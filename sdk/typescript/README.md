@@ -98,23 +98,13 @@ python3 ../../conformance/run_conformance.py --verifier "node src/conformance.ts
 npm install polaris-sdk-ts@next
 ```
 
-This is 1.0.0-rc.3, published to npm under the `next` dist-tag. It is a release candidate, so
-plain `npm install polaris-sdk-ts` keeps resolving 0.1.0, the prior release, until 1.0.0.
-Verified by installing from the live registry into an empty directory and requiring it there.
+A release candidate (1.0.0-rc.3) under the `next` dist-tag; a plain `npm install polaris-sdk-ts`
+resolves 0.1.0 until 1.0.0.
 
-From a clone instead, if you are working on the SDK itself:
+From a clone, if you are working on the SDK itself (`npm install github:...` does not work, because
+the repository root is not a package):
 
 ```bash
-cd sdk/typescript && npm ci     # the build needs its own devDependencies
-cd /your/project && npm install /path/to/polaris-id/sdk/typescript
+cd sdk/typescript && npm ci
+cd /your/project && npm install /path/to/polaris-id/sdk/typescript   # `prepare` builds dist/
 ```
-
-`npm install <dir>` symlinks the package and runs `prepare`, which compiles `dist/`. That
-hook is `prepare` and not `prepack` on purpose: `prepack` fires only for pack and publish, so
-with it a clone install produced a package whose `exports` pointed at a `dist/` that was never
-built, and the failure appeared in the consumer's code as `ERR_MODULE_NOT_FOUND` rather than at
-install time.
-
-`npm install github:EgorKhaklin/polaris-id` does not work and says so (`Could not read
-package.json`): this repository holds several packages and its root is not one of them. npm has
-no equivalent of pip's `#subdirectory=`, so until this is published, a clone is the path.
