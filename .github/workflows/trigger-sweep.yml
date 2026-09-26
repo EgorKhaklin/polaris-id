@@ -77,7 +77,21 @@ jobs:
 
       - name: Every trigger, against every suite
         run: python scripts/polaris-trigger-mutation-drill.py --exhaustive
+      # The step above runs the application suite with each trigger dropped in turn, and what
+      # it commits meanwhile outlives the mutation (operator accounts created while their
+      # recorder was dropped carry no creation event). The next step starts from a clean load.
+      - name: Reload the database
+        if: always()
+        run: |
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 \
+               -c "DROP DATABASE IF EXISTS polaris_test WITH (FORCE)" -c "CREATE DATABASE polaris_test"
+          cd polaris_sql
+          psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f 00_load_all.sql
+          for f in $(ls migrations/*.up.sql | sort); do
+            psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f "$f"
+          done
       # 2026-09-26: removing a whole trigger is one question; removing ONE refusal inside its
       # function is another. The first measurement found sixteen refusals nothing noticed.
       - name: Every refusal inside every trigger function
+        if: always()
         run: python scripts/polaris-trigger-mutation-drill.py --refusals
