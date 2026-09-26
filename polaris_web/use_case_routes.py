@@ -462,6 +462,45 @@ def uc9_queue():
     return render_template('uc9_queue.html', rows=rows)
 
 
+@app.route('/uc9/record-channel/<int:recovery_id>', methods=['POST'])
+@security.login_required
+@security.require_role('admin', 'operator')
+@security.csrf_protect
+def uc9_record_channel(recovery_id):
+    """1.0.0-rc.60: record one of the three out-of-band channels on a PENDING request, attributed
+    to the signed-in user. Since rc.54 the application role cannot UPDATE RecoveryRequest, and
+    until this route no path in the product recorded a channel, so no recovery could be approved
+    without the schema owner. uc9_record_recovery_channel holds every rule: not the requester,
+    once per channel, a SHA-256 for the sworn statement, and a witness bound to another authority.
+    The biometric check and the sworn statement are the requesting authority's to record, so a
+    bound operator is asked for that authority; the witness is by design from another one."""
+    channel = (request.form.get('channel') or '').strip().upper()
+    if channel not in ('BIOMETRIC', 'SWORN', 'WITNESS'):
+        flash('Choose a channel: biometric, sworn statement or witness.', 'error')
+        return redirect(url_for('uc9_queue'))
+    if channel != 'WITNESS':
+        owner = query("SELECT requesting_agency_id FROM RecoveryRequest WHERE recovery_id = %s",
+                      (recovery_id,), fetch='one')
+        if owner is not None:
+            _denied = _operator_authority_permits(owner['requesting_agency_id'])
+            if _denied:
+                return _denied
+    sworn_hash = (request.form.get('sworn_statement_hash') or '').strip().lower() or None
+    try:
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("CALL uc9_record_recovery_channel(%s, %s, %s, %s)",
+                            (recovery_id, session.get('user_id'), channel, sworn_hash))
+            conn.commit()
+        finally:
+            conn.close()
+        flash(f'The {channel.lower()} channel of recovery request #{recovery_id} is recorded.', 'success')
+    except psycopg2.Error as e:
+        flash(db_error_to_message(e), 'error')
+    return redirect(url_for('uc9_queue'))
+
+
 @app.route('/uc9/decide/<int:recovery_id>', methods=['GET', 'POST'])
 @security.login_required
 @security.require_role('admin')

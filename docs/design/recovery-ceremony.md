@@ -38,13 +38,25 @@ check, a sworn statement, and a witnessing agency. That work happens in the
 world, not in the database. The tests insert rows with the channels already
 recorded.
 
-**No path in the product records them.** Until 1.0.0-rc.54 the application role
-could set all three with a plain UPDATE, so the "three independent channels"
-were in practice one role's word. That role has lost UPDATE on RecoveryRequest;
-recording a channel now takes the schema owner, and nothing attributes the act.
-The decision page shows each channel as pending until someone with that access
-records it. A recording procedure, gated per channel and attributed, is the
-missing piece, and it is not built.
+**Recording them.** Until 1.0.0-rc.54 the application role could set all three
+with a plain UPDATE, so the "three independent channels" were in practice one
+role's word. rc.54 took that UPDATE away and left no path in the product to
+record a channel at all, so no recovery could be approved without the schema
+owner. Since 1.0.0-rc.60 `uc9_record_recovery_channel` (the queue's buttons,
+`POST /uc9/record-channel/<id>`, `polaris recovery-record-channel`) records one
+channel at a time on a pending request, attributed and gated per channel:
+
+- **Biometric** and **sworn statement**: an active operator or admin who is not
+  the requester, recorded as `biometric_recorded_by` and `sworn_recorded_by`;
+  the statement is recorded as its SHA-256, never its text.
+- **Witness**: the witness co-signs as themselves, an active operator or admin
+  bound to an authority other than the requesting one, recorded as
+  `witness_agency_id` and `witness_co_sign_user_id`.
+- Each channel is recorded once, and none after a decision (the trigger).
+
+The approver still has to be an admin who is neither the requester nor the
+witness (`witness_differs_from_parties`). What the procedure cannot establish is
+that the biometric check happened: it records who attests that it did.
 
 ### Completing, by an admin
 

@@ -1367,6 +1367,15 @@ class RecoveryCommandTests(CLIBaseTestCase):
             self.assertIn(arg, r.stdout,
                 f"recovery-complete --help must document '{arg}'")
 
+    def test_recovery_record_channel_help_and_choices(self):
+        """1.0.0-rc.60: the channels are recorded from the CLI too, one at a time."""
+        r = run_cli('recovery-record-channel', '--help')
+        for arg in ('--recovery-id', '--recording-user', '--channel', '--sworn-statement-hash'):
+            self.assertIn(arg, r.stdout, f"recovery-record-channel --help must document '{arg}'")
+        r = run_cli('recovery-record-channel', '--recovery-id', '1', '--recording-user', '1',
+                    '--channel', 'NOT_A_CHANNEL', expect_success=False)
+        self.assertNotEqual(r.returncode, 0)
+
     def test_recovery_complete_decision_must_be_approved_or_rejected(self):
         r = run_cli('recovery-complete',
                     '--recovery-id', '1', '--deciding-user', '1',

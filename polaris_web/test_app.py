@@ -2465,6 +2465,32 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
             conn.commit()
         return rid
 
+    def test_a_channel_is_recorded_through_the_console(self):
+        """1.0.0-rc.60: the queue records a channel through /uc9/record-channel, attributed to
+        the signed-in user; an auditor is refused and the row is untouched."""
+        iid = self._make_individual('UC9 console channel')
+        rid = self._make_pending(iid)
+        csrf = self._csrf_token_from('/verifications/new')
+        r = self.client.post('/uc9/record-channel/%d' % rid,
+                             data={'channel': 'BIOMETRIC', 'csrf_token': csrf}, follow_redirects=False)
+        self.assertEqual(r.status_code, 302, r.get_data(as_text=True)[:200])
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT biometric_verified, biometric_recorded_by FROM RecoveryRequest "
+                        "WHERE recovery_id = %s", (rid,))
+            row = cur.fetchone()
+        self.assertTrue(row['biometric_verified'])
+        self.assertEqual(row['biometric_recorded_by'], self._user_id('admin'))
+
+        self._logout(); self._login('auditor')
+        csrf = self._csrf_token_from('/uc7/warrant-audit')
+        r = self.client.post('/uc9/record-channel/%d' % rid,
+                             data={'channel': 'SWORN', 'sworn_statement_hash': 'ab' * 32,
+                                   'csrf_token': csrf}, follow_redirects=False)
+        self.assertEqual(r.status_code, 403, 'the refusal must be the role gate, not the CSRF check')
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT sworn_statement_hash FROM RecoveryRequest WHERE recovery_id = %s", (rid,))
+            self.assertIsNone(cur.fetchone()['sworn_statement_hash'], 'an auditor recorded a channel')
+
     def _complete(self, recovery_id, *, decision='APPROVED',
                   deciding_user='admin', new_token_suffix='RCV'):
         with self._new_conn() as conn, conn.cursor() as cur:
@@ -12184,6 +12210,7 @@ class RouteGuardMatrixTests(PolarisTestCase):
         '/uc7/warrant-audit': ('admin', 'auditor'),
         '/uc8/revoke': ('admin', 'operator'),
         '/uc9/decide/<int:recovery_id>': ('admin',),
+        '/uc9/record-channel/<int:recovery_id>': ('admin', 'operator'),
         '/uc9/initiate-recovery': ('admin', 'operator'),
         '/verifications/new': ('admin', 'operator'),
     }
@@ -12302,7 +12329,7 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
     """Every state-changing route, classified by which cross-site defence applies (v9.418).
 
     CSRF protection only bites where a browser will attach ambient authority. The
-    route table has 49 state-changing routes: 31 carry @csrf_protect, 2 are the
+    route table has 50 state-changing routes: 32 carry @csrf_protect, 2 are the
     launcher's anonymous local-control endpoints and carry @reject_cross_site, and
     16 are the machine API and the pre-session auth endpoints, where there is no
     cookie authority to abuse.
@@ -12367,8 +12394,8 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
             "Either add @csrf_protect, or add an entry to CSRF_EXEMPT saying why a browser "
             "cannot be made to call this with someone else's authority.")
         self.assertEqual(
-            len(csrf), 31,
-            f"{len(csrf)} routes carry @csrf_protect and 31 are recorded. A guard that was "
+            len(csrf), 32,
+            f"{len(csrf)} routes carry @csrf_protect and 32 are recorded. A guard that was "
             "removed shows up here, because a route without one simply stops appearing in the "
             "protected set.")
         self.assertEqual(len(cross_site), 2, f"{len(cross_site)} routes reject cross-site "
@@ -12399,7 +12426,7 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
                     f"{method} {url} without a CSRF token returned {r.status_code}; the token "
                     "is not being required")
             checked += 1
-        self.assertEqual(checked, 31,
+        self.assertEqual(checked, 32,
                          f"only {checked} CSRF-protected routes were exercised; the route table "
                          "is no longer being read and this test is passing by finding nothing")
 

@@ -188,8 +188,8 @@ REVOKE INSERT ON RecoveryRequest FROM polaris_app;
 -- role could set all three itself with a plain UPDATE, so "three independent channels" was one
 -- role's word. The bulk-issuance batch could have issued_at reset, re-opening uc_bulk_issue's
 -- "already issued" refusal. The application updates none of these; their procedures are SECURITY
--- DEFINER. Recording the channels takes the schema owner, which docs/design/recovery-ceremony.md
--- states as the gap it is.
+-- DEFINER. Since 1.0.0-rc.60 the channels are recorded through uc9_record_recovery_channel
+-- (SECURITY DEFINER), gated per channel and attributed; see docs/design/recovery-ceremony.md.
 REVOKE UPDATE, DELETE ON RecoveryRequest FROM polaris_app;
 REVOKE UPDATE, DELETE ON BulkEnrollmentBatch FROM polaris_app;
 REVOKE UPDATE, DELETE ON BulkEnrollmentStaging FROM polaris_app;

@@ -1217,6 +1217,7 @@ server-side regardless.
 | `uc7_warrant_audit` | Warrant-scoped audit read; FULL rows return complete records |
 | `uc8_revoke_token` | Bounded revocation (see below) |
 | `uc9_initiate_recovery`, `uc9_complete_recovery` | The two-phase recovery ceremony after catastrophic loss |
+| `uc9_record_recovery_channel` | Record one out-of-band channel of a pending recovery, attributed (1.0.0-rc.60) |
 | `close_anchor_batch` | Close a Merkle anchor batch |
 | `uc10_attest_trust`, `uc10_revoke_attestation` | The federation trust graph |
 | `uc11_close_epoch` | Close a token-state epoch for the ZK prover |
@@ -1306,6 +1307,27 @@ Read-only queue of all recovery requests (PENDING first, then
 terminal states). Any authenticated role can view; only admin can
 act on PENDING rows. Renders the three OOB channels (Biometric /
 Sworn statement / Witness agency) as compact tick indicators.
+
+#### `POST /uc9/record-channel/<recovery_id>`
+
+Between the phases (1.0.0-rc.60). Operator or admin role required. Records one of the three
+out-of-band channels on a PENDING request through `uc9_record_recovery_channel`, attributed to the
+signed-in user. A bound operator records the biometric check and the sworn statement only for its
+own authority's requests; the witness co-signs as themselves and must be bound to another authority.
+
+| field | type | required | notes |
+|---|---|---|---|
+| `channel` | enum | yes | `BIOMETRIC` \| `SWORN` \| `WITNESS` |
+| `sworn_statement_hash` | hex | for `SWORN` | SHA-256 of the statement, 64 hex characters |
+| `csrf_token` | string | yes | |
+
+Errors:
+
+- `42501` `insufficient_privilege`: not an active operator or admin; the requester recording their
+  own request's channel; a witness not bound to another authority; a bound operator acting for
+  another authority (403 at the route).
+- `23514` `check_violation`: the request is not PENDING; the channel is already recorded; a sworn
+  statement that is not a SHA-256.
 
 #### `POST /uc9/decide/<recovery_id>`
 

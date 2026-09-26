@@ -70,6 +70,30 @@
                 {% endif %}
             </td>
             <td class="actions">
+                {% if r.status == 'PENDING' and current_user.role in ('admin', 'operator') %}
+                    {% if not r.biometric_verified %}
+                    <form method="post" action="{{ url_for('uc9_record_channel', recovery_id=r.recovery_id) }}" class="inline-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="channel" value="BIOMETRIC">
+                        <button type="submit" class="btn btn-sm">Record biometric</button>
+                    </form>
+                    {% endif %}
+                    {% if not r.sworn_statement_present %}
+                    <form method="post" action="{{ url_for('uc9_record_channel', recovery_id=r.recovery_id) }}" class="inline-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="channel" value="SWORN">
+                        <input type="text" name="sworn_statement_hash" placeholder="SHA-256 of the statement" pattern="[0-9a-fA-F]{64}" required aria-label="SHA-256 of the sworn statement">
+                        <button type="submit" class="btn btn-sm">Record statement</button>
+                    </form>
+                    {% endif %}
+                    {% if not r.witness_present %}
+                    <form method="post" action="{{ url_for('uc9_record_channel', recovery_id=r.recovery_id) }}" class="inline-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="channel" value="WITNESS">
+                        <button type="submit" class="btn btn-sm">Co-sign as witness</button>
+                    </form>
+                    {% endif %}
+                {% endif %}
                 {% if r.status == 'PENDING' and current_user.role == 'admin' %}
                     <a href="{{ url_for('uc9_decide', recovery_id=r.recovery_id) }}" class="btn btn-sm btn-gold">Decide</a>
                 {% elif r.status == 'PENDING' %}

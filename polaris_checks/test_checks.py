@@ -1630,7 +1630,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                    "anchorbatch tokenstateepochleaf duressevent authauditlog "
                    "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed", "authoritykeyevent", "timestamplog", "holderkeyevent")
 
-    def write(grants, mig_revoke, proc_definer, uc11_definer=True, uc10_definer=True):
+    def write(grants, mig_revoke, proc_definer, uc11_definer=True, uc10_definer=True, uc9r_definer=True):
         (sql / "09_grants.sql").write_text(grants)
         (mig / "2026-05-15-003-audit-access-log.up.sql").write_text(
             "REVOKE UPDATE, DELETE ON AuditAccessLog FROM polaris_app;\n"
@@ -1646,7 +1646,10 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
             + "AS $$ BEGIN NULL; END; $$;\n"
             + "".join("CREATE OR REPLACE PROCEDURE %s(p INTEGER)\nLANGUAGE plpgsql\n%sAS $$ BEGIN NULL; END; $$;\n"
                       % (r, "SECURITY DEFINER\n" if uc10_definer else "")
-                      for r in ("uc10_attest_trust", "uc10_revoke_attestation", "uc_pseudonymize_individual")))
+                      for r in ("uc10_attest_trust", "uc10_revoke_attestation", "uc_pseudonymize_individual"))
+            + "CREATE OR REPLACE PROCEDURE uc9_record_recovery_channel(p INTEGER)\nLANGUAGE plpgsql\n"
+            + ("SECURITY DEFINER\nSET search_path = public, pg_temp\n" if uc9r_definer else "")
+            + "AS $$ BEGIN NULL; END; $$;\n")
 
     # A real REVOKE naming the tables, not a comment listing them: the check reads
     # 09_grants.sql for the statement, and a comment is not one (v9.399).
@@ -1754,6 +1757,9 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     write(full, True, True, uc11_definer=False)
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
         "must FAIL when uc11_close_epoch runs with the caller's rights"
+    write(full, True, True, uc9r_definer=False)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when uc9_record_recovery_channel runs with the caller's rights (rc.60)"
 
     # 8. 2026-09-25: the federation trust graph.
     write(full.replace("REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;\n", ""), True, True)

@@ -1103,6 +1103,10 @@ CREATE TABLE RecoveryRequest (
     sworn_statement_hash     VARCHAR(128),
     witness_agency_id        INTEGER      REFERENCES Agency(agency_id),
     witness_co_sign_user_id  INTEGER      REFERENCES AppUser(user_id),
+    -- 1.0.0-rc.60: who recorded the biometric check and the sworn statement (the witness is
+    -- attributed by witness_co_sign_user_id). Set once, by uc9_record_recovery_channel.
+    biometric_recorded_by    INTEGER      REFERENCES AppUser(user_id),
+    sworn_recorded_by        INTEGER      REFERENCES AppUser(user_id),
 
     -- Approval ceremony
     decided_at               TIMESTAMP,

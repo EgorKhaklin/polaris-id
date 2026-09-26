@@ -24,6 +24,7 @@ drift from what the program accepts):
     transparency-report  P7.7: generate the public transparency report for a period
     revoke               UC-8: revoke an ACTIVE token
     recovery-initiate    UC-9 phase 1: open a catastrophic-loss recovery ceremony
+    recovery-record-channel  UC-9: record one out-of-band channel (biometric, sworn, witness)
     recovery-complete    UC-9 phase 2: approve or reject a pending recovery request
     transition           Apply a state-machine transition to a token
     bulk-enroll          P2.4: stage an extract with COPY and issue the batch set-based
@@ -902,6 +903,30 @@ def cmd_recovery_complete(args):
     except psycopg2.Error as e:
         conn.rollback()
         sys.stderr.write(red(f"UC-9 complete rejected: {db_error_message(e)}\n"))
+        sys.exit(3)
+    finally:
+        conn.close()
+
+
+# ----------------------------------------------------------------------------
+# COMMAND: recovery-record-channel (UC-9, between the phases), 1.0.0-rc.60
+# ----------------------------------------------------------------------------
+
+def cmd_recovery_record_channel(args):
+    """Record one of the three out-of-band channels on a PENDING recovery request, attributed
+    to --recording-user. uc9_record_recovery_channel holds every rule: not the requester, once
+    per channel, the sworn statement as a SHA-256, a witness bound to another authority."""
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("CALL uc9_record_recovery_channel(%s, %s, %s, %s)",
+                        (args.recovery_id, args.recording_user, args.channel,
+                         (args.sworn_statement_hash or '').lower() or None))
+            conn.commit()
+        print(green(f"\u2713 Recovery #{args.recovery_id}: {args.channel} channel recorded"))
+    except psycopg2.Error as e:
+        conn.rollback()
+        sys.stderr.write(red(f"UC-9 channel rejected: {db_error_message(e)}\n"))
         sys.exit(3)
     finally:
         conn.close()
@@ -2278,6 +2303,16 @@ def build_parser():
     p_9i.add_argument('--cooldown-hours',    type=int, default=48,
         help='Cooldown window before phase 2 may complete (default: 48)')
 
+    # recovery-record-channel (UC-9, between the phases; 1.0.0-rc.60)
+    p_9r = sub.add_parser('recovery-record-channel',
+        help='UC-9: record one out-of-band channel (biometric, sworn statement, witness)')
+    p_9r.add_argument('--recovery-id',    type=int, required=True)
+    p_9r.add_argument('--recording-user', type=int, required=True,
+        help='The operator or admin recording it; for WITNESS, the witness, bound to another authority')
+    p_9r.add_argument('--channel', required=True, choices=['BIOMETRIC', 'SWORN', 'WITNESS'])
+    p_9r.add_argument('--sworn-statement-hash',
+        help='(SWORN only) SHA-256 of the sworn statement, 64 hex characters')
+
     # recovery-complete (UC-9 phase 2)
     p_9c = sub.add_parser('recovery-complete',
         help='UC-9 phase 2: approve or reject a pending recovery request')
@@ -2750,6 +2785,7 @@ HANDLERS = {
     'revoke':           cmd_revoke,
     'recovery-initiate': cmd_recovery_initiate,
     'recovery-complete': cmd_recovery_complete,
+    'recovery-record-channel': cmd_recovery_record_channel,
     'transition':       cmd_transition,
     'bulk-enroll':      cmd_bulk_enroll,
     'user-list':        cmd_user_list,

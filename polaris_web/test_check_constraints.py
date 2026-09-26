@@ -1548,6 +1548,151 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                     cur.execute(sql)
             conn.rollback()
 
+    def test_a_recovery_completes_through_the_product_alone(self):
+        """1.0.0-rc.60. Since rc.54 the application role cannot UPDATE RecoveryRequest, and no path
+        in the product recorded the three out-of-band channels, so no recovery could reach
+        APPROVED without the schema owner. uc9_record_recovery_channel is that path. Here the
+        whole ceremony after initiation runs as polaris_app: the three channels, then the
+        approval. The fixture (an aged PENDING request, a witness bound to another authority) is
+        written as the owner."""
+        import secrets
+        owner = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        tag = secrets.token_hex(4)
+        try:
+            with owner, owner.cursor() as cur:
+                cur.execute("SELECT user_id FROM AppUser WHERE username = 'admin'")
+                admin = cur.fetchone()["user_id"]
+                cur.execute("SELECT user_id FROM AppUser WHERE username = 'operator'")
+                operator = cur.fetchone()["user_id"]
+                cur.execute("SELECT set_config('polaris.justification', "
+                            "'rc.60 fixture: a witness and a same-authority operator', true)")
+                cur.execute("INSERT INTO AppUser (username, password_hash, role, agency_id) "
+                            "VALUES (%s, 'x', 'operator', 2) RETURNING user_id", ("witness-" + tag,))
+                witness = cur.fetchone()["user_id"]
+                cur.execute("INSERT INTO AppUser (username, password_hash, role, agency_id) "
+                            "VALUES (%s, 'x', 'operator', 1) RETURNING user_id", ("samewit-" + tag,))
+                same_agency = cur.fetchone()["user_id"]
+                cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                            "VALUES (%s, '1990-01-01', 'US-PA') RETURNING individual_id", ("RC60 " + tag,))
+                ind = cur.fetchone()["individual_id"]
+                cur.execute("INSERT INTO RecoveryRequest (claimed_individual_id, requested_at, "
+                            "requesting_agency_id, requesting_user_id, cooldown_expires_at) VALUES "
+                            "(%s, now() - interval '50 hours', 1, %s, now() - interval '2 hours') "
+                            "RETURNING recovery_id", (ind, operator))
+                rid = cur.fetchone()["recovery_id"]
+        finally:
+            owner.close()
+
+        app = self._app_conn()
+        rec = "CALL uc9_record_recovery_channel(%s, %s, %s, %s)"
+        refusals = (
+            ("the requester records a channel", (rid, operator, "BIOMETRIC", None), pg_errors.InsufficientPrivilege),
+            ("an auditor records a channel", (rid, 3, "BIOMETRIC", None), pg_errors.InsufficientPrivilege),
+            ("a witness from the requesting authority", (rid, same_agency, "WITNESS", None), pg_errors.InsufficientPrivilege),
+            ("a sworn statement that is not a SHA-256", (rid, admin, "SWORN", "not-a-hash"), pg_errors.CheckViolation),
+        )
+        for label, args, err in refusals:
+            with self.subTest(label), app.cursor() as cur:
+                with self.assertRaises(err):
+                    cur.execute(rec, args)
+            app.rollback()
+
+        with app.cursor() as cur:
+            cur.execute(rec, (rid, admin, "BIOMETRIC", None))
+            cur.execute(rec, (rid, admin, "SWORN", "ab" * 32))
+            cur.execute(rec, (rid, witness, "WITNESS", None))
+        app.commit()
+        with self.subTest("a channel is recorded once"), app.cursor() as cur:
+            with self.assertRaises(pg_errors.CheckViolation):
+                cur.execute(rec, (rid, admin, "BIOMETRIC", None))
+        app.rollback()
+
+        with app.cursor() as cur:
+            cur.execute("CALL uc9_complete_recovery(%s, %s, 'APPROVED', 'rc.60 product path', %s, %s, 1, "
+                        "'IRIS', 'MULTI_MODAL', %s)",
+                        (rid, admin, "TKN-RC60-" + tag, "SN-RC60-" + tag, "https://crl.example/" + tag))
+            cur.execute("SELECT status, biometric_recorded_by, sworn_recorded_by, witness_agency_id, "
+                        "witness_co_sign_user_id FROM RecoveryRequest WHERE recovery_id = %s", (rid,))
+            row = cur.fetchone()
+        app.commit()
+        self.assertEqual(row["status"], "APPROVED", "the ceremony must complete through the product alone")
+        self.assertEqual((row["biometric_recorded_by"], row["sworn_recorded_by"]), (admin, admin))
+        self.assertEqual((row["witness_agency_id"], row["witness_co_sign_user_id"]), (2, witness))
+
+        with self.subTest("nothing is recorded after the decision"), app.cursor() as cur:
+            with self.assertRaises(pg_errors.CheckViolation):
+                cur.execute(rec, (rid, admin, "SWORN", "cd" * 32))
+        app.rollback()
+        app.close()
+
+    def test_each_recovery_channel_refusal_is_its_own(self):
+        """1.0.0-rc.60, written after the procedure mutation drill found five refusals that could be
+        deleted with the ceremony test still green. Each case here reaches exactly one refusal:
+        a request that does not exist, a request already decided (with no channel recorded, so
+        no once-only refusal answers first), a second sworn statement and a second witness (an
+        overwritten statement hash before the decision would be a silent substitution), and an
+        unknown channel. With any one of those refusals deleted, the call returns silently."""
+        import secrets
+        owner = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        tag = secrets.token_hex(4)
+        try:
+            with owner, owner.cursor() as cur:
+                cur.execute("SELECT user_id FROM AppUser WHERE username = 'admin'")
+                admin = cur.fetchone()["user_id"]
+                cur.execute("SELECT user_id FROM AppUser WHERE username = 'operator'")
+                operator = cur.fetchone()["user_id"]
+                cur.execute("SELECT set_config('polaris.justification', "
+                            "'rc.60 fixture: witnesses bound to another authority', true)")
+                cur.execute("INSERT INTO AppUser (username, password_hash, role, agency_id) "
+                            "VALUES (%s, 'x', 'operator', 2) RETURNING user_id", ("wit1-" + tag,))
+                witness = cur.fetchone()["user_id"]
+                cur.execute("INSERT INTO AppUser (username, password_hash, role, agency_id) "
+                            "VALUES (%s, 'x', 'operator', 3) RETURNING user_id", ("wit2-" + tag,))
+                witness2 = cur.fetchone()["user_id"]
+                rids = []
+                for k in range(2):
+                    cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                                "VALUES (%s, '1990-01-01', 'US-PA') RETURNING individual_id",
+                                ("RC60b %s %d" % (tag, k),))
+                    ind = cur.fetchone()["individual_id"]
+                    cur.execute("INSERT INTO RecoveryRequest (claimed_individual_id, requested_at, "
+                                "requesting_agency_id, requesting_user_id, cooldown_expires_at) VALUES "
+                                "(%s, now() - interval '50 hours', 1, %s, now() - interval '2 hours') "
+                                "RETURNING recovery_id", (ind, operator))
+                    rids.append(cur.fetchone()["recovery_id"])
+                open_rid, decided_rid = rids
+                cur.execute("UPDATE RecoveryRequest SET status = 'REJECTED', decided_at = now(), "
+                            "decided_by_user_id = %s, decision_reason = 'fixture' WHERE recovery_id = %s",
+                            (admin, decided_rid))
+        finally:
+            owner.close()
+
+        app = self._app_conn()
+        rec = "CALL uc9_record_recovery_channel(%s, %s, %s, %s)"
+        with app.cursor() as cur:
+            cur.execute(rec, (open_rid, admin, "SWORN", "ab" * 32))
+            cur.execute(rec, (open_rid, witness, "WITNESS", None))
+        app.commit()
+        cases = (
+            ("a request that does not exist", (2 ** 31 - 1, admin, "BIOMETRIC", None), pg_errors.RaiseException),
+            ("a request already decided", (decided_rid, admin, "BIOMETRIC", None), pg_errors.CheckViolation),
+            ("a second sworn statement", (open_rid, admin, "SWORN", "cd" * 32), pg_errors.CheckViolation),
+            ("a second witness", (open_rid, witness2, "WITNESS", None), pg_errors.CheckViolation),
+            ("an unknown channel", (open_rid, admin, "FINGERPRINT", None), pg_errors.RaiseException),
+        )
+        for label, args, err in cases:
+            with self.subTest(label), app.cursor() as cur:
+                with self.assertRaises(err):
+                    cur.execute(rec, args)
+            app.rollback()
+        with app.cursor() as cur:
+            cur.execute("SELECT sworn_statement_hash, witness_co_sign_user_id FROM RecoveryRequest "
+                        "WHERE recovery_id = %s", (open_rid,))
+            row = cur.fetchone()
+        app.rollback(); app.close()
+        self.assertEqual((row["sworn_statement_hash"], row["witness_co_sign_user_id"]), ("ab" * 32, witness),
+                         "a recorded channel was overwritten")
+
     def test_app_role_writes_an_epoch_only_through_uc11(self):
         """2026-09-25. With INSERT on TokenStateEpoch the application role could write an epoch
         uc11_close_epoch refuses: one member, below the anonymity floor, or a committed_count

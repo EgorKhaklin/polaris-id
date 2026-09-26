@@ -11,6 +11,41 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.60 — 2026-09-26 (a recovery can be approved through the product again)
+
+CORE-BUG, a regression from rc.54, against the recovery ceremony the README lists as delivered
+("a two-phase recovery ceremony with independent out-of-band channels") and the approval
+`POST /uc9/decide` documents. rc.54 correctly took UPDATE on `RecoveryRequest` from the application
+role, which had let one role set all three channels, and left no path in the product to record a
+channel at all: every approval in a deployment failed the three-channel check, and only the schema
+owner at a psql prompt could complete a recovery. Externally observable: a new procedure, route and
+CLI command record the channels. Schema change: migration
+`2026-09-26-001-recovery-channels-recorded-in-the-product`. Nothing is published.
+
+- `uc9_record_recovery_channel` (SECURITY DEFINER, search_path pinned) records one channel on a
+  PENDING request, attributed: an active operator or admin who is not the requester records the
+  biometric check (`biometric_recorded_by`) or the sworn statement as its SHA-256
+  (`sworn_recorded_by`); the witness co-signs as themselves and must be bound to an authority other
+  than the requesting one. Each channel is recorded once; none after a decision.
+- `POST /uc9/record-channel/<id>` (operator or admin; a bound operator records the biometric and
+  sworn channels only for its own authority) with buttons on the recovery queue, and
+  `polaris recovery-record-channel`.
+- Tests: `test_a_recovery_completes_through_the_product_alone` runs the whole ceremony after
+  initiation as `polaris_app` (three channels, then approval) and six refusals (the requester, an
+  auditor, a same-authority witness, a malformed hash, a second recording, a recording after the
+  decision); it errors with the down migration applied. `test_a_channel_is_recorded_through_the_console`
+  covers the route, with the auditor refused by the role gate. The CLI's help and choices are tested.
+- The procedure mutation drill, run on the new procedure, found 5 of its 10 refusals deletable
+  with every test green (a missing request, a decided request, a second sworn statement, a second
+  witness, an unknown channel: each would have returned silently, and a re-recorded statement hash
+  would have replaced the first before the decision). `test_each_recovery_channel_refusal_is_its_own`
+  reaches each one on its own; the drill now reports 10 of 10 caught.
+- `check_aor_privilege_boundary` requires the procedure to be SECURITY DEFINER with search_path
+  pinned; one new detection case.
+- Documented: API.md, `docs/design/recovery-ceremony.md` (the "not built" paragraph now says what is
+  and what the record cannot establish), and the paper's limitation, which now says the channels
+  are people's word, recorded and attributed.
+
 ## v1.0.0-rc.59 — 2026-09-25 (a context's proof policy cannot be lowered by the application)
 
 CORE-BUG against the institutional registry (`/api/v1/registry/<agency_id>`), which an authority

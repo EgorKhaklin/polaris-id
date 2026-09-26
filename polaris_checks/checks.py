@@ -811,6 +811,16 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         return _fail("c1_aor_priv", "uc11_close_epoch must be SECURITY DEFINER: it is the only "
                                     "writer of the epoch tables once the application role loses "
                                     "INSERT on them (C1)")
+    # 1.0.0-rc.60. The recovery channels: with no UPDATE on RecoveryRequest, the application
+    # records a channel only through uc9_record_recovery_channel, so it must run as the owner and
+    # must not be redirectable through search_path.
+    rec = re.search(r"PROCEDURE\s+uc9_record_recovery_channel\b.*?AS\s+\$\$", proc, re.I | re.S)
+    if (not rec or not re.search(r"SECURITY\s+DEFINER", rec.group(0), re.I)
+            or not re.search(r"SET\s+search_path\s*=\s*public\s*,\s*pg_temp", rec.group(0), re.I)):
+        return _fail("c1_aor_priv", "uc9_record_recovery_channel must exist and be SECURITY DEFINER "
+                                    "with search_path pinned: it is the product's only path to record "
+                                    "a recovery channel once the application role holds no UPDATE on "
+                                    "RecoveryRequest (C1)")
     # 2026-09-25. The federation trust graph: recorded only by uc10_attest_trust, revoked only by
     # uc10_revoke_attestation, whose ownership the immutability trigger asks for.
     if not re.search(r"REVOKE\s+INSERT\s+ON\s+AgencyTrustAttestation\s+FROM\s+polaris_app", grants, re.I):
