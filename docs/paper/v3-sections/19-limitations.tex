@@ -97,6 +97,22 @@ it does not know the law. \sExt
     narrower test that replaced it, and nobody outside has yet reported walking it.
 \end{itemize}
 
+\subsection{What the numbers are}
+
+Every performance number in this paper is single-node on one laptop, or a simulation at a stated
+scale factor, or a projection that the repository labels as one under a named assumption. No
+production cluster has been measured, and the one measurement on a real failover topology is a
+median at two requests per second with the tail withheld because the sample cannot carry it. The
+national planning targets are targets; the arithmetic that clears them is the easy half of the
+question, and the half that nearly failed was an integer column.
+
+\subsection{Documentation that lags the code}
+
+Researching this version found places where the repository's own prose is behind its code or its
+history; they are recorded in the author's notes that accompany this version rather than fixed
+silently. Where this paper and any repository document disagree, the paper
+followed the code at \code{1.0.0-rc.7} and says so in the note.
+
 \subsection{Claims no stranger has yet tested}
 
 The list above says what outsiders have done. This table turns it around: the claims this paper
@@ -129,18 +145,5 @@ A stranger can follow the stranger's path & The author walked it on a clean mach
 \end{xltabular}
 }
 
-\subsection{What the numbers are}
-
-Every performance number in this paper is single-node on one laptop, or a simulation at a stated
-scale factor, or a projection that the repository labels as one under a named assumption. No
-production cluster has been measured, and the one measurement on a real failover topology is a
-median at two requests per second with the tail withheld because the sample cannot carry it. The
-national planning targets are targets; the arithmetic that clears them is the easy half of the
-question, and the half that nearly failed was an integer column.
-
-\subsection{Documentation that lags the code}
-
-Researching this version found places where the repository's own prose is behind its code or its
-history; they are recorded in the author's notes that accompany this version rather than fixed
-silently. Where this paper and any repository document disagree, the paper
-followed the code at \code{1.0.0-rc.7} and says so in the note.
+\nextlayer{Every row of that table waits for a stranger. The last ring is what happened when the first
+ones came.}
