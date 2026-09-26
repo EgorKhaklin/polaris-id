@@ -60,7 +60,7 @@
 \renewcommand{\headrulewidth}{0.4pt}
 \renewcommand{\footrulewidth}{0.2pt}
 \fancyhead[L]{\small\color{steelgray}\textsc{Khaklin\,|\,Polaris, Version 3}}
-\fancyhead[R]{\small\color{steelgray}\textsc{1.0.0-rc.7}}
+\fancyhead[R]{\small\color{steelgray}\textsc{The map of the system}}
 \fancyfoot[C]{\small\color{steelgray}Page \thepage}
 
 % === SECTION STYLING ===
@@ -166,6 +166,8 @@
 % few lines split across a page break read worse than the space a whole box leaves behind
 % when it moves to the next page. Readability over page count.
 % \motif: the one line each ring opens with, the paper's recurring idea stated for that ring (2026-09-25).
+% \evidencerecord: the companion document the counts, histories, provenance and corrections live in.
+\newcommand{\evidencerecord}{the companion \emph{Evidence Record}}
 \newcommand{\motif}[1]{\par\vspace{2pt}{\centering\itshape\color{navymid}#1\par}\vspace{6pt}}
 \newcommand{\analogy}[1]{\par\vspace{4pt}\begin{tcolorbox}[enhanced, colback=tabstripe, colframe=tabstripe, boxrule=0pt, arc=0pt, outer arc=0pt, left=6pt, right=6pt, top=6pt, bottom=6pt, boxsep=0pt, before skip=0pt, after skip=0pt]\small{\scshape\color{gold}in the town}\enspace #1\end{tcolorbox}\par\vspace{4pt}}
 % Why the next layer exists: the causal step.
@@ -239,7 +241,7 @@
 {\fontsize{13}{17}\selectfont\color{navydark} The map of the system}
 \vspace{0.12in}
 
-{\small\color{steelgray} A reference implementation of an issuer-unlinkable, duress-aware\\ identity-token system, signed with ML-DSA-65 under an audited\\ algorithm-migration path, read from the centre outward, at version 1.0.0-rc.7}
+{\small\color{steelgray} A reference implementation of an issuer-unlinkable, duress-aware\\ identity-token system, signed with ML-DSA-65 under an audited\\ algorithm-migration path, read from the centre outward}
 \vspace{0.5in}
 
 {\color{gold}\rule{0.85in}{0.5pt}}
@@ -304,14 +306,9 @@
 % with its table pushed to the next, which read as a stray heading.
 \clearpage
 \input{v3-sections/A-status}
-\input{v3-sections/B-layers}
-\input{v3-sections/C-counts}
-\input{v3-sections/E-from-v1}
-\input{v3-sections/F-from-v2}
-\input{v3-sections/G-provenance}
-\input{v3-sections/H-corrections}
-% The glossary closes the document (2026-09-25): a reader's last page is a reference, not a list
-% of defects.
+% The glossary is the one other appendix (2026-09-25). Everything the map does not need in order to
+% be read, the counts, the version histories, the provenance and the corrections record, is the
+% companion evidence record (polaris_evidence_record_v3.pdf), so the reading ends at the coda.
 \input{v3-sections/D-glossary}
 
 \end{document}

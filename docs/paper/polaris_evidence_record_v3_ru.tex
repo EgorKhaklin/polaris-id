@@ -68,7 +68,7 @@
 \renewcommand{\headrulewidth}{0.4pt}
 \renewcommand{\footrulewidth}{0.2pt}
 \fancyhead[L]{\small\color{steelgray}\textsc{Хаклин\,|\,Полярис, версия 3}}
-\fancyhead[R]{\small\color{steelgray}\textsc{Карта системы}}
+\fancyhead[R]{\small\color{steelgray}\textsc{Протокол свидетельств}}
 \fancyfoot[C]{\small\color{steelgray}\thepage}
 
 % === SECTION STYLING ===
@@ -125,7 +125,7 @@
 % === HYPERLINKS ===
 \usepackage[colorlinks=true, linkcolor=navymid, urlcolor=navylight, linktoc=all, hypertexnames=false,
   pdfauthor={Егор Хаклин},
-  pdftitle={Полярис, версия 3: карта системы},
+  pdftitle={Полярис, версия 3: протокол свидетельств},
   pdfsubject={Справочная реализация системы идентификационных токенов, несвязываемой со стороны эмитента и учитывающей принуждение, подписанной МЛ-ДСА-65 по проверяемому пути миграции алгоритмов, описанная слой за слоем на версии 1.0.0-кв.7},
   pdfkeywords={личность, постквантовая криптография, алгоритмическая гибкость, нулевое разглашение, федерация, журналы прозрачности, ограничения базы данных, ОИД4ВП, соответствие, совместимость, программные агенты, доказательство того, что ты человек}]{hyperref}
 
@@ -253,95 +253,35 @@
 \newcommand{\thead}[1]{\textbf{\color{white}\small #1}}
 
 % ============================================================================
+% ============================================================================
+% Перекрёстные ссылки в саму карту (разделы, рисунки и таблицы отчёта).
+\usepackage{xr}
+\externaldocument{polaris_project_report_v3_ru}
 \begin{document}
 
-% ---------------------------------------------------------------- TITLE PAGE
 \begin{titlepage}
 \thispagestyle{empty}
 \begin{center}
-\vspace*{0.8in}
+\vspace*{1.6in}
 {\footnotesize\scshape\color{steelgray} Система идентификационных токенов \enspace$\cdot$\enspace версия 3}
-\vspace{0.55in}
+\vspace{0.4in}
 
-\includegraphics[height=7.2cm]{../../site/polaris_logo_clean.png}
-\vspace{0.55in}
-
-{\fontsize{56}{60}\selectfont\scshape\color{navydark} Полярис}
-\vspace{0.18in}
-
-{\fontsize{12}{16}\selectfont\itshape\color{navymid} Fixus inter mutabilia}
-\vspace{0.35in}
-
-{\fontsize{13}{17}\selectfont\color{navydark} Карта системы}
-\vspace{0.12in}
-
-{\small\color{steelgray} Справочная реализация системы идентификационных токенов,\\ несвязываемой со стороны эмитента и учитывающей принуждение, подписанной\\ МЛ-ДСА-65 по проверяемому пути миграции алгоритмов; читается от центра\\ наружу}
-\vspace{0.5in}
-
-{\color{gold}\rule{0.85in}{0.5pt}}
-\vspace{0.28in}
-
-{\fontsize{16}{19}\selectfont\color{navydark} Егор Хаклин}
-\vfill
-{\footnotesize\scshape\color{steelgray} Университет Сетон-Хилл \enspace$\cdot$\enspace сентябрь 2026}
-\vspace{0.6in}
+{\Huge\bfseries\color{navydark} Полярис}\par\vspace{10pt}
+{\Large\color{navymid} Протокол свидетельств}\par\vspace{0.4in}
+{\small\color{steelgray} Сопутствующий том к \emph{Полярис, версия 3: карта системы}.\\
+Карта говорит, что есть система. Этот протокол говорит, как она измерена, что изменилось\\ и что
+было исправлено по пути.}
 \end{center}
 \end{titlepage}
 
-% ---------------------------------------------------------------- FRONT MATTER
-% Russian documents number every page in Arabic numerals, continuously; the title
-% page counts as page 1 and carries no number.
 \pagenumbering{arabic}
 \setcounter{page}{2}
-% Russian practice puts the contents directly after the title page. The preface then
-% runs straight into section 1, so however long the preface grows, no page is left
-% holding a few lines and nothing else.
-{\color{navydark}\Large\bfseries Содержание}\\[2pt]
-{\color{navymid}\rule{\textwidth}{0.8pt}}
-\vspace{4pt}
-\renewcommand{\contentsname}{}
-\tableofcontents
-\newpage
-\input{v3-sections-ru/00-about}
-\bigskip
-
-% ---------------------------------------------------------------- BODY
-\input{v3-sections-ru/01-problem}
-\input{v3-sections-ru/02-reading}
-\input{v3-sections-ru/03-core}
-\input{v3-sections-ru/04-walls}
-\input{v3-sections-ru/05-signatures}
-\input{v3-sections-ru/06-verifiers}
-\input{v3-sections-ru/07-authorization}
-\input{v3-sections-ru/08-privacy}
-\input{v3-sections-ru/09-use}
-\input{v3-sections-ru/10-federation}
-\input{v3-sections-ru/11-transparency}
-\input{v3-sections-ru/12-institutions}
-\input{v3-sections-ru/13-operations}
-\input{v3-sections-ru/14-cognition}
-\input{v3-sections-ru/15-senses}
-\input{v3-sections-ru/16-boundaries}
-\input{v3-sections-ru/17-agents}
-\input{v3-sections-ru/18-research}
-\input{v3-sections-ru/18b-lineage}
-\input{v3-sections-ru/19-limitations}
-% Последнее кольцо открывается на своей странице: это кульминация, и пауза перед ней её часть.
-\clearpage
-\input{v3-sections-ru/19b-outside}
-\input{v3-sections-ru/20-conclusion}
-
-% Работы, которые называет раздел~\ref{sec:lineage} (добавлено 25.09.2026).
-\input{v3-sections-ru/references}
-
-% ---------------------------------------------------------------- APPENDICES
-\appendix
 \renewcommand{\thesection}{\CyrAlph{section}}
 \titleformat{\section}{\Large\bfseries\color{navydark}\filright\hyphenpenalty=10000\exhyphenpenalty=10000}{ПРИЛОЖЕНИЕ \thesection}{1em}{\polarisTitleStrut}[\vspace{0.5pt}{\color{navymid}\titlerule[0.8pt]}\nobreak]
-\input{v3-sections-ru/A-status}
-% Словарь есть единственное другое приложение (25.09.2026). Всё, что карте не нужно, чтобы её прочли,
-% (числа, истории версий, происхождение и запись исправлений) вынесено в сопутствующий протокол
-% свидетельств (polaris_evidence_record_v3_ru.pdf), так что чтение кончается на коде.
-\input{v3-sections-ru/D-glossary}
-
+\input{v3-sections-ru/B-layers}
+\input{v3-sections-ru/C-counts}
+\input{v3-sections-ru/E-from-v1}
+\input{v3-sections-ru/F-from-v2}
+\input{v3-sections-ru/G-provenance}
+\input{v3-sections-ru/H-corrections}
 \end{document}

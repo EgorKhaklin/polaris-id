@@ -18,6 +18,7 @@ is in [NOTICE](../../NOTICE).
 | [`v3-sections/`](v3-sections/) | One file per section and appendix of Version 3. |
 | [`v3-figures/`](v3-figures/) | One TikZ file per diagram of Version 3, plus `styles.tex`, the shared vocabulary. |
 | `polaris_project_report_v3.pdf` | Version 3 rendered. Never edited by hand. |
+| [`polaris_evidence_record_v3.tex`](polaris_evidence_record_v3.tex), [`polaris_evidence_record_v3_ru.tex`](polaris_evidence_record_v3_ru.tex) and their PDFs | The companion to Version 3 in each language: the layer table, how every count was measured, the version histories, the provenance and the corrections record. The map says what the system is; the companion holds the evidence the map does not need in order to be read. It cross-references the map through `xr`, so build the map first. |
 | [`polaris_project_report_v3_ru.tex`](polaris_project_report_v3_ru.tex), [`v3-sections-ru/`](v3-sections-ru/), [`v3-figures-ru/`](v3-figures-ru/), `polaris_project_report_v3_ru.pdf` | The Russian edition of Version 3: the same document, sentence for sentence, with every identifier rendered in Russian. A correction to one edition is made to both in the same commit. |
 | [`polaris_math.tex`](polaris_math.tex), `polaris_math.pdf` | Polaris in mathematical form: the state machine, the ten constraints, authenticity and authorization, privacy, duress, federation, transparency and the operating contract as definitions and properties. Each property carries its evidence mark (enforced, tested, measured, modelled, assumed, limit), and the opening section states that the model is a projection of the system and not the system. A translation, not a proof. |
 | [`ru-glossary.py`](ru-glossary.py) | The map from each Latin identifier the paper cites (checks, code, paths, names) to its Russian rendering; `check_paper_check_citations_resolve` reads it to resolve the Russian edition's citations. |
@@ -37,6 +38,7 @@ is in [NOTICE](../../NOTICE).
 cd docs/paper                            # the cover logo is ../../site/polaris_logo_clean.png (single source)
 pdflatex polaris_project_report_v3.tex      # three times, for the table of contents and cross-references
 pdflatex polaris_project_report_v3_ru.tex   # three times; the Russian edition
+pdflatex polaris_evidence_record_v3.tex     # three times, after the map; the companion (and _ru)
 rm -f *.aux *.out *.log *.toc
 shasum -a 256 *.tex *sections*/*.tex *figures*/*.tex > rendered-from.txt
 ```

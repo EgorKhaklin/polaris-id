@@ -21,20 +21,12 @@
 \documentclass[11pt,letterpaper]{article}
 
 % === ENCODING & TYPOGRAPHY ===
-\usepackage[T2A,T1]{fontenc}
-\usepackage[utf8]{inputenc}
-% No lmodern: Latin Modern ships no T2A small caps, so \scshape in the five marks
-% fell back to upright Cyrillic. Computer Modern via cm-super has T2A/cmr/m/sc,
-% and it is also what the English edition sets, so the two now match.
-\usepackage[english,russian]{babel}
-% Russian words run long, and a line ending in a status mark or a long identifier sometimes
-% had no acceptable break and overflowed its margin by a few points. Emergency stretch lets
-% TeX loosen such a line slightly instead.
+\usepackage[T1]{fontenc}
+% A line with no acceptable break may loosen slightly rather than overflow its margin.
 \setlength{\emergencystretch}{3em}
+\usepackage[utf8]{inputenc}
 \usepackage{textcomp}
-% cmtt, not the English edition's lmtt: there is no T2A/lmtt, so under babel-russian
-% every \code{...} silently fell back to the roman face and stopped reading as code.
-\renewcommand{\ttdefault}{cmtt}
+\renewcommand{\ttdefault}{lmtt}
 \usepackage[expansion=false]{microtype}
 
 % === MATH ===
@@ -67,9 +59,9 @@
 \fancyhf{}
 \renewcommand{\headrulewidth}{0.4pt}
 \renewcommand{\footrulewidth}{0.2pt}
-\fancyhead[L]{\small\color{steelgray}\textsc{Хаклин\,|\,Полярис, версия 3}}
-\fancyhead[R]{\small\color{steelgray}\textsc{Карта системы}}
-\fancyfoot[C]{\small\color{steelgray}\thepage}
+\fancyhead[L]{\small\color{steelgray}\textsc{Khaklin\,|\,Polaris, Version 3}}
+\fancyhead[R]{\small\color{steelgray}\textsc{The evidence record}}
+\fancyfoot[C]{\small\color{steelgray}Page \thepage}
 
 % === SECTION STYLING ===
 \usepackage{titlesec}
@@ -124,22 +116,14 @@
 
 % === HYPERLINKS ===
 \usepackage[colorlinks=true, linkcolor=navymid, urlcolor=navylight, linktoc=all, hypertexnames=false,
-  pdfauthor={Егор Хаклин},
-  pdftitle={Полярис, версия 3: карта системы},
-  pdfsubject={Справочная реализация системы идентификационных токенов, несвязываемой со стороны эмитента и учитывающей принуждение, подписанной МЛ-ДСА-65 по проверяемому пути миграции алгоритмов, описанная слой за слоем на версии 1.0.0-кв.7},
-  pdfkeywords={личность, постквантовая криптография, алгоритмическая гибкость, нулевое разглашение, федерация, журналы прозрачности, ограничения базы данных, ОИД4ВП, соответствие, совместимость, программные агенты, доказательство того, что ты человек}]{hyperref}
+  pdfauthor={Egor Khaklin},
+  pdftitle={Polaris, Version 3: the evidence record},
+  pdfsubject={A reference implementation of an issuer-unlinkable, duress-aware identity-token system, signed with ML-DSA-65 under an audited algorithm-migration path, described layer by layer at 1.0.0-rc.7},
+  pdfkeywords={identity, post-quantum cryptography, algorithm agility, zero-knowledge, federation, transparency logs, database constraints, OpenID4VP, conformance, interoperability, AI agents, proof of personhood}]{hyperref}
 
 % === CAPTIONS ===
 \usepackage{caption}
-% Russian documents name a figure in full and separate the number from the title
-% with a dash rather than a colon. The dash is written --- so the source carries no
-% literal em dash, which the docs/ hook forbids in prose.
-\DeclareCaptionLabelSeparator{gost}{~--- }
-\captionsetup{font={small}, labelfont={bf,color=navymid}, textfont={color=steelgray}, skip=6pt, labelsep=gost}
-\addto\captionsrussian{\renewcommand{\figurename}{Рисунок}%
-  \renewcommand{\tablename}{Таблица}}
-% The Cyrillic appendix series Russian documents use.
-\newcommand{\CyrAlph}[1]{\ifcase\value{#1}\or А\or Б\or В\or Г\or Д\or Е\or Ж\or И\or К\or Л\fi}
+\captionsetup{font={small}, labelfont={bf,color=navymid}, textfont={color=steelgray}, skip=6pt}
 
 % === CODE LISTINGS ===
 \usepackage{listings}
@@ -151,31 +135,11 @@
   commentstyle=\color{steelgray}\itshape, stringstyle=\color{accent}, showstringspaces=false, tabsize=2,
   aboveskip=8pt plus 2pt, belowskip=8pt plus 2pt}
 
-% listings hands its bytes to the font without going through inputenc, so a Cyrillic
-% character in a code block is a fatal "Invalid UTF-8 byte sequence". Mapping each one
-% to its T2A control sequence lets a listing carry Russian comments in the same
-% monospace face as the code. 66 letters: 33 lower, 33 upper, yo included.
-\lstset{extendedchars=true,
-  literate={а}{{\cyra}}1 {б}{{\cyrb}}1 {в}{{\cyrv}}1 {г}{{\cyrg}}1 {д}{{\cyrd}}1 {е}{{\cyre}}1 
-    {ё}{{\cyryo}}1 {ж}{{\cyrzh}}1 {з}{{\cyrz}}1 {и}{{\cyri}}1 {й}{{\cyrishrt}}1 {к}{{\cyrk}}1 
-    {л}{{\cyrl}}1 {м}{{\cyrm}}1 {н}{{\cyrn}}1 {о}{{\cyro}}1 {п}{{\cyrp}}1 {р}{{\cyrr}}1 
-    {с}{{\cyrs}}1 {т}{{\cyrt}}1 {у}{{\cyru}}1 {ф}{{\cyrf}}1 {х}{{\cyrh}}1 {ц}{{\cyrc}}1 
-    {ч}{{\cyrch}}1 {ш}{{\cyrsh}}1 {щ}{{\cyrshch}}1 {ъ}{{\cyrhrdsn}}1 {ы}{{\cyrery}}1 
-    {ь}{{\cyrsftsn}}1 {э}{{\cyrerev}}1 {ю}{{\cyryu}}1 {я}{{\cyrya}}1 {А}{{\CYRA}}1 
-    {Б}{{\CYRB}}1 {В}{{\CYRV}}1 {Г}{{\CYRG}}1 {Д}{{\CYRD}}1 {Е}{{\CYRE}}1 {Ё}{{\CYRYO}}1 
-    {Ж}{{\CYRZH}}1 {З}{{\CYRZ}}1 {И}{{\CYRI}}1 {Й}{{\CYRISHRT}}1 {К}{{\CYRK}}1 {Л}{{\CYRL}}1 
-    {М}{{\CYRM}}1 {Н}{{\CYRN}}1 {О}{{\CYRO}}1 {П}{{\CYRP}}1 {Р}{{\CYRR}}1 {С}{{\CYRS}}1 
-    {Т}{{\CYRT}}1 {У}{{\CYRU}}1 {Ф}{{\CYRF}}1 {Х}{{\CYRH}}1 {Ц}{{\CYRC}}1 {Ч}{{\CYRCH}}1 
-    {Ш}{{\CYRSH}}1 {Щ}{{\CYRSHCH}}1 {Ъ}{{\CYRHRDSN}}1 {Ы}{{\CYRERY}}1 {Ь}{{\CYRSFTSN}}1 
-    {Э}{{\CYREREV}}1 {Ю}{{\CYRYU}}1 {Я}{{\CYRYA}}1}
-
 % === TABLE OF CONTENTS ===
 \usepackage{tocloft}
 \renewcommand{\cftsecfont}{\bfseries\color{navydark}}
 \renewcommand{\cftsubsecfont}{\color{navymid}}
 \renewcommand{\cftsecpagefont}{\bfseries\color{navymid}}
-% 2026-09-25: the widest appendix letters (Ж, Ш, Щ) ran into their titles at the default width.
-\setlength{\cftsecnumwidth}{2.1em}
 \renewcommand{\cftsubsecpagefont}{\color{steelgray}}
 \setlength{\cftbeforesecskip}{1pt}
 \setlength{\cftbeforesubsecskip}{0pt}
@@ -189,11 +153,11 @@
 % and whether anybody outside the repository has exercised it.
 \DeclareRobustCommand{\marktie}{\ifdim\lastskip>0pt \unskip\nobreakspace\fi}
 \newcommand{\statusmark}[3]{{\fboxsep=1.5pt\fboxrule=0.5pt\fcolorbox{#1}{#2}{\scriptsize\scshape\color{#3}\strut}}}
-\newcommand{\sImpl}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{navydark}{navydark}{\scriptsize\scshape\color{white}реализовано}}}
-\newcommand{\sExp}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{accent}{accent}{\scriptsize\scshape\color{white}экспериментально}}}
-\newcommand{\sExt}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{gold}{white}{\scriptsize\scshape\color{gold}требуется внешняя проверка}}}
-\newcommand{\sFut}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{gold}{futfill}{\scriptsize\scshape\color{navydark}предложено}}}
-\newcommand{\sWit}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{navylight}{witfill}{\scriptsize\scshape\color{navylight}проверено извне}}}
+\newcommand{\sImpl}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{navydark}{navydark}{\scriptsize\scshape\color{white}implemented}}}
+\newcommand{\sExp}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{accent}{accent}{\scriptsize\scshape\color{white}experimental}}}
+\newcommand{\sExt}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{gold}{white}{\scriptsize\scshape\color{gold}external validation required}}}
+\newcommand{\sFut}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{gold}{futfill}{\scriptsize\scshape\color{navydark}proposed}}}
+\newcommand{\sWit}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{navylight}{witfill}{\scriptsize\scshape\color{navylight}externally exercised}}}
 % A name in the code.
 % Code names may break after an underscore, so a long check name never overflows a narrow column.
 \DeclareRobustCommand{\code}[1]{{\let\ushold\_\def\_{\ushold\allowbreak}\texttt{\color{navydark}#1}}}
@@ -201,9 +165,9 @@
 % The town analogy, always returned from. An unbreakable box: it is a few lines long, and a
 % few lines split across a page break read worse than the space a whole box leaves behind
 % when it moves to the next page. Readability over page count.
-% \motif: одна строка, которой открывается каждое кольцо, единственная мысль документа для этого кольца (25.09.2026).
+% \motif: the one line each ring opens with, the paper's recurring idea stated for that ring (2026-09-25).
 \newcommand{\motif}[1]{\par\vspace{2pt}{\centering\itshape\color{navymid}#1\par}\vspace{6pt}}
-\newcommand{\analogy}[1]{\par\vspace{4pt}\begin{tcolorbox}[enhanced, colback=tabstripe, colframe=tabstripe, boxrule=0pt, arc=0pt, outer arc=0pt, left=6pt, right=6pt, top=6pt, bottom=6pt, boxsep=0pt, before skip=0pt, after skip=0pt]\small{\scshape\color{gold}в городе}\enspace #1\end{tcolorbox}\par\vspace{4pt}}
+\newcommand{\analogy}[1]{\par\vspace{4pt}\begin{tcolorbox}[enhanced, colback=tabstripe, colframe=tabstripe, boxrule=0pt, arc=0pt, outer arc=0pt, left=6pt, right=6pt, top=6pt, bottom=6pt, boxsep=0pt, before skip=0pt, after skip=0pt]\small{\scshape\color{gold}in the town}\enspace #1\end{tcolorbox}\par\vspace{4pt}}
 % Why the next layer exists: the causal step.
 \newcommand{\nextlayer}[1]{\par\vspace{4pt}\noindent{\color{accent}\rule[-3pt]{2.5pt}{13pt}}\hspace{7pt}\parbox[t]{\dimexpr\textwidth-12pt}{\small\itshape #1}\par\vspace{4pt}}
 % A layer card: the same questions asked of every component. A card is one object: it
@@ -235,113 +199,52 @@
 % paragraph that ran on to the next page. Readability over page count: neither placement
 % shares a page break with a paragraph.
 \newcommand{\figfile}[3]{\setlength{\intextsep}{6pt plus 2pt minus 2pt}\begin{figure}[H]\centering
-  \adjustbox{max width=\textwidth,max totalheight=0.88\textheight,center}{\input{v3-figures-ru/#1}}%
+  \adjustbox{max width=\textwidth,max totalheight=0.88\textheight,center}{\input{v3-figures/#1}}%
   \caption{#2}\label{#3}\end{figure}}
 % \figfit: the same, with a height cap for the one figure that missed the page of its paragraph
 % by fifteen points; the cap is a three per cent reduction, within reading comfort.
 \newcommand{\figfit}[4]{\setlength{\intextsep}{6pt plus 2pt minus 2pt}\begin{figure}[H]\centering
-  \adjustbox{max width=\textwidth,max totalheight=#1\textheight,center}{\input{v3-figures-ru/#2}}%
+  \adjustbox{max width=\textwidth,max totalheight=#1\textheight,center}{\input{v3-figures/#2}}%
   \caption{#3}\label{#4}\end{figure}}
 \newcommand{\figpage}[3]{\begin{figure}[p]\centering
-  \adjustbox{max width=\textwidth,max totalheight=0.84\textheight,center}{\input{v3-figures-ru/#1}}%
+  \adjustbox{max width=\textwidth,max totalheight=0.84\textheight,center}{\input{v3-figures/#1}}%
   \caption{#2}\label{#3}\end{figure}}
 % \figside: a page turned on its side for a figure much wider than it is tall, so that it
 % is read at its natural size rather than at the three quarters the upright page allows.
 \newcommand{\figside}[3]{\begin{sidewaysfigure}\centering
-  \adjustbox{max width=\textheight,max totalheight=0.8\textwidth,center}{\input{v3-figures-ru/#1}}%
+  \adjustbox{max width=\textheight,max totalheight=0.8\textwidth,center}{\input{v3-figures/#1}}%
   \caption{#2}\label{#3}\end{sidewaysfigure}}
 \newcommand{\thead}[1]{\textbf{\color{white}\small #1}}
 
 % ============================================================================
+% Cross-references into the map itself (sections, figures, tables of the report).
+\usepackage{xr}
+\externaldocument{polaris_project_report_v3}
 \begin{document}
 
-% ---------------------------------------------------------------- TITLE PAGE
 \begin{titlepage}
 \thispagestyle{empty}
 \begin{center}
-\vspace*{0.8in}
-{\footnotesize\scshape\color{steelgray} Система идентификационных токенов \enspace$\cdot$\enspace версия 3}
-\vspace{0.55in}
+\vspace*{1.6in}
+{\footnotesize\scshape\color{steelgray} The Identity Token System \enspace$\cdot$\enspace Version 3}
+\vspace{0.4in}
 
-\includegraphics[height=7.2cm]{../../site/polaris_logo_clean.png}
-\vspace{0.55in}
-
-{\fontsize{56}{60}\selectfont\scshape\color{navydark} Полярис}
-\vspace{0.18in}
-
-{\fontsize{12}{16}\selectfont\itshape\color{navymid} Fixus inter mutabilia}
-\vspace{0.35in}
-
-{\fontsize{13}{17}\selectfont\color{navydark} Карта системы}
-\vspace{0.12in}
-
-{\small\color{steelgray} Справочная реализация системы идентификационных токенов,\\ несвязываемой со стороны эмитента и учитывающей принуждение, подписанной\\ МЛ-ДСА-65 по проверяемому пути миграции алгоритмов; читается от центра\\ наружу}
-\vspace{0.5in}
-
-{\color{gold}\rule{0.85in}{0.5pt}}
-\vspace{0.28in}
-
-{\fontsize{16}{19}\selectfont\color{navydark} Егор Хаклин}
-\vfill
-{\footnotesize\scshape\color{steelgray} Университет Сетон-Хилл \enspace$\cdot$\enspace сентябрь 2026}
-\vspace{0.6in}
+{\Huge\bfseries\color{navydark} Polaris}\par\vspace{10pt}
+{\Large\color{navymid} The evidence record}\par\vspace{0.4in}
+{\small\color{steelgray} A companion to \emph{Polaris, Version 3: the map of the system}.\\
+The map says what the system is. This record says how it was measured, what changed, and what was
+corrected along the way.}
 \end{center}
 \end{titlepage}
 
-% ---------------------------------------------------------------- FRONT MATTER
-% Russian documents number every page in Arabic numerals, continuously; the title
-% page counts as page 1 and carries no number.
 \pagenumbering{arabic}
-\setcounter{page}{2}
-% Russian practice puts the contents directly after the title page. The preface then
-% runs straight into section 1, so however long the preface grows, no page is left
-% holding a few lines and nothing else.
-{\color{navydark}\Large\bfseries Содержание}\\[2pt]
-{\color{navymid}\rule{\textwidth}{0.8pt}}
-\vspace{4pt}
-\renewcommand{\contentsname}{}
-\tableofcontents
-\newpage
-\input{v3-sections-ru/00-about}
-\bigskip
-
-% ---------------------------------------------------------------- BODY
-\input{v3-sections-ru/01-problem}
-\input{v3-sections-ru/02-reading}
-\input{v3-sections-ru/03-core}
-\input{v3-sections-ru/04-walls}
-\input{v3-sections-ru/05-signatures}
-\input{v3-sections-ru/06-verifiers}
-\input{v3-sections-ru/07-authorization}
-\input{v3-sections-ru/08-privacy}
-\input{v3-sections-ru/09-use}
-\input{v3-sections-ru/10-federation}
-\input{v3-sections-ru/11-transparency}
-\input{v3-sections-ru/12-institutions}
-\input{v3-sections-ru/13-operations}
-\input{v3-sections-ru/14-cognition}
-\input{v3-sections-ru/15-senses}
-\input{v3-sections-ru/16-boundaries}
-\input{v3-sections-ru/17-agents}
-\input{v3-sections-ru/18-research}
-\input{v3-sections-ru/18b-lineage}
-\input{v3-sections-ru/19-limitations}
-% Последнее кольцо открывается на своей странице: это кульминация, и пауза перед ней её часть.
-\clearpage
-\input{v3-sections-ru/19b-outside}
-\input{v3-sections-ru/20-conclusion}
-
-% Работы, которые называет раздел~\ref{sec:lineage} (добавлено 25.09.2026).
-\input{v3-sections-ru/references}
-
-% ---------------------------------------------------------------- APPENDICES
-\appendix
-\renewcommand{\thesection}{\CyrAlph{section}}
-\titleformat{\section}{\Large\bfseries\color{navydark}\filright\hyphenpenalty=10000\exhyphenpenalty=10000}{ПРИЛОЖЕНИЕ \thesection}{1em}{\polarisTitleStrut}[\vspace{0.5pt}{\color{navymid}\titlerule[0.8pt]}\nobreak]
-\input{v3-sections-ru/A-status}
-% Словарь есть единственное другое приложение (25.09.2026). Всё, что карте не нужно, чтобы её прочли,
-% (числа, истории версий, происхождение и запись исправлений) вынесено в сопутствующий протокол
-% свидетельств (polaris_evidence_record_v3_ru.pdf), так что чтение кончается на коде.
-\input{v3-sections-ru/D-glossary}
-
+\setcounter{page}{1}
+\renewcommand{\thesection}{\Alph{section}}
+\titleformat{\section}{\Large\bfseries\color{navydark}\filright\hyphenpenalty=10000\exhyphenpenalty=10000}{Appendix \thesection}{1em}{\polarisTitleStrut}[\vspace{0.5pt}{\color{navymid}\titlerule[0.8pt]}\nobreak]
+\input{v3-sections/B-layers}
+\input{v3-sections/C-counts}
+\input{v3-sections/E-from-v1}
+\input{v3-sections/F-from-v2}
+\input{v3-sections/G-provenance}
+\input{v3-sections/H-corrections}
 \end{document}
