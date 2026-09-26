@@ -396,7 +396,13 @@ def _refusals(env: dict[str, str]) -> int:
     print()
     for suite in FAST_SUITES:
         if _suite_is_red(suite, env):
-            print(f"FAIL: {suite} is red before anything is mutated", file=sys.stderr)
+            # Say which tests: a red baseline that names nothing cannot be triaged from a CI log.
+            r = subprocess.run([sys.executable, "-m", "unittest", suite], cwd=str(ROOT / "polaris_web"),
+                               env=env, capture_output=True, text=True)
+            named = [ln for ln in r.stderr.splitlines() if ln.startswith(("FAIL:", "ERROR:"))]
+            tail = r.stderr.splitlines()[-25:]
+            print(f"FAIL: {suite} is red before anything is mutated:\n"
+                  + "\n".join("  " + ln for ln in named[:30] + ["last lines:"] + tail), file=sys.stderr)
             return 1
     untested: list[str] = []
     stale: list[str] = []

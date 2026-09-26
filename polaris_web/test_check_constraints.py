@@ -1211,6 +1211,42 @@ class TestEachTriggerRefusalIsNoticed(_CheckBase):
         self.assertEqual(len(ids), n, "fixture needs %d rows from: %s" % (n, sql))
         return ids
 
+    def _token(self, status, **extra):
+        """A fresh person and one credential in the given status, created here: the seed's
+        tokens are consumed by the suites that run before this one (the weekly sweep runs the
+        application suite many times on the same database first)."""
+        (alg,) = self._ids("SELECT algorithm_id FROM CryptographicAlgorithm ORDER BY algorithm_id", 1)
+        (agency,) = self._ids("SELECT agency_id FROM Agency ORDER BY agency_id", 1)
+        with self.conn.cursor() as cur:
+            cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                        "VALUES ('Trigger Refusal Fixture', DATE '1990-01-01', 'US-PA') "
+                        "RETURNING individual_id")
+            person = cur.fetchone()["individual_id"]
+            cols = {"individual_id": person, "token_value": "TRF-%d-%s" % (person, status),
+                    "physical_serial": "TRF-PS-%d-%s" % (person, status), "status": status,
+                    "algorithm_id": alg, "issuing_agency_id": agency,
+                    "biometric_binding_type": "FINGERPRINT"}
+            cols.update(extra)
+            cur.execute("INSERT INTO IdentityToken (%s) VALUES (%s) RETURNING token_id"
+                        % (", ".join(cols), ", ".join(["%s"] * len(cols))), list(cols.values()))
+            tok = cur.fetchone()["token_id"]
+            cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signed_at) "
+                        "VALUES (%s, %s, '\\x01'::bytea, CURRENT_TIMESTAMP - interval '3 days') "
+                        "RETURNING signature_id", (tok, alg))
+            self._sig = cur.fetchone()["signature_id"]
+        return tok
+
+    def _superseded_policy(self):
+        (user,) = self._ids("SELECT user_id FROM AppUser ORDER BY user_id", 1)
+        with self.conn.cursor() as cur:
+            # Inserted already superseded: uq_effective_retention_policy admits one current
+            # policy per class, and the seed's is current.
+            cur.execute("INSERT INTO RetentionPolicy (table_class, retention_days, justification, "
+                        "set_by_user_id, effective_from, superseded_at) VALUES ('AUTH_AUDIT', 400, "
+                        "'a fixture for the refusals drill', %s, now() - interval '2 days', "
+                        "now() - interval '1 day') RETURNING policy_id", (user,))
+            return cur.fetchone()["policy_id"]
+
     def _attestation(self, **extra):
         a, b, self._third = self._ids("SELECT agency_id FROM Agency ORDER BY agency_id", 3)
         (ctx,) = self._ids("SELECT context_id FROM VerificationContext ORDER BY context_id", 1)
@@ -1252,12 +1288,8 @@ class TestEachTriggerRefusalIsNoticed(_CheckBase):
                 self._refused(sql, (att,), message)
 
     def test_a_superseded_retention_policy_cannot_be_backdated(self):
-        with self.conn.cursor() as cur:
-            cur.execute("SELECT policy_id FROM RetentionPolicy WHERE superseded_at IS NOT NULL LIMIT 1")
-            row = cur.fetchone()
-        self.assertIsNotNone(row, "the seed carries superseded retention policies")
-        self._refused("UPDATE RetentionPolicy SET superseded_at = superseded_at - interval '1 day' "
-                      "WHERE policy_id = %s", (row["policy_id"],), "cannot move earlier")
+        self._refused("UPDATE RetentionPolicy SET superseded_at = superseded_at - interval '1 hour' "
+                      "WHERE policy_id = %s", (self._superseded_policy(),), "cannot move earlier")
 
     def test_a_deprecated_signature_cannot_be_undeprecated_or_backdated(self):
         # The application role writes TokenSignature (the migration path), so without these a
@@ -1268,6 +1300,7 @@ class TestEachTriggerRefusalIsNoticed(_CheckBase):
                 ("UPDATE TokenSignature SET deprecation_date = deprecation_date - interval '1 day' "
                  "WHERE signature_id = %s", "cannot be moved earlier")):
             with self.subTest(message):
+                self._token("RESERVE")
                 with self.conn.cursor() as cur:
                     # A second signature on the token, so deprecating it leaves one active
                     # (trg_token_must_have_active_signature refuses a token with none).
@@ -1298,25 +1331,21 @@ class TestEachTriggerRefusalIsNoticed(_CheckBase):
                       "WHERE recovery_id = %s", (rid,), "cannot be rewritten after")
 
     def test_a_superseded_retention_policy_stays_superseded(self):
-        (pid,) = self._ids("SELECT policy_id FROM RetentionPolicy WHERE superseded_at IS NOT NULL "
-                           "ORDER BY policy_id", 1)
         self._refused("UPDATE RetentionPolicy SET superseded_at = NULL WHERE policy_id = %s",
-                      (pid,), "cannot be un-set")
+                      (self._superseded_policy(),), "cannot be un-set")
 
     def test_a_signature_cannot_be_rewritten(self):
-        (sig,) = self._ids("SELECT signature_id FROM TokenSignature ORDER BY signature_id", 1)
+        self._token("RESERVE")
         self._refused("UPDATE TokenSignature SET signature_bytes = '\\x00'::bytea "
-                      "WHERE signature_id = %s", (sig,), "append-only except for deprecation_date")
+                      "WHERE signature_id = %s", (self._sig,), "append-only except for deprecation_date")
 
     def test_a_token_keeps_one_active_signature(self):
-        (tok,) = self._ids("SELECT token_id FROM TokenSignature WHERE deprecation_date IS NULL "
-                           "GROUP BY token_id HAVING count(*) = 1 ORDER BY token_id", 1)
+        tok = self._token("RESERVE")
         self._refused("UPDATE TokenSignature SET deprecation_date = CURRENT_TIMESTAMP "
                       "WHERE token_id = %s", (tok,), "zero active signatures")
 
     def test_a_revoked_token_does_not_return(self):
-        (tok,) = self._ids("SELECT token_id FROM IdentityToken WHERE status = 'REVOKED' "
-                           "ORDER BY token_id", 1)
+        tok = self._token("REVOKED")
         self._refused("UPDATE IdentityToken SET status = 'ACTIVE' WHERE token_id = %s", (tok,),
                       "Illegal token state transition")
 
@@ -1326,12 +1355,9 @@ class TestEachTriggerRefusalIsNoticed(_CheckBase):
                 ("activated_date = CURRENT_TIMESTAMP, expiration_date = polaris_utc_date() - 1",
                  "it expired on")):
             with self.subTest(message):
-                with self.conn.cursor() as cur:
-                    cur.execute("SELECT token_id FROM IdentityToken WHERE status = 'RESERVE' LIMIT 1")
-                    row = cur.fetchone()
-                self.assertIsNotNone(row, "the seed carries a RESERVE token")
+                tok = self._token("RESERVE")
                 self._refused("UPDATE IdentityToken SET status = 'ACTIVE', " + sets +
-                              " WHERE token_id = %s", (row["token_id"],), message)
+                              " WHERE token_id = %s", (tok,), message)
 
 
 class TestC1PrivilegeBoundary(unittest.TestCase):
@@ -1604,8 +1630,13 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         value, its issuer and its duress code. All refused now; a legal status change is not."""
         conn = self._app_conn()
         with conn.cursor() as cur:
-            cur.execute("SELECT token_id FROM IdentityToken WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1")
-            tid = cur.fetchone()["token_id"]
+            # An ACTIVE credential when there is one: the suites that run first on the same
+            # database (the weekly sweeps) can leave only a RESERVE, and the control below needs a
+            # transition that is legal from whatever status the fixture holds.
+            cur.execute("SELECT token_id, status FROM IdentityToken WHERE status IN ('ACTIVE', 'RESERVE') "
+                        "ORDER BY (status = 'ACTIVE') DESC, token_id LIMIT 1")
+            row = cur.fetchone()
+            tid, status = row["token_id"], row["status"]
             cur.execute("SELECT min(individual_id) AS other FROM Individual WHERE individual_id <> "
                         "(SELECT individual_id FROM IdentityToken WHERE token_id = %s)", (tid,))
             other = cur.fetchone()["other"]
@@ -1618,7 +1649,9 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             # Whichever way round, so the write changes the row whatever the fixture holds.
             ("set or clear its duress code", "UPDATE IdentityToken SET duress_code_hash = CASE WHEN "
                                              "duress_code_hash IS NULL THEN 'x' ELSE NULL END WHERE token_id = %s", (tid,)),
-            ("re-date its activation", "UPDATE IdentityToken SET activated_date = activated_date + interval '1 hour' "
+            # COALESCE: a RESERVE has no activated_date, and NULL + 1 hour changes nothing.
+            ("re-date its activation", "UPDATE IdentityToken SET activated_date = "
+                                        "COALESCE(activated_date, CURRENT_TIMESTAMP) + interval '1 hour' "
                                         "WHERE token_id = %s", (tid,)),
         )
         for label, sql, args in attempts:
@@ -1626,9 +1659,13 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 with self.assertRaises(pg_errors.InsufficientPrivilege):
                     cur.execute(sql, args)
             conn.rollback()
-        # The application's own write still goes through: a legal transition, status alone.
+        # The application's own write still goes through: a legal transition, status alone
+        # (with its activation date, the one column that may move with it).
+        control = ("UPDATE IdentityToken SET status = 'LOST' WHERE token_id = %s" if status == "ACTIVE"
+                   else "UPDATE IdentityToken SET status = 'ACTIVE', activated_date = CURRENT_TIMESTAMP "
+                        "WHERE token_id = %s")
         with conn.cursor() as cur:
-            cur.execute("UPDATE IdentityToken SET status = 'LOST' WHERE token_id = %s", (tid,))
+            cur.execute(control, (tid,))
             self.assertEqual(cur.rowcount, 1)
         conn.rollback()
 
@@ -1876,7 +1913,8 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         bound and co-signer rule; nothing in the fast suites noticed."""
         conn = self._app_conn()
         with conn.cursor() as cur:
-            cur.execute("SELECT token_id FROM IdentityToken WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1")
+            cur.execute("SELECT token_id FROM IdentityToken WHERE status IN ('ACTIVE', 'RESERVE') "
+                        "ORDER BY token_id LIMIT 1")
             tok = cur.fetchone()["token_id"]
             with self.assertRaisesRegex(psycopg2.Error, "Use uc8_revoke_token"):
                 cur.execute("UPDATE IdentityToken SET status = 'REVOKED' WHERE token_id = %s", (tok,))
@@ -2254,6 +2292,37 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                             "'security_invoker=true' = ANY(c.reloptions), false)")
                 self.assertEqual([r["relname"] for r in cur.fetchall()], [],
                                  "a view that runs as its owner")
+        finally:
+            conn.rollback()
+            conn.close()
+
+    def test_a_bound_operator_sees_only_its_authoritys_events(self):
+        """2026-09-26. Row-level security isolates three tables by authority. Weakening the
+        IdentityToken policy to USING (true) turned tests red; weakening the ones on
+        VerificationEvent (which carries where a credential was checked) and TokenLifecycleEvent
+        turned nothing red, in the fast suites or in the application suite's bound-operator
+        classes. As polaris_app bound to one authority, none of another's events is visible;
+        unbound, they exist, so the zero is the policy's and not an empty fixture's."""
+        conn = self._app_conn()
+        queries = (
+            ("verification events", "SELECT count(*) AS n FROM VerificationEvent "
+                                    "WHERE requesting_agency_id <> %s"),
+            ("lifecycle events", "SELECT count(*) AS n FROM TokenLifecycleEvent "
+                                 "WHERE actor_agency_id IS NOT NULL AND actor_agency_id <> %s"),
+        )
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT min(agency_id) AS a FROM Agency")
+                agency = cur.fetchone()["a"]
+                for label, sql in queries:
+                    cur.execute("SELECT set_config('polaris.operator_agency_id', '', false)")
+                    cur.execute(sql, (agency,))
+                    self.assertGreater(cur.fetchone()["n"], 0,
+                                       "fixture: another authority's %s exist" % label)
+                    cur.execute("SELECT set_config('polaris.operator_agency_id', %s, false)", (str(agency),))
+                    cur.execute(sql, (agency,))
+                    self.assertEqual(cur.fetchone()["n"], 0,
+                                     "a bound operator sees another authority's %s" % label)
         finally:
             conn.rollback()
             conn.close()

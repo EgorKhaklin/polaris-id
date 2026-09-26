@@ -266,6 +266,44 @@ def main() -> int:
         else:
             print(f"  ok       {fragment:44} {len(tests)} test(s) go red without it ({where})")
 
+    # ROW-LEVEL SECURITY (2026-09-26). Operator isolation is a policy, the fourth mechanism a
+    # database guarantee lives in. Dropping a policy denies everything (safe); the dangerous
+    # mutation is the weakening, USING (true), and the first measurement found two of three
+    # policies could be weakened with every suite still green.
+    with conn.cursor() as cur:
+        cur.execute("SELECT tablename, policyname, qual, with_check FROM pg_policies "
+                    "WHERE schemaname = 'public' ORDER BY tablename, policyname")
+        policies = cur.fetchall()
+    if not policies:
+        print("  MISSING  row-level security policies: none found; operator isolation has no "
+              "mechanism to mutate")
+        unresolved.append("row-level security policies")
+    for table, policy, qual, check in policies:
+        _cases_recorded += 1
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f'ALTER POLICY "{policy}" ON {table} USING (true)'
+                            + (" WITH CHECK (true)" if check else ""))
+            still_green = _run_tests(["TestC1PrivilegeBoundary"], env)
+        finally:
+            with conn.cursor() as cur:
+                restore = (f'ALTER POLICY "{policy}" ON {table} USING ({qual})'
+                           + (f" WITH CHECK ({check})" if check else ""))
+                try:
+                    cur.execute(restore)
+                except psycopg2.Error as exc:
+                    broken_restores.append(f"{table}.{policy}: {exc}\n    {restore};")
+        if still_green:
+            survivors.append((policy, table))
+            print(f"  SURVIVES {policy:44} weakened to USING (true) on {table}; "
+                  "TestC1PrivilegeBoundary still passes")
+        else:
+            print(f"  ok       {policy:44} weakened on {table}: TestC1PrivilegeBoundary goes red")
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND qual = 'true'")
+        if cur.fetchone()[0]:
+            broken_restores.append("a policy was left as USING (true)")
+
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM pg_constraint WHERE connamespace='public'::regnamespace")
         after_total = cur.fetchone()[0]
@@ -298,7 +336,8 @@ def main() -> int:
         for fragment, where in unexpected:
             print(f"  {fragment} ({where})", file=sys.stderr)
         return 1
-    print(f"OK: {_cases_recorded} constraints mutated behind a passing negative control, "
+    print(f"OK: {_cases_recorded - len(policies)} constraints and {len(policies)} row-level security "
+          f"policies mutated behind a passing negative control, "
           f"{len(survivors)} survive "
           f"({len(SURVIVORS_EXPECTED)} declared). Every constraint the suite names is "
           "load-bearing: drop it and the naming test goes red.")
