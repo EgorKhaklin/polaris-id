@@ -490,6 +490,12 @@ jobs:
       - name: Trigger mutation drill (drop each trigger, something must notice)
         run: python scripts/polaris-trigger-mutation-drill.py
 
+      # 2026-09-26: removing a whole trigger is one question, removing ONE refusal inside its
+      # function another; the first measurement found sixteen refusals nothing noticed. About
+      # three minutes, so it runs per push as well as in the weekly sweep.
+      - name: Trigger refusal drill (delete each refusal inside each trigger function)
+        run: python scripts/polaris-trigger-mutation-drill.py --refusals
+
       # v9.434 - the fourth member of that family, and the one with the most to
       # hide. A trigger sees one row; uc8_revoke_token sees a whole revocation --
       # the token's state, the agency's bound, the co-signer, the CRL entry --
