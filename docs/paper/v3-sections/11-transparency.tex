@@ -63,7 +63,7 @@ append-only ledger and receives a receipt, the ledger's own signed head plus an 
 the log cannot use a head it has not publicly committed and the ledger cannot later drop it. A
 ledger is itself an append-only log, so this reuses the same machinery and is monitored the same
 way. The file-backed ledger is implemented and tested; the chain-backed drivers are declared and wait
-on their interfaces. \sImpl{} for the file backend; \sFut{} for a chain.
+on their interfaces. \sImplMark{} for the file backend; \sFut{} for a chain.
 
 \subsection{The public report: saying out loud how often the power was used}
 

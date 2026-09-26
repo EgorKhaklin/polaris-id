@@ -16,7 +16,7 @@ emits is specified so that any client can emit the same. Native mobile and deskt
 browser bridge are product engineering that a reference implementation on notional data does not
 attempt; they would follow the protocol, and never lead it. The physical presentation path, a card
 that signs a device's challenge, is the emulator and verifier device of Section~\ref{sec:core}.
-\sImpl{} for the protocol and the reference script; \sFut{} for native clients.
+\sImplMark{} for the protocol and the reference script; \sFut{} for native clients.
 
 A presentation is an unsigned wrapper around signed things: the issuer-signed credential, an
 optional stapled status assertion so that authorization is decidable with no connectivity, an
@@ -81,7 +81,7 @@ executed from an empty directory before it was written down, which caught its ow
 (a buffered pipe that left the verifier's log empty), and it ends with the line that matters:
 \code{<- 200 authentic, claims ['cnf', 'family\_name', 'given\_name', 'iat', 'iss', 'vct']}. If it
 fails for a reader, the page says, that is the most useful bug the project can receive. Nobody
-outside the repository has yet reported walking it. \sImpl{} for the path; \sExt{} for a walker
+outside the repository has yet reported walking it. \sImplMark{} for the path; \sExt{} for a walker
 who is not the author.
 
 \subsection{What is deliberately not built}

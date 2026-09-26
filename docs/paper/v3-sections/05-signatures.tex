@@ -21,7 +21,7 @@ algorithm: the custodied key decides it before signing, because \code{algorithm}
 field, and the registry advertises the accepted set. SLH-DSA-128s and SLH-DSA-256s, the hash-based
 alternatives that do not rest on lattice assumptions, are registered in the algorithm table
 precisely because they rest on hash functions alone, so that a rotation away from lattices is a row
-update; no SLH-DSA signer is wired, and the posture ledger carries the gap. \sImpl{} for ML-DSA;
+update; no SLH-DSA signer is wired, and the posture ledger carries the gap. \sImplMark{} for ML-DSA;
 \sFut{} for a hash-based signer.
 
 \subsection{Custody}
@@ -35,7 +35,7 @@ verifies after the switch while the new key signs. The KMS driver's envelope cry
 and its service is a stand-in. One production profile makes the module the sole signer: the
 application refuses to boot if a file key is present or real signing is unavailable. Which driver,
 which module, and who holds the key are decisions the readiness ledger assigns to a deploying
-organisation. \sImpl{} for the drivers and the drill; \sExt{} for hardware custody, since no hardware
+organisation. \sImplMark{} for the drivers and the drill; \sExt{} for hardware custody, since no hardware
 module has been used.
 
 The placeholder deserves a paragraph, because it is where an honest system is most easily

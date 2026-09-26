@@ -37,7 +37,7 @@ authorization, because a revoked card still signs a challenge and a device that 
 certified secure elements that sign FIPS 204 in hardware are not something an authority can buy in
 volume today, so a card carries two issuer signatures over one body, a classical one that today's
 silicon can produce and an ML-DSA one, and the reader decides which it trusts. Every one of these
-runs in a drill on every push. \sImpl{} for the profile, the emulator, the vectors and the device;
+runs in a drill on every push. \sImplMark{} for the profile, the emulator, the vectors and the device;
 \sFut{} for a manufactured card, which no drill can establish.
 
 \figfile{nucleus}{The core entity geometry, unchanged from Version 1. Seven entities around
@@ -138,7 +138,7 @@ edges of the lifecycle, and each keeps a record of what it rested on.
     stored procedure makes, each of which a mutation drill shows the tests would notice losing
     (Section~\ref{sec:walls}). No path in the product records the three channels
     (Section~\ref{sec:limitations}). The holder is without identity for the cool-down; the
-    substitute credential a production system would want for that window is not built. \sImpl{}
+    substitute credential a production system would want for that window is not built. \sImplMark{}
     for the ceremony, \sFut{} for the interim credential.
 \end{description}
 
@@ -155,7 +155,7 @@ pager fires at the highest severity. The comparison is constant-time and the wor
 paths. On the card the same mechanism is a second PIN of the same length as the first, entered the
 same way, unlocking a second key slot whose public key the card object does not carry, and a drill
 measures the response in time as well as in bytes, because a coercer at a reader observes how long
-the card took. \sImpl{} as a tested property of the modelled flow.
+the card took. \sImplMark{} as a tested property of the modelled flow.
 
 The duress mechanism is \emph{duress-aware}, not compulsion-resistant: it can keep an alert from a
 coercer who does not know it exists, and it does not protect against an informed coercer or against
