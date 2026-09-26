@@ -214,11 +214,11 @@
 % never splits across a page, so a card that does not fit moves whole to the next page
 % and the space it leaves stays empty. Any figure the section still has pending is
 % flushed before the card, so a figure never lands after the card that closes its section.
-% The card steps the table counter without a caption, as the longtable it used to be did,
-% so that every captioned table keeps the number it has carried since Version 3 was published.
+% The card no longer steps the table counter (2026-09-26): the appendix split already renumbered the
+% map's tables, and a reader saw captioned tables start at 2 and jump to 12.
 \newcounter{qarow}
 \newenvironment{layercard}[1]{%
-  \par\FloatBarrier\refstepcounter{table}\vspace{3pt}%
+  \par\FloatBarrier\vspace{3pt}%
   \noindent\begin{minipage}{\textwidth}%
   \noindent{\color{navydark}\bfseries\small #1}\par\vspace{2pt}%
   \setcounter{qarow}{0}%
