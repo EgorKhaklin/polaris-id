@@ -1701,7 +1701,15 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     immutable = ("CREATE OR REPLACE FUNCTION enforce_attestation_immutability()\nRETURNS TRIGGER AS $$\nBEGIN\n"
                  "  IF current_user <> (SELECT pg_get_userbyid(p.proowner) FROM pg_proc p\n"
                  "     WHERE p.proname = 'uc10_revoke_attestation') THEN RAISE EXCEPTION 'x'; END IF;\n"
-                 "END$$;\n")
+                 "END$$;\n"
+                 "CREATE OR REPLACE FUNCTION enforce_token_binding_owner_only()\nRETURNS TRIGGER AS $$\nBEGIN\n"
+                 "  IF current_user = (SELECT pg_get_userbyid(c.relowner) FROM pg_class c WHERE c.oid = TG_RELID)"
+                 " THEN RETURN NEW; END IF;\n"
+                 "  IF (to_jsonb(NEW) - 'status') IS DISTINCT FROM (to_jsonb(OLD) - 'status') THEN"
+                 " RAISE EXCEPTION 'x'; END IF;\n"
+                 "END;\n$$;\n"
+                 "CREATE TRIGGER trg_token_binding_owner_only\n    BEFORE UPDATE ON IdentityToken\n"
+                 "    FOR EACH ROW\n    EXECUTE FUNCTION enforce_token_binding_owner_only();\n")
     (sql / "06_triggers.sql").write_text(immutable)
 
     # 5. The rc.39 shape: parents revoked, partitions and the lifecycle INSERT not -> FAIL.
@@ -1747,6 +1755,16 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     (sql / "06_triggers.sql").write_text(immutable.replace("uc10_revoke_attestation", "somebody_else"))
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
         "must FAIL when the trigger does not ask for the revocation procedure's owner"
+    (sql / "06_triggers.sql").write_text(immutable)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "OK"
+
+    # 8b. 1.0.0-rc.56: the credential's binding columns. The guard gone, narrowed to status
+    # alone, or no longer asking for the owner: each FAILs.
+    for broken in (immutable.split("CREATE OR REPLACE FUNCTION enforce_token_binding_owner_only")[0],
+                   immutable.replace("BEFORE UPDATE ON IdentityToken", "BEFORE UPDATE OF status ON IdentityToken"),
+                   immutable.replace("c.relowner", "c.relname")):
+        (sql / "06_triggers.sql").write_text(broken)
+        assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", broken[-160:]
     (sql / "06_triggers.sql").write_text(immutable)
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "OK"
 

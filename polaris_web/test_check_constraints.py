@@ -1450,6 +1450,41 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                     cur.execute(sql)
             conn.rollback()
 
+    def test_app_role_cannot_move_extend_or_rewrite_a_credential(self):
+        """1.0.0-rc.56. The state machine guards status and nothing else, and the application
+        role holds UPDATE on IdentityToken for its status changes. With it, one UPDATE moved an
+        ACTIVE credential to another person, another extended it to 2099, and others rewrote its
+        value, its issuer and its duress code. All refused now; a legal status change is not."""
+        conn = self._app_conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1")
+            tid = cur.fetchone()["token_id"]
+            cur.execute("SELECT min(individual_id) AS other FROM Individual WHERE individual_id <> "
+                        "(SELECT individual_id FROM IdentityToken WHERE token_id = %s)", (tid,))
+            other = cur.fetchone()["other"]
+        conn.rollback()
+        attempts = (
+            ("move it to another person", "UPDATE IdentityToken SET individual_id = %s WHERE token_id = %s", (other, tid)),
+            ("extend it", "UPDATE IdentityToken SET expiration_date = DATE '2099-01-01' WHERE token_id = %s", (tid,)),
+            ("rewrite its value", "UPDATE IdentityToken SET token_value = token_value || 'x' WHERE token_id = %s", (tid,)),
+            ("change its issuer", "UPDATE IdentityToken SET issuing_agency_id = issuing_agency_id + 1 WHERE token_id = %s", (tid,)),
+            # Whichever way round, so the write changes the row whatever the fixture holds.
+            ("set or clear its duress code", "UPDATE IdentityToken SET duress_code_hash = CASE WHEN "
+                                             "duress_code_hash IS NULL THEN 'x' ELSE NULL END WHERE token_id = %s", (tid,)),
+            ("re-date its activation", "UPDATE IdentityToken SET activated_date = activated_date + interval '1 hour' "
+                                        "WHERE token_id = %s", (tid,)),
+        )
+        for label, sql, args in attempts:
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql, args)
+            conn.rollback()
+        # The application's own write still goes through: a legal transition, status alone.
+        with conn.cursor() as cur:
+            cur.execute("UPDATE IdentityToken SET status = 'LOST' WHERE token_id = %s", (tid,))
+            self.assertEqual(cur.rowcount, 1)
+        conn.rollback()
+
     def test_app_role_writes_an_epoch_only_through_uc11(self):
         """2026-09-25. With INSERT on TokenStateEpoch the application role could write an epoch
         uc11_close_epoch refuses: one member, below the anonymity floor, or a committed_count

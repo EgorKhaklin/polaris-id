@@ -11,6 +11,31 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.56 — 2026-09-25 (a credential cannot be moved to another person, extended or rewritten by a plain write)
+
+CORE-BUG against the authorization contract: the relying-party API answers who holds a credential,
+who issued it and until when from `IdentityToken`'s own columns, and C3 and the duress mechanism
+rest on them too. Externally observable: for every role but the table owner, an UPDATE of
+`IdentityToken` may change only `status` (and `activated_date` together with it). Schema change:
+migration `2026-09-25-015-token-binding-changed-only-by-its-procedures`. Nothing is published.
+
+The state machine (`enforce_token_state_machine`) fires on `UPDATE OF status` and guards nothing
+else, while the application role holds UPDATE on the whole row for its status changes. Measured as
+`polaris_app`: one UPDATE moved an ACTIVE credential to another person, another extended it to
+2099, and others rewrote its value, its issuer and its duress code. The application's own writes
+are status changes only; every other column is written by the issuance and recovery procedures,
+which run as the owner. Continues the UPDATE side of the open-door sweep.
+
+- New trigger `trg_token_binding_owner_only` (`enforce_token_binding_owner_only`), BEFORE UPDATE
+  of the whole row: any other role changing a column but `status` and `activated_date` is refused,
+  and `activated_date` changes only with a change of status.
+- Test: `test_app_role_cannot_move_extend_or_rewrite_a_credential`, as `polaris_app`, covers
+  six cases and a legal status change. All six fail with the down migration applied.
+- `check_aor_privilege_boundary` requires the trigger over the whole row, admitting only the
+  owner; three new detection cases.
+- Still open: the application role keeps DELETE on `IdentityToken` for the admin delete route,
+  which the audit references refuse for any token with history.
+
 ## v1.0.0-rc.55 — 2026-09-25 (a credential cannot be widened, revived or un-revoked by a plain write)
 
 CORE-BUG against the revocation contract (a revoked token appears in every verifier's revocation

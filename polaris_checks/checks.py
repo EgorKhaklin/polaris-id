@@ -855,6 +855,17 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         return _fail("c1_aor_priv", "enforce_attestation_immutability must admit a revocation only "
                                     "from the owner of uc10_revoke_attestation, or the application "
                                     "role revokes trust with a plain UPDATE (C1)")
+    # 1.0.0-rc.56: IdentityToken keeps UPDATE for status changes, so the rest of the row (holder,
+    # issuer, value, expiry, duress code) is held by a trigger that admits only the owner.
+    bind = re.search(r"FUNCTION\s+enforce_token_binding_owner_only\b.*?END;\s*\$\$;", triggers, re.I | re.S)
+    if (not bind or "relowner" not in bind.group(0) or "'status'" not in bind.group(0)
+            or not re.search(r"CREATE\s+TRIGGER\s+trg_token_binding_owner_only\s+BEFORE\s+UPDATE\s+ON\s+"
+                             r"IdentityToken\s+FOR\s+EACH\s+ROW\s+EXECUTE\s+FUNCTION\s+"
+                             r"enforce_token_binding_owner_only\b", triggers, re.I)):
+        return _fail("c1_aor_priv", "06_triggers.sql must guard every IdentityToken column but status "
+                                    "(enforce_token_binding_owner_only, BEFORE UPDATE of the whole row, "
+                                    "admitting only the table owner), or the application role moves a "
+                                    "credential to another person with a plain UPDATE (C1)")
     return _ok("c1_aor_priv",
                "append-only tables revoke UPDATE/DELETE from polaris_app, and so does every "
                "partition of the four event tables; the lifecycle log and the ZK epoch tables refuse "

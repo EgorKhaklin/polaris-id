@@ -53,6 +53,19 @@ DB_CONFIG = flask_app.DB_CONFIG
 SQL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'polaris_sql')
 
 
+def _owner_write(sql, args=()):
+    """A fixture write as the schema owner. Since 1.0.0-rc.56 the application role changes a
+    credential's status and nothing else, so a test that has to age a credential or give it a
+    duress code writes that as the owner, not through the application it is testing.
+    DB_CONFIG is read at call time: the app-role suite rebinds it to the owner's copy."""
+    conn = psycopg2.connect(**DB_CONFIG)
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(sql, args)
+    finally:
+        conn.close()
+
+
 def _superuser_conn():
     """Connection as postgres for snapshot/restore (needs to truncate)."""
     cfg = dict(DB_CONFIG)
@@ -743,8 +756,8 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         _verifier, challenge = self._pkce()
         self.assertEqual(self._authorize(cid, tv, sig, challenge).status_code, 200,
                          'control: the live credential signs in')
-        flask_app.query("UPDATE IdentityToken SET expiration_date = polaris_utc_date() - 1 "
-                        "WHERE token_value = %s", (tv,), fetch='none')
+        _owner_write("UPDATE IdentityToken SET expiration_date = polaris_utc_date() - 1 "
+                     "WHERE token_value = %s", (tv,))
         r = self._authorize(cid, tv, sig, challenge)
         self.assertEqual(r.status_code, 403, r.get_data(as_text=True))
         self.assertNotIn('code', r.get_json() or {})
@@ -909,8 +922,8 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         import time
         cid, _secret = self._rp('authenticate')
         tid, tv, sig = self._credential()
-        flask_app.query("UPDATE IdentityToken SET duress_code_hash = %s WHERE token_id = %s",
-                        (flask_app.security.hash_password('4321'), tid), fetch='none')
+        _owner_write("UPDATE IdentityToken SET duress_code_hash = %s WHERE token_id = %s",
+                     (flask_app.security.hash_password('4321'), tid))
         _v, challenge = self._pkce()
         before = flask_app.query("SELECT count(*) AS n FROM DuressEvent", fetch='one', primary=True)['n']
         r_wrong = self._authorize(cid, tv, sig, challenge, presented_code='9999')
@@ -4473,8 +4486,8 @@ class ZKSnarkTests(PolarisTestCase):
         return row['token_value'], ph.hex()
 
     def _expire(self, token_value):
-        flask_app.query("UPDATE IdentityToken SET expiration_date = polaris_utc_date() - 1 "
-                        "WHERE token_value = %s", (token_value,), fetch='none')
+        _owner_write("UPDATE IdentityToken SET expiration_date = polaris_utc_date() - 1 "
+                     "WHERE token_value = %s", (token_value,))
 
     def test_effective_status_is_the_one_answer_to_is_it_live(self):
         """The helper every route asks: holder-key binding and holder signing share it with
