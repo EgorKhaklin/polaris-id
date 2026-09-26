@@ -286,13 +286,13 @@ footer a{color:var(--ink-dim)}
         counts are measured per release on the reference machine. CI does not just run tests;
         it exercises the artifacts.</p>
     <div class="numbers">
-        <div class="num"><b>1030</b><span>product tests, live DB</span></div>
-        <div class="num"><b>107</b><span>crypto-witness tests</span></div>
+        <div class="num"><b>1244</b><span>product tests, live DB</span></div>
+        <div class="num"><b>126</b><span>crypto-witness tests</span></div>
         <div class="num"><b>334</b><span>invariant checks</span></div>
         <div class="num"><b>20</b><span>CI jobs</span></div>
         <div class="num"><b>5</b><span>services booted in CI</span></div>
     </div>
-    <p class="asof">test counts measured at v1.0.0-rc.1; the rest recomputed on every push</p>
+    <p class="asof">test counts measured at v1.0.0-rc.62; the rest recomputed on every push</p>
     <ul class="prodlist">
         <li><strong>The production-profile stack boots in CI.</strong> Five services behind a self-built TLS edge come up end to end on every push, and health is asserted through the edge. Building that job surfaced four prod-down bugs the day it landed.</li>
         <li><strong>Backups restore, provably.</strong> An encrypted backup and restore round-trip runs in CI with a fail-closed negative check, and the HA profile's automated failover is drilled on every push.</li>

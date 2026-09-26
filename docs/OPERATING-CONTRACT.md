@@ -90,7 +90,10 @@ semantic version. 1.0.0 requires all of:
 All five held on 15 September 2026 and the four artifacts moved to `1.0.0-rc.1`. The
 candidate holds until an operator who is not the author reaches a verified result without
 help; a defect found in the candidate makes the NEXT candidate, which is how rc.1 became
-rc.2 on 2026-09-17; nothing else moves the number.
+rc.2 on 2026-09-17; nothing else moves the number. Since 2026-09-26 the number moves when a
+candidate is released, not per defect: fixes land as commits, and a release (one tag, one GitHub
+Release) collects the defects found since the last. Between rc.3 and rc.62 the version moved per
+fix with no release, and the Releases page went eight days and fifty-nine versions behind the tree.
 
 ## 5. Cryptographic mode
 

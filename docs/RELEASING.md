@@ -110,6 +110,9 @@ Why a candidate and not 1.0.0: the contract's 90-day objective also asks for an 
 is not the author to have used the verifier, and that row of the scoreboard is blank. A release
 candidate is the number that says both things at once. That operator makes 1.0.0; a defect
 found in the candidate makes the next candidate, which is what rc.2 was. Nothing else does.
+The next candidate is cut as a release, one tag and one GitHub Release that collect every defect
+fixed since the last one, and not per fix (2026-09-26; rc.4 to rc.62 moved per fix, untagged, and
+v1.0.0-rc.62 was released as one candidate covering all of them).
 
 The PyPI maturity classifier is `4 - Beta`. There is no classifier for a candidate, and
 `5 - Production/Stable` would say more than has happened.
