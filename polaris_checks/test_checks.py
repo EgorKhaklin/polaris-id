@@ -1709,7 +1709,16 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                  " RAISE EXCEPTION 'x'; END IF;\n"
                  "END;\n$$;\n"
                  "CREATE TRIGGER trg_token_binding_owner_only\n    BEFORE UPDATE ON IdentityToken\n"
-                 "    FOR EACH ROW\n    EXECUTE FUNCTION enforce_token_binding_owner_only();\n")
+                 "    FOR EACH ROW\n    EXECUTE FUNCTION enforce_token_binding_owner_only();\n"
+                 "CREATE OR REPLACE FUNCTION enforce_agency_key_registered()\nRETURNS TRIGGER AS $$\nBEGIN\n"
+                 "  IF current_user = (SELECT pg_get_userbyid(c.relowner) FROM pg_class c WHERE c.oid = TG_RELID)"
+                 " THEN RETURN NEW; END IF;\n"
+                 "  IF NOT EXISTS (SELECT 1 FROM AuthorityKeyEvent e WHERE e.event = 'registered') OR EXISTS"
+                 " (SELECT 1 FROM AuthorityKeyEvent e WHERE e.event IN ('retired', 'compromised'))"
+                 " THEN RAISE EXCEPTION 'x'; END IF;\n"
+                 "END;\n$$;\n"
+                 "CREATE TRIGGER trg_agency_key_registered\n    BEFORE UPDATE OF signing_public_key_hex ON Agency\n"
+                 "    FOR EACH ROW\n    EXECUTE FUNCTION enforce_agency_key_registered();\n")
     (sql / "06_triggers.sql").write_text(immutable)
 
     # 5. The rc.39 shape: parents revoked, partitions and the lifecycle INSERT not -> FAIL.
@@ -1762,7 +1771,10 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     # alone, or no longer asking for the owner: each FAILs.
     for broken in (immutable.split("CREATE OR REPLACE FUNCTION enforce_token_binding_owner_only")[0],
                    immutable.replace("BEFORE UPDATE ON IdentityToken", "BEFORE UPDATE OF status ON IdentityToken"),
-                   immutable.replace("c.relowner", "c.relname")):
+                   immutable.replace("c.relowner", "c.relname"),
+                   # 1.0.0-rc.57: the register guard gone, or no longer refusing a compromised key.
+                   immutable.split("CREATE OR REPLACE FUNCTION enforce_agency_key_registered")[0],
+                   immutable.replace("'retired', 'compromised'", "'retired'")):
         (sql / "06_triggers.sql").write_text(broken)
         assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", broken[-160:]
     (sql / "06_triggers.sql").write_text(immutable)

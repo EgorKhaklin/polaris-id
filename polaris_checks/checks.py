@@ -866,6 +866,16 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
                                     "(enforce_token_binding_owner_only, BEFORE UPDATE of the whole row, "
                                     "admitting only the table owner), or the application role moves a "
                                     "credential to another person with a plain UPDATE (C1)")
+    # 1.0.0-rc.57: an authority's current key changes only to a key its register holds.
+    akey = re.search(r"FUNCTION\s+enforce_agency_key_registered\b.*?END;\s*\$\$;", triggers, re.I | re.S)
+    if (not akey or "relowner" not in akey.group(0) or "AuthorityKeyEvent" not in akey.group(0)
+            or "compromised" not in akey.group(0)
+            or not re.search(r"CREATE\s+TRIGGER\s+trg_agency_key_registered\s+BEFORE\s+UPDATE\s+OF\s+"
+                             r"signing_public_key_hex\s+ON\s+Agency\b", triggers, re.I)):
+        return _fail("c1_aor_priv", "06_triggers.sql must refuse a change of Agency.signing_public_key_hex "
+                                    "to a key the authority's register does not hold as registered and "
+                                    "unrevoked (enforce_agency_key_registered, admitting only the owner), "
+                                    "or the application role swaps the key the trust list serves (C1)")
     return _ok("c1_aor_priv",
                "append-only tables revoke UPDATE/DELETE from polaris_app, and so does every "
                "partition of the four event tables; the lifecycle log and the ZK epoch tables refuse "

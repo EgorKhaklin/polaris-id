@@ -361,8 +361,7 @@ class TimestampLogTests(PolarisTestCase):
         The probe is what separated this from the twenty-seven refusals on the same surface
         whose removal changes nothing, because something after them answers identically.
         """
-        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1",
-                        ('ab' * 16,), fetch='none')
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,))
         good = 'ab' * 32
         self.assertEqual(
             self.client.post('/api/v1/timestamp/1', json={'digest_hex': good}).status_code, 200,
@@ -387,8 +386,7 @@ class TimestampLogTests(PolarisTestCase):
         claims and what the authority checked would then be two different things, which is
         the property the whole signature exists to carry.
         """
-        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1",
-                        ('ab' * 16,), fetch='none')
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,))
         body = {'digest_hex': 'cd' * 32}
         self.assertEqual(self.client.post('/api/v1/timestamp/1',
                                           json=dict(body, digest_algorithm='SHA3-256')
@@ -419,8 +417,7 @@ class TimestampLogTests(PolarisTestCase):
         artifact: an unbounded string, or a list, or an object. A field the authority signs
         is a field the authority is answerable for.
         """
-        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1",
-                        ('ab' * 16,), fetch='none')
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,))
         body = {'digest_hex': 'ef' * 32}
         self.assertEqual(self.client.post('/api/v1/timestamp/1',
                                           json=dict(body, nonce='n' * 128)).status_code, 200,
@@ -434,7 +431,7 @@ class TimestampLogTests(PolarisTestCase):
 
     def test_unanchored_request_retains_nothing_and_anchored_is_included(self):
         import hashlib
-        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,), fetch='none')
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,))
         before = flask_app.query("SELECT count(*) AS n FROM TimestampLog", fetch='one', primary=True)['n']
         digest = hashlib.sha3_256(b"a thing the authority never sees").hexdigest()
         plain = self.client.post('/api/v1/timestamp/1', json={'digest_hex': digest, 'nonce': 'plain'})
@@ -471,7 +468,7 @@ class RegistryTests(PolarisTestCase):
 
     def test_registry_served_from_athena_views(self):
         self.assertEqual(self.client.get('/api/v1/registry/1').status_code, 404)
-        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,), fetch='none')
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,))
         r = self.client.get('/api/v1/registry/1')
         self.assertEqual(r.status_code, 200)
         reg = r.get_json()
@@ -504,7 +501,7 @@ class ExchangeGatewayTests(UnauthenticatedTestCase):
         ctx, other = int(free[0]['context_id']), int(free[1]['context_id'])
         run = os.urandom(8).hex()
         key_m = os.urandom(32).hex() * 2
-        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 3", (key_m,), fetch='none')
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 3", (key_m,))
         ins = ("INSERT INTO AgencyTrustAttestation (attesting_agency_id, attested_agency_id, context_id, valid_until, signed_by) "
                "VALUES (%s, 3, %s, polaris_utc_date() + INTERVAL '30 days', 1)")
 
@@ -590,7 +587,7 @@ class DocumentSigningTests(UnauthenticatedTestCase):
         tv, sig = self._credential()
         r = self.client.post('/api/v1/sign/1/holder', json={'token_value': tv, 'signature_hex': sig, 'digest_hex': 'cd' * 32})
         self.assertEqual(r.status_code, 404)   # agency 1 is not federated until it has a key
-        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,), fetch='none')
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,))
         r = self.client.post('/api/v1/sign/1/holder', json={'token_value': tv, 'signature_hex': sig,
                                                             'digest_hex': 'cd' * 32, 'name': 'report.txt', 'purpose': 'test'})
         self.assertEqual(r.status_code, 200)
@@ -609,8 +606,7 @@ class DocumentSigningTests(UnauthenticatedTestCase):
     # -- still good, which is the whole of what holder-authorized signing rests on.
 
     def _federate(self, *agency_ids):
-        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = ANY(%s)",
-                        ('ab' * 16, list(agency_ids)), fetch='none')
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = ANY(%s)", ('ab' * 16, list(agency_ids)))
 
     def test_one_authority_cannot_sign_for_another_authoritys_credential(self):
         """Agency 2 must refuse a credential agency 1 issued.
@@ -662,7 +658,7 @@ class DocumentSigningTests(UnauthenticatedTestCase):
         # v9.334: a signer's own timestamp is convenience evidence; an operator may name another
         # federated agency to issue the container's timestamp, never the signer itself.
         tv, sig = self._credential()
-        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id IN (1, 2)", ('ab' * 16,), fetch='none')
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id IN (1, 2)", ('ab' * 16,))
         base = {'token_value': tv, 'signature_hex': sig, 'digest_hex': 'ef' * 32}
         r = self.client.post('/api/v1/sign/1/holder', json=dict(base, timestamp_agency_id=2))
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
@@ -706,7 +702,7 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         placeholder = hashlib.sha3_256(row['token_value'].encode('utf-8')).digest()
         flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
                         "VALUES (%s, 1, %s, NULL)", (row['token_id'], psycopg2.Binary(placeholder)), fetch='none')
-        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,), fetch='none')
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,))
         return row['token_id'], row['token_value'], placeholder.hex()
 
     def _pkce(self):
@@ -4020,8 +4016,7 @@ class IssuerFederationTests(PolarisTestCase):
         the attested agency holding a key so the ceremony signs. Returns (attestation_id,
         the agency ids the signer was asked for)."""
         import pqc_signing
-        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1",
-                        ('ab' * 16,), fetch='none')
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,))
         asked = []
         real = pqc_signing.signature_over_message
 
@@ -4069,8 +4064,7 @@ class IssuerFederationTests(PolarisTestCase):
 
     def _attest_6_to_1(self, signer):
         import pqc_signing
-        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1",
-                        ('ab' * 16,), fetch='none')
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,))
         before = _sql("SELECT count(*) AS n FROM AgencyTrustAttestation", fetch='one')['n']
         csrf = self._csrf_token_from('/verifications/new')
         with patch.object(pqc_signing, 'signature_over_message', signer):

@@ -11,6 +11,30 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.57 — 2026-09-25 (an authority's key cannot be swapped without the register)
+
+CORE-BUG against the key register's promise (`docs/operator/KEY-CEREMONY.md`, the trust list and
+registry report an authority's keys from its register) and against `issuer_authentic` and the
+exchange gateway, which trust `Agency.signing_public_key_hex`. Externally observable: for every role
+but the table owner, that column changes only to a key the agency registered in
+`AuthorityKeyEvent` and has not retired or declared compromised. Schema change: migration
+`2026-09-25-016-agency-key-only-from-the-register`. Nothing is published.
+
+The column's one product writer, `polaris key-register`, appends the key to the
+register and sets it in one transaction. The application role held UPDATE on `Agency` for the
+agency edit route, and with it replaced an authority's key with one the register had never seen;
+the trust list then served it as active and nothing recorded the change.
+
+- New trigger `trg_agency_key_registered` (`enforce_agency_key_registered`).
+- Test: `test_app_role_sets_an_authority_key_only_from_the_register`, as `polaris_app`: an
+  unregistered key and a compromised key are refused, the register's own path works. Both refusals
+  fail with the down migration applied.
+- `check_aor_privilege_boundary` requires the trigger; two new detection cases.
+- Twelve `test_app` fixtures that set an agency key through the application connection now write
+  as the owner.
+- `KEY-CEREMONY.md` told operators to register a per-agency key with a plain `UPDATE Agency`; it
+  now names `polaris key-register`.
+
 ## v1.0.0-rc.56 — 2026-09-25 (a credential cannot be moved to another person, extended or rewritten by a plain write)
 
 CORE-BUG against the authorization contract: the relying-party API answers who holds a credential,

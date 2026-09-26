@@ -123,7 +123,11 @@ cryptographically its own (roadmap PE.3b), give each agency its own key:
    agency with no key file falls back to the global key, so single-key deployments
    are unchanged.
 2. Register each agency's public key so the app can bind and verify it:
-   `UPDATE Agency SET signing_public_key_hex = '<hex>' WHERE agency_id = <id>;`.
+   `polaris key-register <id> <hex>`, which appends the key to
+   the authority's register and makes it current in one transaction. Since 1.0.0-rc.57 the
+   application role cannot set a key the register does not hold (or holds as retired or
+   compromised); a plain `UPDATE Agency` works only as the schema owner, and leaves no register
+   entry, so the trust list would serve a key with no history.
 3. Once registered, `/uc1/issue` REFUSES to issue a token for that agency whose real
    signature was produced by any other key, and `GET /api/tokens/<id>/verify`
    reports `issuer_authentic` — whether the token was signed by its issuing agency's

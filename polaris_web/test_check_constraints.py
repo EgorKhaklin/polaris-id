@@ -1485,6 +1485,31 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             self.assertEqual(cur.rowcount, 1)
         conn.rollback()
 
+    def test_app_role_sets_an_authority_key_only_from_the_register(self):
+        """1.0.0-rc.57. Agency.signing_public_key_hex is the key the trust list serves as active and
+        the key the exchange gateway authenticates an institution by. As polaris_app a plain
+        UPDATE replaced it with a key the register had never seen. Refused now, as is a key the
+        register holds as compromised; `polaris key-register` (log the key, then set it) works."""
+        conn = self._app_conn()
+        fresh, burnt = os.urandom(32).hex(), os.urandom(32).hex()
+        with self.subTest("a key the register has never seen"), conn.cursor() as cur:
+            with self.assertRaises(pg_errors.InsufficientPrivilege):
+                cur.execute("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", (fresh,))
+        conn.rollback()
+        with self.subTest("a key the register holds as compromised"), conn.cursor() as cur:
+            for event in ("registered", "compromised"):
+                cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event) "
+                            "VALUES (1, %s, %s)", (burnt, event))
+            with self.assertRaises(pg_errors.InsufficientPrivilege):
+                cur.execute("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", (burnt,))
+        conn.rollback()
+        with self.subTest("the register's own path"), conn.cursor() as cur:
+            cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event) "
+                        "VALUES (1, %s, 'registered')", (fresh,))
+            cur.execute("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", (fresh,))
+            self.assertEqual(cur.rowcount, 1)
+        conn.rollback()
+
     def test_app_role_writes_an_epoch_only_through_uc11(self):
         """2026-09-25. With INSERT on TokenStateEpoch the application role could write an epoch
         uc11_close_epoch refuses: one member, below the anonymity floor, or a committed_count
