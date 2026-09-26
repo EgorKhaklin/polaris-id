@@ -107,3 +107,84 @@ so the body can be read without them.
 conformance runner; the detection tests of every check.
 \end{description}
 }
+
+\subsection*{Operations: the drills behind Section~\ref{sec:operations}}
+
+\begin{description}
+  \item[High availability.] The database runs under Patroni, which elects the primary, with its leader lease
+    held in a three-member etcd consensus store, and role-based routing. Under a live write stream the drill loses the leader (the replica
+    promoted after the 20-second lease, in-flight queries failing fast and retried, none lost), cuts
+    the leader off from the lease store (it stood down in 7 seconds), performs a planned switchover
+    (3.3 seconds, no insert failed), and crashes an etcd member (a 0.3-second stall). The Kubernetes
+    profile runs the same members with the cluster's API as the lease store and deletes the leader
+    pod. \sImpl
+  \item[A second region.] The HA profile survives a node dying; it does not survive the region, and
+    the tempting fix, a third member in region B, is wrong three ways at once, because it puts the
+    wide-area network inside the lease store's quorum, on every commit, and inside region A's blast
+    radius. So region B is a standby cluster: its own lease store, a different
+    scope, streaming asynchronously through region A's router so a failover inside A does not break
+    replication, electing no primary of its own so two regions can never both accept writes. The
+    recovery point is therefore not zero, and it is measured rather than asserted: the drill cuts
+    region A the way a region goes dark, promotes B under a live write stream, and reports the time
+    to serve (5 seconds) and the rows acknowledged in A and absent from B (zero at the drill's
+    rate), against ceilings of 90 seconds and 50 rows. It asserts two things that matter more than
+    either number: B holds no row A never acknowledged, and what crossed is a contiguous prefix,
+    because a standby holding rows one to forty and forty-five to sixty has skipped rather than
+    lagged. A returned region A is rebuilt as a standby and never brought back as a primary. \sImpl
+  \item[Read replicas.] Read-only surfaces route to a streaming replica under an explicit
+    staleness contract, at most ten seconds behind by default, falling back to the primary beyond
+    it, with every routed response naming its source and lag. Correctness-critical reads stay on
+    the primary, and the authorization half of a verification verdict is pinned there
+    (Section~\ref{sec:authorization}). \sImpl
+  \item[Partitioning.] The four append-only event tables are monthly range-partitioned, and a
+    drill proves that the append-only trigger holds across a partition, an attach and a detach,
+    because the archives' carve-out must not become a rewrite path. \sImpl
+  \item[Disaster recovery.] Backups are encrypted and a restore fails closed without the key.
+    A monthly drill kills the primary, restores it from the archive and commits the measured numbers
+    against the targets of 300 seconds of data loss and four hours to recover: the last recorded
+    rows show 36 to 42 seconds of loss and under five seconds to service, on the drill's ephemeral
+    host, not production hardware. \sImpl
+  \item[Chaos.] A weekly drill boots the blue-green stack under traffic, kills one colour with zero
+    dropped requests, stops both until the outage page reaches a real alert manager and webhook,
+    kills Redis and PostgreSQL, partitions the pooler, and commits every recovery time against a
+    ceiling. Findings become checks. \sImpl
+  \item[Rolling deploys.] A deploy under traffic drops zero requests; edge and database recreation
+    are window operations measured on every push against ceilings (0.3 seconds for the edge on a
+    single host, 0.6 seconds for a database crash), and the readiness ledger carries the remaining
+    edge half openly. \sImpl
+\end{description}
+
+\subsection*{Performance numbers}
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
+\rowcolors{2}{tabstripe}{white}
+\begin{xltabular}{\textwidth}{>{\RaggedRight\arraybackslash\hspace{0pt}}X >{\RaggedRight\arraybackslash\hspace{0pt}}p{1.8in} >{\RaggedRight\arraybackslash\hspace{0pt}}p{0.8in} >{\RaggedRight\arraybackslash\hspace{0pt}}p{1.15in}}
+\caption{Performance numbers at the versions that measured them. Every row is single-node on the reference laptop unless marked as a simulation or a projection. The event-ingestion rate and the cryptographic verification rate differ by about 35 times, a gap the repository's own history once hid (Section~\ref{sec:senses}). Rows the repository has not re-measured since Version 2 carry their original stamp.}\label{tab:perf}\\
+\toprule
+\rowcolor{tabheader}\thead{Quantity} & \thead{Number} & \thead{Kind} & \thead{Source} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{tabheader}\thead{Quantity} & \thead{Number} & \thead{Kind} & \thead{Source} \\
+\midrule
+\endhead
+\midrule\multicolumn{4}{r}{\itshape continued on the next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+ML-DSA-65 sign, one core & about 2,080 per second & measured & dyno, \code{1.0.0-rc.7} \\
+ML-DSA-65 verify, single witness, one core & about 7,950 per second & measured & dyno, \code{1.0.0-rc.7} \\
+ML-DSA-65 verify, two witnesses, one core & about 740 per second & measured & dyno, \code{1.0.0-rc.7} \\
+Membership proof, depth 14 & about 25 ms to prove, 12 ms to verify, 76 KB & measured & dyno, \code{1.0.0-rc.7}; the soundness ledger \\
+Closing an epoch at depth 24, one million members & 2.1 s, tens of megabytes (was 10.8 s and 2.9 GB for a thousand) & measured & epoch cadence, \code{v9.357} \\
+Re-signing a population under ML-DSA-87, one runner & about 345 credentials per second, 91 percent of it signing & measured & quantum-event drill, \code{v9.365} \\
+Issuance through the application & 40 per second sustained, p95 28 ms & measured & baseline, \code{v9.191} \\
+Verification event through the application & 80 per second sustained, p95 18.5 ms & measured & baseline, \code{v9.191} \\
+Verification latency on the two-member HA topology under failover & a p50 at about 2 requests per second; p95 and p99 withheld, the sample cannot carry them & measured & failover drill, \code{v9.387} \\
+Enrolment with real signing, bulk pipeline & about 372 tokens per second & simulated, 1:10,000 & national simulation, \code{v9.257} \\
+Verification-event ingestion (audit writes, no signature check) & about 25,970 per second & simulated, 1:10,000 & national simulation \\
+Atlas aggregates, 8,010 to 80,010 events & every bounded aggregate grew slower than its data (0.72x to 0.89x of linear) & measured & benchmark, \code{v9.402} \\
+Single-witness verification across an eight-core node & about 62,800 per second & projection, fan-out assumed & benchmark arithmetic \\
+\end{xltabular}
+}
