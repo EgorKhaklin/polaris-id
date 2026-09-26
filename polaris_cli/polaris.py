@@ -2139,9 +2139,10 @@ EPILOG = """examples:
   polaris-id issue --legal-name "A. Holder" --dob 1990-01-15 --jurisdiction US-PA \\
                    --agency 1 --algorithm 1 --token-value TKN-PA-NEW-001 \\
                    --serial SN-PA-NEW --biometric IRIS --contexts 1,4
-  polaris-id revoke --token 42 --agency 1 --reason COMPROMISED
+  polaris-id revoke --token 42 --actor-agency 1 --reason COMPROMISE \\
+                    --published-location https://crl.example/agency-1
   polaris-id warrant-audit --individual 3 --context BANKING
-  polaris-id quota-show --agency 1
+  polaris-id quota-show 1
   polaris-id audit-log --since-minutes 60
 
 exit codes:
@@ -2149,6 +2150,7 @@ exit codes:
   1  usage or argument error
   2  the database refused the connection or the statement
   3  a procedure rejected the operation (a constraint or a policy bound)
+  130  interrupted (Ctrl-C)
 
 connection:
   POLARIS_DB_HOST, POLARIS_DB_NAME, POLARIS_DB_USER, POLARIS_DB_PASSWORD,

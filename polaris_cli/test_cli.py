@@ -12,6 +12,8 @@ Run:
 ============================================================================
 """
 
+import contextlib
+import io
 import os
 import sys
 import subprocess
@@ -83,6 +85,29 @@ def run_cli(*args, expect_success=True):
             f"  stderr: {result.stderr[:500]}"
         )
     return result
+
+
+class HelpExamplesParseTests(unittest.TestCase):
+    """2026-09-26. Two of the --help examples failed as written (revoke named --agency and a
+    reason code that does not exist; quota-show took a flag its positional argument never had).
+    Every example the help prints must parse with the real parser."""
+
+    def test_every_help_example_parses(self):
+        import shlex
+        import polaris
+        parser = polaris.build_parser()
+        block = polaris.EPILOG.split("examples:")[1].split("exit codes:")[0]
+        examples = [ln.strip() for ln in block.replace("\\\n", " ").splitlines() if ln.strip()]
+        self.assertGreaterEqual(len(examples), 5, "the examples block was found")
+        for line in examples:
+            with self.subTest(line):
+                argv = shlex.split(line)
+                self.assertEqual(argv[0], "polaris-id")
+                with contextlib.redirect_stderr(io.StringIO()):
+                    try:
+                        parser.parse_args(argv[1:])
+                    except SystemExit:
+                        self.fail("the help example does not parse: " + line)
 
 
 class CLIBaseTestCase(unittest.TestCase):
