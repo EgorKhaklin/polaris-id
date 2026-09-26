@@ -203,6 +203,14 @@ REVOKE UPDATE, DELETE ON TokenPermission FROM polaris_app;
 REVOKE UPDATE, DELETE ON DeviceBinding FROM polaris_app;
 REVOKE UPDATE, DELETE ON RevocationList FROM polaris_app;
 
+-- 1.0.0-rc.58: the algorithm registry and each authority's algorithm authorizations are written
+-- by nothing the application runs. Deprecating an algorithm is an operator ceremony in psql
+-- (docs/operator/OPERATIONS.md), and uc1, uc8 and uc_bulk_issue read AgencyAlgorithmAuth to
+-- decide who may issue and who may co-sign a revocation. With write access the application role
+-- un-deprecated ECDSA-P256, relabelled it quantum_resistant, and could grant any authority BOTH.
+REVOKE INSERT, UPDATE, DELETE ON CryptographicAlgorithm FROM polaris_app;
+REVOKE INSERT, UPDATE, DELETE ON AgencyAlgorithmAuth FROM polaris_app;
+
 -- ----------------------------------------------------------------------------
 -- v8.15 / R11-6 / M2-11 — System-default GUCs for the issuer-discretion
 -- bound enforced by uc8_revoke_token.

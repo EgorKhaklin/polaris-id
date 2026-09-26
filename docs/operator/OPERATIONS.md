@@ -320,7 +320,9 @@ Retiring the old credential is a separate, audited step.
 An algorithm is retired by its `deprecation_date`. Once the date has passed,
 `uc1_issue_token` refuses to mint a new token under it and
 `uc6_migrate_algorithm` refuses to migrate a token onto it; existing tokens
-keep verifying until they are migrated:
+keep verifying until they are migrated. Run it as the schema owner: since 1.0.0-rc.58 the
+application role cannot write the algorithm registry, so a compromised application cannot
+revive a retired algorithm:
 
 ```sql
 UPDATE CryptographicAlgorithm

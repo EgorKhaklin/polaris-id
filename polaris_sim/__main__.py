@@ -5,6 +5,8 @@ life through the real Polaris system.
 
 Reads the standard POLARIS_DB_* environment (host / name / user / password),
 exactly like the operator CLI, so it points at whatever database is configured.
+`build` and `benchmark` must run as the schema owner: it creates authorities and grants each an
+algorithm, which the application role is refused (1.0.0-rc.58).
 This is a benchmark and test harness: point it at an expendable database.
 """
 
@@ -43,6 +45,16 @@ def _connect():
         raise SystemExit(2)
 
 
+def _refused_as_app_role(e: Exception) -> bool:
+    """1.0.0-rc.58: building a nation creates authorities and grants each an algorithm, which is
+    the schema owner's to do; the application role is refused on purpose. Say so, not a traceback."""
+    if getattr(e, "pgcode", None) != "42501":
+        return False
+    sys.stderr.write("building a nation creates authorities and grants them an algorithm, which only "
+                     "the schema owner may do; run it with POLARIS_DB_USER set to the owner\n")
+    return True
+
+
 def cmd_build(args: argparse.Namespace) -> int:
     plan = nation.plan_nation(scale_divisor=args.scale, seed=args.seed)
     if not args.json:
@@ -70,7 +82,12 @@ def cmd_build(args: argparse.Namespace) -> int:
                 if not args.json:
                     sys.stderr.write(f"  ... {pct:3d}%  ({done:,}/{total:,})\n")
 
-        stats = load.build_nation(conn, plan, batch_size=args.batch_size, progress=progress)
+        try:
+            stats = load.build_nation(conn, plan, batch_size=args.batch_size, progress=progress)
+        except Exception as e:
+            if _refused_as_app_role(e):
+                return 2
+            raise
     finally:
         conn.close()
 
@@ -131,6 +148,10 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
             conn, scale_divisor=args.scale, verifications=args.events,
             lifecycle=args.lifecycle, seed=args.seed, latency_samples=args.latency_samples,
             verify_samples=args.verify_samples)
+    except Exception as e:
+        if _refused_as_app_role(e):
+            return 2
+        raise
     finally:
         conn.close()
 

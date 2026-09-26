@@ -38,7 +38,8 @@ P2.14).
 python3 -m polaris_sim build --scale 100000 --plan-only
 
 # Build and enroll a downscaled nation through the real pipeline
-# (POLARIS_DB_* select the target database):
+# (POLARIS_DB_* select the target database; build and benchmark create authorities
+# and grant them an algorithm, so POLARIS_DB_USER must be the schema owner):
 python3 -m polaris_sim build --scale 1000 --seed 42
 
 # Drive a day of national life-events over the enrolled nation:

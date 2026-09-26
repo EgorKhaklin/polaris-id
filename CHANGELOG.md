@@ -11,6 +11,29 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.58 — 2026-09-25 (a retired algorithm cannot be revived, and no authority can grant itself one)
+
+CORE-BUG against the algorithm-retirement promise (`docs/operator/OPERATIONS.md`: once an
+algorithm's deprecation date has passed, `uc1` refuses to mint under it and `uc6` to migrate onto
+it) and against the authorization `uc1`, `uc8` and `uc_bulk_issue` read. Externally observable: the
+application role can no longer insert, update or delete `CryptographicAlgorithm` or
+`AgencyAlgorithmAuth`. Schema change: migration
+`2026-09-25-017-algorithm-registry-written-only-by-the-owner`. Nothing is published.
+
+Nothing the application runs writes either table; deprecation is an operator ceremony in psql. As
+`polaris_app` a plain UPDATE un-deprecated ECDSA-P256 and relabelled it `quantum_resistant`, and an
+INSERT or UPDATE of `AgencyAlgorithmAuth` would grant any authority the right to issue, or the
+BOTH a revocation co-signer must hold.
+
+- The application role loses INSERT, UPDATE and DELETE on both tables.
+- Test: `test_app_role_cannot_revive_an_algorithm_or_grant_itself_one`, as `polaris_app`, six
+  cases; all six fail with the down migration applied.
+- `check_aor_privilege_boundary` requires both revokes; two new detection cases.
+- `python3 -m polaris_sim build` and `benchmark` create authorities and grant them an algorithm,
+  so they run as the schema owner; as the application role they now say so and exit 2 instead of
+  a traceback. `polaris_sim/README.md` says so.
+- `OPERATIONS.md` says the retirement ceremony runs as the schema owner.
+
 ## v1.0.0-rc.57 — 2026-09-25 (an authority's key cannot be swapped without the register)
 
 CORE-BUG against the key register's promise (`docs/operator/KEY-CEREMONY.md`, the trust list and

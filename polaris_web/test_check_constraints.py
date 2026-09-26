@@ -1510,6 +1510,27 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             self.assertEqual(cur.rowcount, 1)
         conn.rollback()
 
+    def test_app_role_cannot_revive_an_algorithm_or_grant_itself_one(self):
+        """1.0.0-rc.58. Nothing the application runs writes the algorithm registry or the
+        authorizations uc1, uc8 and uc_bulk_issue read. As polaris_app a plain UPDATE
+        un-deprecated ECDSA-P256 and relabelled it quantum_resistant, and a row in
+        AgencyAlgorithmAuth grants an authority the right to issue or co-sign. All refused."""
+        conn = self._app_conn()
+        attempts = (
+            ("un-deprecate an algorithm", "UPDATE CryptographicAlgorithm SET deprecation_date = NULL WHERE false"),
+            ("relabel an algorithm", "UPDATE CryptographicAlgorithm SET quantum_resistant = TRUE WHERE false"),
+            ("add an algorithm", "INSERT INTO CryptographicAlgorithm (name) SELECT 'x' WHERE false"),
+            ("grant an authorization", "INSERT INTO AgencyAlgorithmAuth (agency_id, algorithm_id, authorization_type) "
+                                       "SELECT 1, 1, 'BOTH' WHERE false"),
+            ("widen an authorization", "UPDATE AgencyAlgorithmAuth SET authorization_type = 'BOTH' WHERE false"),
+            ("drop an authorization", "DELETE FROM AgencyAlgorithmAuth WHERE false"),
+        )
+        for label, sql in attempts:
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql)
+            conn.rollback()
+
     def test_app_role_writes_an_epoch_only_through_uc11(self):
         """2026-09-25. With INSERT on TokenStateEpoch the application role could write an epoch
         uc11_close_epoch refuses: one member, below the anonymity floor, or a committed_count

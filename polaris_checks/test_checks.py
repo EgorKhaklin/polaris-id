@@ -1694,7 +1694,9 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                          "RecoveryRequest"))
               + "".join("REVOKE UPDATE, DELETE ON %s FROM polaris_app;\n" % t for t in
                         ("RecoveryRequest", "BulkEnrollmentBatch", "BulkEnrollmentStaging",
-                         "TokenPermission", "DeviceBinding", "RevocationList")))
+                         "TokenPermission", "DeviceBinding", "RevocationList"))
+              + "".join("REVOKE INSERT, UPDATE, DELETE ON %s FROM polaris_app;\n" % t for t in
+                        ("CryptographicAlgorithm", "AgencyAlgorithmAuth")))
     full = (good_grants + "SELECT polaris_lock_event_partitions();\n"
             "REVOKE INSERT ON TokenLifecycleEvent FROM polaris_app;\n" + epochs)
     (sql / "01_schema.sql").write_text(lock + ensure)
@@ -1799,6 +1801,9 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     for table in ("RecoveryRequest", "BulkEnrollmentBatch", "BulkEnrollmentStaging",
                   "TokenPermission", "DeviceBinding", "RevocationList"):
         write(full.replace("REVOKE UPDATE, DELETE ON %s FROM polaris_app;\n" % table, ""), True, True)
+        assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", table
+    for table in ("CryptographicAlgorithm", "AgencyAlgorithmAuth"):
+        write(full.replace("REVOKE INSERT, UPDATE, DELETE ON %s FROM polaris_app;\n" % table, ""), True, True)
         assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", table
     write(full, True, True)
 

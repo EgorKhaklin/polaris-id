@@ -845,6 +845,14 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
             return _fail("c1_aor_priv", "09_grants.sql must REVOKE UPDATE, DELETE ON " + table + ": its "
                                         "procedure is its only updater, and a direct UPDATE records the "
                                         "recovery channels or re-opens an issued batch (C1)")
+    # 1.0.0-rc.58: the algorithm registry and the authorizations uc1/uc8/uc_bulk_issue read.
+    for table in ("CryptographicAlgorithm", "AgencyAlgorithmAuth"):
+        if not re.search(r"REVOKE\s+INSERT\s*,\s*UPDATE\s*,\s*DELETE\s+ON\s+" + table + r"\s+FROM\s+polaris_app",
+                         grants, re.I):
+            return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT, UPDATE, DELETE ON " + table + ": "
+                                        "nothing the application runs writes it, and with those rights the "
+                                        "application role revives a deprecated algorithm or grants an "
+                                        "authority the right to issue (C7)")
     head = re.search(r"PROCEDURE\s+uc_pseudonymize_individual\b.*?AS\s+\$\$", proc, re.I | re.S)
     if not head or not re.search(r"SECURITY\s+DEFINER", head.group(0), re.I):
         return _fail("c1_aor_priv", "uc_pseudonymize_individual must be SECURITY DEFINER: it is the "
