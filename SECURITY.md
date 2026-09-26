@@ -1,248 +1,116 @@
 # Security Policy
 
-**Reader:** a security researcher who has found something, or a reviewer
-checking how findings are handled. **Job:** how to report a vulnerability
-privately, what is in scope, what response to expect, how a release is
-verified, and how dependencies are kept current.
-
-Polaris is a reference implementation of a national identity-token system.
-Its guarantees are enforced in the database schema and machine-checked by
-`polaris_checks`; the operator-facing security posture, control by control,
-is [docs/operator/SECURITY-CONTROLS.md](docs/operator/SECURITY-CONTROLS.md), the threat model is
-[docs/design/threat-model.md](docs/design/threat-model.md), and the scope prepared
-for an external engagement is [docs/RED-TEAM-SCOPE.md](docs/RED-TEAM-SCOPE.md).
-
----
-
-## What the registries serve, and what the older versions carry (2026-09-24)
-
-**`polaris-oid4vp` is at `1.0.0rc7`, published 2026-09-24; the other three packages are at
-`1.0.0-rc.3`, published 2026-09-18.** The defects listed below were
-found by measuring the *downloaded wheels* of `1.0.0-rc.1` rather than by reading a
-changelog, and they are fixed in the version the registries now serve. If you installed
-rc.1 or `0.1.0`, or pinned either, this is what you are still running.
-
-| Package | Current | Older versions still carrying the defects |
-|---|---|---|
-| `polaris-oid4vp` | `1.0.0rc7` | `1.0.0rc3`: no Token Status List support at all, so a revoked credential is never discovered to be revoked (added in rc.4 to rc.6, bounded against hostile input in rc.7). `1.0.0rc1`, `0.1.0`: **never reads `exp`**, so a credential whose validity has ended verifies as authentic. Also absent: the finite-number guards, the forbidden-disclosure-name list (a disclosure can overwrite `iss` or the key-binding key in the returned claims), the presentation size bounds (four denial-of-service paths that need no credential), and the `vct` binding. |
-| `polaris-verify` | `1.0.0rc3` | `1.0.0rc1`, `0.1.0`: **never reads a trust attestation's `valid_until`**, so an authority that time-boxed an edge to one year keeps granting cross-authority acceptance after it ends. No finite-number guards, so an agent grant signed with a non-finite `max_amount` is a signed unlimited grant wearing a limit field; and five entry points raise instead of returning a verdict. |
-| `polaris-sdk-python` | `1.0.0rc3` | `1.0.0rc1`, `0.1.0`: no finite-number guards on `grant_within_limits`, so a spending ceiling is defeated by a value that is not a number. The cached access-token lifetime is whatever the issuer says, so a revoked client keeps presenting a token. |
-| `polaris-sdk-ts` (npm) | `1.0.0-rc.3` under `next` | `0.1.0` predates `1.0.0-rc.1` entirely: the canonicalisation and instant-parsing divergences from the wire specification, and the constant-time comparison whose length guard could be inverted, are all present. `latest` still resolves `0.1.0` by design, so a plain `npm install` gets the stable release and `@next` gets the candidate. |
-
-**What this does and does not mean.** Polaris is a reference implementation on notional data
-and has never held real identity data; these packages are offered for evaluation and
-interoperability work, not to protect anything. Naming the older defects is still worth
-doing: someone evaluating the verifier against their own wallet is entitled to know whether
-the copy they installed checks expiry, because **the happy path works either way.**
-`docs/STRANGER-PATH.md` was walked end to end from PyPI on 2026-09-18 against the published
-`polaris-oid4vp` 1.0.0rc3 and a stock walt.id wallet presented successfully; an
-interoperability success is not a security result.
-
-This table's Current column is checked against
-[docs/RELEASING.md](docs/RELEASING.md) on every run, so it cannot go on describing a
-registry state that has moved. It did: between the rc.3 publish and 2026-09-18 this section
-still told a reader the fixes were "not published".
-
-The full list, surface by surface, is in
-[docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md); the release decision is recorded
-in [docs/RELEASING.md](docs/RELEASING.md); the walk and its controls are in
-[lab/EXTERNAL-NOUNS.md](lab/EXTERNAL-NOUNS.md).
+How to report a vulnerability, what is in scope, what to expect, and how to verify a release.
+Polaris is a reference implementation on notional data; it has never held real identity data.
+Related: [security controls](docs/operator/SECURITY-CONTROLS.md) · [threat model](docs/design/threat-model.md) · [red-team scope](docs/RED-TEAM-SCOPE.md) · [review packet](docs/REVIEW-PACKET.md).
 
 ---
 
 ## Reporting a vulnerability
 
-**Do not** file a public GitHub issue for a security vulnerability.
+**Do not** open a public issue. Report privately through the repository's **Security** tab
+(**Report a vulnerability**), which opens a private advisory only the maintainer can see, or
+email PolarisID@protonmail.com.
 
-**Report privately** through GitHub: open the repository's Security tab and
-use **Report a vulnerability**, which creates a private advisory only the
-maintainer can see. If you cannot use GitHub, email
-PolarisID@protonmail.com.
+Include: the component, the version (`/api/health` or `polaris_web/__version__.py`),
+reproduction steps, the impact (which of C1 to C10, if any), a suggested fix if you have one,
+and whether you have published anywhere.
 
-Include:
+| | |
+|---|---|
+| Acknowledgement | within 5 business days |
+| Severity assessment | within 10 business days |
+| **Critical** (breaks C1 to C10 in a deployable configuration) | patch within 14 days |
+| **High** (authentication bypass, data exposure, denial of service against the live stack) | patch within 30 days |
+| **Medium** (a leak that does not violate C2, an insecure default, weakened cryptography) | patch within 90 days |
+| **Low** (a defence-in-depth gap, a documentation error that could mislead a deployment) | patch within 180 days |
+| Coordinated disclosure | 90 days from the report by default |
 
-- The affected component (web app, SQL schema, migration, script, launcher,
-  container image, dependency)
-- The affected version (`/api/health` returns the running version; the
-  canonical version is `polaris_web/__version__.py`)
-- Reproduction steps
-- Impact: which of C1 to C10 is at risk, if any, and which anti-coercion
-  surface is affected
-- Suggested remediation, if you have one
-- Whether you have published anywhere; coordinated disclosure is preferred
+**Before you start,** read [docs/REVIEW-PACKET.md](docs/REVIEW-PACKET.md): what each subsystem
+guarantees, what does not stand in the way, and the known limitations, so you can tell an
+accepted limitation from a defect. Constraints, triggers, procedures, row-level security, the
+checks and the conformance suite are all mutation-tested; the conformance drill lists the 43
+verdict fields the published cases do not constrain.
 
-**Response:** initial acknowledgement within 5 business days, severity
-assessment within 10 business days.
+---
 
-**Before you start, read [docs/REVIEW-PACKET.md](docs/REVIEW-PACKET.md).** It says
-what each subsystem is supposed to guarantee, what mechanism holds it, and -- in the
-column that matters -- what does NOT stand in the way. It also lists the known
-limitations, each with a witness in the tree, so you can tell an accepted limitation
-from a defect before spending a day on it, and twelve guarantee-attack prompts that
-name the attacks the maintainers would most like attempted. Nothing on that page has
-been reviewed by anybody outside this repository, which is the reason it is written
-down at all.
+## Published packages
 
-Worth knowing before you start, because it says what has already been tried: the
-verification layer is itself mutation-tested. `scripts/polaris-check-mutation-drill.py`
-comments out each invariant's subject and requires the check to notice;
-`scripts/polaris-constraint-mutation-drill.py` drops each CHECK constraint the database
-suite names and requires the naming tests to go red (46 of 46 are load-bearing). The
-same treatment of the triggers is in progress and the current count is in the CHANGELOG;
-where a trigger is not yet covered by a test, that is stated rather than implied.
+| Package | Current | Older versions still carrying known defects |
+|---|---|---|
+| `polaris-oid4vp` | `1.0.0rc7` | `1.0.0rc3`: no Token Status List support. `1.0.0rc1`, `0.1.0`: **never reads `exp`**, plus missing input bounds and disclosure-name guards. |
+| `polaris-verify` | `1.0.0rc3` | `1.0.0rc1`, `0.1.0`: **never reads a trust attestation's `valid_until`**; no finite-number guards. |
+| `polaris-sdk-python` | `1.0.0rc3` | `1.0.0rc1`, `0.1.0`: no finite-number guards on grant limits; cached tokens outlive a revoked client. |
+| `polaris-sdk-ts` (npm) | `1.0.0-rc.3` under `next` | `0.1.0` (what `latest` resolves by design): canonicalisation and parsing divergences from the wire specification. |
 
-**Fix, by severity:**
-
-- **Critical** (breaks C1 to C10 in a deployable configuration): patch
-  within 14 days, coordinated disclosure
-- **High** (authentication bypass, data exposure not covered by C2, denial
-  of service against the live stack): patch within 30 days
-- **Medium** (an information leak that does not violate C2, an insecure
-  default, weakened but unbroken cryptography): patch within 90 days
-- **Low** (a defence-in-depth gap, a documentation error that could lead to
-  an insecure deployment): patch within 180 days
-
-**Coordinated disclosure:** the default disclosure date is 90 days from the
-initial report, extended for Critical findings as the patch warrants.
+If you installed or pinned an older version, upgrade. The Current column is checked against
+[docs/RELEASING.md](docs/RELEASING.md) on every run. The packages are for evaluation and
+interoperability work, not for protecting anything.
 
 ---
 
 ## Scope
 
-### In scope
+**In scope:** the application (`polaris_web/`), the SQL schema, procedures and triggers
+(`polaris_sql/`), the ZK prover and its second witness (`polaris_zk/`), the invariant checks
+(`polaris_checks/`), every script under `scripts/`, the container images, compose files, Helm
+chart and Linux installer, the macOS launcher, the migration framework, the exchange fabric,
+the verify SDKs and conformance suite, the card profile and emulator (`polaris_card/`; a
+missing silicon property is a documentation finding only), and documentation errors that could
+lead to an insecure deployment.
 
-- The Flask application (`polaris_web/`)
-- The SQL schema, procedures, triggers and indexes (`polaris_sql/`)
-- The Rust ZK prover and verifier (`polaris_zk/`) and the Python second witness
-- The invariant-check layer (`polaris_checks/`)
-- Every script under `scripts/` (all now `polaris-*`: operator tools, the CI drills and the contributor gates)
-- The Dockerfiles, the compose files (the HA profile's Patroni, etcd and HAProxy
-  configuration included), the Helm chart and the Linux installer
-- The macOS launcher
-- The migration framework
-- The exchange fabric (P8): the exchange gateway and its replay register, the auth
-  broker and its consumed-code register, document signing with long-term validation,
-  the signed registry, the timestamp authority, the receipt transparency log, and the
-  wallet's presentation and QR framing
-- The verify SDKs (`sdk/python`, `sdk/typescript`) and the conformance suite
-  (`conformance/`), which independent implementations build to. **What passing the
-  conformance suite does and does not prove** is itself worth reading before you rely
-  on it: `scripts/polaris-conformance-mutation-drill.py` measures which verdict fields
-  the published cases actually constrain, and 43 of them are not constrained at all. An
-  implementation can pass all 118 cases while never performing those checks. None of the
-  43 can be closed by writing a case: each needs a conforming verifier to compute
-  something it does not, so the contract constrains what its WEAKEST conforming
-  implementation computes. The drill
-  declares the list exactly and CI fails if it grows. A divergence between the shipped
-  verifiers that the suite fails to catch is a finding we want: v9.430 and v9.431 each
-  found one that way (no replay bound on holder proofs in either SDK; no way for either
-  SDK to report whether an artifact's issuer is trusted)
-- The physical layer (`polaris_card/`, P4): the card profile and its encoding, the
-  software token emulator and its APDU contract, the personalization flow, and the
-  reference verifier device. A finding that an emulator does not model a property of
-  real silicon (constant time, fault-injection resistance, key non-extractability) is
-  in scope as a documentation error only: those are properties of a certified part,
-  and the profile says so
-- The documentation, where an error would lead to an insecure deployment
+**Out of scope:**
 
-### Out of scope
-
-- **The seed accounts and notional data.** The sample database ships three
-  demonstration accounts whose passwords are printed in the README's
-  quickstart; production initialization disables and scrambles them. Their
-  existence is not a vulnerability.
-- **Self-inflicted denial of service** through misconfiguration of your own
-  deployment.
-- **Banking, payments and merchant codes.** Excluded by C10; a finding that
-  Polaris lacks a transaction primitive is by design.
-- **Hosted infrastructure you do not control.** Reports against a
-  deployment you operate are in scope; reports against example domains are
-  not.
-- **Upstream vulnerabilities in third-party dependencies** not yet pinned in
-  the `polaris_web/requirements*.txt` files. Report those upstream; they are
-  picked up by the dependency policy below.
-- **The placeholder signing default.** Without `POLARIS_USE_REAL_PQC=1` and liboqs,
-  `TokenSignature.signature_bytes` holds a 32-byte value labelled
-  `DETERMINISTIC-PLACEHOLDER-SHA3-256` that verifies against no key, where real
-  ML-DSA-65 produces 3,309. That is the default, including in CI, and it is a named
-  development profile rather than a defect: production fails closed at boot without
-  real signing (`check_real_pqc_default_boot`), and the profile warns loudly when used
-  unnamed. A report that credential signatures do not verify on a default checkout is
-  this, and is already known. What IS in scope is the guard failing -- a production
-  boot that does not fail closed, a placeholder that is not labelled, or a verifier
-  that accepts a placeholder as though it were a signature.
-
-  Related, and worth reading before relying on the word: the cryptographic claim is
-  **algorithm agility under an audited migration path**, not settled security against a
-  quantum adversary. ML-DSA-65 rests on Module-LWE hardness, which this repository
-  cannot establish. What a break would and would not cost -- including that a
-  credential's classical half during cutover is protected by nothing here -- is stated
-  in [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
+- The seed accounts and notional data (their passwords are public by design; production
+  initialization disables them).
+- Denial of service caused by misconfiguring your own deployment.
+- Payments and transactions (excluded by C10).
+- Hosted infrastructure you do not control.
+- Upstream vulnerabilities in dependencies (report upstream; the dependency policy picks them up).
+- **The placeholder signing default.** Without `POLARIS_USE_REAL_PQC=1` and liboqs, development
+  signing writes a labelled placeholder that verifies against no key; production fails closed
+  without real signing (`check_real_pqc_default_boot`). In scope: that guard failing. The
+  cryptographic claim is algorithm agility under an audited migration path, not settled security
+  against a quantum adversary; see [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
 ---
 
-## Verifying a release (supply chain)
+## Verifying a release
 
-Every published release carries an SPDX 2.3 SBOM for each artifact (the
-Python runtime surface and the five self-built images), and each SBOM carries
-a signed SLSA build-provenance attestation. The attestation is keyless: it is
-signed through GitHub's OIDC identity via Sigstore (Fulcio certificate, Rekor
-transparency log), so there is no long-lived signing key to leak.
-
-To confirm an SBOM you downloaded from a release was produced by this
-repository's release workflow and not tampered with or forged:
+Every release carries SPDX SBOMs (the Python surface and the five images) with signed, keyless
+SLSA build provenance (Sigstore via GitHub OIDC):
 
 ```bash
 gh attestation verify sbom-python.spdx.json --repo EgorKhaklin/polaris-id
 ```
 
-A passing check binds the file's SHA-256 to this repository and the workflow
-that built it; the SBOM then enumerates the exact package set of that
-release. Image signing at a registry digest waits until the container images
-are published to a registry; today they are built and scanned in CI but not
-published, so there is no registry reference to sign.
+Container images are built and scanned in CI but not published to a registry, so there is no
+image digest to sign yet.
 
 ---
 
 ## Dependencies
 
-Dependabot alerts and security updates are enabled on the repository, and
-Dependabot opens weekly version-update PRs for the Python, Rust, GitHub
-Actions and Docker surfaces (`.github/dependabot.yml`). Patch and minor bumps
-are batch-applied to `main` and validated by one full CI run, after which
-Dependabot closes its own PRs on its next scan; that is why the closed PRs
-outnumber the merged ones. Majors of foundation dependencies (PostgreSQL, the
-Python base image, the plonky2 proving system) are deliberate roadmap work
-with their own test passes, never a blind bump. Independently of Dependabot,
-the `cve-scan` and `image-cve-scan` CI jobs fail the build on a known CVE in
-the runtime surface or a fixable critical in a self-built image.
+Dependabot alerts and weekly updates cover Python, Rust, GitHub Actions and Docker. Patch and
+minor bumps are applied in batches and validated by a full CI run; majors of foundation
+dependencies are planned work. The `cve-scan` and `image-cve-scan` CI jobs fail the build on a
+known CVE in the runtime surface or a fixable critical in an image.
 
 ---
 
 ## Reporting under duress
 
-Vulnerability disclosure is itself an anti-coercion surface. This policy
-commits to coordinated disclosure with no retaliation against good-faith
-researchers, a documented response timeline, and embargo coordination before
-publication. If you are reporting under duress, say so in the initial
-message; the report is handled as a duress-channel event. The application's
-duress-code mechanism is for holders authenticating into Polaris, not for
-this channel, but the same commitment applies: a coerced report must not
-lead to retaliation against the researcher.
-
----
+No retaliation against good-faith researchers. If you are reporting under duress, say so in
+your first message and it will be handled accordingly.
 
 ## Credit
 
-Researchers who report Critical or High findings and coordinate disclosure
-are credited, with consent, in the CHANGELOG entry of the patch that ships;
-anonymity is honoured on request. There is no bug-bounty payout: Polaris is
-a reference implementation, not a deployed service. Operators of deployed
-instances may run their own programs against their deployments, citing this
-policy.
+Researchers who report Critical or High findings and coordinate disclosure are credited, with
+consent, in the release that ships the fix; anonymity is honoured on request. There is no bug
+bounty: Polaris is a reference implementation, not a deployed service.
 
 ---
 
 *Maintainer: Egor Khaklin (VANTA)*
-*Last updated: 2026-09-24 (v1.0.0-rc.62)*
+*Last updated: 2026-09-26 (v1.0.0-rc.62)*
 *Machine-readable: the live `/.well-known/security.txt` route (RFC 9116)*
