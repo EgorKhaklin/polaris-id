@@ -115,6 +115,10 @@ and for a standard or an organisation, what it is.
     and co-signed past a threshold, and invisible on the credential.
   \item[Two-witness principle.] No cryptographic verdict is trusted from a single implementation; a
     second, independently written one must agree or abstain explicitly.
+  \item[Version numbers.] The tree counted builds as \code{v9.N} until mid-September 2026 and
+    then took release-candidate numbers, \code{1.0.0-rc.N}, which move only for a change seen from
+    outside. This map is drawn at \code{1.0.0-rc.7}; a \code{v9.N} beside a measurement says which
+    build it was taken on. The packages carry their own version numbers.
   \item[Witness.] An independent party that cosigns log heads it found consistent and refuses a fork.
   \item[Zero-knowledge proof.] A proof that a statement is true which reveals nothing beyond the
     statement's truth; in Polaris, membership of a token in an epoch.

@@ -25,7 +25,7 @@ it does not know the law. \sExt
 \begin{itemize}
   \item No path in the product records the recovery ceremony's three out-of-band channels (the
     biometric check, the sworn statement, the witness co-sign). The approval requires all three, the
-    decision page shows them as pending, and since 1.0.0-rc.54 only the schema owner can set them,
+    decision page shows them as pending, and since a correction made after this map was drawn only the schema owner can set them,
     in an act the audit trail does not attribute; before it the application's own role could set
     all three, which made three independent verifications one role's word.
   \item The physical token is a specification, an emulator and published vectors; no card is
@@ -116,7 +116,7 @@ test each one. A row leaves the table only when a named party does that, on a da
 \textbf{Claim} & \textbf{Evidence today} & \textbf{What an outsider would do} \\
 \midrule
 \endhead
-The schema refuses what the application must not do (C1, C2, C3) & Constraints, triggers and grants; mutation drills; since rc.45 the suites also run as the application role & Attack the database as the application role with the schema in hand \\
+The schema refuses what the application must not do (C1, C2, C3) & Constraints, triggers and grants; mutation drills; since this map was drawn the suites also run as the application role & Attack the database as the application role with the schema in hand \\
 Issuer-unlinkability in zero-knowledge mode & A circuit, a second witness by the same author, a linkability lab & Review the circuit and derive its concrete security; run the linkability lab's adversary with their own strategy \\
 The anonymity set is the epoch, floored & Refusal at epoch close and at verification, tested in the suites & Measure what an issuer learns from epoch timing and size in a realistic enrolment pattern \\
 Credential uniqueness per enrolment identity & The unique index and its formal model & Enrol one person twice through the documented desk procedure and see what notices \\
