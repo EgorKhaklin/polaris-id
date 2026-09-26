@@ -2,66 +2,9 @@
 \section{Conclusion: the whole organism}
 \label{sec:conclusion}
 
-A reader who has followed the rings outward should now be able to answer the questions this paper
-set out to make answerable. Each answer below is one sentence, and each points back to the section
-that carries the mechanism.
+Every ring has now been walked, and the whole can be said in three parts: what Polaris does today, what it does not, and what it is trying to become.
 
 \begin{description}
-  \item[What the central credential is.] One signed claim, \emph{this authority issued this token to
-    this person}, held as a file the holder controls and optionally bound to a key the holder holds,
-    in a lifecycle with exactly one active state, with what its enrolment rested on recorded beside
-    it (Section~\ref{sec:core}).
-  \item[Why the schema surrounds it.] Because a promise enforced only by the people who run the
-    system is not a promise; triggers, check constraints and unique indexes bind every client and
-    every restore, and each is now mutation-tested so the tests that prove them are believed for a
-    reason (Section~\ref{sec:walls}).
-  \item[How cryptographic trust works.] ML-DSA signatures over digests, checked by two independent
-    implementations at issuance and sampled at use, with keys that have a recorded lifecycle and an
-    algorithm that is a row rather than a constant, so that a population can be re-signed when the
-    assumption under it falls (Section~\ref{sec:signatures}).
-  \item[How verification differs from authorization.] Authenticity is permanent and cacheable;
-    authorization is fresh and revocable, decided on the primary or by a short-lived signed assertion
-    whose window is the honest cost of going offline (Sections~\ref{sec:verifiers}
-    and~\ref{sec:authorization}).
-  \item[How privacy is bounded.] By what is stored, not by who may read it: no token identifier on
-    a zero-knowledge event, a membership proof that reveals nothing but membership within an epoch's
-    crowd, bounded reads, and a measured statement of what two colluding verifiers can and cannot do
-    on each presentation path (Section~\ref{sec:privacy}).
-  \item[How relying parties use credentials.] Through a wallet protocol, four packaged verifiers,
-    a login broker that keeps no record of who logged in where, and a path a stranger can walk from a
-    clean machine to an accepted presentation (Section~\ref{sec:use}).
-  \item[How authorities federate.] Each with its own key and no central store, by directional
-    per-context attestations that never form a chain, and by signed feeds a relying party decides
-    on offline (Section~\ref{sec:federation}).
-  \item[How transparency constrains authority.] Append-only logs with signed heads, monitors that
-    prove history only grew, witnesses that cosign, gossip, and produce a non-repudiable proof
-    when a log tells two stories, and a public count of the authority's own most invasive act
-    (Section~\ref{sec:transparency}).
-  \item[How institutional exchange works.] Through a signed registry, a gateway that authenticates
-    by key and authorizes by the responder's own attestation, receipts that commit to hashes and never
-    bodies, a timestamp authority that learns nothing, and signatures that outlive their keys
-    (Section~\ref{sec:institutions}).
-  \item[How Polaris survives failures.] By drilling them: failover, a lost region, replicas,
-    partitions, backup and restore, chaos, rolling deploys and the end of a pilot, each with a
-    measured number and a ceiling, on every push (Section~\ref{sec:operations}).
-  \item[What Atlas and Athena do.] Atlas sees what the system is doing in bounded aggregates;
-    Athena understands the structure of authority and the constitution as data; neither may model a
-    person (Section~\ref{sec:cognition}).
-  \item[Why AI agents change the identity problem.] Because the question becomes what kind of actor
-    is acting, under whose authority, within what scope, verifiable without learning anything else
-    (Section~\ref{sec:agents}).
-  \item[How privacy-preserving proof of personhood fits.] On the existing uniqueness constraint and
-    membership proof, with a scoped nullifier, a holder-side key and a prover on the holder's device,
-    all built, and a presentation that carries no stable handle, which exists only on the
-    zero-knowledge path (Sections~\ref{sec:agents} and~\ref{sec:research}).
-  \item[How delegated agent authority works.] As a signed, scoped, expiring, separately revocable
-    grant from a human's credential to an agent, verified by a service that learns only the five
-    answers it needs, with the bounds that keep it from being a bearer token mutation-tested
-    (Section~\ref{sec:agents}).
-  \item[How stigmergic debugging could help.] As an outside colony of specialised agents leaving
-    evidence on a shared landscape, with confidence drawn only from reproductions; it remains a
-    proposal, and the first outside observer arrived instead as somebody else's wallet
-    (Section~\ref{sec:research}).
   \item[What Polaris can do today.] Issue, sign, verify, revoke, present, federate, log, witness,
     exchange, timestamp and sign documents, re-sign a population, wind a pilot back, be installed from
     a public registry, and accept a presentation from a wallet it had never met, all on notional
@@ -79,7 +22,7 @@ that carries the mechanism.
 \end{description}
 
 \begin{figure}[H]\centering
-  \adjustbox{max width=0.84\textwidth,max totalheight=0.66\textheight,center}{\input{v3-figures/layer-ladder}}%
+  \adjustbox{max width=0.84\textwidth,max totalheight=0.55\textheight,center}{\input{v3-figures/layer-ladder}}%
   \caption{The ladder. From the person, who exists outside the software, to the
 software of strangers, who exist outside it too. The right-hand column is the refusal each layer
 makes of the layer below it; the last rung's refusal is the operating contract's, and nothing in
@@ -88,7 +31,7 @@ the tree can discharge it.}\label{fig:layer-ladder}\end{figure}
 The town's register is small. The walls around it are what make it safe to keep. And the reason the
 system has so many rings is not that its builders enjoyed rings: each one was added when the ring
 inside it was found to be correct and still unable to prove what a society would need to know.
-Credential authenticity is not current authorization. Current authorization is not privacy. Privacy
+A credential's authenticity is not its current authorization. Current authorization is not privacy. Privacy
 is not freedom from coercion. Federation is not institutional independence. A transparency log is not
 protection from a split view. A green test is not proof that the test asked the right question. And a
 system that has checked itself is not a system that anyone else has checked. Polaris is the
