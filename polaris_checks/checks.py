@@ -9789,6 +9789,19 @@ def check_athena_read_only(root: pathlib.Path) -> list[Finding]:
         if m.group(2).upper() != "STABLE":
             return _fail("athena_read_only",
                          f"athena function {m.group(1)}() must be declared STABLE (read-only), not {m.group(2)}")
+    # 1.0.0-rc.61: the curated rows are the owner's. Revoked in this file (fresh load, after
+    # 09_grants.sql) and again in 09_grants.sql (the object sync runs it after this file).
+    grants = _read(root, "polaris_sql/09_grants.sql") or ""
+    for table in sorted(_ATHENA_TABLE_ALLOWLIST):
+        if not re.search(r"REVOKE\s+INSERT\s*,\s*UPDATE\s*,\s*DELETE\s+ON\s+" + table + r"\s+FROM\s+polaris_app",
+                         clean, re.I):
+            return _fail("athena_read_only",
+                         f"16_athena.sql must REVOKE INSERT, UPDATE, DELETE ON {table} FROM polaris_app: the "
+                         "application role could otherwise rewrite the constitution the /athena console shows")
+        if table not in grants:
+            return _fail("athena_read_only",
+                         f"09_grants.sql must repeat the revoke on {table}: the object sync re-grants every "
+                         "table after 16_athena.sql runs")
     return _ok("athena_read_only",
                f"all {len(bodies)} Athena functions are STABLE, non-mutating, and SECURITY INVOKER "
                "(read-only; Athena explains authority, never manufactures it)")

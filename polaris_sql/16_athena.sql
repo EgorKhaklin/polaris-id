@@ -138,6 +138,16 @@ INSERT INTO athena_key_custody (driver, label, is_hardware, source_ref) VALUES
 ON CONFLICT (driver) DO UPDATE SET
   label = EXCLUDED.label, is_hardware = EXCLUDED.is_hardware, source_ref = EXCLUDED.source_ref;
 
+-- 1.0.0-rc.61: the curated state is written by this file, as the owner, and by nothing else.
+-- It loads after 09_grants.sql, so the default privileges gave polaris_app INSERT, UPDATE and
+-- DELETE on all three tables, and as that role one UPDATE made the /athena console say C2 is
+-- enforced by "nothing" and rewrote C2's statement. check_athena_rule_enforcement_resolves
+-- proves the rows in this FILE; the rows an operator reads are the ones in the database.
+-- 09_grants.sql repeats the revoke, because the object sync re-applies it after this file.
+REVOKE INSERT, UPDATE, DELETE ON athena_constitutional_rule FROM polaris_app;
+REVOKE INSERT, UPDATE, DELETE ON athena_rule_enforcement FROM polaris_app;
+REVOKE INSERT, UPDATE, DELETE ON athena_key_custody FROM polaris_app;
+
 -- ----------------------------------------------------------------------------
 -- Object views (all read-only over authority tables; NONE reference a person).
 -- ----------------------------------------------------------------------------

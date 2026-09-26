@@ -5,7 +5,7 @@ national-identity data. **Job:** the bound on every claim in this repository.
 Status first, then the decisions only a deploying organization can make, then
 the engineering record with the check that pins each closed item.
 
-**Status (v1.0.0-rc.60): not production-ready for real identity data.** Every
+**Status (v1.0.0-rc.61): not production-ready for real identity data.** Every
 engineering gap this ledger enumerated is closed and pinned by a check (the
 table at the end). The protocol layer (P8, v9.320 to v9.331: the registry, the
 trust list, the exchange gateway and its receipts, the timestamp authority,
@@ -544,7 +544,7 @@ phase. [MISSION.md](../MISSION.md) still governs every change, and
 
 ---
 
-**The operator a rule names is the operator the application names** (stated at 1.0.0-rc.60).
+**The operator a rule names is the operator the application names** (stated at 1.0.0-rc.61).
 Every procedure that enforces a rule about people (an admin decision; the recovery ceremony's
 requester, recorders, witness and approver being different people) authenticates its actor by a
 user id the caller passes, never by the database session, because every operator reaches the

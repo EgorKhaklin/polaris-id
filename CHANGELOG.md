@@ -11,6 +11,28 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.61 — 2026-09-26 (the constitution Athena shows is the owner's to write)
+
+CORE-BUG against the Athena design record (`docs/design/athena.md`), which says the enforcement
+map "is only true because a check proves it", and the `/athena` console that shows it to operators.
+Externally observable: the application role can no longer insert, update or delete
+`athena_constitutional_rule`, `athena_rule_enforcement` or `athena_key_custody`. No migration:
+`16_athena.sql` is object-synced, and `polaris-migrate.sh --sync-objects` delivers the revoke to an
+upgraded database. Nothing is published.
+
+`16_athena.sql` loads after `09_grants.sql`, so the default privileges gave `polaris_app` write
+access to the three curated tables. As that role, one UPDATE made the console say C2 is enforced
+by "nothing" and a second rewrote C2's statement. `check_athena_rule_enforcement_resolves` proves
+the rows in the file; the rows an operator reads are the ones in the database.
+
+- `16_athena.sql` revokes INSERT, UPDATE and DELETE on the three tables (a fresh load runs it after
+  the grants); `09_grants.sql` repeats the revoke for tables that exist, because the object sync
+  runs it after `16_athena.sql` and re-grants every table.
+- Test: `test_app_role_cannot_rewrite_the_constitution_athena_shows`, as `polaris_app`, eight
+  write cases and a read control; the write cases fail on rc.60.
+- `check_athena_read_only` requires both revokes; detection cases for each table, a commented-out
+  revoke, and a `09_grants.sql` that omits one.
+
 ## v1.0.0-rc.60 — 2026-09-26 (a recovery can be approved through the product again)
 
 CORE-BUG, a regression from rc.54, against the recovery ceremony the README lists as delivered

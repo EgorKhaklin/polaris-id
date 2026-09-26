@@ -6768,10 +6768,26 @@ def test_athena_no_person_check_discriminates(tmp_path):
 
 def test_athena_read_only_check_discriminates(tmp_path):
     # Athena cannot act: STABLE, non-mutating, never SECURITY DEFINER.
+    TABLES = ("athena_constitutional_rule", "athena_rule_enforcement", "athena_key_custody")
+    REVOKES = "".join("REVOKE INSERT, UPDATE, DELETE ON %s FROM polaris_app;\n" % t for t in TABLES)
     GOOD = ("CREATE OR REPLACE FUNCTION athena_x(p INT) RETURNS TABLE(n INT)\n"
-            "  LANGUAGE sql STABLE AS $b$ SELECT 1 LIMIT 1; $b$;\n")
+            "  LANGUAGE sql STABLE AS $b$ SELECT 1 LIMIT 1; $b$;\n" + REVOKES)
+    GRANTS = "ARRAY[%s]\n" % ", ".join("'%s'" % t for t in TABLES)
+    _athena_write(tmp_path, "polaris_sql/09_grants.sql", GRANTS)
     _athena_write(tmp_path, "polaris_sql/16_athena.sql", GOOD)
     assert checks.check_athena_read_only(tmp_path)[0].level == "OK", "must PASS read-only"
+    # rc.61: the application role may not rewrite the curated constitution rows.
+    for t in TABLES:
+        line = "REVOKE INSERT, UPDATE, DELETE ON %s FROM polaris_app;\n" % t
+        _athena_write(tmp_path, "polaris_sql/16_athena.sql", GOOD.replace(line, ""))
+        assert checks.check_athena_read_only(tmp_path)[0].level == "FAIL", "must FAIL without the revoke on " + t
+        _athena_write(tmp_path, "polaris_sql/16_athena.sql", GOOD.replace(line, "-- " + line))
+        assert checks.check_athena_read_only(tmp_path)[0].level == "FAIL", "a commented revoke is no revoke: " + t
+        _athena_write(tmp_path, "polaris_sql/16_athena.sql", GOOD)
+        _athena_write(tmp_path, "polaris_sql/09_grants.sql", GRANTS.replace("'%s'" % t, "'x'"))
+        assert checks.check_athena_read_only(tmp_path)[0].level == "FAIL", "must FAIL when 09 drops " + t
+        _athena_write(tmp_path, "polaris_sql/09_grants.sql", GRANTS)
+    assert checks.check_athena_read_only(tmp_path)[0].level == "OK"
     _athena_write(tmp_path, "polaris_sql/16_athena.sql",
                   GOOD.replace("LANGUAGE sql STABLE AS", "LANGUAGE sql STABLE SECURITY DEFINER AS"))
     assert checks.check_athena_read_only(tmp_path)[0].level == "FAIL", "must FAIL on SECURITY DEFINER"

@@ -215,6 +215,21 @@ REVOKE INSERT, UPDATE, DELETE ON AgencyAlgorithmAuth FROM polaris_app;
 -- application runs writes them; with write access its role lowered a context's policy and the
 -- next registry would have carried the weaker one under the authority's signature.
 REVOKE INSERT, UPDATE, DELETE ON VerificationContext FROM polaris_app;
+-- 1.0.0-rc.61: the Athena constitution the /athena console shows (which mechanism enforces
+-- each of C1-C10, and the key custody). 16_athena.sql writes it as the owner and revokes these
+-- rights itself on a fresh load, where it runs after this file; the object sync runs this file
+-- AFTER 16_athena.sql and re-grants every table above, so the revoke is repeated here, for
+-- tables that exist.
+DO $$
+DECLARE t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY['athena_constitutional_rule', 'athena_rule_enforcement',
+                             'athena_key_custody'] LOOP
+        IF to_regclass(t) IS NOT NULL THEN
+            EXECUTE format('REVOKE INSERT, UPDATE, DELETE ON %I FROM polaris_app', t);
+        END IF;
+    END LOOP;
+END$$;
 
 -- ----------------------------------------------------------------------------
 -- v8.15 / R11-6 / M2-11 — System-default GUCs for the issuer-discretion

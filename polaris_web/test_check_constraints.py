@@ -1693,6 +1693,36 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         self.assertEqual((row["sworn_statement_hash"], row["witness_co_sign_user_id"]), ("ab" * 32, witness),
                          "a recorded channel was overwritten")
 
+    def test_app_role_cannot_rewrite_the_constitution_athena_shows(self):
+        """1.0.0-rc.61. The /athena console shows each of C1-C10, the mechanism that enforces it,
+        and the key custody, from three tables 16_athena.sql writes as the owner. It loads after
+        09_grants.sql, so the default privileges gave polaris_app write access, and one UPDATE made
+        the console say C2 is enforced by "nothing". All writes refused; the console still reads."""
+        conn = self._app_conn()
+        attempts = (
+            ("unenforce a rule", "UPDATE athena_rule_enforcement SET mechanism_name = 'nothing' "
+                                 "WHERE rule_code = 'C2'"),
+            ("drop an enforcement", "DELETE FROM athena_rule_enforcement WHERE rule_code = 'C2'"),
+            ("rewrite a rule", "UPDATE athena_constitutional_rule SET statement = 'x' WHERE rule_code = 'C2'"),
+            ("add a rule", "INSERT INTO athena_constitutional_rule (rule_code, title, statement, kind, "
+                           "source_ref) VALUES ('C11', 'x', 'x', 'CONSTRAINT', 'x')"),
+            ("delete a rule", "DELETE FROM athena_constitutional_rule WHERE rule_code = 'C10'"),
+            ("relabel custody", "UPDATE athena_key_custody SET is_hardware = TRUE"),
+            ("add custody", "INSERT INTO athena_key_custody (driver, label, is_hardware, source_ref) "
+                            "VALUES ('x', 'x', TRUE, 'x')"),
+            ("delete custody", "DELETE FROM athena_key_custody"),
+        )
+        for label, sql in attempts:
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql)
+            conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM athena_rule_enforcement WHERE rule_code = 'C2' "
+                        "AND mechanism_name <> 'nothing'")
+            self.assertGreater(list(cur.fetchone().values())[0], 0, "the console still reads the map")
+        conn.rollback()
+
     def test_app_role_writes_an_epoch_only_through_uc11(self):
         """2026-09-25. With INSERT on TokenStateEpoch the application role could write an epoch
         uc11_close_epoch refuses: one member, below the anonymity floor, or a committed_count

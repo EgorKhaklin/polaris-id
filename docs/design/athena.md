@@ -39,6 +39,10 @@ map is only true because a check proves it. `check_athena_rule_enforcement_resol
 fails the build if any named mechanism no longer exists, and the DB test
 `AthenaOntologyTests.test_rule_enforcement_map_matches_live_catalog` proves each
 one is present in the running catalog, not merely the source.
+The rows are the owner's to write: `16_athena.sql` and `09_grants.sql` revoke INSERT, UPDATE and
+DELETE on the three curated tables from the application role (1.0.0-rc.61; before it, that role
+could make the console say a rule was enforced by nothing), and `check_athena_read_only` requires
+both revokes.
 
 ## Why it is safe to exist
 
