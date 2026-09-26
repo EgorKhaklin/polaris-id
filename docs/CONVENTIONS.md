@@ -289,3 +289,26 @@ mention conventions cross-reference here rather than redefining.
 
 For the project-wide architecture map, see [`reference/SYSTEM-MAP.md`](reference/SYSTEM-MAP.md);
 for the constitution beneath these conventions, [`../MISSION.md`](../MISSION.md).
+
+## 14. Writing checks, tests and drills
+
+- **Read files through `_read`**, which strips comments, so a check cannot pass on a commented-out
+  mechanism. Use `_read_path` for globbed files and `_read_raw` only where the prose is the property.
+- **A check must not pass by finding nothing.** A scan for offenders fails when its subject is absent.
+- **A check that exercises code needs a fixture that can run:** add the behaviour to the fixture and
+  the perturbation that removes it, in the same change.
+- **A detection test asserts PASS on the good fixture before FAIL on the broken one**
+  (`check_detection_tests_have_a_positive_control`).
+- **A skipped test did not run.** A fixture creates the rows its property needs, looks ids up rather
+  than assuming them (other suites consume seed rows), and raises where it cannot.
+- **Mutate the source, not only the catalog.** The suites reload `06_triggers.sql`, so a catalog-only
+  mutation is undone mid-run. Restore in a loop that reports every failure.
+- **Never run two drills against one database**, and never pipe a gate into `tail` inside an `&&`
+  chain (the pipeline's status is `tail`'s).
+- **A schema change is tested on the upgrade path too:** load the previous schema, then apply the new
+  migrations and the object-sync list. A column type change also touches `RETURNS TABLE` functions,
+  dependent views (and their grants) and the sequence.
+- **A new top-level directory** goes into the SYSTEM-MAP tree, and must be `git add`ed before
+  `check_system_map` sees it.
+- **A drill wired into a CI job** runs with what that job installs; a missing precondition exits 3
+  and fails the step.
