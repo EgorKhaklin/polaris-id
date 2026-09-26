@@ -51,13 +51,9 @@ canonical reason vocabulary; the audit trail carries the procedural detail and t
 the issuer-discretion ceiling required one. Revocation looks forward: events recorded while a
 credential was valid are not invalidated, because history is not rewritten. \sImpl
 
-% The figure opens the subsection, under its heading, and the heading and the figure stay on
-% one page: the space they need together is reserved before the heading, so a page that
-% cannot hold both breaks before the heading rather than between them.
-\Needspace{27\baselineskip}
 \subsection{Authorization with the network off}
 
-\figfile{offline-status}{The offline trade, drawn as a timeline. The issuer signs a status
+\figfloat{offline-status}{The offline trade, drawn as a timeline. The issuer signs a status
 assertion with a window; the holder staples it; a relying party verifying offline inside the window
 accepts. If the issuer revokes the credential inside the window, the last \code{ACTIVE} assertion
 stays valid until it expires, and an offline verifier cannot know. The window is bounded by the

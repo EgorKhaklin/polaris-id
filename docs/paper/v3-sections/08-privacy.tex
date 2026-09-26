@@ -34,13 +34,9 @@ shaped so that a weak adversary cannot flatter the result. The claim is scoped p
 zero-knowledge-mode events. Selective and full events do carry a token identifier, because that is
 what those levels mean. \sImpl
 
-% The figure opens the subsection, under its heading, and the heading and the figure stay on
-% one page: the space they need together is reserved before the heading, so a page that
-% cannot hold both breaks before the heading rather than between them.
-\Needspace{44\baselineskip}
 \subsection{The membership proof}
 
-\figfile{holder-flow}{Holder, relying party and issuer, with what each sees and what each is
+\figfloat{holder-flow}{Holder, relying party and issuer, with what each sees and what each is
 prevented from seeing. The holder presents a file; the relying party decides offline with the
 detached verifier or an SDK and learns that a valid credential exists and its value; the issuer
 records, in zero-knowledge mode, an event with no token identifier, and keeps no who-verified-whom

@@ -96,7 +96,7 @@
 \let\polarisSectionRaw\section
 \renewcommand{\section}{\FloatBarrier\Needspace{14\baselineskip}\polarisSectionRaw}
 \let\polarisSubsectionRaw\subsection
-\renewcommand{\subsection}{\FloatBarrier\Needspace{7\baselineskip}\polarisSubsectionRaw}
+\renewcommand{\subsection}{\Needspace{7\baselineskip}\polarisSubsectionRaw}  % no barrier here: a float may pass a subsection heading, never a section (2026-09-25)
 \usepackage{adjustbox}
 
 % === LINE- AND PAGE-BREAKING QUALITY ===
@@ -208,6 +208,11 @@
 \newcommand{\figfit}[4]{\setlength{\intextsep}{6pt plus 2pt minus 2pt}\begin{figure}[H]\centering
   \adjustbox{max width=\textwidth,max totalheight=#1\textheight,center}{\input{v3-figures/#2}}%
   \caption{#3}\label{#4}\end{figure}}
+% \figfloat: a figure allowed to float to the top of the next page, for one that is too tall to
+% share a page with its heading, so the text runs on instead of leaving the page empty.
+\newcommand{\figfloat}[3]{\begin{figure}[tbp]\centering
+  \adjustbox{max width=\textwidth,max totalheight=0.88\textheight,center}{\input{v3-figures/#1}}%
+  \caption{#2}\label{#3}\end{figure}}
 \newcommand{\figpage}[3]{\begin{figure}[p]\centering
   \adjustbox{max width=\textwidth,max totalheight=0.84\textheight,center}{\input{v3-figures/#1}}%
   \caption{#2}\label{#3}\end{figure}}
