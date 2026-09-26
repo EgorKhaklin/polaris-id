@@ -544,6 +544,19 @@ phase. [MISSION.md](../MISSION.md) still governs every change, and
 
 ---
 
+**The operator a rule names is the operator the application names** (stated at 1.0.0-rc.60).
+Every procedure that enforces a rule about people (an admin decision; the recovery ceremony's
+requester, recorders, witness and approver being different people) authenticates its actor by a
+user id the caller passes, never by the database session, because every operator reaches the
+database through the one application role. Those rules therefore bind an honest application
+completely and a compromised one not at all: whoever holds the application's database credential
+(the application process, the CLI's connection) can name any operator and satisfy a four-eyes rule
+alone. Sign-in, hardware keys and session controls stand in front of the application, not the
+database. Closing this needs a per-operator database identity or operator-signed decisions checked
+outside the application; neither is built. Until then the defence against a compromised
+application is the record it leaves, which carries the names it gave, and evidence held outside
+the database, not the four-eyes rules themselves.
+
 ## Decisions only the operator can make
 
 Production with real identity data cannot proceed until each of these is

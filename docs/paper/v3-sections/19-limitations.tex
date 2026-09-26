@@ -31,6 +31,11 @@ it does not know the law. \sExt
     role could set all three, and then nobody but the schema owner could. What the record shows is
     who attests that a check happened, not that it did: the biometric check and the witness remain
     people's word, and the statement is kept as a hash, not verified.
+  \item The rules about people (an admin decision; the recovery ceremony's requester, recorders,
+    witness and approver being different people) name their actors by a user id the application
+    passes: every operator reaches the database through one application role. They bind an honest
+    application, and a compromised one can name any operator and satisfy a four-eyes rule alone. A
+    per-operator database identity or operator-signed decisions would close it; neither is built.
   \item The physical token is a specification, an emulator and published vectors; no card is
     manufactured and no silicon is certified, and the profile states which of its properties an
     emulator cannot establish.

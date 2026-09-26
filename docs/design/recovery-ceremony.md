@@ -58,6 +58,16 @@ The approver still has to be an admin who is neither the requester nor the
 witness (`witness_differs_from_parties`). What the procedure cannot establish is
 that the biometric check happened: it records who attests that it did.
 
+**What the four-eyes rule binds.** Every actor in the ceremony (requester,
+recorders, witness, approver) is a user id the caller passes; the database
+cannot tell which operator is really at the keyboard, because every operator
+reaches it through the one application role. The rule binds an honest
+application completely. An attacker holding the application's database
+credential can name four different operators and complete a recovery alone.
+The ledger (`docs/PRODUCTION-READINESS.md`) states this bound for every
+people-rule, and what would close it: a per-operator database identity or
+operator-signed decisions, neither built.
+
 ### Completing, by an admin
 
 `uc9_complete_recovery` requires the admin role twice over: the route carries
