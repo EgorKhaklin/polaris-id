@@ -61,7 +61,8 @@ jobs:
       - name: Install the app stack
         run: |
           python -m pip install --upgrade pip
-          pip install -r polaris_web/requirements.txt
+          # -dev: the property suite the drills run imports hypothesis.
+          pip install -r polaris_web/requirements-dev.txt
 
       - name: Install the postgres client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client

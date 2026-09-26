@@ -316,7 +316,8 @@ def _interpreter_can_run_the_suite(modules, cwd) -> str:
     return ""
 
 def main(argv=None) -> int:
-    _why = _interpreter_can_run_the_suite(['test_app', 'test_check_constraints'], ROOT / "polaris_web")
+    # Every suite this drill targets (SUITE_FILES), not two of them: see the trigger drill.
+    _why = _interpreter_can_run_the_suite([f[:-3] for f in SUITE_FILES], ROOT / "polaris_web")
     if _why:
         print("polaris-procedure-mutation-drill: " + _why, file=sys.stderr)
         return 1

@@ -267,7 +267,10 @@ def _interpreter_can_run_the_suite(modules, cwd) -> str:
     return ""
 
 def main(argv: list[str]) -> int:
-    _why = _interpreter_can_run_the_suite(['test_app', 'test_check_constraints'], ROOT / "polaris_web")
+    # Every suite this drill runs, not two of them: test_invariants_property needs hypothesis,
+    # and a CI job without it made every trigger the constraint suite missed read as caught
+    # by a suite that never imported (2026-09-26).
+    _why = _interpreter_can_run_the_suite([APP_SUITE, *FAST_SUITES], ROOT / "polaris_web")
     if _why:
         print("polaris-trigger-mutation-drill: " + _why, file=sys.stderr)
         return 1
