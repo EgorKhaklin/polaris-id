@@ -479,6 +479,15 @@ jobs:
       - name: Constraint mutation drill (drop each named constraint, the suite must notice)
         run: python scripts/polaris-constraint-mutation-drill.py
 
+      # 2026-09-26: removing a whole trigger is one question, removing ONE refusal inside its
+      # function another; the first measurement found sixteen refusals nothing noticed. About
+      # three minutes, so it runs per push as well as in the weekly sweep. It runs BEFORE the
+      # whole-trigger drill: while that drill has a recorder trigger dropped, the suites commit
+      # rows the recorder never saw (operator accounts with no creation event), and those rows
+      # outlive the mutation and turn this step's baseline red.
+      - name: Trigger refusal drill (delete each refusal inside each trigger function)
+        run: python scripts/polaris-trigger-mutation-drill.py --refusals
+
       # v9.413 - the same question of the TRIGGERS, which is where C1 lives. The
       # first run of this measurement found 14 of 37 covered by nothing; v9.412
       # covered them. This is what keeps that true, because a coverage number
@@ -490,11 +499,6 @@ jobs:
       - name: Trigger mutation drill (drop each trigger, something must notice)
         run: python scripts/polaris-trigger-mutation-drill.py
 
-      # 2026-09-26: removing a whole trigger is one question, removing ONE refusal inside its
-      # function another; the first measurement found sixteen refusals nothing noticed. About
-      # three minutes, so it runs per push as well as in the weekly sweep.
-      - name: Trigger refusal drill (delete each refusal inside each trigger function)
-        run: python scripts/polaris-trigger-mutation-drill.py --refusals
 
       # v9.434 - the fourth member of that family, and the one with the most to
       # hide. A trigger sees one row; uc8_revoke_token sees a whole revocation --
