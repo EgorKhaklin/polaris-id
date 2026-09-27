@@ -3,7 +3,7 @@
 The bound on every claim in this repository, for the operator or assessor deciding whether
 Polaris could hold real identity data. Status, known limitations, the operator's decisions, the gaps.
 
-**Status (v1.0.0-rc.63): not production-ready for real identity data.** Every engineering gap
+**Status (v1.0.0-rc.64): not production-ready for real identity data.** Every engineering gap
 this ledger enumerated is closed and pinned by a check; what remains is the limitations and
 operator decisions below and the deployment-scale work in [ROADMAP.md](../ROADMAP.md).
 

@@ -7,7 +7,11 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
-## Unreleased
+## v1.0.0-rc.64 — 2026-09-27 (a credential's signature cannot be borrowed from any other artifact)
+
+Two verifier defects fixed, found by trying to separate the public surface from the issuer.
+
+- **Breaking**: the issuer, the database and every verifier refuse a `token_value` that is not a credential serial (more than 128 bytes of UTF-8, beginning with `{`, or containing control characters); every published credential already conforms.
 
 ### Security
 
