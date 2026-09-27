@@ -34,6 +34,7 @@ falsifier invented later is always satisfied by whatever was built.
 |---|---|---|
 | [001-token-status-list.md](001-token-status-list.md) | Read a foreign issuer's revocation status (IETF Token Status List) | CLOSED. Both falsifiers checked and neither fired; shipped as v1.0.0-rc.4 and v1.0.0-rc.5. No outside party has used it. |
 | [002-relying-party-api-compartment.md](002-relying-party-api-compartment.md) | Run the internet-facing relying-party API as its own service with its own least-privileged database login | MEASURED, NOT BUILT alone: separable (160 of 163 tests pass as the narrowed login, every operator write refused), but the public surface still shares the issuance signing key and reads every credential pack, so the split would overstate its protection. Next: signing custody (003). |
+| [003-signing-custody-compartment.md](003-signing-custody-compartment.md) | A signing service outside the web process that signs only the statement formats its caller may request | OPEN, record only. Next: classify every signing call site by format and caller. |
 
 ## Candidates generated, not admitted
 
