@@ -1,0 +1,322 @@
+{
+  "machine": {
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "python": "3.12.13",
+    "processor": "arm",
+    "cpu_count": 8,
+    "cpu": "Apple M3",
+    "oqs": "0.16.0",
+    "cryptography": "50.0.1"
+  },
+  "n": 2000,
+  "reps": 5,
+  "warmup": 200,
+  "started": "2026-09-27T09:49:16-0400",
+  "results": [
+    {
+      "implementation": "detached",
+      "vector": "ml-dsa-65-valid.json",
+      "samples": 10000,
+      "p50_us": 1332.8,
+      "p50_ci95_us": [
+        1332.8,
+        1332.9
+      ],
+      "p95_us": 1342.9,
+      "p99_us": 1362.3,
+      "p99_ci95_us": [
+        1359.5,
+        1366.7
+      ],
+      "max_us": 4139.0,
+      "mean_us": 1335.7,
+      "one_core_per_second_at_p50": 750
+    },
+    {
+      "implementation": "detached",
+      "vector": "ml-dsa-65-tampered-signature.json",
+      "samples": 10000,
+      "p50_us": 1333.8,
+      "p50_ci95_us": [
+        1333.8,
+        1333.9
+      ],
+      "p95_us": 1342.4,
+      "p99_us": 1362.1,
+      "p99_ci95_us": [
+        1358.7,
+        1367.0
+      ],
+      "max_us": 3999.6,
+      "mean_us": 1336.1,
+      "one_core_per_second_at_p50": 750
+    },
+    {
+      "implementation": "detached",
+      "vector": "ml-dsa-65-tampered-token.json",
+      "samples": 10000,
+      "p50_us": 1334.5,
+      "p50_ci95_us": [
+        1334.4,
+        1334.6
+      ],
+      "p95_us": 1342.7,
+      "p99_us": 1369.6,
+      "p99_ci95_us": [
+        1363.5,
+        1375.1
+      ],
+      "max_us": 2297.0,
+      "mean_us": 1336.3,
+      "one_core_per_second_at_p50": 749
+    },
+    {
+      "implementation": "detached",
+      "vector": "ml-dsa-65-wrong-key.json",
+      "samples": 10000,
+      "p50_us": 1335.0,
+      "p50_ci95_us": [
+        1334.9,
+        1335.1
+      ],
+      "p95_us": 1343.0,
+      "p99_us": 1364.7,
+      "p99_ci95_us": [
+        1360.3,
+        1369.8
+      ],
+      "max_us": 2460.1,
+      "mean_us": 1337.2,
+      "one_core_per_second_at_p50": 749
+    },
+    {
+      "implementation": "sdk",
+      "vector": "ml-dsa-65-valid.json",
+      "samples": 10000,
+      "p50_us": 1333.2,
+      "p50_ci95_us": [
+        1333.2,
+        1333.3
+      ],
+      "p95_us": 1341.2,
+      "p99_us": 1356.5,
+      "p99_ci95_us": [
+        1351.5,
+        1365.6
+      ],
+      "max_us": 2246.0,
+      "mean_us": 1335.0,
+      "one_core_per_second_at_p50": 750
+    },
+    {
+      "implementation": "sdk",
+      "vector": "ml-dsa-65-tampered-signature.json",
+      "samples": 10000,
+      "p50_us": 1335.0,
+      "p50_ci95_us": [
+        1334.9,
+        1335.1
+      ],
+      "p95_us": 1344.5,
+      "p99_us": 1372.9,
+      "p99_ci95_us": [
+        1366.5,
+        1382.8
+      ],
+      "max_us": 3096.7,
+      "mean_us": 1337.6,
+      "one_core_per_second_at_p50": 749
+    },
+    {
+      "implementation": "sdk",
+      "vector": "ml-dsa-65-tampered-token.json",
+      "samples": 10000,
+      "p50_us": 1334.8,
+      "p50_ci95_us": [
+        1334.8,
+        1334.9
+      ],
+      "p95_us": 1344.1,
+      "p99_us": 1383.3,
+      "p99_ci95_us": [
+        1374.3,
+        1398.3
+      ],
+      "max_us": 8949.8,
+      "mean_us": 1340.0,
+      "one_core_per_second_at_p50": 749
+    },
+    {
+      "implementation": "sdk",
+      "vector": "ml-dsa-65-wrong-key.json",
+      "samples": 10000,
+      "p50_us": 1335.8,
+      "p50_ci95_us": [
+        1335.6,
+        1335.8
+      ],
+      "p95_us": 1343.5,
+      "p99_us": 1355.5,
+      "p99_ci95_us": [
+        1352.2,
+        1361.5
+      ],
+      "max_us": 1627.1,
+      "mean_us": 1336.5,
+      "one_core_per_second_at_p50": 749
+    },
+    {
+      "implementation": "witness-liboqs",
+      "vector": "ml-dsa-65-valid.json",
+      "samples": 10000,
+      "p50_us": 122.0,
+      "p50_ci95_us": [
+        122.0,
+        122.0
+      ],
+      "p95_us": 122.8,
+      "p99_us": 124.3,
+      "p99_ci95_us": [
+        124.1,
+        124.5
+      ],
+      "max_us": 183.3,
+      "mean_us": 122.1,
+      "one_core_per_second_at_p50": 8194
+    },
+    {
+      "implementation": "witness-liboqs",
+      "vector": "ml-dsa-65-tampered-signature.json",
+      "samples": 10000,
+      "p50_us": 121.8,
+      "p50_ci95_us": [
+        121.8,
+        121.8
+      ],
+      "p95_us": 122.5,
+      "p99_us": 123.9,
+      "p99_ci95_us": [
+        123.6,
+        124.0
+      ],
+      "max_us": 180.5,
+      "mean_us": 121.9,
+      "one_core_per_second_at_p50": 8214
+    },
+    {
+      "implementation": "witness-liboqs",
+      "vector": "ml-dsa-65-tampered-token.json",
+      "samples": 10000,
+      "p50_us": 121.8,
+      "p50_ci95_us": [
+        121.8,
+        121.8
+      ],
+      "p95_us": 122.6,
+      "p99_us": 124.5,
+      "p99_ci95_us": [
+        124.2,
+        124.9
+      ],
+      "max_us": 192.1,
+      "mean_us": 122.0,
+      "one_core_per_second_at_p50": 8214
+    },
+    {
+      "implementation": "witness-liboqs",
+      "vector": "ml-dsa-65-wrong-key.json",
+      "samples": 10000,
+      "p50_us": 122.0,
+      "p50_ci95_us": [
+        122.0,
+        122.0
+      ],
+      "p95_us": 122.6,
+      "p99_us": 124.1,
+      "p99_ci95_us": [
+        124.0,
+        124.5
+      ],
+      "max_us": 157.0,
+      "mean_us": 122.1,
+      "one_core_per_second_at_p50": 8199
+    },
+    {
+      "implementation": "witness-openssl",
+      "vector": "ml-dsa-65-valid.json",
+      "samples": 10000,
+      "p50_us": 1210.2,
+      "p50_ci95_us": [
+        1210.1,
+        1210.2
+      ],
+      "p95_us": 1216.3,
+      "p99_us": 1229.3,
+      "p99_ci95_us": [
+        1226.7,
+        1233.0
+      ],
+      "max_us": 1457.8,
+      "mean_us": 1210.9,
+      "one_core_per_second_at_p50": 826
+    },
+    {
+      "implementation": "witness-openssl",
+      "vector": "ml-dsa-65-tampered-signature.json",
+      "samples": 10000,
+      "p50_us": 1211.6,
+      "p50_ci95_us": [
+        1211.5,
+        1211.7
+      ],
+      "p95_us": 1218.3,
+      "p99_us": 1235.3,
+      "p99_ci95_us": [
+        1230.8,
+        1242.5
+      ],
+      "max_us": 3156.7,
+      "mean_us": 1213.6,
+      "one_core_per_second_at_p50": 825
+    },
+    {
+      "implementation": "witness-openssl",
+      "vector": "ml-dsa-65-tampered-token.json",
+      "samples": 10000,
+      "p50_us": 1211.8,
+      "p50_ci95_us": [
+        1211.7,
+        1211.8
+      ],
+      "p95_us": 1219.0,
+      "p99_us": 1234.3,
+      "p99_ci95_us": [
+        1229.6,
+        1242.4
+      ],
+      "max_us": 2017.0,
+      "mean_us": 1213.3,
+      "one_core_per_second_at_p50": 825
+    },
+    {
+      "implementation": "witness-openssl",
+      "vector": "ml-dsa-65-wrong-key.json",
+      "samples": 10000,
+      "p50_us": 1212.2,
+      "p50_ci95_us": [
+        1212.2,
+        1212.3
+      ],
+      "p95_us": 1218.9,
+      "p99_us": 1233.0,
+      "p99_ci95_us": [
+        1229.9,
+        1241.6
+      ],
+      "max_us": 3706.0,
+      "mean_us": 1213.7,
+      "one_core_per_second_at_p50": 825
+    }
+  ],
+  "finished": "2026-09-27T09:52:52-0400"
+}
