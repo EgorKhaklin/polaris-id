@@ -1,7 +1,7 @@
 # 003: signing custody out of the web process
 
 **Opened 2026-09-27.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md).
-State: OPEN, record only. Follows [002](002-relying-party-api-compartment.md), whose measurement
+State: KILLED 2026-09-27 on its first criterion. Results: [003/RESULTS.md](003/RESULTS.md). Follows [002](002-relying-party-api-compartment.md), whose measurement
 showed that separating the relying-party API's database login protects little while the process
 holds the issuance signing key.
 
@@ -91,3 +91,31 @@ Written before the work starts:
 - **It costs latency the measurement cannot pay.** Signing is 0.12 ms of liboqs today
   (lab/evaluation). If a signer hop adds more than the measured request time can absorb (17.8
   ms per verification end to end), or cannot be optional for the single-host deployment, kill.
+
+---
+
+## Measured and killed (2026-09-27)
+
+Section 9 in lab ([003/CALL-SITES.md](003/CALL-SITES.md), [003/RESULTS.md](003/RESULTS.md)): 21
+signing call sites, classified statically and confirmed by recording every signature a full test
+run makes (904 tests, 189 signing calls, no path the static list missed).
+
+- **The formats do not partition (kill criterion 1 fires).** The relying-party surface signs
+  `polaris-federation-manifest/1`, `polaris-trust-list/1` and `polaris-registry/1` on every
+  request: trust decisions, the very signatures section 2 said it would lose. A format
+  allow-list also cannot limit what a caller puts inside an allowed format.
+- **Issuance has no format at all**: a credential's signature is over `SHA3-256(token_value)`,
+  and `signature_over_message(token_value)` returns the issuance signature. The lab found the
+  sharper consequence, confirmed here with real ML-DSA-65 on the published vectors: ANY
+  artifact the authority signs, re-wrapped as an authenticity pack whose `token_value` is its
+  canonical JSON, verifies as an authentic credential from a trusted issuer. That is a defect in
+  today's product, handled on its own (it does not depend on this bet).
+- Criterion 3 does not fire: a UNIX-socket hop measured 0.012 ms at p50 (0.030 ms p99), about
+  0.2% of the 17.8 ms request.
+
+## Decision
+
+Killed as specified. What survives, as candidates with their own records if pursued: sign the
+request-independent trust artifacts (manifest, trust list, registry, checkpoints) on a schedule
+from the operator side and let the public surface serve those bytes; separate issuance by domain
+in a future protocol version; accept ID tokens and exchange receipts as named limits.

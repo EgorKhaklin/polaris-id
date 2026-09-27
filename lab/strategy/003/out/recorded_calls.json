@@ -1,0 +1,265 @@
+{
+ "tests_run": 904,
+ "failed": 0,
+ "skipped": 3,
+ "failures": [],
+ "total_calls": 189,
+ "distinct": [
+  {
+   "entry": "signature_for_migration",
+   "format": "raw-token-value",
+   "surface": "no-request",
+   "endpoint": "-",
+   "chain": "",
+   "count": 2
+  },
+  {
+   "entry": "signature_for_migration",
+   "format": "raw-token-value",
+   "surface": "no-request",
+   "endpoint": "-",
+   "chain": "migration.py:migrate_batch",
+   "count": 3
+  },
+  {
+   "entry": "signature_for_migration",
+   "format": "raw-token-value",
+   "surface": "no-request",
+   "endpoint": "-",
+   "chain": "migration.py:migrate_batch < migration.py:migrate_population",
+   "count": 32
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "bare-32-byte-digest",
+   "surface": "rp",
+   "endpoint": "api_v1_mdoc",
+   "chain": "rp_api.py:_sign < mdoc.py:build_issuer_signed",
+   "count": 7
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "bare-32-byte-digest",
+   "surface": "rp",
+   "endpoint": "api_v1_verifiable_credential",
+   "chain": "rp_api.py:_sign < vc.py:build_credential",
+   "count": 9
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-epoch-checkpoint/1",
+   "surface": "rp",
+   "endpoint": "api_v1_epoch_checkpoint",
+   "chain": "rp_api.py:_epoch_checkpoint_body < rp_api.py:api_v1_epoch_checkpoint",
+   "count": 2
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-epoch-checkpoint/1",
+   "surface": "rp",
+   "endpoint": "api_v1_federation_status_bundle",
+   "chain": "rp_api.py:_epoch_checkpoint_body < rp_api.py:api_v1_federation_status_bundle",
+   "count": 1
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-epoch-checkpoint/1",
+   "surface": "rp",
+   "endpoint": "api_v1_sign_holder",
+   "chain": "rp_api.py:_epoch_checkpoint_body < rp_api.py:_sign_document",
+   "count": 5
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-epoch-leaves/1",
+   "surface": "rp",
+   "endpoint": "api_v1_epoch_leaves",
+   "chain": "rp_api.py:api_v1_epoch_leaves",
+   "count": 3
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-federation-manifest/1",
+   "surface": "rp",
+   "endpoint": "api_v1_federation_manifest",
+   "chain": "rp_api.py:_federation_manifest_body < rp_api.py:api_v1_federation_manifest",
+   "count": 1
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-federation-manifest/1",
+   "surface": "rp",
+   "endpoint": "api_v1_sign_holder",
+   "chain": "rp_api.py:_federation_manifest_body < rp_api.py:_sign_document",
+   "count": 5
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-federation-status-bundle/1",
+   "surface": "rp",
+   "endpoint": "api_v1_federation_status_bundle",
+   "chain": "rp_api.py:api_v1_federation_status_bundle",
+   "count": 1
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-holder-binding/1",
+   "surface": "rp",
+   "endpoint": "api_v1_holder_binding",
+   "chain": "rp_api.py:_holder_binding_for < rp_api.py:api_v1_holder_binding",
+   "count": 1
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-holder-binding/1",
+   "surface": "rp",
+   "endpoint": "api_v1_holder_key_bind",
+   "chain": "rp_api.py:_holder_binding_for < rp_api.py:api_v1_holder_key_bind",
+   "count": 12
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-id-token/1",
+   "surface": "rp",
+   "endpoint": "api_v1_auth_token",
+   "chain": "rp_api.py:api_v1_auth_token",
+   "count": 4
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-registry/1",
+   "surface": "rp",
+   "endpoint": "api_v1_registry",
+   "chain": "rp_api.py:api_v1_registry",
+   "count": 2
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-revocation-feed/1",
+   "surface": "rp",
+   "endpoint": "api_v1_federation_status_bundle",
+   "chain": "rp_api.py:_revocation_feed_body < rp_api.py:api_v1_federation_status_bundle",
+   "count": 1
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-revocation-feed/1",
+   "surface": "rp",
+   "endpoint": "api_v1_revocation_feed",
+   "chain": "rp_api.py:_revocation_feed_body < rp_api.py:api_v1_revocation_feed",
+   "count": 1
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-revocation-feed/1",
+   "surface": "rp",
+   "endpoint": "api_v1_sign_holder",
+   "chain": "rp_api.py:_revocation_feed_body < rp_api.py:_sign_document",
+   "count": 5
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-signed-document/1",
+   "surface": "rp",
+   "endpoint": "api_v1_sign_holder",
+   "chain": "rp_api.py:_sign_document < rp_api.py:api_v1_sign_holder",
+   "count": 8
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-status-assertion/1",
+   "surface": "rp",
+   "endpoint": "api_v1_status_assertion",
+   "chain": "rp_api.py:api_v1_status_assertion",
+   "count": 7
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-timestamp/1",
+   "surface": "rp",
+   "endpoint": "api_v1_sign_holder",
+   "chain": "rp_api.py:_timestamp_body < rp_api.py:_sign_document",
+   "count": 5
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-timestamp/1",
+   "surface": "rp",
+   "endpoint": "api_v1_timestamp",
+   "chain": "rp_api.py:_timestamp_body < rp_api.py:api_v1_timestamp",
+   "count": 13
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-transparency-sth/1",
+   "surface": "rp",
+   "endpoint": "api_v1_exchange_receipt_inclusion",
+   "chain": "rp_api.py:_sth_body < rp_api.py:api_v1_exchange_receipt_inclusion",
+   "count": 1
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-transparency-sth/1",
+   "surface": "rp",
+   "endpoint": "api_v1_receipt_log_sth",
+   "chain": "rp_api.py:_sth_body < rp_api.py:api_v1_receipt_log_sth",
+   "count": 3
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-transparency-sth/1",
+   "surface": "rp",
+   "endpoint": "api_v1_timestamp",
+   "chain": "rp_api.py:_sth_body < rp_api.py:_anchor_timestamp",
+   "count": 2
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-transparency-sth/1",
+   "surface": "rp",
+   "endpoint": "api_v1_timestamp_inclusion",
+   "chain": "rp_api.py:_sth_body < rp_api.py:api_v1_timestamp_inclusion",
+   "count": 1
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-transparency-sth/1",
+   "surface": "rp",
+   "endpoint": "api_v1_timestamp_log_sth",
+   "chain": "rp_api.py:_sth_body < rp_api.py:api_v1_timestamp_log_sth",
+   "count": 3
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-transparency-sth/1",
+   "surface": "rp",
+   "endpoint": "api_v1_transparency_sth",
+   "chain": "rp_api.py:_sth_body < rp_api.py:api_v1_transparency_sth",
+   "count": 2
+  },
+  {
+   "entry": "signature_over_message",
+   "format": "polaris-trust-attestation/1",
+   "surface": "operator",
+   "endpoint": "api_federation_attest",
+   "chain": "",
+   "count": 2
+  },
+  {
+   "entry": "signature_with_key_for_token",
+   "format": "raw-token-value",
+   "surface": "operator",
+   "endpoint": "uc1_issue",
+   "chain": "use_case_routes.py:uc1_issue < security.py:wrapped",
+   "count": 44
+  },
+  {
+   "entry": "signature_with_key_for_token",
+   "format": "raw-token-value",
+   "surface": "operator",
+   "endpoint": "uc6_migrate",
+   "chain": "use_case_routes.py:uc6_migrate < security.py:wrapped",
+   "count": 1
+  }
+ ]
+}
