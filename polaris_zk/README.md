@@ -1,127 +1,53 @@
-# polaris_zk/: R10-1 / M2-1 · Plonky2 ZK-SNARK prover
+# polaris_zk
 
-This Rust crate is the post-quantum-comfortable ZK-SNARK
-implementation for Polaris's `ZERO_KNOWLEDGE` verification
-disclosure level. Built v8.23 (2026-05-11): Plonky2, chosen for
-post-quantum sovereignty + FRI-based proof system + no trusted
-setup.
+The Plonky2 prover and verifier behind Polaris's `ZERO_KNOWLEDGE` disclosure level. Given the
+leaves of an epoch's Merkle tree, it proves that a leaf is in the tree with root R without saying
+which leaf; the verifier checks the proof against R alone. A zero-knowledge verification stores no
+token identifier (C2), and this proof is what the verifier gets instead.
 
-It is the **5th and final** primitive in the Substrate-D arc
-(M2-1; the other four are M2-2 anchoring, M2-3 substrate catalog,
-M2-8 federation, M2-12 redaction proof). Closes the v2 substrate
-arc 5/5.
+Plonky2 is FRI-based, so there is no trusted setup. [`witness2/`](witness2/) is an independent
+Python implementation of the same Poseidon Merkle computation, and the two must agree bit for bit.
 
----
+## Build
 
-## What it does
-
-Given a Merkle tree of token state-epoch leaves, the prover
-generates a SNARK proving "leaf X is in tree T at root R" without
-revealing X. The verifier checks the proof against R alone.
-
-This is what makes Polaris's `ZERO_KNOWLEDGE` disclosure level
-real: the verifier learns "a valid token exists in this epoch"
-without learning *which* token. C2 (`token_id IS NULL` on ZK
-events) is structurally enforced; this crate provides the
-cryptographic backing.
-
----
-
-## Directory layout
-
-```
-polaris_zk/
-├── Cargo.toml              # plonky2 = "0.2", serde, hex, anyhow
-├── rust-toolchain.toml     # pins nightly (Plonky2 uses feature(specialization))
-└── src/
-    ├── lib.rs              # Merkle-inclusion circuit + prover + verifier
-    └── main.rs             # CLI binary `polaris-zk` with subcommands
-```
-
-CLI subcommands (`polaris-zk`):
-- `compute-root --leaves <file>`: Merkle root over leaves
-- `compute-leaves --epoch <id>`: extract canonical leaves for an epoch
-- `prove --leaves <file> --leaf-idx <n>`: generate SNARK
-- `verify --proof <file> --root <hex>`: verify SNARK against root
-
-The Flask app calls this binary as a subprocess via
-`polaris_web/zk.py` (avoids embedding Rust into the Python web
-process; preserves the 5+ year old web-app's stable surface).
-
----
-
-## Building
-
-The build is **optional** (Polaris core works without ZK proofs;
-only the `ZERO_KNOWLEDGE` disclosure path needs the binary). To
-build:
+Optional: only the zero-knowledge path needs it; `SELECTIVE` and `FULL` disclosure work without it.
 
 ```bash
-# 1. Install rustup (one-time)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# 2. Build the crate
 cd polaris_zk
-cargo +nightly build --release
-
-# 3. Point the Flask app at the binary (optional; defaults to
-#    polaris_zk/target/release/polaris-zk)
-export POLARIS_ZK_BINARY=/path/to/polaris-zk
+cargo +nightly build --release          # rust-toolchain.toml pins nightly
+export POLARIS_ZK_BINARY=$PWD/target/release/polaris-zk   # the default path, if unset
 ```
 
-If the binary is missing at runtime, the Flask app raises a
-clear error on `/api/zk/*` routes naming this README and the
-build steps above. Other disclosure levels (`SELECTIVE`, `FULL`)
-work without it.
+Without the binary, the `/api/zk/*` routes return an error saying how to build it.
 
----
+## The binary
 
-## Schema integration
+`polaris-zk <subcommand>` reads JSON on stdin and writes JSON on stdout
+([`src/main.rs`](src/main.rs) documents each shape):
 
-Polaris's `TokenStateEpoch` table (the **7th audit-of-record
-instance**) holds epoch metadata; `TokenStateEpochLeaf` holds the
-leaves. The `uc11_close_epoch` procedure (the **6th catalog entry**
-in the per-procedure advisory-lock catalog; first non-per-entity
-one) atomically closes an epoch and computes its Merkle root.
-
-Three `/api/zk/*` routes:
-- `POST /api/zk/epoch/<id>/close`: close current epoch (admin-only)
-- `GET /api/zk/epoch/<id>/proof?leaf=<n>`: generate ZK proof for a leaf
-- `POST /api/zk/verify`: verify a proof against an epoch root
-
----
-
-## G-guards / constitutional discipline
-
-This crate is on the cryptographic substrate side; the relevant
-constraints:
-
-- **C2**: `ZERO_KNOWLEDGE` events have `token_id IS NULL`
-  (CHECK constraint + form-layer coercion). The ZK proof is
-  what makes this honest: the verifier can confirm validity
-  without ever seeing `token_id`.
-- **C7**: Cryptographic algorithm metadata flows through
-  `CryptographicAlgorithm` table. Plonky2 + Poseidon hash
-  registered there; never hardcoded in app code.
-- **PQ-comfortable**: Plonky2 is FRI-based (hash-function
-  security only); no elliptic-curve assumption. Survives
-  Shor's algorithm if Poseidon survives Grover (which it does
-  with the 256-bit security level used here).
-
-Any monitoring of ZK proof generation latency should subprocess
-this binary and time it; never embed prover state into Python
-(would break the substrate-isolation discipline).
-
----
-
-## Where to learn more
-
-| Question | Read |
+| Subcommand | Does |
 |---|---|
-| Why Plonky2 + FRI vs Groth16 + ECDSA? | `docs/design/threat-model.md` (PQ section) |
-| Ship CHANGELOG entry | search `CHANGELOG.md` for `v8.23` |
-| Per-ship reference doc | `docs/design/zk-snark.md` |
-| Adversary walk + threat model | `docs/design/threat-model.md` (PQ section) |
-| Schema integration | `polaris_sql/01_schema.sql` (search `TokenStateEpoch`) |
-| Flask wrapper | `polaris_web/zk.py` |
-| v2 mission link | M2-1 (Substrate-D arc; 5/5 closed) |
+| `compute-root` | Poseidon Merkle root over a leaf set |
+| `compute-leaves` | the inclusion path for every leaf |
+| `leaf` | a holder's leaf commitment |
+| `nullifier` | the per-relying-party nullifier for a leaf |
+| `prove` | a SNARK that a leaf is in the tree, bound to an epoch, a context and a nonce |
+| `verify` | checks a proof bundle |
+
+The application calls it as a subprocess ([`polaris_web/zk.py`](../polaris_web/zk.py)).
+
+## In the application
+
+- `TokenStateEpoch` and `TokenStateEpochLeaf` hold each epoch and its leaves; `uc11_close_epoch`
+  closes an epoch and is the only writer.
+- `POST /api/zk/epoch/close` (admin), `GET /api/zk/epoch/<id>`, `POST /api/zk/verify` (single-use
+  nonces).
+
+## Limits
+
+- The claim is membership and nothing else; it does not hide a holder from the issuer, which
+  builds every leaf ([docs/PRODUCTION-READINESS.md](../docs/PRODUCTION-READINESS.md)).
+- The proof system rests on hash-based assumptions; its security level is Plonky2's, not
+  established here.
+
+Design record: [docs/design/zk-snark.md](../docs/design/zk-snark.md).
