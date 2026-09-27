@@ -32,7 +32,7 @@ Around the credential:
 - **Verifiers anyone can hold to a contract.** Python and TypeScript SDKs and a conformance suite of 118 published cases; version 1 of the signed-statement protocol is frozen and re-verified on every push.
 - **Explicit federation.** Trust between agencies is explicit and non-transitive.
 - **Zero-knowledge by default.** A zero-knowledge verification stores no token identifier; a Plonky2 SNARK, re-checked by an independent second witness, proves ledger membership and nothing else.
-- **Gated by invariants.** 335 machine-checked invariants (v1.0.0-rc.62) gate every change in CI.
+- **Gated by invariants.** 335 machine-checked invariants (v1.0.0-rc.63) gate every change in CI.
 
 **The problem it models.** Americans carry six to eight credentials (driver's license, passport, Social Security card and more) with no shared revocation path or audit trail. Polaris models one active credential record per person, verified through context-scoped events (banking, voting, healthcare) at three disclosure levels.
 
@@ -52,7 +52,7 @@ Around the credential:
 
 | | version | where |
 |---|---|---|
-| this tree | 1.0.0-rc.62 | the source you are reading |
+| this tree | 1.0.0-rc.63 | the source you are reading |
 | `polaris-oid4vp` | 1.0.0rc7 | PyPI; the certified version |
 | `polaris-verify`, `polaris-sdk-python` | 1.0.0rc3 | PyPI |
 | `polaris-sdk-ts` | 1.0.0-rc.3 | npm, under `next` (`latest` stays 0.1.0) |
@@ -124,7 +124,7 @@ The vocation above them: **no person can be compelled to renounce, transfer, or 
 | **C9** | Concurrency is tested with real threads. | Engineering | Threaded suites against a live database |
 | **C10** | Identity is not money. | Constitutional | Structural absence, pinned by a check |
 
-Each is machine-checked by [`polaris_checks`](polaris_checks/): 335 plain `check_*` functions (v1.0.0-rc.62), each with a detection test proving it fails on a broken fixture. Why these ten: [MISSION.md](MISSION.md).
+Each is machine-checked by [`polaris_checks`](polaris_checks/): 335 plain `check_*` functions (v1.0.0-rc.63), each with a detection test proving it fails on a broken fixture. Why these ten: [MISSION.md](MISSION.md).
 
 ---
 
@@ -183,7 +183,7 @@ The schema is the core; everything else is a client of it.
 | [`polaris_web/`](polaris_web/) | Flask application: use-case flows, the Atlas, WebAuthn operator MFA, health and metrics. |
 | [`polaris_zk/`](polaris_zk/) | Plonky2 prover (Rust) and [`witness2/`](polaris_zk/witness2/), an independent Python reimplementation. |
 | [`polaris_cli/`](polaris_cli/) | Operator CLI for issuance, revocation, recovery and audit. |
-| [`polaris_checks/`](polaris_checks/) | The invariant layer: 335 checks (v1.0.0-rc.62). |
+| [`polaris_checks/`](polaris_checks/) | The invariant layer: 335 checks (v1.0.0-rc.63). |
 | [`packages/`](packages/), [`sdk/`](sdk/), [`conformance/`](conformance/) | The detached verifier, the OpenID4VP verifier, the verify SDKs and the conformance suite. |
 | [`scripts/`](scripts/), [`deploy/`](deploy/) | Wallet and relying-party tools, operator tooling, observability config. |
 

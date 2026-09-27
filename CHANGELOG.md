@@ -7,7 +7,12 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
-## Unreleased
+## v1.0.0-rc.63 — 2026-09-27 (the pooler keeps each operator's scope; the application role writes less)
+
+Security fixes found by attacking the deployment as a compromised application and by measuring it under load.
+
+- **Breaking**: the pooler refuses `PGBOUNCER_POOL_MODE=transaction` and `statement` at start; remove the override or set `session`.
+- **Breaking**: `quota-set`, `discretion-set`, `user-create`, `user-passwd`, `user-deactivate`, `key-register`, `key-retire`, `key-compromise`, `rp-register` and `rp-policy` exit 3 under the application role; run them with the schema owner (`POLARIS_DB_USER`), and apply the three migrations of 2026-09-27.
 
 ### Security
 
