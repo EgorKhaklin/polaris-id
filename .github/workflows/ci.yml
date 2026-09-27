@@ -373,6 +373,13 @@ jobs:
       - name: Check layer — no check passes on a broken tree, or on a missing one
         run: python scripts/polaris-check-mutation-drill.py
 
+      # 2026-09-27: the constitutional constraints, one at a time. The drill deletes each of
+      # C1 to C10's enforcement and requires that constraint's OWN named check to go red. It had
+      # existed since the constitution table was bound to its objects and no workflow ran it.
+      # About twenty seconds; no database.
+      - name: "Constitution: deleting each constraint's enforcement fails its own check"
+        run: python scripts/polaris-constitution-mutation-drill.py
+
       # 2026-09-17 — the OTHER half of that question. Every mutation drill here deletes a
       # mechanism and requires something to go red, and all of them passed while four
       # separate properties shipped enforced only on the part somebody had looked at: the

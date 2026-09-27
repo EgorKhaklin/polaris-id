@@ -25,6 +25,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Changed
 
 - The trigger refusal drill runs on every push.
+- The constitution mutation drill runs on every push, and the application mutation drill runs weekly over every refusal; neither ran in CI before. Tests now notice the 25 application refusals nothing did.
 
 ### Fixed
 

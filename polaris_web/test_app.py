@@ -17010,6 +17010,384 @@ class AnchoringMerkleHeldOutTests(unittest.TestCase):
             self.assertEqual(anchoring.log_consistency_proof(m, entries), [], m)
 
 
+class RefusalsTheAppMutationDrillFound(PolarisTestCase):
+    """Twenty-five refusals the application mutation drill switched off with nothing noticing
+    (`--all`, 2026-09-27). Each test sends exactly the input one refusal turns away, in a
+    request that is otherwise well formed, and asserts the status AND the error that names
+    this refusal, so a neighbouring check answering the same status does not pass it. Where
+    the same request can succeed, a control leg shows it does."""
+
+    # -- fixtures ------------------------------------------------------------------------
+
+    def _csrf_header(self):
+        return {'X-CSRFToken': self._csrf_token_from('/verifications/new')}
+
+    def _federate(self, *agency_ids):
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = ANY(%s)",
+                     ('ab' * 16, list(agency_ids)))
+
+    def _possession_credential(self):
+        """An ACTIVE credential of agency 1 with a signature the placeholder profile accepts."""
+        import hashlib
+        row = flask_app.query("SELECT token_id, token_value FROM IdentityToken "
+                              "WHERE issuing_agency_id = 1 AND status = 'ACTIVE' "
+                              "ORDER BY token_id LIMIT 1", fetch='one', primary=True)
+        ph = hashlib.sha3_256(row['token_value'].encode('utf-8')).digest()
+        flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+                        "signing_public_key_hex) VALUES (%s, 1, %s, NULL)",
+                        (row['token_id'], psycopg2.Binary(ph)), fetch='none')
+        return row['token_value'], ph.hex()
+
+    def _relying_party(self, scope):
+        cid = 'rp_drill_' + os.urandom(6).hex()
+        secret = 'drill-secret-' + os.urandom(8).hex()
+        _owner_query("SELECT set_config('polaris.justification', "
+                     "'test fixture: a relying party registered for this test only', true); "
+                     "INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, enabled, "
+                     "rate_limit_per_min, scope) VALUES (%s, %s, %s, TRUE, 120, %s)",
+                     (cid, flask_app.security.hash_password(secret), 'Drill RP', scope))
+        return cid, secret
+
+    def _bearer(self, cid, secret):
+        raw = _rp_b64.b64encode(('%s:%s' % (cid, secret)).encode()).decode()
+        r = self.client.post('/api/v1/oauth/token', headers={'Authorization': 'Basic ' + raw},
+                             data={'grant_type': 'client_credentials'})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        return {'Authorization': 'Bearer ' + r.get_json()['access_token']}
+
+    def _authorize_body(self, cid, tv, sig):
+        import base64
+        import hashlib
+        verifier = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b'=').decode('ascii')
+        challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(verifier.encode('ascii')).digest()).rstrip(b'=').decode('ascii')
+        return {'client_id': cid, 'nonce': 'nonce-drill-0001', 'code_challenge': challenge,
+                'code_challenge_method': 'S256', 'context_id': 1,
+                'disclosure_level': 'ZERO_KNOWLEDGE', 'token_value': tv, 'signature_hex': sig}
+
+    def _close_epoch(self):
+        valid_until = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
+        r = self.client.post('/api/zk/epoch/close', json={'context_id': 1, 'valid_until': valid_until},
+                             headers=self._csrf_header())
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        return r.get_json()['epoch_id']
+
+    def _real_pqc_gate_open(self):
+        """The two federation routes answer 503 before anything else without real ML-DSA. The
+        refusals under test sit after that gate and before any signature is checked, so the
+        gate is opened here and nothing downstream of it is faked."""
+        p = patch.object(rp_api.pqc_signing, 'is_enabled', return_value=True)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _exchange_request(self, **env_overrides):
+        body = {'query': 'drill'}
+        env = {'format': rp_api._EXCHANGE_REQUEST_FORMAT,
+               'target': {'agency_id': 1, 'kind': 'records'},
+               'context_id': 1, 'nonce': 'nonce-drill-1',
+               'issued_at': datetime.now(timezone.utc).replace(microsecond=0)
+                            .isoformat().replace('+00:00', 'Z'),
+               'request_hash': rp_api._canonical_body_hash(body),
+               'requester': {'public_key_hex': 'cd' * 32},
+               'signature_hex': 'ff' * 8}
+        env.update(env_overrides)
+        return {'envelope': env, 'body': body}
+
+    def _exchange_setup(self):
+        self._federate(1)
+        self._real_pqc_gate_open()
+        p = patch.dict(os.environ, {'POLARIS_EXCHANGE_UPSTREAMS': '{"records": "http://127.0.0.1:9/"}'})
+        p.start()
+        self.addCleanup(p.stop)
+
+    # -- 404: a named thing that does not exist ------------------------------------------
+
+    def test_atlas_subject_focus_of_an_unknown_individual_is_404(self):
+        """The Atlas subject view answers 404 for an individual that does not exist."""
+        self.assertEqual(self.client.get('/api/atlas/subject?individual_id=2').status_code, 200,
+                         'control: a real subject is served')
+        r = self.client.get('/api/atlas/subject?individual_id=999999')
+        self.assertEqual(r.status_code, 404, r.get_data(as_text=True)[:200])
+
+    def test_editing_an_unknown_agency_is_404(self):
+        """The agency edit form answers 404 for an agency that does not exist."""
+        self.assertEqual(self.client.get('/agencies/1/edit').status_code, 200, 'control')
+        r = self.client.get('/agencies/999999/edit')
+        self.assertEqual(r.status_code, 404, r.get_data(as_text=True)[:200])
+
+    def test_investigating_an_unknown_individual_is_404(self):
+        """The individual object card answers 404 for an individual that does not exist."""
+        self.assertEqual(self.client.get('/investigate/individual/1').status_code, 200, 'control')
+        r = self.client.get('/investigate/individual/999999')
+        self.assertEqual(r.status_code, 404, r.get_data(as_text=True)[:200])
+
+    def test_the_leaf_set_of_an_unknown_epoch_is_404(self):
+        """The published leaf set answers 404 for an epoch that was never closed."""
+        epoch_id = self._close_epoch()
+        self.assertEqual(self.client.get('/api/v1/epoch/%d/leaves' % epoch_id).status_code, 200,
+                         'control: a closed epoch publishes its leaves')
+        r = self.client.get('/api/v1/epoch/%d/leaves' % (epoch_id + 1000))
+        self.assertEqual(r.status_code, 404, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'epoch not found')
+
+    def test_an_epoch_checkpoint_before_any_epoch_is_404(self):
+        """A federated authority with no closed epoch has no checkpoint to sign."""
+        self._federate(1)
+        # The seed (10_auth.sql) closes one epoch. A freshly deployed instance has none, and
+        # that is the state this refusal answers; the owner empties the chain as the reload does.
+        _owner_query("TRUNCATE TokenStateEpochLeaf, TokenStateEpoch CASCADE")
+        r = self.client.get('/api/v1/epoch-checkpoint/1')
+        self.assertEqual(r.status_code, 404, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'no epoch has been closed yet')
+        self._close_epoch()
+        self.assertEqual(self.client.get('/api/v1/epoch-checkpoint/1').status_code, 200,
+                         'control: once an epoch is closed the checkpoint is signed')
+
+    def test_closing_an_anchor_batch_with_nothing_pending_is_404(self):
+        """No pending anchor for the algorithm: there is no batch to close."""
+        r = self.client.post('/api/anchor/batch', json={'algorithm_id': 2}, headers=self._csrf_header())
+        self.assertEqual(r.status_code, 404, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'no pending anchors for that algorithm')
+        self.assertEqual(_sql("SELECT count(*) AS n FROM AnchorBatch", fetch='one')['n'], 2,
+                         'nothing was closed')
+        _sql("INSERT INTO BlockchainAnchor (token_id, did, commitment_hash, ledger_network, "
+             "anchor_tx_hash, anchored_date) VALUES (3, 'did:polaris:test:drill', '0xd1411', "
+             "'ALGORAND_PQ', '0xdrilltx', CURRENT_TIMESTAMP)", fetch='none')
+        ok = self.client.post('/api/anchor/batch', json={'algorithm_id': 2}, headers=self._csrf_header())
+        self.assertEqual(ok.status_code, 200, ok.get_data(as_text=True))
+        self.assertEqual(ok.get_json()['batch_size'], 1, 'control: a pending anchor is batched')
+
+    def test_verifying_the_anchor_of_an_unanchored_token_is_404(self):
+        """A token with no BlockchainAnchor row has no proof to verify."""
+        self.assertEqual(self.client.get('/api/anchor/verify/2').status_code, 200, 'control')
+        self.assertIsNone(_sql("SELECT 1 FROM BlockchainAnchor WHERE token_id = 3", fetch='one'),
+                          'precondition: token 3 is not anchored in the seed')
+        r = self.client.get('/api/anchor/verify/3')
+        self.assertEqual(r.status_code, 404, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'no anchor for that token')
+
+    def test_closing_a_zk_epoch_over_no_eligible_credential_is_404(self):
+        """An epoch over an empty anonymity set is refused, not committed."""
+        valid_until = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
+        self.assertIsNone(_sql("SELECT 1 FROM TokenPermission WHERE context_id = 999999", fetch='one'))
+        before = _sql("SELECT count(*) AS n FROM TokenStateEpoch", fetch='one')['n']
+        r = self.client.post('/api/zk/epoch/close', json={'context_id': 999999, 'valid_until': valid_until},
+                             headers=self._csrf_header())
+        self.assertEqual(r.status_code, 404, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'no eligible tokens for the given context')
+        self.assertEqual(_sql("SELECT count(*) AS n FROM TokenStateEpoch", fetch='one')['n'], before,
+                         'no epoch was written')
+        self._close_epoch()   # control: the same close over a context with members succeeds
+
+    def test_the_exchange_gateway_refuses_a_service_kind_it_does_not_forward_404(self):
+        """An envelope naming a service kind the operator configured no upstream for is 404."""
+        self._exchange_setup()
+        payload = self._exchange_request(target={'agency_id': 1, 'kind': 'not-configured'})
+        r = self.client.post('/api/v1/exchange/1', json=payload)
+        self.assertEqual(r.status_code, 404, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'no_such_service')
+
+    # -- 503 --------------------------------------------------------------------------------
+
+    def test_metrics_without_prometheus_client_is_503(self):
+        """/metrics answers 503 with the remedy when prometheus_client is absent."""
+        import status_routes
+        # status_routes binds _PROM_AVAILABLE by name at import, so its copy is what the
+        # route reads; patching app._PROM_AVAILABLE would not reach it.
+        with patch.object(status_routes, '_PROM_AVAILABLE', False):
+            r = self.client.get('/metrics')
+        self.assertEqual(r.status_code, 503, r.get_data(as_text=True)[:200])
+        self.assertIn('prometheus_client not installed', r.get_data(as_text=True))
+
+    # -- 400: malformed requests --------------------------------------------------------
+
+    def test_webauthn_assertion_cannot_begin_once_the_last_credential_is_gone(self):
+        """A password step staged for a user whose only credential was removed gets no challenge."""
+        wa = flask_app.webauthn_auth
+        auth = _SyntheticAuthenticator('es256')
+        csrf = {'X-CSRFToken': self._csrf_token_from('/settings/webauthn')}
+        opts = self.client.post('/auth/webauthn/register/begin', headers=csrf)
+        self.assertEqual(opts.status_code, 200, opts.get_data(as_text=True))
+        r = self.client.post('/auth/webauthn/register/finish', headers=csrf,
+                             json=auth.register(opts.get_data(as_text=True), wa._expected_origin(), wa._rp_id()))
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+
+        client = flask_app.app.test_client()
+        r = client.post('/login', data={'username': 'admin', 'password': TEST_PASSWORDS['admin']})
+        self.assertIn('/auth/webauthn/assert', r.headers['Location'], 'the second factor is pending')
+
+        cred = wa._canonical_credential_id(auth.credential_id_b64u)
+        _sql("DELETE FROM OperatorWebauthnCredential WHERE credential_id = %s", (cred,), fetch='none')
+        self.assertIsNone(_sql("SELECT 1 FROM OperatorWebauthnCredential WHERE credential_id = %s",
+                               (cred,), fetch='one'))
+
+        r = client.post('/auth/webauthn/assert/begin')
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'no enrolled credentials for this user')
+        with client.session_transaction() as sess:
+            self.assertNotIn('webauthn_assert_challenge', sess)
+
+    def test_webauthn_registration_finish_without_a_challenge_is_refused(self):
+        """A genuine attestation is refused when the session holds no registration challenge."""
+        wa = flask_app.webauthn_auth
+        auth = _SyntheticAuthenticator('es256')
+        csrf = {'X-CSRFToken': self._csrf_token_from('/settings/webauthn')}
+        opts = self.client.post('/auth/webauthn/register/begin', headers=csrf)
+        self.assertEqual(opts.status_code, 200, opts.get_data(as_text=True))
+        payload = auth.register(opts.get_data(as_text=True), wa._expected_origin(), wa._rp_id())
+        with self.client.session_transaction() as sess:
+            sess.pop('webauthn_register_challenge', None)
+        r = self.client.post('/auth/webauthn/register/finish', json=payload, headers=csrf)
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'no pending registration')
+        self.assertIsNone(_sql("SELECT 1 FROM OperatorWebauthnCredential WHERE credential_id = %s",
+                               (wa._canonical_credential_id(auth.credential_id_b64u),), fetch='one'))
+
+    def test_rp_verify_refuses_a_presentation_without_a_signature(self):
+        """/api/v1/verify with token_value but no signature_hex is invalid_request."""
+        cid, secret = self._relying_party('verify')
+        bearer = self._bearer(cid, secret)
+        tv, sig = self._possession_credential()
+        ok = self.client.post('/api/v1/verify', headers=bearer, json={'token_value': tv, 'signature_hex': sig})
+        self.assertEqual(ok.status_code, 200, ok.get_data(as_text=True))
+        r = self.client.post('/api/v1/verify', headers=bearer, json={'token_value': tv})
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'invalid_request')
+        self.assertIn('token_value and signature_hex', r.get_json()['error_description'])
+
+    def test_holder_key_binding_refuses_a_presentation_without_a_signature(self):
+        """/api/v1/holder-key with token_value but no signature_hex is invalid_request."""
+        tv, sig = self._possession_credential()
+        body = {'token_value': tv, 'holder_public_key_hex': 'ab' * 40, 'event': 'bound'}
+        r = self.client.post('/api/v1/holder-key', json=body)
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'invalid_request')
+        self.assertEqual(r.get_json()['error_description'], 'token_value and signature_hex are required')
+        ok = self.client.post('/api/v1/holder-key', json=dict(body, signature_hex=sig))
+        self.assertEqual(ok.status_code, 200, ok.get_data(as_text=True))
+
+    def test_mdoc_refuses_elements_that_are_not_a_list_of_names(self):
+        """/api/v1/mdoc refuses an `elements` that is not a list of strings."""
+        tv, sig = self._possession_credential()
+        ok = self.client.post('/api/v1/mdoc', json={'token_value': tv, 'signature_hex': sig,
+                                                    'elements': ['credential_status']})
+        self.assertEqual(ok.status_code, 200, ok.get_data(as_text=True))
+        for bad in ('credential_status', ['credential_status', 7]):
+            with self.subTest(elements=bad):
+                r = self.client.post('/api/v1/mdoc', json={'token_value': tv, 'signature_hex': sig,
+                                                           'elements': bad})
+                self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+                self.assertEqual(r.get_json()['error_description'],
+                                 'elements must be a list of element identifiers')
+
+    def test_verifiable_credential_refuses_a_verifier_scope_that_is_not_a_string(self):
+        """/api/v1/verifiable-credential refuses a non-string verifier_scope."""
+        tv, sig = self._possession_credential()
+        body = {'token_value': tv, 'signature_hex': sig}
+        ok = self.client.post('/api/v1/verifiable-credential', json=dict(body, verifier_scope='rp_clinic'))
+        self.assertEqual(ok.status_code, 200, ok.get_data(as_text=True))
+        r = self.client.post('/api/v1/verifiable-credential', json=dict(body, verifier_scope=7))
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error_description'], 'verifier_scope must be a string')
+
+    def test_signed_receipt_mint_refuses_an_empty_signature(self):
+        """The responder-signed mint with an empty signature_hex is invalid_request."""
+        self._federate(1)
+        self._real_pqc_gate_open()
+        mint = {'format': rp_api._EXCHANGE_MINT_FORMAT, 'requester_public_key_hex': 'cd' * 32,
+                'context_id': 1, 'request_hash': '00' * 32, 'response_hash': '11' * 32,
+                'responder_agency_id': 1,
+                'occurred_at': datetime.now(timezone.utc).replace(microsecond=0)
+                               .isoformat().replace('+00:00', 'Z')}
+        r = self.client.post('/api/v1/exchange-receipt/1/signed', json={'mint': mint, 'signature_hex': ''})
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'invalid_request')
+        self.assertIn('"signature_hex" are required', r.get_json()['error_description'])
+
+    def test_the_exchange_gateway_refuses_an_envelope_without_a_signature(self):
+        """An exchange envelope with an empty signature_hex is invalid_request."""
+        self._exchange_setup()
+        r = self.client.post('/api/v1/exchange/1', json=self._exchange_request(signature_hex=''))
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'invalid_request')
+        self.assertIn('with signature_hex) and a body are required', r.get_json()['error_description'])
+
+    def test_the_exchange_gateway_refuses_a_nonce_longer_than_64(self):
+        """An exchange envelope whose nonce exceeds 64 characters is invalid_request."""
+        self._exchange_setup()
+        r = self.client.post('/api/v1/exchange/1', json=self._exchange_request(nonce='n' * 65))
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error_description'],
+                         'envelope.nonce must be a string of 1 to 64 characters')
+
+    def test_holder_signing_refuses_a_presentation_without_a_signature(self):
+        """/api/v1/sign/<agency>/holder with token_value but no signature_hex is invalid_request."""
+        self._federate(1)
+        tv, sig = self._possession_credential()
+        body = {'token_value': tv, 'digest_hex': 'cd' * 32}
+        r = self.client.post('/api/v1/sign/1/holder', json=body)
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'invalid_request')
+        self.assertIn('token_value and signature_hex', r.get_json()['error_description'])
+        ok = self.client.post('/api/v1/sign/1/holder', json=dict(body, signature_hex=sig))
+        self.assertEqual(ok.status_code, 200, ok.get_data(as_text=True))
+
+    def test_authorize_refuses_a_nonce_shorter_than_eight(self):
+        """The authorization endpoint refuses a nonce under eight characters."""
+        cid, _secret = self._relying_party('authenticate')
+        tv, sig = self._possession_credential()
+        self._federate(1)
+        body = self._authorize_body(cid, tv, sig)
+        ok = self.client.post('/api/v1/auth/authorize', json=body)
+        self.assertEqual(ok.status_code, 200, ok.get_data(as_text=True))
+        r = self.client.post('/api/v1/auth/authorize', json=dict(body, nonce='short'))
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        self.assertNotIn('code', r.get_json())
+        self.assertIn('nonce (8-128 chars)', r.get_json()['error_description'])
+
+    def test_authorize_refuses_a_presentation_without_a_signature(self):
+        """The authorization endpoint with token_value but no signature_hex is invalid_request."""
+        cid, _secret = self._relying_party('authenticate')
+        tv, sig = self._possession_credential()
+        self._federate(1)
+        body = self._authorize_body(cid, tv, sig)
+        self.assertEqual(self.client.post('/api/v1/auth/authorize', json=body).status_code, 200, 'control')
+        del body['signature_hex']
+        r = self.client.post('/api/v1/auth/authorize', json=body)
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'invalid_request')
+        self.assertIn('token_value and signature_hex', r.get_json()['error_description'])
+
+    def _index_past_the_end(self, entries_path, proof_path):
+        size = len(self.client.get(entries_path).get_json()['entries'])
+        self.assertGreater(size, 0, 'precondition: the log has an entry to prove')
+        self.assertEqual(self.client.get(proof_path % (size - 1)).status_code, 200,
+                         'control: the last entry has a proof')
+        r = self.client.get(proof_path % size)
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json(), {'error': 'index out of range', 'log_size': size})
+
+    def test_anchor_log_proof_past_the_end_is_400(self):
+        """The anchor log's inclusion proof refuses an index at the log size."""
+        self._index_past_the_end('/api/v1/transparency/entries', '/api/v1/transparency/proof/%d')
+
+    def test_receipt_log_proof_past_the_end_is_400(self):
+        """The receipt log's inclusion proof refuses an index at the log size."""
+        import hashlib
+        flask_app.query("INSERT INTO ExchangeReceiptLog (receipt_hash) VALUES (%s) ON CONFLICT DO NOTHING",
+                        (hashlib.sha3_256(b'drill receipt').hexdigest(),), fetch='none')
+        self._index_past_the_end('/api/v1/transparency/receipts/entries',
+                                 '/api/v1/transparency/receipts/proof/%d')
+
+    def test_timestamp_log_proof_past_the_end_is_400(self):
+        """The timestamp log's inclusion proof refuses an index at the log size."""
+        self._federate(1)
+        r = self.client.post('/api/v1/timestamp/1', json={'digest_hex': 'ab' * 32, 'anchor': True})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self._index_past_the_end('/api/v1/transparency/timestamps/entries',
+                                 '/api/v1/transparency/timestamps/proof/%d')
+
+
 if __name__ == '__main__':
     # Pull in property-based invariant tests (C1, C2, C3) so they run as
     # part of the main suite. The import is at the bottom so test_app.py

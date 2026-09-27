@@ -1,0 +1,95 @@
+# ============================================================================
+# app-sweep.yml - the application mutation drill, every refusal.
+#
+# polaris-app-mutation-drill.py switches off each 4xx/5xx refusal in polaris_web
+# one at a time and requires a test to go red. Until 2026-09-27 no workflow ran
+# it, and a full local run that day found 25 refusals nothing noticed (malformed
+# input, missing rows, a proof index past the end), which is exactly how a guarantee
+# nobody runs stops being one. They are covered now; this sweep keeps them covered.
+# A full run is about forty minutes, which is why it is weekly rather than per push.
+# ============================================================================
+name: Application sweep (every refusal)
+
+on:
+  schedule:
+    - cron: "11 4 * * 4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    name: Every application refusal, against the suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: polaris_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -h 127.0.0.1"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      POLARIS_DB_HOST: localhost
+      POLARIS_DB_PORT: "5432"
+      POLARIS_DB_NAME: polaris_test
+      POLARIS_DB_USER: postgres
+      PGPASSWORD: postgres
+      POLARIS_DB_PASSWORD: postgres
+      # The application role's password, as 09_grants.sql creates it. Without it the privilege-
+      # boundary tests try the superuser's password, fail to log in, and under CI fail rather than
+      # skip: the sweep's baseline was red on 2026-09-26 for exactly that reason.
+      POLARIS_APP_TEST_PASSWORD: polaris_dev_password
+      POLARIS_SECRET_KEY: app-sweep-secret
+      POLARIS_STATE_DIR: /tmp/polaris-state
+      POLARIS_PQC_PROFILE: placeholder
+      # The epoch-close refusals run the prover to compute the root; a test that skips for
+      # want of the binary would read as a refusal nothing notices.
+      POLARIS_ZK_BINARY: ${{ github.workspace }}/polaris_zk/target/release/polaris-zk
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the app stack
+        run: |
+          python -m pip install --upgrade pip
+          # -dev: the property suite the drills run imports hypothesis.
+          pip install -r polaris_web/requirements-dev.txt
+
+      - name: Read the pinned Rust toolchain
+        id: rust_pin
+        run: |
+          chan=$(grep -oE 'nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}' polaris_zk/rust-toolchain.toml)
+          [ -n "$chan" ] || { echo "::error::polaris_zk/rust-toolchain.toml carries no dated nightly pin"; exit 1; }
+          echo "chan=$chan" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust (pinned nightly for Plonky2)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust_pin.outputs.chan }}
+
+      - name: Build ZK binary
+        working-directory: polaris_zk
+        run: cargo build --release --bin polaris-zk
+
+      - name: Install the postgres client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Load the schema and apply the migrations
+        run: |
+          mkdir -p "$POLARIS_STATE_DIR"
+          cd polaris_sql
+          psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f 00_load_all.sql
+          for f in $(ls migrations/*.up.sql | sort); do
+            psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Every application refusal, against the suites
+        run: python scripts/polaris-app-mutation-drill.py --all

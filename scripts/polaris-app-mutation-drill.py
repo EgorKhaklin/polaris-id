@@ -208,9 +208,9 @@ DECLARED: dict[tuple[str, str], str] = {
     # `rate_limiter.allow` call from the source, so the check fails the build. That is a
     # structural pin, and it proves the guard is written rather than that it fires. The five
     # holder-facing limiters, whose bounds are 5 and 10, ARE driven past them by
-    # `F03_RateLimitingTests`; these six are not, and the difference is the point.
-    ("api_v1_verify", "rpverify:"): "rpverify: bound is the relying party's own rate_limit_per_min; "
-                             "pinned by check_rate_limits_are_enforced",
+    # `F03_RateLimitingTests`; these five are not, and the difference is the point. (The
+    # relying party's own `rpverify:` bound left this list on 2026-09-27: a held-out test drives
+    # it past rate_limit_per_min, and the full run reported the declaration stale.)
     ("api_v1_exchange_receipt_signed", "exmint:"): "exmint: 120/min; pinned by "
                                               "check_rate_limits_are_enforced",
     ("api_v1_timestamp", "tsa:"): "tsa: 600/min; pinned by check_rate_limits_are_enforced",

@@ -134,3 +134,36 @@ an absence check and worth confirming is true of all four. A further 21 read inp
 cannot enumerate. **Those 103 checks are the part of this page that rests on care rather than on
 a machine**, and the drill prints the list, so a reviewer does not have to take this paragraph's
 word for which ones they are.
+
+---
+
+## 4. Broken on purpose
+
+Each drill deletes or inverts one security control at a time and requires a test to go red. A
+**survivor** is a control nothing noticed; a **declared** survivor is one the drill's source
+names with the reason it is acceptable (a twin check refuses the same case, or a drill outside
+the suites covers it). An undeclared survivor, or a declaration nothing needs any more, fails
+the drill. Measured on 2026-09-27 by running each drill to completion.
+
+| Drill | What is broken, one at a time | Broken | Noticed | Declared survivors | Runs |
+| --- | --- | --- | --- | --- | --- |
+| [constraint](../scripts/polaris-constraint-mutation-drill.py) | a named constraint or row-level security policy, dropped | 49 | 49 | 0 | every push |
+| [trigger](../scripts/polaris-trigger-mutation-drill.py) | a whole trigger, dropped | 53 | 53 | 0 | every push; exhaustive weekly |
+| [trigger `--refusals`](../scripts/polaris-trigger-mutation-drill.py) | one refusal inside a trigger function, deleted | 65 | 56 | 9: masked, a later check in the same function refuses the case | every push |
+| [procedure](../scripts/polaris-procedure-mutation-drill.py) | one refusal inside a stored procedure, deleted | 90 | 88 | 2: pre-lock copies whose twins under the row lock refuse | changed procedures per push; all weekly |
+| [constitution](../scripts/polaris-constitution-mutation-drill.py) | the enforcement of one of C1 to C10, deleted | 10 | 10 | 0 | every push |
+| [application](../scripts/polaris-app-mutation-drill.py) | one 4xx/5xx refusal in the web application, switched off | 116 | 94 | 22: coarse rate limiters pinned structurally, gateway checks covered by the two-instance drill | weekly |
+| [SDK](../scripts/polaris-sdk-mutation-drill.py) | one refusal in either SDK or the detached verifier, inverted to accept | 158 | 137 | 21 | changed files per push |
+| [OpenID4VP](../scripts/polaris-oid4vp-mutation-drill.py) | one refusal in the OpenID4VP verifier, inverted to accept | 104 | 98 | 6 | every push |
+| [ZK](../scripts/polaris-zk-mutation-drill.py) | a ZK witness, disabled or weakened | 3 | 3 | 0 | every push |
+| [check layer](../scripts/polaris-check-mutation-drill.py) | an invariant check's search strings, commented out | 133 | 133 | 0 | every push |
+
+What this does and does not say:
+
+- Every drill carries a negative control, a tree it must fail on, so a drill that could never
+  report a survivor is itself caught.
+- A control no drill mutates is not in this table. The mutations are the ones written down; a
+  mutation nobody thought of is the method's standing limit.
+- "Noticed" means some test went red, not that the right test went red for the right reason.
+- The application row was 116 examined, 44 survived, 25 of them undeclared, until 2026-09-27:
+  no workflow ran that drill. Tests now cover the 25 and a weekly sweep keeps them covered.
