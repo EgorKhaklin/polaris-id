@@ -1376,6 +1376,117 @@
       },
       "note": "v9.429: every published agent-proof case expected authentic: true, including the impostor one (a genuine signature by the wrong key is authentic and powerless). So no case exercised the signature at all, and a verifier that never checked it conformed.",
       "since": "9.429"
+    },
+    {
+      "name": "agent-grant-use-widened-grant",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-grant-widened.json",
+      "now": "2026-05-01T00:00:30Z",
+      "requested_action": "transfer:funds",
+      "expect": {
+        "authentic": false,
+        "action_in_scope": null
+      },
+      "since": "1.0.0-rc.63",
+      "note": "An action added to the grant after signing. A grant the holder did not sign grants nothing, so its scope is not read at all: answering from the forged list would honour the forger's own action."
+    },
+    {
+      "name": "agent-grant-use-action-in-scope",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-grant-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "requested_action": "read:status",
+      "expect": {
+        "authentic": true,
+        "action_in_scope": true
+      },
+      "since": "1.0.0-rc.63",
+      "note": "The requested action is in the grant's signed scope."
+    },
+    {
+      "name": "agent-grant-use-action-out-of-scope",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-grant-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "requested_action": "transfer:funds",
+      "expect": {
+        "authentic": true,
+        "action_in_scope": false
+      },
+      "since": "1.0.0-rc.63",
+      "note": "A genuine grant used for an action it does not name. Authenticity is not permission."
+    },
+    {
+      "name": "agent-grant-use-revoked-by-holder",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-grant-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "revocation_file": "conformance/vectors/grant-revocation-valid.json",
+      "expect": {
+        "authentic": true,
+        "revoked": true
+      },
+      "since": "1.0.0-rc.63",
+      "note": "The holder's own revocation of this grant ends it."
+    },
+    {
+      "name": "agent-grant-use-revocation-by-impostor",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-grant-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "revocation_file": "conformance/vectors/grant-revocation-impostor.json",
+      "expect": {
+        "authentic": true,
+        "revoked": false
+      },
+      "since": "1.0.0-rc.63",
+      "note": "A genuinely signed revocation by a key that is not the grant's holder ends nothing; otherwise anyone able to publish bytes could revoke somebody else's grant."
+    },
+    {
+      "name": "agent-grant-use-agent-proved",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-grant-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "proof_file": "conformance/vectors/agent-proof-valid.json",
+      "requested_action": "read:status",
+      "expected_nonce": "svc-nonce-1",
+      "expect": {
+        "authentic": true,
+        "action_in_scope": true,
+        "agent_proved": true
+      },
+      "since": "1.0.0-rc.63",
+      "note": "The agent proves it holds the key the grant names, for this action and this nonce."
+    },
+    {
+      "name": "agent-grant-use-proof-by-impostor",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-grant-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "proof_file": "conformance/vectors/agent-proof-impostor.json",
+      "requested_action": "read:status",
+      "expected_nonce": "svc-nonce-1",
+      "expect": {
+        "authentic": true,
+        "agent_proved": false
+      },
+      "since": "1.0.0-rc.63",
+      "note": "A genuine proof by a key the grant does not name: a copied grant is not a bearer token."
+    },
+    {
+      "name": "agent-grant-use-proof-replayed",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-grant-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "proof_file": "conformance/vectors/agent-proof-valid.json",
+      "requested_action": "read:status",
+      "expected_nonce": "svc-nonce-2",
+      "expect": {
+        "authentic": true,
+        "agent_proved": false
+      },
+      "since": "1.0.0-rc.63",
+      "note": "The agent's genuine proof, presented to a service that issued a different nonce: a replay."
     }
   ]
 }

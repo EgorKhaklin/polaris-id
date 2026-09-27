@@ -1085,3 +1085,29 @@ def revocation_ends_grant(revocation, grant) -> bool:
         return False
     return str(revocation.get("public_key_hex") or "").lower() == \
         str(grant.get("public_key_hex") or "").lower()
+
+
+def agent_proof_proves(proof, grant, action=None, nonce=None) -> bool:
+    """Is this agent proof bound to THIS grant, this action and this service's nonce?
+
+    Signature verification is the caller's `verify_signed_artifact` step; this is the binding
+    that must accompany it, or a copied grant is a bearer token. The proof must name the grant,
+    be signed by the agent key the grant names, under the algorithm the HOLDER authorized (the
+    proof's own `algorithm` is the agent's unsigned word about itself), and, when the service
+    supplies them, name the requested action and the service's nonce (a replay names another).
+    """
+    if not isinstance(proof, dict) or not isinstance(grant, dict):
+        return False
+    if proof.get("format") != "polaris-agent-proof/1":
+        return False
+    if str(proof.get("grant_id") or "") != str(grant.get("grant_id") or ""):
+        return False
+    if str(proof.get("public_key_hex") or "").lower() != str(grant.get("agent_public_key_hex") or "").lower():
+        return False
+    if grant.get("agent_algorithm") is not None and proof.get("algorithm") != grant.get("agent_algorithm"):
+        return False
+    if nonce is not None and str(proof.get("service_nonce") or "") != str(nonce):
+        return False
+    if action is not None and str(proof.get("action") or "") != str(action):
+        return False
+    return True

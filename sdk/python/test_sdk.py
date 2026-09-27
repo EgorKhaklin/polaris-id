@@ -256,6 +256,29 @@ class RefusalsAreTestedTests(unittest.TestCase):
                                  "%s must not end this grant" % label)
         self.assertFalse(pv.revocation_ends_grant(good, "grant"))
 
+    # -- delegation: agent-proof binding ---------------------------------
+
+    def test_an_agent_proof_must_bind_this_grant_action_and_nonce(self):
+        grant = {"grant_id": "g-1", "agent_public_key_hex": "AA" * 32, "agent_algorithm": "ML-DSA-65"}
+        good = {"format": "polaris-agent-proof/1", "grant_id": "g-1", "public_key_hex": "aa" * 32,
+                "algorithm": "ML-DSA-65", "action": "read:status", "service_nonce": "n-1"}
+        self.assertTrue(pv.agent_proof_proves(good, grant, "read:status", "n-1"),
+                        "the matching proof must prove the agent")
+        self.assertTrue(pv.agent_proof_proves(good, grant),
+                        "without an action or nonce to compare, the binding to the grant decides")
+        for label, bad, action, nonce in (
+                ("not a dict", "proof", None, None),
+                ("wrong format", dict(good, format="polaris-grant-revocation/1"), None, None),
+                ("another grant's id", dict(good, grant_id="g-2"), None, None),
+                ("a key the grant does not name", dict(good, public_key_hex="bb" * 32), None, None),
+                ("an algorithm the holder did not authorize", dict(good, algorithm="ML-DSA-87"), None, None),
+                ("another service's nonce (a replay)", good, "read:status", "n-2"),
+                ("another action", good, "transfer:funds", "n-1")):
+            with self.subTest(case=label):
+                self.assertFalse(pv.agent_proof_proves(bad, grant, action, nonce),
+                                 "%s must not prove the agent" % label)
+        self.assertFalse(pv.agent_proof_proves(good, "grant"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { verifyAuthenticity, PolarisVerifier, pairwiseHandle, handlesLink,
-         nullifiersLink, grantCovers, grantWithinLimits, revocationEndsGrant,
+         nullifiersLink, grantCovers, grantWithinLimits, revocationEndsGrant, agentProofProves,
          verifyInclusion, verifyStatusAssertion, verifyIdToken, verifyHolder, verifyTimestampAnchor,
          verifySignedArtifact, verifyCosignature,
          verifyAttestation, verifyCrossAuthority,
@@ -136,6 +136,23 @@ test("only the holder who signed a grant can revoke it", () => {
   assert.equal(revocationEndsGrant({ ...rev, grant_id: "other" }, GRANT), false,
     "a revocation naming another grant must not end this one");
   assert.equal(revocationEndsGrant({ ...rev, format: "polaris-status-assertion/1" }, GRANT), false);
+});
+
+test("an agent proof must bind this grant, this action and this nonce", () => {
+  const grant = { grant_id: "g1", agent_public_key_hex: "AA".repeat(32), agent_algorithm: "ML-DSA-65" };
+  const good = { format: "polaris-agent-proof/1", grant_id: "g1", public_key_hex: "aa".repeat(32),
+                 algorithm: "ML-DSA-65", action: "read:status", service_nonce: "n-1" };
+  assert.equal(agentProofProves(good, grant, "read:status", "n-1"), true, "the matching proof proves the agent");
+  assert.equal(agentProofProves(good, grant), true);
+  assert.equal(agentProofProves({ ...good, format: "polaris-grant-revocation/1" }, grant), false);
+  assert.equal(agentProofProves({ ...good, grant_id: "g2" }, grant), false, "another grant's proof");
+  assert.equal(agentProofProves({ ...good, public_key_hex: "bb".repeat(32) }, grant), false,
+    "a key the grant does not name: a copied grant is not a bearer token");
+  assert.equal(agentProofProves({ ...good, algorithm: "ML-DSA-87" }, grant), false,
+    "an algorithm the holder did not authorize");
+  assert.equal(agentProofProves(good, grant, "read:status", "n-2"), false, "a replay to another service");
+  assert.equal(agentProofProves(good, grant, "transfer:funds", "n-1"), false, "another action");
+  assert.equal(agentProofProves("proof", grant), false);
 });
 
 // ---------------------------------------------------------------------------

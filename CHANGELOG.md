@@ -18,6 +18,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The application role can no longer register an authority key, record a card personalization or write a retention policy; `key-register`, `key-retire` and `key-compromise` run as the schema owner.
 - The application role can no longer register a relying party or change its secret, scope or privacy policy; it stamps only `last_used_at`. `rp-register` and `rp-policy` run as the schema owner.
 
+### Added
+
+- Conformance cases for an agent grant in use (`agent-grant-use`): whether the action is in scope, whether a revocation ends the grant, and whether the agent's proof binds this grant, action and nonce. Both SDKs gain `agent_proof_proves` / `agentProofProves`.
+
 ### Changed
 
 - The trigger refusal drill runs on every push.

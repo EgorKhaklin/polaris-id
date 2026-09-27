@@ -8,7 +8,7 @@ means (ROADMAP P3.5).
 The suite covers the **offline** checks over the protocol's signed artifacts, each
 specified normatively in [`docs/reference/WIRE-SPEC.md`](../docs/reference/WIRE-SPEC.md). It
 certifies the **authenticity** of the app-signed artifacts a relying party, a service or an
-auditor holds (25 artifact types, listed in `cases.json` and held to that file by
+auditor holds (26 artifact types, listed in `cases.json` and held to that file by
 `check_conformance_spec_counts_its_artifacts`, because this sentence said sixteen for eleven
 releases after the suite had grown past it); among them:
 
@@ -74,7 +74,27 @@ key the case's expected verdict names; the verifier may report additional keys.
   "trusted_witnesses": ["<witness public key hex>", "..."],
   "threshold": 2 }
    -> { "anchored": true, "witnessed": true }
+
+{ "artifact": "agent-grant-use",
+  "grant": { "...": "a polaris-agent-grant/1" },
+  "requested_action": "read:status",
+  "revocation": { "...": "a polaris-grant-revocation/1, only when the case asks about it" },
+  "agent_proof": { "...": "a polaris-agent-proof/1, only when the case asks about it" },
+  "expected_nonce": "<the nonce this service issued>",
+  "now": "2026-05-01T00:00:30Z" }
+   -> { "authentic": true, "action_in_scope": true, "revoked": false, "agent_proved": true }
 ```
+
+For a grant in use (since 1.0.0-rc.63) each link is answered separately, and `null` where the
+case did not supply what the question needs:
+
+- `action_in_scope`: the requested action is in the grant's signed `actions`; an absent or
+  empty list grants nothing.
+- `revoked`: the revocation is genuine AND signed by the grant's holder key AND names this
+  grant. A genuine revocation by any other key ends nothing.
+- `agent_proved`: the proof is genuine AND signed by the agent key the grant names, under the
+  algorithm the holder authorized, naming this grant, the requested action and this
+  service's nonce. Anything else is a copied grant or a replay.
 
 For the timestamp anchor the verdict is:
 
@@ -158,16 +178,16 @@ Status-assertion cases (`artifact: status-assertion`, verdict `{authentic, fresh
 
 A conformance suite is read as a boundary, so it has to say where its boundary is. Measured
 rather than recalled, by `scripts/polaris-contract-reach-drill.py`, which runs every case and
-records which of the reference SDK's public functions actually execute: **the 118 cases enter
-11 of the SDK's 17 public functions.** Six are never entered by any case, which means an
+records which of the reference SDK's public functions actually execute: **the 126 cases enter
+14 of the SDK's 18 public functions.** Four are never entered by any case, which means an
 implementation can get them wrong, or omit them, and still pass every case here.
 
 | never entered | why the contract does not ask |
 |---|---|
 | `nullifiers_link`, `pairwise_handle`, `handles_link` | linkability is a question about TWO presentations, and every case carries one artifact. There is no case shaped like "here are two, are they the same holder" |
-| `grant_covers`, `grant_within_limits`, `revocation_ends_grant` | the cases establish that an agent grant is GENUINE. Whether a genuine grant permits a particular action, stays inside its limits, or has been ended by a revocation is a separate question, and the suite does not ask it |
+| `grant_within_limits` | whether a use stays inside a grant's limits depends on the service's own count of uses, which no case carries. Scope, revocation and the agent's proof are asked (`agent-grant-use`, since 1.0.0-rc.63) |
 
-Those six are covered by the SDK's own tests. That is a different guarantee: it binds this
+Those four are covered by the SDK's own tests. That is a different guarantee: it binds this
 implementation, not the contract, and a third party certifying against these cases inherits
 none of it.
 
@@ -177,7 +197,7 @@ runs it with collection disabled and requires that refusal.
 
 **The same gap, between the implementations.** Three verifiers here check these artifacts:
 the detached verifier a relying party installs, and the two reference SDKs. All three pass all
-118 cases, and a case constrains only the keys it names, so on every other key they could
+126 cases, and a case constrains only the keys it names, so on every other key they could
 differ and the suite would stay green. `scripts/polaris-sdk-agreement-drill.py` compares them
 to EACH OTHER, key for key, on every case, and CI runs it.
 

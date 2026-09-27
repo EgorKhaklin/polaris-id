@@ -21,7 +21,7 @@ drives it over the published cases and checks every verdict. See conformance/SPE
 import json
 import sys
 
-from . import (verify_attestation, verify_authenticity, verify_cross_authority, verify_holder,
+from . import (agent_proof_proves, grant_covers, revocation_ends_grant, verify_attestation, verify_authenticity, verify_cross_authority, verify_holder,
                verify_id_token,
                verify_signed_artifact, verify_status_assertion, verify_timestamp_anchor)
 
@@ -77,6 +77,36 @@ def main(argv=None):
                                    anchors=anchors)
         print(json.dumps({"authentic": v.authentic, "fresh": v.fresh,
                           "issuer_trusted": v.issuer_trusted}))
+        return 0
+    if artifact == "agent-grant-use":
+        # 2026-09-27: a grant IN USE. The signed-artifact cases ask only whether each of the
+        # three objects is genuine; a service must also ask whether the action is in scope,
+        # whether the revocation is the holder's and names this grant, and whether the proof
+        # binds this grant, action and nonce. A verifier answering only the first question
+        # conformed while honouring anybody's revocation and any copied grant.
+        grant = case.get("grant") or {}
+        now = case.get("now")
+        g = verify_signed_artifact(grant, now=now, anchors=None)
+        action = case.get("requested_action")
+        verdict = {"authentic": g.authentic, "action_in_scope": None, "revoked": None,
+                   "agent_proved": None}
+        if not g.authentic:
+            # A grant the holder did not sign grants nothing, so no later question is answered:
+            # reading the scope of a forged grant would honour the forger's own actions.
+            print(json.dumps(verdict))
+            return 0
+        if action is not None:
+            verdict["action_in_scope"] = grant_covers(grant, action)
+        rev = case.get("revocation")
+        if rev is not None:
+            verdict["revoked"] = bool(verify_signed_artifact(rev, now=now, anchors=None).authentic
+                                      and revocation_ends_grant(rev, grant))
+        proof = case.get("agent_proof")
+        if proof is not None:
+            verdict["agent_proved"] = bool(verify_signed_artifact(proof, now=now, anchors=None).authentic
+                                           and agent_proof_proves(proof, grant, action,
+                                                                  case.get("expected_nonce")))
+        print(json.dumps(verdict))
         return 0
     if artifact == "timestamp-anchor":
         v = verify_timestamp_anchor(case.get("timestamp") or {}, log_key=case.get("log_key"),

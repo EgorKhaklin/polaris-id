@@ -10,7 +10,7 @@
  * See conformance/SPEC.md. This is the TypeScript counterpart of the Python SDK's
  * `python -m polaris_verify.conformance`; the same runner drives either.
  */
-import { verifyAttestation, verifyAuthenticity, verifyIdToken, verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority,
+import { agentProofProves, grantCovers, revocationEndsGrant, verifyAttestation, verifyAuthenticity, verifyIdToken, verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority,
   verifyTimestampAnchor, verifyHolder, type Pack } from "./index.ts";
 
 const SIGNED_ARTIFACTS = new Set([
@@ -60,6 +60,25 @@ process.stdin.on("end", () => {
     const v = verifySignedArtifact(caseObj.object ?? {}, caseObj.now ?? null, anchors);
     process.stdout.write(JSON.stringify({ authentic: v.authentic, fresh: v.fresh,
                                           issuer_trusted: v.issuerTrusted ?? null }) + "\n");
+  } else if (artifact === "agent-grant-use") {
+    // 2026-09-27: a grant IN USE; see the Python SDK's conformance CLI for why.
+    const grant = caseObj.grant ?? {};
+    const now = caseObj.now ?? null;
+    const action = caseObj.requested_action ?? null;
+    const authentic = verifySignedArtifact(grant, now, null).authentic;
+    const verdict: Record<string, boolean | null> = {
+      authentic, action_in_scope: null, revoked: null, agent_proved: null };
+    // A grant the holder did not sign grants nothing, so no later question is answered.
+    if (authentic && action !== null) verdict.action_in_scope = grantCovers(grant, action);
+    if (authentic && caseObj.revocation !== undefined && caseObj.revocation !== null) {
+      verdict.revoked = Boolean(verifySignedArtifact(caseObj.revocation, now, null).authentic
+        && revocationEndsGrant(caseObj.revocation, grant));
+    }
+    if (authentic && caseObj.agent_proof !== undefined && caseObj.agent_proof !== null) {
+      verdict.agent_proved = Boolean(verifySignedArtifact(caseObj.agent_proof, now, null).authentic
+        && agentProofProves(caseObj.agent_proof, grant, action, caseObj.expected_nonce ?? null));
+    }
+    process.stdout.write(JSON.stringify(verdict) + "\n");
   } else if (artifact === "timestamp-anchor") {
     const v = verifyTimestampAnchor(caseObj.timestamp ?? {}, caseObj.log_key ?? null,
       caseObj.trusted_witnesses ?? null, Number(caseObj.threshold ?? 1));

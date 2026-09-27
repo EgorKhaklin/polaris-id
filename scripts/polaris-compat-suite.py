@@ -68,7 +68,12 @@ def _at(iso):
 
 
 def _vkey(v):
-    return tuple(int(x) for x in str(v).split("."))
+    # The tree stopped counting ships at v9.467 and continued as 1.0.0 release candidates, so a
+    # case added in the 1.0 line (`since: "1.0.0-rc.N"`) sorts after every v9 release.
+    s = str(v)
+    if s.startswith("1.0.0-rc."):
+        return (10, 0, int(s.rsplit(".", 1)[1]))
+    return tuple(int(x) for x in s.split("."))
 
 
 def _read(rel):

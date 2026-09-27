@@ -87,6 +87,16 @@ def _load_cases():
                 anchors = [payload["object"].get("public_key_hex")]
             if anchors is not None:
                 payload["anchors"] = anchors
+        elif artifact == "agent-grant-use":
+            # 2026-09-27: a grant in use. Each link is supplied only when the case asks about it.
+            payload["grant"] = _load_file(c["grant_file"])
+            if "revocation_file" in c:
+                payload["revocation"] = _load_file(c["revocation_file"])
+            if "proof_file" in c:
+                payload["agent_proof"] = _load_file(c["proof_file"])
+            for k in ("requested_action", "expected_nonce", "now"):
+                if k in c:
+                    payload[k] = c[k]
         elif artifact == "holder-chain":
             payload["credential"] = _load_file(c["credential_file"])
             payload["binding"] = _load_file(c["binding_file"])

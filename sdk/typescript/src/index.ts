@@ -1128,3 +1128,23 @@ export function revocationEndsGrant(revocation: any, grant: any): boolean {
   if (String(revocation.grant_id ?? "") !== String(grant.grant_id ?? "")) return false;
   return String(revocation.public_key_hex ?? "").toLowerCase() === String(grant.public_key_hex ?? "").toLowerCase();
 }
+
+/**
+ * Is this agent proof bound to THIS grant, this action and this service's nonce?
+ *
+ * Signature verification is the caller's `verifySignedArtifact` step; this is the binding
+ * that must accompany it, or a copied grant is a bearer token. The proof must name the
+ * grant, be signed by the agent key the grant names, under the algorithm the HOLDER
+ * authorized, and, when the service supplies them, name the requested action and nonce.
+ */
+export function agentProofProves(proof: any, grant: any, action?: unknown, nonce?: unknown): boolean {
+  if (!proof || typeof proof !== "object" || !grant || typeof grant !== "object") return false;
+  if (proof.format !== "polaris-agent-proof/1") return false;
+  if (String(proof.grant_id ?? "") !== String(grant.grant_id ?? "")) return false;
+  if (String(proof.public_key_hex ?? "").toLowerCase() !== String(grant.agent_public_key_hex ?? "").toLowerCase()) return false;
+  if (grant.agent_algorithm !== undefined && grant.agent_algorithm !== null
+      && proof.algorithm !== grant.agent_algorithm) return false;
+  if (nonce !== undefined && nonce !== null && String(proof.service_nonce ?? "") !== String(nonce)) return false;
+  if (action !== undefined && action !== null && String(proof.action ?? "") !== String(action)) return false;
+  return true;
+}

@@ -55,11 +55,10 @@ EXPECTED_UNREACHED = {
     "nullifiers_link": "the contract publishes no case with two presentations to compare",
     "pairwise_handle": "same: a per-verifier handle has nothing to be compared against",
     "handles_link": "same",
-    # Agent-grant authorization. The cases verify that a grant is GENUINE; whether a genuine
-    # grant permits a particular action is a separate question the contract does not ask.
-    "grant_covers": "the cases verify grant authenticity, never whether it covers an action",
-    "grant_within_limits": "same: limits are checked by the SDK's own tests, not the contract",
-    "revocation_ends_grant": "same: revocation is verified, its EFFECT on a grant is not",
+    # Agent-grant limits. Since 2026-09-27 the agent-grant-use cases ask whether a grant covers
+    # an action, whether a revocation ends it and whether a proof binds it; whether a use stays
+    # inside the grant's limits needs the service's own use count, which no case carries.
+    "grant_within_limits": "limits depend on the service's use count, which no case carries",
 }
 
 
@@ -169,6 +168,9 @@ def main() -> int:
         return 3
 
     unexpected = [n for n in unreached if n not in EXPECTED_UNREACHED]
+    # Checked both ways (2026-09-27): a function declared unreached that a case now reaches
+    # is a stale declaration, and a list that is never pruned stops describing anything.
+    stale = sorted(n for n in EXPECTED_UNREACHED if n in reached)
     if args.json:
         print(json.dumps({"public": len(functions), "reached": len(reached),
                           "unreached": unreached, "unexpected": unexpected}, indent=2))
@@ -182,6 +184,10 @@ def main() -> int:
             why = EXPECTED_UNREACHED.get(name)
             print("      %-26s %s" % (name, why or "NOT ACCOUNTED FOR"))
 
+    if stale:
+        print("\n== %d function(s) declared unreached are now reached by a case: %s. Remove them "
+              "from EXPECTED_UNREACHED ==" % (len(stale), ", ".join(stale)), file=sys.stderr)
+        return 1
     if unexpected:
         print("\n== %d public function(s) the contract does not reach and this drill does not "
               "account for: %s. Either the contract should carry a case for it, or this "

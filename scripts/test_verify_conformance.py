@@ -158,6 +158,17 @@ def _verdict_for(case):
         return {"authentic": v[key], "fresh": v.get("fresh"),
                 "issuer_trusted": v.get("issuer_trusted")}
 
+    if artifact == "agent-grant-use":
+        # 2026-09-27: the grant in use, each link reported as the detached verifier decides it.
+        v = V.verify_agent_grant(
+            _load(case["grant_file"]), now=case.get("now"),
+            requested_action=case.get("requested_action"),
+            revocation=_load(case["revocation_file"]) if "revocation_file" in case else None,
+            agent_proof=_load(case["proof_file"]) if "proof_file" in case else None,
+            expected_nonce=case.get("expected_nonce"))
+        return {"authentic": v["grant_authentic"], "action_in_scope": v["action_in_scope"],
+                "revoked": v["revoked"], "agent_proved": v["agent_proved"]}
+
     if artifact == "timestamp-anchor":
         ts = _load(case["timestamp_file"])
         log_key = case.get("log_key")
