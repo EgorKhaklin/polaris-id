@@ -1,0 +1,12 @@
+[2026-09-27T13:45:53.049Z] versions {"date":"2026-09-27T13:45:52.969Z","node":"v24.11.1","credo_core":"0.6.3","credo_openid4vc":"0.6.3","credo_node":"0.6.3","openid4vc_openid4vp":"0.4.6","openid4vc_oauth2":"0.4.6","sd_jwt_core":"0.19.0","polaris_oid4vp":"1.0.0rc7"}
+[2026-09-27T13:45:53.061Z] credo agent initialized (in-memory storage, NodeKeyManagementService)
+[2026-09-27T13:45:53.064Z] holder key created by Credo KMS: keyId=e598b963-a7a1-451a-9027-11eab8d975d7 publicJwk={"kty":"EC","x":"VujTmKxbBKpNgpMXpggMhKGjJKPs1hb2pIJq-TZ9rXM","y":"07gBEdDgj73_I9SdgAuCdjOf-czmLGiSgNh8rD1n7AA","crv":"P-256","kid":"e598b963-a7a1-451a-9027-11eab8d975d7"}
+[2026-09-27T13:45:53.134Z] issuer: credential   eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsImtpZCI6InBvbGFy... | disclosures  2 (given_name, family_name) | bound to     e598b963-a7a1-451a-9027-11eab8d975d7 | wrote        ./run/credential.json
+[2026-09-27T13:45:53.179Z] CONTROL wrong-issuer: verifier trusts a different key under the same kid
+[2026-09-27T13:45:53.184Z] credo stored 1 SD-JWT VC; vct=urn:eudi:pid:1 claims={"iss":"https://issuer.polaris.test","vct":"urn:eudi:pid:1","iat":1790516753,"cnf":{"jwk":{"kty":"EC","x":"VujTmKxbBKpNgpMXpggMhKGjJKPs1hb2pIJq-TZ9rXM","y":"07gBEdDgj73_I9SdgAuCdjOf-czmLGiSgNh8rD1n7AA","crv":"P-256"}},"given_name":"Jean","family_name":"Dupont"}
+[2026-09-27T13:45:53.390Z] authorization request: openid4vp://authorize?client_id=x509_hash%3A1VXG-ekjC8oY5pqT2fs_vBKb795MsbV1tzvhuQowUlE&request_uri=https%3A%2F%2Flocalhost%3A9543%2Frequest.jwt%3Fstate%3DoOjQfC2denys_Wh-ck-GwQ&request_uri_method=post
+[2026-09-27T13:45:53.429Z] wire post https://localhost:9543/request.jwt?state=oOjQfC2denys_Wh-ck-GwQ -> 200
+[2026-09-27T13:45:53.453Z] resolved: clientIdPrefix=x509_hash effectiveClientId=x509_hash:1VXG-ekjC8oY5pqT2fs_vBKb795MsbV1tzvhuQowUlE response_mode=direct_post.jwt dcql.canBeSatisfied=true
+[2026-09-27T13:45:53.477Z] wire POST https://localhost:9543/response -> 400
+[2026-09-27T13:45:53.477Z] accept returned ok=false serverResponse={"status":400,"body":{"error":"invalid_request","error_description":"the presentation was not accepted"}}
+[2026-09-27T13:45:54.997Z] verifier verdict: <- 400 refused: issuer_signature: the issuer signature over the credential does not verify under the trusted issuer key

@@ -1,0 +1,48 @@
+{
+  "versions": {
+    "date": "2026-09-27T13:46:02.900Z",
+    "node": "v24.11.1",
+    "credo_core": "0.6.3",
+    "credo_openid4vc": "0.6.3",
+    "credo_node": "0.6.3",
+    "openid4vc_openid4vp": "0.4.6",
+    "openid4vc_oauth2": "0.4.6",
+    "sd_jwt_core": "0.19.0",
+    "polaris_oid4vp": "1.0.0rc7"
+  },
+  "requestUrl": "openid4vp://authorize?client_id=x509_hash%3Aaf_dF1qlSuF8SeZuO2qmcb5E_MAlC89_d6mV6QoiBNo&request_uri=https%3A%2F%2Flocalhost%3A9543%2Frequest.jwt%3Fstate%3Di7AcVQW6bnKyHRy4PZj22g&request_uri_method=post",
+  "verifierVerdict": "(the verifier printed no verdict line)",
+  "credo": "threw",
+  "name": "Error",
+  "message": "Error during verification of jwt. No trusted certificate was found while validating the X.509 chain",
+  "detail": {
+    "name": "Error",
+    "message": "Error during verification of jwt. No trusted certificate was found while validating the X.509 chain",
+    "cause": {
+      "name": "X509Error",
+      "message": "No trusted certificate was found while validating the X.509 chain",
+      "stack": [
+        "X509Error: No trusted certificate was found while validating the X.509 chain",
+        "    at X509Service.validateCertificateChain (file://./node_modules/@credo-ts/core/build/modules/x509/X509Service.mjs:50:46)",
+        "    at async JwsService.verifyJwsSigner (file://./node_modules/@credo-ts/core/build/crypto/JwsService.mjs:175:4)",
+        "    at async JwsService.verifyJws (file://./node_modules/@credo-ts/core/build/crypto/JwsService.mjs:125:4)",
+        "    at async Object.verifyJwtCallback (file://./node_modules/@credo-ts/openid4vc/build/shared/callbacks.mjs:83:35)",
+        "    at async verifyJwt (file://./node_modules/@openid4vc/oauth2/dist/index.mjs:320:18)",
+        "    at async verifyJarRequestObject (file://./node_modules/@openid4vc/openid4vp/dist/index.mjs:920:21)",
+        "    at async verifyJarRequest (file://./node_modules/@openid4vc/openid4vp/dist/index.mjs:837:55)",
+        "    at async resolveOpenid4vpAuthorizationRequest (file://./node_modules/@openid4vc/openid4vp/dist/index.mjs:977:9)",
+        "    at async OpenId4VpHolderService.resolveAuthorizationRequest (file://./node_modules/@credo-ts/openid4vc/build/openid4vc-holder/OpenId4vpHolderService.mjs:54:40)",
+        "    at async main (file://./present.ts:212:22)"
+      ]
+    },
+    "stack": [
+      "Error: Error during verification of jwt. No trusted certificate was found while validating the X.509 chain",
+      "    at verifyJwt (file://./node_modules/@openid4vc/oauth2/dist/index.mjs:329:9)",
+      "    at async verifyJarRequestObject (file://./node_modules/@openid4vc/openid4vp/dist/index.mjs:920:21)",
+      "    at async verifyJarRequest (file://./node_modules/@openid4vc/openid4vp/dist/index.mjs:837:55)",
+      "    at async resolveOpenid4vpAuthorizationRequest (file://./node_modules/@openid4vc/openid4vp/dist/index.mjs:977:9)",
+      "    at async OpenId4VpHolderService.resolveAuthorizationRequest (file://./node_modules/@credo-ts/openid4vc/build/openid4vc-holder/OpenId4vpHolderService.mjs:54:40)",
+      "    at async main (file://./present.ts:212:22)"
+    ]
+  }
+}

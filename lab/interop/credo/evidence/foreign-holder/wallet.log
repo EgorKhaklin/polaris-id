@@ -1,0 +1,12 @@
+[2026-09-27T13:45:56.406Z] versions {"date":"2026-09-27T13:45:56.332Z","node":"v24.11.1","credo_core":"0.6.3","credo_openid4vc":"0.6.3","credo_node":"0.6.3","openid4vc_openid4vp":"0.4.6","openid4vc_oauth2":"0.4.6","sd_jwt_core":"0.19.0","polaris_oid4vp":"1.0.0rc7"}
+[2026-09-27T13:45:56.418Z] credo agent initialized (in-memory storage, NodeKeyManagementService)
+[2026-09-27T13:45:56.421Z] holder key created by Credo KMS: keyId=6c68e18f-7a50-4b4d-900b-b906d18a5b7d publicJwk={"kty":"EC","x":"eYp2g3FStC0KCAtrALMpeKqTF6WU3GA3vdNHHOYWJB8","y":"YOd05RqW3u1R_YHI8gzDUdF10s76vc9v0GfgqeqQ4p4","crv":"P-256","kid":"6c68e18f-7a50-4b4d-900b-b906d18a5b7d"}
+[2026-09-27T13:45:56.469Z] CONTROL foreign-holder: cnf.jwk is a key generated outside Credo
+[2026-09-27T13:45:56.536Z] issuer: credential   eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsImtpZCI6InBvbGFy... | disclosures  2 (given_name, family_name) | bound to     not-credo | wrote        ./run/credential.json
+[2026-09-27T13:45:56.541Z] credo stored 1 SD-JWT VC; vct=urn:eudi:pid:1 claims={"iss":"https://issuer.polaris.test","vct":"urn:eudi:pid:1","iat":1790516756,"cnf":{"jwk":{"kty":"EC","crv":"P-256","x":"fdToC5jLadS_OTLYTFKjR8f0ZKJbvIiwtMfhKyOmr20","y":"u8XTnZC2vOtw3qEsDXikFKZyx_skqJNd2OZgQZV2Ih0"}},"given_name":"Jean","family_name":"Dupont"}
+[2026-09-27T13:45:56.746Z] authorization request: openid4vp://authorize?client_id=x509_hash%3A6OryUAIUHDCFOFIwSwvFSTIp3ML6xdDxLrcOxubX5iI&request_uri=https%3A%2F%2Flocalhost%3A9543%2Frequest.jwt%3Fstate%3DznK62Paxdf7besqlDEGyaQ&request_uri_method=post
+[2026-09-27T13:45:56.785Z] wire post https://localhost:9543/request.jwt?state=znK62Paxdf7besqlDEGyaQ -> 200
+[2026-09-27T13:45:56.809Z] resolved: clientIdPrefix=x509_hash effectiveClientId=x509_hash:6OryUAIUHDCFOFIwSwvFSTIp3ML6xdDxLrcOxubX5iI response_mode=direct_post.jwt dcql.canBeSatisfied=true
+[2026-09-27T13:45:56.833Z] wire POST https://localhost:9543/response -> 400
+[2026-09-27T13:45:56.833Z] accept returned ok=false serverResponse={"status":400,"body":{"error":"invalid_request","error_description":"the presentation was not accepted"}}
+[2026-09-27T13:45:58.358Z] verifier verdict: <- 400 refused: kb_signature: the key binding JWT signature does not verify under the credential's cnf.jwk, so the holder did not produce this presentation

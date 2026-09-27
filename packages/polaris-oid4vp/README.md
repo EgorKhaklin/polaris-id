@@ -14,8 +14,8 @@ Foundation [lists the certification](https://openid.net/certification/certified-
 other versions.
 
 **Status:** a release candidate. Outside results: the Foundation's hosted suite (0.1.0, then
-1.0.0rc7 for certification) and one unmodified external wallet, walt.id Wallet API v2 (last
-against 1.0.0-rc.3). No operator other than the author has run it and no independent security
+1.0.0rc7 for certification) and two unmodified external wallets, walt.id Wallet API v2 (last
+against 1.0.0-rc.3) and Credo 0.6.3 (against 1.0.0rc7, 2026-09-27). No operator other than the author has run it and no independent security
 review exists. Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
 
 **Try it in ten minutes, without cloning anything:**

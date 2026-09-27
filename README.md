@@ -62,7 +62,7 @@ Around the credential:
 
 **Checked by someone other than the author:**
 
-- **An unmodified wallet.** A stock [walt.id](https://walt.id) Wallet API v2 presented an SD-JWT VC over OpenID4VP 1.0 and was accepted (15 September 2026), after first catching a certificate defect nothing internal had. Repeat it in ten minutes: [STRANGER-PATH.md](docs/STRANGER-PATH.md).
+- **Two unmodified wallets.** A stock [walt.id](https://walt.id) Wallet API v2 presented an SD-JWT VC over OpenID4VP 1.0 and was accepted (15 September 2026), after first catching a certificate defect nothing internal had. Repeat it in ten minutes: [STRANGER-PATH.md](docs/STRANGER-PATH.md). An independently written second one, the OpenWallet Foundation's Credo 0.6.3, did the same against the published verifier on 27 September 2026 ([lab/interop/credo](lab/interop/credo/README.md)).
 - **The OpenID Foundation's hosted suite**, which certified the verifier as above.
 
 Everything else here is the project checking itself: one author's reference implementation on notional data. It has never held real identity data, and there has been no independent security review, no other operator and no pilot. The ledger of outside results is [the scoreboard](lab/EXTERNAL-NOUNS.md).

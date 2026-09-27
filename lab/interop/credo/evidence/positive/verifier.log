@@ -1,0 +1,14 @@
+polaris-oid4vp serving on https://localhost:9543
+  client_id     x509_hash:4m4QnTVYmJ0Q5j_3PJINe5LwYLNBKSor52o-5IPFXxA
+  request_uri   https://localhost:9543/request.jwt
+  response_uri  https://localhost:9543/response
+  anchor to register: ./run/pki/anchor.pem
+Start a request with --once to print the parameters a wallet is launched with.
+authorization request parameters:
+  client_id          x509_hash:4m4QnTVYmJ0Q5j_3PJINe5LwYLNBKSor52o-5IPFXxA
+  request_uri        https://localhost:9543/request.jwt?state=99j-zkAhZBhkhO1rbMLIdg
+  request_uri_method post
+POST /request.jwt?state=99j-zkAhZBhkhO1rbMLIdg
+  <- 200 authentic, claims ['cnf', 'family_name', 'given_name', 'iat', 'iss', 'vct']
+POST /response
+stopping

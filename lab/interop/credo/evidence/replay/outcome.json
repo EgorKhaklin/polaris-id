@@ -1,0 +1,36 @@
+{
+  "versions": {
+    "date": "2026-09-27T13:45:59.646Z",
+    "node": "v24.11.1",
+    "credo_core": "0.6.3",
+    "credo_openid4vc": "0.6.3",
+    "credo_node": "0.6.3",
+    "openid4vc_openid4vp": "0.4.6",
+    "openid4vc_oauth2": "0.4.6",
+    "sd_jwt_core": "0.19.0",
+    "polaris_oid4vp": "1.0.0rc7"
+  },
+  "requestUrl": "openid4vp://authorize?client_id=x509_hash%3AIcdZo-NCzHONRrHRSQ2rIMYZSg7roNdz_a3iRktJTFQ&request_uri=https%3A%2F%2Flocalhost%3A9543%2Frequest.jwt%3Fstate%3Do5y7qktUqa0IoKW7XkZrDA&request_uri_method=post",
+  "verifierVerdict": "<- 200 authentic, claims ['cnf', 'family_name', 'given_name', 'iat', 'iss', 'vct']",
+  "credo": "accept returned",
+  "ok": true,
+  "serverResponse": {
+    "status": 200,
+    "body": {
+      "redirect_uri": "https://localhost:9543/done"
+    }
+  },
+  "redirectUri": "https://localhost:9543/done",
+  "authorizationResponsePayload": {
+    "vp_token": {
+      "pid": [
+        "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsImtpZCI6InBvbGFyaXMtaW50ZXJvcC1pc3N1ZXItMSJ9.eyJpc3MiOiJodHRwczovL2lzc3Vlci5wb2xhcmlzLnRlc3QiLCJ2Y3QiOiJ1cm46ZXVkaTpwaWQ6MSIsImlhdCI6MTc5MDUxNjc1OSwiX3NkIjpbInBjeHlGRmtxZHh0NFBtaTlHbTdYNzMzZUFleFVDNVZidEVfZHRkN3JJaHciLCI0RVVHa0tha21UemlIMUp5OVoyS1JTckgtR1VGeHZWSWFkVU5id2VuN0pJIl0sIl9zZF9hbGciOiJzaGEtMjU2IiwiY25mIjp7Imp3ayI6eyJrdHkiOiJFQyIsIngiOiJuczlJcUFuQmhKM0VoX3BKSTRBQ0xoTDVQbTlBWW5XZnB6ZXRUbEctSDVvIiwieSI6IkpYRWtfcVB5VHYydXBVUWtCVXhhU1ZDQ0V4bXpVZUt0c3A4VkZOVWhkcnMiLCJjcnYiOiJQLTI1NiJ9fX0.GIgB7TIfBm9OuuLdAB9gGZr96WxpGoHS6nhwltZdU7Dz6f7-9CAb7VicZIa0W9gZrNiiQO0l_TjYwD8jBQxpeQ~WyJzMCIsImdpdmVuX25hbWUiLCJKZWFuIl0~WyJzMSIsImZhbWlseV9uYW1lIiwiRHVwb250Il0~eyJ0eXAiOiJrYitqd3QiLCJhbGciOiJFUzI1NiJ9.eyJpYXQiOjE3OTA1MTY3NjAsIm5vbmNlIjoiaDdMdkhMeHNjT3hsR2ZhOVVXZ0lfQWl2bno1RlUzUkJDTE5KTjJRVk5mSSIsImF1ZCI6Ing1MDlfaGFzaDpJY2Raby1OQ3pIT05SckhSU1EycklNWVpTZzdyb05kel9hM2lSa3RKVEZRIiwic2RfaGFzaCI6IjdaRndsTm0zY3hyU29Tb0FJUEh5NHpqY3ZTUkVESmhqY1BGZTZuUm5TTGcifQ.z7_uwg9i0JteT3KNRhCUS2Js0GP7toOlq9h1sugFquCCJH0naUokh_0C3aBjbfbUQVGetJSMm5iY2hR1bVzvCg"
+      ]
+    },
+    "state": "o5y7qktUqa0IoKW7XkZrDA"
+  },
+  "replay": {
+    "status": 400,
+    "body": "{\"error\": \"invalid_request\", \"error_description\": \"the presentation was not accepted\"}"
+  }
+}

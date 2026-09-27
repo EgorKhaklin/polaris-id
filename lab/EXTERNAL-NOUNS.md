@@ -135,6 +135,53 @@ says nothing about ISO 18013-5 mDL, nothing about any other wallet, nothing abou
 post-quantum path, and it is not a claim that polaris-oid4vp is interoperable in general.
 It is one named implementation, once.
 
+**Filled 2026-09-27: a second wallet, written independently of the first.**
+
+    Wallet:                    Credo, the OpenWallet Foundation's TypeScript framework,
+                               as a holder
+    URL/version:               npm @credo-ts/core, @credo-ts/openid4vc, @credo-ts/node
+                               0.6.3, pinned exactly; underneath, @openid4vc/openid4vp
+                               0.4.6 and @sd-jwt/core 0.19.0 (package-lock.json pins all)
+    Contact/run date:          no contact; the published packages, unmodified, 2026-09-27
+    Verifier:                  pip install --pre polaris-oid4vp -> 1.0.0rc7 from PyPI, into
+                               a fresh venv
+    Result:                    IT PRESENTED AND THE PUBLISHED VERIFIER ACCEPTED.
+
+                                 <- 200 authentic, claims ['cnf', 'family_name',
+                                    'given_name', 'iat', 'iss', 'vct']
+
+                               Credo resolved the signed request object over
+                               request_uri_method=post, checked the x509_hash client id
+                               against a CA registered through its X509Module, matched
+                               the dcql_query, signed the key binding JWT with a P-256 key
+                               its own KMS created, and encrypted the response as
+                               direct_post.jwt (ECDH-ES, A128GCM, with apu/apv). A
+                               different language, library and JOSE stack from walt.id.
+    Modifications to Credo:    none. Configuration through its public API only: the
+                               verifier's CA as a trusted certificate, Node's extra CA
+                               bundle for the self-signed listener, and an in-memory
+                               implementation of its exported StorageService interface
+                               (0.6 ships no in-memory store).
+    Controls:                  Four, each run and refused.
+                               (a) wrong issuer key: 400 refused: issuer_signature.
+                               (b) cnf naming a key Credo does not hold: 400 refused:
+                                   kb_signature.
+                               (c) Credo's exact response POSTed twice: the first 200
+                                   authentic, the second refused.
+                               (d) Credo trusting an unrelated CA: Credo itself refused the
+                                   request object ("No trusted certificate was found") and
+                                   sent nothing.
+    Not exercised:             Credo sent no wallet_nonce (optional, OpenID4VP 1.0 5.10), so
+                               the verifier's echo of it was not reached; it chose A128GCM,
+                               so A256GCM was not reached. Credo 0.7 was not tried.
+    Transcript:                lab/interop/credo/README.md, one command, with the evidence
+                               of every run under lab/interop/credo/evidence/.
+
+**What this does NOT establish either.** Two wallets, one credential format, one path. Both
+were driven by the author on one machine over localhost, with this repository's issuer script
+minting the credential; that is the same category of evidence as the walt.id row, not an
+outside party using Polaris. The issuer was trusted through a JWKS, not x5c.
+
 ### Known limitations, held here and not in ROADMAP.md
 
 Recorded on 2026-09-15 as qualifications on the evidence above, deliberately NOT as a plan.

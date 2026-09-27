@@ -1,0 +1,12 @@
+[2026-09-27T13:45:59.720Z] versions {"date":"2026-09-27T13:45:59.646Z","node":"v24.11.1","credo_core":"0.6.3","credo_openid4vc":"0.6.3","credo_node":"0.6.3","openid4vc_openid4vp":"0.4.6","openid4vc_oauth2":"0.4.6","sd_jwt_core":"0.19.0","polaris_oid4vp":"1.0.0rc7"}
+[2026-09-27T13:45:59.731Z] credo agent initialized (in-memory storage, NodeKeyManagementService)
+[2026-09-27T13:45:59.734Z] holder key created by Credo KMS: keyId=897a87ca-6349-4b11-9730-1251ca11a8e7 publicJwk={"kty":"EC","x":"ns9IqAnBhJ3Eh_pJI4ACLhL5Pm9AYnWfpzetTlG-H5o","y":"JXEk_qPyTv2upUQkBUxaSVCCExmzUeKtsp8VFNUhdrs","crv":"P-256","kid":"897a87ca-6349-4b11-9730-1251ca11a8e7"}
+[2026-09-27T13:45:59.809Z] issuer: credential   eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsImtpZCI6InBvbGFy... | disclosures  2 (given_name, family_name) | bound to     897a87ca-6349-4b11-9730-1251ca11a8e7 | wrote        ./run/credential.json
+[2026-09-27T13:45:59.814Z] credo stored 1 SD-JWT VC; vct=urn:eudi:pid:1 claims={"iss":"https://issuer.polaris.test","vct":"urn:eudi:pid:1","iat":1790516759,"cnf":{"jwk":{"kty":"EC","x":"ns9IqAnBhJ3Eh_pJI4ACLhL5Pm9AYnWfpzetTlG-H5o","y":"JXEk_qPyTv2upUQkBUxaSVCCExmzUeKtsp8VFNUhdrs","crv":"P-256"}},"given_name":"Jean","family_name":"Dupont"}
+[2026-09-27T13:46:00.019Z] authorization request: openid4vp://authorize?client_id=x509_hash%3AIcdZo-NCzHONRrHRSQ2rIMYZSg7roNdz_a3iRktJTFQ&request_uri=https%3A%2F%2Flocalhost%3A9543%2Frequest.jwt%3Fstate%3Do5y7qktUqa0IoKW7XkZrDA&request_uri_method=post
+[2026-09-27T13:46:00.056Z] wire post https://localhost:9543/request.jwt?state=o5y7qktUqa0IoKW7XkZrDA -> 200
+[2026-09-27T13:46:00.080Z] resolved: clientIdPrefix=x509_hash effectiveClientId=x509_hash:IcdZo-NCzHONRrHRSQ2rIMYZSg7roNdz_a3iRktJTFQ response_mode=direct_post.jwt dcql.canBeSatisfied=true
+[2026-09-27T13:46:00.098Z] wire POST https://localhost:9543/response -> 200
+[2026-09-27T13:46:00.099Z] accept returned ok=true serverResponse={"status":200,"body":{"redirect_uri":"https://localhost:9543/done"}}
+[2026-09-27T13:46:00.104Z] CONTROL replay: second POST of the identical response -> 400 {"error": "invalid_request", "error_description": "the presentation was not accepted"}
+[2026-09-27T13:46:01.623Z] verifier verdict: <- 200 authentic, claims ['cnf', 'family_name', 'given_name', 'iat', 'iss', 'vct']

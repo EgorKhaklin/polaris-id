@@ -1,0 +1,11 @@
+[2026-09-27T13:45:41.203Z] versions {"date":"2026-09-27T13:45:41.123Z","node":"v24.11.1","credo_core":"0.6.3","credo_openid4vc":"0.6.3","credo_node":"0.6.3","openid4vc_openid4vp":"0.4.6","openid4vc_oauth2":"0.4.6","sd_jwt_core":"0.19.0","polaris_oid4vp":"1.0.0rc7"}
+[2026-09-27T13:45:41.215Z] credo agent initialized (in-memory storage, NodeKeyManagementService)
+[2026-09-27T13:45:41.218Z] holder key created by Credo KMS: keyId=71e49952-b8b6-4e5c-9beb-48e19d41c128 publicJwk={"kty":"EC","x":"s5qZTV7gppInCA0b1CvqE2YvfExf5bCK4WMYjkiBHIY","y":"P-ZuzrUgxdwWsD1c1cvCaKYilZpFDxcHe-xAZ2YjhvQ","crv":"P-256","kid":"71e49952-b8b6-4e5c-9beb-48e19d41c128"}
+[2026-09-27T13:45:41.287Z] issuer: credential   eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsImtpZCI6InBvbGFy... | disclosures  2 (given_name, family_name) | bound to     71e49952-b8b6-4e5c-9beb-48e19d41c128 | wrote        ./run/credential.json
+[2026-09-27T13:45:41.292Z] credo stored 1 SD-JWT VC; vct=urn:eudi:pid:1 claims={"iss":"https://issuer.polaris.test","vct":"urn:eudi:pid:1","iat":1790516741,"cnf":{"jwk":{"kty":"EC","x":"s5qZTV7gppInCA0b1CvqE2YvfExf5bCK4WMYjkiBHIY","y":"P-ZuzrUgxdwWsD1c1cvCaKYilZpFDxcHe-xAZ2YjhvQ","crv":"P-256"}},"given_name":"Jean","family_name":"Dupont"}
+[2026-09-27T13:45:41.498Z] authorization request: openid4vp://authorize?client_id=x509_hash%3A4m4QnTVYmJ0Q5j_3PJINe5LwYLNBKSor52o-5IPFXxA&request_uri=https%3A%2F%2Flocalhost%3A9543%2Frequest.jwt%3Fstate%3D99j-zkAhZBhkhO1rbMLIdg&request_uri_method=post
+[2026-09-27T13:45:41.535Z] wire post https://localhost:9543/request.jwt?state=99j-zkAhZBhkhO1rbMLIdg -> 200
+[2026-09-27T13:45:41.559Z] resolved: clientIdPrefix=x509_hash effectiveClientId=x509_hash:4m4QnTVYmJ0Q5j_3PJINe5LwYLNBKSor52o-5IPFXxA response_mode=direct_post.jwt dcql.canBeSatisfied=true
+[2026-09-27T13:45:41.579Z] wire POST https://localhost:9543/response -> 200
+[2026-09-27T13:45:41.579Z] accept returned ok=true serverResponse={"status":200,"body":{"redirect_uri":"https://localhost:9543/done"}}
+[2026-09-27T13:45:43.099Z] verifier verdict: <- 200 authentic, claims ['cnf', 'family_name', 'given_name', 'iat', 'iss', 'vct']

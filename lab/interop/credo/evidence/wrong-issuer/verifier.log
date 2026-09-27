@@ -1,0 +1,15 @@
+polaris-oid4vp serving on https://localhost:9543
+  client_id     x509_hash:1VXG-ekjC8oY5pqT2fs_vBKb795MsbV1tzvhuQowUlE
+  request_uri   https://localhost:9543/request.jwt
+  response_uri  https://localhost:9543/response
+  anchor to register: ./run/pki/anchor.pem
+Start a request with --once to print the parameters a wallet is launched with.
+authorization request parameters:
+  client_id          x509_hash:1VXG-ekjC8oY5pqT2fs_vBKb795MsbV1tzvhuQowUlE
+  request_uri        https://localhost:9543/request.jwt?state=oOjQfC2denys_Wh-ck-GwQ
+  request_uri_method post
+POST /request.jwt?state=oOjQfC2denys_Wh-ck-GwQ
+polaris-oid4vp: refused: issuer_signature: the issuer signature over the credential does not verify under the trusted issuer key
+POST /response
+  <- 400 refused: issuer_signature: the issuer signature over the credential does not verify under the trusted issuer key
+stopping
