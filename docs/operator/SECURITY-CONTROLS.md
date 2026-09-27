@@ -150,7 +150,7 @@ The allowed set is the `chk_authaudit_event_type` CHECK constraint. `F11_AuditLo
 
 ## Holder-protection mechanisms
 
-The project report's "Limitations and Open Problems" section ([polaris_project_report.tex](../paper/polaris_project_report.tex)) names six open problems. Four have a relational answer enforced at the schema layer and are described here because each is a control against the system's own operators. The other two, population coverage and the centralized trust assumption, are answered by [tiered-enrollment.md](../design/tiered-enrollment.md) and [federation.md](../design/federation.md).
+The project report's "Limitations and Open Problems" section ([Version 1 of the report](../paper/polaris_project_report.pdf)) names six open problems. Four have a relational answer enforced at the schema layer and are described here because each is a control against the system's own operators. The other two, population coverage and the centralized trust assumption, are answered by [tiered-enrollment.md](../design/tiered-enrollment.md) and [federation.md](../design/federation.md).
 
 ### Issuer discretion bounds
 
