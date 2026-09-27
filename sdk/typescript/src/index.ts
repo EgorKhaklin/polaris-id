@@ -1161,3 +1161,143 @@ export function agentProofProves(proof: any, grant: any, action?: unknown, nonce
   if (action !== undefined && action !== null && String(proof.action ?? "") !== String(action)) return false;
   return true;
 }
+
+// --- P8.2: the exchange in use (1.0.0-rc.64) ------------------------------------------
+// The exchange artifacts were verified here for their signature and nothing else, while the
+// detached verifier answers every question a party holding one has to ask: is it by the
+// requester or responder expected, was the requester attested in this context by an
+// authority trusted at the instant of the decision, and do the bodies held match what was
+// committed. These answer the same questions, and nothing past authenticity for an object
+// its signer did not sign. See the Python SDK for the same three functions.
+
+export type ExchangeRequestVerdict = { authentic: boolean; requesterMatches: boolean | null;
+  requesterAuthorized: boolean | null; bodyBound: boolean | null; note?: string };
+export type ExchangeReceiptVerdict = { authentic: boolean; responderMatches: boolean | null;
+  requesterAuthorized: boolean | null; via: any; requestBound: boolean | null;
+  responseBound: boolean | null; responder: any; note?: string };
+export type ExchangeMintVerdict = { authentic: boolean; responderMatches: boolean | null; note?: string };
+
+function attestationOpen(att: any, now?: string | null): boolean {
+  // The attestation's own window: none stated is open; one nobody can read is closed.
+  if (att.valid_until === undefined || att.valid_until === null) return true;
+  const u = isoToEpoch(att.valid_until);
+  const n = now != null ? isoToEpoch(now) : Date.now() / 1000;
+  return u !== null && n !== null && u >= n;
+}
+
+/** The authority of every manifest the caller trusts that is genuine and fresh at `now` and
+ * attests `keyHex` in EXACTLY `contextId`, inside the attestation's own window, in order. */
+function exchangeAuthorities(keyHex: unknown, contextId: unknown, manifests: unknown, now?: string | null): any[] {
+  const want = String(keyHex ?? "").toLowerCase();
+  const found: any[] = [];
+  if (!want) return found;
+  for (const raw of Array.isArray(manifests) ? manifests : []) {
+    const m = raw && typeof raw === "object" ? raw : {};
+    const mv = verifySignedArtifact(m, now ?? null, null);
+    if (!(mv.authentic && mv.fresh === true)) continue;
+    const atts = Array.isArray(m.attestations) ? m.attestations : [];
+    if (atts.some((att: any) => att && typeof att === "object"
+        && String(att.attested_public_key_hex ?? "").toLowerCase() === want
+        && (att.context_id ?? null) === (contextId ?? null)
+        && attestationOpen(att, now))) {
+      found.push(m.authority ?? null);
+    }
+  }
+  return found;
+}
+
+/** Truth as the Python reference reads it: an empty object or list names nothing. */
+function named(a: unknown): boolean {
+  if (a === null || a === undefined || a === false || a === 0 || a === "") return false;
+  if (Array.isArray(a)) return a.length > 0;
+  if (typeof a === "object") return Object.keys(a as object).length > 0;
+  return true;
+}
+
+function sameKey(a: unknown, b: unknown): boolean {
+  return typeof a === "string" && typeof b === "string" && a.toLowerCase() === b.toLowerCase();
+}
+
+function sha3Hex(body: unknown): string {
+  const raw = body instanceof Uint8Array ? body : new TextEncoder().encode(String(body));
+  return bytesToHex(sha3_256(raw));
+}
+
+/** Verify a requester-signed exchange envelope OFFLINE (wire spec 3.11): the signature under
+ * the key the envelope's signed `requester` names; with `requesterKey`, the requester
+ * expected; with `trustedManifests`, attested in the envelope's context by one of them,
+ * genuine and fresh at `now`; with `body`, that `request_hash` is the SHA3-256 of its
+ * canonical JSON. */
+export function verifyExchangeRequest(envelope: any, requesterKey?: string | null,
+                                      trustedManifests?: any[] | null, body?: unknown,
+                                      now?: string | null): ExchangeRequestVerdict {
+  const e = envelope && typeof envelope === "object" ? envelope : {};
+  const none = { requesterMatches: null, requesterAuthorized: null, bodyBound: null };
+  if (e.format !== "polaris-exchange-request/1") {
+    return { authentic: false, ...none, note: "not a polaris-exchange-request/1" };
+  }
+  const req = e.requester && typeof e.requester === "object" ? e.requester : {};
+  // The verifying key must be the one the SIGNED statement claims for the requester, or a
+  // stranger's signature speaks in the requester's name.
+  if (!sameKey(e.public_key_hex, req.public_key_hex)) {
+    return { authentic: false, ...none, note: "the envelope's key is not the requester it names" };
+  }
+  const base = verifySignedArtifact(e, now ?? null, null);
+  if (!base.authentic) return { authentic: false, ...none, note: base.note };
+  const v: ExchangeRequestVerdict = { authentic: true, ...none };
+  if (requesterKey !== undefined && requesterKey !== null) v.requesterMatches = sameKey(e.public_key_hex, requesterKey);
+  if (trustedManifests !== undefined && trustedManifests !== null) {
+    v.requesterAuthorized = exchangeAuthorities(e.public_key_hex, e.context_id, trustedManifests, now).length > 0;
+  }
+  if (body !== undefined && body !== null) {
+    v.bodyBound = sha3Hex(canonicalJson(body)) === String(e.request_hash ?? "").toLowerCase();
+  }
+  return v;
+}
+
+/** Verify a responder-signed exchange receipt OFFLINE (wire spec 3.8): the signature; with
+ * `responderKey`, the responder expected; with `trustedManifests`, the REQUESTER attested in
+ * exactly the receipt's context (a receipt stating no context is not authorized by an
+ * attestation from another) and by whom (`via`); with a body, that its commitment binds. A
+ * receipt commits to the body bytes as exchanged, so a body is hashed as given. */
+export function verifyExchangeReceipt(receipt: any, now?: string | null, trustedManifests?: any[] | null,
+                                      responderKey?: string | null, requestBody?: unknown,
+                                      responseBody?: unknown): ExchangeReceiptVerdict {
+  const r = receipt && typeof receipt === "object" ? receipt : {};
+  const none = { responderMatches: null, requesterAuthorized: null, via: null, requestBound: null,
+                 responseBound: null, responder: null };
+  if (r.format !== "polaris-exchange-receipt/1") {
+    return { authentic: false, ...none, note: "not a polaris-exchange-receipt/1" };
+  }
+  const base = verifySignedArtifact(r, now ?? null, null);
+  if (!base.authentic) return { authentic: false, ...none, note: base.note };
+  const v: ExchangeReceiptVerdict = { authentic: true, ...none, responder: r.responder ?? null };
+  if (responderKey !== undefined && responderKey !== null) v.responderMatches = sameKey(r.public_key_hex, responderKey);
+  if (requestBody !== undefined && requestBody !== null) {
+    v.requestBound = sha3Hex(requestBody) === String(r.request_hash ?? "").toLowerCase();
+  }
+  if (responseBody !== undefined && responseBody !== null) {
+    v.responseBound = sha3Hex(responseBody) === String(r.response_hash ?? "").toLowerCase();
+  }
+  if (trustedManifests !== undefined && trustedManifests !== null) {
+    const req = r.requester && typeof r.requester === "object" ? r.requester : {};
+    // `via` names the authority, so a manifest that names none answers nothing.
+    const by = exchangeAuthorities(req.public_key_hex, r.context_id, trustedManifests, now).filter(named);
+    v.via = by.length ? by[0] : null;
+    v.requesterAuthorized = by.length > 0;
+  }
+  return v;
+}
+
+/** Verify a responder-signed mint statement OFFLINE (wire spec 3.8.1): the signature, and with
+ * `responderKey`, that the expected responder's key signed it. */
+export function verifyExchangeMint(mint: any, responderKey?: string | null): ExchangeMintVerdict {
+  const m = mint && typeof mint === "object" ? mint : {};
+  if (m.format !== "polaris-exchange-mint/1") {
+    return { authentic: false, responderMatches: null, note: "not a polaris-exchange-mint/1" };
+  }
+  const base = verifySignedArtifact(m, null, null);
+  if (!base.authentic) return { authentic: false, responderMatches: null, note: base.note };
+  return { authentic: true,
+           responderMatches: responderKey !== undefined && responderKey !== null ? sameKey(m.public_key_hex, responderKey) : null };
+}

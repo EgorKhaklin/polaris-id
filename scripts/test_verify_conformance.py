@@ -174,6 +174,31 @@ def _verdict_for(case):
                 "principal_bound": v["principal_bound"], "pairwise_handle": v["pairwise_handle"],
                 "correlation": v["correlation"]}
 
+    if artifact == "exchange-use":
+        # 1.0.0-rc.64: the exchange in use, each question answered as the detached verifier
+        # decides it. `responder` is the SIGNED responder echoed back, and only a receipt
+        # its responder signed names anybody.
+        obj = _load(case["object_file"])
+        manifests = [_load(f) for f in case["manifest_files"]] if "manifest_files" in case else None
+        fmt = obj.get("format")
+        if fmt == "polaris-exchange-receipt/1":
+            v = V.verify_exchange_receipt(obj, now=case.get("now"), trusted_manifests=manifests,
+                                          responder_key=case.get("responder_key"),
+                                          request_body=case.get("request_body"),
+                                          response_body=case.get("response_body"))
+            return {"authentic": v["receipt_authentic"], "responder_matches": v["responder_matches"],
+                    "requester_authorized": v["requester_authorized"], "via": v["via"],
+                    "request_bound": v["request_bound"], "response_bound": v["response_bound"],
+                    "responder": v["responder"] if v["receipt_authentic"] else None}
+        if fmt == "polaris-exchange-mint/1":
+            v = V.verify_exchange_mint(obj, responder_key=case.get("responder_key"))
+            return {"authentic": v["mint_authentic"], "responder_matches": v["responder_matches"]}
+        v = V.verify_exchange_request(obj, requester_key=case.get("requester_key"),
+                                      trusted_manifests=manifests, body=case.get("body"),
+                                      now=case.get("now"))
+        return {"authentic": v["request_authentic"], "requester_matches": v["requester_matches"],
+                "requester_authorized": v["requester_authorized"], "body_bound": v["body_bound"]}
+
     if artifact == "timestamp-anchor":
         ts = _load(case["timestamp_file"])
         log_key = case.get("log_key")
@@ -249,6 +274,22 @@ class ConformanceContractTests(unittest.TestCase):
             with self.subTest(case=case["name"]):
                 self.assertFalse(bool(_verdict_for(case)["authentic"]),
                                  "%s verified when it must not" % case["name"])
+
+    def test_an_exchange_request_is_decided_at_the_stated_instant(self):
+        """1.0.0-rc.64: verify_exchange_request takes `now`, and uses it.
+
+        Until then it decided the requester's authorization at the wall clock while the
+        receipt of the same exchange was decided at a stated instant, so the two halves of one
+        exchange could answer differently. The same envelope and manifest must be authorized
+        inside the manifest's window and not after it; a parameter nothing reads would give
+        the same answer twice."""
+        env = _load("conformance/vectors/exchange-use-request.json")
+        man = _load("conformance/vectors/exchange-use-manifest.json")
+        inside = V.verify_exchange_request(env, trusted_manifests=[man], now="2026-05-01T00:00:30Z")
+        after = V.verify_exchange_request(env, trusted_manifests=[man], now="2026-05-03T00:00:00Z")
+        self.assertTrue(inside["request_authentic"])
+        self.assertIs(inside["requester_authorized"], True)
+        self.assertIs(after["requester_authorized"], False)
 
     def test_every_vector_on_disk_is_reachable(self):
         """A vector no case names is dead weight, or a case that was dropped by accident."""

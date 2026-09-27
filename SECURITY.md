@@ -39,7 +39,7 @@ verdict fields the published cases do not constrain.
 | Package | Current | Older versions still carrying known defects |
 |---|---|---|
 | `polaris-oid4vp` | `1.0.0rc7` | `1.0.0rc3`: no Token Status List support. `1.0.0rc1`, `0.1.0`: **never reads `exp`**, plus missing input bounds and disclosure-name guards. |
-| `polaris-verify` | `1.0.0rc3` | `1.0.0rc3` itself: reports a delegated grant signed under a **revoked** holder binding as bound and usable (fixed in the tree 2026-09-27, not yet released). `1.0.0rc1`, `0.1.0`: **never reads a trust attestation's `valid_until`**; no finite-number guards. |
+| `polaris-verify` | `1.0.0rc3` | `1.0.0rc3` itself: reports a delegated grant signed under a **revoked** holder binding as bound and usable, and an exchange receipt that states **no context** as requester-authorized by an attestation from any context (both fixed in the tree 2026-09-27, not yet released). `1.0.0rc1`, `0.1.0`: **never reads a trust attestation's `valid_until`**; no finite-number guards. |
 | `polaris-sdk-python` | `1.0.0rc3` | `1.0.0rc1`, `0.1.0`: no finite-number guards on grant limits; cached tokens outlive a revoked client. |
 | `polaris-sdk-ts` (npm) | `1.0.0-rc.3` under `next` | `0.1.0` (what `latest` resolves by design): canonicalisation and parsing divergences from the wire specification. |
 

@@ -284,6 +284,107 @@ class RefusalsAreTestedTests(unittest.TestCase):
             with self.subTest(case=label):
                 self.assertFalse(pv.grant_principal_bound(g, b, c, now), "%s must not bind" % label)
 
+    # -- the exchange in use (1.0.0-rc.64) --------------------------------
+
+    @staticmethod
+    def _exchange(name):
+        with open(os.path.join(_ROOT, "conformance", "vectors", "exchange-use-%s.json" % name)) as f:
+            return json.load(f)
+
+    @unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+    def test_an_exchange_request_answers_who_whether_authorized_and_what_body(self):
+        env, man = self._exchange("request"), self._exchange("manifest")
+        me = env["requester"]["public_key_hex"]
+        now, later = "2026-05-01T00:00:30Z", "2026-05-03T00:00:00Z"
+        body = {"account": "notional-7", "ask": "balance"}
+        v = pv.verify_exchange_request(env, requester_key=me.upper(), trusted_manifests=[man], body=body, now=now)
+        self.assertEqual((v.authentic, v.requester_matches, v.requester_authorized, v.body_bound),
+                         (True, True, True, True))
+        self.assertEqual(pv.verify_exchange_request(env).requester_authorized, None,
+                         "no manifests supplied is no answer, not a refusal")
+        for label, kw in (
+                ("another requester", {"requester_key": "aa" * 32}),
+                ("a key that is not a string", {"requester_key": 7})):
+            with self.subTest(case=label):
+                self.assertIs(pv.verify_exchange_request(env, now=now, **kw).requester_matches, False)
+        mstr = json.loads(json.dumps(man))
+        closed = dict(mstr, attestations=[dict(a, valid_until="whenever") for a in mstr["attestations"]])
+        for label, e, mans, at in (
+                ("a context the requester is not attested in", self._exchange("request-context-3"), [man], now),
+                ("an attestation added after the authority signed", self._exchange("request-context-3"),
+                 [self._exchange("manifest-forged")], now),
+                ("an attestation whose own window closed", self._exchange("request-context-2"), [man], now),
+                ("a manifest that expired before the instant decided", env, [man], later),
+                ("a manifest decided before it was issued", env, [man], "2026-04-01T00:00:00Z"),
+                ("an attestation window nobody can read", env, [closed], now),
+                ("manifests that are not a list", env, man, now),
+                ("a manifest that is not a dict", env, ["manifest"], now)):
+            with self.subTest(case=label):
+                self.assertIs(pv.verify_exchange_request(e, trusted_manifests=mans, now=now if at is None else at)
+                              .requester_authorized, False, "%s must not authorize" % label)
+        self.assertIs(pv.verify_exchange_request(env, body=dict(body, account="x")).body_bound, False)
+        for label, bad in (
+                ("a stranger's signature in the requester's name", self._exchange("request-stranger")),
+                ("edited after signing", self._exchange("request-tampered")),
+                ("another format", dict(env, format="polaris-exchange-receipt/1")),
+                ("not a dict", "envelope")):
+            with self.subTest(case=label):
+                v = pv.verify_exchange_request(bad, requester_key=me, trusted_manifests=[man], body=body, now=now)
+                self.assertEqual((v.authentic, v.requester_matches, v.requester_authorized, v.body_bound),
+                                 (False, None, None, None), "%s answers nothing" % label)
+
+    @unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+    def test_an_exchange_receipt_answers_who_whether_authorized_by_whom_and_what_bodies(self):
+        rc, man = self._exchange("receipt"), self._exchange("manifest")
+        now = "2026-05-01T00:00:30Z"
+        req = '{"account":"notional-7","ask":"balance"}'
+        resp = '{"balance":"notional"}'
+        v = pv.verify_exchange_receipt(rc, now=now, trusted_manifests=[man], responder_key=rc["public_key_hex"],
+                                       request_body=req, response_body=resp.encode("utf-8"))
+        self.assertEqual((v.authentic, v.responder_matches, v.requester_authorized, v.via, v.request_bound,
+                          v.response_bound, v.responder),
+                         (True, True, True, man["authority"], True, True, rc["responder"]))
+        self.assertIs(pv.verify_exchange_receipt(rc, responder_key="aa" * 32).responder_matches, False)
+        self.assertIs(pv.verify_exchange_receipt(rc, request_body=' ' + req).request_bound, False,
+                      "the body is hashed as given, never re-serialized")
+        self.assertIs(pv.verify_exchange_receipt(rc, response_body="{}").response_bound, False)
+        nameless = self._exchange("manifest-nameless")
+        for label, r, mans in (
+                ("a receipt that states no context, beside an attestation in context 1",
+                 self._exchange("receipt-no-context"), [man]),
+                ("a context the requester is not attested in", self._exchange("receipt-context-3"), [man]),
+                ("a manifest that is not genuine", rc, [self._exchange("manifest-forged")]),
+                ("a genuine manifest that names no authority, so `via` could name nobody", rc, [nameless])):
+            with self.subTest(case=label):
+                v = pv.verify_exchange_receipt(r, now=now, trusted_manifests=mans)
+                self.assertEqual((v.requester_authorized, v.via), (False, None), "%s must not authorize" % label)
+        for label, bad in (
+                ("edited after signing", self._exchange("receipt-tampered")),
+                ("another format", dict(rc, format="polaris-exchange-request/1")),
+                ("not a dict", ["receipt"])):
+            with self.subTest(case=label):
+                v = pv.verify_exchange_receipt(bad, now=now, trusted_manifests=[man],
+                                               responder_key=rc["public_key_hex"], request_body=req,
+                                               response_body=resp)
+                self.assertEqual((v.authentic, v.responder_matches, v.requester_authorized, v.via,
+                                  v.request_bound, v.response_bound, v.responder),
+                                 (False, None, None, None, None, None, None),
+                                 "%s answers nothing, and names no responder" % label)
+
+    @unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+    def test_an_exchange_mint_answers_whose_it_is(self):
+        m = self._exchange("mint")
+        self.assertEqual((pv.verify_exchange_mint(m, m["public_key_hex"].upper()).authentic,
+                          pv.verify_exchange_mint(m, m["public_key_hex"]).responder_matches), (True, True))
+        self.assertIs(pv.verify_exchange_mint(m).responder_matches, None)
+        self.assertIs(pv.verify_exchange_mint(m, "aa" * 32).responder_matches, False)
+        for label, bad in (("edited after signing", self._exchange("mint-tampered")),
+                           ("another format", dict(m, format="polaris-exchange-receipt/1")),
+                           ("not a dict", "mint")):
+            with self.subTest(case=label):
+                v = pv.verify_exchange_mint(bad, m["public_key_hex"])
+                self.assertEqual((v.authentic, v.responder_matches), (False, None))
+
     # -- delegation: agent-proof binding ---------------------------------
 
     def test_an_agent_proof_must_bind_this_grant_action_and_nonce(self):

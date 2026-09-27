@@ -17,7 +17,7 @@ have done with it is [the scoreboard](lab/EXTERNAL-NOUNS.md).
 - The holder layer: holder-side keys, per-scope nullifiers, pairwise presentation handles and signed, expiring agent grants.
 - A physical-layer profile: card profile with vectors, a software token emulator, card-generated keys, a reference verifier device.
 - Operations: a hardened five-service stack behind a post-quantum TLS edge; compose, blue-green, Linux and Helm deployments; backup, off-site restore, replication, HA failover and a DR drill measuring RPO and RTO; a retention engine; a sealed secrets store; SBOMs with provenance; CVE gates.
-- Verifiers anyone can build against: a detached verifier, Python and TypeScript SDKs and a 130-case conformance suite; `polaris-oid4vp` is OpenID Certified for its OpenID4VP 1.0 + HAIP 1.0 Verifier profile.
+- Verifiers anyone can build against: a detached verifier, Python and TypeScript SDKs and a 151-case conformance suite; `polaris-oid4vp` is OpenID Certified for its OpenID4VP 1.0 + HAIP 1.0 Verifier profile.
 
 **Do not have:** hardware tokens (modeled, not built); an assessed NIST 800-63 conformance
 (the mapping exists; no assessment); multi-region scale; status distribution at production CDN

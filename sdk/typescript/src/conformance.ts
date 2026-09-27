@@ -10,7 +10,7 @@
  * See conformance/SPEC.md. This is the TypeScript counterpart of the Python SDK's
  * `python -m polaris_verify.conformance`; the same runner drives either.
  */
-import { agentProofProves, grantCovers, grantPrincipalBound, pairwiseHandle, revocationEndsGrant, verifyAttestation, verifyAuthenticity, verifyIdToken, verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority,
+import { agentProofProves, verifyExchangeMint, verifyExchangeReceipt, verifyExchangeRequest, grantCovers, grantPrincipalBound, pairwiseHandle, revocationEndsGrant, verifyAttestation, verifyAuthenticity, verifyIdToken, verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority,
   verifyTimestampAnchor, verifyHolder, type Pack } from "./index.ts";
 
 const SIGNED_ARTIFACTS = new Set([
@@ -88,6 +88,25 @@ process.stdin.on("end", () => {
         && agentProofProves(caseObj.agent_proof, grant, action, caseObj.expected_nonce ?? null));
     }
     process.stdout.write(JSON.stringify(verdict) + "\n");
+  } else if (artifact === "exchange-use") {
+    // 1.0.0-rc.64: an exchange artifact IN USE; see the Python SDK's conformance CLI for why.
+    const obj = caseObj.object ?? {};
+    const now = caseObj.now ?? null;
+    if (obj.format === "polaris-exchange-receipt/1") {
+      const r = verifyExchangeReceipt(obj, now, caseObj.manifests ?? null, caseObj.responder_key ?? null,
+        caseObj.request_body ?? null, caseObj.response_body ?? null);
+      process.stdout.write(JSON.stringify({ authentic: r.authentic, responder_matches: r.responderMatches,
+        requester_authorized: r.requesterAuthorized, via: r.via, request_bound: r.requestBound,
+        response_bound: r.responseBound, responder: r.responder }) + "\n");
+    } else if (obj.format === "polaris-exchange-mint/1") {
+      const m = verifyExchangeMint(obj, caseObj.responder_key ?? null);
+      process.stdout.write(JSON.stringify({ authentic: m.authentic, responder_matches: m.responderMatches }) + "\n");
+    } else {
+      const q = verifyExchangeRequest(obj, caseObj.requester_key ?? null, caseObj.manifests ?? null,
+        caseObj.body ?? null, now);
+      process.stdout.write(JSON.stringify({ authentic: q.authentic, requester_matches: q.requesterMatches,
+        requester_authorized: q.requesterAuthorized, body_bound: q.bodyBound }) + "\n");
+    }
   } else if (artifact === "timestamp-anchor") {
     const v = verifyTimestampAnchor(caseObj.timestamp ?? {}, caseObj.log_key ?? null,
       caseObj.trusted_witnesses ?? null, Number(caseObj.threshold ?? 1));

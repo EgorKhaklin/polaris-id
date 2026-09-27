@@ -7,6 +7,17 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
+## Unreleased
+
+### Fixed
+
+- `polaris-verify`: an exchange receipt that states no context was reported requester-authorized by an attestation from any context; the receipt's context must now match exactly, as for the request.
+
+### Added
+
+- Conformance cases for an exchange in use (`exchange-use`): whether an envelope, receipt or mint statement is by the party expected, whether the requester was attested in its context at a stated instant (and by which authority, for a receipt), whether the bodies held match the commitments, and which responder a genuine receipt names. Both SDKs gain `verify_exchange_request`, `verify_exchange_receipt` and `verify_exchange_mint` (`verifyExchangeRequest`, `verifyExchangeReceipt`, `verifyExchangeMint`).
+- `polaris-verify`: `verify_exchange_request` takes `now`, deciding the requester's authorization at a stated instant as `verify_exchange_receipt` already did; without it the wall clock decides, as before.
+
 ## v1.0.0-rc.63 — 2026-09-27 (the pooler keeps each operator's scope; the application role writes less)
 
 Security fixes found by attacking the deployment as a compromised application and by measuring it under load.

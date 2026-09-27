@@ -100,6 +100,15 @@ def _load_cases():
             for k in ("requested_action", "expected_nonce", "verifier_scope", "now"):
                 if k in c:
                     payload[k] = c[k]
+        elif artifact == "exchange-use":
+            # 1.0.0-rc.64: an exchange artifact in use. What each question needs is supplied
+            # only when the case asks it; `manifests` are the ones this party trusts.
+            payload["object"] = _load_file(c["object_file"])
+            if "manifest_files" in c:
+                payload["manifests"] = [_load_file(f) for f in c["manifest_files"]]
+            for k in ("requester_key", "responder_key", "body", "request_body", "response_body", "now"):
+                if k in c:
+                    payload[k] = c[k]
         elif artifact == "holder-chain":
             payload["credential"] = _load_file(c["credential_file"])
             payload["binding"] = _load_file(c["binding_file"])

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { verifyAuthenticity, PolarisVerifier, pairwiseHandle, handlesLink,
          nullifiersLink, grantCovers, grantWithinLimits, revocationEndsGrant, agentProofProves, grantPrincipalBound,
+         verifyExchangeRequest, verifyExchangeReceipt, verifyExchangeMint,
          verifyInclusion, verifyStatusAssertion, verifyIdToken, verifyHolder, verifyTimestampAnchor,
          verifySignedArtifact, verifyCosignature,
          verifyAttestation, verifyCrossAuthority,
@@ -156,6 +157,83 @@ test("a grant speaks for a principal only under an active binding", () => {
   assert.equal(grantPrincipalBound(grant, conf("grant-principal-binding-wrong-type.json"), cred, now), false,
     "a genuine issuer-signed object of another type, carrying a binding's fields, is not a binding");
   assert.equal(grantPrincipalBound(grant, "binding", cred, now), false);
+});
+
+// The exchange in use (1.0.0-rc.64): the same questions the detached verifier answers.
+const xch = (n: string) => JSON.parse(readFileSync(join(ROOT, "conformance", "vectors", `exchange-use-${n}.json`), "utf8"));
+const XNOW = "2026-05-01T00:00:30Z";
+
+test("an exchange request answers who, whether authorized and what body", () => {
+  const env = xch("request"); const man = xch("manifest");
+  const me = env.requester.public_key_hex;
+  const body = { ask: "balance", account: "notional-7" };
+  const v = verifyExchangeRequest(env, me.toUpperCase(), [man], body, XNOW);
+  assert.deepEqual([v.authentic, v.requesterMatches, v.requesterAuthorized, v.bodyBound], [true, true, true, true]);
+  assert.equal(verifyExchangeRequest(env).requesterAuthorized, null, "no manifests is no answer");
+  assert.equal(verifyExchangeRequest(env, "aa".repeat(32), null, null, XNOW).requesterMatches, false);
+  assert.equal(verifyExchangeRequest(env, 7 as any, null, null, XNOW).requesterMatches, false);
+  const closed = { ...man, attestations: man.attestations.map((a: any) => ({ ...a, valid_until: "whenever" })) };
+  const refusals: [string, any, any, string][] = [
+    ["a context the requester is not attested in", xch("request-context-3"), [man], XNOW],
+    ["an attestation added after the authority signed", xch("request-context-3"), [xch("manifest-forged")], XNOW],
+    ["an attestation whose own window closed", xch("request-context-2"), [man], XNOW],
+    ["a manifest that expired before the instant decided", env, [man], "2026-05-03T00:00:00Z"],
+    ["a manifest decided before it was issued", env, [man], "2026-04-01T00:00:00Z"],
+    ["an attestation window nobody can read", env, [closed], XNOW],
+    ["manifests that are not a list", env, man, XNOW],
+    ["a manifest that is not an object", env, ["manifest"], XNOW]];
+  for (const [label, e, mans, at] of refusals) {
+    assert.equal(verifyExchangeRequest(e, null, mans, null, at).requesterAuthorized, false, label);
+  }
+  assert.equal(verifyExchangeRequest(env, null, null, { ...body, account: "x" }).bodyBound, false);
+  for (const [label, bad] of [["a stranger's signature in the requester's name", xch("request-stranger")],
+                              ["edited after signing", xch("request-tampered")],
+                              ["another format", { ...env, format: "polaris-exchange-receipt/1" }],
+                              ["not an object", "envelope"]] as [string, any][]) {
+    const b = verifyExchangeRequest(bad, me, [man], body, XNOW);
+    assert.deepEqual([b.authentic, b.requesterMatches, b.requesterAuthorized, b.bodyBound],
+      [false, null, null, null], label + " answers nothing");
+  }
+});
+
+test("an exchange receipt answers who, whether authorized, by whom and what bodies", () => {
+  const rc = xch("receipt"); const man = xch("manifest");
+  const req = '{"account":"notional-7","ask":"balance"}';
+  const resp = '{"balance":"notional"}';
+  const v = verifyExchangeReceipt(rc, XNOW, [man], rc.public_key_hex, req, new TextEncoder().encode(resp));
+  assert.deepEqual([v.authentic, v.responderMatches, v.requesterAuthorized, v.via, v.requestBound, v.responseBound, v.responder],
+    [true, true, true, man.authority, true, true, rc.responder]);
+  assert.equal(verifyExchangeReceipt(rc, null, null, "aa".repeat(32)).responderMatches, false);
+  assert.equal(verifyExchangeReceipt(rc, null, null, null, " " + req).requestBound, false,
+    "the body is hashed as given, never re-serialized");
+  assert.equal(verifyExchangeReceipt(rc, null, null, null, null, "{}").responseBound, false);
+  const refusals: [string, any, any][] = [
+    ["a receipt that states no context, beside an attestation in context 1", xch("receipt-no-context"), [man]],
+    ["a context the requester is not attested in", xch("receipt-context-3"), [man]],
+    ["a manifest that is not genuine", rc, [xch("manifest-forged")]],
+    ["a genuine manifest that names no authority, so `via` could name nobody", rc, [xch("manifest-nameless")]]];
+  for (const [label, r, mans] of refusals) {
+    const b = verifyExchangeReceipt(r, XNOW, mans);
+    assert.deepEqual([b.requesterAuthorized, b.via], [false, null], label);
+  }
+  for (const [label, bad] of [["edited after signing", xch("receipt-tampered")],
+                              ["another format", { ...rc, format: "polaris-exchange-request/1" }],
+                              ["not an object", ["receipt"]]] as [string, any][]) {
+    const b = verifyExchangeReceipt(bad, XNOW, [man], rc.public_key_hex, req, resp);
+    assert.deepEqual([b.authentic, b.responderMatches, b.requesterAuthorized, b.via, b.requestBound, b.responseBound, b.responder],
+      [false, null, null, null, null, null, null], label + " answers nothing and names no responder");
+  }
+});
+
+test("an exchange mint answers whose it is", () => {
+  const m = xch("mint");
+  assert.equal(verifyExchangeMint(m, m.public_key_hex.toUpperCase()).responderMatches, true);
+  assert.equal(verifyExchangeMint(m).responderMatches, null);
+  assert.equal(verifyExchangeMint(m, "aa".repeat(32)).responderMatches, false);
+  for (const bad of [xch("mint-tampered"), { ...m, format: "polaris-exchange-receipt/1" }, "mint"]) {
+    const b = verifyExchangeMint(bad, m.public_key_hex);
+    assert.deepEqual([b.authentic, b.responderMatches], [false, null]);
+  }
 });
 
 test("an agent proof must bind this grant, this action and this nonce", () => {

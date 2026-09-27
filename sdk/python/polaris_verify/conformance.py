@@ -21,7 +21,7 @@ drives it over the published cases and checks every verdict. See conformance/SPE
 import json
 import sys
 
-from . import (agent_proof_proves, grant_covers, grant_principal_bound, pairwise_handle, revocation_ends_grant, verify_attestation, verify_authenticity, verify_cross_authority, verify_holder,
+from . import (agent_proof_proves, verify_exchange_mint, verify_exchange_receipt, verify_exchange_request, grant_covers, grant_principal_bound, pairwise_handle, revocation_ends_grant, verify_attestation, verify_authenticity, verify_cross_authority, verify_holder,
                verify_id_token,
                verify_signed_artifact, verify_status_assertion, verify_timestamp_anchor)
 
@@ -115,6 +115,34 @@ def main(argv=None):
                                            and agent_proof_proves(proof, grant, action,
                                                                   case.get("expected_nonce")))
         print(json.dumps(verdict))
+        return 0
+    if artifact == "exchange-use":
+        # 1.0.0-rc.64: an exchange artifact IN USE. The signed-artifact cases ask only whether
+        # it is genuine; a party holding one must also ask whether it is by the requester or
+        # responder expected, whether the requester was attested in its context by an
+        # authority trusted at `now`, and whether the bodies it holds are the ones committed.
+        obj = case.get("object") or {}
+        fmt = obj.get("format") if isinstance(obj, dict) else None
+        now = case.get("now")
+        if fmt == "polaris-exchange-receipt/1":
+            r = verify_exchange_receipt(obj, now=now, trusted_manifests=case.get("manifests"),
+                                        responder_key=case.get("responder_key"),
+                                        request_body=case.get("request_body"),
+                                        response_body=case.get("response_body"))
+            print(json.dumps({"authentic": r.authentic, "responder_matches": r.responder_matches,
+                              "requester_authorized": r.requester_authorized, "via": r.via,
+                              "request_bound": r.request_bound, "response_bound": r.response_bound,
+                              "responder": r.responder}))
+        elif fmt == "polaris-exchange-mint/1":
+            m = verify_exchange_mint(obj, responder_key=case.get("responder_key"))
+            print(json.dumps({"authentic": m.authentic, "responder_matches": m.responder_matches}))
+        else:
+            q = verify_exchange_request(obj, requester_key=case.get("requester_key"),
+                                        trusted_manifests=case.get("manifests"),
+                                        body=case.get("body"), now=now)
+            print(json.dumps({"authentic": q.authentic, "requester_matches": q.requester_matches,
+                              "requester_authorized": q.requester_authorized,
+                              "body_bound": q.body_bound}))
         return 0
     if artifact == "timestamp-anchor":
         v = verify_timestamp_anchor(case.get("timestamp") or {}, log_key=case.get("log_key"),

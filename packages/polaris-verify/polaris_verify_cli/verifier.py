@@ -2046,13 +2046,15 @@ def canonical_body_hash(obj):
     return hashlib.sha3_256(json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
-def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None, body=None):
+def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None, body=None, now=None):
     """Verify a requester's signed exchange envelope OFFLINE (P8.2d): the ML-DSA-65 signature
     over SHA3-256(canonical) under the key the envelope names (with requester_key: that it is
     the expected requester); with trusted_manifests, that the requester is attested in the
-    envelope's context by an authority the verifier trusts (the section 4 rule); with body,
-    that request_hash binds it. A third party holding the envelope and the matching receipt
-    (exchange_evidence) proves both sides of an exchange with no access to either body."""
+    envelope's context by an authority the verifier trusts (the section 4 rule), decided at
+    `now` (manifest freshness and each attestation's window; None is the wall clock, as for
+    verify_exchange_receipt); with body, that request_hash binds it. A third party holding the
+    envelope and the matching receipt (exchange_evidence) proves both sides of an exchange with
+    no access to either body."""
     if not isinstance(envelope, dict):
         envelope = {}
     req = envelope.get("requester") if isinstance(envelope.get("requester"), dict) else {}
@@ -2108,13 +2110,13 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
         ctx = envelope.get("context_id")
         authorized = False
         for m in (trusted_manifests if isinstance(trusted_manifests, (list, tuple)) else []):
-            mv = verify_manifest(m)
+            mv = verify_manifest(m, now=now)
             if not (mv.get("manifest_authentic") and mv.get("fresh")):
                 continue
             for att in mv.get("attestations") or []:
                 if isinstance(att, dict) and str(att.get("attested_public_key_hex") or "").lower() == pk_hex \
                         and att.get("context_id") == ctx \
-                        and _attestation_window_open(att):
+                        and _attestation_window_open(att, now):
                     authorized = True
         v["requester_authorized"] = authorized
     if body is not None:
@@ -2719,8 +2721,11 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
             for att in mv["attestations"]:
                 if not isinstance(att, dict):
                     continue
+                # The receipt's context, exactly (WIRE-SPEC 3.8 and section 4 step 2), as the
+                # request path compares it. Before 1.0.0-rc.64 a receipt stating no context
+                # was authorized by an attestation from ANY context.
                 if str(att.get("attested_public_key_hex") or "").lower() == req_key and \
-                   (ctx is None or att.get("context_id") == ctx) and \
+                   att.get("context_id") == ctx and \
                    _attestation_window_open(att, now):
                     via = mv["authority"]
                     break

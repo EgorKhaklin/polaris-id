@@ -8,7 +8,7 @@ means (ROADMAP P3.5).
 The suite covers the **offline** checks over the protocol's signed artifacts, each
 specified normatively in [`docs/reference/WIRE-SPEC.md`](../docs/reference/WIRE-SPEC.md). It
 certifies the **authenticity** of the app-signed artifacts a relying party, a service or an
-auditor holds (26 artifact types, listed in `cases.json` and held to that file by
+auditor holds (27 artifact types, listed in `cases.json` and held to that file by
 `check_conformance_spec_counts_its_artifacts`, because this sentence said sixteen for eleven
 releases after the suite had grown past it); among them:
 
@@ -87,6 +87,22 @@ key the case's expected verdict names; the verifier may report additional keys.
   "now": "2026-05-01T00:00:30Z" }
    -> { "authentic": true, "action_in_scope": true, "revoked": false, "agent_proved": true,
         "principal_bound": true, "pairwise_handle": "<hex>", "correlation": "exposed" }
+
+{ "artifact": "exchange-use",
+  "object": { "...": "a polaris-exchange-request/1, polaris-exchange-receipt/1 or polaris-exchange-mint/1" },
+  "requester_key": "<the requester's key this party expects (an envelope)>",
+  "responder_key": "<the responder's key this party expects (a receipt or a mint)>",
+  "manifests": [ { "...": "the polaris-federation-manifest/1 objects this party trusts" } ],
+  "body": { "...": "the request body this party holds (an envelope)" },
+  "request_body": "<the request body, as exchanged (a receipt)>",
+  "response_body": "<the response body, as exchanged (a receipt)>",
+  "now": "2026-05-01T00:00:30Z" }
+   -> envelope: { "authentic": true, "requester_matches": true, "requester_authorized": true,
+                  "body_bound": true }
+   -> receipt:  { "authentic": true, "responder_matches": true, "requester_authorized": true,
+                  "via": { "...": "the attesting manifest's authority" }, "request_bound": true,
+                  "response_bound": true, "responder": { "...": "the receipt's signed responder" } }
+   -> mint:     { "authentic": true, "responder_matches": true }
 ```
 
 For a grant in use (since 1.0.0-rc.63) each link is answered separately, and `null` where the
@@ -105,6 +121,30 @@ case did not supply what the question needs:
 - `pairwise_handle`, `correlation`: with `verifier_scope`, the handle this relying party keys
   the principal by (`pairwise_handle` of the bound holder key) and `"exposed"`, because a
   grant's handle is a stable value the relying party can store.
+
+For an exchange in use (since 1.0.0-rc.64) the verifier dispatches on the object's `format`.
+Each question is answered only when the case supplies what it needs (`null` otherwise), and
+none past `authentic` for an object its signer did not sign:
+
+- `authentic`: the signature is genuine. For an envelope, the key that verifies must also be
+  the requester key the signed statement names; a stranger's genuine signature in the
+  requester's name is not the requester's envelope.
+- `requester_matches`, `responder_matches`: the signing key is the one this party expected.
+- `requester_authorized`: some manifest among those supplied is genuine and fresh at `now`
+  and attests the requester's key in EXACTLY the object's context, inside the attestation's
+  own `valid_until` (the section 4 rule of the wire spec, applied to the requester). A
+  receipt that states no context is not authorized by an attestation from another context.
+  The decision is made at the case's `now`, never at the verifier's clock.
+- `via` (receipt): the `authority` of the manifest that authorized the requester; `null`
+  when none did, including when that manifest names no authority.
+- `body_bound` (envelope): `request_hash` is the SHA3-256 of the body's canonical JSON
+  (sorted keys, compact separators), as wire spec section 3.11 defines it.
+- `request_bound`, `response_bound` (receipt): the commitment is the SHA3-256 of the body
+  bytes AS EXCHANGED (a string is hashed as its UTF-8), with no re-serialization, so a
+  receipt case supplies each body as the exact string. The two rules differ: `body_bound`
+  hashes canonical JSON, the receipt's fields hash the raw body.
+- `responder` (receipt): the receipt's signed `responder`, reported only for a genuine
+  receipt; a forged receipt names nobody.
 
 For the timestamp anchor the verdict is:
 
@@ -188,8 +228,8 @@ Status-assertion cases (`artifact: status-assertion`, verdict `{authentic, fresh
 
 A conformance suite is read as a boundary, so it has to say where its boundary is. Measured
 rather than recalled, by `scripts/polaris-contract-reach-drill.py`, which runs every case and
-records which of the reference SDK's public functions actually execute: **the 130 cases enter
-16 of the SDK's 19 public functions.** Three are never entered by any case, which means an
+records which of the reference SDK's public functions actually execute: **the 151 cases enter
+19 of the SDK's 22 public functions.** Three are never entered by any case, which means an
 implementation can get them wrong, or omit them, and still pass every case here.
 
 | never entered | why the contract does not ask |
@@ -207,7 +247,7 @@ runs it with collection disabled and requires that refusal.
 
 **The same gap, between the implementations.** Three verifiers here check these artifacts:
 the detached verifier a relying party installs, and the two reference SDKs. All three pass all
-130 cases, and a case constrains only the keys it names, so on every other key they could
+151 cases, and a case constrains only the keys it names, so on every other key they could
 differ and the suite would stay green. `scripts/polaris-sdk-agreement-drill.py` compares them
 to EACH OTHER, key for key, on every case, and CI runs it.
 

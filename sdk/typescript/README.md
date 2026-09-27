@@ -65,8 +65,12 @@ refused (wire spec section 6).
   ID token and trust list (authenticity, freshness where windowed, and the artifact's
   commitment or self-consistency).
 - `verifyCrossAuthority(...)`: the federation trust decision (accept / reject).
+- `verifyExchangeRequest(...)`, `verifyExchangeReceipt(...)`, `verifyExchangeMint(...)`: an
+  exchange artifact in use: whether it is by the party expected, whether the requester was
+  attested in its context at a stated instant (and by whom, for a receipt), and whether the
+  bodies held match the commitments.
 
-The SDK passes every case of the conformance suite (130 cases, measured against the repository on 2026-09-27) and every case of the frozen
+The SDK passes every case of the conformance suite (151 cases, measured against the repository on 2026-09-27) and every case of the frozen
 version-1 set under `scripts/polaris-compat-suite.py --typescript-only`, which runs on every CI push.
 
 ## Running and building

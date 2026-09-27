@@ -34,7 +34,7 @@ import hashlib
 import json
 import time
 import urllib.request
-from typing import List, Optional
+from typing import Any, List, Optional
 
 __version__ = "0.1.0"
 ALGORITHM = "ML-DSA-65"   # the default parameter set
@@ -1134,3 +1134,159 @@ def agent_proof_proves(proof, grant, action=None, nonce=None) -> bool:
     if action is not None and str(proof.get("action") or "") != str(action):
         return False
     return True
+
+
+# --- P8.2: the exchange in use (1.0.0-rc.64) -----------------------------------------
+# The exchange artifacts were verified here for their signature and nothing else, while the
+# detached verifier answers every question a party holding one has to ask: is it by the
+# requester or responder I expected, was the requester attested in this context by an
+# authority I trust at the instant I am deciding, and do the bodies I hold match what was
+# committed. These three answer the same questions, and answer nothing past authenticity
+# for an object its signer did not sign.
+
+@dataclasses.dataclass
+class ExchangeRequestVerdict:
+    authentic: bool
+    requester_matches: Optional[bool] = None
+    requester_authorized: Optional[bool] = None
+    body_bound: Optional[bool] = None
+    note: Optional[str] = None
+
+
+@dataclasses.dataclass
+class ExchangeReceiptVerdict:
+    authentic: bool
+    responder_matches: Optional[bool] = None
+    requester_authorized: Optional[bool] = None
+    via: Any = None
+    request_bound: Optional[bool] = None
+    response_bound: Optional[bool] = None
+    #: The responder the receipt names, a SIGNED field, reported only for an authentic receipt.
+    responder: Any = None
+    note: Optional[str] = None
+
+
+@dataclasses.dataclass
+class ExchangeMintVerdict:
+    authentic: bool
+    responder_matches: Optional[bool] = None
+    note: Optional[str] = None
+
+
+def _attestation_open(att, now=None) -> bool:
+    """The attestation's own window: no `valid_until` is open; an unreadable one is closed."""
+    until = att.get("valid_until")
+    if until is None:
+        return True
+    u = _iso_to_epoch(until)
+    n = _iso_to_epoch(now) if now is not None else time.time()
+    return u is not None and n is not None and u >= n
+
+
+def _exchange_authorities(key_hex, context_id, manifests, now=None):
+    """The authority of every manifest the caller trusts that is genuine and fresh at `now` and
+    attests `key_hex` in EXACTLY `context_id`, inside the attestation's own window, in order.
+    The section 4 rule, applied to an institution rather than a credential."""
+    want = str(key_hex or "").lower()
+    found = []
+    if not want:
+        return found
+    for m in (manifests if isinstance(manifests, (list, tuple)) else []):
+        m = m if isinstance(m, dict) else {}
+        mv = verify_signed_artifact(m, now=now)
+        if not (mv.authentic and mv.fresh is True):
+            continue
+        if any(isinstance(att, dict)
+               and str(att.get("attested_public_key_hex") or "").lower() == want
+               and att.get("context_id") == context_id
+               and _attestation_open(att, now)
+               for att in (m.get("attestations") if isinstance(m.get("attestations"), list) else [])):
+            found.append(m.get("authority"))
+    return found
+
+
+def _same_key(a, b) -> bool:
+    return isinstance(a, str) and isinstance(b, str) and a.lower() == b.lower()
+
+
+def _sha3_hex(body) -> str:
+    raw = body if isinstance(body, bytes) else str(body).encode("utf-8")
+    return hashlib.sha3_256(raw).hexdigest()
+
+
+def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None, body=None,
+                            now=None) -> ExchangeRequestVerdict:
+    """Verify a requester-signed exchange envelope OFFLINE (wire spec 3.11): the signature,
+    under the key the envelope's signed `requester` names; with `requester_key`, that it is
+    the requester expected; with `trusted_manifests`, that one of them, genuine and fresh at
+    `now`, attests the requester in the envelope's context; with `body`, that `request_hash`
+    is the SHA3-256 of the body's canonical JSON."""
+    e = envelope if isinstance(envelope, dict) else {}
+    if e.get("format") != "polaris-exchange-request/1":
+        return ExchangeRequestVerdict(False, note="not a polaris-exchange-request/1")
+    req = e.get("requester") if isinstance(e.get("requester"), dict) else {}
+    # The key that verifies is the envelope's; it must be the one the SIGNED statement claims
+    # for the requester, or a stranger's signature speaks in the requester's name.
+    if not _same_key(e.get("public_key_hex"), req.get("public_key_hex")):
+        return ExchangeRequestVerdict(False, note="the envelope's key is not the requester it names")
+    base = verify_signed_artifact(e, now=now)
+    if not base.authentic:
+        return ExchangeRequestVerdict(False, note=base.note)
+    v = ExchangeRequestVerdict(True)
+    if requester_key is not None:
+        v.requester_matches = _same_key(e.get("public_key_hex"), requester_key)
+    if trusted_manifests is not None:
+        v.requester_authorized = bool(_exchange_authorities(e.get("public_key_hex"), e.get("context_id"),
+                                                            trusted_manifests, now))
+    if body is not None:
+        canon = json.dumps(body, sort_keys=True, separators=(",", ":"))
+        v.body_bound = _sha3_hex(canon) == str(e.get("request_hash") or "").lower()
+    return v
+
+
+def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder_key=None,
+                            request_body=None, response_body=None) -> ExchangeReceiptVerdict:
+    """Verify a responder-signed exchange receipt OFFLINE (wire spec 3.8): the signature; with
+    `responder_key`, that the expected responder signed it; with `trusted_manifests`, that one
+    of them, genuine and fresh at `now`, attests the REQUESTER in exactly the receipt's
+    context (a receipt stating no context is not authorized by an attestation from another),
+    and which authority (`via`); with a body, that its commitment binds. A receipt commits to
+    the SHA3-256 of the body bytes as exchanged, so a body is hashed as given (bytes, or the
+    string's UTF-8), not re-serialized."""
+    r = receipt if isinstance(receipt, dict) else {}
+    if r.get("format") != "polaris-exchange-receipt/1":
+        return ExchangeReceiptVerdict(False, note="not a polaris-exchange-receipt/1")
+    base = verify_signed_artifact(r, now=now)
+    if not base.authentic:
+        return ExchangeReceiptVerdict(False, note=base.note)
+    v = ExchangeReceiptVerdict(True, responder=r.get("responder"))
+    if responder_key is not None:
+        v.responder_matches = _same_key(r.get("public_key_hex"), responder_key)
+    if request_body is not None:
+        v.request_bound = _sha3_hex(request_body) == str(r.get("request_hash") or "").lower()
+    if response_body is not None:
+        v.response_bound = _sha3_hex(response_body) == str(r.get("response_hash") or "").lower()
+    if trusted_manifests is not None:
+        req = r.get("requester") if isinstance(r.get("requester"), dict) else {}
+        # `via` names the authority, so an attestation in a manifest that names none is no
+        # answer to "authorized by whom" (the detached verifier's rule too).
+        named = [a for a in _exchange_authorities(req.get("public_key_hex"), r.get("context_id"),
+                                                  trusted_manifests, now) if a]
+        v.via = named[0] if named else None
+        v.requester_authorized = bool(named)
+    return v
+
+
+def verify_exchange_mint(mint, responder_key=None) -> ExchangeMintVerdict:
+    """Verify a responder-signed mint statement OFFLINE (wire spec 3.8.1): the signature, and
+    with `responder_key`, that the expected responder's key signed it."""
+    m = mint if isinstance(mint, dict) else {}
+    if m.get("format") != "polaris-exchange-mint/1":
+        return ExchangeMintVerdict(False, note="not a polaris-exchange-mint/1")
+    base = verify_signed_artifact(m)
+    if not base.authentic:
+        return ExchangeMintVerdict(False, note=base.note)
+    v = ExchangeMintVerdict(True)
+    if responder_key is not None:
+        v.responder_matches = _same_key(m.get("public_key_hex"), responder_key)
+    return v
