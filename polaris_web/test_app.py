@@ -17065,6 +17065,14 @@ class RefusalsTheAppMutationDrillFound(PolarisTestCase):
                 'code_challenge_method': 'S256', 'context_id': 1,
                 'disclosure_level': 'ZERO_KNOWLEDGE', 'token_value': tv, 'signature_hex': sig}
 
+    def _need_zk_binary(self):
+        """Closing an epoch runs the prover. The real-signer CI job does not build it, so these
+        tests skip there with the ZK class's message; the product job and the app sweep build it."""
+        import zk as _zk
+        if not os.path.isfile(_zk._binary_path()):
+            self.skipTest("polaris-zk binary not built at %s. Run `cargo build --release` in "
+                          "polaris_zk/ first." % _zk._binary_path())
+
     def _close_epoch(self):
         valid_until = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
         r = self.client.post('/api/zk/epoch/close', json={'context_id': 1, 'valid_until': valid_until},
@@ -17123,6 +17131,7 @@ class RefusalsTheAppMutationDrillFound(PolarisTestCase):
 
     def test_the_leaf_set_of_an_unknown_epoch_is_404(self):
         """The published leaf set answers 404 for an epoch that was never closed."""
+        self._need_zk_binary()
         epoch_id = self._close_epoch()
         self.assertEqual(self.client.get('/api/v1/epoch/%d/leaves' % epoch_id).status_code, 200,
                          'control: a closed epoch publishes its leaves')
@@ -17132,6 +17141,7 @@ class RefusalsTheAppMutationDrillFound(PolarisTestCase):
 
     def test_an_epoch_checkpoint_before_any_epoch_is_404(self):
         """A federated authority with no closed epoch has no checkpoint to sign."""
+        self._need_zk_binary()
         self._federate(1)
         # The seed (10_auth.sql) closes one epoch. A freshly deployed instance has none, and
         # that is the state this refusal answers; the owner empties the chain as the reload does.
@@ -17168,6 +17178,7 @@ class RefusalsTheAppMutationDrillFound(PolarisTestCase):
 
     def test_closing_a_zk_epoch_over_no_eligible_credential_is_404(self):
         """An epoch over an empty anonymity set is refused, not committed."""
+        self._need_zk_binary()
         valid_until = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
         self.assertIsNone(_sql("SELECT 1 FROM TokenPermission WHERE context_id = 999999", fetch='one'))
         before = _sql("SELECT count(*) AS n FROM TokenStateEpoch", fetch='one')['n']
