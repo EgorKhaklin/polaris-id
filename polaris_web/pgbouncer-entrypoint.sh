@@ -57,7 +57,15 @@ REPLICA_PORT="${POLARIS_DB_REPLICA_PORT:-5432}"
 case "$REPLICA_HOST" in ''|*[!A-Za-z0-9._-]*) [ -z "$REPLICA_HOST" ] || { echo "pgbouncer: POLARIS_DB_REPLICA_HOST must be a plain hostname (got '$REPLICA_HOST')" >&2; exit 1; } ;; esac
 case "$REPLICA_PORT" in ''|*[!0-9]*) echo "pgbouncer: POLARIS_DB_REPLICA_PORT must be an integer (got '$REPLICA_PORT')" >&2; exit 1 ;; esac
 LISTEN_PORT="${PGBOUNCER_LISTEN_PORT:-6432}"
-POOL_MODE="${PGBOUNCER_POOL_MODE:-transaction}"
+# 2026-09-27: SESSION pooling, and nothing else. The application puts the operator's authority
+# into the database session (set_config('polaris.operator_agency_id', ..., false)) and the
+# row-level policies read it (docs/design/per-authority-isolation.md). In transaction mode a
+# server connection passes between clients with its session state intact and no reset, so a
+# later, unrelated request ran under the previous operator's scope: measured through this
+# pooler's own version, the next client read the last client's authority. Session mode binds a
+# server connection to one client connection and runs server_reset_query (DISCARD ALL) before
+# the next, which is the fresh session the design assumes, while still reusing the backend.
+POOL_MODE="${PGBOUNCER_POOL_MODE:-session}"
 MAX_CLIENT_CONN="${PGBOUNCER_MAX_CLIENT_CONN:-500}"
 DEFAULT_POOL_SIZE="${PGBOUNCER_DEFAULT_POOL_SIZE:-20}"
 MIN_POOL_SIZE="${PGBOUNCER_MIN_POOL_SIZE:-5}"
@@ -118,8 +126,11 @@ for _nv in "POLARIS_DB_PORT=$DB_PORT" "PGBOUNCER_LISTEN_PORT=$LISTEN_PORT" \
     esac
 done
 case "$POOL_MODE" in
-    transaction|session|statement) ;;
-    *) echo "pgbouncer: PGBOUNCER_POOL_MODE must be transaction|session|statement (got '$POOL_MODE')" >&2; exit 1 ;;
+    session) ;;
+    transaction|statement)
+        echo "pgbouncer: PGBOUNCER_POOL_MODE=$POOL_MODE is refused: the operator's authority lives in the database session, and $POOL_MODE pooling hands that session to the next client unreset (docs/design/per-authority-isolation.md). Use session." >&2
+        exit 1 ;;
+    *) echo "pgbouncer: PGBOUNCER_POOL_MODE must be session (got '$POOL_MODE')" >&2; exit 1 ;;
 esac
 case "$DB_USER" in ''|*[!A-Za-z0-9_]*) echo "pgbouncer: POLARIS_DB_USER must be a plain SQL identifier (got '$DB_USER')" >&2; exit 1 ;; esac
 case "$DB_NAME" in ''|*[!A-Za-z0-9_]*) echo "pgbouncer: POLARIS_DB_NAME must be a plain SQL identifier (got '$DB_NAME')" >&2; exit 1 ;; esac
@@ -250,6 +261,8 @@ listen_port = $LISTEN_PORT
 auth_type = scram-sha-256
 auth_file = $USERLIST
 pool_mode = $POOL_MODE
+# Run before a server connection is handed to the next client: clears the operator scope.
+server_reset_query = DISCARD ALL
 max_client_conn = $MAX_CLIENT_CONN
 default_pool_size = $DEFAULT_POOL_SIZE
 min_pool_size = $MIN_POOL_SIZE
@@ -269,7 +282,7 @@ tcp_keepcnt = $TCP_KEEPCNT
 # v9.244: a query with no answer for this long is cancelled and its server
 # connection recycled (a backend that vanished mid-query, see above).
 query_timeout = $QUERY_TIMEOUT
-# psycopg2 sends extra_float_digits; pgbouncer must tolerate it in transaction mode.
+# psycopg2 sends extra_float_digits as a startup parameter; pgbouncer must tolerate it.
 ignore_startup_parameters = extra_float_digits
 # TLS (v9.121): server_tls encrypts the postgres hop, client_tls the app hop.
 ${TLS_INI}# Log to stderr (no logfile), no pidfile — let Docker own the process lifecycle.

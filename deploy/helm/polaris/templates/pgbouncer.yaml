@@ -36,7 +36,7 @@ spec:
             - {name: POLARIS_DB_USER, value: polaris_app}
             - {name: POLARIS_DB_PASSWORD_FILE, value: /run/secrets/polaris_db_password}
             - {name: PGBOUNCER_LISTEN_PORT, value: "6432"}
-            - {name: PGBOUNCER_POOL_MODE, value: transaction}
+            - {name: PGBOUNCER_POOL_MODE, value: session}   # transaction mode leaks the operator scope
             - {name: PGBOUNCER_DEFAULT_POOL_SIZE, value: "20"}
             - {name: PGBOUNCER_MIN_POOL_SIZE, value: "5"}
             - {name: PGBOUNCER_RESERVE_POOL_SIZE, value: "5"}

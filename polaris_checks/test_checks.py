@@ -3076,6 +3076,38 @@ def test_compose_resource_limits_check_discriminates(tmp_path):
         "must FAIL when the prod compose is absent"
 
 
+def test_pooler_keeps_the_operator_scope_check_discriminates(tmp_path):
+    web = tmp_path / "polaris_web"
+    web.mkdir()
+    helm = tmp_path / "deploy" / "helm" / "polaris" / "templates"
+    helm.mkdir(parents=True)
+    GOOD_ENTRY = ('POOL_MODE="${PGBOUNCER_POOL_MODE:-session}"\n'
+                  'case "$POOL_MODE" in\n    session) ;;\n    transaction|statement)\n'
+                  '        echo "refused" >&2\n        exit 1 ;;\n    *) exit 1 ;;\nesac\n'
+                  "cat > ini <<EOF\npool_mode = $POOL_MODE\nserver_reset_query = DISCARD ALL\nEOF\n")
+    GOOD_COMPOSE = "      PGBOUNCER_POOL_MODE: session   # note\n"
+    GOOD_HELM = "            - {name: PGBOUNCER_POOL_MODE, value: session}\n"
+
+    def write(entry=GOOD_ENTRY, compose=GOOD_COMPOSE, helm_text=GOOD_HELM):
+        (web / "pgbouncer-entrypoint.sh").write_text(entry)
+        (web / "docker-compose.prod.yml").write_text(compose)
+        (helm / "pgbouncer.yaml").write_text(helm_text)
+
+    write()
+    first = checks.check_pooler_keeps_the_operator_scope(tmp_path)[0]
+    assert first.level == "OK", first.message
+    for label, kw in (
+            ("transaction default", dict(entry=GOOD_ENTRY.replace(":-session}", ":-transaction}"))),
+            ("refusal gone", dict(entry=GOOD_ENTRY.replace("        exit 1 ;;\n    *)", "        : ;;\n    *)"))),
+            ("no reset", dict(entry=GOOD_ENTRY.replace("server_reset_query = DISCARD ALL\n", ""))),
+            ("compose transaction", dict(compose="      PGBOUNCER_POOL_MODE: transaction\n")),
+            ("helm transaction", dict(helm_text="            - {name: PGBOUNCER_POOL_MODE, value: transaction}\n")),
+            ("nothing to verify", dict(compose="x: 1\n", helm_text="y: 2\n"))):
+        write(**kw)
+        got = checks.check_pooler_keeps_the_operator_scope(tmp_path)[0]
+        assert got.level == "FAIL", "%s must fail: %s" % (label, got.message)
+
+
 def test_pgbouncer_self_built_check_discriminates(tmp_path):
     web = tmp_path / "polaris_web"
     web.mkdir()

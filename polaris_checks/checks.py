@@ -2932,6 +2932,46 @@ def check_pgbackrest_scaffolding(root: pathlib.Path) -> list[Finding]:
 # (not an env literal). This check keeps the bitnami image from creeping back and
 # keeps the secret off the environment.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# The pooler must not carry one request's operator scope into another's. The application puts
+# the operator's authority into the DATABASE SESSION (set_config(..., false)) and the row-level
+# policies read it (docs/design/per-authority-isolation.md, which says a pool without a reset
+# makes one operator's authority the next request's). PgBouncer's transaction mode is exactly
+# that pool: a server connection passes to the next client with its session unreset, measured
+# 2026-09-27 through this repository's own image. Session mode with server_reset_query clears
+# it and still reuses the backend.
+# ---------------------------------------------------------------------------
+def check_pooler_keeps_the_operator_scope(root: pathlib.Path) -> list[Finding]:
+    name = "pooler_scope"
+    entry = _read(root, "polaris_web/pgbouncer-entrypoint.sh")
+    if not entry:
+        return _fail(name, "polaris_web/pgbouncer-entrypoint.sh is missing")
+    if not re.search(r'(?m)^POOL_MODE="\$\{PGBOUNCER_POOL_MODE:-session\}"', entry):
+        return _fail(name, "pgbouncer-entrypoint.sh must default PGBOUNCER_POOL_MODE to session: in "
+                           "transaction mode the next client inherits the last operator's scope")
+    refusal = re.search(r"(?ms)^\s*transaction\|statement\)\s*\n(.*?);;", entry)
+    if not refusal or not re.search(r"(?m)^\s*exit 1\b", refusal.group(1)):
+        return _fail(name, "pgbouncer-entrypoint.sh must REFUSE transaction and statement pooling "
+                           "(a `transaction|statement)` branch that exits 1), not merely default away "
+                           "from them")
+    if not re.search(r"(?m)^server_reset_query = DISCARD ALL$", entry):
+        return _fail(name, "pgbouncer-entrypoint.sh must write `server_reset_query = DISCARD ALL` into "
+                           "the generated ini, so a server connection is reset before its next client")
+    seen = 0
+    for rel in ("polaris_web/docker-compose.prod.yml", "deploy/helm/polaris/templates/pgbouncer.yaml"):
+        text = _read(root, rel) or ""
+        for m in re.finditer(r"PGBOUNCER_POOL_MODE\W+(?:value:\s*)?['\"]?([a-z]+)", text):
+            seen += 1
+            if m.group(1) != "session":
+                return _fail(name, "%s sets PGBOUNCER_POOL_MODE to %s; only session keeps one "
+                                   "request's operator scope out of the next" % (rel, m.group(1)))
+    if seen == 0:
+        return _fail(name, "neither the prod compose nor the Helm chart sets PGBOUNCER_POOL_MODE; "
+                           "found nothing to verify, so the check would pass vacuously")
+    return _ok(name, "the pooler runs in session mode with DISCARD ALL between clients and refuses "
+                     "transaction and statement pooling; %d deploy setting(s) agree" % seen)
+
+
 def check_pgbouncer_self_built(root: pathlib.Path) -> list[Finding]:
     compose = _read(root, "polaris_web/docker-compose.prod.yml")
     if not compose:
@@ -23178,6 +23218,7 @@ def check_agent_runbook_stays_private(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_pooler_keeps_the_operator_scope,
     check_publishable_packages_keep_their_dependency_budget,
     check_published_algorithm_table_matches_the_seed,
     check_security_page_matches_the_release_ledger,

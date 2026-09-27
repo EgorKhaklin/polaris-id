@@ -17,7 +17,7 @@ backups through pgBackRest exactly as on compose.
 |---|---|---|---|
 | `caddy` | Deployment | uid 1000 | the TLS edge on 8080/8443 (Service 80/443); `tls: internal` or ACME; 200 req/min/IP; retries onto another app pod for 15s; polls `/api/health/live` every 2s |
 | `app` | Deployment, 2 replicas | uid 1000 | `maxUnavailable: 0`, readiness on `/api/health/live`, PodDisruptionBudget `minAvailable: 1` |
-| `pgbouncer` | Deployment | uid 1000 | transaction pooling, TLS to postgres (verify-ca) and from the app |
+| `pgbouncer` | Deployment | uid 1000 | session pooling (transaction mode is refused: it hands the operator scope to the next client), TLS to postgres (verify-ca) and from the app |
 | `pg-router` | Deployment | uid 99 | HAProxy, the same as the compose HA profile: 5432 to the member answering Patroni's `/primary`, 5433 to a replica; sessions to a member marked down are cut, which is what frees the pool from a frozen leader |
 | `postgres` | StatefulSet, 2 members + PVCs | uid 70 | the self-contained image under Patroni ([FAILOVER.md](FAILOVER.md)): the Kubernetes API is the lease store, the leader Service's endpoints follow the lease, a replica Service selects on the `role` label; the data directory in a subdirectory of the volume; TLS on |
 | `redis` | StatefulSet + PVC | uid 999 | sessions and rate-limit state |

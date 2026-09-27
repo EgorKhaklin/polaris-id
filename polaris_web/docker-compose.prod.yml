@@ -286,7 +286,7 @@ services:
       POLARIS_DB_USER: polaris_app
       POLARIS_DB_PASSWORD_FILE: /run/secrets/polaris_db_password
       PGBOUNCER_LISTEN_PORT: '6432'
-      PGBOUNCER_POOL_MODE: transaction
+      PGBOUNCER_POOL_MODE: session   # transaction mode leaks the operator scope (per-authority-isolation.md)
       PGBOUNCER_DEFAULT_POOL_SIZE: '20'
       PGBOUNCER_MIN_POOL_SIZE: '5'
       PGBOUNCER_RESERVE_POOL_SIZE: '5'

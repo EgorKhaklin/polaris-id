@@ -83,7 +83,7 @@ below.
 |---|---|---|---|
 | `caddy` | `polaris-caddy:prod` (built from `Dockerfile.caddy`, Caddy 2.11.4 with the rate-limit module) | TLS termination, security headers, rate limit | 80 + 443 (host) |
 | `app` | `polaris-app:prod` (built from `Dockerfile.prod`) | Flask + gunicorn (`WEB_CONCURRENCY`, default 4) | 8000 |
-| `pgbouncer` | `polaris-pgbouncer:prod` (built from `Dockerfile.pgbouncer`) | Transaction-mode connection pool in front of Postgres | 6432 |
+| `pgbouncer` | `polaris-pgbouncer:prod` (built from `Dockerfile.pgbouncer`) | Session-mode connection pool in front of Postgres (transaction mode is refused: it would hand one request's operator scope to the next) | 6432 |
 | `postgres` | `polaris-postgres:prod` (built from `Dockerfile.postgres`: `postgres:16-alpine` plus pgBackRest) | Database | 5432 |
 | `redis` | `redis:7-alpine` (digest-pinned) | Rate-limiter backend | 6379 |
 

@@ -17,6 +17,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The application role can no longer create, promote, deactivate or reset the password of an operator account; it keeps only the lockout columns. `user-create`, `user-passwd` and `user-deactivate` run as the schema owner.
 - The application role can no longer register an authority key, record a card personalization or write a retention policy; `key-register`, `key-retire` and `key-compromise` run as the schema owner.
 - The application role can no longer register a relying party or change its secret, scope or privacy policy; it stamps only `last_used_at`. `rp-register` and `rp-policy` run as the schema owner.
+- The connection pooler runs in session mode and resets each server connection between clients; transaction and statement pooling are refused. In transaction mode a request inherited the previous operator's authority scope.
 
 ### Added
 

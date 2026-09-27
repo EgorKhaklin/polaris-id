@@ -157,7 +157,11 @@ the unguarded-cast trap above, the fact that the scope is applied to every conne
 hands out, and the pairing between `is_local=false` and the per-request connection: put a pool
 behind `get_db` without resetting the scope on checkout and one operator's authority is inherited
 by the next request on that connection, which is a cross-authority read attributed to the wrong
-person.
+person. The pooler in front of the database is such a pool: PgBouncer in transaction mode hands a
+server connection to the next client with its session unreset, and until 2026-09-27 the
+production profile shipped it that way. It now runs in session mode with `server_reset_query =
+DISCARD ALL`, refuses transaction and statement pooling at start, and
+`check_pooler_keeps_the_operator_scope` pins all three.
 
 `BoundOperatorRouteIsolationTests` runs the application's own routes as the application role for
 an operator bound to authority 1: no single-token route and no page shows authority 3's
