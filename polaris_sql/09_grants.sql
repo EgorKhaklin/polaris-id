@@ -220,6 +220,13 @@ REVOKE INSERT, UPDATE, DELETE ON VerificationContext FROM polaris_app;
 -- 'applied' row for a pending migration (its file's SHA-256 is public) and the next upgrade
 -- skipped it. The migrator runs as the owner; the application only reads the registry.
 REVOKE INSERT, UPDATE, DELETE ON schema_version FROM polaris_app;
+-- 2026-09-27 (owner-directed): operator accounts. The web application writes only its lockout
+-- bookkeeping; creating accounts, changing a role or a password, and deactivating are the
+-- operator's CLI, run as the owner. With table-wide INSERT and UPDATE the application role could
+-- create an admin, raise its own account to admin, or reset the admin's password.
+REVOKE INSERT, UPDATE, DELETE ON AppUser FROM polaris_app;
+GRANT UPDATE (failed_login_count, locked_until, last_failed_login_at, last_login_at)
+    ON AppUser TO polaris_app;
 -- 2026-09-26: the bounds on an authority's own power. docs/design/issuer-discretion.md: "a caller
 -- must not choose the bound it is about to be held to". Nothing the application runs writes these
 -- (quota-set and discretion-set are the operator's CLI); with UPDATE and INSERT the application

@@ -1144,6 +1144,12 @@ def cmd_user_create(args):
         conn.rollback()
         sys.stderr.write(red(f"User {args.username!r} already exists.\n"))
         sys.exit(3)
+    except psycopg2.errors.InsufficientPrivilege:
+        conn.rollback()
+        sys.stderr.write(red("Refused: account management is a governance decision the application's "
+                             "database role cannot make. Run it as the schema owner (set "
+                             "POLARIS_DB_USER).\n"))
+        sys.exit(3)
     except psycopg2.errors.CheckViolation as e:
         conn.rollback()
         msg = str(e)
@@ -1217,6 +1223,12 @@ def cmd_user_passwd(args):
             conn.commit()
         print(green(f"✓ Password updated for {args.username} (#{row['user_id']})"))
         print(dim(f"  Revoked {revoked} live web session(s)."))
+    except psycopg2.errors.InsufficientPrivilege:
+        conn.rollback()
+        sys.stderr.write(red("Refused: account management is a governance decision the application's "
+                             "database role cannot make. Run it as the schema owner (set "
+                             "POLARIS_DB_USER).\n"))
+        sys.exit(3)
     except psycopg2.Error as e:
         conn.rollback()
         sys.stderr.write(red(f"Database error: {db_error_message(e)}\n"))
@@ -1262,6 +1274,12 @@ def cmd_user_deactivate(args):
         print(dim(f"    polaris query \"SELECT set_config('polaris.justification', "
                   f"'<why, at least 20 characters>', true); "
                   f"UPDATE AppUser SET is_active=TRUE WHERE username='{args.username.lower()}'\""))
+    except psycopg2.errors.InsufficientPrivilege:
+        conn.rollback()
+        sys.stderr.write(red("Refused: account management is a governance decision the application's "
+                             "database role cannot make. Run it as the schema owner (set "
+                             "POLARIS_DB_USER).\n"))
+        sys.exit(3)
     except psycopg2.Error as e:
         conn.rollback()
         sys.stderr.write(red(f"Database error: {db_error_message(e)}\n"))

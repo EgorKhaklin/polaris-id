@@ -92,7 +92,8 @@ REASON=""
 # Database connection
 PSQL="${POLARIS_PSQL:-psql}"
 DB_NAME="${POLARIS_DB_NAME:-polaris}"
-DB_USER="${POLARIS_DB_USER:-polaris_app}"
+# The schema owner: since 2026-09-27 the application role cannot change an account.
+DB_USER="${POLARIS_DB_USER:-postgres}"
 DB_HOST="${POLARIS_DB_HOST:-localhost}"
 
 # Min-days safety threshold (in days)

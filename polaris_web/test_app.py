@@ -50,6 +50,11 @@ import rp_api          # and the relying-party API v1, the same day
 # ----------------------------------------------------------------------------
 
 DB_CONFIG = flask_app.DB_CONFIG
+#: The owner's connection, captured before any test switches the application to its own role
+#: (several classes patch flask_app.DB_CONFIG, which DB_CONFIG aliases). Administrators' acts in
+#: fixtures, such as binding an account, are made with it (2026-09-27: the application role can
+#: no longer change an account).
+_OWNER_DB_CONFIG = dict(DB_CONFIG)
 SQL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'polaris_sql')
 
 
@@ -6181,12 +6186,14 @@ class BoundOperatorRouteIsolationTests(PolarisTestCase):
         self.foreign_value = row['token_value']
         self.own_value = _sql("SELECT token_value FROM IdentityToken WHERE issuing_agency_id = 1 "
                               "AND token_id = 3", fetch='one')['token_value']
-        patcher = mock.patch.dict(flask_app.DB_CONFIG, app_cfg)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        # The binding is an administrator's act, made as the owner, before the application is
+        # switched to its own role (which, since 2026-09-27, cannot change an account).
         with self.client.session_transaction() as sess:
             sess['operator_agency_id'] = 1
             _bind_account(sess, 1)
+        patcher = mock.patch.dict(flask_app.DB_CONFIG, app_cfg)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_the_investigate_card_is_scoped(self):
         self.assertEqual(self.client.get('/investigate/token/2').status_code, 404)
@@ -12577,8 +12584,14 @@ def _bind_account(sess, agency_id):
     uid = sess.get('user_id')
     if uid is None:
         return
-    _sql("SELECT set_config('polaris.justification', 'test: bind the signed-in account', false); "
-         "UPDATE AppUser SET agency_id = %s WHERE user_id = %s", (agency_id, uid), fetch='none')
+    conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("SELECT set_config('polaris.justification', "
+                        "'test: bind the signed-in account', true)")
+            cur.execute("UPDATE AppUser SET agency_id = %s WHERE user_id = %s", (agency_id, uid))
+    finally:
+        conn.close()
 
 def _sql(query, params=None, fetch='all'):
     conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)

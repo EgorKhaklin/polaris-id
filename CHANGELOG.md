@@ -14,6 +14,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A referee's recorded level is now derived from their proofing, a co-signer must be proofed, and the vouching bound is enforced by the database; the application role can no longer write vouchings.
 - The application role can no longer write identity-proofing records, so it cannot record an assurance level no evidence supports.
 - The application role can no longer set an authority's quota or revocation bound; `quota-set` and `discretion-set` run as the schema owner.
+- The application role can no longer create, promote, deactivate or reset the password of an operator account; it keeps only the lockout columns. `user-create`, `user-passwd` and `user-deactivate` run as the schema owner.
 
 ### Changed
 

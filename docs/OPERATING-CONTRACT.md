@@ -52,9 +52,16 @@ A product **behaviour** change needs exactly one qualifying reason, named in the
   the last of which is the one that keeps this from becoming a licence: *what evidence would
   prove the bet wrong*, written before the work starts. No record, no STRATEGIC-BUILD.
 
+- **THREAT-MODEL.** Added 2026-09-27 by the owner. An executable counterexample in which an
+  adversary the project's own threat model names (a compromised application, a coerced operator,
+  a hostile relying party) gains a capability the design withholds from it, citing the threat
+  model and the failing test. It exists because CORE-BUG needs a published promise, and the
+  cheapest time to close a gap an outside reviewer would find is before they find it. A capability
+  nobody demonstrated an adversary gaining is not a THREAT-MODEL.
+
 Cleanliness, completeness, elegance, architectural expansion and "a desirable new guarantee"
 still do not qualify, and a roadmap row, a paper or a competitor's feature list is not an
-analysis. Everything else goes to `lab/`. Do not invent a sixth justification.
+analysis. Everything else goes to `lab/`. Do not invent a seventh justification.
 
 **Why the count changed.** The first four reasons are all reactive: each waits for somebody
 outside to act. That is the right default for a reference implementation and it has a failure

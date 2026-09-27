@@ -34,6 +34,7 @@ Residuals the design accepts, each named where it belongs below: a rate limiter 
 ### Authentication
 
 - Accounts live in `AppUser` ([01_schema.sql](../../polaris_sql/01_schema.sql)); passwords are Werkzeug scrypt hashes (`security.hash_password`, `method='scrypt'`). Three roles: `admin`, `operator`, `auditor`. `PasswordHashingTests` (3 tests) pins the hash format.
+- Account management runs as the schema owner: `polaris-id user-create`, `user-passwd` and `user-deactivate` (and `polaris-set-webauthn-deadline.sh`). The application's database role can update only the lockout columns (`failed_login_count`, `locked_until`, `last_failed_login_at`, `last_login_at`), so a compromised application cannot create, promote, reactivate or re-password an account.
 - Lockout: `LOGIN_FAILURE_THRESHOLD = 5` failures within `LOGIN_FAILURE_WINDOW_MIN = 10` minutes locks the account for `ACCOUNT_LOCK_MIN = 15` minutes. The failure counter increments in one `UPDATE ... RETURNING` (C4), pinned by `check_c4_atomic_failed_login`.
 - Username enumeration: the unknown-user path runs a dummy scrypt verification and returns the same generic error as a wrong password; the lockout state is revealed only on a correct password.
 - Session fixation: `session.clear()` runs before the session is populated at login. Logout is `POST` plus CSRF, so an image tag cannot end a session.

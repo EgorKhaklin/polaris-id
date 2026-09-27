@@ -804,6 +804,19 @@ class GovernanceCommandsRefuseTheAppRole(unittest.TestCase):
                 self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
                 self.assertIn("schema owner", r.stderr)
 
+    def test_the_app_role_cannot_manage_accounts(self):
+        """2026-09-27 (owner-directed): creating an account, resetting a password and
+        deactivating are the owner's; as the application role each is refused."""
+        why = 'an account the application tried to make for itself'
+        for args in (('user-create', 'forged_admin', 'admin', '--password', 'Forged-Admin-1!',
+                      '--justification', why),
+                     ('user-passwd', 'admin', '--password', 'Reset-By-App-1!'),
+                     ('user-deactivate', 'auditor')):
+            with self.subTest(args[0]):
+                r = self._as_app(*args)
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                self.assertIn("schema owner", r.stderr)
+
 
 class QuotaCommandTests(CLIBaseTestCase):
     """v9.190 (P1.8): quota-set / quota-show manage AgencyQuota rows."""

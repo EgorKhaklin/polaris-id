@@ -1994,6 +1994,32 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 cur.execute("UPDATE IdentityToken SET status = 'REVOKED' WHERE token_id = %s", (tok,))
         conn.rollback()
 
+    def test_app_role_cannot_grant_itself_an_account(self):
+        """2026-09-27 (owner-directed). With table-wide INSERT and UPDATE on AppUser the
+        application role could create an admin, raise its own account to admin, or reset the
+        admin's password. It keeps only the lockout columns the web application maintains."""
+        conn = self._app_conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT set_config('polaris.justification', %s, true)",
+                        ("a justification of the required length, for this test",))
+        for label, sql in (
+                ("create an admin", "INSERT INTO AppUser (username, password_hash, role) "
+                                    "VALUES ('forged_admin', 'x', 'admin')"),
+                ("raise a role", "UPDATE AppUser SET role = 'admin' WHERE username = 'operator'"),
+                ("reset a password", "UPDATE AppUser SET password_hash = 'x' WHERE username = 'admin'"),
+                ("reactivate", "UPDATE AppUser SET is_active = TRUE WHERE false"),
+                ("delete", "DELETE FROM AppUser WHERE false")):
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql)
+            conn.rollback()
+        # The web application's own write still goes through.
+        with conn.cursor() as cur:
+            cur.execute("UPDATE AppUser SET failed_login_count = failed_login_count "
+                        "WHERE username = 'admin'")
+            self.assertEqual(cur.rowcount, 1)
+        conn.rollback()
+
     def test_app_role_cannot_choose_its_own_bounds(self):
         """2026-09-26. As polaris_app, authority 1's revocation bound was superseded and reset to
         100% a day, under which uc8 never asks for a co-signer. All writes to both bounds refused."""

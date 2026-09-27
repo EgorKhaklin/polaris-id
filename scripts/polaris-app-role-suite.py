@@ -86,7 +86,7 @@ def run_cli_phase(app_role):
     # Governance commands a deployment runs as the schema owner (2026-09-26): the bounds on an
     # authority's own power are not the application role's to set. test_cli asserts that role is
     # refused for each; here they keep the owner, as they would in a deployment.
-    owner_only = {"quota-set", "discretion-set"}
+    owner_only = {"quota-set", "discretion-set", "user-create", "user-passwd", "user-deactivate"}
 
     def run_as_app(cmd, *a, **kw):
         if (isinstance(cmd, list) and len(cmd) > 2 and str(cmd[1]).endswith("polaris.py")
