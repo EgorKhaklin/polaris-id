@@ -21541,7 +21541,6 @@ def check_source_path_citations_resolve(root: pathlib.Path) -> list[Finding]:
 #: is the right answer, because the property is the absence itself. Adding a check here is a
 #: claim that it is one of those, and the reason has to say why.
 VACUOUS_IS_CORRECT = {
-    "check_paper_check_citations_resolve": "the paper sources are private; the build runs it via POLARIS_PAPER_SRC",
     "check_no_named_reference_systems": "asserts a name is absent; absent from nothing is absent",
     "check_no_citations_to_deleted_apparatus": "asserts a citation is absent",
     "check_no_fk_cascade": "asserts no ON DELETE CASCADE exists",
@@ -22531,15 +22530,15 @@ def check_paper_check_citations_resolve(root: pathlib.Path) -> list[Finding]:
     # docs/paper/ ships the PDFs. The private build runs this check with POLARIS_PAPER_SRC set to
     # the sources before it replaces a PDF. A tree without them has nothing here to resolve.
     paper = pathlib.Path(os.environ.get("POLARIS_PAPER_SRC") or root / "docs/paper")
-    if not (paper / "v3-sections").is_dir() and not (paper / "polaris_math.tex").is_file():
-        return _ok(name, "the paper's LaTeX sources are not in this tree (docs/paper/ ships PDFs "
-                         "only); the private build resolves every citation through "
-                         "POLARIS_PAPER_SRC before it replaces a PDF")
     checks_py = _read(root, "polaris_checks/checks.py")
     defined = set(re.findall(r"^def (check_\w+)", checks_py, re.M))
     if not defined:
         return _fail(name, "no check functions were found in polaris_checks/checks.py, so nothing "
                            "could be resolved and this measured nothing")
+    if not (paper / "v3-sections").is_dir() and not (paper / "polaris_math.tex").is_file():
+        return _ok(name, "the paper's LaTeX sources are not in this tree (docs/paper/ ships PDFs "
+                         "only); the private build resolves every citation through "
+                         "POLARIS_PAPER_SRC before it replaces a PDF")
     back: dict[str, str] = {}
     glossary = paper / "ru-glossary.py"
     if glossary.is_file():
