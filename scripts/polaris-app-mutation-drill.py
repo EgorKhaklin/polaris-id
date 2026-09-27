@@ -301,6 +301,24 @@ def mutate(src: str, span) -> str:
     return "".join(lines[:lo_line - 1] + [head + "False" + tail] + lines[hi_line:])
 
 
+_HOLE = re.compile(r"%[sdr]|\{[^{}]*\}")
+
+
+def _built_path_matches(line: str, concrete: str) -> bool:
+    """Does a string literal on this line, with its format holes as wildcards, name `concrete`?"""
+    for m in re.finditer(r"""(['\"])(/[^'\"]*)\1""", line):
+        lit = m.group(2)
+        if not _HOLE.search(lit):
+            continue
+        fixed = [seg for seg in _HOLE.sub("", lit).split("/") if seg]
+        if len(fixed) < 2:
+            continue
+        rx = ".*".join(re.escape(part) for part in _HOLE.split(lit))
+        if re.fullmatch(rx, concrete):
+            return True
+    return False
+
+
 def classes_exercising(route: str, view: str) -> list[str]:
     """[module.Class] for every test class whose body requests this route.
 
@@ -313,6 +331,13 @@ def classes_exercising(route: str, view: str) -> list[str]:
     inner = re.sub(r"<[^>]+>", "[^'\"]*",
                    re.escape(route).replace(r"\<", "<").replace(r"\>", ">"))
     pat = re.compile(r"""['\"][^'\"]*""" + inner)
+    # 2026-09-27: the other direction. A test that BUILDS its path, as
+    # '/api/v1/transparency/%sproof/%d' % (log, size) does, puts a format hole where the route
+    # has a fixed segment, so the route's text never appears and the class was never selected
+    # (a refusal it tests read as one nothing notices). A literal with holes becomes a pattern
+    # of its own, matched against the route with each <param> filled; it must keep two fixed
+    # path segments, so '/api/%s' does not select every class in the suite.
+    concrete = re.sub(r"<[^>]+>", "1", route)
     out = []
     for fname in SUITE_FILES:
         path = ROOT / "polaris_web" / fname
@@ -323,7 +348,7 @@ def classes_exercising(route: str, view: str) -> list[str]:
             m = re.match(r"class (\w+)\(", line)
             if m:
                 current, hit = m.group(1), False
-            elif current and not hit and pat.search(line):
+            elif current and not hit and (pat.search(line) or _built_path_matches(line, concrete)):
                 out.append("%s.%s" % (module, current))
                 hit = True
     return sorted(set(out))
