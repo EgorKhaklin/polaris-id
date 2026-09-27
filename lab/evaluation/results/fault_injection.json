@@ -1,0 +1,582 @@
+{
+  "machine": {
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "python": "3.12.13",
+    "processor": "arm",
+    "cpu_count": 8,
+    "cpu": "Apple M3",
+    "oqs": "0.16.0",
+    "cryptography": "50.0.1"
+  },
+  "endpoint": "POST /api/v1/verify",
+  "server": {
+    "gunicorn_workers": 4,
+    "worker_class": "sync",
+    "database": "polaris_eval",
+    "db_version": "PostgreSQL 16.14 (Homebrew) on aarch64-apple-darwin25.4.0, compiled by Apple clang version 21.0.0 (clang-2100.0.123.102), 64-bit",
+    "fresh_gunicorn_per_run": true
+  },
+  "credentials": {
+    "valid": {
+      "token_id": 12,
+      "real_mldsa65": true,
+      "verifies_locally_with_liboqs": true
+    },
+    "revoked": {
+      "token_id": 13,
+      "real_mldsa65": true,
+      "verifies_locally_with_liboqs": true
+    }
+  },
+  "method": {
+    "closed_loop": true,
+    "concurrency": 8,
+    "generator_processes": 4,
+    "kinds_rotation": [
+      "valid",
+      "revoked",
+      "tampered",
+      "unknown"
+    ],
+    "warmup_s": 5.0,
+    "pre_s": 20.0,
+    "window_s": 10.0,
+    "post_s": 30.0,
+    "new_connection_per_request": true
+  },
+  "fault": "In one psql session on the 'postgres' database: pg_terminate_backend(pid) for every pg_stat_activity row with datname = 'polaris_eval'; ALTER DATABASE polaris_eval ALLOW_CONNECTIONS false; pg_terminate_backend again. After the window, ALLOW_CONNECTIONS true.",
+  "server_env_note": "gunicorn --config polaris_web/gunicorn.conf.py, POLARIS_WORKERS=4 (sync), POLARIS_USE_REAL_PQC=1 with a file issuer key, POLARIS_DB_HOST=localhost POLARIS_DB_USER=vanta (schema owner, trust auth, no pgbouncer), POLARIS_RATE_LIMIT_BACKEND=memory, POLARIS_RATE_LIMIT_WRITE_MAX=100000000, POLARIS_RATE_LIMIT_LOGIN_MAX=1000",
+  "background_before": {
+    "loadavg": [
+      4.07,
+      3.39,
+      2.6
+    ],
+    "top_cpu": [
+      {
+        "pcpu": 98.4,
+        "comm": "fseventsd"
+      },
+      {
+        "pcpu": 31.2,
+        "comm": "Python"
+      },
+      {
+        "pcpu": 13.2,
+        "comm": "WindowServer"
+      },
+      {
+        "pcpu": 9.0,
+        "comm": "com.apple.Virtualization.VirtualMachine"
+      },
+      {
+        "pcpu": 6.1,
+        "comm": "iTerm2"
+      },
+      {
+        "pcpu": 4.0,
+        "comm": "2.1.280"
+      }
+    ]
+  },
+  "started": "2026-09-27T18:22:05-0400",
+  "runs": [
+    {
+      "events_s": {
+        "nominal_fault_at": 20.0,
+        "nominal_restore_at": 30.0
+      },
+      "requests": 11271,
+      "by_outcome": {
+        "ok": 11271
+      },
+      "by_http_status": {
+        "200": 11271
+      },
+      "errors_by_detail": {},
+      "wrong_answers": 0,
+      "wrong_answer_examples": [],
+      "verdicts_seen_on_200_by_kind": {
+        "valid": {
+          "True|True|True|accept|ACTIVE": 2817
+        },
+        "revoked": {
+          "True|False|False|reject|REVOKED": 2817
+        },
+        "tampered": {
+          "False|False|False|reject|null": 2818
+        },
+        "unknown": {
+          "False|False|False|reject|null": 2819
+        }
+      },
+      "expected_verdict_by_kind": {
+        "valid": "True|True|True|accept|ACTIVE",
+        "revoked": "True|False|False|reject|REVOKED",
+        "tampered": "False|False|False|reject|null",
+        "unknown": "False|False|False|reject|null"
+      },
+      "baseline": {
+        "window_s": [
+          5.0,
+          20.0
+        ],
+        "correct_per_s": 190.7,
+        "errors": 0,
+        "valid_p50_ms": 47.39
+      },
+      "during_fault_window": {
+        "responses": 1908,
+        "correct": 1908,
+        "by_outcome": {
+          "ok": 1908
+        }
+      },
+      "errors_total": 0,
+      "client_outage_s": 0.0,
+      "first_error_end_s": null,
+      "last_error_end_s": null,
+      "errors_after_restore": 0,
+      "last_error_after_restore_s": null,
+      "time_to_first_correct_s": 0.002,
+      "first_correct_started_s": -0.038,
+      "time_to_first_accept_s": 0.075,
+      "time_to_recovery_s": 0.0,
+      "recovery_rule": "earliest t after the restore (10 ms steps) with no error at or after t for the rest of the run and >= 90% of the baseline correct-answer rate in [t, t+1 s)",
+      "post_restore_valid_p50_ms": 49.01,
+      "bins_after_restore_first10": [
+        {
+          "ok": 192,
+          "err": 0
+        },
+        {
+          "ok": 199,
+          "err": 0
+        },
+        {
+          "ok": 192,
+          "err": 0
+        },
+        {
+          "ok": 186,
+          "err": 0
+        },
+        {
+          "ok": 199,
+          "err": 0
+        },
+        {
+          "ok": 186,
+          "err": 0
+        },
+        {
+          "ok": 180,
+          "err": 0
+        },
+        {
+          "ok": 179,
+          "err": 0
+        },
+        {
+          "ok": 178,
+          "err": 0
+        },
+        {
+          "ok": 183,
+          "err": 0
+        }
+      ],
+      "label": "control1",
+      "fault_injected": false,
+      "raw": "fault_injection_control1.csv.gz",
+      "gunicorn_workers": 4,
+      "server_log": {
+        "lines_mentioning_OperationalError": 0,
+        "not_accepting_connections": 0,
+        "terminating_connection_admin_command": 0,
+        "server_closed_connection": 0,
+        "worker_timeouts": 0
+      }
+    },
+    {
+      "events_s": {
+        "fault_issued": 20.002961,
+        "fault_done": 20.05514,
+        "terminated_before_block": 2,
+        "terminated_after_block": 2,
+        "restore_issued": 30.000814,
+        "restore_done": 30.044222
+      },
+      "requests": 14277,
+      "by_outcome": {
+        "ok": 9371,
+        "500": 4906
+      },
+      "by_http_status": {
+        "200": 9371,
+        "500": 4906
+      },
+      "errors_by_detail": {
+        "500 html:500 \u00b7 Something failed on the server | Identity Token System": 4906
+      },
+      "wrong_answers": 0,
+      "wrong_answer_examples": [],
+      "verdicts_seen_on_200_by_kind": {
+        "valid": {
+          "True|True|True|accept|ACTIVE": 2340
+        },
+        "revoked": {
+          "True|False|False|reject|REVOKED": 2345
+        },
+        "tampered": {
+          "False|False|False|reject|null": 2344
+        },
+        "unknown": {
+          "False|False|False|reject|null": 2342
+        }
+      },
+      "expected_verdict_by_kind": {
+        "valid": "True|True|True|accept|ACTIVE",
+        "revoked": "True|False|False|reject|REVOKED",
+        "tampered": "False|False|False|reject|null",
+        "unknown": "False|False|False|reject|null"
+      },
+      "baseline": {
+        "window_s": [
+          5.003,
+          20.003
+        ],
+        "correct_per_s": 191.5,
+        "errors": 0,
+        "valid_p50_ms": 47.46
+      },
+      "during_fault_window": {
+        "responses": 4893,
+        "correct": 8,
+        "by_outcome": {
+          "ok": 8,
+          "500": 4885
+        }
+      },
+      "errors_total": 4906,
+      "client_outage_s": 9.959,
+      "first_error_end_s": 20.084715,
+      "last_error_end_s": 30.043824,
+      "errors_after_restore": 21,
+      "last_error_after_restore_s": 0.043,
+      "time_to_first_correct_s": 0.055,
+      "first_correct_started_s": 0.027,
+      "time_to_first_accept_s": 0.076,
+      "time_to_recovery_s": 0.05,
+      "recovery_rule": "earliest t after the restore (10 ms steps) with no error at or after t for the rest of the run and >= 90% of the baseline correct-answer rate in [t, t+1 s)",
+      "post_restore_valid_p50_ms": 48.7,
+      "bins_after_restore_first10": [
+        {
+          "ok": 176,
+          "err": 21
+        },
+        {
+          "ok": 184,
+          "err": 0
+        },
+        {
+          "ok": 190,
+          "err": 0
+        },
+        {
+          "ok": 177,
+          "err": 0
+        },
+        {
+          "ok": 184,
+          "err": 0
+        },
+        {
+          "ok": 174,
+          "err": 0
+        },
+        {
+          "ok": 185,
+          "err": 0
+        },
+        {
+          "ok": 182,
+          "err": 0
+        },
+        {
+          "ok": 177,
+          "err": 0
+        },
+        {
+          "ok": 174,
+          "err": 0
+        }
+      ],
+      "label": "fault1",
+      "fault_injected": true,
+      "raw": "fault_injection_fault1.csv.gz",
+      "gunicorn_workers": 4,
+      "server_log": {
+        "lines_mentioning_OperationalError": 4906,
+        "not_accepting_connections": 4902,
+        "terminating_connection_admin_command": 0,
+        "server_closed_connection": 4,
+        "worker_timeouts": 0
+      }
+    },
+    {
+      "events_s": {
+        "fault_issued": 20.000932,
+        "fault_done": 20.055072,
+        "terminated_before_block": 2,
+        "terminated_after_block": 1,
+        "restore_issued": 30.001901,
+        "restore_done": 30.040645
+      },
+      "requests": 13821,
+      "by_outcome": {
+        "ok": 8658,
+        "500": 5163
+      },
+      "by_http_status": {
+        "200": 8658,
+        "500": 5163
+      },
+      "errors_by_detail": {
+        "500 html:500 \u00b7 Something failed on the server | Identity Token System": 5163
+      },
+      "wrong_answers": 0,
+      "wrong_answer_examples": [],
+      "verdicts_seen_on_200_by_kind": {
+        "valid": {
+          "True|True|True|accept|ACTIVE": 2164
+        },
+        "revoked": {
+          "True|False|False|reject|REVOKED": 2162
+        },
+        "tampered": {
+          "False|False|False|reject|null": 2166
+        },
+        "unknown": {
+          "False|False|False|reject|null": 2166
+        }
+      },
+      "expected_verdict_by_kind": {
+        "valid": "True|True|True|accept|ACTIVE",
+        "revoked": "True|False|False|reject|REVOKED",
+        "tampered": "False|False|False|reject|null",
+        "unknown": "False|False|False|reject|null"
+      },
+      "baseline": {
+        "window_s": [
+          5.001,
+          20.001
+        ],
+        "correct_per_s": 185.7,
+        "errors": 0,
+        "valid_p50_ms": 49.24
+      },
+      "during_fault_window": {
+        "responses": 5152,
+        "correct": 9,
+        "by_outcome": {
+          "ok": 9,
+          "500": 5143
+        }
+      },
+      "errors_total": 5163,
+      "client_outage_s": 9.955,
+      "first_error_end_s": 20.085874,
+      "last_error_end_s": 30.040977,
+      "errors_after_restore": 20,
+      "last_error_after_restore_s": 0.039,
+      "time_to_first_correct_s": 0.052,
+      "first_correct_started_s": 0.026,
+      "time_to_first_accept_s": 0.059,
+      "time_to_recovery_s": 0.04,
+      "recovery_rule": "earliest t after the restore (10 ms steps) with no error at or after t for the rest of the run and >= 90% of the baseline correct-answer rate in [t, t+1 s)",
+      "post_restore_valid_p50_ms": 54.48,
+      "bins_after_restore_first10": [
+        {
+          "ok": 180,
+          "err": 20
+        },
+        {
+          "ok": 186,
+          "err": 0
+        },
+        {
+          "ok": 181,
+          "err": 0
+        },
+        {
+          "ok": 181,
+          "err": 0
+        },
+        {
+          "ok": 175,
+          "err": 0
+        },
+        {
+          "ok": 178,
+          "err": 0
+        },
+        {
+          "ok": 191,
+          "err": 0
+        },
+        {
+          "ok": 191,
+          "err": 0
+        },
+        {
+          "ok": 176,
+          "err": 0
+        },
+        {
+          "ok": 169,
+          "err": 0
+        }
+      ],
+      "label": "fault2",
+      "fault_injected": true,
+      "raw": "fault_injection_fault2.csv.gz",
+      "gunicorn_workers": 4,
+      "server_log": {
+        "lines_mentioning_OperationalError": 5163,
+        "not_accepting_connections": 5160,
+        "terminating_connection_admin_command": 0,
+        "server_closed_connection": 3,
+        "worker_timeouts": 0
+      }
+    },
+    {
+      "events_s": {
+        "fault_issued": 20.000317,
+        "fault_done": 20.053767,
+        "terminated_before_block": 0,
+        "terminated_after_block": 1,
+        "restore_issued": 30.002561,
+        "restore_done": 30.058086
+      },
+      "requests": 14542,
+      "by_outcome": {
+        "ok": 9324,
+        "500": 5218
+      },
+      "by_http_status": {
+        "200": 9324,
+        "500": 5218
+      },
+      "errors_by_detail": {
+        "500 html:500 \u00b7 Something failed on the server | Identity Token System": 5218
+      },
+      "wrong_answers": 0,
+      "wrong_answer_examples": [],
+      "verdicts_seen_on_200_by_kind": {
+        "valid": {
+          "True|True|True|accept|ACTIVE": 2331
+        },
+        "revoked": {
+          "True|False|False|reject|REVOKED": 2333
+        },
+        "tampered": {
+          "False|False|False|reject|null": 2329
+        },
+        "unknown": {
+          "False|False|False|reject|null": 2331
+        }
+      },
+      "expected_verdict_by_kind": {
+        "valid": "True|True|True|accept|ACTIVE",
+        "revoked": "True|False|False|reject|REVOKED",
+        "tampered": "False|False|False|reject|null",
+        "unknown": "False|False|False|reject|null"
+      },
+      "baseline": {
+        "window_s": [
+          5.0,
+          20.0
+        ],
+        "correct_per_s": 185.5,
+        "errors": 0,
+        "valid_p50_ms": 48.88
+      },
+      "during_fault_window": {
+        "responses": 5201,
+        "correct": 7,
+        "by_outcome": {
+          "ok": 7,
+          "500": 5194
+        }
+      },
+      "errors_total": 5218,
+      "client_outage_s": 9.977,
+      "first_error_end_s": 20.08016,
+      "last_error_end_s": 30.056759,
+      "errors_after_restore": 24,
+      "last_error_after_restore_s": 0.054,
+      "time_to_first_correct_s": 0.067,
+      "first_correct_started_s": 0.04,
+      "time_to_first_accept_s": 0.08,
+      "time_to_recovery_s": 0.06,
+      "recovery_rule": "earliest t after the restore (10 ms steps) with no error at or after t for the rest of the run and >= 90% of the baseline correct-answer rate in [t, t+1 s)",
+      "post_restore_valid_p50_ms": 48.39,
+      "bins_after_restore_first10": [
+        {
+          "ok": 177,
+          "err": 24
+        },
+        {
+          "ok": 193,
+          "err": 0
+        },
+        {
+          "ok": 189,
+          "err": 0
+        },
+        {
+          "ok": 190,
+          "err": 0
+        },
+        {
+          "ok": 188,
+          "err": 0
+        },
+        {
+          "ok": 194,
+          "err": 0
+        },
+        {
+          "ok": 194,
+          "err": 0
+        },
+        {
+          "ok": 191,
+          "err": 0
+        },
+        {
+          "ok": 190,
+          "err": 0
+        },
+        {
+          "ok": 191,
+          "err": 0
+        }
+      ],
+      "label": "fault3",
+      "fault_injected": true,
+      "raw": "fault_injection_fault3.csv.gz",
+      "gunicorn_workers": 4,
+      "server_log": {
+        "lines_mentioning_OperationalError": 5218,
+        "not_accepting_connections": 5217,
+        "terminating_connection_admin_command": 0,
+        "server_closed_connection": 1,
+        "worker_timeouts": 0
+      }
+    }
+  ],
+  "finished": "2026-09-27T18:26:49-0400",
+  "db_accepting_connections_at_end": true
+}

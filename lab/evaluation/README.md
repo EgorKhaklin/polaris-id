@@ -190,3 +190,136 @@ python3 lab/evaluation/online_verify_latency.py sweep --base http://127.0.0.1:53
 For 8 workers, restart gunicorn with `POLARIS_WORKERS=8` and `--tag w8`. The breakdown runs
 with the same `POLARIS_*` environment as the server:
 `python3 lab/evaluation/online_verify_latency.py breakdown --pack $STATE/pack.json --client $STATE/rp.json --n 500`.
+
+## Fault injection: the database goes away under load (2026-09-27)
+
+[`fault_injection.py`](fault_injection.py): while relying parties verify at a steady rate
+against `POST /api/v1/verify`, the database is taken away for 10 s and given back. The
+question is what clients see during and after, and above all whether any answer is wrong.
+Errors are acceptable; a wrong answer is not.
+
+**Setup**, as in the online measurement: gunicorn with 4 sync workers and the repository's
+`gunicorn.conf.py`, the dedicated database `polaris_eval`, real ML-DSA-65 (liboqs, a file
+issuer key), the relying party's limit and the per-IP `POST` bucket raised, the in-memory
+limiter. Each run starts its own gunicorn and stops it, so runs are independent. Closed loop,
+concurrency 8 over 4 generator processes, a new connection per request, 5 s of warm-up
+discarded, then 20 s before the fault, the 10 s window, and 30 s after the restore. Every
+request is recorded with its start and end time, kind, status, outcome and verdict.
+
+**Wrong answers can only be seen where the right answer is known**, so every virtual client
+cycles through four presentations, each with exactly one correct verdict:
+
+| Kind | Presentation | The only correct 200 |
+| --- | --- | --- |
+| valid | the ACTIVE credential, genuine signature | authentic, currently authoritative, usable, `accept`, status `ACTIVE` |
+| revoked | a second credential, issued the same way and revoked through `uc8_revoke_token` (a co-signer, reason `ADMINISTRATIVE`), genuine signature | authentic, not currently authoritative, not usable, `reject`, status `REVOKED` |
+| tampered | the valid credential with the first signature byte flipped | the uniform `reject`: not authentic, status null |
+| unknown | a token value that was never issued, with the valid signature | the same uniform `reject` |
+
+Every 200 is compared on five fields (authentic, currently_authoritative, usable, decision,
+status) with its kind's verdict. Any difference is a wrong answer, and an `accept` for a
+revoked, tampered or unknown presentation is the worst kind; a 200 that is not JSON also
+counts as wrong. Anything that is not a 200 is an error.
+
+**What was injected.** The PostgreSQL server on `:5432` is shared with other work, so it was
+not stopped. The fault is confined to `polaris_eval`, issued in one psql session on the
+`postgres` database: `pg_terminate_backend` for every backend connected to `polaris_eval`
+(the statements in flight), `ALTER DATABASE polaris_eval ALLOW_CONNECTIONS false`, and
+`pg_terminate_backend` again (sessions that authenticated before the refusal committed). Ten
+seconds later, `ALTER DATABASE polaris_eval ALLOW_CONNECTIONS true`. The script re-enables
+connections and stops gunicorn in `finally` blocks whatever happens, and records that
+`polaris_eval` accepted connections at the end (it did).
+
+Why it approximates a restart, from the application's side: a shutdown terminates every
+backend, and the application sees the same `psycopg2.OperationalError` ("server closed the
+connection unexpectedly") for a statement in flight; then every new connection is refused
+until the server is back, which here is `FATAL: database "polaris_eval" is not currently
+accepting connections` instead of "the database system is shutting down" or a refused TCP
+connection. Where it differs: the postmaster, the shared buffers and the other databases stay
+up, so there is no crash recovery, no WAL replay and no cold cache after the restore, and a
+refused connection fails in milliseconds instead of waiting on a TCP timeout. The time to
+recover measured here is therefore the application's part only; a real restart adds the
+server's own start-up and cache warm-up on top.
+
+Results ([`results/fault_injection.json`](results/fault_injection.json); every request in
+`results/fault_injection_<run>.csv.gz`). Times after the restore are from the moment the
+`ALLOW_CONNECTIONS true` command was issued; the psql call itself took 39 to 56 ms.
+
+| Run | Requests | 200 | 500 | Other | Wrong answers | Backends terminated | Outage seen by clients | First correct answer after restore | Recovery | Correct/s before | valid p50 before / after |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| control (no fault) | 11,271 | 11,271 | 0 | 0 | **0** | none | none | n/a | n/a | 190.7 | 47.4 / 49.0 ms |
+| fault 1 | 14,277 | 9,371 | 4,906 | 0 | **0** | 2 + 2 | 9.96 s | 55 ms | 0.05 s | 191.5 | 47.5 / 48.7 ms |
+| fault 2 | 13,821 | 8,658 | 5,163 | 0 | **0** | 2 + 1 | 9.96 s | 52 ms | 0.04 s | 185.7 | 49.2 / 54.5 ms |
+| fault 3 | 14,542 | 9,324 | 5,218 | 0 | **0** | 0 + 1 | 9.98 s | 67 ms | 0.06 s | 185.5 | 48.9 / 48.4 ms |
+
+Columns: backends terminated before + after the refusal; outage seen by clients is the first
+to the last failed response; recovery is the earliest moment after which no response failed
+for the rest of the run and the next second held at least 90% of the pre-fault rate of
+correct answers (10 ms steps); correct/s before is over the 15 s before the fault; the valid
+p50 after is from 5 to 25 s after the restore.
+
+**Wrong answers: 0 of 42,640 responses in the three fault runs, and 0 of 11,271 in the
+control.** Every 200 in every run carried exactly its kind's verdict: across the fault runs,
+6,835 `accept`s, every one for the valid credential; 6,840 `REVOKED` rejects, every one for
+the revoked credential; 13,678 uniform rejects, every one for a tampered or unknown
+presentation (`verdicts_seen_on_200_by_kind` in the summary lists each run). No `accept` was
+returned for a presentation that must be refused, before, during or after the fault. The
+count was repeated from the raw timelines independently of the script's own classifier and
+agrees.
+
+What it says:
+
+- During the outage the endpoint fails closed and fast. Every request that needed the
+  database got a 500: no 200, no 401 claiming the relying party was disabled, no timeout, no
+  worker restart. The error responses took about 15 ms at p50, so clients saw about 500
+  errors a second instead of about 190 answers. The server log has one `OperationalError`
+  per 500 (4,906, 5,163 and 5,218), all "not currently accepting connections" except one per
+  terminated backend ("server closed the connection unexpectedly"), so a statement killed
+  mid-flight ended in an error, not in a verdict.
+- The requests that completed correctly inside the window (8, 9 and 7) all finished within
+  45 ms of the fault command, before the refusal had committed.
+- Recovery is immediate because there is nothing to recover. The application opens a new
+  connection for every statement and holds no pool, so the first request after the restore
+  simply connects: the first correct answer came 52 to 67 ms after the restore command was
+  issued, 11 to 14 ms after it returned, and the last error in each run completed within a
+  millisecond of the command returning. Throughput and latency were back at the pre-fault level within the first
+  second.
+- The status and body are the one rough edge. The 500 is the application's HTML error page
+  (`Content-Type: text/html`), with no `Retry-After`, not a JSON error. It leaks nothing (no
+  driver text, no database name), but `docs/reference/API.md` (Error semantics) says every
+  `/api/*` JSON endpoint returns errors as `{"error": ...}`, and this one does not when the
+  database is down. A relying party has to treat any non-200 as "no verdict", which is the
+  safe reading; the disagreement between the document and the behaviour is recorded here and
+  not fixed (lab only).
+
+What it does not say:
+
+- Nothing about a deployment. One machine, one PostgreSQL, one database, loopback, the
+  generator on the same host, 4 sync workers, no pgbouncer, no replica, no Redis limiter.
+- Nothing about the high-availability profile, which has its own drills
+  (`scripts/polaris-failover-drill.sh`, `scripts/polaris-chaos-drill.sh`). A pooler in the path behaves differently from the connection per
+  statement here: it holds server connections across the fault and has to notice they are
+  dead, so its recovery time and its error mix are not these.
+- Not a real restart: no postmaster restart, no crash recovery, no cold cache, no TCP-level
+  refusal (see above). Nor a partial fault: a slow database, a network partition that hangs
+  instead of refusing, a full disk, or a failover that returns an older state. A database that
+  comes back with stale data (a restored backup, a lagging replica promoted) could return a
+  wrong verdict that this test cannot produce, because the data here never changes.
+- One credential of each kind, one relying party, one bearer token obtained before the fault.
+  The token grant (`/api/v1/oauth/token`) needs the database too and was not exercised during
+  the outage. Three fault runs with the same 10 s window at the same point; other window
+  lengths were not run.
+
+Re-run, with the state from the online measurement (the revoked credential is issued with the
+`issue` subcommand and a different `--token-value`, then revoked with
+`CALL uc8_revoke_token(<token_id>, 1, 'ADMINISTRATIVE', '<url>', 2)` in `polaris_eval`; its pack
+goes to `$STATE/pack_revoked.json`). The script starts and stops gunicorn itself; stop any
+server already on the port first:
+
+```bash
+~/.local/share/polaris-venv312/bin/python lab/evaluation/fault_injection.py run \
+  --state $STATE --gunicorn ~/.local/share/polaris-venv312/bin/gunicorn --runs 3 --controls 1
+```
+
+It refuses to target `postgres`, `polaris_test` or `polaris`, and it must never be pointed at a
+database other work depends on: the fault is real for every client of that database.
