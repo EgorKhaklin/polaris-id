@@ -20,7 +20,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
-- Conformance cases for an agent grant in use (`agent-grant-use`): whether the action is in scope, whether a revocation ends the grant, and whether the agent's proof binds this grant, action and nonce. Both SDKs gain `agent_proof_proves` / `agentProofProves`.
+- Conformance cases for an agent grant in use (`agent-grant-use`): whether the action is in scope, whether a revocation ends the grant, whether the agent's proof binds this grant, action and nonce, and whether the grant's key is one an issuer bound under an active binding. Both SDKs gain `agent_proof_proves` / `agentProofProves` and `grant_principal_bound` / `grantPrincipalBound`.
 
 ### Changed
 
@@ -28,6 +28,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- `polaris-verify`: a delegated grant signed with a holder key whose binding the issuer had revoked was reported bound and usable.
 - `polaris-id --help` examples for `revoke` and `quota-show` now parse.
 
 ## v1.0.0-rc.62 — 2026-09-26 (fifty-nine fixes, one release)

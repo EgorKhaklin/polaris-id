@@ -256,6 +256,34 @@ class RefusalsAreTestedTests(unittest.TestCase):
                                  "%s must not end this grant" % label)
         self.assertFalse(pv.revocation_ends_grant(good, "grant"))
 
+    # -- delegation: the principal behind a grant ------------------------
+
+    @unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+    def test_a_grant_speaks_for_a_principal_only_under_an_active_binding(self):
+        def conf(name):
+            with open(os.path.join(_ROOT, "conformance", "vectors", name)) as f:
+                return json.load(f)
+        cred = conf("grant-principal-credential.json")
+        grant = conf("grant-principal-grant.json")
+        active = conf("grant-principal-binding-active.json")
+        now = "2026-05-01T00:00:30Z"
+        self.assertTrue(pv.grant_principal_bound(grant, active, cred, now),
+                        "the key the issuer bound, under an active binding, speaks for the holder")
+        for label, g, b, c in (
+                ("a binding the issuer revoked (the lost-device case)", grant,
+                 conf("grant-principal-binding-revoked.json"), cred),
+                ("a grant signed by a key no issuer bound", conf("grant-principal-grant-stranger.json"),
+                 active, cred),
+                ("a binding for another credential", grant, active, dict(cred, token_value="OTHER")),
+                ("a binding edited after signing", grant, dict(active, status="active ",
+                                                               holder_public_key_hex="aa" * 32), cred),
+                ("not a binding", grant, dict(active, format="polaris-holder-proof/1"), cred),
+                ("a genuine issuer-signed object of another type carrying a binding's fields",
+                 grant, conf("grant-principal-binding-wrong-type.json"), cred),
+                ("not a dict", grant, "binding", cred)):
+            with self.subTest(case=label):
+                self.assertFalse(pv.grant_principal_bound(g, b, c, now), "%s must not bind" % label)
+
     # -- delegation: agent-proof binding ---------------------------------
 
     def test_an_agent_proof_must_bind_this_grant_action_and_nonce(self):

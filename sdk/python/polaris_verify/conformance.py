@@ -21,7 +21,7 @@ drives it over the published cases and checks every verdict. See conformance/SPE
 import json
 import sys
 
-from . import (agent_proof_proves, grant_covers, revocation_ends_grant, verify_attestation, verify_authenticity, verify_cross_authority, verify_holder,
+from . import (agent_proof_proves, grant_covers, grant_principal_bound, pairwise_handle, revocation_ends_grant, verify_attestation, verify_authenticity, verify_cross_authority, verify_holder,
                verify_id_token,
                verify_signed_artifact, verify_status_assertion, verify_timestamp_anchor)
 
@@ -89,7 +89,8 @@ def main(argv=None):
         g = verify_signed_artifact(grant, now=now, anchors=None)
         action = case.get("requested_action")
         verdict = {"authentic": g.authentic, "action_in_scope": None, "revoked": None,
-                   "agent_proved": None}
+                   "agent_proved": None, "principal_bound": None, "pairwise_handle": None,
+                   "correlation": None}
         if not g.authentic:
             # A grant the holder did not sign grants nothing, so no later question is answered:
             # reading the scope of a forged grant would honour the forger's own actions.
@@ -97,6 +98,13 @@ def main(argv=None):
             return 0
         if action is not None:
             verdict["action_in_scope"] = grant_covers(grant, action)
+        binding = case.get("binding")
+        if binding is not None:
+            verdict["principal_bound"] = grant_principal_bound(grant, binding, case.get("credential") or {}, now)
+            if case.get("verifier_scope") is not None:
+                verdict["pairwise_handle"] = pairwise_handle(binding.get("holder_public_key_hex"),
+                                                             case["verifier_scope"])
+                verdict["correlation"] = "exposed"
         rev = case.get("revocation")
         if rev is not None:
             verdict["revoked"] = bool(verify_signed_artifact(rev, now=now, anchors=None).authentic

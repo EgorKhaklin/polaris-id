@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { verifyAuthenticity, PolarisVerifier, pairwiseHandle, handlesLink,
-         nullifiersLink, grantCovers, grantWithinLimits, revocationEndsGrant, agentProofProves,
+         nullifiersLink, grantCovers, grantWithinLimits, revocationEndsGrant, agentProofProves, grantPrincipalBound,
          verifyInclusion, verifyStatusAssertion, verifyIdToken, verifyHolder, verifyTimestampAnchor,
          verifySignedArtifact, verifyCosignature,
          verifyAttestation, verifyCrossAuthority,
@@ -136,6 +136,26 @@ test("only the holder who signed a grant can revoke it", () => {
   assert.equal(revocationEndsGrant({ ...rev, grant_id: "other" }, GRANT), false,
     "a revocation naming another grant must not end this one");
   assert.equal(revocationEndsGrant({ ...rev, format: "polaris-status-assertion/1" }, GRANT), false);
+});
+
+test("a grant speaks for a principal only under an active binding", () => {
+  const conf = (n: string) => JSON.parse(readFileSync(join(ROOT, "conformance", "vectors", n), "utf8"));
+  const cred = conf("grant-principal-credential.json");
+  const grant = conf("grant-principal-grant.json");
+  const active = conf("grant-principal-binding-active.json");
+  const now = "2026-05-01T00:00:30Z";
+  assert.equal(grantPrincipalBound(grant, active, cred, now), true);
+  assert.equal(grantPrincipalBound(grant, conf("grant-principal-binding-revoked.json"), cred, now), false,
+    "a binding the issuer revoked (the lost-device case) speaks for nobody");
+  assert.equal(grantPrincipalBound(conf("grant-principal-grant-stranger.json"), active, cred, now), false,
+    "a grant signed by a key no issuer bound");
+  assert.equal(grantPrincipalBound(grant, active, { ...cred, token_value: "OTHER" }, now), false,
+    "a binding for another credential");
+  assert.equal(grantPrincipalBound(grant, { ...active, holder_public_key_hex: "aa".repeat(32) }, cred, now), false,
+    "a binding edited after signing");
+  assert.equal(grantPrincipalBound(grant, conf("grant-principal-binding-wrong-type.json"), cred, now), false,
+    "a genuine issuer-signed object of another type, carrying a binding's fields, is not a binding");
+  assert.equal(grantPrincipalBound(grant, "binding", cred, now), false);
 });
 
 test("an agent proof must bind this grant, this action and this nonce", () => {

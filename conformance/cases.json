@@ -1487,6 +1487,65 @@
       },
       "since": "1.0.0-rc.63",
       "note": "The agent's genuine proof, presented to a service that issued a different nonce: a replay."
+    },
+    {
+      "artifact": "agent-grant-use",
+      "credential_file": "conformance/vectors/grant-principal-credential.json",
+      "now": "2026-05-01T00:00:30Z",
+      "since": "1.0.0-rc.63",
+      "name": "agent-grant-use-principal-bound",
+      "grant_file": "conformance/vectors/grant-principal-grant.json",
+      "binding_file": "conformance/vectors/grant-principal-binding-active.json",
+      "verifier_scope": "https://rp.example",
+      "expect": {
+        "authentic": true,
+        "principal_bound": true,
+        "correlation": "exposed",
+        "pairwise_handle": "4ae6291e645b6af51c570d6d4357ca81278c289414b0861c94777340903f6d63"
+      },
+      "note": "The grant is signed by the key the credential's issuer bound to the holder, under an active binding. The verifier's handle for this principal is pairwise, and still a stable value it can store: correlation is exposed, not bounded."
+    },
+    {
+      "artifact": "agent-grant-use",
+      "credential_file": "conformance/vectors/grant-principal-credential.json",
+      "now": "2026-05-01T00:00:30Z",
+      "since": "1.0.0-rc.63",
+      "name": "agent-grant-use-principal-binding-revoked",
+      "grant_file": "conformance/vectors/grant-principal-grant.json",
+      "binding_file": "conformance/vectors/grant-principal-binding-revoked.json",
+      "expect": {
+        "authentic": true,
+        "principal_bound": false
+      },
+      "note": "The issuer revoked the holder's binding (a lost device). A grant signed with that key speaks for nobody: a revoked binding means the holder has no usable key."
+    },
+    {
+      "artifact": "agent-grant-use",
+      "credential_file": "conformance/vectors/grant-principal-credential.json",
+      "now": "2026-05-01T00:00:30Z",
+      "since": "1.0.0-rc.63",
+      "name": "agent-grant-use-principal-stranger",
+      "grant_file": "conformance/vectors/grant-principal-grant-stranger.json",
+      "binding_file": "conformance/vectors/grant-principal-binding-active.json",
+      "expect": {
+        "authentic": true,
+        "principal_bound": false
+      },
+      "note": "A genuine grant signed by a key no issuer bound to this credential."
+    },
+    {
+      "artifact": "agent-grant-use",
+      "credential_file": "conformance/vectors/grant-principal-credential.json",
+      "now": "2026-05-01T00:00:30Z",
+      "since": "1.0.0-rc.63",
+      "name": "agent-grant-use-principal-binding-wrong-type",
+      "grant_file": "conformance/vectors/grant-principal-grant.json",
+      "binding_file": "conformance/vectors/grant-principal-binding-wrong-type.json",
+      "expect": {
+        "authentic": true,
+        "principal_bound": false
+      },
+      "note": "A genuinely issuer-signed object of ANOTHER type, carrying a binding's fields outside what that type signs. Only its format says it is not a binding."
     }
   ]
 }

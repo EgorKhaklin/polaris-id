@@ -53,7 +53,6 @@ EXPECTED_UNREACHED = {
     # could be the same holder; the published cases carry single artifacts, so there is no
     # case shaped like "here are two, are they linked".
     "nullifiers_link": "the contract publishes no case with two presentations to compare",
-    "pairwise_handle": "same: a per-verifier handle has nothing to be compared against",
     "handles_link": "same",
     # Agent-grant limits. Since 2026-09-27 the agent-grant-use cases ask whether a grant covers
     # an action, whether a revocation ends it and whether a proof binds it; whether a use stays

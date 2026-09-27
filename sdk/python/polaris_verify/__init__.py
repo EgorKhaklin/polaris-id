@@ -1087,6 +1087,29 @@ def revocation_ends_grant(revocation, grant) -> bool:
         str(grant.get("public_key_hex") or "").lower()
 
 
+def grant_principal_bound(grant, binding, credential, now=None) -> bool:
+    """Does the key that signed this grant speak for somebody?
+
+    It must be the holder key an ISSUER bound to this credential, under a binding that is
+    genuine, fresh and ACTIVE. A revoked binding is published so that a verifier sees the
+    holder has no usable key (the lost-device case, where the key is what a thief holds); a
+    grant signed with it speaks for nobody. The grant's own signature is the caller's
+    `verify_signed_artifact` step.
+    """
+    if not isinstance(grant, dict) or not isinstance(binding, dict) or not isinstance(credential, dict):
+        return False
+    if binding.get("format") != "polaris-holder-binding/1":
+        return False
+    bv = verify_signed_artifact(binding, now=now)
+    return bool(bv.authentic and bv.fresh is not False
+                and (binding.get("status") or "active") == "active"
+                and str(binding.get("holder_public_key_hex") or "").lower()
+                == str(grant.get("public_key_hex") or "").lower()
+                and str(binding.get("token_value")) == str(credential.get("token_value"))
+                and str(binding.get("public_key_hex") or "").lower()
+                == str(credential.get("public_key_hex") or "").lower())
+
+
 def agent_proof_proves(proof, grant, action=None, nonce=None) -> bool:
     """Is this agent proof bound to THIS grant, this action and this service's nonce?
 

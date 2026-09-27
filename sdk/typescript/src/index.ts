@@ -1137,6 +1137,19 @@ export function revocationEndsGrant(revocation: any, grant: any): boolean {
  * grant, be signed by the agent key the grant names, under the algorithm the HOLDER
  * authorized, and, when the service supplies them, name the requested action and nonce.
  */
+export function grantPrincipalBound(grant: any, binding: any, credential: any, now?: string | null): boolean {
+  // The key that signed the grant must be the holder key an ISSUER bound to this credential,
+  // under a binding that is genuine, fresh and ACTIVE; a revoked binding speaks for nobody.
+  if (!grant || typeof grant !== "object" || !binding || typeof binding !== "object"
+      || !credential || typeof credential !== "object") return false;
+  if (binding.format !== "polaris-holder-binding/1") return false;
+  const bv = verifySignedArtifact(binding, now ?? null, null);
+  return !!(bv.authentic && bv.fresh !== false && (binding.status ?? "active") === "active"
+    && String(binding.holder_public_key_hex ?? "").toLowerCase() === String(grant.public_key_hex ?? "").toLowerCase()
+    && String(binding.token_value) === String(credential.token_value)
+    && String(binding.public_key_hex ?? "").toLowerCase() === String(credential.public_key_hex ?? "").toLowerCase());
+}
+
 export function agentProofProves(proof: any, grant: any, action?: unknown, nonce?: unknown): boolean {
   if (!proof || typeof proof !== "object" || !grant || typeof grant !== "object") return false;
   if (proof.format !== "polaris-agent-proof/1") return false;

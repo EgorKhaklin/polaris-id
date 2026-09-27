@@ -91,10 +91,7 @@ NOT_A_DECISION = {
 #: false. The drill now asks that question instead of counting them, which is why this
 #: list fell by more than the two cases added.
 SURVIVORS_EXPECTED = (
-    "verify_agent_grant.correlation",
     "verify_agent_grant.limits",
-    "verify_agent_grant.pairwise_handle",
-    "verify_agent_grant.principal_bound",
     # 2026-09-17: `valid_until` was added to the attestation verdict when the trust edge's
     # own window started being enforced, and it is the window ECHOED BACK, not a decision.
     # Forcing it permissive changes no verdict because nothing downstream reads it: the

@@ -94,7 +94,10 @@ def _load_cases():
                 payload["revocation"] = _load_file(c["revocation_file"])
             if "proof_file" in c:
                 payload["agent_proof"] = _load_file(c["proof_file"])
-            for k in ("requested_action", "expected_nonce", "now"):
+            if "binding_file" in c:
+                payload["binding"] = _load_file(c["binding_file"])
+                payload["credential"] = _load_file(c["credential_file"])
+            for k in ("requested_action", "expected_nonce", "verifier_scope", "now"):
                 if k in c:
                     payload[k] = c[k]
         elif artifact == "holder-chain":

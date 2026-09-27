@@ -4180,13 +4180,21 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
     # is signed by a key that speaks for nobody.
     if binding is not None:
         bv = verify_holder_binding(binding, credential=credential, now=now, anchor_keys=anchor_keys)
+        # 2026-09-27: the binding must also be ACTIVE. A revoked binding is published so that
+        # "a verifier sees that the holder has no usable key" (WIRE-SPEC, holder binding), and
+        # verify_holder_proof has required it since P9.1; this path read authenticity,
+        # freshness and the key but not the status, so a grant signed with a key the issuer had
+        # revoked (the lost-device case, where the key is what the thief holds) was bound and
+        # usable.
+        active = (binding.get("status") or "active") == "active" if isinstance(binding, dict) else False
         v["principal_bound"] = bool(
-            bv["binding_authentic"] and bv["fresh"] is not False
+            bv["binding_authentic"] and bv["fresh"] is not False and active
             and str(bv["holder_public_key_hex"] or "").lower() == str(holder_key or "").lower()
             and (bv["bound_to_credential"] is not False))
         if not v["principal_bound"]:
             v["note"] = ("the grant's signing key is not one an issuer bound to a credential "
-                         "(%s)" % (bv["note"] or "binding did not verify"))
+                         "(%s)" % ("the issuer revoked the binding" if bv["binding_authentic"] and not active
+                                   else bv["note"] or "binding did not verify"))
         if verifier_scope is not None:
             v["pairwise_handle"] = pairwise_handle(bv["holder_public_key_hex"], verifier_scope)
             v["correlation"] = "exposed"

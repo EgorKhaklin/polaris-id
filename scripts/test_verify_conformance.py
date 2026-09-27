@@ -165,9 +165,14 @@ def _verdict_for(case):
             requested_action=case.get("requested_action"),
             revocation=_load(case["revocation_file"]) if "revocation_file" in case else None,
             agent_proof=_load(case["proof_file"]) if "proof_file" in case else None,
-            expected_nonce=case.get("expected_nonce"))
+            expected_nonce=case.get("expected_nonce"),
+            binding=_load(case["binding_file"]) if "binding_file" in case else None,
+            credential=_load(case["credential_file"]) if "credential_file" in case else None,
+            verifier_scope=case.get("verifier_scope"))
         return {"authentic": v["grant_authentic"], "action_in_scope": v["action_in_scope"],
-                "revoked": v["revoked"], "agent_proved": v["agent_proved"]}
+                "revoked": v["revoked"], "agent_proved": v["agent_proved"],
+                "principal_bound": v["principal_bound"], "pairwise_handle": v["pairwise_handle"],
+                "correlation": v["correlation"]}
 
     if artifact == "timestamp-anchor":
         ts = _load(case["timestamp_file"])
@@ -250,7 +255,8 @@ class ConformanceContractTests(unittest.TestCase):
         named = set()
         for c in _cases():
             for k in ("pack_file", "object_file", "assertion_file", "timestamp_file",
-                      "credential_file", "binding_file", "proof_file", "feed_file"):
+                      "credential_file", "binding_file", "proof_file", "feed_file",
+                      "grant_file", "revocation_file"):
                 if k in c:
                     named.add(os.path.basename(c[k]))
             for f in c.get("manifest_files", []):

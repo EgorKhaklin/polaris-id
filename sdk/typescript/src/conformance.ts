@@ -10,7 +10,7 @@
  * See conformance/SPEC.md. This is the TypeScript counterpart of the Python SDK's
  * `python -m polaris_verify.conformance`; the same runner drives either.
  */
-import { agentProofProves, grantCovers, revocationEndsGrant, verifyAttestation, verifyAuthenticity, verifyIdToken, verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority,
+import { agentProofProves, grantCovers, grantPrincipalBound, pairwiseHandle, revocationEndsGrant, verifyAttestation, verifyAuthenticity, verifyIdToken, verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority,
   verifyTimestampAnchor, verifyHolder, type Pack } from "./index.ts";
 
 const SIGNED_ARTIFACTS = new Set([
@@ -66,8 +66,17 @@ process.stdin.on("end", () => {
     const now = caseObj.now ?? null;
     const action = caseObj.requested_action ?? null;
     const authentic = verifySignedArtifact(grant, now, null).authentic;
-    const verdict: Record<string, boolean | null> = {
-      authentic, action_in_scope: null, revoked: null, agent_proved: null };
+    const verdict: Record<string, boolean | string | null> = {
+      authentic, action_in_scope: null, revoked: null, agent_proved: null,
+      principal_bound: null, pairwise_handle: null, correlation: null };
+    const binding = caseObj.binding ?? null;
+    if (authentic && binding !== null) {
+      verdict.principal_bound = grantPrincipalBound(grant, binding, caseObj.credential ?? {}, now);
+      if (caseObj.verifier_scope !== undefined && caseObj.verifier_scope !== null) {
+        verdict.pairwise_handle = pairwiseHandle(binding.holder_public_key_hex, caseObj.verifier_scope);
+        verdict.correlation = "exposed";
+      }
+    }
     // A grant the holder did not sign grants nothing, so no later question is answered.
     if (authentic && action !== null) verdict.action_in_scope = grantCovers(grant, action);
     if (authentic && caseObj.revocation !== undefined && caseObj.revocation !== null) {
