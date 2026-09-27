@@ -55,6 +55,18 @@ DB_CONFIG = flask_app.DB_CONFIG
 #: fixtures, such as binding an account, are made with it (2026-09-27: the application role can
 #: no longer change an account).
 _OWNER_DB_CONFIG = dict(DB_CONFIG)
+
+
+def _owner_query(sql, params=(), fetch='none'):
+    """A fixture write as the schema owner, for tables the application role cannot write
+    (relying parties since 2026-09-27). Same call shape as the application's query()."""
+    conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+        conn.commit()
+    finally:
+        conn.close()
 SQL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'polaris_sql')
 
 
@@ -692,7 +704,7 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         # INSERT go in ONE statement because query() draws from a pool: as two calls the
         # GUC can land on a different connection than the insert and the reason is not
         # there when the trigger looks for it.
-        flask_app.query("SELECT set_config('polaris.justification', "
+        _owner_query("SELECT set_config('polaris.justification', "
                         "'test fixture: a relying party registered for this test only', true); "
                         "INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, enabled, rate_limit_per_min, scope) "
                         "VALUES (%s, %s, %s, TRUE, 120, %s)",
@@ -837,7 +849,7 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         code = self._authorize(cid, tv, sig, challenge).get_json()['code']
 
         # The relying party loses the scope after the code was issued.
-        flask_app.query("SELECT set_config('polaris.justification', "
+        _owner_query("SELECT set_config('polaris.justification', "
                         "'test fixture: withdraws the authenticate scope under test', true); "
                         "UPDATE RelyingParty SET scope = %s WHERE client_id = %s",
                         ('verify', cid), fetch='none')
@@ -850,7 +862,7 @@ class AuthBrokerTests(UnauthenticatedTestCase):
 
         # The control: restore the scope and the same code redeems. Without this leg an
         # endpoint that refused every redemption would pass the assertion above.
-        flask_app.query("SELECT set_config('polaris.justification', "
+        _owner_query("SELECT set_config('polaris.justification', "
                         "'test fixture: restores the scope this test withdrew', true); "
                         "UPDATE RelyingParty SET scope = %s WHERE client_id = %s",
                         ('authenticate', cid), fetch='none')
@@ -888,14 +900,14 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         cid, _secret = self._rp('authenticate')
         _tid, tv, sig = self._credential()
         _verifier, challenge = self._pkce()
-        flask_app.query("UPDATE RelyingParty SET require_zk = TRUE WHERE client_id = %s", (cid,), fetch='none')
+        _owner_query("UPDATE RelyingParty SET require_zk = TRUE WHERE client_id = %s", (cid,), fetch='none')
         r = self._authorize(cid, tv, sig, challenge)
         self.assertEqual((r.status_code, r.get_json()['error']), (403, 'insufficient_assurance'))
-        flask_app.query("SELECT set_config('polaris.justification', 'test fixture: drops the step-up under test', true); "
+        _owner_query("SELECT set_config('polaris.justification', 'test fixture: drops the step-up under test', true); "
                         "UPDATE RelyingParty SET require_zk = FALSE, required_enrollment = 'EXEMPT' WHERE client_id = %s", (cid,), fetch='none')
         r = self._authorize(cid, tv, sig, challenge, required_enrollment='ENROLLED')
         self.assertEqual((r.status_code, r.get_json()['error']), (403, 'insufficient_enrollment'))
-        flask_app.query("SELECT set_config('polaris.justification', 'test fixture: drops the enrollment requirement under test', true); "
+        _owner_query("SELECT set_config('polaris.justification', 'test fixture: drops the enrollment requirement under test', true); "
                         "UPDATE RelyingParty SET required_enrollment = NULL, required_context_id = 2 WHERE client_id = %s", (cid,), fetch='none')
         r = self._authorize(cid, tv, sig, challenge)
         self.assertEqual((r.status_code, r.get_json()['error']), (403, 'policy_violation'))

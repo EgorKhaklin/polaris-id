@@ -2601,6 +2601,12 @@ def _cmd_key_event(args, event):
         elif event == 'compromised':
             print(red("  Verifiers holding the trust list will reject signatures under this key from the effective instant."))
         return 0
+    except psycopg2.errors.InsufficientPrivilege:
+        conn.rollback()
+        sys.stderr.write(red("Refused: an authority key event is a governance decision the application's "
+                             "database role cannot make. Run it as the schema owner (set "
+                             "POLARIS_DB_USER).\n"))
+        return 3
     except Exception as e:
         conn.rollback()
         print(red(f"key event failed: {e}"))
@@ -2619,6 +2625,11 @@ def cmd_key_retire(args):
 
 def cmd_key_compromise(args):
     return _cmd_key_event(args, 'compromised')
+
+
+_RP_OWNER_ONLY = ("Refused: registering a relying party or setting its policy is a governance decision "
+                  "the application's database role cannot make. Run it as the schema owner (set "
+                  "POLARIS_DB_USER).\n")
 
 
 def cmd_rp_policy(args):
@@ -2675,6 +2686,8 @@ def cmd_rp_policy(args):
             conn.commit()
         print(green(f"\u2713 Policy for relying party #{row['rp_id']}: require_zk={row['require_zk']} required_enrollment={row['required_enrollment']} required_context_id={row['required_context_id']}"))
         return 0
+    except psycopg2.errors.InsufficientPrivilege:
+        conn.rollback(); sys.stderr.write(red(_RP_OWNER_ONLY)); return 3
     except Exception as e:
         conn.rollback(); print(red(f"rp-policy failed: {e}")); return 1
     finally:
@@ -2793,6 +2806,10 @@ def cmd_rp_register(args):
     except psycopg2.errors.CheckViolation as e:
         conn.rollback()
         sys.stderr.write(red(f"Constraint violation: {str(e).split(chr(10))[0]}\n"))
+        sys.exit(3)
+    except psycopg2.errors.InsufficientPrivilege:
+        conn.rollback()
+        sys.stderr.write(red(_RP_OWNER_ONLY))
         sys.exit(3)
     except psycopg2.Error as e:
         conn.rollback()

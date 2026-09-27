@@ -15,6 +15,7 @@ Run:
 import contextlib
 import io
 import os
+import re
 import sys
 import subprocess
 import tempfile
@@ -799,6 +800,28 @@ class GovernanceCommandsRefuseTheAppRole(unittest.TestCase):
         for args in (('quota-set', '2', '--revoke-per-day', '100000', '--justification', why),
                      ('discretion-set', '2', '--max-revoke-percent', '100', '--window-days', '1',
                       '--justification', why)):
+            with self.subTest(args[0]):
+                r = self._as_app(*args)
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                self.assertIn("schema owner", r.stderr)
+
+    def test_the_app_role_cannot_register_an_authority_key(self):
+        """2026-09-27: a registered key then made the authority's signing key, as the application
+        role. Key events are the owner's."""
+        r = self._as_app('key-register', '1', 'ab' * 976, '--note', 'the application registering its own key')
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn("schema owner", r.stderr)
+
+    def test_the_app_role_cannot_register_or_reshape_a_relying_party(self):
+        """2026-09-27: relying-party registration and policy are the owner's."""
+        why = 'a relying party the application tried to register for itself'
+        # A real, zero-knowledge-only party registered by the owner, so rp-policy reaches its UPDATE.
+        reg = run_cli('rp-register', 'ZK-only RP', '--require-zk', '--justification',
+                      'a zero-knowledge-only relying party for this test')
+        self.assertEqual(reg.returncode, 0, reg.stdout + reg.stderr)
+        cid = re.search(r"client_id:\s+(rp_\S+)", reg.stdout).group(1)
+        for args in (('rp-register', 'Forged RP', '--justification', why),
+                     ('rp-policy', cid, '--no-require-zk', '--justification', why)):
             with self.subTest(args[0]):
                 r = self._as_app(*args)
                 self.assertEqual(r.returncode, 3, r.stdout + r.stderr)

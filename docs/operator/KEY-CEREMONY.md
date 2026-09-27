@@ -123,8 +123,10 @@ cryptographically its own (roadmap PE.3b), give each agency its own key:
    agency with no key file falls back to the global key, so single-key deployments
    are unchanged.
 2. Register each agency's public key so the app can bind and verify it:
-   `polaris key-register <id> <hex>`, which appends the key to
-   the authority's register and makes it current in one transaction. Since 1.0.0-rc.57 the
+   `polaris key-register <id> <hex>`, run as the schema owner, which appends the key to
+   the authority's register and makes it current in one transaction. The application role
+   cannot append key events (2026-09-27), so `key-register`, `key-retire` and
+   `key-compromise` exit 3 under it. Since 1.0.0-rc.57 the
    application role cannot set a key the register does not hold (or holds as retired or
    compromised); a plain `UPDATE Agency` works only as the schema owner, and leaves no register
    entry, so the trust list would serve a key with no history.

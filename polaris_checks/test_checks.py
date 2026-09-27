@@ -1702,7 +1702,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                         ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext", "schema_version",
                          "RefereeVouching", "EnrollmentProofing", "EnrollmentEvidence",
                          "IssuerDiscretionPolicy", "AgencyQuota",
-                         "AppUser")))
+                         "AppUser", "AuthorityKeyEvent", "CardPersonalization", "RetentionPolicy", "RelyingParty")))
     full = (good_grants + "SELECT polaris_lock_event_partitions();\n"
             "REVOKE INSERT ON TokenLifecycleEvent FROM polaris_app;\n" + epochs)
     (sql / "01_schema.sql").write_text(lock + ensure)
@@ -1814,7 +1814,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     for table in ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext", "schema_version",
                          "RefereeVouching", "EnrollmentProofing", "EnrollmentEvidence",
                          "IssuerDiscretionPolicy", "AgencyQuota",
-                         "AppUser"):
+                         "AppUser", "AuthorityKeyEvent", "CardPersonalization", "RetentionPolicy", "RelyingParty"):
         write(full.replace("REVOKE INSERT, UPDATE, DELETE ON %s FROM polaris_app;\n" % table, ""), True, True)
         assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", table
     write(full, True, True)

@@ -861,7 +861,7 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
     for table in ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext", "schema_version",
                   "RefereeVouching", "EnrollmentProofing", "EnrollmentEvidence",
                   "IssuerDiscretionPolicy", "AgencyQuota",
-                  "AppUser"):
+                  "AppUser", "AuthorityKeyEvent", "CardPersonalization", "RetentionPolicy", "RelyingParty"):
         if not re.search(r"REVOKE\s+INSERT\s*,\s*UPDATE\s*,\s*DELETE\s+ON\s+" + table + r"\s+FROM\s+polaris_app",
                          grants, re.I):
             return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT, UPDATE, DELETE ON " + table + ": "

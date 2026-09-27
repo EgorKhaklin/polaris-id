@@ -101,11 +101,10 @@ DECLARE
         -- record (as the owner since 2026-09-25); polaris_app must not edit or remove
         -- one, or the erasure log could be made to lie about what happened.
         'individualerasureevent',
-        -- P1.11: the retention policy. Appending a policy is INSERT and stays
-        -- available; superseding one is an UPDATE and belongs to
-        -- uc_apply_retention_template, which is SECURITY DEFINER and
-        -- admin-gated. A role that could UPDATE this table directly could
-        -- retire a retention decision without recording who did it.
+        -- P1.11: the retention policy. Superseding one is an UPDATE and belongs to
+        -- uc_apply_retention_template, which is SECURITY DEFINER and admin-gated. A
+        -- role that could UPDATE this table directly could retire a retention
+        -- decision without recording who did it. INSERT is revoked too (2026-09-27).
         'retentionpolicy',
         -- P8.2c: the exchange-receipt transparency log. polaris_app appends a
         -- receipt's hash at mint time; a role that could UPDATE/DELETE could
@@ -233,6 +232,23 @@ GRANT UPDATE (failed_login_count, locked_until, last_failed_login_at, last_login
 -- role superseded authority 1's revocation bound and set it to 100% a day, under which uc8 never
 -- asks for a co-signer. Those two commands now run as the schema owner.
 REVOKE INSERT, UPDATE, DELETE ON IssuerDiscretionPolicy FROM polaris_app;
+-- 2026-09-27: three registers nothing the web application writes. As polaris_app: a 'registered'
+-- AuthorityKeyEvent for an attacker's key, then Agency.signing_public_key_hex set to it (the
+-- rc.57 guard only asks that the register hold the key); a CardPersonalization row binding an
+-- attacker's normal and duress keys to an ACTIVE credential, which the append-only table then
+-- keeps and which refuses the real card; a RetentionPolicy attributed to an operator, around
+-- uc_set_retention_policy's admin check (that procedure is SECURITY DEFINER and needs no grant).
+-- Key events are the operator's CLI and card personalization is a bench station, both run as
+-- the schema owner.
+REVOKE INSERT, UPDATE, DELETE ON AuthorityKeyEvent FROM polaris_app;
+REVOKE INSERT, UPDATE, DELETE ON CardPersonalization FROM polaris_app;
+REVOKE INSERT, UPDATE, DELETE ON RetentionPolicy FROM polaris_app;
+-- 2026-09-27: relying parties. Registration and policy are the operator's CLI (rp-register,
+-- rp-policy); the web application only stamps last_used_at. As polaris_app, writing its own
+-- justification, a zero-knowledge-only party was turned into a full-disclosure one and its client
+-- secret replaced with one the attacker knew.
+REVOKE INSERT, UPDATE, DELETE ON RelyingParty FROM polaris_app;
+GRANT UPDATE (last_used_at) ON RelyingParty TO polaris_app;
 REVOKE INSERT, UPDATE, DELETE ON AgencyQuota FROM polaris_app;
 -- 2026-09-26: the identity-proofing records. "The level is derived, never asserted" (01_schema.sql),
 -- and nothing the application runs writes them (proofing.record_proofing has no route); with INSERT

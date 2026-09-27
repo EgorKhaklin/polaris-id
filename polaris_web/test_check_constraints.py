@@ -1521,12 +1521,14 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             self.assertFalse(row["upd"], f"polaris_app must not hold UPDATE on {tbl}")
             self.assertFalse(row["del"], f"polaris_app must not hold DELETE on {tbl}")
             # Since rc.40 the lifecycle log, and since 2026-09-25 the epoch leaves and the anchor
-            # batches, are written only by SECURITY DEFINER routines.
+            # batches, are written only by SECURITY DEFINER routines; since 2026-09-27 the key
+            # register, card personalization and retention policy only by the owner.
             self.assertEqual(bool(row["ins"]),
                              tbl.lower() not in ("tokenlifecycleevent", "tokenstateepochleaf",
-                                                 "anchorbatch", "duressevent"),
+                                                 "anchorbatch", "duressevent", "authoritykeyevent",
+                                                 "cardpersonalization", "retentionpolicy"),
                              f"append-only is insert-allowed except the lifecycle log, the epoch "
-                             f"leaves and the anchor batches: {tbl}")
+                             f"leaves, the anchor batches and the owner's registers: {tbl}")
             conn.rollback()
 
     def test_app_role_records_and_revokes_trust_only_through_uc10(self):
@@ -1754,19 +1756,25 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             with self.assertRaises(pg_errors.InsufficientPrivilege):
                 cur.execute("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", (fresh,))
         conn.rollback()
-        with self.subTest("a key the register holds as compromised"), conn.cursor() as cur:
+        # Since 2026-09-27 the register is the owner's to append to, so the owner writes the
+        # events and the UPDATE under test runs as polaris_app in the same transaction.
+        owner = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        self.addCleanup(owner.close)
+        with self.subTest("a key the register holds as compromised"), owner.cursor() as cur:
             for event in ("registered", "compromised"):
                 cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event) "
                             "VALUES (1, %s, %s)", (burnt, event))
+            cur.execute("SET LOCAL ROLE polaris_app")
             with self.assertRaises(pg_errors.InsufficientPrivilege):
                 cur.execute("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", (burnt,))
-        conn.rollback()
-        with self.subTest("the register's own path"), conn.cursor() as cur:
+        owner.rollback()
+        with self.subTest("the register's own path"), owner.cursor() as cur:
             cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event) "
                         "VALUES (1, %s, 'registered')", (fresh,))
+            cur.execute("SET LOCAL ROLE polaris_app")
             cur.execute("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", (fresh,))
             self.assertEqual(cur.rowcount, 1)
-        conn.rollback()
+        owner.rollback()
 
     def test_app_role_cannot_revive_an_algorithm_or_grant_itself_one(self):
         """1.0.0-rc.58. Nothing the application runs writes the algorithm registry or the
@@ -2020,6 +2028,74 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             self.assertEqual(cur.rowcount, 1)
         conn.rollback()
 
+    def test_app_role_cannot_write_keys_cards_or_retention(self):
+        """2026-09-27. As polaris_app: a registered key for an attacker, then made authority 1's
+        signing key; an attacker's keys bound to an ACTIVE credential's card record; a retention
+        policy attributed to an operator, around uc_set_retention_policy's admin check."""
+        conn = self._app_conn()
+        key = "ab" * 976
+        for label, sql, params in (
+                ("register a key", "INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event) "
+                                   "VALUES (1, %s, 'registered')", (key,)),
+                ("bind card keys", "INSERT INTO CardPersonalization (token_id, issuing_agency_id, "
+                                   "credential_ref, profile_version, normal_public_key, "
+                                   "duress_public_key, card_object_sha3_256) SELECT token_id, "
+                                   "issuing_agency_id, %s, 1, %s, %s, %s FROM IdentityToken "
+                                   "WHERE status = 'ACTIVE' LIMIT 1",
+                 (psycopg2.Binary(b"\xdd" * 32), psycopg2.Binary(b"\xaa" * 65),
+                  psycopg2.Binary(b"\xbb" * 65), psycopg2.Binary(b"\xcc" * 32))),
+                ("write a retention policy", "INSERT INTO RetentionPolicy (table_class, jurisdiction, "
+                                             "retention_days, justification, set_by_user_id) "
+                                             "SELECT 'VERIFICATION', 'APP-ROLE', 365, "
+                                             "'written around the admin-only procedure', user_id "
+                                             "FROM AppUser WHERE role <> 'admin' LIMIT 1", None)):
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql, params)
+            conn.rollback()
+        # The rc.57 guard still refuses a key the register does not hold, so the circle is closed.
+        with conn.cursor() as cur:
+            with self.assertRaises(psycopg2.Error):
+                cur.execute("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", (key,))
+        conn.rollback()
+
+    def test_app_role_cannot_rewrite_a_relying_party(self):
+        """2026-09-27. As polaris_app, writing its own justification, a zero-knowledge-only
+        relying party was made full-disclosure and its client secret replaced with one the
+        attacker knew. Registration and policy are the owner's; last_used_at stays writable."""
+        owner = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        self.addCleanup(owner.close)
+        with owner.cursor() as cur:
+            cur.execute("SELECT set_config('polaris.justification', %s, true)",
+                        ("a zero-knowledge-only relying party for this test",))
+            cur.execute("INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, scope, "
+                        "require_zk) VALUES ('rp_' || md5(random()::text), 'owner-hash', 'ZK only', "
+                        "'verify authenticate', TRUE) RETURNING client_id")
+            cid = cur.fetchone()["client_id"]
+            cur.execute("SET LOCAL ROLE polaris_app")
+            cur.execute("SELECT set_config('polaris.justification', %s, true)",
+                        ("the application writing its own justification text",))
+            for label, sql in (
+                    ("drop the zero-knowledge requirement",
+                     "UPDATE RelyingParty SET require_zk = FALSE WHERE client_id = %s"),
+                    ("replace the client secret",
+                     "UPDATE RelyingParty SET client_secret_hash = 'attacker' WHERE client_id = %s"),
+                    ("widen the scope",
+                     "UPDATE RelyingParty SET scope = 'verify authenticate', enabled = TRUE WHERE client_id = %s"),
+                    ("register a party",
+                     "INSERT INTO RelyingParty (client_id, client_secret_hash, org_name) "
+                     "SELECT %s || 'x', 'x', 'Forged'"),
+                    ("remove a party", "DELETE FROM RelyingParty WHERE client_id = %s")):
+                with self.subTest(label):
+                    cur.execute("SAVEPOINT s")
+                    with self.assertRaises(pg_errors.InsufficientPrivilege):
+                        cur.execute(sql, (cid,))
+                    cur.execute("ROLLBACK TO SAVEPOINT s")
+            # The web application's own write still goes through.
+            cur.execute("UPDATE RelyingParty SET last_used_at = now() WHERE client_id = %s", (cid,))
+            self.assertEqual(cur.rowcount, 1)
+        owner.rollback()
+
     def test_app_role_cannot_choose_its_own_bounds(self):
         """2026-09-26. As polaris_app, authority 1's revocation bound was superseded and reset to
         100% a day, under which uc8 never asks for a co-signer. All writes to both bounds refused."""
@@ -2187,8 +2263,10 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
 
     def test_authority_key_history_is_append_only_and_one_way(self):
         """P8.7b: AuthorityKeyEvent accepts registered/retired/compromised rows (chk_authority_key_event),
-        never an edit or a removal, and AuthorityKeyCurrent derives compromised > retired > active."""
-        conn = self._app_conn()
+        never an edit or a removal, and AuthorityKeyCurrent derives compromised > retired > active.
+        The owner appends (the application role cannot, since 2026-09-27)."""
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        self.addCleanup(conn.close)
         key = "ab" * 32
         with conn.cursor() as cur:
             with self.assertRaises(pg_errors.CheckViolation):
@@ -2204,6 +2282,7 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event) VALUES (1, %s, 'compromised')", (key,))
             cur.execute("SELECT status FROM AuthorityKeyCurrent WHERE public_key_hex = %s", (key,))
             self.assertEqual(cur.fetchone()["status"], "compromised")
+            cur.execute("SET LOCAL ROLE polaris_app")
             with self.assertRaises(pg_errors.InsufficientPrivilege):
                 cur.execute("DELETE FROM AuthorityKeyEvent WHERE public_key_hex = %s", (key,))
         conn.rollback()
@@ -2211,8 +2290,9 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
     def test_authority_key_register_accepts_only_the_ml_dsa_sets(self):
         """chk_authority_key_algorithm (2026-09-24): the registry publishes this value for
         relying parties to verify under, and until then only the CLI's choices kept a classical
-        one out."""
-        conn = self._app_conn()
+        one out. As the owner, the register's only writer since 2026-09-27."""
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        self.addCleanup(conn.close)
         key = "cd" * 32
         with conn.cursor() as cur:
             with self.assertRaises(pg_errors.CheckViolation):
