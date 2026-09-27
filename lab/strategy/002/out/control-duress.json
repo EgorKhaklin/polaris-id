@@ -1,0 +1,35 @@
+{
+ "mode": "split",
+ "tests_run": 10,
+ "failed": 1,
+ "skipped": 0,
+ "per_class": {
+  "AuthBrokerTests": {
+   "pass": 9,
+   "fail": 1,
+   "skip": 0
+  }
+ },
+ "failures": [
+  {
+   "test": "AuthBrokerTests.test_duress_is_served_identically_and_recorded_silently",
+   "last": "AssertionError: 0 != 1"
+  }
+ ],
+ "refusals": [
+  {
+   "test": "AuthBrokerTests.test_duress_is_served_identically_and_recorded_silently",
+   "statement": "CALL uc12_record_duress(%s, %s, %s, %s)",
+   "error": "permission denied for procedure uc12_record_duress",
+   "endpoint": "api_v1_auth_authorize",
+   "method": null,
+   "path": "(background thread)"
+  }
+ ],
+ "rp_connections_by_endpoint": {
+  "api_v1_auth_authorize": 57,
+  "api_v1_auth_token": 16
+ },
+ "grants_unchanged_by_reloads": true,
+ "grant_lines": 219
+}

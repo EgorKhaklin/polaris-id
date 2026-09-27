@@ -1,0 +1,241 @@
+{
+ "mode": "split",
+ "tests_run": 20,
+ "failed": 17,
+ "skipped": 0,
+ "per_class": {
+  "AuthBrokerTests": {
+   "pass": 1,
+   "fail": 9,
+   "skip": 0
+  },
+  "HolderKeyBindingTests": {
+   "pass": 2,
+   "fail": 8,
+   "skip": 0
+  }
+ },
+ "failures": [
+  {
+   "test": "AuthBrokerTests.test_a_credential_that_is_no_longer_active_cannot_authenticate",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table individual"
+  },
+  {
+   "test": "AuthBrokerTests.test_an_expired_credential_cannot_sign_in",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table individual"
+  },
+  {
+   "test": "AuthBrokerTests.test_an_unknown_disclosure_level_is_refused_not_signed",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table individual"
+  },
+  {
+   "test": "AuthBrokerTests.test_authorization_code_is_opaque",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table individual"
+  },
+  {
+   "test": "AuthBrokerTests.test_code_flow_with_pkce_replay_and_scope",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table individual"
+  },
+  {
+   "test": "AuthBrokerTests.test_duress_is_served_identically_and_recorded_silently",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table individual"
+  },
+  {
+   "test": "AuthBrokerTests.test_registered_policy_binds_the_holder_request",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table individual"
+  },
+  {
+   "test": "AuthBrokerTests.test_the_token_endpoint_checks_the_scope_again_for_itself",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table individual"
+  },
+  {
+   "test": "AuthBrokerTests.test_two_relying_parties_get_different_subjects_for_one_person",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table individual"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_a_credential_that_is_no_longer_active_cannot_bind_a_holder_key",
+   "last": "AssertionError: 400 != 200 : control: it binds while the credential is ACTIVE"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_a_recorded_binding_cannot_be_rewritten",
+   "last": "AssertionError: Error not raised"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_binding_endpoint_returns_the_current_binding",
+   "last": "AssertionError: 404 != 200"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_binding_shape_carries_no_personal_data",
+   "last": "KeyError: 'format'"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_only_an_accepted_parameter_set_is_registered",
+   "last": "AssertionError: 400 != 200 : control: ML-DSA-87 binds"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_revocation_publishes_rather_than_hides",
+   "last": "KeyError: 'status'"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_revoking_a_holder_key_that_was_never_bound_is_refused",
+   "last": "AssertionError: 400 != 200"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_rotation_replaces_the_current_key_without_rewriting_history",
+   "last": "KeyError: 'holder_public_key_hex'"
+  }
+ ],
+ "refusals": [
+  {
+   "test": "AuthBrokerTests.test_a_credential_that_is_no_longer_active_cannot_authenticate",
+   "statement": "SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = %s",
+   "error": "permission denied for table individual",
+   "endpoint": "api_v1_auth_authorize",
+   "method": "POST",
+   "path": "/api/v1/auth/authorize"
+  },
+  {
+   "test": "AuthBrokerTests.test_an_expired_credential_cannot_sign_in",
+   "statement": "SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = %s",
+   "error": "permission denied for table individual",
+   "endpoint": "api_v1_auth_authorize",
+   "method": "POST",
+   "path": "/api/v1/auth/authorize"
+  },
+  {
+   "test": "AuthBrokerTests.test_an_unknown_disclosure_level_is_refused_not_signed",
+   "statement": "SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = %s",
+   "error": "permission denied for table individual",
+   "endpoint": "api_v1_auth_authorize",
+   "method": "POST",
+   "path": "/api/v1/auth/authorize"
+  },
+  {
+   "test": "AuthBrokerTests.test_authorization_code_is_opaque",
+   "statement": "SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = %s",
+   "error": "permission denied for table individual",
+   "endpoint": "api_v1_auth_authorize",
+   "method": "POST",
+   "path": "/api/v1/auth/authorize"
+  },
+  {
+   "test": "AuthBrokerTests.test_code_flow_with_pkce_replay_and_scope",
+   "statement": "SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = %s",
+   "error": "permission denied for table individual",
+   "endpoint": "api_v1_auth_authorize",
+   "method": "POST",
+   "path": "/api/v1/auth/authorize"
+  },
+  {
+   "test": "AuthBrokerTests.test_duress_is_served_identically_and_recorded_silently",
+   "statement": "SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = %s",
+   "error": "permission denied for table individual",
+   "endpoint": "api_v1_auth_authorize",
+   "method": "POST",
+   "path": "/api/v1/auth/authorize"
+  },
+  {
+   "test": "AuthBrokerTests.test_registered_policy_binds_the_holder_request",
+   "statement": "SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = %s",
+   "error": "permission denied for table individual",
+   "endpoint": "api_v1_auth_authorize",
+   "method": "POST",
+   "path": "/api/v1/auth/authorize"
+  },
+  {
+   "test": "AuthBrokerTests.test_the_token_endpoint_checks_the_scope_again_for_itself",
+   "statement": "SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = %s",
+   "error": "permission denied for table individual",
+   "endpoint": "api_v1_auth_authorize",
+   "method": "POST",
+   "path": "/api/v1/auth/authorize"
+  },
+  {
+   "test": "AuthBrokerTests.test_two_relying_parties_get_different_subjects_for_one_person",
+   "statement": "SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = %s",
+   "error": "permission denied for table individual",
+   "endpoint": "api_v1_auth_authorize",
+   "method": "POST",
+   "path": "/api/v1/auth/authorize"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_a_credential_that_is_no_longer_active_cannot_bind_a_holder_key",
+   "statement": "INSERT INTO HolderKeyEvent (token_id, public_key_hex, algorithm, event) VALUES (%s, %s, %s, %s)",
+   "error": "permission denied for table holderkeyevent",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_a_recorded_binding_cannot_be_rewritten",
+   "statement": "INSERT INTO HolderKeyEvent (token_id, public_key_hex, algorithm, event) VALUES (%s, %s, %s, %s)",
+   "error": "permission denied for table holderkeyevent",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_binding_endpoint_returns_the_current_binding",
+   "statement": "INSERT INTO HolderKeyEvent (token_id, public_key_hex, algorithm, event) VALUES (%s, %s, %s, %s)",
+   "error": "permission denied for table holderkeyevent",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_binding_shape_carries_no_personal_data",
+   "statement": "INSERT INTO HolderKeyEvent (token_id, public_key_hex, algorithm, event) VALUES (%s, %s, %s, %s)",
+   "error": "permission denied for table holderkeyevent",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_only_an_accepted_parameter_set_is_registered",
+   "statement": "INSERT INTO HolderKeyEvent (token_id, public_key_hex, algorithm, event) VALUES (%s, %s, %s, %s)",
+   "error": "permission denied for table holderkeyevent",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_revocation_publishes_rather_than_hides",
+   "statement": "INSERT INTO HolderKeyEvent (token_id, public_key_hex, algorithm, event) VALUES (%s, %s, %s, %s)",
+   "error": "permission denied for table holderkeyevent",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_revoking_a_holder_key_that_was_never_bound_is_refused",
+   "statement": "INSERT INTO HolderKeyEvent (token_id, public_key_hex, algorithm, event) VALUES (%s, %s, %s, %s)",
+   "error": "permission denied for table holderkeyevent",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_rotation_replaces_the_current_key_without_rewriting_history",
+   "statement": "INSERT INTO HolderKeyEvent (token_id, public_key_hex, algorithm, event) VALUES (%s, %s, %s, %s)",
+   "error": "permission denied for table holderkeyevent",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_rotation_replaces_the_current_key_without_rewriting_history",
+   "statement": "INSERT INTO HolderKeyEvent (token_id, public_key_hex, algorithm, event) VALUES (%s, %s, %s, %s)",
+   "error": "permission denied for table holderkeyevent",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  }
+ ],
+ "rp_connections_by_endpoint": {
+  "api_v1_auth_authorize": 29,
+  "api_v1_holder_key_bind": 24,
+  "api_v1_holder_binding": 4
+ },
+ "grants_unchanged_by_reloads": true,
+ "grant_lines": 206
+}

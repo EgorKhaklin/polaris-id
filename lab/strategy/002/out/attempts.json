@@ -1,0 +1,366 @@
+{
+ "definer_routines_executable": [
+  "uc12_record_duress(integer,integer,integer,character varying)"
+ ],
+ "results": [
+  {
+   "label": "issue: INSERT IdentityToken",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table identitytoken"
+  },
+  {
+   "label": "issue: uc1_issue_and_activate (a function, SECURITY DEFINER)",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for function uc1_issue_and_activate"
+  },
+  {
+   "label": "issue: CALL uc_bulk_issue",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for procedure uc_bulk_issue"
+  },
+  {
+   "label": "issue: INSERT TokenSignature",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table tokensignature"
+  },
+  {
+   "label": "issue: INSERT TokenPermission",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table tokenpermission"
+  },
+  {
+   "label": "revoke: UPDATE IdentityToken.status",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table identitytoken"
+  },
+  {
+   "label": "revoke: CALL uc8_revoke_token",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for procedure uc8_revoke_token"
+  },
+  {
+   "label": "revoke: INSERT RevocationList",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table revocationlist"
+  },
+  {
+   "label": "un-revoke: DELETE RevocationList",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table revocationlist"
+  },
+  {
+   "label": "re-point: UPDATE Agency.signing_public_key_hex",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table agency"
+  },
+  {
+   "label": "authority key event: INSERT AuthorityKeyEvent",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table authoritykeyevent"
+  },
+  {
+   "label": "trust edge: CALL uc10_attest_trust",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for procedure uc10_attest_trust"
+  },
+  {
+   "label": "trust edge: INSERT AgencyTrustAttestation",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table agencytrustattestation"
+  },
+  {
+   "label": "account: INSERT AppUser",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table appuser"
+  },
+  {
+   "label": "account: UPDATE AppUser.role",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table appuser"
+  },
+  {
+   "label": "session: INSERT OperatorSession",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table operatorsession"
+  },
+  {
+   "label": "verification event: INSERT VerificationEvent",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table verificationevent"
+  },
+  {
+   "label": "audit: DELETE TokenLifecycleEvent",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table tokenlifecycleevent"
+  },
+  {
+   "label": "audit: DELETE VerificationEvent",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table verificationevent"
+  },
+  {
+   "label": "audit: DELETE AuthAuditLog",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table authauditlog"
+  },
+  {
+   "label": "audit: DELETE DuressEvent",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table duressevent"
+  },
+  {
+   "label": "audit: INSERT AuthAuditLog",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table authauditlog"
+  },
+  {
+   "label": "audit: TRUNCATE TokenLifecycleEvent",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table tokenlifecycleevent"
+  },
+  {
+   "label": "epoch: CALL uc11_close_epoch",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for procedure uc11_close_epoch"
+  },
+  {
+   "label": "recovery: CALL uc9_initiate_recovery",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for procedure uc9_initiate_recovery"
+  },
+  {
+   "label": "erasure: CALL uc_pseudonymize_individual",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for procedure uc_pseudonymize_individual"
+  },
+  {
+   "label": "purge: CALL uc_archive_purge",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for procedure uc_archive_purge"
+  },
+  {
+   "label": "DDL: CREATE TABLE",
+   "kind": "operator",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for schema public"
+  },
+  {
+   "label": "own: UPDATE HolderKeyEvent",
+   "kind": "own",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table holderkeyevent"
+  },
+  {
+   "label": "own: DELETE HolderKeyEvent",
+   "kind": "own",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table holderkeyevent"
+  },
+  {
+   "label": "own: DELETE ExchangeReceiptLog",
+   "kind": "own",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table exchangereceiptlog"
+  },
+  {
+   "label": "own: DELETE TimestampLog",
+   "kind": "own",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table timestamplog"
+  },
+  {
+   "label": "own: DELETE AuthCodeConsumed",
+   "kind": "own",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table authcodeconsumed"
+  },
+  {
+   "label": "own: DELETE ExchangeNonce",
+   "kind": "own",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table exchangenonce"
+  },
+  {
+   "label": "own: DELETE ZkVerificationNonce",
+   "kind": "own",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table zkverificationnonce"
+  },
+  {
+   "label": "own: UPDATE RelyingParty.scope",
+   "kind": "own",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table relyingparty"
+  },
+  {
+   "label": "own: UPDATE RelyingParty.client_secret_hash",
+   "kind": "own",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table relyingparty"
+  },
+  {
+   "label": "own: UPDATE RelyingParty.require_zk",
+   "kind": "own",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table relyingparty"
+  },
+  {
+   "label": "own: INSERT RelyingParty",
+   "kind": "own",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table relyingparty"
+  },
+  {
+   "label": "read: AppUser.password_hash",
+   "kind": "read",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table appuser"
+  },
+  {
+   "label": "read: OperatorSession",
+   "kind": "read",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table operatorsession"
+  },
+  {
+   "label": "read: Individual.date_of_birth",
+   "kind": "read",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table individual"
+  },
+  {
+   "label": "read: VerificationEvent",
+   "kind": "read",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table verificationevent"
+  },
+  {
+   "label": "read: DuressEvent",
+   "kind": "read",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table duressevent"
+  },
+  {
+   "label": "read: IdentityToken.physical_serial",
+   "kind": "read",
+   "outcome": "refused-42501",
+   "sqlstate": "42501",
+   "message": "ERROR:  permission denied for table identitytoken"
+  },
+  {
+   "label": "definer: CALL uc12_record_duress on a token with a duress code enrolled",
+   "kind": "definer",
+   "outcome": "SUCCEEDED",
+   "sqlstate": null,
+   "message": "rowcount=-1"
+  },
+  {
+   "label": "own: INSERT HolderKeyEvent binding an attacker key to token 1 (no possession proof)",
+   "kind": "own-insert",
+   "outcome": "SUCCEEDED",
+   "sqlstate": null,
+   "message": "rowcount=1"
+  },
+  {
+   "label": "own-read: every credential pack (token_value + stored signature) in one query",
+   "kind": "own-read",
+   "outcome": "SUCCEEDED",
+   "sqlstate": null,
+   "message": "rowcount=5"
+  },
+  {
+   "label": "own-read: which credentials have a duress code enrolled, and the hashes",
+   "kind": "own-read",
+   "outcome": "SUCCEEDED",
+   "sqlstate": null,
+   "message": "rowcount=2"
+  },
+  {
+   "label": "own-read: every holder legal name",
+   "kind": "own-read",
+   "outcome": "SUCCEEDED",
+   "sqlstate": null,
+   "message": "rowcount=8"
+  },
+  {
+   "label": "own: INSERT ZkVerificationNonce (burn a nonce a holder has not used)",
+   "kind": "own-insert",
+   "outcome": "SUCCEEDED",
+   "sqlstate": null,
+   "message": "rowcount=1"
+  }
+ ],
+ "duress_rows_before": 0,
+ "duress_rows_after": 0
+}

@@ -1,0 +1,1084 @@
+{
+ "mode": "asis",
+ "tests_run": 163,
+ "failed": 80,
+ "skipped": 3,
+ "per_class": {
+  "ExchangeReceiptSignedTests": {
+   "pass": 2,
+   "fail": 0,
+   "skip": 0
+  },
+  "ExchangeReceiptLogTests": {
+   "pass": 0,
+   "fail": 2,
+   "skip": 0
+  },
+  "TimestampLogTests": {
+   "pass": 0,
+   "fail": 4,
+   "skip": 0
+  },
+  "RegistryTests": {
+   "pass": 0,
+   "fail": 1,
+   "skip": 0
+  },
+  "ExchangeGatewayTests": {
+   "pass": 4,
+   "fail": 0,
+   "skip": 0
+  },
+  "DocumentSigningTests": {
+   "pass": 4,
+   "fail": 0,
+   "skip": 0
+  },
+  "AuthBrokerTests": {
+   "pass": 10,
+   "fail": 0,
+   "skip": 0
+  },
+  "ZKSnarkTests": {
+   "pass": 36,
+   "fail": 12,
+   "skip": 0
+  },
+  "TransparencyProofBoundsTests": {
+   "pass": 1,
+   "fail": 0,
+   "skip": 0
+  },
+  "F03_RateLimitingTests": {
+   "pass": 2,
+   "fail": 0,
+   "skip": 0
+  },
+  "JsonRouteTotalityTests": {
+   "pass": 1,
+   "fail": 1,
+   "skip": 0
+  },
+  "RouteGuardMatrixTests": {
+   "pass": 4,
+   "fail": 0,
+   "skip": 0
+  },
+  "CrossSiteDefenceMatrixTests": {
+   "pass": 3,
+   "fail": 0,
+   "skip": 0
+  },
+  "EndToEndFlowTests": {
+   "pass": 0,
+   "fail": 0,
+   "skip": 3
+  },
+  "RelyingPartyApiTests": {
+   "pass": 3,
+   "fail": 15,
+   "skip": 0
+  },
+  "HolderKeyBindingTests": {
+   "pass": 1,
+   "fail": 9,
+   "skip": 0
+  },
+  "OfflineStatusAssertionTests": {
+   "pass": 0,
+   "fail": 3,
+   "skip": 0
+  },
+  "FederationManifestTests": {
+   "pass": 0,
+   "fail": 2,
+   "skip": 0
+  },
+  "EpochRevocationTests": {
+   "pass": 0,
+   "fail": 4,
+   "skip": 0
+  },
+  "StatusBundleTests": {
+   "pass": 0,
+   "fail": 2,
+   "skip": 0
+  },
+  "OperatorAuthorityScopeTests": {
+   "pass": 6,
+   "fail": 3,
+   "skip": 0
+  },
+  "RefusalsTheAppMutationDrillFound": {
+   "pass": 9,
+   "fail": 16,
+   "skip": 0
+  }
+ },
+ "failures": [
+  {
+   "test": "CrossSiteDefenceMatrixTests.test_every_csrf_protected_route_refuses_a_request_without_a_token (route='/api/v1/exchange-receipt/<int:agency_id>')",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "CrossSiteDefenceMatrixTests.test_every_csrf_protected_route_refuses_a_request_without_a_token (route='/api/v1/sign/<int:agency_id>')",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "EpochRevocationTests.test_epoch_checkpoint_shape_and_canonical_match",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "EpochRevocationTests.test_not_federated_agency_is_404",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "EpochRevocationTests.test_revocation_feed_shape_commitment_and_no_pii",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "EpochRevocationTests.test_the_leaves_route_is_bounded_by_the_schema_before_the_application",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "ExchangeReceiptLogTests.test_receipt_log_head_proof_and_inclusion",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "ExchangeReceiptLogTests.test_unknown_receipt_hash_is_not_in_the_log",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "FederationManifestTests.test_manifest_shape_and_attestation_exchange",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "FederationManifestTests.test_not_federated_agency_is_404",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_a_credential_that_is_no_longer_active_cannot_bind_a_holder_key",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_a_recorded_binding_cannot_be_rewritten",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_binding_endpoint_returns_the_current_binding",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_binding_shape_carries_no_personal_data",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_only_an_accepted_parameter_set_is_registered",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_possession_is_required_to_bind",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_revocation_publishes_rather_than_hides",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_revoking_a_holder_key_that_was_never_bound_is_refused",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_rotation_replaces_the_current_key_without_rewriting_history",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "JsonRouteTotalityTests.test_no_json_route_answers_5xx_to_a_body_it_dislikes",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "OfflineStatusAssertionTests.test_assertion_reflects_current_status",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "OfflineStatusAssertionTests.test_assertion_shape_is_short_lived_and_carries_no_pii",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "OfflineStatusAssertionTests.test_possession_is_required",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "OperatorAuthorityScopeTests.test_a_bound_operator_cannot_make_another_authority_sign",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "OperatorAuthorityScopeTests.test_a_public_route_is_unaffected_by_the_policies",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "OperatorAuthorityScopeTests.test_an_unbound_operator_is_not_refused_by_the_authority_binding",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_an_epoch_checkpoint_before_any_epoch_is_404",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_anchor_log_proof_past_the_end_is_400",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_authorize_refuses_a_nonce_shorter_than_eight",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_authorize_refuses_a_presentation_without_a_signature",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_holder_key_binding_refuses_a_presentation_without_a_signature",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_holder_signing_refuses_a_presentation_without_a_signature",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_mdoc_refuses_elements_that_are_not_a_list_of_names",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_receipt_log_proof_past_the_end_is_400",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_rp_verify_refuses_a_presentation_without_a_signature",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_signed_receipt_mint_refuses_an_empty_signature",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_the_exchange_gateway_refuses_a_nonce_longer_than_64",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_the_exchange_gateway_refuses_a_service_kind_it_does_not_forward_404",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_the_exchange_gateway_refuses_an_envelope_without_a_signature",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_the_leaf_set_of_an_unknown_epoch_is_404",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_timestamp_log_proof_past_the_end_is_400",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_verifiable_credential_refuses_a_verifier_scope_that_is_not_a_string",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RegistryTests.test_registry_served_from_athena_views",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_a_relying_party_is_held_to_its_own_rate_limit",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_a_status_assertion_needs_a_stored_signature_that_still_verifies",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_a_status_assertion_never_says_active_for_an_expired_credential",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_a_stored_signature_that_no_longer_verifies_is_not_verifiable",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_disabled_rp_cannot_get_a_token",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_disabling_a_relying_party_stops_its_EXISTING_bearer_immediately",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_token_endpoint_issues_a_verify_scoped_bearer",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_unknown_client_is_invalid_client",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_unknown_value_and_tampered_signature_are_uniformly_not_verifiable",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_unsupported_grant_type_is_400",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_verify_accepts_a_genuine_presentation_and_carries_no_pii",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_verify_rejects_a_revoked_token_but_stays_authentic",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_verify_rejects_an_expired_credential_but_stays_authentic",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_verify_rejects_every_non_active_status_not_only_revoked (status='DORMANT')",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_verify_rejects_every_non_active_status_not_only_revoked (status='LOST')",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_verify_requires_a_valid_bearer",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_wrong_secret_is_invalid_client",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RouteGuardMatrixTests.test_every_role_gated_route_refuses_a_role_it_excludes (route='/api/v1/exchange-receipt/<int:agency_id>', role='auditor')",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "RouteGuardMatrixTests.test_every_role_gated_route_refuses_a_role_it_excludes (route='/api/v1/sign/<int:agency_id>', role='auditor')",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "StatusBundleTests.test_bundle_shape_commitment_and_canonical_match",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "StatusBundleTests.test_not_federated_agency_is_404",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "TimestampLogTests.test_the_authority_bounds_the_nonce_the_caller_chooses",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "TimestampLogTests.test_the_authority_refuses_a_digest_algorithm_it_did_not_compute",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "TimestampLogTests.test_the_authority_signs_a_DIGEST_and_refuses_anything_else",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "TimestampLogTests.test_unanchored_request_retains_nothing_and_anchored_is_included",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "ZKSnarkTests.test_a_per_holder_artifact_is_never_cached",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "ZKSnarkTests.test_an_expired_credential_is_not_signed_as_usable",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "ZKSnarkTests.test_mdoc_is_possession_authenticated_and_never_cached",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "ZKSnarkTests.test_mdoc_never_carries_the_token_value",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "ZKSnarkTests.test_mdoc_never_claims_the_mdl_doctype",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "ZKSnarkTests.test_mdoc_renders_the_credential_in_iso_18013_5_structure",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "ZKSnarkTests.test_mdoc_selective_disclosure_withholds_what_was_not_asked_for",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "ZKSnarkTests.test_public_status_artifacts_cache_only_to_their_own_window",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "ZKSnarkTests.test_verifiable_credential_attests_a_result_not_an_identity",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "ZKSnarkTests.test_verifiable_credential_names_its_own_cryptosuite",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "ZKSnarkTests.test_verifiable_credential_never_carries_the_token_value",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  },
+  {
+   "test": "ZKSnarkTests.test_verifiable_credential_subject_id_is_per_verifier_or_absent",
+   "last": "psycopg2.errors.InsufficientPrivilege: permission denied for table operatorsession"
+  }
+ ],
+ "refusals": [
+  {
+   "test": "ExchangeReceiptLogTests.test_receipt_log_head_proof_and_inclusion",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_receipt_log_sth",
+   "method": "GET",
+   "path": "/api/v1/transparency/receipts/sth"
+  },
+  {
+   "test": "ExchangeReceiptLogTests.test_unknown_receipt_hash_is_not_in_the_log",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_exchange_receipt_inclusion",
+   "method": "GET",
+   "path": "/api/v1/exchange-receipt/inclusion/efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+  },
+  {
+   "test": "TimestampLogTests.test_the_authority_bounds_the_nonce_the_caller_chooses",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_timestamp",
+   "method": "POST",
+   "path": "/api/v1/timestamp/1"
+  },
+  {
+   "test": "TimestampLogTests.test_the_authority_refuses_a_digest_algorithm_it_did_not_compute",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_timestamp",
+   "method": "POST",
+   "path": "/api/v1/timestamp/1"
+  },
+  {
+   "test": "TimestampLogTests.test_the_authority_signs_a_DIGEST_and_refuses_anything_else",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_timestamp",
+   "method": "POST",
+   "path": "/api/v1/timestamp/1"
+  },
+  {
+   "test": "TimestampLogTests.test_unanchored_request_retains_nothing_and_anchored_is_included",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_timestamp",
+   "method": "POST",
+   "path": "/api/v1/timestamp/1"
+  },
+  {
+   "test": "RegistryTests.test_registry_served_from_athena_views",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_registry",
+   "method": "GET",
+   "path": "/api/v1/registry/1"
+  },
+  {
+   "test": "ZKSnarkTests.test_a_per_holder_artifact_is_never_cached",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_status_assertion",
+   "method": "POST",
+   "path": "/api/v1/status-assertion"
+  },
+  {
+   "test": "ZKSnarkTests.test_an_expired_credential_is_not_signed_as_usable",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_verifiable_credential",
+   "method": "POST",
+   "path": "/api/v1/verifiable-credential"
+  },
+  {
+   "test": "ZKSnarkTests.test_mdoc_is_possession_authenticated_and_never_cached",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_mdoc",
+   "method": "POST",
+   "path": "/api/v1/mdoc"
+  },
+  {
+   "test": "ZKSnarkTests.test_mdoc_never_carries_the_token_value",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_mdoc",
+   "method": "POST",
+   "path": "/api/v1/mdoc"
+  },
+  {
+   "test": "ZKSnarkTests.test_mdoc_never_claims_the_mdl_doctype",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_mdoc",
+   "method": "POST",
+   "path": "/api/v1/mdoc"
+  },
+  {
+   "test": "ZKSnarkTests.test_mdoc_renders_the_credential_in_iso_18013_5_structure",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_mdoc",
+   "method": "POST",
+   "path": "/api/v1/mdoc"
+  },
+  {
+   "test": "ZKSnarkTests.test_mdoc_selective_disclosure_withholds_what_was_not_asked_for",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_mdoc",
+   "method": "POST",
+   "path": "/api/v1/mdoc"
+  },
+  {
+   "test": "ZKSnarkTests.test_public_status_artifacts_cache_only_to_their_own_window",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_revocation_feed",
+   "method": "GET",
+   "path": "/api/v1/revocation-feed/1"
+  },
+  {
+   "test": "ZKSnarkTests.test_verifiable_credential_attests_a_result_not_an_identity",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_verifiable_credential",
+   "method": "POST",
+   "path": "/api/v1/verifiable-credential"
+  },
+  {
+   "test": "ZKSnarkTests.test_verifiable_credential_names_its_own_cryptosuite",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_verifiable_credential",
+   "method": "POST",
+   "path": "/api/v1/verifiable-credential"
+  },
+  {
+   "test": "ZKSnarkTests.test_verifiable_credential_never_carries_the_token_value",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_verifiable_credential",
+   "method": "POST",
+   "path": "/api/v1/verifiable-credential"
+  },
+  {
+   "test": "ZKSnarkTests.test_verifiable_credential_subject_id_is_per_verifier_or_absent",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_verifiable_credential",
+   "method": "POST",
+   "path": "/api/v1/verifiable-credential"
+  },
+  {
+   "test": "JsonRouteTotalityTests.test_no_json_route_answers_5xx_to_a_body_it_dislikes",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_auth_authorize",
+   "method": "POST",
+   "path": "/api/v1/auth/authorize"
+  },
+  {
+   "test": "RouteGuardMatrixTests.test_every_role_gated_route_refuses_a_role_it_excludes",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_exchange_receipt",
+   "method": "POST",
+   "path": "/api/v1/exchange-receipt/1"
+  },
+  {
+   "test": "RouteGuardMatrixTests.test_every_role_gated_route_refuses_a_role_it_excludes",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_sign",
+   "method": "POST",
+   "path": "/api/v1/sign/1"
+  },
+  {
+   "test": "CrossSiteDefenceMatrixTests.test_every_csrf_protected_route_refuses_a_request_without_a_token",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_exchange_receipt",
+   "method": "POST",
+   "path": "/api/v1/exchange-receipt/1"
+  },
+  {
+   "test": "CrossSiteDefenceMatrixTests.test_every_csrf_protected_route_refuses_a_request_without_a_token",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_sign",
+   "method": "POST",
+   "path": "/api/v1/sign/1"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_a_relying_party_is_held_to_its_own_rate_limit",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_oauth_token",
+   "method": "POST",
+   "path": "/api/v1/oauth/token"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_a_status_assertion_needs_a_stored_signature_that_still_verifies",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_status_assertion",
+   "method": "POST",
+   "path": "/api/v1/status-assertion"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_a_status_assertion_never_says_active_for_an_expired_credential",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_status_assertion",
+   "method": "POST",
+   "path": "/api/v1/status-assertion"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_a_stored_signature_that_no_longer_verifies_is_not_verifiable",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_oauth_token",
+   "method": "POST",
+   "path": "/api/v1/oauth/token"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_disabled_rp_cannot_get_a_token",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_oauth_token",
+   "method": "POST",
+   "path": "/api/v1/oauth/token"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_disabling_a_relying_party_stops_its_EXISTING_bearer_immediately",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_oauth_token",
+   "method": "POST",
+   "path": "/api/v1/oauth/token"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_token_endpoint_issues_a_verify_scoped_bearer",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_oauth_token",
+   "method": "POST",
+   "path": "/api/v1/oauth/token"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_unknown_client_is_invalid_client",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_oauth_token",
+   "method": "POST",
+   "path": "/api/v1/oauth/token"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_unknown_value_and_tampered_signature_are_uniformly_not_verifiable",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_oauth_token",
+   "method": "POST",
+   "path": "/api/v1/oauth/token"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_unsupported_grant_type_is_400",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_oauth_token",
+   "method": "POST",
+   "path": "/api/v1/oauth/token"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_verify_accepts_a_genuine_presentation_and_carries_no_pii",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_oauth_token",
+   "method": "POST",
+   "path": "/api/v1/oauth/token"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_verify_rejects_a_revoked_token_but_stays_authentic",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_oauth_token",
+   "method": "POST",
+   "path": "/api/v1/oauth/token"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_verify_rejects_an_expired_credential_but_stays_authentic",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_oauth_token",
+   "method": "POST",
+   "path": "/api/v1/oauth/token"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_verify_rejects_every_non_active_status_not_only_revoked",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_oauth_token",
+   "method": "POST",
+   "path": "/api/v1/oauth/token"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_verify_rejects_every_non_active_status_not_only_revoked",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_oauth_token",
+   "method": "POST",
+   "path": "/api/v1/oauth/token"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_verify_requires_a_valid_bearer",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_verify",
+   "method": "POST",
+   "path": "/api/v1/verify"
+  },
+  {
+   "test": "RelyingPartyApiTests.test_wrong_secret_is_invalid_client",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_oauth_token",
+   "method": "POST",
+   "path": "/api/v1/oauth/token"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_a_credential_that_is_no_longer_active_cannot_bind_a_holder_key",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_a_recorded_binding_cannot_be_rewritten",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_binding_endpoint_returns_the_current_binding",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_holder_binding",
+   "method": "POST",
+   "path": "/api/v1/holder-binding"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_binding_shape_carries_no_personal_data",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_only_an_accepted_parameter_set_is_registered",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_possession_is_required_to_bind",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_revocation_publishes_rather_than_hides",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_revoking_a_holder_key_that_was_never_bound_is_refused",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "HolderKeyBindingTests.test_rotation_replaces_the_current_key_without_rewriting_history",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "OfflineStatusAssertionTests.test_assertion_reflects_current_status",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_status_assertion",
+   "method": "POST",
+   "path": "/api/v1/status-assertion"
+  },
+  {
+   "test": "OfflineStatusAssertionTests.test_assertion_shape_is_short_lived_and_carries_no_pii",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_status_assertion",
+   "method": "POST",
+   "path": "/api/v1/status-assertion"
+  },
+  {
+   "test": "OfflineStatusAssertionTests.test_possession_is_required",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_status_assertion",
+   "method": "POST",
+   "path": "/api/v1/status-assertion"
+  },
+  {
+   "test": "FederationManifestTests.test_manifest_shape_and_attestation_exchange",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_federation_manifest",
+   "method": "GET",
+   "path": "/api/v1/federation-manifest/1"
+  },
+  {
+   "test": "FederationManifestTests.test_not_federated_agency_is_404",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_federation_manifest",
+   "method": "GET",
+   "path": "/api/v1/federation-manifest/1"
+  },
+  {
+   "test": "EpochRevocationTests.test_epoch_checkpoint_shape_and_canonical_match",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_epoch_checkpoint",
+   "method": "GET",
+   "path": "/api/v1/epoch-checkpoint/1"
+  },
+  {
+   "test": "EpochRevocationTests.test_not_federated_agency_is_404",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_epoch_checkpoint",
+   "method": "GET",
+   "path": "/api/v1/epoch-checkpoint/1"
+  },
+  {
+   "test": "EpochRevocationTests.test_revocation_feed_shape_commitment_and_no_pii",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_revocation_feed",
+   "method": "GET",
+   "path": "/api/v1/revocation-feed/1"
+  },
+  {
+   "test": "EpochRevocationTests.test_the_leaves_route_is_bounded_by_the_schema_before_the_application",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_epoch_leaves",
+   "method": "GET",
+   "path": "/api/v1/epoch/1/leaves"
+  },
+  {
+   "test": "StatusBundleTests.test_bundle_shape_commitment_and_canonical_match",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_federation_status_bundle",
+   "method": "GET",
+   "path": "/api/v1/federation-status-bundle/1"
+  },
+  {
+   "test": "StatusBundleTests.test_not_federated_agency_is_404",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_federation_status_bundle",
+   "method": "GET",
+   "path": "/api/v1/federation-status-bundle/1"
+  },
+  {
+   "test": "OperatorAuthorityScopeTests.test_a_bound_operator_cannot_make_another_authority_sign",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_sign",
+   "method": "POST",
+   "path": "/api/v1/sign/2"
+  },
+  {
+   "test": "OperatorAuthorityScopeTests.test_a_public_route_is_unaffected_by_the_policies",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_revocation_feed",
+   "method": "GET",
+   "path": "/api/v1/revocation-feed/1"
+  },
+  {
+   "test": "OperatorAuthorityScopeTests.test_an_unbound_operator_is_not_refused_by_the_authority_binding",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_sign",
+   "method": "POST",
+   "path": "/api/v1/sign/1"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_an_epoch_checkpoint_before_any_epoch_is_404",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_epoch_checkpoint",
+   "method": "GET",
+   "path": "/api/v1/epoch-checkpoint/1"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_anchor_log_proof_past_the_end_is_400",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_transparency_entries",
+   "method": "GET",
+   "path": "/api/v1/transparency/entries"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_authorize_refuses_a_nonce_shorter_than_eight",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_auth_authorize",
+   "method": "POST",
+   "path": "/api/v1/auth/authorize"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_authorize_refuses_a_presentation_without_a_signature",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_auth_authorize",
+   "method": "POST",
+   "path": "/api/v1/auth/authorize"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_holder_key_binding_refuses_a_presentation_without_a_signature",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_holder_key_bind",
+   "method": "POST",
+   "path": "/api/v1/holder-key"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_holder_signing_refuses_a_presentation_without_a_signature",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_sign_holder",
+   "method": "POST",
+   "path": "/api/v1/sign/1/holder"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_mdoc_refuses_elements_that_are_not_a_list_of_names",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_mdoc",
+   "method": "POST",
+   "path": "/api/v1/mdoc"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_receipt_log_proof_past_the_end_is_400",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_receipt_log_entries",
+   "method": "GET",
+   "path": "/api/v1/transparency/receipts/entries"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_rp_verify_refuses_a_presentation_without_a_signature",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_oauth_token",
+   "method": "POST",
+   "path": "/api/v1/oauth/token"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_signed_receipt_mint_refuses_an_empty_signature",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_exchange_receipt_signed",
+   "method": "POST",
+   "path": "/api/v1/exchange-receipt/1/signed"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_the_exchange_gateway_refuses_a_nonce_longer_than_64",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_exchange",
+   "method": "POST",
+   "path": "/api/v1/exchange/1"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_the_exchange_gateway_refuses_a_service_kind_it_does_not_forward_404",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_exchange",
+   "method": "POST",
+   "path": "/api/v1/exchange/1"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_the_exchange_gateway_refuses_an_envelope_without_a_signature",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_exchange",
+   "method": "POST",
+   "path": "/api/v1/exchange/1"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_the_leaf_set_of_an_unknown_epoch_is_404",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_epoch_leaves",
+   "method": "GET",
+   "path": "/api/v1/epoch/2/leaves"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_timestamp_log_proof_past_the_end_is_400",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_timestamp",
+   "method": "POST",
+   "path": "/api/v1/timestamp/1"
+  },
+  {
+   "test": "RefusalsTheAppMutationDrillFound.test_verifiable_credential_refuses_a_verifier_scope_that_is_not_a_string",
+   "statement": "SELECT s.revoked_at, u.is_active, u.role AS current_role, u.agency_id AS current_agency_id, (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale FROM OperatorSession s JOIN AppUser u ON u.use",
+   "error": "permission denied for table operatorsession",
+   "endpoint": "api_v1_verifiable_credential",
+   "method": "POST",
+   "path": "/api/v1/verifiable-credential"
+  }
+ ],
+ "grants_unchanged_by_reloads": true,
+ "grant_lines": 220
+}

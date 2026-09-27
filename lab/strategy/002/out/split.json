@@ -1,0 +1,154 @@
+{
+ "mode": "split",
+ "tests_run": 163,
+ "failed": 0,
+ "skipped": 3,
+ "per_class": {
+  "ExchangeReceiptSignedTests": {
+   "pass": 2,
+   "fail": 0,
+   "skip": 0
+  },
+  "ExchangeReceiptLogTests": {
+   "pass": 2,
+   "fail": 0,
+   "skip": 0
+  },
+  "TimestampLogTests": {
+   "pass": 4,
+   "fail": 0,
+   "skip": 0
+  },
+  "RegistryTests": {
+   "pass": 1,
+   "fail": 0,
+   "skip": 0
+  },
+  "ExchangeGatewayTests": {
+   "pass": 4,
+   "fail": 0,
+   "skip": 0
+  },
+  "DocumentSigningTests": {
+   "pass": 4,
+   "fail": 0,
+   "skip": 0
+  },
+  "AuthBrokerTests": {
+   "pass": 10,
+   "fail": 0,
+   "skip": 0
+  },
+  "ZKSnarkTests": {
+   "pass": 48,
+   "fail": 0,
+   "skip": 0
+  },
+  "TransparencyProofBoundsTests": {
+   "pass": 1,
+   "fail": 0,
+   "skip": 0
+  },
+  "F03_RateLimitingTests": {
+   "pass": 2,
+   "fail": 0,
+   "skip": 0
+  },
+  "JsonRouteTotalityTests": {
+   "pass": 2,
+   "fail": 0,
+   "skip": 0
+  },
+  "RouteGuardMatrixTests": {
+   "pass": 4,
+   "fail": 0,
+   "skip": 0
+  },
+  "CrossSiteDefenceMatrixTests": {
+   "pass": 3,
+   "fail": 0,
+   "skip": 0
+  },
+  "EndToEndFlowTests": {
+   "pass": 0,
+   "fail": 0,
+   "skip": 3
+  },
+  "RelyingPartyApiTests": {
+   "pass": 18,
+   "fail": 0,
+   "skip": 0
+  },
+  "HolderKeyBindingTests": {
+   "pass": 10,
+   "fail": 0,
+   "skip": 0
+  },
+  "OfflineStatusAssertionTests": {
+   "pass": 3,
+   "fail": 0,
+   "skip": 0
+  },
+  "FederationManifestTests": {
+   "pass": 2,
+   "fail": 0,
+   "skip": 0
+  },
+  "EpochRevocationTests": {
+   "pass": 4,
+   "fail": 0,
+   "skip": 0
+  },
+  "StatusBundleTests": {
+   "pass": 2,
+   "fail": 0,
+   "skip": 0
+  },
+  "OperatorAuthorityScopeTests": {
+   "pass": 9,
+   "fail": 0,
+   "skip": 0
+  },
+  "RefusalsTheAppMutationDrillFound": {
+   "pass": 25,
+   "fail": 0,
+   "skip": 0
+  }
+ },
+ "failures": [],
+ "refusals": [],
+ "rp_connections_by_endpoint": {
+  "api_v1_receipt_log_sth": 1,
+  "api_v1_exchange_receipt_inclusion": 2,
+  "api_v1_receipt_log_entries": 3,
+  "api_v1_timestamp": 56,
+  "api_v1_timestamp_inclusion": 2,
+  "api_v1_timestamp_log_sth": 1,
+  "api_v1_timestamp_log_entries": 3,
+  "api_v1_registry": 17,
+  "api_v1_sign_holder": 72,
+  "api_v1_auth_authorize": 65,
+  "api_v1_auth_token": 16,
+  "api_v1_status_assertion": 20,
+  "api_v1_verifiable_credential": 30,
+  "api_v1_mdoc": 45,
+  "api_v1_revocation_feed": 7,
+  "api_v1_epoch_checkpoint": 9,
+  "api_v1_federation_manifest": 7,
+  "api_v1_trust_list": 1,
+  "api_v1_federation_status_bundle": 7,
+  "api_v1_transparency_entries": 2,
+  "api_v1_transparency_proof": 3,
+  "api_v1_receipt_log_proof": 3,
+  "api_v1_timestamp_log_proof": 3,
+  "api_v1_holder_binding": 14,
+  "api_v1_holder_key_bind": 46,
+  "api_v1_oauth_token": 27,
+  "api_v1_verify": 36,
+  "api_v1_epoch_leaves": 7,
+  "api_v1_exchange_receipt_signed": 1,
+  "api_v1_exchange": 3
+ },
+ "grants_unchanged_by_reloads": true,
+ "grant_lines": 224
+}

@@ -1,0 +1,122 @@
+{
+ "mode": "owner",
+ "tests_run": 163,
+ "failed": 0,
+ "skipped": 3,
+ "per_class": {
+  "ExchangeReceiptSignedTests": {
+   "pass": 2,
+   "fail": 0,
+   "skip": 0
+  },
+  "ExchangeReceiptLogTests": {
+   "pass": 2,
+   "fail": 0,
+   "skip": 0
+  },
+  "TimestampLogTests": {
+   "pass": 4,
+   "fail": 0,
+   "skip": 0
+  },
+  "RegistryTests": {
+   "pass": 1,
+   "fail": 0,
+   "skip": 0
+  },
+  "ExchangeGatewayTests": {
+   "pass": 4,
+   "fail": 0,
+   "skip": 0
+  },
+  "DocumentSigningTests": {
+   "pass": 4,
+   "fail": 0,
+   "skip": 0
+  },
+  "AuthBrokerTests": {
+   "pass": 10,
+   "fail": 0,
+   "skip": 0
+  },
+  "ZKSnarkTests": {
+   "pass": 48,
+   "fail": 0,
+   "skip": 0
+  },
+  "TransparencyProofBoundsTests": {
+   "pass": 1,
+   "fail": 0,
+   "skip": 0
+  },
+  "F03_RateLimitingTests": {
+   "pass": 2,
+   "fail": 0,
+   "skip": 0
+  },
+  "JsonRouteTotalityTests": {
+   "pass": 2,
+   "fail": 0,
+   "skip": 0
+  },
+  "RouteGuardMatrixTests": {
+   "pass": 4,
+   "fail": 0,
+   "skip": 0
+  },
+  "CrossSiteDefenceMatrixTests": {
+   "pass": 3,
+   "fail": 0,
+   "skip": 0
+  },
+  "EndToEndFlowTests": {
+   "pass": 0,
+   "fail": 0,
+   "skip": 3
+  },
+  "RelyingPartyApiTests": {
+   "pass": 18,
+   "fail": 0,
+   "skip": 0
+  },
+  "HolderKeyBindingTests": {
+   "pass": 10,
+   "fail": 0,
+   "skip": 0
+  },
+  "OfflineStatusAssertionTests": {
+   "pass": 3,
+   "fail": 0,
+   "skip": 0
+  },
+  "FederationManifestTests": {
+   "pass": 2,
+   "fail": 0,
+   "skip": 0
+  },
+  "EpochRevocationTests": {
+   "pass": 4,
+   "fail": 0,
+   "skip": 0
+  },
+  "StatusBundleTests": {
+   "pass": 2,
+   "fail": 0,
+   "skip": 0
+  },
+  "OperatorAuthorityScopeTests": {
+   "pass": 9,
+   "fail": 0,
+   "skip": 0
+  },
+  "RefusalsTheAppMutationDrillFound": {
+   "pass": 25,
+   "fail": 0,
+   "skip": 0
+  }
+ },
+ "failures": [],
+ "refusals": [],
+ "grants_unchanged_by_reloads": true,
+ "grant_lines": 220
+}

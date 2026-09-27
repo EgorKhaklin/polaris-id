@@ -33,7 +33,7 @@ falsifier invented later is always satisfied by whatever was built.
 | Record | Capability | State |
 |---|---|---|
 | [001-token-status-list.md](001-token-status-list.md) | Read a foreign issuer's revocation status (IETF Token Status List) | CLOSED. Both falsifiers checked and neither fired; shipped as v1.0.0-rc.4 and v1.0.0-rc.5. No outside party has used it. |
-| [002-relying-party-api-compartment.md](002-relying-party-api-compartment.md) | Run the internet-facing relying-party API as its own service with its own least-privileged database login | OPEN. Lab measurement first: run the relying-party test classes as that login and record every right it needs. |
+| [002-relying-party-api-compartment.md](002-relying-party-api-compartment.md) | Run the internet-facing relying-party API as its own service with its own least-privileged database login | MEASURED, NOT BUILT alone: separable (160 of 163 tests pass as the narrowed login, every operator write refused), but the public surface still shares the issuance signing key and reads every credential pack, so the split would overstate its protection. Next: signing custody (003). |
 
 ## Candidates generated, not admitted
 

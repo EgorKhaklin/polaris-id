@@ -1,7 +1,7 @@
 # 002: the relying-party API in its own compartment
 
 **Opened 2026-09-27.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md).
-State: OPEN, lab measurement first. One move.
+State: MEASURED 2026-09-27, NOT BUILT as a process split alone. Results: [002/RESULTS.md](002/RESULTS.md).
 
 ---
 
@@ -90,3 +90,37 @@ Written before the work starts:
 - **Nobody runs it split.** If, by the next release after it ships, no documented deployment
   (compose, Helm, Linux) runs the relying-party API separately by default, it was a diagram,
   not a compartment.
+
+---
+
+## Measured (2026-09-27)
+
+Section 9 was run in a scratch database: a login `polaris_rp` with exactly the rights the
+relying-party routes need ([002/polaris_rp_grants.sql](002/polaris_rp_grants.sql)), the 22
+test classes that call `/api/v1` run with the application connected as it
+([002/run_rp_as_polaris_rp.py](002/run_rp_as_polaris_rp.py)), and every operator write
+attempted as it ([002/attempt_operator_writes.py](002/attempt_operator_writes.py)).
+
+- **The surface is separable** (the first kill criterion does not fire): 163 tests, 160 pass
+  and 3 skip in split mode, with 26 relations read, 7 tables written (the six the map named plus
+  `ZkVerificationNonce`), and one definer procedure (`uc12_record_duress`). Every operator write
+  was refused: issuing, revoking, re-pointing a signing key, trust edges, accounts, sessions,
+  verification events, audit deletion, epochs, recoveries, erasure, purge, DDL.
+- **Section 2 overstated what the split buys.** Its sentence, that the blast radius would be
+  six append-mostly registers and one timestamp column, is false. As `polaris_rp` the public
+  surface still: binds any holder key to any credential (the insert is not tied to possession in
+  the database), reads every credential pack in one query (token value plus stored signature,
+  which is what possession authentication checks, so it can present as any holder), reads the
+  enrolled duress hashes and holder legal names, and records duress events through
+  `uc12_record_duress`. And outside the database it signs with the SAME custody key as issuance,
+  so code execution there acts as the issuer whatever login it holds.
+
+## Decision
+
+Not built as a process split alone: separating the login while the signing key and the bulk
+pack read stay shared would put a boundary on a diagram that an attacker walks around. The
+compartment that decides the blast radius is signing custody, a key the public surface can use
+for what it signs and cannot use for issuance, together with a possession lookup that does not
+expose packs in bulk. That is its own bet with its own record (003), before any of this ships.
+
+Recorded here because a strategy that only records its successes is a list of preferences.

@@ -1,0 +1,272 @@
+[
+ {
+  "where": "_rp_authenticate_client (oauth/token, auth/token)",
+  "statement": "SELECT rp_id, client_secret_hash, enabled, scope FROM RelyingParty WHERE client_id = %s",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "POST /api/v1/oauth/token",
+  "statement": "UPDATE RelyingParty SET last_used_at = now() WHERE rp_id = %s",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "POST /api/v1/verify",
+  "statement": "SELECT rate_limit_per_min FROM RelyingParty WHERE rp_id = %s AND enabled = TRUE",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "POST /api/v1/verify",
+  "statement": "SELECT it.token_id, it.issuing_agency_id, it.token_value, it.status, it.expiration_date, ts.signature_bytes, ts.signing_public_key_hex, ag.signing_public_key_he",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_issuer_key_facts (verify)",
+  "statement": "SELECT k.status, k.registered_at, k.retired_at, k.compromised_at, (SELECT min(event_timestamp) FROM TokenLifecycleEvent WHERE token_id = %s AND event_type = 'IS",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_possession_authenticated (holder routes, mdoc, vc, sign/holder, auth/authorize)",
+  "statement": "SELECT it.token_id, it.individual_id, it.token_value, it.status, it.issuing_agency_id, it.expiration_date, ts.signature_bytes, ts.signing_public_key_hex FROM Id",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "GET /api/v1/epoch/<id>/leaves",
+  "statement": "SELECT e.epoch_id, e.merkle_root, e.committed_count, e.valid_until FROM TokenStateEpoch e WHERE e.epoch_id = %s",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "GET /api/v1/epoch/<id>/leaves",
+  "statement": "SELECT leaf_hash FROM TokenStateEpochLeaf WHERE epoch_id = %s ORDER BY leaf_id",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "GET /api/v1/epoch/<id>/leaves",
+  "statement": "SELECT agency_id, name FROM Agency ORDER BY agency_id LIMIT 1",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_holder_binding_for",
+  "statement": "SELECT public_key_hex, algorithm, event, effective_at FROM HolderKeyCurrent WHERE token_id = %s",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "POST /api/v1/holder-key",
+  "statement": "SELECT public_key_hex, algorithm FROM HolderKeyCurrent WHERE token_id = %s",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "POST /api/v1/holder-key",
+  "statement": "INSERT INTO HolderKeyEvent (token_id, public_key_hex, algorithm, event) VALUES (%s, %s, %s, %s)",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "POST /api/v1/mdoc",
+  "statement": "SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = (SELECT individual_id FROM IdentityToken WHERE token_value = %s)",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "POST /api/v1/mdoc, /verifiable-credential",
+  "statement": "SELECT c.context_type FROM VerificationContext c JOIN TokenPermission p ON p.context_id = c.context_id JOIN IdentityToken t ON t.token_id = p.token_id WHERE t.t",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_authority_keys (federation-manifest, trust-list)",
+  "statement": "SELECT public_key_hex, algorithm, status, registered_at, retired_at, compromised_at FROM AuthorityKeyCurrent WHERE agency_id = %s ORDER BY registered_at NULLS L",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_key_status",
+  "statement": "SELECT status FROM AuthorityKeyCurrent WHERE agency_id = %s AND public_key_hex = %s",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_federation_manifest_body",
+  "statement": "SELECT att.attested_agency_id, att.context_id, att.attested_date, att.valid_until, att.attestation_format, att.attestation_signature_hex, att.attestation_public",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_federation_manifest_body, _revocation_feed_body",
+  "statement": "SELECT epoch_id, merkle_root FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 1",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_epoch_checkpoint_body",
+  "statement": "SELECT epoch_id, merkle_root, committed_count, valid_until FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 2",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_revocation_feed_body",
+  "statement": "SELECT it.token_value FROM RevocationList rl JOIN IdentityToken it ON it.token_id = rl.token_id WHERE it.issuing_agency_id = %s",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_federated_agency and every per-agency route",
+  "statement": "SELECT agency_id, name, signing_public_key_hex FROM Agency WHERE agency_id = %s",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_exchange_attestation",
+  "statement": "SELECT ag.agency_id AS authority_id, ag.name AS authority_name FROM AgencyTrustAttestation att JOIN Agency ag2 ON ag2.agency_id = att.attested_agency_id JOIN Ag",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "GET /api/v1/registry/<id>",
+  "statement": "SELECT va.agency_id, va.name, va.agency_type, va.jurisdiction, va.authorization_level, ag.signing_public_key_hex FROM v_athena_agency va JOIN Agency ag ON ag.ag",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "GET /api/v1/registry/<id>",
+  "statement": "SELECT context_id, context_type, requires_biometric, min_security_level FROM v_athena_proof_policy ORDER BY context_id",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "GET /api/v1/registry/<id>",
+  "statement": "SELECT disclosure_level FROM v_athena_disclosure_policy ORDER BY ordinal",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "GET /api/v1/registry/<id>",
+  "statement": "SELECT ta.attesting_agency_id, ta.attested_agency_id, ta.context_id, ta.valid_until, ab.signing_public_key_hex AS attested_public_key_hex FROM v_athena_trust_ag",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "GET /api/v1/registry/<id>",
+  "statement": "SELECT org_name, scope FROM RelyingParty WHERE enabled = TRUE ORDER BY org_name",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_consume_exchange_nonce (POST /api/v1/exchange/<id>)",
+  "statement": "INSERT INTO ExchangeNonce (requester_key_hash, nonce) VALUES (%s, %s)",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "POST /api/v1/exchange/<id>",
+  "statement": "SELECT agency_id FROM Agency WHERE lower(signing_public_key_hex) = %s",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "POST /api/v1/auth/authorize",
+  "statement": "SELECT rp_id, client_id, scope, enabled, require_zk, required_enrollment, required_context_id FROM RelyingParty WHERE client_id = %s",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_check_and_record_duress (auth/authorize)",
+  "statement": "SELECT duress_code_hash FROM IdentityToken WHERE token_id = %s",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "POST /api/v1/auth/authorize",
+  "statement": "SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = %s",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_zk_verify_and_consume (auth/authorize step-up)",
+  "statement": "SELECT merkle_root, valid_until, committed_count, COALESCE(NULLIF(polaris_database_setting('polaris.min_epoch_anonymity_set'), ''), '20')::INTEGER AS min_anonym",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_db_now (zk step-up)",
+  "statement": "SELECT LOCALTIMESTAMP AS t",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_zk_verify_and_consume (auth/authorize step-up)",
+  "statement": "INSERT INTO ZkVerificationNonce (epoch_id, context_id, nonce) VALUES (%s, %s, %s) ON CONFLICT ON CONSTRAINT pk_zk_verification_nonce DO NOTHING RETURNING consum",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "POST /api/v1/auth/token",
+  "statement": "INSERT INTO AuthCodeConsumed (code_hash) VALUES (%s)",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "POST /api/v1/auth/token",
+  "statement": "SELECT agency_id, name FROM Agency WHERE agency_id = %s",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "POST /api/v1/trust-list/<id>",
+  "statement": "SELECT agency_id, name, signing_public_key_hex FROM Agency WHERE signing_public_key_hex IS NOT NULL ORDER BY agency_id",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_transparency_entries receipts",
+  "statement": "SELECT receipt_hash FROM ExchangeReceiptLog ORDER BY seq",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_transparency_entries timestamps",
+  "statement": "SELECT timestamp_hash FROM TimestampLog ORDER BY seq",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_transparency_entries anchors",
+  "statement": "SELECT merkle_root FROM AnchorBatch ORDER BY batch_id",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_receipt_log_append",
+  "statement": "INSERT INTO ExchangeReceiptLog (receipt_hash) VALUES (%s) ON CONFLICT (receipt_hash) DO NOTHING",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_receipt_log_append",
+  "statement": "SELECT (SELECT count(*) FROM ExchangeReceiptLog b WHERE b.seq < a.seq) AS idx FROM ExchangeReceiptLog a WHERE a.receipt_hash = %s",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_timestamp_log_append",
+  "statement": "INSERT INTO TimestampLog (timestamp_hash) VALUES (%s) ON CONFLICT (timestamp_hash) DO NOTHING",
+  "outcome": "ok",
+  "message": ""
+ },
+ {
+  "where": "_timestamp_log_append",
+  "statement": "SELECT (SELECT count(*) FROM TimestampLog b WHERE b.seq < a.seq) AS idx FROM TimestampLog a WHERE a.timestamp_hash = %s",
+  "outcome": "ok",
+  "message": ""
+ }
+]

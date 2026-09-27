@@ -1,0 +1,14 @@
+{
+ "statuses": {
+  "404": 60,
+  "429": 3
+ },
+ "rate_limited_rows_before": 0,
+ "rate_limited_rows_after": 0,
+ "audit_failures": [
+  "[audit] Failed to write RATE_LIMITED: permission denied for table authauditlog",
+  "[audit] Failed to write RATE_LIMITED: permission denied for table authauditlog",
+  "[audit] Failed to write RATE_LIMITED: permission denied for table authauditlog"
+ ],
+ "audit_failure_count": 3
+}
