@@ -62,7 +62,12 @@ Two more findings bear on any signer design:
   A related property follows from reading the verifier and was not exercised here, so it should be
   checked with real ML-DSA before anyone relies on it: `verify_pack` places no constraint on the
   shape of `token_value`, so any statement the authority signs may also verify as an authenticity
-  pack whose token_value is that statement's text.
+  pack whose token_value is that statement's text. Checked the same day:
+  [`transplant_counterexample.py`](transplant_counterexample.py) re-wraps 11 published signed
+  vectors and hands each to the detached verifier and both SDKs with the signing key trusted.
+  Before the fix all 33 verdicts were authentic and trusted
+  ([`out/transplant_before_fix.txt`](out/transplant_before_fix.txt)); after the serial rule
+  (WIRE-SPEC 3.7) all 33 are refused ([`out/transplant_after_fix.txt`](out/transplant_after_fix.txt)).
 - **Two call sites sign a bare digest.** The mdoc and VC routes pass SHA3-256 of their document to
   `signature_over_message`, which hashes it again. A signer receives 32 opaque bytes and cannot
   read a format from them. The interface would have to change so the document itself is sent.

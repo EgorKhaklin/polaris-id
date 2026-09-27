@@ -172,6 +172,9 @@ authenticity pack the verdict is:
   under the pack's `public_key_hex`.
   A placeholder pack (`algorithm` is the placeholder label, or a null
   `public_key_hex`) is **not** authenticatable offline and MUST be `false`.
+  A pack whose `token_value` is not a credential serial (non-empty, at most 128 bytes of
+  UTF-8, first character not `{`, no control character; WIRE-SPEC 3.7) MUST be `false`,
+  whatever its signature (1.0.0-rc.64).
 - `issuer_trusted` (bool or null) -- `null` when no `anchors` were supplied;
   otherwise whether the pack's `public_key_hex` is in the anchor set. A genuine
   signature by a key that is NOT in the anchors is `authentic: true,
@@ -197,6 +200,8 @@ trusted), and the verdict a conformant verifier MUST return:
 | tampered-token | false | null | genuine signature over a different token_value |
 | wrong-key | false | null | genuine signature checked against an unrelated key |
 | placeholder | false | null | the dev/CI placeholder; not authenticatable offline |
+| pack-transplanted-artifact-signature | false | | a genuine federation-manifest signature and its statement, re-wrapped as a pack under a trusted key (1.0.0-rc.64) |
+| pack-transplant-control-valid | true | true | the same authority's key over a credential serial (1.0.0-rc.64) |
 
 Trust-attestation cases (`artifact: trust-attestation`, v9.421). An attestation is an EDGE
 between two agencies, and a genuine edge between two OTHER agencies verifies perfectly. So the

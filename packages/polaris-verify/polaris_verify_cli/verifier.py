@@ -135,6 +135,41 @@ def _digest(token_value: str) -> bytes:
     return hashlib.sha3_256(token_value.encode("utf-8")).digest()
 
 
+#: The longest credential serial, in bytes of UTF-8: IdentityToken.token_value is VARCHAR(128).
+TOKEN_VALUE_MAX_BYTES = 128
+
+
+def token_value_serial_problem(token_value):
+    """Why `token_value` is not a credential serial, or None when it is one (WIRE-SPEC 3.7).
+
+    A pack is signed over SHA3-256(token_value) with no format or domain, and every other
+    signed artifact is signed over SHA3-256 of its canonical JSON statement. So a pack is
+    only domain-separated from those artifacts if its token_value cannot be a JSON statement.
+    Before this rule any authority-signed artifact (a manifest, a trust list, a registry),
+    its signature re-wrapped as a pack whose token_value was its canonical statement,
+    verified as an authentic credential from a trusted issuer (2026-09-27, measured with real
+    ML-DSA-65 on the published vectors: lab/strategy/003/transplant_counterexample.py).
+
+    A serial is a non-empty string of at most 128 bytes of UTF-8 whose first character is
+    not "{" and which contains no control character (U+0000-U+001F, U+007F-U+009F). Every
+    signed statement begins with "{"; every credential ever issued is a short serial."""
+    if not isinstance(token_value, str):
+        return "token_value must be a string, got %s" % type(token_value).__name__
+    if not token_value:
+        return "token_value is empty"
+    try:
+        n = len(token_value.encode("utf-8"))
+    except UnicodeEncodeError:
+        return "token_value is not valid Unicode (an unpaired surrogate)"
+    if token_value[0] == "{":
+        return "token_value begins with '{', so it is a signed JSON statement, not a credential serial"
+    if n > TOKEN_VALUE_MAX_BYTES:
+        return "token_value is %d bytes of UTF-8; a credential serial is at most %d" % (n, TOKEN_VALUE_MAX_BYTES)
+    if any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in token_value):
+        return "token_value contains a control character"
+    return None
+
+
 def _verify_liboqs(digest: bytes, sig: bytes, pk: bytes, alg=_ALG):
     """Primary witness: liboqs. Returns True/False, or None if liboqs is absent."""
     if _DEV_PLACEHOLDER_MODE:
@@ -216,6 +251,12 @@ def verify_pack(pack: dict, anchor_keys=None) -> dict:
     }
     if not tok or not alg:
         verdict["note"] = "pack is missing token_value or algorithm"
+        return verdict
+    # WIRE-SPEC 3.7, 2026-09-27: decided before any signature is checked. A pack whose
+    # token_value is not a credential serial is not a credential, whatever it verifies under.
+    serial_problem = token_value_serial_problem(tok)
+    if serial_problem is not None:
+        verdict["note"] = "not an authentic credential: %s" % serial_problem
         return verdict
 
     if alg == _PLACEHOLDER:
@@ -375,6 +416,13 @@ def selftest() -> int:
                    "public_key_hex": None}
     checks.append(("placeholder is refused",
                    verify_pack(placeholder)["signature_valid"] is False))
+    # WIRE-SPEC 3.7: a genuine signature over a JSON statement is not a credential.
+    stmt = '{"format":"polaris-selftest-statement/1"}'
+    with oqs.Signature(_ALG) as s:
+        pk_s = bytes(s.generate_keypair())
+        sig_s = bytes(s.sign(_digest(stmt)))
+    checks.append(("a signed JSON statement is refused as a credential",
+                   verify_pack(pack_for(stmt, sig_s, pk_s))["signature_valid"] is False))
     # P8.8a: algorithm agility. An ML-DSA-87 pack verifies under its own parameter set; a
     # signature claiming the wrong set fails; a genuine ML-DSA-44 pack is refused (below the floor).
     enabled = set(oqs.get_enabled_sig_mechanisms())

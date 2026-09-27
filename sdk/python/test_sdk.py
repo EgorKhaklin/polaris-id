@@ -946,3 +946,35 @@ class IsoInstantGrammarTests(unittest.TestCase):
             with self.subTest(c["input"]):
                 got = pv._iso_to_epoch(c["input"])
                 self.assertEqual(None if got is None else int(got), c["epoch"])
+
+
+class TokenValueIsASerialTests(unittest.TestCase):
+    """WIRE-SPEC 3.7 (2026-09-27): a pack's token_value is a credential serial. A pack is signed
+    over SHA3-256(token_value) and every other artifact over SHA3-256 of its canonical JSON
+    statement, so without this rule an authority-signed artifact, its signature re-wrapped as a
+    pack whose token_value is its canonical statement, verified as an authentic credential."""
+
+    def test_the_rule(self):
+        for tok in ("POLARIS-VECTOR-VALID-0001", "A" * 128, "TKN-é-1", "}{", "x{"):
+            self.assertIsNone(pv.token_value_serial_problem(tok), tok)
+        for tok in ('{"format":"x"}', "{", "", "A" * 129, "é" * 65, "TKN-\n", "TKN-\x7f",
+                    "TKN-\u0085", "TKN-\ud800", None, 1, ["x"]):
+            self.assertIsNotNone(pv.token_value_serial_problem(tok), repr(tok))
+
+    @unittest.skipUnless(_mldsa_available(), "cryptography lacks ML-DSA-65")
+    def test_a_transplanted_artifact_signature_is_not_a_credential(self):
+        import hashlib
+        m = _conformance_vector("federation-manifest-valid.json")
+        canonical = pv._canonical(m, pv._ARTIFACT_KEYS["polaris-federation-manifest/1"])
+        # Positive control: the manifest's signature IS genuine over this statement, so the
+        # refusal below is the serial rule's and not a bad signature's.
+        ok, _ran, _note = pv._verify_over_digest(hashlib.sha3_256(canonical).digest(),
+                                                 m["signature_hex"], m["public_key_hex"], m["algorithm"])
+        self.assertTrue(ok)
+        pack = {"format": "polaris-authenticity-pack/1", "token_value": canonical.decode("utf-8"),
+                "algorithm": m["algorithm"], "signature_hex": m["signature_hex"],
+                "public_key_hex": m["public_key_hex"]}
+        v = pv.verify_authenticity(pack, anchors=[m["public_key_hex"]])
+        self.assertFalse(v.authentic)
+        self.assertIsNone(v.issuer_trusted)
+        self.assertIn("not a credential serial", v.note or "")

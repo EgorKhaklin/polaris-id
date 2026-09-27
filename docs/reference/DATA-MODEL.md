@@ -139,7 +139,7 @@ The core state-bearing object.
 | column | type | notes |
 |---|---|---|
 | `token_id` | SERIAL PK | |
-| `token_value` | VARCHAR(128) NOT NULL UNIQUE | canonical token serial |
+| `token_value` | VARCHAR(128) NOT NULL UNIQUE | canonical token serial; `chk_token_value_is_a_serial` |
 | `physical_serial` | VARCHAR(64) NOT NULL UNIQUE | hardware serial |
 | `hardware_model` | VARCHAR(50) | |
 | `biometric_binding_type` | VARCHAR(20) NOT NULL | `NONE` \| `FINGERPRINT` \| `FACE` \| `IRIS` |
@@ -151,6 +151,12 @@ The core state-bearing object.
 | `status` | VARCHAR(20) NOT NULL DEFAULT 'RESERVE' | state machine in `06_triggers.sql` |
 | `issued_date` | TIMESTAMP NOT NULL DEFAULT now() | |
 | `activated_date` | TIMESTAMP | required if status=ACTIVE (trigger) |
+
+**CHECK constraint** `chk_token_value_is_a_serial` (2026-09-27): the token value is a
+credential serial, non-empty, at most 128 bytes of UTF-8, not beginning with `{`, and with no
+control character. Issuance signs `SHA3-256(token_value)` with no domain and every other
+signed artifact is a JSON statement beginning with `{`, so this keeps a credential's signature
+from being interchangeable with an artifact's (WIRE-SPEC 3.7).
 
 **Indexes:**
 

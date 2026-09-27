@@ -24,6 +24,9 @@ raises no exception:
   - drop each field                             -> reject, no crash
   - adversarial field values (None/[]/{}/huge)  -> reject, no crash
   - feed the object to every OTHER type's verify (cross-type confusion) -> reject
+  - wrap its genuine signature and canonical statement as an authenticity pack under the
+    trusted key (signature transplant, WIRE-SPEC 3.7) -> reject, in verify_pack, a
+    presentation, a cross-authority decision and the Python SDK
 
 It then fuzzes the composed decisions for robustness: garbage packs, manifests, and
 bundles must all produce a clean reject decision, never an exception.
@@ -433,6 +436,57 @@ def main():
                 continue
             must_reject(name, "cross-type:%s" % other, verify_fn, accept_fn, obj)
             cases += 1
+
+    # 6a. signature transplant (2026-09-27, WIRE-SPEC 3.7). A pack is signed over
+    #     SHA3-256(token_value) and every type above over SHA3-256 of its canonical statement.
+    #     So each genuine object's signature, with its canonical statement as the token_value,
+    #     is a pack whose signature is GENUINE under a key the caller trusts. It must still be
+    #     refused: a token_value is a credential serial, and a JSON statement is not one.
+    #     The positive control is the signature itself: it is checked to verify over the
+    #     statement by both witnesses first, so the refusal is the serial rule's, not a bad
+    #     signature's. The Python SDK is held to the same rule in-process.
+    canonical_of = {
+        "trust-list": V._trust_list_canonical, "id-token": V._id_token_canonical,
+        "exchange-receipt": V._exchange_receipt_canonical, "exchange-mint": V._exchange_mint_canonical,
+        "signed-document": V._signed_document_canonical, "exchange-request": V._exchange_request_canonical,
+        "registry": V._registry_canonical, "timestamp": V._timestamp_canonical,
+        "manifest": V._manifest_canonical, "epoch-checkpoint": V._epoch_checkpoint_canonical,
+        "revocation-feed": V._revocation_feed_canonical, "status-assertion": V._status_assertion_canonical,
+        "transparency-sth": V._sth_canonical, "status-bundle": V._status_bundle_canonical,
+        "agent-grant": V._agent_grant_canonical, "grant-revocation": V._grant_revocation_canonical,
+        "agent-proof": V._agent_proof_canonical,
+    }
+    missing = sorted(set(genuines) - set(canonical_of))
+    if missing:
+        fails.append(("transplant", "coverage", "no canonical statement for %s" % ", ".join(missing)))
+    sys.path.insert(0, os.path.join(_ROOT, "sdk", "python"))
+    import polaris_verify as sdk_py
+    transplant_manifest = g_manifest()
+    for name, obj in genuines.items():
+        if name not in canonical_of:
+            continue
+        stmt = canonical_of[name](obj)
+        ok, ran, _note = V._two_witness_verify(hashlib.sha3_256(stmt).digest(), bytes.fromhex(obj["signature_hex"]),
+                                               bytes.fromhex(obj["public_key_hex"]), _FUZZ_ALG)
+        cases += 1
+        if not ok:
+            fails.append((name, "transplant:control", "the genuine signature did not verify over its statement (%s)" % ran))
+            continue
+        pack = {"format": "polaris-authenticity-pack/1", "token_value": stmt.decode("utf-8"),
+                "algorithm": _FUZZ_ALG, "signature_hex": obj["signature_hex"], "public_key_hex": obj["public_key_hex"]}
+        trusted = [obj["public_key_hex"]]
+        must_reject(name, "transplant:verify_pack", lambda p: V.verify_pack(p, trusted),
+                    lambda v: v["signature_valid"] or v["issuer_trusted"], pack)
+        must_reject(name, "transplant:verify_presentation",
+                    lambda p: V.verify_presentation({"format": "polaris-presentation/1", "credential": p},
+                                                    anchor_keys=trusted),
+                    lambda v: v.get("credential_authentic") is True, pack)
+        must_reject(name, "transplant:verify_cross_authority",
+                    lambda p: V.verify_cross_authority(p, 1, [transplant_manifest]),
+                    lambda v: v.get("decision") == "accept", pack)
+        must_reject(name, "transplant:sdk-python", lambda p: sdk_py.verify_authenticity(p, trusted),
+                    lambda v: v.authentic or v.issuer_trusted, pack)
+        cases += 4
 
     # 6b. P8.6: verify_presentation / decode_presentation_frames on garbage must yield a clean
     #     verdict or reason, never a crash (the wrapper is unsigned; its inner types are fuzzed above).

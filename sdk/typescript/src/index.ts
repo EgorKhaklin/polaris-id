@@ -71,6 +71,45 @@ function hexToBytes(hex: string): Uint8Array {
   return out;
 }
 
+/** The longest credential serial, in bytes of UTF-8: IdentityToken.token_value is VARCHAR(128). */
+export const TOKEN_VALUE_MAX_BYTES = 128;
+
+/** Why `tokenValue` is not a credential serial, or null when it is one (WIRE-SPEC 3.7).
+ *
+ * A pack is signed over SHA3-256(token_value) with no domain, and every other signed artifact
+ * over SHA3-256 of its canonical JSON statement, so without this rule any authority-signed
+ * artifact re-wrapped as a pack (token_value: its canonical statement) verified as an authentic
+ * credential (2026-09-27, measured with real ML-DSA-65). A serial is a non-empty string of at
+ * most 128 bytes of UTF-8, not beginning with "{", with no control character (U+0000-U+001F,
+ * U+007F-U+009F). Every signed statement begins with "{". Same rule as the Python verifiers. */
+export function tokenValueSerialProblem(tokenValue: unknown): string | null {
+  if (typeof tokenValue !== "string") {
+    return "token_value must be a string, got " + (tokenValue === null ? "null" : typeof tokenValue);
+  }
+  if (tokenValue.length === 0) return "token_value is empty";
+  for (let i = 0; i < tokenValue.length; i++) {
+    const c = tokenValue.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const d = i + 1 < tokenValue.length ? tokenValue.charCodeAt(i + 1) : 0;
+      if (d >= 0xdc00 && d <= 0xdfff) { i++; continue; }
+      return "token_value is not valid Unicode (an unpaired surrogate)";
+    }
+    if (c >= 0xdc00 && c <= 0xdfff) return "token_value is not valid Unicode (an unpaired surrogate)";
+  }
+  if (tokenValue[0] === "{") {
+    return "token_value begins with '{', so it is a signed JSON statement, not a credential serial";
+  }
+  const n = new TextEncoder().encode(tokenValue).length;
+  if (n > TOKEN_VALUE_MAX_BYTES) {
+    return "token_value is " + n + " bytes of UTF-8; a credential serial is at most " + TOKEN_VALUE_MAX_BYTES;
+  }
+  for (let i = 0; i < tokenValue.length; i++) {
+    const c = tokenValue.charCodeAt(i);
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) return "token_value contains a control character";
+  }
+  return null;
+}
+
 /** Verify a Polaris authenticity pack OFFLINE. `anchors` (optional) are trusted
  * issuer public keys as hex; issuerTrusted says whether the pack's key is one. */
 export function verifyAuthenticity(pack: Pack, anchors?: string[] | null): AuthenticityVerdict {
@@ -89,6 +128,12 @@ export function verifyAuthenticity(pack: Pack, anchors?: string[] | null): Authe
   if (!impl) {
     return { authentic: false, issuerTrusted: null, algorithm: alg,
              note: "unknown or unaccepted signature algorithm: " + String(alg) };
+  }
+  // WIRE-SPEC 3.7, 2026-09-27: decided before any signature is checked.
+  const serialProblem = tokenValueSerialProblem(tok);
+  if (serialProblem !== null) {
+    return { authentic: false, issuerTrusted: null, algorithm: alg,
+             note: "not an authentic credential: " + serialProblem };
   }
   let ok: boolean;
   try {

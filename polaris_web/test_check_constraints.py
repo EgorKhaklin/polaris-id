@@ -451,6 +451,40 @@ class TestIdentityTokenChecks(_CheckBase):
             constraint_name='chk_token_time_order',
         )
 
+    def test_token_value_is_a_serial(self):
+        """chk_token_value_is_a_serial (2026-09-27, WIRE-SPEC 3.7): a token value that could be
+        a signed JSON statement is refused by the register itself. Runs as the table's owner,
+        asserted below, so it is the constraint that refuses and not a missing grant; a
+        genuine serial in the same INSERT is the positive control."""
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT pg_get_userbyid(relowner) = current_user AS is_owner "
+                        "FROM pg_class WHERE oid = 'identitytoken'::regclass")
+            if not cur.fetchone()['is_owner']:
+                self.skipTest("needs the owner of IdentityToken (POLARIS_DB_USER), so a grant cannot refuse first")
+        insert = ("INSERT INTO IdentityToken "
+                  "(individual_id, token_value, physical_serial, status, "
+                  "algorithm_id, issuing_agency_id, biometric_binding_type) "
+                  "VALUES (2, %s, %s, 'RESERVE', 1, 1, 'FINGERPRINT')")
+        with self.conn.cursor() as cur:
+            cur.execute("SAVEPOINT serial_control")
+            cur.execute(insert, ('X-TEST-SERIAL-OK', 'PSV-SERIAL-OK'))
+            cur.execute("ROLLBACK TO SAVEPOINT serial_control")
+        for i, (label, value) in enumerate((
+                ("a signed JSON statement", '{"format":"polaris-trust-list/1","keys":[]}'),
+                ("empty", ''),
+                ("a control character", 'X-TEST-\x01'),
+                ("a C1 control character", 'X-TEST-\u0085'),
+                ("more than 128 bytes of UTF-8", 'é' * 100))):
+            with self.subTest(label):
+                with self.conn.cursor() as cur:
+                    cur.execute("SAVEPOINT serial_case")
+                try:
+                    self._expect_check_violation(insert, (value, 'PSV-SERIAL-BAD-%d' % i),
+                                                 constraint_name='chk_token_value_is_a_serial')
+                finally:
+                    with self.conn.cursor() as cur:
+                        cur.execute("ROLLBACK TO SAVEPOINT serial_case")
+
 
 # ============================================================================
 # IssuerDiscretionPolicy (R11-6 / M2-11)

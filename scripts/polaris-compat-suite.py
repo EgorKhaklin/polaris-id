@@ -67,6 +67,19 @@ def _at(iso):
     return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(timezone.utc) if iso else None
 
 
+#: Cases whose expected REJECTION the pinned older verifier cannot meet because the case pins a
+#: defect IN that verifier, fixed after its release. The cross-version rule ("never accept what a
+#: later case rejects") assumes the pinned verifier is correct for what it understands; a security
+#: fix to that verifier is exactly the exception. Each entry is declared, reported, and checked
+#: both ways: the pinned verifier must still accept it (or the entry is stale and fails), and
+#: every CURRENT verifier is held to the case in full. SECURITY.md names each defect.
+PINNED_KNOWN_DEFECTS = {
+    "pack-transplanted-artifact-signature":
+        "2026-09-27: a signature from any authority-signed artifact, re-wrapped as a credential "
+        "pack, verified as authentic; the pinned verifier predates the credential-serial rule",
+}
+
+
 def _vkey(v):
     # The tree stopped counting ships at v9.467 and continued as 1.0.0 release candidates, so a
     # case added in the 1.0 line (`since: "1.0.0-rc.N"`) sorts after every v9 release.
@@ -318,7 +331,7 @@ def main(argv=None):
         m = re.search(r"v?(9\.\d+)", pathlib.Path(args.old_verifier).name)
         old_version = m.group(1) if m else "0.0"
     current_cases = json.loads(CURRENT_CASES.read_text(encoding="utf-8"))["cases"]
-    agreed = predated = declined = 0
+    agreed = predated = declined = known = 0
     for c in current_cases:
         got, why = decide(OLD, c)
         if why:
@@ -332,12 +345,26 @@ def main(argv=None):
         # Fail-closed across versions: a wrong ACCEPTANCE is always a violation; on a case newer
         # than the pinned release a wrong rejection is the verifier declining what it predates.
         wrong_accept = any(e in (False, "reject") and g not in (False, None, "reject") for k, (g, e) in mism.items())
+        if wrong_accept and newer and c["name"] in PINNED_KNOWN_DEFECTS:
+            known += 1
+            print("   KNOWN DEFECT of pinned v%s, declared: %s (%s)"
+                  % (old_version, c["name"], PINNED_KNOWN_DEFECTS[c["name"]]))
+            continue
         if newer and not wrong_accept:
             declined += 1
         else:
             failures.append("pinned v%s verifier on %s (since %s): %s" % (old_version, c["name"], c.get("since"), mism))
-    print("3. pinned v%s verifier <- current cases: %d agreed, %d predated (types it lacks), %d declined (newer than it, fail-closed), %d violations"
-          % (old_version, agreed, predated, declined, len([f for f in failures if f.startswith("pinned")])))
+    # Two-way: a declared defect the pinned verifier no longer exhibits (or a case that no longer
+    # exists) is a stale declaration.
+    names = {c["name"] for c in current_cases}
+    for name in sorted(PINNED_KNOWN_DEFECTS):
+        if name not in names:
+            failures.append("pinned known-defect declaration names no current case: %s" % name)
+    if known != len([n for n in PINNED_KNOWN_DEFECTS if n in names]):
+        failures.append("pinned known-defect declarations: %d declared, %d observed; a declaration the "
+                        "pinned verifier no longer exhibits is stale" % (len(PINNED_KNOWN_DEFECTS), known))
+    print("3. pinned v%s verifier <- current cases: %d agreed, %d predated (types it lacks), %d declined (newer than it, fail-closed), %d known defects of the pinned version (declared), %d violations"
+          % (old_version, agreed, predated, declined, known, len([f for f in failures if f.startswith("pinned")])))
 
     if failures:
         print("\nFAILED:")
@@ -345,7 +372,7 @@ def main(argv=None):
             print("  - " + f)
         return 1
     print("\nOK: version 1 is compatible in both directions -- the current verifiers accept everything version 1 "
-          "published, and the pinned older verifier never accepts what the current suite rejects.")
+          "published, and the pinned older verifier never accepts what the current suite rejects, except the defects of its own version declared in PINNED_KNOWN_DEFECTS.")
     return 0
 
 

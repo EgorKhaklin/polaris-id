@@ -129,6 +129,10 @@ def uc1_issue():
             return redirect(url_for('tokens_detail', tok_id=new_token_id))
         except (pqc_signing.PQCUnavailableError, pqc_signing.SigningError) as e:
             flash(f'The token could not be issued. {e}', 'error')
+            # 2026-09-27: a token value that is not a credential serial (WIRE-SPEC 3.7) is
+            # the request's fault, refused before anything is signed.
+            if isinstance(e, pqc_signing.NotACredentialSerial):
+                status = 400
         except (psycopg2.Error, ValueError, KeyError) as e:
             flash(db_error_to_message(e), 'error')
             if _quota_refused(e, 'issue', request.form.get('issuing_agency_id')):

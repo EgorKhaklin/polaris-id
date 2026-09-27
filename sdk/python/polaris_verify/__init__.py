@@ -76,6 +76,36 @@ def _digest(token_value: str) -> bytes:
     return hashlib.sha3_256(token_value.encode("utf-8")).digest()
 
 
+#: The longest credential serial, in bytes of UTF-8: IdentityToken.token_value is VARCHAR(128).
+TOKEN_VALUE_MAX_BYTES = 128
+
+
+def token_value_serial_problem(token_value):
+    """Why `token_value` is not a credential serial, or None when it is one (WIRE-SPEC 3.7).
+
+    A pack is signed over SHA3-256(token_value) with no domain, and every other signed
+    artifact over SHA3-256 of its canonical JSON statement, so without this rule any
+    authority-signed artifact re-wrapped as a pack (token_value: its canonical statement)
+    verified as an authentic credential (2026-09-27, measured with real ML-DSA-65). A serial
+    is a non-empty string of at most 128 bytes of UTF-8, not beginning with "{", with no
+    control character (U+0000-U+001F, U+007F-U+009F). Every signed statement begins with "{"."""
+    if not isinstance(token_value, str):
+        return "token_value must be a string, got %s" % type(token_value).__name__
+    if not token_value:
+        return "token_value is empty"
+    try:
+        n = len(token_value.encode("utf-8"))
+    except UnicodeEncodeError:
+        return "token_value is not valid Unicode (an unpaired surrogate)"
+    if token_value[0] == "{":
+        return "token_value begins with '{', so it is a signed JSON statement, not a credential serial"
+    if n > TOKEN_VALUE_MAX_BYTES:
+        return "token_value is %d bytes of UTF-8; a credential serial is at most %d" % (n, TOKEN_VALUE_MAX_BYTES)
+    if any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in token_value):
+        return "token_value contains a control character"
+    return None
+
+
 def _verify_cryptography(digest, sig, pk, alg=ALGORITHM):
     try:
         from cryptography.hazmat.primitives.asymmetric import mldsa
@@ -162,6 +192,10 @@ def verify_authenticity(pack: dict, anchors=None) -> AuthenticityVerdict:
         sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
     except (ValueError, TypeError):
         return AuthenticityVerdict(False, None, alg, note="signature_hex/public_key_hex are not valid hex")
+    # WIRE-SPEC 3.7, 2026-09-27: decided before any signature is checked.
+    serial_problem = token_value_serial_problem(tok)
+    if serial_problem is not None:
+        return AuthenticityVerdict(False, None, alg, note="not an authentic credential: %s" % serial_problem)
     digest = _digest(tok)
     primary = _verify_cryptography(digest, sig, pk, alg)
     witness = _verify_liboqs(digest, sig, pk, alg)

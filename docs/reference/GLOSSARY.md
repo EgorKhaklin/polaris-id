@@ -97,7 +97,8 @@ terminal status; the new token references it via
 core state-bearing object.
 
 **Token value**: the canonical token serial. `IdentityToken.token_value`,
-UNIQUE.
+UNIQUE: non-empty, at most 128 bytes, not beginning with `{`, no control characters
+(`chk_token_value_is_a_serial`; WIRE-SPEC 3.7).
 
 **UC-N**: Use Case N. Defined in the project report ([docs/paper/](../paper/README.md)).
 UC-1 (Issue), UC-3 (Bind device), UC-4 (Revoke), UC-5 (Report lost),

@@ -9,6 +9,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ## Unreleased
 
+### Security
+
+- `polaris-verify`, both SDKs and issuance: a pack's `token_value` must be a credential serial (at most 128 bytes, not beginning with `{`, no control characters); before, any authority-signed artifact re-wrapped as a pack verified as an authentic credential from a trusted issuer. `IdentityToken` refuses a non-serial value (`chk_token_value_is_a_serial`, migration 2026-09-27-004).
+
 ### Fixed
 
 - `polaris-verify`: an exchange receipt that states no context was reported requester-authorized by an attestation from any context; the receipt's context must now match exactly, as for the request.

@@ -1892,6 +1892,40 @@
       },
       "since": "1.0.0-rc.64",
       "note": "The context changed after signing; a forged mint answers nothing further."
+    },
+    {
+      "name": "transplant-manifest-genuine",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/transplant-manifest.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true
+      },
+      "since": "1.0.0-rc.64",
+      "note": "The artifact whose signature the next case moves: a genuine manifest by the transplant authority."
+    },
+    {
+      "name": "pack-transplanted-artifact-signature",
+      "artifact": "authenticity-pack",
+      "pack_file": "conformance/vectors/pack-transplanted-artifact-signature.json",
+      "anchors": "self",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.64",
+      "note": "The manifest's genuine signature and canonical statement, wrapped as a pack, with its key trusted. A pack's token_value MUST be a credential serial (WIRE-SPEC 3.7): every other artifact signs a JSON statement, which begins with '{'. Before 1.0.0-rc.64 every shipped verifier reported this authentic and its issuer trusted."
+    },
+    {
+      "name": "pack-transplant-control-valid",
+      "artifact": "authenticity-pack",
+      "pack_file": "conformance/vectors/pack-transplant-control-valid.json",
+      "anchors": "self",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": true
+      },
+      "since": "1.0.0-rc.64",
+      "note": "Control: the same authority's key over a credential serial verifies and is trusted, so the refusal above is the serial rule's and not the key's."
     }
   ]
 }

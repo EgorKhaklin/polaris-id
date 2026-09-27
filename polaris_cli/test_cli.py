@@ -398,6 +398,19 @@ class BulkEnrollCommandTests(CLIBaseTestCase):
         self.assertEqual(r.returncode, 3)
         self.assertEqual(self._count('BULKDUP-TOK-%'), {})
 
+    def test_bulk_enroll_refuses_a_token_value_that_is_not_a_serial(self):
+        # WIRE-SPEC 3.7 (2026-09-27): a token value shaped like a signed JSON statement would
+        # make the credential's signature interchangeable with an artifact's. The whole batch
+        # is refused before anything is signed, the genuine serial beside it included.
+        csv = self._extract([
+            ('Serial One', '1990-01-01', 'US-PA', 'FACE', 'BULKJSON-TOK-1', 'BULKJSON-SER-1', '{}'),
+            ('Json Two', '1990-01-01', 'US-PA', 'FACE', '{format:polaris-trust-list/1}', 'BULKJSON-SER-2', '{}'),
+        ])
+        r = run_cli('bulk-enroll', csv, '--agency', '1', '--algorithm', '1', expect_success=False)
+        self.assertEqual(r.returncode, 3)
+        self.assertIn('not a credential serial', r.stderr)
+        self.assertEqual(self._count('BULKJSON-TOK-%'), {})
+
 
 # ============================================================================
 # transition

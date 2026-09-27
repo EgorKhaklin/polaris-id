@@ -1582,6 +1582,35 @@ class UC1Tests(PolarisTestCase):
                         'insufficient_privilege' in body.lower(),
                         f"Expected authorization error, got: {body[:500]}")
 
+    def test_issue_refuses_a_token_value_that_is_not_a_serial(self):
+        """2026-09-27 (WIRE-SPEC 3.7): issuance signs SHA3-256(token_value) with no domain, so a
+        token value shaped like a signed JSON statement would make the credential's signature
+        interchangeable with an artifact's. The route refuses it before anything is signed:
+        400, the reason shown, and no token written."""
+        stmt = '{"format":"polaris-trust-list/1","keys":[]}'
+        r = self._post('/uc1/issue', data={
+            'legal_name': 'Transplant Holder',
+            'date_of_birth': '1985-06-20',
+            'jurisdiction': 'US-OH',
+            'issuing_agency_id': '1',
+            'algorithm_id': '1',
+            'biometric_binding_type': 'IRIS',
+            'token_value': stmt,
+            'physical_serial': 'SN-TRANSPLANT-0001',
+            'hardware_model': 'TitanQ-3',
+            'contexts': ['1'],
+        })
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('not a credential serial', r.get_data(as_text=True))
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) AS n FROM IdentityToken WHERE physical_serial = %s",
+                            ('SN-TRANSPLANT-0001',))
+                self.assertEqual(cur.fetchone()['n'], 0)
+        finally:
+            conn.close()
+
 
 # ============================================================================
 # UC-4 (reserve activation) TESTS

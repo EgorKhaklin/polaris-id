@@ -9,7 +9,7 @@ import { verifyAuthenticity, PolarisVerifier, pairwiseHandle, handlesLink,
          verifyInclusion, verifyStatusAssertion, verifyIdToken, verifyHolder, verifyTimestampAnchor,
          verifySignedArtifact, verifyCosignature,
          verifyAttestation, verifyCrossAuthority,
-         __canonicalJsonForTest, __isoToEpochForTest, expiresIn } from "../src/index.ts";
+         __canonicalJsonForTest, __isoToEpochForTest, expiresIn, tokenValueSerialProblem } from "../src/index.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const vec = (n: string) => JSON.parse(readFileSync(join(ROOT, "vectors", n), "utf8"));
@@ -851,4 +851,34 @@ test("the ISO instant grammar both reference SDKs share", () => {
     const got = __isoToEpochForTest(c.input);
     assert.equal(got === null ? null : Math.round(got), c.epoch, c.input);
   }
+});
+
+// WIRE-SPEC 3.7 (2026-09-27): a pack's token_value is a credential serial. A pack is signed over
+// SHA3-256(token_value) and every other artifact over SHA3-256 of its canonical JSON statement,
+// so without this rule an authority-signed artifact, its signature re-wrapped as a pack whose
+// token_value is its canonical statement, verified as an authentic credential.
+test("a token value is a credential serial (the same rule as the Python verifiers)", () => {
+  for (const t of ["POLARIS-VECTOR-VALID-0001", "A".repeat(128), "TKN-\u00e9-1", "}{", "x{"]) {
+    assert.equal(tokenValueSerialProblem(t), null, t);
+  }
+  for (const t of ['{"format":"x"}', "{", "", "A".repeat(129), "\u00e9".repeat(65), "TKN-\n", "TKN-\x7f",
+                   "TKN-\u0085", "TKN-\ud800", null, 1, ["x"]]) {
+    assert.notEqual(tokenValueSerialProblem(t), null, JSON.stringify(t));
+  }
+});
+
+test("a transplanted artifact signature is not a credential", () => {
+  const m = JSON.parse(readFileSync(join(ROOT, "conformance", "vectors", "federation-manifest-valid.json"), "utf8"));
+  // Positive control: the manifest's own signature is genuine, so the refusal below is the
+  // serial rule's and not a bad signature's.
+  assert.equal(verifySignedArtifact(m).authentic, true);
+  const keys = ["format", "authority", "anchors", "attestations", "epoch", "revocation", "issued_at", "expires_at", "algorithm"];
+  const stmt: Record<string, unknown> = {};
+  for (const k of keys) stmt[k] = m[k] ?? null;
+  const pack = { token_value: __canonicalJsonForTest(stmt), algorithm: m.algorithm,
+                 signature_hex: m.signature_hex, public_key_hex: m.public_key_hex };
+  const v = verifyAuthenticity(pack, [m.public_key_hex]);
+  assert.equal(v.authentic, false);
+  assert.equal(v.issuerTrusted, null);
+  assert.match(v.note ?? "", /not a credential serial/);
 });

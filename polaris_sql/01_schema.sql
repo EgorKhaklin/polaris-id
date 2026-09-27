@@ -646,6 +646,18 @@ CREATE TABLE IdentityToken (
         (activated_date  IS NULL OR activated_date  >= issued_date) AND
         (expiration_date IS NULL OR expiration_date >= issued_date::date)
     ),
+    -- 2026-09-27 (WIRE-SPEC 3.7): a token value is a credential serial. Issuance signs
+    -- SHA3-256(token_value) with no domain and every other artifact signs SHA3-256 of a JSON
+    -- statement, which begins with '{'; a token value that could be one would make an issued
+    -- credential's signature interchangeable with an artifact's. Non-empty, at most 128 bytes
+    -- of UTF-8 (the column counts characters), first character not '{', and no control
+    -- character (U+0001-U+001F, U+007F-U+009F; PostgreSQL cannot store U+0000).
+    CONSTRAINT chk_token_value_is_a_serial CHECK (
+        token_value <> ''
+        AND octet_length(token_value) <= 128
+        AND left(token_value, 1) <> '{'
+        AND token_value !~ '[\u0001-\u001f\u007f-\u009f]'
+    ),
     -- A non-NULL duress_code_hash must be a Werkzeug scrypt hash (length ≥ 20 chars
     -- is a generous floor; a real scrypt hash is ~150 chars).
     CONSTRAINT chk_duress_hash_well_formed CHECK (

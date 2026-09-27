@@ -81,6 +81,49 @@ class SigningError(RuntimeError):
     material or liboqs, and must never be persisted."""
 
 
+class NotACredentialSerial(SigningError):
+    """Raised when issuance is asked to sign a token_value that is not a credential serial.
+
+    Issuance signs SHA3-256(token_value) with no format or domain; every other artifact this
+    authority signs is SHA3-256 of a canonical JSON statement. A token_value that could be
+    such a statement would make an issued credential's signature and an artifact's signature
+    interchangeable (WIRE-SPEC 3.7). The verifiers refuse such a pack; issuance refuses to make
+    one, and IdentityToken's chk_token_value_is_a_serial refuses to store one."""
+
+
+#: The longest credential serial, in bytes of UTF-8: IdentityToken.token_value is VARCHAR(128).
+TOKEN_VALUE_MAX_BYTES = 128
+
+
+def token_value_serial_problem(token_value):
+    """Why `token_value` is not a credential serial, or None when it is one (WIRE-SPEC 3.7).
+    The same rule, word for word, as the detached verifier and both SDKs: a non-empty string of
+    at most 128 bytes of UTF-8, not beginning with "{", with no control character
+    (U+0000-U+001F, U+007F-U+009F)."""
+    if not isinstance(token_value, str):
+        return "token_value must be a string, got %s" % type(token_value).__name__
+    if not token_value:
+        return "token_value is empty"
+    try:
+        n = len(token_value.encode("utf-8"))
+    except UnicodeEncodeError:
+        return "token_value is not valid Unicode (an unpaired surrogate)"
+    if token_value[0] == "{":
+        return "token_value begins with '{', so it is a signed JSON statement, not a credential serial"
+    if n > TOKEN_VALUE_MAX_BYTES:
+        return "token_value is %d bytes of UTF-8; a credential serial is at most %d" % (n, TOKEN_VALUE_MAX_BYTES)
+    if any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in token_value):
+        return "token_value contains a control character"
+    return None
+
+
+def require_credential_serial(token_value):
+    """Refuse, before anything is signed, a token_value that is not a credential serial."""
+    problem = token_value_serial_problem(token_value)
+    if problem is not None:
+        raise NotACredentialSerial("refusing to issue: %s" % problem)
+
+
 # Detect liboqs-python at import time (defer ImportError so module
 # always imports — callers introspect via is_available()).
 _OQS_AVAILABLE = False
@@ -373,7 +416,11 @@ def signature_with_key_for_token(token_value: str, agency_id=None) -> tuple:
     PE.3b: `agency_id` selects the issuing agency's own signing key when one is
     registered (POLARIS_AGENCY_KEYS_DIR), else the global key. The placeholder path
     ignores it (there is no key to pick).
+
+    Refuses (NotACredentialSerial) a token_value that is not a credential serial, before
+    anything is signed, on every path: the placeholder too (WIRE-SPEC 3.7).
     """
+    require_credential_serial(token_value)
     flag_set = os.environ.get("POLARIS_USE_REAL_PQC", "0") == "1"
     if flag_set and not _OQS_AVAILABLE:
         raise PQCUnavailableError(
@@ -460,7 +507,10 @@ def signature_for_migration(token_value: str, algorithm: str, agency_id=None) ->
     Returns `(signature_bytes, algorithm_label, public_key_hex_or_none)`, matching
     `signature_over_message`. With the flag off, the deterministic placeholder is returned
     and labelled as such, so a dev-profile migration can be exercised end to end without
-    anything mistaking its output for a signature."""
+    anything mistaking its output for a signature.
+
+    Refuses (NotACredentialSerial) a token_value that is not a credential serial."""
+    require_credential_serial(token_value)
     flag_set = os.environ.get("POLARIS_USE_REAL_PQC", "0") == "1"
     if not flag_set:
         # The placeholder is per (token, algorithm): a migration that produced the same bytes

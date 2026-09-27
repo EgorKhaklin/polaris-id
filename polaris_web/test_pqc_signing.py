@@ -58,6 +58,32 @@ class PlaceholderPathTests(unittest.TestCase):
     def test_is_enabled_false_when_flag_unset(self):
         self.assertFalse(pqc_signing.is_enabled())
 
+    def test_issuance_refuses_a_token_value_that_is_not_a_serial(self):
+        """2026-09-27 (WIRE-SPEC 3.7): every issuing entry point refuses, before signing, a
+        token value that could be a signed JSON statement or is otherwise not a serial. The
+        placeholder path too: the refusal does not depend on which signer runs."""
+        bad = {
+            "a signed JSON statement": '{"format":"polaris-trust-list/1"}',
+            "empty": "",
+            "a control character": "TKN-\n-1",
+            "a C1 control character": "TKN-\u0085-1",
+            "more than 128 bytes of UTF-8": "é" * 65,
+            "an unpaired surrogate": "TKN-\ud800",
+            "not a string": 12345,
+        }
+        for label, value in bad.items():
+            for name, call in (
+                    ("signature_with_key_for_token", lambda v: pqc_signing.signature_with_key_for_token(v)),
+                    ("signature_bytes_for_token", lambda v: pqc_signing.signature_bytes_for_token(v)),
+                    ("signature_for_migration", lambda v: pqc_signing.signature_for_migration(v, "ML-DSA-87"))):
+                with self.subTest(label=label, entry=name):
+                    with self.assertRaises(pqc_signing.NotACredentialSerial):
+                        call(value)
+        # Positive controls: the longest serial and a non-ASCII one are issued.
+        for good in ("A" * 128, "TKN-é-2026", "TKN-CA-2026-000002"):
+            sig, _label = pqc_signing.signature_bytes_for_token(good)
+            self.assertEqual(sig, hashlib.sha3_256(good.encode("utf-8")).digest())
+
     def test_verify_token_signature_placeholder_roundtrip(self):
         token = 'TKN-PLACEHOLDER-VERIFY'
         sig, label = pqc_signing.signature_bytes_for_token(token)

@@ -144,6 +144,16 @@ signature over `SHA3-256(token_value)` under `public_key_hex`; with a set of tru
 issuer keys it MAY additionally report whether the issuer is trusted, but authenticity
 and issuer-trust are distinct results and MUST be reported separately.
 
+`token_value` is a credential serial: a non-empty string of at most 128 bytes of UTF-8
+whose first character is not `{` and which contains no control character (U+0000 to
+U+001F, U+007F to U+009F). A verifier MUST refuse a pack whose `token_value` is not a
+credential serial as not authentic, before it checks the signature, and an issuer MUST NOT
+issue one. This is the pack's domain separation: every other artifact signs a JSON
+statement, which begins with `{`, so without the rule an authority's signature on any
+artifact it publishes, re-wrapped with that statement as the `token_value`, would verify as
+a credential it never issued (1.0.0-rc.64; conformance case
+`pack-transplanted-artifact-signature`).
+
 ### 3.8 `polaris-exchange-receipt/1`
 
 Signed evidence that a responder served an authenticated, authorized request from another

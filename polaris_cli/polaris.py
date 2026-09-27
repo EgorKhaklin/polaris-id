@@ -2112,6 +2112,15 @@ def cmd_bulk_enroll(args):
             signer = _load_signer()
             values = []
             for r in in_rows:
+                # 2026-09-27: a token value that is not a credential serial (WIRE-SPEC 3.7) is
+                # refused before anything is signed, and the whole batch with it.
+                problem = signer.token_value_serial_problem(r["token_value"])
+                if problem is not None:
+                    conn.rollback()
+                    sys.stderr.write(red(
+                        f"Bulk enrollment rejected (whole batch rolled back): the row for "
+                        f"physical serial {r['physical_serial']!r} is refused: {problem}\n"))
+                    sys.exit(3)
                 sig, _label, pubkey = signer.signature_with_key_for_token(r["token_value"])
                 values.append((
                     batch_id, r["legal_name"], r["date_of_birth"], r["jurisdiction"],
