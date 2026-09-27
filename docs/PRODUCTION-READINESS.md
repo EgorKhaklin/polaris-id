@@ -53,6 +53,7 @@ operator decisions below and the deployment-scale work in [ROADMAP.md](../ROADMA
 - The timestamp authority keeps no per-request record except one digest and one instant per anchored timestamp, and only when the caller asked for the anchor.
 - Retention ships at five years for every class. Polaris records a jurisdiction's decision and its justification; it does not know the law.
 - Warrant-audit statistics rest on the authority's own append-only log, which defends against revision, not omission; no outside reader can detect an access that was never recorded.
+- Edits to a person's non-credential fields (legal name, date of birth, jurisdiction) are not recorded: an admin can rectify them through the operator UI and nothing keeps the prior value ([PRIVACY.md](operator/PRIVACY.md)).
 
 **Authorization and operators**
 
