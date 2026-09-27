@@ -1994,6 +1994,23 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 cur.execute("UPDATE IdentityToken SET status = 'REVOKED' WHERE token_id = %s", (tok,))
         conn.rollback()
 
+    def test_app_role_cannot_choose_its_own_bounds(self):
+        """2026-09-26. As polaris_app, authority 1's revocation bound was superseded and reset to
+        100% a day, under which uc8 never asks for a co-signer. All writes to both bounds refused."""
+        conn = self._app_conn()
+        for label, sql in (
+                ("supersede the revocation bound", "UPDATE IssuerDiscretionPolicy SET superseded_at = now() WHERE false"),
+                ("set a new one", "INSERT INTO IssuerDiscretionPolicy (agency_id, max_revoke_percent, window_days, "
+                                  "set_by_admin, justification) SELECT 1, 100, 1, 'x', repeat('x', 20) WHERE false"),
+                ("supersede a quota", "UPDATE AgencyQuota SET superseded_at = now() WHERE false"),
+                ("set a new quota", "INSERT INTO AgencyQuota (agency_id, set_by_admin, justification) "
+                                    "SELECT 1, 'x', repeat('x', 20) WHERE false"),
+                ("delete", "DELETE FROM IssuerDiscretionPolicy WHERE false")):
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql)
+            conn.rollback()
+
     def test_app_role_cannot_assert_a_proofing_level(self):
         """2026-09-26. "The level is derived, never asserted." Nothing the application runs writes
         the proofing records; as polaris_app an IAL2 proofing resting on no evidence was recorded.

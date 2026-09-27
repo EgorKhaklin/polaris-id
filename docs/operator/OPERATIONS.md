@@ -1157,7 +1157,9 @@ Both are per agency, never per person.
 **Quotas.** `AgencyQuota` holds up to three caps per agency: issuances per
 rolling day, revocations per rolling day (of the tokens that agency issued),
 verifications per rolling hour (as the requesting agency). NULL = no cap of
-that kind, no row = no caps, so nothing changes until you set one:
+that kind, no row = no caps, so nothing changes until you set one. Run
+`quota-set` as the schema owner (`POLARIS_DB_USER`): the application's role
+cannot set the bounds on an authority's own power, and is refused.
 
 ```bash
 polaris-id quota-set 5 --verify-per-hour 500 --justification "First National Bank: contracted verification volume is ~300/h"
@@ -1187,7 +1189,9 @@ refuses. An uncapped agency pays one primary-key lookup per write.
 **Revocation bounds.** `uc8_revoke_token` caps the share of its own tokens one
 issuing agency may revoke in a rolling window: 5.00% over 30 days by default,
 overridable per agency. Raising an agency's ceiling is the single most consequential
-per-agency setting in the schema, so it is kept, not edited:
+per-agency setting in the schema, so it is kept, not edited, and it is set as
+the schema owner (the application's role is refused, so a compromised application
+cannot lift the bound it is held to):
 
 ```bash
 polaris-id discretion-show                     # every bound, against the system default

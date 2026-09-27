@@ -103,6 +103,11 @@ current role is the owner, and outside them the application role never is. The d
 is read from the database's own setting (`polaris_database_setting()`), not the session's, for
 the same reason: a caller must not choose the bound it is about to be held to.
 
+The bound itself is out of the application's reach too. `IssuerDiscretionPolicy` and
+`AgencyQuota` are written only by the schema owner (`discretion-set` and `quota-set` run as the
+owner); until 2026-09-26 the application role could supersede an authority's bound and set it to
+100% a day, which chose the bound it was about to be held to.
+
 The trigger does not repeat the rate arithmetic. Its job is to close every
 other door: a direct UPDATE from psql, from the SQL console, or from
 application code that skipped the procedure is refused with

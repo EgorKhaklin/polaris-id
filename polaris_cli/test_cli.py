@@ -780,6 +780,31 @@ class UserDeactivateCommandTests(CLIBaseTestCase):
         self.assertEqual(r.returncode, 1)
 
 
+class GovernanceCommandsRefuseTheAppRole(unittest.TestCase):
+    """2026-09-26. docs/design/issuer-discretion.md: "a caller must not choose the bound it is
+    about to be held to". As polaris_app, authority 1's revocation bound was reset to 100% a day,
+    under which uc8 never asks for a co-signer. quota-set and discretion-set run as the schema
+    owner; as the application role each is refused, with a message saying who may run it."""
+
+    def _as_app(self, *args):
+        env = os.environ.copy()
+        env.update(NO_COLOR='1', POLARIS_DB_USER='polaris_app',
+                   POLARIS_DB_PASSWORD=os.environ.get('POLARIS_APP_TEST_PASSWORD',
+                                                      'polaris_dev_password'))
+        return subprocess.run([sys.executable, CLI, *args], capture_output=True, text=True,
+                              env=env, timeout=30)
+
+    def test_the_app_role_cannot_move_an_authoritys_bounds(self):
+        why = 'a bound the caller chose for itself, refused'
+        for args in (('quota-set', '2', '--revoke-per-day', '100000', '--justification', why),
+                     ('discretion-set', '2', '--max-revoke-percent', '100', '--window-days', '1',
+                      '--justification', why)):
+            with self.subTest(args[0]):
+                r = self._as_app(*args)
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                self.assertIn("schema owner", r.stderr)
+
+
 class QuotaCommandTests(CLIBaseTestCase):
     """v9.190 (P1.8): quota-set / quota-show manage AgencyQuota rows."""
 

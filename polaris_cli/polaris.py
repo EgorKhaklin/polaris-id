@@ -1539,6 +1539,12 @@ def cmd_quota_set(args):
                       f"(polaris quota-show --history)."))
         print(dim("  Enforced by the enforce_agency_quota trigger on every write path; "
                   "refusals count on polaris_quota_refusals_total."))
+    except psycopg2.errors.InsufficientPrivilege:
+        conn.rollback()
+        sys.stderr.write(red("Refused: this is a governance decision the application's database "
+                             "role cannot make. Run it as the schema owner (set POLARIS_DB_USER); "
+                             "see docs/design/issuer-discretion.md.\n"))
+        sys.exit(3)
     except psycopg2.errors.CheckViolation as e:
         conn.rollback()
         sys.stderr.write(red(f"Constraint violation: {str(e).split(chr(10))[0]}\n"))
@@ -1683,6 +1689,12 @@ def cmd_discretion_set(args):
             print(red(line) if now > was else dim(line))
         print(dim("  Enforced by uc8_revoke_token on every sanctioned revocation. "
                   "History: polaris discretion-show --history."))
+    except psycopg2.errors.InsufficientPrivilege:
+        conn.rollback()
+        sys.stderr.write(red("Refused: this is a governance decision the application's database "
+                             "role cannot make. Run it as the schema owner (set POLARIS_DB_USER); "
+                             "see docs/design/issuer-discretion.md.\n"))
+        sys.exit(3)
     except psycopg2.errors.CheckViolation as e:
         conn.rollback()
         sys.stderr.write(red(f"Constraint violation: {str(e).split(chr(10))[0]}\n"))

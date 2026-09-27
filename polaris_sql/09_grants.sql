@@ -220,6 +220,13 @@ REVOKE INSERT, UPDATE, DELETE ON VerificationContext FROM polaris_app;
 -- 'applied' row for a pending migration (its file's SHA-256 is public) and the next upgrade
 -- skipped it. The migrator runs as the owner; the application only reads the registry.
 REVOKE INSERT, UPDATE, DELETE ON schema_version FROM polaris_app;
+-- 2026-09-26: the bounds on an authority's own power. docs/design/issuer-discretion.md: "a caller
+-- must not choose the bound it is about to be held to". Nothing the application runs writes these
+-- (quota-set and discretion-set are the operator's CLI); with UPDATE and INSERT the application
+-- role superseded authority 1's revocation bound and set it to 100% a day, under which uc8 never
+-- asks for a co-signer. Those two commands now run as the schema owner.
+REVOKE INSERT, UPDATE, DELETE ON IssuerDiscretionPolicy FROM polaris_app;
+REVOKE INSERT, UPDATE, DELETE ON AgencyQuota FROM polaris_app;
 -- 2026-09-26: the identity-proofing records. "The level is derived, never asserted" (01_schema.sql),
 -- and nothing the application runs writes them (proofing.record_proofing has no route); with INSERT
 -- the application role recorded an IAL2 proofing, remote and unsupervised, resting on no evidence.
