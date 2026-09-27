@@ -220,6 +220,11 @@ REVOKE INSERT, UPDATE, DELETE ON VerificationContext FROM polaris_app;
 -- 'applied' row for a pending migration (its file's SHA-256 is public) and the next upgrade
 -- skipped it. The migrator runs as the owner; the application only reads the registry.
 REVOKE INSERT, UPDATE, DELETE ON schema_version FROM polaris_app;
+-- 2026-09-26: the identity-proofing records. "The level is derived, never asserted" (01_schema.sql),
+-- and nothing the application runs writes them (proofing.record_proofing has no route); with INSERT
+-- the application role recorded an IAL2 proofing, remote and unsupervised, resting on no evidence.
+REVOKE INSERT, UPDATE, DELETE ON EnrollmentProofing FROM polaris_app;
+REVOKE INSERT, UPDATE, DELETE ON EnrollmentEvidence FROM polaris_app;
 -- 2026-09-26: the referee vouchings, where an assurance level is minted from somebody's word.
 -- Nothing the application runs writes them (referee.record_vouching has no route); with INSERT the
 -- application role recorded 26 vouchings by an unproofed referee with no co-signer.

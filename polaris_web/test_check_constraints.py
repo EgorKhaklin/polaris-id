@@ -1994,6 +1994,24 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 cur.execute("UPDATE IdentityToken SET status = 'REVOKED' WHERE token_id = %s", (tok,))
         conn.rollback()
 
+    def test_app_role_cannot_assert_a_proofing_level(self):
+        """2026-09-26. "The level is derived, never asserted." Nothing the application runs writes
+        the proofing records; as polaris_app an IAL2 proofing resting on no evidence was recorded.
+        All writes refused, to both tables."""
+        conn = self._app_conn()
+        for label, sql in (
+                ("proofing", "INSERT INTO EnrollmentProofing (individual_id, recorded_by_agency_id, "
+                             "presence, derived_ial) SELECT 1, 1, 'REMOTE_UNSUPERVISED', 'IAL2' WHERE false"),
+                ("evidence", "INSERT INTO EnrollmentEvidence (proofing_id, evidence_type, strength, "
+                             "validation_method, verification_method) SELECT 1, 'PASSPORT', 'STRONG', "
+                             "'NONE', 'NONE' WHERE false"),
+                ("update", "UPDATE EnrollmentProofing SET derived_ial = 'IAL2' WHERE false"),
+                ("delete", "DELETE FROM EnrollmentEvidence WHERE false")):
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql)
+            conn.rollback()
+
     def test_app_role_cannot_record_a_vouching(self):
         """2026-09-26. Nothing the application runs writes RefereeVouching; with INSERT the
         application role recorded 26 vouchings by an unproofed referee. All writes refused."""
@@ -2165,8 +2183,11 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         conn.rollback()
 
     def test_enrollment_evidence_values_carry_no_document_number(self):
-        """chk_evidence_type_shape and chk_evidence_issuer_not_a_number (2026-09-24)."""
-        conn = self._app_conn()
+        """chk_evidence_type_shape and chk_evidence_issuer_not_a_number (2026-09-24). As the owner:
+        since 2026-09-26 the application role cannot write evidence at all, and the owner is the
+        writer these CHECKs still bind."""
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        self.addCleanup(conn.close)
         ins = ("WITH p AS (%s) INSERT INTO EnrollmentEvidence (proofing_id, evidence_type, strength, "
                "validation_method, verification_method, issuing_authority_name, validated, verified) "
                "SELECT p.proofing_id, %%s, 'STRONG', 'VISUAL_INSPECTION', 'BIOMETRIC_COMPARISON', %%s, "

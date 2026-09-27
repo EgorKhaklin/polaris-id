@@ -12,6 +12,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Security
 
 - A referee's recorded level is now derived from their proofing, a co-signer must be proofed, and the vouching bound is enforced by the database; the application role can no longer write vouchings.
+- The application role can no longer write identity-proofing records, so it cannot record an assurance level no evidence supports.
 
 ### Changed
 

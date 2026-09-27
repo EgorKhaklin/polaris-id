@@ -859,7 +859,7 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
     # 1.0.0-rc.59: the proof policy the signed registry publishes;
     # 1.0.0-rc.62: the migration registry polaris-migrate.sh reads to decide what is applied.
     for table in ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext", "schema_version",
-                  "RefereeVouching"):
+                  "RefereeVouching", "EnrollmentProofing", "EnrollmentEvidence"):
         if not re.search(r"REVOKE\s+INSERT\s*,\s*UPDATE\s*,\s*DELETE\s+ON\s+" + table + r"\s+FROM\s+polaris_app",
                          grants, re.I):
             return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT, UPDATE, DELETE ON " + table + ": "
