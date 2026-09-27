@@ -17428,6 +17428,42 @@ class RefusalsTheAppMutationDrillFound(PolarisTestCase):
                                  '/api/v1/transparency/timestamps/proof/%d')
 
 
+
+class ApiErrorsAreJson(PolarisTestCase):
+    """docs/reference/API.md, Error semantics: every /api/* JSON endpoint returns errors as
+    {"error": ...}. Before 2026-09-27 the framework-level handlers rendered the HTML page on every
+    path (measured under a database outage: every /api/v1/verify 500 was text/html)."""
+
+    def _json_error(self, r, code):
+        self.assertEqual(r.status_code, code, r.get_data(as_text=True)[:200])
+        self.assertTrue(r.is_json, "an /api error must be JSON, got %s" % r.content_type)
+        body = r.get_json()
+        self.assertIsInstance(body.get('error'), str)
+        self.assertTrue(body['error'])
+        self.assertIn('request_id', body)
+
+    def test_an_unknown_api_path_is_a_json_404(self):
+        self._json_error(self.client.get('/api/v1/no-such-route'), 404)
+
+    def test_an_oversized_api_body_is_a_json_413(self):
+        big = b'x' * (flask_app.security.MAX_REQUEST_BODY_BYTES + 1)
+        self._json_error(self.client.post('/api/v1/verify', data=big,
+                                          content_type='application/json'), 413)
+
+    def test_an_unhandled_failure_under_api_is_a_json_500(self):
+        flask_app.app.config['PROPAGATE_EXCEPTIONS'] = False
+        self.addCleanup(flask_app.app.config.__setitem__, 'PROPAGATE_EXCEPTIONS', None)
+        import rp_api
+        with patch.object(rp_api, '_transparency_entries', side_effect=RuntimeError('boom')):
+            r = self.client.get('/api/v1/transparency/entries')
+        self._json_error(r, 500)
+        self.assertNotIn('boom', r.get_data(as_text=True), 'the failure text must not leak')
+
+    def test_a_page_error_is_still_the_html_page(self):
+        r = self.client.get('/no-such-page')
+        self.assertEqual(r.status_code, 404)
+        self.assertIn('text/html', r.content_type, 'control: non-API paths keep the page')
+
 if __name__ == '__main__':
     # Pull in property-based invariant tests (C1, C2, C3) so they run as
     # part of the main suite. The import is at the bottom so test_app.py

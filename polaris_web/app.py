@@ -1348,36 +1348,36 @@ def api_sim_tick():
 # ----------------------------------------------------------------------------
 
 
+def _error_response(code, message):
+    """One error, two shapes. docs/reference/API.md (Error semantics) promises that every /api/*
+    JSON endpoint answers an error as {"error": ...}; before 2026-09-27 these handlers rendered
+    the HTML page for every path, so a /api caller got HTML whenever the error came from the
+    framework (an unhandled exception, an unknown /api path, an oversized body) rather than from
+    the route. Measured under a database outage: every /api/v1/verify 500 was text/html."""
+    if request.path.startswith('/api/'):
+        return jsonify(error=message, request_id=observability.get_request_id()), code
+    return render_template('error.html', code=code, message=message), code
+
+
 @app.errorhandler(400)
 def bad_request(e):
-    return render_template('error.html',
-                           code=400,
-                           message=getattr(e, 'description', None)
-                                   or 'The request was not understood.'), 400
+    return _error_response(400, getattr(e, 'description', None) or 'The request was not understood.')
 
 
 @app.errorhandler(403)
 def forbidden(e):
-    return render_template('error.html',
-                           code=403,
-                           message='Your account does not have permission for '
-                                   'this action.'), 403
+    return _error_response(403, 'Your account does not have permission for this action.')
 
 
 @app.errorhandler(413)
 def request_entity_too_large(e):
-    return render_template('error.html',
-                           code=413,
-                           message='That request body is too large. The maximum is '
-                                   f'{security.MAX_REQUEST_BODY_BYTES // 1024} KB.'), 413
+    return _error_response(413, 'That request body is too large. The maximum is '
+                                f'{security.MAX_REQUEST_BODY_BYTES // 1024} KB.')
 
 
 @app.errorhandler(429)
 def too_many_requests(e):
-    return render_template('error.html',
-                           code=429,
-                           message='Too many requests from this address. Wait a '
-                                   'minute and try again.'), 429
+    return _error_response(429, 'Too many requests from this address. Wait a minute and try again.')
 
 
 # ============================================================================
@@ -2384,18 +2384,13 @@ def _check_and_record_duress(token_id, context_id, requesting_agency_id, duress_
 
 @app.errorhandler(404)
 def page_not_found(e):
-    return render_template('error.html',
-                           code=404,
-                           message='No page exists at that address.'), 404
+    return _error_response(404, 'No page exists at that address.')
 
 
 @app.errorhandler(500)
 def server_error(e):
-    return render_template('error.html',
-                           code=500,
-                           message='The request could not be completed. The '
-                                   'failure is recorded in the log with the '
-                                   'request id below.'), 500
+    return _error_response(500, 'The request could not be completed. The failure is recorded in the '
+                                'log with the request id.')
 
 
 # ============================================================================

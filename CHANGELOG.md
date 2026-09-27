@@ -7,6 +7,12 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
+## Unreleased
+
+### Fixed
+
+- Errors on `/api/*` paths that come from the framework (an unhandled failure, an unknown path, an oversized body, a rate limit) are JSON `{"error", "request_id"}` as the API reference promises, not the HTML error page.
+
 ## v1.0.0-rc.64 — 2026-09-27 (a credential's signature cannot be borrowed from any other artifact)
 
 Two verifier defects fixed, found by trying to separate the public surface from the issuer.
