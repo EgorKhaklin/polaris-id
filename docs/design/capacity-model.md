@@ -19,12 +19,16 @@ not asserted":
 > instances; an enrollment surge of 200,000/day sustained during rollout years; 99.99%
 > availability on the verification path.
 
-Every throughput target clears by more than an order of magnitude.
+The signature cost clears every throughput target by more than an order of magnitude. The
+service around it does not: measured end to end on one 8-core machine (2026-09-27,
+[lab/evaluation](../../lab/evaluation/README.md)), `POST /api/v1/verify` served 155 to 165 per
+second with 4 or 8 workers, and the signature was 0.14 ms of a 17.8 ms request. Most of the rest
+is a new database connection per statement, three per verification.
 
 | Target | What it costs | Source |
 | --- | --- | --- |
-| 50,000 peak verifications/s | ~6.4 cores | MEASURED: 7,848/s per core, single-witness verify-at-use |
-| 5,000 sustained verifications/s | under one core | MEASURED |
+| 50,000 peak verifications/s | ~6.4 cores of signature checking | MEASURED for the signature alone: 7,848/s per core, single-witness verify-at-use; not the endpoint (above) |
+| 5,000 sustained verifications/s | under one core of signature checking | MEASURED for the signature alone |
 | 200,000 enrollments/day | ~9 minutes of one signer | MEASURED: 372 tokens/s, signing-bound |
 
 And the system could not have run for a week at the sustained target, because

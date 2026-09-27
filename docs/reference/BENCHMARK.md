@@ -73,7 +73,7 @@ measurement instrument, not a production SLO.
 | Verification-EVENT ingestion (audit writes, NOT signature checks) | ~25,970 events/s |
 | Cryptographic verification, two-witness (issuance-grade) | ~745 verifications/s per core (2,000/2,000 verified, p95 1.36 ms) |
 | **Cryptographic verification, single-witness (verify-at-use)** | **~7,848 verifications/s per core** (2,000/2,000 verified, p95 0.13 ms) |
-| Projected fleet, single-witness (8 cores, verify needs only the public key) | ~62,783 verifications/s |
+| Projected fleet, single-witness (8 cores, verify needs only the public key) | ~62,783 signature checks/s, extrapolated; the endpoint measured 155 to 165/s on 8 cores ([lab/evaluation](../../lab/evaluation/README.md)) |
 | Single event write latency | p50 0.14 ms, p95 0.19 ms, p99 0.23 ms (n=500) |
 | Event set measured | 200,010 verification events |
 

@@ -1,0 +1,25 @@
+{
+  "machine": {
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "python": "3.12.13",
+    "processor": "arm",
+    "cpu_count": 8,
+    "cpu": "Apple M3",
+    "oqs": "0.16.0",
+    "cryptography": "50.0.1"
+  },
+  "n": 500,
+  "unprofiled_wall_ms_per_request": 17.818,
+  "unprofiled_cpu_ms_per_request": 3.77,
+  "profiled_ms_per_request": {
+    "handler_total": 17.018,
+    "db_connect": 9.675,
+    "db_execute": 6.454,
+    "mldsa_verify_liboqs": 0.143
+  },
+  "calls": {
+    "db_connect_per_request": 3.0
+  },
+  "real_mldsa65": true,
+  "started": "2026-09-27T10:17:04-0400"
+}

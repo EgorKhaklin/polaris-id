@@ -1,0 +1,298 @@
+{
+  "machine": {
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "python": "3.12.13",
+    "processor": "arm",
+    "cpu_count": 8,
+    "cpu": "Apple M3",
+    "oqs": "0.16.0",
+    "cryptography": "50.0.1"
+  },
+  "endpoint": "POST /api/v1/verify",
+  "base": "http://127.0.0.1:5391",
+  "server": {
+    "gunicorn_workers": 4,
+    "worker_class": "sync",
+    "gunicorn_pid": 12086,
+    "database": "polaris_eval",
+    "db_version": "PostgreSQL 16.14 (Homebrew) on aarch64-apple-darwin25.4.0, compiled by Apple clang version 21.0.0 (clang-2100.0.123.102), 64-bit"
+  },
+  "credential": {
+    "algorithm": "ML-DSA-65",
+    "real_mldsa65": true,
+    "verifies_locally_with_liboqs": true,
+    "token_id": 12
+  },
+  "method": {
+    "closed_loop": true,
+    "warmup_s": 5.0,
+    "duration_s": 20.0,
+    "levels": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32,
+      64
+    ],
+    "new_connection_per_request": true,
+    "generator_processes_max": 4,
+    "generator_colocated": true
+  },
+  "server_env_note": "gunicorn 26.2.0 --config polaris_web/gunicorn.conf.py --bind 127.0.0.1:5391, POLARIS_WORKERS=4 (sync), POLARIS_USE_REAL_PQC=1 with a file issuer key, POLARIS_DB_HOST=localhost POLARIS_DB_USER=vanta (schema owner, trust auth, no pgbouncer), POLARIS_RATE_LIMIT_BACKEND=memory, POLARIS_RATE_LIMIT_WRITE_MAX=100000000, POLARIS_RATE_LIMIT_LOGIN_MAX=1000, RelyingParty.rate_limit_per_min=100000000",
+  "background_before": {
+    "loadavg": [
+      5.44,
+      4.57,
+      3.7
+    ],
+    "top_cpu": [
+      {
+        "pcpu": 100.0,
+        "comm": "fseventsd"
+      },
+      {
+        "pcpu": 28.2,
+        "comm": "Python"
+      },
+      {
+        "pcpu": 14.7,
+        "comm": "node"
+      },
+      {
+        "pcpu": 14.3,
+        "comm": "WindowServer"
+      },
+      {
+        "pcpu": 8.0,
+        "comm": "iTerm2"
+      },
+      {
+        "pcpu": 6.9,
+        "comm": "2.1.280"
+      }
+    ]
+  },
+  "started": "2026-09-27T10:08:19-0400",
+  "results": [
+    {
+      "concurrency": 1,
+      "generator_processes": 1,
+      "served": 1098,
+      "errors": {},
+      "throughput_per_s": 54.9,
+      "p50_ms": 18.11,
+      "p50_ci95_ms": [
+        18.04,
+        18.16
+      ],
+      "p95_ms": 20.62,
+      "p99_ms": 22.39,
+      "p99_ci95_ms": [
+        21.78,
+        24.23
+      ],
+      "max_ms": 29.83,
+      "mean_us": 18216.4,
+      "cpu_cores_used": {
+        "gunicorn_workers": 0.27,
+        "postgres": 0.07,
+        "generator": 0.02
+      },
+      "host_cpu": {
+        "user_pct": 24.8,
+        "sys_pct": 13.0,
+        "idle_pct": 62.2,
+        "seconds_sampled": 8
+      }
+    },
+    {
+      "concurrency": 2,
+      "generator_processes": 2,
+      "served": 2200,
+      "errors": {},
+      "throughput_per_s": 110.0,
+      "p50_ms": 17.79,
+      "p50_ci95_ms": [
+        17.76,
+        17.82
+      ],
+      "p95_ms": 20.5,
+      "p99_ms": 22.22,
+      "p99_ci95_ms": [
+        21.68,
+        22.66
+      ],
+      "max_ms": 28.83,
+      "mean_us": 18178.9,
+      "cpu_cores_used": {
+        "gunicorn_workers": 0.49,
+        "postgres": 0.1,
+        "generator": 0.05
+      },
+      "host_cpu": {
+        "user_pct": 29.1,
+        "sys_pct": 19.6,
+        "idle_pct": 51.3,
+        "seconds_sampled": 8
+      }
+    },
+    {
+      "concurrency": 4,
+      "generator_processes": 4,
+      "served": 3112,
+      "errors": {},
+      "throughput_per_s": 155.6,
+      "p50_ms": 25.41,
+      "p50_ci95_ms": [
+        25.33,
+        25.49
+      ],
+      "p95_ms": 29.53,
+      "p99_ms": 32.71,
+      "p99_ci95_ms": [
+        32.28,
+        33.14
+      ],
+      "max_ms": 58.6,
+      "mean_us": 25683.4,
+      "cpu_cores_used": {
+        "gunicorn_workers": 0.85,
+        "postgres": 0.19,
+        "generator": 0.08
+      },
+      "host_cpu": {
+        "user_pct": 39.9,
+        "sys_pct": 35.2,
+        "idle_pct": 24.9,
+        "seconds_sampled": 8
+      }
+    },
+    {
+      "concurrency": 8,
+      "generator_processes": 4,
+      "served": 3098,
+      "errors": {},
+      "throughput_per_s": 154.9,
+      "p50_ms": 50.97,
+      "p50_ci95_ms": [
+        50.68,
+        51.12
+      ],
+      "p95_ms": 58.36,
+      "p99_ms": 68.98,
+      "p99_ci95_ms": [
+        66.41,
+        70.81
+      ],
+      "max_ms": 82.89,
+      "mean_us": 51632.8,
+      "cpu_cores_used": {
+        "gunicorn_workers": 0.84,
+        "postgres": 0.19,
+        "generator": 0.08
+      },
+      "host_cpu": {
+        "user_pct": 40.6,
+        "sys_pct": 36.3,
+        "idle_pct": 23.1,
+        "seconds_sampled": 8
+      }
+    },
+    {
+      "concurrency": 16,
+      "generator_processes": 4,
+      "served": 3069,
+      "errors": {},
+      "throughput_per_s": 153.4,
+      "p50_ms": 101.03,
+      "p50_ci95_ms": [
+        100.67,
+        101.33
+      ],
+      "p95_ms": 117.26,
+      "p99_ms": 147.47,
+      "p99_ci95_ms": [
+        141.37,
+        165.11
+      ],
+      "max_ms": 276.34,
+      "mean_us": 104238.1,
+      "cpu_cores_used": {
+        "gunicorn_workers": 0.83,
+        "postgres": 0.19,
+        "generator": 0.08
+      },
+      "host_cpu": {
+        "user_pct": 39.9,
+        "sys_pct": 35.3,
+        "idle_pct": 24.8,
+        "seconds_sampled": 8
+      }
+    },
+    {
+      "concurrency": 32,
+      "generator_processes": 4,
+      "served": 3082,
+      "errors": {},
+      "throughput_per_s": 154.1,
+      "p50_ms": 205.04,
+      "p50_ci95_ms": [
+        204.72,
+        205.39
+      ],
+      "p95_ms": 235.59,
+      "p99_ms": 253.17,
+      "p99_ci95_ms": [
+        251.05,
+        255.26
+      ],
+      "max_ms": 266.17,
+      "mean_us": 207823.5,
+      "cpu_cores_used": {
+        "gunicorn_workers": 0.84,
+        "postgres": 0.19,
+        "generator": 0.08
+      },
+      "host_cpu": {
+        "user_pct": 40.0,
+        "sys_pct": 35.5,
+        "idle_pct": 24.5,
+        "seconds_sampled": 8
+      }
+    },
+    {
+      "concurrency": 64,
+      "generator_processes": 4,
+      "served": 2965,
+      "errors": {},
+      "throughput_per_s": 148.2,
+      "p50_ms": 426.27,
+      "p50_ci95_ms": [
+        425.85,
+        426.67
+      ],
+      "p95_ms": 466.27,
+      "p99_ms": 570.24,
+      "p99_ci95_ms": [
+        550.08,
+        573.97
+      ],
+      "max_ms": 591.52,
+      "mean_us": 431728.2,
+      "cpu_cores_used": {
+        "gunicorn_workers": 0.83,
+        "postgres": 0.19,
+        "generator": 0.08
+      },
+      "host_cpu": {
+        "user_pct": 40.3,
+        "sys_pct": 36.5,
+        "idle_pct": 23.1,
+        "seconds_sampled": 8
+      }
+    }
+  ],
+  "finished": "2026-09-27T10:11:33-0400"
+}
