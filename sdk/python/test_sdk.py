@@ -730,6 +730,33 @@ class CrossAuthorityHeldOutTests(unittest.TestCase):
 
 
 @unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+class CrossAuthorityEdgeWindowTests(unittest.TestCase):
+    """2026-09-27: verify_cross_authority never read a signed edge's `valid_until`, so an edge
+    its authority time-boxed kept granting acceptance after the box closed, as long as the
+    manifest carrying it was fresh (WIRE-SPEC 3.14: the edge binds "the window, so it cannot be
+    extended"). sdk/testdata/federation-edge-window.json holds the same signed edge in three
+    windows under one fresh manifest each."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-edge-window.json")))
+
+    def decide(self, window):
+        f = self.f
+        return pv.verify_cross_authority(f["pack"], f["_fixture"]["context_id"], [f["manifests"][window]],
+                                         [f["trusted_anchor"]], None, now=f["_fixture"]["now"]).decision
+
+    def test_an_edge_inside_its_window_is_accepted(self):
+        self.assertEqual(self.decide("open"), "accept")
+
+    def test_an_edge_past_its_window_is_refused(self):
+        self.assertEqual(self.decide("closed"), "reject")
+
+    def test_an_edge_whose_window_cannot_be_read_is_refused(self):
+        self.assertEqual(self.decide("unreadable"), "reject")
+
+
+@unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
 class TimestampAnchorHeldOutTests(unittest.TestCase):
     """2026-09-23: ten of verify_timestamp_anchor's rules removed in turn; nine survived this
     suite and the conformance runner. Several sit BEFORE a signature check, so a test that

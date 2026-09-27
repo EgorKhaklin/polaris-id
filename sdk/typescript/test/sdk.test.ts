@@ -778,6 +778,19 @@ test("held-out: each federation variant is refused", () => {
 });
 
 
+// 2026-09-27: verifyCrossAuthority never read a signed edge's `valid_until`, so an edge its
+// authority time-boxed kept granting acceptance after the box closed while the manifest carrying
+// it was fresh (WIRE-SPEC 3.14). One signed edge in three windows, each under a fresh manifest.
+const EDGE = JSON.parse(readFileSync(join(ROOT, "sdk", "testdata", "federation-edge-window.json"), "utf8"));
+const edgeDecide = (w: string) => verifyCrossAuthority(EDGE.pack, EDGE._fixture.context_id,
+  [EDGE.manifests[w]], [EDGE.trusted_anchor], null, EDGE._fixture.now).decision;
+
+test("a signed edge counts only inside its own window", () => {
+  assert.equal(edgeDecide("open"), "accept");
+  assert.equal(edgeDecide("closed"), "reject", "an edge past its valid_until");
+  assert.equal(edgeDecide("unreadable"), "reject", "an edge whose valid_until cannot be read");
+});
+
 // 2026-09-23: a held-out round on verifyTimestampAnchor. The published witnessed anchor covers
 // the rules a test can reach by editing unsigned fields; sdk/testdata/anchor-variants.json holds
 // genuinely signed variants for the three it cannot (a head for another log, cosignatures over

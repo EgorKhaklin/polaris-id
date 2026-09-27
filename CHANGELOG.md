@@ -12,6 +12,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Fixed
 
 - Errors on `/api/*` paths that come from the framework (an unhandled failure, an unknown path, an oversized body, a rate limit) are JSON `{"error", "request_id"}` as the API reference promises, not the HTML error page.
+- The Python and TypeScript SDKs' cross-authority decision refuses a signed trust edge past its `valid_until`, or whose `valid_until` cannot be read, as the detached verifier already did; before, a fresh manifest carrying an expired edge was accepted.
 
 ## v1.0.0-rc.64 — 2026-09-27 (a credential's signature cannot be borrowed from any other artifact)
 
