@@ -115,6 +115,14 @@ def main():
                 VALUES (%s, %s, 'IN_PERSON', 'IAL1') RETURNING proofing_id
             """, (applicant, agency))
             proofing = cur.fetchone()["proofing_id"]
+            # The referee and the co-signer must themselves be proofed: trg_vouching_rules
+            # derives the referee's level from this record and refuses an unproofed co-signer.
+            for person in (ref_id, third):
+                cur.execute("""
+                    INSERT INTO EnrollmentProofing
+                        (individual_id, recorded_by_agency_id, presence, derived_ial)
+                    VALUES (%s, %s, 'IN_PERSON', 'IAL2')
+                """, (person, agency))
             conn.commit()
 
         def direct(referee_id, applicant_id, referee_ial, relationship, vouched_ial,
@@ -190,9 +198,9 @@ def main():
         # 2026-09-24, a held-out round: of twelve mutations of referee.py, eight survived
         # test_referee and this drill together, and every one was in the three functions that
         # touch the database. The rows above insert DIRECTLY, which is the right way to test
-        # the schema's floors and no way at all to test record_vouching, the only place the
-        # bound is enforced (the database cannot hold a count). A record_vouching that never
-        # counted, or counted every referee, or the whole history, passed.
+        # the schema's floors and no way at all to test record_vouching's own count. A
+        # record_vouching that never counted, or counted every referee, or the whole history,
+        # passed. (Since 2026-09-26 the database holds the bound too, in trg_vouching_rules.)
         def aged(days, referee_id=ref_id):
             with conn.cursor() as cur:
                 cur.execute("""

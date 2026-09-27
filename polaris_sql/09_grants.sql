@@ -220,6 +220,11 @@ REVOKE INSERT, UPDATE, DELETE ON VerificationContext FROM polaris_app;
 -- 'applied' row for a pending migration (its file's SHA-256 is public) and the next upgrade
 -- skipped it. The migrator runs as the owner; the application only reads the registry.
 REVOKE INSERT, UPDATE, DELETE ON schema_version FROM polaris_app;
+-- 2026-09-26: the referee vouchings, where an assurance level is minted from somebody's word.
+-- Nothing the application runs writes them (referee.record_vouching has no route); with INSERT the
+-- application role recorded 26 vouchings by an unproofed referee with no co-signer.
+-- trg_vouching_rules now holds the rules for every writer as well.
+REVOKE INSERT, UPDATE, DELETE ON RefereeVouching FROM polaris_app;
 -- 1.0.0-rc.61: the Athena constitution the /athena console shows (which mechanism enforces
 -- each of C1-C10, and the key custody). 16_athena.sql writes it as the owner and revokes these
 -- rights itself on a fresh load, where it runs after this file; the object sync runs this file

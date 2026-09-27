@@ -7,6 +7,20 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
+## Unreleased
+
+### Security
+
+- A referee's recorded level is now derived from their proofing, a co-signer must be proofed, and the vouching bound is enforced by the database; the application role can no longer write vouchings.
+
+### Changed
+
+- The trigger refusal drill runs on every push.
+
+### Fixed
+
+- `polaris-id --help` examples for `revoke` and `quota-show` now parse.
+
 ## v1.0.0-rc.62 — 2026-09-26 (fifty-nine fixes, one release)
 
 rc.4 to rc.62 were cut per fix and released together; from here a version moves only when a release is cut.

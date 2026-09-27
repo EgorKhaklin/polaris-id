@@ -1699,7 +1699,8 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                         ("RecoveryRequest", "BulkEnrollmentBatch", "BulkEnrollmentStaging",
                          "TokenPermission", "DeviceBinding", "RevocationList"))
               + "".join("REVOKE INSERT, UPDATE, DELETE ON %s FROM polaris_app;\n" % t for t in
-                        ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext", "schema_version")))
+                        ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext", "schema_version",
+                         "RefereeVouching")))
     full = (good_grants + "SELECT polaris_lock_event_partitions();\n"
             "REVOKE INSERT ON TokenLifecycleEvent FROM polaris_app;\n" + epochs)
     (sql / "01_schema.sql").write_text(lock + ensure)
@@ -1808,7 +1809,8 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                   "TokenPermission", "DeviceBinding", "RevocationList"):
         write(full.replace("REVOKE UPDATE, DELETE ON %s FROM polaris_app;\n" % table, ""), True, True)
         assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", table
-    for table in ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext", "schema_version"):
+    for table in ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext", "schema_version",
+                         "RefereeVouching"):
         write(full.replace("REVOKE INSERT, UPDATE, DELETE ON %s FROM polaris_app;\n" % table, ""), True, True)
         assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", table
     write(full, True, True)
@@ -11285,7 +11287,7 @@ def test_trusted_referee_check_discriminates(tmp_path):
     import shutil
 
     def write(rel=None, old=None, new=None):
-        for f in ('polaris_web/referee.py', 'polaris_sql/01_schema.sql'):
+        for f in ('polaris_web/referee.py', 'polaris_sql/01_schema.sql', 'polaris_sql/06_triggers.sql'):
             dst = tmp_path / f
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(REPO / f, dst)
@@ -11305,6 +11307,22 @@ def test_trusted_referee_check_discriminates(tmp_path):
           "")
     assert checks.check_trusted_referee(tmp_path)[0].level == "FAIL", \
         "a rule only the module enforces must FAIL: this is where an assurance level is minted"
+
+    # 2026-09-26: THE DATABASE HOLDS THE LEVEL AND THE BOUND TOO, with the module's numbers.
+    for old_text, new_text, why in (
+            ("CREATE TRIGGER trg_vouching_rules", "CREATE TRIGGER trg_vouching_rules_disabled",
+             "no trigger, so the referee's level is the writer's claim"),
+            ("IF NEW.referee_ial IS DISTINCT FROM v_referee_level THEN", "IF false THEN",
+             "the claimed level is never compared with the proofed one"),
+            ("IF v_seen >= 25 AND", "IF v_seen >= 250 AND",
+             "the database bound drifted from referee.py's"),
+            ("AND vouched_at >= CURRENT_TIMESTAMP - interval '30 days';",
+             "AND vouched_at >= CURRENT_TIMESTAMP - interval '3 days';",
+             "the database window drifted from referee.py's")):
+        write('polaris_sql/06_triggers.sql', old_text, new_text)
+        assert checks.check_trusted_referee(tmp_path)[0].level == "FAIL", "must FAIL: " + why
+    write()
+    assert checks.check_trusted_referee(tmp_path)[0].level == "OK"
 
     # THE CREDENTIAL GAINS A MARK. A person who needed a referee would carry it at every
     # counter for the rest of their life.

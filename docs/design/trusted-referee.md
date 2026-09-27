@@ -32,11 +32,11 @@ is that refusing is the exclusion the mechanism exists to prevent.
 
 | Rule | Where it lives | Why |
 | --- | --- | --- |
-| A referee must be proofed at IAL2 or above | `MINIMUM_REFEREE_IAL`, and `cannot_vouch_above_own_level` in the schema | An unproofed person vouching for an unproofed person is two strangers agreeing |
+| A referee must be proofed at IAL2 or above | `MINIMUM_REFEREE_IAL`; `trg_vouching_rules` derives the recorded level from the referee's latest `EnrollmentProofing` row, and `cannot_vouch_above_own_level` in the schema | An unproofed person vouching for an unproofed person is two strangers agreeing |
 | A vouching cannot exceed the referee's own level | `vouching_ceiling`, `cannot_vouch_above_own_level` | You cannot give what you do not have |
 | **A vouching never reaches IAL3** | `VOUCHING_CEILING`, `vouching_never_reaches_ial3` | IAL3 needs the APPLICANT's live biometric in a supervised session. A referee can attest to who somebody is; a referee cannot be that person's face |
 | Nobody vouches for themselves | `referee_is_not_the_applicant` | |
-| A co-signer is a third person | `co_signer_is_a_third_person` | Past the bound the point is a second pair of eyes, and the referee's own are already on it |
+| A co-signer is a third, proofed person | `co_signer_is_a_third_person`, and `trg_vouching_rules` requires the co-signer to be proofed at IAL2 or above | Past the bound the point is a second pair of eyes, and the referee's own are already on it |
 | The relationship comes from a closed vocabulary | `RELATIONSHIPS`, and a `CHECK` | "Knows the applicant" covers a social worker and a stranger paid fifty pounds, and the difference is the whole control |
 
 Note the second column. **Every limit is a database constraint, not only a module check.** The
@@ -64,6 +64,13 @@ So past `VOUCHING_BOUND` vouchings in `VOUCHING_WINDOW_DAYS`, a vouching require
 a third proofed person who also puts their name to it. With one, it stands at any volume. This
 is the same shape as the mass-revocation bound in UC-8, for the same reason: the answer to an
 action that might be coercion is to make one person unable to take it alone.
+
+The bound is held by the database as well as the module: `trg_vouching_rules` counts the
+referee's vouchings in the window under a per-referee lock, and `check_trusted_referee` requires
+its numbers to equal `VOUCHING_BOUND` and `VOUCHING_WINDOW_DAYS`. Until 2026-09-26 only
+`record_vouching` counted, and the recorded level was the writer's claim; as the application role,
+26 vouchings by an unproofed referee with no co-signer were recorded. The application role now
+holds no write access to the table.
 
 The threshold is a judgment and is stated as one. What must not change is that crossing it asks
 for a signature rather than closing the door.

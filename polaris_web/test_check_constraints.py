@@ -1360,6 +1360,80 @@ class TestEachTriggerRefusalIsNoticed(_CheckBase):
                               " WHERE token_id = %s", (tok,), message)
 
 
+class TestVouchingRulesHeldByTheDatabase(_CheckBase):
+    """2026-09-26. docs/design/trusted-referee.md: "Every limit is a database constraint, not
+    only a module check." The referee's level was the writer's claim, the co-signer bound lived
+    only in referee.py, and a co-signer was never checked for being proofed. As polaris_app, 26
+    vouchings by an unproofed referee with no co-signer were recorded. trg_vouching_rules holds
+    each rule for every writer; each test asserts that rule's own message."""
+
+    def _person(self, name):
+        with self.conn.cursor() as cur:
+            cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                        "VALUES (%s, DATE '1985-01-01', 'US-PA') RETURNING individual_id", (name,))
+            return cur.fetchone()["individual_id"]
+
+    def _proof(self, person, level):
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT min(agency_id) AS a FROM Agency")
+            agency = cur.fetchone()["a"]
+            cur.execute("INSERT INTO EnrollmentProofing (individual_id, recorded_by_agency_id, "
+                        "presence, derived_ial) VALUES (%s, %s, 'IN_PERSON', %s) "
+                        "RETURNING proofing_id", (person, agency, level))
+            return cur.fetchone()["proofing_id"]
+
+    def _setup(self, referee_level="IAL2"):
+        self.referee = self._person("Referee Fixture")
+        if referee_level:
+            self._proof(self.referee, referee_level)
+        self.applicant = self._person("Applicant Fixture")
+        self.proofing = self._proof(self.applicant, "IAL1")
+
+    def _vouch(self, referee_ial="IAL2", co_signer=None):
+        with self.conn.cursor() as cur:
+            cur.execute("INSERT INTO RefereeVouching (proofing_id, referee_individual_id, "
+                        "applicant_individual_id, referee_ial, relationship, vouched_ial, "
+                        "co_signer_individual_id) VALUES (%s, %s, %s, %s, 'SOCIAL_WORKER', 'IAL1', %s) "
+                        "RETURNING vouching_id",
+                        (self.proofing, self.referee, self.applicant, referee_ial, co_signer))
+            return cur.fetchone()["vouching_id"]
+
+    def _refused(self, message, **kw):
+        with self.assertRaisesRegex(psycopg2.Error, message):
+            self._vouch(**kw)
+        self.conn.rollback()
+
+    def test_a_proofed_referee_vouches(self):
+        self._setup()
+        self.assertIsNotNone(self._vouch())
+
+    def test_an_unproofed_referee_cannot_vouch(self):
+        self._setup(referee_level=None)
+        self._refused("has no proofing record")
+
+    def test_the_referee_level_is_derived_not_claimed(self):
+        self._setup(referee_level="IAL1")
+        self._refused("the level is derived, never chosen", referee_ial="IAL2")
+
+    def test_past_the_bound_a_proofed_cosigner_is_required(self):
+        self._setup()
+        for _ in range(25):
+            self._vouch()
+        self._refused("needs a co-signer")
+        # The same referee's 25 are gone with the rollback; rebuild them and co-sign the 26th.
+        self._setup()
+        for _ in range(25):
+            self._vouch()
+        cosigner = self._person("Co-signer Fixture")
+        self._proof(cosigner, "IAL2")
+        self.assertIsNotNone(self._vouch(co_signer=cosigner))
+
+    def test_an_unproofed_cosigner_does_not_count(self):
+        self._setup()
+        cosigner = self._person("Unproofed Co-signer")
+        self._refused("is not proofed at IAL2 or above", co_signer=cosigner)
+
+
 class TestC1PrivilegeBoundary(unittest.TestCase):
     """C1 append-only is a PRIVILEGE boundary, not only a trigger.
 
@@ -1919,6 +1993,21 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             with self.assertRaisesRegex(psycopg2.Error, "Use uc8_revoke_token"):
                 cur.execute("UPDATE IdentityToken SET status = 'REVOKED' WHERE token_id = %s", (tok,))
         conn.rollback()
+
+    def test_app_role_cannot_record_a_vouching(self):
+        """2026-09-26. Nothing the application runs writes RefereeVouching; with INSERT the
+        application role recorded 26 vouchings by an unproofed referee. All writes refused."""
+        conn = self._app_conn()
+        for label, sql in (
+                ("insert", "INSERT INTO RefereeVouching (proofing_id, referee_individual_id, "
+                           "applicant_individual_id, referee_ial, relationship, vouched_ial) "
+                           "SELECT 1, 1, 2, 'IAL2', 'NOTARY', 'IAL1' WHERE false"),
+                ("update", "UPDATE RefereeVouching SET vouched_ial = 'IAL1' WHERE false"),
+                ("delete", "DELETE FROM RefereeVouching WHERE false")):
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql)
+            conn.rollback()
 
     def test_app_role_cannot_mark_a_migration_applied(self):
         """1.0.0-rc.62. polaris-migrate.sh decides a migration is applied by the last event in
@@ -2792,7 +2881,11 @@ APPEND_ONLY_FIXTURES = {
         "INSERT INTO IndividualErasureEvent (individual_id, pseudonym_assigned, erased_by_user_id, "
         "reason) VALUES (1, 'PSEUDO-APPEND-ONLY-TEST', 1, 'append-only fixture') RETURNING erasure_id"),
     'lifecyclearchivecheckpoint': ('checkpoint_id', None),
+    # The referee must be proofed (trg_vouching_rules derives the level from the record), and
+    # in its own statement: a CTE's insert is not visible to the trigger's read of the same one.
     'refereevouching': ('vouching_id',
+        "INSERT INTO EnrollmentProofing (individual_id, recorded_by_agency_id, presence, "
+        "derived_ial) VALUES (2, 1, 'IN_PERSON', 'IAL2'); "
         f"WITH p AS ({_PROOFING}) "
         "INSERT INTO RefereeVouching (proofing_id, referee_individual_id, applicant_individual_id, "
         "referee_ial, relationship, vouched_ial) "

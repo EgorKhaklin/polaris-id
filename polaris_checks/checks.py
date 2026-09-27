@@ -858,7 +858,8 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
     # 1.0.0-rc.58: the algorithm registry and the authorizations uc1/uc8/uc_bulk_issue read;
     # 1.0.0-rc.59: the proof policy the signed registry publishes;
     # 1.0.0-rc.62: the migration registry polaris-migrate.sh reads to decide what is applied.
-    for table in ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext", "schema_version"):
+    for table in ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext", "schema_version",
+                  "RefereeVouching"):
         if not re.search(r"REVOKE\s+INSERT\s*,\s*UPDATE\s*,\s*DELETE\s+ON\s+" + table + r"\s+FROM\s+polaris_app",
                          grants, re.I):
             return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT, UPDATE, DELETE ON " + table + ": "
@@ -17012,6 +17013,31 @@ def check_trusted_referee(root: pathlib.Path) -> list[Finding]:
         exec(compile(_read_path(mod_path), ref.__file__, "exec"), ref.__dict__)
     except Exception as exc:  # noqa: BLE001
         return _fail(name, f"polaris_web/referee.py does not load: {exc}")
+
+    # 2026-09-26: the referee's level, the co-signer's proofing and the bound are held by the
+    # database too (trg_vouching_rules), with the same numbers the module uses. Before, the level
+    # was the writer's claim and the bound lived only in record_vouching.
+    trig = _read(root, "polaris_sql/06_triggers.sql")
+    fn = re.search(r"FUNCTION\s+enforce_vouching_rules\(\).*?\$\$(.*?)\$\$", trig, re.S)
+    if not fn or not re.search(r"CREATE\s+TRIGGER\s+trg_vouching_rules\s+BEFORE\s+INSERT\s+ON\s+RefereeVouching",
+                               trig, re.I):
+        return _fail(name, "RefereeVouching has no trg_vouching_rules BEFORE INSERT trigger, so the "
+                           "referee's level is whatever the writer claims and the co-signer bound "
+                           "lives only in referee.py")
+    body = fn.group(1)
+    for needle, why in (("FROM EnrollmentProofing", "the referee's level is not derived from their proofing"),
+                        ("IS DISTINCT FROM v_referee_level", "a claimed referee level is not compared with the proofed one"),
+                        ("co_signer_individual_id", "the co-signer's proofing is not checked")):
+        if needle not in body:
+            return _fail(name, "trg_vouching_rules: " + why)
+    window = re.search(r"interval\s+'(\d+)\s+days'", body)
+    bound = re.search(r"v_seen\s*>=\s*(\d+)", body)
+    if not window or not bound:
+        return _fail(name, "trg_vouching_rules does not count a window against a bound")
+    if (int(window.group(1)), int(bound.group(1))) != (ref.VOUCHING_WINDOW_DAYS, ref.VOUCHING_BOUND):
+        return _fail(name, "trg_vouching_rules counts %s days against %s, but referee.py says %s and %s; "
+                           "the database and the module must refuse the same vouching"
+                     % (window.group(1), bound.group(1), ref.VOUCHING_WINDOW_DAYS, ref.VOUCHING_BOUND))
 
     base = dict(referee_id=1, applicant_id=2, referee_ial="IAL2",
                 relationship="SOCIAL_WORKER", vouched_ial="IAL2")
