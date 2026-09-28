@@ -179,7 +179,9 @@ def status_list_token(key, uri: str, valid_indexes, now: int | None = None) -> s
     """The agency's Token Status List token for one list: `statuslist+jwt`, signed with the copy
     key and the same x5c, so a verifier checks it on the basis it checked the copy."""
     now = int(time.time()) if now is None else int(now)
-    lst = b64u(zlib.compress(encode_status_bits(valid_indexes), 9))
+    # zlib's default level. At 100,000 valid slots level 9 was 96 ms of a 113 ms fetch, for a
+    # list 1.7% smaller; the decoded list is the same at any level.
+    lst = b64u(zlib.compress(encode_status_bits(valid_indexes)))
     header = {"alg": "ES256", "typ": "statuslist+jwt", "x5c": list(key.x5c)}
     payload = {"sub": uri, "iat": now, "exp": now + STATUS_LIST_TTL, "ttl": STATUS_LIST_TTL,
                "status_list": {"bits": 1, "lst": lst}}
