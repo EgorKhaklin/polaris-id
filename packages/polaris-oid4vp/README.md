@@ -13,9 +13,11 @@ Foundation [lists the certification](https://openid.net/certification/certified-
 (2026-09-24). It covers that version in that role: not an endorsement, not an audit, and not
 other versions.
 
-**Status:** a release candidate. Outside results: the Foundation's hosted suite (0.1.0, then
-1.0.0rc7 for certification) and two unmodified external wallets, walt.id Wallet API v2 (last
-against 1.0.0-rc.3) and Credo 0.6.3 (against 1.0.0rc7, 2026-09-27). No operator other than the author has run it and no independent security
+**Status:** 1.0.0rc8, a release candidate, not certified: it carries the fixes made since
+1.0.0rc7. Outside results: the Foundation's hosted suite (0.1.0, then 1.0.0rc7 for
+certification) and four unmodified external wallets: walt.id Wallet API v2 (last against
+1.0.0-rc.3), Credo 0.6.3 (against 1.0.0rc7, 2026-09-27), eudi-dev v2.3.7 and OID4VCgo 0.12.0
+(2026-09-28). No operator other than the author has run it and no independent security
 review exists. Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
 
 **Try it in ten minutes, without cloning anything:**
