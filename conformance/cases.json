@@ -2156,6 +2156,61 @@
       "since": "1.0.0-rc.66",
       "note": "A supplied feed must be authentic: a forged or altered one rejects.",
       "feed_file": "conformance/vectors/cross-authority-variants-feed-not-authentic.json"
+    },
+    {
+      "name": "timestamp-anchor-variants-base",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/timestamp-anchor-variants-base.json",
+      "log_key": "sth",
+      "trusted_witnesses": "cosigners",
+      "threshold": 2,
+      "expect": {
+        "anchored": true,
+        "witnessed": true
+      },
+      "since": "1.0.0-rc.66",
+      "note": "The positive control: this log's genuine head, the inclusion proof, and two distinct trusted witnesses cosigning exactly that head."
+    },
+    {
+      "name": "timestamp-anchor-variants-other-log",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/timestamp-anchor-variants-other-log.json",
+      "log_key": "sth",
+      "trusted_witnesses": "cosigners",
+      "threshold": 2,
+      "expect": {
+        "anchored": false
+      },
+      "since": "1.0.0-rc.66",
+      "note": "A head genuinely signed by the log's key but for ANOTHER log does not anchor an entry of this one."
+    },
+    {
+      "name": "timestamp-anchor-variants-cosignature-other-size",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/timestamp-anchor-variants-cosignature-other-size.json",
+      "log_key": "sth",
+      "trusted_witnesses": "cosigners",
+      "threshold": 2,
+      "expect": {
+        "anchored": true,
+        "witnessed": false
+      },
+      "since": "1.0.0-rc.66",
+      "note": "The second cosignature is genuine but over another tree size, so it is not a cosignature of this head and the threshold of two is not met."
+    },
+    {
+      "name": "timestamp-anchor-variants-cosignature-other-root",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/timestamp-anchor-variants-cosignature-other-root.json",
+      "log_key": "sth",
+      "trusted_witnesses": "cosigners",
+      "threshold": 2,
+      "expect": {
+        "anchored": true,
+        "witnessed": false
+      },
+      "since": "1.0.0-rc.66",
+      "note": "The second cosignature is genuine but over another root, so it witnesses a different log state and the threshold of two is not met."
     }
   ]
 }

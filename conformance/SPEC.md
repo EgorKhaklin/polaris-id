@@ -223,6 +223,10 @@ Timestamp-anchor witnessing (`artifact: timestamp-anchor`, v9.421). A cosignatur
 the witness threshold only when it verifies. `timestamp-anchor-forged-cosignature` trusts both
 cosigners, corrupts one signature, and requires `witnessed: false` at a threshold of two:
 counting a cosignature without checking it makes the quorum arithmetic rather than evidence.
+A cosignature that verifies must also be OF this head: the `timestamp-anchor-variants-*` cases
+(1.0.0-rc.66) take one genuinely signed, twice-witnessed anchor and change one signed fact. A
+head for another log does not anchor, and a genuine cosignature over another tree size or
+another root does not count toward the threshold; the base anchor is their positive control.
 
 ID-token cases (`artifact: id-token`, verdict `{authentic, audience_matches, nonce_matches,
 fresh}`, v9.420). An ID token is the one artifact whose signature being valid is not the
