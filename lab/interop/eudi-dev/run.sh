@@ -17,7 +17,19 @@ IMAGE="${EUDI_IMAGE:-ghcr.io/dominikschlosser/eudi-dev:v2.3.7}"
 PKG="${POLARIS_OID4VP:-polaris-oid4vp==1.0.0rc7}"
 PORT="${PORT:-9443}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ISSUER="$HERE/../waltid/issue_sdjwt_vc.py"
+# The issuer script: named explicitly, downloaded beside this file (docs/STRANGER-PATH.md), or
+# where it sits in a clone of the repository.
+ISSUER="${ISSUER:-}"
+if [ -z "$ISSUER" ]; then
+  for candidate in "$HERE/issue_sdjwt_vc.py" "$HERE/../waltid/issue_sdjwt_vc.py"; do
+    [ -f "$candidate" ] && ISSUER="$candidate" && break
+  done
+fi
+if [ -z "$ISSUER" ] || [ ! -f "$ISSUER" ]; then
+  echo "issue_sdjwt_vc.py not found: put it beside run.sh or set ISSUER" >&2
+  exit 2
+fi
+ISSUER="$(cd "$(dirname "$ISSUER")" && pwd)/$(basename "$ISSUER")"
 WORK="${WORK:-$(mktemp -d)}"
 PY="${PYTHON:-python3}"
 ADD_HOST=()
