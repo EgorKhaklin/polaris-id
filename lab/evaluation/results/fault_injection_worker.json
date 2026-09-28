@@ -1,0 +1,590 @@
+{
+  "machine": {
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "python": "3.12.13",
+    "processor": "arm",
+    "cpu_count": 8,
+    "cpu": "Apple M3",
+    "oqs": "0.16.0",
+    "cryptography": "50.0.1"
+  },
+  "endpoint": "POST /api/v1/verify",
+  "server": {
+    "gunicorn_workers": 4,
+    "worker_class": "sync",
+    "database": "polaris_eval",
+    "db_version": "PostgreSQL 16.14 (Homebrew) on aarch64-apple-darwin25.4.0, compiled by Apple clang version 21.0.0 (clang-2100.0.123.102), 64-bit",
+    "fresh_gunicorn_per_run": true
+  },
+  "credentials": {
+    "valid": {
+      "token_id": 12,
+      "real_mldsa65": true,
+      "verifies_locally_with_liboqs": true
+    },
+    "revoked": {
+      "token_id": 13,
+      "real_mldsa65": true,
+      "verifies_locally_with_liboqs": true
+    }
+  },
+  "method": {
+    "closed_loop": true,
+    "concurrency": 8,
+    "generator_processes": 4,
+    "kinds_rotation": [
+      "valid",
+      "revoked",
+      "tampered",
+      "unknown"
+    ],
+    "warmup_s": 5.0,
+    "pre_s": 20.0,
+    "window_s": 0.0,
+    "post_s": 30.0,
+    "new_connection_per_request": true
+  },
+  "fault_kind": "worker",
+  "fault": "SIGKILL to one gunicorn worker (the lowest pid among the master's children) at the fault instant, as the kernel's OOM killer would; the master respawns it. No restore.",
+  "server_env_note": "gunicorn --config polaris_web/gunicorn.conf.py, POLARIS_WORKERS=4 (sync), POLARIS_USE_REAL_PQC=1 with a file issuer key, POLARIS_DB_HOST=localhost POLARIS_DB_USER=vanta (schema owner, trust auth, no pgbouncer), POLARIS_RATE_LIMIT_BACKEND=memory, POLARIS_RATE_LIMIT_WRITE_MAX=100000000, POLARIS_RATE_LIMIT_LOGIN_MAX=1000",
+  "background_before": {
+    "loadavg": [
+      7.39,
+      10.46,
+      8.47
+    ],
+    "top_cpu": [
+      {
+        "pcpu": 100.0,
+        "comm": "fseventsd"
+      },
+      {
+        "pcpu": 32.9,
+        "comm": "Python"
+      },
+      {
+        "pcpu": 20.9,
+        "comm": "iTerm2"
+      },
+      {
+        "pcpu": 18.4,
+        "comm": "WindowServer"
+      },
+      {
+        "pcpu": 8.0,
+        "comm": "claude"
+      },
+      {
+        "pcpu": 4.8,
+        "comm": "Brave Browser"
+      }
+    ]
+  },
+  "started": "2026-09-28T10:09:13-0400",
+  "runs": [
+    {
+      "events_s": {
+        "nominal_fault_at": 20.0,
+        "nominal_restore_at": 20.0
+      },
+      "requests": 6158,
+      "by_outcome": {
+        "ok": 6158
+      },
+      "by_http_status": {
+        "200": 6158
+      },
+      "errors_by_detail": {},
+      "wrong_answers": 0,
+      "wrong_answer_examples": [],
+      "verdicts_seen_on_200_by_kind": {
+        "valid": {
+          "True|True|True|accept|ACTIVE": 1540
+        },
+        "revoked": {
+          "True|False|False|reject|REVOKED": 1539
+        },
+        "tampered": {
+          "False|False|False|reject|null": 1539
+        },
+        "unknown": {
+          "False|False|False|reject|null": 1540
+        }
+      },
+      "expected_verdict_by_kind": {
+        "valid": "True|True|True|accept|ACTIVE",
+        "revoked": "True|False|False|reject|REVOKED",
+        "tampered": "False|False|False|reject|null",
+        "unknown": "False|False|False|reject|null"
+      },
+      "baseline": {
+        "window_s": [
+          5.0,
+          20.0
+        ],
+        "correct_per_s": 141.5,
+        "errors": 0,
+        "valid_p50_ms": 53.79
+      },
+      "during_fault_window": {
+        "responses": 0,
+        "correct": 0,
+        "by_outcome": {}
+      },
+      "errors_total": 0,
+      "client_outage_s": 0.0,
+      "first_error_end_s": null,
+      "last_error_end_s": null,
+      "errors_after_restore": 0,
+      "last_error_after_restore_s": null,
+      "time_to_first_correct_s": 0.0,
+      "first_correct_started_s": -0.057,
+      "time_to_first_accept_s": 0.03,
+      "time_to_recovery_s": 0.0,
+      "recovery_rule": "earliest t after the restore (10 ms steps) with no error at or after t for the rest of the run and >= 90% of the baseline correct-answer rate in [t, t+1 s)",
+      "post_restore_valid_p50_ms": 70.78,
+      "bins_after_restore_first10": [
+        {
+          "ok": 172,
+          "err": 0
+        },
+        {
+          "ok": 139,
+          "err": 0
+        },
+        {
+          "ok": 183,
+          "err": 0
+        },
+        {
+          "ok": 189,
+          "err": 0
+        },
+        {
+          "ok": 83,
+          "err": 0
+        },
+        {
+          "ok": 76,
+          "err": 0
+        },
+        {
+          "ok": 122,
+          "err": 0
+        },
+        {
+          "ok": 80,
+          "err": 0
+        },
+        {
+          "ok": 126,
+          "err": 0
+        },
+        {
+          "ok": 124,
+          "err": 0
+        }
+      ],
+      "label": "control1",
+      "fault_injected": false,
+      "raw": "fault_injection_worker_control1.csv.gz",
+      "gunicorn_workers": 4,
+      "server_log": {
+        "lines_mentioning_OperationalError": 0,
+        "not_accepting_connections": 0,
+        "terminating_connection_admin_command": 0,
+        "server_closed_connection": 0,
+        "worker_timeouts": 0,
+        "redis_limiter_failed_closed": 0,
+        "worker_killed_by_signal": 0,
+        "workers_booted": 4
+      }
+    },
+    {
+      "events_s": {
+        "fault_issued": 20.002135,
+        "killed_worker_pid": 12432,
+        "fault_done": 20.038928,
+        "restore_issued": 20.038956,
+        "workers_right_after_kill": 3,
+        "restore_done": 20.075034
+      },
+      "requests": 6623,
+      "by_outcome": {
+        "ok": 6622,
+        "conn-RemoteDisconnected": 1
+      },
+      "by_http_status": {
+        "200": 6622,
+        "0": 1
+      },
+      "errors_by_detail": {
+        "conn-RemoteDisconnected Remote end closed connection without response": 1
+      },
+      "wrong_answers": 0,
+      "wrong_answer_examples": [],
+      "verdicts_seen_on_200_by_kind": {
+        "valid": {
+          "True|True|True|accept|ACTIVE": 1654
+        },
+        "revoked": {
+          "True|False|False|reject|REVOKED": 1657
+        },
+        "tampered": {
+          "False|False|False|reject|null": 1657
+        },
+        "unknown": {
+          "False|False|False|reject|null": 1654
+        }
+      },
+      "expected_verdict_by_kind": {
+        "valid": "True|True|True|accept|ACTIVE",
+        "revoked": "True|False|False|reject|REVOKED",
+        "tampered": "False|False|False|reject|null",
+        "unknown": "False|False|False|reject|null"
+      },
+      "baseline": {
+        "window_s": [
+          5.002,
+          20.002
+        ],
+        "correct_per_s": 142.2,
+        "errors": 0,
+        "valid_p50_ms": 58.42
+      },
+      "during_fault_window": {
+        "responses": 5,
+        "correct": 5,
+        "by_outcome": {
+          "ok": 5
+        }
+      },
+      "errors_total": 1,
+      "client_outage_s": 0.0,
+      "first_error_end_s": 20.045321,
+      "last_error_end_s": 20.045321,
+      "errors_after_restore": 1,
+      "last_error_after_restore_s": 0.006,
+      "time_to_first_correct_s": 0.002,
+      "first_correct_started_s": -0.056,
+      "time_to_first_accept_s": 0.023,
+      "time_to_recovery_s": 0.98,
+      "recovery_rule": "earliest t after the restore (10 ms steps) with no error at or after t for the rest of the run and >= 90% of the baseline correct-answer rate in [t, t+1 s)",
+      "post_restore_valid_p50_ms": 65.54,
+      "bins_after_restore_first10": [
+        {
+          "ok": 78,
+          "err": 1
+        },
+        {
+          "ok": 132,
+          "err": 0
+        },
+        {
+          "ok": 176,
+          "err": 0
+        },
+        {
+          "ok": 183,
+          "err": 0
+        },
+        {
+          "ok": 180,
+          "err": 0
+        },
+        {
+          "ok": 165,
+          "err": 0
+        },
+        {
+          "ok": 169,
+          "err": 0
+        },
+        {
+          "ok": 125,
+          "err": 0
+        },
+        {
+          "ok": 131,
+          "err": 0
+        },
+        {
+          "ok": 111,
+          "err": 0
+        }
+      ],
+      "label": "fault1",
+      "fault_injected": true,
+      "raw": "fault_injection_worker_fault1.csv.gz",
+      "gunicorn_workers": 4,
+      "server_log": {
+        "lines_mentioning_OperationalError": 0,
+        "not_accepting_connections": 0,
+        "terminating_connection_admin_command": 0,
+        "server_closed_connection": 0,
+        "worker_timeouts": 0,
+        "redis_limiter_failed_closed": 0,
+        "worker_killed_by_signal": 1,
+        "workers_booted": 5
+      }
+    },
+    {
+      "events_s": {
+        "fault_issued": 20.002231,
+        "killed_worker_pid": 31242,
+        "fault_done": 20.033399,
+        "restore_issued": 20.033417,
+        "workers_right_after_kill": 3,
+        "restore_done": 20.0626
+      },
+      "requests": 6905,
+      "by_outcome": {
+        "ok": 6904,
+        "conn-RemoteDisconnected": 1
+      },
+      "by_http_status": {
+        "200": 6904,
+        "0": 1
+      },
+      "errors_by_detail": {
+        "conn-RemoteDisconnected Remote end closed connection without response": 1
+      },
+      "wrong_answers": 0,
+      "wrong_answer_examples": [],
+      "verdicts_seen_on_200_by_kind": {
+        "valid": {
+          "True|True|True|accept|ACTIVE": 1726
+        },
+        "revoked": {
+          "True|False|False|reject|REVOKED": 1727
+        },
+        "tampered": {
+          "False|False|False|reject|null": 1725
+        },
+        "unknown": {
+          "False|False|False|reject|null": 1726
+        }
+      },
+      "expected_verdict_by_kind": {
+        "valid": "True|True|True|accept|ACTIVE",
+        "revoked": "True|False|False|reject|REVOKED",
+        "tampered": "False|False|False|reject|null",
+        "unknown": "False|False|False|reject|null"
+      },
+      "baseline": {
+        "window_s": [
+          5.002,
+          20.002
+        ],
+        "correct_per_s": 174.0,
+        "errors": 0,
+        "valid_p50_ms": 50.43
+      },
+      "during_fault_window": {
+        "responses": 4,
+        "correct": 4,
+        "by_outcome": {
+          "ok": 4
+        }
+      },
+      "errors_total": 1,
+      "client_outage_s": 0.0,
+      "first_error_end_s": 20.038779,
+      "last_error_end_s": 20.038779,
+      "errors_after_restore": 1,
+      "last_error_after_restore_s": 0.005,
+      "time_to_first_correct_s": 0.009,
+      "first_correct_started_s": -0.057,
+      "time_to_first_accept_s": 0.009,
+      "time_to_recovery_s": 0.36,
+      "recovery_rule": "earliest t after the restore (10 ms steps) with no error at or after t for the rest of the run and >= 90% of the baseline correct-answer rate in [t, t+1 s)",
+      "post_restore_valid_p50_ms": 63.44,
+      "bins_after_restore_first10": [
+        {
+          "ok": 144,
+          "err": 1
+        },
+        {
+          "ok": 151,
+          "err": 0
+        },
+        {
+          "ok": 150,
+          "err": 0
+        },
+        {
+          "ok": 125,
+          "err": 0
+        },
+        {
+          "ok": 113,
+          "err": 0
+        },
+        {
+          "ok": 135,
+          "err": 0
+        },
+        {
+          "ok": 105,
+          "err": 0
+        },
+        {
+          "ok": 74,
+          "err": 0
+        },
+        {
+          "ok": 100,
+          "err": 0
+        },
+        {
+          "ok": 88,
+          "err": 0
+        }
+      ],
+      "label": "fault2",
+      "fault_injected": true,
+      "raw": "fault_injection_worker_fault2.csv.gz",
+      "gunicorn_workers": 4,
+      "server_log": {
+        "lines_mentioning_OperationalError": 0,
+        "not_accepting_connections": 0,
+        "terminating_connection_admin_command": 0,
+        "server_closed_connection": 0,
+        "worker_timeouts": 0,
+        "redis_limiter_failed_closed": 0,
+        "worker_killed_by_signal": 1,
+        "workers_booted": 5
+      }
+    },
+    {
+      "events_s": {
+        "fault_issued": 20.001052,
+        "killed_worker_pid": 50597,
+        "fault_done": 20.0444,
+        "restore_issued": 20.044431,
+        "workers_right_after_kill": 3,
+        "restore_done": 20.080969
+      },
+      "requests": 5711,
+      "by_outcome": {
+        "ok": 5710,
+        "conn-RemoteDisconnected": 1
+      },
+      "by_http_status": {
+        "200": 5710,
+        "0": 1
+      },
+      "errors_by_detail": {
+        "conn-RemoteDisconnected Remote end closed connection without response": 1
+      },
+      "wrong_answers": 0,
+      "wrong_answer_examples": [],
+      "verdicts_seen_on_200_by_kind": {
+        "valid": {
+          "True|True|True|accept|ACTIVE": 1428
+        },
+        "revoked": {
+          "True|False|False|reject|REVOKED": 1428
+        },
+        "tampered": {
+          "False|False|False|reject|null": 1426
+        },
+        "unknown": {
+          "False|False|False|reject|null": 1428
+        }
+      },
+      "expected_verdict_by_kind": {
+        "valid": "True|True|True|accept|ACTIVE",
+        "revoked": "True|False|False|reject|REVOKED",
+        "tampered": "False|False|False|reject|null",
+        "unknown": "False|False|False|reject|null"
+      },
+      "baseline": {
+        "window_s": [
+          5.001,
+          20.001
+        ],
+        "correct_per_s": 113.3,
+        "errors": 0,
+        "valid_p50_ms": 71.26
+      },
+      "during_fault_window": {
+        "responses": 4,
+        "correct": 4,
+        "by_outcome": {
+          "ok": 4
+        }
+      },
+      "errors_total": 1,
+      "client_outage_s": 0.0,
+      "first_error_end_s": 20.051938,
+      "last_error_end_s": 20.051938,
+      "errors_after_restore": 1,
+      "last_error_after_restore_s": 0.008,
+      "time_to_first_correct_s": 0.013,
+      "first_correct_started_s": -0.053,
+      "time_to_first_accept_s": 0.025,
+      "time_to_recovery_s": 0.01,
+      "recovery_rule": "earliest t after the restore (10 ms steps) with no error at or after t for the rest of the run and >= 90% of the baseline correct-answer rate in [t, t+1 s)",
+      "post_restore_valid_p50_ms": 68.44,
+      "bins_after_restore_first10": [
+        {
+          "ok": 111,
+          "err": 1
+        },
+        {
+          "ok": 130,
+          "err": 0
+        },
+        {
+          "ok": 114,
+          "err": 0
+        },
+        {
+          "ok": 113,
+          "err": 0
+        },
+        {
+          "ok": 105,
+          "err": 0
+        },
+        {
+          "ok": 87,
+          "err": 0
+        },
+        {
+          "ok": 131,
+          "err": 0
+        },
+        {
+          "ok": 75,
+          "err": 0
+        },
+        {
+          "ok": 130,
+          "err": 0
+        },
+        {
+          "ok": 114,
+          "err": 0
+        }
+      ],
+      "label": "fault3",
+      "fault_injected": true,
+      "raw": "fault_injection_worker_fault3.csv.gz",
+      "gunicorn_workers": 4,
+      "server_log": {
+        "lines_mentioning_OperationalError": 0,
+        "not_accepting_connections": 0,
+        "terminating_connection_admin_command": 0,
+        "server_closed_connection": 0,
+        "worker_timeouts": 0,
+        "redis_limiter_failed_closed": 0,
+        "worker_killed_by_signal": 1,
+        "workers_booted": 5
+      }
+    }
+  ],
+  "finished": "2026-09-28T10:13:18-0400",
+  "db_accepting_connections_at_end": true
+}

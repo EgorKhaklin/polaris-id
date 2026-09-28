@@ -1,0 +1,595 @@
+{
+  "machine": {
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "python": "3.12.13",
+    "processor": "arm",
+    "cpu_count": 8,
+    "cpu": "Apple M3",
+    "oqs": "0.16.0",
+    "cryptography": "50.0.1"
+  },
+  "endpoint": "POST /api/v1/verify",
+  "server": {
+    "gunicorn_workers": 4,
+    "worker_class": "sync",
+    "database": "polaris_eval",
+    "db_version": "PostgreSQL 16.14 (Homebrew) on aarch64-apple-darwin25.4.0, compiled by Apple clang version 21.0.0 (clang-2100.0.123.102), 64-bit",
+    "fresh_gunicorn_per_run": true
+  },
+  "credentials": {
+    "valid": {
+      "token_id": 12,
+      "real_mldsa65": true,
+      "verifies_locally_with_liboqs": true
+    },
+    "revoked": {
+      "token_id": 13,
+      "real_mldsa65": true,
+      "verifies_locally_with_liboqs": true
+    }
+  },
+  "method": {
+    "closed_loop": true,
+    "concurrency": 8,
+    "generator_processes": 4,
+    "kinds_rotation": [
+      "valid",
+      "revoked",
+      "tampered",
+      "unknown"
+    ],
+    "warmup_s": 5.0,
+    "pre_s": 20.0,
+    "window_s": 10.0,
+    "post_s": 30.0,
+    "new_connection_per_request": true
+  },
+  "fault_kind": "redis",
+  "fault": "gunicorn with POLARIS_RATE_LIMIT_BACKEND=redis against a dedicated Redis (redis:7-alpine, container polaris-eval-redis, 127.0.0.1:6431). The fault is `docker kill` (SIGKILL: the server dies as in a crash); the restore is `docker start`, an empty Redis on the same port. The ready time is when it next answers PING.",
+  "server_env_note": "gunicorn --config polaris_web/gunicorn.conf.py, POLARIS_WORKERS=4 (sync), POLARIS_USE_REAL_PQC=1 with a file issuer key, POLARIS_DB_HOST=localhost POLARIS_DB_USER=vanta (schema owner, trust auth, no pgbouncer), POLARIS_RATE_LIMIT_BACKEND=redis, POLARIS_RATE_LIMIT_WRITE_MAX=100000000, POLARIS_RATE_LIMIT_LOGIN_MAX=1000",
+  "background_before": {
+    "loadavg": [
+      5.0,
+      7.78,
+      6.56
+    ],
+    "top_cpu": [
+      {
+        "pcpu": 100.0,
+        "comm": "fseventsd"
+      },
+      {
+        "pcpu": 30.9,
+        "comm": "Python"
+      },
+      {
+        "pcpu": 21.1,
+        "comm": "iTerm2"
+      },
+      {
+        "pcpu": 15.6,
+        "comm": "WindowServer"
+      },
+      {
+        "pcpu": 12.0,
+        "comm": "2.1.280"
+      },
+      {
+        "pcpu": 7.8,
+        "comm": "claude"
+      }
+    ]
+  },
+  "started": "2026-09-28T09:55:41-0400",
+  "runs": [
+    {
+      "events_s": {
+        "nominal_fault_at": 20.0,
+        "nominal_restore_at": 30.0
+      },
+      "requests": 8487,
+      "by_outcome": {
+        "ok": 8487
+      },
+      "by_http_status": {
+        "200": 8487
+      },
+      "errors_by_detail": {},
+      "wrong_answers": 0,
+      "wrong_answer_examples": [],
+      "verdicts_seen_on_200_by_kind": {
+        "valid": {
+          "True|True|True|accept|ACTIVE": 2124
+        },
+        "revoked": {
+          "True|False|False|reject|REVOKED": 2121
+        },
+        "tampered": {
+          "False|False|False|reject|null": 2120
+        },
+        "unknown": {
+          "False|False|False|reject|null": 2122
+        }
+      },
+      "expected_verdict_by_kind": {
+        "valid": "True|True|True|accept|ACTIVE",
+        "revoked": "True|False|False|reject|REVOKED",
+        "tampered": "False|False|False|reject|null",
+        "unknown": "False|False|False|reject|null"
+      },
+      "baseline": {
+        "window_s": [
+          5.0,
+          20.0
+        ],
+        "correct_per_s": 138.0,
+        "errors": 0,
+        "valid_p50_ms": 64.86
+      },
+      "during_fault_window": {
+        "responses": 1300,
+        "correct": 1300,
+        "by_outcome": {
+          "ok": 1300
+        }
+      },
+      "errors_total": 0,
+      "client_outage_s": 0.0,
+      "first_error_end_s": null,
+      "last_error_end_s": null,
+      "errors_after_restore": 0,
+      "last_error_after_restore_s": null,
+      "time_to_first_correct_s": 0.005,
+      "first_correct_started_s": -0.055,
+      "time_to_first_accept_s": 0.072,
+      "time_to_recovery_s": 0.0,
+      "recovery_rule": "earliest t after the restore (10 ms steps) with no error at or after t for the rest of the run and >= 90% of the baseline correct-answer rate in [t, t+1 s)",
+      "post_restore_valid_p50_ms": 58.52,
+      "bins_after_restore_first10": [
+        {
+          "ok": 143,
+          "err": 0
+        },
+        {
+          "ok": 139,
+          "err": 0
+        },
+        {
+          "ok": 136,
+          "err": 0
+        },
+        {
+          "ok": 123,
+          "err": 0
+        },
+        {
+          "ok": 132,
+          "err": 0
+        },
+        {
+          "ok": 135,
+          "err": 0
+        },
+        {
+          "ok": 139,
+          "err": 0
+        },
+        {
+          "ok": 147,
+          "err": 0
+        },
+        {
+          "ok": 145,
+          "err": 0
+        },
+        {
+          "ok": 137,
+          "err": 0
+        }
+      ],
+      "label": "control1",
+      "fault_injected": false,
+      "raw": "fault_injection_redis_control1.csv.gz",
+      "gunicorn_workers": 4,
+      "server_log": {
+        "lines_mentioning_OperationalError": 0,
+        "not_accepting_connections": 0,
+        "terminating_connection_admin_command": 0,
+        "server_closed_connection": 0,
+        "worker_timeouts": 0,
+        "redis_limiter_failed_closed": 0,
+        "worker_killed_by_signal": 0,
+        "workers_booted": 4
+      }
+    },
+    {
+      "events_s": {
+        "fault_issued": 20.004054,
+        "fault_done": 20.413962,
+        "restore_issued": 30.000588,
+        "redis_ready": 30.37453,
+        "restore_done": 30.374561
+      },
+      "requests": 10838,
+      "by_outcome": {
+        "ok": 7207,
+        "429": 3631
+      },
+      "by_http_status": {
+        "200": 7207,
+        "429": 3631
+      },
+      "errors_by_detail": {
+        "429 json:rate_limited": 2,
+        "429 json:Too many requests from this address. Wait a minute and try again.": 3629
+      },
+      "wrong_answers": 0,
+      "wrong_answer_examples": [],
+      "verdicts_seen_on_200_by_kind": {
+        "valid": {
+          "True|True|True|accept|ACTIVE": 1801
+        },
+        "revoked": {
+          "True|False|False|reject|REVOKED": 1804
+        },
+        "tampered": {
+          "False|False|False|reject|null": 1802
+        },
+        "unknown": {
+          "False|False|False|reject|null": 1800
+        }
+      },
+      "expected_verdict_by_kind": {
+        "valid": "True|True|True|accept|ACTIVE",
+        "revoked": "True|False|False|reject|REVOKED",
+        "tampered": "False|False|False|reject|null",
+        "unknown": "False|False|False|reject|null"
+      },
+      "baseline": {
+        "window_s": [
+          5.004,
+          20.004
+        ],
+        "correct_per_s": 136.1,
+        "errors": 0,
+        "valid_p50_ms": 63.15
+      },
+      "during_fault_window": {
+        "responses": 3586,
+        "correct": 14,
+        "by_outcome": {
+          "ok": 14,
+          "429": 3572
+        }
+      },
+      "errors_total": 3631,
+      "client_outage_s": 10.114,
+      "first_error_end_s": 20.169332,
+      "last_error_end_s": 30.283421,
+      "errors_after_restore": 59,
+      "last_error_after_restore_s": 0.283,
+      "time_to_first_correct_s": 0.33,
+      "first_correct_started_s": 0.232,
+      "time_to_first_accept_s": 0.34,
+      "time_to_recovery_s": 0.29,
+      "recovery_rule": "earliest t after the restore (10 ms steps) with no error at or after t for the rest of the run and >= 90% of the baseline correct-answer rate in [t, t+1 s)",
+      "post_restore_valid_p50_ms": 55.33,
+      "bins_after_restore_first10": [
+        {
+          "ok": 85,
+          "err": 59
+        },
+        {
+          "ok": 127,
+          "err": 0
+        },
+        {
+          "ok": 126,
+          "err": 0
+        },
+        {
+          "ok": 134,
+          "err": 0
+        },
+        {
+          "ok": 129,
+          "err": 0
+        },
+        {
+          "ok": 127,
+          "err": 0
+        },
+        {
+          "ok": 124,
+          "err": 0
+        },
+        {
+          "ok": 124,
+          "err": 0
+        },
+        {
+          "ok": 134,
+          "err": 0
+        },
+        {
+          "ok": 122,
+          "err": 0
+        }
+      ],
+      "label": "fault1",
+      "fault_injected": true,
+      "raw": "fault_injection_redis_fault1.csv.gz",
+      "gunicorn_workers": 4,
+      "server_log": {
+        "lines_mentioning_OperationalError": 0,
+        "not_accepting_connections": 0,
+        "terminating_connection_admin_command": 0,
+        "server_closed_connection": 0,
+        "worker_timeouts": 0,
+        "redis_limiter_failed_closed": 3631,
+        "worker_killed_by_signal": 0,
+        "workers_booted": 4
+      }
+    },
+    {
+      "events_s": {
+        "fault_issued": 20.001922,
+        "fault_done": 20.357574,
+        "restore_issued": 30.003055,
+        "redis_ready": 30.374071,
+        "restore_done": 30.374102
+      },
+      "requests": 12628,
+      "by_outcome": {
+        "ok": 8191,
+        "429": 4437
+      },
+      "by_http_status": {
+        "200": 8191,
+        "429": 4437
+      },
+      "errors_by_detail": {
+        "429 json:rate_limited": 2,
+        "429 json:Too many requests from this address. Wait a minute and try again.": 4435
+      },
+      "wrong_answers": 0,
+      "wrong_answer_examples": [],
+      "verdicts_seen_on_200_by_kind": {
+        "valid": {
+          "True|True|True|accept|ACTIVE": 2048
+        },
+        "revoked": {
+          "True|False|False|reject|REVOKED": 2047
+        },
+        "tampered": {
+          "False|False|False|reject|null": 2048
+        },
+        "unknown": {
+          "False|False|False|reject|null": 2048
+        }
+      },
+      "expected_verdict_by_kind": {
+        "valid": "True|True|True|accept|ACTIVE",
+        "revoked": "True|False|False|reject|REVOKED",
+        "tampered": "False|False|False|reject|null",
+        "unknown": "False|False|False|reject|null"
+      },
+      "baseline": {
+        "window_s": [
+          5.002,
+          20.002
+        ],
+        "correct_per_s": 173.1,
+        "errors": 0,
+        "valid_p50_ms": 51.11
+      },
+      "during_fault_window": {
+        "responses": 4362,
+        "correct": 19,
+        "by_outcome": {
+          "ok": 19,
+          "429": 4343
+        }
+      },
+      "errors_total": 4437,
+      "client_outage_s": 10.151,
+      "first_error_end_s": 20.118542,
+      "last_error_end_s": 30.269154,
+      "errors_after_restore": 94,
+      "last_error_after_restore_s": 0.266,
+      "time_to_first_correct_s": 0.323,
+      "first_correct_started_s": 0.205,
+      "time_to_first_accept_s": 0.398,
+      "time_to_recovery_s": 0.28,
+      "recovery_rule": "earliest t after the restore (10 ms steps) with no error at or after t for the rest of the run and >= 90% of the baseline correct-answer rate in [t, t+1 s)",
+      "post_restore_valid_p50_ms": 54.17,
+      "bins_after_restore_first10": [
+        {
+          "ok": 110,
+          "err": 94
+        },
+        {
+          "ok": 154,
+          "err": 0
+        },
+        {
+          "ok": 138,
+          "err": 0
+        },
+        {
+          "ok": 173,
+          "err": 0
+        },
+        {
+          "ok": 176,
+          "err": 0
+        },
+        {
+          "ok": 172,
+          "err": 0
+        },
+        {
+          "ok": 168,
+          "err": 0
+        },
+        {
+          "ok": 168,
+          "err": 0
+        },
+        {
+          "ok": 139,
+          "err": 0
+        },
+        {
+          "ok": 152,
+          "err": 0
+        }
+      ],
+      "label": "fault2",
+      "fault_injected": true,
+      "raw": "fault_injection_redis_fault2.csv.gz",
+      "gunicorn_workers": 4,
+      "server_log": {
+        "lines_mentioning_OperationalError": 0,
+        "not_accepting_connections": 0,
+        "terminating_connection_admin_command": 0,
+        "server_closed_connection": 0,
+        "worker_timeouts": 0,
+        "redis_limiter_failed_closed": 4437,
+        "worker_killed_by_signal": 0,
+        "workers_booted": 4
+      }
+    },
+    {
+      "events_s": {
+        "fault_issued": 20.000302,
+        "fault_done": 20.36344,
+        "restore_issued": 30.000635,
+        "redis_ready": 30.437098,
+        "restore_done": 30.437116
+      },
+      "requests": 10938,
+      "by_outcome": {
+        "ok": 6827,
+        "429": 4111
+      },
+      "by_http_status": {
+        "200": 6827,
+        "429": 4111
+      },
+      "errors_by_detail": {
+        "429 json:rate_limited": 2,
+        "429 json:Too many requests from this address. Wait a minute and try again.": 4109
+      },
+      "wrong_answers": 0,
+      "wrong_answer_examples": [],
+      "verdicts_seen_on_200_by_kind": {
+        "valid": {
+          "True|True|True|accept|ACTIVE": 1706
+        },
+        "revoked": {
+          "True|False|False|reject|REVOKED": 1706
+        },
+        "tampered": {
+          "False|False|False|reject|null": 1708
+        },
+        "unknown": {
+          "False|False|False|reject|null": 1707
+        }
+      },
+      "expected_verdict_by_kind": {
+        "valid": "True|True|True|accept|ACTIVE",
+        "revoked": "True|False|False|reject|REVOKED",
+        "tampered": "False|False|False|reject|null",
+        "unknown": "False|False|False|reject|null"
+      },
+      "baseline": {
+        "window_s": [
+          5.0,
+          20.0
+        ],
+        "correct_per_s": 136.9,
+        "errors": 0,
+        "valid_p50_ms": 65.48
+      },
+      "during_fault_window": {
+        "responses": 4040,
+        "correct": 16,
+        "by_outcome": {
+          "ok": 16,
+          "429": 4024
+        }
+      },
+      "errors_total": 4111,
+      "client_outage_s": 10.239,
+      "first_error_end_s": 20.127338,
+      "last_error_end_s": 30.366071,
+      "errors_after_restore": 87,
+      "last_error_after_restore_s": 0.365,
+      "time_to_first_correct_s": 0.405,
+      "first_correct_started_s": 0.301,
+      "time_to_first_accept_s": 0.411,
+      "time_to_recovery_s": 0.37,
+      "recovery_rule": "earliest t after the restore (10 ms steps) with no error at or after t for the rest of the run and >= 90% of the baseline correct-answer rate in [t, t+1 s)",
+      "post_restore_valid_p50_ms": 63.33,
+      "bins_after_restore_first10": [
+        {
+          "ok": 88,
+          "err": 87
+        },
+        {
+          "ok": 141,
+          "err": 0
+        },
+        {
+          "ok": 137,
+          "err": 0
+        },
+        {
+          "ok": 141,
+          "err": 0
+        },
+        {
+          "ok": 139,
+          "err": 0
+        },
+        {
+          "ok": 144,
+          "err": 0
+        },
+        {
+          "ok": 139,
+          "err": 0
+        },
+        {
+          "ok": 112,
+          "err": 0
+        },
+        {
+          "ok": 116,
+          "err": 0
+        },
+        {
+          "ok": 135,
+          "err": 0
+        }
+      ],
+      "label": "fault3",
+      "fault_injected": true,
+      "raw": "fault_injection_redis_fault3.csv.gz",
+      "gunicorn_workers": 4,
+      "server_log": {
+        "lines_mentioning_OperationalError": 0,
+        "not_accepting_connections": 0,
+        "terminating_connection_admin_command": 0,
+        "server_closed_connection": 0,
+        "worker_timeouts": 0,
+        "redis_limiter_failed_closed": 4111,
+        "worker_killed_by_signal": 0,
+        "workers_booted": 4
+      }
+    }
+  ],
+  "finished": "2026-09-28T10:00:26-0400",
+  "db_accepting_connections_at_end": true
+}

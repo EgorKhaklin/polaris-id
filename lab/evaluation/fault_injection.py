@@ -375,7 +375,9 @@ class WorkerFault:
         events["killed_worker_pid"] = workers[0]
 
     def restore(self, events):
-        events["workers_after"] = len(_worker_pids(self.master))
+        # The count at the kill instant, before the master can respawn: 3 of 4 is expected here.
+        # The respawn is in the server log (`workers_booted`: the start-up workers plus one).
+        events["workers_right_after_kill"] = len(_worker_pids(self.master))
 
     def ensure_restored(self):
         return False
@@ -558,6 +560,7 @@ def _one_run(args, on, bodies, client, label, inject, out_dir, fault):
             "worker_timeouts": log_text.count("WORKER TIMEOUT"),
             "redis_limiter_failed_closed": log_text.count("failing closed (denying request)"),
             "worker_killed_by_signal": log_text.count("was sent SIGKILL"),
+            "workers_booted": log_text.count("Booting worker"),
         },
     })
     return summary

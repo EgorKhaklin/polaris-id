@@ -290,7 +290,8 @@ What it says:
   `/api/*` JSON endpoint returns errors as `{"error": ...}`, and this one does not when the
   database is down. A relying party has to treat any non-200 as "no verdict", which is the
   safe reading; the disagreement between the document and the behaviour is recorded here and
-  not fixed (lab only).
+  not fixed (lab only). Since fixed: from rc.65 every framework error on `/api/*` is JSON
+  `{"error", "request_id"}`.
 
 What it does not say:
 
@@ -310,6 +311,49 @@ What it does not say:
   the outage. Three fault runs with the same 10 s window at the same point; other window
   lengths were not run.
 
+## Fault injection: the limiter's Redis, and one worker, go away under load (2026-09-28)
+
+The same harness, setup and four-kind load as above, with `--fault`:
+
+- **`redis`**: gunicorn's limiter runs on Redis (`POLARIS_RATE_LIMIT_BACKEND=redis`), a
+  dedicated container on port 6431. The fault is `docker kill` for 10 s, then `docker start`
+  (an empty Redis). `security.py` documents the limiter as failing closed while Redis is away.
+- **`worker`**: one of the four sync workers gets SIGKILL, as an OOM kill would. `--window 0`.
+
+Results in [`results/fault_injection_redis.json`](results/fault_injection_redis.json) and
+[`results/fault_injection_worker.json`](results/fault_injection_worker.json); every request in
+`results/fault_injection_{redis,worker}_<run>.csv.gz`. The machine was shared (load average 5 to
+18), so throughput varies between runs; errors and wrong answers do not depend on it.
+
+| Fault | Run | Requests | 200 | 429 | Dropped | Wrong answers | Last error after restore/kill | Recovery |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| redis | control | 8,487 | 8,487 | 0 | 0 | **0** | n/a | n/a |
+| redis | 1 | 10,838 | 7,207 | 3,631 | 0 | **0** | 0.28 s | 0.29 s |
+| redis | 2 | 12,628 | 8,191 | 4,437 | 0 | **0** | 0.27 s | 0.28 s |
+| redis | 3 | 10,938 | 6,827 | 4,111 | 0 | **0** | 0.37 s | 0.37 s |
+| worker | control | 6,158 | 6,158 | 0 | 0 | **0** | n/a | n/a |
+| worker | 1 | 6,623 | 6,622 | 0 | 1 | **0** | 0.006 s | 0.98 s |
+| worker | 2 | 6,905 | 6,904 | 0 | 1 | **0** | 0.005 s | 0.36 s |
+| worker | 3 | 5,711 | 5,710 | 0 | 1 | **0** | 0.008 s | 0.01 s |
+
+Recovery uses the rule above. What it says:
+
+- **Without its Redis the limiter fails closed, and recovers on its own.** Every request in
+  the window got a JSON 429; none was answered wrongly and none reached a 5xx. The last 429
+  came 0.27 to 0.37 s after `docker start` was issued, before the harness's own PING saw Redis
+  (0.37 to 0.44 s): the application needs no restart.
+- **The 429 names the wrong cause.** 3,629 of the 3,631 in run 1 say "Too many requests from
+  this address. Wait a minute and try again." A client that obeys waits a minute for a service
+  that was back in under half a second. Lab only; not changed.
+- **A killed worker costs the one request it was serving** (the connection closes without a
+  response). The master boots a replacement in the same second (five worker boots for four
+  workers in each fault run's log), and no other request failed.
+
+What it does not say: a Redis that is slow rather than gone, a partition that leaves
+connections hanging, several application hosts sharing one limiter, or a kill during start-up.
+On macOS the server runs with `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`, as the launcher
+does: without it a respawned worker died at once, a platform effect, not Polaris.
+
 Re-run, with the state from the online measurement (the revoked credential is issued with the
 `issue` subcommand and a different `--token-value`, then revoked with
 `CALL uc8_revoke_token(<token_id>, 1, 'ADMINISTRATIVE', '<url>', 2)` in `polaris_eval`; its pack
@@ -319,6 +363,7 @@ server already on the port first:
 ```bash
 ~/.local/share/polaris-venv312/bin/python lab/evaluation/fault_injection.py run \
   --state $STATE --gunicorn ~/.local/share/polaris-venv312/bin/gunicorn --runs 3 --controls 1
+# the same with --fault redis (Docker), or --fault worker --window 0
 ```
 
 It refuses to target `postgres`, `polaris_test` or `polaris`, and it must never be pointed at a
