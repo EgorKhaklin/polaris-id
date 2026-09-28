@@ -17474,6 +17474,26 @@ class ApiErrorsAreJson(PolarisTestCase):
         self.assertEqual(r.status_code, 404)
         self.assertIn('text/html', r.content_type, 'control: non-API paths keep the page')
 
+    def test_a_wrong_method_under_api_is_a_json_405_that_says_allow(self):
+        # 2026-09-28: 405 had no handler, so the framework's HTML page answered every /api path.
+        for method, path in (('DELETE', '/api/v1/verify'), ('GET', '/api/v1/verify'),
+                             ('PUT', '/api/health')):
+            r = self.client.open(path, method=method)
+            self._json_error(r, 405)
+            self.assertTrue(r.headers.get('Allow'), '%s %s: a 405 must say Allow' % (method, path))
+
+    def test_a_code_with_no_handler_of_its_own_is_json_under_api(self):
+        # The promise is about every code, so the test raises one no handler names.
+        from werkzeug.exceptions import UnsupportedMediaType
+        import rp_api
+        with patch.object(rp_api, '_transparency_entries', side_effect=UnsupportedMediaType()):
+            self._json_error(self.client.get('/api/v1/transparency/entries'), 415)
+
+    def test_a_wrong_method_on_a_page_is_still_the_framework_page(self):
+        r = self.client.open('/login', method='DELETE')
+        self.assertEqual(r.status_code, 405)
+        self.assertIn('text/html', r.content_type, 'control: non-API paths keep the page')
+
 if __name__ == '__main__':
     # Pull in property-based invariant tests (C1, C2, C3) so they run as
     # part of the main suite. The import is at the bottom so test_app.py

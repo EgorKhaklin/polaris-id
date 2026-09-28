@@ -22820,7 +22820,16 @@ def check_no_local_date(root: pathlib.Path) -> list[Finding]:
 # LOCALTIMESTAMP is not in the pattern: _db_now reads it deliberately, to compare with the
 # TIMESTAMP-without-zone columns the writing session's clock fills. That is the same class one
 # level down (the column type), recorded as open, not waved through here.
-_SESSION_DATE = re.compile(r"\bCURRENT_DATE\b|\b(?:now\(\)|CURRENT_TIMESTAMP)\s*::\s*date\b", re.I)
+# 2026-09-28: the same date, one cast later. `CURRENT_TIMESTAMP::TIMESTAMP` is the session's
+# wall clock, and uc_issue_credential_copy held it in a variable and then cast that to DATE
+# for the status list's day, while credential_copy_valid_indexes compared expiries against it.
+# This pattern did not see either use: a copy issued from a session at UTC-12 was filed under
+# the previous day, and one that had expired read as valid to that session. A zone-free
+# timestamp is `CURRENT_TIMESTAMP AT TIME ZONE 'UTC'`; `::timestamptz` and
+# `::timestamp with time zone` keep the instant and are not session clocks.
+_SESSION_DATE = re.compile(r"\bCURRENT_DATE\b|\b(?:now\(\)|CURRENT_TIMESTAMP)\s*::\s*date\b"
+                           r"|\b(?:now\(\)|CURRENT_TIMESTAMP)\s*::\s*timestamp\b(?!\s*with\s+time\s+zone)",
+                           re.I)
 
 
 def check_no_session_date_in_sql(root: pathlib.Path) -> list[Finding]:
@@ -22845,8 +22854,9 @@ def check_no_session_date_in_sql(root: pathlib.Path) -> list[Finding]:
             if _SESSION_DATE.search(code):
                 offenders.append(f"{f.relative_to(root)}:{i}")
     if offenders:
-        return _fail(name, "a date decision reads the session's date, which a client's timezone "
-                           "moves: " + "; ".join(offenders[:6]) + ". Use polaris_utc_date()")
+        return _fail(name, "a date decision reads the session's date or wall clock, which a "
+                           "client's timezone moves: " + "; ".join(offenders[:6]) +
+                           ". Use polaris_utc_date(), or CURRENT_TIMESTAMP AT TIME ZONE 'UTC'")
     return _ok(name, f"no session date in {scanned} SQL and application files: every date decision "
                      "reads polaris_utc_date(), the UTC date whatever timezone a session set")
 

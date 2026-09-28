@@ -19749,9 +19749,18 @@ def test_no_session_date_in_sql_check_discriminates(tmp_path):
         "the UTC function must PASS, and a comment naming CURRENT_DATE is not a use"
     for bad in ("IF NEW.expiration_date < CURRENT_DATE THEN\n",
                 "SELECT now()::date;\n",
-                "SELECT CURRENT_TIMESTAMP :: DATE;\n"):
+                "SELECT CURRENT_TIMESTAMP :: DATE;\n",
+                # 2026-09-28: the session's wall clock, cast to DATE only later.
+                "    v_now TIMESTAMP := CURRENT_TIMESTAMP::TIMESTAMP;\n",
+                "AND c.expires_at > now()::timestamp(0)\n",
+                "SELECT CURRENT_TIMESTAMP::timestamp without time zone;\n"):
         trig.write_text(bad)
         assert checks.check_no_session_date_in_sql(tmp_path)[0].level == "FAIL", bad
+    for good in ("    v_now TIMESTAMP := (CURRENT_TIMESTAMP AT TIME ZONE 'UTC');\n",
+                 "SELECT CURRENT_TIMESTAMP::timestamptz;\n",
+                 "SELECT CURRENT_TIMESTAMP::timestamp with time zone;\n"):
+        trig.write_text(good)
+        assert checks.check_no_session_date_in_sql(tmp_path)[0].level == "OK", good
     trig.write_text("SELECT 1;\n")
     route.write_text('q = "SELECT 1 WHERE valid_until >= CURRENT_DATE"\n')
     assert checks.check_no_session_date_in_sql(tmp_path)[0].level == "FAIL", \

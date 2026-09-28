@@ -2589,7 +2589,9 @@ DECLARE
     v_agency      INTEGER;
     v_individual  INTEGER;
     v_expiration  DATE;
-    v_now         TIMESTAMP := CURRENT_TIMESTAMP::TIMESTAMP;
+    -- The UTC wall clock, not the session's: list_day, issued_at and expires_at are all
+    -- read from this, and a session's timezone must move none of them (2026-09-28).
+    v_now         TIMESTAMP := (CURRENT_TIMESTAMP AT TIME ZONE 'UTC');
     v_exp         TIMESTAMP;
     v_copy        BIGINT;
     v_list_no     INTEGER;
@@ -2678,7 +2680,7 @@ AS $$
        AND c.list_day = p_list_day
        AND c.list_no = p_list_no
        AND t.status = 'ACTIVE'
-       AND c.expires_at > CURRENT_TIMESTAMP::TIMESTAMP
+       AND c.expires_at > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
 $$;
 COMMENT ON FUNCTION credential_copy_valid_indexes(INTEGER, DATE, INTEGER) IS
   'The indexes of one status list that read VALID now; every other index is published as 1.';

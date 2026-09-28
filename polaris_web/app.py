@@ -68,6 +68,7 @@ from flask import (
 from flask.json.provider import DefaultJSONProvider
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash
 
 import security
@@ -1385,6 +1386,24 @@ def request_entity_too_large(e):
 @app.errorhandler(429)
 def too_many_requests(e):
     return _error_response(429, 'Too many requests from this address. Wait a minute and try again.')
+
+
+@app.errorhandler(HTTPException)
+def other_http_error(e):
+    """Every framework error the handlers above do not name. Until 2026-09-28 the JSON promise
+    held only for the codes listed there, so a wrong method on an /api path (405) was answered
+    with the HTML page. The promise is about every /api error, so this answers every code,
+    and a code added to the framework later is covered without another handler. Off /api the
+    framework's own response is kept. The exception's headers are kept on /api too: a 405
+    must still say Allow."""
+    if not request.path.startswith('/api/'):
+        return e
+    resp = jsonify(error=e.description or e.name, request_id=observability.get_request_id())
+    resp.status_code = e.code or 500
+    for header, value in e.get_headers():
+        if header.lower() != 'content-type':
+            resp.headers[header] = value
+    return resp
 
 
 # ============================================================================

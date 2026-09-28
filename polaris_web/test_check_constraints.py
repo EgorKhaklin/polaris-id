@@ -2847,6 +2847,54 @@ class TestCredentialCopyRecord(unittest.TestCase):
             self.assertNotIn(row["status_index"], self._valid(cur, row),
                              "a copy of a revoked credential must not read VALID")
 
+    # 2026-09-28: the record read the SESSION's wall clock (CURRENT_TIMESTAMP::TIMESTAMP), so a
+    # session's timezone moved list_day and every expiry comparison. A transaction's clock
+    # stands still, so these tests move the zone instead of waiting: UTC-12 and UTC+14 between
+    # them shift the date at any hour of the day.
+
+    def test_the_list_day_is_the_utc_date_in_any_session_zone(self):
+        conn = self._app()
+        with conn.cursor() as cur:
+            value, _ = self._issue(cur, "Z")
+            for zone in ("Etc/GMT+12", "Etc/GMT-14"):
+                cur.execute("SET LOCAL timezone = %s", (zone,))
+                row = self._copy(cur, value)
+                cur.execute("SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::DATE AS utc")
+                self.assertEqual(row["list_day"], cur.fetchone()["utc"],
+                                 "a copy issued from a session at %s is filed under that "
+                                 "session's date, not the UTC date" % zone)
+
+    def test_a_live_copy_reads_valid_to_a_session_ahead_of_utc(self):
+        conn = self._app()
+        with conn.cursor() as cur:
+            value, _ = self._issue(cur, "Y")
+            cur.execute("SET LOCAL timezone = 'UTC'")
+            row = self._copy(cur, value, valid_for="1 hour")
+            cur.execute("SET LOCAL timezone = 'Etc/GMT-14'")
+            self.assertIn(row["status_index"], self._valid(cur, row),
+                          "a copy with an hour left reads revoked to a session at UTC+14")
+
+    def test_an_expired_copy_reads_expired_to_a_session_behind_utc(self):
+        """No procedure makes an expired copy, and a transaction cannot wait for one, so the
+        schema owner writes the row the procedure would have written an hour ago."""
+        conn = self._owner()
+        with conn.cursor() as cur:
+            value, token_id = self._issue(cur, "X")
+            cur.execute(
+                "WITH n AS (SELECT nextval(pg_get_serial_sequence('credentialcopy', 'copy_id')) AS id), "
+                "t AS (SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '2 hours' AS at) "
+                "INSERT INTO CredentialCopy (copy_id, token_id, agency_id, list_day, list_no, "
+                "status_index, format, issued_at, expires_at) "
+                "SELECT n.id, %s, 2, t.at::DATE, (n.id / 524288)::INTEGER, 4242, 'dc+sd-jwt', "
+                "t.at, t.at + INTERVAL '1 hour' FROM n, t "
+                "RETURNING list_day, list_no, status_index", (token_id,))
+            row = cur.fetchone()
+            cur.execute("SET LOCAL timezone = 'UTC'")
+            self.assertNotIn(4242, self._valid(cur, row), "control: expired an hour ago in UTC")
+            cur.execute("SET LOCAL timezone = 'Etc/GMT+12'")
+            self.assertNotIn(4242, self._valid(cur, row),
+                             "a copy that expired an hour ago reads VALID to a session at UTC-12")
+
     def test_indexes_are_unique_within_a_list(self):
         conn = self._app()
         with conn.cursor() as cur:
