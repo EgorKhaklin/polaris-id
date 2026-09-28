@@ -7,11 +7,17 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
-## Unreleased
+## v1.0.0-rc.66 — 2026-09-28 (a Polaris credential in a wallet Polaris did not write)
+
+One security fix, three fixes, and OpenID4VCI issuance. The detached verifier and both SDKs accepted a foreign credential through an unsigned trust edge that its attesting authority's own manifest said had ended; it takes an authentic credential and a fresh manifest from an authority the relying party already trusts, and it forges nothing. New: an operator offers a wallet copy of one ACTIVE credential over OpenID4VCI 1.0, the database decides at redemption, and each agency publishes a Token Status List computed from the record. walt.id and Credo each received a copy from the product, in runs driven by this repository. The copy is a classical ES256 credential; nothing verified from it rests on ML-DSA-65.
+
+- **Breaking**: `polaris-verify` and both SDKs refuse an unsigned (legacy) trust edge past its own `valid_until`, or whose `valid_until` cannot be read, as they already refused a signed one.
+- **Breaking**: every error on an `/api/*` path is JSON, whatever its code; a wrong method is a JSON `405` with its `Allow` header, where it was the HTML page.
 
 ### Security
 
 - `polaris-verify` and both SDKs: a cross-authority decision refuses an unsigned (legacy) trust edge whose own `valid_until` has passed or cannot be read, as it already refused a signed one; before, an edge that its authority's own fresh manifest said had ended still granted acceptance. A legacy edge that states no window is decided as before ([wire spec section 4](docs/reference/WIRE-SPEC.md)).
+- **Relying parties, until fixed packages are published**: pass `require_signed_attestation=True` to refuse legacy edges; with `polaris-verify` 1.0.0rc3 that closes the gap. The published SDKs (1.0.0rc3 and 1.0.0-rc.3) also accept a signed edge past its own window (fixed in the tree in rc.65, not yet published), so SDK callers should also check the edge's `valid_until` themselves.
 
 ### Fixed
 
