@@ -15,8 +15,7 @@ revocation itself.
 
 ## What ran
 
-[`product/present.py`](product/present.py), from commit `d1f26475`, product code as released in
-rc.66, one run per wallet:
+[`product/present.py`](product/present.py), from commit `82db0394`, one run per wallet:
 - **The S5 setup:** a fresh database, TLS, the TEST wallet-copy chain for agency 2,
   `polaris_web` under gunicorn over TLS, an ACTIVE credential, the operator's offer, and the
   wallet's receipt.
@@ -26,8 +25,9 @@ rc.66, one run per wallet:
   - asks, by DCQL, for `vct` `urn:polaris:wallet-copy:1` and the claim `age_over_18`;
   - resolves status with a relying-party policy written in the harness. It accepts a status
     list only for the issuer the credential names, only from under that issuer's own path,
-    and only when its `x5c` leaf chains to the same anchor (a `StatedAuthority`, not an
-    inference).
+    and only when its `x5c` leaf chains to the same anchor and names that issuer as its URI
+    subjectAltName (a `StatedAuthority`, not an inference). The library holds the credential
+    to the same rule (`dd57b8c1`).
 - **Each wallet's trust configuration,** made before it received anything:
   - walt.id: the verifier's TLS certificate in its Java truststore, and the verifier's
     request-object CA in `clientIdTrust`.
@@ -69,9 +69,8 @@ presentation.
 - **The verdict reports INVALID; it does not refuse.** The verifier answers the wallet
   normally and puts the revocation state in its verdict. Refusing is the relying party's
   policy, as the package README says.
-- **A race in `decide_by_fetching`, found here.** It takes the caller's clock before its
-  fetch and refuses any `iat` later than that. The product signs its list at fetch time, so a
-  fetch crossing a second boundary read a VALID copy as unreachable (`iat_future`); one
-  walt.id run did. That fails closed, never a false VALID. The resolver here fetches first and
-  judges on arrival, and the polaris-oid4vp maintainers have the repro.
+- **A race in `decide_by_fetching`, found here and fixed in the tree at `80c71ce0`.** It took
+  the caller's clock before its fetch and refused any `iat` later than that, so a list the
+  product signed during the fetch read as `iat_future`: unreachable, never a false VALID. The
+  resolver here fetches first and judges on arrival.
 - **Not HAIP issuance, and a classical credential,** as STEP5 says.
