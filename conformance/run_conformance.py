@@ -143,6 +143,8 @@ def _load_cases():
                 payload["revocation_feed"] = _load_file(c["feed_file"])
             if "now" in c:
                 payload["now"] = c["now"]
+            if "require_signed_attestation" in c:
+                payload["require_signed_attestation"] = c["require_signed_attestation"]
         else:
             raise ValueError("unknown artifact %r in case %r" % (artifact, c["name"]))
         cases.append((c["name"], payload, c["expect"]))

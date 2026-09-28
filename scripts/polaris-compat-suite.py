@@ -89,6 +89,9 @@ PINNED_KNOWN_DEFECTS = {
     "cross-authority-variants-attestation-bad-signature":
         "v9.348: an edge carrying a signature that does not verify is refused; the pinned verifier "
         "predates signed attestations and reads every edge as the manifest's word",
+    "cross-authority-require-signed-unsigned-edge":
+        "v9.348: a relying party may require signed edges; the pinned verifier predates signed "
+        "attestations and has no such option, so it accepts the legacy edge",
 }
 
 

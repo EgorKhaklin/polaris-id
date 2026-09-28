@@ -2304,6 +2304,56 @@
       },
       "feed_file": "conformance/vectors/cross-authority-uppercase-leaf-feed.json",
       "note": "The issuer's authentic feed lists the leaf in upper-case hex. Leaves are hex and compared without regard to case, as the feed's own commitment is."
+    },
+    {
+      "name": "cross-authority-require-signed-unsigned-edge",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-signed-edge-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-signed-edge-manifest-unsigned.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "The relying party requires signed edges and this one is legacy (wire spec 3.14).",
+      "require_signed_attestation": true
+    },
+    {
+      "name": "cross-authority-require-signed-signed-edge",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-signed-edge-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-signed-edge-manifest-signed.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "accept"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "The positive control: under the same requirement a signed edge is accepted.",
+      "require_signed_attestation": true
+    },
+    {
+      "name": "cross-authority-unsigned-edge-not-required",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-signed-edge-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-signed-edge-manifest-unsigned.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "accept"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "The same legacy edge with the option off is accepted: the option decides."
     }
   ]
 }

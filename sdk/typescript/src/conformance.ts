@@ -117,7 +117,8 @@ process.stdin.on("end", () => {
     process.stdout.write(JSON.stringify({ proved: v.proved }) + "\n");
   } else if (artifact === "cross-authority") {
     const v = verifyCrossAuthority(caseObj.pack ?? {}, caseObj.context_id, caseObj.manifests ?? [],
-      caseObj.trusted_anchors ?? null, caseObj.revocation_feed ?? null, caseObj.now ?? null);
+      caseObj.trusted_anchors ?? null, caseObj.revocation_feed ?? null, caseObj.now ?? null,
+      caseObj.require_signed_attestation === true);
     process.stdout.write(JSON.stringify({ decision: v.decision, authentic: v.authentic, issuer_trusted: v.issuerTrusted }) + "\n");
   } else {
     process.stdout.write(JSON.stringify({ error: "unknown artifact: " + artifact }) + "\n");

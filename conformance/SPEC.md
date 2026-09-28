@@ -35,7 +35,11 @@ manifest lists as retired, an edge that attests another key, an edge whose signa
 verify, and a supplied feed that is stale, signed by another key than the issuer's, or not
 authentic; each must reject, and the base setup, with no feed and with a clean one, must accept
 (1.0.0-rc.66). Until then a verifier could skip any of those seven checks and still pass every
-published case. Online authorization (a live call to
+published case. A cross-authority case may set `require_signed_attestation: true`, the relying
+party's option to refuse legacy (unsigned) edges; an adapter passes it through, and absent means
+false. The `cross-authority-require-signed-*` cases refuse a legacy edge under the option,
+accept a signed one under it, and accept the same legacy edge without it (1.0.0-rc.66).
+Online authorization (a live call to
 `POST /api/v1/verify`, specified in [`docs/reference/API.md`](../docs/reference/API.md)) is
 the only check not in these offline vectors, because it depends on live issuer state.
 

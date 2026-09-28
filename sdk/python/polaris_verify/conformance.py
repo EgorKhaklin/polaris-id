@@ -159,7 +159,8 @@ def main(argv=None):
     if artifact == "cross-authority":
         v = verify_cross_authority(case.get("pack") or {}, case.get("context_id"),
                                    case.get("manifests") or [], trusted_anchors=case.get("trusted_anchors"),
-                                   revocation_feed=case.get("revocation_feed"), now=case.get("now"))
+                                   revocation_feed=case.get("revocation_feed"), now=case.get("now"),
+                                   require_signed_attestation=case.get("require_signed_attestation") is True)
         print(json.dumps({"decision": v.decision, "authentic": v.authentic, "issuer_trusted": v.issuer_trusted}))
         return 0
     print(json.dumps({"error": "unknown artifact: %s" % artifact}))

@@ -237,7 +237,8 @@ def _verdict_for(case):
         v = V.verify_cross_authority(
             pack, case.get("context_id"), manifests, trusted_anchors=anchors,
             revocation_feed=_load(case["feed_file"]) if "feed_file" in case else None,
-            now=case.get("now"))
+            now=case.get("now"),
+            require_signed_attestation=case.get("require_signed_attestation") is True)
         return {"decision": v["decision"], "authentic": v["authentic"],
                 "issuer_trusted": v.get("key_status") not in ("revoked", "unknown")}
 
