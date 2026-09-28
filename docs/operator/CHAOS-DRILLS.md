@@ -14,7 +14,7 @@ The standing chaos program (roadmap P2.11). Two instruments, two cadences:
   Prometheus scraping the app containers with the shipped alert rules, the
   shipped Alertmanager configuration, and a webhook sink standing in for the
   pager. One row is appended below per run, PASS or FAIL, committed by the
-  workflow.
+  workflow to a `drill-ledger/` branch and brought here by a pull request.
 
 Scenarios in the weekly drill, each under continuous traffic:
 

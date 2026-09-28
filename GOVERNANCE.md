@@ -25,7 +25,7 @@ passes.
 
 | Role | Who | Responsibilities |
 |---|---|---|
-| Maintainer | Egor Khaklin | Reviews and merges changes; cuts releases; publishes the packages (npm releases need the maintainer's second factor); answers security reports under [SECURITY.md](SECURITY.md); holds the project's accounts |
+| Maintainer | Egor Khaklin | Reviews and merges changes, through pull requests like everyone else; cuts releases; publishes the packages (npm releases need the maintainer's second factor); answers security reports under [SECURITY.md](SECURITY.md); holds the project's accounts |
 | Contributor | anyone | Proposes changes through issues and pull requests, signed off under the Developer Certificate of Origin |
 | Security reporter | anyone | Reports privately as [SECURITY.md](SECURITY.md) describes; credited unless they ask not to be |
 

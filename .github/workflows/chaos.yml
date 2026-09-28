@@ -67,7 +67,11 @@ jobs:
           git add docs/operator/CHAOS-DRILLS.md
           if git diff --cached --quiet; then echo "no ledger change"; exit 0; fi
           git commit -m "chaos: record drill $(date -u +%Y-%m-%d) (${{ steps.drill.outcome }})"
-          git push
+          # main accepts changes only through pull requests, so the row goes to its own branch
+          # and reaches main through a pull request that runs CI like any other change.
+          branch="drill-ledger/chaos-$(date -u +%Y-%m-%d)"
+          git push origin "HEAD:refs/heads/$branch"
+          echo "Ledger row pushed to $branch; open a pull request to bring it into main." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the drill summary
         if: always()
