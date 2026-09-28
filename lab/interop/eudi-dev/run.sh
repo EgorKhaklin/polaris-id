@@ -14,7 +14,8 @@
 set -euo pipefail
 
 IMAGE="${EUDI_IMAGE:-ghcr.io/dominikschlosser/eudi-dev:v2.3.7}"
-PKG="${POLARIS_OID4VP:-polaris-oid4vp==1.0.0rc7}"
+# What a stranger installs: the newest release, candidates included. Pin it to repeat a run.
+PKG="${POLARIS_OID4VP:-polaris-oid4vp}"
 PORT="${PORT:-9443}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # The issuer script: named explicitly, downloaded beside this file (docs/STRANGER-PATH.md), or
@@ -43,12 +44,17 @@ fi
 
 echo "work dir   $WORK"
 echo "wallet     $IMAGE"
-echo "verifier   $PKG (from PyPI)"
+echo "verifier   pip install --pre $PKG"
 mkdir -p "$WORK" && cd "$WORK"
 "$PY" -m venv venv
 venv/bin/pip install -q --pre "$PKG"
+echo "installed  polaris-oid4vp $(venv/bin/python -c 'import importlib.metadata as m; print(m.version("polaris-oid4vp"))')"
 venv/bin/polaris-oid4vp keygen --out pki --host host.docker.internal --port "$PORT" >/dev/null
 mkdir -p home
+# The wallet runs as the image's own user and keeps its state in this directory. Docker Desktop
+# maps file ownership across the mount and Docker Engine does not, so on Linux that user could
+# not create its state here without this.
+chmod a+rwx home
 
 wallet() {
   # The ${a[@]+...} form because macOS's bash 3.2 calls an empty array unbound under set -u.
@@ -58,13 +64,18 @@ wallet() {
     -e SSL_CERT_FILE=/in/pki/anchor.pem -e EUDI_DEV_STORAGE=file "$IMAGE" wallet "$@"
 }
 
-# The wallet makes its own holder key on first use. Only the public half leaves the file.
+# The wallet makes its own holder key on first use. It is read through the container, as the
+# user that owns it: on Linux the file belongs to the image's user, mode 0600, and this shell
+# cannot open it. Only the public half is kept; the copy is removed as soon as it is read.
 wallet info >/dev/null
+docker run --rm -v "$WORK/home:/home/app/.eudi-dev" --entrypoint cat "$IMAGE" \
+  /home/app/.eudi-dev/wallet/holder.pem > holder.pem
 venv/bin/python - <<'EOF'
-import base64, json
+import base64, json, os
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-key = serialization.load_pem_private_key(open("home/wallet/holder.pem", "rb").read(), None)
+key = serialization.load_pem_private_key(open("holder.pem", "rb").read(), None)
+os.remove("holder.pem")
 pub = key.public_key()
 assert isinstance(pub, ec.EllipticCurvePublicKey) and isinstance(pub.curve, ec.SECP256R1)
 n = pub.public_numbers()

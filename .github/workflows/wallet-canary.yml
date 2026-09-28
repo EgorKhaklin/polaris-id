@@ -1,0 +1,52 @@
+# ============================================================================
+# wallet-canary.yml - a wallet nobody here wrote presents to the PUBLISHED verifier.
+#
+# lab/interop/eudi-dev/run.sh installs polaris-oid4vp from PyPI into a fresh venv (the
+# newest release, as `pip install --pre` gives a stranger), lets the eudi-dev wallet
+# generate its own key, mints one credential bound to it, has the wallet present it
+# with HAIP enforced in strict mode, and runs three controls that must each be refused.
+# It exits non-zero if any outcome differs.
+#
+# Two wallets, weekly. v2.3.7 by digest is the release the OpenID Foundation lists as a
+# certified OpenID4VP 1.0 + HAIP 1.0 wallet: if it stops working, something on OUR side
+# moved (the registry, a dependency, the verifier). `latest` floats on purpose: if it
+# alone stops working, the wallet moved, and that is worth knowing before a stranger
+# finds it. docs/STRANGER-PATH.md opens with the same script, so this is also the
+# stranger's first minute, run on a machine nobody here set up.
+#
+# Kept out of the Polaris CI workflow: a change on the wallet's side is news, not a
+# defect in the commit that happened to be pushed that day.
+# ============================================================================
+name: Wallet canary (eudi-dev presents to the published verifier)
+
+on:
+  schedule:
+    - cron: "23 5 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  present:
+    name: eudi-dev ${{ matrix.wallet.label }} presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        wallet:
+          - label: v2.3.7 (the certified release)
+            image: ghcr.io/dominikschlosser/eudi-dev@sha256:2df7ac5c79206a29c66eb8c49acdcc07d0ec76c7d6d260056edccaac9257e081
+          - label: latest
+            image: ghcr.io/dominikschlosser/eudi-dev:latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Present, then the three controls
+        env:
+          EUDI_IMAGE: ${{ matrix.wallet.image }}
+          WORK: ${{ runner.temp }}/eudi
+        run: bash lab/interop/eudi-dev/run.sh
