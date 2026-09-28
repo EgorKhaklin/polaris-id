@@ -62,7 +62,11 @@ Around the credential:
 
 **Checked by someone other than the author:**
 
-- **Four unmodified wallets.** A stock [walt.id](https://walt.id) Wallet API v2 presented an SD-JWT VC over OpenID4VP 1.0 and was accepted (15 September 2026), after first catching a certificate defect nothing internal had. Repeat it in ten minutes: [STRANGER-PATH.md](docs/STRANGER-PATH.md). An independently written second one, the OpenWallet Foundation's Credo 0.6.3, did the same against the published verifier on 27 September 2026 ([lab/interop/credo](lab/interop/credo/README.md)), and a third, the Go wallet eudi-dev v2.3.7, which the OpenID Foundation lists as a certified OID4VP 1.0 + HAIP 1.0 wallet, on 28 September 2026 with HAIP enforced in strict mode ([lab/interop/eudi-dev](lab/interop/eudi-dev/README.md)). A fourth, OID4VCgo 0.12.0, also listed as certified, presented a credential it issued itself under an x5c chain, the same day ([lab/interop/oid4vcgo](lab/interop/oid4vcgo/README.md)).
+- **Four unmodified wallets** presented to the verifier and were accepted: walt.id Wallet API v2
+  (15 September 2026; repeat it in ten minutes with [STRANGER-PATH.md](docs/STRANGER-PATH.md)), the
+  OpenWallet Foundation's [Credo 0.6.3](lab/interop/credo/README.md), and two wallets the OpenID
+  Foundation lists as certified, [eudi-dev v2.3.7](lab/interop/eudi-dev/README.md) (HAIP strict mode)
+  and [OID4VCgo 0.12.0](lab/interop/oid4vcgo/README.md) (its own x5c-signed credential).
 - **The OpenID Foundation's hosted suite**, which certified the verifier as above.
 
 Everything else here is the project checking itself: one author's reference implementation on notional data. It has never held real identity data, and there has been no independent security review, no other operator and no pilot. The ledger of outside results is [the scoreboard](lab/EXTERNAL-NOUNS.md).
@@ -154,39 +158,9 @@ Each is machine-checked by [`polaris_checks`](polaris_checks/): 336 plain `check
 
 ## Architecture
 
-The schema is the core; everything else is a client of it.
-
-```
-      ┌───────────────────────────────────────────────────────────┐
-      │  CHECK LAYER          polaris_checks: flat invariant      │
-      │                       checks; gates CI; reads everything, │
-      │                       writes nothing                      │
-      └────────────────────────────┬──────────────────────────────┘
-                                   │
-      ┌────────────────────────────▼──────────────────────────────┐
-      │  APPLICATION          Flask routes: every use case,       │
-      │                       the Atlas, WebAuthn MFA, /metrics   │
-      │                       polaris_cli: the same over a shell  │
-      └──────────┬──────────────────────────────┬─────────────────┘
-                 │                              │ subprocess
-      ┌──────────▼─────────────┐   ┌────────────▼─────────────────┐
-      │  SCHEMA  PostgreSQL 16 │   │  ZK PROVER  Rust + Plonky2   │
-      │  tables, procedures,   │   │  Merkle-inclusion SNARK,     │
-      │  triggers, append-only │   │  re-verified bit-for-bit by  │
-      │  audit (the security   │   │  an independent Python       │
-      │  boundary)             │   │  second witness              │
-      │                        │   └──────────────────────────────┘
-      └──────────┬─────────────┘
-                 │ signs under
-      ┌──────────▼────────────────────────────────────────────────┐
-      │  SIGNATURES           ML-DSA-65 default (FIPS 204),       │
-      │                       ML-DSA-87 accepted beside it;       │
-      │                       SLH-DSA registered (FIPS 205),      │
-      │                       not yet a signer; algorithm         │
-      │                       registry: rotation is a row, not a  │
-      │                       redeploy                            │
-      └───────────────────────────────────────────────────────────┘
-```
+The schema is the core and the security boundary. The application, the CLI and the Rust prover
+(re-checked by an independent Python witness) are its clients; the check layer reads everything
+and writes nothing; the signer is ML-DSA-65, the algorithm a registry row ([overview](docs/ARCHITECTURE-OVERVIEW.md)).
 
 | Component | What it is |
 |---|---|
@@ -234,16 +208,10 @@ Counts of checks, tables, routes and CI jobs are re-measured by `polaris_checks`
 
 Test counts: reference machine, v1.0.0-rc.62 (`pytest -q` per suite, 2026-09-26). The five skipped crypto tests need a PKCS#11 module or a real KMS key.
 
-On every push, CI also:
-
-- boots the five-service production-profile stack and checks health through the TLS edge;
-- round-trips encrypted backup and restore, and restores a killed primary from the WAL archive;
-- rolls a deploy under traffic and fails the HA profile's leader and lease store under writes;
-- installs the Linux server profile on Debian and Rocky and the Kubernetes profile on kind;
-- proves the post-quantum TLS handshake and real ML-DSA-65 signing in the production image;
-- runs the federation, trust-list recovery and version-1 compatibility drills;
-- mutation-tests constraints, triggers, procedures and row-level security;
-- gates on CVE scans of the Python dependencies and all five images.
+On every push, CI also boots the five-service production-profile stack, round-trips backups,
+fails over the HA profile under writes, proves the post-quantum TLS handshake and real ML-DSA-65
+signing, runs the federation and compatibility drills and the mutation drills, and gates on CVE
+scans ([ci.yml](.github/workflows/ci.yml)).
 
 ```bash
 python3 -m polaris_checks.run        # the invariant layer, no database needed
