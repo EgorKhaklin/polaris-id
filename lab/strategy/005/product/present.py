@@ -98,8 +98,17 @@ def status_resolver(anchor, product_port, product_cafile):
             credential_issuer=issuer, status_uri=uri, verify=verify,
             why="the relying party trusts this issuer's anchor for its credentials, and so for "
                 "status lists signed under it")
-        return tsl.decide_by_fetching(index=idx, expected_uri=uri, authority=authority, fetch=fetch,
-                                      now=int(time.time()), credential_issuer=issuer)
+        try:
+            token = fetch(uri)
+        except Exception as exc:  # noqa: BLE001  no list is no answer, not a negative one
+            return {"checked": False, "state": "unreachable",
+                    "reason": "fetching the status list raised %s" % type(exc).__name__}
+        # Judged at the time the list ARRIVED. decide_by_fetching takes `now` before its fetch,
+        # so a list the issuer signs during the request reads as dated in the future
+        # (iat_future): observed 2026-09-28 on a copy that was VALID, reported to the
+        # polaris-oid4vp maintainers with the repro.
+        return tsl.decide(token, index=idx, expected_uri=uri, authority=authority,
+                          now=int(time.time()), credential_issuer=issuer)
     return resolver
 
 
