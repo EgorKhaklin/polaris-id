@@ -106,7 +106,7 @@ _NEW_UNBOUND_ADMIN_ROUTE = '''
 @security.require_role('admin')
 def agencies_coverage_drill(ag_id):
     """MUTATION: a state-changing admin route that asks no operator binding."""
-    query("UPDATE Agency SET agency_name = agency_name WHERE agency_id = %s", (ag_id,))
+    query("UPDATE Agency SET name = name WHERE agency_id = %s", (ag_id,))
     return redirect('/agencies')
 '''
 
