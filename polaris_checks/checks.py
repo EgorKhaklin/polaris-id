@@ -18178,8 +18178,7 @@ def check_no_module_imports_an_unstable_name(root: pathlib.Path) -> list[Finding
 #: Documents that are records of a moment rather than descriptions of the tree. A citation in
 #: one of these was true when it was written and is not a claim about the code now, so holding
 #: it to the current tree would force the rewriting of history to keep a check green.
-_POINT_IN_TIME_DOCS = ("docs/history/", "docs/paper/", "DEVNOTES/presentation-plan.md",
-                       "CHANGELOG.md")
+_POINT_IN_TIME_DOCS = ("docs/history/", "docs/paper/", "CHANGELOG.md")
 
 
 def check_documented_symbols_resolve(root: pathlib.Path) -> list[Finding]:
