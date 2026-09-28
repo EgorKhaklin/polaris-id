@@ -1123,7 +1123,16 @@ def _ship_baseline():
     "dirty", so the baseline became HEAD, the diff was the untracked file alone, and the
     gate said READY with every drill the commit needed unrun. Any stray file hid any
     unpushed commit from the drill requirement.
+
+    And in CI, the commit the push started from, which the workflow names as
+    POLARIS_CHANGED_BASE: a push carries several commits and HEAD~1 sees only the last
+    (scripts/polaris_changed_base.py). A named commit this checkout cannot reach answers with
+    the last tag, the broad baseline, because under-selecting is the failure this guards.
     """
+    if os.environ.get("POLARIS_CHANGED_BASE", "").strip().strip("0"):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        from polaris_changed_base import changed_base
+        return changed_base(ROOT) or _last_tag()
     try:
         upstream = subprocess.run(["git", "rev-parse", "--verify", "--quiet", "@{u}"], cwd=ROOT,
                                   capture_output=True, text=True).stdout.strip()

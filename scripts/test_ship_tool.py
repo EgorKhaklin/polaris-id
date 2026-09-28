@@ -386,6 +386,60 @@ class ShipBaselineTests(unittest.TestCase):
         _write(os.path.join(work, "a.txt"), "2")
         self.assertEqual(self._baseline(work), "HEAD")
 
+    # 2026-09-28: CI names the commit a push started from (POLARIS_CHANGED_BASE), because HEAD~1
+    # sees only a push's last commit. A push of three commits whose procedure change was the
+    # middle one ran the procedure drill as a no-op in under a second.
+
+    def _push_of_three(self):
+        work, git = self._repo()
+        before = git("rev-parse", "HEAD")
+        os.makedirs(os.path.join(work, "polaris_sql"))
+        _write(os.path.join(work, "polaris_sql", "05_procedures.sql"), "-- a refusal moved")
+        git("add", "polaris_sql"); git("commit", "-q", "-m", "the procedure change")
+        _write(os.path.join(work, "CHANGELOG.md"), "a line")
+        git("add", "CHANGELOG.md"); git("commit", "-q", "-m", "a changelog line")
+        git("checkout", "-q", "--detach")          # CI checks out a commit, with no upstream
+        return work, git, before
+
+    def _named(self, value):
+        from unittest import mock
+        return mock.patch.dict(os.environ, {"POLARIS_CHANGED_BASE": value})
+
+    def test_ci_measures_a_push_from_the_commit_it_started_from(self):
+        import polaris_changed_base as cb
+        work, git, before = self._push_of_three()
+        parent = git("rev-parse", "HEAD~1")
+        self.assertNotIn("05_procedures.sql", git("diff", "--name-only", parent),
+                         "the miss this closes: HEAD~1 does not see the middle commit")
+        with self._named(before):
+            self.assertEqual(cb.changed_base(work), before)
+            self.assertEqual(self._baseline(work), before)
+        self.assertIn("polaris_sql/05_procedures.sql", git("diff", "--name-only", before))
+
+    def test_unnamed_and_detached_is_head_parent(self):
+        import polaris_changed_base as cb
+        work, git, _ = self._push_of_three()
+        saved = os.environ.pop("POLARIS_CHANGED_BASE", None)
+        try:
+            self.assertEqual(cb.changed_base(work), git("rev-parse", "HEAD~1"))
+        finally:
+            if saved is not None:
+                os.environ["POLARIS_CHANGED_BASE"] = saved
+
+    def test_a_named_commit_the_checkout_cannot_reach_is_not_nothing_changed(self):
+        import polaris_changed_base as cb
+        work, git, _ = self._push_of_three()
+        with self._named("f" * 40):
+            self.assertIsNone(cb.changed_base(work), "unreachable must read as 'could not tell'")
+            self.assertNotEqual(self._baseline(work), git("rev-parse", "HEAD~1"),
+                                "the ship tool must not fall back to the narrow baseline")
+
+    def test_a_first_push_names_the_zero_commit_and_falls_back(self):
+        import polaris_changed_base as cb
+        work, git, _ = self._push_of_three()
+        with self._named("0" * 40):
+            self.assertEqual(cb.changed_base(work), git("rev-parse", "HEAD~1"))
+
 
 if __name__ == "__main__":
     unittest.main()

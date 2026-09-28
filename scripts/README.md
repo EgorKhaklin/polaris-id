@@ -100,6 +100,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | Script | What it does | Called by |
 |---|---|---|
 | `polaris_authz_audit.py` | The report itself; the shell wrapper handles arguments and output | `polaris-authz-audit.sh` |
+| `polaris_changed_base.py` | The commit a ship is measured from: the one CI names (where the push started), else the upstream when HEAD is ahead of it, else HEAD~1; `None` when it cannot be reached, so callers refuse | `polaris-procedure-mutation-drill.py --changed`, `polaris-sdk-mutation-drill.py --changed`, `polaris-ship.py` |
 | `polaris_load_gen.py` | Async load generator, standard library only | `polaris-load-test.sh`, `polaris-abuse-drill.sh` |
 
 Several of these are pinned by `polaris_checks`: a check asserts the script

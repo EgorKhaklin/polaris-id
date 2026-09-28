@@ -102,10 +102,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # v9.436: the procedure drill's --changed mode compares against HEAD~1 and
-          # refuses rather than passing when it cannot reach one, so the job needs one
-          # commit of history.
-          fetch-depth: 2
+          # v9.436: the procedure drill's --changed mode refuses rather than passing when it
+          # cannot reach its baseline. Since 2026-09-28 the baseline is the commit the push
+          # started from (POLARIS_CHANGED_BASE), which can be any number of commits back, so
+          # the job takes the whole history.
+          fetch-depth: 0
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v7
@@ -516,6 +517,12 @@ jobs:
       # only the test classes that NAME the procedure under test; the weekly
       # procedure-sweep workflow re-tries every survivor against all of them.
       - name: Procedure mutation drill (delete each refusal, something must notice)
+        env:
+          # The commit this push started from, or a pull request's base. A push carries
+          # several commits and HEAD~1 sees only the last: on 2026-09-28 this drill ran
+          # as a no-op on a push whose procedure change was in its second-to-last
+          # commit (scripts/polaris_changed_base.py).
+          POLARIS_CHANGED_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: python scripts/polaris-procedure-mutation-drill.py --changed
 
       # A killed drill cannot restore what it mutated. 05_procedures.sql is the
@@ -1844,13 +1851,14 @@ jobs:
           --health-retries 5
 
     steps:
-      # fetch-depth 2 so the SDK drill's --changed has a baseline. Without it HEAD~1 is
-      # unreachable and the drill REFUSES rather than reporting a clean run, which is the
-      # right behaviour and would fail this job.
+      # The whole history, so the SDK drill's --changed can reach the commit the push started
+      # from (POLARIS_CHANGED_BASE). Without it the baseline is unreachable and the drill
+      # REFUSES rather than reporting a clean run, which is the right behaviour and would
+      # fail this job.
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v7
@@ -2257,6 +2265,12 @@ jobs:
       - name: Install the TypeScript SDK's pinned dependencies
         run: cd sdk/typescript && npm ci
       - name: SDK mutation — every refusal in BOTH reference verifiers is caught when inverted
+        env:
+          # The commit this push started from, or a pull request's base. A push carries
+          # several commits and HEAD~1 sees only the last: on 2026-09-28 this drill ran
+          # as a no-op on a push whose procedure change was in its second-to-last
+          # commit (scripts/polaris_changed_base.py).
+          POLARIS_CHANGED_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: python scripts/polaris-sdk-mutation-drill.py --changed
 
       # v9.330 (P8.8b) — cross-version compatibility, both directions: the frozen version-1

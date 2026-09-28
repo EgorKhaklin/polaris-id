@@ -225,9 +225,15 @@ def _procedures_moved() -> bool:
     None rather than False when no baseline is reachable -- a shallow checkout, say --
     because "I could not tell" and "nothing changed" must not look alike.
     """
+    # The baseline is the commit the push started from in CI, not HEAD~1: a push carries
+    # several commits, and on 2026-09-28 this ran as a no-op on a push whose procedure change
+    # was in the second-to-last one. scripts/polaris_changed_base.py says how it is chosen.
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from polaris_changed_base import changed_base
+    base = changed_base(ROOT)
+    if base is None:
+        return None
     try:
-        base = subprocess.check_output(["git", "rev-parse", "HEAD~1"], cwd=str(ROOT),
-                                       text=True, stderr=subprocess.DEVNULL).strip()
         out = subprocess.check_output(
             ["git", "diff", "--name-only", base, "--",
              "polaris_sql/05_procedures.sql", "polaris_sql/migrations"],
@@ -359,9 +365,11 @@ def main(argv=None) -> int:
     if args.changed:
         moved = _procedures_moved()
         if moved is None:
-            print("--changed cannot tell what this ship touched (no reachable HEAD~1). That is "
-                  "not the same as 'nothing changed', so this is a refusal rather than a clean "
-                  "run: give the checkout fetch-depth: 2, or run without --changed.",
+            print("--changed cannot tell what this ship touched (no reachable baseline: "
+                  "POLARIS_CHANGED_BASE, the upstream or HEAD~1). That is not the same as "
+                  "'nothing changed', so this is a refusal rather than a clean run: give the "
+                  "checkout the history back to that commit (fetch-depth: 0), or run without "
+                  "--changed.",
                   file=sys.stderr)
             conn.close()
             return 2
