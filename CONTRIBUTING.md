@@ -14,6 +14,12 @@ governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
   [change proposal](.github/ISSUE_TEMPLATE/change_proposal.yml) first, naming which of C1 to C10 it
   touches and how each stays enforced. A proposal that adds a check is fast-tracked.
 
+## Sign-off
+
+Contributions are made under the [Developer Certificate of Origin](https://developercertificate.org):
+sign off each commit with `git commit -s`, which adds a `Signed-off-by` line certifying that you
+wrote the change or have the right to submit it under the project's license.
+
 ## What merges
 
 - `python3 -m polaris_checks.run` reports READY.

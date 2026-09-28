@@ -470,7 +470,7 @@ jobs:
 
       - name: Python suites under coverage + floor gate (DB, with ZK binary)
         env:
-          COVERAGE_FLOOR: "74"
+          COVERAGE_FLOOR: "80"
         run: bash scripts/polaris-coverage.sh
 
       # v9.407 - MISSION's first claim is that the guarantees live in the DATABASE.

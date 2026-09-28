@@ -29,7 +29,8 @@ cd "$ROOT"
 #   v9.350  70  measured 70% -- the detached verifier's tests were being discarded
 #   v9.351  72  measured 75% -- run_standalone stopped discarding them
 #   v9.352  74  measured 75% -- ratcheted to sit just under the real baseline
-COVERAGE_FLOOR="${COVERAGE_FLOOR:-74}"
+#   rc.66   80  measured 84% (CI 36457520993) -- the OpenSSF silver criterion is 80% statement coverage
+COVERAGE_FLOOR="${COVERAGE_FLOOR:-80}"
 GATE=1
 [ "${1:-}" = "--no-gate" ] && GATE=0
 
