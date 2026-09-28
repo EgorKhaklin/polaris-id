@@ -11,7 +11,7 @@ rc.66 ([decision so far](#decision-so-far-2026-09-28)).
 | 3, the binding ([STEP3](005/STEP3.md)) | 7 of 7 in the lab issuer's code: no copy for a non-ACTIVE credential, and revocation reaches a verifier that reads status. |
 | S1 to S4, the product | The record, the keys, the OpenID4VCI endpoints and the offer route, with the binding moved into the database (2026-09-28). |
 | S5, receipt ([STEP5](005/STEP5.md)) | Both wallets received a copy from `polaris_web`: VALID, then INVALID after `uc8_revoke_token`; no copy for a credential revoked before redemption. |
-| S6, presentation ([STEP6](005/STEP6.md)) | Both wallets presented their copy to `polaris-oid4vp`, which read the product's status: VALID, then INVALID; the relying party learned only `age_over_18`. |
+| S6, presentation ([STEP6](005/STEP6.md)) | Both wallets presented their copy to `polaris-oid4vp`, which read the product's status: VALID, then INVALID; the relying party asked for `age_over_18` and learned no name, birthdate or jurisdiction. |
 
 ---
 

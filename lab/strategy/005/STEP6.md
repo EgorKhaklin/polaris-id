@@ -7,7 +7,7 @@ the record:
 - VALID while the Polaris credential was ACTIVE;
 - INVALID after `uc8_revoke_token`.
 
-The relying party asked for `age_over_18` alone and learned only that.
+The relying party asked for `age_over_18` alone and learned no name, birthdate or jurisdiction.
 
 S5 ([STEP5.md](STEP5.md)) checked the stored copy from outside the wallet. This is the loop a
 relying party runs: an unmodified wallet presents, and the verifier decides authenticity and
