@@ -12,6 +12,7 @@ Run: python3 -m pytest polaris_checks/test_checks.py
 
 from __future__ import annotations
 
+import os
 import pathlib
 
 import pytest
@@ -20,6 +21,19 @@ from polaris_checks import checks
 from polaris_checks.checks import Finding, run_all
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(autouse=True)
+def _no_enclosing_git(monkeypatch):
+    """A detection test runs a check against a scratch tree, and a git-aware check asks git
+    which files are tracked. Run from a git hook, the environment names the repository being
+    committed (GIT_DIR, GIT_INDEX_FILE); from a linked worktree those paths are absolute, so
+    git answered for the enclosing repository instead of the scratch tree, and
+    test_system_map_covers_the_tree_check_fails_both_ways saw its good fixture FAIL
+    (2026-09-28). The tests on the real tree need none of it: git finds REPO from the
+    working directory."""
+    for key in [k for k in os.environ if k.startswith("GIT_")]:
+        monkeypatch.delenv(key)
 
 
 def test_run_all_clean_on_real_repo():
