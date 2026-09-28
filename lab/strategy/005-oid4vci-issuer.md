@@ -1,22 +1,17 @@
 # 005: issue a Polaris credential into a wallet Polaris did not write (OpenID4VCI)
 
 **Opened 2026-09-27.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md).
-State: OPEN. Section 9 step 1 done ([005/WALL.md](005/WALL.md)): no criterion fires, and the bet
-splits into a wallet loop (pre-authorized code, decides criteria 1 and 2) and a HAIP
-certification (a FAPI 2.0 authorization server), decided after the loop. Step 2 done
-([005/STEP2.md](005/STEP2.md)): walt.id and Credo both received from a conformant issuer with no
-workaround (criterion 2 does not fire), and one credential went issuer, walt.id, `polaris-oid4vp`.
-Step 3 done ([005/STEP3.md](005/STEP3.md)): 7 of 7, the wallet copy obeys the Polaris record
-(no copy for a non-ACTIVE credential, revocation reaches a verifier that reads status), with
-the binding in the issuer's code rather than the database. The wallet loop as product is
-built (2026-09-28: the record, the keys, the OpenID4VCI endpoints and the offer route, with the
-binding moved into the database), and step S5 is done ([005/STEP5.md](005/STEP5.md)): walt.id and
-Credo each received a wallet copy from `polaris_web` itself. The copy verified independently and
-read VALID, then INVALID after `uc8_revoke_token`. A credential revoked between offer and
-redemption got no copy. S6 is done ([005/STEP6.md](005/STEP6.md)): walt.id and Credo each presented their received copy
-to `polaris-oid4vp`, whose verifier read the product's status list: VALID, then INVALID after
-revocation. The relying party asked for `age_over_18` and learned only that. The loop is
-closed. Criterion 4 ("nobody holds it") starts counting now.
+**State: OPEN.** The wallet loop is built and closed in two wallets; criterion 4 counts from
+rc.66 ([decision so far](#decision-so-far-2026-09-28)).
+
+| Step | Result |
+|---|---|
+| 1, the wall ([WALL.md](005/WALL.md)) | No criterion fires. The bet splits into a wallet loop (pre-authorized code) and a HAIP certification (a FAPI 2.0 authorization server). |
+| 2, the wallets ([STEP2](005/STEP2.md)) | walt.id and Credo received from a conformant lab issuer with no workaround; one credential went issuer, walt.id, `polaris-oid4vp`. |
+| 3, the binding ([STEP3](005/STEP3.md)) | 7 of 7 in the lab issuer's code: no copy for a non-ACTIVE credential, and revocation reaches a verifier that reads status. |
+| S1 to S4, the product | The record, the keys, the OpenID4VCI endpoints and the offer route, with the binding moved into the database (2026-09-28). |
+| S5, receipt ([STEP5](005/STEP5.md)) | Both wallets received a copy from `polaris_web`: VALID, then INVALID after `uc8_revoke_token`; no copy for a credential revoked before redemption. |
+| S6, presentation ([STEP6](005/STEP6.md)) | Both wallets presented their copy to `polaris-oid4vp`, which read the product's status: VALID, then INVALID; the relying party learned only `age_over_18`. |
 
 ---
 
