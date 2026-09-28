@@ -145,6 +145,8 @@ name (`dd57b8c1`).
 
 - A wallet copy is not revoked separately from its credential. A lost phone is handled by
   revoking the credential, which flips every copy.
+- A credential can have any number of copies, one per redeemed offer, and copies are not counted
+  against the agency's issuance quota. Each offer is recorded under the operator who made it.
 - Revocation reaches a verifier that reads status. `polaris-oid4vp`'s `Verifier` reports it
   and leaves refusal to the relying party's policy, and `serve` reads no status list.
 - Nothing here is external validation. The external exercise is walt.id and Credo receiving a
