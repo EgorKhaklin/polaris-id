@@ -41,7 +41,16 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import time
 import zlib
+
+#: How far ahead of this verifier's clock a status list token's `iat` may be. Zero until
+#: 2026-09-28: an issuer that signs its list when it is fetched (the Polaris issuer does), fetched
+#: across a second boundary, was refused as dated in the future, and so was any list from a
+#: machine whose clock runs ahead. Found presenting a Polaris wallet copy through walt.id
+#: (lab/strategy/005, S6). The same allowance sdjwt.py gives a key binding JWT and exp/nbf; a
+#: token dated further ahead is still refused.
+MAX_IAT_SKEW_SECONDS = 300
 
 #: Status values the draft defines. 0x03 and 0x0B-0x0F are application-specific; everything
 #: else is reserved. An unknown value is reported by number and NOT folded into "valid",
@@ -372,10 +381,13 @@ def decide(token, *, index, expected_uri, authority, now, credential_issuer=None
     if exp is not None and now >= exp:
         return _refuse("expired", "the status list token expired at %d and it is %d; the draft "
                                   "says it MUST NOT be used" % (exp, now))
-    if iat > now:
-        return _refuse("iat_future", "the status list token is dated %d, which is after the "
-                                     "current time %d" % (iat, now))
-    age = now - iat
+    if iat > now + MAX_IAT_SKEW_SECONDS:
+        return _refuse("iat_future", "the status list token is dated %d, %d seconds after the "
+                                     "current time %d and beyond the %d second allowance for "
+                                     "clock differences" % (iat, iat - now, now, MAX_IAT_SKEW_SECONDS))
+    # Inside the allowance a token dated ahead of this clock is taken as just issued, not as a
+    # negative age that no staleness bound could ever reach.
+    age = max(0, now - iat)
     bound = min([b for b in (ttl, max_age_seconds) if b is not None], default=None)
     stale = bound is not None and age > bound
 
@@ -447,13 +459,16 @@ def decide(token, *, index, expected_uri, authority, now, credential_issuer=None
 UNREACHABLE = "unreachable"
 
 
-def decide_by_fetching(*, index, expected_uri, authority, fetch, now,
+def decide_by_fetching(*, index, expected_uri, authority, fetch, now=None,
                        credential_issuer=None, issuer_key_verify=None, max_age_seconds=None):
     """Fetch the status list named by a credential and decide it, or say why not.
 
     fetch   callable(uri: str) -> bytes. May raise; anything it raises becomes `unreachable`
             rather than an exception out of this function, because a verifier that dies on
             one credential has failed open for every other credential in the queue.
+    now     integer POSIX seconds to decide at, or None (the default) to read the clock once the
+            token is in hand. A `now` read before the fetch is older than a token the issuer
+            signs during it.
 
     Authority is established BEFORE the fetch, deliberately. If nobody is entitled to publish
     status for this issuer, the answer is `no_authority` and no request is made: asking a URI
@@ -502,6 +517,8 @@ def decide_by_fetching(*, index, expected_uri, authority, fetch, now,
                        % (expected_uri,
                           "nothing" if not shaped else "%d bytes that are not a compact JWS"
                           % len(bytes(shaped))))
+    if now is None:
+        now = int(time.time())
     return decide(token, index=index, expected_uri=expected_uri, authority=authority,
                   now=now, credential_issuer=credential_issuer,
                   issuer_key_verify=issuer_key_verify, max_age_seconds=max_age_seconds)

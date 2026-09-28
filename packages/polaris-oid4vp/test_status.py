@@ -441,11 +441,50 @@ class HeldOutBoundaryTests(unittest.TestCase):
         self.assertEqual(v["code"], "expired")
         self.assertTrue(decide(token(payload(exp=NOW + 1)), issuer_key_verify=accept)["checked"])
 
-    def test_a_list_dated_one_second_ahead_is_refused(self):
-        v = decide(token(payload(iat=NOW + 1)), issuer_key_verify=accept)
+    def test_a_list_dated_past_the_clock_allowance_is_refused(self):
+        """The allowance, not zero, since 2026-09-28: a list dated just ahead of this clock (an
+        issuer signing at fetch time across a second boundary, or a clock running ahead) is
+        decided; one dated beyond the allowance is still refused."""
+        edge = NOW + S.MAX_IAT_SKEW_SECONDS
+        v = decide(token(payload(iat=edge + 1, exp=edge + 3600)), issuer_key_verify=accept)
         self.assertIs(v["checked"], False)
         self.assertEqual(v["code"], "iat_future")
-        self.assertTrue(decide(token(payload(iat=NOW)), issuer_key_verify=accept)["checked"])
+        at_edge = decide(token(payload(iat=edge, exp=edge + 3600)), issuer_key_verify=accept)
+        self.assertTrue(at_edge["checked"], at_edge)
+        self.assertEqual((at_edge["stale"], at_edge["fresh"]), (False, True),
+                         "a list dated ahead is taken as just issued, not as a negative age")
+
+    def test_a_list_dated_one_second_ahead_is_decided(self):
+        """walt.id presenting a Polaris wallet copy (lab/strategy/005, S6): the issuer signed its
+        list at fetch time, one second after the verifier read its clock, and the credential,
+        VALID, read `unreachable` with code iat_future."""
+        v = decide(token(payload(iat=NOW + 1)), issuer_key_verify=accept)
+        self.assertTrue(v["checked"], v)
+        self.assertEqual(v["status"], S.INVALID)
+
+    def test_decide_by_fetching_reads_the_clock_once_the_token_is_in_hand(self):
+        """With no `now`, the clock is read AFTER the fetch. The fetch below moves the clock
+        further than any allowance and signs at the new time, as a slow issuer would: a clock
+        read before the fetch would call the list dated in the future."""
+        real = S.time
+
+        class Clock:
+            t = NOW
+
+            def time(self):
+                return Clock.t
+        S.time = Clock()
+        try:
+            def slow_fetch(uri):
+                Clock.t += 10 * S.MAX_IAT_SKEW_SECONDS
+                return token(payload(iat=Clock.t, exp=Clock.t + 3600)).encode()
+            v = S.decide_by_fetching(index=1, expected_uri=URI, authority=AUTHORITY,
+                                     credential_issuer=ISSUER, issuer_key_verify=accept,
+                                     fetch=slow_fetch)
+        finally:
+            S.time = real
+        self.assertTrue(v["checked"], v)
+        self.assertEqual(v["status"], S.INVALID)
 
     def test_a_list_is_stale_one_second_past_its_ttl(self):
         at = decide(token(payload(iat=NOW - 600, ttl=600)), issuer_key_verify=accept)
