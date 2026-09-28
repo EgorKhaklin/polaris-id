@@ -13,12 +13,13 @@ externally observable changes.
 | `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc4, 2026-09-28 | 1.0.0rc3, 2026-09-18 |
 | `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc8, 2026-09-28 | 1.0.0rc7, 2026-09-24 |
 | `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc4, 2026-09-28 | 1.0.0rc3, 2026-09-18 |
-| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.3, 2026-09-18 | 1.0.0-rc.1, 2026-09-16 |
+| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.4, 2026-09-28 | 1.0.0-rc.3, 2026-09-18 |
 
 > **2026-09-28:** `polaris-verify` and `polaris-sdk-python` 1.0.0rc4 and `polaris-oid4vp`
 > 1.0.0rc8 went out through trusted publishing over OIDC, each read back from the live
-> registry. `polaris-sdk-ts` 1.0.0-rc.4 is staged under `next` and waits for a maintainer's
-> approval. `polaris-oid4vp` 1.0.0rc8 is not certified; the certified version is 1.0.0rc7.
+> registry. `polaris-sdk-ts` 1.0.0-rc.4 was staged under `next`, approved by the maintainer and
+> read back (shasum `09964827b3aedb66c23a19bb89aed0c0156ab42a`). `polaris-oid4vp` 1.0.0rc8 is not
+> certified; the certified version is 1.0.0rc7.
 >
 > **npm now takes two people-steps, and the first one lies.** `npm stage publish` uploads the
 > tarball and stops; the job exits 0 while nothing is installable. A maintainer then approves
@@ -158,7 +159,7 @@ four values. Two things cost time on 2026-09-15 and are worth knowing:
 `package not found` until it was actually created, two refused runs later). Its fields, which
 npm does not let you edit afterwards: publisher GitHub Actions, organization or user
 `EgorKhaklin`, repository `polaris-id`, workflow filename `publish.yml`, environment name
-`npm`, direct `npm publish` allowed. npm cannot do any of this for a package's *first* publish: the
+`npm`, direct `npm publish` allowed (switched off 2026-09-28, below). npm cannot do any of this for a package's *first* publish: the
 publisher is configured on a package page that does not exist until something has been
 published (npm/cli#8544). 0.1.0 therefore went out under a granular token scoped to the one
 package, held as a repository secret for that one run and revoked within the hour. The secret
@@ -195,13 +196,11 @@ npm stage reject <stage-id>         # to abandon it instead
 Then verify from the live registry as below. Until `approve` runs, the verification will
 correctly find nothing, and that is the staging working rather than a failed publish.
 
-**One setting still has to change on npmjs.com, and it is not in this repository.** The
-trusted publisher was created with direct `npm publish` allowed, which leaves that path open
-beside this one and makes the approval optional rather than required. On the package's
-access page, under the trusted publisher, leave "allow `npm publish`" **unchecked**. npm's
-own wording calls the checked state not recommended. Nothing in the tree can enforce this,
-which is why it is written here: the staging in `publish.yml` is half of the control, and
-this checkbox is the other half.
+**Direct `npm publish` is off (2026-09-28).** The trusted publisher was created with it
+allowed, which left that path open beside staging and made the approval optional. "Allow `npm
+publish`" is now unchecked on the package's access page, so a staged publish approved with a
+second factor is the only path. Nothing in the tree can enforce this: the staging in
+`publish.yml` is half of the control, and that setting is the other half. Keep it unchecked.
 
 ---
 
@@ -253,7 +252,7 @@ worse state to be in than three runs.
 | 36448595804 | 2026-09-28 | `polaris-verify` 1.0.0rc4 | published to PyPI by trusted publishing; read back from the live registry |
 | 36448937187 | 2026-09-28 | `polaris-sdk-python` 1.0.0rc4 | published to PyPI the same way; read back from the live registry |
 | 36449355751 | 2026-09-28 | `polaris-oid4vp` 1.0.0rc8 | published to PyPI the same way; read back from the live registry. Not certified: 1.0.0rc7 stays the certified version |
-| 36449564786 | 2026-09-28 | `polaris-sdk-ts` 1.0.0-rc.4 | staged (id 24f2675d), not published by the job; waits for a maintainer's second factor |
+| 36449564786 | 2026-09-28 | `polaris-sdk-ts` 1.0.0-rc.4 | staged (id 24f2675d); approved by the maintainer with a second factor, then read back from the live registry under `next` |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different
