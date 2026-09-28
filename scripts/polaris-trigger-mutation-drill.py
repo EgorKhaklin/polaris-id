@@ -50,6 +50,8 @@ import subprocess
 import tempfile
 import sys
 
+import polaris_bounded_run  # scripts/: each suite run has a time bound
+
 try:
     import psycopg2
 except ImportError:  # pragma: no cover - the drill needs the app stack
@@ -200,9 +202,9 @@ def _count(conn) -> int:
 
 
 def _suite_is_red(module: str, env: dict[str, str]) -> bool:
-    return subprocess.run([sys.executable, "-m", "unittest", module],
-                          cwd=str(ROOT / "polaris_web"), env=env,
-                          capture_output=True).returncode != 0
+    return polaris_bounded_run.run([sys.executable, "-m", "unittest", module],
+                                   cwd=str(ROOT / "polaris_web"), env=env,
+                                   capture_output=True).returncode != 0
 
 
 
@@ -400,8 +402,9 @@ def _refusals(env: dict[str, str]) -> int:
     for suite in FAST_SUITES:
         if _suite_is_red(suite, env):
             # Say which tests: a red baseline that names nothing cannot be triaged from a CI log.
-            r = subprocess.run([sys.executable, "-m", "unittest", suite], cwd=str(ROOT / "polaris_web"),
-                               env=env, capture_output=True, text=True)
+            r = polaris_bounded_run.run([sys.executable, "-m", "unittest", suite],
+                                        cwd=str(ROOT / "polaris_web"), env=env,
+                                        capture_output=True, text=True)
             named = [ln for ln in r.stderr.splitlines() if ln.startswith(("FAIL:", "ERROR:"))]
             tail = r.stderr.splitlines()[-25:]
             print(f"FAIL: {suite} is red before anything is mutated:\n"

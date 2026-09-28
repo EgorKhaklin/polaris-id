@@ -27,9 +27,10 @@ from __future__ import annotations
 
 import pathlib
 import shutil
-import subprocess
 import sys
 import tempfile
+
+import polaris_bounded_run  # scripts/: each suite run has a time bound
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LIB_RS = ROOT / "polaris_zk" / "src" / "lib.rs"
@@ -41,13 +42,13 @@ _cases_recorded = 0
 
 def _rust_suite() -> bool:
     """True when the Rust tests are RED."""
-    return subprocess.run(["cargo", "test", "--release"], cwd=str(ROOT / "polaris_zk"),
-                          capture_output=True).returncode != 0
+    return polaris_bounded_run.run(["cargo", "test", "--release"], cwd=str(ROOT / "polaris_zk"),
+                                   capture_output=True).returncode != 0
 
 
 def _witness_suite() -> bool:
     """True when the witness and differential suites are RED."""
-    return subprocess.run(
+    return polaris_bounded_run.run(
         [sys.executable, "-m", "pytest", "-q",
          "polaris_zk/witness2/test_witness2.py", "polaris_web/test_zk_second_witness.py"],
         cwd=str(ROOT), capture_output=True).returncode != 0

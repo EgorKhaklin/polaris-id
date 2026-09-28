@@ -47,6 +47,8 @@ import subprocess
 import tempfile
 import sys
 
+import polaris_bounded_run  # scripts/: each suite run has a time bound
+
 try:
     import psycopg2
 except ImportError:  # pragma: no cover - the drill needs the app stack
@@ -183,9 +185,9 @@ def _suites_red(env, targets, show=False) -> bool:
     tests failed and why: a red baseline that names nothing cannot be triaged from a CI log."""
     if not targets:
         return False
-    r = subprocess.run([sys.executable, "-m", "unittest", *targets],
-                       cwd=str(ROOT / "polaris_web"), env=env,
-                       capture_output=True, text=True)
+    r = polaris_bounded_run.run([sys.executable, "-m", "unittest", *targets],
+                                cwd=str(ROOT / "polaris_web"), env=env,
+                                capture_output=True, text=True)
     if show and r.returncode != 0:
         lines = r.stderr.splitlines()
         named = [ln for ln in lines if ln.startswith(("FAIL:", "ERROR:"))]

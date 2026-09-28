@@ -46,6 +46,8 @@ import re
 import subprocess
 import sys
 
+import polaris_bounded_run  # scripts/: each suite run has a time bound
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
@@ -213,8 +215,8 @@ def _failing_checks(mod=None, root=None) -> list:
     """
     if mod is not None:
         return [f.check for fn in mod.CHECKS for f in _safe(fn, root) if f.level == "FAIL"]
-    r = subprocess.run([sys.executable, "-m", "polaris_checks.run"],
-                       cwd=str(ROOT), capture_output=True)
+    r = polaris_bounded_run.run([sys.executable, "-m", "polaris_checks.run"],
+                                cwd=str(ROOT), capture_output=True)
     out = (r.stdout or b"").decode("utf-8", "replace")
     return re.findall(r"✗ \[(\w+)\]", out)
 

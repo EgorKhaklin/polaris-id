@@ -22,6 +22,11 @@ on:
 permissions:
   contents: read
 
+# A step's log is a pipe, and Python holds piped stdout until 8 KB or exit; unbuffered, a
+# drill's progress shows as it happens.
+env:
+  PYTHONUNBUFFERED: "1"
+
 jobs:
   sweep:
     name: Every trigger, against every suite

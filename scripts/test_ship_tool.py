@@ -618,3 +618,161 @@ class FailureBlockTests(unittest.TestCase):
         blocks = ship._failure_blocks(self.LOG)
         self.assertNotIn("Ran 4 tests", blocks[1])
         self.assertNotIn("FAIL: test_race", blocks[1])
+
+
+class BoundedSuiteRunTests(unittest.TestCase):
+    """scripts/polaris_bounded_run.py: a drill's suite run has a bound, and hitting it is reported.
+
+    These assert the effect: the run returns inside the bound, it reads as not passing, and what
+    the suite started is gone too, which subprocess.run(timeout=...) alone does not do."""
+
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.mkdtemp(prefix="polaris-bounded-")
+        self.saved = os.environ.pop("POLARIS_DRILL_SUITE_TIMEOUT", None)
+
+    def tearDown(self):
+        import shutil
+        import polaris_bounded_run as br
+        shutil.rmtree(self.dir, ignore_errors=True)
+        if self.saved is not None:
+            os.environ["POLARIS_DRILL_SUITE_TIMEOUT"] = self.saved
+        br.TIMEOUTS.clear()      # these timeouts are the tests' own; the exit line is a drill's
+
+    @staticmethod
+    def _alive(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        # A killed child of a reaped parent can linger as a zombie until init reaps it; a
+        # zombie runs nothing.
+        import subprocess
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True,
+                               text=True).stdout.strip()
+        return bool(state) and not state.startswith("Z")
+
+    def test_a_suite_that_finishes_is_passed_through(self):
+        import polaris_bounded_run as br
+        r = br.run(["sh", "-c", "echo out; echo err >&2; exit 3"], capture_output=True, text=True,
+                   timeout=30)
+        self.assertEqual((r.returncode, r.stdout, r.stderr), (3, "out\n", "err\n"))
+        r = br.run(["sh", "-c", "echo ok"], capture_output=True, timeout=30)
+        self.assertEqual((r.returncode, r.stdout), (0, b"ok\n"))
+
+    def test_a_hung_suite_comes_back_inside_the_bound_and_reads_as_not_passing(self):
+        import time
+        import polaris_bounded_run as br
+        pidfile = os.path.join(self.dir, "grandchild.pid")
+        # The shell starts a long sleep (what a suite starts: a server, a test binary) and
+        # waits on it, as a hung suite would. The sleep writes nowhere, so the pipes close when
+        # the shell dies and the only thing left to show a group-less kill is the sleep itself.
+        script = "sleep 300 >/dev/null 2>&1 & echo $! > %s; echo started; wait" % pidfile
+        t0 = time.monotonic()
+        r = br.run(["sh", "-c", script], capture_output=True, text=True, timeout=2)
+        took = time.monotonic() - t0
+        self.assertLess(took, 20, "the bound did not bound the run")
+        self.assertEqual(r.returncode, br.TIMED_OUT)
+        self.assertNotEqual(r.returncode, 0, "a timed-out suite must never read as green")
+        self.assertIn("started", r.stdout, "what the suite wrote before the bound is kept")
+        self.assertIn("TIMED OUT after 2 s", r.stderr.splitlines()[-1])
+        with open(pidfile) as fh:
+            grandchild = int(fh.read().strip())
+        for _ in range(50):
+            if not self._alive(grandchild):
+                break
+            time.sleep(0.1)
+        self.assertFalse(self._alive(grandchild),
+                         "the suite's own child outlived the bound: only the direct child "
+                         "was killed, which is what subprocess.run(timeout=...) does")
+
+    def test_a_process_that_left_the_group_cannot_hold_the_run_open(self):
+        import sys
+        import time
+        import polaris_bounded_run as br
+        pidfile = os.path.join(self.dir, "escaped.pid")
+        # A test that starts a server in a session of its own: the bound cannot kill it, and it
+        # still holds the run's stdout, so reading to end-of-file would wait for it forever.
+        child = ("import subprocess, time\n"
+                 "p = subprocess.Popen(['sleep', '300'], start_new_session=True)\n"
+                 "open(%r, 'w').write(str(p.pid))\n"
+                 "time.sleep(300)\n" % pidfile)
+        t0 = time.monotonic()
+        try:
+            r = br.run([sys.executable, "-c", child], capture_output=True, text=True, timeout=2)
+            took = time.monotonic() - t0
+        finally:
+            if os.path.exists(pidfile):
+                try:
+                    os.kill(int(open(pidfile).read().strip()), 9)
+                except (ProcessLookupError, ValueError):
+                    pass
+        self.assertEqual(r.returncode, br.TIMED_OUT)
+        self.assertLess(took, 30, "a process outside the group held the run open")
+        self.assertIn("TIMED OUT", r.stderr)
+
+    def test_bytes_output_carries_the_note_too(self):
+        import polaris_bounded_run as br
+        r = br.run(["sh", "-c", "sleep 300"], capture_output=True, timeout=1)
+        self.assertEqual(r.returncode, br.TIMED_OUT)
+        self.assertIn(b"TIMED OUT after 1 s", r.stderr)
+
+    def test_the_exit_line_names_every_run_that_hit_the_bound(self):
+        """A drill's verdict counts mutants; this line is what says some were noticed by hanging."""
+        import contextlib
+        import io
+        import polaris_bounded_run as br
+        br.run(["sh", "-c", "exit 1"], capture_output=True, timeout=30)
+        self.assertEqual(br.TIMEOUTS, [], "a run that ended is not a timeout")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            br._say_timeouts()
+        self.assertEqual(buf.getvalue(), "", "nothing timed out, so nothing is said")
+        br.run(["sh", "-c", "sleep 300"], capture_output=True, timeout=1)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            br._say_timeouts()
+        self.assertIn("1 suite run(s) hit the time bound", buf.getvalue())
+        self.assertIn("after 1 s: sh -c sleep 300", buf.getvalue())
+
+    def test_the_environment_sets_the_bound_and_nonsense_does_not(self):
+        import polaris_bounded_run as br
+        from unittest import mock
+        for raw, want in (("45", 45.0), ("0.5", 0.5), ("", br.DEFAULT_S), ("soon", br.DEFAULT_S),
+                          ("0", br.DEFAULT_S), ("-3", br.DEFAULT_S)):
+            with mock.patch.dict(os.environ, {"POLARIS_DRILL_SUITE_TIMEOUT": raw}):
+                self.assertEqual(br.bound(), want, raw)
+        with mock.patch.dict(os.environ, {"POLARIS_DRILL_SUITE_TIMEOUT": "1"}):
+            r = br.run(["sh", "-c", "sleep 300"], capture_output=True)
+            self.assertEqual(r.returncode, br.TIMED_OUT, "run() without timeout= must use bound()")
+
+    def test_every_drill_suite_run_is_bounded(self):
+        """Each subprocess call in a mutation drill that runs a suite goes through the helper or
+        carries its own timeout=. A new drill written the old way fails here, by name."""
+        import ast
+        import glob
+        suite_words = ("unittest", "pytest", "cargo", "polaris_checks.run", "--probe-route")
+        unbounded = []
+        drills = sorted(glob.glob(os.path.join(_HERE, "polaris-*-mutation-drill.py")))
+        self.assertGreaterEqual(len(drills), 10, "the drill glob found almost nothing")
+        seen = 0
+        for path in drills:
+            tree = ast.parse(open(path).read(), path)
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "subprocess"
+                        and node.func.attr in ("run", "Popen", "call", "check_call",
+                                               "check_output")):
+                    continue
+                text = ast.get_source_segment(open(path).read(), node) or ""
+                # The interpreter probe (`-c` with __import__) only imports; it is not a suite.
+                if "__import__" in text or not any(w in text for w in suite_words):
+                    continue
+                seen += 1
+                if not any(k.arg == "timeout" for k in node.keywords):
+                    unbounded.append("%s:%d" % (os.path.basename(path), node.lineno))
+        self.assertGreater(seen, 0, "no suite call was recognised; the scan is broken")
+        self.assertEqual(unbounded, [], "suite runs with no bound; use polaris_bounded_run.run")

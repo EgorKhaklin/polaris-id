@@ -32,6 +32,8 @@ import subprocess
 import tempfile
 import sys
 
+import polaris_bounded_run  # scripts/: each suite run has a time bound
+
 try:
     import psycopg2
 except ImportError:  # pragma: no cover - the drill needs the app stack
@@ -110,7 +112,7 @@ def _catalog(cur, fragment: str) -> list[tuple[str, str, str]]:
 
 def _run_tests(tests: list[str], env: dict[str, str]) -> bool:
     """True when the named tests all PASS."""
-    proc = subprocess.run(
+    proc = polaris_bounded_run.run(
         [sys.executable, "-m", "unittest"] + [f"test_check_constraints.{t}" for t in tests],
         cwd=str(ROOT / "polaris_web"), env=env, capture_output=True, text=True)
     return proc.returncode == 0

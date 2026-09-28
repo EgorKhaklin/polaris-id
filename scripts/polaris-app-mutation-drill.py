@@ -91,6 +91,8 @@ import subprocess
 import sys
 import time
 
+import polaris_bounded_run  # scripts/: each suite run has a time bound
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WEB = ROOT / "polaris_web"
 
@@ -427,9 +429,9 @@ def _probe_child(route: str) -> int:
 
 def probe(route: str, env: dict) -> list:
     """This route's answers to PROBE_BODIES, or [] if the probe itself could not run."""
-    r = subprocess.run([sys.executable, str(pathlib.Path(__file__).resolve()),
-                        "--probe-route", route],
-                       capture_output=True, env=env, cwd=str(ROOT))
+    r = polaris_bounded_run.run([sys.executable, str(pathlib.Path(__file__).resolve()),
+                                 "--probe-route", route],
+                                capture_output=True, env=env, cwd=str(ROOT))
     line = (r.stdout or b"").decode("utf-8", "replace").strip().splitlines()
     for candidate in reversed(line):
         try:
@@ -461,8 +463,8 @@ def run_tests(targets: list[str], env: dict) -> tuple[bool, str]:
     """(green, tail). No targets is not green: it is 'nothing looked'."""
     if not targets:
         return True, "no test class names this route"
-    r = subprocess.run([sys.executable, "-m", "unittest", *targets],
-                       cwd=str(ROOT / "polaris_web"), capture_output=True, env=env)
+    r = polaris_bounded_run.run([sys.executable, "-m", "unittest", *targets],
+                                cwd=str(ROOT / "polaris_web"), capture_output=True, env=env)
     text = (r.stderr or b"").decode("utf-8", "replace")
     return r.returncode == 0, text.strip().splitlines()[-1] if text.strip() else ""
 
