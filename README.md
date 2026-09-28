@@ -84,6 +84,17 @@ polaris-verify --pqc-provider auto --issuer-anchor trusted-keys.json --pack your
 - It refuses to start until you name the cryptography it uses; there is no default.
 - **A genuine signature is not a trusted issuer:** without `--issuer-anchor` it abstains (exit 2) rather than report success.
 
+No credential yet? A published sample and its issuer's key, with no clone:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/vectors/ml-dsa-65-valid.json
+curl -fsSLO https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/vectors/anchors/ml-dsa-65-issuer.json
+polaris-verify --pqc-provider auto --issuer-anchor ml-dsa-65-issuer.json --pack ml-dsa-65-valid.json
+# signature_valid: True, issuer_trusted: True, exit 0
+```
+
+`ml-dsa-65-tampered-signature.json` beside it exits 2, and so does the genuine sample under any other issuer's key. The sample issuer is a demo: in real use an issuer's key comes from the issuer or a trust list you already trust, never from beside the credential.
+
 Authenticity is permanent; authorization can change. The same credential after revocation:
 
 ```jsonc

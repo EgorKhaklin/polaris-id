@@ -35,6 +35,11 @@ python3 scripts/polaris-verify.py --pack vectors/ml-dsa-65-valid.json --json
 | `ml-dsa-65-wrong-key.json` | invalid | a genuine signature checked against an unrelated public key is rejected |
 | `placeholder.json` | invalid | the dev/CI SHA3 placeholder is never reported authentic — it is a binding, not a signature |
 
+`anchors/ml-dsa-65-issuer.json` is the sample issuer's published key, in the form
+`--issuer-anchor` reads, so the whole trust decision can be tried without a clone (README, "Try
+it"): the valid pack under it answers `issuer_trusted: True`, and under any other key `False`. It
+sits in a subdirectory because `--verify-dir` reads every top-level `*.json` here as a pack.
+
 ## The pack format
 
 Each file is a `polaris-authenticity-pack/1` — the same shape the running system
