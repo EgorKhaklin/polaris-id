@@ -6236,6 +6236,13 @@ class BoundOperatorRouteIsolationTests(PolarisTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+    def test_no_wallet_offer_for_a_credential_the_operator_cannot_see(self):
+        # Row-level security hides token 2 from an operator bound to authority 1, and hidden is
+        # not "not found" (rc.43): the offer route answers 403 before it looks for a key.
+        r = self._post('/tokens/2/wallet-offer', csrf_from='/tokens')
+        self.assertEqual(r.status_code, 403, r.get_data(as_text=True)[:300])
+        self.assertNotIn(self.foreign_value, r.get_data(as_text=True))
+
     def test_the_investigate_card_is_scoped(self):
         self.assertEqual(self.client.get('/investigate/token/2').status_code, 404)
         own = self.client.get('/investigate/token/3')
