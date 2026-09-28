@@ -28,6 +28,22 @@ Every record answers all ten. A record that cannot is not an argument for buildi
 Ten is the one that matters. It is written before the work starts, not after, because a
 falsifier invented later is always satisfied by whatever was built.
 
+## How a decision is written
+
+A record starts from a contradiction inside the tree. "The finding that started it" is the
+place where something the repository says, or a decision it already recorded, stops holding
+against the rest of what it says. A decision does not pick a side of that contradiction. It
+says three things:
+- what the earlier position got right, which is kept;
+- what was false, which is dropped;
+- the new position that holds both.
+
+[005](005-oid4vci-issuer.md) is the worked case. It keeps 001's finding that issuer software is
+ordinary, and it drops 001's conclusion that issuing could only duplicate that software. The
+new position is not "an issuer" but a wallet copy the Polaris record governs, and it inherits
+the mdoc bridge's sentence that a classical signature makes a classical credential instead of
+arguing with it. A decision that only reverses the one before it has not finished.
+
 ## The records
 
 | Record | Capability | State |
