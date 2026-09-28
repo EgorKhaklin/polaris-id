@@ -247,11 +247,10 @@ author on one machine, the credential minted by this repository's issuer script.
                                walt.id did not.
     Modifications:             none. Configuration only: the issuer's TLS certificate in each
                                wallet's trust store, and the test anchor registered with Credo.
-    Presented (S6):            walt.id then presented the copy it held to polaris-oid4vp,
-                               whose verifier read the product's status list: authentic,
-                               VALID; after uc8_revoke_token, authentic and INVALID. The
-                               relying party asked for age_over_18 and learned only that.
-                               Credo was not run through the presentation.
+    Presented (S6):            each wallet then presented the copy it held to
+                               polaris-oid4vp, whose verifier read the product's status list:
+                               authentic, VALID; after uc8_revoke_token, authentic and INVALID.
+                               The relying party asked for age_over_18 and learned only that.
     Transcript:                lab/strategy/005/STEP5.md and STEP6.md; product/run.py and
                                product/present.py reproduce them and exit non-zero if any
                                case differs.

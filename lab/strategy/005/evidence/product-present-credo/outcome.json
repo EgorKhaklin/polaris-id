@@ -1,31 +1,31 @@
 {
-  "wallet": "waltid",
+  "wallet": "credo",
   "commit": "d1f26475e761ca9e380d83126224226a1d8cdb0c",
-  "issuer": "https://host.docker.internal:9644/api/v1/oid4vci/2",
-  "started": "2026-09-28T11:10:03.540129+00:00",
+  "issuer": "https://localhost:9644/api/v1/oid4vci/2",
+  "started": "2026-09-28T11:10:16.426687+00:00",
   "received": true,
   "wallet_said": {
-    "receive": {
-      "credentialIds": [
-        "44968700-d237-42a4-847d-06db794d06cb"
-      ],
-      "deferredTransactionIds": {}
-    },
-    "stored_fields": [
-      "addedAt",
-      "credential",
-      "id",
-      "label",
-      "metadata"
-    ]
+    "ready": true,
+    "stored": true,
+    "vct": "urn:polaris:wallet-copy:1",
+    "holder_jwk": {
+      "kty": "EC",
+      "x": "9hoaU9tn35BcMqWMpkeCOPzHBDeUZ60z7Z77lo3a7IQ",
+      "y": "wOM9Y6r8Xwc_oCAECm0LuWQgAWpiAloBcuugWtgp8sw",
+      "crv": "P-256",
+      "kid": "ce51eab7-253b-4a36-899a-634f95d2aa2a"
+    }
   },
   "presented_while_active": {
     "wallet_answer": {
-      "transmission_success": true,
-      "verifier_response": {
-        "redirect_uri": "https://host.docker.internal:9543/done"
-      },
-      "redirect_to": "https://host.docker.internal:9543/done"
+      "presented": true,
+      "ok": true,
+      "serverResponse": {
+        "status": 200,
+        "body": {
+          "redirect_uri": "https://localhost:9543/done"
+        }
+      }
     },
     "authentic": true,
     "claims": [
@@ -48,17 +48,20 @@
       "code": null,
       "reason": "status 0 (VALID) published 0s ago on stated authority (the relying party trusts this issuer's anchor for its credentials, and so for status lists signed under it)",
       "state": "checked",
-      "uri": "https://host.docker.internal:9644/api/v1/oid4vci/2/status/2026-09-28/0",
-      "idx": 592906
+      "uri": "https://localhost:9644/api/v1/oid4vci/2/status/2026-09-28/0",
+      "idx": 605421
     }
   },
   "presented_after_revocation": {
     "wallet_answer": {
-      "transmission_success": true,
-      "verifier_response": {
-        "redirect_uri": "https://host.docker.internal:9543/done"
-      },
-      "redirect_to": "https://host.docker.internal:9543/done"
+      "presented": true,
+      "ok": true,
+      "serverResponse": {
+        "status": 200,
+        "body": {
+          "redirect_uri": "https://localhost:9543/done"
+        }
+      }
     },
     "authentic": true,
     "claims": [
@@ -81,8 +84,8 @@
       "code": null,
       "reason": "status 1 (INVALID) published 0s ago on stated authority (the relying party trusts this issuer's anchor for its credentials, and so for status lists signed under it)",
       "state": "checked",
-      "uri": "https://host.docker.internal:9644/api/v1/oid4vci/2/status/2026-09-28/0",
-      "idx": 592906
+      "uri": "https://localhost:9644/api/v1/oid4vci/2/status/2026-09-28/0",
+      "idx": 605421
     }
   },
   "verdict": "PASS"
