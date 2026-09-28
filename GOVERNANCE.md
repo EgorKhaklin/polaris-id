@@ -32,6 +32,19 @@ passes.
 A contributor who sustains substantial, reviewed contributions can be invited to become a second
 maintainer, with the same access and responsibilities.
 
+## Access and review
+
+Before anyone is given write access to the repository or ownership of a published package, the
+maintainer reviews their contributions to the project (sustained work that went through review),
+confirms that their account uses two-factor authentication, and grants the least access the role
+needs. Access is removed when the role ends.
+
+Every change reaches `main` through a pull request. Review checks that the change carries a test
+that fails without it, that the gate and the required checks pass, that no constraint in
+[MISSION.md](MISSION.md) is weakened, that every commit is signed off, and that any changelog line is
+short and accurate. While Polaris has one maintainer, the reviewer is the author; approval by a
+person other than the author becomes a rule once there is a second maintainer.
+
 ## Continuity
 
 The maintainer keeps what is needed to continue the project (the GitHub repository, the PyPI and

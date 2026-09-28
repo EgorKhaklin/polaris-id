@@ -1,0 +1,28 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/EgorKhaklin/polaris-id/blob/main/vex.openvex.json",
+  "author": "Egor Khaklin",
+  "timestamp": "2026-09-28T21:45:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2025-68121",
+        "description": "Go crypto/tls: incorrect certificate validation during TLS session resumption"
+      },
+      "products": [
+        {
+          "@id": "pkg:docker/library/postgres@16-alpine",
+          "subcomponents": [
+            {
+              "@id": "pkg:golang/github.com/tianon/gosu"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "gosu, the postgres image's privilege-drop helper, opens no TLS connection, so the vulnerable session-resumption path is never reached. It cannot be patched by apk or a base bump; re-evaluate when the postgres base ships gosu built with Go 1.24.13 or later. The image scan's matching exception is in .trivyignore."
+    }
+  ]
+}

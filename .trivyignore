@@ -2,6 +2,7 @@
 # Each entry MUST carry a justification and a re-evaluation trigger. The Trivy CI
 # job gates on FIXABLE CRITICAL after applying this file; an undocumented add here
 # is a review smell. HIGH findings are reported informationally, not gated.
+# Each exception is also declared, with the same reason, in vex.openvex.json (OpenVEX).
 
 # CVE-2025-68121 — Go crypto/tls: incorrect certificate validation during TLS
 # session resumption. Present in /usr/local/bin/gosu (the Go stdlib it was
