@@ -5784,9 +5784,9 @@ class RouteModuleTests(PolarisTestCase):
     #: test_roster_is_complete until it is added here, which is the point: the roster is what
     #: `check_modules_are_measured` reads to know a module has a measured suite at all, and a
     #: derived-only test would let one arrive with neither a line here nor any coverage.
-    ROUTE_MODULES = {'atlas_routes', 'auth_routes', 'federation_routes', 'operator_routes',
-                     'rp_api', 'sql_console', 'status_routes', 'transparency_routes',
-                     'use_case_routes', 'verification_routes'}
+    ROUTE_MODULES = {'atlas_routes', 'auth_routes', 'federation_routes', 'oid4vci_routes',
+                     'operator_routes', 'rp_api', 'sql_console', 'status_routes',
+                     'transparency_routes', 'use_case_routes', 'verification_routes'}
 
     @staticmethod
     def _derive():
@@ -12289,6 +12289,7 @@ class RouteGuardMatrixTests(PolarisTestCase):
         '/sql': ('admin', 'auditor'),
         '/tokens/<int:tok_id>/delete': ('admin',),
         '/tokens/<int:tok_id>/transition': ('admin', 'operator'),
+        '/tokens/<int:tok_id>/wallet-offer': ('admin', 'operator'),
         '/uc1/issue': ('admin', 'operator'),
         '/uc4/activate-reserve': ('admin', 'operator'),
         '/uc5/bind-device': ('admin', 'operator'),
