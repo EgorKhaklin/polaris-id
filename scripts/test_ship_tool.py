@@ -776,3 +776,47 @@ class BoundedSuiteRunTests(unittest.TestCase):
                     unbounded.append("%s:%d" % (os.path.basename(path), node.lineno))
         self.assertGreater(seen, 0, "no suite call was recognised; the scan is broken")
         self.assertEqual(unbounded, [], "suite runs with no bound; use polaris_bounded_run.run")
+
+
+class ReleaseNotesTests(unittest.TestCase):
+    """scripts/polaris-release-notes.sh renders a GitHub release page from a CHANGELOG block. A
+    release page resolves a relative link against .../releases/tag/vX, so the rc.66 page's links
+    404ed (2026-09-28); its item list had lost the group headings; and a block with no intro
+    paragraph printed its first heading as the summary."""
+
+    BLOCK = ("# Changelog\n\n## v9.9.9 — 2026-01-02 (a plain subtitle)\n\n{intro}"
+             "### Security\n\n- A fix; [its record](docs/x.md#part) and [a site](https://example.org).\n\n"
+             "### Fixed\n\n- **Breaking**: a second fix.\n\n## v9.9.8 — 2026-01-01 (older)\n\n- old\n")
+
+    def render(self, intro):
+        import shutil
+        import subprocess
+        import tempfile
+        d = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(d, "scripts"))
+            shutil.copy(os.path.join(_HERE, "polaris-release-notes.sh"), os.path.join(d, "scripts"))
+            with open(os.path.join(d, "CHANGELOG.md"), "w", encoding="utf-8") as f:
+                f.write(self.BLOCK.format(intro=intro))
+            out = subprocess.run(["bash", os.path.join(d, "scripts", "polaris-release-notes.sh"), "9.9.9"],
+                                 capture_output=True, text=True, timeout=60)
+        finally:
+            shutil.rmtree(d)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout
+
+    def test_links_point_at_the_tag_and_the_list_keeps_its_groups_folded(self):
+        page = self.render("One sentence about the release.\n\n")
+        self.assertIn("One sentence about the release.", page)
+        self.assertIn("](https://github.com/EgorKhaklin/polaris-id/blob/v9.9.9/docs/x.md#part)", page)
+        self.assertIn("](https://example.org)", page)
+        self.assertNotIn("](docs/", page)
+        details = page.split("### Details")[1]
+        self.assertIn("<details>", details)
+        self.assertIn("**Security**", details)
+        self.assertIn("**Fixed**", details)
+        self.assertIn("- **Breaking**: a second fix.", page.split("### Upgrade")[0])
+
+    def test_a_block_with_no_intro_has_no_summary(self):
+        head = self.render("").split("### Breaking changes")[0]
+        self.assertNotIn("Security", head)

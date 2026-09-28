@@ -7,7 +7,9 @@
 #   scripts/polaris-release-notes.sh 9.205            # prints the body to stdout
 #   scripts/polaris-release-notes.sh 9.205 > notes.md && gh release create v9.205 --notes-file notes.md
 #
-# The summary and the item list come from the CHANGELOG block verbatim. The
+# The summary and the item list come from the CHANGELOG block, the list with its
+# group headings and folded in <details>; relative links are rewritten to the file
+# at the release's tag, since a release page resolves them against itself. The
 # Breaking changes section is "None" unless the block contains a line that
 # starts with "- **Breaking" (case-insensitive). The Upgrade section names
 # the roadmap row when the block's title carries one.
@@ -35,16 +37,27 @@ if not m:
 if not m:
     sys.exit(f"no CHANGELOG entry for v{version} in CHANGELOG.md or docs/history/")
 date, title, body = m.group(1), m.group(2).strip(), m.group(3).strip()
+
+
+def absolute(s):
+    # A release page is not the repository: a relative link resolved against
+    # .../releases/tag/vX and 404ed. Point it at the file as it was at this tag.
+    return re.sub(r"\]\((?!https?://|#|mailto:)([^)\s]+)\)",
+                  lambda l: "](https://github.com/%s/blob/v%s/%s)" % (repo, version, l.group(1)), s)
+
+
 paras = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
-summary = next((p for p in paras if not p.startswith("- ")), "")
-items = [p for p in paras if p.startswith("- ")]
+# The one-sentence intro, when the block has one; a heading is not a summary.
+summary = paras[0] if paras and not paras[0].startswith(("- ", "#")) else ""
+details = ["**%s**" % p[4:].strip() if p.startswith("### ") else p
+           for p in paras if p != summary and p.startswith(("- ", "### "))]
 breaking = [ln for ln in body.splitlines() if re.match(r"^- \*\*breaking", ln, re.I)]
 row = re.search(r"\b(P\d+\.\d+)\b", title)
 print(f"**{title}**\n")
 if summary:
-    print(summary + "\n")
+    print(absolute(summary) + "\n")
 print("### Breaking changes\n")
-print(("\n".join(breaking) if breaking else "None.") + "\n")
+print((absolute("\n".join(breaking)) if breaking else "None.") + "\n")
 print("### Upgrade\n")
 print("Pull the tag, rebuild the images, and run `scripts/polaris-deploy.sh prod` "
       "(the expand-contract migration policy keeps the running app safe during the roll); "
@@ -57,8 +70,10 @@ print("Every release carries SPDX SBOMs with signed SLSA build provenance "
       "attached by the sbom workflow after publication):\n")
 print("```bash\ngh attestation verify sbom-python.spdx.json --repo " + repo + "\n```\n")
 print("### Details\n")
-if items:
-    print("\n\n".join(items) + "\n")
+if details:
+    print("<details><summary>Every change in this release</summary>\n")
+    print(absolute("\n\n".join(details)) + "\n")
+    print("</details>\n")
 anchor = "v" + version.replace(".", "") + "-" + date + "-" + re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
 print(f"The full entry is in [{source}](https://github.com/{repo}/blob/main/{source}) under `v{version}`, dated {date}.")
 PY
