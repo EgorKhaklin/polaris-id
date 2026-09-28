@@ -1942,6 +1942,70 @@
       },
       "since": "1.0.0-rc.64",
       "note": "Control: the same authority's key over a credential serial verifies and is trusted, so the refusal above is the serial rule's and not the key's."
+    },
+    {
+      "name": "cross-authority-edge-window-signed-open",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-edge-window-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-edge-window-signed-open.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "accept"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "Wire spec section 4: the edge is signed and its own window is open at now: the positive control."
+    },
+    {
+      "name": "cross-authority-edge-window-signed-closed",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-edge-window-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-edge-window-signed-closed.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "Wire spec section 4: the edge is signed and its own window closed a month before now; the manifest is fresh."
+    },
+    {
+      "name": "cross-authority-edge-window-unsigned-open",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-edge-window-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-edge-window-unsigned-open.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "accept"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "Wire spec section 4: a legacy edge states a window that is open at now: the positive control."
+    },
+    {
+      "name": "cross-authority-edge-window-unsigned-closed",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-edge-window-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-edge-window-unsigned-closed.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "Wire spec section 4: a legacy edge states a window that closed before now: the manifest's authority signed that window, and a fresh manifest does not extend an edge its authority has ended."
     }
   ]
 }

@@ -25,7 +25,11 @@ given a foreign credential's pack, the federation manifests the relying party tr
 trusted anchor set, and a presented context, decide accept or reject -- accept only when the
 credential is authentic AND a trusted manifest attests its key in that context AND (if a
 revocation feed is supplied) it is not revoked. No context presented (`context_id` null) is a reject: it is not a
-wildcard over every context. Online authorization (a live call to
+wildcard over every context. An attestation that states a `valid_until` counts only until it,
+and one whose `valid_until` cannot be read not at all, signed or unsigned; an unsigned (legacy)
+attestation that states no window is accepted, as `cross-authority-accept` publishes. The
+`cross-authority-edge-window-*` cases pin the window for both kinds of edge, each with an open
+edge as its positive control (1.0.0-rc.66). Online authorization (a live call to
 `POST /api/v1/verify`, specified in [`docs/reference/API.md`](../docs/reference/API.md)) is
 the only check not in these offline vectors, because it depends on live issuer state.
 

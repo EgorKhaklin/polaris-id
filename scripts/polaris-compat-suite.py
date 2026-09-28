@@ -80,6 +80,12 @@ PINNED_KNOWN_DEFECTS = {
     "cross-authority-no-context":
         "2026-09-27: a cross-authority decision with no context presented matched an edge from "
         "any context; the pinned verifier treats a missing context as a wildcard",
+    "cross-authority-edge-window-signed-closed":
+        "2026-09-17: nothing read a trust edge's own valid_until, so an edge its authority had "
+        "time-boxed kept granting acceptance past its end; the pinned verifier predates that rule",
+    "cross-authority-edge-window-unsigned-closed":
+        "2026-09-28: no verifier read an unsigned (legacy) edge's valid_until; the pinned "
+        "verifier predates any window rule",
 }
 
 
