@@ -338,6 +338,18 @@ class ShipBaselineTests(unittest.TestCase):
     holding one unrelated untracked file read as "dirty", the baseline became HEAD, and the
     gate reported READY with the commit's drills unrun."""
 
+    def setUp(self):
+        # Run from a git hook, the environment names the repository being committed
+        # (GIT_INDEX_FILE, GIT_DIR, GIT_WORK_TREE). Inherited by the git commands below and by
+        # the ship tool's own, they act on THAT repository: from a linked worktree, where the
+        # index path is absolute, `git add a.txt` in the scratch repository added a.txt to the
+        # index of the commit being made, and the scratch commit failed (2026-09-28). The
+        # scratch repositories must see none of it.
+        self._git_env = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("GIT_")}
+
+    def tearDown(self):
+        os.environ.update(self._git_env)
+
     def _repo(self):
         import subprocess
         import tempfile
