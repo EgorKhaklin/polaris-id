@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_conformance_runner.py -- the conformance runner, held to scoring a WRONG verifier as wrong.
 
 `conformance/run_conformance.py` is how an outside team certifies its own verifier: point the

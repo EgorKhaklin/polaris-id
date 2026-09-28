@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """vc.py - a verification RESULT expressed as a W3C Verifiable Credential (P3.8).
 
 Like the mdoc bridge, this is a FORMAT, not a trust model, and the roadmap row says so in

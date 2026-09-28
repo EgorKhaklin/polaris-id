@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_verifier.py -- the seven refusals as HTTP status codes, which is how they are scored.
 
 `test_sdjwt.py` proves the verifier NOTICES each of the conformance plan's seven negative

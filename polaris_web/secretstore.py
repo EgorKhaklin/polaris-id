@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/secretstore.py — the sealed secret store (roadmap P1.3).
 
 Until now the production secrets (the session key, the DB passwords, the

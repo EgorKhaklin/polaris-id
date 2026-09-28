@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/oid4vci_routes.py: OpenID4VCI 1.0, the pre-authorized code grant, a wallet copy per agency.
 
 docs/design/oid4vci-issuer.md is the design and this module is its protocol surface. Each agency

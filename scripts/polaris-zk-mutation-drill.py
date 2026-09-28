@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-zk-mutation-drill.py - would either witness notice being switched off?
 
 v9.419. The third mutation drill, after the constraints (v9.407) and the triggers

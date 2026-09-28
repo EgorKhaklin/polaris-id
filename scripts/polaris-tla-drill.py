@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-tla-drill.py - the formal specs, actually checked (roadmap P6.7).
 
 meta/tla/ carried one TLA+ spec for years, described as "checked once to show the technique".

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/atlas_routes.py -- the Atlas, the operational investigation surface.
 
 The third block lifted out of app.py (2026-09-18) and the largest: the /atlas page, the

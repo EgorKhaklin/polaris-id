@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-chaos-drill.sh — induced failures against the booted stack, with
 # recovery measured and paging verified (roadmap P2.11, v9.242).

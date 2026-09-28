@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/wallet_copy.py: what a wallet copy is on the wire, and what a wallet must send for one.
 
 A wallet copy (docs/design/oid4vci-issuer.md) is an SD-JWT VC, `dc+sd-jwt`, signed ES256 by the

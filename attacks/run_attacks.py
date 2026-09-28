@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """
 attacks/ — adversaries that MUST fail. Run every release; CI goes red if any SUCCEEDS.
 

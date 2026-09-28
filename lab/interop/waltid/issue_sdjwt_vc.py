@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Mint one SD-JWT VC bound to a key walt.id generated and holds.
 
 This is the ISSUER half of the walt.id encounter. It is deliberately not a product:

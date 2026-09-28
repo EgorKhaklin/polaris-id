@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/credential_copy_keys.py: the ES256 keys wallet copies are signed with.
 
 A wallet copy (docs/design/oid4vci-issuer.md) is an SD-JWT VC signed ES256 under the issuing

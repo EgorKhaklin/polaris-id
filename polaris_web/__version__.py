@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/__version__.py — single canonical version string.
 
 Pre-v9.06 the version literal lived only in `polaris_web/app.py`

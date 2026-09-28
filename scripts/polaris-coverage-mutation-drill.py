@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-coverage-mutation-drill.py -- grow a surface by one bad member; does anything notice?
 
 EVERY OTHER MUTATION DRILL IN THIS TREE ASKS THE SAME QUESTION: delete the mechanism, does a

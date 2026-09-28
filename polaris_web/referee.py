@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/referee.py - how somebody who cannot present evidence still gets a credential (P4.4).
 
 Every combination in 800-63A starts from documents. A person with none -- no fixed address, a

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """record_signing_calls.py - every signing call the test suite makes, with the statement format
 it signs and the surface that reached it (lab/strategy/003-signing-custody-compartment.md,
 section 9, step 1 checked dynamically).

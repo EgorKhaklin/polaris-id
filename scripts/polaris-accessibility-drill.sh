@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-accessibility-drill.sh — WCAG 2.2 AA audit of every operator surface
 # (roadmap P6.5).

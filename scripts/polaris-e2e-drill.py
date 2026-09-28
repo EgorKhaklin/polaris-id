@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """
 polaris-e2e-drill.py — the whole holder<->verifier flow, RUN end to end (PE follow-up).
 

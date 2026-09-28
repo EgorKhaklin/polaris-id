@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-credential-copy-test-pki.py: a TEST certificate chain for one agency's wallet copies.
 
     python3 scripts/polaris-credential-copy-test-pki.py --agency 7 \\

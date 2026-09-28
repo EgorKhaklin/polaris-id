@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/kms_standin.py — a local AWS KMS stand-in for tests.
 
 Speaks the real TrentService JSON 1.1 wire protocol boto3 uses, so a driver's

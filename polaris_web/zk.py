@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """
 zk.py — Python wrapper around the polaris_zk Rust binary (R10-1 / M2-1 / v8.23).
 

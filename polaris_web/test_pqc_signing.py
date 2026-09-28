@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_pqc_signing.py — unit tests for the post-quantum signing module.
 
 `pqc_signing` is the single entry point `uc1_issue` calls to produce the bytes

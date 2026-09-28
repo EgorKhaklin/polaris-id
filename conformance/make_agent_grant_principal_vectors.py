@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Generate the grant-principal conformance vectors and cases (2026-09-27).
 
 A grant is signed by a holder key. Whether that key SPEAKS FOR anybody is a second question:

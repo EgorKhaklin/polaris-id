@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """
 test_zk_second_witness.py - the differential that two-witnesses Polaris's ZK
 verdict (v9.44, Glass bounded-integration).

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/coexistence.py - living beside the credential you are replacing (roadmap P7.5).
 
 A new national credential does not arrive into an empty field. It arrives beside a driving

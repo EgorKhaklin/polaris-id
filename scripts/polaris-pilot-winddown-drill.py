@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-pilot-winddown-drill.py - a pilot that can actually be undone (roadmap P5.1).
 
 A pilot's real promise is not that it will work. It is that it can be wound back. Institutions

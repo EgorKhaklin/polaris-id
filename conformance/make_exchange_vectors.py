@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Generate the exchange-receipt and exchange-mint conformance vectors (v9.331): the evidence a
 service holds after an exchange through the gateway (P8.2) and the statement a responder's
 service signs to mint one without an operator session (P8.2b). Each vector is verified by the

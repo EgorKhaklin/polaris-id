@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-procedure-mutation-drill.py — is each refusal a stored procedure makes tested?
 
 CHECK constraints are mutation-tested (v9.407), triggers are (v9.413), the ZK witnesses are

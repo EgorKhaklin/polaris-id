@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Mutations of one genuine Credo presentation, each put to polaris-oid4vp's full decision path.
 
 Credo 0.6.3 built, signed and encrypted a real presentation (`capture-verifier` recorded it,

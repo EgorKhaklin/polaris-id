@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/transparency_routes.py -- the epoch tree and the anchor log.
 
 The eighth block lifted out of app.py (2026-09-18): the ZK epoch surface (/epochs, /api/zk) and

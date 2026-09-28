@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/pilot.py - winding a pilot down (roadmap P5.1).
 
 A pilot's real promise is not that it will work. It is that it can be undone. Institutions

@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # patroni-entrypoint.sh — render Patroni's configuration and exec it
 # (v9.243, roadmap P2.7).

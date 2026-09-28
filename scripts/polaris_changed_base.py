@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """scripts/polaris_changed_base.py: the commit a ship is measured from, one answer for every tool.
 
 The `--changed` modes of the procedure and SDK mutation drills, and the ship tool's drill plan,

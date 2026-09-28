@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/rp_api.py -- the relying-party API, version 1.
 
 The fourth and largest block lifted out of app.py (2026-09-18): every /api/v1 route and the

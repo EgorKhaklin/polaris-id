@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """
 polaris-presentation-drill.py -- the wallet's presentation and its QR/NFC transfer, run (P8.6).
 

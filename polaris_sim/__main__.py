@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """`python3 -m polaris_sim` - build a synthetic nation and (later ships) run its
 life through the real Polaris system.
 

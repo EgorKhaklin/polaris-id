@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # deploy/linux/install.sh: a fresh Linux server to a healthy Polaris production
 # stack, from this script alone (roadmap P1.1).

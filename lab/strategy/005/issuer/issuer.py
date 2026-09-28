@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """A minimal OpenID4VCI 1.0 issuer, pre-authorized code only, for 005 section 9 step 2.
 
 LAB CODE. It exists to answer one question: will two wallets Polaris did not write (walt.id

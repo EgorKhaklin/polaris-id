@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """mdoc.py - a Polaris credential rendered in the ISO/IEC 18013-5 mdoc structure (P3.7).
 
 WHAT THIS IS, AND THE ONE SENTENCE THAT MATTERS MOST

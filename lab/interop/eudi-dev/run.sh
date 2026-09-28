@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # eudi-dev presents an SD-JWT VC to the PUBLISHED polaris-oid4vp, then three controls.
 #
 # Everything runs from a scratch directory: a fresh venv with polaris-oid4vp from PyPI, the

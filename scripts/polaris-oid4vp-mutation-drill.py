@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-oid4vp-mutation-drill.py -- would a test notice if the verifier stopped refusing?
 
 `packages/polaris-oid4vp` is at 99% line coverage, which says every line RAN. It does not

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/migration.py — mass algorithm migration (roadmap P7.6, the quantum event).
 
 UC-6 migrates ONE token. `uc6_migrate_algorithm` takes a per-token advisory lock, validates,

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-ct-monitor.sh — Certificate Transparency monitor for ${POLARIS_DOMAIN}
 #                        (v9.01 / Phase 3 Wave 1)

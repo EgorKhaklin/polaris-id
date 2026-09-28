@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-trigger-mutation-drill.py - does the suite notice when a trigger is gone?
 
 v9.413. The sibling of polaris-constraint-mutation-drill.py. MISSION names three

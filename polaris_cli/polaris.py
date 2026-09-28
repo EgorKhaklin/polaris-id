@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-id: the command-line interface to Polaris.
 
 Every operation the web application performs on tokens, individuals, agencies

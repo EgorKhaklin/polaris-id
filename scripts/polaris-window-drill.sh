@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-window-drill.sh — measure the service windows the blue-green deploy
 # still has, and prove the edge configuration path has none.

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-sdk-agreement-drill.py -- do the implementations give the SAME answer?
 
 This repository ships THREE verifiers of the same artifacts: the detached verifier a relying

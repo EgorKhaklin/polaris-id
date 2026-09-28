@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-vc-format-drill.py - a verification RESULT as a W3C Verifiable Credential (P3.8).
 
 The sibling of the mdoc bridge, and the same discipline: a FORMAT, not a trust model. What

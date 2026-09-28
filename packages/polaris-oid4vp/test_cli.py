@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_cli.py -- the entry point, and the two certificate shapes the suite refuses.
 
 `keygen` exists because the High Assurance profile's certificate requirements are not

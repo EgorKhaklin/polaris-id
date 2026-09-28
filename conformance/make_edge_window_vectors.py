@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Generate the edge-window conformance vectors: a trust edge counts only inside its own window,
 signed or not (wire spec section 4).
 

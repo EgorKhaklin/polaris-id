@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """The national life-event stream: a realistic flow of verifications and token
 lifecycle events over a time window, written through the REAL paths.
 

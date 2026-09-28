@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Adversaries against the Token Status List decision function. Each one MUST fail.
 
 LAB. Record: lab/strategy/001-token-status-list.md.

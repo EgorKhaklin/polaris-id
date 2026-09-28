@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-real-signer-suite.py - the web application's suite, signing with real ML-DSA-65.
 
 WHY THIS EXISTS. The main CI job and the local gate run test_app with the development

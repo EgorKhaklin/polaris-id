@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: Apache-2.0
+-- Copyright 2026 Egor Khaklin and the Polaris contributors
 -- Every right polaris_rp holds in the current database, one per line, sorted. Used to check that
 -- test_app's reload_sample_data does not drop or widen the compartment's grants.
 SELECT line FROM (

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-oid4vp-conformance-drill.py -- run the real verifier against the real suite.
 
 Everything else in `packages/polaris-oid4vp` is checked against material this repository

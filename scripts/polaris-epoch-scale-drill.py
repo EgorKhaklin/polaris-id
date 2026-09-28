@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-epoch-scale-drill.py - the epoch pipeline at production depth (roadmap P2.5).
 
 An epoch tree is a FIXED-DEPTH tree, and the obvious implementation pads the leaf vector to

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """run_rp_as_polaris_rp.py - the relying-party test classes with the relying-party API connected
 as polaris_rp (lab/strategy/002-relying-party-api-compartment.md, section 9, step 2).
 

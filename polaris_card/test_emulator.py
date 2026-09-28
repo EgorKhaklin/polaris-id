@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_emulator.py - the software token's behaviour (roadmap P4.2).
 
 The profile suite proves what is on a card. This proves what a card DOES: what it answers

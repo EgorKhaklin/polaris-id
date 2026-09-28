@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Egor Khaklin and the Polaris contributors
 /**
  * An unmodified Credo agent that receives a wallet copy over OpenID4VCI 1.0 from polaris_web and
  * then presents it over OpenID4VP 1.0, in ONE process: Credo's storage here is in memory, so the

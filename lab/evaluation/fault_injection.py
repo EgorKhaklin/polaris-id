@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Fault injection: the database goes away under steady verification load, and comes back.
 
 online_verify_latency.py measures `POST /api/v1/verify` when everything works. This asks what

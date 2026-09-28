@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # pg-entrypoint.sh — Polaris postgres image entrypoint (roadmap P0.9).
 #

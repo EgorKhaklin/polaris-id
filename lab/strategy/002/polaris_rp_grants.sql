@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: Apache-2.0
+-- Copyright 2026 Egor Khaklin and the Polaris contributors
 -- lab/strategy/002/polaris_rp_grants.sql
 --
 -- LAB ONLY. The relying-party compartment's database login, as measured against the scratch

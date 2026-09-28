@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """serve.py -- the smallest HTTPS surface an OpenID4VP verifier can present.
 
 Three paths and nothing else: the `request_uri` a wallet fetches the signed request object

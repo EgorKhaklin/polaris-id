@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_card/card_profile.py - the on-card data model, normatively (roadmap P4.1).
 
 The specification is docs/design/card-profile.md. This module is the same thing as code,

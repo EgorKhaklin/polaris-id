@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_wallet_copy.py: the wallet copy's wire format and the checks on a wallet's proof (005 S3).
 
 No database and no route: wallet_copy.py builds and checks, oid4vci_routes.py decides. Every

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Generate the timestamp-anchor variant conformance vectors: one genuinely signed, twice-
 witnessed one-entry log over the published conformance timestamp, and variants that differ in
 exactly one signed fact.

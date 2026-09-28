@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-constraint-mutation-drill.py - does the suite notice when a constraint is gone?
 
 v9.406. MISSION.md's first claim is that the guarantees live in the DATABASE, not in

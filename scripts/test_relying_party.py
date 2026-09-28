@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_relying_party.py — the relying-party verifier (holder<->verifier flow, PE follow-up).
 
 Drives the decision logic of scripts/polaris-relying-party.py with injected

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # setup.sh -- the mechanical half of the stranger's path.
 #
 # Creates a wallet in a running walt.id, has walt.id generate its own P-256 key, mints one

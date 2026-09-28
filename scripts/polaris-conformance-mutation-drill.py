@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-conformance-mutation-drill.py — does the published contract constrain a verifier?
 
 `conformance/cases.json` is the contract an integrator builds against: 79 cases of real

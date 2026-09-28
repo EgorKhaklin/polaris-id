@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-id-cli — Command-line interface to the Polaris Identity Token System.
 
 The package exposes a single console script (``polaris-id``) that wraps the

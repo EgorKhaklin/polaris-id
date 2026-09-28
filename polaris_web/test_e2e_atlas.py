@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/test_e2e_atlas.py — Atlas end-to-end smoke tests.
 
 **Why end-to-end for the Atlas.** The Atlas (`/atlas`) is the operational

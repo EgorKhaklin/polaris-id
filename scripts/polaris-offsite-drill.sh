@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-offsite-drill.sh — prove the OFFSITE (S3) backup + restore path end to
 # end (roadmap P0.9). The other CI round-trip exercises a LOCAL filesystem repo,

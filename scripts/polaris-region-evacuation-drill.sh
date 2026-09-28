@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-region-evacuation-drill.sh — the second region, evacuated and measured
 # (v9.359, roadmap P2.8).

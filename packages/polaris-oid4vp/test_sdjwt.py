@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_sdjwt.py -- the seven refusals the conformance suite scores, each built and caught.
 
 ANTI-VACUITY. A verifier that refuses everything passes every negative test in this file and

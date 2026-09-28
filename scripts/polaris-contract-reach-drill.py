@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-contract-reach-drill.py -- what does the published contract never touch?
 
 `conformance/cases.json` is what a third-party implementation is measured against. The

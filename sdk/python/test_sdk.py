@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_sdk.py -- the polaris-verify Python SDK (P3.5).
 
 Offline authenticity is exercised against the published vectors under real

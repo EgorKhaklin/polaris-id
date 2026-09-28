@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Egor Khaklin and the Polaris contributors
 // polaris_zk/src/lib.rs — Plonky2 Merkle-inclusion circuit + prover + verifier.
 //
 // Implements the C3+A4+B3 ship picked in the M2-1 alignment-exploration

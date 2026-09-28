@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-dr-drill.sh — prove the recovery targets by MEASUREMENT (roadmap
 # P1.10, v9.192): RPO <= 5 min and RTO <= 4 h, on a clean stack, with the

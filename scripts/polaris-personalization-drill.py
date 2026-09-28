@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-personalization-drill.py - a record becomes an object (roadmap P4.3).
 
 Personalization is the only step where the authority's signature is applied to something that

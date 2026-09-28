@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """App-layer adversary: an authentic-but-REVOKED credential must not read as
 currently authoritative. Needs the app + Postgres.
 

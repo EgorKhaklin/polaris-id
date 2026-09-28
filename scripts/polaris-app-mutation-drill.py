@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-app-mutation-drill.py -- is each refusal the application makes tested?
 
 CHECK constraints are mutation-tested (v9.407), triggers are (v9.413), the ZK witnesses are

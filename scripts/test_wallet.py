@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_wallet.py — the holder wallet (scripts/polaris-wallet.py, roadmap PE.7).
 
 Runs the wallet as a subprocess exactly as a holder would. Covers: hold a

@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: Apache-2.0
+-- Copyright 2026 Egor Khaklin and the Polaris contributors
 -- ============================================================================
 -- AI-context: schema DDL. The partial unique index uq_one_active_per_person
 --   is load-bearing for concurrency safety. Read:

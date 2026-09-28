@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: Apache-2.0
+-- Copyright 2026 Egor Khaklin and the Polaris contributors
 -- ============================================================================
 -- POLARIS — IDENTITY TOKEN SYSTEM
 -- 13_postgis.sql : Optional PostGIS migration for atlas spatial queries (R8-4)

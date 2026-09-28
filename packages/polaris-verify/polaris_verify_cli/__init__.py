@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-verify: a detached verifier for Polaris credentials and signed artifacts.
 
 The primary external door. It runs with no Polaris server, no database and no operator

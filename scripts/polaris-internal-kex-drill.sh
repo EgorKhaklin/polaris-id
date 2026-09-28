@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # polaris-internal-kex-drill.sh - measure the TLS key exchange on the internal hops.
 #
 # v9.404. PQC-POSTURE stated the key exchange on the app->pgbouncer and

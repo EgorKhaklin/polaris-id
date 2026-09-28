@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Egor Khaklin and the Polaris contributors
 /* ===========================================================================
  * atlas-console.js  —  the Atlas analytical console shell + Overview view.
  * Roadmap P2.3 (v9.248, the analytical-console rebuild).

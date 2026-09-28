@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # =============================================================================
 # scripts/polaris-test.sh — one-shot runner for the database-backed suites
 #

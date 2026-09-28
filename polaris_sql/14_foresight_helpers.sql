@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: Apache-2.0
+-- Copyright 2026 Egor Khaklin and the Polaris contributors
 -- ============================================================================
 -- 14_foresight_helpers.sql — Layer-1 surface for foresight signals (v9.12)
 --

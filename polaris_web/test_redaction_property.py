@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """
 test_redaction_property.py — verification-graph redaction tests (M2-12 / R11-7)
 

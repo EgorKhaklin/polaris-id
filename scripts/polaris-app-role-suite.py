@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-app-role-suite.py - the web application's suite, with the APPLICATION connected as
 the role it runs as in production.
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-unread-signed-fields.py -- which signed fields does nothing read?
 
 A field inside a signed statement is a promise the signature carries. If no consumer

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # OID4VCgo's own OpenID4VP wallet harness presents an x5c-signed SD-JWT VC to polaris-oid4vp,
 # then three controls.
 #

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """verifier_trust_default.py -- what does an integrator learn when no trust root is given?
 
 RAISED BY AN OUTSIDE REVIEWER, 2026-09-17: the detached verifier computes

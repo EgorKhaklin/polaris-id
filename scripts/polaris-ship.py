@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-ship.py -- the ship tool (v9.345): what a change needs verified, run it fast, read a red run.
 
     python3 scripts/polaris-ship.py plan                 # the paths changed since the last tag -> the suites and

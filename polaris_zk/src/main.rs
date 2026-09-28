@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Egor Khaklin and the Polaris contributors
 // polaris_zk/src/main.rs — CLI binary for the Plonky2 SNARK prover/verifier.
 //
 // Subcommands (read JSON on stdin, write JSON on stdout):

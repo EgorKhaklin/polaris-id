@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # =============================================================================
 # scripts/polaris-authz-audit.sh — the who-can-do-what report
 #

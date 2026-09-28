@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/pqc_signing.py — real ML-DSA-65 (FIPS 204) signing path.
 
 v9.24. Until this module, Polaris's headline post-quantum claim was

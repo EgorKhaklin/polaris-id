@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Generate the last two held-out fixtures as published conformance cases: a holder proof's
 exact window, and a revoked leaf written in upper case.
 

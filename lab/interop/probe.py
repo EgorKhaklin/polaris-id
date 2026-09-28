@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """probe.py -- what does the OpenID Foundation conformance suite demand of a verifier?
 
 THIS IS NOT A VERIFIER AND IT IS NOT PRODUCT CODE. It verifies nothing: it builds an

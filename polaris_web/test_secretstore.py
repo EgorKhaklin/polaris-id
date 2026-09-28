@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_secretstore.py — the sealed secret store (roadmap P1.3).
 
 Every backend is exercised for real: `age` through the real age CLI with

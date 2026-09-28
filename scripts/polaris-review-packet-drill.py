@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-review-packet-drill.py - the review packet cannot quietly stop being true (P1.18 item 8).
 
 A packet handed to an external reviewer is a set of claims about a codebase, written once and

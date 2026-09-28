@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_authz_audit.py — unified authorization-as-code report (v9.19).
 
 Polaris's authorization model is distributed across four surfaces:

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-helm-drill.sh — the Kubernetes reference profile boots to healthy on
 # a stock cluster, with its NetworkPolicies ENFORCED and the restricted Pod

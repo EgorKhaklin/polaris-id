@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: Apache-2.0
+-- Copyright 2026 Egor Khaklin and the Polaris contributors
 -- AI-context: append-only enforcement, audit trigger, lifecycle event auto-emission. Audit trigger reads polaris.{actor_agency_id, reason_code, event_lat, event_lon} GUCs. See docs/design/concurrency.md.
 -- ============================================================================
 -- POLARIS — IDENTITY TOKEN SYSTEM

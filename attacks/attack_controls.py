@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Security controls as attacks — the NIST 800-53 families that map to Polaris's
 real mechanisms (AC, AU, IA, SC), each expressed as an adversary that tries to
 VIOLATE the control against the running app + database and must fail:

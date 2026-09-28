@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_card/emulator.py - a software token implementing the card profile (roadmap P4.2).
 
 P4.1 specified the card OBJECT: what is on the card and what is signed. This is the card's

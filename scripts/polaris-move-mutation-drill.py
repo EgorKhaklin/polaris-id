@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-move-mutation-drill.py -- put the violation in a SIBLING module. Does anything notice?
 
 THE THIRD QUESTION, and the one nothing in this tree asks yet.

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # pgbackrest-conf.sh — render the pgBackRest REPO LOCATION fragment from env
 # (roadmap P0.9). Runs inside the postgres image on every container start (via
