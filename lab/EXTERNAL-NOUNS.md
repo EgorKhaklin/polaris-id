@@ -224,6 +224,42 @@ outside party using Polaris. The issuer was trusted through a JWKS, not x5c.
 The same limits as the two rows above apply unchanged: one format, one path, driven by the
 author on one machine, the credential minted by this repository's issuer script.
 
+**Filled 2026-09-28: a fourth wallet, which issues its own credential under an x5c chain.**
+
+    Wallet:                    OID4VCgo (Oscar Sanderson), cmd/conformance-wallet-vp, a Go
+                               library's own OpenID4VP wallet, as a holder
+    URL/version:               github.com/idfoundry/oid4vcgo v0.12.0
+                               h1:0S48shym0HCNkh95aBA9W+v3r5daoOVG858PX3B7RrQ=
+                               and v0.19.0, the current release; MIT
+    Contact/run date:          no contact; the published module, unmodified, 2026-09-28
+    Verifier:                  polaris-oid4vp from this repository at 1156db81: the published
+                               1.0.0rc7 cannot trust an x5c issuer (no --issuer-trust-anchor)
+    Result:                    IT PRESENTED AND THE VERIFIER ACCEPTED (both releases).
+
+                                 <- 200 authentic, claims ['cnf', 'exp', 'family_name',
+                                    'given_name', 'vct']
+
+                               The wallet verified the signed request object against its x5c
+                               leaf and the x509_hash client id, presented an SD-JWT VC it
+                               issued with its own code under an x5c chain to a test CA, and
+                               encrypted the response as direct_post.jwt; polaris-oid4vp
+                               chained the credential's x5c to that CA. The OpenID Foundation
+                               lists OID4VCgo 0.12.0 as a certified OID4VP 1.0 + HAIP 1.0
+                               Wallet (2026-09-23).
+    Found:                     the wallet follows the redirect_uri an accepted response
+                               carries (HAIP 5.1), and `serve` answered it 404. Fixed: the
+                               path now serves a constant page.
+    Controls:                  Three, each run and refused.
+                               (a) the verifier trusting an unrelated CA: 400 issuer_key.
+                               (b) the answered request again: refused at the request (404).
+                               (c) a launch client_id that is not the signed request's: the
+                                   wallet itself refused.
+    Transcript:                lab/interop/oid4vcgo/README.md; `run.sh` builds the wallet at a
+                               pinned version and reproduces all of it.
+
+Its limits are the other rows' limits, plus two: the credential's keys and CA are test material
+this repository generated, and the verifier is the repository's, not a published release.
+
 **Filled 2026-09-28: the issuing side. Two wallets receive a wallet copy from the product.**
 
     Wallets:                   walt.id Wallet API v2 1.0.0 (waltid/wallet-api2:1.0.0,
