@@ -43,6 +43,17 @@ The fault is confined to the evaluation database, issued in one psql session on 
 
 The README says what this does and does not share with a real restart.
 
+TWO MORE FAULTS (2026-09-28), chosen with --fault; `db` is the default and the one above.
+    redis    the rate limiter's Redis goes away. gunicorn runs with POLARIS_RATE_LIMIT_BACKEND=redis
+             against a DEDICATED Redis container on its own port (6431; the suites' and the
+             gate's 6399-6415 are refused); the fault is `docker kill` (the process dies, as in a
+             crash), the restore `docker start` (a fresh, empty Redis on the same port). security.py
+             documents the limiter as failing CLOSED when Redis is unreachable mid-flight: every
+             limited request is denied until Redis answers again. What that costs a relying party,
+             and whether the service comes back by itself, is what this measures.
+    worker   one gunicorn worker is sent SIGKILL, as the kernel's OOM killer would; the master
+             respawns it. Run with --window 0: there is nothing to restore.
+
 Each run starts its own gunicorn (same environment as the online measurement) and stops it,
 so runs are independent. Connections to polaris_eval are re-enabled and gunicorn is stopped in
 a `finally`, whatever happens.
@@ -233,6 +244,149 @@ def _allowed(admin_db, db):
     return _psql(admin_db, "SELECT datallowconn FROM pg_database WHERE datname = '%s'" % db) == "t"
 
 
+class DbFault:
+    """The evaluation database refuses sessions for the window (the fault described above)."""
+
+    kind = "db"
+
+    def __init__(self, args):
+        self.args = args
+
+    def describe(self):
+        a = self.args
+        return ("In one psql session on the '%s' database: pg_terminate_backend(pid) for every "
+                "pg_stat_activity row with datname = '%s'; ALTER DATABASE %s ALLOW_CONNECTIONS false; "
+                "pg_terminate_backend again. After the window, ALLOW_CONNECTIONS true."
+                % (a.admin_db, a.db_name, a.db_name))
+
+    def setup(self):
+        pass
+
+    def bind(self, master_pid):
+        pass
+
+    def apply(self, events):
+        before, after = _fault(self.args.admin_db, self.args.db_name)
+        events["terminated_before_block"] = before
+        events["terminated_after_block"] = after
+
+    def restore(self, events):
+        _allow(self.args.admin_db, self.args.db_name, True)
+
+    def ensure_restored(self):
+        if not _allowed(self.args.admin_db, self.args.db_name):
+            _allow(self.args.admin_db, self.args.db_name, True)
+            return True
+        return False
+
+    def teardown(self):
+        pass
+
+
+def _docker(*argv, check=True):
+    r = subprocess.run(["docker", *argv], capture_output=True, text=True, timeout=60)
+    if check and r.returncode != 0:
+        raise RuntimeError("docker %s failed: %s" % (" ".join(argv), r.stderr.strip()))
+    return r.stdout.strip()
+
+
+class RedisFault:
+    """The rate limiter's own Redis dies for the window: a dedicated container, never shared."""
+
+    kind = "redis"
+
+    def __init__(self, args):
+        self.args = args
+        self.name = args.redis_container
+
+    def describe(self):
+        return ("gunicorn with POLARIS_RATE_LIMIT_BACKEND=redis against a dedicated Redis (%s, container "
+                "%s, 127.0.0.1:%d). The fault is `docker kill` (SIGKILL: the server dies as in a crash); "
+                "the restore is `docker start`, an empty Redis on the same port. The ready time is when "
+                "it next answers PING." % (self.args.redis_image, self.name, self.args.redis_port))
+
+    def _ping(self):
+        r = subprocess.run(["docker", "exec", self.name, "redis-cli", "ping"], capture_output=True,
+                           text=True, timeout=10)
+        return r.returncode == 0 and r.stdout.strip() == "PONG"
+
+    def _wait_ready(self, limit=30.0):
+        t0 = time.time()
+        while time.time() - t0 < limit:
+            if self._ping():
+                return time.time()
+            time.sleep(0.02)
+        raise RuntimeError("Redis %s did not answer PING within %.0f s" % (self.name, limit))
+
+    def setup(self):
+        _docker("rm", "-f", self.name, check=False)
+        _docker("run", "-d", "--name", self.name, "-p", "127.0.0.1:%d:6379" % self.args.redis_port,
+                self.args.redis_image)
+        self._wait_ready()
+
+    def bind(self, master_pid):
+        pass
+
+    def apply(self, events):
+        _docker("kill", self.name)
+
+    def restore(self, events):
+        _docker("start", self.name)
+        t_zero = events.get("_t_zero")
+        ready = self._wait_ready()
+        if t_zero is not None:
+            events["redis_ready"] = round(ready - t_zero, 6)
+
+    def ensure_restored(self):
+        running = _docker("inspect", "-f", "{{.State.Running}}", self.name, check=False)
+        if running != "true":
+            _docker("start", self.name, check=False)
+            return True
+        return False
+
+    def teardown(self):
+        _docker("rm", "-f", self.name, check=False)
+
+
+class WorkerFault:
+    """One gunicorn worker is sent SIGKILL; the master respawns it. Nothing to restore."""
+
+    kind = "worker"
+
+    def __init__(self, args):
+        self.args = args
+        self.master = None
+
+    def describe(self):
+        return ("SIGKILL to one gunicorn worker (the lowest pid among the master's children) at the "
+                "fault instant, as the kernel's OOM killer would; the master respawns it. No restore.")
+
+    def setup(self):
+        pass
+
+    def bind(self, master_pid):
+        self.master = master_pid
+
+    def apply(self, events):
+        workers = _worker_pids(self.master)
+        if not workers:
+            raise RuntimeError("no gunicorn worker to kill under master %s" % self.master)
+        os.kill(workers[0], signal.SIGKILL)
+        events["killed_worker_pid"] = workers[0]
+
+    def restore(self, events):
+        events["workers_after"] = len(_worker_pids(self.master))
+
+    def ensure_restored(self):
+        return False
+
+    def teardown(self):
+        pass
+
+
+FAULTS = {"db": DbFault, "redis": RedisFault, "worker": WorkerFault}
+
+
 # --- gunicorn -------------------------------------------------------------------------------
 
 def _server_env(args):
@@ -242,10 +396,20 @@ def _server_env(args):
         "POLARIS_DB_HOST": "localhost", "POLARIS_DB_NAME": args.db_name, "POLARIS_DB_USER": args.db_user,
         "POLARIS_USE_REAL_PQC": "1", "POLARIS_PQC_SIGNING_KEY_FILE": str(state / "issuer_key.json"),
         "POLARIS_SECRET_KEY": (state / "secret_key").read_text().strip(),
-        "POLARIS_STATE_DIR": str(state), "POLARIS_RATE_LIMIT_BACKEND": "memory",
+        "POLARIS_STATE_DIR": str(state),
+        "POLARIS_RATE_LIMIT_BACKEND": "redis" if args.fault == "redis" else "memory",
         "POLARIS_RATE_LIMIT_WRITE_MAX": "100000000", "POLARIS_RATE_LIMIT_LOGIN_MAX": "1000",
         "POLARIS_WORKERS": str(args.workers),
     })
+    if args.fault == "redis":
+        env["POLARIS_REDIS_URL"] = "redis://127.0.0.1:%d/0" % args.redis_port
+    if sys.platform == "darwin":
+        # As polaris_mac_launch.sh has done since v8.99. Without it, a worker the master forks
+        # AFTER start-up dies at once on macOS ("+[NSCharacterSet initialize] may have been in
+        # progress in another thread when fork() was called ... Crashing instead"), so one
+        # killed worker became a crash loop of respawns: 34 in 8 seconds, measured 2026-09-28.
+        # That is the platform, not Polaris; the start-up workers never met it.
+        env.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
     return env
 
 
@@ -290,7 +454,7 @@ def _worker_pids(master):
 
 # --- one run --------------------------------------------------------------------------------
 
-def _one_run(args, on, bodies, client, label, inject, out_dir):
+def _one_run(args, on, bodies, client, label, inject, out_dir, fault):
     """Start gunicorn, drive the load, inject (or not) the fault, stop gunicorn. Returns the
     run summary. The finally re-enables connections and stops gunicorn whatever happened."""
     log_path = pathlib.Path(args.state) / ("fault_%s.gunicorn.err" % label)
@@ -299,6 +463,7 @@ def _one_run(args, on, bodies, client, label, inject, out_dir):
     try:
         proc, log = _start_gunicorn(args, log_path)
         workers = _worker_pids(proc.pid)
+        fault.bind(proc.pid)
         u = urllib.parse.urlsplit(args.base)
         token = on._bearer(args.base, client)  # before any fault: the grant itself needs the database
         hdrs = {"Authorization": "Bearer " + token, "Content-Type": "application/json"}
@@ -336,19 +501,19 @@ def _one_run(args, on, bodies, client, label, inject, out_dir):
         while time.time() < t_fault_at:
             time.sleep(0.002)
         if inject:
+            events["_t_zero"] = t_zero
             events["fault_issued"] = rel(time.time())
-            before, after = _fault(args.admin_db, args.db_name)
+            fault.apply(events)
             events["fault_done"] = rel(time.time())
-            events["terminated_before_block"] = before
-            events["terminated_after_block"] = after
         else:
             events["nominal_fault_at"] = rel(t_fault_at)
         while time.time() < t_restore_at:
             time.sleep(0.002)
         if inject:
             events["restore_issued"] = rel(time.time())
-            _allow(args.admin_db, args.db_name, True)
+            fault.restore(events)
             events["restore_done"] = rel(time.time())
+            events.pop("_t_zero", None)
         else:
             events["nominal_restore_at"] = rel(t_restore_at)
         rows = []
@@ -358,7 +523,10 @@ def _one_run(args, on, bodies, client, label, inject, out_dir):
             p.join()
     finally:
         restore_error = None
+        events.pop("_t_zero", None)
         try:
+            if fault.ensure_restored():
+                events.setdefault("restore_in_finally", True)
             if not _allowed(args.admin_db, args.db_name):
                 _allow(args.admin_db, args.db_name, True)
                 events.setdefault("restore_in_finally", True)
@@ -369,7 +537,10 @@ def _one_run(args, on, bodies, client, label, inject, out_dir):
             print("WARNING: could not confirm connections re-enabled: %s" % restore_error, file=sys.stderr)
 
     rows.sort(key=lambda r: r[2])
-    raw = out_dir / ("fault_injection_%s.csv.gz" % label)
+    # Named by the stem as well as the label, and the stem defaults by fault kind (main()): a
+    # redis and a worker run under one fixed name overwrote the database run's committed raw
+    # data on 2026-09-28 (restored from git).
+    raw = out_dir / ("%s_%s.csv.gz" % (args.stem, label))
     with gzip.open(raw, "wt", newline="") as f:
         w = csv.writer(f)
         w.writerow(["vclient", "kind", "t_start_s", "t_end_s", "ms", "http_status", "outcome", "verdict",
@@ -385,6 +556,8 @@ def _one_run(args, on, bodies, client, label, inject, out_dir):
             "terminating_connection_admin_command": log_text.count("terminating connection due to administrator"),
             "server_closed_connection": log_text.count("server closed the connection unexpectedly"),
             "worker_timeouts": log_text.count("WORKER TIMEOUT"),
+            "redis_limiter_failed_closed": log_text.count("failing closed (denying request)"),
+            "worker_killed_by_signal": log_text.count("was sent SIGKILL"),
         },
     })
     return summary
@@ -515,6 +688,7 @@ def cmd_run(args):
 
     out_dir = pathlib.Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
+    fault = FAULTS[args.fault](args)
     plan = ["control%d" % (i + 1) for i in range(args.controls)] + ["fault%d" % (i + 1) for i in range(args.runs)]
     summary = {
         "machine": on._offline()._machine(), "endpoint": "POST /api/v1/verify",
@@ -527,21 +701,21 @@ def cmd_run(args):
         "method": {"closed_loop": True, "concurrency": args.concurrency, "generator_processes": args.procs,
                    "kinds_rotation": list(KINDS), "warmup_s": args.warmup, "pre_s": args.pre,
                    "window_s": args.window, "post_s": args.post, "new_connection_per_request": True},
-        "fault": ("In one psql session on the '%s' database: pg_terminate_backend(pid) for every "
-                  "pg_stat_activity row with datname = '%s'; ALTER DATABASE %s ALLOW_CONNECTIONS false; "
-                  "pg_terminate_backend again. After the window, ALLOW_CONNECTIONS true."
-                  % (args.admin_db, args.db_name, args.db_name)),
+        "fault_kind": fault.kind,
+        "fault": fault.describe(),
         "server_env_note": ("gunicorn --config polaris_web/gunicorn.conf.py, POLARIS_WORKERS=%d (sync), "
                             "POLARIS_USE_REAL_PQC=1 with a file issuer key, POLARIS_DB_HOST=localhost "
                             "POLARIS_DB_USER=%s (schema owner, trust auth, no pgbouncer), "
-                            "POLARIS_RATE_LIMIT_BACKEND=memory, POLARIS_RATE_LIMIT_WRITE_MAX=100000000, "
-                            "POLARIS_RATE_LIMIT_LOGIN_MAX=1000" % (args.workers, args.db_user)),
+                            "POLARIS_RATE_LIMIT_BACKEND=%s, POLARIS_RATE_LIMIT_WRITE_MAX=100000000, "
+                            "POLARIS_RATE_LIMIT_LOGIN_MAX=1000"
+                            % (args.workers, args.db_user, "redis" if args.fault == "redis" else "memory")),
         "background_before": on._background(), "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "runs": [],
     }
     try:
+        fault.setup()
         for label in plan:
             inject = label.startswith("fault")
-            s = _one_run(args, on, bodies, client, label, inject, out_dir)
+            s = _one_run(args, on, bodies, client, label, inject, out_dir, fault)
             summary["runs"].append(s)
             print("%-9s requests %5d  errors %4d %s  outage %5.2f s  first correct %s s  recovery %s s  WRONG %d"
                   % (label, s["requests"], s["errors_total"], s["by_http_status"], s["client_outage_s"],
@@ -552,6 +726,7 @@ def cmd_run(args):
             if not _allowed(args.admin_db, args.db_name):
                 _allow(args.admin_db, args.db_name, True)
         finally:
+            fault.teardown()
             summary["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
             summary["db_accepting_connections_at_end"] = _allowed(args.admin_db, args.db_name)
             dest = out_dir / (args.stem + ".json")
@@ -585,10 +760,25 @@ def main():
     pr.add_argument("--runs", type=int, default=3)
     pr.add_argument("--controls", type=int, default=1)
     pr.add_argument("--gap", type=float, default=3.0)
-    pr.add_argument("--stem", default="fault_injection")
+    pr.add_argument("--stem", default=None,
+                    help="results name; default fault_injection for db, fault_injection_<fault> otherwise")
+    pr.add_argument("--fault", choices=sorted(FAULTS), default="db",
+                    help="db (the default): the evaluation database; redis: the limiter's own Redis; "
+                         "worker: SIGKILL one gunicorn worker (use --window 0)")
+    pr.add_argument("--redis-port", type=int, default=6431,
+                    help="the DEDICATED Redis this run starts; never 6399-6415 (the suites' and the gate's)")
+    pr.add_argument("--redis-image", default="redis:7-alpine")
+    pr.add_argument("--redis-container", default="polaris-eval-redis")
     pr.add_argument("--out", default=str(ROOT / "lab" / "evaluation" / "results"))
     args = ap.parse_args()
     args.base = "http://127.0.0.1:%d" % args.port
+    if args.stem is None:
+        args.stem = "fault_injection" if args.fault == "db" else "fault_injection_" + args.fault
+    # 6399 is the suites' Redis; polaris-ship.py starts one per shard from 6400, up to 16. A
+    # gate that finds this run's Redis on its port adopts it, and the kills fail its tests.
+    if args.fault == "redis" and 6399 <= args.redis_port <= 6415:
+        ap.error("refusing port %d: 6399-6415 belong to the test suites and the gate's shards"
+                 % args.redis_port)
     if args.db_name in ("postgres", "polaris_test", "polaris") or not re.fullmatch(r"[a-z_][a-z0-9_]*", args.db_name):
         ap.error("refusing to inject a fault into %r: use a dedicated evaluation database" % args.db_name)
     return {"run": cmd_run}[args.cmd](args)
