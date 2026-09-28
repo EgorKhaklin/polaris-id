@@ -112,5 +112,5 @@ bounty: Polaris is a reference implementation, not a deployed service.
 ---
 
 *Maintainer: Egor Khaklin (VANTA)*
-*Last updated: 2026-09-27 (v1.0.0-rc.64)*
+*Last updated: 2026-09-27 (v1.0.0-rc.65)*
 *Machine-readable: the live `/.well-known/security.txt` route (RFC 9116)*

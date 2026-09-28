@@ -7,7 +7,14 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
-## Unreleased
+## v1.0.0-rc.65 — 2026-09-27 (verifiers refuse what they were never asked to accept)
+
+Four defects fixed, each against a promise the tree already made: one found by injecting faults into the running system, one by mutating two independent wallets' real output, and two by holding the SDKs and the detached verifier to the wire specification.
+
+- **Breaking**: a cross-authority decision with no presented context is refused by every verifier; callers that passed no context were accepting edges from any context.
+- **Breaking**: both SDKs refuse a signed trust edge past its `valid_until` or with an unreadable one, as the detached verifier already did.
+- **Breaking**: `polaris-oid4vp` refuses a `vp_token` not keyed by the DCQL query id it asked for.
+- **Breaking**: errors on `/api/*` paths are always JSON; clients that received the HTML error page for framework errors now receive `{"error", "request_id"}`.
 
 ### Fixed
 
