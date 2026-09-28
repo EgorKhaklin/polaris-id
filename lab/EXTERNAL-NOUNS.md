@@ -182,6 +182,48 @@ were driven by the author on one machine over localhost, with this repository's 
 minting the credential; that is the same category of evidence as the walt.id row, not an
 outside party using Polaris. The issuer was trusted through a JWKS, not x5c.
 
+**Filled 2026-09-28: a third wallet, sharing no code with either.**
+
+    Wallet:                    eudi-dev (Dominik Schlosser), a Go wallet, as a holder
+    URL/version:               ghcr.io/dominikschlosser/eudi-dev:v2.3.7
+                               sha256:2df7ac5c79206a29c66eb8c49acdcc07d0ec76c7d6d260056edccaac9257e081
+                               and :v2.4.3, the current release
+                               sha256:d544031950e9b5e911fe2212e5e57e109459d53e294e1b6feb243036e5dac3fc
+                               github.com/dominikschlosser/eudi-dev, Apache-2.0
+    Contact/run date:          no contact; the published images, unmodified, 2026-09-28
+    Verifier:                  pip install --pre polaris-oid4vp -> 1.0.0rc7 from PyPI, into
+                               a fresh venv
+    Result:                    IT PRESENTED AND THE PUBLISHED VERIFIER ACCEPTED, with the
+                               wallet enforcing HAIP 1.0 in strict mode (both releases).
+
+                                 <- 200 authentic, claims ['cnf', 'family_name',
+                                    'given_name', 'iat', 'iss', 'vct']
+
+                               `wallet accept --auto-accept --haip --mode strict` fetched the
+                               signed request object, matched the dcql_query, signed the key
+                               binding JWT with a P-256 key it generated, and encrypted the
+                               response as direct_post.jwt. The OpenID Foundation lists
+                               eudi-dev v2.3.7 as a certified OID4VP 1.0 + HAIP 1.0 Wallet
+                               (sd_jwt_vc, direct_post.jwt, 2026-09-18); that exact release
+                               met the exact certified verifier release here.
+    Modifications to eudi-dev: none. The verifier's test anchor as its TLS root
+                               (SSL_CERT_FILE); nothing else configured.
+    Controls:                  Three, each run and refused.
+                               (a) wrong issuer key under the same kid: 400 refused:
+                                   issuer_signature; the wallet was told only "not accepted".
+                               (b) the answered request presented again: refused at the
+                                   request stage (request_uri 404).
+                               (c) a launch URI whose client_id is not the signed request's:
+                                   eudi-dev itself refused and sent nothing.
+    Not observed:              whether it posted a wallet_nonce; it chose A128GCM, so A256GCM
+                               was not reached; whether it validates the request object's
+                               chain beyond the x509_hash binding was not isolated.
+    Transcript:                lab/interop/eudi-dev/README.md; `run.sh` reproduces the run
+                               and all three controls and exits non-zero if any differs.
+
+The same limits as the two rows above apply unchanged: one format, one path, driven by the
+author on one machine, the credential minted by this repository's issuer script.
+
 ### Known limitations, held here and not in ROADMAP.md
 
 Recorded on 2026-09-15 as qualifications on the evidence above, deliberately NOT as a plan.
