@@ -9,6 +9,29 @@ package on PyPI rather than a working copy. Last walked 2026-09-26 against `pola
 macOS with Docker Desktop: the wallet reported `transmission_success` and the verifier printed the
 step 7 line exactly. Nothing here is from memory.
 
+## One minute first
+
+Before the ten minutes, one script checks the same published verifier against a different wallet
+nobody here wrote: [eudi-dev](https://github.com/dominikschlosser/eudi-dev), a 34 MB image, which
+the OpenID Foundation lists (v2.3.7) as a certified OpenID4VP 1.0 + HAIP 1.0 wallet. It needs
+Docker, `python3` and port 9443, and nothing else.
+
+    mkdir -p ~/polaris-quick && cd ~/polaris-quick
+    curl -fsSLO https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/lab/interop/eudi-dev/run.sh
+    curl -fsSLO https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/lab/interop/waltid/issue_sdjwt_vc.py
+    bash run.sh
+
+The last line it prints when all is well:
+
+    RESULT: accepted, and all three controls refused
+
+It installs `polaris-oid4vp` from PyPI into a venv of its own, lets the wallet generate its own
+key, mints one credential bound to it, has the wallet present it with HAIP enforced, then runs
+three controls that must each be refused ([what they are](../lab/interop/eudi-dev/README.md)). It
+does every step for you, so it shows THAT the path works; the ten minutes below show what each
+step is. Walked 2026-09-28 as written, from an empty directory outside the repository, with the
+system Python 3.9.6 and Docker Desktop on macOS: ten seconds once the image was local.
+
 ## 0. Prerequisites
 
     docker --version     # 24+, daemon running
