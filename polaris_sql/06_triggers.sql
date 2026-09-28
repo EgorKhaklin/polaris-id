@@ -421,6 +421,15 @@ CREATE TRIGGER trg_auth_code_append_only
     FOR EACH ROW
     EXECUTE FUNCTION reject_auth_code_modification();
 
+-- 2026-09-28: the wallet copy record is audit of record (C1). A copy once recorded was issued;
+-- editing the row would move its status index onto another copy, and deleting it would make a
+-- live copy read as revoked or hide that it was ever issued.
+DROP TRIGGER IF EXISTS trg_credential_copy_append_only ON CredentialCopy;
+CREATE TRIGGER trg_credential_copy_append_only
+    BEFORE UPDATE OR DELETE ON CredentialCopy
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_audit_modification();
+
 -- P8.7b (v9.328): a key event is history; it is never edited or removed.
 CREATE OR REPLACE FUNCTION reject_authority_key_event_modification()
 RETURNS TRIGGER

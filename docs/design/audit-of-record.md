@@ -49,7 +49,7 @@ inconsistently the fourteenth.
    when. If that needs a join to a separate event log, it is not an audit of
    record.
 
-## The thirty-one instances
+## The thirty-two instances
 
 | Element | What it records | Bounded mutation | Enforcement |
 |---|---|---|---|
@@ -80,13 +80,14 @@ inconsistently the fourteenth.
 | `ExchangeReceiptLog` | One row per minted exchange receipt, holding only its SHA3-256 | None; fully append-only | `trg_receipt_log_append_only` |
 | `TimestampLog` | One row per anchored timestamp, holding only its SHA3-256 | None; fully append-only | `trg_timestamp_log_append_only` |
 | `AuthCodeConsumed` | Authorization codes spent, so a code is single-use across workers | None; fully append-only | `trg_auth_code_append_only` |
+| `CredentialCopy` | Every wallet copy issued over OpenID4VCI: which credential, which status-list position, when, until when; never where it went | None; fully append-only | `trg_credential_copy_append_only` |
 | `ExchangeNonce` | Exchange nonces consumed, so a replay is refused | None; fully append-only | `trg_exchange_nonce_append_only` |
 | `AgencyQuota` | Per-authority caps, and who set each one, from what, when, and why | Supersession only: a new cap appends a row and retires the live one | `trg_agency_quota_immutable` |
 | `IssuerDiscretionPolicy` | Per-authority revocation-share bounds, so a LOOSENING is auditable in fact | Supersession only, as above | `trg_discretion_policy_immutable` |
 | `RetentionPolicy` | Retention decisions per table class and jurisdiction | Supersession only, as above | `trg_retention_policy_immutable` |
 
 Every trigger above raises `insufficient_privilege`, and
-`check_aor_append_only_triggers` fails the build if any of the thirty-one stops
+`check_aor_append_only_triggers` fails the build if any of the thirty-two stops
 being guarded. The check names each table rather than counting triggers,
 because a count nobody reads can fall by one silently.
 

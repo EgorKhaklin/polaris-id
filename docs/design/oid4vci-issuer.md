@@ -5,7 +5,9 @@ there, or an operator deciding whether to offer it. **Job:** state what the wall
 governs it, what it inherits from the Polaris credential and what it does not, before the code
 exists.
 
-**State: designed, not built.** The bet is [lab/strategy/005](../../lab/strategy/005-oid4vci-issuer.md).
+**State: the record is built, the endpoints are not.** `CredentialCopy`,
+`uc_issue_credential_copy` and `credential_copy_valid_indexes` exist (2026-09-28); the
+OpenID4VCI routes, keys and offers follow. The bet is [lab/strategy/005](../../lab/strategy/005-oid4vci-issuer.md).
 The lab showed that two wallets Polaris did not write take a credential from a conformant
 pre-authorized-code issuer without a workaround ([STEP2](../../lab/strategy/005/STEP2.md)). It
 also showed that a copy issued under the record's rules obeys the record, 7 of 7 with two
@@ -65,7 +67,7 @@ is its own credential issuer, so a wallet copy names the agency that issued the 
     token               POST .../api/v1/oid4vci/<agency_id>/token
     nonce               POST .../api/v1/oid4vci/<agency_id>/nonce
     credential          POST .../api/v1/oid4vci/<agency_id>/credential
-    status list         GET  .../api/v1/oid4vci/<agency_id>/status
+    status list         GET  .../api/v1/oid4vci/<agency_id>/status/<YYYY-MM-DD>/<list_no>
 
 The paths sit under `/api/`, so every error is the JSON body the API reference promises.
 
@@ -84,7 +86,7 @@ The paths sit under `/api/`, so every error is the JSON body the API reference p
 | Token | The code is valid, unexpired, and its SHA3-256 hash is consumed in the append-only register the auth broker already uses (`AuthCodeConsumed`), so a second redemption fails at the primary key. | database (single use) |
 | Credential | The proof of possession is ES256 over this issuer's `c_nonce`, with the wallet's key in its header. The copy is then recorded through a definer procedure that **refuses unless the credential is ACTIVE**, and it gets a random status index that no other copy holds. | database (the ACTIVE rule and the unique index), application (the proof) |
 | Signing | The recorded copy is signed with the agency's ES256 leaf. `exp` is thirty days, or the credential's own expiration if that is sooner. | application |
-| Status | One Token Status List per agency. A bit is 0 only for a copy whose credential is ACTIVE now; every other index, assigned or not, is 1. A copy the record does not hold therefore reads as revoked to any verifier that asks. | database (the list is computed from the record at each fetch), application (signing) |
+| Status | One Token Status List per agency per day per list number, 2^20 slots each, with the list number derived from the copy id so no list is more than half full. A bit is 0 only for a copy whose credential is ACTIVE now and whose own window is open; every other index, assigned or not, is 1. A copy the record does not hold therefore reads as revoked to any verifier that asks. | database (the list is computed from the record at each fetch), application (signing) |
 
 The lab's first limit was that the binding lived in the issuer's code. This design moves the
 decisive rule into the database: no copy record exists for a credential that is not ACTIVE, and
@@ -110,8 +112,10 @@ signs anything else.
   birthdate. This is not the zero-knowledge age predicate: the presentation is linkable, as
   above.
 - **The status index is random, not the credential id,** so the list does not reveal issuance
-  order. Each list has a fixed size of 2^17 entries, so its length says nothing about how many
-  copies exist.
+  order. Each list has a fixed size of 2^20 entries, so its length says nothing about how
+  many copies it holds. The list number is `copy_id / 2^19`, so it reveals the total number
+  of copies ever issued to within half a million, and the day in the list's address is the
+  day the copy's own `iat` already states.
 - **Revocation counts.** An observer who fetches the list can count its revoked bits. The
   agency's revocation feed already publishes its revoked count, so this adds no new class of
   disclosure.

@@ -7,8 +7,8 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **45 tables** in `01_schema.sql` (v9.443), organized
-into six functional groups. A migrated deployment holds **52 tables**: those,
+The Polaris schema is **46 tables** in `01_schema.sql` (v9.443; the 46th, CredentialCopy, 2026-09-28), organized
+into six functional groups. A migrated deployment holds **53 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -306,6 +306,24 @@ The relying party's registered auth-broker policy (v9.336, migration 006) lives 
 `RelyingParty` as `require_zk`, `required_enrollment` (CHECK-constrained to the enrollment
 vocabulary) and `required_context_id` (a foreign key to `VerificationContext`): the authorize
 route applies it and lets a holder-side request add a requirement, never remove one.
+
+### `CredentialCopy` (constraint C1: append-only; lab/strategy/005)
+
+The wallet copy record ([oid4vci-issuer.md](../design/oid4vci-issuer.md)). A wallet copy
+is an SD-JWT VC of a credential, issued over OpenID4VCI and signed ES256 under the issuing
+agency's certificate: a classical credential, governed by this record. One row per copy,
+written only by `uc_issue_credential_copy`, a SECURITY DEFINER function that refuses a
+credential that is not ACTIVE, or one another agency issued, and caps a copy's life at
+thirty days. The application role reads the table and cannot write, edit or remove a row.
+
+A copy's place in a Token Status List is `(agency_id, list_day, list_no, status_index)`:
+one list per agency per day per list number, 2^20 slots, with `list_no = copy_id / 2^19` so
+no list is more than half full. The index is random, never the credential id.
+`credential_copy_valid_indexes` returns the indexes of one list that read VALID (credential
+ACTIVE, copy unexpired); every other index is published as revoked. No holder key is kept.
+`copy_id` is 64-bit because the capacity model's monthly-renewal case would exhaust a 32-bit
+id in about six months. Strictly append-only by trigger (`trg_credential_copy_append_only`)
+and by privilege.
 
 ### `AuthorityKeyEvent` (constraint C1: append-only; roadmap P8.7b)
 

@@ -116,6 +116,12 @@ SURVIVORS_EXPECTED: dict[str, str] = {
                               "is the guarantee and the concurrent-uc4 test catches its loss",
     "uc4_activate_reserve#3": "pre-lock copy of the RESERVE check; its twin #6 refuses with the "
                               "same message on a single connection",
+    # 2026-09-28. The bound on the status-index draw: a list is at most half full (list_no is
+    # copy_id / 2^19 in a 2^20 list), so 64 straight collisions happen with probability below
+    # 2^-64. The refusal exists so a broken list number cannot spin the loop forever; no fixture
+    # can reach it without breaking the list arithmetic the other rules hold.
+    "uc_issue_credential_copy#5": "the draw bound: 64 collisions in a list at most half full, "
+                                  "probability below 2^-64; it bounds the loop, no test reaches it",
 }
 
 

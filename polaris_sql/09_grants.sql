@@ -118,7 +118,9 @@ DECLARE
         -- P8.7b: the authority key register (history is never edited).
         'authoritykeyevent',
         'timestamplog',
-        'holderkeyevent'
+        'holderkeyevent',
+        -- 2026-09-28: the wallet copy record (docs/design/oid4vci-issuer.md).
+        'credentialcopy'
     ];
 BEGIN
     FOREACH v_tbl IN ARRAY v_append_only_tables LOOP
@@ -169,6 +171,13 @@ REVOKE INSERT, UPDATE, DELETE ON BlockchainAnchor FROM polaris_app;
 REVOKE INSERT ON DuressEvent FROM polaris_app;
 REVOKE INSERT ON LifecycleArchiveCheckpoint FROM polaris_app;
 REVOKE INSERT ON IndividualErasureEvent FROM polaris_app;
+
+-- 2026-09-28. A wallet copy is recorded only by uc_issue_credential_copy (SECURITY DEFINER), which
+-- refuses a credential that is not ACTIVE. With INSERT the application role could record a copy
+-- the procedure would refuse, and the status list, computed from these rows, would publish it as
+-- VALID for as long as its credential stayed ACTIVE. The application reads the record; it does
+-- not write it.
+REVOKE INSERT ON CredentialCopy FROM polaris_app;
 
 -- 2026-09-25. The credential tables. A credential, its permissions, a revocation-list entry, a
 -- device binding and a recovery request are each created only by a use-case procedure, all

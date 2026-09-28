@@ -95,6 +95,7 @@ DROP TABLE IF EXISTS AppUserEvent           CASCADE;
 DROP TABLE IF EXISTS RelyingPartyEvent      CASCADE;
 DROP TABLE IF EXISTS RelyingParty           CASCADE;
 DROP TABLE IF EXISTS ExchangeReceiptLog     CASCADE;
+DROP TABLE IF EXISTS CredentialCopy         CASCADE;
 DROP TABLE IF EXISTS HolderKeyEvent CASCADE;
 DROP TABLE IF EXISTS TimestampLog           CASCADE;
 DROP TABLE IF EXISTS ExchangeNonce          CASCADE;
@@ -1347,6 +1348,44 @@ COMMENT ON TABLE HolderKeyEvent IS
   'an instant). The holder''s PUBLIC key only; the private key never leaves their device. '
   'Binding is proved by possession of the credential, so an operator cannot bind a key to a '
   'credential they do not hold. Append-only by trigger and by privilege.';
+
+-- 2026-09-28 (lab/strategy/005, docs/design/oid4vci-issuer.md): the WALLET COPY RECORD. A
+-- wallet copy is an SD-JWT VC of a credential, issued over OpenID4VCI into a wallet Polaris
+-- did not write and signed ES256 under the issuing agency's certificate: a classical
+-- credential, governed by this record. One row per copy, written ONLY by
+-- uc_issue_credential_copy, which refuses a credential that is not ACTIVE. The table is not
+-- called a wallet anything: C10 reads a wallet as money, and identity is not money.
+--
+-- A copy's place in a Token Status List is (agency_id, list_day, list_no, status_index): one
+-- list per agency per day per list number, 2^20 slots each. list_no is copy_id / 2^19, so no
+-- list is ever more than half full and a random draw finds a free slot at once, at any scale.
+-- The index is random, never the credential id, so a list does not reveal issuance order.
+-- No holder key is kept, so the record says a copy was issued and when, not where it went.
+-- Append-only by trigger and by privilege.
+CREATE TABLE CredentialCopy (
+    copy_id       BIGSERIAL    PRIMARY KEY,
+    token_id      INTEGER      NOT NULL REFERENCES IdentityToken(token_id),
+    agency_id     INTEGER      NOT NULL REFERENCES Agency(agency_id),
+    list_day      DATE         NOT NULL,
+    list_no       INTEGER      NOT NULL,
+    status_index  INTEGER      NOT NULL
+        CONSTRAINT chk_credential_copy_status_index CHECK (status_index >= 0 AND status_index < 1048576),
+    format        VARCHAR(20)  NOT NULL
+        CONSTRAINT chk_credential_copy_format CHECK (format = 'dc+sd-jwt'),
+    issued_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at    TIMESTAMP    NOT NULL,
+    CONSTRAINT chk_credential_copy_window CHECK (expires_at > issued_at),
+    CONSTRAINT chk_credential_copy_list_day CHECK (list_day = issued_at::DATE),
+    CONSTRAINT chk_credential_copy_list_no CHECK (list_no = copy_id / 524288),
+    CONSTRAINT uq_credential_copy_status_index UNIQUE (agency_id, list_day, list_no, status_index)
+);
+
+COMMENT ON TABLE CredentialCopy IS
+  'Wallet copies issued over OpenID4VCI (docs/design/oid4vci-issuer.md): one row per copy, '
+  'written only by uc_issue_credential_copy, which refuses a credential that is not ACTIVE. '
+  '(agency_id, list_day, list_no, status_index) is the copy''s Token Status List position, '
+  'the index random and never the credential id. No holder key is stored. Append-only by '
+  'trigger and by privilege.';
 
 -- An ML-DSA-65 public key is 3904 hex characters, beyond a btree's row limit; a hash index
 -- serves the equality lookups the current-key view makes.

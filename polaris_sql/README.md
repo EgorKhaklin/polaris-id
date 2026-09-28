@@ -6,8 +6,8 @@ Ubuntu 24.04 and macOS 15; compatible with PostgreSQL 14 or later.
 
 | Part | Count |
 |------|-------|
-| Tables | **45 tables** (v1.0.0-rc.62; a migrated deployment holds 52, with the `schema_version` registry, the three migration-added tables, and the three Athena curated tables) |
-| Stored procedures and functions | **23 stored procedures and functions** (v1.0.0-rc.62) in `05_procedures.sql` |
+| Tables | **46 tables** (the 46th, CredentialCopy, 2026-09-28; a migrated deployment holds 53, with the `schema_version` registry, the three migration-added tables, and the three Athena curated tables) |
+| Stored procedures and functions | **25 stored procedures and functions** (with the two wallet-copy functions, 2026-09-28) in `05_procedures.sql` |
 | Self-tests | `08_tests.sql` reports 91 checks, all PASS on a fresh load (v1.0.0-rc.62) |
 | Substrate manifest | 27 rows in `SystemDependency` |
 
@@ -53,11 +53,11 @@ Dependencies when loading by hand:
 |------|---------|
 | `00_load_all.sql` | Driver that runs every file in order |
 | `00_migrations_table.sql` | `schema_version` migration registry (append-only) |
-| `01_schema.sql` | DDL: 45 tables (incl. CardPersonalization, HolderKeyEvent, TimestampLog, AuthorityKeyEvent, AuthCodeConsumed, ExchangeNonce, ExchangeReceiptLog, RelyingParty, IssuerDiscretionPolicy, EnrollmentStatusEvent, RecoveryRequest, TokenSignature, AnchorBatch, AgencyTrustAttestation, TokenStateEpoch, TokenStateEpochLeaf, DuressEvent, LifecycleArchiveCheckpoint, AppUser, AuthAuditLog, RetentionPolicy) |
+| `01_schema.sql` | DDL: 46 tables (incl. CardPersonalization, HolderKeyEvent, CredentialCopy, TimestampLog, AuthorityKeyEvent, AuthCodeConsumed, ExchangeNonce, ExchangeReceiptLog, RelyingParty, IssuerDiscretionPolicy, EnrollmentStatusEvent, RecoveryRequest, TokenSignature, AnchorBatch, AgencyTrustAttestation, TokenStateEpoch, TokenStateEpochLeaf, DuressEvent, LifecycleArchiveCheckpoint, AppUser, AuthAuditLog, RetentionPolicy) |
 | `02_indexes.sql` | Partial unique indexes, spatial index on `VerificationEvent(latitude, longitude)`, revocation-rate (R11-6), enrollment-event (R11-4), recovery-queue, active-signature (R11-1), anchor batch/pending (R10-2), secondary indexes |
 | `03_view.sql` | `ActiveTokens` and `IndividualCurrentEnrollment` views |
 | `04_data.sql` | Sample data across all five enrollment states, TokenSignature backfill, two closed `AnchorBatch` rows |
-| `05_procedures.sql` | 23 stored procedures and functions (below) |
+| `05_procedures.sql` | 25 stored procedures and functions (below) |
 | `06_triggers.sql` | State machine, auto-audit, append-only on every audit-of-record table (see `docs/design/audit-of-record.md`), revocation-velocity bound (R11-6), enrollment seed (R11-4), active-signature and signature immutability (R11-1), attestation immutability (R11-3), epoch immutability (R10-1) |
 | `07_queries.sql` | Relational-algebra queries from §8, UC-6 bonus, `civic_enrollment_summary` (R11-4) |
 | `08_tests.sql` | Self-test suite: prints PASS or FAIL per check |
@@ -81,7 +81,9 @@ UC-7, UC-8, UC-9 (initiate, record a channel, complete), `close_anchor_batch`
 pseudonymization), `uc_apply_retention_template` + `uc_set_retention_policy` +
 `retention_days_for` + `retention_cutoff` (the retention engine),
 `polaris_database_setting` (the database's own setting, 1.0.0-rc.19), and
-`polaris_utc_date` (the UTC date whatever the session set, 1.0.0-rc.47).
+`polaris_utc_date` (the UTC date whatever the session set, 1.0.0-rc.47), and
+`uc_issue_credential_copy` + `credential_copy_valid_indexes` (the wallet copy record and its
+status lists, 2026-09-28).
 
 ## Migrations
 

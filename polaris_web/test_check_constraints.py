@@ -1505,6 +1505,9 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         "HolderKeyEvent",
         # v9.341 (P8.5b): the timestamp transparency log.
         "TimestampLog",
+        # 2026-09-28: the wallet copy record (docs/design/oid4vci-issuer.md). Editing a row
+        # would move a copy's status index onto another copy.
+        "CredentialCopy",
     )
 
     def _app_conn(self):
@@ -1556,11 +1559,13 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             self.assertFalse(row["del"], f"polaris_app must not hold DELETE on {tbl}")
             # Since rc.40 the lifecycle log, and since 2026-09-25 the epoch leaves and the anchor
             # batches, are written only by SECURITY DEFINER routines; since 2026-09-27 the key
-            # register, card personalization and retention policy only by the owner.
+            # register, card personalization and retention policy only by the owner; since
+            # 2026-09-28 the wallet copy record only by uc_issue_credential_copy.
             self.assertEqual(bool(row["ins"]),
                              tbl.lower() not in ("tokenlifecycleevent", "tokenstateepochleaf",
                                                  "anchorbatch", "duressevent", "authoritykeyevent",
-                                                 "cardpersonalization", "retentionpolicy"),
+                                                 "cardpersonalization", "retentionpolicy",
+                                                 "credentialcopy"),
                              f"append-only is insert-allowed except the lifecycle log, the epoch "
                              f"leaves, the anchor batches and the owner's registers: {tbl}")
             conn.rollback()
@@ -2708,6 +2713,162 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         conn.rollback()
 
 
+class TestCredentialCopyRecord(unittest.TestCase):
+    """The wallet copy record obeys the credential record (docs/design/oid4vci-issuer.md).
+
+    lab/strategy/005/STEP3.md showed the rule holding in the lab issuer's code and named that
+    as its limit. Here it is the database's: uc_issue_credential_copy, the only writer of
+    CredentialCopy, refuses a credential that is not ACTIVE, and credential_copy_valid_indexes,
+    which the status list is computed from, drops a copy the moment its credential leaves
+    ACTIVE. Every test runs as polaris_app, in one transaction that is rolled back: the
+    credentials are issued through uc1_issue_and_activate and revoked through uc8_revoke_token,
+    so no rule is stepped around to set a test up.
+    """
+
+    def _app(self):
+        conn = TestC1PrivilegeBoundary._app_conn(self)
+        self.addCleanup(conn.rollback)
+        return conn
+
+    def _owner(self):
+        """The schema owner, for the one state polaris_app cannot make: an ACTIVE credential
+        past its expiration_date (enforce_token_binding_owner_only lets the application
+        change only a credential's status). The refusal under test is the definer function's,
+        so which role calls it does not change what it decides."""
+        cfg = dict(DB_CONFIG)
+        cfg["user"] = os.environ.get("POLARIS_TEST_RELOAD_USER") or DB_CONFIG.get("user")
+        password = os.environ.get("POLARIS_TEST_RELOAD_PASSWORD")
+        if password is not None:
+            cfg["password"] = password
+        try:
+            conn = psycopg2.connect(cursor_factory=RealDictCursor, **cfg)
+        except psycopg2.OperationalError as exc:
+            if os.environ.get("CI"):
+                self.fail("the schema owner is unreachable in CI: %s" % exc)
+            self.skipTest("the schema owner is unreachable: %s" % exc)
+        self.addCleanup(conn.close)
+        self.addCleanup(conn.rollback)
+        return conn
+
+    def _issue(self, cur, label):
+        value = "TKN-COPY-TEST-%s-%d" % (label, os.getpid())
+        cur.execute("SELECT uc1_issue_and_activate(%s, DATE '1990-05-06', 'PA', 2, 1, 'NONE', 2, "
+                    "NULL, %s, %s, 'test', ARRAY[1]) AS token_id",
+                    ("Copy Test %s" % label, value, "PHY-" + value))
+        return value, cur.fetchone()["token_id"]
+
+    def _copy(self, cur, value, agency=2, valid_for=None):
+        if valid_for is None:
+            cur.execute("SELECT * FROM uc_issue_credential_copy(%s, %s)", (value, agency))
+        else:
+            cur.execute("SELECT * FROM uc_issue_credential_copy(%s, %s, %s::INTERVAL)",
+                        (value, agency, valid_for))
+        return cur.fetchone()
+
+    def _valid(self, cur, row):
+        cur.execute("SELECT status_index FROM credential_copy_valid_indexes(2, %s, %s)",
+                    (row["list_day"], row["list_no"]))
+        return {r["status_index"] for r in cur.fetchall()}
+
+    def test_an_active_credential_gets_a_copy_in_a_valid_position(self):
+        conn = self._app()
+        with conn.cursor() as cur:
+            value, _ = self._issue(cur, "A")
+            row = self._copy(cur, value)
+            self.assertTrue(0 <= row["status_index"] < 1048576)
+            self.assertEqual(row["list_no"], row["copy_id"] // 524288)
+            self.assertEqual(row["legal_name"], "Copy Test A")
+            self.assertIn(row["status_index"], self._valid(cur, row))
+
+    def test_no_copy_for_a_credential_that_is_not_active(self):
+        conn = self._app()
+        with conn.cursor() as cur:
+            value, token_id = self._issue(cur, "R")
+            cur.execute("CALL uc8_revoke_token(%s, 2, 'COMPROMISED', 'copy test', 1)", (token_id,))
+            with self.assertRaisesRegex(pg_errors.CheckViolation, "only for an ACTIVE credential"):
+                self._copy(cur, value)
+
+    def test_no_copy_for_another_agencys_credential(self):
+        conn = self._app()
+        with conn.cursor() as cur:
+            value, _ = self._issue(cur, "G")
+            with self.assertRaisesRegex(pg_errors.InsufficientPrivilege, "issued by agency 2, not 1"):
+                self._copy(cur, value, agency=1)
+
+    def test_no_copy_for_a_credential_that_does_not_exist(self):
+        """Without this refusal the insert still fails, on a null token_id, with a different
+        error; the procedure mutation drill showed no test told the two apart (2026-09-28)."""
+        conn = self._app()
+        with conn.cursor() as cur:
+            with self.assertRaisesRegex(pg_errors.NoDataFound, "no credential has that value"):
+                self._copy(cur, "TKN-NO-SUCH-CREDENTIAL-%d" % os.getpid())
+
+    def test_no_copy_for_a_credential_past_its_expiration(self):
+        """An ACTIVE credential whose expiration_date has passed (the expiry job has not run
+        yet) gets no copy: its copy would be born expired."""
+        conn = self._owner()
+        with conn.cursor() as cur:
+            value, token_id = self._issue(cur, "X")
+            # The whole timeline moves back, because chk_token_time_order holds an expiration
+            # to on or after the issue date: issued ten days ago, activated then, expired
+            # yesterday, and still ACTIVE because no expiry job has run.
+            cur.execute("UPDATE IdentityToken SET issued_date = CURRENT_TIMESTAMP - INTERVAL '10 days', "
+                        "activated_date = CURRENT_TIMESTAMP - INTERVAL '10 days', "
+                        "expiration_date = CURRENT_DATE - 1 WHERE token_id = %s", (token_id,))
+            with self.assertRaisesRegex(pg_errors.CheckViolation, "expires before a copy could be valid"):
+                self._copy(cur, value)
+
+    def test_a_copy_does_not_outlive_its_credential(self):
+        conn = self._owner()
+        with conn.cursor() as cur:
+            value, token_id = self._issue(cur, "E")
+            cur.execute("UPDATE IdentityToken SET expiration_date = CURRENT_DATE + 3 "
+                        "WHERE token_id = %s RETURNING expiration_date", (token_id,))
+            expires = cur.fetchone()["expiration_date"]
+            row = self._copy(cur, value)
+            self.assertEqual(row["expires_at"].date(), expires,
+                             "a copy lives thirty days, or until its credential expires if sooner")
+
+    def test_a_copy_lives_at_most_thirty_days(self):
+        conn = self._app()
+        with conn.cursor() as cur:
+            value, _ = self._issue(cur, "T")
+            with self.assertRaisesRegex(pg_errors.InvalidParameterValue, "at most thirty days"):
+                self._copy(cur, value, valid_for="31 days")
+
+    def test_revocation_takes_the_copy_off_the_valid_list(self):
+        """The effect the status list rests on, measured the way a verifier sees it."""
+        conn = self._app()
+        with conn.cursor() as cur:
+            value, token_id = self._issue(cur, "V")
+            row = self._copy(cur, value)
+            self.assertIn(row["status_index"], self._valid(cur, row), "a live copy reads VALID")
+            cur.execute("CALL uc8_revoke_token(%s, 2, 'COMPROMISED', 'copy test', 1)", (token_id,))
+            self.assertNotIn(row["status_index"], self._valid(cur, row),
+                             "a copy of a revoked credential must not read VALID")
+
+    def test_indexes_are_unique_within_a_list(self):
+        conn = self._app()
+        with conn.cursor() as cur:
+            value, _ = self._issue(cur, "U")
+            rows = [self._copy(cur, value) for _ in range(25)]
+            positions = {(r["list_day"], r["list_no"], r["status_index"]) for r in rows}
+            self.assertEqual(len(positions), 25, "two copies share a status-list position")
+
+    def test_the_application_cannot_write_or_edit_the_record(self):
+        conn = self._app()
+        with conn.cursor() as cur:
+            value, _ = self._issue(cur, "W")
+            row = self._copy(cur, value)
+            for sql in ("UPDATE CredentialCopy SET status_index = 0 WHERE copy_id = %s",
+                        "DELETE FROM CredentialCopy WHERE copy_id = %s"):
+                with self.subTest(sql=sql.split()[0]):
+                    cur.execute("SAVEPOINT s")
+                    with self.assertRaises(pg_errors.InsufficientPrivilege):
+                        cur.execute(sql, (row["copy_id"],))
+                    cur.execute("ROLLBACK TO SAVEPOINT s")
+
+
 class TestRetentionEngine(_CheckBase):
     """The retention decision is data, floored, and the purge obeys it (P1.11).
 
@@ -3035,6 +3196,15 @@ APPEND_ONLY_FIXTURES = {
         "profile_version, normal_public_key, duress_public_key, card_object_sha3_256) "
         "VALUES (1, 1, decode(repeat('00',32),'hex'), 1, decode(repeat('11',32),'hex'), "
         "decode(repeat('22',32),'hex'), decode(repeat('33',32),'hex')) RETURNING personalization_id"),
+    # 2026-09-28: the wallet copy record. Written in production only by
+    # uc_issue_credential_copy; the fixture is the owner, so it writes a legal row directly
+    # (a copy id drawn first, because the list number is derived from it).
+    'credentialcopy': ('copy_id',
+        "WITH n AS (SELECT nextval(pg_get_serial_sequence('credentialcopy', 'copy_id')) AS id) "
+        "INSERT INTO CredentialCopy (copy_id, token_id, agency_id, list_day, list_no, status_index, "
+        "format, issued_at, expires_at) SELECT n.id, 1, 1, CURRENT_DATE, (n.id / 524288)::INTEGER, "
+        "4242, 'dc+sd-jwt', CURRENT_TIMESTAMP::TIMESTAMP, CURRENT_TIMESTAMP::TIMESTAMP + INTERVAL '1 day' "
+        "FROM n RETURNING copy_id"),
     'duressevent': ('event_id',
         "INSERT INTO DuressEvent (token_id, context_id, requesting_agency_id) "
         "VALUES (1, 1, 1) RETURNING event_id"),
@@ -4266,6 +4436,15 @@ UNIQUE_RULE_FIXTURES = {
         "profile_version, normal_public_key, duress_public_key, card_object_sha3_256) "
         "VALUES (1, 1, decode(repeat('00',32),'hex'), 1, decode(repeat('11',32),'hex'), "
         "decode(repeat('22',32),'hex'), decode(repeat('33',32),'hex'))", {}),
+    # 2026-09-28: a wallet copy's place in a status list is unique per agency, day and list.
+    # The copy of this seeded row keeps its list number because its new copy_id falls in the
+    # same list (copy_id / 2^19), so the only rule it can break is this one.
+    'uq_credential_copy_status_index': (
+        "WITH n AS (SELECT nextval(pg_get_serial_sequence('credentialcopy', 'copy_id')) AS id) "
+        "INSERT INTO CredentialCopy (copy_id, token_id, agency_id, list_day, list_no, status_index, "
+        "format, issued_at, expires_at) SELECT n.id, 1, 1, CURRENT_DATE, (n.id / 524288)::INTEGER, "
+        "777, 'dc+sd-jwt', CURRENT_TIMESTAMP::TIMESTAMP, CURRENT_TIMESTAMP::TIMESTAMP + INTERVAL '1 day' "
+        "FROM n", {}),
     # IdentityToken carries three. Each needs the other two stepped out of the way.
     'identitytoken_token_value_key': (None, {
         'physical_serial': "'SER-UNIQ-PROBE-A'"}),

@@ -564,7 +564,7 @@ _AOR_TABLES = (
     "RefereeVouching", "AgencyEvent", "AppUserEvent", "RelyingPartyEvent",
     "AuthorityKeyEvent", "HolderKeyEvent", "ExchangeReceiptLog", "TimestampLog",
     "AuthCodeConsumed", "ExchangeNonce", "AgencyQuota", "IssuerDiscretionPolicy",
-    "RetentionPolicy",
+    "RetentionPolicy", "CredentialCopy",
 )
 
 
@@ -22667,7 +22667,7 @@ def check_append_only_guards_are_classified(root: pathlib.Path) -> list[Finding]
                 guards.setdefault(fn_name, set()).add(table)
     if not guards:
         return _fail(name, "no BEFORE UPDATE OR DELETE trigger was found in the SQL; the schema "
-                           "has thirty-one, so the parse has drifted and this measured nothing")
+                           "has thirty-two, so the parse has drifted and this measured nothing")
     suite = _read(root, "polaris_web/test_check_constraints.py")
     m = re.search(r"APPEND_ONLY_GUARDS\s*=\s*\((.*?)\)", suite, re.S)
     if not m:

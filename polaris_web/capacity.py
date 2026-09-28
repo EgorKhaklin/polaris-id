@@ -187,6 +187,14 @@ GROWTH = {
         "why": "a binding and a rotation per credential over its life, at the enrollment "
                "surge rate",
     },
+    "CredentialCopy": {
+        # A wallet copy lives at most thirty days (docs/design/oid4vci-issuer.md), so the
+        # stress case is every holder keeping one and renewing it monthly. copy_id is 64-bit
+        # for this reason: at this rate a 32-bit id would run out in about half a year.
+        "rate": lambda t: t["population"] / (30 * 86400.0),
+        "basis": ASSUMED,
+        "why": "one wallet copy per holder per month, assuming every holder keeps one",
+    },
     "DeviceBinding": {
         "rate": lambda t: t["enrollment_surge"] / 86400.0,
         "basis": ASSUMED,

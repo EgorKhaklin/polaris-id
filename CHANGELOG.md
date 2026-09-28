@@ -11,6 +11,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- The wallet copy record for OpenID4VCI issuance (`CredentialCopy`, `uc_issue_credential_copy`, `credential_copy_valid_indexes`; migration 2026-09-28-001, [design](docs/design/oid4vci-issuer.md)): the database refuses a copy of a credential that is not ACTIVE and computes each status list from the record. No endpoint issues copies yet.
 - `polaris-oid4vp serve --issuer-trust-anchor PEM` trusts an issuer that signs with its certificate in `x5c`, as HAIP issuers do; before, the server could configure only issuer JWKs, so it could verify no HAIP issuer's credential. Found issuing into walt.id and Credo (`lab/strategy/005/`).
 
 ## v1.0.0-rc.65 — 2026-09-27 (verifiers refuse what they were never asked to accept)

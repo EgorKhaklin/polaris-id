@@ -90,7 +90,7 @@ invariant-check layer that gates CI.
 
 ### Layer 1: Data substrate (`polaris_sql/`)
 
-PostgreSQL 16. 45 tables, stored procedures, triggers, append-only
+PostgreSQL 16. 46 tables, stored procedures, triggers, append-only
 audit-of-record tables, and schema-level guards. The migration
 framework records SHA-256 hashes in an append-only registry.
 
@@ -99,7 +99,7 @@ of the schema. The schema can be operated via raw SQL (the
 `/sql` route is an authenticated, read-only console) and the
 constraints still hold; they are not mediated by the application.
 
-Key tables (45 in `01_schema.sql`, 52 in a migrated deployment; partial list):
+Key tables (46 in `01_schema.sql`, 53 in a migrated deployment; partial list):
 - `IdentityToken`: the central object
 - `Individual`: the person an identity is bound to
 - `Agency`: the issuer of an identity
