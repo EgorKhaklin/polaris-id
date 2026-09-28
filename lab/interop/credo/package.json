@@ -6,7 +6,8 @@
   "description": "An unmodified Credo holder presenting an SD-JWT VC to polaris-oid4vp over direct_post.jwt",
   "scripts": {
     "present": "node present.ts",
-    "typecheck": "tsc --noEmit --module nodenext --moduleResolution nodenext --target es2022 --allowImportingTsExtensions --strict --skipLibCheck --types node present.ts MemoryStorageService.ts"
+    "typecheck": "tsc --noEmit --module nodenext --moduleResolution nodenext --target es2022 --allowImportingTsExtensions --strict --skipLibCheck --types node present.ts receive.ts MemoryStorageService.ts",
+    "receive": "node receive.ts"
   },
   "dependencies": {
     "@credo-ts/core": "0.6.3",

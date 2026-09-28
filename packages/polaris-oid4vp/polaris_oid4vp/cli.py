@@ -129,14 +129,34 @@ def keygen(out: pathlib.Path, host: str) -> dict:
     return {"out": out, "host": host}
 
 
-def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None) -> Verifier:
+def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
+                  issuer_trust_anchors=None) -> Verifier:
     base = "https://%s:%d" % (host, port)
     return Verifier(
         client_cert_pem=(pki / FILES["client_cert"]).read_bytes(),
         client_key_pem=(pki / FILES["client_key"]).read_bytes(),
         request_uri=base + REQUEST_PATH,
         response_uri=base + RESPONSE_PATH,
-        issuer_jwks=issuer_jwks or [])
+        issuer_jwks=issuer_jwks or [],
+        issuer_trust_anchors=issuer_trust_anchors or [])
+
+
+def _load_trust_anchors(paths):
+    """Each file holds one or more PEM certificates, every one an issuer trust anchor.
+
+    HAIP 1.0 has an SD-JWT VC issuer sign with its certificate in `x5c`, and the library has
+    verified such chains against configured anchors since it was written; until 2026-09-27
+    this command could not configure one, so no HAIP issuer's credential could be verified
+    by `serve` (found issuing into walt.id and Credo, lab/strategy/005/)."""
+    from cryptography.x509 import load_pem_x509_certificates
+    anchors = []
+    for path in paths or []:
+        try:
+            anchors.extend(load_pem_x509_certificates(pathlib.Path(path).read_bytes()))
+        except (OSError, ValueError) as exc:
+            raise SystemExit("polaris-oid4vp: --issuer-trust-anchor %s is not a readable PEM "
+                             "certificate file: %s" % (path, exc))
+    return anchors
 
 
 def _cmd_keygen(args) -> int:
@@ -165,9 +185,15 @@ def _cmd_serve(args) -> int:
     if isinstance(issuer_jwks, dict):
         issuer_jwks = issuer_jwks.get("keys", [issuer_jwks])
 
-    verifier = verifier_from(pki, args.host, args.port, issuer_jwks)
-    if not issuer_jwks:
-        print("polaris-oid4vp: no --issuer-jwks given, so no credential can be verified: "
+    try:
+        anchors = _load_trust_anchors(args.issuer_trust_anchor)
+    except SystemExit as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    verifier = verifier_from(pki, args.host, args.port, issuer_jwks, anchors)
+    if not issuer_jwks and not anchors:
+        print("polaris-oid4vp: no --issuer-jwks or --issuer-trust-anchor given, so no "
+              "credential can be verified: "
               "every presentation will be refused with `issuer_key`. That is the correct "
               "answer to an unconfigured verifier, and it is probably not what you wanted.",
               file=sys.stderr)
@@ -244,6 +270,9 @@ def main(argv=None) -> int:
     s.add_argument("--port", type=int, default=9443)
     s.add_argument("--issuer-jwks", default=None,
                    help="a JSON file of issuer public JWKs to trust")
+    s.add_argument("--issuer-trust-anchor", action="append", default=[], metavar="PEM",
+                   help="a PEM file of CA certificates an issuer's x5c leaf must chain to "
+                        "(repeatable); the HAIP way to trust an issuer")
     s.add_argument("--once", action="store_true",
                    help="print one authorization request's parameters at startup")
     s.add_argument("--verbose", action="store_true")

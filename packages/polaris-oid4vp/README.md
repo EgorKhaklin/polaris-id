@@ -34,7 +34,11 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
 - `keygen` makes a CA, a leaf it signs and a listener certificate, and prints the `client_id`
   and the anchor a counterparty registers. The profile rejects a self-signed leaf and a trust
   anchor inside the chain; `keygen` avoids both. Its keys are for testing.
-- `serve` with no `--issuer-jwks` refuses every presentation (`issuer_key`) and says so on stderr.
+- `serve --issuer-trust-anchor ca.pem` trusts an issuer that signs with its certificate in `x5c`,
+  as HAIP issuers do (repeatable; each file may hold several PEM certificates). The leaf must
+  chain to an anchor in one link and carry the digitalSignature key usage.
+- `serve` with neither `--issuer-jwks` nor `--issuer-trust-anchor` refuses every presentation
+  (`issuer_key`) and says so on stderr.
 - The CLI is a test harness. A deployment embeds `Verifier` (it needs your status policy; see
   Revocation).
 
@@ -127,7 +131,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 304 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 306 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 103 refusals accept and requires a

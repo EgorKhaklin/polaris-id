@@ -254,6 +254,41 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         _, _, _, err = self._serve("--issuer-jwks", self._jwks_file({"keys": [self.jwk]}))
         self.assertNotIn("no --issuer-jwks", err, "the warning fires when it is configured")
 
+    def _anchor_file(self, n=1):
+        import datetime
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.x509.oid import NameOID
+        pems, now = [], datetime.datetime.now(datetime.timezone.utc)
+        for i in range(n):
+            key = ec.generate_private_key(ec.SECP256R1())
+            name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "issuer CA %d" % i)])
+            cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+                    .public_key(key.public_key()).serial_number(x509.random_serial_number())
+                    .not_valid_before(now).not_valid_after(now + datetime.timedelta(days=1))
+                    .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+                    .sign(key, hashes.SHA256()))
+            pems.append(cert.public_bytes(serialization.Encoding.PEM))
+        path = self.tmp / ("anchors-%d.pem" % n)
+        path.write_bytes(b"".join(pems))
+        return str(path)
+
+    def test_issuer_trust_anchors_reach_the_verifier(self):
+        """HAIP issuers sign with x5c; without this flag `serve` could verify none of them."""
+        _, seen, _, err = self._serve("--issuer-trust-anchor", self._anchor_file(2),
+                                      "--issuer-trust-anchor", self._anchor_file(1))
+        self.assertEqual(len(seen["verifier"].issuer_trust_anchors), 3)
+        self.assertNotIn("no --issuer-jwks", err, "anchors alone are a configured issuer")
+
+    def test_an_unreadable_trust_anchor_file_is_refused(self):
+        bad = self.tmp / "not-a-cert.pem"
+        bad.write_text("hello")
+        rc, seen, _, err = self._serve("--issuer-trust-anchor", str(bad))
+        self.assertEqual(rc, 2)
+        self.assertNotIn("verifier", seen, "no verifier may start on an anchor it could not read")
+        self.assertIn("not a readable PEM", err)
+
     def test_a_jwks_document_is_unwrapped_to_its_keys(self):
         _, seen, _, _ = self._serve("--issuer-jwks", self._jwks_file({"keys": [self.jwk]}))
         self.assertEqual(seen["verifier"].issuer_jwks, [self.jwk])

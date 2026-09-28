@@ -7,6 +7,12 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
+## Unreleased
+
+### Added
+
+- `polaris-oid4vp serve --issuer-trust-anchor PEM` trusts an issuer that signs with its certificate in `x5c`, as HAIP issuers do; before, the server could configure only issuer JWKs, so it could verify no HAIP issuer's credential. Found issuing into walt.id and Credo (`lab/strategy/005/`).
+
 ## v1.0.0-rc.65 — 2026-09-27 (verifiers refuse what they were never asked to accept)
 
 Four defects fixed, each against a promise the tree already made: one found by injecting faults into the running system, one by mutating two independent wallets' real output, and two by holding the SDKs and the detached verifier to the wire specification.
