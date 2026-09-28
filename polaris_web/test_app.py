@@ -12408,9 +12408,9 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
     """Every state-changing route, classified by which cross-site defence applies (v9.418).
 
     CSRF protection only bites where a browser will attach ambient authority. The
-    route table has 50 state-changing routes: 32 carry @csrf_protect, 2 are the
+    route table has 54 state-changing routes: 33 carry @csrf_protect, 2 are the
     launcher's anonymous local-control endpoints and carry @reject_cross_site, and
-    16 are the machine API and the pre-session auth endpoints, where there is no
+    19 are the machine API and the pre-session auth endpoints, where there is no
     cookie authority to abuse.
 
     That last group is the interesting one, because "CSRF does not apply here" is a
@@ -12445,6 +12445,14 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
         '/api/v1/timestamp/<int:agency_id>': 'timestamp authority API, no session',
         '/api/v1/verifiable-credential': 'credential issuance API, no session',
         '/api/v1/verify': 'relying-party verification API, no session',
+        # 2026-09-28, OpenID4VCI (oid4vci_routes.py). A wallet calls these, never a browser
+        # carrying an operator's cookie; the offer route that starts it IS csrf-protected.
+        '/api/v1/oid4vci/<int:agency_id>/token': 'OpenID4VCI token endpoint, authenticated by the '
+                                                 'pre-authorized code, no session',
+        '/api/v1/oid4vci/<int:agency_id>/nonce': 'OpenID4VCI nonce endpoint, public by design; the '
+                                                 'nonce is spent by a signed proof, no session',
+        '/api/v1/oid4vci/<int:agency_id>/credential': 'OpenID4VCI credential endpoint, authenticated '
+                                                      'by the bearer token and a signed proof, no session',
     }
 
     def _state_changing(self):
@@ -12473,8 +12481,8 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
             "Either add @csrf_protect, or add an entry to CSRF_EXEMPT saying why a browser "
             "cannot be made to call this with someone else's authority.")
         self.assertEqual(
-            len(csrf), 32,
-            f"{len(csrf)} routes carry @csrf_protect and 32 are recorded. A guard that was "
+            len(csrf), 33,
+            f"{len(csrf)} routes carry @csrf_protect and 33 are recorded. A guard that was "
             "removed shows up here, because a route without one simply stops appearing in the "
             "protected set.")
         self.assertEqual(len(cross_site), 2, f"{len(cross_site)} routes reject cross-site "
@@ -12505,7 +12513,7 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
                     f"{method} {url} without a CSRF token returned {r.status_code}; the token "
                     "is not being required")
             checked += 1
-        self.assertEqual(checked, 32,
+        self.assertEqual(checked, 33,
                          f"only {checked} CSRF-protected routes were exercised; the route table "
                          "is no longer being read and this test is passing by finding nothing")
 
