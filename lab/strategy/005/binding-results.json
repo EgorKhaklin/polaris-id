@@ -1,0 +1,47 @@
+{
+  "database": "a scratch load of polaris_sql (00_load_all + migrations)",
+  "results": [
+    {
+      "case": "A: offer for a REVOKED credential",
+      "expect": "no copy",
+      "got": "no copy",
+      "detail": "the Polaris record does not hold this credential ACTIVE (REVOKED)"
+    },
+    {
+      "case": "A: offer for a LOST credential",
+      "expect": "no copy",
+      "got": "no copy",
+      "detail": "the Polaris record does not hold this credential ACTIVE (LOST)"
+    },
+    {
+      "case": "A: offer for a RESERVE credential",
+      "expect": "no copy",
+      "got": "no copy",
+      "detail": "the Polaris record does not hold this credential ACTIVE (RESERVE)"
+    },
+    {
+      "case": "B: offered while ACTIVE, revoked before redemption",
+      "expect": "no copy",
+      "got": "no copy",
+      "detail": "the Polaris record does not hold this credential ACTIVE (REVOKED)"
+    },
+    {
+      "case": "C: offer for an ACTIVE credential",
+      "expect": "copy",
+      "got": "copy",
+      "detail": "issued"
+    },
+    {
+      "case": "C: that copy presented to polaris-oid4vp",
+      "expect": "accepted/VALID",
+      "got": "accepted/VALID",
+      "detail": "status 0 (VALID) published 0s ago on stated authority (the relying party trusts this issuer's CA for credentials, and so for its status list)"
+    },
+    {
+      "case": "D: the SAME copy after uc8_revoke_token",
+      "expect": "INVALID",
+      "got": "INVALID",
+      "detail": "HTTP 200; the verdict carries the record's revocation"
+    }
+  ]
+}

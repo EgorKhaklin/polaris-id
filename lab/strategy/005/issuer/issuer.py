@@ -127,8 +127,15 @@ def issuer_pki(base_url):
 
 
 class Issuer:
-    def __init__(self, base_url):
+    """`record`, when given, is the Polaris record this issuer answers to (step 3): a callable
+    token_value -> (token_id, status) or None, and `record.all()` -> [(token_id, status)]. An
+    offer then names one Polaris credential, the wallet copy is issued only while that
+    credential is ACTIVE at REDEMPTION time, and the copy carries a Token Status List entry at
+    idx = token_id whose bit is read from the record on every fetch of /status."""
+
+    def __init__(self, base_url, record=None):
         self.base = base_url
+        self.record = record
         self.key, self.x5c, self.ca_pem = issuer_pki(base_url)
         self.kid = "polaris-lab-vci-1"
         self.jwk = public_jwk(self.key, kid=self.kid)
@@ -138,10 +145,12 @@ class Issuer:
         self.issued = []         # what was issued, for the record
         self.lock = threading.Lock()
 
-    def new_offer(self):
+    def new_offer(self, token_value=None):
+        if self.record is not None and token_value is None:
+            raise ValueError("with a Polaris record, an offer names the credential it copies")
         code = secrets.token_urlsafe(24)
         with self.lock:
-            self.codes[code] = {"used": False}
+            self.codes[code] = {"used": False, "token_value": token_value}
         offer = {"credential_issuer": self.base, "credential_configuration_ids": [CONFIG_ID],
                  "grants": {PRE_AUTH: {"pre-authorized_code": code}}}
         return "openid-credential-offer://?credential_offer=" + urllib.parse.quote(json.dumps(offer, separators=(",", ":"))), offer
@@ -166,6 +175,23 @@ class Issuer:
                 "pre-authorized_grant_anonymous_access_supported": True,
                 "response_types_supported": ["token"]}
 
+    def status_list_token(self):
+        """A Token Status List token over the whole record: bit 1 for every credential that is
+        not ACTIVE, read now. Signed by the credential key, with the same x5c, so the verifier
+        can take the same-key basis rather than a delegation."""
+        import sys as _sys
+        _sys.path.insert(0, str(HERE.parents[2].parent / "packages" / "polaris-oid4vp"))
+        from polaris_oid4vp.status import encode_status_list
+        rows = self.record.all()
+        size = max((tid for tid, _ in rows), default=0) + 1
+        bits = [0] * size
+        for tid, st in rows:
+            bits[tid] = 0 if st == "ACTIVE" else 1
+        now = int(time.time())
+        return jws(self.key, {"alg": "ES256", "typ": "statuslist+jwt", "x5c": self.x5c},
+                   {"sub": self.base + "/status", "iat": now, "exp": now + 600, "ttl": 60,
+                    "status_list": {"bits": 1, "lst": encode_status_list(bits)}})
+
     def vc_issuer_metadata(self):
         return {"issuer": self.base, "jwks": {"keys": [self.jwk]}}
 
@@ -181,7 +207,7 @@ class Issuer:
                 return 400, {"error": "invalid_request", "error_description": "no tx_code was offered"}
             state["used"] = True
             tok = secrets.token_urlsafe(32)
-            self.tokens[tok] = time.time() + 300
+            self.tokens[tok] = (time.time() + 300, state["token_value"])
         return 200, {"access_token": tok, "token_type": "Bearer", "expires_in": 300}
 
     def nonce(self):
@@ -193,9 +219,20 @@ class Issuer:
     def credential(self, auth, body):
         tok = auth[7:] if auth.startswith("Bearer ") else None
         with self.lock:
-            exp = self.tokens.get(tok)
-        if exp is None or exp < time.time():
+            entry = self.tokens.get(tok)
+        if entry is None or entry[0] < time.time():
             return 401, {"error": "invalid_token"}
+        token_value = entry[1]
+        status_claim = None
+        if self.record is not None:
+            # The record decides, at redemption and not at offer: an offer made while the
+            # credential was ACTIVE is worthless once it is not.
+            found = self.record(token_value)
+            if found is None or found[1] != "ACTIVE":
+                return 400, {"error": "credential_request_denied",
+                             "error_description": "the Polaris record does not hold this credential ACTIVE (%s)"
+                                                  % ("absent" if found is None else found[1])}
+            status_claim = {"status_list": {"idx": found[0], "uri": self.base + "/status"}}
         cid = body.get("credential_configuration_id")
         if cid != CONFIG_ID:
             return 400, {"error": "unknown_credential_configuration"}
@@ -214,6 +251,8 @@ class Issuer:
                    "exp": int(time.time()) + 86400 * 30,
                    "_sd": sorted(b64u(hashlib.sha256(d.encode("ascii")).digest()) for d in disclosures),
                    "_sd_alg": "sha-256", "cnf": {"jwk": holder}}
+        if status_claim is not None:
+            payload["status"] = status_claim
         credential = jws(self.key, {"alg": "ES256", "typ": "dc+sd-jwt", "x5c": self.x5c}, payload) + \
             "~" + "~".join(disclosures) + "~"
         with self.lock:
@@ -253,6 +292,15 @@ def make_handler(issuer, log_path):
                 return self._send(200, issuer.as_metadata())
             if path.startswith("/.well-known/jwt-vc-issuer"):
                 return self._send(200, issuer.vc_issuer_metadata())
+            if path == "/status" and issuer.record is not None:
+                token = issuer.status_list_token().encode()
+                self._record(b"", 200, "<status list token>")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/statuslist+jwt")
+                self.send_header("Content-Length", str(len(token)))
+                self.end_headers()
+                self.wfile.write(token)
+                return
             return self._send(404, {"error": "not_found"})
 
         def do_POST(self):

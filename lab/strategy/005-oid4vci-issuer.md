@@ -6,7 +6,9 @@ splits into a wallet loop (pre-authorized code, decides criteria 1 and 2) and a 
 certification (a FAPI 2.0 authorization server), decided after the loop. Step 2 done
 ([005/STEP2.md](005/STEP2.md)): walt.id and Credo both received from a conformant issuer with no
 workaround (criterion 2 does not fire), and one credential went issuer, walt.id, `polaris-oid4vp`.
-Next: step 3, the binding (criterion 1).
+Step 3 done ([005/STEP3.md](005/STEP3.md)): 7 of 7, the wallet copy obeys the Polaris record
+(no copy for a non-ACTIVE credential, revocation reaches a verifier that reads status), with
+the binding in the issuer's code rather than the database. Next: the wallet loop as product.
 
 ---
 
