@@ -1,0 +1,89 @@
+{
+  "wallet": "waltid",
+  "commit": "0ae7cecc0fa094e192c94b60cf120ef4a1ee7007",
+  "issuer": "https://host.docker.internal:9644/api/v1/oid4vci/2",
+  "started": "2026-09-28T11:00:55.037957+00:00",
+  "received": true,
+  "wallet_said": {
+    "receive": {
+      "credentialIds": [
+        "dbd05ac9-0d88-42fe-b399-c49776c40d8b"
+      ],
+      "deferredTransactionIds": {}
+    },
+    "stored_fields": [
+      "addedAt",
+      "credential",
+      "id",
+      "label",
+      "metadata"
+    ]
+  },
+  "presented_while_active": {
+    "wallet_answer": {
+      "transmission_success": true,
+      "verifier_response": {
+        "redirect_uri": "https://host.docker.internal:9543/done"
+      },
+      "redirect_to": "https://host.docker.internal:9543/done"
+    },
+    "authentic": true,
+    "claims": [
+      "age_over_18",
+      "cnf",
+      "exp",
+      "iat",
+      "iss",
+      "status",
+      "vct"
+    ],
+    "revocation": {
+      "checked": true,
+      "status": 0,
+      "meaning": "VALID",
+      "fresh": true,
+      "stale": false,
+      "age_seconds": 0,
+      "authority": "stated",
+      "code": null,
+      "reason": "status 0 (VALID) published 0s ago on stated authority (the relying party trusts this issuer's anchor for its credentials, and so for status lists signed under it)",
+      "state": "checked",
+      "uri": "https://host.docker.internal:9644/api/v1/oid4vci/2/status/2026-09-28/0",
+      "idx": 483695
+    }
+  },
+  "presented_after_revocation": {
+    "wallet_answer": {
+      "transmission_success": true,
+      "verifier_response": {
+        "redirect_uri": "https://host.docker.internal:9543/done"
+      },
+      "redirect_to": "https://host.docker.internal:9543/done"
+    },
+    "authentic": true,
+    "claims": [
+      "age_over_18",
+      "cnf",
+      "exp",
+      "iat",
+      "iss",
+      "status",
+      "vct"
+    ],
+    "revocation": {
+      "checked": true,
+      "status": 1,
+      "meaning": "INVALID",
+      "fresh": true,
+      "stale": false,
+      "age_seconds": 0,
+      "authority": "stated",
+      "code": null,
+      "reason": "status 1 (INVALID) published 0s ago on stated authority (the relying party trusts this issuer's anchor for its credentials, and so for status lists signed under it)",
+      "state": "checked",
+      "uri": "https://host.docker.internal:9644/api/v1/oid4vci/2/status/2026-09-28/0",
+      "idx": 483695
+    }
+  },
+  "verdict": "PASS"
+}

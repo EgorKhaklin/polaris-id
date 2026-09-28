@@ -272,17 +272,29 @@ def credo_receive(offer_uri, out, cafile, anchor):
 class WaltId:
     """walt.id Wallet API v2 1.0.0, unmodified, at a pinned digest (lab/interop/waltid/README.md)."""
 
-    def __init__(self, out, tls_pem):
+    def __init__(self, out, tls_pem, extra_tls=(), request_anchor_pem=None):
+        """`extra_tls`: more TLS certificates to trust (a verifier's, for S6).
+        `request_anchor_pem`: the CA a verifier's request object must chain to, written to
+        clientIdTrust as lab/interop/waltid/README.md describes. Both are registration."""
         self.name = "polaris-waltid-s5"
         subprocess.run(["docker", "rm", "-f", self.name], capture_output=True)
         subprocess.run(["docker", "run", "-d", "--name", self.name, "-p", "7006:7006", WALTID_IMAGE],
                        check=True, capture_output=True)
         # The issuer's TLS certificate is self-signed; trusting it is registration, not a workaround.
-        subprocess.run(["docker", "cp", tls_pem, "%s:/tmp/issuer-tls.pem" % self.name], check=True)
-        subprocess.run(["docker", "exec", "-u", "0", self.name, "keytool", "-importcert", "-noprompt", "-alias",
-                        "polaris-s5", "-file", "/tmp/issuer-tls.pem", "-keystore",
-                        "/opt/java/openjdk/lib/security/cacerts", "-storepass", "changeit"], check=True,
-                       capture_output=True)
+        for i, pem in enumerate((tls_pem, *extra_tls)):
+            subprocess.run(["docker", "cp", str(pem), "%s:/tmp/trust-%d.pem" % (self.name, i)], check=True)
+            subprocess.run(["docker", "exec", "-u", "0", self.name, "keytool", "-importcert", "-noprompt", "-alias",
+                            "polaris-s5-%d" % i, "-file", "/tmp/trust-%d.pem" % i, "-keystore",
+                            "/opt/java/openjdk/lib/security/cacerts", "-storepass", "changeit"], check=True,
+                           capture_output=True)
+        if request_anchor_pem is not None:
+            conf = "/waltid-wallet-api2/config/wallet-service.conf"
+            current = subprocess.run(["docker", "exec", self.name, "cat", conf], capture_output=True,
+                                     text=True).stdout
+            pem = pathlib.Path(request_anchor_pem).read_text().strip().replace("\n", "\\n")
+            staged = out / "wallet-service.conf"
+            staged.write_text(current.rstrip("\n") + '\nclientIdTrust { x509TrustAnchors = ["%s"] }\n' % pem)
+            subprocess.run(["docker", "cp", str(staged), "%s:%s" % (self.name, conf)], check=True)
         subprocess.run(["docker", "restart", self.name], check=True, capture_output=True)
         self.base = "http://localhost:7006"
         for _ in range(120):

@@ -13,8 +13,10 @@ built (2026-09-28: the record, the keys, the OpenID4VCI endpoints and the offer 
 binding moved into the database), and step S5 is done ([005/STEP5.md](005/STEP5.md)): walt.id and
 Credo each received a wallet copy from `polaris_web` itself. The copy verified independently and
 read VALID, then INVALID after `uc8_revoke_token`. A credential revoked between offer and
-redemption got no copy. Next: the received copy presented to `polaris-oid4vp` with status read.
-Criterion 4 ("nobody holds it") starts counting now.
+redemption got no copy. S6 is done ([005/STEP6.md](005/STEP6.md)): walt.id presented its received copy to
+`polaris-oid4vp`, whose verifier read the product's status list: VALID, then INVALID after
+revocation. The relying party asked for `age_over_18` and learned only that. Next: Credo
+through the same presentation. Criterion 4 ("nobody holds it") starts counting now.
 
 ---
 
