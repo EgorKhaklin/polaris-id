@@ -15,7 +15,7 @@ revocation itself.
 
 ## What ran
 
-[`product/present.py`](product/present.py), from commit `82db0394`, one run per wallet:
+[`product/present.py`](product/present.py), from commit `21d545db`, one run per wallet:
 - **The S5 setup:** a fresh database, TLS, the TEST wallet-copy chain for agency 2,
   `polaris_web` under gunicorn over TLS, an ACTIVE credential, the operator's offer, and the
   wallet's receipt.

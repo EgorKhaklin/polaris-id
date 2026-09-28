@@ -1,8 +1,8 @@
 {
   "wallet": "credo",
-  "commit": "82db0394602548d873a55fde32b287359b8d0dc8",
+  "commit": "21d545db8e110c64fbca73c0ac0cbd2412d05e16",
   "issuer": "https://localhost:9644/api/v1/oid4vci/2",
-  "started": "2026-09-28T13:43:57.187774+00:00",
+  "started": "2026-09-28T13:47:34.225726+00:00",
   "received": true,
   "wallet_said": {
     "ready": true,
@@ -10,10 +10,10 @@
     "vct": "urn:polaris:wallet-copy:1",
     "holder_jwk": {
       "kty": "EC",
-      "x": "KmOUX1PDT4_K29iyiqgRio3qV8Hv7n6A6fTDHOyW0Ts",
-      "y": "E0CHQr_2AzC2jaf8k5osqY1cwbdgnJ3kzu-krFMiRT4",
+      "x": "P1tPQ1YBS4pziM-7ypzYYEewvMWVbfjxNH4T1Qe7MfA",
+      "y": "TRUR3-BYply-ONV4ZsLQ9Zsohvf5N6QY74aQR9HJ4qo",
       "crv": "P-256",
-      "kid": "ded9bdff-0bdd-4d0d-8278-b697896bf0a1"
+      "kid": "b5accfec-04bd-424c-9070-10f1cbe063a0"
     }
   },
   "presented_while_active": {
@@ -49,7 +49,7 @@
       "reason": "status 0 (VALID) published 0s ago on stated authority (the relying party trusts this issuer's anchor for its credentials, and so for status lists signed under it)",
       "state": "checked",
       "uri": "https://localhost:9644/api/v1/oid4vci/2/status/2026-09-28/0",
-      "idx": 271576
+      "idx": 509778
     }
   },
   "presented_after_revocation": {
@@ -85,7 +85,7 @@
       "reason": "status 1 (INVALID) published 0s ago on stated authority (the relying party trusts this issuer's anchor for its credentials, and so for status lists signed under it)",
       "state": "checked",
       "uri": "https://localhost:9644/api/v1/oid4vci/2/status/2026-09-28/0",
-      "idx": 271576
+      "idx": 509778
     }
   },
   "verdict": "PASS"

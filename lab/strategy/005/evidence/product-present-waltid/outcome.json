@@ -1,13 +1,13 @@
 {
   "wallet": "waltid",
-  "commit": "82db0394602548d873a55fde32b287359b8d0dc8",
+  "commit": "21d545db8e110c64fbca73c0ac0cbd2412d05e16",
   "issuer": "https://host.docker.internal:9644/api/v1/oid4vci/2",
-  "started": "2026-09-28T13:43:30.759014+00:00",
+  "started": "2026-09-28T13:47:11.033372+00:00",
   "received": true,
   "wallet_said": {
     "receive": {
       "credentialIds": [
-        "c4d3e8ef-2350-49fb-938c-e534f354789d"
+        "41f0de96-a4e8-4f18-a405-f1e53f128238"
       ],
       "deferredTransactionIds": {}
     },
@@ -49,7 +49,7 @@
       "reason": "status 0 (VALID) published 0s ago on stated authority (the relying party trusts this issuer's anchor for its credentials, and so for status lists signed under it)",
       "state": "checked",
       "uri": "https://host.docker.internal:9644/api/v1/oid4vci/2/status/2026-09-28/0",
-      "idx": 827883
+      "idx": 636760
     }
   },
   "presented_after_revocation": {
@@ -82,7 +82,7 @@
       "reason": "status 1 (INVALID) published 0s ago on stated authority (the relying party trusts this issuer's anchor for its credentials, and so for status lists signed under it)",
       "state": "checked",
       "uri": "https://host.docker.internal:9644/api/v1/oid4vci/2/status/2026-09-28/0",
-      "idx": 827883
+      "idx": 636760
     }
   },
   "verdict": "PASS"
