@@ -130,3 +130,15 @@ Written before the work starts:
 - **Nobody holds it.** If, by the release after it ships, no outside party has issued into or
   presented from a wallet with it, it was a demonstration, not a dependency. Record that on the
   scoreboard as a blank.
+
+## Decision so far (2026-09-28)
+
+- **Criteria 1 and 2 do not fire.** The database refuses a copy of a credential that is not
+  ACTIVE, and the status list turns a copy INVALID when its credential is revoked
+  ([STEP5](005/STEP5.md), [STEP6](005/STEP6.md)). walt.id and Credo received and presented a
+  copy with no Polaris-specific accommodation.
+- **Stage 2, the issuer certification, is not started.** HAIP requires the authorization code
+  grant, which needs the holder to sign in to Polaris, and Polaris has no holder sign-in; PAR,
+  DPoP and attestation-based client authentication come with it ([WALL.md](005/WALL.md)). It is
+  decided when a named wallet or relying party requires HAIP issuance from Polaris.
+- **Criterion 4 counts from rc.66** and is decided at rc.67.
