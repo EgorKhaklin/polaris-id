@@ -2211,6 +2211,99 @@
       },
       "since": "1.0.0-rc.66",
       "note": "The second cosignature is genuine but over another root, so it witnesses a different log state and the threshold of two is not met."
+    },
+    {
+      "name": "holder-chain-proof-window-late-edge",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/holder-window-credential.json",
+      "binding_file": "conformance/vectors/holder-window-binding.json",
+      "proof_file": "conformance/vectors/holder-window-proof.json",
+      "expected_nonce": "rp-nonce-window",
+      "expected_context": 1,
+      "now": "2026-05-01T00:05:00Z",
+      "expect": {
+        "proved": true
+      },
+      "since": "1.0.0-rc.66",
+      "note": "The binding is valid throughout, so only the proof's own window decides: five minutes after the proof: the last instant it is fresh."
+    },
+    {
+      "name": "holder-chain-proof-window-late-past",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/holder-window-credential.json",
+      "binding_file": "conformance/vectors/holder-window-binding.json",
+      "proof_file": "conformance/vectors/holder-window-proof.json",
+      "expected_nonce": "rp-nonce-window",
+      "expected_context": 1,
+      "now": "2026-05-01T00:05:01Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.66",
+      "note": "The binding is valid throughout, so only the proof's own window decides: one second past the five-minute window."
+    },
+    {
+      "name": "holder-chain-proof-window-early-edge",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/holder-window-credential.json",
+      "binding_file": "conformance/vectors/holder-window-binding.json",
+      "proof_file": "conformance/vectors/holder-window-proof.json",
+      "expected_nonce": "rp-nonce-window",
+      "expected_context": 1,
+      "now": "2026-04-30T23:59:00Z",
+      "expect": {
+        "proved": true
+      },
+      "since": "1.0.0-rc.66",
+      "note": "The binding is valid throughout, so only the proof's own window decides: one minute before the proof: the clock skew allowed."
+    },
+    {
+      "name": "holder-chain-proof-window-early-past",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/holder-window-credential.json",
+      "binding_file": "conformance/vectors/holder-window-binding.json",
+      "proof_file": "conformance/vectors/holder-window-proof.json",
+      "expected_nonce": "rp-nonce-window",
+      "expected_context": 1,
+      "now": "2026-04-30T23:58:59Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.66",
+      "note": "The binding is valid throughout, so only the proof's own window decides: one second more skew than is allowed."
+    },
+    {
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-uppercase-leaf-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-uppercase-leaf-manifest.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "since": "1.0.0-rc.66",
+      "name": "cross-authority-uppercase-leaf-no-feed",
+      "expect": {
+        "decision": "accept"
+      },
+      "note": "The positive control: the same credential, with no feed supplied, is accepted."
+    },
+    {
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-uppercase-leaf-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-uppercase-leaf-manifest.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "since": "1.0.0-rc.66",
+      "name": "cross-authority-uppercase-leaf-revoked",
+      "expect": {
+        "decision": "reject"
+      },
+      "feed_file": "conformance/vectors/cross-authority-uppercase-leaf-feed.json",
+      "note": "The issuer's authentic feed lists the leaf in upper-case hex. Leaves are hex and compared without regard to case, as the feed's own commitment is."
     }
   ]
 }

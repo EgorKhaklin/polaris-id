@@ -228,6 +228,16 @@ A cosignature that verifies must also be OF this head: the `timestamp-anchor-var
 head for another log does not anchor, and a genuine cosignature over another tree size or
 another root does not count toward the threshold; the base anchor is their positive control.
 
+Holder-proof window (`artifact: holder-chain`, 1.0.0-rc.66). A holder proof is fresh from one
+minute before its `issued_at` (clock skew) until five minutes after it, both ends inclusive.
+The `holder-chain-proof-window-*` cases take a chain whose binding opens a day before the proof,
+so only the proof's own window decides, and decide it at the four edges: five minutes after and
+one second more, one minute before and one second more.
+
+Revoked leaves are hex and compared without regard to case, as the feed's own commitment is
+(`cross-authority-uppercase-leaf-*`, 1.0.0-rc.66): an authentic feed that lists a credential's
+leaf in upper case revokes it, and the same credential with no feed is the positive control.
+
 ID-token cases (`artifact: id-token`, verdict `{authentic, audience_matches, nonce_matches,
 fresh}`, v9.420). An ID token is the one artifact whose signature being valid is not the
 question. A token minted for relying party A carries a perfectly good signature when it is
