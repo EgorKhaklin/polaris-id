@@ -24,7 +24,8 @@ It also certifies the composite federation **trust decision** (`artifact: cross-
 given a foreign credential's pack, the federation manifests the relying party trusts, a
 trusted anchor set, and a presented context, decide accept or reject -- accept only when the
 credential is authentic AND a trusted manifest attests its key in that context AND (if a
-revocation feed is supplied) it is not revoked. Online authorization (a live call to
+revocation feed is supplied) it is not revoked. No context presented (`context_id` null) is a reject: it is not a
+wildcard over every context. Online authorization (a live call to
 `POST /api/v1/verify`, specified in [`docs/reference/API.md`](../docs/reference/API.md)) is
 the only check not in these offline vectors, because it depends on live issuer state.
 

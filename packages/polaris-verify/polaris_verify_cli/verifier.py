@@ -874,7 +874,10 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
             if not isinstance(att, dict):
                 continue
             same_key = str(att.get("attested_public_key_hex") or "").lower() == token_key
-            same_ctx = (context_id is None or att.get("context_id") == context_id)
+            # In-context means a context was presented (WIRE-SPEC section 4). Before
+            # 2026-09-27 a missing one matched an edge from ANY context, so a presentation
+            # that left out `context_id` was accepted under another context's trust.
+            same_ctx = (context_id is not None and att.get("context_id") == context_id)
             if same_key and same_ctx:
                 # P9.5: is this edge signed by the agency that made it, or is it the
                 # operator's word carried by the manifest's signature?
@@ -1614,7 +1617,7 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
             if not isinstance(att, dict):
                 continue
             if (str(att.get("attested_public_key_hex") or "").lower() == cp_key
-                    and (context_id is None or att.get("context_id") == context_id)
+                    and context_id is not None and att.get("context_id") == context_id
                     and _attestation_window_open(att, now)):
                 via = mv["authority"]
                 break

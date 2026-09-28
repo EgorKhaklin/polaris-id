@@ -847,7 +847,9 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
             if not isinstance(att, dict):
                 continue
             if (str(att.get("attested_public_key_hex") or "").lower() == token_key
-                    and (context_id is None or att.get("context_id") == context_id)):
+                    and context_id is not None and att.get("context_id") == context_id):
+                # In-context means a context was presented (WIRE-SPEC section 4); before
+                # 2026-09-27 a missing one matched an edge from ANY context.
                 # P9.5: is the edge signed by the agency that made it, or is it the
                 # operator's word carried by the manifest's signature?
                 auth = m.get("authority") if isinstance(m.get("authority"), dict) else {}

@@ -511,7 +511,8 @@ A relying party decides a FOREIGN credential offline, non-transitively and in-co
    and signed by a trusted anchor) MUST carry an attestation whose
    `attested_public_key_hex` equals the credential's signing key AND whose `context_id`
    equals the presented context. Trust is NOT transitive: an attestation by an
-   untrusted authority confers nothing.
+   untrusted authority confers nothing. A decision with no presented context MUST reject;
+   a missing context is not a wildcard over every context.
 3. If the relying party supplies the issuer's revocation feed (section 3.3) or a status
    bundle carrying it (section 3.4), the credential MUST NOT be revoked, and the feed
    MUST be authentic, fresh, and bound to the issuer's key; a missing binding, a

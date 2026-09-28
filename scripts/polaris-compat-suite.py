@@ -77,6 +77,9 @@ PINNED_KNOWN_DEFECTS = {
     "pack-transplanted-artifact-signature":
         "2026-09-27: a signature from any authority-signed artifact, re-wrapped as a credential "
         "pack, verified as authentic; the pinned verifier predates the credential-serial rule",
+    "cross-authority-no-context":
+        "2026-09-27: a cross-authority decision with no context presented matched an edge from "
+        "any context; the pinned verifier treats a missing context as a wildcard",
 }
 
 

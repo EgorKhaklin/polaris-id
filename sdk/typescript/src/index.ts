@@ -896,7 +896,9 @@ export function verifyCrossAuthority(
     if (trusted != null && ![...active].some((x: string) => trusted!.has(x))) continue;
     for (const att of Array.isArray(mm.attestations) ? mm.attestations : []) {
       if (att && String(att.attested_public_key_hex ?? "").toLowerCase() === tokenKey
-          && (contextId == null || att.context_id === contextId)) {
+          && contextId != null && att.context_id === contextId) {
+        // In-context means a context was presented (WIRE-SPEC section 4); before 2026-09-27
+        // a missing one matched an edge from ANY context.
         // P9.5: is the edge signed by the agency that made it, or is it the operator's
         // word carried by the manifest's signature?
         const unsigned = !att.signature_hex && !att.public_key_hex;

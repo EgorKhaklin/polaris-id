@@ -396,6 +396,22 @@
       "since": "9.316"
     },
     {
+      "name": "cross-authority-no-context",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-manifest.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": null,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.65",
+      "note": "2026-09-27: a presentation that states no context is not decided under an edge from any context. Before this every verifier treated a missing context as a wildcard, so a relying party reading the context from the presentation accepted one that left it out."
+    },
+    {
       "name": "cross-authority-revoked",
       "artifact": "cross-authority",
       "pack_file": "conformance/vectors/cross-authority-pack.json",
