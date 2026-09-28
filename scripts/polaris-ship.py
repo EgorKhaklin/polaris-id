@@ -546,6 +546,21 @@ def make_db(db, env):
             raise SystemExit("run: migration %s failed on %s:\n%s" % (os.path.basename(f), db, r.stderr[-1500:]))
 
 
+def run_schema_drift(py, env, db, out):
+    """The schema drift drill against `db`: every INSERT column list and UPDATE target in the
+    tree must resolve against the live catalog. Sub-second, run by CI on every push, and it
+    reads every file for SQL, so a statement in any path can fail it. True when it passes."""
+    sd = subprocess.run([py, os.path.join(ROOT, "scripts", "polaris-schema-drift-drill.py")],
+                        cwd=ROOT, env=dict(env, POLARIS_DB_NAME=db), capture_output=True, text=True)
+    if sd.returncode == 0:
+        print("run: schema drift: PASS", file=out)
+        return True
+    print("run: schema drift: FAILED", file=out)
+    for x in _plain((sd.stdout or "") + (sd.stderr or "")).splitlines()[-12:]:
+        print("    " + x, file=out)
+    return False
+
+
 def drop_db(db, env):
     subprocess.run(["dropdb", "--if-exists", "-h", env.get("POLARIS_DB_HOST", "localhost"), db], env=env, capture_output=True)
 
@@ -733,6 +748,8 @@ def run(argv, out=None):
                      (", %d SKIPPED" % u_skipped) if u_skipped else ""), file=out)
             for label, text in u_failures:
                 print("\n    %s:\n%s" % (label, "\n".join("    " + x for x in text.splitlines()[-30:])), file=out)
+                failed = True
+            if not run_schema_drift(py, base_env, dbs[0], out):
                 failed = True
             # 2026-09-25: CI's application-role suite, locally. The suites above connect as the
             # owner; this re-runs the web and CLI suites with the application and the CLI as
