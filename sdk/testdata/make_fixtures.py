@@ -165,7 +165,13 @@ def federation_edge_window():
     windows: open at `now`, closed a month before it, and unreadable. The manifest carrying the
     edge is fresh in all three. 2026-09-27: both SDKs' verify_cross_authority never read
     `valid_until` and accepted the closed and the unreadable edge; the detached verifier had
-    refused them since 2026-09-17."""
+    refused them since 2026-09-17.
+
+    The same edge UNSIGNED (legacy, resting on the manifest's signature) in the same three
+    windows, and with no window stated. 2026-09-28: all three verifiers read the window only
+    for a signed edge, so an unsigned edge its authority's own manifest said had ended still
+    granted acceptance. One that states no window is legacy and stays accepted, as the
+    published cross-authority vectors require."""
     issuer, issuer_pk = _signer()
     authority, authority_pk = _signer()
     token = "HELD-OUT-EDGE-WINDOW-0001"
@@ -173,11 +179,15 @@ def federation_edge_window():
             "signature_hex": issuer.sign(hashlib.sha3_256(token.encode()).digest()).hex(),
             "public_key_hex": issuer_pk}
 
-    def manifest(valid_until):
-        att = _sign_statement(authority, authority_pk, {
-            "format": "polaris-trust-attestation/1", "algorithm": ALG, "attesting_agency_id": "B",
-            "attested_agency_id": "A", "attested_public_key_hex": issuer_pk, "context_id": 1,
-            "attested_date": "2026-01-01", "valid_until": valid_until}, ATTESTATION_KEYS)
+    def manifest(valid_until, signed=True):
+        edge = {"attesting_agency_id": "B", "attested_agency_id": "A",
+                "attested_public_key_hex": issuer_pk, "context_id": 1,
+                "attested_date": "2026-01-01", "valid_until": valid_until}
+        if valid_until is None:
+            del edge["valid_until"]
+        att = (_sign_statement(authority, authority_pk,
+                               dict(edge, format="polaris-trust-attestation/1", algorithm=ALG),
+                               ATTESTATION_KEYS) if signed else edge)
         return _sign_statement(authority, authority_pk, {
             "format": "polaris-federation-manifest/1", "algorithm": ALG,
             "authority": {"agency_id": "B", "name": "Authority B"},
@@ -193,7 +203,11 @@ def federation_edge_window():
             "pack": pack, "trusted_anchor": authority_pk,
             "manifests": {"open": manifest("2026-12-31T00:00:00Z"),
                           "closed": manifest("2026-06-01T00:00:00Z"),
-                          "unreadable": manifest("not-a-date")}}
+                          "unreadable": manifest("not-a-date"),
+                          "unsigned-open": manifest("2026-12-31T00:00:00Z", signed=False),
+                          "unsigned-closed": manifest("2026-06-01T00:00:00Z", signed=False),
+                          "unsigned-unreadable": manifest("not-a-date", signed=False),
+                          "unsigned-no-window": manifest(None, signed=False)}}
 
 
 STH_KEYS = ["format", "log_id", "tree_size", "root_hash_hex", "timestamp"]

@@ -791,6 +791,16 @@ test("a signed edge counts only inside its own window", () => {
   assert.equal(edgeDecide("unreadable"), "reject", "an edge whose valid_until cannot be read");
 });
 
+// 2026-09-28: the window was read only for a SIGNED edge, so an unsigned (legacy) edge its
+// authority's own manifest said had ended still granted acceptance. One stating no window is
+// legacy and stays accepted, as the published cross-authority vectors require.
+test("an unsigned edge is held to the window it states", () => {
+  assert.equal(edgeDecide("unsigned-open"), "accept");
+  assert.equal(edgeDecide("unsigned-closed"), "reject", "an unsigned edge past its valid_until");
+  assert.equal(edgeDecide("unsigned-unreadable"), "reject", "an unsigned edge whose valid_until cannot be read");
+  assert.equal(edgeDecide("unsigned-no-window"), "accept", "a legacy edge that states no window");
+});
+
 // 2026-09-23: a held-out round on verifyTimestampAnchor. The published witnessed anchor covers
 // the rules a test can reach by editing unsigned fields; sdk/testdata/anchor-variants.json holds
 // genuinely signed variants for the three it cannot (a head for another log, cosignatures over

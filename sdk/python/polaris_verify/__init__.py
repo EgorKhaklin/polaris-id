@@ -858,9 +858,10 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
                 if not unsigned and not av.authentic:
                     continue    # a present-but-bad signature is worse than none: refuse the edge
                 # An edge whose own window has closed is not an edge, however fresh the manifest
-                # carrying it (WIRE-SPEC 3.14; the detached verifier since 2026-09-17). Until
-                # 2026-09-27 this decision never read `valid_until`.
-                if not unsigned and not _attestation_open(att, now):
+                # carrying it (WIRE-SPEC section 4). Until 2026-09-27 this decision never read
+                # `valid_until`, and until 2026-09-28 it read it only for a SIGNED edge. A legacy
+                # edge that states no window stays open.
+                if not _attestation_open(att, now):
                     continue
                 if require_signed_attestation and unsigned:
                     continue

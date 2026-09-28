@@ -9,6 +9,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ## Unreleased
 
+### Security
+
+- `polaris-verify` and both SDKs: a cross-authority decision refuses an unsigned (legacy) trust edge whose own `valid_until` has passed or cannot be read, as it already refused a signed one; before, an edge that its authority's own fresh manifest said had ended still granted acceptance. A legacy edge that states no window is decided as before ([wire spec section 4](docs/reference/WIRE-SPEC.md)).
+
 ### Fixed
 
 - `polaris-oid4vp`: a disclosure whose claim name is not a string, and an issuer-signed `vct` that is not a string, are refused; before, `verify_presentation`, documented never to raise, raised `TypeError`. The disclosure needed only one genuine credential from a trusted issuer.

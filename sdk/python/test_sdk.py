@@ -755,6 +755,16 @@ class CrossAuthorityEdgeWindowTests(unittest.TestCase):
     def test_an_edge_whose_window_cannot_be_read_is_refused(self):
         self.assertEqual(self.decide("unreadable"), "reject")
 
+    def test_an_unsigned_edge_is_held_to_the_window_it_states(self):
+        """2026-09-28: the window was read only for a SIGNED edge, so an unsigned (legacy) edge
+        that its authority's own manifest said had ended still granted acceptance. One that
+        states no window is legacy and stays accepted: the published cross-authority vectors
+        carry exactly that edge."""
+        for window, want in (("unsigned-open", "accept"), ("unsigned-closed", "reject"),
+                             ("unsigned-unreadable", "reject"), ("unsigned-no-window", "accept")):
+            with self.subTest(window=window):
+                self.assertEqual(self.decide(window), want)
+
 
 @unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
 class TimestampAnchorHeldOutTests(unittest.TestCase):

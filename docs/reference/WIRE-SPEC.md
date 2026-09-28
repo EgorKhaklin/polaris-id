@@ -512,7 +512,11 @@ A relying party decides a FOREIGN credential offline, non-transitively and in-co
    `attested_public_key_hex` equals the credential's signing key AND whose `context_id`
    equals the presented context. Trust is NOT transitive: an attestation by an
    untrusted authority confers nothing. A decision with no presented context MUST reject;
-   a missing context is not a wildcard over every context.
+   a missing context is not a wildcard over every context. An attestation that states a
+   `valid_until` MUST NOT be used after it, and one whose `valid_until` cannot be read
+   MUST NOT be used at all, whether or not the attestation is signed: a fresh manifest does
+   not extend an edge its authority has ended. A LEGACY attestation that states no window
+   is decided as section 3.14 says.
 3. If the relying party supplies the issuer's revocation feed (section 3.3) or a status
    bundle carrying it (section 3.4), the credential MUST NOT be revoked, and the feed
    MUST be authentic, fresh, and bound to the issuer's key; a missing binding, a

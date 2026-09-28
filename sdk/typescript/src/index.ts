@@ -905,9 +905,10 @@ export function verifyCrossAuthority(
         const av = verifyAttestation(att, mm.authority?.agency_id ?? null, tokenKey);
         if (!unsigned && !av.authentic) continue;
         // An edge whose own window has closed is not an edge, however fresh the manifest
-        // carrying it (WIRE-SPEC 3.14; the detached verifier since 2026-09-17). Until
-        // 2026-09-27 this decision never read `valid_until`.
-        if (!unsigned && !attestationOpen(att, now)) continue;
+        // carrying it (WIRE-SPEC section 4). Until 2026-09-27 this decision never read
+        // `valid_until`, and until 2026-09-28 it read it only for a SIGNED edge. A legacy edge
+        // that states no window stays open.
+        if (!attestationOpen(att, now)) continue;
         if (requireSignedAttestation && unsigned) continue;
         signedEdge = !unsigned;
         via = mm.authority;

@@ -893,6 +893,12 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
                 # one-year edge granted acceptance six years past its end.
                 if av["expired"]:
                     continue
+                # Signed or not. `verify_attestation` returns before reading the window of an
+                # unsigned (legacy) edge, so until 2026-09-28 an edge whose own manifest said it
+                # had ended still counted here, while the exchange and zero-knowledge paths
+                # already refused it. A legacy edge that states no window stays open.
+                if not av["signed"] and not _attestation_window_open(att, now):
+                    continue
                 if require_signed_attestation and not av["signed"]:
                     continue
                 attestation_signed = bool(av["signed"])

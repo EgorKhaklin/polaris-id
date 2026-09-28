@@ -528,6 +528,39 @@ class GrantLimitsSurviveANonFiniteNumberTests(unittest.TestCase):
         self.assertFalse(V.grant_within_limits({"limits": {"max_uses": 3}}, 3)[0])
 
 
+class TheCrossAuthorityDecisionReadsEveryStatedWindowTests(unittest.TestCase):
+    """The detached verifier held to the SDKs' answers on one fixture, under real ML-DSA-65.
+
+    2026-09-28: `verify_cross_authority` read an edge's window only when the edge was SIGNED.
+    `verify_attestation` returns before it looks at `valid_until` for an unsigned (legacy)
+    edge, so `expired` stayed None and an edge whose own manifest said it had ended still
+    granted acceptance; the exchange and zero-knowledge paths in this file already applied
+    `_attestation_window_open` to every edge. An edge that states no window is legacy and is
+    accepted as before: the published cross-authority vectors carry exactly that edge.
+    """
+
+    WANT = {"open": "accept", "closed": "reject", "unreadable": "reject",
+            "unsigned-open": "accept", "unsigned-closed": "reject",
+            "unsigned-unreadable": "reject", "unsigned-no-window": "accept"}
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(_HERE, "..", "sdk", "testdata", "federation-edge-window.json")) as fh:
+            cls.f = json.load(fh)
+
+    def test_every_window_decides_as_the_sdks_do(self):
+        f = self.f
+        if not any(V._provider_available(name) for name in V.REAL_PROVIDERS):
+            self.skipTest("needs an ML-DSA-65 provider")
+        self.assertEqual(set(f["manifests"]), set(self.WANT), "the fixture and this table drifted")
+        for window, want in self.WANT.items():
+            with self.subTest(window=window):
+                got = V.verify_cross_authority(f["pack"], f["_fixture"]["context_id"],
+                                               [f["manifests"][window]], now=f["_fixture"]["now"],
+                                               trusted_anchors=[f["trusted_anchor"]])
+                self.assertEqual(got["decision"], want, got.get("reasons"))
+
+
 class TheAttestationWindowIsReadTests(unittest.TestCase):
     """`valid_until` is in the signed statement and was compared to NOTHING.
 
