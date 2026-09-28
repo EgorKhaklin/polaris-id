@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""The tree's polaris-oid4vp CLI, unchanged, plus one recording hook.
+
+Before judging a direct_post.jwt response it writes, to $CAPTURE, the response as posted, the
+body it decrypts to, and the session it answers (nonce, state, the session's ephemeral
+decryption key), with the verifier's client_id and issuer JWKS. That is everything
+`adversarial.py` needs to replay mutations of a genuine Credo presentation against the same
+decision path. The hook records and returns the original handler's answer; it decides nothing.
+"""
+import json
+import os
+import pathlib
+import sys
+
+TREE = pathlib.Path(__file__).resolve().parents[4]
+sys.path.insert(0, str(TREE / "packages" / "polaris-oid4vp"))
+
+from cryptography.hazmat.primitives import serialization  # noqa: E402
+from polaris_oid4vp import cli  # noqa: E402
+from polaris_oid4vp import verifier as V  # noqa: E402
+from polaris_oid4vp.jwe import JweError, decrypt_response  # noqa: E402
+
+_original = V.Verifier.handle_direct_post
+
+
+def _recording(self, form):
+    token = form.get("response")
+    token = token[0] if isinstance(token, list) else (token or "")
+    with self._lock:
+        sessions = list(self._sessions.values())
+    for s in sessions:
+        try:
+            body = decrypt_response(token, s.enc_key)
+        except JweError:
+            continue
+        pem = s.enc_key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                      serialization.NoEncryption()).decode()
+        pathlib.Path(os.environ["CAPTURE"]).write_text(json.dumps({
+            "response_jwe": token, "body": body, "nonce": s.nonce, "state": s.state,
+            "enc_key_pem": pem, "client_id": self.client_id, "issuer_jwks": self.issuer_jwks,
+            "vct_values": self.vct_values}, indent=2))
+        break
+    return _original(self, form)
+
+
+V.Verifier.handle_direct_post = _recording
+sys.exit(cli.main())

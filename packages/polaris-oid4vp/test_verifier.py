@@ -531,6 +531,14 @@ class HeldOutTransportTests(VerifierTestCase):
         self.assertEqual(status, 400)
         self.assertIn("not one presentation", verdict.reason)
 
+    def test_a_genuine_presentation_under_an_id_the_query_did_not_use_is_refused(self):
+        """OpenID4VP 1.0 section 8.1 keys vp_token by the DCQL credential query id."""
+        jar, genuine = self._genuine()
+        form = self.wallet.respond(jar, vp_token={"not-pid": [genuine]})
+        status, body, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY))
+        self.assertIn("not one presentation", verdict.reason)
+
     def test_one_genuine_presentation_is_accepted_through_the_same_path(self):
         """The positive control for the two above."""
         jar, genuine = self._genuine()

@@ -173,7 +173,7 @@ class Verifier:
                 "encrypted_response_enc_values_supported": ["A128GCM", "A256GCM"],
             },
             "dcql_query": {"credentials": [{
-                "id": "pid",
+                "id": self.DCQL_QUERY_ID,
                 "format": "dc+sd-jwt",
                 "meta": {"vct_values": self.vct_values},
                 "claims": [{"path": [c]} for c in self.claims],
@@ -274,10 +274,16 @@ class Verifier:
         # last part, so anything helpful added here fails the test.
         return 200, {"redirect_uri": self.redirect_uri}, verdict
 
+    #: The `id` of the one credential query in the request's DCQL. OpenID4VP 1.0 section 8.1
+    #: keys `vp_token` by that id. Until 2026-09-27 the key was never compared: one
+    #: presentation under any name was taken as the answer (found by mutating a genuine
+    #: Credo response, lab/interop/credo/adversarial/).
+    DCQL_QUERY_ID = "pid"
+
     def _single_presentation(self, vp_token):
-        if not isinstance(vp_token, dict) or len(vp_token) != 1:
+        if not isinstance(vp_token, dict) or list(vp_token) != [self.DCQL_QUERY_ID]:
             return None
-        value = next(iter(vp_token.values()))
+        value = vp_token[self.DCQL_QUERY_ID]
         if isinstance(value, list):
             if len(value) != 1:
                 return None

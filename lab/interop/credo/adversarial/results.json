@@ -1,0 +1,300 @@
+{
+  "wallet": "Credo 0.6.3 (@credo-ts/openid4vc)",
+  "verifier": "polaris-oid4vp (tree)",
+  "results": [
+    {
+      "case": "genuine response, as Credo sent it",
+      "layer": "token",
+      "expect": "accept",
+      "got": "accept",
+      "reason": null
+    },
+    {
+      "case": "genuine body, re-encrypted to the session key",
+      "layer": "body",
+      "expect": "accept",
+      "got": "accept",
+      "reason": null
+    },
+    {
+      "case": "JWE ciphertext altered",
+      "layer": "token",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the response did not decrypt under any outstanding request's key: it was encrypted to somebody else, altered, or it answers a request that has expired"
+    },
+    {
+      "case": "JWE tag altered",
+      "layer": "token",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the response did not decrypt under any outstanding request's key: it was encrypted to somebody else, altered, or it answers a request that has expired"
+    },
+    {
+      "case": "JWE IV altered",
+      "layer": "token",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the response did not decrypt under any outstanding request's key: it was encrypted to somebody else, altered, or it answers a request that has expired"
+    },
+    {
+      "case": "JWE protected header: enc A256GCM",
+      "layer": "token",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the response did not decrypt under any outstanding request's key: it was encrypted to somebody else, altered, or it answers a request that has expired"
+    },
+    {
+      "case": "JWE protected header: alg dir",
+      "layer": "token",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the response did not decrypt under any outstanding request's key: it was encrypted to somebody else, altered, or it answers a request that has expired"
+    },
+    {
+      "case": "JWE protected header: alg none",
+      "layer": "token",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the response did not decrypt under any outstanding request's key: it was encrypted to somebody else, altered, or it answers a request that has expired"
+    },
+    {
+      "case": "JWE protected header: zip DEF",
+      "layer": "token",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the response did not decrypt under any outstanding request's key: it was encrypted to somebody else, altered, or it answers a request that has expired"
+    },
+    {
+      "case": "JWE protected header: apv changed",
+      "layer": "token",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the response did not decrypt under any outstanding request's key: it was encrypted to somebody else, altered, or it answers a request that has expired"
+    },
+    {
+      "case": "JWE with an encrypted key segment",
+      "layer": "token",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the response did not decrypt under any outstanding request's key: it was encrypted to somebody else, altered, or it answers a request that has expired"
+    },
+    {
+      "case": "JWE with a sixth segment",
+      "layer": "token",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the response did not decrypt under any outstanding request's key: it was encrypted to somebody else, altered, or it answers a request that has expired"
+    },
+    {
+      "case": "state from another request",
+      "layer": "body",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the response's state does not match the request its encryption key belongs to"
+    },
+    {
+      "case": "state missing",
+      "layer": "body",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the response's state does not match the request its encryption key belongs to"
+    },
+    {
+      "case": "vp_token keyed by a query id the request did not ask for",
+      "layer": "body",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the vp_token is not one presentation for the one credential the DCQL query asked for"
+    },
+    {
+      "case": "vp_token with a second, unrequested entry",
+      "layer": "body",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the vp_token is not one presentation for the one credential the DCQL query asked for"
+    },
+    {
+      "case": "vp_token with the presentation twice",
+      "layer": "body",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the vp_token is not one presentation for the one credential the DCQL query asked for"
+    },
+    {
+      "case": "vp_token as a bare string",
+      "layer": "body",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the vp_token is not one presentation for the one credential the DCQL query asked for"
+    },
+    {
+      "case": "vp_token empty",
+      "layer": "body",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the vp_token is not one presentation for the one credential the DCQL query asked for"
+    },
+    {
+      "case": "key-binding JWT removed",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the presentation carries no key binding JWT, so nothing ties it to the holder who presented it"
+    },
+    {
+      "case": "key-binding JWT signature removed",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the key binding JWT signature does not verify under the credential's cnf.jwk, so the holder did not produce this presentation"
+    },
+    {
+      "case": "key-binding JWT alg none",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the key binding JWT declares alg='none', which is not in the accepted set ('ES256',)"
+    },
+    {
+      "case": "key-binding JWT nonce changed",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the key binding JWT signature does not verify under the credential's cnf.jwk, so the holder did not produce this presentation"
+    },
+    {
+      "case": "key-binding JWT aud changed",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the key binding JWT signature does not verify under the credential's cnf.jwk, so the holder did not produce this presentation"
+    },
+    {
+      "case": "key-binding JWT typ changed",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the key binding JWT declares typ='JWT' rather than 'kb+jwt'"
+    },
+    {
+      "case": "key-binding JWT signature altered",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the key binding JWT signature does not verify under the credential's cnf.jwk, so the holder did not produce this presentation"
+    },
+    {
+      "case": "one disclosure withheld (sd_hash no longer covers the set)",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the key binding JWT's sd_hash does not match the SHA-256 of what was actually presented: the disclosures are not the set the holder signed over"
+    },
+    {
+      "case": "disclosures reordered",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the key binding JWT's sd_hash does not match the SHA-256 of what was actually presented: the disclosures are not the set the holder signed over"
+    },
+    {
+      "case": "a disclosure repeated",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the same disclosure was presented twice"
+    },
+    {
+      "case": "a disclosure the issuer never committed to",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "a disclosure was presented that the issuer never committed to: its digest appears nowhere in the signed payload"
+    },
+    {
+      "case": "a disclosure's value altered",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "a disclosure was presented that the issuer never committed to: its digest appears nowhere in the signed payload"
+    },
+    {
+      "case": "a disclosure with base64 padding",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "a disclosure does not decode: not canonical base64url: the input carries characters or padding bits that its bytes do not"
+    },
+    {
+      "case": "issuer signature altered",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the issuer signature over the credential does not verify under the trusted issuer key"
+    },
+    {
+      "case": "issuer JWT alg none",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the issuer JWT declares alg='none', which is not in the accepted set ('ES256',)"
+    },
+    {
+      "case": "issuer JWT vct changed",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the issuer signature over the credential does not verify under the trusted issuer key"
+    },
+    {
+      "case": "issuer JWT cnf removed",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the issuer signature over the credential does not verify under the trusted issuer key"
+    },
+    {
+      "case": "issuer JWT typ changed",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the issuer JWT declares typ='JWT', and this verifier only checks 'dc+sd-jwt'"
+    },
+    {
+      "case": "a trailing empty segment after the KB-JWT",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "a disclosure does not decode: not canonical base64url: the input carries characters or padding bits that its bytes do not"
+    },
+    {
+      "case": "whitespace around the presentation",
+      "layer": "presentation",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the issuer-signed JWT does not parse: not canonical base64url: the input carries characters or padding bits that its bytes do not"
+    },
+    {
+      "case": "KB-JWT judged at its own iat",
+      "layer": "presentation (verify_presentation, now)",
+      "expect": "accept",
+      "got": "accept",
+      "reason": ""
+    },
+    {
+      "case": "KB-JWT judged a day after its iat",
+      "layer": "presentation (verify_presentation, now)",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the key binding JWT was minted 86400 seconds from now, outside the 300 second window"
+    },
+    {
+      "case": "KB-JWT judged a day before its iat",
+      "layer": "presentation (verify_presentation, now)",
+      "expect": "reject",
+      "got": "reject",
+      "reason": "the key binding JWT was minted -86400 seconds from now, outside the 300 second window"
+    }
+  ]
+}
