@@ -93,7 +93,11 @@ image digest to sign yet.
 
 ## Dependencies
 
-Dependabot alerts and weekly updates cover Python, Rust, GitHub Actions and Docker. Patch and
+A dependency is added only when the standard library or an existing dependency cannot do the
+job; each published package declares a dependency budget that a check holds on every push
+(`polaris-verify` has none). Dependencies come from PyPI, npm and crates.io through their package
+managers, at versions pinned in the lock and requirements files, and container base images are
+pinned by digest. Dependabot alerts and weekly updates cover Python, Rust, GitHub Actions and Docker. Patch and
 minor bumps are applied in batches and validated by a full CI run; majors of foundation
 dependencies are planned work. The `cve-scan` and `image-cve-scan` CI jobs fail the build on a
 known CVE in the runtime surface or a fixable critical in an image.

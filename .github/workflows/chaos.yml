@@ -66,7 +66,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/operator/CHAOS-DRILLS.md
           if git diff --cached --quiet; then echo "no ledger change"; exit 0; fi
-          git commit -m "chaos: record drill $(date -u +%Y-%m-%d) (${{ steps.drill.outcome }})"
+          git commit -s -m "chaos: record drill $(date -u +%Y-%m-%d) (${{ steps.drill.outcome }})"
           # main accepts changes only through pull requests, so the row goes to its own branch
           # and reaches main through a pull request that runs CI like any other change.
           branch="drill-ledger/chaos-$(date -u +%Y-%m-%d)"

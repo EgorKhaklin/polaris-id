@@ -60,7 +60,7 @@ jobs:
           git add docs/operator/DR-DRILLS.md
           if git diff --cached --quiet; then echo "no ledger change to commit"; exit 0; fi
           summary=$(python3 -c "import json; d=json.load(open('/tmp/dr-drill.json')); m=d['measured']; print(f\"{d['status']}: RPO {m['rpo_s']}s, RTO {m['rto_service_s']}s to service ({m['rto_db_s']}s to database), backup {m['backup_s']}s\")" 2>/dev/null || echo "drill did not produce a result file")
-          git commit -m "dr-drill: monthly result, $summary" -m "Appended by .github/workflows/dr-drill.yml (roadmap P1.10)."
+          git commit -s -m "dr-drill: monthly result, $summary" -m "Appended by .github/workflows/dr-drill.yml (roadmap P1.10)."
           # main accepts changes only through pull requests, so the row goes to its own branch
           # and reaches main through a pull request that runs CI like any other change.
           branch="drill-ledger/dr-$(date -u +%Y-%m)"

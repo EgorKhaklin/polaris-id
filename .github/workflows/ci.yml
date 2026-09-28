@@ -2570,6 +2570,34 @@ jobs:
   # CVE, CVE-2025-71176, was riding into prod via the shared requirements file).
   # Dependabot (.github/dependabot.yml) opens PRs for new advisories weekly.
   # --------------------------------------------------------------------------
+  dco:
+    # OpenSSF Baseline OSPS-LE-01.01: every commit a person contributes asserts, with a
+    # Developer Certificate of Origin sign-off, that they may contribute it. Bots (dependency
+    # updates, the drill ledgers) are not contributors and are skipped by author name.
+    name: DCO sign-off on every commit
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Every commit in the pull request carries Signed-off-by
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            author=$(git log -1 --format='%an <%ae>' "$c")
+            case "$author" in *"[bot]"*) continue ;; esac
+            if ! git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$c" | grep -q .; then
+              echo "::error::$c by $author has no Signed-off-by line; amend it with git commit -s --amend (or git rebase --signoff)"
+              missing=1
+            fi
+          done
+          exit $missing
+
   cve-scan:
     name: Dependency CVE scan + SAST
     runs-on: ubuntu-latest
