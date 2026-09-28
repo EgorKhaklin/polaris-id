@@ -589,7 +589,9 @@ CREATE TABLE AuthAuditLog (
             'WEBAUTHN_REGISTERED', 'WEBAUTHN_ASSERTED', 'WEBAUTHN_ASSERTION_FAILED',
             'WEBAUTHN_DEREGISTERED', 'WEBAUTHN_REGISTRATION_REFUSED',
             'EMERGENCY_PASSWORD_LOGIN_AUTHORIZED', 'NETWORK_POLICY_DENIED',
-            'SESSION_EVICTED', 'SESSION_EXPIRED', 'SESSION_REVOKED'
+            'SESSION_EVICTED', 'SESSION_EXPIRED', 'SESSION_REVOKED',
+            -- 2026-09-28: an operator offered a wallet copy of a credential (OpenID4VCI).
+            'WALLET_COPY_OFFERED'
         )),
     -- v9.245 (roadmap P2.1): the partition key must be part of the primary key.
     PRIMARY KEY (audit_id, event_timestamp)

@@ -90,7 +90,7 @@ The paths sit under `/api/`, so every error is the JSON body the API reference p
 
 | Step | Rule | Held by |
 |---|---|---|
-| Offer | An operator of the issuing agency creates it for one credential. The pre-authorized code is stateless: encrypted (Fernet) under a key derived from the instance secret with a salt of its own, so it names the credential without showing it; ten-minute life. | application (operator route, role-gated) |
+| Offer | An operator of the issuing agency creates it for one credential. The pre-authorized code is stateless: encrypted (Fernet) under a key derived from the instance secret with a salt of its own, so it names the credential without showing it; ten-minute life. The offer is recorded in `AuthAuditLog` (`WALLET_COPY_OFFERED`) under the operator's account, with the code's SHA3-256, before it is returned, or it is not made. | application (operator route, role-gated; the record in AuthAuditLog) |
 | Token | The code is valid, unexpired, and its SHA3-256 hash is consumed in the append-only register the auth broker already uses (`AuthCodeConsumed`), so a second redemption fails at the primary key. | database (single use) |
 | Credential | The proof of possession is ES256 over this issuer's `c_nonce`, with the wallet's key in its header. The copy is then recorded through a definer procedure that **refuses unless the credential is ACTIVE**, and it gets a random status index that no other copy holds. | database (the ACTIVE rule and the unique index), application (the proof) |
 | Signing | The recorded copy is signed with the agency's ES256 leaf. `exp` is thirty days, or the credential's own expiration if that is sooner. | application |
@@ -138,8 +138,8 @@ name (`dd57b8c1`).
   agency's revocation feed already publishes its revoked count, so this adds no new class of
   disclosure.
 - **The copy record stores no wallet key.** The holder key lives only in the credential's
-  `cnf`. The audit of record says a copy of which credential was issued, and when. It does not
-  record where the copy went.
+  `cnf`. The audit of record says which operator offered a copy of which credential, and when a
+  copy was issued. It does not record where the copy went.
 
 ## What it does not do
 

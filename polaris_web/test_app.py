@@ -17822,6 +17822,44 @@ class WalletCopyIssuanceTests(PolarisTestCase):
         r = self._credential(access, proof)
         self.assertEqual((r.status_code, r.get_json()['error']), (400, 'invalid_proof'))
 
+    def test_an_offer_is_recorded_under_the_operators_account(self):
+        # ARCHITECTURE-OVERVIEW, C1: "a coerced operator's actions leave evidence". An offer puts
+        # a signed copy of a person's credential into whatever wallet redeems it; until
+        # 2026-09-28 nothing recorded which operator made it.
+        import hashlib as _hashlib
+        uid = flask_app.query("SELECT user_id FROM AppUser WHERE username = 'admin'", fetch='one')['user_id']
+        before = flask_app.query("SELECT COALESCE(MAX(audit_id), 0) AS m FROM AuthAuditLog "
+                                 "WHERE event_type = 'WALLET_COPY_OFFERED'", fetch='one')['m']
+        r = self._offer()
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:200])
+        code = self._code_from(r)
+        rows = flask_app.query("SELECT user_id, username, detail FROM AuthAuditLog "
+                               "WHERE event_type = 'WALLET_COPY_OFFERED' AND audit_id > %s",
+                               (before,), fetch='all')
+        self.assertEqual(len(rows), 1, "one offer, one record")
+        self.assertEqual((rows[0]['user_id'], rows[0]['username']), (uid, 'admin'))
+        self.assertIn('token_id=%d ' % self.token_id, rows[0]['detail'])
+        # The record carries the code's hash as the token endpoint spends it, so a redeemed
+        # code links back to the operator who offered it.
+        spent = _hashlib.sha3_256(('polaris-vci-code:%s' % code).encode('utf-8')).hexdigest()
+        self.assertIn('code_sha3=%s' % spent, rows[0]['detail'])
+        self.assertEqual(self._token(code).status_code, 200)
+        self.assertIsNotNone(flask_app.query("SELECT 1 FROM AuthCodeConsumed WHERE code_hash = %s",
+                                             (spent,), fetch='one'))
+
+    def test_an_offer_that_cannot_be_recorded_is_not_made(self):
+        import oid4vci_routes
+        real = oid4vci_routes.query
+
+        def failing(sql, *a, **kw):
+            if 'INSERT INTO AuthAuditLog' in sql:
+                raise RuntimeError('the audit log is unavailable')
+            return real(sql, *a, **kw)
+        with patch.object(oid4vci_routes, 'query', side_effect=failing):
+            r = self._offer()
+        self.assertEqual(r.status_code, 503, r.get_data(as_text=True)[:200])
+        self.assertNotIn('offer', r.get_json())
+
     def test_a_proof_dated_nan_is_refused(self):
         # API.md: `iat` within the last five minutes. Python's json reads the NaN constant, and a
         # NaN iat failed both one-sided comparisons of the window, so it passed as fresh.

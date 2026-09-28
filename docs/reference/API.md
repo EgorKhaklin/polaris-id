@@ -1203,7 +1203,9 @@ The operator starts it with `POST /tokens/<id>/wallet-offer` (login, `admin` or 
 CSRF; an operator bound to another authority gets `403`). It answers `{offer, offer_uri,
 expires_in}`: the credential offer by value and its `openid-credential-offer://` URI, whose
 pre-authorized code names the credential and lives ten minutes. A credential that is not ACTIVE
-is `409`. Nothing is recorded until a wallet redeems the offer. The issuer metadata is also served
+is `409`. The offer is recorded in `AuthAuditLog` as `WALLET_COPY_OFFERED` under the operator's
+account, with the SHA3-256 of its code, before it is answered; if it cannot be recorded the answer
+is `503` and no offer is made. The copy itself is recorded when a wallet redeems it. The issuer metadata is also served
 at `GET /.well-known/openid-credential-issuer/api/v1/oid4vci/<agency_id>`, and the authorization
 server metadata at `GET /.well-known/oauth-authorization-server/api/v1/oid4vci/<agency_id>`.
 

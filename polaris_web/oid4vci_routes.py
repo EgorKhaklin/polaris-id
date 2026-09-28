@@ -264,7 +264,8 @@ def oid4vci_status_list(agency_id, day, list_no):
 def tokens_wallet_offer(tok_id):
     """An operator of the issuing agency offers a wallet copy of one credential: the
     openid-credential-offer URI, carrying a pre-authorized code that names the credential,
-    lives ten minutes and is spent at the token endpoint. Nothing is recorded until a wallet
+    lives ten minutes and is spent at the token endpoint. The offer is recorded under the
+    operator's account (AuthAuditLog) before it is returned; the copy is recorded when a wallet
     redeems it, and the record decides then."""
     row = query('SELECT token_value, issuing_agency_id, status FROM IdentityToken WHERE token_id = %s',
                 (tok_id,), fetch='one', primary=True)
@@ -284,6 +285,21 @@ def tokens_wallet_offer(tok_id):
         return jsonify(error='conflict', error_description='a wallet copy is offered only for an ACTIVE '
                        'credential; this one is %s' % row['status']), 409
     code = rp_auth.issue_vci_value(app.secret_key, 'code', {'ag': agency_id, 'tv': row['token_value']})
+    # C1: a coerced operator's actions leave evidence. The offer is recorded under the operator's
+    # account before it is returned, with the code's hash as the token endpoint spends it, so a
+    # redeemed code links back to whoever offered it; an offer that cannot be recorded is not made.
+    user = security.current_user() or {}
+    spent = hashlib.sha3_256(('polaris-vci-code:%s' % code).encode('utf-8')).hexdigest()
+    try:
+        query('INSERT INTO AuthAuditLog (event_type, username, user_id, ip_address, user_agent, detail) '
+              'VALUES (%s, %s, %s, %s, %s, %s)',
+              ('WALLET_COPY_OFFERED', user.get('username'), user.get('user_id'),
+               security.client_ip()[:45], (request.headers.get('User-Agent', '') or '')[:255],
+               'token_id=%d agency_id=%d code_sha3=%s' % (tok_id, agency_id, spent)), fetch='none')
+    except Exception:  # noqa: BLE001 -- no record, no offer
+        app.logger.exception('wallet-copy offer for token %s not recorded', tok_id)
+        return jsonify(error='server_error',
+                       error_description='the offer could not be recorded, so it was not made'), 503
     offer = {'credential_issuer': issuer,
              'credential_configuration_ids': [wallet_copy.CONFIGURATION_ID],
              'grants': {PRE_AUTH: {'pre-authorized_code': code}}}

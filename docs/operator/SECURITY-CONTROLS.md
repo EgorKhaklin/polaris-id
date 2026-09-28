@@ -133,6 +133,8 @@ Outside production the secret-key case is a stderr warning. Pinned by `check_pro
 | `SESSION_EXPIRED` | A session idled past `POLARIS_SESSION_IDLE_MINUTES_<ROLE>` |
 | `SESSION_REVOKED` | A live session of a deactivated account was ended on its next request |
 | `WEBAUTHN_REGISTRATION_REFUSED` | An enrollment the library rejected, or one the attestation policy refused (`policy:` in the detail) |
+| `PASSWORD_VERIFIED` | A password checked out; `LOGIN_SUCCESS` follows only when the login completes, second factor included |
+| `WALLET_COPY_OFFERED` | An operator offered a wallet copy of a credential; the detail names the credential, its agency and the SHA3-256 of the code, which `AuthCodeConsumed` holds once a wallet redeems it |
 
 The allowed set is the `chk_authaudit_event_type` CHECK constraint. `F11_AuditLoggingTests` (3 tests) covers login audit, authorization-denial audit, and the append-only trigger. `AuditAccessLog` ([migration](../../polaris_sql/migrations/2026-05-15-003-audit-access-log.up.sql)) is the meta-audit: it records who queried the audit tables and is itself append-only through the same trigger function. Feeding these tables to a SIEM is an operator step in the [checklist](#operator-checklist).
 
