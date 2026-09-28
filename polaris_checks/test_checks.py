@@ -1118,6 +1118,18 @@ def test_c8_atlas_caps_checks_routes_not_only_constants(tmp_path):
     assert checks.check_c8_atlas_caps(tmp_path)[0].level == "FAIL", \
         "must FAIL on `not (0 < x)`, a lower bound only"
 
+    # 2026-09-28: a route is a route whichever quotes it uses and however its decorator breaks.
+    # Before the other routes as well as after: a route this check cannot see is outside every
+    # window, so only the before case shows a blind read as a pass rather than a misattribution.
+    for deco in ('@app.route("/api/atlas/newthing")\n',
+                 '@app.route(\n    "/api/atlas/newthing",\n    methods=["GET"])\n'):
+        route = deco + "def atlas_newthing():\n    limit = int(request.args.get('limit', '50'))\n"
+        for body in (CLAMPED + route, route + CLAMPED):
+            write(body)
+            out = checks.check_c8_atlas_caps(tmp_path)[0]
+            assert out.level == "FAIL" and "newthing" in out.message, \
+                "must FAIL on an unclamped route written %r" % deco
+
     # 2026-09-17, the three shapes the clamp detection got wrong. Each of these passed
     # while /api/atlas/points had its real `min(..., _ATLAS_MAX_POINTS)` deleted, and so did
     # the application suite and this test as it stood.
@@ -6324,6 +6336,11 @@ def test_api_routes_documented_check_fails_in_both_directions(tmp_path):
 
     (tmp_path / "polaris_web/app.py").write_text(app + "@app.route('/api/metrics')\ndef m(): pass\n")
     assert checks.check_api_routes_documented(tmp_path)[0].level == "FAIL", "must FAIL when a route is undocumented"
+    # 2026-09-28: an undocumented route escapes nothing by its quotes or its line breaks.
+    for deco in ('@app.route("/api/metrics")\n', '@app.route(\n    "/api/metrics",\n    methods=["GET"])\n'):
+        (tmp_path / "polaris_web/app.py").write_text(app + deco + "def m(): pass\n")
+        assert checks.check_api_routes_documented(tmp_path)[0].level == "FAIL", \
+            "must FAIL on an undocumented route written %r" % deco
 
     (tmp_path / "polaris_web/app.py").write_text(app)
     (tmp_path / "docs/reference/API.md").write_text(doc + "\n### `POST /api/tokens/new`\n")
@@ -19614,6 +19631,17 @@ def test_state_changing_routes_ask_the_binding_check_discriminates(tmp_path):
     write(GOOD)
     assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "FAIL", \
         "must FAIL when a declared instance-wide route is gone"
+    # 2026-09-28: the same unbound route in double quotes, with `methods=` on the next line,
+    # and with the role in double quotes: each is the route above, and each must FAIL.
+    for deco in ('@app.route("/agencies/<int:ag_id>/edit", methods=["POST"])\n'
+                 "@security.require_role('admin')\n",
+                 "@app.route('/agencies/<int:ag_id>/edit',\n           methods=['POST'])\n"
+                 "@security.require_role('admin')\n",
+                 "@app.route('/agencies/<int:ag_id>/edit', methods=['POST'])\n"
+                 '@security.require_role("admin")\n'):
+        write(GOOD + "\n" + OTHERS + deco + "def agencies_edit(ag_id):\n    query('UPDATE Agency')\n")
+        assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "FAIL", \
+            "must FAIL on an unbound state-changing route written %r" % deco
     # A GET-only or unauthenticated route is not in scope.
     write(GOOD + "\n" + OTHERS + "@app.route('/federation')\ndef viewer():\n    pass\n")
     assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "OK"

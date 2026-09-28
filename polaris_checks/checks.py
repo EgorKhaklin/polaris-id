@@ -3459,6 +3459,32 @@ _ATLAS_NOT_COUNTS = {
 }
 
 
+#: A route decorator's opening and its path, in either quote style, with the path on the same
+#: line or the next. Three checks found routes with `@app\.route\('...'` until 2026-09-28, so a
+#: route written with double quotes, or with its arguments broken across lines, was not a route
+#: to them; nothing in the tree was written that way yet.
+_ROUTE_DECORATOR = re.compile(r"""@app\.route\(\s*(['"])(?P<path>[^'"\n]+)\1""")
+
+
+def _route_decorators(src: str) -> list[tuple[int, str, str]]:
+    """Every `@app.route(...)` in `src`, in order: (0-based line of the `@`, the path, the
+    decorator's whole text up to its closing parenthesis, however many lines it spans).
+
+    Lines count `\n`, so callers index `src.split("\n")`."""
+    out, line, at = [], 0, 0
+    for m in _ROUTE_DECORATOR.finditer(src):
+        line += src.count("\n", at, m.start())
+        at = m.start()
+        depth, end = 0, len(src)
+        for j in range(m.start() + len("@app.route"), len(src)):
+            depth += (src[j] == "(") - (src[j] == ")")
+            if depth == 0:
+                end = j + 1
+                break
+        out.append((line, m.group("path"), src[m.start():end]))
+    return out
+
+
 def check_c8_atlas_caps(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
     # v9.248: the analytical console added a bounded categorical roll-up; its
@@ -3480,9 +3506,9 @@ def check_c8_atlas_caps(root: pathlib.Path) -> list[Finding]:
     # The hazard C8 names is a result set a CALLER can grow. A route returning a
     # fixed-shape aggregate is bounded by construction and needs no cap; a route that reads
     # a count from the query string does.
-    lines = app.splitlines()
-    starts = [(i, m.group(1)) for i, line in enumerate(lines)
-              for m in [re.search(r"@app\.route\('(/api/atlas[^']*)'", line)] if m]
+    lines = app.split("\n")
+    starts = [(i, path) for i, path, _deco in _route_decorators(app)
+              if path.startswith("/api/atlas")]
     if not starts:
         return _fail("c8_atlas_caps", "no /api/atlas routes found in polaris_web/, so C8 has "
                                       "nothing to be true of")
@@ -4164,7 +4190,8 @@ def _norm_api_path(path: str) -> str:
 
 
 def _api_routes_in_app(app_src: str) -> set[str]:
-    return {_norm_api_path(m) for m in re.findall(r"@app\.route\('(/api/[^']*)'", app_src)}
+    return {_norm_api_path(path) for _i, path, _deco in _route_decorators(app_src)
+            if path.startswith("/api/")}
 
 
 def _api_routes_in_doc(doc: str) -> set[str]:
@@ -23117,14 +23144,15 @@ def check_state_changing_routes_ask_the_binding(root: pathlib.Path) -> list[Find
     for f in sorted(web.glob("*.py")):
         if f.name.startswith("test_"):
             continue
-        src = _read_path(f).splitlines()
-        i = 0
-        while i < len(src):
-            m = re.match(r"@app\.route\('([^']+)'", src[i])
-            if not (m and re.search(r"POST|PUT|DELETE", src[i])):
-                i += 1
+        text = _read_path(f)
+        src = text.split("\n")
+        after = 0
+        for i, route, deco_text in _route_decorators(text):
+            # The methods are read from the whole decorator: `methods=` on the line after
+            # the path hid a POST from this check until 2026-09-28. A second decorator on a
+            # handler already read is part of that handler, as before.
+            if i < after or not re.search(r"POST|PUT|DELETE", deco_text):
                 continue
-            route = m.group(1)
             j = i
             while j < len(src) and not src[j].startswith("def "):
                 j += 1
@@ -23133,7 +23161,7 @@ def check_state_changing_routes_ask_the_binding(root: pathlib.Path) -> list[Find
             while k < len(src) and not re.match(r"(@app\.route|def |class )", src[k]):
                 k += 1
             roles = re.findall(r"require_role\(([^)]*)\)", deco)
-            if roles and re.search(r"'(admin|operator)'", roles[0]):
+            if roles and re.search(r"""['"](admin|operator)['"]""", roles[0]):
                 seen.add(route)
                 body = "\n".join(src[j:k])
                 if route not in _INSTANCE_WIDE_ROUTES and not _BINDING_ASKED.search(body):
@@ -23147,7 +23175,7 @@ def check_state_changing_routes_ask_the_binding(root: pathlib.Path) -> list[Find
                     # 1.0.0-rc.33: the same for a token named in the FORM. /uc8/revoke asked
                     # only about the actor it was told to act as, never whose token it was.
                     unbound.append(f"{f.name}: {route} (names a token, never asks its issuer)")
-            i = k
+            after = k
     if not seen:
         return _fail(name, "no state-changing admin or operator route found; the scan is blind")
     stale = sorted(r for r in _INSTANCE_WIDE_ROUTES if r not in seen)

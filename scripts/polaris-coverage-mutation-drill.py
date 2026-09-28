@@ -95,6 +95,21 @@ def api_atlas_coverage_drill():
     return jsonify({'rows': rows})
 '''
 
+#: A new state-changing admin route that asks no operator binding, written with `methods=` on
+#: the line after its path as auth_routes.py already writes one. The property: an operator bound
+#: to one authority cannot turn such a route against another; each asks the binding or is
+#: declared instance-wide with a reason.
+_NEW_UNBOUND_ADMIN_ROUTE = '''
+
+@app.route('/agencies/<int:ag_id>/coverage-drill',
+           methods=['POST'])
+@security.require_role('admin')
+def agencies_coverage_drill(ag_id):
+    """MUTATION: a state-changing admin route that asks no operator binding."""
+    query("UPDATE Agency SET agency_name = agency_name WHERE agency_id = %s", (ag_id,))
+    return redirect('/agencies')
+'''
+
 #: A new query reading a verification location with no ZERO_KNOWLEDGE clause. C6 is
 #: redaction at EVERY read path, and this is a read path.
 _NEW_LOCATION_QUERY = '''
@@ -338,6 +353,10 @@ MUTATIONS = [
 
     ("documented_commands_run", "a documented verifier invocation names no crypto mode",
      None, _new_doc_example),
+
+    # Fourth wave, 2026-09-28: a route a bound operator could turn against another authority.
+    ("state_changing_routes_ask_the_binding", "a state-changing admin route asks no operator binding",
+     "polaris_web/app.py", lambda t: _append_route(t, _NEW_UNBOUND_ADMIN_ROUTE)),
 ]
 
 
