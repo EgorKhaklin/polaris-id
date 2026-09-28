@@ -53,7 +53,7 @@ Around the credential:
 | this tree | 1.0.0-rc.66 | the source you are reading |
 | `polaris-oid4vp` | 1.0.0rc8 | PyPI; 1.0.0rc7 is the certified version |
 | `polaris-verify`, `polaris-sdk-python` | 1.0.0rc4 | PyPI |
-| `polaris-sdk-ts` | 1.0.0-rc.4 | npm, under `next` (`latest` stays 0.1.0) |
+| `polaris-sdk-ts` | 1.0.0-rc.5 | npm, under `next` (`latest` stays 0.1.0) |
 
 - **A release candidate.** A new candidate is cut as a release that collects the defects fixed since the last: see [releases](https://github.com/EgorKhaklin/polaris-id/releases) and the [CHANGELOG](CHANGELOG.md). What separates it from 1.0.0 is an operator who is not the author.
 - **Installing:** `pip install --pre` (pip skips candidates otherwise); npm `polaris-sdk-ts@next`. PyPI packages use trusted publishing over OIDC. Every publish is recorded in [RELEASING.md](docs/RELEASING.md).
