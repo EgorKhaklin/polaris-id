@@ -1,7 +1,9 @@
 # 005: issue a Polaris credential into a wallet Polaris did not write (OpenID4VCI)
 
 **Opened 2026-09-27.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md).
-State: OPEN, record only. Nothing is built until section 9's first step has run.
+State: OPEN. Section 9 step 1 done ([005/WALL.md](005/WALL.md)): no criterion fires, and the bet
+splits into a wallet loop (pre-authorized code, decides criteria 1 and 2) and a HAIP
+certification (a FAPI 2.0 authorization server), decided after the loop.
 
 ---
 
