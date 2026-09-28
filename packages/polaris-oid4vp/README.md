@@ -36,7 +36,9 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   anchor inside the chain; `keygen` avoids both. Its keys are for testing.
 - `serve --issuer-trust-anchor ca.pem` trusts an issuer that signs with its certificate in `x5c`,
   as HAIP issuers do (repeatable; each file may hold several PEM certificates). The leaf must
-  chain to an anchor in one link and carry the digitalSignature key usage.
+  chain to an anchor in one link, be inside its validity period, and, when it states a key
+  usage, include digitalSignature; one that states extended key usages must name one an
+  issuer may hold. A leaf that states no key usage is not restricted by one.
 - `serve` with neither `--issuer-jwks` nor `--issuer-trust-anchor` refuses every presentation
   (`issuer_key`) and says so on stderr.
 - The CLI is a test harness. A deployment embeds `Verifier` (it needs your status policy; see
