@@ -3,7 +3,7 @@
 Contributions are welcome. Polaris is a reference implementation maintained by a single author
 with AI assistance. The ten constraints in [MISSION.md](MISSION.md) are enforced in the database
 schema, and a change that weakens one is refused however it is submitted. Participation is
-governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
+governed by the [Code of Conduct](CODE_OF_CONDUCT.md); decisions and roles by [GOVERNANCE.md](GOVERNANCE.md).
 
 ## How to propose a change
 

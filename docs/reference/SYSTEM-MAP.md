@@ -23,6 +23,7 @@ polaris/
 ├── CHANGELOG.md                  ← every ship, never edited retroactively
 ├── CONTRIBUTING.md / SECURITY.md ← contributor guide; vulnerability disclosure
 ├── CODE_OF_CONDUCT.md            ← the community standard, Contributor Covenant 3.0
+├── GOVERNANCE.md                 ← how decisions are made, the roles, and continuity
 ├── CITATION.cff                  ← how to cite this work, and the shipped version
 ├── LICENSE / NOTICE              ← Apache 2.0; provenance and third-party notices
 │
