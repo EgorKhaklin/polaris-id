@@ -7,6 +7,16 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
+## Unreleased
+
+### Fixed
+
+- `polaris-oid4vp serve` answers the `redirect_uri` it sends an accepted wallet to (`/done`) with a page; before, a wallet that followed it, as HAIP 5.1 intends, was answered 404. Found with OID4VCgo's wallet (`lab/interop/oid4vcgo/`).
+
+### Added
+
+- `vectors/anchors/ml-dsa-65-issuer.json`, the sample issuer's published key, so the whole trust decision can be tried with `polaris-verify` from PyPI and no clone (README, Try it).
+
 ## v1.0.0-rc.66 — 2026-09-28 (a Polaris credential in a wallet Polaris did not write)
 
 One security fix, three fixes, and OpenID4VCI issuance. The detached verifier and both SDKs accepted a foreign credential through an unsigned trust edge that its attesting authority's own manifest said had ended; it takes an authentic credential and a fresh manifest from an authority the relying party already trusts, and it forges nothing. New: an operator offers a wallet copy of one ACTIVE credential over OpenID4VCI 1.0, the database decides at redemption, and each agency publishes a Token Status List computed from the record. walt.id and Credo each received a copy from the product, in runs driven by this repository. The copy is a classical ES256 credential; nothing verified from it rests on ML-DSA-65.
