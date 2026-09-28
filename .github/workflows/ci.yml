@@ -2603,6 +2603,40 @@ jobs:
           done
           exit $missing
 
+  osv-scan:
+    # OpenSSF Baseline OSPS-VM-05.03: every change is checked for malicious packages (the OpenSSF
+    # Malicious Packages data in OSV) and known vulnerabilities, in the Python sets the images
+    # actually install (each resolved in its own environment, so indirect dependencies count) and in
+    # the npm and Rust lockfiles. Any finding fails the job; one that does not affect Polaris is
+    # declared, with its reason, in osv-scanner.toml. The scanner image is pinned by digest.
+    name: Malicious packages and known vulnerabilities (OSV)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Resolve each image's Python set exactly as it installs
+        run: |
+          for set in "" -custody -patroni; do
+            python -m venv "/tmp/osv$set"
+            "/tmp/osv$set/bin/pip" install -q -r "polaris_web/requirements$set.txt"
+            "/tmp/osv$set/bin/pip" freeze --all | grep -v -E '^(pip|setuptools|wheel)==' > "/tmp/installed$set.txt"
+            echo "requirements$set.txt: $(wc -l < "/tmp/installed$set.txt") packages installed"
+          done
+      - name: Scan with OSV-Scanner
+        run: |
+          docker run --rm -v "$PWD:/src:ro" -v /tmp:/scan:ro \
+            ghcr.io/google/osv-scanner@sha256:afd838850ac1a0fcc15ff4a041dc9ba11123c3f0d2666217a5f0fcf9222b55fa \
+            scan source --no-resolve --config /src/osv-scanner.toml \
+            -L requirements.txt:/scan/installed.txt \
+            -L requirements.txt:/scan/installed-custody.txt \
+            -L requirements.txt:/scan/installed-patroni.txt \
+            -L /src/sdk/typescript/package-lock.json \
+            -L /src/polaris_zk/Cargo.lock
+
   cve-scan:
     name: Dependency CVE scan + SAST
     runs-on: ubuntu-latest
