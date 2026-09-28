@@ -67,6 +67,8 @@ VERIFICATION = [
     (r"^scripts/polaris-verify\.py$|^sdk/|^conformance/|^polaris_web/anchoring\.py$",
      ["python3 scripts/polaris-compat-suite.py", "python3 conformance/run_conformance.py against the Python, the TypeScript and the detached verifier",
       "cd polaris_web && python3 -m unittest test_canonical_equivalence"], "a verifier or a wire format moved"),
+    (r"^polaris_web/credential_copy_keys\.py$|^scripts/polaris-credential-copy-test-pki\.py$",
+     ["cd polaris_web && python3 -m unittest test_credential_copy_keys"], "the wallet-copy keys moved"),
     (r"^polaris_web/(security|rp_auth|webauthn_auth)\.py$",
      ["python3 scripts/polaris-ship.py run", "python3 scripts/polaris-auth-broker-drill.py", "python3 scripts/polaris-presentation-drill.py"], "authentication or authorization moved"),
     (r"^polaris_web/zk\.py$|^polaris_zk/", ["cd polaris_web && python3 -m unittest test_zk_second_witness", "python3 scripts/polaris-cross-authority-zk-drill.py",
@@ -313,7 +315,7 @@ DEFAULT_MODULES = ["test_app", "test_check_constraints", "test_invariants_proper
 UNSHARDED_SUITES = {
     "polaris_web": ["test_pqc_signing", "test_custody", "test_secretstore", "test_transparency",
                     "test_capacity", "test_referee", "test_enrollment_code",
-                    "test_canonical_equivalence"],
+                    "test_canonical_equivalence", "test_credential_copy_keys"],
     "polaris_cli": ["test_cli"],
     "scripts": ["test_verify_load", "test_wallet", "test_relying_party",
                 "test_verify_conformance", "test_verify_p9", "test_verify_refusals",

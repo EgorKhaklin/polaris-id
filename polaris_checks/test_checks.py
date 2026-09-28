@@ -4065,6 +4065,8 @@ def test_prod_fail_closed_check_discriminates(tmp_path):
         "        sys.exit(2)\n"
         "    if os.environ.get('POLARIS_PQC_SIGNING_KEY_FILE'):\n"
         "        sys.exit(2)\n"
+        "    if os.environ.get('POLARIS_CREDENTIAL_COPY_KEYS_DIR'):\n"
+        "        sys.exit(2)\n"
     )
     GOOD = GOOD + HSM_GUARD
 
@@ -4108,6 +4110,10 @@ def test_prod_fail_closed_check_discriminates(tmp_path):
     write(app=GOOD.replace("    if os.environ.get('POLARIS_PQC_SIGNING_KEY_FILE'):\n        sys.exit(2)\n", ""))
     assert checks.check_prod_fail_closed(tmp_path)[0].level == "FAIL", \
         "must FAIL when the HSM guard does not forbid POLARIS_PQC_SIGNING_KEY_FILE"
+    # 8. (2026-09-28) the HSM guard no longer forbids the wallet-copy keys -> FAIL.
+    write(app=GOOD.replace("    if os.environ.get('POLARIS_CREDENTIAL_COPY_KEYS_DIR'):\n        sys.exit(2)\n", ""))
+    assert checks.check_prod_fail_closed(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the HSM guard does not forbid POLARIS_CREDENTIAL_COPY_KEYS_DIR"
 
 
 def test_prod_real_pqc_check_discriminates(tmp_path):

@@ -1,9 +1,12 @@
 """polaris_web/custody.py — key custody abstraction for the issuer signing key
 (roadmap P1.2).
 
-Polaris has exactly one long-lived private key: the issuer's ML-DSA-65 (FIPS 204)
-token-signing key. Epoch anchors are hash-chained, not signed, so nothing else
-needs custody today; anything that does later goes through this interface.
+Polaris credentials are signed by one kind of long-lived private key: the issuer's
+ML-DSA-65 (FIPS 204) token-signing key. Epoch anchors are hash-chained, not signed.
+The one other private key, an agency's ES256 wallet-copy key, is held by
+credential_copy_keys.py and not by this interface: its contract (ES256 over a JWS
+signing input) is not this one, and in this version it is a file, which the
+HSM-sole-signer profile refuses.
 
 Before this module the key was a JSON file the app read into memory. That is
 the `file` driver here, kept for development and small deployments. Two more

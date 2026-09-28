@@ -2677,6 +2677,12 @@ def check_prod_fail_closed(root: pathlib.Path) -> list[Finding]:
         return _fail("prod_fail_closed",
                      "the HSM-sole-signer guard must forbid POLARIS_PQC_SIGNING_KEY_FILE (a latent file-key "
                      "fallback the sole-HSM profile must not carry)")
+    # 2026-09-28: the wallet-copy keys (credential_copy_keys.py) are ES256 FILES in this
+    # version. A sole-signer deployment that configured them would sign outside the HSM.
+    if not re.search(r"POLARIS_REQUIRE_HSM_SOLE_SIGNER.{0,1500}POLARIS_CREDENTIAL_COPY_KEYS_DIR", app, re.S):
+        return _fail("prod_fail_closed",
+                     "the HSM-sole-signer guard must forbid POLARIS_CREDENTIAL_COPY_KEYS_DIR (wallet-copy "
+                     "keys are files, a signer outside the HSM)")
     return _ok("prod_fail_closed",
                "the application fails closed in production on a plaintext-capable POLARIS_DB_SSLMODE and on "
                "POLARIS_DURESS_SYNC=1 (the duress timing side-channel), alongside the default-SECRET_KEY "

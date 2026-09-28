@@ -4,12 +4,14 @@
 witnesses to its ceremony. **Job:** how the key is created under each
 custody driver, where it lives, who may touch it, and how it is rotated.
 
-Polaris has one long-lived private key: the issuer's ML-DSA-65 (FIPS 204)
-token-signing key. Every token's `TokenSignature` is produced by it, and the
+Polaris credentials are signed by one kind of long-lived private key: the
+issuer's ML-DSA-65 (FIPS 204) token-signing key, one per agency where agencies
+have their own (below). Every token's `TokenSignature` is produced by it, and the
 public key is stored WITH each signature, so verification is self-contained and
-survives rotation. Epoch anchors are hash-chained, not signed; no other private
-key exists today. This page is how that key is created, where it lives, and how
-it is replaced.
+survives rotation. Epoch anchors are hash-chained, not signed. An instance that
+offers wallet copies holds a second kind, an ES256 key per agency that signs those
+copies and nothing else ([Wallet-copy keys](#wallet-copy-keys-es256)). This page is
+how each is created, where it lives, and how it is replaced.
 
 ## Custody drivers
 
@@ -103,6 +105,8 @@ unless:
 - `POLARIS_PQC_SIGNING_KEY_FILE` is **unset** — no file key sits in the
   environment as a latent fallback a flipped driver could use, and
 - `POLARIS_USE_REAL_PQC=1` — the deterministic placeholder is not the HSM.
+- `POLARIS_CREDENTIAL_COPY_KEYS_DIR` is **unset**: wallet-copy keys are files in
+  this version, so a sole-signer deployment does not offer wallet copies.
 
 It is a fail-closed boot guard: it makes the profile's intent true at startup
 rather than discovering at first issuance that a file key or the placeholder was
@@ -136,6 +140,35 @@ cryptographically its own (roadmap PE.3b), give each agency its own key:
    registered key. Rotate an agency's key the same way as the global key (below),
    updating its registered `signing_public_key_hex` and keeping the old key as a
    trust anchor until its tokens expire.
+
+## Wallet-copy keys (ES256)
+
+A wallet copy ([design](../design/oid4vci-issuer.md)) is an SD-JWT VC signed ES256,
+because the wallets it is issued into verify nothing else, so it is a classical
+credential. Its key is per agency and, in this version, a file:
+
+- `$POLARIS_CREDENTIAL_COPY_KEYS_DIR/<agency_id>.key.pem`: the P-256 private key,
+  PKCS#8, mode 0600;
+- `$POLARIS_CREDENTIAL_COPY_KEYS_DIR/<agency_id>.chain.pem`: the leaf certificate
+  first, then any intermediates. The trust anchor stays out; wallets and relying
+  parties register it.
+
+Generate the key where it will live and have the agency's CA issue the leaf for it,
+with `digitalSignature`, without the CA flag or `keyCertSign`, and with the credential
+issuer URL, `https://HOST/api/v1/oid4vci/<agency_id>`, as a URI subjectAltName.
+`polaris_web/credential_copy_keys.py` refuses anything else when it loads the key, and
+checks the chain's validity window again at every use. A replaced pair is picked up
+without a restart, so rotation is: issue the new leaf, replace both files, and keep the
+old anchor registered while copies signed under it are unexpired.
+
+A compromised wallet-copy key can sign copies that verify until the leaf expires or
+relying parties drop its anchor. The status list narrows such a forgery and does not
+prevent it (the design record says why), so keep leaves short-lived and replace a
+compromised pair at once.
+
+`scripts/polaris-credential-copy-test-pki.py` writes a TEST chain for development and
+the lab, never a deployment's. `polaris_web/test_credential_copy_keys.py` tests every
+refusal, and switches each one off in turn to show that a test notices.
 
 ## Rotation
 

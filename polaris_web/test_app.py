@@ -11491,7 +11491,8 @@ class HsmSoleSignerBootTests(unittest.TestCase):
         import os as _os
         env = _os.environ.copy()
         for k in ("POLARIS_ENV", "POLARIS_REQUIRE_HSM_SOLE_SIGNER", "POLARIS_CUSTODY_DRIVER",
-                  "POLARIS_PQC_SIGNING_KEY_FILE", "POLARIS_USE_REAL_PQC"):
+                  "POLARIS_PQC_SIGNING_KEY_FILE", "POLARIS_USE_REAL_PQC",
+                  "POLARIS_CREDENTIAL_COPY_KEYS_DIR"):
             env.pop(k, None)
         env["POLARIS_SECRET_KEY"] = "x" * 64  # silence the unrelated dev-secret warning
         env.update(extra_env)
@@ -11514,6 +11515,15 @@ class HsmSoleSignerBootTests(unittest.TestCase):
         r = self._boot({"POLARIS_REQUIRE_HSM_SOLE_SIGNER": "1", "POLARIS_CUSTODY_DRIVER": "pkcs11"})
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("POLARIS_USE_REAL_PQC", r.stderr)
+
+    def test_refuses_boot_when_wallet_copy_keys_are_configured(self):
+        # Every other condition of the profile is met, so the wallet-copy directory is the
+        # one reason left to refuse, and the message must name it.
+        r = self._boot({"POLARIS_REQUIRE_HSM_SOLE_SIGNER": "1", "POLARIS_CUSTODY_DRIVER": "pkcs11",
+                        "POLARIS_USE_REAL_PQC": "1", "POLARIS_CREDENTIAL_COPY_KEYS_DIR": "/tmp/copy-keys"})
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("POLARIS_CREDENTIAL_COPY_KEYS_DIR", r.stderr)
+        self.assertNotIn("POLARIS_PQC_SIGNING_KEY_FILE", r.stderr)
 
 
 class RealPqcDefaultBootTests(unittest.TestCase):

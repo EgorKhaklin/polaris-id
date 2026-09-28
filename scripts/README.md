@@ -93,6 +93,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-chaos-test.sh` | Fault injection, asserting the system fails safe rather than open | `ci.yml`, on every push |
 | `polaris-load-test.sh` | HTTP load generation against a running instance | A contributor, by hand |
 | `polaris-atlas-benchmark.sh` | The Atlas endpoints against a multi-million-event log | A contributor, reproducing `SCALING.md` |
+| `polaris-credential-copy-test-pki.py` | A TEST certificate chain for one agency's wallet copies: the ES256 key (0600), the leaf alone as the chain, and the test CA to register with a wallet; never overwrites a key | A contributor or the lab; `test_credential_copy_keys.py` in CI |
 
 ## Python helpers
 

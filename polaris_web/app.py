@@ -513,6 +513,13 @@ if _env_flag('POLARIS_REQUIRE_HSM_SOLE_SIGNER', False):
         _hsm_errs.append("POLARIS_PQC_SIGNING_KEY_FILE must NOT be set (a file key is a fallback signer)")
     if os.environ.get('POLARIS_USE_REAL_PQC') != '1':
         _hsm_errs.append("POLARIS_USE_REAL_PQC must be '1' (the deterministic placeholder is not the HSM)")
+    # 2026-09-28: a wallet copy is signed ES256 by a per-agency key that is a FILE in this
+    # version (credential_copy_keys.py), so a sole-signer deployment cannot offer wallet
+    # copies until that key has HSM custody. Without this line the profile's promise, that
+    # nothing signs outside the HSM, would be false the day wallet copies were configured.
+    if os.environ.get('POLARIS_CREDENTIAL_COPY_KEYS_DIR'):
+        _hsm_errs.append("POLARIS_CREDENTIAL_COPY_KEYS_DIR must NOT be set (wallet-copy keys are files, "
+                         "and this profile allows no signer outside the HSM)")
     if _hsm_errs:
         sys.stderr.write(
             "\n  FATAL: POLARIS_REQUIRE_HSM_SOLE_SIGNER is set, but the HSM is not the sole\n"

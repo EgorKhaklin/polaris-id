@@ -5,9 +5,10 @@ there, or an operator deciding whether to offer it. **Job:** state what the wall
 governs it, what it inherits from the Polaris credential and what it does not, before the code
 exists.
 
-**State: the record is built, the endpoints are not.** `CredentialCopy`,
-`uc_issue_credential_copy` and `credential_copy_valid_indexes` exist (2026-09-28); the
-OpenID4VCI routes, keys and offers follow. The bet is [lab/strategy/005](../../lab/strategy/005-oid4vci-issuer.md).
+**State: the record and the keys are built, the endpoints are not.** `CredentialCopy`,
+`uc_issue_credential_copy`, `credential_copy_valid_indexes` and the key loader
+`polaris_web/credential_copy_keys.py` exist (2026-09-28); the OpenID4VCI routes and offers
+follow. The bet is [lab/strategy/005](../../lab/strategy/005-oid4vci-issuer.md).
 The lab showed that two wallets Polaris did not write take a credential from a conformant
 pre-authorized-code issuer without a workaround ([STEP2](../../lab/strategy/005/STEP2.md)). It
 also showed that a copy issued under the record's rules obeys the record, 7 of 7 with two
@@ -99,10 +100,16 @@ borrow a valid copy's index. The status defence narrows a forgery; it does not p
 ## Keys
 
 Each agency has an ES256 leaf whose chain the wallet copy carries in `x5c`, with the anchor
-left out and a leaf that is not self-signed. In version 1 the key lives in the secrets
-directory as a file, beside the other file-custody material. PKCS#11 and KMS come later, through
-the custody interface. The ML-DSA custody key never signs a wallet copy, and the ES256 key never
-signs anything else.
+left out. In version 1 the key is a file per agency in `POLARIS_CREDENTIAL_COPY_KEYS_DIR`
+([KEY-CEREMONY](../operator/KEY-CEREMONY.md#wallet-copy-keys-es256)). The loader refuses a key
+a verifier would reject or that could do more than sign copies: a key file open to group or
+others, a key that is not P-256 or not the leaf's, a leaf that is a CA, carries keyCertSign or
+lacks digitalSignature, a self-signed certificate anywhere in the file, a link that does not
+verify, an intermediate that is not a CA, and a chain outside its validity window, checked
+again at every use. The ML-DSA custody key never signs a wallet copy, and the ES256 key never
+signs anything else. PKCS#11 and KMS come later, through the custody interface; until then the
+HSM-sole-signer profile refuses to start with wallet-copy keys configured, since they would be
+a signer outside the HSM.
 
 ## Privacy
 
