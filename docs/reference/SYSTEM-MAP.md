@@ -87,6 +87,7 @@ polaris/
 │
 ├── .github/workflows/  ← ci.yml (21 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the site)
 ├── .github/dependabot.yml, .pre-commit-config.yaml, .gitignore, .coveragerc, .trivyignore, ruff.toml
+├── vex.openvex.json   ← scanner findings that do not affect Polaris, and why (OpenVEX)
 ├── .mailmap           ← names the author of the commits a test fixture identity signed on 2026-09-28
 ```
 

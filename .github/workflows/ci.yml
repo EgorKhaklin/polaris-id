@@ -40,6 +40,11 @@ on:
 # must not, and two main commits lost their results within the hour (0a15c2b, e8c649f) before
 # this was corrected. Keying a push on its own SHA puts every commit in a group of one, where
 # there is nothing to queue behind and nothing to cancel.
+# Least privilege, stated rather than inherited: every job reads the repository and nothing
+# more (OpenSSF Baseline OSPS-AC-04.02).
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

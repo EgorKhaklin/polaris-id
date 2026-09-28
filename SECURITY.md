@@ -51,6 +51,16 @@ interoperability work, not for protecting anything.
 
 ---
 
+## Supported versions
+
+Security fixes go to the newest release of each package and to the newest release candidate of
+the tree. Until 1.0.0, an older version stops receiving security updates the day a newer one is
+published: the fix ships as a new version, and the table above lists what older versions still
+carry. `polaris-oid4vp` 1.0.0rc7 stays the certified version and is listed with its known defects;
+it is not patched in place.
+
+---
+
 ## Scope
 
 **In scope:** the application (`polaris_web/`), the SQL schema, procedures and triggers
@@ -86,6 +96,10 @@ SLSA build provenance (Sigstore via GitHub OIDC):
 gh attestation verify sbom-python.spdx.json --repo EgorKhaklin/polaris-id
 ```
 
+The attestation names the repository and the workflow run that built the artifact, so a passing
+check also confirms who produced it. The packages on PyPI and npm carry the same kind of provenance
+from trusted publishing, shown on each registry page.
+
 Container images are built and scanned in CI but not published to a registry, so there is no
 image digest to sign yet.
 
@@ -101,6 +115,14 @@ pinned by digest. Dependabot alerts and weekly updates cover Python, Rust, GitHu
 minor bumps are applied in batches and validated by a full CI run; majors of foundation
 dependencies are planned work. The `cve-scan` and `image-cve-scan` CI jobs fail the build on a
 known CVE in the runtime surface or a fixable critical in an image.
+
+Thresholds. Dependency findings (SCA): a known vulnerability in a runtime dependency, or a fixable
+critical in an image, fails the build and is fixed before anything merges; a high finding in an
+image is reviewed before each release and fixed once a fixed version exists. A dependency whose
+license does not allow its use in an Apache-2.0 project is not added (NOTICE lists every license). Code findings (SAST): bandit fails the build on a high-severity
+finding; medium findings are reviewed before each release. No release is
+cut while either job fails. A finding that does not affect Polaris is declared, with the reason, in
+[vex.openvex.json](vex.openvex.json) and, for the image scan, in `.trivyignore`.
 
 ---
 

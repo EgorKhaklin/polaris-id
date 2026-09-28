@@ -62,9 +62,13 @@ jobs:
         run: cd sdk/typescript && npm pack --pack-destination "$GITHUB_WORKSPACE/dist"
 
       - name: What would be published
+        # Inputs reach the shell as variables, never as pasted text (OpenSSF Baseline OSPS-BR-01.04).
+        env:
+          TARGET: ${{ inputs.target }}
+          CONFIRM: ${{ inputs.confirm }}
         run: |
-          echo "target: ${{ inputs.target }}"
-          if [ "${{ inputs.confirm }}" = "PUBLISH" ]; then
+          echo "target: $TARGET"
+          if [ "$CONFIRM" = "PUBLISH" ]; then
             echo "confirm: PUBLISH — a real publish will run"
           else
             echo "confirm: (not PUBLISH) — DRY RUN, nothing leaves this runner"
@@ -94,12 +98,15 @@ jobs:
           name: distributions
           path: dist
       - name: Select the one package being published
+        env:
+          TARGET: ${{ inputs.target }}
         run: |
           mkdir -p upload
-          case "${{ inputs.target }}" in
+          case "$TARGET" in
             "polaris-verify (PyPI)")     cp dist/polaris-verify/* upload/ ;;
             "polaris-sdk-python (PyPI)") cp dist/polaris-sdk-python/* upload/ ;;
             "polaris-oid4vp (PyPI)")     cp dist/polaris-oid4vp/* upload/ ;;
+            *) echo "::error::unknown target: $TARGET"; exit 1 ;;
           esac
           ls -l upload
       - uses: pypa/gh-action-pypi-publish@release/v1
