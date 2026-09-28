@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 34" width="1200" height="34" role="img" aria-label="">
+<defs>
+<linearGradient id="l" x1="0" x2="508" y1="0" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#b08a3e" stop-opacity="0"/><stop offset="1" stop-color="#b08a3e" stop-opacity=".75"/></linearGradient>
+<linearGradient id="r" x1="1200" x2="692" y1="0" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#b08a3e" stop-opacity="0"/><stop offset="1" stop-color="#b08a3e" stop-opacity=".75"/></linearGradient>
+</defs>
+<line x1="0" y1="17" x2="508" y2="17" stroke="url(#l)" stroke-width="1.2"/>
+<line x1="692" y1="17" x2="1200" y2="17" stroke="url(#r)" stroke-width="1.2"/>
+<g fill="none" stroke="#b08a3e" stroke-width="1.8" stroke-linejoin="miter" stroke-linecap="square">
+<path d="M516 24.5L516 9.5L528 9.5L528 18.5L522 18.5L522 15.5L525 15.5L525 12.5L519 12.5L519 24.5L531 24.5L531 24.5L531 9.5L543 9.5L543 18.5L537 18.5L537 15.5L540 15.5L540 12.5L534 12.5L534 24.5L546 24.5L546 24.5L546 9.5L558 9.5L558 18.5L552 18.5L552 15.5L555 15.5L555 12.5L549 12.5L549 24.5L561 24.5L561 24.5L561 9.5L573 9.5L573 18.5L567 18.5L567 15.5L570 15.5L570 12.5L564 12.5L564 24.5L576 24.5"/>
+<path d="M684 24.5L684 9.5L672 9.5L672 18.5L678 18.5L678 15.5L675 15.5L675 12.5L681 12.5L681 24.5L669 24.5L669 24.5L669 9.5L657 9.5L657 18.5L663 18.5L663 15.5L660 15.5L660 12.5L666 12.5L666 24.5L654 24.5L654 24.5L654 9.5L642 9.5L642 18.5L648 18.5L648 15.5L645 15.5L645 12.5L651 12.5L651 24.5L639 24.5L639 24.5L639 9.5L627 9.5L627 18.5L633 18.5L633 15.5L630 15.5L630 12.5L636 12.5L636 24.5L624 24.5"/>
+</g>
+<path fill="#b08a3e" d="M606.36 10.64L602.4 17L606.36 23.36L600 19.4L593.64 23.36L597.6 17L593.64 10.64L600 14.6ZM600 2L601.91 15.09L615 17L601.91 18.91L600 32L598.09 18.91L585 17L598.09 15.09Z"/>
+</svg>

@@ -6,16 +6,16 @@
 
 A reference implementation on notional data, not a deployment. CI boots the production-profile stack, the post-quantum TLS handshake, the backup round trip and the disaster-recovery drill on every push.
 
-[![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/EgorKhaklin/polaris-id?include_prereleases&label=release&color=2b5797&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/releases/latest)
-[![License](https://img.shields.io/badge/license-Apache--2.0-3b6e48?style=flat-square)](LICENSE)
-[![Status](https://img.shields.io/badge/status-reference%20implementation%2C%20not%20production-b8860b?style=flat-square)](docs/PRODUCTION-READINESS.md)
+[![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/EgorKhaklin/polaris-id?include_prereleases&label=release&color=c9a352&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/releases/latest)
+[![License](https://img.shields.io/badge/license-Apache--2.0-2b5797?labelColor=0a1421&style=flat-square)](LICENSE)
+[![Status](https://img.shields.io/badge/status-reference%20implementation%2C%20not%20production-b8860b?labelColor=0a1421&style=flat-square)](docs/PRODUCTION-READINESS.md)
 
 [**Project site**](https://egorkhaklin.github.io/polaris-id/) · [What it is](#what-it-is) · [Status](#status) · [Try it](#try-it) · [The ten guarantees](#the-ten-guarantees) · [Architecture](#architecture) · [Verified](#verified-not-asserted) · [Run it](#run-it) · [Documentation](#documentation)
 
 </div>
 
----
+<img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## What it is
 
@@ -40,7 +40,7 @@ Around the credential:
 - *Relying-party correlation is bounded, not eliminated.* What a verifier is **shown** differs from what it has to **store**: a full presentation still shows a stable `token_value`, so two relying parties keeping raw material can correlate. Per-relying-party identifiers mean the value a verifier writes down is unrecognisable at the next one. Findings: [lab/linkability](lab/linkability/README.md).
 - *Offline authorization trades revocation latency for issuer non-observation.* A revoked credential's last ACTIVE assertion stays valid until it expires (one hour by default); a high-risk verifier demands online status.
 
----
+<img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## Status
 
@@ -69,7 +69,7 @@ Around the credential:
 
 Everything else here is the project checking itself: one author's reference implementation on notional data. It has never held real identity data, and there has been no independent security review, no other operator and no pilot. The ledger of outside results is [the scoreboard](lab/EXTERNAL-NOUNS.md).
 
----
+<img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## Try it
 
@@ -118,7 +118,7 @@ python3 conformance/run_conformance.py --self                          # 184 pub
 python3 scripts/polaris-compat-suite.py                                # frozen v1 protocol
 ```
 
----
+<img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## The ten guarantees
 
@@ -139,7 +139,7 @@ The vocation above them: **no person can be compelled to renounce, transfer, or 
 
 Each is machine-checked by [`polaris_checks`](polaris_checks/): 336 plain `check_*` functions (v1.0.0-rc.66), each with a detection test proving it fails on a broken fixture. Why these ten: [MISSION.md](MISSION.md).
 
----
+<img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## Threats answered by construction
 
@@ -152,7 +152,7 @@ Each is machine-checked by [`polaris_checks`](polaris_checks/): 336 plain `check
 | **Auditability vs. privacy** | A Plonky2 SNARK proves ledger membership and nothing else. | [zk-snark](docs/design/zk-snark.md) |
 | **Issuer overreach** | A per-agency revocation-rate ceiling enforced by trigger. | [issuer-discretion](docs/design/issuer-discretion.md) |
 
----
+<img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## Architecture
 
@@ -172,7 +172,7 @@ and writes nothing; the signer is ML-DSA-65, the algorithm a registry row ([over
 
 Reference deployment profile: a Caddy TLS edge, gunicorn, PgBouncer, PostgreSQL with pgBackRest, and Redis; all non-root with capabilities dropped.
 
----
+<img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## Cryptography
 
@@ -191,7 +191,7 @@ The claim is **algorithm agility under an audited migration path**, not settled 
 - **The ZK proof needs no trusted setup** (Plonky2, FRI-based).
 - **Limits:** without real PQC enabled, development signing writes a named placeholder that verifies against no key; and the classical half of a credential in migration is protected by nothing here. See [PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
----
+<img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## Verified, not asserted
 
@@ -216,7 +216,7 @@ python3 -m polaris_checks.run        # the invariant layer, no database needed
 python3 scripts/polaris-ship.py run  # the full local gate, matching CI
 ```
 
----
+<img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## Run it
 
@@ -252,7 +252,7 @@ curl -fsS https://$POLARIS_DOMAIN/api/health
 - **Kubernetes:** the Helm reference profile ([docs/operator/KUBERNETES.md](docs/operator/KUBERNETES.md)).
 - **Runbooks:** [INSTALL](docs/operator/INSTALL.md) · [OPERATIONS](docs/operator/OPERATIONS.md) · [SECRETS](docs/operator/SECRETS.md) · [DR](docs/operator/DR.md) · [FAILOVER](docs/operator/FAILOVER.md).
 
----
+<img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## Where Polaris sits
 
@@ -267,7 +267,7 @@ curl -fsS https://$POLARIS_DOMAIN/api/health
 
 The first two columns matter most: every other row is deployed at national scale; Polaris is neither. Its other ticks are design properties in the codebase, on notional data. None is novel alone; the point is all five in one codebase, enforced at the schema and machine-checked.
 
----
+<img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## Documentation
 
@@ -283,7 +283,7 @@ The first two columns matter most: every other row is deployed at national scale
 | Reading it as research | [Project report, Version 3](docs/paper/polaris_project_report_v3.pdf) (the system at 1.0.0-rc.7) · [Russian edition](docs/paper/polaris_project_report_v3_ru.pdf) · [CITATION.cff](CITATION.cff) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md) |
 
----
+<img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## Scope, honestly
 
@@ -291,8 +291,22 @@ The first two columns matter most: every other row is deployed at national scale
 - **Not production-ready, and says so.** Remaining gaps are operator decisions (key custody, offsite backup, alerting, legal review, penetration test): [PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 - **Security disclosures:** [SECURITY.md](SECURITY.md).
 
----
+<img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## License
 
 [Apache License 2.0](LICENSE), for its express patent grant. Copyright 2026 Egor Khaklin. If you build on it, retain [LICENSE](LICENSE) and [NOTICE](NOTICE); NOTICE names every dependency license (all permissive except psycopg2, LGPL 3 with an OpenSSL exception, used unmodified).
+
+<br>
+
+<div align="center">
+
+<img src="docs/assets/band.svg" width="100%" alt="">
+
+<br>
+
+<img src="docs/assets/seal.svg" width="76" alt="The VANTA Corp owl">
+
+<sub><i>Fixus inter mutabilia</i> · fixed amid the mutable</sub>
+
+</div>
