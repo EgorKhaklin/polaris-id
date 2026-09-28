@@ -11,103 +11,87 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
-- `polaris-oid4vp serve` answers the `redirect_uri` it sends an accepted wallet to (`/done`) with a page; before, a wallet that followed it, as HAIP 5.1 intends, was answered 404. Found with OID4VCgo's wallet (`lab/interop/oid4vcgo/`).
+- `polaris-oid4vp serve` answers `/done`, where it sends an accepted wallet, with a page instead of 404.
+- `polaris-oid4vp` status checks allow a list dated up to 300 s ahead and read the clock after the fetch.
 
 ### Added
 
-- `vectors/anchors/ml-dsa-65-issuer.json`, the sample issuer's published key, so the whole trust decision can be tried with `polaris-verify` from PyPI and no clone (README, Try it).
+- `vectors/anchors/ml-dsa-65-issuer.json`, the sample issuer's key, to try `polaris-verify` from PyPI without a clone.
 
 ## v1.0.0-rc.66 — 2026-09-28 (a Polaris credential in a wallet Polaris did not write)
 
-One security fix, three fixes, and OpenID4VCI issuance. The detached verifier and both SDKs accepted a foreign credential through an unsigned trust edge that its attesting authority's own manifest said had ended; it takes an authentic credential and a fresh manifest from an authority the relying party already trusts, and it forges nothing. New: an operator offers a wallet copy of one ACTIVE credential over OpenID4VCI 1.0, the database decides at redemption, and each agency publishes a Token Status List computed from the record. walt.id and Credo each received a copy from the product, in runs driven by this repository. The copy is a classical ES256 credential; nothing verified from it rests on ML-DSA-65.
-
-- **Breaking**: `polaris-verify` and both SDKs refuse an unsigned (legacy) trust edge past its own `valid_until`, or whose `valid_until` cannot be read, as they already refused a signed one.
-- **Breaking**: every error on an `/api/*` path is JSON, whatever its code; a wrong method is a JSON `405` with its `Allow` header, where it was the HTML page.
+OpenID4VCI issuance of wallet copies, received by walt.id and Credo; one security fix and three fixes.
 
 ### Security
 
-- `polaris-verify` and both SDKs: a cross-authority decision refuses an unsigned (legacy) trust edge whose own `valid_until` has passed or cannot be read, as it already refused a signed one; before, an edge that its authority's own fresh manifest said had ended still granted acceptance. A legacy edge that states no window is decided as before ([wire spec section 4](docs/reference/WIRE-SPEC.md)).
-- **Relying parties, until fixed packages are published**: pass `require_signed_attestation=True` to refuse legacy edges; with `polaris-verify` 1.0.0rc3 that closes the gap. The published SDKs (1.0.0rc3 and 1.0.0-rc.3) also accept a signed edge past its own window (fixed in the tree in rc.65, not yet published), so SDK callers should also check the edge's `valid_until` themselves.
+- **Breaking**: `polaris-verify` and both SDKs refuse an unsigned trust edge past its `valid_until` or with an unreadable one.
+- Until fixed packages are published, pass `require_signed_attestation=True`; [SECURITY.md](SECURITY.md) lists what each version lacks.
 
 ### Fixed
 
-- `polaris-oid4vp`: a disclosure whose claim name is not a string, and an issuer-signed `vct` that is not a string, are refused; before, `verify_presentation`, documented never to raise, raised `TypeError`. The disclosure needed only one genuine credential from a trusted issuer.
-- `polaris-oid4vp`: a response JWE whose `enc` is not a string, or whose protected header or decrypted body nests deeper than 64 levels, is refused as a `JweError`; before, `TypeError` or `RecursionError` escaped `Verifier.handle_direct_post`, documented never to raise. `serve` answered 400 either way.
-- Every framework error on an `/api/*` path is JSON `{"error", "request_id"}`, whatever its code, as the API reference promises; a wrong method (405, which keeps its `Allow` header) was still the HTML page.
+- **Breaking**: a wrong method on `/api/*` is a JSON `405` with its `Allow` header, not the HTML page.
+- `polaris-oid4vp` refuses a disclosure name or `vct` that is not a string, instead of raising `TypeError`.
+- `polaris-oid4vp` refuses a response JWE with a non-string `enc` or over 64 levels of nesting, instead of raising.
 
 ### Added
 
-- The wallet copy record for OpenID4VCI issuance (`CredentialCopy`, `uc_issue_credential_copy`, `credential_copy_valid_indexes`; migrations 2026-09-28-001 and -002, [design](docs/design/oid4vci-issuer.md)): the database refuses a copy of a credential that is not ACTIVE and computes each status list from the record, on the UTC clock whatever a session's timezone.
-- OpenID4VCI 1.0 issuance of wallet copies, pre-authorized code grant ([API](docs/reference/API.md#openid4vci-issuance-wallet-copies), wire spec section 3.19): an operator offers a copy of one ACTIVE credential (`POST /tokens/<id>/wallet-offer`), and the wallet redeems it at `/api/v1/oid4vci/<agency_id>/token`, `/nonce` and `/credential` for an SD-JWT VC signed ES256 under the agency's certificate and bound to the wallet's key. The record decides at redemption, and each agency publishes its Token Status List. A classical credential: nothing verified from it rests on ML-DSA-65. walt.id Wallet API v2 1.0.0 and Credo 0.6.3 each received one from the product ([lab/strategy/005/STEP5.md](lab/strategy/005/STEP5.md)).
-- Per-agency ES256 keys for wallet copies (`POLARIS_CREDENTIAL_COPY_KEYS_DIR`, [key ceremony](docs/operator/KEY-CEREMONY.md#wallet-copy-keys-es256)): a key or chain a verifier would reject, or a leaf that could issue certificates, is refused at load, and the chain's validity window is checked at every use; the HSM-sole-signer profile refuses to start with them configured. `scripts/polaris-credential-copy-test-pki.py` writes a test chain.
-- `polaris-oid4vp serve --issuer-trust-anchor PEM` trusts an issuer that signs with its certificate in `x5c`, as HAIP issuers do; before, the server could configure only issuer JWKs, so it could verify no HAIP issuer's credential. Found issuing into walt.id and Credo (`lab/strategy/005/`).
-- 26 conformance cases, 181 in all, for checks a verifier could skip and still conform: a trust edge's own window, signed or not (`cross-authority-edge-window-*`); a stale manifest, a retired anchor, an edge for another key or with a bad signature, and a stale, foreign or unauthentic revocation feed (`cross-authority-variants-*`); a witness over another log, size or root (`timestamp-anchor-variants-*`); a holder proof's exact window (`holder-chain-proof-window-*`); a revoked leaf in upper case (`cross-authority-uppercase-leaf-*`); and legacy edges refused when signed ones are required (`cross-authority-require-signed-*`). A cross-authority case may set `require_signed_attestation` ([conformance spec](conformance/SPEC.md)).
+- OpenID4VCI 1.0 issuance of SD-JWT VC wallet copies of an ACTIVE credential; classical ES256, not ML-DSA-65 ([API](docs/reference/API.md#openid4vci-issuance-wallet-copies), [design](docs/design/oid4vci-issuer.md)).
+- `CredentialCopy` record (migrations 2026-09-28-001, -002): the database copies only ACTIVE credentials and computes each status list.
+- Per-agency ES256 wallet-copy keys (`POLARIS_CREDENTIAL_COPY_KEYS_DIR`), checked at load and every use; refused under the HSM-sole-signer profile.
+- `polaris-oid4vp serve --issuer-trust-anchor PEM` trusts issuers that sign with an `x5c` certificate, as HAIP issuers do.
+- 26 conformance cases (181 in all) for checks a verifier could skip; a case may set `require_signed_attestation`.
 
 ## v1.0.0-rc.65 — 2026-09-27 (verifiers refuse what they were never asked to accept)
 
-Four defects fixed, each against a promise the tree already made: one found by injecting faults into the running system, one by mutating two independent wallets' real output, and two by holding the SDKs and the detached verifier to the wire specification.
-
-- **Breaking**: a cross-authority decision with no presented context is refused by every verifier; callers that passed no context were accepting edges from any context.
-- **Breaking**: both SDKs refuse a signed trust edge past its `valid_until` or with an unreadable one, as the detached verifier already did.
-- **Breaking**: `polaris-oid4vp` refuses a `vp_token` not keyed by the DCQL query id it asked for.
-- **Breaking**: errors on `/api/*` paths are always JSON; clients that received the HTML error page for framework errors now receive `{"error", "request_id"}`.
+Four fixes to promises the verifiers already made.
 
 ### Fixed
 
-- Errors on `/api/*` paths that come from the framework (an unhandled failure, an unknown path, an oversized body, a rate limit) are JSON `{"error", "request_id"}` as the API reference promises, not the HTML error page.
-- The Python and TypeScript SDKs' cross-authority decision refuses a signed trust edge past its `valid_until`, or whose `valid_until` cannot be read, as the detached verifier already did; before, a fresh manifest carrying an expired edge was accepted.
-- A cross-authority decision with no presented context rejects, in the detached verifier and both SDKs (wire spec section 4, conformance case `cross-authority-no-context`); before, a missing context matched a trust edge from any context.
-- `polaris-oid4vp` refuses a `vp_token` keyed by anything other than the DCQL credential query id it asked for (OpenID4VP 1.0 section 8.1); before, one presentation under any key was taken as the answer. Found by mutating a genuine Credo presentation (`lab/interop/credo/adversarial/`).
+- **Breaking**: framework errors on `/api/*` (failure, unknown path, oversized body, rate limit) are JSON, not the HTML page.
+- **Breaking**: both SDKs refuse a signed trust edge past its `valid_until` or with an unreadable one.
+- **Breaking**: every verifier rejects a cross-authority decision with no presented context.
+- **Breaking**: `polaris-oid4vp` refuses a `vp_token` not keyed by the DCQL query id it asked for.
 
 ## v1.0.0-rc.64 — 2026-09-27 (a credential's signature cannot be borrowed from any other artifact)
 
-Two verifier defects fixed, found by trying to separate the public surface from the issuer.
-
-- **Breaking**: the issuer, the database and every verifier refuse a `token_value` that is not a credential serial (more than 128 bytes of UTF-8, beginning with `{`, or containing control characters); every published credential already conforms.
+Two verifier fixes and conformance cases for exchanges.
 
 ### Security
 
-- `polaris-verify`, both SDKs and issuance: a pack's `token_value` must be a credential serial (at most 128 bytes, not beginning with `{`, no control characters); before, any authority-signed artifact re-wrapped as a pack verified as an authentic credential from a trusted issuer. `IdentityToken` refuses a non-serial value (`chk_token_value_is_a_serial`, migration 2026-09-27-004).
+- **Breaking**: issuance, the database and every verifier require `token_value` to be a credential serial, so no other signed artifact passes as one.
 
 ### Fixed
 
-- `polaris-verify`: an exchange receipt that states no context was reported requester-authorized by an attestation from any context; the receipt's context must now match exactly, as for the request.
+- `polaris-verify`: an exchange receipt that states no context no longer matches an attestation from any context.
 
 ### Added
 
-- Conformance cases for an exchange in use (`exchange-use`): whether an envelope, receipt or mint statement is by the party expected, whether the requester was attested in its context at a stated instant (and by which authority, for a receipt), whether the bodies held match the commitments, and which responder a genuine receipt names. Both SDKs gain `verify_exchange_request`, `verify_exchange_receipt` and `verify_exchange_mint` (`verifyExchangeRequest`, `verifyExchangeReceipt`, `verifyExchangeMint`).
-- `polaris-verify`: `verify_exchange_request` takes `now`, deciding the requester's authorization at a stated instant as `verify_exchange_receipt` already did; without it the wall clock decides, as before.
+- `exchange-use` conformance cases; both SDKs gain `verify_exchange_request`, `verify_exchange_receipt` and `verify_exchange_mint`.
+- `polaris-verify`: `verify_exchange_request` takes `now`, as `verify_exchange_receipt` does.
 
 ## v1.0.0-rc.63 — 2026-09-27 (the pooler keeps each operator's scope; the application role writes less)
 
-Security fixes found by attacking the deployment as a compromised application and by measuring it under load.
-
-- **Breaking**: the pooler refuses `PGBOUNCER_POOL_MODE=transaction` and `statement` at start; remove the override or set `session`.
-- **Breaking**: `quota-set`, `discretion-set`, `user-create`, `user-passwd`, `user-deactivate`, `key-register`, `key-retire`, `key-compromise`, `rp-register` and `rp-policy` exit 3 under the application role; run them with the schema owner (`POLARIS_DB_USER`), and apply the three migrations of 2026-09-27.
+Security fixes from attacking the deployment as a compromised application.
 
 ### Security
 
-- A referee's recorded level is now derived from their proofing, a co-signer must be proofed, and the vouching bound is enforced by the database; the application role can no longer write vouchings.
-- The application role can no longer write identity-proofing records, so it cannot record an assurance level no evidence supports.
-- The application role can no longer set an authority's quota or revocation bound; `quota-set` and `discretion-set` run as the schema owner.
-- The application role can no longer create, promote, deactivate or reset the password of an operator account; it keeps only the lockout columns. `user-create`, `user-passwd` and `user-deactivate` run as the schema owner.
-- The application role can no longer register an authority key, record a card personalization or write a retention policy; `key-register`, `key-retire` and `key-compromise` run as the schema owner.
-- The application role can no longer register a relying party or change its secret, scope or privacy policy; it stamps only `last_used_at`. `rp-register` and `rp-policy` run as the schema owner.
-- The connection pooler runs in session mode and resets each server connection between clients; transaction and statement pooling are refused. In transaction mode a request inherited the previous operator's authority scope.
-
-### Added
-
-- Conformance cases for an agent grant in use (`agent-grant-use`): whether the action is in scope, whether a revocation ends the grant, whether the agent's proof binds this grant, action and nonce, and whether the grant's key is one an issuer bound under an active binding. Both SDKs gain `agent_proof_proves` / `agentProofProves` and `grant_principal_bound` / `grantPrincipalBound`.
-
-### Changed
-
-- The trigger refusal drill runs on every push.
-- The constitution mutation drill runs on every push, and the application mutation drill runs weekly over every refusal; neither ran in CI before. Tests now notice the 25 application refusals nothing did.
+- **Breaking**: the pooler runs in session mode only; in transaction mode a request could inherit another operator's scope.
+- **Breaking**: `quota-set`, `discretion-set`, `user-{create,passwd,deactivate}`, `key-{register,retire,compromise}`, `rp-register` and `rp-policy` run as the schema owner.
+- The application role can no longer write vouchings, proofing records, quotas, revocation bounds, operator accounts, authority keys, card personalizations, retention policies or relying parties.
+- A referee's level derives from their proofing, co-signers must be proofed, and the database bounds vouching.
 
 ### Fixed
 
-- `polaris-verify`: a delegated grant signed with a holder key whose binding the issuer had revoked was reported bound and usable.
-- `polaris-id --help` examples for `revoke` and `quota-show` now parse.
+- `polaris-verify` no longer reports a grant signed under a revoked holder binding as bound.
+- `polaris-id --help` examples for `revoke` and `quota-show` parse.
+
+### Added
+
+- `agent-grant-use` conformance cases; both SDKs gain `agent_proof_proves` and `grant_principal_bound`.
+
+### Changed
+
+- The trigger refusal and constitution mutation drills run on every push, the application mutation drill weekly.
 
 ## v1.0.0-rc.62 — 2026-09-26 (fifty-nine fixes, one release)
 
