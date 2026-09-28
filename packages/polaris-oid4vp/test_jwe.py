@@ -203,6 +203,39 @@ class StructuralRefusalsCoverageFoundTests(unittest.TestCase):
                     parts[0] = b64u_encode(json.dumps(header, separators=(",", ":")).encode())
                     self._expect(".".join(parts), field)
 
+    def test_an_enc_of_the_wrong_json_type_is_refused_as_a_JweError(self):
+        """`enc` is looked up in a dict, so a list or an object raised TypeError, which
+        escaped `verifier.py`'s `except JweError` and `handle_direct_post` with it. It is the
+        first field read after `alg`. Measured 2026-09-28."""
+        for bad in ([], ["A128GCM"], {"a": 1}):
+            with self.subTest(value=repr(bad)):
+                parts = self.token.split(".")
+                header = json.loads(_decode(parts[0]))
+                header["enc"] = bad
+                parts[0] = b64u_encode(json.dumps(header, separators=(",", ":")).encode())
+                self._expect(".".join(parts), "accepted set")
+
+    def test_deep_nesting_is_refused_as_a_JweError(self):
+        """`sdjwt.py` and `status.py` bound nesting depth before parsing; this module did not.
+        20,000 levels overflow Python 3.12's parser, and RecursionError is not a ValueError,
+        so it escaped every handler here. The protected header is the sender's to write, and
+        so is the decrypted body: the key it is encrypted to is published in the request
+        object. Arrays cost two bytes a level. Measured 2026-09-28."""
+        deep = ("[" * 30_000 + "]" * 30_000).encode()
+        parts = self.token.split(".")
+        parts[0] = b64u_encode(deep)
+        try:
+            self._expect(".".join(parts), "nests deeper")
+        except RecursionError:
+            self.fail("a deeply nested protected header raised RecursionError")
+        token = encrypt_compact(deep, self.key.public_key())
+        try:
+            with self.assertRaises(JweError) as caught:
+                decrypt_response(token, self.key)
+        except RecursionError:
+            self.fail("a deeply nested decrypted body raised RecursionError")
+        self.assertIn("nests deeper", str(caught.exception))
+
     def test_an_epk_with_short_coordinates_is_refused(self):
         parts = self.token.split(".")
         header = json.loads(_decode(parts[0]))

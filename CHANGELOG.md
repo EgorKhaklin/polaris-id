@@ -9,6 +9,11 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ## Unreleased
 
+### Fixed
+
+- `polaris-oid4vp`: a disclosure whose claim name is not a string, and an issuer-signed `vct` that is not a string, are refused; before, `verify_presentation`, documented never to raise, raised `TypeError`. The disclosure needed only one genuine credential from a trusted issuer.
+- `polaris-oid4vp`: a response JWE whose `enc` is not a string, or whose protected header or decrypted body nests deeper than 64 levels, is refused as a `JweError`; before, `TypeError` or `RecursionError` escaped `Verifier.handle_direct_post`, documented never to raise. `serve` answered 400 either way.
+
 ### Added
 
 - The wallet copy record for OpenID4VCI issuance (`CredentialCopy`, `uc_issue_credential_copy`, `credential_copy_valid_indexes`; migration 2026-09-28-001, [design](docs/design/oid4vci-issuer.md)): the database refuses a copy of a credential that is not ACTIVE and computes each status list from the record. No endpoint issues copies yet.

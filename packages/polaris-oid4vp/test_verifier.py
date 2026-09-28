@@ -719,3 +719,35 @@ class HeldOutRequestTests(VerifierTestCase):
         _, status, body = self.exchange()
         self.assertEqual(status, 200)
         self.assertEqual(body, {"redirect_uri": "https://verifier.test/done"})
+
+
+class TheResponsePathReturnsRatherThanRaisesTests(VerifierTestCase):
+    """`handle_direct_post` is documented to return, never to raise ("Nothing returns 500").
+
+    `serve` catches whatever escapes it, so the bundled server answered 400 regardless. A
+    relying party that puts `Verifier` behind its own server has no such net, and these two
+    responses escaped as TypeError until 2026-09-28: one from a wallet holding any genuine
+    credential, one from anybody able to POST.
+    """
+
+    def test_a_disclosure_named_by_an_array_is_answered_400(self):
+        junk = b64u_encode(json.dumps(["salt", ["iss"], 1]).encode())
+        try:
+            _, status, body = self.exchange(extra_disclosure=junk)
+        except TypeError as exc:
+            self.fail("handle_direct_post raised %r" % exc)
+        self.assertEqual(status, 400)
+        self.assertEqual(body, Verifier.REFUSAL_BODY)
+
+    def test_an_enc_of_the_wrong_json_type_is_answered_400(self):
+        _, jar = self.verifier.new_request()
+        parts = self.wallet.respond(jar)["response"][0].split(".")
+        header = json.loads(b64u_decode(parts[0]))
+        header["enc"] = ["A128GCM"]
+        parts[0] = b64u_encode(json.dumps(header, separators=(",", ":")).encode())
+        try:
+            status, body, _ = self.verifier.handle_direct_post({"response": [".".join(parts)]})
+        except TypeError as exc:
+            self.fail("handle_direct_post raised %r" % exc)
+        self.assertEqual(status, 400)
+        self.assertEqual(body, Verifier.REFUSAL_BODY)

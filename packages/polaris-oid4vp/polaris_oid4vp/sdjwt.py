@@ -686,11 +686,13 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
     if expected_vct is not None:
         wanted = ({expected_vct} if isinstance(expected_vct, str)
                   else {v for v in expected_vct if isinstance(v, str)})
-        if payload.get("vct") not in wanted:
+        # A string first: `vct` in a set is a hash lookup, and an issuer-signed array or
+        # object raised TypeError there (2026-09-28).
+        vct = payload.get("vct")
+        if not isinstance(vct, str) or vct not in wanted:
             return _refuse("vct", "the credential is of type %r and this request asked for "
                                   "%s: a credential of the wrong type is not an answer to "
-                                  "the question that was put"
-                                  % (payload.get("vct"), sorted(wanted)))
+                                  "the question that was put" % (vct, sorted(wanted)))
 
     if payload.get("_sd_alg", "sha-256") != "sha-256":
         return _refuse("sd_alg", "the credential declares _sd_alg=%r; this verifier computes "
@@ -741,6 +743,13 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         digest = _digest(encoded)
         if digest in by_digest:
             return _refuse("disclosure", "the same disclosure was presented twice")
+        # A claim name is a JSON object key, so a string. This runs before the commitment
+        # check below, on input any holder of one genuine credential writes, and an array or
+        # an object reached the forbidden-name set lookup and raised TypeError (2026-09-28).
+        if len(parsed) == 3 and not isinstance(parsed[1], str):
+            return _refuse("disclosure",
+                           "a disclosure's claim name is a JSON %s, not a string, so it "
+                           "names no claim" % type(parsed[1]).__name__)
         # A 3-element disclosure names a claim. An object-property disclosure may not name
         # one of the registered claims the credential's own integrity rests on, whether or
         # not the payload already carries it.

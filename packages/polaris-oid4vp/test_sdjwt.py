@@ -871,20 +871,55 @@ class HostileInputTotalityTests(unittest.TestCase):
 
     def test_deeply_nested_json_is_refused_rather_than_overflowing_the_stack(self):
         """2,780 bytes did it. `json.loads` is recursive with no limit of its own, and
-        RecursionError is not a ValueError, so every handler in the module missed it."""
-        for label, part in (("payload", 1), ("header", 0)):
-            with self.subTest(label):
-                # Built as raw text on purpose: json.loads on it would overflow HERE,
-                # in the test, and never reach the thing under test.
-                deep = "[" * 994 + "]" * 994
-                header = {"alg": "ES256", "typ": "dc+sd-jwt"}
-                pieces = [b64u_encode(json.dumps(header).encode()),
-                          b64u_encode(deep.encode()), b64u_encode(b"\x00" * 64)]
-                if part == 0:
-                    pieces[0] = b64u_encode(deep.encode())
-                v = self.w.verify(".".join(pieces) + "~~")
-                self.assertFalse(v.authentic)
-                self.assertEqual(v.code, "malformed")
+        RecursionError is not a ValueError, so every handler in the module missed it.
+
+        2026-09-28: at 994 levels this test could no longer see the bound it pins. Python
+        3.12's parser takes 994 levels without overflowing, the result is a list rather than
+        an object, and "must both be JSON objects" refused it as `malformed` too, so the
+        test passed with the depth bound deleted. 20,000 levels overflow 3.12; arrays cost
+        two bytes a level, so 30,000 stay under the 64 KiB size bound, where only the depth
+        bound can refuse them. The reason is asserted for the same cause: a code alone was
+        satisfied by a different refusal.
+        """
+        for depth in (10_000, 30_000):
+            for label, part in (("payload", 1), ("header", 0)):
+                with self.subTest(label, depth=depth):
+                    # Built as raw text on purpose: json.loads on it would overflow HERE,
+                    # in the test, and never reach the thing under test.
+                    deep = "[" * depth + "]" * depth
+                    header = {"alg": "ES256", "typ": "dc+sd-jwt"}
+                    pieces = [b64u_encode(json.dumps(header).encode()),
+                              b64u_encode(deep.encode()), b64u_encode(b"\x00" * 64)]
+                    if part == 0:
+                        pieces[0] = b64u_encode(deep.encode())
+                    try:
+                        v = self.w.verify(".".join(pieces) + "~~")
+                    except RecursionError:
+                        self.fail("nesting %d levels raised RecursionError out of a function "
+                                  "documented never to raise" % depth)
+                    self.assertFalse(v.authentic)
+                    self.assertEqual(v.code, "malformed")
+                    self.assertIn("nests deeper", v.reason)
+
+    def test_a_disclosure_named_by_an_array_or_an_object_is_refused(self):
+        """A claim name is a string. An array or an object reached the forbidden-name test,
+        a set lookup, and raised TypeError before the commitment check, so one genuine
+        credential from a trusted issuer was enough, with or without a key binding JWT.
+        Measured 2026-09-28."""
+        for name in (["iss"], {"a": 1}):
+            for drop in (False, True):
+                with self.subTest(name=repr(name), no_key_binding=drop):
+                    junk = b64u_encode(json.dumps(["salt", name, 1]).encode())
+                    try:
+                        v = self.w.verify(self.w.present(extra_disclosure=junk,
+                                                         drop_key_binding=drop),
+                                          require_key_binding=not drop)
+                    except TypeError as exc:
+                        self.fail("a disclosure named %r raised %r out of a function "
+                                  "documented never to raise" % (name, exc))
+                    self.assertFalse(v.authentic)
+                    self.assertEqual(v.code, "disclosure")
+                    self.assertIn("not a string", v.reason)
 
     def test_a_presentation_larger_than_the_bound_is_refused_before_parsing(self):
         v = self.w.verify("x" * (MAX_PRESENTATION_BYTES + 1))
@@ -984,6 +1019,19 @@ class CredentialTypeTests(unittest.TestCase):
     def test_the_requested_type_still_verifies(self):
         v = self.w.verify(self.w.present(), expected_vct="urn:eudi:pid:1")
         self.assertTrue(v.authentic, v.reason)
+
+    def test_a_vct_that_is_not_a_string_is_refused_rather_than_raised(self):
+        """`vct` is issuer-signed, so this takes a trusted issuer, but an array or an object
+        reached a set lookup and raised TypeError. Measured 2026-09-28."""
+        for bad in (["urn:eudi:pid:1"], {"a": 1}):
+            with self.subTest(vct=repr(bad)):
+                try:
+                    v = self.w.verify(self.w.present(payload_extra={"vct": bad}),
+                                      expected_vct="urn:eudi:pid:1")
+                except TypeError as exc:
+                    self.fail("vct=%r raised %r" % (bad, exc))
+                self.assertFalse(v.authentic)
+                self.assertEqual(v.code, "vct")
 
     def test_a_collection_of_accepted_types_is_honoured(self):
         v = self.w.verify(self.w.present(),

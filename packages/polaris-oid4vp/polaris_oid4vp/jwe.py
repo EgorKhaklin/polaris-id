@@ -37,6 +37,8 @@ import base64
 import json
 import struct
 
+from .sdjwt import MAX_JSON_DEPTH, _nesting_depth
+
 try:
     from cryptography.exceptions import InvalidTag
     from cryptography.hazmat.primitives import hashes
@@ -54,6 +56,24 @@ ACCEPTED_ALG = "ECDH-ES"
 #: in `encrypted_response_enc_values_supported`, so a verifier that advertises both and can
 #: only open one is advertising something untrue.
 ACCEPTED_ENC = {"A128GCM": 16, "A256GCM": 32}
+
+
+def _loads_depth_bounded(raw, what):
+    """`json.loads`, refusing before parsing a document nested deeper than `sdjwt.py` allows.
+
+    `sdjwt.py` and `status.py` have bounded nesting depth since 2026-09-17 and -19; this
+    module parsed both of its documents without one. `json.loads` is recursive, 20,000 levels
+    of `[` overflow Python 3.12's parser, and RecursionError is not a ValueError, so it
+    escaped every handler here and `verifier.py`'s `except JweError` with them (2026-09-28).
+    Both documents are the sender's to write: the protected header in the clear, and the body
+    under a key the request object publishes. Bytes are decoded the way `json.loads` decodes
+    them, so no document that parsed before is read differently.
+    """
+    text = (raw.decode(json.detect_encoding(raw), "surrogatepass")
+            if isinstance(raw, (bytes, bytearray)) else raw)
+    if _nesting_depth(text) > MAX_JSON_DEPTH:
+        raise ValueError("the %s nests deeper than %d levels" % (what, MAX_JSON_DEPTH))
+    return json.loads(text)
 
 
 class JweError(Exception):
@@ -140,7 +160,7 @@ def decrypt_compact(token, private_key):
     protected_b64, encrypted_key, iv_b64, ciphertext_b64, tag_b64 = parts
 
     try:
-        header = json.loads(b64u_decode(protected_b64))
+        header = _loads_depth_bounded(b64u_decode(protected_b64), "protected header")
     except (ValueError, json.JSONDecodeError) as exc:
         raise JweError("the protected header does not decode: %s" % exc) from exc
     if not isinstance(header, dict):
@@ -151,7 +171,9 @@ def decrypt_compact(token, private_key):
     if alg != ACCEPTED_ALG:
         raise JweError("alg=%r; this verifier performs %r and refuses to be walked onto "
                        "another" % (alg, ACCEPTED_ALG))
-    if enc not in ACCEPTED_ENC:
+    # A string first: `enc` in a dict is a hash lookup, and a list or an object raised
+    # TypeError, which escaped `verifier.py`'s `except JweError` (2026-09-28).
+    if not isinstance(enc, str) or enc not in ACCEPTED_ENC:
         raise JweError("enc=%r; the accepted set is %s" % (enc, sorted(ACCEPTED_ENC)))
     if encrypted_key:
         raise JweError("ECDH-ES is direct key agreement, so the encrypted key must be "
@@ -201,7 +223,7 @@ def decrypt_response(token, private_key):
     """The same, decoded as the JSON authorization response OpenID4VP section 8 defines."""
     plaintext = decrypt_compact(token, private_key)
     try:
-        body = json.loads(plaintext)
+        body = _loads_depth_bounded(plaintext, "decrypted response")
     except (ValueError, json.JSONDecodeError) as exc:
         raise JweError("the decrypted response is not JSON: %s" % exc) from exc
     if not isinstance(body, dict):
