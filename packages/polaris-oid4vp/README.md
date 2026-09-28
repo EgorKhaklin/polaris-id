@@ -38,7 +38,10 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   as HAIP issuers do (repeatable; each file may hold several PEM certificates). The leaf must
   chain to an anchor in one link, be inside its validity period, and, when it states a key
   usage, include digitalSignature; one that states extended key usages must name one an
-  issuer may hold. A leaf that states no key usage is not restricted by one.
+  issuer may hold. A leaf that states no key usage is not restricted by one. An `iss` must be
+  a name the leaf gives: a URI subjectAltName exactly, or, for a leaf naming only DNS hosts, an
+  https URL on one. Without `iss`, the certificate's subject is the issuer.
+- `--issuer-jwks` trusts every key it lists for every `iss`; list one issuer's keys per verifier.
 - `serve` with neither `--issuer-jwks` nor `--issuer-trust-anchor` refuses every presentation
   (`issuer_key`) and says so on stderr.
 - The CLI is a test harness. A deployment embeds `Verifier` (it needs your status policy; see
@@ -75,7 +78,7 @@ make every presentation replayable. `sdjwt.py` touches no socket and reads no co
 | `credential_validity` | a credential past its `exp` or before its `nbf` |
 | `vct` | a credential of a type the query did not ask for |
 | `disclosure` | a disclosure of a claim that must be signed (`iss`, `exp`, `cnf`, ...), a colliding claim, or nesting past the depth cap |
-| `issuer_key` | an untrusted key, or an x5c leaf outside its validity or not marked for signing |
+| `issuer_key` | an untrusted key, an x5c leaf outside its validity or not marked for signing, or one that does not name the credential's `iss` |
 | `malformed` | over 256 KiB, JSON over 64 KiB or 64 levels, or non-finite numbers |
 
 Recursive disclosures (SD-JWT 4.2.4.1) are supported.
@@ -133,7 +136,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 316 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 323 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 103 refusals accept and requires a

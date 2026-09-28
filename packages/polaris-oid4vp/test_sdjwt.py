@@ -51,6 +51,19 @@ def _public_jwk(key):
             "y": b64u_encode(numbers.y.to_bytes(32, "big"))}
 
 
+def _general_names(*specs):
+    """("uri", value) and ("dns", value) pairs as x509 general names; a flat pair is one spec."""
+    if specs and isinstance(specs[0], str):
+        specs = (specs,)
+    kinds = {"uri": x509.UniformResourceIdentifier, "dns": x509.DNSName}
+    out = []
+    for spec in specs:
+        if spec and isinstance(spec[0], str):
+            spec = (spec,)
+        out += [kinds[kind](value) for kind, value in spec]
+    return out
+
+
 def _disclosure(salt, name, value):
     raw = json.dumps([salt, name, value], separators=(",", ":")).encode()
     return b64u_encode(raw)
@@ -392,7 +405,9 @@ class X5CTests(unittest.TestCase):
     """The other way an issuer key is established, which is the one the suite uses."""
 
     @staticmethod
-    def _chain():
+    def _chain(san=("uri", "https://issuer.example")):
+        """A CA and a leaf under it. The leaf names the issuer `Wallet` mints as its `iss`,
+        as an HAIP issuer's leaf does; `san=None` gives a leaf that names no issuer."""
         now = datetime.datetime.now(datetime.timezone.utc)
         ca_key = ec.generate_private_key(ec.SECP256R1())
         ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test anchor")])
@@ -408,9 +423,10 @@ class X5CTests(unittest.TestCase):
                 .issuer_name(ca_name).public_key(leaf_key.public_key())
                 .serial_number(x509.random_serial_number())
                 .not_valid_before(now - datetime.timedelta(days=1))
-                .not_valid_after(now + datetime.timedelta(days=30))
-                .sign(ca_key, hashes.SHA256()))
-        return ca, leaf, leaf_key
+                .not_valid_after(now + datetime.timedelta(days=30)))
+        if san is not None:
+            leaf = leaf.add_extension(x509.SubjectAlternativeName(_general_names(san)), critical=False)
+        return ca, leaf.sign(ca_key, hashes.SHA256()), leaf_key
 
     def _present_with_x5c(self, leaf, leaf_key):
         w = Wallet()
@@ -452,6 +468,83 @@ class X5CTests(unittest.TestCase):
         v = verify_presentation(presentation, expected_nonce=NONCE, expected_audience=AUDIENCE)
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "issuer_key")
+
+
+class IssuerNamedByItsCertificateTests(unittest.TestCase):
+    """With `x5c` the issuer is the certificate's (SD-JWT VC draft 19, section 2.5), so an
+    `iss` must be a name the leaf gives: one of its URI subjectAltNames exactly, or, for a leaf
+    that names only DNS hosts, an https URL on one of them. Found 2026-09-28: issuer A's leaf
+    signed a credential naming issuer B, and it verified as B's, B's status list included."""
+
+    A = "https://a.example/api/v1/oid4vci/1"
+    B = "https://b.example/api/v1/oid4vci/2"
+    NO_ISS = object()
+
+    def _verify(self, san, iss):
+        ca, leaf, leaf_key = X5CTests._chain(san=san)
+        w = Wallet()
+        disclosures = [_disclosure("salt0", "given_name", "Jean")]
+        digests = [b64u_encode(hashlib.sha256(d.encode("ascii")).digest()) for d in disclosures]
+        payload = {"vct": "urn:eudi:pid:1", "iat": int(time.time()), "_sd": digests,
+                   "_sd_alg": "sha-256", "cnf": {"jwk": _public_jwk(w.holder_key)}}
+        if iss is not self.NO_ISS:
+            payload["iss"] = iss
+        der = leaf.public_bytes(serialization.Encoding.DER)
+        issuer_jwt = _jws(leaf_key, {"alg": "ES256", "typ": "dc+sd-jwt",
+                                     "x5c": [base64.b64encode(der).decode()]}, payload)
+        presented = issuer_jwt + "~" + "".join(d + "~" for d in disclosures)
+        kb = _jws(w.holder_key, {"alg": "ES256", "typ": "kb+jwt"},
+                  {"iat": int(time.time()), "aud": AUDIENCE, "nonce": NONCE,
+                   "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())})
+        return verify_presentation(presented + kb, expected_nonce=NONCE,
+                                   expected_audience=AUDIENCE, trust_anchors=[ca])
+
+    def assertAuthentic(self, v):
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
+    def assertRefused(self, v):
+        self.assertIsInstance(v, Verdict)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key", v.reason)
+
+    def test_an_iss_its_leaf_names_is_authentic(self):
+        v = self._verify(("uri", self.A), self.A)
+        self.assertAuthentic(v)
+        self.assertEqual(v.claims.get("iss"), self.A)
+
+    def test_an_iss_another_certificate_names_is_refused(self):
+        v = self._verify(("uri", self.A), self.B)
+        self.assertRefused(v)
+        self.assertIn(self.B, v.reason)
+
+    def test_without_an_iss_the_leaf_is_the_issuer(self):
+        """The shape OID4VCgo's issuer produces: x5c, no `iss`, a leaf that names nothing."""
+        self.assertAuthentic(self._verify(None, self.NO_ISS))
+
+    def test_a_leaf_that_names_no_issuer_cannot_carry_an_iss(self):
+        self.assertRefused(self._verify(None, self.A))
+
+    def test_a_leaf_naming_only_hosts_binds_an_https_iss_on_one_of_them(self):
+        hosts = (("dns", "a.example"), ("dns", "c.example"))
+        self.assertAuthentic(self._verify(hosts, self.A))
+        self.assertAuthentic(self._verify(hosts, "https://A.EXAMPLE:8443/tenant"))
+        self.assertRefused(self._verify(hosts, self.B))
+        self.assertRefused(self._verify(hosts, "http://a.example/api"))
+        self.assertRefused(self._verify(hosts, "https://someone@a.example/api"))
+
+    def test_a_uri_name_is_not_widened_to_its_host(self):
+        """A Polaris wallet-copy leaf names its issuer URL AND the host every agency on it
+        shares. The host must not make one agency's key name another agency's URL."""
+        mine = "https://host.example/api/v1/oid4vci/1"
+        other = "https://host.example/api/v1/oid4vci/2"
+        san = (("uri", mine), ("dns", "host.example"))
+        self.assertAuthentic(self._verify(san, mine))
+        self.assertRefused(self._verify(san, other))
+
+    def test_an_iss_that_is_not_a_string_is_refused_not_raised(self):
+        for iss in (None, 5, [self.A], {"iss": self.A}, ""):
+            with self.subTest(iss=iss):
+                self.assertRefused(self._verify(("uri", self.A), iss))
 
 
 class RefusalsCoverageFoundTests(unittest.TestCase):
@@ -1148,6 +1241,9 @@ class IssuerCertificateTests(unittest.TestCase):
                    .not_valid_after(not_after or (now + datetime.timedelta(days=30))))
         for ext, critical in extensions:
             builder = builder.add_extension(ext, critical=critical)
+        if not any(isinstance(ext, x509.SubjectAlternativeName) for ext, _ in extensions):
+            builder = builder.add_extension(x509.SubjectAlternativeName(
+                [x509.UniformResourceIdentifier("https://issuer.example")]), critical=False)
         return builder.sign(ca_key, hashes.SHA256()), leaf_key
 
     def _verify(self, leaf, leaf_key, ca):

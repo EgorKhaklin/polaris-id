@@ -34,6 +34,7 @@ import hashlib
 import json
 import math
 import time
+import urllib.parse
 
 try:
     from cryptography.exceptions import InvalidSignature
@@ -396,7 +397,8 @@ def _verify_es256(public_key, signing_input, signature):
 
 
 def _issuer_public_key(header, issuer_jwks, trust_anchors):
-    """The key the issuer JWS is checked under, or a reason it cannot be established.
+    """(key, reason, leaf): the key the issuer JWS is checked under, or why there is none,
+    and the x5c leaf it came from (None for a configured JWK).
 
     Two ways, both explicit: an `x5c` chain whose leaf chains to a configured trust anchor,
     or a JWK the caller configured out of band. A verifier that takes the key from the token
@@ -405,18 +407,18 @@ def _issuer_public_key(header, issuer_jwks, trust_anchors):
     chain = header.get("x5c")
     if chain:
         if not isinstance(chain, list) or not chain:
-            return None, "x5c is present but is not a non-empty array"
+            return None, "x5c is present but is not a non-empty array", None
         try:
             leaf = load_der_x509_certificate(base64.b64decode(chain[0]))
         except Exception as exc:  # noqa: BLE001  any parse failure is the same refusal
-            return None, "the x5c leaf certificate does not parse: %s" % exc
+            return None, "the x5c leaf certificate does not parse: %s" % exc, None
         if not trust_anchors:
             return None, ("the credential presents an x5c chain and no trust anchor is "
-                          "configured, so nothing can be said about who signed it")
+                          "configured, so nothing can be said about who signed it"), None
         for anchor in trust_anchors:
             if _chains_to(leaf, anchor):
-                return leaf.public_key(), ""
-        return None, "the x5c leaf does not chain to any configured trust anchor"
+                return leaf.public_key(), "", leaf
+        return None, "the x5c leaf does not chain to any configured trust anchor", None
     if issuer_jwks:
         kid = header.get("kid")
         for jwk in issuer_jwks:
@@ -429,12 +431,12 @@ def _issuer_public_key(header, issuer_jwks, trust_anchors):
             if kid and jwk.get("kid") and jwk["kid"] != kid:
                 continue
             try:
-                return _es256_public_key(jwk), ""
+                return _es256_public_key(jwk), "", None
             except ValueError:
                 continue
-        return None, "no configured issuer JWK matches this credential's kid"
+        return None, "no configured issuer JWK matches this credential's kid", None
     return None, ("the credential carries no x5c and no issuer JWK is configured, so there "
-                  "is no key to check the issuer signature against")
+                  "is no key to check the issuer signature against"), None
 
 
 def _chains_to(leaf, anchor):
@@ -501,6 +503,51 @@ def _chains_to(leaf, anchor):
     except Exception:  # noqa: BLE001
         return False
     return True
+
+
+def _leaf_names(leaf, iss):
+    """"" when the x5c `leaf` gives `iss` as one of its own names, else why it does not.
+
+    With `x5c`, the issuer of an SD-JWT VC IS the subject of the end-entity certificate (SD-JWT
+    VC draft 19, section 2.5) and `iss` is optional. Until 2026-09-28 an `iss` was never
+    compared with anything: issuer A's leaf signed a credential naming issuer B, it verified as
+    B's, `claims["iss"]` said B, and a status resolver given that `iss` read B's list, VALID at
+    an index B had issued (measured, this tree and 1.0.0rc7 alike).
+
+    A URI subjectAltName is a name and is matched exactly. A leaf that names only DNS hosts
+    binds an https `iss` on one of them. URI names come first: a Polaris wallet-copy leaf
+    names its issuer URL and also the host every agency on it shares, and the host must not
+    make one agency's key name another agency's URL. A leaf that names neither cannot carry an
+    `iss`, because nothing binds the two.
+    """
+    if not isinstance(iss, str) or not iss:
+        return "the credential's iss is %r, which is not an issuer identifier" % (iss,)
+    try:
+        names = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+        uris = names.get_values_for_type(x509.UniformResourceIdentifier)
+        hosts = [h.lower() for h in names.get_values_for_type(x509.DNSName)]
+    except x509.ExtensionNotFound:
+        uris, hosts = [], []
+    except Exception:  # noqa: BLE001  a malformed extension names nobody
+        return "the issuer certificate's subjectAltName does not parse, so it names no issuer"
+    if uris:
+        if iss in uris:
+            return ""
+        return ("the credential names issuer %r and the certificate that signed it names %s"
+                % (iss, ", ".join(repr(u) for u in uris)))
+    if hosts:
+        try:
+            url = urllib.parse.urlsplit(iss)
+            bound = (url.scheme == "https" and url.username is None and url.password is None
+                     and url.hostname in hosts)
+        except ValueError:
+            bound = False
+        if bound:
+            return ""
+        return ("the credential names issuer %r and the certificate that signed it names only "
+                "the host(s) %s" % (iss, ", ".join(repr(h) for h in hosts)))
+    return ("the credential names issuer %r and the certificate that signed it names no issuer "
+            "(no URI or DNS subjectAltName), so nothing binds the two" % (iss,))
 
 
 # ------------------------------------------------------------------------- disclosures
@@ -676,12 +723,16 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
     if header.get("alg") not in ACCEPTED_ALGS:
         return _refuse("issuer_alg", "the issuer JWT declares alg=%r, which is not in the "
                                      "accepted set %r" % (header.get("alg"), ACCEPTED_ALGS))
-    key, why = _issuer_public_key(header, issuer_jwks, trust_anchors)
+    key, why, leaf = _issuer_public_key(header, issuer_jwks, trust_anchors)
     if key is None:
         return _refuse("issuer_key", why)
     if not _verify_es256(key, signing_input, signature):
         return _refuse("issuer_signature", "the issuer signature over the credential does "
                                            "not verify under the trusted issuer key")
+    if leaf is not None and "iss" in payload:
+        why = _leaf_names(leaf, payload["iss"])
+        if why:
+            return _refuse("issuer_key", why)
 
     if expected_vct is not None:
         wanted = ({expected_vct} if isinstance(expected_vct, str)

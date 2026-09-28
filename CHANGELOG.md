@@ -9,6 +9,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ## Unreleased
 
+### Security
+
+- `polaris-oid4vp` refuses an x5c credential whose `iss` its certificate does not name.
+
 ### Fixed
 
 - `polaris-oid4vp serve` answers `/done`, where it sends an accepted wallet, with a page instead of 404.
