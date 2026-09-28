@@ -79,13 +79,14 @@ The paths sit under `/api/`, so every error is the JSON body the API reference p
   attestation-based client authentication. Those make a FAPI 2.0 authorization server, and
   that is decided separately ([WALL.md](../../lab/strategy/005/WALL.md)).
 - **`tx_code`, batch issuance and deferred issuance are not in version 1.** The offer is
-  handed over in person, lives ten minutes and is single-use.
+  handed over in person, lives ten minutes and is single-use. It is a bearer value: whoever holds
+  it in that time can redeem it, and the copy carries the person's legal name and birthdate.
 
 ## What governs a wallet copy
 
 | Step | Rule | Held by |
 |---|---|---|
-| Offer | An operator of the issuing agency creates it for one credential. The pre-authorized code is stateless: HMAC under a salt distinct from the auth broker's codes, naming the credential, ten-minute life. | application (operator route, role-gated) |
+| Offer | An operator of the issuing agency creates it for one credential. The pre-authorized code is stateless: encrypted (Fernet) under a key derived from the instance secret with a salt of its own, so it names the credential without showing it; ten-minute life. | application (operator route, role-gated) |
 | Token | The code is valid, unexpired, and its SHA3-256 hash is consumed in the append-only register the auth broker already uses (`AuthCodeConsumed`), so a second redemption fails at the primary key. | database (single use) |
 | Credential | The proof of possession is ES256 over this issuer's `c_nonce`, with the wallet's key in its header. The copy is then recorded through a definer procedure that **refuses unless the credential is ACTIVE**, and it gets a random status index that no other copy holds. | database (the ACTIVE rule and the unique index), application (the proof) |
 | Signing | The recorded copy is signed with the agency's ES256 leaf. `exp` is thirty days, or the credential's own expiration if that is sooner. | application |

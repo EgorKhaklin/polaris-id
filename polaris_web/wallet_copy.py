@@ -114,7 +114,9 @@ def verify_proof(proof: str, audience: str, now: float | None = None) -> tuple[d
     iat = payload.get("iat")
     if isinstance(iat, bool) or not isinstance(iat, (int, float)):
         raise ProofRefused("the proof has no numeric iat")
-    if iat < now - PROOF_MAX_AGE or iat > now + CLOCK_SKEW:
+    # One chained bound: Python's json reads the NaN constant, and NaN fails every comparison, so
+    # it passed `iat < lo or iat > hi` as fresh.
+    if not (now - PROOF_MAX_AGE <= iat <= now + CLOCK_SKEW):
         raise ProofRefused("the proof iat is outside the last %d seconds" % PROOF_MAX_AGE)
     nonce = payload.get("nonce")
     if not isinstance(nonce, str) or not nonce:

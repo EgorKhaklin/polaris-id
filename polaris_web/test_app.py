@@ -17611,7 +17611,7 @@ class WalletCopyIssuanceTests(PolarisTestCase):
         from cryptography.hazmat.primitives.asymmetric import ec
         return ec.generate_private_key(ec.SECP256R1())
 
-    def _proof(self, key, nonce, aud=None):
+    def _proof(self, key, nonce, aud=None, iat=None):
         import base64 as _b64
         import json as _json
         import time as _time
@@ -17621,7 +17621,7 @@ class WalletCopyIssuanceTests(PolarisTestCase):
         n = key.public_key().public_numbers()
         jwk = {'kty': 'EC', 'crv': 'P-256', 'x': b64(n.x.to_bytes(32, 'big')), 'y': b64(n.y.to_bytes(32, 'big'))}
         header = {'typ': 'openid4vci-proof+jwt', 'alg': 'ES256', 'jwk': jwk}
-        payload = {'aud': aud or self.issuer, 'iat': int(_time.time()), 'nonce': nonce}
+        payload = {'aud': aud or self.issuer, 'iat': int(_time.time()) if iat is None else iat, 'nonce': nonce}
         si = '%s.%s' % (b64(_json.dumps(header).encode()), b64(_json.dumps(payload).encode()))
         r_, s_ = utils.decode_dss_signature(key.sign(si.encode(), ec.ECDSA(hashes.SHA256())))
         return si + '.' + b64(r_.to_bytes(32, 'big') + s_.to_bytes(32, 'big')), jwk
@@ -17809,6 +17809,15 @@ class WalletCopyIssuanceTests(PolarisTestCase):
         proof, _ = self._proof(self._wallet_key(), self._nonce(), aud='https://elsewhere.test/api/v1/oid4vci/2')
         r = self._credential(access, proof)
         self.assertEqual((r.status_code, r.get_json()['error']), (400, 'invalid_proof'))
+
+    def test_a_proof_dated_nan_is_refused(self):
+        # API.md: `iat` within the last five minutes. Python's json reads the NaN constant, and a
+        # NaN iat failed both one-sided comparisons of the window, so it passed as fresh.
+        access = self._token(self._code_from(self._offer())).get_json()['access_token']
+        proof, _ = self._proof(self._wallet_key(), self._nonce(), iat=float('nan'))
+        r = self._credential(access, proof)
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'invalid_proof')
 
     def test_the_request_must_name_this_configuration_and_carry_one_proof(self):
         access = self._token(self._code_from(self._offer())).get_json()['access_token']

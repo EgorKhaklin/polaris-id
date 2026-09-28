@@ -97,6 +97,9 @@ class ProofTests(unittest.TestCase):
             ("no numeric iat", proof(payload={"iat": True})[0]),
             ("outside the last", proof(payload={"iat": NOW - wc.PROOF_MAX_AGE - 1})[0]),
             ("outside the last", proof(payload={"iat": NOW + wc.CLOCK_SKEW + 1})[0]),
+            # Python's json reads the NaN constant, and NaN fails every comparison.
+            ("outside the last", proof(payload={"iat": float("nan")})[0]),
+            ("outside the last", proof(payload={"iat": float("inf")})[0]),
             ("no nonce", proof(payload={"nonce": None})[0]),
             ("no nonce", proof(payload={"nonce": ""})[0]),
         ]
