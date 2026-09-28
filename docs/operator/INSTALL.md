@@ -5,6 +5,9 @@ launcher. **Job:** the long-form companion to the README's quickstart:
 what the launcher does, what it needs, and what to do when a step fails.
 A server deployment is [DEPLOYMENT.md](DEPLOYMENT.md), not this page.
 
+The laptop stack signs with a named development placeholder, not ML-DSA-65, so `polaris-verify`
+reports what it issues as not authenticatable. Real signing is the production image.
+
 
 ## Prerequisites
 
@@ -276,7 +279,7 @@ To remove Polaris cleanly:
 
 ```bash
 ./polaris_mac_launch.sh nuke         # remove containers, image, volume
-rm -rf ~/Desktop/polaris             # or wherever you put the folder
+rm -rf ~/polaris                     # or wherever you cloned it
 docker rmi postgres:16 python:3.12-slim 2>/dev/null   # optional
 ```
 

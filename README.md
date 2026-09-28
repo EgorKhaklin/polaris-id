@@ -198,7 +198,7 @@ The schema is the core; everything else is a client of it.
 | [`packages/`](packages/), [`sdk/`](sdk/), [`conformance/`](conformance/) | The detached verifier, the OpenID4VP verifier, the verify SDKs and the conformance suite. |
 | [`scripts/`](scripts/), [`deploy/`](deploy/) | Wallet and relying-party tools, operator tooling, observability config. |
 
-Production topology: a Caddy TLS edge, gunicorn, PgBouncer, PostgreSQL with pgBackRest, and Redis; all non-root with capabilities dropped.
+Reference deployment profile: a Caddy TLS edge, gunicorn, PgBouncer, PostgreSQL with pgBackRest, and Redis; all non-root with capabilities dropped.
 
 ---
 
@@ -269,6 +269,9 @@ admin     Admin@123!      full access, SQL console
 operator  Operator@123!   issue, activate, bind tokens
 auditor   Auditor@123!    read-only, warrant audits, duress dashboard
 ```
+
+The laptop stack signs with a named development placeholder, not ML-DSA-65, so `polaris-verify`
+reports what it issues as not authenticatable. Real signing is the production image (liboqs).
 
 **Single host:**
 

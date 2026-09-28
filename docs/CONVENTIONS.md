@@ -221,7 +221,7 @@ confirms target exists. CI runs this on every push.
 
 **Cross-references prefer relative paths:**
 - `[X](../meta/constraint-lattice.md)`: relative ✓
-- `[X](/Users/vanta/Desktop/polaris/meta/constraint-lattice.md)`: absolute ✗
+- `[X](/Users/you/polaris/meta/constraint-lattice.md)`: absolute ✗
 - `[X](https://github.com/.../meta/constraint-lattice.md)`, URL ✗ (would
   rot when fork count grows)
 
