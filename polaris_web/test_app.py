@@ -4272,6 +4272,18 @@ class IssuerFederationTests(PolarisTestCase):
             with self.assertRaises(ValueError, msg='%s must not parse' % bad):
                 flask_app.app.json.loads(bad)
 
+    def test_a_json_body_nested_past_the_parser_is_refused_not_crashed(self):
+        """A body nested past the parser's depth is malformed, like the non-finite ones.
+        20,000 levels (80 KB, inside the body limit) raised RecursionError out of get_json,
+        whose silent mode catches ValueError only, so an anonymous caller got a 500 from
+        /api/v1/auth/authorize, whose contract is the uniform 401 invalid_client."""
+        deep = '[' * 20000 + ']' * 20000
+        with self.assertRaises(ValueError):
+            flask_app.app.json.loads(deep)
+        r = self.client.post('/api/v1/auth/authorize', data=deep, content_type='application/json')
+        self.assertEqual(r.status_code, 401, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'invalid_client')
+
 
 # ============================================================================
 # v8.23 / R10-1 / M2-1 — ZK-SNARK (Plonky2 + Hybrid-Merkle, C3+A4+B3)
@@ -17816,6 +17828,17 @@ class WalletCopyIssuanceTests(PolarisTestCase):
         access = self._token(self._code_from(self._offer())).get_json()['access_token']
         proof, _ = self._proof(self._wallet_key(), self._nonce(), iat=float('nan'))
         r = self._credential(access, proof)
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'invalid_proof')
+
+    def test_a_proof_nested_past_the_parser_is_a_400_not_a_500(self):
+        # API.md: a proof that fails is 400 invalid_proof. JSON nested 20,000 deep (53 KB, well
+        # inside the body limit) raised RecursionError out of the parser, which is not a refusal.
+        import base64 as _b64
+        b64 = lambda b: _b64.urlsafe_b64encode(b).rstrip(b'=').decode()  # noqa: E731
+        access = self._token(self._code_from(self._offer())).get_json()['access_token']
+        deep = '[' * 20000 + ']' * 20000
+        r = self._credential(access, '%s.%s.%s' % (b64(deep.encode()), b64(b'{}'), b64(b's' * 64)))
         self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
         self.assertEqual(r.get_json()['error'], 'invalid_proof')
 

@@ -259,7 +259,9 @@ class _FiniteNumbersOnly(DefaultJSONProvider):
 
     `parse_constant` covers the three bare literals. `parse_float` covers the rest, because
     `1e400` is valid JSON grammar that overflows to infinity without ever being a constant.
-    Both raise ValueError, which is what Flask already treats as a malformed body.
+    Both raise ValueError, which is what Flask already treats as a malformed body. So does a
+    body nested past the parser's depth, which raises RecursionError that `get_json`'s silent
+    mode would not catch.
     """
 
     @staticmethod
@@ -276,7 +278,10 @@ class _FiniteNumbersOnly(DefaultJSONProvider):
     def loads(self, s, **kwargs):
         kwargs.setdefault("parse_constant", self._refuse_constant)
         kwargs.setdefault("parse_float", self._finite_float)
-        return super().loads(s, **kwargs)
+        try:
+            return super().loads(s, **kwargs)
+        except RecursionError:
+            raise ValueError("JSON nested deeper than the parser allows") from None
 
 
 app.json = _FiniteNumbersOnly(app)

@@ -26,6 +26,8 @@ PROOF_TYP = "openid4vci-proof+jwt"
 #: A proof older than this, or dated further ahead than CLOCK_SKEW, is refused.
 PROOF_MAX_AGE = 300
 CLOCK_SKEW = 30
+#: A proof is a few hundred characters: a P-256 jwk, three claims and a 64-byte signature.
+PROOF_MAX_CHARS = 16384
 #: 2^20 one-bit slots per list, the size the schema's status_index CHECK allows.
 STATUS_LIST_SIZE = 1 << 20
 STATUS_LIST_TTL = 300
@@ -75,12 +77,15 @@ def verify_proof(proof: str, audience: str, now: float | None = None) -> tuple[d
     from cryptography.hazmat.primitives.asymmetric import ec, utils
 
     now = time.time() if now is None else now
+    if isinstance(proof, str) and len(proof) > PROOF_MAX_CHARS:
+        raise ProofRefused("the proof is longer than %d characters" % PROOF_MAX_CHARS)
     try:
         h64, p64, s64 = proof.split(".")
         header = json.loads(b64u_decode(h64))
         payload = json.loads(b64u_decode(p64))
         signature = b64u_decode(s64)
-    except (AttributeError, ValueError, TypeError) as exc:
+    except (AttributeError, ValueError, TypeError, RecursionError) as exc:
+        # RecursionError: JSON nested past the parser's depth is a malformed proof, not a fault.
         raise ProofRefused("the proof is not a compact JWS: %s" % exc) from None
     if not isinstance(header, dict) or not isinstance(payload, dict):
         raise ProofRefused("the proof's header and payload must be JSON objects")

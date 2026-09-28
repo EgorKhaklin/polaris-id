@@ -79,6 +79,7 @@ class ProofTests(unittest.TestCase):
         cases = [
             ("not a compact JWS", "a.b"),
             ("not a compact JWS", 42),
+            ("longer than", "a" * (wc.PROOF_MAX_CHARS + 1)),
             # JSON, but not objects: without the guard, .get() raises AttributeError, a 500.
             ("must be JSON objects", "%s.%s.%s" % (b64(b"[1]"), b64(b"{}"), b64(b"s" * 64))),
             ("must be JSON objects", "%s.%s.%s" % (b64(b'{"alg":"ES256"}'), b64(b'"x"'), b64(b"s" * 64))),
@@ -106,6 +107,11 @@ class ProofTests(unittest.TestCase):
         for fragment, p in cases:
             with self.subTest(fragment=fragment):
                 self.refused(fragment, p)
+
+    def test_json_nested_past_the_parser_is_a_refusal(self):
+        # The parser's depth limit depends on the build; whatever it is, hitting it refuses.
+        with mock.patch.object(wc.json, "loads", side_effect=RecursionError("too deep")):
+            self.refused("not a compact JWS", proof()[0])
 
 
 class _Key:
@@ -238,7 +244,7 @@ class RefusalMutationTests(unittest.TestCase):
     harness that is red for another reason would make every mutant look caught."""
 
     #: Change deliberately: a refusal was added or removed, and this is the inventory.
-    EXPECTED = 13
+    EXPECTED = 14
 
     @staticmethod
     def _sites(src):

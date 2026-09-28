@@ -18,6 +18,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-oid4vp serve` answers `/done`, where it sends an accepted wallet, with a page instead of 404.
 - `polaris-oid4vp` status checks allow a list dated up to 300 s ahead and read the clock after the fetch.
 - The OpenID4VCI credential endpoint refuses a proof whose `iat` is NaN, which passed the five-minute window.
+- The OpenID4VCI credential endpoint answers `400 invalid_proof`, not 500, to a proof over 16 KB or nested past the parser.
+- A JSON request body nested past the parser's depth is refused as malformed, not answered with a 500.
 
 ### Added
 
