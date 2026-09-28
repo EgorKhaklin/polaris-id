@@ -4,8 +4,9 @@ The measured recovery point and recovery time of Polaris, one row per drill,
 appended by [`scripts/polaris-dr-drill.sh --record`](../../scripts/polaris-dr-drill.sh)
 and never edited by hand. The monthly GitHub Actions workflow
 ([`.github/workflows/dr-drill.yml`](../../.github/workflows/dr-drill.yml))
-runs the drill on the first of every month and commits its row here, pass or
-fail; every push to `main` also runs the drill in CI without recording. On a
+runs the drill on the first of every month and commits its row, pass or fail, to a
+`drill-ledger/` branch; a pull request brings it here, since `main` accepts changes only
+through pull requests; every push to `main` also runs the drill in CI without recording. On a
 Linux host the `polaris-dr-drill.timer` unit runs it monthly and appends to
 `/var/lib/polaris/dr-drills.md`.
 

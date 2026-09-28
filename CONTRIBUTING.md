@@ -22,6 +22,11 @@ wrote the change or have the right to submit it under the project's license.
 
 ## What merges
 
+Every change reaches `main` through a pull request, the maintainer's included: `main` refuses
+direct pushes, force-pushes and deletion. A pull request merges, as a merge commit, once the
+required checks pass (the TypeScript SDK suite, the dependency and SAST scan, and the product
+boundary); the full suites run on every pull request too. Before opening one:
+
 - `python3 -m polaris_checks.run` reports READY.
 - `python3 scripts/polaris-ship.py run` passes: the sharded database suites and every unsharded
   suite CI runs. (`./scripts/polaris-test.sh` covers only four suites; use it for an inner loop.)
