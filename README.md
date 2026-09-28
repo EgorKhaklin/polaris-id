@@ -1,8 +1,6 @@
 <div align="center">
 
-<img src="site/polaris_logo_clean.png" alt="Polaris" width="220" height="220">
-
-# POLARIS
+<img src="docs/assets/hero.svg" width="100%" alt="Polaris">
 
 **A working reference implementation of an issuer-unlinkable, duress-aware<br>identity-token system, signed with ML-DSA-65 under an audited algorithm-migration path.**
 
