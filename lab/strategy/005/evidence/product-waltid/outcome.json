@@ -1,0 +1,151 @@
+{
+  "wallet": "waltid",
+  "commit": "6803f9f221d82def4790b78b54278bc8551188f6",
+  "product_tree_dirty": false,
+  "issuer": "https://host.docker.internal:9644/api/v1/oid4vci/2",
+  "started": "2026-09-28T09:59:32.947053+00:00",
+  "C_received": true,
+  "C_wallet_said": {
+    "receive": {
+      "credentialIds": [
+        "35298c27-4a32-4fd8-9e4a-19043ef0993d"
+      ],
+      "deferredTransactionIds": {}
+    },
+    "stored_fields": [
+      "addedAt",
+      "credential",
+      "id",
+      "label",
+      "metadata"
+    ]
+  },
+  "C_copy": {
+    "iss": "https://host.docker.internal:9644/api/v1/oid4vci/2",
+    "vct": "urn:polaris:wallet-copy:1",
+    "cnf_matches_wallet_key": true,
+    "status": "VALID"
+  },
+  "D_status_after_revocation": "INVALID",
+  "B_received": false,
+  "B_wallet_said": {
+    "error": "HTTP 500: {\"exception\":true,\"id\":\"CredentialEndpointException\",\"status\":\"Internal Server Error\",\"code\":\"500\",\"message\":\"Credential endpoint returned HTTP 400 (credential_request_denied)\"}"
+  },
+  "issuer_saw": [
+    [
+      "GET",
+      "/api/health/live",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "POST",
+      "/login",
+      302,
+      "Python-urllib/3.12"
+    ],
+    [
+      "GET",
+      "/dashboard",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "GET",
+      "/tokens",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "POST",
+      "/tokens/12/wallet-offer",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "GET",
+      "/tokens",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "POST",
+      "/tokens/13/wallet-offer",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "GET",
+      "/.well-known/openid-credential-issuer/api/v1/oid4vci/2",
+      200,
+      "walt.id WebDataFetcher"
+    ],
+    [
+      "GET",
+      "/.well-known/oauth-authorization-server/api/v1/oid4vci/2",
+      200,
+      "walt.id WebDataFetcher"
+    ],
+    [
+      "POST",
+      "/api/v1/oid4vci/2/token",
+      200,
+      "walt.id WebDataFetcher"
+    ],
+    [
+      "POST",
+      "/api/v1/oid4vci/2/nonce",
+      200,
+      "walt.id WebDataFetcher"
+    ],
+    [
+      "POST",
+      "/api/v1/oid4vci/2/credential",
+      200,
+      "walt.id WebDataFetcher"
+    ],
+    [
+      "GET",
+      "/api/v1/oid4vci/2/status/2026-09-28/0",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "GET",
+      "/api/v1/oid4vci/2/status/2026-09-28/0",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "GET",
+      "/.well-known/openid-credential-issuer/api/v1/oid4vci/2",
+      200,
+      "walt.id WebDataFetcher"
+    ],
+    [
+      "GET",
+      "/.well-known/oauth-authorization-server/api/v1/oid4vci/2",
+      200,
+      "walt.id WebDataFetcher"
+    ],
+    [
+      "POST",
+      "/api/v1/oid4vci/2/token",
+      200,
+      "walt.id WebDataFetcher"
+    ],
+    [
+      "POST",
+      "/api/v1/oid4vci/2/nonce",
+      200,
+      "walt.id WebDataFetcher"
+    ],
+    [
+      "POST",
+      "/api/v1/oid4vci/2/credential",
+      400,
+      "walt.id WebDataFetcher"
+    ]
+  ],
+  "verdict": "PASS"
+}

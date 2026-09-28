@@ -1,0 +1,59 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "url": "https://localhost:9644/.well-known/openid-credential-issuer/api/v1/oid4vci/2"
+    },
+    "response": {
+      "status": 200,
+      "body": "{\"credential_configurations_supported\":{\"polaris_wallet_copy\":{\"credential_metadata\":{\"claims\":[{\"path\":[\"legal_name\"]},{\"path\":[\"birthdate\"]},{\"path\":[\"age_over_18\"]},{\"path\":[\"age_over_21\"]},{\"path\":[\"jurisdiction\"]}],\"display\":[{\"locale\":\"en\",\"name\":\"Polaris wallet copy\"}]},\"credential_signing_alg_values_supported\":[\"ES256\"],\"cryptographic_binding_methods_supported\":[\"jwk\"],\"format\":\"dc+sd-jwt\",\"proof_types_supported\":{\"jwt\":{\"proof_signing_alg_values_supported\":[\"ES256\"]}},\"scope\":\"polaris_wallet_copy\",\"vct\":\"urn:polaris:wallet-copy:1\"}},\"credential_endpoint\":\"https://localhost:9644/api/v1/oid4vci/2/credential\",\"credential_issuer\":\"https://localhost:9644/api/v1/oid4vci/2\",\"display\":[{\"locale\":\"en\",\"name\":\"Pennsylvania Identity Bureau\"}],\"nonce_endpoint\":\"https://localhost:9644/api/v1/oid4vci/2/nonce\"}\n"
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "url": "https://localhost:9644/.well-known/oauth-authorization-server/api/v1/oid4vci/2"
+    },
+    "response": {
+      "status": 200,
+      "body": "{\"grant_types_supported\":[\"urn:ietf:params:oauth:grant-type:pre-authorized_code\"],\"issuer\":\"https://localhost:9644/api/v1/oid4vci/2\",\"pre-authorized_grant_anonymous_access_supported\":true,\"response_types_supported\":[\"token\"],\"token_endpoint\":\"https://localhost:9644/api/v1/oid4vci/2/token\"}\n"
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://localhost:9644/api/v1/oid4vci/2/token",
+      "headers": {},
+      "body": "pre-authorized_code=gAAAAABqujqCaQ1B03Ryi0oLti0vxkV4UMHeEhF9tgD_CzuITK8NP-XA-DDZGvp4d8ogRiTxGcrcgRZkAyy8jDdMYHp-IRVdT18eaYbE8sjG2Jv-PbXsrW2wc-HKeeRzhSspo6vTiZM2_tG6HAKzp1lq0fC1bt19OA%3D%3D&resource=https%3A%2F%2Flocalhost%3A9644%2Fapi%2Fv1%2Foid4vci%2F2&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Apre-authorized_code"
+    },
+    "response": {
+      "status": 200,
+      "body": "{\"access_token\":\"gAAAAABqujqEpQJ8hZ2QOh1GHPlfVw2i6KmM88ktqNqORGpQEPSoWho_bVri7ZF7WgR9137cV06I8DBOYcNbVLFmqSdYFMnhVj4vIDITonUzqXa215agv4KpwaZcrMSg_7rfIQicVaZOOshCCAJguCYwC6yIYtnIVg==\",\"expires_in\":300,\"token_type\":\"Bearer\"}\n"
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://localhost:9644/api/v1/oid4vci/2/nonce"
+    },
+    "response": {
+      "status": 200,
+      "body": "{\"c_nonce\":\"gAAAAABqujqEGynDzhex8wKyN_u-f69UVkT1W_8TmK8PMLMAUbUl8Qenh31U-gA8PgN-caEFjcvBdu1fktPDyDxxzqCQKSx0IJIRX246wDwpHwpLJyBZ0iw=\"}\n"
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://localhost:9644/api/v1/oid4vci/2/credential",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer gAAAAABqujqEpQJ8hZ2QOh1GHPlfVw2i6KmM88ktqNqORGpQEPSoWho_bVri7ZF7WgR9137cV06I8DBOYcNbVLFmqSdYFMnhVj4vIDITonUzqXa215agv4KpwaZcrMSg_7rfIQicVaZOOshCCAJguCYwC6yIYtnIVg=="
+      },
+      "body": "{\"proofs\":{\"jwt\":[\"eyJhbGciOiJFUzI1NiIsInR5cCI6Im9wZW5pZDR2Y2ktcHJvb2Yrand0IiwiandrIjp7Imt0eSI6IkVDIiwia2lkIjoiZGIxODk2MzgtZjAxYi00YTk5LTlhMzYtNzkyY2ExYmUyZGU5IiwiY3J2IjoiUC0yNTYiLCJ4IjoiZDJ4eEFjT0NuYTF3eHdjbVZRNmJmMzJHbVJUdVBNM3FoTTJDMkdSaXVwQSIsInkiOiJmR0Q2OVFkOEp1eE1ncy1zWWMwd0xTVEZGSDJ1UU5TbmZSZTdBMTV2NkVJIn19.eyJhdWQiOiJodHRwczovL2xvY2FsaG9zdDo5NjQ0L2FwaS92MS9vaWQ0dmNpLzIiLCJpYXQiOjE3OTA1ODk1NzIsIm5vbmNlIjoiZ0FBQUFBQnF1anFFR3luRHpoZXg4d0t5Tl91LWY2OVVWa1QxV184VG1LOFBNTE1BVWJVbDhRZW5oMzFVLWdBOFBnTi1jYUVGamN2QmR1MWZrdFBEeUR4eHpxQ1FLU3gwSUpJUlgyNDZ3RHdwSHdwTEp5QlowaXc9In0.2umD0Ek5p7RhlfdyeW3A1TjLpbJRj9wVQdnJmLhnp9Y11poZhJGOUWzTXBeQkPPstWq8zPl8mAFMG4mRxL-Kwg\"]},\"credential_configuration_id\":\"polaris_wallet_copy\"}"
+    },
+    "response": {
+      "status": 400,
+      "body": "{\"error\":\"credential_request_denied\",\"error_description\":\"the Polaris record does not allow a copy of this credential now\"}\n"
+    }
+  }
+]

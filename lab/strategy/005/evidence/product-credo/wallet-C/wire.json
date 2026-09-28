@@ -1,0 +1,72 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "url": "https://localhost:9644/.well-known/openid-credential-issuer/api/v1/oid4vci/2"
+    },
+    "response": {
+      "status": 200,
+      "body": "{\"credential_configurations_supported\":{\"polaris_wallet_copy\":{\"credential_metadata\":{\"claims\":[{\"path\":[\"legal_name\"]},{\"path\":[\"birthdate\"]},{\"path\":[\"age_over_18\"]},{\"path\":[\"age_over_21\"]},{\"path\":[\"jurisdiction\"]}],\"display\":[{\"locale\":\"en\",\"name\":\"Polaris wallet copy\"}]},\"credential_signing_alg_values_supported\":[\"ES256\"],\"cryptographic_binding_methods_supported\":[\"jwk\"],\"format\":\"dc+sd-jwt\",\"proof_types_supported\":{\"jwt\":{\"proof_signing_alg_values_supported\":[\"ES256\"]}},\"scope\":\"polaris_wallet_copy\",\"vct\":\"urn:polaris:wallet-copy:1\"}},\"credential_endpoint\":\"https://localhost:9644/api/v1/oid4vci/2/credential\",\"credential_issuer\":\"https://localhost:9644/api/v1/oid4vci/2\",\"display\":[{\"locale\":\"en\",\"name\":\"Pennsylvania Identity Bureau\"}],\"nonce_endpoint\":\"https://localhost:9644/api/v1/oid4vci/2/nonce\"}\n"
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "url": "https://localhost:9644/.well-known/oauth-authorization-server/api/v1/oid4vci/2"
+    },
+    "response": {
+      "status": 200,
+      "body": "{\"grant_types_supported\":[\"urn:ietf:params:oauth:grant-type:pre-authorized_code\"],\"issuer\":\"https://localhost:9644/api/v1/oid4vci/2\",\"pre-authorized_grant_anonymous_access_supported\":true,\"response_types_supported\":[\"token\"],\"token_endpoint\":\"https://localhost:9644/api/v1/oid4vci/2/token\"}\n"
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://localhost:9644/api/v1/oid4vci/2/token",
+      "headers": {},
+      "body": "pre-authorized_code=gAAAAABqujqCRCWkL5PPzfXe9urSXKKRva8nrYqxeFbD5eW5BunRwghxe8sp9iebSa9wzoJvfLN7dSMu4v2jbvzlS7186AI6oeNnww4i1jJoPel9BXFisJI21KjhwPT5eA4WbGT9R8c_g63-AnaGL6uCJyOTVWX17Q%3D%3D&resource=https%3A%2F%2Flocalhost%3A9644%2Fapi%2Fv1%2Foid4vci%2F2&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Apre-authorized_code"
+    },
+    "response": {
+      "status": 200,
+      "body": "{\"access_token\":\"gAAAAABqujqDdxpftPW1QlrNokYHHcXGVoWo3mEAK5m9EwMZCPuLjJ2eOFmThCdD0sD3W00p5dE_MrmI_W5lFd5nCkwnyAloDqIe1bkBlfirY1XNTrC7xDpkbSUY7dEfeHDVtSydTQEA9FbhWAR5oWMuZnS3N5eKTQ==\",\"expires_in\":300,\"token_type\":\"Bearer\"}\n"
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://localhost:9644/api/v1/oid4vci/2/nonce"
+    },
+    "response": {
+      "status": 200,
+      "body": "{\"c_nonce\":\"gAAAAABqujqDyfKd3cDaTgMhMOQ8nH72M56I6cez8agOgU1AIgJ_uNtgg3kipvDy6VjMiuguZXCUzxHFhO_fhx0TNySzv2Y4OJ13kiGSnhY9XtMXTosqaVc=\"}\n"
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://localhost:9644/api/v1/oid4vci/2/credential",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer gAAAAABqujqDdxpftPW1QlrNokYHHcXGVoWo3mEAK5m9EwMZCPuLjJ2eOFmThCdD0sD3W00p5dE_MrmI_W5lFd5nCkwnyAloDqIe1bkBlfirY1XNTrC7xDpkbSUY7dEfeHDVtSydTQEA9FbhWAR5oWMuZnS3N5eKTQ=="
+      },
+      "body": "{\"proofs\":{\"jwt\":[\"eyJhbGciOiJFUzI1NiIsInR5cCI6Im9wZW5pZDR2Y2ktcHJvb2Yrand0IiwiandrIjp7Imt0eSI6IkVDIiwia2lkIjoiZGMyZTE4MmItMTcyNy00MTc5LTllZmQtMzhlOWMzZjBjNGY3IiwiY3J2IjoiUC0yNTYiLCJ4IjoiLUR4RVFhTWlfZ2h5WUI4cDhSMTBZNjNsRXNHT0w2NzVQZy03NGJvOUJfUSIsInkiOiIyYWxmM0ZSN2c4NTQ3aXF5MXR3aVoyZXRQRDBhNk5WeFVIcEMteXlRM1lvIn19.eyJhdWQiOiJodHRwczovL2xvY2FsaG9zdDo5NjQ0L2FwaS92MS9vaWQ0dmNpLzIiLCJpYXQiOjE3OTA1ODk1NzEsIm5vbmNlIjoiZ0FBQUFBQnF1anFEeWZLZDNjRGFUZ01oTU9ROG5INzJNNTZJNmNlejhhZ09nVTFBSWdKX3VOdGdnM2tpcHZEeTZWak1pdWd1WlhDVXp4SEZoT19maHgwVE55U3p2Mlk0T0oxM2tpR1NuaFk5WHRNWFRvc3FhVmM9In0.sehDdI-Yud3ScNqN8fz3XKriT3N243nqjpYE2UPttjG_NwXhfHbxCDsa64DyYTA6MDAv82LbpSliPRMEpMLepg\"]},\"credential_configuration_id\":\"polaris_wallet_copy\"}"
+    },
+    "response": {
+      "status": 200,
+      "body": "{\"credentials\":[{\"credential\":\"eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCeFRDQ0FXdWdBd0lCQWdJVUhkRGhMQm8rbmdVUm1aL0c1UmFqbVJoK0VVTXdDZ1lJS29aSXpqMEVBd0l3TURFdU1Dd0dBMVVFQXd3bFVHOXNZWEpwY3lCM1lXeHNaWFF0WTI5d2VTQlVSVk5VSUVOQkxDQmhaMlZ1WTNrZ01qQWVGdzB5TmpBNU1qY3dPVFU1TWpsYUZ3MHlOakV5TWpjd09UVTVNamxhTURReE1qQXdCZ05WQkFNTUtWQnZiR0Z5YVhNZ2QyRnNiR1YwTFdOdmNIa2dWRVZUVkNCcGMzTjFaWElzSUdGblpXNWplU0F5TUZrd0V3WUhLb1pJemowQ0FRWUlLb1pJemowREFRY0RRZ0FFUjFCUHJZNUZGZ1p1NlBUUlR0UXRUd0F0ZERSS2ZoOE1SSG5pRmUwLzdIbFlPaEFweWxCVGE1TStKSkJxUU1GSUJwNXJRYWNBdUlTNnVVQkRIODEzQmFOZk1GMHdEQVlEVlIwVEFRSC9CQUl3QURBT0JnTlZIUThCQWY4RUJBTUNCNEF3UFFZRFZSMFJCRFl3TklZbmFIUjBjSE02THk5c2IyTmhiR2h2YzNRNk9UWTBOQzloY0drdmRqRXZiMmxrTkhaamFTOHlnZ2xzYjJOaGJHaHZjM1F3Q2dZSUtvWkl6ajBFQXdJRFNBQXdSUUlnTmM3QW0rdnkxU3h5bElORFJZcVFMM3lnZlpEclh0dzV6ZDJZU3AwcjdSSUNJUUNMeGhSRGlvNkhlZ2F3aFFNM21SKzdZQ0d1alI3M2NUa05EVW95M0lmU2d3PT0iXX0.eyJpc3MiOiJodHRwczovL2xvY2FsaG9zdDo5NjQ0L2FwaS92MS9vaWQ0dmNpLzIiLCJ2Y3QiOiJ1cm46cG9sYXJpczp3YWxsZXQtY29weToxIiwiaWF0IjoxNzkwNTg5NTcxLCJleHAiOjE3OTMxODE1NzEsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiItRHhFUWFNaV9naHlZQjhwOFIxMFk2M2xFc0dPTDY3NVBnLTc0Ym85Ql9RIiwieSI6IjJhbGYzRlI3Zzg1NDdpcXkxdHdpWjJldFBEMGE2TlZ4VUhwQy15eVEzWW8ifX0sInN0YXR1cyI6eyJzdGF0dXNfbGlzdCI6eyJpZHgiOjkzNjI0MSwidXJpIjoiaHR0cHM6Ly9sb2NhbGhvc3Q6OTY0NC9hcGkvdjEvb2lkNHZjaS8yL3N0YXR1cy8yMDI2LTA5LTI4LzAifX0sIl9zZCI6WyIzN085X1R5akZTeGhkVE1sWFNmMjViejhWZ2pkWmZQbnB5dXpfSzhjVHVBIiwiQVlfa3VIN1JwWm9lMVpSM1ZKWHNZNkx6a0NWZmtmclljWEVROVlsUjhkYyIsIkZUX1FpNlZyNjJvc0V6aFFZeDVmNjJJaXYtTkp6ajllcVY4SlFURHpGOXciLCJLZ2J2UFlmcGVOVXlZY3hRZzMzRHB2dzFYdkRCV19HanVSWTJfRm5sMlVvIiwiY2JHTnV6Vnp2SUtEbnVtMjFLSERsQTd3dklYeDZDZ05lWlAzUm1VT3RqYyJdLCJfc2RfYWxnIjoic2hhLTI1NiJ9.dYT3J6rCgLwOAZ4kcw0As6zRdUd0tV243QfYWT_-Wuwyf68ccKOWbUly6ozBALLoKjAwBO5LO4I1PBRytjyfnw~WyJXX21XSkpseVNxcDlVNUFEcllBOWdBIiwibGVnYWxfbmFtZSIsIlM1IEhvbGRlciBDIl0~WyI4bktWcUJFRVlpRlZPSmVsRHduWjdBIiwiYmlydGhkYXRlIiwiMTk5MC0wNS0wNiJd~WyJDb2Q4MW9jWFl6ZDBKbGVYY1JlNTh3IiwiYWdlX292ZXJfMTgiLHRydWVd~WyItenBSejEtN0FDeXJ5dEl5Z1NkSWVBIiwiYWdlX292ZXJfMjEiLHRydWVd~WyJPUGduZXA2YlFJOExUZy1RU25Pb3h3IiwianVyaXNkaWN0aW9uIiwiUEEiXQ~\"}]}\n"
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "url": "https://localhost:9644/api/v1/oid4vci/2/status/2026-09-28/0",
+      "headers": {
+        "Accept": "application/statuslist+jwt"
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": "eyJhbGciOiJFUzI1NiIsInR5cCI6InN0YXR1c2xpc3Qrand0IiwieDVjIjpbIk1JSUJ4VENDQVd1Z0F3SUJBZ0lVSGREaExCbytuZ1VSbVovRzVSYWptUmgrRVVNd0NnWUlLb1pJemowRUF3SXdNREV1TUN3R0ExVUVBd3dsVUc5c1lYSnBjeUIzWVd4c1pYUXRZMjl3ZVNCVVJWTlVJRU5CTENCaFoyVnVZM2tnTWpBZUZ3MHlOakE1TWpjd09UVTVNamxhRncweU5qRXlNamN3T1RVNU1qbGFNRFF4TWpBd0JnTlZCQU1NS1ZCdmJHRnlhWE1nZDJGc2JHVjBMV052Y0hrZ1ZFVlRWQ0JwYzNOMVpYSXNJR0ZuWlc1amVTQXlNRmt3RXdZSEtvWkl6ajBDQVFZSUtvWkl6ajBEQVFjRFFnQUVSMUJQclk1RkZnWnU2UFRSVHRRdFR3QXRkRFJLZmg4TVJIbmlGZTAvN0hsWU9oQXB5bEJUYTVNK0pKQnFRTUZJQnA1clFhY0F1SVM2dVVCREg4MTNCYU5mTUYwd0RBWURWUjBUQVFIL0JBSXdBREFPQmdOVkhROEJBZjhFQkFNQ0I0QXdQUVlEVlIwUkJEWXdOSVluYUhSMGNITTZMeTlzYjJOaGJHaHZjM1E2T1RZME5DOWhjR2t2ZGpFdmIybGtOSFpqYVM4eWdnbHNiMk5oYkdodmMzUXdDZ1lJS29aSXpqMEVBd0lEU0FBd1JRSWdOYzdBbSt2eTFTeHlsSU5EUllxUUwzeWdmWkRyWHR3NXpkMllTcDByN1JJQ0lRQ0x4aFJEaW82SGVnYXdoUU0zbVIrN1lDR3VqUjczY1RrTkRVb3kzSWZTZ3c9PSJdfQ.eyJzdWIiOiJodHRwczovL2xvY2FsaG9zdDo5NjQ0L2FwaS92MS9vaWQ0dmNpLzIvc3RhdHVzLzIwMjYtMDktMjgvMCIsImlhdCI6MTc5MDU4OTU3MSwiZXhwIjoxNzkwNTg5ODcxLCJ0dGwiOjMwMCwic3RhdHVzX2xpc3QiOnsiYml0cyI6MSwibHN0IjoiZU5ydDBERU5BQUFNQXlEX29wZk9SZE1ESkpBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBTERyRkFBQUFBQUFBQUFBQUFBQUFBQlE5V0dvSGVFIn19.zIIER0n_r2Md1todfAUMi2n330HUS_sJKlwFC9VcGr6JmQUA7CW0UMNSXn0PRKaN8h8-GXKhwCdlDXWvhz1IHg"
+    }
+  }
+]

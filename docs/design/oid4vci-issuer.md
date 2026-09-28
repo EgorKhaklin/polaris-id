@@ -5,12 +5,12 @@ there, or an operator deciding whether to offer it. **Job:** state what the wall
 governs it, what it inherits from the Polaris credential and what it does not, before the code
 exists.
 
-**State: built; no wallet has received from the product yet.** The record (`CredentialCopy`,
+**State: built, and two wallets have received from it.** The record (`CredentialCopy`,
 `uc_issue_credential_copy`, `credential_copy_valid_indexes`), the key loader
 (`polaris_web/credential_copy_keys.py`) and the OpenID4VCI endpoints and operator offer
 (`polaris_web/oid4vci_routes.py`, [API](../reference/API.md#openid4vci-issuance-wallet-copies))
 exist (2026-09-28). The lab's binding cases run against the product over HTTP
-(`WalletCopyIssuanceTests`). Issuing into walt.id and Credo from the product is the next step. The bet is [lab/strategy/005](../../lab/strategy/005-oid4vci-issuer.md).
+(`WalletCopyIssuanceTests`), and walt.id Wallet API v2 1.0.0 and Credo 0.6.3 each received a copy from the product, driven by this repository ([STEP5](../../lab/strategy/005/STEP5.md)). The bet is [lab/strategy/005](../../lab/strategy/005-oid4vci-issuer.md).
 The lab showed that two wallets Polaris did not write take a credential from a conformant
 pre-authorized-code issuer without a workaround ([STEP2](../../lab/strategy/005/STEP2.md)). It
 also showed that a copy issued under the record's rules obeys the record, 7 of 7 with two

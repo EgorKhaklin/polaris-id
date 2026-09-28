@@ -224,6 +224,36 @@ outside party using Polaris. The issuer was trusted through a JWKS, not x5c.
 The same limits as the two rows above apply unchanged: one format, one path, driven by the
 author on one machine, the credential minted by this repository's issuer script.
 
+**Filled 2026-09-28: the issuing side. Two wallets receive a wallet copy from the product.**
+
+    Wallets:                   walt.id Wallet API v2 1.0.0 (waltid/wallet-api2:1.0.0,
+                               sha256:d2248288f41ceba029a7fd943fed623ef7f0f846edfee666ac6f7e621c4d739e)
+                               and Credo 0.6.3 (@credo-ts), each unmodified
+    Contact/run date:          no contact; 2026-09-28, from commit 6803f9f2
+    Issuer:                    polaris_web itself, served over TLS: the operator's offer
+                               route and the OpenID4VCI 1.0 endpoints (pre-authorized code),
+                               signing with a TEST wallet-copy chain for agency 2
+    Result:                    BOTH RECEIVED A WALLET COPY, AND THE RECORD GOVERNED IT.
+                               Each wallet fetched the path-inserted issuer and authorization
+                               server metadata, then token, nonce and credential. The copy it
+                               stored verified from x5c[0] to the test anchor, was bound to a
+                               key the wallet generated, and read VALID on the agency's status
+                               list through polaris-oid4vp's status decision. After
+                               uc8_revoke_token the same copy read INVALID.
+    Control:                   a credential revoked between offer and redemption: both wallets
+                               were refused (400 credential_request_denied, from the record)
+                               and stored nothing.
+    Difference:                Credo fetched the status list when it received the copy;
+                               walt.id did not.
+    Modifications:             none. Configuration only: the issuer's TLS certificate in each
+                               wallet's trust store, and the test anchor registered with Credo.
+    Transcript:                lab/strategy/005/STEP5.md; lab/strategy/005/product/run.py
+                               reproduces a run and exits non-zero if any case differs.
+
+The same category as the rows above: driven by the author, on one machine, against a TEST CA
+and a scratch database, not an outside party using Polaris. Not HAIP (pre-authorized code
+only). The copy is a classical ES256 credential; nothing verified from it rests on ML-DSA-65.
+
 ### Known limitations, held here and not in ROADMAP.md
 
 Recorded on 2026-09-15 as qualifications on the evidence above, deliberately NOT as a plan.

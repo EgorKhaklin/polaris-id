@@ -8,7 +8,13 @@ certification (a FAPI 2.0 authorization server), decided after the loop. Step 2 
 workaround (criterion 2 does not fire), and one credential went issuer, walt.id, `polaris-oid4vp`.
 Step 3 done ([005/STEP3.md](005/STEP3.md)): 7 of 7, the wallet copy obeys the Polaris record
 (no copy for a non-ACTIVE credential, revocation reaches a verifier that reads status), with
-the binding in the issuer's code rather than the database. Next: the wallet loop as product.
+the binding in the issuer's code rather than the database. The wallet loop as product is
+built (2026-09-28: the record, the keys, the OpenID4VCI endpoints and the offer route, with the
+binding moved into the database), and step S5 is done ([005/STEP5.md](005/STEP5.md)): walt.id and
+Credo each received a wallet copy from `polaris_web` itself. The copy verified independently and
+read VALID, then INVALID after `uc8_revoke_token`. A credential revoked between offer and
+redemption got no copy. Next: the received copy presented to `polaris-oid4vp` with status read.
+Criterion 4 ("nobody holds it") starts counting now.
 
 ---
 

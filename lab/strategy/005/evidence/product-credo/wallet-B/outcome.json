@@ -1,0 +1,4 @@
+{
+  "stored": false,
+  "error": "Error: Error retrieving credentials from 'https://localhost:9644/api/v1/oid4vci/2'\n{\n  \"error\": \"credential_request_denied\",\n  \"error_description\": \"the Polaris record does not allow a copy of this credential now\"\n}"
+}

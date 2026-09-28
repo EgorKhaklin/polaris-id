@@ -1,0 +1,37 @@
+{
+  "stored": true,
+  "vct": "urn:polaris:wallet-copy:1",
+  "claims": {
+    "iss": "https://localhost:9644/api/v1/oid4vci/2",
+    "vct": "urn:polaris:wallet-copy:1",
+    "iat": 1790589571,
+    "exp": 1793181571,
+    "cnf": {
+      "jwk": {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "-DxEQaMi_ghyYB8p8R10Y63lEsGOL675Pg-74bo9B_Q",
+        "y": "2alf3FR7g8547iqy1twiZ2etPD0a6NVxUHpC-yyQ3Yo"
+      }
+    },
+    "status": {
+      "status_list": {
+        "idx": 936241,
+        "uri": "https://localhost:9644/api/v1/oid4vci/2/status/2026-09-28/0"
+      }
+    },
+    "jurisdiction": "PA",
+    "legal_name": "S5 Holder C",
+    "age_over_21": true,
+    "birthdate": "1990-05-06",
+    "age_over_18": true
+  },
+  "compact": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCeFRDQ0FXdWdBd0lCQWdJVUhkRGhMQm8rbmdVUm1aL0c1UmFqbVJoK0VVTXdDZ1lJS29aSXpqMEVBd0l3TURFdU1Dd0dBMVVFQXd3bFVHOXNZWEpwY3lCM1lXeHNaWFF0WTI5d2VTQlVSVk5VSUVOQkxDQmhaMlZ1WTNrZ01qQWVGdzB5TmpBNU1qY3dPVFU1TWpsYUZ3MHlOakV5TWpjd09UVTVNamxhTURReE1qQXdCZ05WQkFNTUtWQnZiR0Z5YVhNZ2QyRnNiR1YwTFdOdmNIa2dWRVZUVkNCcGMzTjFaWElzSUdGblpXNWplU0F5TUZrd0V3WUhLb1pJemowQ0FRWUlLb1pJemowREFRY0RRZ0FFUjFCUHJZNUZGZ1p1NlBUUlR0UXRUd0F0ZERSS2ZoOE1SSG5pRmUwLzdIbFlPaEFweWxCVGE1TStKSkJxUU1GSUJwNXJRYWNBdUlTNnVVQkRIODEzQmFOZk1GMHdEQVlEVlIwVEFRSC9CQUl3QURBT0JnTlZIUThCQWY4RUJBTUNCNEF3UFFZRFZSMFJCRFl3TklZbmFIUjBjSE02THk5c2IyTmhiR2h2YzNRNk9UWTBOQzloY0drdmRqRXZiMmxrTkhaamFTOHlnZ2xzYjJOaGJHaHZjM1F3Q2dZSUtvWkl6ajBFQXdJRFNBQXdSUUlnTmM3QW0rdnkxU3h5bElORFJZcVFMM3lnZlpEclh0dzV6ZDJZU3AwcjdSSUNJUUNMeGhSRGlvNkhlZ2F3aFFNM21SKzdZQ0d1alI3M2NUa05EVW95M0lmU2d3PT0iXX0.eyJpc3MiOiJodHRwczovL2xvY2FsaG9zdDo5NjQ0L2FwaS92MS9vaWQ0dmNpLzIiLCJ2Y3QiOiJ1cm46cG9sYXJpczp3YWxsZXQtY29weToxIiwiaWF0IjoxNzkwNTg5NTcxLCJleHAiOjE3OTMxODE1NzEsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiItRHhFUWFNaV9naHlZQjhwOFIxMFk2M2xFc0dPTDY3NVBnLTc0Ym85Ql9RIiwieSI6IjJhbGYzRlI3Zzg1NDdpcXkxdHdpWjJldFBEMGE2TlZ4VUhwQy15eVEzWW8ifX0sInN0YXR1cyI6eyJzdGF0dXNfbGlzdCI6eyJpZHgiOjkzNjI0MSwidXJpIjoiaHR0cHM6Ly9sb2NhbGhvc3Q6OTY0NC9hcGkvdjEvb2lkNHZjaS8yL3N0YXR1cy8yMDI2LTA5LTI4LzAifX0sIl9zZCI6WyIzN085X1R5akZTeGhkVE1sWFNmMjViejhWZ2pkWmZQbnB5dXpfSzhjVHVBIiwiQVlfa3VIN1JwWm9lMVpSM1ZKWHNZNkx6a0NWZmtmclljWEVROVlsUjhkYyIsIkZUX1FpNlZyNjJvc0V6aFFZeDVmNjJJaXYtTkp6ajllcVY4SlFURHpGOXciLCJLZ2J2UFlmcGVOVXlZY3hRZzMzRHB2dzFYdkRCV19HanVSWTJfRm5sMlVvIiwiY2JHTnV6Vnp2SUtEbnVtMjFLSERsQTd3dklYeDZDZ05lWlAzUm1VT3RqYyJdLCJfc2RfYWxnIjoic2hhLTI1NiJ9.dYT3J6rCgLwOAZ4kcw0As6zRdUd0tV243QfYWT_-Wuwyf68ccKOWbUly6ozBALLoKjAwBO5LO4I1PBRytjyfnw~WyJXX21XSkpseVNxcDlVNUFEcllBOWdBIiwibGVnYWxfbmFtZSIsIlM1IEhvbGRlciBDIl0~WyI4bktWcUJFRVlpRlZPSmVsRHduWjdBIiwiYmlydGhkYXRlIiwiMTk5MC0wNS0wNiJd~WyJDb2Q4MW9jWFl6ZDBKbGVYY1JlNTh3IiwiYWdlX292ZXJfMTgiLHRydWVd~WyItenBSejEtN0FDeXJ5dEl5Z1NkSWVBIiwiYWdlX292ZXJfMjEiLHRydWVd~WyJPUGduZXA2YlFJOExUZy1RU25Pb3h3IiwianVyaXNkaWN0aW9uIiwiUEEiXQ~",
+  "holder_jwk": {
+    "kty": "EC",
+    "x": "-DxEQaMi_ghyYB8p8R10Y63lEsGOL675Pg-74bo9B_Q",
+    "y": "2alf3FR7g8547iqy1twiZ2etPD0a6NVxUHpC-yyQ3Yo",
+    "crv": "P-256",
+    "kid": "dc2e182b-1727-4179-9efd-38e9c3f0c4f7"
+  }
+}

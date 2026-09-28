@@ -1,0 +1,179 @@
+{
+  "wallet": "credo",
+  "commit": "6803f9f221d82def4790b78b54278bc8551188f6",
+  "product_tree_dirty": false,
+  "issuer": "https://localhost:9644/api/v1/oid4vci/2",
+  "started": "2026-09-28T09:59:27.165401+00:00",
+  "C_received": true,
+  "C_wallet_said": {
+    "stored": true,
+    "vct": "urn:polaris:wallet-copy:1",
+    "claims": {
+      "iss": "https://localhost:9644/api/v1/oid4vci/2",
+      "vct": "urn:polaris:wallet-copy:1",
+      "iat": 1790589571,
+      "exp": 1793181571,
+      "cnf": {
+        "jwk": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "-DxEQaMi_ghyYB8p8R10Y63lEsGOL675Pg-74bo9B_Q",
+          "y": "2alf3FR7g8547iqy1twiZ2etPD0a6NVxUHpC-yyQ3Yo"
+        }
+      },
+      "status": {
+        "status_list": {
+          "idx": 936241,
+          "uri": "https://localhost:9644/api/v1/oid4vci/2/status/2026-09-28/0"
+        }
+      },
+      "jurisdiction": "PA",
+      "legal_name": "S5 Holder C",
+      "age_over_21": true,
+      "birthdate": "1990-05-06",
+      "age_over_18": true
+    },
+    "holder_jwk": {
+      "kty": "EC",
+      "x": "-DxEQaMi_ghyYB8p8R10Y63lEsGOL675Pg-74bo9B_Q",
+      "y": "2alf3FR7g8547iqy1twiZ2etPD0a6NVxUHpC-yyQ3Yo",
+      "crv": "P-256",
+      "kid": "dc2e182b-1727-4179-9efd-38e9c3f0c4f7"
+    }
+  },
+  "C_copy": {
+    "iss": "https://localhost:9644/api/v1/oid4vci/2",
+    "vct": "urn:polaris:wallet-copy:1",
+    "cnf_matches_wallet_key": true,
+    "status": "VALID"
+  },
+  "D_status_after_revocation": "INVALID",
+  "B_received": false,
+  "B_wallet_said": {
+    "stored": false,
+    "error": "Error: Error retrieving credentials from 'https://localhost:9644/api/v1/oid4vci/2'\n{\n  \"error\": \"credential_request_denied\",\n  \"error_description\": \"the Polaris record does not allow a copy of this credential now\"\n}"
+  },
+  "issuer_saw": [
+    [
+      "GET",
+      "/api/health/live",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "POST",
+      "/login",
+      302,
+      "Python-urllib/3.12"
+    ],
+    [
+      "GET",
+      "/dashboard",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "GET",
+      "/tokens",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "POST",
+      "/tokens/12/wallet-offer",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "GET",
+      "/tokens",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "POST",
+      "/tokens/13/wallet-offer",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "GET",
+      "/.well-known/openid-credential-issuer/api/v1/oid4vci/2",
+      200,
+      "node"
+    ],
+    [
+      "GET",
+      "/.well-known/oauth-authorization-server/api/v1/oid4vci/2",
+      200,
+      "node"
+    ],
+    [
+      "POST",
+      "/api/v1/oid4vci/2/token",
+      200,
+      "node"
+    ],
+    [
+      "POST",
+      "/api/v1/oid4vci/2/nonce",
+      200,
+      "node"
+    ],
+    [
+      "POST",
+      "/api/v1/oid4vci/2/credential",
+      200,
+      "node"
+    ],
+    [
+      "GET",
+      "/api/v1/oid4vci/2/status/2026-09-28/0",
+      200,
+      "node"
+    ],
+    [
+      "GET",
+      "/api/v1/oid4vci/2/status/2026-09-28/0",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "GET",
+      "/api/v1/oid4vci/2/status/2026-09-28/0",
+      200,
+      "Python-urllib/3.12"
+    ],
+    [
+      "GET",
+      "/.well-known/openid-credential-issuer/api/v1/oid4vci/2",
+      200,
+      "node"
+    ],
+    [
+      "GET",
+      "/.well-known/oauth-authorization-server/api/v1/oid4vci/2",
+      200,
+      "node"
+    ],
+    [
+      "POST",
+      "/api/v1/oid4vci/2/token",
+      200,
+      "node"
+    ],
+    [
+      "POST",
+      "/api/v1/oid4vci/2/nonce",
+      200,
+      "node"
+    ],
+    [
+      "POST",
+      "/api/v1/oid4vci/2/credential",
+      400,
+      "node"
+    ]
+  ],
+  "verdict": "PASS"
+}
