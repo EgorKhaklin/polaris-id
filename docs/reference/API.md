@@ -1187,7 +1187,7 @@ specified in [transparency-log.md](../design/transparency-log.md).
 An agency that holds a wallet-copy key ([key ceremony](../operator/KEY-CEREMONY.md#wallet-copy-keys-es256))
 is an OpenID4VCI 1.0 credential issuer for the pre-authorized code grant, and issues a wallet
 copy of an ACTIVE credential: an SD-JWT VC signed ES256 under the agency's certificate (wire spec
-section 3.19). The design, and what the copy is and is not, is
+section 3.20). The design, and what the copy is and is not, is
 [oid4vci-issuer.md](../design/oid4vci-issuer.md). The credential issuer identifier is
 `https://HOST/api/v1/oid4vci/<agency_id>`, read from the leaf certificate's URI subjectAltName
 rather than configured. An agency with no key answers `404 not_found` on every route below; a key

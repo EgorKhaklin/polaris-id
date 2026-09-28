@@ -454,7 +454,7 @@ as for a presentation, and reserves `bounded` for a chain carried by the zero-kn
 A grant hides the human from the agent's ACTIONS; it does not hide the credential from the
 service.
 
-### 3.17 `polaris-presentation/1` and `polaris-qr/1` (the holder's presentation and its transfer)
+### 3.18 `polaris-presentation/1` and `polaris-qr/1` (the holder's presentation and its transfer)
 
 `polaris-presentation/1` is the UNSIGNED wrapper a holder hands a verifier (P8.6):
 `credential` (the section 3.7 authenticity pack), an optional `status_assertion` (section
@@ -481,7 +481,7 @@ is far smaller). No frame
 exceeds the emitter's frame budget (RECOMMENDED 1800 bytes). Framing is transport integrity
 only; it adds no authenticity.
 
-### 3.18 `polaris-trust-list/1`
+### 3.19 `polaris-trust-list/1`
 
 A publishing authority's signed statement of every authority key its instance knows, with each
 key's lifecycle status (P8.7b).
@@ -502,7 +502,7 @@ trust list, MUST require the signer key active at the evidence's instant per the
 only per the signer's own manifest. Statuses in a manifest's `anchors` (3.1) and a registry's
 `authorities` (3.10) MUST reflect the same register.
 
-### 3.19 The wallet copy (`dc+sd-jwt`, vct `urn:polaris:wallet-copy:1`) and its status list
+### 3.20 The wallet copy (`dc+sd-jwt`, vct `urn:polaris:wallet-copy:1`) and its status list
 
 Not a Polaris statement: a standard SD-JWT VC, issued over OpenID4VCI to a wallet Polaris did not
 write ([oid4vci-issuer.md](../design/oid4vci-issuer.md)). It is signed ES256, not ML-DSA, so it is
