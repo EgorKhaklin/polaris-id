@@ -240,6 +240,29 @@ class ResponseUriTests(ServeTestCase):
         self.assertEqual(seen[1][1].code, "nonce")
 
 
+class DonePageTests(ServeTestCase):
+    """HAIP 5.1: an accepted response carries only a `redirect_uri`, and a same-device wallet
+    follows it. Until 2026-09-28 this listener answered that path 404, measured with OID4VCgo's
+    wallet (lab/interop/oid4vcgo/): a presentation that succeeded ended on an error page."""
+
+    def test_the_redirect_an_accepted_presentation_returns_is_served(self):
+        _, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar)
+        status, _, body = _post(self.base + "/response", {"response": form["response"][0]})
+        self.assertEqual(status, 200)
+        path = urllib.parse.urlsplit(json.loads(body)["redirect_uri"]).path
+        status, ctype, page = _get(self.base + path)
+        self.assertEqual(status, 200)
+        self.assertTrue(ctype.startswith("text/html"), ctype)
+        self.assertIn(b"complete", page)
+
+    def test_the_page_is_the_same_whoever_asks(self):
+        """It varies with nothing, so it tells a prober nothing the 200 had not."""
+        first = _get(self.base + "/done")
+        self.assertEqual(first[0], 200)
+        self.assertEqual(first, _get(self.base + "/done?state=anything&x=1"))
+
+
 class TransportTests(unittest.TestCase):
     """TLS and logging, the two things `serve` does that are not routing."""
 

@@ -1,7 +1,8 @@
 """serve.py -- the smallest HTTPS surface an OpenID4VP verifier can present.
 
-Two endpoints and nothing else: the `request_uri` a wallet fetches the signed request object
-from, and the `response_uri` it POSTs the encrypted response to. Built on the standard
+Three paths and nothing else: the `request_uri` a wallet fetches the signed request object
+from, the `response_uri` it POSTs the encrypted response to, and the constant page an accepted
+wallet is redirected to afterwards (`DONE_PATH`). Built on the standard
 library, so a relying party running this installs `polaris-oid4vp` and no web framework.
 
 This is a REFERENCE listener. `http.server` is single-threaded per connection and has no
@@ -20,6 +21,17 @@ from .verifier import Verifier  # noqa: F401  re-exported for callers of serve()
 
 REQUEST_PATH = "/request.jwt"
 RESPONSE_PATH = "/response"
+
+#: Where `Verifier` sends the wallet after an accepted presentation unless told otherwise: HAIP
+#: 5.1 makes the answer a `redirect_uri`, and a same-device wallet follows it. Until 2026-09-28
+#: this listener answered that path 404, measured with OID4VCgo's wallet, which follows it as
+#: HAIP intends: a presentation that succeeded ended on an error page (lab/interop/oid4vcgo/).
+DONE_PATH = "/done"
+
+#: The page at DONE_PATH, and the same page whoever asks. It varies with nothing, so a prober
+#: learns nothing from it that the 200 on the response_uri had not already said.
+DONE_PAGE = (b'<!doctype html><meta charset="utf-8"><title>Presentation complete</title>'
+             b"<p>The presentation is complete. You can close this page.</p>\n")
 
 #: The largest request body this listener will read. An SD-JWT VC presentation inside a JWE,
 #: even with a dozen disclosures and an x5c chain, is a few tens of kilobytes; the capture
@@ -80,6 +92,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         path, _, query = self.path.partition("?")
+        if path == DONE_PATH:
+            return self._send_page(DONE_PAGE)
         if path != REQUEST_PATH:
             return self._send(404, {"error": "not_found"})
         return self._serve_request_object(urllib.parse.parse_qs(query))
@@ -158,6 +172,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _send_page(self, raw):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(raw)
 
