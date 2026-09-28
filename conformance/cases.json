@@ -2006,6 +2006,156 @@
       },
       "since": "1.0.0-rc.66",
       "note": "Wire spec section 4: a legacy edge states a window that closed before now: the manifest's authority signed that window, and a fresh manifest does not extend an edge its authority has ended."
+    },
+    {
+      "name": "cross-authority-variants-base",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-variants-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-variants-manifest.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "accept"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "The positive control: the genuine setup every variant below differs from in one fact."
+    },
+    {
+      "name": "cross-authority-variants-feed-clean",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-variants-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-variants-manifest.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "accept"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "The positive control for the feed variants: an authentic, fresh feed from the issuer that revokes nothing.",
+      "feed_file": "conformance/vectors/cross-authority-variants-feed-clean.json"
+    },
+    {
+      "name": "cross-authority-variants-manifest-stale",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-variants-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-variants-manifest-stale.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "A manifest past its own window confers nothing, however genuine."
+    },
+    {
+      "name": "cross-authority-variants-attestation-other-key",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-variants-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-variants-manifest-other-key.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "An edge that attests another key does not attest this credential's issuer."
+    },
+    {
+      "name": "cross-authority-variants-attestation-bad-signature",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-variants-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-variants-manifest-bad-attestation-signature.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "A present-but-invalid edge signature refuses the edge (wire spec section 3.14)."
+    },
+    {
+      "name": "cross-authority-variants-retired-anchor",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-variants-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-variants-manifest.json"
+      ],
+      "trusted_anchors": [
+        "cf15aa3bb8847f08ee18ced89a5e3121eb3f5dbf70f638272fc2e870f3eb04f9164a0bdb33231caa0f9e0d91263237e0885912a3d12eb5ecd12f5bb8fcf0f90dbd7d7cfccc093985e451ce8e232bd3a5ccfc3725606c564f3889e79c60aa652d500131a9c74969e1a48ce1e3232b1c945caa287fbec928d97bff2d9ebffcdab4025fe668c0bb9d4112d9cf7d11420e4ff2836e714234d43e2e1e1de9db3871927730553d15a2634ba12897d2939047ea00b4d268cb37d33eb9c0865154a2243dd68a078297ad54b8a898c9acb3de77addcbdeff33969c9dca122f7dfcce108aeb81ec8bb75cc1cfcf5278239994b83bc043a14cc4a9f8583f0d2d58a440f3f023eac6a663626601a344697ddf2b66e98cab07584ba17be8d6cc2adfc9c83936a523da72c23082ce5c4f88ea87bf8e0a11c8eaa99265dbb76a4fc9be48a378d5593096827abe1e8fa2ff3f73b5c00601863d60d5a6393fba99be31c94972eff611ae65d9f57245bbf3ae7a432068fa58b668712a7529fe13200daab9015c9038b1e4ca9c77943c1b6bd1236ec989e89b9b91357a19014d1ee11ecd9b6b6cdd4025d384c3eedab1a82541425e79a8891a37fafb989aba213a7fcd00450e26a8f6d2416296385146e07531b9cf7aa2d42f582a041642fcf17d02832efed21a85c4024467910f75cbda02dddd0628434c9d626716977853a80dd37e1f533eaef8670bd0498ad19bba392959e6ef02094f6988e827097409a4b5b91af7b3d09b51d3dcbfb411cf1ddbd062284bbaacf09bb04f8a57490fcefe28581e2c497996611c2ed0475183422b2fd5d9fd3e08e6bde31720a23beb854324d5f31d875fac5ae27827aba72072b829bc653b639dd107ee0316d7465d2e0599e99b28e733c2902baef8a1ebf53cbaa10daf6c31e3c8a063c3b171a655e31aa54dba2239de1d6c0d114a30049589fb51bd887cdef625f1068f5243e100cefa55d357108acf4e2c7201e3430a2d241ee7f0dfe2d6a90d8f324757121d0325cbc8f3c7a6c52758d909b5dee2dbabefb37ea30181ae1ff72677b1daf2374c78dd03bab694e67bc56041e5ddde4a3904d25b191364d85138d2d819240e5b33842fed9849d062f7408ca9cadf2840b983d407cfded066e05006581f6a8e64766be8d86b86294b8e369cbebb9f6283ef40272a39fe0ec445db1e3565274a2112cbf72a02900c5fa85889bdb92df5c3338a49a86d7e546b77444fa513d28c00ed84a28943161b3cec0470ce3587e645aa7f462fab388250d8e53337cd8d33d277bd2d046ec489b4cd85d429565a68858de54a9b1aa6c4b2eb4fbe974ebf79880af4a3ccd83ac13767b48f19aaeb1d1a42af1c3bd5e95ac34aeef0ea8d54d3e093adf12443de78d27849f489b80413712b88b93c247cf9e87b5f3f7edd2ff53b23bb889abc43d8012502cd49cf0cdd975ad83d0753653be574e65477372a2bf73fb71fcdad1179088705c9cc761549b0151a98925f9c460d1fc891df55b74bb64e9424858f38a1de9f7efc873bae2991a7f266172cf2d122e8d7146a9402ae60f302cdccb9280aadd33ef1fbc063f672f4f78037adbd93567f0169f66c7cf7e57e6b5f29132ded52a870ea9d6418e912937c2e7b4fe2c92c2498647763fea8d5a8b17c57e7f4554fcdf23df0ffb01db8469b98e9f227170a175c752531eb16e0469ac89f448f1e6ba39e57ec9741a38e5f58dd2e4ecf2ad6a2168f2d7ca66bc7cc7ed302f1ec36c9a77a631d1ecccdcd2c9b4213012c1ce242c3993c20404600a8cf50004e9c7d5bdd20a8bd21449cd06385d5c8dc59b13957f3a5b1fe4d6e7c408d85a73b78c28f332791cc38c11ceede02613d5d613a133758294c63658eee3447baefc058f656c8854e494c24489532e959a681664f44c28d08b6764acb2e5e23e8a40f3f5d0750ff4980ced33868dd0c2fe2a1c753114ade0b3f4e8b1c44d8c4fa67e47fda646fe9a49156999534286cf4f951781187fec656e18dc17dce80162eea02456369c4ef107102f974aae9c4076f7089524b92b3460e2e8d61244e5464a4a106eb3ce9e1abbb66a00d00cc4043f371d47706773b1f357d3495884bb69aed12d28478f0be13a843233ad99527628b4c3ce6132f75d225d6e0e7dc4424ef3496041bb43136e5cda278eafd612345e10e71fea94551e173dd73c01778ba9454fdfa27eba133649f7b80e041963bfd309c1617cf936ef7a2a1ee1ba75204981a8222fdf9f31ea19d9a5b2d4972e245298a9bebe24f4056927ae2ad447ea898cb5cc069b57a56477d22ed99aa5c311552416dff3ffa7ae72dd6ac21c41654f3c80b83dcbac531f083d03ef2842cf6c6e63c51cb373bacce1b498123612fe389f6f279f0d38a0db61e62431c39727b6d44e9db642d4f13c2b5b011b55c4b4d6327e0f43983cfe270afa5fafc46dbda7ac0763d146bbb32bdf28695a58f0a88dd7c38e8a1940c145878f3ba658b99bfb7ab4d1cfcaf80599c4e989289ae58f2ce57fa9753e879b0419136020918abcb3bab42332457edb2233072beb2931aa680921086d3dbddd5356de540f256490bce073add60357a02732705dfd1ce52f37465906fe4ffff473b526bcf08aa8d80d4d35dc7b28380c57237ffedcdfe43613d42903708bd34aa16145e27462215bef459d9de7f24b10e1678174fc3ea6fc003fcb7e6fecf041c6e8dbba230ec70e3841906db33d7d1bf62999772392f6fe96f968f04b1b013b68e8bc"
+      ],
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "Trusting only a key the manifest lists as RETIRED confers no trust in it."
+    },
+    {
+      "name": "cross-authority-variants-feed-stale",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-variants-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-variants-manifest.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "A supplied feed must be fresh (wire spec section 4, item 3): fail-closed.",
+      "feed_file": "conformance/vectors/cross-authority-variants-feed-stale.json"
+    },
+    {
+      "name": "cross-authority-variants-feed-other-issuer",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-variants-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-variants-manifest.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "A supplied feed must be bound to the issuer's key: another authority's word about this credential is not the issuer's.",
+      "feed_file": "conformance/vectors/cross-authority-variants-feed-other-issuer.json"
+    },
+    {
+      "name": "cross-authority-variants-feed-not-authentic",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-variants-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-variants-manifest.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.66",
+      "note": "A supplied feed must be authentic: a forged or altered one rejects.",
+      "feed_file": "conformance/vectors/cross-authority-variants-feed-not-authentic.json"
     }
   ]
 }

@@ -83,7 +83,10 @@ NOT_A_DECISION = {
 #: conformed). Nor is freshness: v9.430 closed all nine `fresh` fields by pinning a
 #: `now` in each case, one inside the artifact's validity window and one long after.
 #: Nor are the two commitments: v9.432 published a feed and a bundle that are correctly
-#: SIGNED and whose committed root does not match what they list.
+#: SIGNED and whose committed root does not match what they list. Nor, since 2026-09-28, are
+#: `verify_cross_authority.revoked` and `verify_revocation_feed.issuer_matches`: the
+#: `cross-authority-variants-*` cases (1.0.0-rc.66) supply feeds that are stale, not authentic
+#: and signed by another key than the issuer's, and this drill measured both closed by them.
 #:
 #: Seven fields that stood here until v9.432 were never survivors. They GATE their
 #: artifact's authenticity, so forcing the reported value cannot re-open the gate and
@@ -101,7 +104,6 @@ SURVIVORS_EXPECTED = (
     "verify_attestation.valid_until",
     "verify_cosignature.witness_matches",
     "verify_cross_authority.authentic",
-    "verify_cross_authority.revoked",
     "verify_cross_authority.via",
     "verify_epoch_checkpoint.issuer_matches",
     "verify_epoch_leaves.count_matches",
@@ -113,7 +115,6 @@ SURVIVORS_EXPECTED = (
     "verify_pack.algorithm",
     "verify_pack.authenticity",
     "verify_pack.token_value",
-    "verify_revocation_feed.issuer_matches",
     "verify_signed_document.binds",
     "verify_signed_document.ltv",
     "verify_signed_document.on_behalf_of",

@@ -86,6 +86,9 @@ PINNED_KNOWN_DEFECTS = {
     "cross-authority-edge-window-unsigned-closed":
         "2026-09-28: no verifier read an unsigned (legacy) edge's valid_until; the pinned "
         "verifier predates any window rule",
+    "cross-authority-variants-attestation-bad-signature":
+        "v9.348: an edge carrying a signature that does not verify is refused; the pinned verifier "
+        "predates signed attestations and reads every edge as the manifest's word",
 }
 
 

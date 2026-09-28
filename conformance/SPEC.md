@@ -29,7 +29,13 @@ wildcard over every context. An attestation that states a `valid_until` counts o
 and one whose `valid_until` cannot be read not at all, signed or unsigned; an unsigned (legacy)
 attestation that states no window is accepted, as `cross-authority-accept` publishes. The
 `cross-authority-edge-window-*` cases pin the window for both kinds of edge, each with an open
-edge as its positive control (1.0.0-rc.66). Online authorization (a live call to
+edge as its positive control (1.0.0-rc.66). The `cross-authority-variants-*` cases take one
+genuine setup and change one fact each: a stale manifest, trust placed only in an anchor the
+manifest lists as retired, an edge that attests another key, an edge whose signature does not
+verify, and a supplied feed that is stale, signed by another key than the issuer's, or not
+authentic; each must reject, and the base setup, with no feed and with a clean one, must accept
+(1.0.0-rc.66). Until then a verifier could skip any of those seven checks and still pass every
+published case. Online authorization (a live call to
 `POST /api/v1/verify`, specified in [`docs/reference/API.md`](../docs/reference/API.md)) is
 the only check not in these offline vectors, because it depends on live issuer state.
 
