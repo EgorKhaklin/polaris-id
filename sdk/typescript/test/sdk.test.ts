@@ -905,3 +905,18 @@ test("a transplanted artifact signature is not a credential", () => {
   assert.equal(v.issuerTrusted, null);
   assert.match(v.note ?? "", /not a credential serial/);
 });
+
+test("an artifact whose format is not a string, or names a prototype member, is unknown", () => {
+  const conf = (n: string) => JSON.parse(readFileSync(join(ROOT, "conformance", "vectors", n), "utf8"));
+  const ck = conf("epoch-checkpoint-valid.json");
+  const now = "2026-06-01T00:00:00Z";
+  const good = verifySignedArtifact(ck, now);
+  assert.equal(good.authentic, true, good.note ?? "");
+  assert.equal(good.fresh, true);
+  for (const format of [[ck.format], { a: 1 }, 5, "constructor", "toString", "__proto__", "hasOwnProperty"]) {
+    const v = verifySignedArtifact({ ...ck, format }, now);
+    assert.equal(v.authentic, false, String(format));
+    assert.equal(v.fresh, null, "fresh is not evaluated for an unknown artifact: " + String(format));
+    assert.match(v.note ?? "", /unknown or unsupported artifact/, String(format));
+  }
+});

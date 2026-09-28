@@ -346,8 +346,16 @@ export function expiresIn(value: unknown): number {
   return Math.min(Math.trunc(value), MAX_TOKEN_CACHE_SECONDS);
 }
 
+/** A table entry for a sender's `format`: only for a string, and only an own key. A list coerced
+ * to its string (`["polaris-epoch-checkpoint/1"]` found the checkpoint's keys and reported
+ * `fresh` for an artifact the Python SDK calls unknown), and a name such as "constructor"
+ * found the prototype's member. ACCEPTED_ALGORITHMS has had this guard; these had not. */
+function ownEntry<T>(table: Record<string, T>, key: unknown): T | undefined {
+  return typeof key === "string" && Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined;
+}
+
 function withinReplayWindow(obj: any, now?: string | null): boolean | null {
-  const seconds = REPLAY_WINDOW_SECONDS[obj?.format];
+  const seconds = ownEntry(REPLAY_WINDOW_SECONDS, obj?.format);
   if (seconds === undefined) return null;
   const issued = isoToEpoch(obj?.issued_at);
   if (issued === null) return null;
@@ -484,7 +492,7 @@ export function verifyIdToken(tok: any, audience?: string | null, nonce?: string
 export function verifySignedArtifact(obj: any, now?: string | null,
                                      anchors?: string[] | null): ArtifactVerdict {
   const o = obj ?? {};
-  const keys = ARTIFACT_KEYS[o.format];
+  const keys = ownEntry(ARTIFACT_KEYS, o.format);
   if (!keys) return { authentic: false, fresh: null, note: "unknown or unsupported artifact: " + o.format };
   if (o.algorithm === PLACEHOLDER_LABEL || !o.public_key_hex) {
     return { authentic: false, fresh: null, note: "placeholder -- not authenticatable offline" };

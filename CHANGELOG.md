@@ -24,6 +24,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - **Breaking**: `polaris-verify` exits 2, not 1, for a presentation or ZK decision it does not accept, as its exit table says.
 - The Python SDK refuses, instead of raising on, a non-string artifact `format`, non-list `cosignatures` or a non-object revocation feed.
 - `polaris-verify` refuses, instead of raising on, timestamp-anchor `cosignatures` that are not a list.
+- The TypeScript SDK treats an artifact `format` that is not a string, or names a prototype member, as unknown, as the Python SDK does.
 
 ### Added
 
