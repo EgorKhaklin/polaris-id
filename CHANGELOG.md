@@ -13,16 +13,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - `polaris-oid4vp`: a disclosure whose claim name is not a string, and an issuer-signed `vct` that is not a string, are refused; before, `verify_presentation`, documented never to raise, raised `TypeError`. The disclosure needed only one genuine credential from a trusted issuer.
 - `polaris-oid4vp`: a response JWE whose `enc` is not a string, or whose protected header or decrypted body nests deeper than 64 levels, is refused as a `JweError`; before, `TypeError` or `RecursionError` escaped `Verifier.handle_direct_post`, documented never to raise. `serve` answered 400 either way.
+- Every framework error on an `/api/*` path is JSON `{"error", "request_id"}`, whatever its code, as the API reference promises; a wrong method (405, which keeps its `Allow` header) was still the HTML page.
 
 ### Added
 
 - The wallet copy record for OpenID4VCI issuance (`CredentialCopy`, `uc_issue_credential_copy`, `credential_copy_valid_indexes`; migrations 2026-09-28-001 and -002, [design](docs/design/oid4vci-issuer.md)): the database refuses a copy of a credential that is not ACTIVE and computes each status list from the record, on the UTC clock whatever a session's timezone. No endpoint issues copies yet.
 - Per-agency ES256 keys for wallet copies (`POLARIS_CREDENTIAL_COPY_KEYS_DIR`, [key ceremony](docs/operator/KEY-CEREMONY.md#wallet-copy-keys-es256)): a key or chain a verifier would reject, or a leaf that could issue certificates, is refused at load, and the chain's validity window is checked at every use; the HSM-sole-signer profile refuses to start with them configured. `scripts/polaris-credential-copy-test-pki.py` writes a test chain. No endpoint signs with them yet.
 - `polaris-oid4vp serve --issuer-trust-anchor PEM` trusts an issuer that signs with its certificate in `x5c`, as HAIP issuers do; before, the server could configure only issuer JWKs, so it could verify no HAIP issuer's credential. Found issuing into walt.id and Credo (`lab/strategy/005/`).
-
-### Fixed
-
-- Every framework error on an `/api/*` path is JSON `{"error", "request_id"}`, whatever its code, as the API reference promises; a wrong method (405, which keeps its `Allow` header) was still the HTML page.
 
 ## v1.0.0-rc.65 — 2026-09-27 (verifiers refuse what they were never asked to accept)
 
