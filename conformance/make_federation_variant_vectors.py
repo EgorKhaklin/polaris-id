@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Generate the federation-variant conformance vectors: one genuine cross-authority setup and
 signed variants of it, each wrong in exactly one fact the trust decision must check.
 

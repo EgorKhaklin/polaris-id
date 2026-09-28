@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """witness2.commitment - the leaf commitment and the scoped nullifier, re-derived.
 
 The independent half of P9.3. `polaris_zk`'s Rust circuit computes both of these

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_jwe.py -- the encrypted response, opened, and the ways it must refuse to open.
 
 READ THE LIMIT FIRST. Every test here encrypts with this package and decrypts with this

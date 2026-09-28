@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """
 poseidon_constants.py - Plonky2 Poseidon-Goldilocks constants (width 12).
 

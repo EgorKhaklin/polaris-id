@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/auth_routes.py -- how an operator proves who they are.
 
 The ninth block lifted out of app.py (2026-09-18): the password sign-in, sign-out, and the

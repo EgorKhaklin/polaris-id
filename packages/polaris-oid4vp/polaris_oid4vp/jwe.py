@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """jwe.py -- open the encrypted authorization response a wallet POSTs back.
 
 HAIP pins `direct_post.jwt`, so the wallet does not send the `vp_token` in the clear: it

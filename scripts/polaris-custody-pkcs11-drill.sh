@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-custody-pkcs11-drill.sh — prove the PKCS#11 custody driver against a
 # REAL PKCS#11 v3.2 token with ML-DSA (roadmap P1.2). Runs INSIDE a Fedora 43

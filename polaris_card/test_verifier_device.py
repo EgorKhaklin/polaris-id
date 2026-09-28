@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_verifier_device.py - the device at the counter (roadmap P4.5).
 
 The drill runs the device end to end under real signatures. What belongs here is the part that

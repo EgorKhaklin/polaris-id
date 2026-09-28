@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-schema-drift-drill.py - every SQL reference in the tree resolves against the
 live catalog (roadmap P1, ship discipline).
 

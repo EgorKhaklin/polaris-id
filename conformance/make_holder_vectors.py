@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Generate the holder-key conformance vectors (P9.1): the chain issuer anchor -> binding ->
 holder key -> proof. Polaris was issuer-centric until v9.349, so presenting the credential
 file was the whole of the proof; a holder proof answers whether the party presenting it holds

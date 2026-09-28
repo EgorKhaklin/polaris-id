@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """
 test_checks.py — tests for the flat check layer.
 
@@ -19895,3 +19897,34 @@ def test_agent_runbook_private_check_discriminates(tmp_path):
     for f in ("README.md", "docs/guide.md", "CLAUDE.md", "CHANGELOG.md"):
         (tmp_path / f).unlink()
     assert fn(tmp_path)[0].level == "FAIL"
+
+
+def test_license_headers_check_discriminates(tmp_path):
+    good = "# SPDX-License-Identifier: Apache-2.0\n# Copyright 2026 Egor Khaklin and the Polaris contributors\n"
+    (tmp_path / "a.py").write_text(good + "print(1)\n")
+    (tmp_path / "b.sh").write_text("#!/bin/bash\n" + good + "echo hi\n")
+    (tmp_path / "c.sql").write_text(good.replace("#", "--") + "SELECT 1;\n")
+    (tmp_path / "Dockerfile.x").write_text("# syntax=docker/dockerfile:1\n" + good + "FROM scratch\n")
+    frozen = tmp_path / "conformance" / "frozen" / "v1"
+    frozen.mkdir(parents=True)
+    (frozen / "vector.py").write_text("x = 1\n")
+    mig = tmp_path / "polaris_sql" / "migrations"
+    mig.mkdir(parents=True)
+    (mig / "2026-01-01-001-x.up.sql").write_text("SELECT 1;\n")
+    (tmp_path / "notes.md").write_text("prose needs no header\n")
+    vendor = tmp_path / "static" / "vendor"
+    vendor.mkdir(parents=True)
+    (vendor / "lib.js").write_text("/* third-party, its own license */\n")
+    assert checks.check_source_files_carry_license_header(tmp_path)[0].level == "OK", \
+        "must PASS on the good fixture (a shebang or a Docker directive may come first; frozen vectors, released migrations and vendored files are exempt)"
+    (tmp_path / "d.ts").write_text("export const x = 1;\n")
+    assert checks.check_source_files_carry_license_header(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a source file without the header"
+    (tmp_path / "d.ts").write_text("// SPDX-License-Identifier: Apache-2.0\nexport const x = 1;\n")
+    assert checks.check_source_files_carry_license_header(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the copyright line is missing"
+    for name in ("a.py", "b.sh", "c.sql", "Dockerfile.x", "d.ts"):
+        (tmp_path / name).unlink()
+    assert checks.check_source_files_carry_license_header(tmp_path)[0].level == "FAIL", \
+        "must FAIL when it finds no source file at all, so a broken filter cannot pass"
+

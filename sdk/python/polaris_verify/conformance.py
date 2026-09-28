@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """python -m polaris_verify.conformance -- the verifier CLI the conformance suite drives.
 
 Reads ONE conformance case as JSON on stdin and prints a verdict as JSON on stdout. The case

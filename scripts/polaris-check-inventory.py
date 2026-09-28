@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-check-inventory.py -- what does each invariant check look at, and can it find it?
 
 WHY THIS EXISTS. Most of the checks in `polaris_checks/checks.py` find their subject by

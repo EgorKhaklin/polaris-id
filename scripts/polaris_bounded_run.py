@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """scripts/polaris_bounded_run.py: a drill's suite run, inside a time bound it reports.
 
 `run` is `subprocess.run` for the calls that run a suite, with two differences:

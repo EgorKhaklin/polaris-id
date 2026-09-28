@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_capacity.py - the national capacity model (roadmap P7.3).
 
 The model's job is to say whether the roadmap's stated planning targets survive contact with

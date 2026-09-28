@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/operator_routes.py -- the operator console: records, and the cards over them.
 
 The sixth block lifted out of app.py (2026-09-18): the eighteen routes an operator uses to look

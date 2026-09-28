@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-bulk-drill.sh — bulk enrollment, exercised end to end
 # (roadmap P2.4, v9.247).

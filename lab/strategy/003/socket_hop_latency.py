@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """socket_hop_latency.py - the added latency of ONE local IPC round trip, measured
 (lab/strategy/003-signing-custody-compartment.md, section 10, kill criterion 3).
 

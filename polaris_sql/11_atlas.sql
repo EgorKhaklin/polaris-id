@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: Apache-2.0
+-- Copyright 2026 Egor Khaklin and the Polaris contributors
 -- ============================================================================
 -- AI-context: this file is performance-critical and the architecture decisions
 --   in it are NON-OBVIOUS. Read these before editing:

@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # AI-context: macOS double-click launcher with self-heal. Native path installs from polaris_web/requirements.txt (hash-guarded), builds the polaris-zk Rust binary (mtime-cached) and sets POLARIS_ZK_BINARY, and skips the schema reload when the DB is already loaded. `test` runs the canonical suite (polaris_checks + 4 DB suites + CLI + ZK pytest + cargo). file_mtime() is OS-aware (BSD vs GNU stat). docker_compose_up_with_heal auto-wipes volume on stale-password detection. See DEVNOTES/known-gotchas.md.
 # =============================================================================
 #  POLARIS / macOS Launch Controller

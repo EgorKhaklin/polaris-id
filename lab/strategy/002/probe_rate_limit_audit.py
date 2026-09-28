@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """probe_rate_limit_audit.py - does the /api/v1 path write the operator's audit table?
 
 LAB ONLY. app._security_before_request audits every state-changing request past the per-IP write

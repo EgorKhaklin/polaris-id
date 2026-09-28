@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-transparency-report-drill.py - attack the report the authority just published (P7.7).
 
 Suppressing small counts is the part everybody does. Checking that the suppression survived

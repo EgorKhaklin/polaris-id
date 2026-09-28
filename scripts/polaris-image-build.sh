@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-image-build.sh — build a Polaris container image, or the whole
 # four-image production set, the one supported way: retried against transient

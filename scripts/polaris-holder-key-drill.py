@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """
 polaris-holder-key-drill.py — P9.1 (v9.349): a holder can hold a KEY, not only a file.
 

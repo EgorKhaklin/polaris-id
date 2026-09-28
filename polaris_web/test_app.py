@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # =============================================================================
 # AI-context: 118 tests across 24+ test classes. setUp() calls
 #   reload_sample_data() which honors POLARIS_DB_NAME (fixed in v6).

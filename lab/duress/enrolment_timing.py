@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """enrolment_timing.py -- can the front of house tell who has a duress code?
 
 THE CLAIM UNDER TEST, from docs/design/duress-codes.md:

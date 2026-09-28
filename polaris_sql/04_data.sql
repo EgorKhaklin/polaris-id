@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: Apache-2.0
+-- Copyright 2026 Egor Khaklin and the Polaris contributors
 -- ============================================================================
 -- POLARIS — IDENTITY TOKEN SYSTEM
 -- 04_data.sql : Sample data

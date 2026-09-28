@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-card-emulator-drill.py - a reader, a card, and a coercer (roadmap P4.2).
 
 The emulator's own suite tests the card from the inside: it holds the token object and can ask

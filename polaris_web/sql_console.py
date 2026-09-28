@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/sql_console.py -- the read-only SQL console.
 
 The first module lifted out of app.py (2026-09-18). It is small on purpose: the job of the

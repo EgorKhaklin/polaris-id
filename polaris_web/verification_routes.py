@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/verification_routes.py -- the operator's verification surface.
 
 The second block lifted out of app.py (2026-09-18): /verifications, the read-only browser over

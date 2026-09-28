@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """
 polaris-ui-drill.py — headless-browser UI verification for the Atlas (v9.262).
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """The signature transplant, run against all three shipped verifiers (lab evidence, 2026-09-27).
 
 An authenticity pack (WIRE-SPEC 3.7) is signed over SHA3-256(token_value). Every other signed

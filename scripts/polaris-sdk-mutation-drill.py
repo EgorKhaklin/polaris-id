@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-sdk-mutation-drill.py - every refusal in the reference SDK is inverted, and
 something must notice (roadmap P3.5).
 

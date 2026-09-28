@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Egor Khaklin and the Polaris contributors
 /**
  * An unmodified Credo agent receiving one SD-JWT VC over OpenID4VCI 1.0 (pre-authorized code)
  * from the lab issuer in lab/strategy/005/issuer/. The issuer half of 005 section 9 step 2.

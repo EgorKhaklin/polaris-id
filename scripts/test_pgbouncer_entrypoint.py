@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """The pooler's entrypoint keeps the operator scope inside one session.
 
 The application puts the operator's authority into the database session and the row-level

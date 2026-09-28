@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """cli.py -- `polaris-oid4vp keygen` and `polaris-oid4vp serve`.
 
 Installing this package used to leave you with a library and no way to run a verifier.

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """pairwise_constructions.py -- one domain-separated construction, or two wearing one tag?
 
 RAISED BY AN OUTSIDE REVIEWER, 2026-09-17, under the heading "when a check searches for text,

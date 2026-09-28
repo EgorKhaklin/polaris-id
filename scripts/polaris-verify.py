@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """scripts/polaris-verify.py -- the detached verifier, kept reachable at its historical path.
 
 The verifier moved to `packages/polaris-verify/polaris_verify_cli/verifier.py` when

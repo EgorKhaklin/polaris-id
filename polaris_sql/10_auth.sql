@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: Apache-2.0
+-- Copyright 2026 Egor Khaklin and the Polaris contributors
 -- ============================================================================
 -- POLARIS — IDENTITY TOKEN SYSTEM
 -- 10_auth.sql : Seed data for AppUser + AuthAuditLog (+ v2 admin-mediated rows)

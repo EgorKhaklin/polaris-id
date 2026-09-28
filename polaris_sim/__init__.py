@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_sim - the national simulation and benchmark harness.
 
 A seeded, deterministic simulation of a synthetic United States driven through

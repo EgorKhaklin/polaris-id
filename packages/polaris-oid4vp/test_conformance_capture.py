@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_conformance_capture.py -- verify something this project did not make.
 
 Every other test in this package builds its own material, which means every other test is

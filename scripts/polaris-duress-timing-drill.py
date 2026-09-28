@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-duress-timing-drill.py - indistinguishability at the physical layer (roadmap P4.7).
 
 The card's duress mechanism is asserted elsewhere at the level of BYTES: same commands, same

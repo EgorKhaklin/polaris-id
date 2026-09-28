@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """scenario-2-agent.py -- a holder authorises an AI agent to perform ONE scoped action.
 
 The second required benchmark scenario. Privado's documented product surface has NO DIRECT

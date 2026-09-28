@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Egor Khaklin and the Polaris contributors
 /* v8.97: WebAuthn enrollment (settings page).
    Position B of a recorded decision.
 

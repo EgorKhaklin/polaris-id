@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-recover-admin.sh — emergency password-only login for a locked-out
 #                            admin (v8.97 / Position B § IV.3 architect-rec

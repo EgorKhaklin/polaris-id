@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Generate the algorithm-agility conformance vectors (P8.8a, v9.329).
 
 The artifacts the suite already certifies, signed under ML-DSA-87; a genuine ML-DSA-44 pack

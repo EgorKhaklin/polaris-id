@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/tracing.py — opt-in OpenTelemetry distributed tracing (v9.187 / roadmap P1.6).
 
 The v9.27 anti-architect constraint ("no tracing system") held while Polaris

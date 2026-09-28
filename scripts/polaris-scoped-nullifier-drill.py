@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-scoped-nullifier-drill.py - one human, once per scope (roadmap P9.3).
 
 Proves the two opposite-facing properties of the scoped nullifier end to end,

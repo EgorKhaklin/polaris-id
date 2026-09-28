@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-cost-model.py - infrastructure cost per million persons per year (P2.10).
 
 A cost figure for a national identity system is easy to write down and hard to trust, so this

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """transcript_size.py -- does a Polaris transcript's SIZE identify the holder?
 
 Threat model T-len. The same two colluding verifiers as `adversary.py`, stripped to one

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-quantum-event-drill.py - re-signing a population when an algorithm falls (P7.6).
 
 Polaris exists because the algorithms in today's credentials will not hold. Every other part

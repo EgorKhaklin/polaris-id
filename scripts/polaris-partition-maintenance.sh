@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-partition-maintenance.sh — premake the event tables' monthly
 # partitions ahead of time (roadmap P2.1, v9.245).

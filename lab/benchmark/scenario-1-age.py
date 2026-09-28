@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """scenario-1-age.py -- holder proves AGE >= 21 without revealing date of birth.
 
 The first required benchmark scenario, run rather than described. It measures POLARIS only.

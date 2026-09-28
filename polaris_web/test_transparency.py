@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_transparency.py - the public transparency program (roadmap P7.7).
 
 The module's job is to publish figures about the authority's most invasive power without

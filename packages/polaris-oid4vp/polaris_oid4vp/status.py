@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """status.py -- decide a Token Status List token. Pure, and it opens no socket.
 
 draft-ietf-oauth-status-list (at -20, past working group last call, not yet an RFC) is the

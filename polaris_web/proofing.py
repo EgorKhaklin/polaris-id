@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/proofing.py - identity proofing and the assurance it supports (roadmap P4.4).
 
 Polaris could issue a credential and had no way to say how the person was proven to be who

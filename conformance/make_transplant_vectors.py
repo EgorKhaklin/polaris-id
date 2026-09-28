@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Generate the signature-transplant conformance vectors and cases (1.0.0-rc.64).
 
 An authenticity pack (WIRE-SPEC 3.7) is signed over SHA3-256(token_value). Every other signed

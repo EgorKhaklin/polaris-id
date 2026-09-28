@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """
 polaris-kat-verify.py — ML-DSA-65 conformance against Project Wycheproof.
 

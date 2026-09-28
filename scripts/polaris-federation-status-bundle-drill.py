@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """
 polaris-federation-status-bundle-drill.py — the aggregate mirrored status feed, run (P3.2c).
 

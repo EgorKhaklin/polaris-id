@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Egor Khaklin and the Polaris contributors
 /* ========================================================================
  * athena-console.js — the Athena authority-and-constitution console (v9.266).
  *

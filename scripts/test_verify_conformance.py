@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_verify_conformance.py — the detached verifier against every published conformance case.
 
 `conformance/run_conformance.py` drives the *SDK* over `conformance/cases.json` as a

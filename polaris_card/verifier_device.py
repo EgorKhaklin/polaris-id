@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_card/verifier_device.py - the reference verifier device (roadmap P4.5).
 
 What a border post, a bank counter or a pharmacy actually runs. It reads a card over NFC or a

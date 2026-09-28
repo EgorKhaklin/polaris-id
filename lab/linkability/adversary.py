@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """adversary.py -- what advantage does a colluding verifier have at "same holder?"
 
 Threat model T. Two verifiers, V1 and V2, each keep the COMPLETE transcript of every

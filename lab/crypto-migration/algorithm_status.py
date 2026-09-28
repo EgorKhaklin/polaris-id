@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """algorithm_status.py -- can a verifier ever learn that an algorithm is deprecated?
 
 THE CLAIM UNDER TEST is the front door's: *algorithm agility under an audited migration

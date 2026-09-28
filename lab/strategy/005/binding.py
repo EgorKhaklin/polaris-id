@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """005, section 9 step 3: does the wallet copy obey the Polaris record?
 
 Kill criterion 1 of the record: "If the wallet copy can be issued, or can stay valid, when the

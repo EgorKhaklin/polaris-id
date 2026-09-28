@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_card/make_vectors.py - regenerate polaris_card/vectors/ (roadmap P4.1, P4.2).
 
 The vectors are the profile's contract with implementers who are not running this code. They

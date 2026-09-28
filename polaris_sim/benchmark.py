@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """The benchmark harness: drive a synthetic nation at a chosen scale through the
 real system and measure it, so the numbers that certify Polaris at scale are
 produced by running it, not asserted.

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """make_fixtures.py -- regenerate the SDKs' shared test fixtures under real ML-DSA-65.
 
 Each fixture is an input no conformance vector covers, found by a held-out round of

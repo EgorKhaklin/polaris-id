@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # polaris-release-notes.sh: render the GitHub release body for one version from its
 # CHANGELOG.md entry, in the fixed shape every release uses:
 #   summary, Breaking changes, Upgrade, Verify this release, Details.

@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # patroni-post-init.sh — Patroni's post_init hook (v9.243, roadmap P2.7).
 #

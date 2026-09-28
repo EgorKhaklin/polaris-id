@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Generate the exchange-in-use conformance vectors and cases (1.0.0-rc.64).
 
 The exchange cases published at 9.331 and 9.324 ask one question of each object: is its

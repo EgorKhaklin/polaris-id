@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Generate the timestamp-anchor conformance vectors (P9.6, was P8.5c): the evidence that a
 timestamp is an entry in a witnessed append-only log, which is what makes long-term validation
 survive a stolen timestamp key. Every vector is verified by the detached verifier before it is

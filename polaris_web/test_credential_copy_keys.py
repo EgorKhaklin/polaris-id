@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_credential_copy_keys.py: the ES256 keys wallet copies are signed with (005 S2).
 
 Every refusal credential_copy_keys.py makes has a test that builds exactly the chain it refuses,

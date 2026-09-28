@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """verifier.py -- the listening half: ask for a presentation, and answer 200 or 4xx.
 
 `sdjwt.py` decides and `jwe.py` opens. This is what puts them on a wire. It builds the

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-check-mutation-drill.py - can a check pass on a tree where its property is gone?
 
 Every guarantee in this repository is believed because a check says so, and the checks are

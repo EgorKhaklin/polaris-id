@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-accessibility-drill.py - every operator surface, audited (roadmap P6.5).
 
 An identity system a person cannot operate is one that excludes them from identity. That is

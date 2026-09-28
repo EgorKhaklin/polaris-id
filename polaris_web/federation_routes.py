@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/federation_routes.py -- explicit, non-transitive trust between authorities.
 
 The seventh block lifted out of app.py (2026-09-18): the federation viewer and the two

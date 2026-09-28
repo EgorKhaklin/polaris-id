@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """sdjwt.py -- verify an SD-JWT VC presentation with key binding, and refuse precisely.
 
 This is the half of an OpenID4VP verifier that DECIDES. It touches no socket, reads no

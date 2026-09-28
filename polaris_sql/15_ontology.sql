@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: Apache-2.0
+-- Copyright 2026 Egor Khaklin and the Polaris contributors
 -- ============================================================================
 -- 15_ontology.sql — Single-entity semantic views over the schema (v9.19,
 --                   person-aggregating views removed v9.266 for Athena)

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-verifier-device-drill.py - the thing at the counter (roadmap P4.5).
 
 A border post, a bank counter, a pharmacy. It reads a card over NFC or a presentation over QR

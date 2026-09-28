@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Generate the require-signed-attestation conformance vectors: a relying party that requires
 signed edges is not satisfied by a legacy one.
 

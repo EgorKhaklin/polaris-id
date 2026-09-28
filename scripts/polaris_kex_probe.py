@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_kex_probe.py - what TLS group did this hop actually negotiate?
 
 v9.404. PQC-POSTURE used to state the internal hops' key exchange by reading

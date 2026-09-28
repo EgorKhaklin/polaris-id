@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/custody.py — key custody abstraction for the issuer signing key
 (roadmap P1.2).
 

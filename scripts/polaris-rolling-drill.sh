@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-rolling-drill.sh — prove a rolling deploy drops ZERO requests
 # (roadmap P1.4), with a negative control so "zero" cannot be vacuous.

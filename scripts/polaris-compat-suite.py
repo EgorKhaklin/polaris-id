@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-compat-suite.py -- cross-version compatibility, both directions (P8.8b, v9.330).
 
   1. IMMUTABILITY.  conformance/frozen/v1/SHA256SUMS is recomputed; a changed frozen file fails.

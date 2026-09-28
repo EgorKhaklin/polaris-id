@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """
 merkle.py - the Plonky2 Merkle-tree semantics Polaris's circuit proves, re-done
 independently in Python.

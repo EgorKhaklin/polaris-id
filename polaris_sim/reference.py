@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Static reference data for the national simulation: the real United States as
 a table of jurisdictions with populations, plus deterministic name pools.
 

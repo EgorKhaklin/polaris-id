@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Egor Khaklin and the Polaris contributors
 /* Flash handling.
  *
  * A success flash reports something that already happened, so it fades on its

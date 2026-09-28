@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """attempt_operator_writes.py - section 9 step 4: as polaris_rp, attempt the operator's writes
 directly in SQL and require each refused with insufficient_privilege (SQLSTATE 42501).
 

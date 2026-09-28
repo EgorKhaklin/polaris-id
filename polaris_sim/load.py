@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Load a synthetic-nation plan into a Polaris database through the REAL
 enrollment path: agencies inserted as configuration, then every person issued a
 token set-based through the bulk pipeline (uc_bulk_issue), so each synthetic

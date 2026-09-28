@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/use_case_routes.py -- the operator's use-case surface.
 
 The fifth block lifted out of app.py (2026-09-18): the nine routes behind the seven documented

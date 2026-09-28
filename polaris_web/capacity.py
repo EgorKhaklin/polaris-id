@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/capacity.py - do the stated national targets survive contact with the schema (P7.3).
 
 The roadmap states four planning targets for national operation and says, in the row itself,

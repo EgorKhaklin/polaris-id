@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_ship_tool.py — the triage tool's flake classifier (roadmap P1.16, v9.377).
 
 `triage` exists so a red CI run gets one of two answers quickly: this is a known flake, rerun

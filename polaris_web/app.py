@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # =============================================================================
 # AI-context: ~3,450 line Flask app. Routes are GROUPED by entity — search
 #   for '# ====.*=====' to find the right section before adding routes.

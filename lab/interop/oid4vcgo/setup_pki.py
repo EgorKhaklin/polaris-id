@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Test PKI and config for OID4VCgo's conformance-wallet-vp presenting to polaris-oid4vp.
 
 Writes, into the directory given:

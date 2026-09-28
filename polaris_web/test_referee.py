@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_referee.py - the trusted referee (roadmap P4.4).
 
 The referee path is the anti-exclusion mechanism in enrollment and the most obvious forgery

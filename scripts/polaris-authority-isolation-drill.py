@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-authority-isolation-drill.py - one authority's operators, another's data (P3.9).
 
 The claim worth making is not "the application filters by agency". It is that an operator

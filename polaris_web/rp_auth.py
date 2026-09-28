@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """rp_auth.py — relying-party API auth (P3.4, v9.288).
 
 The first PROGRAMMATIC (non-operator) authentication path in Polaris. A

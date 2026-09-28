@@ -1,4 +1,6 @@
 # syntax=docker/dockerfile:1
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # Dockerfile.etcd — the distributed configuration store of the HA profile
 # (v9.243, roadmap P2.7).

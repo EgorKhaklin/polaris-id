@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-perf-baseline.sh — the published performance baseline (roadmap P1.9,
 # v9.191): issuance/s, verification/s, and atlas p95, measured END TO END

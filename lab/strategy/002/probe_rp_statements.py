@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """probe_rp_statements.py - every SQL statement on the relying-party path, run AS polaris_rp.
 
 LAB ONLY. The test classes do not reach every statement under the test profile: the exchange

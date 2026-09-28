@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-card-profile-drill.py - the card as an object, end to end (roadmap P4.1).
 
 The profile's own suite proves the encoding against the published vectors with signature

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_status.py -- the Token Status List decision function, held to its refusals.
 
 The research version of this and its twenty-two adversaries live in

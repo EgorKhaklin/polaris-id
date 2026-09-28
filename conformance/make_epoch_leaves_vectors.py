@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Generate the epoch-leaves conformance vectors (P9.2): the published anonymity set a holder
 proves membership against on their OWN device. Until v9.350 no endpoint published the set, so
 a holder had to be handed it out of band, which in practice meant the issuer proving for them.

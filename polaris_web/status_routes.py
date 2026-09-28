@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/status_routes.py -- is this instance serving, and what does it expose.
 
 The tenth block lifted out of app.py (2026-09-18): the dependency health checks, the readiness

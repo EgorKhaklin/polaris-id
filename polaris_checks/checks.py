@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """
 polaris_checks — a flat, legible invariant-check layer for Polaris.
 
@@ -4355,7 +4357,8 @@ def check_cli_help_lists_every_command(root: pathlib.Path) -> list[Finding]:
         return _fail("cli_help", "the HANDLERS registry parsed to ZERO commands, so the "
                                  "docstring comparison below is empty against empty and "
                                  "reports success. 'lists all 0 commands' is not a pass")
-    doc = re.match(r'(?s)\A#![^\n]*\n"""(.*?)"""', src)
+    # Comment lines (the license header) may sit between the shebang and the docstring.
+    doc = re.match(r'(?s)\A#![^\n]*\n(?:#[^\n]*\n)*"""(.*?)"""', src)
     if not doc:
         return _fail("cli_help", "polaris_cli/polaris.py has no module docstring")
     listed = set(re.findall(r"^    ([a-z][a-z0-9-]+)\s{2,}\S", doc.group(1), re.M))
@@ -13775,6 +13778,52 @@ def check_private_keys_only_in_listed_fixtures(root: pathlib.Path) -> list[Findi
     return _ok("private_keys_only_in_listed_fixtures",
                "private-key material appears only in the %d listed throwaway fixtures, each with its reason"
                % len(holding))
+
+
+_LICENSE_HEADER_EXTS = frozenset({".py", ".ts", ".js", ".mjs", ".rs", ".sql", ".sh"})
+# Exempt, because a byte change breaks them: the frozen version-1 vectors are never edited, and
+# a released migration is recorded by its SHA-256 when applied, so `polaris-migrate.sh --down`
+# refuses to roll back a migration whose file changed afterwards (it would break the rollback
+# of every existing deployment; a fresh gate cannot see that).
+_LICENSE_HEADER_EXEMPT = ("conformance/frozen/", "polaris_sql/migrations/")
+
+
+def _needs_license_header(rel: str) -> bool:
+    # Vendored third-party code keeps its own license header, never this project's.
+    if rel.startswith(_LICENSE_HEADER_EXEMPT) or "node_modules/" in rel or "/vendor/" in "/" + rel:
+        return False
+    path = pathlib.PurePosixPath(rel)
+    return path.suffix in _LICENSE_HEADER_EXTS or path.name.startswith("Dockerfile")
+
+
+def check_source_files_carry_license_header(root: pathlib.Path) -> list[Finding]:
+    """Every source file names its license and its copyright holder in its first lines.
+
+    OpenSSF gold asks for both in each source file (copyright_per_file, license_per_file); a
+    file added without them breaks that claim silently. The two lines sit within the first six,
+    after a shebang or a Docker parser directive. Exempt: the frozen version-1 vectors and the
+    released migrations, whose bytes are pinned (see _LICENSE_HEADER_EXEMPT), and vendored
+    third-party code. Finding no source file at all fails too, so a broken filter cannot pass.
+    """
+    checked, missing = 0, []
+    for rel in _tracked_files(root):
+        if not _needs_license_header(rel):
+            continue
+        try:
+            head = "\n".join((root / rel).read_text(encoding="utf-8", errors="replace").split("\n")[:6])
+        except OSError:
+            continue
+        checked += 1
+        if "SPDX-License-Identifier: Apache-2.0" not in head or "Copyright" not in head:
+            missing.append(rel)
+    if not checked:
+        return _fail("license_headers", "found no source file to check: the file filter matches nothing")
+    if missing:
+        return _fail("license_headers",
+                     "%d source file(s) lack the SPDX-License-Identifier and Copyright lines at the top: %s"
+                     % (len(missing), ", ".join(missing[:8]) + (" ..." if len(missing) > 8 else "")))
+    return _ok("license_headers",
+               "all %d tracked source files carry an SPDX license identifier and a copyright line" % checked)
 
 
 def check_preflight_typechecks_ts_sdk(root: pathlib.Path) -> list[Finding]:
@@ -23426,6 +23475,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_exchange_mint_signed_auth,
     check_no_named_reference_systems,
     check_private_keys_only_in_listed_fixtures,
+    check_source_files_carry_license_header,
     check_preflight_typechecks_ts_sdk,
     check_exchange_receipt,
     check_wire_spec_matches_code,

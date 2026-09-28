@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """lab/strategy/005/product/run.py: a wallet Polaris did not write receives a wallet copy from the PRODUCT.
 
 005 step S5. Step 2 (../STEP2.md) had two wallets take a credential from the lab issuer; this

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # =============================================================================
 # AI-context: auth, rate limit, CSRF, CSP, security headers. The CSP is
 #   'self' — never weaken without naming the threat.

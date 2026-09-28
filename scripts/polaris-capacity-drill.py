@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-capacity-drill.py - prove the id space is actually wide (roadmap P7.3).
 
 The capacity model reads the schema and says `VerificationEvent.event_id` is now 64-bit. That

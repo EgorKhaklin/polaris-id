@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_verify_p9.py — unit tests for the P9 additions to scripts/polaris-verify.py.
 
 The P9 surface is exercised end to end by drills and the conformance suite, both of which

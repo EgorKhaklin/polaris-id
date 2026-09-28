@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Crypto-layer adversaries: forge, tamper, substitute keys against the REAL
 ML-DSA-65 verify. Each attacks the detached verifier's `verify_pack` (the engine a
 relying party runs) AND, for the last one, the app's own two-witness

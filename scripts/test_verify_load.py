@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_verify_load.py — unit tests for scripts/polaris-verify-load.py, the
 authenticated verify-AT-USE load the HA drills hold across a rolling deploy and
 a failover (roadmap P2.9, v9.259).

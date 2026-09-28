@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/transparency.py - what the authority publishes about itself (roadmap P7.7).
 
 An identity authority asks to be trusted with the most invasive power in the system: the

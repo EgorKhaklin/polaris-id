@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-status-distribution-drill.py - status artifacts through an untrusted cache (P2.6).
 
 Signing a status artifact is what lets an untrusted intermediary carry it: a cache cannot

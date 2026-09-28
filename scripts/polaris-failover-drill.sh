@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-failover-drill.sh — induced failures against the HA profile, with
 # every recovery measured under a live write stream (roadmap P2.7, v9.243).

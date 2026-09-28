@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_enrollment_code.py - the secret sent to a channel (roadmap P4.4).
 
 What a code establishes is narrow: somebody who could reach that channel returned the secret.

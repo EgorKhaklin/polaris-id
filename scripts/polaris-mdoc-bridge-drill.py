@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-mdoc-bridge-drill.py - a Polaris credential in ISO 18013-5 structure (P3.7).
 
 A FORMAT bridge, not a trust bridge, and this drill exists as much to hold the second half of

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Generate the delegated agent-grant conformance vectors (P9.8).
 
 A person authorising an agent should not have to hand over their credential, and an outside

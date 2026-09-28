@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-referee-drill.py - the path for people with no documents, against a real database (P4.4).
 
 Every 800-63A combination starts from documents. A person with none fails all of them, and an

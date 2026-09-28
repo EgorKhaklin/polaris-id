@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Online verification latency and throughput, measured rather than extrapolated.
 
 The offline counterpart (offline_verify_latency.py) times one authenticity verdict in a

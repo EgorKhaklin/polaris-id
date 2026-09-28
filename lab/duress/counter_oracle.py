@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """counter_oracle.py -- long-run frequency analysis, taken to its actual conclusion.
 
 THE ACCEPTED LIMITATION, from docs/design/duress-codes.md:

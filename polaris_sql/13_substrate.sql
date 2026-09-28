@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: Apache-2.0
+-- Copyright 2026 Egor Khaklin and the Polaris contributors
 -- AI-context: M2-3 / R10-3 — substrate-dependency manifest, queryable form.
 -- The prose form is docs/design/substrate.md; this SQL view is its mirror so
 -- the manifest is machine-readable. The two MUST stay in sync — if a row

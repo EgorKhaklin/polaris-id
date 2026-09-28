@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """enrolment_rate.py -- how identifying is a duress event, and to whom?
 
 THE QUESTION, from README.md's unmeasured list: "If few holders enrol, a `DuressEvent` is

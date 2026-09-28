@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Generate the trust-attestation conformance vectors (P9.5): the attesting agency's own
 signature over a federation trust edge. Before v9.348 the edge was a row an operator
 recorded, and the manifest that published it signed whatever the table held; a row inserted

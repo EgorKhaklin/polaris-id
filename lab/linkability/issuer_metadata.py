@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """issuer_metadata.py -- how much does issuer metadata narrow the anonymity set?
 
 THE QUESTION, from README.md's unmeasured list: "Agency id, algorithm, epoch id and epoch

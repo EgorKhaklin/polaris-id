@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """
 polaris-verify-load.py — authenticated verify-AT-USE load for the HA drills
 (roadmap P2.9, v9.259). Pure stdlib — no external deps, so it runs on a bare

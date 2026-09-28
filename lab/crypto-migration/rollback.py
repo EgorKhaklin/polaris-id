@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """rollback.py -- a migration cannot be reversed, and the schema is explicit about why.
 
 THE QUESTION, from README.md's unmeasured list: "`uc6_migrate_algorithm` moves a token

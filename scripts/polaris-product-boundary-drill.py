@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-product-boundary-drill.py -- can a stranger install the verifier and use it?
 
 The product contract's REQUIRED install test, made executable:

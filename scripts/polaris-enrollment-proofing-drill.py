@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-enrollment-proofing-drill.py - what an enrollment rested on (roadmap P4.4).
 
 Polaris could issue a credential and had no way to say how the person was proven to be who

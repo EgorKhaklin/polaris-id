@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_card/personalization.py - putting a credential onto a card (roadmap P4.3).
 
 Personalization is the moment a database record becomes an object in somebody's pocket. It is

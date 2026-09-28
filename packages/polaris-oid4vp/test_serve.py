@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_serve.py -- the wire surface, which had no test at all until coverage said so.
 
 `test_verifier.py` drives `handle_direct_post` in process and asserts it returns 400. That is

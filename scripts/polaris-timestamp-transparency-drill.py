@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-timestamp-transparency-drill.py -- a STOLEN timestamp-authority key, and what survives it (P8.5b).
 
 Long-term validation (P8.5, v9.334) trusts a timestamp authority the verifier names. If that

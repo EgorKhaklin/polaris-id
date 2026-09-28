@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """Add the grant-in-use conformance cases (2026-09-27).
 
 The agent-grant cases published at 9.354 ask one question of each object: is its signature

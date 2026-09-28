@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-assurance-mapping-drill.py - the assurance mapping, resolved (roadmap P6.2).
 
 A control mapping is the easiest document in any project to write and the easiest to let rot.

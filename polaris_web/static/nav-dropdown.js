@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Egor Khaklin and the Polaris contributors
 /* polaris_web/static/nav-dropdown.js
  *
  * v8.35: coordinate the masthead nav <details> dropdowns so opening one

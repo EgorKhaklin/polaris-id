@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """lab/strategy/005/product/present.py: the product's wallet copy, presented from the wallet to a verifier that reads its status.
 
 005 step S6. S5 (../STEP5.md) had a wallet receive a copy from polaris_web and checked the copy

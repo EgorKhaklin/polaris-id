@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_custody.py — the key custody abstraction (roadmap P1.2).
 
 Three drivers, one contract: raw ML-DSA-65 public key + raw signature over the

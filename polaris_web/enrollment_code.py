@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris_web/enrollment_code.py - the secret sent to a channel, and what it does not prove (P4.4).
 
 An authority sends a code to a channel the applicant nominated; the applicant returns it. What
