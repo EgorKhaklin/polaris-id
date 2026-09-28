@@ -9744,7 +9744,7 @@ def check_national_simulation(root: pathlib.Path) -> list[Finding]:
 # ===========================================================================
 # Athena (v9.266) — the authority-and-constitution layer. Five invariants make
 # person-legibility structurally impossible and keep Athena non-sovereign.
-# Spec: DEVNOTES/athena-ontology-assessment.md sections 5, 6, 8, 10, 11.
+# Spec: docs/design/athena.md.
 # ===========================================================================
 
 _ATHENA_SQL_REL = "polaris_sql/16_athena.sql"

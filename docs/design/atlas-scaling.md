@@ -42,7 +42,7 @@ agency tallies) without ever carrying its location (C6):
 Their endpoints (`/api/atlas/series`, `/api/atlas/breakdown`) are
 `@replica_reads` and capped, and the charts are hand-rolled inline SVG / CSS
 bars in `atlas-console.js` (no charting library, so `script-src 'self'` stays
-strict). The full rebuild plan is [DEVNOTES/atlas-redesign.md](../../DEVNOTES/atlas-redesign.md).
+strict).
 
 ### Partition pruning under the generic plan (v9.260, benchmark-driven)
 

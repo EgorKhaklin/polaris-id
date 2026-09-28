@@ -1,7 +1,6 @@
 # Athena: the authority-and-constitution layer
 
 **Status:** shipped v9.266 (roadmap P6.8). **Code:** [`polaris_sql/16_athena.sql`](../../polaris_sql/16_athena.sql).
-**Design study:** [`DEVNOTES/athena-ontology-assessment.md`](../../DEVNOTES/athena-ontology-assessment.md).
 
 Athena is a read-only semantic and provenance layer over the *authority* tables,
 plus a first-class, machine-checked model of the constitution. Atlas answers

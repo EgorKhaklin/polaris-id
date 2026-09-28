@@ -13,7 +13,7 @@
 --   if this algorithm is deprecated, who is affected?  athena_affected_by_algorithm
 --   which mechanism enforces this constitutional rule? athena_rule_enforcement
 --
--- DESIGN LAW (DEVNOTES/athena-ontology-assessment.md, endorsed):
+-- DESIGN LAW (stated in docs/design/athena.md):
 --   * Athena describes and orchestrates authority; it never manufactures it.
 --     Every authority object/edge is a SELECT over an existing table, so it
 --     cannot outlive its source. Athena has no independent authority store.

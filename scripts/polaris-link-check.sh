@@ -111,6 +111,10 @@ for dirpath, dirs, files in os.walk(root):
         # name files that have since moved or been renamed.
         if fname == 'CHANGELOG.md' and os.path.dirname(os.path.join(dirpath, fname)) == root:
             continue
+        # The archive under docs/history/, for the same reason: it records what was true when
+        # it was written, links to files that have since left the tree included.
+        if os.path.relpath(dirpath, root).split(os.sep)[:2] == ['docs', 'history']:
+            continue
         if fname in SELF_REFERENTIAL:
             continue
         path = os.path.join(dirpath, fname)

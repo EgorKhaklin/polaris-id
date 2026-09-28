@@ -3,9 +3,7 @@
 A seeded, deterministic simulation of a synthetic United States, driven through
 the **real** Polaris procedures and constraints, so the system can be exercised,
 benchmarked, and hardened at national scale. Notional data only; point it at an
-expendable database. The multi-ship plan is
-[DEVNOTES/national-simulation.md](../DEVNOTES/national-simulation.md) (roadmap
-P2.14).
+expendable database (roadmap P2.14).
 
 ## What ships today
 

@@ -14,7 +14,6 @@ are assessor-facing material and were filed where an assessor would not look.
 | [style.md](style.md) | The house style: declarative prose, no em-dashes, no cosmic framing, and the quality bar a ship has to clear |
 | [known-gotchas.md](known-gotchas.md) | Things that have already cost an hour: environment quirks, tool behaviour, and the traps in this codebase |
 | [record.md](record.md) | The project record: the completed arcs and the deployment phase log, moved out of MISSION.md at v9.195 |
-| [athena-ontology-assessment.md](athena-ontology-assessment.md) | The adversarial assessment of an operational ontology (Athena): model power and rules, never a graph of people; verdict, constraints, MVP, and kill criteria (roadmap P6.8) |
 
 ## Where does something new go
 
