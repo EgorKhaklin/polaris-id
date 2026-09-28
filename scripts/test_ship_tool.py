@@ -355,11 +355,15 @@ class ShipBaselineTests(unittest.TestCase):
         import tempfile
         root = tempfile.mkdtemp(prefix="polaris-ship-baseline-")
         remote, work = os.path.join(root, "remote.git"), os.path.join(root, "work")
-        git = lambda *a, cwd=work: subprocess.run(["git", *a], cwd=cwd, check=True,  # noqa: E731
+        # The scratch identity rides in the environment and is never written to a config file.
+        # Before setUp dropped GIT_*, a hook's GIT_DIR sent `git config user.name t` into the
+        # real repository's config, and 69 commits were authored t <t@example.invalid>.
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+        git = lambda *a, cwd=work: subprocess.run(["git", *a], cwd=cwd, check=True, env=env,  # noqa: E731
                                                   capture_output=True, text=True).stdout.strip()
         subprocess.run(["git", "init", "--bare", "-q", remote], check=True)
         subprocess.run(["git", "clone", "-q", remote, work], check=True, capture_output=True)
-        git("config", "user.email", "t@example.invalid"); git("config", "user.name", "t")
         _write(os.path.join(work, "a.txt"), "1")
         git("add", "a.txt"); git("commit", "-q", "-m", "base"); git("push", "-q", "origin", "HEAD")
         git("branch", "--set-upstream-to=origin/%s" % git("rev-parse", "--abbrev-ref", "HEAD"))
