@@ -503,7 +503,9 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
     composite check, not this per-artifact authenticity."""
     obj = obj if isinstance(obj, dict) else {}
     fmt = obj.get("format")
-    keys = _ARTIFACT_KEYS.get(fmt)
+    # A string first: `format` is the sender's, and a list or an object is unhashable, which
+    # raised TypeError out of every artifact check (2026-09-28).
+    keys = _ARTIFACT_KEYS.get(fmt) if isinstance(fmt, str) else None
     if keys is None:
         return ArtifactVerdict(False, None, "unknown or unsupported artifact: %s" % fmt)
     if obj.get("algorithm") == PLACEHOLDER_LABEL or not obj.get("public_key_hex"):
@@ -702,7 +704,10 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
     if trusted_witnesses is not None:
         trusted = {str(t).lower() for t in trusted_witnesses}
         seen = set()
-        for c in (anchor.get("cosignatures") or []):
+        cosignatures = anchor.get("cosignatures")
+        # A list, or nothing witnessed: `True` raised TypeError out of a check that says it
+        # is total on hostile input (2026-09-28).
+        for c in (cosignatures if isinstance(cosignatures, list) else []):
             if not isinstance(c, dict) or not verify_cosignature(c).authentic:
                 continue
             if (c.get("log_id") == sth.get("log_id") and c.get("tree_size") == sth.get("tree_size")
@@ -875,14 +880,17 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
                                      reason="no trusted authority attests to this credential's issuer in this context")
     via_str = via if isinstance(via, str) else None
     if revocation_feed is not None:
-        rv = verify_signed_artifact(revocation_feed if isinstance(revocation_feed, dict) else {}, now=now)
-        bound = str((revocation_feed or {}).get("public_key_hex") or "").lower() == token_key
+        # A feed that is not an object is not authentic, as in the detached verifier; the
+        # binding below read `.get` off it and raised AttributeError (2026-09-28).
+        feed = revocation_feed if isinstance(revocation_feed, dict) else {}
+        rv = verify_signed_artifact(feed, now=now)
+        bound = str(feed.get("public_key_hex") or "").lower() == token_key
         if not (rv.authentic and rv.fresh and bound):
             return CrossAuthorityVerdict("reject", True, True, via_str,
                                          "the issuer's revocation feed is not authentic, fresh, and bound to the issuer key",
                                          signed_edge)
         leaf = hashlib.sha3_256(str(pack.get("token_value") or "").encode("utf-8")).hexdigest()
-        if leaf in {str(x).lower() for x in (revocation_feed.get("revoked_leaves") or [])}:
+        if leaf in {str(x).lower() for x in (feed.get("revoked_leaves") or [])}:
             return CrossAuthorityVerdict("reject", True, True, via_str,
                                          "credential is revoked in the issuer's published feed", signed_edge)
     return CrossAuthorityVerdict("accept", True, True, via_str, None, signed_edge)

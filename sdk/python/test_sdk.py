@@ -832,6 +832,63 @@ class TimestampAnchorHeldOutTests(unittest.TestCase):
                 self.assertEqual((v.cosigner_count, v.witnessed), (1, False))
 
 
+@unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+class HostileFieldsAreAVerdictTests(unittest.TestCase):
+    """Fields a third party writes, of the wrong JSON type, are refused, never raised.
+    2026-09-28, a type sweep of every published case's payload through the conformance adapter:
+    three sites raised, while the TypeScript SDK and the detached verifier refused all three.
+    `verify_timestamp_anchor` says it is total on hostile input."""
+
+    def test_cosignatures_that_are_not_a_list_witness_nothing(self):
+        import copy
+        ts = copy.deepcopy(_conformance_vector("timestamp-anchor-witnessed.json"))
+        both = [c["public_key_hex"] for c in ts["anchor"]["cosignatures"]]
+        v = pv.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=2)
+        self.assertTrue(v.anchored and v.witnessed, v.note)
+        for bad in (True, 5):
+            with self.subTest(cosignatures=bad):
+                ts["anchor"]["cosignatures"] = bad
+                v = pv.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=2)
+                self.assertTrue(v.anchored, v.note)
+                self.assertFalse(v.witnessed)
+
+    def test_a_format_that_is_not_a_string_is_an_unknown_artifact(self):
+        import copy
+        for bad in ([], {}, ["polaris-epoch-checkpoint/1"]):
+            with self.subTest(format=bad):
+                self.assertFalse(pv.verify_signed_artifact({"format": bad}).authentic)
+                ts = copy.deepcopy(_conformance_vector("timestamp-anchor-witnessed.json"))
+                ts["anchor"]["sth"]["format"] = bad
+                self.assertFalse(pv.verify_timestamp_anchor(ts).anchored)
+
+    def test_a_revocation_feed_that_is_not_an_object_rejects(self):
+        f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json")))
+
+        def decide(feed):
+            return pv.verify_cross_authority(f["pack"], f["_fixture"]["context_id"], [f["manifests"]["base"]],
+                                             [f["trusted_anchor"]], feed, now=f["_fixture"]["now"]).decision
+        self.assertEqual(decide(f["feeds"]["clean"]), "accept")
+        for bad in (True, 5, "feed", [f["feeds"]["clean"]]):
+            with self.subTest(feed=type(bad).__name__):
+                self.assertEqual(decide(bad), "reject")
+
+    def test_the_conformance_adapter_answers_a_binding_that_is_not_an_object(self):
+        import contextlib
+        import io
+        from unittest import mock
+        sys.path.insert(0, os.path.join(_ROOT, "conformance"))
+        import run_conformance
+        from polaris_verify import conformance as adapter
+        payload = next(p for n, p, e in run_conformance._load_cases() if n == "agent-grant-use-principal-bound")
+        payload = dict(payload, binding=True, verifier_scope="rp.example")
+        out = io.StringIO()
+        with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), contextlib.redirect_stdout(out):
+            self.assertEqual(adapter.main([]), 0)
+        verdict = json.loads(out.getvalue())
+        self.assertFalse(verdict["principal_bound"])
+        self.assertIsNone(verdict["pairwise_handle"])
+
+
 class GrantCoverageTests(unittest.TestCase):
     """2026-09-23: a held-out mutation made grant_covers answer yes to ANY action of a grant
     with a non-empty list, and this suite stayed green: every test here asked about empty or

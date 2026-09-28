@@ -102,8 +102,10 @@ def main(argv=None):
         if binding is not None:
             verdict["principal_bound"] = grant_principal_bound(grant, binding, case.get("credential") or {}, now)
             if case.get("verifier_scope") is not None:
-                verdict["pairwise_handle"] = pairwise_handle(binding.get("holder_public_key_hex"),
-                                                             case["verifier_scope"])
+                # A binding is the holder's to send; one that is not an object has no key,
+                # so no handle, as in the TypeScript adapter (it raised AttributeError here).
+                key = binding.get("holder_public_key_hex") if isinstance(binding, dict) else None
+                verdict["pairwise_handle"] = pairwise_handle(key, case["verifier_scope"])
                 verdict["correlation"] = "exposed"
         rev = case.get("revocation")
         if rev is not None:

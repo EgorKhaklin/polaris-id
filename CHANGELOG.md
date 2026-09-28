@@ -21,6 +21,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The OpenID4VCI credential endpoint answers `400 invalid_proof`, not 500, to a proof over 16 KB or nested past the parser.
 - A JSON request body nested past the parser's depth is refused as malformed, not answered with a 500.
 - **Breaking**: `polaris-verify` exits 2, not 1, for a presentation or ZK decision it does not accept, as its exit table says.
+- The Python SDK refuses, instead of raising on, a non-string artifact `format`, non-list `cosignatures` or a non-object revocation feed.
+- `polaris-verify` refuses, instead of raising on, timestamp-anchor `cosignatures` that are not a list.
 
 ### Added
 

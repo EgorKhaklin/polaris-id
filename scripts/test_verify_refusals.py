@@ -387,6 +387,27 @@ class HeldOutSemanticMutations(unittest.TestCase):
             V._verify_liboqs, V._verify_cryptography = saved
 
 
+class WitnessedCheckpointIsTotal(unittest.TestCase):
+    """`verify_timestamp_anchor` says it is total on hostile input. Cosignatures that are not a
+    list raised TypeError from `verify_witnessed_checkpoint` until 2026-09-28."""
+
+    def test_cosignatures_that_are_not_a_list_witness_nothing(self):
+        import copy
+        ts = json.loads((ROOT / "conformance" / "vectors" / "timestamp-anchor-witnessed.json").read_text())
+        both = [c["public_key_hex"] for c in ts["anchor"]["cosignatures"]]
+        good = V.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=2)
+        if not good.get("anchored"):
+            self.skipTest("no ML-DSA-65 backend here: %s" % good.get("note"))
+        self.assertTrue(good.get("witnessed"))
+        for bad in (True, 5):
+            with self.subTest(cosignatures=bad):
+                t = copy.deepcopy(ts)
+                t["anchor"]["cosignatures"] = bad
+                v = V.verify_timestamp_anchor(t, trusted_witnesses=both, threshold=2)
+                self.assertTrue(v.get("anchored"))
+                self.assertFalse(v.get("witnessed"))
+
+
 # --------------------------------------------------------------------------- the exit codes
 
 @unittest.skipUnless(any(V._provider_available(p) for p in V.REAL_PROVIDERS),

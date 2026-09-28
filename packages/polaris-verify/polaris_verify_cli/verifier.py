@@ -3107,7 +3107,9 @@ def verify_witnessed_checkpoint(sth, cosignatures, trusted_witnesses, threshold=
         return {"witnessed": False, "cosigner_count": 0, "note": "the STH is not signed by the expected log key"}
     trusted = {t.lower() for t in (trusted_witnesses or [])}
     seen = set()
-    for c in (cosignatures or []):
+    # A list, or nothing witnessed: `True` raised TypeError out of verify_timestamp_anchor,
+    # which says it is total on hostile input (2026-09-28).
+    for c in (cosignatures if isinstance(cosignatures, list) else []):
         cv = verify_cosignature(c)
         if not cv["cosignature_authentic"]:
             continue
