@@ -23,6 +23,8 @@ Exit 0 only if both verdicts are as required. LAB CODE, as run.py.
 """
 import argparse
 import base64
+import os
+import subprocess
 import datetime
 import importlib.util
 import json
@@ -48,6 +50,19 @@ from cryptography.hazmat.primitives import hashes  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import ec, utils  # noqa: E402
 
 VERIFIER_PORT = 9543
+
+
+def _read_json(proc, key):
+    """The next line on the wallet's stdout that is a JSON object carrying `key`. Other lines,
+    such as a library's own log output, are skipped. None when the process ends first."""
+    for line in proc.stdout:
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and key in obj:
+            return obj
+    return None
 
 
 def status_resolver(anchor, product_port, product_cafile):
@@ -90,25 +105,28 @@ def status_resolver(anchor, product_port, product_cafile):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--wallet", choices=("waltid", "credo"), default="waltid")
     ap.add_argument("--out", required=True, type=pathlib.Path)
     ap.add_argument("--port", type=int, default=9644)
     args = ap.parse_args(argv)
+    credo = args.wallet == "credo"
     out = args.out.resolve()
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
-    host, db = "host.docker.internal", "polaris_s6_waltid"
-    import os
-    import subprocess
+    # walt.id runs in Docker and reaches the host by this name; Credo runs on the host.
+    host = "localhost" if credo else "host.docker.internal"
+    bind = "127.0.0.1" if credo else "0.0.0.0"
+    db = "polaris_s6_%s" % args.wallet
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(S5.ROOT), capture_output=True, text=True).stdout.strip()
-    result = {"wallet": "waltid", "commit": commit, "issuer": "https://%s:%d/api/v1/oid4vci/%d" % (host, args.port, S5.AGENCY),
+    result = {"wallet": args.wallet, "commit": commit, "issuer": "https://%s:%d/api/v1/oid4vci/%d" % (host, args.port, S5.AGENCY),
               "started": datetime.datetime.now(datetime.timezone.utc).isoformat()}
 
     S5.SHIP.make_db(db, dict(os.environ, PGUSER="vanta", POLARIS_DB_HOST="localhost"))
     S5.tls_cert(out, host)
     vpki = out / "verifier-pki"
     keygen(vpki, host)
-    server, keys = S5.serve(out, db, host, args.port, "0.0.0.0")
+    server, keys = S5.serve(out, db, host, args.port, bind)
     anchor_pem = keys / ("%d.anchor.pem" % S5.AGENCY)
     anchor = x509.load_pem_x509_certificate(anchor_pem.read_bytes())
     verdicts = []
@@ -118,7 +136,7 @@ def main(argv=None):
     verifier.vct_values = ["urn:polaris:wallet-copy:1"]
     verifier.claims = ["age_over_18"]
     verifier.status_resolver = status_resolver(anchor, args.port, str(out / "tls.pem"))
-    vserver = serve(verifier, host="0.0.0.0", port=VERIFIER_PORT, certfile=str(vpki / FILES["tls_cert"]),
+    vserver = serve(verifier, host=bind, port=VERIFIER_PORT, certfile=str(vpki / FILES["tls_cert"]),
                     keyfile=str(vpki / FILES["tls_key"]),
                     on_verdict=lambda status, body, verdict: verdicts.append((status, verdict)))
     wallet = None
@@ -127,9 +145,20 @@ def main(argv=None):
         op = S5.Operator(args.port, str(out / "tls.pem"))
         op.sign_in()
         offer = op.offer(c_id)
-        wallet = S5.WaltId(out, str(out / "tls.pem"), extra_tls=(str(vpki / FILES["tls_cert"]),),
-                           request_anchor_pem=str(vpki / FILES["anchor"]))
-        compact, said = wallet.receive(offer["offer_uri"])
+        if credo:
+            bundle = out / "tls-bundle.pem"
+            bundle.write_text((out / "tls.pem").read_text() + (vpki / FILES["tls_cert"]).read_text())
+            env = dict(os.environ, OFFER=offer["offer_uri"], ISSUER_CA=str(anchor_pem),
+                       VERIFIER_CA=str(vpki / FILES["anchor"]), NODE_EXTRA_CA_CERTS=str(bundle))
+            wallet = subprocess.Popen(["node", "receive-and-present.ts"], cwd=str(S5.CREDO), env=env,
+                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                      stderr=open(out / "credo.log", "w"), text=True, bufsize=1)
+            said = _read_json(wallet, "ready") or {"error": "Credo exited before it answered"}
+            compact = said.get("stored") or None
+        else:
+            wallet = S5.WaltId(out, str(out / "tls.pem"), extra_tls=(str(vpki / FILES["tls_cert"]),),
+                               request_anchor_pem=str(vpki / FILES["anchor"]))
+            compact, said = wallet.receive(offer["offer_uri"])
         result["received"] = bool(compact)
         result["wallet_said"] = said
 
@@ -137,11 +166,16 @@ def main(argv=None):
             session, _ = verifier.new_request()
             url = "openid4vp://authorize?" + urllib.parse.urlencode(verifier.authorization_request_params(session))
             before = len(verdicts)
-            try:
-                answer = wallet._call("POST", "/wallet/%s/credentials/present" % wallet.wid,
-                                      {"requestUrl": url, "keyId": wallet.kid})
-            except urllib.error.HTTPError as exc:
-                answer = {"error": "HTTP %d: %s" % (exc.code, exc.read().decode()[:400])}
+            if credo:
+                wallet.stdin.write(url + "\n")
+                wallet.stdin.flush()
+                answer = _read_json(wallet, "presented") or {"error": "Credo exited before it answered"}
+            else:
+                try:
+                    answer = wallet._call("POST", "/wallet/%s/credentials/present" % wallet.wid,
+                                          {"requestUrl": url, "keyId": wallet.kid})
+                except urllib.error.HTTPError as exc:
+                    answer = {"error": "HTTP %d: %s" % (exc.code, exc.read().decode()[:400])}
             for _ in range(20):
                 if len(verdicts) > before:
                     break
@@ -164,7 +198,10 @@ def main(argv=None):
         else:
             ok = False
     finally:
-        if wallet is not None:
+        if wallet is not None and credo:
+            wallet.stdin.close()
+            wallet.wait(timeout=60)
+        elif wallet is not None:
             wallet.close()
         vserver.shutdown()
         vserver.server_close()

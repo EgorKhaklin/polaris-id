@@ -113,7 +113,9 @@ def tls_cert(out, host):
     import ipaddress
     names = [x509.DNSName(h) for h in dict.fromkeys((host, "localhost"))]
     names.append(x509.IPAddress(ipaddress.ip_address("127.0.0.1")))
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)])
+    # A subject of its own: a verifier's self-signed TLS certificate for the same host may sit
+    # in the same trust bundle (S6), and two anchors with one subject make chain building guess.
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "polaris-005 product TLS, %s" % host)])
     cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
             .serial_number(x509.random_serial_number())
             .not_valid_before(now - datetime.timedelta(days=1)).not_valid_after(now + datetime.timedelta(days=7))
