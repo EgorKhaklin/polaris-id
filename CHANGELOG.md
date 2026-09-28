@@ -26,6 +26,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- 3 conformance cases (184 in all): a third party's field of the wrong type is refused, not a crash.
 - `vectors/anchors/ml-dsa-65-issuer.json`, the sample issuer's key, to try `polaris-verify` from PyPI without a clone.
 
 ## v1.0.0-rc.66 — 2026-09-28 (a Polaris credential in a wallet Polaris did not write)
