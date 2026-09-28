@@ -13707,6 +13707,76 @@ def check_no_named_reference_systems(root: pathlib.Path) -> list[Finding]:
                "no named reference system (country or product) appears in the tree; the class is described instead")
 
 
+_REPLAY_KEY = ("a finished lab verifier session's response-decryption key, kept so the wallet's "
+               "genuine encrypted response can be replayed")
+
+#: Private-key material the public tree may hold: throwaways with no use beyond the file that
+#: holds them, each with the reason it is kept. A secret scanner cannot tell a throwaway from a
+#: real key, and neither can a reader; this list is where the difference is stated.
+_PRIVATE_KEY_FIXTURES = {
+    "lab/interop/credo/adversarial/capture.json": _REPLAY_KEY,
+    "lab/interop/credo/adversarial/eudi-dev/capture.json": _REPLAY_KEY,
+    "lab/interop/credo/adversarial/oid4vcgo/capture.json": _REPLAY_KEY,
+    "lab/interop/credo/adversarial/waltid/capture.json": _REPLAY_KEY,
+    "packages/polaris-oid4vp/testdata/conformance-suite-capture.json":
+        "the OpenID Foundation suite run's response-decryption JWK, kept to decrypt its captured response",
+    "polaris_web/test_secretstore.py": "a dummy PEM whose body is 'xyz', not a key",
+}
+# Built in two pieces so this file does not match its own pattern.
+_PRIVATE_PEM = re.compile("-----BEGIN (?:[A-Z0-9]+ )*PRIVATE" + " KEY-----")
+_PRIVATE_JWK_D = re.compile(r'"d"\s*:\s*"[A-Za-z0-9_-]{20,}"')
+_PRIVATE_KEY_EXTS = _NAMED_REF_EXTS | {".pem", ".key", ".jwk"}
+
+
+def _tracked_files(root: pathlib.Path) -> list[str]:
+    """Tracked paths, from git when available, else every file under the tree."""
+    try:
+        out = subprocess.run(["git", "-C", str(root), "ls-files"],
+                             capture_output=True, text=True, timeout=30)
+        if out.returncode == 0 and out.stdout.strip():
+            return sorted(line for line in out.stdout.splitlines() if line.strip())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return sorted("/".join(f.relative_to(root).parts) for f in root.rglob("*") if f.is_file())
+
+
+def check_private_keys_only_in_listed_fixtures(root: pathlib.Path) -> list[Finding]:
+    """Private-key material appears only in the throwaway fixtures `_PRIVATE_KEY_FIXTURES` lists.
+
+    The public repository holds what an outsider needs to verify, integrate and run the
+    reference, and nothing secret-adjacent (the owner's boundary, 2026-09-28). Five tracked
+    files held private keys, all throwaways, and nothing said so. A file holding a PEM private
+    key, or a JWK with its private `d`, must be listed with its reason; a listed file that no
+    longer holds one fails too, so the list stays true.
+    """
+    holding = set()
+    for rel in _tracked_files(root):
+        parts = rel.split("/")
+        if (any(d in _NAMED_REF_SKIP_DIRS for d in parts)
+                or pathlib.PurePosixPath(rel).suffix.lower() not in _PRIVATE_KEY_EXTS):
+            continue
+        try:
+            text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _PRIVATE_PEM.search(text) or ('"kty"' in text and _PRIVATE_JWK_D.search(text)):
+            holding.add(rel)
+    unlisted = sorted(holding - set(_PRIVATE_KEY_FIXTURES))
+    if unlisted:
+        return _fail("private_keys_only_in_listed_fixtures",
+                     "private-key material in %s, which _PRIVATE_KEY_FIXTURES does not list: a real key "
+                     "never belongs in the public tree, and a throwaway is listed with its reason"
+                     % ", ".join(unlisted))
+    stale = sorted(set(_PRIVATE_KEY_FIXTURES) - holding)
+    if stale:
+        return _fail("private_keys_only_in_listed_fixtures",
+                     "_PRIVATE_KEY_FIXTURES lists %s, which holds no private-key material now: remove the "
+                     "entry" % ", ".join(stale))
+    return _ok("private_keys_only_in_listed_fixtures",
+               "private-key material appears only in the %d listed throwaway fixtures, each with its reason"
+               % len(holding))
+
+
 def check_preflight_typechecks_ts_sdk(root: pathlib.Path) -> list[Finding]:
     """The local pre-ship gate type-checks the TypeScript SDK.
 
@@ -23356,6 +23426,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_timestamp_authority,
     check_exchange_mint_signed_auth,
     check_no_named_reference_systems,
+    check_private_keys_only_in_listed_fixtures,
     check_preflight_typechecks_ts_sdk,
     check_exchange_receipt,
     check_wire_spec_matches_code,

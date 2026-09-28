@@ -8788,6 +8788,35 @@ def test_exchange_mint_signed_auth_check_discriminates(tmp_path):
     assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL without the fail-closed unit test"
 
 
+def test_private_keys_only_in_listed_fixtures_check_discriminates(tmp_path, monkeypatch):
+    # Assembled so this file does not hold the patterns it tests.
+    pem = "-----BEGIN EC PRIV" + "ATE KEY-----\\nMHcCAQEE\\n-----END EC PRIV" + "ATE KEY-----\\n"
+    jwk = '{"kty": "EC", "crv": "P-256", "x": "abc", "d": "' + "A" * 43 + '"}'
+    monkeypatch.setattr(checks, "_PRIVATE_KEY_FIXTURES", {"lab/capture.json": "a throwaway session key"})
+    (tmp_path / "lab").mkdir()
+    listed = tmp_path / "lab" / "capture.json"
+    listed.write_text('{"enc_key_pem": "%s"}' % pem)
+    (tmp_path / "notes.md").write_text("a public key is fine: -----BEGIN PUBLIC KEY-----\n")
+    assert checks.check_private_keys_only_in_listed_fixtures(tmp_path)[0].level == "OK", \
+        "must PASS when the only key is in a listed fixture"
+    (tmp_path / "evidence.json").write_text('{"key": "%s"}' % pem)
+    assert checks.check_private_keys_only_in_listed_fixtures(tmp_path)[0].level == "FAIL", \
+        "must FAIL on an unlisted PEM private key"
+    (tmp_path / "evidence.json").unlink()
+    (tmp_path / "wallet.jwk").write_text(jwk)
+    assert checks.check_private_keys_only_in_listed_fixtures(tmp_path)[0].level == "FAIL", \
+        "must FAIL on an unlisted JWK carrying its private d"
+    (tmp_path / "wallet.jwk").write_text(jwk.replace('"d"', '"e"'))
+    assert checks.check_private_keys_only_in_listed_fixtures(tmp_path)[0].level == "OK", \
+        "a public JWK is not private-key material"
+    (tmp_path / "data.json").write_text('{"d": "' + "B" * 43 + '"}')
+    assert checks.check_private_keys_only_in_listed_fixtures(tmp_path)[0].level == "OK", \
+        "a long 'd' in a document that is not a JWK is not a key"
+    listed.write_text('{"enc_key_pem": null}')
+    assert checks.check_private_keys_only_in_listed_fixtures(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a listed fixture that no longer holds a key (a stale entry)"
+
+
 def test_no_named_reference_systems_check_discriminates(tmp_path):
     (tmp_path / "docs").mkdir()
     doc = tmp_path / "docs" / "a.md"
