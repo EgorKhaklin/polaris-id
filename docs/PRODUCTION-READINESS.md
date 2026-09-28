@@ -89,7 +89,7 @@ Production with real identity data cannot proceed until each is recorded as made
 |---|---|---|
 | Legal basis, DPIA, regulator approval | Named controller, jurisdiction, counsel-drafted DPIA, regulatory sign-off | Not an engineering task |
 | Signing-key custody | `file`, `pkcs11` (CI-tested against a real token) or `kms` driver; the HSM or KMS; key holder; rotation authority | [KEY-CEREMONY.md](operator/KEY-CEREMONY.md) |
-| Wallet copies | Whether to offer them at all (each is a classical ES256 credential that relying parties can link across presentations); per agency, the CA that issues the wallet-copy leaf, the leaf's lifetime, and the key's custodian (a file in this version, which the HSM-sole-signer profile refuses) | [oid4vci-issuer.md](design/oid4vci-issuer.md), [KEY-CEREMONY.md](operator/KEY-CEREMONY.md#wallet-copy-keys-es256) |
+| Wallet copies | Whether to offer them at all (each is a classical ES256 credential that relying parties can link across presentations, with no duress path); per agency, the CA that issues the wallet-copy leaf, the leaf's lifetime, and the key's custodian (a file in this version, which the HSM-sole-signer profile refuses) | [oid4vci-issuer.md](design/oid4vci-issuer.md), [KEY-CEREMONY.md](operator/KEY-CEREMONY.md#wallet-copy-keys-es256) |
 | Postgres HA topology | Hosts for the two members and three etcd members; synchronous replication (zero loss) or lower commit latency | [FAILOVER.md](operator/FAILOVER.md) |
 | Encryption at rest | Host volume encryption (LUKS, TDE or fscrypt) and its key custodian | [ENCRYPTION-AT-REST.md](operator/ENCRYPTION-AT-REST.md) |
 | Offsite backup target | The S3-compatible bucket, retention and schedule (RPO 300 s, RTO 4 h targets) | [DR-DRILLS.md](operator/DR-DRILLS.md) |

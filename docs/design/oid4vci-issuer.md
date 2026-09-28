@@ -59,6 +59,10 @@ same issuer signature and the same holder key every time, so relying parties can
 presentations, which the zero-knowledge mode is built to prevent. Selective disclosure hides
 the claims a holder withholds; it does not hide that two presentations came from one copy.
 
+**Duress-awareness does not extend to the wallet copy either.** A copy carries no duress code, and
+its presentation goes to the relying party without reaching Polaris, so a holder made to present
+one leaves no `DuressEvent`.
+
 ## The protocol surface
 
 OpenID4VCI 1.0 Final, the pre-authorized code grant, one credential configuration. Each agency
