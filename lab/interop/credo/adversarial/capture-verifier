@@ -38,6 +38,8 @@ def _recording(self, form):
         pathlib.Path(os.environ["CAPTURE"]).write_text(json.dumps({
             "response_jwe": token, "body": body, "nonce": s.nonce, "state": s.state,
             "enc_key_pem": pem, "client_id": self.client_id, "issuer_jwks": self.issuer_jwks,
+            "issuer_trust_anchors_pem": [c.public_bytes(serialization.Encoding.PEM).decode()
+                                         for c in self.issuer_trust_anchors],
             "vct_values": self.vct_values}, indent=2))
         break
     return _original(self, form)

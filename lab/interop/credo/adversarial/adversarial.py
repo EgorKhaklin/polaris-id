@@ -27,10 +27,43 @@ HERE = pathlib.Path(__file__).resolve().parent
 TREE = HERE.parents[3]
 sys.path.insert(0, str(TREE / "packages" / "polaris-oid4vp"))
 
+import datetime  # noqa: E402
+
+from cryptography import x509  # noqa: E402
 from cryptography.hazmat.primitives import serialization  # noqa: E402
+from polaris_oid4vp import sdjwt as S  # noqa: E402
 from polaris_oid4vp import verifier as V  # noqa: E402
 from polaris_oid4vp.jwe import encrypt_compact  # noqa: E402
 from polaris_oid4vp.sdjwt import verify_presentation  # noqa: E402
+
+
+def _anchors(capture):
+    """The issuer trust anchors the capture was judged under, for an x5c issuer (OID4VCgo)."""
+    return [x509.load_pem_x509_certificate(p.encode()) for p in capture.get("issuer_trust_anchors_pem", [])]
+
+
+def _pin_clock(capture):
+    """Judge every replay at the instant the wallet presented, not the instant it is replayed.
+
+    handle_direct_post judges the key binding JWT's `iat` against the clock, inside a 300 second
+    window, and an x5c leaf's validity the same way. Replayed later on the wall clock the genuine
+    response was refused as stale, and a mutation the freshness check reaches before the check it
+    names was refused for the wrong reason while still counting as caught: the committed Credo
+    round, rerun on 2026-09-28 nine hours after its capture, failed both positive controls, and
+    "one disclosure withheld" and "disclosures reordered" were refused on freshness instead of
+    `sd_hash`. The freshness cases below keep their explicit `now`.
+    """
+    pres = capture["body"]["vp_token"]["pid"][0]
+    instant = float(json.loads(b64d(pres.split("~")[-1].split(".")[1]))["iat"]) + 1
+
+    class _Clock:
+        @staticmethod
+        def time():
+            return instant
+
+    S.time = _Clock()
+    S._utcnow = lambda: datetime.datetime.fromtimestamp(instant, datetime.timezone.utc)
+    return instant
 
 
 
@@ -83,6 +116,7 @@ class Harness:
                             request_uri="https://localhost:9543/request",
                             response_uri="https://localhost:9543/response",
                             issuer_jwks=capture["issuer_jwks"],
+                            issuer_trust_anchors=_anchors(capture),
                             vct_values=tuple(capture["vct_values"]))
         # The only part of the client PKI a RESPONSE is judged against is the client_id, which
         # the KB-JWT's `aud` must equal. Take it from the capture; the throwaway certificate
@@ -184,6 +218,7 @@ def main():
     ap.add_argument("--wallet", default="Credo 0.6.3 (@credo-ts/openid4vc)")
     a = ap.parse_args()
     capture = json.loads(pathlib.Path(a.capture).read_text())
+    _pin_clock(capture)
     hz = Harness(capture)
     results, bad = [], 0
     for label, kind, value, expect in cases(capture):
@@ -208,7 +243,7 @@ def main():
                                ("KB-JWT judged a day before its iat", iat - 86400, "reject")):
         v = verify_presentation(pres, expected_nonce=capture["nonce"], expected_audience=capture["client_id"],
                                 issuer_jwks=capture["issuer_jwks"], expected_vct=capture["vct_values"],
-                                now=now)
+                                trust_anchors=_anchors(capture), now=now)
         got = "accept" if v.authentic else "reject"
         ok = got == expect
         bad += not ok
