@@ -4858,7 +4858,9 @@ def main(argv=None):
             print(json.dumps(stamp_crypto(verdict, _mode), indent=2))
         else:
             print("usable offline: %s%s" % (verdict["usable_offline"], (" (%s)" % verdict["note"]) if verdict.get("note") else ""))
-        return 0 if verdict["usable_offline"] else 1
+        # 2 is "not accepted" in the README's exit-code table; 1 is only for frames that do not
+        # decode (above). Until 2026-09-28 an unusable presentation exited 1.
+        return 0 if verdict["usable_offline"] else 2
     if args.zk_proof:
         try:
             proof = json.loads(open(args.zk_proof).read())
@@ -4877,7 +4879,8 @@ def main(argv=None):
             print("decision: %s" % verdict["decision"])
             for r in verdict.get("reasons", []):
                 print("  - %s" % r)
-        return {"accept": 0, "abstain": 2}.get(verdict["decision"], 1)
+        # Reject and abstain are both "not accepted" (2); a reject exited 1 until 2026-09-28.
+        return 0 if verdict["decision"] == "accept" else 2
 
     try:
         raw = open(args.pack).read() if args.pack else sys.stdin.read()

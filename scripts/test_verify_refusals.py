@@ -467,15 +467,24 @@ class CommandLineExitCodes(unittest.TestCase):
                                        "--pack", str(self.pack),
                                        "--status-assertion", str(self.blob)), 0)
 
-    def test_an_unusable_presentation_exits_non_zero(self):
+    def test_an_unusable_presentation_is_not_accepted_2(self):
+        """Row 2. It exited 1 until 2026-09-28, the code the table gives undecodable frames."""
         from unittest import mock
         with mock.patch.object(V, "verify_presentation",
                                return_value={"usable_offline": False, "note": "x"}):
-            self.assertEqual(self.main("--pqc-provider", "auto", "--presentation", str(self.blob)), 1)
+            self.assertEqual(self.main("--pqc-provider", "auto", "--presentation", str(self.blob)), 2)
+        self.assertEqual(self.main("--pqc-provider", "auto", "--presentation", str(self.blob)), 2,
+                         "and with the real verdict: {} is no presentation anyone can use")
 
-    def test_an_abstaining_zero_knowledge_decision_exits_2(self):
+    def test_frames_that_do_not_decode_exit_1(self):
+        """Row 1, the documented inconsistency: kept, because a script may depend on it."""
+        frames = self.tmp / "frames.txt"
+        frames.write_text("not a polaris-qr/1 frame\n")
+        self.assertEqual(self.main("--pqc-provider", "auto", "--qr-frames", str(frames)), 1)
+
+    def test_a_zero_knowledge_decision_that_is_not_accept_exits_2(self):
         from unittest import mock
-        for decision, code in (("abstain", 2), ("reject", 1), ("accept", 0)):
+        for decision, code in (("abstain", 2), ("reject", 2), ("accept", 0)):
             with self.subTest(decision=decision), \
                     mock.patch.object(V, "verify_cross_authority_zk",
                                       return_value={"decision": decision, "reasons": []}):
