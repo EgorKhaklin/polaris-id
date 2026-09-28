@@ -502,6 +502,31 @@ trust list, MUST require the signer key active at the evidence's instant per the
 only per the signer's own manifest. Statuses in a manifest's `anchors` (3.1) and a registry's
 `authorities` (3.10) MUST reflect the same register.
 
+### 3.19 The wallet copy (`dc+sd-jwt`, vct `urn:polaris:wallet-copy:1`) and its status list
+
+Not a Polaris statement: a standard SD-JWT VC, issued over OpenID4VCI to a wallet Polaris did not
+write ([oid4vci-issuer.md](../design/oid4vci-issuer.md)). It is signed ES256, not ML-DSA, so it is
+a classical credential, and nothing verified from it rests on the Polaris credential's signature.
+The two are joined by the issuance record and the status bit.
+
+The issuer-signed JWT has header `alg: ES256`, `typ: dc+sd-jwt` and `x5c`: the agency's leaf
+certificate first, then any intermediates, never the trust anchor. The leaf names the credential
+issuer as a URI subjectAltName. The payload carries, not disclosable: `iss` (the credential issuer
+`https://HOST/api/v1/oid4vci/<agency_id>`), `vct`, `iat`, `exp` (thirty days after issuance, or the
+credential's own expiration if sooner), `cnf.jwk` (the P-256 key the wallet proved it holds) and
+`status.status_list` `{idx, uri}`; and `_sd` with `_sd_alg: sha-256`. The claims are all
+selectively disclosable, one disclosure each with a 128-bit salt: `legal_name`, `birthdate`
+(ISO date), `age_over_18`, `age_over_21` (judged on the UTC date of issuance and not recomputed)
+and `jurisdiction`. The copy never carries the credential's `token_value`.
+
+A verifier MUST verify the signature from `x5c[0]`, MUST chain `x5c` to an anchor it registered
+for the issuer, and SHOULD read the status. The status list at `uri` is a Token Status List token
+(`typ: statuslist+jwt`, `status_list.bits: 1`) signed by the same key under the same `x5c`, with
+`sub` equal to `uri` and a `ttl`. Each list covers one agency, one UTC day and one list number,
+2^20 slots, bits running from the least significant end of each byte. A slot is 0 only while the
+copy that holds it is recorded, its credential is ACTIVE and its window is open. Every other slot,
+assigned or not, is 1, so a copy the record does not hold reads as revoked.
+
 ## 4. The federation trust decision
 
 A relying party decides a FOREIGN credential offline, non-transitively and in-context:

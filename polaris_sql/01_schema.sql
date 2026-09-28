@@ -525,7 +525,8 @@ CREATE TABLE AuthCodeConsumed (
 );
 
 COMMENT ON TABLE AuthCodeConsumed IS
-  'P8.4 auth-broker consumed authorization codes (SHA3-256 of the code only; no subject, '
+  'Spent one-time values: the P8.4 auth broker''s authorization codes, and the OpenID4VCI '
+  'pre-authorized codes, access tokens and nonces (SHA3-256 of the value only; no subject, '
   'no relying party): single use across workers. Append-only by trigger and by privilege.';
 
 -- P8.7b (v9.328): the AUTHORITY KEY REGISTER. Every event in an authority key's life --

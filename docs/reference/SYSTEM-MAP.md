@@ -37,6 +37,9 @@ polaris/
 │   │      the ten route modules split out of app.py (2026-09-18); each registers
 │   │      by import at the end of app.py, which aliases itself into sys.modules
 │   │      first so `python3 app.py` does not load the entry point twice
+│   ├── oid4vci_routes.py / wallet_copy.py / credential_copy_keys.py
+│   │      OpenID4VCI issuance of wallet copies (2026-09-28): the routes, the SD-JWT VC
+│   │      and status list, and the per-agency ES256 keys; registered the same way
 │   ├── templates/ static/                         ← Jinja2 templates; external-only JS and CSS
 │   ├── Dockerfile / docker-compose.yml            ← dev image and dev stack
 │   ├── Dockerfile.prod / docker-compose.prod.yml  ← prod image and the five-service stack

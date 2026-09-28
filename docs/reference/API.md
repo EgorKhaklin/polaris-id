@@ -1182,6 +1182,76 @@ mirror to replicate and recompute independently. Bounded result set (C8): at mos
 `POLARIS_TRANSPARENCY_ENTRIES_CAP` per call. The append-only guarantee and the monitor are
 specified in [transparency-log.md](../design/transparency-log.md).
 
+## OpenID4VCI issuance (wallet copies)
+
+An agency that holds a wallet-copy key ([key ceremony](../operator/KEY-CEREMONY.md#wallet-copy-keys-es256))
+is an OpenID4VCI 1.0 credential issuer for the pre-authorized code grant, and issues a wallet
+copy of an ACTIVE credential: an SD-JWT VC signed ES256 under the agency's certificate (wire spec
+section 3.19). The design, and what the copy is and is not, is
+[oid4vci-issuer.md](../design/oid4vci-issuer.md). The credential issuer identifier is
+`https://HOST/api/v1/oid4vci/<agency_id>`, read from the leaf certificate's URI subjectAltName
+rather than configured. An agency with no key answers `404 not_found` on every route below; a key
+that fails its checks, or a certificate that names no issuer for the agency, answers
+`503 server_error`. Every answer is `Cache-Control: no-store`.
+
+The code, the access token and the nonce are stateless: each is encrypted under a key derived
+from the instance secret and a salt of its own, so a value of one kind never opens as another,
+and each is spent in the append-only `AuthCodeConsumed` register, so a second use is refused on
+every worker.
+
+The operator starts it with `POST /tokens/<id>/wallet-offer` (login, `admin` or `operator`,
+CSRF; an operator bound to another authority gets `403`). It answers `{offer, offer_uri,
+expires_in}`: the credential offer by value and its `openid-credential-offer://` URI, whose
+pre-authorized code names the credential and lives ten minutes. A credential that is not ACTIVE
+is `409`. Nothing is recorded until a wallet redeems the offer. The issuer metadata is also served
+at `GET /.well-known/openid-credential-issuer/api/v1/oid4vci/<agency_id>`, and the authorization
+server metadata at `GET /.well-known/oauth-authorization-server/api/v1/oid4vci/<agency_id>`.
+
+### `GET /api/v1/oid4vci/<agency_id>/.well-known/openid-credential-issuer`
+
+**Public.** The credential issuer metadata (OpenID4VCI 1.0 section 12.2), identical to the
+inserted well-known path above: `credential_issuer`, `credential_endpoint`, `nonce_endpoint`, and
+one configuration, `polaris_wallet_copy`: format `dc+sd-jwt`, vct `urn:polaris:wallet-copy:1`,
+`jwk` binding, ES256 for the credential and the proof.
+
+### `GET /api/v1/oid4vci/<agency_id>/.well-known/oauth-authorization-server`
+
+**Public.** The authorization server metadata (RFC 8414): the issuer is its own authorization
+server, `token_endpoint` only, grant `urn:ietf:params:oauth:grant-type:pre-authorized_code`.
+
+### `POST /api/v1/oid4vci/<agency_id>/token`
+
+**Public; the pre-authorized code is the credential.** Form `grant_type=urn:ietf:params:oauth:grant-type:pre-authorized_code`,
+`pre-authorized_code`. Any other grant is `400 unsupported_grant_type`; a `tx_code` is `400
+invalid_request` (none is offered); a code that is not this agency's, has expired or was already
+used is `400 invalid_grant`. Returns `{access_token, token_type: "Bearer", expires_in: 300}`. The
+token endpoint does not decide whether a copy may be made; the record decides at the credential
+endpoint.
+
+### `POST /api/v1/oid4vci/<agency_id>/nonce`
+
+**Public.** Returns `{c_nonce}`, valid five minutes and spent by the proof that carries it.
+
+### `POST /api/v1/oid4vci/<agency_id>/credential`
+
+**Bearer access token.** Body `{credential_configuration_id: "polaris_wallet_copy", proofs:
+{jwt: [proof]}}`, exactly one proof: an `openid4vci-proof+jwt` signed ES256 by the P-256 key in
+its `jwk` header, with `aud` this issuer, `iat` within the last five minutes and a `nonce` from
+the nonce endpoint. An access token that is not this agency's, has expired or was already used is
+`401 invalid_token`; a request for another configuration is `400 invalid_credential_request`; a
+proof that fails is `400 invalid_proof` with the reason; a nonce that was not issued here, has
+expired or was already used is `400 invalid_nonce`. The copy is then recorded by
+`uc_issue_credential_copy`, which refuses unless the credential is ACTIVE at that instant
+(`400 credential_request_denied`), and only then signed. Returns `{credentials: [{credential}]}`,
+the SD-JWT VC bound to the proof's key. One access token buys one copy.
+
+### `GET /api/v1/oid4vci/<agency_id>/status/<day>/<list_no>`
+
+**Public.** One Token Status List (`application/statuslist+jwt`), computed from the record at the
+fetch: bit 0 only for a copy whose credential is ACTIVE now and whose own window is open, bit 1
+for every other slot, assigned or not. `day` is the ISO date the copy's `status.status_list.uri`
+names; anything else is `404`.
+
 ## Verification API (use cases UC-1 through UC-8)
 
 Each use case is reachable through the operator UI (HTML form) AND
@@ -1792,6 +1862,7 @@ Status codes:
 |---|---|---|
 | `POST /login` | 10 per 60 s per client IP | `POLARIS_RATE_LIMIT_LOGIN_MAX` |
 | Every `POST`, `PUT`, `PATCH`, `DELETE` (one shared bucket per client IP), except `/api/heartbeat` and `/api/quit` | 60 per 60 s | `POLARIS_RATE_LIMIT_WRITE_MAX`, `POLARIS_RATE_LIMIT_WRITE_WINDOW` |
+| `POST /api/v1/oid4vci/<agency_id>/token`, `/nonce`, `/credential` | 30 per 60 s per agency and client IP, inside the write bucket above | none |
 | `GET` routes, including `/api/health` and `/api/atlas/*` | not rate-limited by the application; the Caddy edge carries its own `rate_limit` directive | the Caddyfile |
 
 A refused request is answered `429` and audited as `RATE_LIMITED`. The

@@ -113,7 +113,7 @@ if ! POLARIS_SHIP_COVERAGE=1 "$PY" "$ROOT/scripts/polaris-ship.py" run \
     SUITE_FAIL=1
 fi
 
-run "$ROOT/polaris_web" unittest test_pqc_signing test_custody test_secretstore test_transparency test_capacity test_referee test_enrollment_code test_credential_copy_keys
+run "$ROOT/polaris_web" unittest test_pqc_signing test_custody test_secretstore test_transparency test_capacity test_referee test_enrollment_code test_credential_copy_keys test_wallet_copy
 run "$ROOT/polaris_cli" unittest test_cli
 run_standalone "$ROOT/scripts" unittest test_verify_load test_wallet test_relying_party \
                                        test_verify_conformance test_verify_p9 test_verify_refusals test_ship_tool \

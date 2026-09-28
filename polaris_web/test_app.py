@@ -17494,6 +17494,400 @@ class ApiErrorsAreJson(PolarisTestCase):
         self.assertEqual(r.status_code, 405)
         self.assertIn('text/html', r.content_type, 'control: non-API paths keep the page')
 
+
+class WalletCopyIssuanceTests(PolarisTestCase):
+    """OpenID4VCI issuance of a wallet copy (docs/design/oid4vci-issuer.md), end to end over HTTP.
+
+    The wallet here is a P-256 key and the requests a wallet sends; step 2 of lab/strategy/005
+    recorded what two real wallets send, and these tests send the same. Every copy is checked the
+    way a verifier checks it: the signature from x5c[0] alone, the chain against the test anchor,
+    each disclosure against the signed digests, and the status bit through polaris-oid4vp's own
+    status decision rather than anything in polaris_web.
+
+    The binding cases are lab/strategy/005/STEP3.md's, now against the product: no copy for a
+    credential that is not ACTIVE (A), none for one revoked between offer and redemption (B), a
+    copy of an ACTIVE one that reads VALID (C), and the same copy reading INVALID once the
+    credential is revoked (D). Credentials are issued through uc1_issue_and_activate and revoked
+    through uc8_revoke_token, so no rule of the record is stepped around to set a case up.
+    """
+
+    PRE_AUTH = 'urn:ietf:params:oauth:grant-type:pre-authorized_code'
+
+    def setUp(self):
+        super().setUp()
+        import importlib.util
+        import tempfile
+        self._keys = tempfile.TemporaryDirectory()
+        self.addCleanup(self._keys.cleanup)
+        spec = importlib.util.spec_from_file_location(
+            'credential_copy_test_pki', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..',
+                                                     'scripts', 'polaris-credential-copy-test-pki.py'))
+        self._pki = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self._pki)
+        self._anchors = {}
+        env = patch.dict(os.environ, {'POLARIS_CREDENTIAL_COPY_KEYS_DIR': self._keys.name})
+        env.start()
+        self.addCleanup(env.stop)
+        import credential_copy_keys
+        credential_copy_keys.reset()
+        self.addCleanup(credential_copy_keys.reset)
+        # A fresh ACTIVE credential through the issuance procedure, as the lab harness made
+        # them: agency 2, whose revocations another agency is authorized to co-sign.
+        self.token_value = 'TKN-WALLETCOPY-%s' % os.urandom(4).hex()
+        row = flask_app.query("SELECT uc1_issue_and_activate(%s, DATE '1990-05-06', 'PA', 2, 1, 'NONE', 2, "
+                              "NULL, %s, %s, 'wallet copy test', ARRAY[1]) AS token_id",
+                              ('Wallet Copy Holder', self.token_value, 'PHY-' + self.token_value),
+                              fetch='returning', primary=True)
+        self.token_id, self.agency = row['token_id'], 2
+        self.issuer = self._keys_for(self.agency)
+
+    def _fresh(self, label):
+        value = 'TKN-WALLETCOPY-%s-%s' % (label, os.urandom(3).hex())
+        return flask_app.query("SELECT uc1_issue_and_activate(%s, DATE '1990-05-06', 'PA', 2, 1, 'NONE', 2, "
+                               "NULL, %s, %s, 'wallet copy test', ARRAY[1]) AS token_id",
+                               ('Wallet Copy ' + label, value, 'PHY-' + value),
+                               fetch='returning', primary=True)['token_id']
+
+    # ------ the record's side ------
+
+    def _keys_for(self, agency):
+        import pathlib
+        from cryptography import x509
+        issuer = 'https://polaris.test/api/v1/oid4vci/%d' % agency
+        if agency not in self._anchors:
+            written = self._pki.make(pathlib.Path(self._keys.name), agency, issuer)
+            self._anchors[agency] = x509.load_pem_x509_certificate(pathlib.Path(written['anchor']).read_bytes())
+        return issuer
+
+    def _revoke(self, token_id):
+        """Through uc8_revoke_token and every rule it applies: the revocation-rate bound asks for
+        a co-signing agency holding BOTH authorization on the credential's algorithm."""
+        row = flask_app.query("SELECT t.issuing_agency_id AS agency, aa.agency_id AS cosigner "
+                              "FROM IdentityToken t JOIN AgencyAlgorithmAuth aa ON aa.algorithm_id = t.algorithm_id "
+                              "WHERE t.token_id = %s AND aa.authorization_type = 'BOTH' "
+                              "AND aa.agency_id <> t.issuing_agency_id ORDER BY aa.agency_id LIMIT 1",
+                              (token_id,), fetch='one', primary=True)
+        flask_app.query("CALL uc8_revoke_token(%s, %s, 'COMPROMISED', 'wallet copy test', %s)",
+                        (token_id, row['agency'], row['cosigner']), fetch='none')
+
+    # ------ the wallet's side ------
+
+    def _path(self, suffix, agency=None):
+        return '/api/v1/oid4vci/%d/%s' % (agency or self.agency, suffix)
+
+    def _offer(self, token_id=None):
+        return self._post('/tokens/%d/wallet-offer' % (token_id or self.token_id), csrf_from='/tokens')
+
+    def _code_from(self, r):
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:300])
+        return r.get_json()['offer']['grants'][self.PRE_AUTH]['pre-authorized_code']
+
+    def _token(self, code, agency=None):
+        return self.client.post(self._path('token', agency), data={
+            'grant_type': self.PRE_AUTH, 'pre-authorized_code': code})
+
+    def _nonce(self, agency=None):
+        r = self.client.post(self._path('nonce', agency))
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:300])
+        return r.get_json()['c_nonce']
+
+    def _wallet_key(self):
+        from cryptography.hazmat.primitives.asymmetric import ec
+        return ec.generate_private_key(ec.SECP256R1())
+
+    def _proof(self, key, nonce, aud=None):
+        import base64 as _b64
+        import json as _json
+        import time as _time
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec, utils
+        b64 = lambda b: _b64.urlsafe_b64encode(b).rstrip(b'=').decode()  # noqa: E731
+        n = key.public_key().public_numbers()
+        jwk = {'kty': 'EC', 'crv': 'P-256', 'x': b64(n.x.to_bytes(32, 'big')), 'y': b64(n.y.to_bytes(32, 'big'))}
+        header = {'typ': 'openid4vci-proof+jwt', 'alg': 'ES256', 'jwk': jwk}
+        payload = {'aud': aud or self.issuer, 'iat': int(_time.time()), 'nonce': nonce}
+        si = '%s.%s' % (b64(_json.dumps(header).encode()), b64(_json.dumps(payload).encode()))
+        r_, s_ = utils.decode_dss_signature(key.sign(si.encode(), ec.ECDSA(hashes.SHA256())))
+        return si + '.' + b64(r_.to_bytes(32, 'big') + s_.to_bytes(32, 'big')), jwk
+
+    def _credential(self, access_token, proof, agency=None):
+        return self.client.post(self._path('credential', agency), json={
+            'credential_configuration_id': 'polaris_wallet_copy', 'proofs': {'jwt': [proof]}},
+            headers={'Authorization': 'Bearer ' + access_token})
+
+    def _receive(self):
+        """The whole wallet loop: offer, token, nonce, proof, credential. Returns (copy, jwk)."""
+        r = self._token(self._code_from(self._offer()))
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:300])
+        proof, jwk = self._proof(self._wallet_key(), self._nonce())
+        r = self._credential(r.get_json()['access_token'], proof)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:300])
+        return r.get_json()['credentials'][0]['credential'], jwk
+
+    # ------ the verifier's side ------
+
+    def _open(self, sd_jwt):
+        """Verify the copy as a verifier would, from x5c alone: (payload, header, disclosed)."""
+        import base64 as _b64
+        import hashlib as _hashlib
+        import json as _json
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec, utils
+        d64 = lambda s: _b64.urlsafe_b64decode(s + '=' * (-len(s) % 4))  # noqa: E731
+        parts = sd_jwt.split('~')
+        self.assertEqual(parts[-1], '', 'an issued SD-JWT ends with ~')
+        h64, p64, s64 = parts[0].split('.')
+        header, payload = _json.loads(d64(h64)), _json.loads(d64(p64))
+        self.assertEqual((header['alg'], header['typ']), ('ES256', 'dc+sd-jwt'))
+        leaf = x509.load_der_x509_certificate(_b64.b64decode(header['x5c'][0]))
+        leaf.verify_directly_issued_by(self._anchors[self.agency])
+        sig = d64(s64)
+        leaf.public_key().verify(utils.encode_dss_signature(int.from_bytes(sig[:32], 'big'),
+                                                            int.from_bytes(sig[32:], 'big')),
+                                 ('%s.%s' % (h64, p64)).encode(), ec.ECDSA(hashes.SHA256()))
+        disclosed = {}
+        for d in parts[1:-1]:
+            digest = _b64.urlsafe_b64encode(_hashlib.sha256(d.encode()).digest()).rstrip(b'=').decode()
+            self.assertIn(digest, payload['_sd'], 'a disclosure the issuer did not sign')
+            _salt, name, value = _json.loads(d64(d))
+            disclosed[name] = value
+        return payload, header, disclosed
+
+    def _status(self, payload, header):
+        """The copy's status through polaris-oid4vp's own decision, on the same-key basis."""
+        import base64 as _b64
+        import sys as _sys
+        import time as _time
+        import urllib.parse as _up
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec, utils
+        _sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..',
+                                         'packages', 'polaris-oid4vp'))
+        from polaris_oid4vp import status as st
+        ref = payload['status']['status_list']
+        r = self.client.get(_up.urlsplit(ref['uri']).path)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:300])
+        self.assertEqual(r.mimetype, 'application/statuslist+jwt')
+        leaf = x509.load_der_x509_certificate(_b64.b64decode(header['x5c'][0]))
+
+        def same_key(signing_input, signature, _header):
+            try:
+                leaf.public_key().verify(utils.encode_dss_signature(
+                    int.from_bytes(signature[:32], 'big'), int.from_bytes(signature[32:], 'big')),
+                    bytes(signing_input), ec.ECDSA(hashes.SHA256()))
+                return True
+            except Exception:  # noqa: BLE001 -- any failure to verify is "no"
+                return False
+        verdict = st.decide(r.get_data(), index=ref['idx'], expected_uri=ref['uri'],
+                            authority=st.StatedAuthority(), now=int(_time.time()),
+                            credential_issuer=payload['iss'], issuer_key_verify=same_key)
+        self.assertTrue(verdict.checked, verdict)
+        return verdict['meaning']
+
+    # ------ the binding cases (STEP3 A-D), against the product ------
+
+    def test_c_an_active_credential_gets_a_copy_a_verifier_accepts_as_valid(self):
+        copy, jwk = self._receive()
+        payload, header, disclosed = self._open(copy)
+        self.assertEqual(payload['iss'], self.issuer)
+        self.assertEqual(payload['vct'], 'urn:polaris:wallet-copy:1')
+        self.assertEqual(payload['cnf']['jwk'], jwk, 'the copy is bound to the key that proved possession')
+        self.assertEqual(disclosed, {'legal_name': 'Wallet Copy Holder', 'birthdate': '1990-05-06',
+                                     'age_over_18': True, 'age_over_21': True, 'jurisdiction': 'PA'})
+        self.assertNotIn(self.token_value, copy, 'the credential serial is the correlation handle; '
+                                                 'the copy never carries it')
+        self.assertEqual(self._status(payload, header), 'VALID')
+
+    def test_d_the_same_copy_reads_invalid_once_the_credential_is_revoked(self):
+        copy, _ = self._receive()
+        payload, header, _ = self._open(copy)
+        self.assertEqual(self._status(payload, header), 'VALID')
+        self._revoke(self.token_id)
+        self.assertEqual(self._status(payload, header), 'INVALID')
+
+    def test_b_no_copy_for_a_credential_revoked_between_offer_and_redemption(self):
+        code = self._code_from(self._offer())
+        self._revoke(self.token_id)
+        r = self._token(code)
+        self.assertEqual(r.status_code, 200, 'the token endpoint does not decide; the record does, at redemption')
+        proof, _ = self._proof(self._wallet_key(), self._nonce())
+        r = self._credential(r.get_json()['access_token'], proof)
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:300])
+        self.assertEqual(r.get_json()['error'], 'credential_request_denied')
+
+    def test_a_no_offer_and_no_copy_for_a_credential_that_is_not_active(self):
+        import rp_auth
+        # REVOKED through uc8 and LOST through the operator's transition route, each on a fresh
+        # credential; RESERVE is a state issuance never enters, so it comes from the seed.
+        revoked = self._fresh('A-REVOKED')
+        self._revoke(revoked)
+        lost = self._fresh('A-LOST')
+        r = self._post('/tokens/%d/transition' % lost, {'new_status': 'LOST'}, csrf_from='/tokens')
+        self.assertIn(r.status_code, (200, 302), r.get_data(as_text=True)[:300])
+        for status in ('REVOKED', 'LOST', 'RESERVE'):
+            with self.subTest(status=status):
+                row = flask_app.query("SELECT token_id, token_value, issuing_agency_id FROM IdentityToken "
+                                      "WHERE status = %s ORDER BY token_id DESC LIMIT 1", (status,),
+                                      fetch='one', primary=True)
+                self.assertIsNotNone(row, 'no %s credential to offer' % status)
+                agency = int(row['issuing_agency_id'])
+                issuer = self._keys_for(agency)
+                self.assertEqual(self._offer(row['token_id']).status_code, 409, 'the offer route refuses')
+                # A code the offer route never made, as a compromised application could mint
+                # one: the database still refuses the copy.
+                code = rp_auth.issue_vci_value(flask_app.app.secret_key, 'code',
+                                               {'ag': agency, 'tv': row['token_value']})
+                r = self._token(code, agency)
+                self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:300])
+                proof, _ = self._proof(self._wallet_key(), self._nonce(agency), aud=issuer)
+                r = self._credential(r.get_json()['access_token'], proof, agency)
+                self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:300])
+                self.assertEqual(r.get_json()['error'], 'credential_request_denied')
+
+    # ------ the protocol's single-use and scoping rules ------
+
+    def test_a_code_is_spent_once(self):
+        code = self._code_from(self._offer())
+        self.assertEqual(self._token(code).status_code, 200)
+        r = self._token(code)
+        self.assertEqual((r.status_code, r.get_json()['error']), (400, 'invalid_grant'))
+
+    def test_an_access_token_buys_one_copy(self):
+        r = self._token(self._code_from(self._offer()))
+        access = r.get_json()['access_token']
+        key = self._wallet_key()
+        self.assertEqual(self._credential(access, self._proof(key, self._nonce())[0]).status_code, 200)
+        r = self._credential(access, self._proof(key, self._nonce())[0])
+        self.assertEqual((r.status_code, r.get_json()['error']), (401, 'invalid_token'))
+        self.assertIn('Bearer', r.headers.get('WWW-Authenticate', ''))
+
+    def test_a_nonce_is_spent_once(self):
+        proof, _ = self._proof(self._wallet_key(), self._nonce())
+        first = self._token(self._code_from(self._offer())).get_json()['access_token']
+        self.assertEqual(self._credential(first, proof).status_code, 200)
+        second = self._token(self._code_from(self._offer())).get_json()['access_token']
+        r = self._credential(second, proof)
+        self.assertEqual((r.status_code, r.get_json()['error']), (400, 'invalid_nonce'))
+
+    def test_values_open_only_at_their_own_agency_and_as_their_own_kind(self):
+        other = self._keys_for(1)
+        code = self._code_from(self._offer())
+        r = self._token(code, agency=1)
+        self.assertEqual((r.status_code, r.get_json()['error']), (400, 'invalid_grant'),
+                         "agency 2's code at agency 1's token endpoint")
+        access = self._token(code).get_json()['access_token']
+        proof, _ = self._proof(self._wallet_key(), self._nonce(agency=1), aud=other)
+        r = self._credential(access, proof, agency=1)
+        self.assertEqual(r.status_code, 401, "agency 2's access token at agency 1's credential endpoint")
+        r = self._credential(self._nonce(), self._proof(self._wallet_key(), self._nonce())[0])
+        self.assertEqual(r.status_code, 401, 'a nonce is not an access token')
+        proof, _ = self._proof(self._wallet_key(), self._nonce(agency=1))
+        r = self._credential(access, proof)
+        self.assertEqual((r.status_code, r.get_json()['error']), (400, 'invalid_nonce'),
+                         "agency 1's nonce in a proof to agency 2")
+
+    def test_a_proof_aimed_at_another_issuer_is_refused(self):
+        access = self._token(self._code_from(self._offer())).get_json()['access_token']
+        proof, _ = self._proof(self._wallet_key(), self._nonce(), aud='https://elsewhere.test/api/v1/oid4vci/2')
+        r = self._credential(access, proof)
+        self.assertEqual((r.status_code, r.get_json()['error']), (400, 'invalid_proof'))
+
+    def test_the_request_must_name_this_configuration_and_carry_one_proof(self):
+        access = self._token(self._code_from(self._offer())).get_json()['access_token']
+        proof, _ = self._proof(self._wallet_key(), self._nonce())
+        for body, error in (({'credential_configuration_id': 'other', 'proofs': {'jwt': [proof]}}, 'invalid_credential_request'),
+                            ({'credential_configuration_id': 'polaris_wallet_copy', 'proof': {'jwt': proof}}, 'invalid_proof'),
+                            ({'credential_configuration_id': 'polaris_wallet_copy', 'proofs': {'jwt': [proof, proof]}}, 'invalid_proof')):
+            r = self.client.post('/api/v1/oid4vci/%d/credential' % self.agency, json=body,
+                                 headers={'Authorization': 'Bearer ' + access})
+            self.assertEqual((r.status_code, r.get_json()['error']), (400, error), body)
+
+    def test_the_token_endpoint_takes_only_the_pre_authorized_code_grant(self):
+        code = self._code_from(self._offer())
+        r = self.client.post('/api/v1/oid4vci/%d/token' % self.agency,
+                             data={'grant_type': 'authorization_code', 'code': code})
+        self.assertEqual((r.status_code, r.get_json()['error']), (400, 'unsupported_grant_type'))
+        r = self.client.post('/api/v1/oid4vci/%d/token' % self.agency,
+                             data={'grant_type': self.PRE_AUTH, 'pre-authorized_code': code, 'tx_code': '1234'})
+        self.assertEqual((r.status_code, r.get_json()['error']), (400, 'invalid_request'))
+
+    # ------ what an agency offers, and to whom ------
+
+    def test_the_metadata_names_the_issuer_its_certificate_names(self):
+        for path in ('/.well-known/openid-credential-issuer/api/v1/oid4vci/%d' % self.agency,
+                     '/api/v1/oid4vci/%d/.well-known/openid-credential-issuer' % self.agency):
+            meta = self.client.get(path).get_json()
+            self.assertEqual(meta['credential_issuer'], self.issuer, path)
+            self.assertEqual(meta['credential_endpoint'], self.issuer + '/credential')
+            self.assertIn('polaris_wallet_copy', meta['credential_configurations_supported'])
+        for path in ('/.well-known/oauth-authorization-server/api/v1/oid4vci/%d' % self.agency,
+                     '/api/v1/oid4vci/%d/.well-known/oauth-authorization-server' % self.agency):
+            meta = self.client.get(path).get_json()
+            self.assertEqual((meta['issuer'], meta['token_endpoint']), (self.issuer, self.issuer + '/token'), path)
+
+    def test_an_agency_without_a_key_offers_nothing(self):
+        for path in ('/.well-known/openid-credential-issuer/api/v1/oid4vci/3',
+                     '/api/v1/oid4vci/3/.well-known/openid-credential-issuer',
+                     '/.well-known/oauth-authorization-server/api/v1/oid4vci/3',
+                     '/api/v1/oid4vci/3/status/2026-09-28/0'):
+            r = self.client.get(path)
+            self.assertEqual((r.status_code, r.get_json()['error']), (404, 'not_found'), path)
+        for suffix in ('token', 'nonce', 'credential'):
+            r = self.client.post('/api/v1/oid4vci/3/%s' % suffix)
+            self.assertEqual(r.status_code, 404, suffix)
+
+    def test_a_key_that_fails_its_checks_is_a_fault_not_an_absence(self):
+        os.chmod(os.path.join(self._keys.name, '%d.key.pem' % self.agency), 0o644)
+        r = self.client.get('/.well-known/openid-credential-issuer/api/v1/oid4vci/%d' % self.agency)
+        self.assertEqual((r.status_code, r.get_json()['error']), (503, 'server_error'))
+
+    def test_a_certificate_that_does_not_name_the_issuer_is_a_fault(self):
+        import pathlib
+        for f in pathlib.Path(self._keys.name).glob('%d.*' % self.agency):
+            f.unlink()
+        self._anchors.pop(self.agency)
+        self._pki.make(pathlib.Path(self._keys.name), self.agency, 'https://polaris.test/api/v1/oid4vci/99')
+        r = self.client.get('/.well-known/openid-credential-issuer/api/v1/oid4vci/%d' % self.agency)
+        self.assertEqual((r.status_code, r.get_json()['error']), (503, 'server_error'))
+
+    def test_the_status_list_answers_only_for_a_real_day(self):
+        for day in ('2026-13-01', '20260928', '2026-9-28', 'today'):
+            r = self.client.get('/api/v1/oid4vci/%d/status/%s/0' % (self.agency, day))
+            self.assertEqual(r.status_code, 404, day)
+
+    def test_a_bound_operator_cannot_offer_another_authoritys_credential(self):
+        csrf = self._csrf_token_from('/tokens')
+        with self.client.session_transaction() as sess:
+            sess['operator_agency_id'] = 1
+            _bind_account(sess, 1)     # the account too, or the session ends on the next request
+        self.addCleanup(self._unbind)
+        r = self.client.post('/tokens/%d/wallet-offer' % self.token_id, data={'csrf_token': csrf})
+        self.assertEqual(r.status_code, 403, r.get_data(as_text=True)[:300])
+
+    def _unbind(self):
+        with self.client.session_transaction() as sess:
+            _bind_account(sess, None)
+
+    def test_the_offer_uri_carries_the_offer(self):
+        import json as _json
+        import urllib.parse as _up
+        body = self._offer().get_json()
+        uri = _up.urlsplit(body['offer_uri'])
+        self.assertEqual(uri.scheme, 'openid-credential-offer')
+        self.assertEqual(_json.loads(_up.parse_qs(uri.query)['credential_offer'][0]), body['offer'])
+        self.assertEqual(body['offer']['credential_issuer'], self.issuer)
+
+    def test_every_endpoint_answers_429_past_its_rate(self):
+        for _ in range(30):
+            self.client.post('/api/v1/oid4vci/%d/nonce' % self.agency)
+        for method, path in (('POST', '/api/v1/oid4vci/%d/nonce'), ('POST', '/api/v1/oid4vci/%d/token'),
+                             ('POST', '/api/v1/oid4vci/%d/credential')):
+            r = self.client.open(path % self.agency, method=method)
+            self.assertEqual((r.status_code, r.get_json()['error']), (429, 'slow_down'), path)
+
+
 if __name__ == '__main__':
     # Pull in property-based invariant tests (C1, C2, C3) so they run as
     # part of the main suite. The import is at the bottom so test_app.py

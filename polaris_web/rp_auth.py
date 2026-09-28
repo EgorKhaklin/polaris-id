@@ -101,3 +101,39 @@ def parse_bearer(auth_header):
     if len(parts) == 2 and parts[0].lower() == "bearer":
         return parts[1].strip() or None
     return None
+
+#: OpenID4VCI one-time values (oid4vci_routes.py). Each kind has its own salt, so a value of one
+#: kind never opens as another, and all of them are distinct from the auth broker's codes and the
+#: relying-party access tokens. Encrypted like the auth codes: a pre-authorized code and an access
+#: token name the credential, which a bearer has no need to read.
+_VCI_SALTS = {"code": "polaris-vci-pre-authorized-code-v1",
+              "token": "polaris-vci-access-token-v1",
+              "nonce": "polaris-vci-nonce-v1"}
+VCI_TTL = {"code": 600, "token": 300, "nonce": 300}
+
+
+def _vci_fernet(secret_key, kind):
+    from cryptography.fernet import Fernet
+    salt = _VCI_SALTS[kind]
+    key = base64.urlsafe_b64encode(hashlib.sha3_256(("%s:%s" % (salt, secret_key)).encode("utf-8")).digest())
+    return Fernet(key)
+
+
+def issue_vci_value(secret_key, kind, payload):
+    """Encrypt a one-time OpenID4VCI value of this kind. A random member makes every value
+    distinct, so spending one never spends another with the same payload."""
+    import secrets
+    body = dict(payload, n=secrets.token_urlsafe(12))
+    return _vci_fernet(secret_key, kind).encrypt(json.dumps(body, separators=(",", ":")).encode("utf-8")).decode("ascii")
+
+
+def open_vci_value(secret_key, kind, value):
+    """The payload of a value of this kind, if it is ours and within its lifetime; else None."""
+    if not value or not isinstance(value, str) or len(value) > 4096:
+        return None
+    try:
+        raw = _vci_fernet(secret_key, kind).decrypt(value.encode("ascii"), ttl=VCI_TTL[kind])
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception:  # noqa: BLE001 -- a wrong key or kind, a tamper, an expiry: all "not ours"
+        return None
+    return payload if isinstance(payload, dict) else None

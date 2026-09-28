@@ -339,6 +339,7 @@ _RATE_LIMITED_ROUTES = (
     ("exch:", "the exchange gateway"),
     ("sign:", "holder-authorized document signing"),
     ("auth:", "the authorization endpoint"),
+    ("vci:", "the OpenID4VCI token, nonce and credential endpoints"),
 )
 
 

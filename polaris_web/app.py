@@ -2442,6 +2442,7 @@ import federation_routes    # noqa: E402,F401  -- /federation, /api/federation
 import transparency_routes  # noqa: E402,F401  -- /epochs, /anchors, /api/zk, /api/anchor
 import auth_routes          # noqa: E402,F401  -- /login, /logout, /auth/webauthn, /settings
 import status_routes        # noqa: E402,F401  -- /api/health, /metrics, security.txt
+import oid4vci_routes       # noqa: E402,F401  -- OpenID4VCI: wallet copies, per agency
 
 
 # ============================================================================

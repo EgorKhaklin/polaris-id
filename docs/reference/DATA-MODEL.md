@@ -295,12 +295,17 @@ never be un-consumed) and by privilege, exactly like `ZkVerificationNonce`.
 
 ### `AuthCodeConsumed` (constraint C1: append-only; roadmap P8.4)
 
-The auth broker's consumed-code register. An authorization code is a stateless
-signed blob; the token endpoint consumes its SHA3-256 here before minting an ID
-token, so a code is single-use across every worker (a replay hits the primary
-key: `invalid_grant`). Only the code hash is kept -- no subject, no relying
-party, no instant -- so the broker holds no record of who authenticated where.
-Strictly append-only by trigger (`trg_auth_code_append_only`) and by privilege.
+The single-use register for one-time values. The auth broker's authorization
+codes and, since 2026-09-28, the OpenID4VCI pre-authorized codes, access tokens
+and nonces (domain-separated by kind) are stateless encrypted blobs; each is spent
+here as its SHA3-256 before it is honoured, so a value is single-use across every
+worker (a replay hits the primary key: `invalid_grant`, `invalid_token` or
+`invalid_nonce`). Only the hash and the instant it was spent (`consumed_at`) are
+kept -- no subject, no relying party -- so the register holds no record of who
+authenticated, or received a wallet copy, where. Until 2026-09-28 this page said
+no instant was kept; the table has always kept `consumed_at`, and the auth-broker
+check allows the hash and the instant only. Strictly append-only by trigger
+(`trg_auth_code_append_only`) and by privilege.
 
 The relying party's registered auth-broker policy (v9.336, migration 006) lives on
 `RelyingParty` as `require_zk`, `required_enrollment` (CHECK-constrained to the enrollment

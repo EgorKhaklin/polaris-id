@@ -315,7 +315,8 @@ DEFAULT_MODULES = ["test_app", "test_check_constraints", "test_invariants_proper
 UNSHARDED_SUITES = {
     "polaris_web": ["test_pqc_signing", "test_custody", "test_secretstore", "test_transparency",
                     "test_capacity", "test_referee", "test_enrollment_code",
-                    "test_canonical_equivalence", "test_credential_copy_keys"],
+                    "test_canonical_equivalence", "test_credential_copy_keys",
+                    "test_wallet_copy"],
     "polaris_cli": ["test_cli"],
     "scripts": ["test_verify_load", "test_wallet", "test_relying_party",
                 "test_verify_conformance", "test_verify_p9", "test_verify_refusals",

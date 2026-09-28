@@ -119,7 +119,8 @@ break.
   [transparency_routes.py](../polaris_web/transparency_routes.py),
   [auth_routes.py](../polaris_web/auth_routes.py),
   [verification_routes.py](../polaris_web/verification_routes.py),
-  [federation_routes.py](../polaris_web/federation_routes.py) and
+  [federation_routes.py](../polaris_web/federation_routes.py),
+  [oid4vci_routes.py](../polaris_web/oid4vci_routes.py) (OpenID4VCI issuance of wallet copies, 2026-09-28) and
   [sql_console.py](../polaris_web/sql_console.py), with role enforcement
   (`admin`, `operator`, `auditor`) as implemented by `require_role` in
   [security.py](../polaris_web/security.py). The

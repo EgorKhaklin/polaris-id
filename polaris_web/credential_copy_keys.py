@@ -83,6 +83,19 @@ class CopyKey:
         credential's `iss` to a uniformResourceIdentifier in the leaf's subjectAltName."""
         return issuer_url in self.san_uris
 
+    def credential_issuer(self, path: str):
+        """The credential issuer identifier this leaf names for `path`: its one https URI
+        subjectAltName whose path is exactly `path`. None when there is none, or more than one,
+        because then the certificate does not say which issuer it is."""
+        import urllib.parse
+        found = []
+        for uri in self.san_uris:
+            parts = urllib.parse.urlsplit(uri)
+            if parts.scheme == "https" and parts.hostname and parts.path == path \
+                    and not parts.query and not parts.fragment:
+                found.append(uri)
+        return found[0] if len(found) == 1 else None
+
     def describe(self) -> dict:
         """Non-secret facts, for health and the operator."""
         return {"agency_id": self.agency_id, "leaf_sha256": self.leaf_fingerprint,

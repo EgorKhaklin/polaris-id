@@ -5,10 +5,12 @@ there, or an operator deciding whether to offer it. **Job:** state what the wall
 governs it, what it inherits from the Polaris credential and what it does not, before the code
 exists.
 
-**State: the record and the keys are built, the endpoints are not.** `CredentialCopy`,
-`uc_issue_credential_copy`, `credential_copy_valid_indexes` and the key loader
-`polaris_web/credential_copy_keys.py` exist (2026-09-28); the OpenID4VCI routes and offers
-follow. The bet is [lab/strategy/005](../../lab/strategy/005-oid4vci-issuer.md).
+**State: built; no wallet has received from the product yet.** The record (`CredentialCopy`,
+`uc_issue_credential_copy`, `credential_copy_valid_indexes`), the key loader
+(`polaris_web/credential_copy_keys.py`) and the OpenID4VCI endpoints and operator offer
+(`polaris_web/oid4vci_routes.py`, [API](../reference/API.md#openid4vci-issuance-wallet-copies))
+exist (2026-09-28). The lab's binding cases run against the product over HTTP
+(`WalletCopyIssuanceTests`). Issuing into walt.id and Credo from the product is the next step. The bet is [lab/strategy/005](../../lab/strategy/005-oid4vci-issuer.md).
 The lab showed that two wallets Polaris did not write take a credential from a conformant
 pre-authorized-code issuer without a workaround ([STEP2](../../lab/strategy/005/STEP2.md)). It
 also showed that a copy issued under the record's rules obeys the record, 7 of 7 with two
@@ -109,7 +111,10 @@ verify, an intermediate that is not a CA, and a chain outside its validity windo
 again at every use. The ML-DSA custody key never signs a wallet copy, and the ES256 key never
 signs anything else. PKCS#11 and KMS come later, through the custody interface; until then the
 HSM-sole-signer profile refuses to start with wallet-copy keys configured, since they would be
-a signer outside the HSM.
+a signer outside the HSM. The credential issuer identifier is read from the leaf, not
+configured: the one https URI subjectAltName whose path is `/api/v1/oid4vci/<agency_id>`. A leaf
+that names none, or two, is a fault, so the `iss` a copy carries is always the name its
+certificate gives.
 
 ## Privacy
 

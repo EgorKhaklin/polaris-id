@@ -155,7 +155,9 @@ credential. Its key is per agency and, in this version, a file:
 
 Generate the key where it will live and have the agency's CA issue the leaf for it,
 with `digitalSignature`, without the CA flag or `keyCertSign`, and with the credential
-issuer URL, `https://HOST/api/v1/oid4vci/<agency_id>`, as a URI subjectAltName.
+issuer URL, `https://HOST/api/v1/oid4vci/<agency_id>`, as its one https URI subjectAltName for
+that path. The endpoints read the issuer identifier from there: a leaf that names none, or two,
+makes every endpoint of that agency answer `503`.
 `polaris_web/credential_copy_keys.py` refuses anything else when it loads the key, and
 checks the chain's validity window again at every use. A replaced pair is picked up
 without a restart, so rotation is: issue the new leaf, replace both files, and keep the
