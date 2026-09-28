@@ -4,8 +4,8 @@
 asking anyone a question.** If you cannot, that is the bug and we want to hear it.
 
 This page is run start to finish before it is changed, from outside the repository, against the
-package on PyPI rather than a working copy. Last walked 2026-09-26 against `polaris-oid4vp`
-1.0.0rc7 installed from the registry, with the system Python 3.9 and `waltid/wallet-api2:1.0.0`, on
+package on PyPI rather than a working copy. Last walked 2026-09-28 against `polaris-oid4vp`
+1.0.0rc8 installed from the registry, with the system Python 3.9 and `waltid/wallet-api2:1.0.0`, on
 macOS with Docker Desktop: the wallet reported `transmission_success` and the verifier printed the
 step 7 line exactly. Nothing here is from memory.
 
@@ -61,7 +61,7 @@ and splitting them across two directories is the single most common way this pat
     mkdir -p ~/polaris-try && cd ~/polaris-try
     python3 -m venv .venv && . .venv/bin/activate
 
-From the registry. You do not need this repository. `--pre` because 1.0.0rc7 is a release
+From the registry. You do not need this repository. `--pre` because 1.0.0rc8 is a release
 candidate and pip skips those unless told; 0.1.0 is the previous release and also works.
 
     pip install --pre polaris-oid4vp

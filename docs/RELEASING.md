@@ -10,17 +10,15 @@ externally observable changes.
 
 | Artifact | Registry | Name | On the registry | Before it |
 |---|---|---|---|---|
-| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc3, 2026-09-18 | 1.0.0rc1, 2026-09-16 |
-| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc7, 2026-09-24 | 1.0.0rc3, 2026-09-18 |
-| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc3, 2026-09-18 | 1.0.0rc1, 2026-09-16 |
+| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc4, 2026-09-28 | 1.0.0rc3, 2026-09-18 |
+| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc8, 2026-09-28 | 1.0.0rc7, 2026-09-24 |
+| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc4, 2026-09-28 | 1.0.0rc3, 2026-09-18 |
 | `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.3, 2026-09-18 | 1.0.0-rc.1, 2026-09-16 |
 
-> **rc.3 IS PUBLISHED, ALL FOUR.** On 2026-09-18 the three PyPI packages went out at
-> 1.0.0rc3 through trusted publishing over OIDC, and `polaris-sdk-ts` 1.0.0-rc.3 followed
-> under `next`. Every one was verified by reading the version back from the live registry,
-> and [STRANGER-PATH.md](STRANGER-PATH.md) was walked end to end against the published
-> `polaris-oid4vp` 1.0.0rc3: a walt.id wallet presented a credential and the verifier
-> answered `200 authentic`.
+> **2026-09-28:** `polaris-verify` and `polaris-sdk-python` 1.0.0rc4 and `polaris-oid4vp`
+> 1.0.0rc8 went out through trusted publishing over OIDC, each read back from the live
+> registry. `polaris-sdk-ts` 1.0.0-rc.4 is staged under `next` and waits for a maintainer's
+> approval. `polaris-oid4vp` 1.0.0rc8 is not certified; the certified version is 1.0.0rc7.
 >
 > **npm now takes two people-steps, and the first one lies.** `npm stage publish` uploads the
 > tarball and stops; the job exits 0 while nothing is installable. A maintainer then approves
@@ -38,7 +36,8 @@ externally observable changes.
 >
 > The approval is what makes it real, and the tarball's shasum is the thing to check before
 > approving: `npm stage view <id>` must match what the build published. For rc.3 that was
-> `7bc35e6dbaf0e505b9bb7a4f6c90f5e79e3ffcad`, and the registry serves the same digest.
+> `7bc35e6dbaf0e505b9bb7a4f6c90f5e79e3ffcad`, and the registry serves the same digest; for
+> rc.4 it is `09964827b3aedb66c23a19bb89aed0c0156ab42a`.
 > Verify from the registry rather than the exit code, always: a green workflow and an
 > unpublished package look identical from outside.
 
@@ -250,6 +249,11 @@ worse state to be in than three runs.
 | 35946206199 | 2026-09-24 | dry run | the PyPI job skipped: target or confirm did not match exactly; nothing published |
 | 35946434707 | 2026-09-24 | dry run | the same; nothing published |
 | 35946558589 | 2026-09-24 | `polaris-oid4vp` 1.0.0rc7 | published to PyPI by trusted publishing; read back from the live registry and installed into a clean environment outside the tree. Published so the OpenID Foundation certification run tests the version a stranger installs, not 0.1.0 |
+| 36448334875 | 2026-09-28 | dry run | built and gated all four at the new versions; nothing published |
+| 36448595804 | 2026-09-28 | `polaris-verify` 1.0.0rc4 | published to PyPI by trusted publishing; read back from the live registry |
+| 36448937187 | 2026-09-28 | `polaris-sdk-python` 1.0.0rc4 | published to PyPI the same way; read back from the live registry |
+| 36449355751 | 2026-09-28 | `polaris-oid4vp` 1.0.0rc8 | published to PyPI the same way; read back from the live registry. Not certified: 1.0.0rc7 stays the certified version |
+| 36449564786 | 2026-09-28 | `polaris-sdk-ts` 1.0.0-rc.4 | staged (id 24f2675d), not published by the job; waits for a maintainer's second factor |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different
