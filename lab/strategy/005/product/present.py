@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
 """lab/strategy/005/product/present.py: the product's wallet copy, presented from the wallet to a verifier that reads its status.
 
-005 step S6. S5 (../STEP5.md) had walt.id receive a copy from polaris_web and checked the copy
-itself. Here walt.id presents the copy it holds, through its own public API, to a
-polaris-oid4vp Verifier that reads the product's status list:
+005 step S6. S5 (../STEP5.md) had a wallet receive a copy from polaris_web and checked the copy
+itself. Here the wallet (walt.id or Credo) presents the copy it holds, through its own public
+API, to a polaris-oid4vp Verifier that reads the product's status list:
 
   1. as in S5: a fresh database, TLS, the TEST wallet-copy chain, polaris_web over TLS, an
-     ACTIVE credential, the operator's offer, walt.id's receipt;
-  2. a verifier: `polaris-oid4vp keygen` for host.docker.internal, a Verifier that trusts the
-     product's TEST anchor for issuers and resolves status from the product's list. It states
-     the authority for exactly the list the copy names, under its issuer's own path, and
-     accepts a list only from an x5c leaf chaining to that same anchor;
-  3. walt.id, configured beforehand to trust the verifier (its TLS certificate, and its
-     request-object CA in clientIdTrust), presents the copy: the verdict must be authentic
-     with status VALID;
-  4. uc8_revoke_token, then walt.id presents the SAME copy to a new request: authentic, and
+     ACTIVE credential, the operator's offer, the wallet's receipt;
+  2. a verifier: `polaris-oid4vp keygen` for the host name the wallet uses, a Verifier that
+     trusts the product's TEST anchor for issuers and resolves status from the product's list.
+     It states the authority for exactly the list the copy names, under its issuer's own path,
+     and accepts a list only from an x5c leaf that chains to that anchor AND names the
+     credential's issuer as its URI subjectAltName;
+  3. the wallet, configured beforehand to trust the verifier, presents the copy: the verdict
+     must be authentic with status VALID;
+  4. uc8_revoke_token, then the wallet presents the SAME copy to a new request: authentic, and
      status INVALID.
 
-    python3 lab/strategy/005/product/present.py --out /tmp/s6-waltid
+    python3 lab/strategy/005/product/present.py --wallet waltid --out /tmp/s6-waltid
+    python3 lab/strategy/005/product/present.py --wallet credo --out /tmp/s6-credo
 
 Exit 0 only if both verdicts are as required. LAB CODE, as run.py.
 """
@@ -70,18 +71,26 @@ def status_resolver(anchor, product_port, product_cafile):
 
     A list is accepted only for the issuer the credential names, only from under that
     issuer's own path, and only when its x5c leaf chains to the anchor the relying party
-    already trusts for that issuer's credentials."""
+    already trusts for that issuer's credentials AND names that issuer as its URI
+    subjectAltName. The anchor alone is not enough where one anchor certifies several issuers:
+    any of their leaves would then vouch for any other's list. polaris-oid4vp holds the
+    credential to the same rule (dd57b8c1); the list is this policy's to hold."""
 
-    def verify(signing_input, signature, header):
-        try:
-            leaf = x509.load_der_x509_certificate(base64.b64decode((header or {}).get("x5c", [""])[0]))
-            leaf.verify_directly_issued_by(anchor)
-            der = utils.encode_dss_signature(int.from_bytes(signature[:32], "big"),
-                                             int.from_bytes(signature[32:], "big"))
-            leaf.public_key().verify(der, bytes(signing_input), ec.ECDSA(hashes.SHA256()))
-            return True
-        except Exception:  # noqa: BLE001  any failure is "not this authority"
-            return False
+    def verify_for(issuer):
+        def verify(signing_input, signature, header):
+            try:
+                leaf = x509.load_der_x509_certificate(base64.b64decode((header or {}).get("x5c", [""])[0]))
+                leaf.verify_directly_issued_by(anchor)
+                san = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+                if issuer not in san.get_values_for_type(x509.UniformResourceIdentifier):
+                    return False
+                der = utils.encode_dss_signature(int.from_bytes(signature[:32], "big"),
+                                                 int.from_bytes(signature[32:], "big"))
+                leaf.public_key().verify(der, bytes(signing_input), ec.ECDSA(hashes.SHA256()))
+                return True
+            except Exception:  # noqa: BLE001  any failure is "not this authority"
+                return False
+        return verify
 
     def fetch(uri):
         parts = urllib.parse.urlsplit(uri)
@@ -95,7 +104,7 @@ def status_resolver(anchor, product_port, product_cafile):
             return {"checked": False, "state": "unreachable",
                     "reason": "the status list is not under the issuer's own path"}
         authority = tsl.StatedAuthority().state(
-            credential_issuer=issuer, status_uri=uri, verify=verify,
+            credential_issuer=issuer, status_uri=uri, verify=verify_for(issuer),
             why="the relying party trusts this issuer's anchor for its credentials, and so for "
                 "status lists signed under it")
         try:
