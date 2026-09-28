@@ -45,6 +45,9 @@ The current versions carry none of the defects below; each row lists what older 
 | `polaris-sdk-python` | `1.0.0rc4` | `1.0.0rc3` and earlier: `verify_authenticity` **accepts any authority-signed artifact re-wrapped as a pack**; `verify_cross_authority` accepts a signed or **unsigned** trust edge past, or without a readable, `valid_until`, and with **no context presented** an edge from any context. `1.0.0rc3` (measured): an artifact `format` that is not a string, `cosignatures` that are not a list, or a revocation feed that is not an object **raise** instead of refusing. `1.0.0rc1`, `0.1.0`: no finite-number guards on grant limits; cached tokens outlive a revoked client. |
 | `polaris-sdk-ts` (npm) | `1.0.0-rc.4` under `next` | `1.0.0-rc.3` and earlier: `verifyAuthenticity` **accepts any authority-signed artifact re-wrapped as a pack**; `verifyCrossAuthority` accepts a signed or **unsigned** trust edge past, or without a readable, `valid_until`, and with **no context presented** an edge from any context. `0.1.0` (what `latest` resolves): canonicalisation and parsing divergences from the wire specification. |
 
+Exception until the next npm publish: `polaris-sdk-ts` 1.0.0-rc.4 reads an artifact `format` that is a
+list as the string it coerces to, and fails one published conformance case; 1.0.0-rc.5 carries the fix.
+
 If you installed or pinned an older version, upgrade. The Current column is checked against
 [docs/RELEASING.md](docs/RELEASING.md) on every run. The packages are for evaluation and
 interoperability work, not for protecting anything.
