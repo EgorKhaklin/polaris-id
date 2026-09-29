@@ -85,7 +85,7 @@ polaris/
 ├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks; the detached verifier polaris-verify.py, its vector generator, and the holder wallet polaris-wallet.py live here too
 ├── site/               ← the published project page (GitHub Pages), its logo and the Atlas captures
 │
-├── .github/workflows/  ← ci.yml (22 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the site)
+├── .github/workflows/  ← ci.yml (23 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the site)
 ├── .github/dependabot.yml, .pre-commit-config.yaml, .gitignore, .coveragerc, .trivyignore, ruff.toml
 ├── osv-scanner.toml   ← declared exceptions for the malicious-package and vulnerability scan (none today)
 ├── vex.openvex.json   ← scanner findings that do not affect Polaris, and why (OpenVEX)
@@ -114,6 +114,7 @@ polaris/
   material from a directory that is not the repository, with none of Polaris importable.
   Carries a negative control: a verifier that drags `psycopg2` in with it must be caught.
 - `sdk-typescript`: the TypeScript verify SDK (`sdk/typescript/`) type-checked, unit-tested, and driven through the language-agnostic conformance runner (`@noble/post-quantum` ML-DSA-65 agreeing with liboqs and OpenSSL).
+- `invariants`: the invariant layer and every check's detection test, with no database, in minutes; the required check that keeps a failing invariant from merging.
 - `dco`: on a pull request, every commit a person made carries a Developer Certificate of Origin sign-off.
 - `osv-scan`: malicious packages and known vulnerabilities (OSV-Scanner) in each image's installed Python set and the npm and Rust lockfiles.
 - `cve-scan`: dependency CVE audit (pip-audit) plus SAST (bandit).

@@ -2564,17 +2564,27 @@ jobs:
       # checked first); the Python side of the suite runs in the pqc-real job.
       - name: Cross-version compatibility (frozen v1 under the TypeScript SDK)
         run: python3 scripts/polaris-compat-suite.py --typescript-only
-  # --------------------------------------------------------------------------
-  # Dependency CVE scan. The dependency surface was pinned but never audited —
-  # a known CVE in a pinned package would ship silently. This GATES on the
-  # RUNTIME surface (requirements.txt, what the Docker images install): a known
-  # vulnerability there fails the build. The dev tooling (requirements-dev.txt:
-  # pytest, hypothesis, playwright) is audited informationally — a test-tool CVE
-  # is surfaced but does not block, because it never reaches the production
-  # image. This split is exactly why v9.105 separated the two files (a pytest
-  # CVE, CVE-2025-71176, was riding into prod via the shared requirements file).
-  # Dependabot (.github/dependabot.yml) opens PRs for new advisories weekly.
-  # --------------------------------------------------------------------------
+  invariants:
+    # The invariant layer gates the merge. The product suite runs these checks too, but it takes
+    # about two hours and is not a required check, so a pull request could merge while a check
+    # failed. This job needs no database and finishes in minutes, and it is required on main.
+    name: Invariant checks and their detection tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: The invariant layer
+        run: python3 -m polaris_checks.run
+      - name: Each check fails on its broken fixture
+        run: |
+          # pytest from the dev set; PyYAML for the one detection test that parses the pre-commit config.
+          pip install "$(grep -E '^pytest[>=<]' polaris_web/requirements-dev.txt)" \
+                      "$(grep -E '^PyYAML==' polaris_web/requirements-patroni.txt)"
+          python3 -m pytest polaris_checks/test_checks.py -q -p no:cacheprovider
+
   dco:
     # OpenSSF Baseline OSPS-LE-01.01: every commit a person contributes asserts, with a
     # Developer Certificate of Origin sign-off, that they may contribute it. Bots (dependency
@@ -2637,6 +2647,17 @@ jobs:
             -L /src/sdk/typescript/package-lock.json \
             -L /src/polaris_zk/Cargo.lock
 
+  # --------------------------------------------------------------------------
+  # Dependency CVE scan. The dependency surface was pinned but never audited,
+  # so a known CVE in a pinned package would ship silently. This GATES on the
+  # RUNTIME surface (requirements.txt, what the Docker images install): a known
+  # vulnerability there fails the build. The dev tooling (requirements-dev.txt:
+  # pytest, hypothesis, playwright) is audited informationally: a test-tool CVE
+  # is surfaced but does not block, because it never reaches the production
+  # image. This split is exactly why v9.105 separated the two files (a pytest
+  # CVE, CVE-2025-71176, was riding into prod via the shared requirements file).
+  # Dependabot (.github/dependabot.yml) opens PRs for new advisories weekly.
+  # --------------------------------------------------------------------------
   cve-scan:
     name: Dependency CVE scan + SAST
     runs-on: ubuntu-latest

@@ -204,7 +204,7 @@ Counts of checks, tables, routes and CI jobs are re-measured by `polaris_checks`
 | Product tests (live database) | 1245 | Constraints, use cases, routes, redaction, real-thread concurrency, the secret store |
 | Crypto witnesses | 126 passing of 131 collected | ML-DSA across both witnesses and a software PKCS#11 module; Rust and Python epoch roots agree |
 | Invariant checks | 338 | C1-C10 plus production posture, each with a detection test |
-| CI jobs | 22 | Below |
+| CI jobs | 23 | Below |
 
 Test counts: reference machine, v1.0.0-rc.62 (`pytest -q` per suite, 2026-09-26). The five skipped crypto tests need a PKCS#11 module or a real KMS key.
 
