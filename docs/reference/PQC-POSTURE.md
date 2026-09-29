@@ -2,8 +2,8 @@
 
 This document states precisely which Polaris primitives are post-quantum and
 which are still classical. It is an honest audit, not a marketing claim. Where a
-primitive is classical, it says so plainly. Polaris is a notional, educational
-reference system; see [../../MISSION.md](../../MISSION.md) for scope and
+primitive is classical, it says so plainly. Polaris is a reference system on
+notional data; see [../../MISSION.md](../../MISSION.md) for scope and
 [../PRODUCTION-READINESS.md](../PRODUCTION-READINESS.md) for the operational gap
 ledger. Nothing here asserts production-readiness.
 
@@ -29,7 +29,7 @@ The reference standards are NIST FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), and FIPS
 205 (SLH-DSA), all final as of 2024-08-13, and the NIST IR 8547 transition draft
 (deprecate classical public-key after 2030, disallow after 2035). CNSA 2.0 is NSA
 policy for National Security Systems and is reference context only; Polaris is a
-civilian educational system.
+civilian reference implementation.
 
 ## What is post-quantum today
 
@@ -216,7 +216,7 @@ third-party-gated and are future work, not current defects.
 
 ## Closing note
 
-This is an audit of a notional, educational reference system. The data is
+This is an audit of a reference system on notional data. The data is
 non-real. The honest summary is that the identity token at the center of Polaris
 is post-quantum, and as of v9.136 so is the client-to-edge transport key exchange
 for modern clients (hybrid X25519MLKEM768, proven off a real handshake and

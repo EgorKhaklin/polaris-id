@@ -9,11 +9,10 @@ A reference implementation on notional data, not a deployment. CI boots the prod
 [![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/EgorKhaklin/polaris-id?include_prereleases&label=release&color=c9a352&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-2b5797?labelColor=0a1421&style=flat-square)](LICENSE)
-[![Status](https://img.shields.io/badge/status-reference%20implementation%2C%20not%20production-b8860b?labelColor=0a1421&style=flat-square)](docs/PRODUCTION-READINESS.md)
 [![OpenSSF Best Practices](https://img.shields.io/cii/level/15004?label=OpenSSF%20best%20practices&labelColor=0a1421&style=flat-square)](https://www.bestpractices.dev/projects/15004)
 [![OpenSSF Baseline](https://www.bestpractices.dev/projects/15004/baseline)](https://www.bestpractices.dev/projects/15004)
 
-<a href="https://egorkhaklin.github.io/polaris-id/"><img src="docs/assets/nav/project-site.svg" alt="Project site"></a>
+<a href="https://polaris-id.e-khaklin.workers.dev/"><img src="docs/assets/nav/project-site.svg" alt="Project site"></a>
 <a href="#what-it-is"><img src="docs/assets/nav/what-it-is.svg" alt="What it is"></a>
 <a href="#status"><img src="docs/assets/nav/status.svg" alt="Status"></a>
 <a href="#try-it"><img src="docs/assets/nav/try-it.svg" alt="Try it"></a>
@@ -297,7 +296,6 @@ The first two columns matter most: every other row is deployed at national scale
 
 ## Scope, honestly
 
-- **Educational reference implementation**, built as a portfolio project for Seton Hill University, Spring 2026. Notional data only; the seeded credentials are deliberately public.
 - **Not production-ready, and says so.** Remaining gaps are operator decisions (key custody, offsite backup, alerting, legal review, penetration test): [PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 - **Security disclosures:** [SECURITY.md](SECURITY.md).
 

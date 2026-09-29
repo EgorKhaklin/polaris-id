@@ -7714,7 +7714,7 @@ def check_site_tokens_match_app(root: pathlib.Path) -> list[Finding]:
 
 # ---------------------------------------------------------------------------
 # The project site's security headers. GitHub Pages cannot send response headers, so the site is
-# served by a host that reads site/_headers (the Cloudflare Pages format). That policy refuses
+# served by a host that reads site/_headers (Cloudflare's format). That policy refuses
 # inline style and script and every other origin, so a page that relied on any of them would look
 # right from a clone and render broken on the host that sends the policy. This check reads the
 # policy and holds every page, and every stylesheet the site serves, to it.

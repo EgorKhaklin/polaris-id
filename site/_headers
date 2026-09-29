@@ -1,4 +1,4 @@
-# Security headers for the project site, read by Cloudflare Pages (GitHub Pages cannot send them).
+# Security headers for the project site, in Cloudflare's _headers format (GitHub Pages cannot send them).
 # The site loads nothing from other origins and runs no script, so almost everything is refused.
 /*
   Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'

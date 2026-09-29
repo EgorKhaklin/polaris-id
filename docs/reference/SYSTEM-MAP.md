@@ -83,13 +83,14 @@ polaris/
 ├── DEVNOTES/           ← the contributor's working notes: gotchas, house style, the project record
 ├── meta/               ← structural records (redaction proof, structural architecture, the TLA+ model)
 ├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks; the detached verifier polaris-verify.py, its vector generator, and the holder wallet polaris-wallet.py live here too
-├── site/               ← the published project page (GitHub Pages), its logo and the Atlas captures
+├── site/               ← the published project page (Cloudflare, wrangler.jsonc) and its logo
 │
-├── .github/workflows/  ← ci.yml (23 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the site)
+├── .github/workflows/  ← ci.yml (23 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the old GitHub Pages address, now a redirect to the site)
 ├── .github/dependabot.yml, .pre-commit-config.yaml, .gitignore, .coveragerc, .trivyignore, ruff.toml
 ├── osv-scanner.toml   ← declared exceptions for the malicious-package and vulnerability scan (none today)
 ├── vex.openvex.json   ← scanner findings that do not affect Polaris, and why (OpenVEX)
 ├── REUSE.toml         ← license and copyright of the pinned files that cannot carry a header
+├── wrangler.jsonc     ← how Cloudflare publishes site/: the directory, and site/404.html for unknown paths
 ├── .mailmap           ← names the author of the commits a test fixture identity signed on 2026-09-28
 ```
 

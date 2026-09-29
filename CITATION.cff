@@ -8,7 +8,7 @@ authors:
 version: "1.0.0-rc.66"
 date-released: "2026-09-28"
 repository-code: "https://github.com/EgorKhaklin/polaris-id"
-url: "https://egorkhaklin.github.io/polaris-id/"
+url: "https://polaris-id.e-khaklin.workers.dev/"
 license: Apache-2.0
 keywords:
   - digital identity
@@ -31,4 +31,4 @@ abstract: >-
   signing path writes a labelled placeholder unless real ML-DSA is enabled. Both
   limits, and what a break in Module-LWE would and would not cost, are stated in
   docs/PRODUCTION-READINESS.md.
-  Educational; notional data only; never deployed.
+  Notional data only; never deployed.
