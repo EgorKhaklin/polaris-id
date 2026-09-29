@@ -94,6 +94,9 @@ PINNED_KNOWN_DEFECTS = {
     "cross-authority-require-signed-unsigned-edge":
         "v9.348: a relying party may require signed edges; the pinned verifier predates signed "
         "attestations and has no such option, so it accepts the legacy edge",
+    "pack-signature-hex-whitespace":
+        "2026-09-29: bytes.fromhex skips whitespace between bytes, so a genuine signature with a "
+        "space in its hex verified; the pinned verifier predates the strict hex reader",
 }
 
 

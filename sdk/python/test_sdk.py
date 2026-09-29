@@ -51,6 +51,20 @@ class AuthenticityTests(unittest.TestCase):
         self.assertTrue(pv.verify_authenticity(valid, anchors=[valid["public_key_hex"]]).issuer_trusted)
         self.assertFalse(pv.verify_authenticity(valid, anchors=["00"]).issuer_trusted)
 
+    def test_a_hex_field_holds_hex_digits_and_nothing_else(self):
+        # bytes.fromhex skips a space between bytes, so a genuine signature spelled that way
+        # verified here and was refused by the TypeScript SDK and by nothing else; the decoder
+        # now refuses it, as it always refused a character that is not hex.
+        good = _vector("ml-dsa-65-valid.json")
+        self.assertTrue(pv.verify_authenticity(good).authentic)
+        sig, pk = good["signature_hex"], good["public_key_hex"]
+        for field, value in (("signature_hex", sig[:2] + " " + sig[2:]),
+                             ("public_key_hex", pk[:2] + "\n" + pk[2:]),
+                             ("signature_hex", sig[:-1] + "g")):
+            v = pv.verify_authenticity(dict(good, **{field: value}))
+            self.assertFalse(v.authentic, "%s=%r" % (field, value[:8]))
+            self.assertIn("not valid hex", v.note or "")
+
 
 @unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
 class PresentationDecisionTests(unittest.TestCase):

@@ -53,6 +53,24 @@ _ALG = "ML-DSA-65"          # the default parameter set
 _ACCEPTED = {"ML-DSA-65": ("MLDSA65PublicKey", 1952, 3309), "ML-DSA-87": ("MLDSA87PublicKey", 2592, 4627)}
 
 
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def _unhex(s):
+    """`bytes.fromhex`, minus the whitespace it skips between bytes.
+
+    A hex field holds hex digits and nothing else. `bytes.fromhex` also accepts a space between
+    two bytes, so a signature written that way verified here and was refused by the TypeScript
+    SDK, which in turn read "eg" as 0x0e and accepted what this refused: the same artifact, two
+    verdicts. Every hex field is read through this, so all three verifiers read it one way. The
+    exceptions are bytes.fromhex's own: TypeError for a value that is not a string, ValueError
+    for one that is not hex.
+    """
+    if isinstance(s, str) and (len(s) % 2 or not _HEX_DIGITS.issuperset(s)):
+        raise ValueError("not hex: a hex field holds hex digits and nothing else")
+    return bytes.fromhex(s)
+
+
 def _window_within(issued_at, expires_at, max_window_seconds):
     """Is this artifact's stated window no wider than the caller's cap?
 
@@ -265,7 +283,7 @@ def verify_pack(pack: dict, anchor_keys=None) -> dict:
         # A dev/CI placeholder is NOT a signature — it is a SHA3 binding with no
         # key. Say so plainly rather than reporting a green check.
         try:
-            got = bytes.fromhex(sig_hex or "")
+            got = _unhex(sig_hex or "")
         except (ValueError, TypeError):
             got = b""
         matches = got == _digest(tok)
@@ -284,8 +302,8 @@ def verify_pack(pack: dict, anchor_keys=None) -> dict:
         verdict["note"] = "pack is missing signature_hex or public_key_hex"
         return verdict
     try:
-        sig = bytes.fromhex(sig_hex)
-        pk = bytes.fromhex(pk_hex)
+        sig = _unhex(sig_hex)
+        pk = _unhex(pk_hex)
     except (ValueError, TypeError):
         verdict["note"] = "signature_hex/public_key_hex are not valid hex"
         return verdict
@@ -545,7 +563,7 @@ def verify_status_assertion(assertion, now=None, max_window_seconds=None, anchor
         v["note"] = "not a %s" % _STATUS_ASSERTION_FORMAT
         return v
     try:
-        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -666,7 +684,7 @@ def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors
         v["note"] = "placeholder manifest -- not authenticatable offline"
         return v
     try:
-        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -789,7 +807,7 @@ def verify_attestation(att, attesting_agency_id=None, expected_key=None, now=Non
         v["note"] = "placeholder attestation signature -- not authenticatable offline"
         return v
     try:
-        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -1092,7 +1110,7 @@ def verify_epoch_checkpoint(cp, now=None, max_window_seconds=None, issuer_key=No
         v["note"] = "placeholder checkpoint -- not authenticatable offline"
         return v
     try:
-        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -1209,7 +1227,7 @@ def verify_revocation_feed(feed, now=None, max_window_seconds=None, issuer_key=N
     v["commitment_ok"] = (revoked_root(leaves) == str(feed.get("revoked_root_hex") or "").lower()
                           and len(uniq) == (feed.get("revoked_count") or 0))
     try:
-        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -1365,7 +1383,7 @@ def verify_status_bundle(bundle, now=None, max_window_seconds=None, publisher_ke
     v["commitment_ok"] = (bundle_members_root(members) == str(bundle.get("members_root_hex") or "").lower()
                           and len(members) == (bundle.get("member_count") or 0))
     try:
-        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -1734,7 +1752,7 @@ def verify_timestamp(ts, now=None, anchor_keys=None):
         v["note"] = "not a %s" % _TIMESTAMP_FORMAT
         return v
     try:
-        sig, pk = bytes.fromhex(str(sig_hex)), bytes.fromhex(str(pk_hex))
+        sig, pk = _unhex(str(sig_hex)), _unhex(str(pk_hex))
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -1836,8 +1854,8 @@ def verify_timestamp_anchor(ts, log_key=None, trusted_witnesses=None, threshold=
         return v
     try:
         idx, size = int(proof.get("index")), int(proof.get("tree_size"))
-        root = bytes.fromhex(str(sth.get("root_hash_hex")))
-        path = [bytes.fromhex(str(p)) for p in (proof.get("proof_hex") or [])]
+        root = _unhex(str(sth.get("root_hash_hex")))
+        path = [_unhex(str(p)) for p in (proof.get("proof_hex") or [])]
     except (TypeError, ValueError, OverflowError):
         # OverflowError: `"index": Infinity` survives `json.loads` and `int(float('inf'))`
         # raises it. See the note on the public-inputs handler above.
@@ -1895,8 +1913,8 @@ def verify_receipt_inclusion(receipt, proof, sth, log_key=None):
         return v
     try:
         idx, size = int(proof.get("index")), int(proof.get("tree_size"))
-        root = bytes.fromhex(str(sth.get("root_hash_hex")))
-        path = [bytes.fromhex(str(p)) for p in (proof.get("proof_hex") or [])]
+        root = _unhex(str(sth.get("root_hash_hex")))
+        path = [_unhex(str(p)) for p in (proof.get("proof_hex") or [])]
     except (TypeError, ValueError, OverflowError):
         # OverflowError: `"index": Infinity` survives `json.loads` and `int(float('inf'))`
         # raises it. See the note on the public-inputs handler above.
@@ -1965,7 +1983,7 @@ def verify_registry(reg, now=None, max_window_seconds=None, trusted_anchors=None
         v["note"] = "placeholder registry -- not authenticatable offline"
         return v
     try:
-        sig, pk = bytes.fromhex(str(sig_hex)), bytes.fromhex(str(pk_hex))
+        sig, pk = _unhex(str(sig_hex)), _unhex(str(pk_hex))
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -2136,7 +2154,7 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
         v["note"] = "the envelope's public_key_hex does not match the signed requester key"
         return v
     try:
-        sig, pk = bytes.fromhex(str(envelope.get("signature_hex"))), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(str(envelope.get("signature_hex"))), _unhex(pk_hex)
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -2187,7 +2205,7 @@ def _alg_for_key_length(pk_hex):
     """The accepted parameter set a public key's length identifies, for an artifact whose
     `algorithm` is not a signed field (the mint statement); None when no accepted set fits."""
     try:
-        n = len(bytes.fromhex(pk_hex or ""))
+        n = len(_unhex(pk_hex or ""))
     except (ValueError, TypeError):
         return None
     for name, (_cls, pk_len, _sig_len) in _ACCEPTED.items():
@@ -2221,7 +2239,7 @@ def verify_exchange_mint(mint, responder_key=None):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
     try:
-        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -2342,7 +2360,7 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
         v["note"] = "placeholder signature -- not authenticatable offline"
         return v
     try:
-        sig, pk = bytes.fromhex(str(sig_hex)), bytes.fromhex(str(pk_hex))
+        sig, pk = _unhex(str(sig_hex)), _unhex(str(pk_hex))
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -2529,7 +2547,7 @@ def verify_id_token(tok, audience=None, nonce=None, now=None, trusted_anchors=No
         v["note"] = "placeholder token -- not authenticatable offline"
         return v
     try:
-        sig, pk = bytes.fromhex(str(sig_hex)), bytes.fromhex(str(pk_hex))
+        sig, pk = _unhex(str(sig_hex)), _unhex(str(pk_hex))
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -2611,7 +2629,7 @@ def verify_trust_list(tl, now=None, max_window_seconds=None, trusted_anchors=Non
         v["note"] = "placeholder trust list -- not authenticatable offline"
         return v
     try:
-        sig, pk = bytes.fromhex(str(sig_hex)), bytes.fromhex(str(pk_hex))
+        sig, pk = _unhex(str(sig_hex)), _unhex(str(pk_hex))
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -2745,7 +2763,7 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
         v["note"] = "placeholder receipt -- not authenticatable offline"
         return v
     try:
-        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -2970,7 +2988,7 @@ def verify_sth(sth, issuer_key=None):
         v["note"] = "placeholder STH -- not authenticatable offline"
         return v
     try:
-        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -3016,8 +3034,8 @@ def verify_log_consistency(old_sth, new_sth, proof, issuer_key=None):
         return {"consistent": False, "fork": True,
                 "note": "the newer STH is SMALLER (tree shrank from %d to %d) -- a rewrite" % (m, n)}
     try:
-        root1, root2 = bytes.fromhex(old_sth["root_hash_hex"]), bytes.fromhex(new_sth["root_hash_hex"])
-        pf = [bytes.fromhex(h) for h in (proof or [])]
+        root1, root2 = _unhex(old_sth["root_hash_hex"]), _unhex(new_sth["root_hash_hex"])
+        pf = [_unhex(h) for h in (proof or [])]
     except (ValueError, TypeError, KeyError):
         return {"consistent": False, "fork": False, "note": "root_hash_hex or proof is not valid hex"}
     if m == n:
@@ -3079,7 +3097,7 @@ def verify_cosignature(cosig, witness_key=None):
         v["note"] = "placeholder cosignature -- not authenticatable offline"
         return v
     try:
-        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -3205,8 +3223,8 @@ def verify_publication(log_sth, receipt, ledger_key):
     entry = _publication_entry(log_sth.get("log_id"), log_sth.get("tree_size"), log_sth.get("root_hash_hex"))
     try:
         idx = int(receipt["leaf_index"])
-        root = bytes.fromhex(ledger_sth["root_hash_hex"])
-        proof = [bytes.fromhex(h) for h in (receipt.get("inclusion_proof_hex") or [])]
+        root = _unhex(ledger_sth["root_hash_hex"])
+        proof = [_unhex(h) for h in (receipt.get("inclusion_proof_hex") or [])]
     except (ValueError, TypeError, KeyError, OverflowError):
         # OverflowError: a receipt whose `leaf_index` is the bare literal `Infinity`.
         v["note"] = "the receipt's leaf_index, proof, or ledger root is malformed"
@@ -3481,7 +3499,7 @@ def verify_epoch_leaves(bundle, now=None, max_window_seconds=None, anchor_keys=N
         v["note"] = "placeholder bundle -- not authenticatable offline"
         return v
     try:
-        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -3588,7 +3606,7 @@ def verify_holder_binding(binding, credential=None, now=None, max_window_seconds
         v["note"] = "placeholder binding -- not authenticatable offline"
         return v
     try:
-        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -3632,7 +3650,7 @@ def verify_holder_proof(proof, binding=None, expected_nonce=None, expected_conte
         v["note"] = "placeholder holder proof -- not authenticatable offline"
         return v
     try:
-        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
@@ -3759,7 +3777,7 @@ def _signed_by(obj, canonical, key_hex, alg):
     """Two-witness signature check over a canonical statement. Returns (ok, witnesses, note)
     with ok None when no verifier is installed, so a caller abstains rather than accepting."""
     try:
-        sig, pk = bytes.fromhex(str(obj.get("signature_hex") or "")), bytes.fromhex(str(key_hex or ""))
+        sig, pk = _unhex(str(obj.get("signature_hex") or "")), _unhex(str(key_hex or ""))
     except (ValueError, TypeError):
         return None, [], "signature_hex/public_key_hex are not valid hex"
     if not _accepted_alg(alg):
@@ -3902,8 +3920,8 @@ def verify_verifiable_credential(document, anchor_keys=None, now=None):
     alg = proof.get("polarisAlgorithm")
     key_hex = proof.get("polarisPublicKeyHex")
     try:
-        sig = bytes.fromhex(str(proof.get("proofValue") or ""))
-        pk = bytes.fromhex(str(key_hex or ""))
+        sig = _unhex(str(proof.get("proofValue") or ""))
+        pk = _unhex(str(key_hex or ""))
     except (ValueError, TypeError):
         v["note"] = "proofValue or the public key is not valid hex"
         return v
@@ -4055,7 +4073,7 @@ def verify_mdoc(document_bytes, anchor_keys=None, now=None):
          "reader_interop": None, "witnesses": [], "note": None}
     if isinstance(document_bytes, str):
         try:
-            document_bytes = bytes.fromhex(document_bytes)
+            document_bytes = _unhex(document_bytes)
         except (ValueError, TypeError):
             v["note"] = "the document is neither bytes nor valid hex"
             return v
@@ -4157,7 +4175,7 @@ def verify_mdoc(document_bytes, anchor_keys=None, now=None):
     key_hex = unprotected.get("polaris_public_key_hex") if isinstance(unprotected, dict) else None
     alg = unprotected.get("polaris_algorithm") if isinstance(unprotected, dict) else None
     try:
-        sig, pk = bytes(signature), bytes.fromhex(str(key_hex or ""))
+        sig, pk = bytes(signature), _unhex(str(key_hex or ""))
     except (ValueError, TypeError):
         v["note"] = "the COSE signature or public key is not usable"
         return v

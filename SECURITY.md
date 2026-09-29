@@ -36,7 +36,8 @@ verdict fields the published cases do not constrain.
 
 ## Published packages
 
-The current versions carry none of the defects below; each row lists what older versions still carry.
+The current versions carry none of the defects below except the one stated after the table; each row
+lists what older versions still carry.
 
 | Package | Current | Older versions still carrying known defects |
 |---|---|---|
@@ -44,6 +45,11 @@ The current versions carry none of the defects below; each row lists what older 
 | `polaris-verify` | `1.0.0rc4` | `1.0.0rc3` and earlier: **report any authority-signed artifact re-wrapped as an authenticity pack as an authentic credential**; with **no context presented**, accept a trust edge from any context; accept an **unsigned** trust edge past, or without a readable, `valid_until`. `1.0.0rc3` also: a grant under a **revoked** holder binding reads as bound, a receipt stating no context reads as requester-authorized, and timestamp-anchor `cosignatures` that are not a list **raise** instead of refusing (measured). `1.0.0rc1`, `0.1.0`: **never read a trust attestation's `valid_until`**; no finite-number guards. |
 | `polaris-sdk-python` | `1.0.0rc4` | `1.0.0rc3` and earlier: `verify_authenticity` **accepts any authority-signed artifact re-wrapped as a pack**; `verify_cross_authority` accepts a signed or **unsigned** trust edge past, or without a readable, `valid_until`, and with **no context presented** an edge from any context. `1.0.0rc3` (measured): an artifact `format` that is not a string, `cosignatures` that are not a list, or a revocation feed that is not an object **raise** instead of refusing. `1.0.0rc1`, `0.1.0`: no finite-number guards on grant limits; cached tokens outlive a revoked client. |
 | `polaris-sdk-ts` (npm) | `1.0.0-rc.5` under `next` | `1.0.0-rc.4` and earlier: read an artifact `format` that is a list as the string it coerces to. `1.0.0-rc.3` and earlier: `verifyAuthenticity` **accepts any authority-signed artifact re-wrapped as a pack**; `verifyCrossAuthority` accepts a signed or **unsigned** trust edge past, or without a readable, `valid_until`, and with **no context presented** an edge from any context. `0.1.0` (what `latest` resolves): canonicalisation and parsing divergences from the wire specification. |
+
+Exception until the next publish: `polaris-verify` and `polaris-sdk-python` 1.0.0rc4 accept a signature or
+key whose hex has whitespace between bytes, and `polaris-sdk-ts` 1.0.0-rc.5 accepts one with a character
+that is not hex; each verifier accepted spellings the others refused. The tree carries the fix and three
+conformance cases that hold all three to it.
 
 If you installed or pinned an older version, upgrade. The Current column is checked against
 [docs/RELEASING.md](docs/RELEASING.md) on every run. The packages are for evaluation and

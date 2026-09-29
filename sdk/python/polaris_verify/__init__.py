@@ -48,6 +48,24 @@ ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87Pub
 def _accepted(alg):
     """True iff `alg` names an accepted parameter set (total over hostile input)."""
     return isinstance(alg, str) and alg in ACCEPTED_ALGORITHMS
+
+
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def _unhex(s):
+    """`bytes.fromhex`, minus the whitespace it skips between bytes.
+
+    A hex field holds hex digits and nothing else. `bytes.fromhex` also accepts a space between
+    two bytes, so a signature written that way verified here and was refused by the TypeScript
+    SDK, which in turn read "eg" as 0x0e and accepted what this refused: the same artifact, two
+    verdicts. Every hex field is read through this, so all three verifiers read it one way. The
+    exceptions are bytes.fromhex's own: TypeError for a value that is not a string, ValueError
+    for one that is not hex.
+    """
+    if isinstance(s, str) and (len(s) % 2 or not _HEX_DIGITS.issuperset(s)):
+        raise ValueError("not hex: a hex field holds hex digits and nothing else")
+    return bytes.fromhex(s)
 PLACEHOLDER_LABEL = "DETERMINISTIC-PLACEHOLDER-SHA3-256"
 
 
@@ -191,7 +209,7 @@ def verify_authenticity(pack: dict, anchors=None) -> AuthenticityVerdict:
     if not tok or not sig_hex:
         return AuthenticityVerdict(False, None, alg, note="pack missing token_value or signature_hex")
     try:
-        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         return AuthenticityVerdict(False, None, alg, note="signature_hex/public_key_hex are not valid hex")
     # WIRE-SPEC 3.7, 2026-09-27: decided before any signature is checked.
@@ -241,7 +259,7 @@ def _verify_over_digest(digest, sig_hex, pk_hex, alg=ALGORITHM):
     if not _accepted(alg):
         return None, [], "unknown or unaccepted signature algorithm: %r" % (alg,)
     try:
-        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+        sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         return None, [], "signature_hex/public_key_hex are not valid hex"
     primary = _verify_cryptography(digest, sig, pk, alg)
@@ -683,8 +701,8 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
         return v
     try:
         idx, size = int(proof.get("index")), int(proof.get("tree_size"))
-        root = bytes.fromhex(str(sth.get("root_hash_hex")))
-        path = [bytes.fromhex(str(x)) for x in (proof.get("proof_hex") or [])]
+        root = _unhex(str(sth.get("root_hash_hex")))
+        path = [_unhex(str(x)) for x in (proof.get("proof_hex") or [])]
     except (TypeError, ValueError, OverflowError):
         v.note = "malformed proof"
         return v
