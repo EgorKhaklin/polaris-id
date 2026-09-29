@@ -121,8 +121,10 @@ Thresholds. Dependency findings (SCA): a known vulnerability in a runtime depend
 critical in an image, fails the build and is fixed before anything merges; a high finding in an
 image is reviewed before each release and fixed once a fixed version exists. A dependency whose
 license does not allow its use in an Apache-2.0 project is not added (NOTICE lists every license). Code findings (SAST): bandit fails the build on a high-severity
-finding; medium findings are reviewed before each release. No release is
-cut while either job fails. A finding that does not affect Polaris is declared, with the reason, in
+finding; medium findings are reviewed before each release. Every change is also scanned by OSV-Scanner for malicious packages (the OpenSSF Malicious Packages
+data) and known vulnerabilities, in the Python sets the images install and in the npm and Rust
+lockfiles; any finding blocks the merge unless it is declared, with its reason, in
+`osv-scanner.toml`. No release is cut while any of these jobs fails. A finding that does not affect Polaris is declared, with the reason, in
 [vex.openvex.json](vex.openvex.json) and, for the image scan, in `.trivyignore`.
 
 ---

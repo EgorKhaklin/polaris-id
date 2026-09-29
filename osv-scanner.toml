@@ -1,0 +1,8 @@
+# OSV-Scanner exceptions, read by the osv-scan CI job (OpenSSF Baseline OSPS-VM-05.03).
+# The job fails on any malicious package or known vulnerability it finds. A finding that does
+# not affect Polaris is declared here with its reason, and the same finding goes in
+# vex.openvex.json. There are none today.
+#
+# [[IgnoredVulns]]
+# id = "GHSA-0000-0000-0000"
+# reason = "why this finding cannot reach Polaris"
