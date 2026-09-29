@@ -1,12 +1,11 @@
-# Deploys site/ to GitHub Pages (https://egorkhaklin.github.io/polaris-id/).
-# Separate from ci.yml on purpose: the site is a static artifact; product CI
-# gates stay in 'Polaris CI'. Pages is enabled with build_type=workflow.
+# The old project-site address, https://egorkhaklin.github.io/polaris-id/, kept as a redirect.
+# Since 2026-09-29 the site is served by Cloudflare from site/ (wrangler.jsonc), at
+# https://polaris-id.e-khaklin.workers.dev/, because GitHub Pages cannot send the security
+# headers in site/_headers. Links already published (posts, applications, papers) still arrive.
 #
-# v9.219: no path filter. The page states counts that live elsewhere in the
-# tree (the schema, the check layer, ci.yml), so a filter on site/** would make
-# this workflow structurally blind to the commits that make the page wrong. It
-# runs on every push to main, and the verify job below refuses to publish a
-# page whose numbers or links no longer resolve.
+# The verify job keeps running on every push to main: the page states counts that live
+# elsewhere in the tree (the schema, the check layer, ci.yml), so it recomputes them and checks
+# that every link resolves. The same checks gate the merge through the required invariants job.
 name: Pages
 
 on:
@@ -38,17 +37,38 @@ jobs:
         run: bash scripts/polaris-link-check.sh --ci
 
   deploy:
-    name: Deploy site/ to GitHub Pages
+    name: Redirect the old GitHub Pages address to the project site
     needs: verify
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v7
+      - name: Write the redirect
+        env:
+          SITE: https://polaris-id.e-khaklin.workers.dev/
+        run: |
+          mkdir redirect
+          for page in index.html 404.html; do
+            cat > "redirect/$page" <<HTML
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+          <meta charset="UTF-8">
+          <title>Polaris: the project site has moved</title>
+          <meta name="robots" content="noindex">
+          <link rel="canonical" href="$SITE">
+          <meta http-equiv="refresh" content="0; url=$SITE">
+          </head>
+          <body>
+          <p>The Polaris project site is at <a href="$SITE">$SITE</a>.</p>
+          </body>
+          </html>
+          HTML
+          done
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: site/
+          path: redirect/
       - id: deployment
         uses: actions/deploy-pages@v5

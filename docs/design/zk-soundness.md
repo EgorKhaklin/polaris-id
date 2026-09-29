@@ -9,7 +9,7 @@ limits precisely should not be trusted with the thing it protects.
 
 The short version, up front:
 
-> **The ZK layer is an educational Merkle-inclusion SNARK built on the audited
+> **The ZK layer is a Merkle-inclusion SNARK built on the audited
 > `plonky2` 1.x crate (Merkle roots were verified bit-identical across the
 > major-version bump). The membership statement and its verdict are
 > two-witnessed by an independent implementation. The tree depth is

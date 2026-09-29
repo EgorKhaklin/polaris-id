@@ -9,7 +9,7 @@ type: application
 version: 0.1.0
 appVersion: "1.0.0-rc.66"
 kubeVersion: ">=1.29.0-0"
-icon: https://egorkhaklin.github.io/polaris-id/polaris_logo_clean.png
-home: https://egorkhaklin.github.io/polaris-id/
+icon: https://polaris-id.e-khaklin.workers.dev/polaris_logo_clean.png
+home: https://polaris-id.e-khaklin.workers.dev/
 sources:
   - https://github.com/EgorKhaklin/polaris-id
