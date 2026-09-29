@@ -313,7 +313,7 @@ The first two columns matter most: every other row is deployed at national scale
 
 <br>
 
-<img src="docs/assets/seal.svg" width="76" alt="The VANTA Corp owl">
+<img src="docs/assets/seal.svg" width="76" alt="The Khaklin Technologies owl">
 
 <sub><i>Fixus inter mutabilia</i> · fixed amid the mutable</sub>
 
