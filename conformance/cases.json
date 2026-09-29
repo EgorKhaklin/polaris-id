@@ -2399,6 +2399,36 @@
       },
       "since": "1.0.0-rc.66",
       "note": "A revocation feed that is not an object cannot establish non-revocation: reject, not an exception."
+    },
+    {
+      "name": "pack-signature-hex-not-hex",
+      "artifact": "authenticity-pack",
+      "pack_file": "conformance/vectors/pack-signature-hex-not-hex.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.66",
+      "note": "A hex field holds hex digits and nothing else: a byte of signature_hex written with a character that is not hex; a reader that stops at the first bad character decodes the genuine signature. Before this case the TypeScript SDK accepted a character that is not hex and the Python verifiers accepted whitespace, each where the others refused."
+    },
+    {
+      "name": "pack-signature-hex-whitespace",
+      "artifact": "authenticity-pack",
+      "pack_file": "conformance/vectors/pack-signature-hex-whitespace.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.66",
+      "note": "A hex field holds hex digits and nothing else: a space between two bytes of signature_hex; a reader that skips whitespace decodes the genuine signature. Before this case the TypeScript SDK accepted a character that is not hex and the Python verifiers accepted whitespace, each where the others refused."
+    },
+    {
+      "name": "pack-public-key-hex-not-hex",
+      "artifact": "authenticity-pack",
+      "pack_file": "conformance/vectors/pack-public-key-hex-not-hex.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.66",
+      "note": "A hex field holds hex digits and nothing else: a byte of public_key_hex written with a character that is not hex; a reader that stops at the first bad character decodes the genuine key. Before this case the TypeScript SDK accepted a character that is not hex and the Python verifiers accepted whitespace, each where the others refused."
     }
   ]
 }

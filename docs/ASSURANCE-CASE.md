@@ -14,7 +14,7 @@ author: no independent security review has been done yet ([SECURITY.md](../SECUR
 - **The verifiers' promises**: a credential is authentic only if its signature verifies under a
   trusted issuer key; anything forged, replayed, re-bound, expired, revoked or malformed is
   refused, and a verifier that cannot decide does not report success. The published contract is
-  the conformance suite ([conformance/SPEC.md](../conformance/SPEC.md), 184 cases).
+  the conformance suite ([conformance/SPEC.md](../conformance/SPEC.md)).
 - **Fail closed on cryptography**: the verifier refuses to run until its cryptographic provider
   is named, and issuance fails if two independent ML-DSA implementations disagree.
 
@@ -73,7 +73,7 @@ holders are assumed throughout.
 ## 6. Evidence, and its limits
 
 Evidence: the machine-checked invariants of `polaris_checks`, each with a test that breaks it; product suites against
-a live database; the 184-case conformance suite agreed on by three verifier implementations;
+a live database; the conformance suite, agreed on by three verifier implementations;
 mutation drills; the OpenID Foundation's conformance suite; and wallets written by others, each
 run carrying controls that must be refused ([lab/EXTERNAL-NOUNS.md](../lab/EXTERNAL-NOUNS.md)).
 

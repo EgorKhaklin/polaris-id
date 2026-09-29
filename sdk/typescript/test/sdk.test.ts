@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { sha3_256 } from "@noble/hashes/sha3.js";
 import { verifyAuthenticity, PolarisVerifier, pairwiseHandle, handlesLink,
          nullifiersLink, grantCovers, grantWithinLimits, revocationEndsGrant, agentProofProves, grantPrincipalBound,
          verifyExchangeRequest, verifyExchangeReceipt, verifyExchangeMint,
@@ -920,5 +921,170 @@ test("an artifact whose format is not a string, or names a prototype member, is 
     assert.equal(v.authentic, false, String(format));
     assert.equal(v.fresh, null, "fresh is not evaluated for an unknown artifact: " + String(format));
     assert.match(v.note ?? "", /unknown or unsupported artifact/, String(format));
+  }
+});
+
+
+// 2026-09-29: branches no unit test reached. The conformance runner drives most of these
+// formats, but through `node src/conformance.ts` in a child process per case, which this
+// suite's coverage does not see; each test pins one here, with a genuine artifact beside
+// every refusal so the refusal is the rule's and not a broken fixture's.
+test("a registry is authentic only when an active authority of its publisher signed it", () => {
+  assert.equal(verifySignedArtifact(conf("registry-valid.json")).authentic, true);
+  assert.equal(verifySignedArtifact(conf("registry-impostor.json")).authentic, false,
+    "signed by a key the registry does not list for its publisher");
+});
+
+test("a trust list is authentic only when an active key of its publisher signed it", () => {
+  assert.equal(verifySignedArtifact(conf("trust-list-valid.json")).authentic, true);
+  assert.equal(verifySignedArtifact(conf("trust-list-impostor.json")).authentic, false);
+});
+
+test("a federation status bundle must commit to the members it carries", () => {
+  assert.equal(verifySignedArtifact(conf("federation-status-bundle-valid.json")).authentic, true);
+  assert.equal(verifySignedArtifact(conf("federation-status-bundle-commitment-mismatch.json")).authentic, false);
+});
+
+test("a pack without a token or signature, or under an unknown algorithm, is refused with its reason", () => {
+  const good = vec("ml-dsa-65-valid.json");
+  assert.equal(verifyAuthenticity(good).authentic, true);
+  const bare = verifyAuthenticity({ ...good, token_value: "" });
+  assert.equal(bare.authentic, false);
+  assert.match(bare.note ?? "", /missing token_value or signature_hex/);
+  const alien = verifyAuthenticity({ ...good, algorithm: "RSA-2048" });
+  assert.equal(alien.authentic, false);
+  assert.match(alien.note ?? "", /unknown or unaccepted signature algorithm/);
+});
+
+test("a signature or key that does not decode is a verification error, never a throw", () => {
+  const now = "2026-06-01T00:00:00Z";
+  const sa = conf("status-assertion-valid.json");
+  assert.equal(verifyStatusAssertion(sa, now).authentic, true);
+  const bad = verifyStatusAssertion({ ...sa, signature_hex: "abc" }, now);
+  assert.equal(bad.authentic, false);
+  assert.match(bad.note ?? "", /verification error/);
+  const reg = conf("registry-valid.json");
+  const art = verifySignedArtifact({ ...reg, public_key_hex: "abc" });
+  assert.equal(art.authentic, false);
+  assert.match(art.note ?? "", /verification error/);
+});
+
+test("an id-token of another format, or whose signature fails, carries the reason", () => {
+  assert.equal(verifyIdToken(conf("id-token-valid.json")).authentic, true);
+  const other = verifyIdToken({ format: "polaris-trust-list/1" });
+  assert.equal(other.authentic, false);
+  assert.match(other.note ?? "", /not a polaris-id-token\/1/);
+  const forged = verifyIdToken(conf("id-token-tampered.json"));
+  assert.equal(forged.authentic, false);
+  assert.equal(forged.fresh, null, "freshness is not judged for a token that is not authentic");
+});
+
+test("a cosignature from another witness, or one that does not decode, is not authentic", () => {
+  const c = conf("timestamp-anchor-witnessed.json").anchor.cosignatures[0];
+  assert.equal(verifyCosignature(c).authentic, true);
+  assert.equal(verifyCosignature(c, c.public_key_hex).authentic, true);
+  const other = verifyCosignature(c, "00".repeat(32));
+  assert.equal(other.authentic, false);
+  assert.match(other.note ?? "", /not from the expected witness/);
+  const bad = verifyCosignature({ ...c, signature_hex: "abc" });
+  assert.equal(bad.authentic, false);
+  assert.match(bad.note ?? "", /verification error/);
+});
+
+test("a timestamp anchor that is missing, misshapen, for another entry or another log is not anchored", () => {
+  const ts = witnessedTs();
+  assert.equal(verifyTimestampAnchor(ts, null, bothWitnesses(ts), 2).anchored, true);
+  const cases: [any, RegExp][] = [
+    [null, /must be an object/],
+    [{ ...ts, anchor: null }, /carries no anchor/],
+    [{ ...ts, anchor: { ...ts.anchor, proof: null } }, /must be objects/],
+    [{ ...ts, anchor: { ...ts.anchor, proof: { ...ts.anchor.proof, entry_hex: "00" } } }, /not for this timestamp/],
+    [{ ...ts, anchor: { ...ts.anchor, proof: { ...ts.anchor.proof, log_id: "another-log" } } }, /is not a polaris-timestamp-log head/],
+    [{ ...ts, anchor: { ...ts.anchor, proof: { ...ts.anchor.proof, proof_hex: ["abc"] } } }, /malformed proof/],
+  ];
+  for (const [t, why] of cases) {
+    const v = verifyTimestampAnchor(t, null, bothWitnesses(ts), 2);
+    assert.equal(v.anchored, false, String(why));
+    assert.match(v.note ?? "", why);
+  }
+});
+
+test("a holder chain of the wrong formats, an unknown algorithm or an undecodable proof is not proved", () => {
+  const cred = conf("holder-credential.json"), b = conf("holder-binding-valid.json"), p = conf("holder-proof-valid.json");
+  const at = (binding: any, proof: any) => verifyHolder(cred, binding, proof, "rp-nonce-1", null, "2026-05-01T00:00:10Z");
+  assert.equal(at(b, p).proved, true);
+  const cases: [any, any, RegExp][] = [
+    [{ ...b, format: "polaris-trust-list/1" }, p, /needs a polaris-holder-binding\/1/],
+    [b, { ...p, algorithm: "RSA-2048" }, /unknown or unaccepted signature algorithm/],
+    [b, { ...p, signature_hex: "abc" }, /verification error/],
+  ];
+  for (const [binding, proof, why] of cases) {
+    const v = at(binding, proof);
+    assert.equal(v.proved, false, String(why));
+    assert.match(v.note ?? "", why);
+  }
+});
+
+test("a trust attestation for another attesting agency or another key, or undecodable, is not authentic", () => {
+  const a = conf("trust-attestation-valid.json");
+  assert.equal(verifyAttestation(a, a.attesting_agency_id, a.attested_public_key_hex).authentic, true);
+  const cases: [any, number | null, string | null, RegExp][] = [
+    [a, a.attesting_agency_id + 1, null, /different attesting agency/],
+    [a, a.attesting_agency_id, "00".repeat(32), /different attested key/],
+    [{ ...a, signature_hex: "abc" }, null, null, /verification error/],
+  ];
+  for (const [att, agency, key, why] of cases) {
+    const v = verifyAttestation(att, agency, key);
+    assert.equal(v.authentic, false, String(why));
+    assert.match(v.note ?? "", why);
+  }
+});
+
+test("the right-most leaf of an unbalanced tree is proved by its one-node path", () => {
+  // Size 5: the root is H(H(H(l0,l1),H(l2,l3)), l4), so leaf 4's path is the left subtree
+  // alone, and the walk climbs the levels where leaf 4 has no sibling.
+  const node = (a: Uint8Array, b: Uint8Array) => sha3_256(Uint8Array.of(1, ...a, ...b));
+  const l = [0, 1, 2, 3, 4].map((i) => new Uint8Array(32).fill(i + 1));
+  const left = node(node(l[0], l[1]), node(l[2], l[3]));
+  const root = node(left, l[4]);
+  assert.equal(verifyInclusion(4, 5, l[4], root, [left]), true);
+  assert.equal(verifyInclusion(4, 5, l[4], node(l[4], left), [left]), false, "the order of a node's children matters");
+  assert.equal(verifyInclusion(3, 5, l[4], root, [left]), false, "the same path does not prove another index");
+});
+
+test("an OK status answer decides the presentation: active accepts, anything else rejects", async () => {
+  const saved = globalThis.fetch;
+  const answer = (body: any) => (async (url: string) => String(url).endsWith("/oauth/token")
+    ? { ok: true, status: 200, json: async () => ({ access_token: "t", expires_in: 300 }) }
+    : { ok: true, status: 200, json: async () => body }) as any;
+  try {
+    const v = () => new PolarisVerifier({ issuerUrl: "http://x", clientId: "c", clientSecret: "s" });
+    globalThis.fetch = answer({ currently_authoritative: true, status: "ACTIVE" });
+    const yes = await v().verifyPresentation(PRES());
+    assert.equal(yes.decision, "accept");
+    assert.equal(yes.status, "ACTIVE");
+    globalThis.fetch = answer({ currently_authoritative: false, status: "REVOKED" });
+    const no = await v().verifyPresentation(PRES());
+    assert.equal(no.decision, "reject");
+    assert.match((no.reasons ?? []).join(" "), /status=REVOKED/);
+  } finally {
+    globalThis.fetch = saved;
+  }
+});
+
+test("a hex field holds hex digits and nothing else", () => {
+  // parseInt stops at the first character it cannot read, so "eg" decoded as 0x0e: a genuine
+  // signature re-spelled that way verified here and in no other verifier. A space between
+  // bytes, which the Python verifiers used to skip, is refused too.
+  const good = vec("ml-dsa-65-valid.json");
+  assert.equal(verifyAuthenticity(good).authentic, true);
+  const sig: string = good.signature_hex, pk: string = good.public_key_hex;
+  const zero = (h: string) => [...h].findIndex((c, k) => k % 2 === 0 && c === "0");
+  const respell = (h: string) => { const i = zero(h); return h.slice(0, i) + h[i + 1] + "g" + h.slice(i + 2); };
+  for (const pack of [{ ...good, signature_hex: respell(sig) }, { ...good, public_key_hex: respell(pk) },
+                      { ...good, signature_hex: sig.slice(0, 2) + " " + sig.slice(2) }]) {
+    const v = verifyAuthenticity(pack);
+    assert.equal(v.authentic, false);
+    assert.match(v.note ?? "", /bad hex/);
   }
 });

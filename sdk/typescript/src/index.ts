@@ -62,8 +62,13 @@ export type Pack = {
   public_key_hex?: string | null;
 };
 
+// A hex field holds hex digits and nothing else. parseInt alone stops at the first character
+// it cannot read, so "eg" decoded as 0x0e and a signature carrying it verified here while both
+// Python verifiers refused it (and they accepted a space between bytes, which this refused).
+const HEX_DIGITS = /^[0-9a-fA-F]*$/;
+
 function hexToBytes(hex: string): Uint8Array {
-  if (typeof hex !== "string" || hex.length % 2 !== 0) throw new Error("bad hex");
+  if (typeof hex !== "string" || hex.length % 2 !== 0 || !HEX_DIGITS.test(hex)) throw new Error("bad hex");
   const out = new Uint8Array(hex.length / 2);
   for (let i = 0; i < out.length; i++) {
     const b = parseInt(hex.substr(i * 2, 2), 16);

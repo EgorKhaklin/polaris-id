@@ -25,10 +25,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The Python SDK refuses, instead of raising on, a non-string artifact `format`, non-list `cosignatures` or a non-object revocation feed.
 - `polaris-verify` refuses, instead of raising on, timestamp-anchor `cosignatures` that are not a list.
 - The TypeScript SDK treats an artifact `format` that is not a string, or names a prototype member, as unknown, as the Python SDK does.
+- The TypeScript SDK refuses a signature or key whose hex has a character that is not hex; it read `eg` as `0e`.
+- The Python SDK and `polaris-verify` refuse hex with whitespace between bytes, which `bytes.fromhex` skipped.
 
 ### Added
 
 - 3 conformance cases (184 in all): a third party's field of the wrong type is refused, not a crash.
+- 3 conformance cases (187 in all): a hex field with a character that is not hex, or a space, is refused.
 - `vectors/anchors/ml-dsa-65-issuer.json`, the sample issuer's key, to try `polaris-verify` from PyPI without a clone.
 
 ### Changed
