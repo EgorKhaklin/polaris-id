@@ -7704,8 +7704,135 @@ def check_site_tokens_match_app(root: pathlib.Path) -> list[Finding]:
     page = _read(root, "site/index.html")
     if page and ":root" in page.split("<style>")[-1][:400]:
         return _fail("design_tokens", "site/index.html redeclares the palette; tokens.css owns it")
+    # The page's own styles live in stylesheets beside it (the site's policy refuses inline style).
+    for sheet in sorted((root / "site").glob("*.css")):
+        if sheet.name != "tokens.css" and ":root" in sheet.read_text(encoding="utf-8", errors="replace"):
+            return _fail("design_tokens", f"site/{sheet.name} redeclares the palette; tokens.css owns it")
     return _ok("design_tokens",
                f"the site and the application share all {len(site)} design tokens by name and value")
+
+
+# ---------------------------------------------------------------------------
+# The project site's security headers. GitHub Pages cannot send response headers, so the site is
+# served by a host that reads site/_headers (the Cloudflare Pages format). That policy refuses
+# inline style and script and every other origin, so a page that relied on any of them would look
+# right from a clone and render broken on the host that sends the policy. This check reads the
+# policy and holds every page, and every stylesheet the site serves, to it.
+# ---------------------------------------------------------------------------
+_SITE_HEADERS_FIXED = {"x-content-type-options": "nosniff", "x-frame-options": "deny"}
+_URL_WITH_ORIGIN = re.compile(r"(?i)^(?:[a-z][a-z0-9+.-]*:|//)")
+
+
+def _site_headers_for(text: str, pattern: str = "/*") -> dict[str, str]:
+    """The headers a _headers file sets for one path pattern, names lowercased."""
+    out: dict[str, str] = {}
+    current = None
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not line[0].isspace():
+            current = line.strip()
+        elif current == pattern and ":" in line:
+            name, _, value = line.strip().partition(":")
+            out[name.strip().lower()] = value.strip()
+    return out
+
+
+def _csp_allows(directives: dict[str, list[str]], kind: str, url: str | None) -> bool:
+    """Whether a policy lets a resource of this kind load; url None means inline."""
+    fallback = ("child-src", "default-src") if kind == "frame" else ("default-src",)
+    sources = next((directives[d] for d in (kind + "-src",) + fallback if d in directives), [])
+    if url is None:
+        return "'unsafe-inline'" in sources
+    if url.lower().startswith("data:"):
+        return "data:" in sources
+    if _URL_WITH_ORIGIN.match(url):
+        return any("://" in s and url.startswith(s) for s in sources)
+    return "'self'" in sources
+
+
+def check_site_pages_render_under_their_headers(root: pathlib.Path) -> list[Finding]:
+    """site/_headers sends the hardening headers, and every page renders under that policy.
+
+    OpenSSF gold's hardened_site asks the project site for a nonpermissive Content-Security-Policy,
+    HSTS, X-Content-Type-Options: nosniff and X-Frame-Options. The policy must start from
+    default-src 'none', refuse framing, and allow no inline code and no eval; then each page and
+    stylesheet is read for what it would load (inline style or script, event handlers, scripts,
+    stylesheets, images, frames, fonts, CSS url() and @import) and each load must be one the
+    policy allows. A site with no page fails too, so a moved directory cannot pass.
+    """
+    text = _read(root, "site/_headers")
+    if not text:
+        return _fail("site_headers", "site/_headers is missing: the site would be served with no hardening headers")
+    headers = _site_headers_for(text)
+    csp = headers.get("content-security-policy", "")
+    directives = {}
+    for part in csp.split(";"):
+        words = part.split()
+        if words:
+            directives[words[0].lower()] = words[1:]
+    if directives.get("default-src") != ["'none'"]:
+        return _fail("site_headers", "the site's Content-Security-Policy must start from default-src 'none'")
+    if directives.get("frame-ancestors") != ["'none'"]:
+        return _fail("site_headers", "the site's Content-Security-Policy must refuse framing: frame-ancestors 'none'")
+    loose = [w for w in ("'unsafe-inline'", "'unsafe-eval'", "*", "data:", "https:", "http:")
+             if any(w in sources for sources in directives.values())]
+    if loose:
+        return _fail("site_headers", "the site's Content-Security-Policy allows %s" % ", ".join(loose))
+    for name, want in _SITE_HEADERS_FIXED.items():
+        if headers.get(name, "").lower() != want:
+            return _fail("site_headers", f"site/_headers must send {name}: {want}")
+    max_age = re.search(r"max-age=(\d+)", headers.get("strict-transport-security", ""))
+    if not max_age or int(max_age.group(1)) < 31536000:
+        return _fail("site_headers", "site/_headers must send Strict-Transport-Security with max-age of a year or more")
+
+    pages = sorted((root / "site").glob("*.html"))
+    if not pages:
+        return _fail("site_headers", "found no page under site/: nothing was checked against the policy")
+    loads: list[tuple[str, str, str | None]] = []
+    sheets: set[str] = set()
+    for page in pages:
+        html = page.read_text(encoding="utf-8", errors="replace")
+        rel = f"site/{page.name}"
+        if re.search(r"(?i)<style\b", html) or re.search(r"(?i)\sstyle\s*=", html):
+            loads.append((rel, "style", None))
+        if re.search(r"(?i)\son[a-z]+\s*=", html):
+            loads.append((rel, "script", None))
+        for tag in re.finditer(r"(?is)<(script|link|img|iframe|embed|object|source)\b([^>]*)>", html):
+            name, attrs = tag.group(1).lower(), tag.group(2)
+            urls = re.findall(r'(?i)\s(?:src|href|data)\s*=\s*"([^"]*)"', attrs)
+            if name == "link":
+                rel_attr = (re.search(r'(?i)\srel\s*=\s*"([^"]*)"', attrs) or [None, ""])[1].lower()
+                if "stylesheet" in rel_attr:
+                    loads += [(rel, "style", u) for u in urls]
+                    sheets.update(u for u in urls if not _URL_WITH_ORIGIN.match(u))
+                elif "icon" in rel_attr:
+                    loads += [(rel, "img", u) for u in urls]
+            elif name == "script":
+                loads += [(rel, "script", u) for u in urls] or [(rel, "script", None)]
+            elif name in ("img", "source"):
+                loads += [(rel, "img", u) for u in urls]
+            else:
+                loads += [(rel, "frame" if name == "iframe" else "object", u) for u in urls] or [(rel, "object", None)]
+    for sheet in sorted(sheets):
+        css = _read(root, f"site/{sheet}")
+        if not css:
+            return _fail("site_headers", f"a page links site/{sheet}, which does not exist")
+        css = re.sub(r"(?s)/\*.*?\*/", "", css)
+        for imp in re.findall(r"""@import\s+(?:url\()?\s*['"]?([^'")\s;]+)""", css):
+            loads.append((f"site/{sheet}", "style", imp))
+        fonts = " ".join(re.findall(r"(?s)@font-face\s*\{.*?\}", css))
+        for url in re.findall(r"""url\(\s*['"]?([^'")]+)""", fonts):
+            loads.append((f"site/{sheet}", "font", url))
+        for url in re.findall(r"""url\(\s*['"]?([^'")]+)""", re.sub(r"(?s)@font-face\s*\{.*?\}", "", css)):
+            loads.append((f"site/{sheet}", "img", url))
+    for where, kind, url in loads:
+        if not _csp_allows(directives, kind, url):
+            what = f"inline {kind}" if url is None else f"{kind} from {url}"
+            return _fail("site_headers", f"{where} loads {what}, which the site's own policy refuses")
+    return _ok("site_headers",
+               f"site/_headers sends a default-src 'none' policy, HSTS, nosniff and DENY, and all "
+               f"{len(pages)} pages and {len(sheets)} stylesheets load only what it allows")
 
 
 # ---------------------------------------------------------------------------
@@ -13788,6 +13915,24 @@ _LICENSE_HEADER_EXTS = frozenset({".py", ".ts", ".js", ".mjs", ".rs", ".sql", ".
 _LICENSE_HEADER_EXEMPT = ("conformance/frozen/", "polaris_sql/migrations/")
 
 
+def _reuse_annotations(text: str) -> list[dict]:
+    """The [[annotations]] tables of a REUSE.toml: each one's paths, license and copyright.
+
+    Read by pattern rather than tomllib, which the system interpreters (3.9) lack; a
+    commented-out line declares nothing.
+    """
+    text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    out = []
+    for block in text.split("[[annotations]]")[1:]:
+        block = re.split(r"\n\s*\[", block, maxsplit=1)[0]
+        paths = re.search(r'^\s*path\s*=\s*(\[[^\]]*\]|"[^"]*")', block, re.M)
+        lic = re.search(r'^\s*SPDX-License-Identifier\s*=\s*"([^"]*)"', block, re.M)
+        cop = re.search(r'^\s*SPDX-FileCopyrightText\s*=\s*"([^"]*)"', block, re.M)
+        out.append({"path": re.findall(r'"([^"]*)"', paths.group(1)) if paths else [],
+                    "license": lic.group(1) if lic else "", "copyright": cop.group(1) if cop else ""})
+    return out
+
+
 def _needs_license_header(rel: str) -> bool:
     # Vendored third-party code keeps its own license header, never this project's.
     if rel.startswith(_LICENSE_HEADER_EXEMPT) or "node_modules/" in rel or "/vendor/" in "/" + rel:
@@ -13803,10 +13948,21 @@ def check_source_files_carry_license_header(root: pathlib.Path) -> list[Finding]
     file added without them breaks that claim silently. The two lines sit within the first six,
     after a shebang or a Docker parser directive. Exempt: the frozen version-1 vectors and the
     released migrations, whose bytes are pinned (see _LICENSE_HEADER_EXEMPT), and vendored
-    third-party code. Finding no source file at all fails too, so a broken filter cannot pass.
+    third-party code. A pinned file still needs both statements, so the exemption holds only
+    while REUSE.toml declares the license and copyright of every exempt path that has files.
+    Finding no source file at all fails too, so a broken filter cannot pass.
     """
     checked, missing = 0, []
-    for rel in _tracked_files(root):
+    tracked = _tracked_files(root)
+    pinned = [pre for pre in _LICENSE_HEADER_EXEMPT if any(rel.startswith(pre) for rel in tracked)]
+    declared = {path for a in _reuse_annotations(_read_raw(root, "REUSE.toml"))
+                if a["license"] == "Apache-2.0" and a["copyright"] for path in a["path"]}
+    undeclared = [pre for pre in pinned if pre + "**" not in declared]
+    if undeclared:
+        return _fail("license_headers",
+                     "REUSE.toml must declare the license (Apache-2.0) and copyright of %s, whose "
+                     "files cannot carry a header" % ", ".join(undeclared))
+    for rel in tracked:
         if not _needs_license_header(rel):
             continue
         try:
@@ -13823,7 +13979,8 @@ def check_source_files_carry_license_header(root: pathlib.Path) -> list[Finding]
                      "%d source file(s) lack the SPDX-License-Identifier and Copyright lines at the top: %s"
                      % (len(missing), ", ".join(missing[:8]) + (" ..." if len(missing) > 8 else "")))
     return _ok("license_headers",
-               "all %d tracked source files carry an SPDX license identifier and a copyright line" % checked)
+               "all %d tracked source files carry an SPDX license identifier and a copyright line, and "
+               "REUSE.toml declares both for the pinned files under %s" % (checked, ", ".join(pinned) or "no path"))
 
 
 def check_preflight_typechecks_ts_sdk(root: pathlib.Path) -> list[Finding]:
@@ -23676,6 +23833,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_metrics_edge_acl,
     check_image_builds_are_retried,
     check_site_tokens_match_app,
+    check_site_pages_render_under_their_headers,
     check_css_animations_resolve,
     check_system_map_covers_the_tree,
     check_paper_pdf_is_current,

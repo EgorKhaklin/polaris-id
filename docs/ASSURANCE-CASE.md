@@ -72,7 +72,7 @@ holders are assumed throughout.
 
 ## 6. Evidence, and its limits
 
-Evidence: 337 machine-checked invariants, each with a test that breaks it; product suites against
+Evidence: the machine-checked invariants of `polaris_checks`, each with a test that breaks it; product suites against
 a live database; the 184-case conformance suite agreed on by three verifier implementations;
 mutation drills; the OpenID Foundation's conformance suite; and wallets written by others, each
 run carrying controls that must be refused ([lab/EXTERNAL-NOUNS.md](../lab/EXTERNAL-NOUNS.md)).

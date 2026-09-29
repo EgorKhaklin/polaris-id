@@ -89,6 +89,7 @@ polaris/
 ├── .github/dependabot.yml, .pre-commit-config.yaml, .gitignore, .coveragerc, .trivyignore, ruff.toml
 ├── osv-scanner.toml   ← declared exceptions for the malicious-package and vulnerability scan (none today)
 ├── vex.openvex.json   ← scanner findings that do not affect Polaris, and why (OpenVEX)
+├── REUSE.toml         ← license and copyright of the pinned files that cannot carry a header
 ├── .mailmap           ← names the author of the commits a test fixture identity signed on 2026-09-28
 ```
 

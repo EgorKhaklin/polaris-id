@@ -1,0 +1,14 @@
+# License and copyright for the files that cannot carry a header (the REUSE specification's
+# annotation format). Every other source file states both in its first lines.
+#
+# These files' bytes are pinned: a released migration is recorded by its SHA-256 when it is
+# applied, and `polaris-migrate.sh --down` refuses a file changed since; the frozen version-1
+# vectors are never edited. check_source_files_carry_license_header holds this list to the
+# paths it exempts.
+version = 1
+
+[[annotations]]
+path = ["polaris_sql/migrations/**", "conformance/frozen/**"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Egor Khaklin and the Polaris contributors"
+SPDX-License-Identifier = "Apache-2.0"

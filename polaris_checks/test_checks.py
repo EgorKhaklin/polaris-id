@@ -6546,10 +6546,63 @@ def test_site_tokens_match_app_check_fails_when_the_palette_forks(tmp_path):
     assert checks.check_site_tokens_match_app(tmp_path)[0].level == "FAIL", \
         "must FAIL when the page redeclares the palette inline"
 
+    write({"site/tokens.css": good["site/tokens.css"], "site/index.css": ":root{--ink:#000}\n"})
+    assert checks.check_site_tokens_match_app(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the page's own stylesheet redeclares the palette"
+    (tmp_path / "site/index.css").unlink()
+
     write({"site/index.html": good["site/index.html"]})
     (tmp_path / "site/tokens.css").unlink()
     assert checks.check_site_tokens_match_app(tmp_path)[0].level == "FAIL", \
         "must FAIL when the token file is missing"
+
+
+def test_site_pages_render_under_their_headers_check_discriminates(tmp_path):
+    headers = ("# comment\n/*\n"
+               "  Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; "
+               "base-uri 'none'; form-action 'none'; frame-ancestors 'none'\n"
+               "  Strict-Transport-Security: max-age=31536000; includeSubDomains\n"
+               "  X-Content-Type-Options: nosniff\n  X-Frame-Options: DENY\n")
+    page = ('<link rel="canonical" href="https://example.org/">\n<link rel="icon" href="f.svg">\n'
+            '<link rel="stylesheet" href="a.css">\n<img src="logo.png" alt="">\n')
+    good = {"site/_headers": headers, "site/index.html": page,
+            "site/a.css": "/* url(https://example.org/in-a-comment.png) */\nbody{background:url(bg.png)}\n"}
+
+    def result(**changes):
+        for rel in ("site/_headers", "site/index.html", "site/a.css", "site/b.html"):
+            (tmp_path / rel).unlink(missing_ok=True)
+        files = dict(good, **{k.replace("__", "/").replace("_dot_", "."): v for k, v in changes.items()})
+        for rel, body in files.items():
+            if body is not None:
+                p = tmp_path / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(body)
+        return checks.check_site_pages_render_under_their_headers(tmp_path)[0].level
+
+    assert result() == "OK", \
+        "must PASS when the policy is strict and the page loads only same-origin stylesheets and images (a canonical link loads nothing)"
+    broken = {
+        "the headers file is missing": {"site___headers": None},
+        "the policy allows inline style": {"site___headers": headers.replace("style-src 'self'", "style-src 'self' 'unsafe-inline'")},
+        "the policy does not start from default-src 'none'": {"site___headers": headers.replace("default-src 'none'", "default-src 'self'")},
+        "the policy lets the site be framed": {"site___headers": headers.replace("; frame-ancestors 'none'", "")},
+        "the policy allows data: images": {"site___headers": headers.replace("img-src 'self'", "img-src 'self' data:")},
+        "X-Frame-Options is missing": {"site___headers": headers.replace("  X-Frame-Options: DENY\n", "")},
+        "nosniff is missing": {"site___headers": headers.replace("nosniff", "sniff")},
+        "HSTS lasts less than a year": {"site___headers": headers.replace("max-age=31536000", "max-age=300")},
+        "a page carries an inline style block": {"site__index_dot_html": page + "<style>p{}</style>\n"},
+        "a page carries a style attribute": {"site__index_dot_html": page + '<p style="color:red">x</p>\n'},
+        "a page carries an inline script": {"site__index_dot_html": page + "<script>go()</script>\n"},
+        "a page loads a script the policy does not list": {"site__index_dot_html": page + '<script src="app.js"></script>\n'},
+        "a page carries an event handler": {"site__index_dot_html": page + '<a href="#" onclick="go()">x</a>\n'},
+        "a page loads an image from another origin": {"site__index_dot_html": page + '<img src="https://example.org/x.png" alt="">\n'},
+        "a second page frames another origin": {"site__b_dot_html": '<iframe src="https://example.org/"></iframe>\n'},
+        "a stylesheet uses a data: image": {"site__a_dot_css": "body{background:url(data:image/png;base64,AAAA)}\n"},
+        "a stylesheet imports another origin": {"site__a_dot_css": "@import url(https://fonts.example.org/x.css);\n"},
+        "a stylesheet loads a web font": {"site__a_dot_css": "@font-face{font-family:x;src:url(x.woff2)}\n"},
+        "a linked stylesheet does not exist": {"site__a_dot_css": None},
+        "there is no page at all": {"site__index_dot_html": None},
+    }
+    for why, change in broken.items():
+        assert result(**change) == "FAIL", f"must FAIL when {why}"
 
 
 def test_css_animations_resolve_check_fails_on_an_orphaned_animation(tmp_path):
@@ -19915,8 +19968,22 @@ def test_license_headers_check_discriminates(tmp_path):
     vendor = tmp_path / "static" / "vendor"
     vendor.mkdir(parents=True)
     (vendor / "lib.js").write_text("/* third-party, its own license */\n")
+    reuse = ('version = 1\n\n[[annotations]]\npath = ["polaris_sql/migrations/**", "conformance/frozen/**"]\n'
+             'SPDX-FileCopyrightText = "2026 Egor Khaklin and the Polaris contributors"\n'
+             'SPDX-License-Identifier = "Apache-2.0"\n')
+    (tmp_path / "REUSE.toml").write_text(reuse)
     assert checks.check_source_files_carry_license_header(tmp_path)[0].level == "OK", \
-        "must PASS on the good fixture (a shebang or a Docker directive may come first; frozen vectors, released migrations and vendored files are exempt)"
+        "must PASS on the good fixture (a shebang or a Docker directive may come first; frozen vectors and released migrations are declared in REUSE.toml; vendored files are exempt)"
+    (tmp_path / "REUSE.toml").write_text(reuse.replace('"polaris_sql/migrations/**", ', ""))
+    assert checks.check_source_files_carry_license_header(tmp_path)[0].level == "FAIL", \
+        "must FAIL when REUSE.toml does not declare an exempt path that has files"
+    (tmp_path / "REUSE.toml").write_text(reuse.replace("SPDX-License-Identifier", "# SPDX-License-Identifier"))
+    assert checks.check_source_files_carry_license_header(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the declaration's license line is commented out"
+    (tmp_path / "REUSE.toml").unlink()
+    assert checks.check_source_files_carry_license_header(tmp_path)[0].level == "FAIL", \
+        "must FAIL when REUSE.toml is missing while pinned files exist"
+    (tmp_path / "REUSE.toml").write_text(reuse)
     (tmp_path / "d.ts").write_text("export const x = 1;\n")
     assert checks.check_source_files_carry_license_header(tmp_path)[0].level == "FAIL", \
         "must FAIL on a source file without the header"
