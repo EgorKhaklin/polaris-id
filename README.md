@@ -13,7 +13,15 @@ A reference implementation on notional data, not a deployment. CI boots the prod
 [![OpenSSF Best Practices](https://img.shields.io/cii/level/15004?label=OpenSSF%20best%20practices&labelColor=0a1421&style=flat-square)](https://www.bestpractices.dev/projects/15004)
 [![OpenSSF Baseline](https://www.bestpractices.dev/projects/15004/baseline)](https://www.bestpractices.dev/projects/15004)
 
-[**Project site**](https://egorkhaklin.github.io/polaris-id/) · [What it is](#what-it-is) · [Status](#status) · [Try it](#try-it) · [The ten guarantees](#the-ten-guarantees) · [Architecture](#architecture) · [Verified](#verified-not-asserted) · [Run it](#run-it) · [Documentation](#documentation)
+<a href="https://egorkhaklin.github.io/polaris-id/"><img src="docs/assets/nav/project-site.svg" alt="Project site"></a>
+<a href="#what-it-is"><img src="docs/assets/nav/what-it-is.svg" alt="What it is"></a>
+<a href="#status"><img src="docs/assets/nav/status.svg" alt="Status"></a>
+<a href="#try-it"><img src="docs/assets/nav/try-it.svg" alt="Try it"></a>
+<a href="#the-ten-guarantees"><img src="docs/assets/nav/the-ten-guarantees.svg" alt="The ten guarantees"></a>
+<a href="#architecture"><img src="docs/assets/nav/architecture.svg" alt="Architecture"></a>
+<a href="#verified-not-asserted"><img src="docs/assets/nav/verified.svg" alt="Verified"></a>
+<a href="#run-it"><img src="docs/assets/nav/run-it.svg" alt="Run it"></a>
+<a href="#documentation"><img src="docs/assets/nav/documentation.svg" alt="Documentation"></a>
 
 </div>
 
