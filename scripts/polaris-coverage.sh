@@ -35,6 +35,7 @@ cd "$ROOT"
 #   2026-09-29  84 / 82  statements 86.59%, branches 84.74% in a local run set up as CI's job is
 #               (no liboqs), with the packages' suites added and tooling omitted. The floors sit
 #               under CI's last own number (84%); raise them once CI reports the new measurement
+#   2026-09-29  86 / 84  CI measured statements 86.57%, branches 84.68% (run 36519839718)
 # Since 2026-09-29 branches are measured too (.coveragerc) and have their own floor, BRANCH_FLOOR.
 # coverage.py's TOTAL blends the two once branches are on, so the gate reads each from coverage.json.
 COVERAGE_FLOOR="${COVERAGE_FLOOR:-80}"

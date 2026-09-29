@@ -360,12 +360,21 @@ def verify_dir(dir_path) -> int:
     ran_real = False
     for p in paths:
         try:
-            pack = json.load(open(p))
+            with open(p) as fh:
+                pack = json.load(fh)
         except Exception as e:
             print("%-34s UNREADABLE (%s)" % (os.path.basename(p), e))
             all_ok = False
             continue
-        expect = (pack.get("_vector") or {}).get("expect", "valid")
+        # A vector that is not an object (the conformance set has a bare `true`) raised
+        # AttributeError out of the next line: a traceback and exit 1, a code the docstring
+        # above does not define. It is reported and counted as a disagreement instead.
+        if not isinstance(pack, dict):
+            print("%-34s NOT A PACK (a JSON %s, not an object)" % (os.path.basename(p), type(pack).__name__))
+            all_ok = False
+            continue
+        meta = pack.get("_vector") if isinstance(pack.get("_vector"), dict) else {}
+        expect = meta.get("expect", "valid")
         verdict = verify_pack(pack)
         got = "valid" if verdict["signature_valid"] else "invalid"
         if verdict["authenticity"] not in ("none", None) and verdict["witnesses"]:
@@ -2429,15 +2438,19 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     else:
         L["signer_key_active_at_instant"] = False
     obo = doc.get("on_behalf_of") if isinstance(doc.get("on_behalf_of"), dict) else None
+    revocation_why = None
     if obo and obo.get("credential_hash"):
         feed = ltv.get("revocation_feed")
         if instant is not None and isinstance(feed, dict):
             fv = verify_revocation_feed(feed, now=instant, issuer_key=signer_key)
-            L["credential_unrevoked_at_instant"] = bool(fv.get("feed_authentic") and fv.get("fresh")
-                                                        and fv.get("issuer_matches") is not False
-                                                        and not is_revoked_leaf(feed, obo["credential_hash"]))
+            feed_ok = bool(fv.get("feed_authentic") and fv.get("fresh") and fv.get("issuer_matches") is not False)
+            listed = is_revoked_leaf(feed, obo["credential_hash"])
+            L["credential_unrevoked_at_instant"] = feed_ok and not listed
+            revocation_why = ("credential revoked at the instant" if feed_ok and listed else
+                              "no authentic, fresh revocation feed from the signer at the instant")
         else:
             L["credential_unrevoked_at_instant"] = False
+            revocation_why = "no revocation feed at the instant for a holder-authorized signature"
     # P8.7b: with a trust list the verifier trusts, the signer key's status AT THE INSTANT is
     # decided independently of the signer's own manifest (which a compromised key could forge).
     L["signer_key_status_per_trust_list"] = None
@@ -2509,7 +2522,7 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
         ) + (", no anchored timestamp under an anchored policy" if (require_anchored and not L["timestamp_anchored"])
              else (", the anchor's head is not witnessed by a trusted witness"
                    if (require_anchored and trusted_witnesses is not None and not L["timestamp_witnessed"]) else "")
-        ) + (", credential revoked at the instant" if L["credential_unrevoked_at_instant"] is False else "")
+        ) + (", " + revocation_why if L["credential_unrevoked_at_instant"] is False else "")
     return v
 
 
