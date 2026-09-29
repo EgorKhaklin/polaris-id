@@ -5733,27 +5733,43 @@ def check_zk_tree_depth_synced(root: pathlib.Path) -> list[Finding]:
 # ratchet (fails on a drop). Pin that the Python gate script exists and CI runs
 # it with a floor, and that CI gates the Rust library coverage too.
 def check_coverage_gated(root: pathlib.Path) -> list[Finding]:
+    """Python coverage is measured for statements AND branches, each gated on its own floor.
+
+    Since 2026-09-29 .coveragerc measures branches, and coverage.py's TOTAL (and its
+    --fail-under) then blends statements and branches into one figure that answers neither
+    question. So the script reads both out of coverage.json's totals and gates each on its
+    floor (COVERAGE_FLOOR for statements, BRANCH_FLOOR for branches), CI sets both, and the
+    Rust library keeps its own gate.
+    """
     sh = _read(root, "scripts/polaris-coverage.sh")
     if not sh:
         return _fail("coverage_gate", "scripts/polaris-coverage.sh is missing; coverage is not measured")
-    if "--fail-under" not in sh:
+    rc = _read(root, ".coveragerc")
+    if not re.search(r"(?m)^\s*branch\s*=\s*true\s*$", rc):
         return _fail("coverage_gate",
-                     "polaris-coverage.sh does not gate on a floor (--fail-under); it measures "
-                     "coverage without failing on a regression")
+                     ".coveragerc does not set branch = true; branch coverage is not measured")
+    missing = [t for t in ("coverage.json", "covered_lines", "covered_branches",
+                           "COVERAGE_FLOOR", "BRANCH_FLOOR", "exit 1") if t not in sh]
+    if missing:
+        return _fail("coverage_gate",
+                     "polaris-coverage.sh does not gate statements and branches on their own floors "
+                     "(missing: %s); it measures coverage without failing on a regression" % ", ".join(missing))
     ci = _read(root, ".github/workflows/ci.yml")
     if "polaris-coverage.sh" not in ci:
         return _fail("coverage_gate",
-                     "CI does not run scripts/polaris-coverage.sh; the Python coverage floor is "
+                     "CI does not run scripts/polaris-coverage.sh; the Python coverage floors are "
                      "never enforced")
-    if "COVERAGE_FLOOR" not in ci:
-        return _fail("coverage_gate", "CI runs coverage without setting a COVERAGE_FLOOR")
+    for floor in ("COVERAGE_FLOOR", "BRANCH_FLOOR"):
+        if floor not in ci:
+            return _fail("coverage_gate", f"CI runs coverage without setting {floor}")
     if "fail-under-lines" not in ci:
         return _fail("coverage_gate",
                      "CI does not gate the Rust library coverage (cargo llvm-cov "
                      "--fail-under-lines); only Python is floored")
     return _ok("coverage_gate",
-               "coverage is measured and gated on both surfaces: Python via polaris-coverage.sh "
-               "with a COVERAGE_FLOOR, Rust via cargo llvm-cov --fail-under-lines")
+               "coverage is measured and gated on both surfaces: Python statements and branches "
+               "each on its own floor (COVERAGE_FLOOR, BRANCH_FLOOR) via polaris-coverage.sh, Rust "
+               "via cargo llvm-cov --fail-under-lines")
 
 
 def check_offsite_backup_env_driven(root: pathlib.Path) -> list[Finding]:

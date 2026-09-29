@@ -1,9 +1,10 @@
 # Coverage config for scripts/polaris-coverage.sh (roadmap P0.8).
 # Measures PRODUCT coverage: the test files, venvs, and generated code are
 # omitted so the number reflects how much of the shipped code the suites
-# exercise, not how much of the tests run.
+# exercise, not how much of the tests run. Statements and branches are both
+# measured (2026-09-29), and the script gates each on its own floor.
 [run]
-branch = false
+branch = true
 parallel = true
 omit =
     */test_*.py
@@ -11,7 +12,9 @@ omit =
     */venv/*
     */__pycache__/*
     */witness2/poseidon_constants.py
-    polaris_checks/run.py
+    # The checks' command-line entry; the layer itself is measured. The pattern needs the
+    # leading */ because coverage matches absolute paths: without it this never matched.
+    */polaris_checks/run.py
     # The subprocess-coverage bootstrap polaris-coverage.sh drops in a temp dir; it
     # is not product code, and recording it leaves a dangling source reference
     # once the temp dir is cleaned (a "No source for code" report error).
@@ -24,6 +27,16 @@ omit =
     */site-packages/*
     */dist-packages/*
     */.tox/*
+    # Tooling that entered the denominator only because a test imports it: the ship tool,
+    # the suite and drill runners, the load generator and the test PKI. None of it ships.
+    */scripts/polaris-ship.py
+    */scripts/polaris-app-role-suite.py
+    */scripts/polaris-real-signer-suite.py
+    */scripts/polaris-schema-drift-drill.py
+    */scripts/polaris_bounded_run.py
+    */scripts/polaris_changed_base.py
+    */scripts/polaris-verify-load.py
+    */scripts/polaris-credential-copy-test-pki.py
 
 [report]
 # The CLI entrypoints are exercised end to end (the app shells into the ZK

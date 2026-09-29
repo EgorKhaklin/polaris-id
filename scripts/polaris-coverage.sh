@@ -16,7 +16,7 @@
 #
 # Usage:
 #   scripts/polaris-coverage.sh                 # run, report, gate on the floor
-#   scripts/polaris-coverage.sh --no-gate       # run + report only (no fail-under)
+#   scripts/polaris-coverage.sh --no-gate       # run + report only (no floors)
 #   COVERAGE_FLOOR=80 scripts/polaris-coverage.sh   # override the floor
 # ============================================================================
 
@@ -32,7 +32,13 @@ cd "$ROOT"
 #   v9.351  72  measured 75% -- run_standalone stopped discarding them
 #   v9.352  74  measured 75% -- ratcheted to sit just under the real baseline
 #   rc.66   80  measured 84% (CI 36457520993) -- the OpenSSF silver criterion is 80% statement coverage
+#   2026-09-29  84 / 82  statements 86.59%, branches 84.74% in a local run set up as CI's job is
+#               (no liboqs), with the packages' suites added and tooling omitted. The floors sit
+#               under CI's last own number (84%); raise them once CI reports the new measurement
+# Since 2026-09-29 branches are measured too (.coveragerc) and have their own floor, BRANCH_FLOOR.
+# coverage.py's TOTAL blends the two once branches are on, so the gate reads each from coverage.json.
 COVERAGE_FLOOR="${COVERAGE_FLOOR:-80}"
+BRANCH_FLOOR="${BRANCH_FLOOR:-80}"
 GATE=1
 [ "${1:-}" = "--no-gate" ] && GATE=0
 
@@ -126,19 +132,40 @@ run_standalone "$ROOT/scripts" unittest test_verify_load test_wallet test_relyin
 # run from the repo root with the dotted module path, not from inside the dir.
 run "$ROOT" unittest polaris_sim.test_sim
 
+# The standalone packages, as they ship (2026-09-29). Their suites run in CI beside these; leaving
+# them out measured the tree and not what PyPI and npm carry.
+run_standalone "$ROOT/sdk/python" unittest test_sdk
+run_standalone "$ROOT/packages/polaris-oid4vp" unittest test_sdjwt test_jwe test_verifier test_serve \
+                                                       test_cli test_conformance_capture test_status
+# The conformance suite drives the Python SDK's command line in a child process per case, which
+# subprocess coverage records; and the detached verifier's own check of every published vector,
+# as CI runs it. (Its --selftest needs liboqs, which this job does not install.)
+( cd "$ROOT" && PYTHONPATH="$ROOT/sdk/python${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PY" conformance/run_conformance.py --self >/dev/null ) \
+    || { echo "::error::suite failed: conformance/run_conformance.py --self" >&2; SUITE_FAIL=1; }
+( cd "$ROOT" && "$PY" -m coverage run -p scripts/polaris-verify.py --pqc-provider auto --verify-dir vectors >/dev/null ) \
+    || { echo "::error::suite failed: polaris-verify.py --verify-dir vectors" >&2; SUITE_FAIL=1; }
+
 echo "== combining =="
 "$PY" -m coverage combine
 "$PY" -m coverage report --skip-covered | tail -25
 "$PY" -m coverage xml -o "$ROOT/coverage.xml" >/dev/null 2>&1 || true
+"$PY" -m coverage json -q -o "$ROOT/coverage.json"
 
-TOTAL=$("$PY" -m coverage report | awk '/^TOTAL/{gsub("%","",$NF); print $NF}')
-echo "== TOTAL line coverage: ${TOTAL}% (floor ${COVERAGE_FLOOR}%) =="
+# Statements and branches, each out of the JSON totals (coverage.py's TOTAL blends them).
+TOTALS=$("$PY" -c 'import json, sys
+t = json.load(open(sys.argv[1]))["totals"]
+print("%.2f %.2f" % (100.0 * t["covered_lines"] / max(t["num_statements"], 1),
+                     100.0 * t["covered_branches"] / max(t["num_branches"], 1)))' "$ROOT/coverage.json")
+STMT=${TOTALS% *}
+BRANCH=${TOTALS#* }
+echo "== statements ${STMT}% (floor ${COVERAGE_FLOOR}%), branches ${BRANCH}% (floor ${BRANCH_FLOOR}%) =="
 
 # Publish to the GitHub Actions step summary when running in CI.
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     {
         echo "### Python coverage"
-        echo "Total line coverage: **${TOTAL}%** (floor ${COVERAGE_FLOOR}%)"
+        echo "Statements: **${STMT}%** (floor ${COVERAGE_FLOOR}%). Branches: **${BRANCH}%** (floor ${BRANCH_FLOOR}%)."
     } >> "$GITHUB_STEP_SUMMARY"
 fi
 
@@ -149,8 +176,12 @@ if [ "$SUITE_FAIL" -ne 0 ]; then
 fi
 
 if [ "$GATE" -eq 1 ]; then
-    "$PY" -m coverage report --fail-under="$COVERAGE_FLOOR" >/dev/null 2>&1 || {
-        echo "::error::Python coverage ${TOTAL}% is below the floor ${COVERAGE_FLOOR}%" >&2
+    BELOW=$("$PY" -c 'import sys
+s, b, fs, fb = map(float, sys.argv[1:])
+print(" ".join(n for n, v, f in (("statements", s, fs), ("branches", b, fb)) if v < f))' \
+        "$STMT" "$BRANCH" "$COVERAGE_FLOOR" "$BRANCH_FLOOR")
+    if [ -n "$BELOW" ]; then
+        echo "::error::Python coverage is below its floor (${BELOW}): statements ${STMT}% (floor ${COVERAGE_FLOOR}%), branches ${BRANCH}% (floor ${BRANCH_FLOOR}%)" >&2
         exit 1
-    }
+    fi
 fi

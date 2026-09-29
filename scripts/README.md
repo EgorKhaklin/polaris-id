@@ -38,7 +38,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | Script | What it proves | Called by |
 |---|---|---|
 | `polaris-image-build.sh` | Builds one image, or the four-image set, retried and version-stamped | Every image build in both workflows |
-| `polaris-coverage.sh` | Runs the database-backed suites under coverage and gates on the floor | `ci.yml` |
+| `polaris-coverage.sh` | Runs the suites under coverage and gates statements and branches, each on its floor | `ci.yml` |
 | `polaris-link-check.sh` | Every cross-reference, HTML attribute and repository link resolves | `ci.yml`, `pages.yml`, `polaris-preflight.sh`, pre-commit |
 | `polaris-verifier-differential.py` | The detached verifier and the Python SDK answer the same hostile battery: 340 comparisons over 10 shared functions, and any input where they give a different KIND of answer is a finding. A note may differ; a verdict may not | by hand, after touching either |
 | `polaris-check-inventory.py` | Which invariant checks read which source path, and whether each can conclude from zero targets. Run `--path <file>` before moving anything: a check bound to a path that loses its targets does not fail, it passes over an empty set | by hand, before a refactor |

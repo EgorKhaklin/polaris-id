@@ -74,7 +74,10 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
-MUTABLE_SUFFIXES = (".py", ".sql", ".sh", ".yml", ".yaml", ".ts", ".js")
+#: `.coveragerc` is matched by its whole name (a dotfile has no suffix) and takes `#` comments.
+#: Without it, check_coverage_gated left the mutated population the day it began reading that
+#: file (2026-09-29): one input this harness could not mutate, and the whole check was skipped.
+MUTABLE_SUFFIXES = (".py", ".sql", ".sh", ".yml", ".yaml", ".ts", ".js", ".coveragerc")
 
 #: The marker that turns a line into something the file's own reader will not see. Per
 #: language, because getting this wrong is silent: prefixing a `.ts` line with `#` leaves it
