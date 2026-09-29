@@ -19,6 +19,7 @@ passing, so a verifier that refuses everything cannot satisfy it. The mutation d
 
     cd scripts && python3 -m unittest test_verify_refusals
 """
+import hashlib
 import importlib.util
 import json
 import os
@@ -337,6 +338,408 @@ class MdocTag24Refusals(unittest.TestCase):
         self.assertIs(v["issuer_authentic"], False)
         self.assertIsNot(v["digests_match"], True)
         self.assertIn("tag 24", json.dumps(v))
+
+
+
+# --------------------------------------------------------------------------- genuine VC and mdoc
+
+def _mldsa_signer():
+    """A fresh ML-DSA-65 key through the cryptography witness: (sign, public key bytes)."""
+    from cryptography.hazmat.primitives.asymmetric import mldsa
+    sk = mldsa.MLDSA65PrivateKey.generate()
+    return sk.sign, sk.public_key().public_bytes_raw()
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class VerifiableCredentialDecisions(unittest.TestCase):
+    """2026-09-29: only malformed credentials were under test, never a genuine one, so nothing
+    showed the verifier accepts what it should. Every refusal here sits beside the genuine
+    credential passing, signed with a fresh key."""
+
+    NOW = "2026-06-01T00:00:00Z"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sign, cls.pk = _mldsa_signer()
+
+    def credential(self, proof_changes=None, **changes):
+        doc = {"@context": ["https://www.w3.org/ns/credentials/v2"],
+               "type": ["VerifiableCredential", V._VC_TYPE], "issuer": "did:example:authority",
+               "validFrom": "2026-01-01T00:00:00Z", "validUntil": "2027-01-01T00:00:00Z",
+               "credentialSubject": {"verification": "authentic", "status": "ACTIVE"}}
+        doc.update(changes)
+        proof = {"type": "DataIntegrityProof", "cryptosuite": V._VC_CRYPTOSUITE,
+                 "polarisAlgorithm": "ML-DSA-65", "polarisPublicKeyHex": self.pk.hex()}
+        proof["proofValue"] = self.sign(hashlib.sha3_256(V._vc_canonical(doc)).digest()).hex()
+        proof.update(proof_changes or {})
+        doc["proof"] = proof
+        return doc
+
+    def test_a_genuine_credential_verifies_and_is_trusted_only_under_its_key(self):
+        v = V.verify_verifiable_credential(self.credential(), anchor_keys=[self.pk.hex().upper()], now=self.NOW)
+        self.assertIs(v["structure_valid"], True)
+        self.assertIs(v["proof_authentic"], True, v["note"])
+        self.assertIs(v["fresh"], True)
+        self.assertIs(v["issuer_trusted"], True)
+        self.assertIn("structure and validity window only", v["verifier_interop"])
+        self.assertIs(V.verify_verifiable_credential(self.credential(), anchor_keys=["00"], now=self.NOW)["issuer_trusted"], False)
+        self.assertIsNone(V.verify_verifiable_credential(self.credential(), now=self.NOW)["issuer_trusted"])
+        as_bytes = json.dumps(self.credential()).encode("utf-8")
+        self.assertIs(V.verify_verifiable_credential(as_bytes, now=self.NOW)["proof_authentic"], True)
+
+    def test_freshness_is_the_window_and_an_unreadable_window_is_not_fresh(self):
+        self.assertIs(V.verify_verifiable_credential(self.credential(), now="2027-01-01T00:00:00Z")["fresh"], False)
+        v = V.verify_verifiable_credential(self.credential(validUntil="not a date"), now=self.NOW)
+        self.assertIs(v["fresh"], False)
+        self.assertIs(v["proof_authentic"], True, "the window is refused, the proof is still judged")
+        self.assertIn("validity window is not readable", v["note"] or "")
+
+    def test_each_refusal_with_its_reason(self):
+        good = self.credential()
+        for doc, why in ((b"\xff\xfe", "not decodable JSON"),
+                         ([good], "not an object"),
+                         (dict(good, type=["VerifiableCredential"]), V._VC_TYPE),
+                         (dict(good, credentialSubject="authentic"), "no subject object"),
+                         (self.credential(credentialSubject={"legal_name": "A. Person"}), "identity attributes"),
+                         (dict(good, proof="none"), "carries no proof"),
+                         (self.credential(proof_changes={"cryptosuite": "ecdsa-rdfc-2019"}), "unexpected cryptosuite"),
+                         (self.credential(proof_changes={"proofValue": "zz"}), "not valid hex"),
+                         (self.credential(proof_changes={"polarisAlgorithm": "ML-DSA-44"}), "unaccepted signature algorithm"),
+                         (dict(good, credentialSubject={"verification": "forged"}), "proof is invalid")):
+            v = V.verify_verifiable_credential(doc, now=self.NOW)
+            self.assertIs(v["proof_authentic"], False, why)
+            self.assertIn(why, v["note"] or "", why)
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class MdocDecisions(unittest.TestCase):
+    """2026-09-29: the same gap for the ISO 18013-5-structured credential: tag-24 refusals were
+    tested, a genuine document never was. Built here the way the issuer builds one: each element
+    tag-24 wrapped and digested, the digests in a Mobile Security Object, the MSO signed as a
+    COSE_Sign1 Sig_structure under ML-DSA."""
+
+    NOW = "2026-06-01T00:00:00Z"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sign, cls.pk = _mldsa_signer()
+        cls.other_sign, cls.other_pk = _mldsa_signer()
+
+    def document(self, elements=None, mso_changes=None, unprotected=None, after=None):
+        elements = elements if elements is not None else {"status": "ACTIVE", "checked_at": "2026-05-01T00:00:00Z"}
+        items, digests = [], {}
+        for i, (name, value) in enumerate(elements.items()):
+            item = ("tag24", _cbor({"digestID": i, "random": bytes([i + 1]) * 16,
+                                    "elementIdentifier": name, "elementValue": value}))
+            items.append(item)
+            digests[i] = hashlib.sha256(_cbor(item)).digest()
+        mso = {"version": "1.0", "digestAlgorithm": "SHA-256", "docType": V._MDOC_DOC_TYPE,
+               "valueDigests": {V._MDOC_NAMESPACE: digests},
+               "validityInfo": {"validFrom": "2026-01-01T00:00:00Z", "validUntil": "2027-01-01T00:00:00Z"}}
+        mso.update(mso_changes or {})
+        protected, payload = _cbor({1: -49}), _cbor(("tag24", _cbor(mso)))
+        signature = self.sign(hashlib.sha3_256(V._cbor_sig_structure(protected, payload)).digest())
+        header = {"polaris_public_key_hex": self.pk.hex(), "polaris_algorithm": "ML-DSA-65"}
+        header.update(unprotected or {})
+        if after:
+            after(items)
+        return _cbor({"docType": V._MDOC_DOC_TYPE,
+                      "issuerSigned": {"nameSpaces": {V._MDOC_NAMESPACE: items},
+                                       "issuerAuth": [protected, header, payload, signature]}})
+
+    def test_a_genuine_document_verifies_digests_and_signature(self):
+        doc = self.document()
+        v = V.verify_mdoc(doc, anchor_keys=[self.pk.hex()], now=self.NOW)
+        self.assertIs(v["structure_valid"], True)
+        self.assertIs(v["digests_match"], True, v["note"])
+        self.assertIs(v["issuer_authentic"], True, v["note"])
+        self.assertIs(v["fresh"], True)
+        self.assertIs(v["issuer_trusted"], True)
+        self.assertEqual(v["elements"], {"status": "ACTIVE", "checked_at": "2026-05-01T00:00:00Z"})
+        self.assertIn("structure and digests only", v["reader_interop"])
+        self.assertIs(V.verify_mdoc(doc.hex(), now=self.NOW)["issuer_authentic"], True, "hex in, same answer")
+        self.assertIs(V.verify_mdoc(doc, anchor_keys=["00"], now=self.NOW)["issuer_trusted"], False)
+        self.assertIs(V.verify_mdoc(doc, now="2027-01-01T00:00:00Z")["fresh"], False)
+
+    def test_each_refusal_before_the_signature(self):
+        def swap_first(items):
+            items[0] = ("tag24", _cbor({"digestID": 0, "random": b"\x01" * 16,
+                                        "elementIdentifier": "status", "elementValue": "REVOKED"}))
+        for doc, why in (("zz", "neither bytes nor valid hex"),
+                         (7, "not bytes"),
+                         (b"\xff", "not decodable CBOR"),
+                         (_cbor({"docType": "org.iso.18013.5.1.mDL"}), "does not claim the mDL docType"),
+                         (_cbor({"docType": V._MDOC_DOC_TYPE}), "no issuerSigned"),
+                         (_cbor({"docType": V._MDOC_DOC_TYPE, "issuerSigned": {"issuerAuth": [1, 2]}}), "COSE_Sign1 quadruple"),
+                         (_cbor({"docType": V._MDOC_DOC_TYPE, "issuerSigned": {"issuerAuth": [1, {}, 2, b""]}}), "not a byte string"),
+                         (self.document(mso_changes={"docType": "other"}), "docType does not match"),
+                         (self.document(mso_changes={"digestAlgorithm": "SHA-512"}), "unsupported MSO digest algorithm"),
+                         (self.document(mso_changes={"valueDigests": {}}), "digests are missing"),
+                         (self.document(elements={"token_value": "TKN-1"}), "correlation handle"),
+                         (self.document(after=swap_first), "digest does not match")):
+            v = V.verify_mdoc(doc, now=self.NOW)
+            self.assertIs(v["issuer_authentic"], False, why)
+            self.assertIn(why, v["note"] or "", why)
+
+    def test_each_refusal_at_the_signature(self):
+        for doc, why in ((self.document(unprotected={"polaris_public_key_hex": "zz"}), "not usable"),
+                         (self.document(unprotected={"polaris_algorithm": "ES256"}), "unaccepted signature algorithm"),
+                         (self.document(unprotected={"polaris_public_key_hex": self.other_pk.hex()}), "MSO signature is invalid")):
+            v = V.verify_mdoc(doc, now=self.NOW)
+            self.assertIs(v["digests_match"], True, "the digests are fine; the refusal is the signature's")
+            self.assertIs(v["issuer_authentic"], False, why)
+            self.assertIn(why, v["note"] or "", why)
+
+    def test_an_unreadable_window_is_not_fresh(self):
+        v = V.verify_mdoc(self.document(mso_changes={"validityInfo": {}}), now=self.NOW)
+        self.assertIs(v["fresh"], False)
+        self.assertIs(v["issuer_authentic"], True, "the window is refused, the signature is still judged")
+        self.assertIn("validity window is not readable", v["note"] or "")
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class SignedDocumentLongTermValidation(unittest.TestCase):
+    """2026-09-29: long-term validation had no genuine container under test. Its promise is the
+    one a relying party leans on years later: the signature stays valid after the key is
+    retired because the evidence fixes the instant (a timestamp by an independent, trusted
+    authority over the statement AND the signature; the signer's manifest listing the key as
+    active then; no revocation of the credential then). Each rule below is broken alone, beside
+    the complete container passing."""
+
+    SIGNED, STAMPED, NOW = "2026-05-01T00:00:00Z", "2026-05-01T00:00:10Z", "2026-09-01T00:00:00Z"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.signer, cls.stamper, cls.second, cls.publisher = (_mldsa_signer() for _ in range(4))
+        cls.body = b"%PDF-1.7 a notional report\n"
+
+    @staticmethod
+    def seal(obj, canonical, key):
+        sign, pk = key
+        out = dict(obj, algorithm="ML-DSA-65")
+        out["signature_hex"] = sign(hashlib.sha3_256(canonical(out)).digest()).hex()
+        out["public_key_hex"] = pk.hex()
+        return out
+
+    def document(self, on_behalf_of=None):
+        return self.seal({"format": V._SIGNED_DOCUMENT_FORMAT,
+                          "document": {"name": "report.pdf", "digest_algorithm": "SHA3-256",
+                                       "digest_hex": hashlib.sha3_256(self.body).hexdigest()},
+                          "signer": {"agency_id": 1, "name": "Notional Authority"},
+                          "on_behalf_of": on_behalf_of, "purpose": "approval", "signed_at": self.SIGNED},
+                         V._signed_document_canonical, self.signer)
+
+    def timestamp(self, doc, key=None, digest_hex=None):
+        return self.seal({"format": V._TIMESTAMP_FORMAT, "authority": "Notional Time Authority",
+                          "digest_hex": digest_hex or hashlib.sha3_256(V.document_signature_material(doc)).hexdigest(),
+                          "digest_algorithm": "SHA3-256", "nonce": "n-1", "issued_at": self.STAMPED},
+                         V._timestamp_canonical, key or self.stamper)
+
+    def manifest(self, status="active", expires="2026-06-01T00:00:00Z"):
+        return self.seal({"format": "polaris-federation-manifest/1",
+                          "authority": {"agency_id": 1, "name": "Notional Authority"},
+                          "anchors": [{"public_key_hex": self.signer[1].hex(), "algorithm": "ML-DSA-65", "status": status}],
+                          "attestations": [], "epoch": None, "revocation": None,
+                          "issued_at": "2026-04-01T00:00:00Z", "expires_at": expires},
+                         V._manifest_canonical, self.signer)
+
+    def feed(self, leaves):
+        return self.seal({"format": V._REVOCATION_FEED_FORMAT, "authority": {"agency_id": 1},
+                          "epoch_number": 1, "as_of": self.STAMPED, "revoked_root_hex": V.revoked_root(leaves),
+                          "revoked_count": len(set(leaves)), "revoked_leaves": leaves,
+                          "issued_at": "2026-04-30T00:00:00Z", "expires_at": "2026-05-02T00:00:00Z"},
+                         V._revocation_feed_canonical, self.signer)
+
+    def trust_list(self, signer_status="active", retired_at=None):
+        signer = {"agency_id": 1, "public_key_hex": self.signer[1].hex(), "status": signer_status,
+                  "registered_at": "2026-01-01T00:00:00Z"}
+        if retired_at:
+            signer["retired_at"] = retired_at
+        keys = [{"agency_id": 9, "public_key_hex": self.publisher[1].hex(), "status": "active",
+                 "registered_at": "2026-01-01T00:00:00Z"}, signer,
+                {"agency_id": 5, "public_key_hex": self.stamper[1].hex(), "status": "active",
+                 "registered_at": "2026-01-01T00:00:00Z"}]
+        return self.seal({"format": "polaris-trust-list/1", "publisher": {"agency_id": 9, "name": "Notional Registry"},
+                          "keys": keys, "issued_at": "2026-04-01T00:00:00Z", "expires_at": "2027-01-01T00:00:00Z"},
+                         V._trust_list_canonical, self.publisher)
+
+    def container(self, doc=None, **kw):
+        doc = doc or self.document()
+        return V.attach_ltv(doc, timestamp=kw.get("timestamp") or self.timestamp(doc),
+                            manifest=kw.get("manifest") or self.manifest(),
+                            revocation_feed=kw.get("feed"), timestamps=kw.get("timestamps"))
+
+    def decide(self, container, **kw):
+        kw.setdefault("timestamp_anchors", [self.stamper[1].hex(), self.second[1].hex()])
+        return V.verify_signed_document(container, now=self.NOW, **kw)
+
+    def test_the_signature_alone_is_authentic_binds_its_bytes_and_claims_nothing_long_term(self):
+        doc = self.document()
+        v = V.verify_signed_document(doc, trusted_anchors=[self.signer[1].hex()], document_bytes=self.body)
+        self.assertIs(v["document_authentic"], True, v["note"])
+        self.assertIs(v["signer_trusted"], True)
+        self.assertIs(v["binds"], True)
+        self.assertIs(v["valid_long_term"], False)
+        self.assertIn("no long-term-validation evidence", v["note"])
+        self.assertIs(V.verify_signed_document(doc, document_bytes=b"another file")["binds"], False)
+        self.assertIs(V.verify_signed_document(doc, trusted_anchors=["00"])["signer_trusted"], False)
+
+    def test_complete_evidence_is_valid_long_term(self):
+        v = self.decide(self.container())
+        self.assertIs(v["valid_long_term"], True, v["note"])
+        L = v["ltv"]
+        self.assertEqual((L["timestamp_authentic"], L["timestamp_binds"], L["timestamp_authority_trusted"],
+                          L["timestamp_independent"], L["signer_key_active_at_instant"], L["independent_timestamps"]),
+                         (True, True, True, True, True, 1))
+        self.assertEqual(L["instant"], self.STAMPED)
+
+    def test_each_long_term_rule_broken_alone(self):
+        doc = self.document()
+        for container, kw, why in (
+                (self.container(), {"timestamp_anchors": None}, "no trusted timestamp-authority anchors given"),
+                (self.container(), {"timestamp_anchors": ["00"]}, "timestamp authority not trusted"),
+                (self.container(doc, timestamp=self.timestamp(doc, key=self.signer)),
+                 {"timestamp_anchors": [self.signer[1].hex()]}, "timestamp_independent"),
+                (self.container(doc, timestamp=self.timestamp(doc, digest_hex="00" * 32)), {}, "timestamp_binds"),
+                (self.container(manifest=self.manifest(status="retired")), {}, "signer_key_active_at_instant"),
+                (self.container(manifest=self.manifest(expires="2026-04-15T00:00:00Z")), {}, "signer_key_active_at_instant"),
+                (self.container(), {"timestamp_quorum": 2}, "quorum not met (1 of 2"),
+                (self.container(), {"require_anchored": True}, "no anchored timestamp")):
+            v = self.decide(container, **kw)
+            self.assertIs(v["valid_long_term"], False, why)
+            self.assertIn(why, v["note"] or "", why)
+
+    def test_a_quorum_counts_distinct_trusted_authorities(self):
+        doc = self.document()
+        both = self.container(doc, timestamps=[self.timestamp(doc, key=self.second)])
+        v = self.decide(both, timestamp_quorum=2)
+        self.assertIs(v["valid_long_term"], True, v["note"])
+        self.assertEqual(v["ltv"]["independent_timestamps"], 2)
+
+    def test_a_credential_revoked_at_the_instant_ends_long_term_validity(self):
+        leaf = hashlib.sha3_256(b"TKN-NOTIONAL-1").hexdigest()
+        doc = self.document(on_behalf_of={"credential_hash": leaf, "holder": "notional"})
+        ok = self.decide(self.container(doc, feed=self.feed(["aa" * 32])))
+        self.assertIs(ok["valid_long_term"], True, ok["note"])
+        self.assertIs(ok["ltv"]["credential_unrevoked_at_instant"], True)
+        revoked = self.decide(self.container(doc, feed=self.feed([leaf])))
+        self.assertIs(revoked["valid_long_term"], False)
+        self.assertIn("credential revoked at the instant", revoked["note"])
+        # Missing evidence is not a revocation, and the note must not say it is.
+        no_feed = self.decide(self.container(doc))
+        self.assertIs(no_feed["valid_long_term"], False, "a holder-authorized signature needs the feed")
+        self.assertIn("no revocation feed at the instant", no_feed["note"])
+        self.assertNotIn("credential revoked", no_feed["note"])
+        foreign = self.seal({k: val for k, val in self.feed([]).items() if k not in ("signature_hex", "public_key_hex")},
+                            V._revocation_feed_canonical, self.second)
+        unproven = self.decide(self.container(doc, feed=foreign))
+        self.assertIs(unproven["valid_long_term"], False, "a feed from another key proves nothing about this credential")
+        self.assertIn("no authentic, fresh revocation feed from the signer", unproven["note"])
+        self.assertNotIn("credential revoked", unproven["note"])
+
+    def test_the_trust_list_decides_the_signer_key_at_the_instant(self):
+        anchors = [self.publisher[1].hex()]
+        active = self.decide(self.container(), trust_list=self.trust_list(), trusted_anchors=anchors)
+        self.assertEqual(active["ltv"]["signer_key_status_per_trust_list"], "active")
+        self.assertIs(active["valid_long_term"], True, active["note"])
+        retired = self.decide(self.container(), trust_list=self.trust_list("retired", "2026-04-20T00:00:00Z"),
+                              trusted_anchors=anchors)
+        self.assertEqual(retired["ltv"]["signer_key_status_per_trust_list"], "retired")
+        self.assertIs(retired["valid_long_term"], False)
+
+    def test_each_refusal_of_the_signature_itself(self):
+        good = self.document()
+        for doc, why in ((dict(good, format="polaris-signed-document/2"), "not a polaris-signed-document/1"),
+                         (dict(good, public_key_hex=""), "placeholder signature"),
+                         (dict(good, signature_hex="zz"), "not valid hex"),
+                         (dict(good, algorithm="ML-DSA-44"), "unaccepted signature algorithm"),
+                         (dict(good, purpose="a different purpose"), "document signature is invalid")):
+            v = V.verify_signed_document(doc)
+            self.assertIs(v["document_authentic"], False, why)
+            self.assertIn(why, v["note"] or "", why)
+
+
+class VerifyDirIsTotal(unittest.TestCase):
+    """--verify-dir promises 0 (all match), 2 (a disagreement) or 3 (usage). A vector that was not
+    a JSON object raised AttributeError instead: a traceback and exit 1."""
+
+    def test_a_file_that_is_not_an_object_is_reported_not_raised_on(self):
+        genuine = (ROOT / "vectors" / "ml-dsa-65-valid.json").read_text()
+        with tempfile.TemporaryDirectory() as d:
+            import contextlib
+            import io
+            (pathlib.Path(d) / "a-genuine-pack.json").write_text(genuine)
+            with contextlib.redirect_stdout(io.StringIO()):
+                alone = V.verify_dir(d)
+            self.assertEqual(alone, 0 if V._provider_available("oqs") or _cryptography_mldsa() else 2)
+            (pathlib.Path(d) / "b-bare-true.json").write_text("true")
+            (pathlib.Path(d) / "c-vector-meta-a-string.json").write_text(
+                json.dumps(dict(json.loads(genuine), _vector="valid")))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = V.verify_dir(d)
+            self.assertEqual(code, 2, "a file that is not a pack is a disagreement, not a crash")
+            self.assertIn("b-bare-true.json", out.getvalue())
+            self.assertIn("NOT A PACK", out.getvalue())
+            self.assertIn("c-vector-meta-a-string.json", out.getvalue())
+
+
+# (verifier, the published genuine vector, the key that says it is authentic)
+_SIGNED_ARTIFACTS = (("verify_manifest", "federation-manifest-valid.json", "manifest_authentic"),
+                     ("verify_trust_list", "trust-list-valid.json", "trust_list_authentic"),
+                     ("verify_registry", "registry-valid.json", "registry_authentic"),
+                     ("verify_id_token", "id-token-valid.json", "token_authentic"),
+                     ("verify_timestamp", "timestamp-valid.json", "timestamp_authentic"),
+                     ("verify_status_assertion", "status-assertion-valid.json", "status_authentic"),
+                     ("verify_revocation_feed", "revocation-feed-valid.json", "feed_authentic"),
+                     ("verify_status_bundle", "federation-status-bundle-valid.json", "bundle_authentic"),
+                     ("verify_epoch_checkpoint", "epoch-checkpoint-valid.json", "checkpoint_authentic"),
+                     ("verify_agent_grant", "agent-grant-valid.json", "grant_authentic"))
+
+
+class EverySignedArtifactRefusesTheSameWay(unittest.TestCase):
+    """2026-09-29: every artifact verifier opens with the same refusals (another format, a
+    placeholder signature, hex that does not decode, an algorithm below the floor, no ML-DSA
+    backend, two backends that disagree), and for most artifacts only the genuine path and a
+    tampered signature had ever been driven. Here each refusal meets each artifact, beside that
+    artifact's published genuine vector passing."""
+
+    @staticmethod
+    def vector(name):
+        return json.loads((ROOT / "conformance" / "vectors" / name).read_text())
+
+    @unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+    def test_each_input_refusal_on_each_artifact(self):
+        for fn, name, key in _SIGNED_ARTIFACTS:
+            good = self.vector(name)
+            self.assertIs(getattr(V, fn)(good)[key], True, fn)
+            for change, why in (({"format": "polaris-something-else/1"}, "not a "),
+                                ({"public_key_hex": ""}, "placeholder"),
+                                ({"signature_hex": "zz"}, "not valid hex"),
+                                ({"algorithm": "ML-DSA-44"}, "unaccepted signature algorithm")):
+                v = getattr(V, fn)(dict(good, **change))
+                self.assertIs(v[key], False, "%s %s" % (fn, change))
+                if fn == "verify_agent_grant" and "public_key_hex" in change:
+                    # A grant is signed by the holder, never by the placeholder signer, so an
+                    # empty key has no refusal of its own and falls through to the witnesses.
+                    # What they say depends on which are installed (liboqs refuses the key;
+                    # cryptography alone cannot load it and reports that it could not run),
+                    # so only the refusal is asserted.
+                    continue
+                self.assertIn(why, v["note"] or "", "%s %s" % (fn, change))
+
+    def test_no_backend_and_disagreeing_backends_are_refusals(self):
+        saved = (V._verify_liboqs, V._verify_cryptography)
+        try:
+            for (lib, crypto), why in (((None, None), "no ML-DSA"), ((True, False), "DISAGREE")):
+                V._verify_liboqs = lambda *a, _r=lib, **k: _r
+                V._verify_cryptography = lambda *a, _r=crypto, **k: _r
+                for fn, name, key in _SIGNED_ARTIFACTS:
+                    v = getattr(V, fn)(self.vector(name))
+                    self.assertIs(v[key], False, "%s: %s" % (fn, why))
+                    self.assertIn(why, v["note"] or "", "%s: %s" % (fn, why))
+        finally:
+            V._verify_liboqs, V._verify_cryptography = saved
 
 
 

@@ -27,6 +27,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The TypeScript SDK treats an artifact `format` that is not a string, or names a prototype member, as unknown, as the Python SDK does.
 - The TypeScript SDK refuses a signature or key whose hex has a character that is not hex; it read `eg` as `0e`.
 - The Python SDK and `polaris-verify` refuse hex with whitespace between bytes, which `bytes.fromhex` skipped.
+- `polaris-verify --verify-dir` reports a vector that is not a JSON object instead of raising.
+- `polaris-verify` no longer calls missing revocation evidence a revocation in its long-term-validation note.
 
 ### Added
 
