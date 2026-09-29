@@ -2643,37 +2643,40 @@ def test_coverage_gated_check_discriminates(tmp_path):
     wf = tmp_path / ".github" / "workflows"
     scripts.mkdir()
     wf.mkdir(parents=True)
-    cov = scripts / "polaris-coverage.sh"
-    ci = wf / "ci.yml"
+    cov, ci, rc = scripts / "polaris-coverage.sh", wf / "ci.yml", tmp_path / ".coveragerc"
+    gate = ('coverage json -o coverage.json\n'
+            'python -c "t[\'covered_lines\'] t[\'covered_branches\']"\n'
+            '[ below "$COVERAGE_FLOOR" "$BRANCH_FLOOR" ] && exit 1\n')
+    good_ci = ("jobs:\n  test:\n    steps:\n"
+               "      - env:\n          COVERAGE_FLOOR: \"86\"\n          BRANCH_FLOOR: \"83\"\n"
+               "        run: bash scripts/polaris-coverage.sh\n"
+               "      - run: cargo llvm-cov --fail-under-lines 85\n")
 
-    # No coverage script -> coverage not measured.
-    ci.write_text("jobs:\n  test:\n    steps:\n      - run: python -m unittest\n")
-    assert checks.check_coverage_gated(tmp_path)[0].level == "FAIL", \
-        "must FAIL when polaris-coverage.sh is absent"
+    def level(script, ci_text, rc_text="[run]\nbranch = true\n"):
+        for p in (cov, ci, rc):
+            p.unlink(missing_ok=True)
+        if script is not None:
+            cov.write_text(script)
+        ci.write_text(ci_text)
+        rc.write_text(rc_text)
+        return checks.check_coverage_gated(tmp_path)[0].level
 
-    # Script measures but does not gate.
-    cov.write_text("coverage report\n")
-    assert checks.check_coverage_gated(tmp_path)[0].level == "FAIL", \
-        "must FAIL when the script has no --fail-under floor"
-
-    # Gates in the script, but CI never runs it.
-    cov.write_text("coverage report --fail-under=$COVERAGE_FLOOR\n")
-    assert checks.check_coverage_gated(tmp_path)[0].level == "FAIL", \
+    assert level(gate, good_ci) == "OK", \
+        "must PASS with branches measured, both floors gated in the script and set in CI, and the Rust gate"
+    assert level(None, good_ci) == "FAIL", "must FAIL when polaris-coverage.sh is absent"
+    assert level(gate, good_ci, "[run]\nbranch = false\n") == "FAIL", \
+        "must FAIL when .coveragerc does not measure branches"
+    assert level(gate, good_ci, "[run]\n# branch = true\n") == "FAIL", \
+        "must FAIL when branch = true is only a comment"
+    assert level("coverage report\n", good_ci) == "FAIL", "must FAIL when the script gates on no floor"
+    assert level(gate.replace("covered_branches", "x").replace("BRANCH_FLOOR", "X"), good_ci) == "FAIL", \
+        "must FAIL when the script gates statements only"
+    assert level(gate, good_ci.replace("bash scripts/polaris-coverage.sh", "true")) == "FAIL", \
         "must FAIL when CI does not run polaris-coverage.sh"
-
-    # CI runs it with a floor, but no Rust coverage gate.
-    ci.write_text("jobs:\n  test:\n    steps:\n"
-                  "      - env:\n          COVERAGE_FLOOR: \"72\"\n"
-                  "        run: bash scripts/polaris-coverage.sh\n")
-    assert checks.check_coverage_gated(tmp_path)[0].level == "FAIL", \
+    assert level(gate, good_ci.replace('          BRANCH_FLOOR: "83"\n', "")) == "FAIL", \
+        "must FAIL when CI sets no branch floor"
+    assert level(gate, good_ci.replace("      - run: cargo llvm-cov --fail-under-lines 85\n", "")) == "FAIL", \
         "must FAIL when Rust coverage is not gated (no fail-under-lines)"
-
-    ci.write_text("jobs:\n  test:\n    steps:\n"
-                  "      - env:\n          COVERAGE_FLOOR: \"72\"\n"
-                  "        run: bash scripts/polaris-coverage.sh\n"
-                  "      - run: cargo llvm-cov --fail-under-lines 85\n")
-    assert checks.check_coverage_gated(tmp_path)[0].level == "OK", \
-        "must PASS with the Python script+floor, CI running it, and the Rust gate"
 
 
 def test_dockerfile_copies_app_modules_check_discriminates(tmp_path):
