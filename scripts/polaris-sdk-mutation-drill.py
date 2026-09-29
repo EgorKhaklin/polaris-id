@@ -108,10 +108,13 @@ DECLARED_SURVIVORS: dict[str, str] = {
     "verify:_provider_available:e706fa#2":
         "the cryptography import failing: dead on any machine that can run the verifier's tests",
 
-    "typescript:hexToBytes:56b25d":
-        "removing the throw yields garbage bytes and the same not-authentic verdict",
+    # typescript:hexToBytes:56b25d, the decoder's first throw, was declared here until
+    # 2026-09-29 as "garbage bytes and the same not-authentic verdict". Since the decoder
+    # refuses any character outside [0-9a-fA-F], removing that throw lets "eg" read as 0x0e
+    # and a re-spelled genuine signature verify; sdk.test.ts asserts it does not.
     "typescript:hexToBytes:7c7d1e":
-        "removing the throw yields garbage bytes and the same not-authentic verdict",
+        "unreachable: the HEX_DIGITS test above has already refused every pair parseInt could "
+        "fail on, so parseInt never returns NaN here",
     # typescript:accessToken and typescript:onlineStatus, the two HTTP status guards on the
     # online path, were declared here until 2026-09-23 as "no offline suite reaches it". A
     # stubbed fetch reaches both; sdk.test.ts now drives each with a non-OK answer.
@@ -129,14 +132,10 @@ DECLARED_SURVIVORS: dict[str, str] = {
         "ok is None: the verification could not run, which needs no backend installed",
     "python:verify_attestation:930d0e":
         "ok is None: the verification could not run, which needs no backend installed",
-    "typescript:verifyStatusAssertion:83de9a":
-        "the catch-all arm: reachable only by making the crypto library throw",
-    "typescript:verifySignedArtifact:b96e23":
-        "the catch-all arm: reachable only by making the crypto library throw",
-    "typescript:verifyCosignature:b96e23":
-        "the catch-all arm: reachable only by making the crypto library throw",
-    "typescript:verifyAttestation:b96e23":
-        "the catch-all arm: reachable only by making the crypto library throw",
+    # The TypeScript catch-all arms of verifyStatusAssertion, verifySignedArtifact,
+    # verifyCosignature and verifyAttestation were declared here until 2026-09-29 as
+    # "reachable only by making the crypto library throw". A signature that does not decode
+    # reaches each one (hexToBytes throws inside the try); sdk.test.ts drives all four.
 
     # --- Reached only AFTER a signature genuinely verifies: none left ----------------
     # `if ok and witness_key is not None and <mismatch>` in both SDKs was declared here
