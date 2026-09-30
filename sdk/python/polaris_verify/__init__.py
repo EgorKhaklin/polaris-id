@@ -35,6 +35,7 @@ import math
 import hashlib
 import json
 import time
+import urllib.parse
 import urllib.request
 from typing import Any, List, Optional
 
@@ -927,6 +928,12 @@ class PolarisVerifier:
         self._bearer = None
         self._bearer_exp = 0.0
 
+    def _urlopen(self, req):
+        parsed = urllib.parse.urlsplit(req.full_url)
+        if parsed.scheme not in ("https", "http") or not parsed.netloc:
+            raise ValueError("issuer_url must be an http(s) URL, got %r" % (self.issuer_url,))
+        return urllib.request.urlopen(req, timeout=self.timeout)  # nosec B310 -- scheme verified to be https or http above
+
     # --- OAuth2 client-credentials (cached, refreshed on expiry) --------------
     def _access_token(self):
         if self._bearer and time.time() < self._bearer_exp - 5:
@@ -936,7 +943,7 @@ class PolarisVerifier:
             "%s/api/v1/oauth/token" % self.issuer_url, data=b"grant_type=client_credentials",
             headers={"Authorization": "Basic " + creds,
                      "Content-Type": "application/x-www-form-urlencoded"})
-        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+        with self._urlopen(req) as r:
             body = json.loads(r.read())
         self._bearer = body["access_token"]
         self._bearer_exp = time.time() + _expires_in(body.get("expires_in"))
@@ -949,7 +956,7 @@ class PolarisVerifier:
             "%s/api/v1/verify" % self.issuer_url, data=body,
             headers={"Authorization": "Bearer " + self._access_token(),
                      "Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+        with self._urlopen(req) as r:
             return json.loads(r.read())
 
     def verify_presentation(self, presentation) -> Verdict:
