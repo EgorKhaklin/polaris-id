@@ -109,8 +109,8 @@ only.
 | `unsupported_status` | its status claim is in a form this verifier cannot read |
 | `checked` | a resolver answered; `status` carries the issuer's value |
 | `unreachable` | a resolver was asked and got no answer |
-| `no_authority` | no key is stated as entitled to publish this issuer's status, so nothing was fetched |
-| `list_refused` | a status list was obtained and is not usable as evidence; `code` says why |
+| `no_authority` | no key is stated as entitled to publish this issuer's status at that URI, so no list can count as evidence |
+| `list_refused` | the status reference, the list or its signature failed a check, so nothing is usable as evidence; `code` says which |
 
 - **Opt-in:** pass `status_resolver=` to `Verifier(...)` or `verify_presentation`. Without one
   nothing is fetched and the state is `not_evaluated`.
