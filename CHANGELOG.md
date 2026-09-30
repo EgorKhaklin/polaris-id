@@ -38,6 +38,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - **Breaking**: `polaris-oid4vp` reports the `no_authority` and `list_refused` revocation states it called `unreachable`.
 - `polaris-oid4vp` refuses a JWE whose tag is not 128 bits; other splits of the same bytes decrypted.
 - `polaris-oid4vp serve` counts a body's raw bytes against Content-Length; invalid UTF-8 hid a truncated body.
+- `polaris-relying-party.py` rejects, instead of crashing, when the issuer refuses its OAuth client.
 
 ### Added
 
