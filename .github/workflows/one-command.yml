@@ -1,0 +1,68 @@
+# ============================================================================
+# one-command.yml - the one-command path: clean images to a credential verified by the
+# PUBLISHED polaris-verify (lab/strategy/006/try.sh).
+#
+# try.sh builds the production images, generates the secrets and an ML-DSA-65 key on the
+# runner, and starts the production stack as its own compose project behind Caddy's local
+# certificate authority (the only change from production, as in prod-stack-boot). It then
+# creates an operator, issues one credential through the console's form, and verifies it with
+# polaris-verify from PyPI against the key generated here. It exits non-zero unless
+# polaris-verify exits 0.
+#
+# This is the author's own run, not outside evidence: the operating contract's 1.0.0 condition
+# asks for an operator who is not the author. What this keeps true is that the path such an
+# operator would take still works, end to end, on a machine nobody configured by hand.
+#
+# Pull requests run it only when a path it exercises changed, because seven to nine minutes of
+# image builds on every documentation change would cost everyone's queue. It also runs on every
+# push to main, nightly, and by hand.
+# ============================================================================
+name: One-command path (clean images to a credential verified by published polaris-verify)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "lab/strategy/006/**"
+      - "polaris_web/**"
+      - "polaris_sql/**"
+      - "polaris_cli/**"
+      - "polaris_zk/**"
+      - "deploy/**"
+      - "packages/polaris-verify/**"
+      - "scripts/polaris-image-build.sh"
+      - "scripts/polaris-generate-secrets.sh"
+      - "scripts/polaris-create-operator.sh"
+      - ".github/workflows/one-command.yml"
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: one-command-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  one-command:
+    name: The one-command path, clean images to a credential verified by published polaris-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Run lab/strategy/006/try.sh
+        run: bash lab/strategy/006/try.sh
+
+      - name: Tear down
+        if: always()
+        run: bash lab/strategy/006/try.sh --down || true

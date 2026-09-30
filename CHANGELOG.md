@@ -67,6 +67,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Discussions forms for questions, needs and interop results; `.github/SUPPORT.md` says where each kind of message goes.
 - Code scanning: CodeQL (security-extended) over the Python, TypeScript, Rust and workflows, zizmor over the workflows, and OpenSSF Scorecard.
 - `lab/strategy/006/try.sh`: from a clone, one command to a credential that PyPI's polaris-verify verifies under a key minted on the machine.
+- A workflow runs `try.sh` from clean images nightly and on main; the README's Run it section names it.
 
 ### Changed
 
