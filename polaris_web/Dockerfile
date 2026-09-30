@@ -20,10 +20,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# v9.05 / Wave 1 / C3: pinned via requirements.txt (was 3 inline packages
-# with loose specs). Matches polaris_web/requirements.txt + Dockerfile.prod.
+# The runtime lock: every package pinned and hashed, compiled from requirements.in,
+# so pip refuses any file whose hash the lock does not hold. Same file as Dockerfile.prod.
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.txt
 
 # Copy app code:
 #   anchoring.py    R10-2 Merkle helper

@@ -1,0 +1,73 @@
+# polaris_web/requirements.in: the RUNTIME dependencies, as chosen by hand.
+#
+# requirements.txt is compiled from this file with every transitive package
+# pinned and hashed, and it is what the images install (pip --require-hashes).
+# Change a version here, then recompile:
+#   pip-compile --generate-hashes --allow-unsafe --strip-extras \
+#       --output-file=requirements.txt requirements.in
+# in the image's own platform (linux/amd64, Python 3.12); Dependabot recompiles
+# it the same way. Every version it locks must be at least seven days old.
+#
+# v9.105 split the runtime surface from the test tooling: the production image
+# must not carry test frameworks (a pytest CVE, CVE-2025-71176, is why), so
+# pytest, Hypothesis and Playwright live in requirements-test.in.
+
+# ---- Runtime: Flask web stack ----
+Flask==3.1.3
+Werkzeug==3.1.8
+Jinja2==3.1.6
+itsdangerous==2.2.0
+click==8.5.0
+blinker==1.9.0
+MarkupSafe==3.0.3
+
+# ---- Runtime: WSGI server ----
+gunicorn==26.2.0
+packaging==26.3
+
+# ---- Runtime: Postgres driver ----
+psycopg2-binary==2.9.13
+
+# ---- Runtime: WebAuthn (operator MFA, v8.97; the 3.x major taken in v9.189,
+# roadmap P1.7, with its own ceremony test pass: it adds the ML-DSA COSE
+# algorithms (-48/-49/-50, verified through cryptography's mldsa module), wraps
+# malformed client payloads in InvalidRegistrationResponse /
+# InvalidAuthenticationResponse instead of raw parser errors, rejects
+# duplicate CBOR keys, and refreshes the Android/TPM attestation roots) ----
+webauthn==3.0.0
+cbor2==6.1.4
+cryptography==50.0.1
+pyOpenSSL==26.4.0
+pyasn1==0.6.4
+pyasn1-modules==0.4.2
+cffi==2.1.1
+pycparser==3.0
+typing_extensions==4.16.0
+
+# ---- Runtime: Prometheus client (v8.93 /metrics) ----
+prometheus_client>=0.26.0,<1.0
+
+# ---- Runtime: Redis client for cross-worker rate limiting (v9.40) ----
+# Auto-selected by security.py when POLARIS_REDIS_URL is set + the URL
+# is reachable. Without this package, security.py falls back to the
+# in-memory backend (each gunicorn worker holds its own bucket).
+# Required for accurate per-IP rate limits under POLARIS_WORKERS>1.
+# v9.190 (roadmap P1.8): the 5.x to 8.x major taken with its own test pass
+# (the Redis-backed limiter tests run against a real Redis in CI, and the
+# abuse drill runs the Lua sliding window through it). Exact pin, so the
+# image and the runner install the same client; 8.x speaks RESP3 by default
+# and retries by default, the latter overridden in security.py.
+redis==8.1.0
+
+# ---- Runtime: OpenTelemetry distributed tracing (v9.187, roadmap P1.6) ----
+# OPT-IN and optional at runtime, exactly like prometheus_client above:
+# tracing.py imports these behind a guard and instruments ONLY when
+# POLARIS_OTEL is truthy (off = zero overhead, zero telemetry). The sdk and
+# exporter track the stable 1.x line; the instrumentations version as 0.NNb0
+# betas paired to the sdk release (0.65b0 <-> 1.44.0); bump them together.
+# (No Flask auto-instrumentation package on purpose: the request span is
+# hand-rolled in tracing.py so its attribute surface is exactly what the
+# vocation allows: route template, scrubbed path, the ephemeral request id.)
+opentelemetry-sdk==1.44.0
+opentelemetry-exporter-otlp-proto-http==1.44.0
+opentelemetry-instrumentation-psycopg2==0.65b0

@@ -1,0 +1,35 @@
+# polaris_web/requirements-test.in: the TEST and lint tooling, never in an image.
+#
+# requirements-test.txt is compiled from this file, hashed, against the runtime
+# lock (the -c line), so a package both need is pinned to the same version in
+# both. requirements-dev.txt installs the two together.
+#   pip-compile --generate-hashes --allow-unsafe --strip-extras \
+#       --output-file=requirements-test.txt requirements-test.in
+
+-c requirements.txt
+
+# ---- Test-only: property testing (10 Hypothesis tests) ----
+hypothesis>=6.168.1,<7.0
+
+# ---- Test-only: pytest (ZK two-witness suites, v9.44/v9.46) ----
+# polaris_zk/witness2/test_witness2.py and polaris_web/test_zk_second_witness.py
+# are pytest-style (functions + pytest.mark); they ImportError without this.
+pytest>=9.1.1,<10.0
+
+# ---- Test-only: Playwright (v9.33 Atlas-globe E2E) ----
+# After installing this package, run `playwright install chromium` once
+# to download the browser binary (~250MB). polaris_web/test_e2e_atlas.py
+# gracefully skips if either the package OR the browser is unavailable.
+playwright>=1.63.0,<2.0
+
+# ---- Test-only: coverage.py (v9.171 / roadmap P0.8) ----
+# scripts/polaris-coverage.sh runs the suites under coverage, combines them, and
+# gates CI on a line-coverage floor. Subprocess coverage (test_cli shells into
+# polaris.py) relies on coverage.process_startup(), which this provides.
+coverage>=7.16.1,<8.0
+
+# ---- Lint: ruff (v9.306) ----
+# The pyflakes-family hygiene gate (unused imports, unused locals, undefined
+# names, placeholder-free f-strings), configured in ruff.toml with select = F.
+# Run by the pre-commit hook and the CI "Ruff" step; formatting is not enforced.
+ruff==0.16.9

@@ -9,6 +9,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ## Unreleased
 
+### Security
+
+- Every Python package the images install is hash-pinned, and liboqs builds from a checked commit; liboqs-python was unpinned and fetched it.
+
 ### Fixed
 
 - A NUL character in a path, query, form field or JSON string is refused as bad input; it escaped as a 500.
