@@ -1037,6 +1037,16 @@ FLAKE_SIGNATURES = [
 #: retired `minio/minio` from Docker Hub and the drill's pull started failing
 #: with a message Docker also uses for a rate limit, so it reads exactly like a
 #: flake. Rerunning it would have failed forever.
+# 2026-09-30: a job GitHub could not give a runner never starts: it has no steps and no log,
+# so `--log-failed` returns nothing for a run that has in fact finished, and triage used to say
+# "UNKNOWN, no log to read yet" about it (run 36712294233, "Full prod compose boots"). The reason
+# exists only in the job's check-run annotation, which triage now reads for exactly those jobs.
+FLAKE_SIGNATURES.append(
+    ("runner-not-acquired", r"was not started because it repeatedly failed to be acquired",
+     "GitHub could not give the job a runner, so it never started and left no log; rerun the "
+     "failed jobs"))
+
+
 UPSTREAM_SIGNATURES = [
     ("registry-removal",
      r"pull access denied for \S+, repository does not exist or may require 'docker login'",
@@ -1089,6 +1099,17 @@ def _gh(*args):
     return r.stdout
 
 
+def _never_started_reasons(jobs):
+    """The annotations on failed jobs that ran no step, one `job<TAB>message` line each."""
+    lines = []
+    for job in jobs.get("jobs", []):
+        if job.get("conclusion") == "failure" and not job.get("steps") and job.get("databaseId"):
+            notes = json.loads(_gh("api", "repos/{owner}/{repo}/check-runs/%s/annotations"
+                                   % job["databaseId"]) or "[]")
+            lines += ["%s\t%s" % (job.get("name", "?"), n.get("message", "")) for n in notes]
+    return "\n".join(lines)
+
+
 def triage(run_id=None, out=None):
     out = out or sys.stdout
     if not run_id:
@@ -1101,6 +1122,10 @@ def triage(run_id=None, out=None):
     failed = [j["name"] for j in jobs.get("jobs", []) if j.get("conclusion") == "failure"]
     log = subprocess.run(["gh", "run", "view", str(run_id), "--log-failed"], capture_output=True, text=True, cwd=ROOT).stdout
     print("run %s: %s; failed jobs: %s" % (run_id, jobs.get("conclusion"), ", ".join(failed) or "none"), file=out)
+    # A finished run with no failed-job log: a job that never started has no log to give, and
+    # GitHub records why only as an annotation on it. Read those, so the verdict rests on them.
+    if jobs.get("conclusion") is not None and not log.strip():
+        log = _never_started_reasons(jobs)
 
     # v9.377: "I could not look" is not "I looked and found nothing". gh refuses --log-failed
     # while ANY job in the run is still going, so triaging a run whose failure has already
