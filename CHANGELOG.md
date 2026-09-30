@@ -14,6 +14,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-verify` refuses an agent-grant chain whose credential does not verify or whose issuer is outside `--issuer-anchor`.
 - `polaris-verify` calls an agent grant usable only when all five links were supplied and checked; a bare grant was usable.
 - `polaris-verify` abstains on an agent grant or a presentation with no `--issuer-anchor`, as it already did for a pack.
+- `polaris-verify` binds a stapled status assertion to the credential's own key; another trusted authority's assertion was accepted.
 - Both SDKs verify a credential's own signature before binding an agent grant to it.
 
 ### Fixed
@@ -22,6 +23,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Both SDKs refuse a status bundle whose signed `member_count` differs from its members, as WIRE-SPEC 3.4 requires.
 - The three verifiers read an inclusion proof's index and size as JSON integers and its path as a list; each coerced differently.
 - Both SDKs return a verdict for a manifest set that is not a list; the Python SDK raised on `true`, the TypeScript SDK on any.
+- `polaris-verify` exits 3 on an anchor file that is not a key list; the presentation and grant paths raised.
 
 ### Changed
 

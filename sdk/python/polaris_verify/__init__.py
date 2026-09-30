@@ -396,7 +396,8 @@ def verify_status_assertion(assertion: dict, now=None) -> StatusAssertionVerdict
     expires_at}); freshness (now within [issued_at, expires_at)); and whether the status is
     ACTIVE. `now` is an ISO-8601 string or None for the current time. No network, no Polaris
     code. A relying party deciding authorization offline requires authentic AND fresh AND
-    active, all bound to the presented credential's token_value."""
+    active, all bound to the presented credential: the same token_value, signed by the credential's
+    own public_key_hex (WIRE-SPEC 3.5)."""
     assertion = assertion if isinstance(assertion, dict) else {}
     alg = assertion.get("algorithm")
     status = assertion.get("status")

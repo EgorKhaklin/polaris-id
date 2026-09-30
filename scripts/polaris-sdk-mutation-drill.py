@@ -126,12 +126,10 @@ DECLARED_SURVIVORS: dict[str, str] = {
     # without removing the thing the tests need in order to run.
     "python:verify_authenticity:a78e3f":
         "the no-backend-available branch; a suite with cryptography installed cannot reach it",
-    "python:verify_status_assertion:4a55a6":
-        "ok is None: the verification could not run, which needs no backend installed",
-    "python:verify_cosignature:930d0e":
-        "ok is None: the verification could not run, which needs no backend installed",
-    "python:verify_attestation:930d0e":
-        "ok is None: the verification could not run, which needs no backend installed",
+    # python:verify_status_assertion:4a55a6, python:verify_cosignature:930d0e and
+    # python:verify_attestation:930d0e, each "ok is None: the verification could not run",
+    # were declared here until 2026-09-30, when the drill measured all three caught: an input
+    # whose signature cannot be checked now reaches each, so they are refusals, not dead code.
     # The TypeScript catch-all arms of verifyStatusAssertion, verifySignedArtifact,
     # verifyCosignature and verifyAttestation were declared here until 2026-09-29 as
     # "reachable only by making the crypto library throw". A signature that does not decode

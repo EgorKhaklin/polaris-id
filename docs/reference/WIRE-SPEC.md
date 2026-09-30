@@ -126,7 +126,9 @@ A short-lived, issuer-signed statement of a single credential's current status.
 Signed fields: format, token_value, status, issued_at, expires_at
 
 A verifier deciding authorization offline MUST require the assertion to be authentic,
-bound to the presented credential (`token_value`), `status == "ACTIVE"`, and fresh.
+bound to the presented credential (the same `token_value`, signed by the credential's own
+key), `status == "ACTIVE"`, and fresh. A key the verifier trusts for other credentials does
+not answer for this one.
 Note that `algorithm` is not a signed field of this artifact; a verifier MUST still
 reject a placeholder-signed assertion.
 

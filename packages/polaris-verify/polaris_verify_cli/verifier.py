@@ -655,14 +655,20 @@ def verify_stapled(pack, assertion, now=None, max_window_seconds=None, anchor_ke
     a = verify_pack(pack, anchor_keys)
     s = verify_status_assertion(assertion, now=now, max_window_seconds=max_window_seconds,
                                 anchor_keys=anchor_keys)
-    bound = bool(pack.get("token_value")) and pack.get("token_value") == assertion.get("token_value")
+    # Bound = the same token AND the credential's own key. The token alone let any key the relying
+    # party trusts answer for any credential: with two authorities trusted, the second one's
+    # ACTIVE assertion overrode the first one's revocation (2026-09-30). verify_presentation has
+    # always required both, as WIRE-SPEC's presentation section does.
+    bound = (bool(pack.get("token_value")) and pack.get("token_value") == assertion.get("token_value")
+             and str(pack.get("public_key_hex") or "").lower() == str(assertion.get("public_key_hex") or "").lower())
     reasons = []
     if not a["signature_valid"]:
         reasons.append("credential is not authentic")
     if a.get("issuer_trusted") is False:
         reasons.append("credential issuer is not trusted")
     if not bound:
-        reasons.append("the status assertion is not bound to this credential")
+        reasons.append("the status assertion is not bound to this credential (another token, or "
+                       "signed by a key other than the credential's)")
     if not s["status_authentic"]:
         reasons.append("status assertion not authentic: %s" % (s.get("note") or "invalid"))
     elif not s["fresh"]:
@@ -3320,6 +3326,10 @@ def _load_anchor(path):
         data = json.load(f)
     if isinstance(data, list):
         return [str(x) for x in data]
+    if not isinstance(data, dict):
+        # `null` or a number reached `key in data` and raised TypeError, which the presentation
+        # and grant paths did not catch: a traceback and exit 1 where the table says 3.
+        raise ValueError("anchor file must be a list of hex keys or carry a 'public_keys_hex' list")
     for key in ("public_keys_hex", "public_key_hex", "anchors", "keys"):
         if key in data:
             v = data[key]

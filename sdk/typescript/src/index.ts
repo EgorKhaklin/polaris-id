@@ -383,7 +383,9 @@ function withinWindow(obj: any, now?: string | null): boolean | null {
 /** Verify a Polaris status assertion OFFLINE (P3.6, wire spec section 3.5): the ML-DSA-65
  * signature over SHA3-256(canonical statement of {format, token_value, status, issued_at,
  * expires_at}); freshness (now within [issued_at, expires_at)); and ACTIVE status. `now` is
- * an ISO-8601 string or null for the current time. No network. */
+ * an ISO-8601 string or null for the current time. No network. A relying party deciding
+ * authorization offline also requires it bound to the presented credential: the same
+ * token_value, signed by the credential's own public_key_hex (WIRE-SPEC 3.5). */
 export function verifyStatusAssertion(assertion: any, now?: string | null): StatusAssertionVerdict {
   const a = assertion ?? {};
   const status = a.status ?? null;

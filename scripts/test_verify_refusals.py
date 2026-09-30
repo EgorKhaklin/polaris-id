@@ -351,6 +351,51 @@ def _mldsa_signer():
 
 
 @unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class StapledStatusIsTheIssuers(unittest.TestCase):
+    """WIRE-SPEC 3.5: a stapled status assertion is bound to the credential by the same token AND
+    the credential's own key. Until 2026-09-30 verify_stapled bound by the token alone, so with
+    two authorities trusted, the second one's ACTIVE assertion overrode the first one's
+    revocation. verify_presentation, deciding the same two artifacts, always refused it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sign_a, pk_a = _mldsa_signer()
+        cls.sign_b, pk_b = _mldsa_signer()
+        cls.a, cls.b = pk_a.hex(), pk_b.hex()
+        tv = "ISSUER-A-0001"
+        cls.pack = {"format": "polaris-authenticity-pack/1", "token_value": tv, "algorithm": "ML-DSA-65",
+                    "public_key_hex": cls.a,
+                    "signature_hex": cls.sign_a(hashlib.sha3_256(tv.encode("utf-8")).digest()).hex()}
+
+    def assertion(self, sign, pk, status):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        iso = lambda d: d.isoformat().replace("+00:00", "Z")  # noqa: E731
+        sa = {"format": "polaris-status-assertion/1", "token_value": self.pack["token_value"],
+              "status": status, "issued_at": iso(now - timedelta(minutes=1)),
+              "expires_at": iso(now + timedelta(minutes=10))}
+        sa.update(algorithm="ML-DSA-65", public_key_hex=pk,
+                  signature_hex=sign(hashlib.sha3_256(V._status_assertion_canonical(sa)).digest()).hex())
+        return sa
+
+    def test_the_issuers_own_assertion_decides(self):
+        both = [self.a, self.b]
+        self.assertEqual(V.verify_stapled(self.pack, self.assertion(self.sign_a, self.a, "ACTIVE"),
+                                          anchor_keys=both)["decision"], "accept", "control")
+        self.assertEqual(V.verify_stapled(self.pack, self.assertion(self.sign_a, self.a, "REVOKED"),
+                                          anchor_keys=both)["decision"], "reject")
+
+    def test_another_trusted_key_does_not_answer_for_this_credential(self):
+        both = [self.a, self.b]
+        vouched = self.assertion(self.sign_b, self.b, "ACTIVE")
+        v = V.verify_stapled(self.pack, vouched, anchor_keys=both)
+        self.assertEqual(v["decision"], "reject")
+        self.assertIs(v["bound"], False)
+        p = V.verify_presentation({"format": "polaris-presentation/1", "credential": self.pack,
+                                   "status_assertion": vouched}, anchor_keys=both)
+        self.assertIs(p["usable_offline"], False, "and the presentation path agrees")
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
 class VerifiableCredentialDecisions(unittest.TestCase):
     """2026-09-29: only malformed credentials were under test, never a genuine one, so nothing
     showed the verifier accepts what it should. Every refusal here sits beside the genuine
@@ -957,6 +1002,18 @@ class CommandLineExitCodes(unittest.TestCase):
                     mock.patch.object(V, "verify_agent_grant", return_value=verdict):
                 self.assertEqual(self.main("--pqc-provider", "auto", "--agent-grant", str(self.blob),
                                            *flags), code)
+
+    def test_an_anchor_file_that_is_not_a_key_list_exits_3(self):
+        """2026-09-30: `null` or a number as the anchor file raised TypeError out of the
+        presentation and grant paths, a traceback and exit 1; the table says 3."""
+        bad = self.tmp / "anchor-bad.json"
+        for body in ("null", "7"):
+            bad.write_text(body)
+            for flag, target in (("--pack", self.pack), ("--presentation", self.blob),
+                                 ("--agent-grant", self.blob)):
+                with self.subTest(anchor=body, path=flag):
+                    self.assertEqual(self.main("--pqc-provider", "auto", flag, str(target),
+                                               "--issuer-anchor", str(bad)), 3)
 
     def test_frames_that_do_not_decode_exit_1(self):
         """Row 1, the documented inconsistency: kept, because a script may depend on it."""
