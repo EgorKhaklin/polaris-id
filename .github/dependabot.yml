@@ -84,6 +84,20 @@ updates:
     commit-message:
       prefix: ci
 
+  # The toolchain publish.yml builds the Python distributions with (build, setuptools,
+  # twine), hash-pinned by pip-compile in .github/publish; Dependabot recompiles it.
+  - package-ecosystem: pip
+    directory: /.github/publish
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+
   # Docker base images and the prod compose's digest-pinned images: a PR
   # bumps a pinned digest when the upstream tag moves, so a frozen digest
   # still receives security updates.

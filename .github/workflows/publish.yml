@@ -52,12 +52,16 @@ jobs:
       - name: Product boundary — a stranger installs these and uses them
         run: python scripts/polaris-product-boundary-drill.py
 
-      - name: Build the Python distributions
+      # build, twine and the setuptools that builds each distribution come from one hash-pinned
+      # lock (.github/publish/requirements.txt), and the build runs without isolation so that it
+      # uses that setuptools. With isolation, `build` fetched whatever setuptools PyPI served on
+      # the day, unpinned, into the step that makes what gets published.
+      - name: Build the Python distributions with the pinned toolchain
         run: |
-          python -m pip install --quiet build twine
-          python -m build --outdir dist/polaris-verify packages/polaris-verify
-          python -m build --outdir dist/polaris-sdk-python sdk/python
-          python -m build --outdir dist/polaris-oid4vp packages/polaris-oid4vp
+          python -m pip install --quiet --require-hashes -r .github/publish/requirements.txt
+          python -m build --no-isolation --outdir dist/polaris-verify packages/polaris-verify
+          python -m build --no-isolation --outdir dist/polaris-sdk-python sdk/python
+          python -m build --no-isolation --outdir dist/polaris-oid4vp packages/polaris-oid4vp
       - name: Validate the distribution metadata
         run: python -m twine check dist/*/*
       - name: Pack the npm tarball
@@ -139,13 +143,24 @@ jobs:
           # `npm stage publish` needs Node 22.14.0 or later. 24 satisfies it; the assertion
           # below is what actually holds the floor, because a pin can be edited.
           node-version: '24'
-      # `npm@latest` is not a version floor, it is a hope. Two things below depend on real
-      # floors: the OIDC exchange needs 11.5.1 and `npm stage publish` needs 11.15.0. If the
-      # registry ever serves an older `latest`, a silent fall back to a direct publish is
-      # exactly the outcome staging exists to prevent, so the job refuses instead.
-      - name: npm CLI new enough to stage
+      # One exact npm, checked against the registry's sha512 integrity before it is installed:
+      # this job holds the OIDC identity that publishes, and `npm@latest` put whatever the
+      # registry served that day into it. 12.1.0 is the npm that staged 1.0.0-rc.5 (run
+      # 36467934686). To move it, take the new version's `dist.integrity` from
+      # https://registry.npmjs.org/npm/<version>, once that release is seven days old. Two
+      # things below still depend on real floors: the OIDC exchange needs 11.5.1 and `npm stage
+      # publish` needs 11.15.0; a silent fall back to a direct publish is exactly the outcome
+      # staging exists to prevent, so the job refuses instead.
+      - name: npm CLI new enough to stage, pinned by integrity
+        env:
+          NPM_VERSION: "12.1.0"
+          NPM_INTEGRITY: "sha512-Fyhu62pNx70YCs/5+dEmJQTFVmSKwvo5CA0qvBkGDRpob42MJ6G2RQ2tdxeKM4nYnIZDqkYAxEgqtoejn9QGtQ=="
         run: |
-          npm install -g npm@latest
+          curl -fsSLo "$RUNNER_TEMP/npm.tgz" "https://registry.npmjs.org/npm/-/npm-$NPM_VERSION.tgz"
+          got="sha512-$(openssl dgst -sha512 -binary "$RUNNER_TEMP/npm.tgz" | base64 -w0)"
+          [ "$got" = "$NPM_INTEGRITY" ] \
+            || { echo "::error::npm $NPM_VERSION does not match its pinned integrity"; exit 1; }
+          npm install -g "$RUNNER_TEMP/npm.tgz"
           NPM_V="$(npm --version)"; NODE_V="$(node --version | tr -d v)"
           echo "npm $NPM_V, node $NODE_V"
           need() {
