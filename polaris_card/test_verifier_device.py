@@ -307,3 +307,99 @@ class TheAcceptingPathTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NfcTests(unittest.TestCase):
+    """read_nfc drives a card over APDUs, and until 2026-09-30 no test ran it: the two promises
+    in its docstring (a duress PIN is answered exactly like the normal one; without the card
+    object the device learns nothing that identifies the credential) were held by nothing."""
+
+    def setUp(self):
+        try:
+            from polaris_card import emulator as em      # type: ignore
+        except ImportError:                              # pragma: no cover - the flat layout
+            import emulator as em                        # type: ignore
+        self.em = em
+        self.device = vd.VerifierDevice("counter-1")
+        try:
+            self.token, self.detail = em.new_software_token()
+        except Exception as e:                           # pragma: no cover - needs cryptography
+            self.skipTest("the emulator needs cryptography: %s" % e)
+
+    def _recording(self, token):
+        sent = []
+        real = token.transmit
+
+        def transmit(apdu):
+            sent.append(bytes(apdu))
+            return real(apdu)
+        token.transmit = transmit
+        return sent
+
+    def test_the_normal_pin_yields_a_presentation_carrying_the_card_object(self):
+        p = self.device.read_nfc(self.token, "1234")
+        self.assertEqual((p["transport"], p["scope"]), ("nfc", "counter-1"))
+        self.assertEqual(len(p["challenge"]), vd.CHALLENGE_BYTES)
+        self.assertEqual(p["card_object"], self.detail["card_object"])
+        self.assertTrue(p["handle"] and p["signature"])
+
+    def test_the_duress_pin_is_answered_exactly_like_the_normal_one(self):
+        normal = self.device.read_nfc(self.token, "1234")
+        duress = self.device.read_nfc(self.token, "9999")
+        self.assertEqual(sorted(normal), sorted(duress))
+        self.assertEqual((len(normal["handle"]), len(normal["signature"])),
+                         (len(duress["handle"]), len(duress["signature"])),
+                         "a length would tell the device which PIN it was")
+        self.assertEqual(normal["card_object"], duress["card_object"])
+        self.assertNotEqual(normal["handle"], duress["handle"], "control: the two slots are different keys")
+
+    def test_a_wrong_pin_is_reported_by_its_status_word_and_never_interpreted(self):
+        with self.assertRaises(vd.DeviceRefusal) as caught:
+            self.device.read_nfc(self.token, "0000")
+        self.assertIn("did not accept the PIN (status 0x63c", str(caught.exception))
+
+    def test_without_the_card_object_the_device_never_asks_for_it(self):
+        sent = self._recording(self.token)
+        p = self.device.read_nfc(self.token, "1234", want_card_object=False)
+        self.assertIsNone(p["card_object"])
+        self.assertNotIn(self.em.get_card_object(), sent, "the device asked for what it said it would not")
+        self.assertTrue(p["handle"] and p["signature"], "possession is still proved")
+
+    def test_a_card_that_does_not_answer_select_is_refused(self):
+        class Silent:
+            def transmit(self, apdu):
+                return (0x6D00).to_bytes(2, "big")
+        with self.assertRaises(vd.DeviceRefusal) as caught:
+            self.device.read_nfc(Silent(), "1234")
+        self.assertIn("did not answer SELECT", str(caught.exception))
+
+    def test_a_card_that_answers_the_challenge_with_nothing_is_refused(self):
+        real = self.token.transmit
+        sign = self.em.sign_challenge("counter-1", b"\x00" * vd.CHALLENGE_BYTES)
+
+        def transmit(apdu):
+            if bytes(apdu[:4]) == bytes(sign[:4]):
+                return (0x9000).to_bytes(2, "big")
+            return real(apdu)
+        self.token.transmit = transmit
+        with self.assertRaises(vd.DeviceRefusal) as caught:
+            self.device.read_nfc(self.token, "1234")
+        self.assertIn("did not produce a presentation", str(caught.exception))
+
+    def test_the_status_verifier_is_the_detached_one_not_a_second(self):
+        import importlib.util
+        root = os.path.dirname(_HERE)
+        spec = importlib.util.spec_from_file_location("pv_for_device_test", os.path.join(root, "scripts", "polaris-verify.py"))
+        pv = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pv)
+        loaded = vd._load_status_verifier()
+        self.assertEqual(loaded.__name__, "verify_status_assertion")
+        self.assertEqual(loaded.__code__.co_code, pv.verify_status_assertion.__code__.co_code)
+
+    def test_no_status_assertion_verifier_is_a_verdict_with_a_note_not_an_acceptance(self):
+        p = _presentation(self.device)
+        v = self.device.decide(p, verify_response=lambda b, s: True,
+                               status_assertion={"token_value": "T", "status": "ACTIVE"})
+        self.assertFalse(v["accepted"])
+        self.assertEqual(v["note"], "no status-assertion verifier was supplied")
+        self.assertEqual(v["linkability"], "credential-linkable", "it read the token value all the same")
