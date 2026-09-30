@@ -4,7 +4,10 @@
 outside this repository. **Job:** say exactly what has to be true first, what the one-time
 setup is, and what the command is.
 
-This covers the four artifacts a stranger installs. It does not cover the tree version in
+This covers the four artifacts a stranger installs, and the operator CLI, `polaris-id-cli`
+(`polaris_cli/`), for someone already running a Polaris instance: its commands need a running
+Polaris PostgreSQL, and the few that need the application tree refuse from a package install and
+name the clone to run them from. It does not cover the tree version in
 `polaris_web/__version__.py`, which is published nowhere and moves only when something
 externally observable changes.
 
@@ -224,7 +227,9 @@ Actions → **Publish product artifacts** → Run workflow.
   Everything is built, gated and validated, and the distributions are attached to the run as
   an artifact. Nothing leaves the runner. Do this first, every time.
 - **Real publish**: set `target` to the one artifact, and type `PUBLISH` into `confirm`.
-  Anything other than that exact string stays a dry run.
+  Anything other than that exact string stays a dry run. The publish job then waits for the
+  maintainer to approve the run (the `pypi` and `npm` environments require it since
+  2026-09-30), so a dispatch alone publishes nothing.
 
 One artifact per run, on purpose. A publish that half-succeeded across three registries is a
 worse state to be in than three runs.

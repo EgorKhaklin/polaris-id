@@ -154,7 +154,8 @@ the API (`gh api repos/EgorKhaklin/polaris-id/rulesets`, `.../environments`,
 - Version tags (`v*`) cannot be moved or deleted, and a published release's tag and assets
   cannot be changed.
 - The `pypi` and `npm` environments deploy only from `main`, so only reviewed, merged workflow
-  code can publish; an npm publish also waits for a maintainer's second factor.
+  code can publish, and every publish waits for the maintainer to approve that run; an npm
+  publish also waits for a maintainer's second factor.
 - Secret scanning with push protection, private vulnerability reporting, and Dependabot alerts,
   malware alerts and security updates are on. Workflow tokens default to read-only, and a
   first-time contributor's workflow run waits for approval.
