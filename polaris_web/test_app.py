@@ -3962,6 +3962,10 @@ class IssuerFederationTests(PolarisTestCase):
             cur.execute("SELECT count(*) AS n FROM VerificationEvent WHERE token_id = %s "
                         "AND outcome = 'SUCCESS'", (row['token_id'],))
             before = cur.fetchone()['n']
+        # Permitted in the context, so the status rule is the only one refusing: the seed's
+        # terminal credential holds no permission, and the context rule would mask this one.
+        _owner_write("INSERT INTO TokenPermission (token_id, context_id, permission_level) VALUES (%s, %s, 'VERIFY') "
+                     "ON CONFLICT DO NOTHING", (row['token_id'], self._context_id('BANKING')))
         r = self._post('/verifications/new', data={
             'token_id': str(row['token_id']),
             'requesting_agency_id': str(row['issuing_agency_id']),   # same agency: trusted
@@ -4013,14 +4017,45 @@ class IssuerFederationTests(PolarisTestCase):
                              'a SUCCESS was recorded against a credential past its expiry')
         self.assertIn('/verifications/new', r.location)
 
+    def test_a_success_is_not_recorded_in_a_context_the_credential_is_not_permitted_in(self):
+        """2026-09-30. TokenPermission controls which contexts a token is permitted in, and a
+        presentation outside them is what UNAUTHORIZED records: a SUCCESS there is untrue the
+        same way as one against a dead credential. The same agency verifies, so trust holds."""
+        ctx_hc, ctx_bank = self._context_id('HEALTHCARE'), self._context_id('BANKING')
+
+        def post(ctx, outcome):
+            return self._post('/verifications/new', data={
+                'token_id': '3',                 # James: BANKING, EMPLOYMENT, TRAVEL, MOTOR_VEHICLE
+                'requesting_agency_id': '1',     # his issuer: implicit trust
+                'context_id': str(ctx), 'outcome': outcome, 'disclosure_level': 'SELECTIVE',
+            }, follow_redirects=False)
+
+        def count(ctx, outcome):
+            with psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG) as conn, conn.cursor() as cur:
+                cur.execute("SELECT count(*) AS n FROM VerificationEvent WHERE token_id = 3 "
+                            "AND context_id = %s AND outcome = %s", (ctx, outcome))
+                return cur.fetchone()['n']
+
+        before = count(ctx_hc, 'SUCCESS')
+        r = post(ctx_hc, 'SUCCESS')
+        self.assertIn('/verifications/new', r.location)
+        self.assertEqual(count(ctx_hc, 'SUCCESS'), before, 'a SUCCESS was recorded outside the permitted contexts')
+        before = count(ctx_hc, 'UNAUTHORIZED')
+        self.assertNotIn('/verifications/new', post(ctx_hc, 'UNAUTHORIZED').location)
+        self.assertEqual(count(ctx_hc, 'UNAUTHORIZED'), before + 1, 'recording the refusal is what the log is for')
+        before = count(ctx_bank, 'SUCCESS')
+        self.assertNotIn('/verifications/new', post(ctx_bank, 'SUCCESS').location)
+        self.assertEqual(count(ctx_bank, 'SUCCESS'), before + 1, 'control: a permitted context records SUCCESS')
+
     def test_cross_agency_success_blocked_without_attestation(self):
-        """No attestation between Agency 6 and Agency 1 for HEALTHCARE →
-        SUCCESS verification must be blocked."""
-        ctx_hc = self._context_id('HEALTHCARE')
+        """No attestation between Agency 6 and Agency 1 for BANKING →
+        SUCCESS verification must be blocked. BANKING, not HEALTHCARE: James is
+        permitted in it, so the trust rule is the only one refusing (2026-09-30)."""
+        ctx_bank = self._context_id('BANKING')
         r = self._post('/verifications/new', data={
             'token_id': '3',  # James, issued by Agency 1
-            'requesting_agency_id': '6',  # no attestation from 6 → 1 for HEALTHCARE
-            'context_id': str(ctx_hc),
+            'requesting_agency_id': '6',  # no attestation from 6 → 1 for BANKING
+            'context_id': str(ctx_bank),
             'outcome': 'SUCCESS',
             'disclosure_level': 'SELECTIVE',
         }, follow_redirects=False)
@@ -4068,6 +4103,9 @@ class IssuerFederationTests(PolarisTestCase):
                 INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes)
                 VALUES (%s, 1, %s)
             """, (tid, b'TRANSITIVE_SIG'))
+            # Permitted in TRAVEL, so the trust rule is the only one refusing (2026-09-30).
+            cur.execute("INSERT INTO TokenPermission (token_id, context_id, permission_level) "
+                        "VALUES (%s, %s, 'VERIFY')", (tid, ctx_travel))
             conn.commit()
 
         # Step 3: TSA(4) tries to verify the Agency-6-issued token.
@@ -4101,19 +4139,20 @@ class IssuerFederationTests(PolarisTestCase):
         self.assertIn('/verifications/new', r.location)
 
     def test_revoked_attestation_blocks_new_verification(self):
-        """After revoking an attestation, new SUCCESS verifications fail."""
+        """After revoking an attestation, new SUCCESS verifications fail. EMPLOYMENT, not
+        VOTING: James is permitted in it, so the trust rule is the only one refusing (2026-09-30)."""
         admin = self._admin_user_id()
-        ctx_voting = self._context_id('VOTING')
+        ctx_emp = self._context_id('EMPLOYMENT')
         # Set up: create a fresh attestation, then revoke it.
         with self._db() as conn, conn.cursor() as cur:
             cur.execute("CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
-                        (4, 1, ctx_voting,
+                        (4, 1, ctx_emp,
                          datetime.now(timezone.utc).date() + timedelta(days=30), admin))
             cur.execute("""
                 SELECT attestation_id FROM AgencyTrustAttestation
                  WHERE attesting_agency_id=4 AND attested_agency_id=1
                    AND context_id=%s AND revocation_date IS NULL
-            """, (ctx_voting,))
+            """, (ctx_emp,))
             aid = cur.fetchone()['attestation_id']
             cur.execute("CALL uc10_revoke_attestation(%s, %s, %s)",
                         (aid, 'TEST_REVOKED_BLOCKS', admin))
@@ -4123,7 +4162,7 @@ class IssuerFederationTests(PolarisTestCase):
         r = self._post('/verifications/new', data={
             'token_id': '3',  # issued by federal NY (Agency 1)
             'requesting_agency_id': '4',  # TSA, revoked above
-            'context_id': str(ctx_voting),
+            'context_id': str(ctx_emp),
             'outcome': 'SUCCESS',
             'disclosure_level': 'SELECTIVE',
         }, follow_redirects=False)
