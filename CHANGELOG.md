@@ -12,6 +12,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Security
 
 - Every Python package the images install is hash-pinned, and liboqs builds from a checked commit; liboqs-python was unpinned and fetched it.
+- A login signs only a context the credential is permitted in; `/api/v1/auth/authorize` signed any `context_id`, even one that does not exist.
 
 ### Fixed
 
@@ -29,6 +30,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - `polaris-ship.py triage` names a job GitHub never gave a runner, from its annotation, instead of calling the finished run unknown.
 - Two image checks read each Dockerfile's instructions, not its comments, and require a hash-checked install in every image; a comment could pass for one.
+- A login's requested enrollment status applies alongside the registered one, and a malformed requirement is refused; the registered status replaced the request's.
 - `polaris-oid4vp` accepts an issuer certificate whose extended key usage is ISO 18013-5's document signer, as EUDI issuers' are; it refused eudi-dev's PID Provider.
 
 ### Added

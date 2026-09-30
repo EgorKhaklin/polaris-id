@@ -916,6 +916,63 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         r = self._authorize(cid, tv, sig, challenge, context_id=2)
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
 
+    def test_a_request_adds_an_enrollment_requirement_and_never_replaces_one(self):
+        """2026-09-30 review: `rp['required_enrollment'] or body.get('required_enrollment')` let a
+        registered status shadow the requested one, so a request could not add a requirement.
+        The statuses are exclusive populations, not a ladder: both apply, and a registered status
+        and a different requested one cannot both be met."""
+        cid, _secret = self._rp('authenticate')
+        _tid, tv, sig = self._credential()
+        _verifier, challenge = self._pkce()
+        held = flask_app.query("SELECT e.current_status FROM IndividualCurrentEnrollment e "
+                               "JOIN IdentityToken t ON t.individual_id = e.individual_id WHERE t.token_value = %s",
+                               (tv,), fetch='one', primary=True)
+        self.assertEqual(held['current_status'], 'ENROLLED', 'fixture: the sample credential is held by an enrolled person')
+        _owner_query("UPDATE RelyingParty SET required_enrollment = 'ENROLLED' WHERE client_id = %s", (cid,), fetch='none')
+        self.assertEqual(self._authorize(cid, tv, sig, challenge).status_code, 200, 'control: the registered status is met')
+        self.assertEqual(self._authorize(cid, tv, sig, challenge, required_enrollment='enrolled').status_code, 200,
+                         'asking again for the registered status adds nothing')
+        r = self._authorize(cid, tv, sig, challenge, required_enrollment='EXEMPT')
+        self.assertEqual((r.status_code, r.get_json().get('error')), (403, 'insufficient_enrollment'),
+                         'a requested status applies alongside the registered one')
+        self.assertNotIn('code', r.get_json())
+
+    def test_a_malformed_requirement_is_refused_not_dropped(self):
+        """2026-09-30 review: a required_enrollment that was not a string was skipped, so the ask was
+        served as no ask, and one no relying party can register came back as the holder's
+        shortfall. require_zk was read for truth, so [] asked for nothing and "false" for a proof."""
+        cid, _secret = self._rp('authenticate')
+        _tid, tv, sig = self._credential()
+        _verifier, challenge = self._pkce()
+        for field, bad in [('required_enrollment', v) for v in (['ENROLLED'], True, 1, {}, '', 'VERIFIED', 'NOT_ENROLLED')] + \
+                          [('require_zk', v) for v in ('false', 1, [], {})]:
+            with self.subTest(field=field, value=bad):
+                flask_app.security.rate_limiter.reset()
+                r = self._authorize(cid, tv, sig, challenge, **{field: bad})
+                self.assertEqual((r.status_code, (r.get_json() or {}).get('error')), (400, 'invalid_request'),
+                                 r.get_data(as_text=True))
+        self.assertEqual(self._authorize(cid, tv, sig, challenge, required_enrollment=None, require_zk=False).status_code,
+                         200, 'control: null and false ask for nothing')
+
+    def test_the_code_names_only_a_context_the_credential_is_permitted_in(self):
+        """2026-09-30 review: the route signed whatever context_id the request named into the code
+        the ID token is minted from, one the credential holds no permission in or one that does
+        not exist. Every other statement the instance signs names a context from TokenPermission:
+        /verify/mdoc and /verify/vc report a permitted one, and a ZK step-up proves membership in
+        an epoch built from it."""
+        cid, _secret = self._rp('authenticate')
+        tid, tv, sig = self._credential()
+        _verifier, challenge = self._pkce()
+        permitted = {r['context_id'] for r in flask_app.query(
+            "SELECT context_id FROM TokenPermission WHERE token_id = %s", (tid,), primary=True)}
+        known = {r['context_id'] for r in flask_app.query("SELECT context_id FROM VerificationContext", primary=True)}
+        self.assertTrue(permitted and known - permitted, 'fixture: the credential is permitted in some contexts, not all')
+        self.assertEqual(self._authorize(cid, tv, sig, challenge, context_id=min(permitted)).status_code, 200, 'control')
+        for ctx in (min(known - permitted), max(known) + 1000):
+            r = self._authorize(cid, tv, sig, challenge, context_id=ctx)
+            self.assertEqual((r.status_code, r.get_json().get('error')), (403, 'forbidden'), 'context_id=%d' % ctx)
+            self.assertNotIn('code', r.get_json())
+
     def test_authorization_code_is_opaque(self):
         # v9.336: the code is encrypted; a bearer learns nothing from it and another key opens nothing.
         import base64

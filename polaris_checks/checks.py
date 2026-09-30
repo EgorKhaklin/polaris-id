@@ -13165,10 +13165,21 @@ def check_broker_policy_bound(root: pathlib.Path) -> list[Finding]:
         return _fail("broker_policy_bound", "the policy columns must ship as a reversible migration (006)")
     app = _read_app(root)
     for sym in ("rp['required_context_id'] is not None and context_id != int(rp['required_context_id'])",
-                "required = rp['required_enrollment'] or body.get('required_enrollment')",
-                "if rp['require_zk'] or body.get('require_zk'):", "policy_violation"):
+                "for required in (rp['required_enrollment'], asked_enrollment):",
+                "if rp['require_zk'] or asked_zk:", "policy_violation",
+                "FROM TokenPermission WHERE token_id = %s AND context_id = %s"):
         if sym not in app:
-            return _fail("broker_policy_bound", "the authorize route must apply the stored policy and let a request only add to it (%s missing)" % sym)
+            return _fail("broker_policy_bound", "the authorize route must apply the stored policy, let a request only add to "
+                                                "it and sign only a context the credential is permitted in (%s missing)" % sym)
+    # 2026-09-30: `rp['required_enrollment'] or body.get(...)` let a registered status shadow the
+    # requested one, so a request could not add a requirement.
+    if "rp['required_enrollment'] or " in app:
+        return _fail("broker_policy_bound", "a registered enrollment status must not shadow the requested one; both apply")
+    vocab = re.search(r"_REQUIRABLE_ENROLLMENT\s*=\s*\(([^)]*)\)", app)
+    chk = re.search(r"chk_rp_required_enrollment CHECK \(required_enrollment IS NULL OR required_enrollment IN \(([^)]*)\)\)", schema)
+    if not vocab or not chk or set(re.findall(r"'([A-Z_]+)'", vocab.group(1))) != set(re.findall(r"'([A-Z_]+)'", chk.group(1))):
+        return _fail("broker_policy_bound", "the statuses a request may add (_REQUIRABLE_ENROLLMENT) must be the ones a "
+                                            "relying party can register (chk_rp_required_enrollment)")
     ra = _read(root, "polaris_web/rp_auth.py")
     if "from cryptography.fernet import Fernet" not in ra or "_code_serializer" in ra or "URLSafeTimedSerializer(secret_key, salt=_CODE_SALT)" in ra:
         return _fail("broker_policy_bound", "the authorization code must be encrypted (Fernet), not a decodable signed blob")
@@ -13184,8 +13195,9 @@ def check_broker_policy_bound(root: pathlib.Path) -> list[Finding]:
         return _fail("broker_policy_bound", "docs/reference/DATA-MODEL.md must document the policy columns")
     return _ok("broker_policy_bound",
                "the auth broker applies the relying party's registered policy (step-up, enrollment, context) over the "
-               "holder-side request, which may add a requirement but never remove one; the authorization code is encrypted "
-               "and opaque; migration 006, the route, the CLI, the tests and the docs are pinned")
+               "holder-side request, which may add a requirement from the registrable vocabulary but never remove one, and "
+               "signs only a context the credential is permitted in; the authorization code is encrypted and opaque; "
+               "migration 006, the route, the CLI, the tests and the docs are pinned")
 
 
 def check_qr_resource_bounds(root: pathlib.Path) -> list[Finding]:

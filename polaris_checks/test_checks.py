@@ -9993,12 +9993,17 @@ def test_qr_resource_bounds_check_discriminates(tmp_path):
 
 def test_broker_policy_bound_check_discriminates(tmp_path):
     # v9.336: the relying party's registered policy binds; the code is opaque.
-    APP = ("    if rp['required_context_id'] is not None and context_id != int(rp['required_context_id']):\n"
+    APP = ("_REQUIRABLE_ENROLLMENT = ('PENDING_ENROLLMENT', 'ENROLLED', 'EXEMPT')\n"
+           "    if rp['required_context_id'] is not None and context_id != int(rp['required_context_id']):\n"
            "        return jsonify(error='policy_violation'), 403\n"
-           "    required = rp['required_enrollment'] or body.get('required_enrollment')\n"
-           "    if rp['require_zk'] or body.get('require_zk'):\n        pass\n")
+           "    if not query(\"SELECT 1 FROM TokenPermission WHERE token_id = %s AND context_id = %s\", (t, c)):\n"
+           "        return jsonify(error='forbidden'), 403\n"
+           "    for required in (rp['required_enrollment'], asked_enrollment):\n        pass\n"
+           "    if rp['require_zk'] or asked_zk:\n        pass\n")
     good = {
-        'polaris_sql/01_schema.sql': "    require_zk          BOOLEAN      NOT NULL DEFAULT FALSE,\n    required_enrollment VARCHAR(20)\n    required_context_id INTEGER      REFERENCES VerificationContext(context_id)\n",
+        'polaris_sql/01_schema.sql': "    require_zk          BOOLEAN      NOT NULL DEFAULT FALSE,\n    required_enrollment VARCHAR(20)\n"
+                                     "        CONSTRAINT chk_rp_required_enrollment CHECK (required_enrollment IS NULL OR required_enrollment IN ('PENDING_ENROLLMENT', 'ENROLLED', 'EXEMPT')),\n"
+                                     "    required_context_id INTEGER      REFERENCES VerificationContext(context_id)\n",
         'polaris_sql/migrations/2026-09-09-006-relying-party-policy.up.sql': "ALTER TABLE RelyingParty ADD COLUMN IF NOT EXISTS require_zk BOOLEAN;\n",
         'polaris_sql/migrations/2026-09-09-006-relying-party-policy.down.sql': "ALTER TABLE RelyingParty DROP COLUMN IF EXISTS require_zk;\n",
         'polaris_web/app.py': APP,
@@ -10017,8 +10022,15 @@ def test_broker_policy_bound_check_discriminates(tmp_path):
     write()
     first = checks.check_broker_policy_bound(tmp_path)[0]
     assert first.level == "OK", "must PASS on the full fixture: " + first.message
-    write({'polaris_web/app.py': APP.replace("rp['require_zk'] or body.get('require_zk')", "body.get('require_zk')")})
+    write({'polaris_web/app.py': APP.replace("rp['require_zk'] or asked_zk", "asked_zk")})
     assert checks.check_broker_policy_bound(tmp_path)[0].level == "FAIL", "must FAIL if the holder request alone decides the step-up"
+    # 2026-09-30: the registered status shadowed the requested one, with the loop line still present.
+    write({'polaris_web/app.py': APP + "    required = rp['required_enrollment'] or body.get('required_enrollment')\n"})
+    assert checks.check_broker_policy_bound(tmp_path)[0].level == "FAIL", "must FAIL if a registered status can shadow the request's"
+    write({'polaris_web/app.py': APP.replace("'ENROLLED', 'EXEMPT')\n", "'ENROLLED')\n", 1)})
+    assert checks.check_broker_policy_bound(tmp_path)[0].level == "FAIL", "must FAIL when the request vocabulary drifts from the schema's"
+    write({'polaris_web/app.py': APP.replace("FROM TokenPermission WHERE", "FROM TokenPermission t WHERE")})
+    assert checks.check_broker_policy_bound(tmp_path)[0].level == "FAIL", "must FAIL when the route signs a context without reading the permission"
     write({'polaris_web/rp_auth.py': "import itsdangerous\ndef _code_serializer(k): return itsdangerous.URLSafeTimedSerializer(secret_key, salt=_CODE_SALT)\n"})
     assert checks.check_broker_policy_bound(tmp_path)[0].level == "FAIL", "must FAIL if the code is a decodable signed blob"
     write({'polaris_sql/01_schema.sql': "    scope VARCHAR(40)\n"})
