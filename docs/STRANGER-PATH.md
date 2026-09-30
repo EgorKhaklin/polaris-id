@@ -1,7 +1,8 @@
 # The stranger's path
 
 **One accepted presentation from a wallet nobody here wrote, in about ten minutes, without
-asking anyone a question.** If you cannot, that is the bug and we want to hear it.
+asking anyone a question.** If you cannot, that is the bug and we want to hear it: whatever happens,
+[open a report](https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml).
 
 This page is run start to finish before it is changed, from outside the repository, against the
 package on PyPI rather than a working copy. Last walked 2026-09-28 against `polaris-oid4vp`

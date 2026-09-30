@@ -1,0 +1,57 @@
+name: I ran the stranger's path
+description: Report what happened when you followed docs/STRANGER-PATH.md, good or bad.
+title: "[stranger's path] "
+labels: ["stranger path"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for trying Polaris. A failure report is as useful as a success: where you got stuck is the bug. Security findings go through the private advisory in the issue chooser instead.
+  - type: dropdown
+    id: route
+    attributes:
+      label: Which path did you follow?
+      options:
+        - The one-minute script (run.sh against eudi-dev)
+        - The ten-minute path (the walt.id wallet, step by step)
+        - Both
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Did you get the success line?
+      description: "The one-minute script ends with `RESULT: accepted, and all three controls refused`; the ten-minute path prints its accepted line at step 7."
+      options:
+        - Yes, without help
+        - Yes, after working around something (say what below)
+        - "No"
+    validations:
+      required: true
+  - type: input
+    id: machine
+    attributes:
+      label: Machine
+      description: Operating system, Docker version and Python version.
+      placeholder: macOS 15.1, Docker 27.3, Python 3.12
+    validations:
+      required: true
+  - type: dropdown
+    id: time
+    attributes:
+      label: How long did it take?
+      options:
+        - Under 15 minutes
+        - 15 to 60 minutes
+        - Over an hour
+  - type: textarea
+    id: friction
+    attributes:
+      label: What confused you or failed?
+      description: Paste any error output. Nothing is too small.
+  - type: checkboxes
+    id: credit
+    attributes:
+      label: Credit
+      options:
+        - label: You may name me, by my GitHub handle, as an outside operator on the project's scoreboard and in its release notes.
