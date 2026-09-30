@@ -591,6 +591,16 @@ def _plain(text):
     return _ANSI.sub("", text)
 
 
+#: A class unittest skipped whole: its setUpClass raised SkipTest, so none of its tests ran and
+#: none is counted in "Ran N tests". Only the verbose log names it.
+_CLASS_SKIP = re.compile(r"^setUpClass \((?:[\w.]+\.)?(\w+)\) \.\.\. skipped '(.*)'$", re.M)
+
+
+def class_skips(log):
+    """[(class, reason)] for every class a unittest log skipped whole in setUpClass."""
+    return _CLASS_SKIP.findall(_plain(log))
+
+
 def _failure_blocks(log):
     """The FAIL/ERROR blocks of a unittest log, each running to the next separator.
 
@@ -686,12 +696,14 @@ def run(argv, out=None):
             #
             # Off by default: a local `run` is for speed and should not litter .coverage.*
             # files or pay the instrumentation cost.
-            cmd = [py, "-m", "unittest"] + ids
+            # -v: a class skipped whole in setUpClass is named, with its reason, only in the
+            # verbose log. Without it a shard just reports fewer tests than it was given.
+            cmd = [py, "-m", "unittest", "-v"] + ids
             if os.environ.get("POLARIS_SHIP_COVERAGE") == "1":
                 src = ",".join(os.path.join(ROOT, d) for d in
                                ("polaris_web", "polaris_cli", "polaris_checks", "polaris_sim"))
                 cmd = [py, "-m", "coverage", "run", "-p", "--source=" + src,
-                       "-m", "unittest"] + ids
+                       "-m", "unittest", "-v"] + ids
                 env = dict(env, COVERAGE_RCFILE=os.path.join(ROOT, ".coveragerc"),
                            COVERAGE_FILE=os.path.join(ROOT, ".coverage"))
             running.append(subprocess.Popen(cmd, cwd=WEB, env=env, stdout=log, stderr=subprocess.STDOUT, text=True))
@@ -725,6 +737,15 @@ def run(argv, out=None):
               % ("FAILED" if failed or ran != total else "PASS", ran, total,
                  (", %d SKIPPED" % skipped) if skipped else "",
                  wall, test_time, (test_time / wall) if wall else 0), file=out)
+        if ran != total:
+            # A shard that runs fewer tests than it was given fails the verdict; say which class
+            # went missing and why, or the number points nowhere. On 2026-09-30 it was the 48
+            # tests of ZKSnarkTests, skipped because the prover binary was not built here.
+            sizes = {c: n for _m, c, n in units}
+            for _i, _n, _secs, _ok, text, _sk in results:
+                for cls, why in class_skips(text):
+                    print("    %s: %d tests did not run: its setUpClass skipped (%s)"
+                          % (cls, sizes.get(cls, 0), why), file=out)
         for i, _, _, ok, text, _sk in results:
             if not ok:
                 blocks = _failure_blocks(text)

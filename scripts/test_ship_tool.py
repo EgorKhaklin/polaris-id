@@ -447,6 +447,24 @@ class ShipBaselineTests(unittest.TestCase):
             self.assertEqual(cb.changed_base(work), git("rev-parse", "HEAD~1"))
 
 
+
+class ClassSkipTests(unittest.TestCase):
+    """A class skipped whole in setUpClass never counts in "Ran N tests"; run names it."""
+
+    def test_a_whole_class_skip_is_named_with_its_reason(self):
+        log = ("test_c (test_app.Fine.test_c) ... ok\n"
+               "setUpClass (test_app.ZKSnarkTests) ... skipped 'polaris-zk binary not built at /x. "
+               "Run `cargo build --release` in polaris_zk/ first.'\n\n"
+               "Ran 1 test in 0.100s\n\nOK (skipped=1)\n")
+        self.assertEqual(ship.class_skips(log), [
+            ("ZKSnarkTests", "polaris-zk binary not built at /x. Run `cargo build --release` in polaris_zk/ first.")])
+
+    def test_a_per_test_skip_is_not_a_class_skip(self):
+        log = ("test_d (test_app.Fine.test_d) ... skipped 'per-test reason'\n\n"
+               "Ran 1 test in 0.100s\n\nOK (skipped=1)\n")
+        self.assertEqual(ship.class_skips(log), [])
+
+
 if __name__ == "__main__":
     unittest.main()
 
