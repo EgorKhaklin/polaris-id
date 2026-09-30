@@ -13,7 +13,7 @@ Foundation [lists the certification](https://openid.net/certification/certified-
 (2026-09-24). It covers that version in that role: not an endorsement, not an audit, and not
 other versions.
 
-**Status:** 1.0.0rc9, a release candidate, not certified: it carries the fixes made since
+**Status:** 1.0.0rc10, a release candidate, not certified: it carries the fixes made since
 1.0.0rc7. Outside results: the Foundation's hosted suite (0.1.0, then 1.0.0rc7 for
 certification) and four unmodified external wallets: walt.id Wallet API v2 (last against
 1.0.0-rc.3), Credo 0.6.3 (against 1.0.0rc7, 2026-09-27), eudi-dev v2.3.7 and OID4VCgo 0.12.0
@@ -109,8 +109,8 @@ only.
 | `unsupported_status` | its status claim is in a form this verifier cannot read |
 | `checked` | a resolver answered; `status` carries the issuer's value |
 | `unreachable` | a resolver was asked and got no answer |
-| `no_authority` | no key is stated as entitled to publish this issuer's status, so nothing was fetched |
-| `list_refused` | a status list was obtained and is not usable as evidence; `code` says why |
+| `no_authority` | no key is stated as entitled to publish this issuer's status at that URI, so no list can count as evidence |
+| `list_refused` | the status reference, the list or its signature failed a check, so nothing is usable as evidence; `code` says which |
 
 - **Opt-in:** pass `status_resolver=` to `Verifier(...)` or `verify_presentation`. Without one
   nothing is fetched and the state is `not_evaluated`.
@@ -143,7 +143,8 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
 - 334 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 103 refusals accept and requires a
-  test to fail: 97 are caught, and the 6 survivors are declared with their reasons.
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 107 refusals accept and requires a
+  test to fail: 102 are caught, and the 5 survivors are declared with their reasons (CI run
+  36666780941, 2026-09-30).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.
