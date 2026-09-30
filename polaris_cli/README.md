@@ -118,7 +118,7 @@ polaris-id transition 4 LOST    --actor 1 --reason HOLDER_REPORTED_THEFT
 
 | Command | Flags |
 |---------|-------|
-| `issue` | `--legal-name`, `--dob`, `--jurisdiction`, `--agency`, `--algorithm`, `--token-value`, `--serial`, `--contexts` (required); `--biometric` (`NONE`/`FINGERPRINT`/`FACE`/`IRIS`, default `IRIS`), `--liveness` (`PASSIVE`/`ACTIVE_CHALLENGE`/`MULTI_MODAL`), `--witness`, `--hardware` |
+| `issue` | `--legal-name`, `--dob`, `--jurisdiction`, `--agency`, `--algorithm`, `--token-value`, `--serial`, `--contexts` (required); `--biometric` (`NONE`/`FINGERPRINT`/`FACE`/`IRIS`, default `IRIS`), `--liveness` (`PASSIVE`/`ACTIVE_CHALLENGE`/`MULTI_MODAL`), `--witness`, `--hardware`. Signs through `polaris_web/pqc_signing` as the issuing route does (the agency's own key when it has one), and issues nothing it cannot sign |
 | `activate-reserve` | `--lost-token`, `--reserve-token`, `--actor-agency`, `--crl-url`; `--reason` (`LOST`/`STOLEN`/`COMPROMISED`/`SUPERSEDED`/`ADMINISTRATIVE`) |
 | `bind-device` | `--token`, `--fingerprint`; `--device-type` (`PHONE`/`TABLET`/`WATCH`), `--binding-method` (`SECURE_ENCLAVE`/`TITAN_SECURITY`/`TRUSTED_PLATFORM_MODULE`), `--validity-months` (default 12) |
 | `migrate-algorithm` | `--token`, `--new-algorithm`, one of `--signature-hex` / `--signature-file`; `--deprecate-old` (one-way) |
@@ -128,7 +128,7 @@ polaris-id transition 4 LOST    --actor 1 --reason HOLDER_REPORTED_THEFT
 | `recovery-record-channel` | `--recovery-id`, `--recording-user`, `--channel`; `--sworn-statement-hash` (SWORN only, 64 hex) |
 | `recovery-complete` | `--recovery-id`, `--deciding-user`, `--decision` (`APPROVED`/`REJECTED`), `--reason`; if approved: `--new-token-value`, `--new-serial`, `--algorithm`, `--biometric-binding`, `--liveness-check`, `--published-location` |
 | `transition` | `<new-status>` in `ACTIVE`/`DORMANT`/`REVOKED`/`LOST`/`EXPIRED`; `--actor`, `--reason` |
-| `bulk-enroll` | File columns `legal_name\|date_of_birth\|jurisdiction\|biometric_binding_type\|token_value\|physical_serial\|permitted_contexts`; `--agency`, `--algorithm`; `--note`, `--dry-run`. The whole batch rolls back on any rejection |
+| `bulk-enroll` | File columns `legal_name\|date_of_birth\|jurisdiction\|biometric_binding_type\|token_value\|physical_serial\|permitted_contexts`; `--agency`, `--algorithm`; `--note`, `--dry-run`. Signs each row as `issue` does; the whole batch rolls back on any rejection |
 | `migrate-population` | `--to` (algorithm name, e.g. `ML-DSA-87`, or id); `--batch` (default 500), `--limit`, `--dry-run`, `--deprecate-old` (second pass, refused while any credential is unmigrated), `--grace-seconds` (default 1) |
 | `transparency-report` | `--period` (e.g. `2026-Q3`), `--since`; `--published` (repeatable), `--anchor-target-hours`, `--checks-total`, `--checks-passed`, `--json` |
 

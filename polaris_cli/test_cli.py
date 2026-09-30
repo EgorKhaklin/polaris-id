@@ -267,6 +267,34 @@ class IssueCommandTests(CLIBaseTestCase):
         self.assertIn('Issued and activated token', r.stdout)
         self.assertIn('CLI Test Holder', r.stdout)
 
+    def _stored_signatures(self, token_value):
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT ts.signature_bytes, ts.signing_public_key_hex FROM TokenSignature ts "
+                            "JOIN IdentityToken it ON it.token_id = ts.token_id WHERE it.token_value = %s",
+                            (token_value,))
+                return cur.fetchall()
+        finally:
+            conn.close()
+
+    def test_issue_stores_a_signature_that_verifies(self):
+        """The CLI called uc1 without a signature, so the procedure stored its legacy literal
+        ('UC1_ISSUE_PLACEHOLDER_<id>'), which verifies under nothing: the command printed success
+        for a credential no relying party could accept. bulk-enroll's own rule (_load_signer) is
+        never to store one. It signs the way the issuing route does now."""
+        run_cli('issue', '--legal-name', 'Signed CLI Holder', '--dob', '1990-01-15',
+                '--jurisdiction', 'US-OH', '--agency', '1', '--algorithm', '1',
+                '--token-value', 'TKN-OH-CLI-SIGNED', '--serial', 'SN-OH-CLI-SIGNED', '--contexts', '1')
+        rows = self._stored_signatures('TKN-OH-CLI-SIGNED')
+        self.assertEqual(len(rows), 1)
+        sig, key = bytes(rows[0]['signature_bytes']), rows[0]['signing_public_key_hex']
+        self.assertFalse(sig.startswith(b'UC1_ISSUE_PLACEHOLDER'), sig[:40])
+        import polaris
+        self.assertTrue(polaris._load_signer().verify_stored_signature(
+            'TKN-OH-CLI-SIGNED', sig, key, witnesses='single'),
+            'the stored signature must verify under the check every door makes')
+
     def test_issue_with_unauthorized_algorithm_fails(self):
         # Agency 2 (PA) doesn't have a grant on algorithm 4 (SLH-DSA-256s)
         r = run_cli('issue',
@@ -361,6 +389,46 @@ class BulkEnrollCommandTests(CLIBaseTestCase):
                 return {row['status']: row['n'] for row in cur.fetchall()}
         finally:
             conn.close()
+
+    def test_bulk_enroll_signs_under_the_issuing_agencys_key(self):
+        """The issuing route signs under the issuing agency's own key and refuses a signature made
+        under a key the agency is not registered to (PE.3b). bulk-enroll asked the signer for no
+        agency, so a federated authority's batch was signed under whatever key the host held. A
+        stand-in signer answers with a key other than agency 1's registered one."""
+        import argparse
+        from unittest import mock
+        import polaris
+        run_cli('key-register', '1', 'ab' * 1952, '--note', 'the agency key this test registers')
+        asked = []
+
+        class OtherKeySigner:
+            class SigningError(Exception):
+                pass
+
+            class PQCUnavailableError(Exception):
+                pass
+
+            @staticmethod
+            def token_value_serial_problem(value):
+                return None
+
+            @staticmethod
+            def signature_with_key_for_token(value, agency_id=None):
+                asked.append(agency_id)
+                return b'\x01' * 3309, 'ML-DSA-65', 'cd' * 1952
+
+        csv = self._extract([
+            ('Key One', '1990-01-01', 'US-PA', 'FACE', 'BULKKEY-TOK-1', 'BULKKEY-SER-1', '{1}'),
+        ])
+        args = argparse.Namespace(csv=csv, agency=1, algorithm=1, note=None, dry_run=False)
+        err = io.StringIO()
+        with mock.patch.object(polaris, '_load_signer', return_value=OtherKeySigner), \
+                contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+            polaris.cmd_bulk_enroll(args)
+        self.assertEqual(stop.exception.code, 3, err.getvalue())
+        self.assertEqual(asked, [1], 'the signer is asked for the issuing agency, as the issuing route asks')
+        self.assertIn('registered to a different signing key', err.getvalue())
+        self.assertEqual(self._count('BULKKEY-TOK-%'), {})
 
     def test_bulk_enroll_issues_batch_set_based(self):
         csv = self._extract([
@@ -794,6 +862,36 @@ class UserDeactivateCommandTests(CLIBaseTestCase):
     def test_deactivate_unknown_user_fails(self):
         r = run_cli('user-deactivate', 'nobody', expect_success=False)
         self.assertEqual(r.returncode, 1)
+
+
+class KeyEventCommandTests(CLIBaseTestCase):
+    """key-register, key-retire and key-compromise are the one product writer of authority keys
+    (06_triggers.sql, KEY-CEREMONY.md). Each read its new row by position through the CLI's
+    dict cursor, so as the schema owner every event failed with "key event failed: 0" and
+    nothing was recorded; only the application role's refusal, which comes first, was tested."""
+
+    KEY = 'ab' * 1952
+
+    def _events(self):
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT event FROM AuthorityKeyEvent WHERE agency_id = 1 AND public_key_hex = %s "
+                            "ORDER BY event_id", (self.KEY,))
+                events = [r['event'] for r in cur.fetchall()]
+                cur.execute("SELECT signing_public_key_hex FROM Agency WHERE agency_id = 1")
+                return events, cur.fetchone()['signing_public_key_hex']
+        finally:
+            conn.close()
+
+    def test_the_owner_registers_then_retires_an_authority_key(self):
+        reg = run_cli('key-register', '1', self.KEY, '--note', 'a key this test registers')
+        self.assertIn('Recorded key event', reg.stdout)
+        self.assertEqual(self._events(), (['registered'], self.KEY),
+                         'registered, and made the agency\'s current signing key')
+        ret = run_cli('key-retire', '1', self.KEY, '--note', 'retired by this test')
+        self.assertIn('retired', ret.stdout)
+        self.assertEqual(self._events()[0], ['registered', 'retired'])
 
 
 class GovernanceCommandsRefuseTheAppRole(unittest.TestCase):
