@@ -1,14 +1,29 @@
 # License and copyright for the files that cannot carry a header (the REUSE specification's
 # annotation format). Every other source file states both in its first lines.
-#
-# These files' bytes are pinned: a released migration is recorded by its SHA-256 when it is
-# applied, and `polaris-migrate.sh --down` refuses a file changed since; the frozen version-1
-# vectors are never edited. check_source_files_carry_license_header holds this list to the
-# paths it exempts.
 version = 1
 
+# The pinned files. A released migration is recorded by its SHA-256 when it is applied, and
+# `polaris-migrate.sh --down` refuses a file changed since; the frozen version-1 vectors are
+# never edited. check_source_files_carry_license_header holds this entry to the paths it exempts.
 [[annotations]]
 path = ["polaris_sql/migrations/**", "conformance/frozen/**"]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Egor Khaklin and the Polaris contributors"
 SPDX-License-Identifier = "Apache-2.0"
+
+# The brand files: the Polaris logo and star mark, the owl emblem, and the Khaklin Technologies
+# lockup. The license covers the files, not the names and marks they carry (TRADEMARKS.md).
+[[annotations]]
+path = ["site/polaris_logo_clean.png", "site/favicon.svg", "polaris_web/static/favicon.svg",
+        "docs/assets/seal.svg", "docs/assets/hero.svg"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Egor Khaklin"
+SPDX-License-Identifier = "Apache-2.0"
+
+# The OpenID Certified mark belongs to the OpenID Foundation and is used under its
+# certification terms. The project does not license it (TRADEMARKS.md).
+[[annotations]]
+path = ["docs/assets/openid-certified-mark-on-white.png", "site/openid-certified-mark-on-white.png"]
+precedence = "closest"
+SPDX-FileCopyrightText = "OpenID Foundation"
+SPDX-License-Identifier = "LicenseRef-OpenID-Certified-Mark"

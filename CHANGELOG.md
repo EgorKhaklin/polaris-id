@@ -29,12 +29,14 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The Python SDK and `polaris-verify` refuse hex with whitespace between bytes, which `bytes.fromhex` skipped.
 - `polaris-verify --verify-dir` reports a vector that is not a JSON object instead of raising.
 - `polaris-verify` no longer calls missing revocation evidence a revocation in its long-term-validation note.
+- NOTICE names psycopg 3 and certifi, which are not permissive, and drops files the tree no longer ships.
 
 ### Added
 
 - 3 conformance cases (184 in all): a third party's field of the wrong type is refused, not a crash.
 - 3 conformance cases (187 in all): a hex field with a character that is not hex, or a space, is refused.
 - `vectors/anchors/ml-dsa-65-issuer.json`, the sample issuer's key, to try `polaris-verify` from PyPI without a clone.
+- `TRADEMARKS.md`: the license covers the files, not the Polaris, owl, Khaklin Technologies or OpenID Certified marks.
 
 ### Changed
 
