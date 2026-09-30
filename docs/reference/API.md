@@ -1858,6 +1858,11 @@ Status codes:
 - `429`: rate limited
 - `500`: server error (sanitized)
 
+A NUL character in the path, the query or a form field is `400` on every route: PostgreSQL text
+cannot hold one. A JSON body with a NUL in any string or key, a non-finite number (`NaN`,
+`Infinity`, `1e400`) or nesting past the parser's depth is malformed, and each route answers it as
+it answers any malformed body.
+
 ---
 
 ## Rate limits
