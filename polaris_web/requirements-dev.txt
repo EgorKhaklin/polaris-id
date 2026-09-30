@@ -29,7 +29,7 @@ pytest>=9.1.1,<10.0
 # After installing this package, run `playwright install chromium` once
 # to download the browser binary (~250MB). polaris_web/test_e2e_atlas.py
 # gracefully skips if either the package OR the browser is unavailable.
-playwright>=1.62.0,<2.0
+playwright>=1.63.0,<2.0
 
 # ---- Test-only: coverage.py (v9.171 / roadmap P0.8) ----
 # scripts/polaris-coverage.sh runs the suites under coverage, combines them, and
