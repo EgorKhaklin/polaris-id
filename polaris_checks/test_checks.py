@@ -2906,6 +2906,13 @@ def test_images_install_hashed_locks_check_discriminates(tmp_path):
     write({"polaris_web/Dockerfile": "FROM x\n", "polaris_web/Dockerfile.postgres": "FROM y\n",
            "polaris_web/Dockerfile.prod": "FROM z\n"})
     assert checks.check_images_install_hashed_locks(tmp_path)[0].level == "FAIL", "must FAIL when it finds nothing to check"
+    # Per image, not a total: dev 1 + prod 2 still reach 3 while the database image lost its install.
+    write({"polaris_web/Dockerfile.postgres": "RUN apk add python3\n"})
+    assert checks.check_images_install_hashed_locks(tmp_path)[0].level == "FAIL", "must FAIL when one image has no hashed install"
+    # An environment marker on a fully hashed pin is still a pin.
+    write({"polaris_web/requirements-patroni.txt":
+           lock("patroni==4.1.5", "3") + 'typing-extensions==4.16.0 ; python_version < "3.13" \\\n    --hash=sha256:' + "4" * 64 + "\n"})
+    assert checks.check_images_install_hashed_locks(tmp_path)[0].level == "OK", "must PASS on a hashed pin with an environment marker"
 
 
 def test_prod_image_no_test_deps_check_discriminates(tmp_path):
@@ -4220,17 +4227,19 @@ def test_prod_real_pqc_check_discriminates(tmp_path):
     web = tmp_path / "polaris_web"
     gh = tmp_path / ".github" / "workflows"
     web.mkdir(); gh.mkdir(parents=True)
-    GOOD_DF = "FROM x\nRUN pip install liboqs-python\n"
+    GOOD_DF = "FROM x\n# liboqs-python signs in production\nRUN pip install --require-hashes -r /tmp/requirements-pqc.txt\n"
+    GOOD_LOCK = "liboqs-python==0.16.0.1 \\\n    --hash=sha256:" + "0" * 64 + "\n"
     GOOD_COMPOSE = ("services:\n  app:\n    environment:\n"
                     "      POLARIS_USE_REAL_PQC: '1'\n"
                     "      POLARIS_PQC_SIGNING_KEY_FILE: /run/secrets/polaris_signing_key\n"
                     "    secrets:\n      - polaris_signing_key\n")
     GOOD_CI = "jobs:\n  d:\n    steps:\n      - name: Verify real ML-DSA-65 signing inside the prod image\n"
 
-    def write(df=GOOD_DF, compose=GOOD_COMPOSE, ci=GOOD_CI):
+    def write(df=GOOD_DF, compose=GOOD_COMPOSE, ci=GOOD_CI, lock=GOOD_LOCK):
         (web / "Dockerfile.prod").write_text(df)
         (web / "docker-compose.prod.yml").write_text(compose)
         (gh / "ci.yml").write_text(ci)
+        (web / "requirements-pqc.txt").write_text(lock)
 
     # 1. liboqs not installed in the prod image -> FAIL.
     write(df="FROM x\nRUN pip install flask\n")
@@ -4256,6 +4265,22 @@ def test_prod_real_pqc_check_discriminates(tmp_path):
     write()
     assert checks.check_prod_real_pqc(tmp_path)[0].level == "OK", \
         "must PASS with liboqs in the image, the flag on, the key secret, and CI verification"
+
+    # 6. Only a comment names liboqs-python; the install is gone -> FAIL (the 2026-09-30 review's
+    # bypass: _read keeps comments in Dockerfile.prod).
+    write(df="FROM x\n# RUN pip install liboqs-python (liboqs-python signs in production)\n")
+    assert checks.check_prod_real_pqc(tmp_path)[0].level == "FAIL", \
+        "must FAIL when only a comment names liboqs-python"
+
+    # 7. The pqc lock installed without hash checking -> FAIL.
+    write(df="FROM x\nRUN pip install -r /tmp/requirements-pqc.txt\n")
+    assert checks.check_prod_real_pqc(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the pqc lock is installed without --require-hashes"
+
+    # 8. The lock names liboqs-python without its hashes -> FAIL.
+    write(lock="liboqs-python==0.16.0.1\n")
+    assert checks.check_prod_real_pqc(tmp_path)[0].level == "FAIL", \
+        "must FAIL when requirements-pqc.txt does not pin liboqs-python with hashes"
 
 
 def test_signature_self_contained_verify_check_discriminates(tmp_path):

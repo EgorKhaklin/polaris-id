@@ -1548,15 +1548,32 @@ def check_signature_self_contained_verify(root: pathlib.Path) -> list[Finding]:
 # verifies real ML-DSA-65 actually works inside the prod image. The real key
 # CUSTODY (HSM/KMS) stays operator-gated; the compose ships a generated key.
 # ---------------------------------------------------------------------------
+def _dockerfile_code(text: str) -> str:
+    """A Dockerfile's instructions without its comments, one logical line per instruction: a
+    comment may name what an instruction no longer does, and _read keeps comments for any
+    suffix _COMMENT_SYNTAX does not list (Dockerfile.prod is `.prod`)."""
+    code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+    return code.replace("\\\n", " ")
+
+
 def check_prod_real_pqc(root: pathlib.Path) -> list[Finding]:
     df = _read(root, "polaris_web/Dockerfile.prod")
     compose = _read(root, "polaris_web/docker-compose.prod.yml")
     if not df or not compose:
         return _fail("prod_real_pqc", "Dockerfile.prod / docker-compose.prod.yml missing")
-    if "liboqs-python" not in df:
+    # Read the RUN lines, not the file: since the hash-pinned locks the install names
+    # requirements-pqc.txt, and "liboqs-python" survived only in comments, so deleting the
+    # install left this check green (found by review, 2026-09-30).
+    installs = [cmd for cmd in re.findall(r"\bpip3?\s+install\b[^\n&;|]*", _dockerfile_code(df))
+                if re.search(r"(?:^|\s)-r\s+\S*requirements-pqc\.txt\b", cmd)]
+    if not installs or not all("--require-hashes" in cmd for cmd in installs):
         return _fail("prod_real_pqc",
-                     "Dockerfile.prod must install liboqs-python so real ML-DSA-65 signing is "
-                     "available in the prod image (not just testable in a CI job)")
+                     "Dockerfile.prod must install requirements-pqc.txt (liboqs-python) with "
+                     "--require-hashes, so real ML-DSA-65 signing is in the prod image")
+    lock = _read(root, "polaris_web/requirements-pqc.txt")
+    if not re.search(r"(?m)^liboqs-python==[^\s\\;]+\s*\\\n\s+--hash=sha256:[0-9a-f]{64}", lock):
+        return _fail("prod_real_pqc",
+                     "polaris_web/requirements-pqc.txt must pin liboqs-python with its sha256 hashes")
     if not re.search(r"POLARIS_USE_REAL_PQC:\s*['\"]?1", compose):
         return _fail("prod_real_pqc",
                      "the prod compose must set POLARIS_USE_REAL_PQC=1 so issuance uses real PQC, "
@@ -1664,10 +1681,13 @@ def check_images_install_hashed_locks(root: pathlib.Path) -> list[Finding]:
         df = _read(root, rel)
         if not df:
             return _fail(name, f"{rel} is missing")
-        # Comments dropped (a comment may say "pip install"), then one RUN per logical line.
-        code = "\n".join(ln for ln in df.splitlines() if not ln.lstrip().startswith("#"))
-        logical = code.replace("\\\n", " ")
-        for cmd in re.findall(r"\bpip3?\s+install\b[^\n&;|]*", logical):
+        here = re.findall(r"\bpip3?\s+install\b[^\n&;|]*", _dockerfile_code(df))
+        if not here:
+            # Per image, not a total: one Dockerfile losing its install (or moving to another
+            # installer) must not hide behind the others' count.
+            return _fail(name, f"{rel} has no pip install of a hashed lock; each image installs "
+                               "its Python packages from one")
+        for cmd in here:
             installs += 1
             if "--require-hashes" not in cmd:
                 return _fail(name, f"{rel}: `{' '.join(cmd.split())[:90]}` installs without "
@@ -1680,7 +1700,9 @@ def check_images_install_hashed_locks(root: pathlib.Path) -> list[Finding]:
                 path = "polaris_web/" + lock.rsplit("/", 1)[-1]
                 text = _read(root, path)
                 pins = re.findall(r"(?m)^[A-Za-z0-9_.\-]+\S*", text)
-                hashed = re.findall(r"(?m)^[A-Za-z0-9_.\-]+==[^\s\\]+ \\\n\s+--hash=sha256:[0-9a-f]{64}", text)
+                # An environment marker (`pkg==1.0 ; python_version < "3.13" \`) is still a pin.
+                hashed = re.findall(r"(?m)^[A-Za-z0-9_.\-]+==[^\s\\;]+(?:\s*;[^\\\n]*)?\s*\\\n"
+                                    r"\s+--hash=sha256:[0-9a-f]{64}", text)
                 if not pins:
                     return _fail(name, f"{path} (installed by {rel}) is missing or empty")
                 if len(hashed) != len(pins):
