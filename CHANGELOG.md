@@ -54,6 +54,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-relying-party.py` rejects, instead of crashing, when the issuer refuses its OAuth client.
 - `polaris-relying-party.py` exits 3, instead of crashing, on a presentation that is not an object or an anchor it cannot read.
 - The exchange gateway answers 502, not a non-JSON reply, when its upstream answers NaN, Infinity or 1e400.
+- The trust-anchors loader refuses a key of no accepted length; signature checks refuse, not raise, on a non-string.
 
 ### Added
 
