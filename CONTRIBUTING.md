@@ -7,6 +7,9 @@ governed by the [Code of Conduct](CODE_OF_CONDUCT.md); decisions and roles by [G
 
 ## How to propose a change
 
+Questions go to [Discussions](https://github.com/EgorKhaklin/polaris-id/discussions), not issues;
+[.github/SUPPORT.md](.github/SUPPORT.md) says where each kind of message goes.
+
 - **Small fixes** (a typo, a broken link, a missed test, an isolated bug): open an issue or a pull
   request. The [pull-request template](.github/PULL_REQUEST_TEMPLATE.md) asks for the motivation,
   the change and the blast radius.

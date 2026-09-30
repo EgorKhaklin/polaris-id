@@ -1,0 +1,34 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Questions about installing, running or verifying Polaris ID. A bug you can reproduce goes in an issue; a security finding goes through a private advisory (SECURITY.md), never a public post.
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part
+      options:
+        - polaris-verify (the offline verifier)
+        - polaris-oid4vp (the OpenID4VP verifier)
+        - polaris-sdk-python or polaris-sdk-ts
+        - The server, the schema or the operator application
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`pip show <package>`, `npm ls polaris-sdk-ts`, or the commit you built from."
+  - type: textarea
+    id: question
+    attributes:
+      label: What you are trying to do
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: What you ran and what it printed
+      description: The command and its output are often the whole answer.
+      render: text

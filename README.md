@@ -290,6 +290,7 @@ The first two columns matter most: every other row is deployed at national scale
 | Operating an instance | [docs/operator/](docs/operator/README.md) |
 | Asking why a mechanism is built this way | [docs/design/](docs/design/README.md) |
 | Reading it as research | [Project report, Version 3](docs/paper/polaris_project_report_v3.pdf) (the system at 1.0.0-rc.7) · [Russian edition](docs/paper/polaris_project_report_v3_ru.pdf) · [CITATION.cff](CITATION.cff) |
+| Asking a question | [Discussions](https://github.com/EgorKhaklin/polaris-id/discussions) · [where each kind of message goes](.github/SUPPORT.md) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md) |
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
