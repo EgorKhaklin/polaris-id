@@ -9,9 +9,14 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ## Unreleased
 
+### Fixed
+
+- Installed as a package, `polaris-id` refuses the four commands that need a clone and says which; `--version` printed `unknown`.
+
 ### Changed
 
 - Published: `polaris-sdk-ts` 1.0.0-rc.6 on npm under `next`, approved by the maintainer with a second factor.
+- `polaris-id-cli` is packaged as 1.0.0rc1 for PyPI: metadata, README and links for a package page, built with setuptools alone.
 
 ### Fixed
 

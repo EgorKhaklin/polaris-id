@@ -1,27 +1,20 @@
-# polaris-id-cli — Python packaging metadata.
+# polaris-id-cli: Python packaging metadata.
 #
-# Built from the Polaris repository's polaris_cli/ subdirectory.
-# Project source-of-truth: https://github.com/EgorKhaklin/polaris
+# Built from the polaris_cli/ directory of https://github.com/EgorKhaklin/polaris-id and published
+# to PyPI by .github/workflows/publish.yml through trusted publishing: no token exists to leak.
+# Locally: `python3 -m build polaris_cli` makes the wheel and sdist; `twine check` validates them.
 #
-# Build + publish workflow:
-#     cd polaris_cli
-#     python3 -m build              # produces dist/polaris_id_cli-X.Y.Z-py3-none-any.whl + .tar.gz
-#     twine check dist/*            # validates metadata + README rendering
-#     twine upload dist/*           # actual PyPI upload (needs PYPI_API_TOKEN)
-#
-# Name is `polaris-id-cli` because `polaris-cli` is taken on PyPI by an
-# unrelated "Polaris Cloud" resource-management tool. The `polaris-id`
-# console script keeps `polaris-cli`'s `polaris` script intact for users
-# who have both installed.
+# The name is `polaris-id-cli` because `polaris-cli` on PyPI is an unrelated tool; the console
+# script is `polaris-id` for the same reason.
 
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "polaris-id-cli"
-version = "9.30.0"
-description = "Command-line interface to the Polaris Identity Token System — UC-1 through UC-9 stored procedures, audit-log tail, ad-hoc SQL, and user-management workflow against a running Polaris Postgres database."
+version = "1.0.0rc1"
+description = "Operator command line for a Polaris ID database: lifecycle procedures, governance, audit and read-only SQL against a running Polaris PostgreSQL. Pre-pilot."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
@@ -78,11 +71,11 @@ user-mgmt = [
 polaris-id = "polaris_cli.polaris:main"
 
 [project.urls]
-Homepage = "https://github.com/EgorKhaklin/polaris"
-Repository = "https://github.com/EgorKhaklin/polaris"
-Documentation = "https://github.com/EgorKhaklin/polaris/blob/main/polaris_cli/README.md"
-Issues = "https://github.com/EgorKhaklin/polaris/issues"
-Changelog = "https://github.com/EgorKhaklin/polaris/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/EgorKhaklin/polaris-id"
+Repository = "https://github.com/EgorKhaklin/polaris-id"
+Documentation = "https://github.com/EgorKhaklin/polaris-id/blob/main/polaris_cli/README.md"
+Issues = "https://github.com/EgorKhaklin/polaris-id/issues"
+Changelog = "https://github.com/EgorKhaklin/polaris-id/blob/main/CHANGELOG.md"
 
 # --------------------------------------------------------------------------
 # Setuptools: explicit package + package-directory mapping. The pyproject.toml
@@ -99,10 +92,9 @@ packages = ["polaris_cli"]
 package-dir = { "polaris_cli" = "." }
 include-package-data = false
 
-# Exclude development files from the wheel via MANIFEST.in (sdist) and
-# explicit exclude-package-data (wheel). The test suite needs a live
-# Polaris database, so shipping it inside the wheel would only confuse
-# downstream consumers.
+# exclude-package-data keeps bytecode out. It cannot keep test_cli.py out: that is a module of
+# the package directory, not data, so the wheel carries it. It needs a live Polaris database
+# and does nothing on import.
 
 [tool.setuptools.package-data]
 polaris_cli = []

@@ -79,7 +79,7 @@ def _require_werkzeug():
         return generate_password_hash
     except ImportError:
         sys.stderr.write("ERROR: werkzeug is required for user-management commands.\n")
-        sys.stderr.write("    pip install Flask  (werkzeug ships with Flask)\n")
+        sys.stderr.write("    pip install 'polaris-id-cli[user-mgmt]'  (or Flask, which ships it)\n")
         sys.exit(1)
 
 
@@ -534,7 +534,7 @@ def cmd_issue(args):
         sys.exit(1)
     # Signed as the issuing route signs. Without a signature uc1 stores its legacy literal,
     # which verifies under nothing, and bulk-enroll's rule is never to store one (_load_signer).
-    signer = _load_signer()
+    signer = _load_signer('issue')
     conn = connect()
     try:
         with conn.cursor() as cur:
@@ -645,8 +645,7 @@ def cmd_transparency_report(args):
     try:
         from polaris_web import transparency
     except ImportError as exc:
-        sys.stderr.write(red(f"the transparency module is unavailable: {exc}\n"))
-        sys.exit(2)
+        _needs_the_application('transparency-report', 'transparency', exc)
 
     conn = connect()
     try:
@@ -706,8 +705,7 @@ def cmd_migrate_population(args):
     try:
         import migration
     except ImportError as exc:
-        sys.stderr.write(red(f"the migration module is unavailable: {exc}\n"))
-        sys.exit(2)
+        _needs_the_application('migrate-population', 'migration', exc)
 
     conn = connect()
     try:
@@ -2061,11 +2059,31 @@ _BULK_STAGING_COLS = (
 )
 
 
-def _load_signer():
-    """Import the real signing module. Bulk enrollment SIGNS every token_value
-    through the same path single issuance uses; it must never store an unsigned
-    or placeholder-literal token, so if the module is unreachable we refuse the
-    whole operation rather than fall back to something unverifiable."""
+_REPO_URL = "https://github.com/EgorKhaklin/polaris-id"
+
+
+def _needs_the_application(command, module, exc):
+    """Refuse (exit 2) a command that runs through a module of the Polaris application.
+    polaris_web/ ships in a checkout of the repository, not in the polaris-id-cli package, so
+    from a package install the refusal says where the command runs instead of the bare import
+    error; in a checkout it names the import error, which is then the thing to fix."""
+    web = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "polaris_web")
+    if os.path.isdir(web):
+        sys.stderr.write(red(f"`{command}` needs polaris_web/{module}.py, which is not importable "
+                             f"here: {exc}\n"))
+    else:
+        sys.stderr.write(red(
+            f"`{command}` runs through the Polaris application's {module} module, which ships in a "
+            f"checkout of {_REPO_URL}, not in this package. Run it from a clone: "
+            f"python3 polaris_cli/polaris.py {command} ...\n"))
+    sys.exit(2)
+
+
+def _load_signer(command):
+    """Import the real signing module. issue and bulk-enroll SIGN every token_value through
+    the path the issuing route uses; neither may store an unsigned or placeholder-literal
+    token, so if the module is unreachable the whole operation is refused rather than fall
+    back to something unverifiable."""
     try:
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         pw = os.path.join(repo_root, "polaris_web")
@@ -2073,11 +2091,8 @@ def _load_signer():
             sys.path.insert(0, pw)
         import pqc_signing
         return pqc_signing
-    except Exception as e:  # pragma: no cover - environment-dependent
-        sys.stderr.write(red(
-            "Bulk enrollment requires the signing module (polaris_web/pqc_signing) so every "
-            f"token is really signed; it is not importable here: {e}\n"))
-        sys.exit(2)
+    except Exception as e:  # noqa: BLE001 -- absent (a package install) or broken: both refuse
+        _needs_the_application(command, "pqc_signing", e)
 
 
 def _issuance_signature(signer, cur, token_value, agency_id):
@@ -2101,6 +2116,8 @@ def cmd_bulk_enroll(args):
         sys.stderr.write(red(f"No such extract file: {args.csv}\n"))
         sys.exit(1)
     cols = ", ".join(_BULK_STAGING_COLS)
+    # Before any database work: from a package install this refuses without touching a batch.
+    signer = _load_signer('bulk-enroll')
     conn = connect()
     try:
         with conn.cursor() as cur:
@@ -2137,7 +2154,6 @@ def cmd_bulk_enroll(args):
             # row, so a mass-issued token can never claim a signature it lacks.
             import psycopg2 as _pg
             from psycopg2.extras import execute_values as _ev
-            signer = _load_signer()
             values = []
             for r in in_rows:
                 # 2026-09-27: a token value that is not a credential serial (WIRE-SPEC 3.7) is
@@ -2190,7 +2206,8 @@ def cmd_bulk_enroll(args):
 # ----------------------------------------------------------------------------
 
 def _polaris_version():
-    """The shipped version, read from the one canonical source."""
+    """In a checkout, the tree's version, read from the one canonical source. Installed as the
+    polaris-id-cli package, which carries no polaris_web/, the package's own version."""
     version_file = os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), 'polaris_web', '__version__.py')
     try:
@@ -2201,7 +2218,11 @@ def _polaris_version():
                     return match.group(1)
     except OSError:
         pass
-    return 'unknown'
+    try:
+        from importlib.metadata import version
+        return '%s (polaris-id-cli)' % version('polaris-id-cli')
+    except Exception:  # noqa: BLE001 -- not installed as a package either
+        return 'unknown'
 
 
 POLARIS_VERSION = _polaris_version()
