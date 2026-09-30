@@ -132,6 +132,21 @@ test("limits are enforced, and unknown limits are refused rather than ignored", 
   assert.match(String(note), /does not understand/);
 });
 
+// 2026-09-30: `limits` as a string or a number read as no limits here, and the Python verifiers
+// read a list that way too, so one signed grant got two answers. Present and not a plain object
+// is refused; absent still means unlimited.
+test("limits that are not an object are refused, and absent limits still mean unlimited", () => {
+  for (const limits of [[{ max_uses: 1 }], [], "max_uses=1", 1, 0, true]) {
+    const [ok, note] = grantWithinLimits({ limits }, 5, 1e9);
+    assert.equal(ok, false, JSON.stringify(limits));
+    assert.match(String(note), /not an object/);
+  }
+  for (const grant of [null, [], "grant", 3]) assert.equal(grantWithinLimits(grant, 0)[0], false);
+  for (const grant of [{}, { limits: null }, { limits: {} }]) {
+    assert.deepEqual(grantWithinLimits(grant, 1e6, 1e9), [true, null], JSON.stringify(grant));
+  }
+});
+
 test("only the holder who signed a grant can revoke it", () => {
   const rev = { format: "polaris-grant-revocation/1", grant_id: "g1", public_key_hex: "AB".repeat(32) };
   assert.equal(revocationEndsGrant(rev, GRANT), true, "hex case must not defeat a revocation");

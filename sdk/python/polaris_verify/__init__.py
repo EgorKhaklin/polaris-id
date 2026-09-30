@@ -1107,10 +1107,17 @@ def grant_within_limits(grant, uses_so_far: int = 0, amount=None):
     service that has never heard of `max_transfers` must not be treated as unlimited; that
     is how a bounded grant silently becomes an unbounded one.
     """
-    if not isinstance(grant, dict) or not isinstance(grant.get("limits"), dict):
+    # 2026-09-30: a `limits` that was present but not an object (a list, a string, a number)
+    # was read as no limits at all, so a signed bounded grant answered as unlimited here and
+    # in polaris-verify, while the TypeScript SDK refused a list. Absent means unlimited;
+    # anything else that is not an object is a limit this verifier cannot read, and refused.
+    if not isinstance(grant, dict):
+        return False, "the grant is not an object"
+    limits = grant.get("limits")
+    if limits is None:
         limits = {}
-    else:
-        limits = grant["limits"]
+    elif not isinstance(limits, dict):
+        return False, "the grant's limits are not an object; refusing rather than ignoring them"
     unknown = sorted(set(limits) - {"max_uses", "max_amount"})
     if unknown:
         return False, ("the grant carries limits this verifier does not understand (%s); refusing "
