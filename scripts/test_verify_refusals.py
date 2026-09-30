@@ -637,6 +637,34 @@ class SignedDocumentLongTermValidation(unittest.TestCase):
         self.assertIn("no authentic, fresh revocation feed from the signer", unproven["note"])
         self.assertNotIn("credential revoked", unproven["note"])
 
+    def test_a_feed_that_was_not_current_at_the_instant_proves_nothing(self):
+        """Found by the daily adversarial review (2026-09-30): with `and fv.get("fresh")` removed
+        from the feed decision, every verifier test still passed, so a signer's feed that had
+        expired months before the timestamp fixed the instant counted as proof of non-revocation.
+        The signer's own key signs each of these; only the window is wrong."""
+        leaf = hashlib.sha3_256(b"TKN-NOTIONAL-1").hexdigest()
+        doc = self.document(on_behalf_of={"credential_hash": leaf, "holder": "notional"})
+
+        def feed(issued, expires, leaves=()):
+            body = {k: val for k, val in self.feed(list(leaves)).items() if k not in ("signature_hex", "public_key_hex")}
+            body.update(issued_at=issued, expires_at=expires)
+            return self.seal(body, V._revocation_feed_canonical, self.signer)
+
+        for label, stale in (("expired months before the instant", feed("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")),
+                             ("issued after the instant", feed("2026-06-01T00:00:00Z", "2026-06-02T00:00:00Z"))):
+            with self.subTest(label):
+                v = self.decide(self.container(doc, feed=stale))
+                self.assertIs(v["valid_long_term"], False, label)
+                self.assertIs(v["ltv"]["credential_unrevoked_at_instant"], False, label)
+                self.assertIn("no authentic, fresh revocation feed from the signer", v["note"])
+        # A feed from another key that LISTS the credential is not a revocation either: the note
+        # must say the evidence is missing, not that the credential was revoked.
+        foreign = self.seal({k: val for k, val in self.feed([leaf]).items() if k not in ("signature_hex", "public_key_hex")},
+                            V._revocation_feed_canonical, self.second)
+        v = self.decide(self.container(doc, feed=foreign))
+        self.assertIs(v["valid_long_term"], False)
+        self.assertNotIn("credential revoked", v["note"])
+
     def test_the_trust_list_decides_the_signer_key_at_the_instant(self):
         anchors = [self.publisher[1].hex()]
         active = self.decide(self.container(), trust_list=self.trust_list(), trusted_anchors=anchors)
