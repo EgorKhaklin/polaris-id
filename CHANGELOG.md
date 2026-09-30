@@ -55,6 +55,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-relying-party.py` exits 3, instead of crashing, on a presentation that is not an object or an anchor it cannot read.
 - The exchange gateway answers 502, not a non-JSON reply, when its upstream answers NaN, Infinity or 1e400.
 - The trust-anchors loader refuses a key of no accepted length; signature checks refuse, not raise, on a non-string.
+- `polaris-create-operator.sh --target=docker-stack` hashes the password in the app container; the host needs no werkzeug.
 
 ### Added
 
@@ -65,6 +66,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `TRADEMARKS.md`: the license covers the files, not the Polaris, owl, Khaklin Technologies or OpenID Certified marks.
 - Discussions forms for questions, needs and interop results; `.github/SUPPORT.md` says where each kind of message goes.
 - Code scanning: CodeQL (security-extended) over the Python, TypeScript, Rust and workflows, zizmor over the workflows, and OpenSSF Scorecard.
+- `lab/strategy/006/try.sh`: from a clone, one command to a credential that PyPI's polaris-verify verifies under a key minted on the machine.
 
 ### Changed
 
