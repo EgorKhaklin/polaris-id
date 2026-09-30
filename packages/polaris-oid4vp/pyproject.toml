@@ -30,6 +30,10 @@ polaris-oid4vp = "polaris_oid4vp.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/EgorKhaklin/polaris-id"
+Documentation = "https://github.com/EgorKhaklin/polaris-id/tree/main/packages/polaris-oid4vp#readme"
+Changelog = "https://github.com/EgorKhaklin/polaris-id/blob/main/CHANGELOG.md"
+Issues = "https://github.com/EgorKhaklin/polaris-id/issues"
+Source = "https://github.com/EgorKhaklin/polaris-id/tree/main/packages/polaris-oid4vp"
 Assessment = "https://github.com/EgorKhaklin/polaris-id/tree/main/lab/interop"
 
 [tool.setuptools.packages.find]
