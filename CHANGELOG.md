@@ -15,6 +15,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- Published: `polaris-oid4vp` 1.0.0rc11 (not certified; 1.0.0rc7 is) and the first `polaris-id-cli`, 1.0.0rc1, on PyPI, each approved at the environment gate.
 - `publish.yml` can publish `polaris-id-cli`, gated on its wheel installing and behaving alone; every publish now waits for the maintainer to approve the run.
 - Published: `polaris-sdk-ts` 1.0.0-rc.6 on npm under `next`, approved by the maintainer with a second factor.
 - `polaris-id-cli` is packaged as 1.0.0rc1 for PyPI: metadata, README and links for a package page, built with setuptools alone.

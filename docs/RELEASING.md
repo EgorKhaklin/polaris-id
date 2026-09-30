@@ -14,10 +14,16 @@ externally observable changes.
 | Artifact | Registry | Name | On the registry | Before it |
 |---|---|---|---|---|
 | `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc5, 2026-09-30 | 1.0.0rc4, 2026-09-28 |
-| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc10, 2026-09-30 | 1.0.0rc9, 2026-09-30 |
+| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc11, 2026-09-30 | 1.0.0rc10, 2026-09-30 |
 | `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc5, 2026-09-30 | 1.0.0rc4, 2026-09-28 |
+| `polaris_cli/` | PyPI | `polaris-id-cli` | 1.0.0rc1, 2026-09-30 | none, the first |
 | `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.6, 2026-09-30 | 1.0.0-rc.5, 2026-09-28 |
 
+> **2026-09-30, evening:** `polaris-oid4vp` 1.0.0rc11, which takes ISO 18013-5's document
+> signer as an issuer certificate usage (not certified; 1.0.0rc7 is), and the first
+> `polaris-id-cli`, 1.0.0rc1, each held at the environment gate until the maintainer approved
+> the run, then read back from the live registry.
+>
 > **2026-09-30, later:** `polaris-verify` and `polaris-sdk-python` 1.0.0rc5 and `polaris-oid4vp`
 > 1.0.0rc10 went out the same way, each read back from the live registry, carrying the fixes
 > SECURITY.md lists against their predecessors. 1.0.0rc10 is not certified; 1.0.0rc7 is.
@@ -277,6 +283,9 @@ worse state to be in than three runs.
 | 36702201606 | 2026-09-30 | `polaris-verify` 1.0.0rc5 | published to PyPI by trusted publishing; read back from the live registry |
 | 36702209438 | 2026-09-30 | `polaris-sdk-python` 1.0.0rc5 | published to PyPI the same way; read back from the live registry |
 | 36702217173 | 2026-09-30 | `polaris-oid4vp` 1.0.0rc10 | published to PyPI the same way; read back, and STRANGER-PATH walked against it. Not certified: 1.0.0rc7 stays the certified version |
+| 36743013280 | 2026-09-30 | dry run | built and gated the four Python packages, polaris-id-cli among them, and the npm tarball; nothing published |
+| 36743023024 | 2026-09-30 | `polaris-oid4vp` 1.0.0rc11 | approved by the maintainer at the environment gate, published by trusted publishing; read back, and STRANGER-PATH walked against it. Not certified: 1.0.0rc7 stays the certified version |
+| 36743032972 | 2026-09-30 | `polaris-id-cli` 1.0.0rc1 | the first: approved at the gate, published the same way; read back, installed alone, `--version` and the clone-only refusals checked |
 | 36712332414 | 2026-09-30 | `polaris-sdk-ts` 1.0.0-rc.6 | staged (id d1d7abd7-f1ed-47ab-adb6-5f62497f3f0c); not published by the job; npm requires a maintainer's second factor |
 | (by hand) | 2026-09-30 | `polaris-sdk-ts` 1.0.0-rc.6 | approved by the maintainer with a second factor and read back from the live registry under `next`; shasum e57ef6929e7bf809efccd51c325a0592ca53b88d |
 

@@ -32,7 +32,7 @@ accepts everything prints the same success line.
 | 2026-09-17 to 2026-09-28 | walt.id, the same image | PyPI: 1.0.0rc1, rc3, rc7, rc8 | accepted each time | as above | [STRANGER-PATH.md](../docs/STRANGER-PATH.md), walked from the registry |
 | 2026-09-27 | Credo 0.6.3 (OpenWallet Foundation, TypeScript) | PyPI 1.0.0rc7 | accepted | wrong issuer key; a `cnf` key Credo does not hold; the same response twice; Credo trusting an unrelated CA (Credo refused) | [lab/interop/credo](interop/credo/README.md) |
 | 2026-09-28 | eudi-dev v2.3.7 and v2.4.3 (Go), HAIP 1.0 enforced in strict mode | PyPI 1.0.0rc7 | accepted | wrong issuer key; the answered request again; a mismatched `client_id` (the wallet refused) | [lab/interop/eudi-dev](interop/eudi-dev/README.md) |
-| 2026-09-30 | eudi-dev v2.3.7 (Go), HAIP strict, presenting a PID credential its own issuer signed (`x5c`, ISO 18013-5 document signer) | this repository, c8014978 (1.0.0rc11); 1.0.0rc10 refused it | accepted | an unrelated CA; the answered request again | [lab/interop/eudi-dev](interop/eudi-dev/README.md#an-issuer-nobody-here-wrote-2026-09-30) |
+| 2026-09-30 | eudi-dev v2.3.7 (Go), HAIP strict, presenting a PID credential its own issuer signed (`x5c`, ISO 18013-5 document signer) | PyPI 1.0.0rc11 (c8014978); 1.0.0rc10 refused it | accepted | an unrelated CA; the answered request again | [lab/interop/eudi-dev](interop/eudi-dev/README.md#an-issuer-nobody-here-wrote-2026-09-30) |
 | 2026-09-28 | OID4VCgo 0.12.0 and 0.19.0 (Go), presenting a credential it issued under an x5c chain | this repository, 1156db81 | accepted; the wallet followed the `redirect_uri` into a 404, fixed | an unrelated CA; the answered request again; a mismatched `client_id` (the wallet refused) | [lab/interop/oid4vcgo](interop/oid4vcgo/README.md) |
 | weekly since 2026-09-28 | eudi-dev v2.3.7 (by digest) and latest | the newest PyPI release | accepted (rc7, then rc8) | all three | `.github/workflows/wallet-canary.yml` |
 
@@ -83,7 +83,7 @@ The fee was waived on 2026-09-23 under the Foundation's open-source policy.
 
 It is a self-certification the Foundation reviewed and published, not an endorsement and not an
 independent verification (Certification Terms 3(e)). It covers that version in the verifier role
-on that profile. It does not cover the rest of Polaris, other versions (1.0.0rc8 to 1.0.0rc10 are
+on that profile. It does not cover the rest of Polaris, other versions (1.0.0rc8 to 1.0.0rc11 are
 not certified), the wallet role, other formats, or anything the suite does not test.
 Measured after it, on 2026-09-30: 1.0.0rc7 refuses an issuer certificate whose extended key
 usage is ISO 18013-5's document signer, as EUDI issuers' are (eudi-dev's PID Provider: its chain
@@ -115,8 +115,9 @@ become installable only when a maintainer approves them with a second factor.
 | Package | First | Release candidate | Current |
 |---|---|---|---|
 | `polaris-verify` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc5, 2026-09-30 |
-| `polaris-oid4vp` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc10, 2026-09-30 (1.0.0rc7 is the certified one) |
+| `polaris-oid4vp` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc11, 2026-09-30 (1.0.0rc7 is the certified one) |
 | `polaris-sdk-python` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc5, 2026-09-30 |
+| `polaris-id-cli` (PyPI) | 1.0.0rc1, 2026-09-30 | 1.0.0rc1, 2026-09-30 | 1.0.0rc1, 2026-09-30 |
 | `polaris-sdk-ts` (npm) | 0.1.0, 2026-09-15 | 1.0.0-rc.1, 2026-09-16, under `next` | 1.0.0-rc.6, 2026-09-30, under `next` |
 
 Every run is recorded in [docs/RELEASING.md](../docs/RELEASING.md). Being installable is not
