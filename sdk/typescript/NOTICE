@@ -15,16 +15,16 @@ consumer reads.
 About this work
 ================================================================================
 
-Polaris is a reference implementation of a national identity token system:
-ML-DSA-65 signatures under an audited algorithm-migration path, zero-knowledge
-verification, and an append-only audit of record, enforced in the database
-schema rather than in policy. What the cryptography does and does not buy,
-including what a break in the underlying lattice assumption would cost, is
-stated in docs/PRODUCTION-READINESS.md.
+Polaris is a pre-pilot identity-token system: ML-DSA-65 signatures under an
+audited algorithm-migration path, zero-knowledge verification, and an
+append-only audit of record, enforced in the database schema rather than in
+policy. What the cryptography does and does not buy, including what a break
+in the underlying lattice assumption would cost, is stated in
+docs/PRODUCTION-READINESS.md.
 
 It began as the author's project for SCS-230 (Database Management Systems)
-at Seton Hill University in spring 2026 and is maintained as a working
-reference implementation on notional data. It has never held real identity
+at Seton Hill University in spring 2026 and is maintained as a working,
+pre-pilot system on notional data. It has never held real identity
 data, it is not deployed to any population, and the physical token it models
 is not manufactured. The constitution (the ten hard constraints C1 to C10 and
 the vocation) is MISSION.md.

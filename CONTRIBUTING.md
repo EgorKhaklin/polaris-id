@@ -1,6 +1,6 @@
 # Contributing to Polaris
 
-Contributions are welcome. Polaris is a reference implementation maintained by a single author
+Contributions are welcome. Polaris is pre-pilot software maintained by a single author
 with AI assistance. The ten constraints in [MISSION.md](MISSION.md) are enforced in the database
 schema, and a change that weakens one is refused however it is submitted. Participation is
 governed by the [Code of Conduct](CODE_OF_CONDUCT.md); decisions and roles by [GOVERNANCE.md](GOVERNANCE.md).
@@ -24,20 +24,42 @@ wrote the change or have the right to submit it under the project's license.
 
 Every change reaches `main` through a pull request, the maintainer's included: `main` refuses
 direct pushes, force-pushes and deletion. A pull request merges, as a merge commit, once the
-required checks pass (the TypeScript SDK suite, the dependency and SAST scan, and the product
-boundary); the full suites run on every pull request too. Before opening one:
+six required checks pass: the TypeScript SDK suite, the dependency and SAST scan, the product
+boundary, the DCO sign-off, the malicious-package and vulnerability scan, and the invariant checks
+with their detection tests. The full suites run on every pull request too.
 
+Before opening one:
+
+- Every commit is signed off (`git commit -s`).
+- The tests for what the change touches pass, and new behaviour carries a test that fails without
+  it; a new invariant carries a `check_*` with a detection test that fails on a broken fixture.
 - `python3 -m polaris_checks.run` reports READY.
-- `python3 scripts/polaris-ship.py run` passes: the sharded database suites and every unsharded
-  suite CI runs. (`./scripts/polaris-test.sh` covers only four suites; use it for an inner loop.)
-- `./scripts/polaris-preflight.sh` reports READY, with `ruff` installed (CI lints first).
-- The drills the change needs have run: `python3 scripts/polaris-ship.py drills --run`.
 - `./scripts/polaris-link-check.sh --ci` resolves every reference.
-- A change to a signed artifact keeps the frozen version-1 set passing (`scripts/polaris-compat-suite.py`).
-- New behaviour carries a test that fails without it; a new invariant carries a `check_*` with a
-  detection test that fails on a broken fixture.
 - The CHANGELOG gets one plain line for anything externally observable. Versions move only when a
   release is cut ([docs/RELEASING.md](docs/RELEASING.md)).
+
+Before merging, the maintainer also runs what needs a database or a long drill, so a small change
+does not need Postgres or Redis on your machine:
+
+- `python3 scripts/polaris-ship.py run`: the sharded database suites and every unsharded suite CI
+  runs. (`./scripts/polaris-test.sh` covers only four suites; use it for an inner loop.)
+- `./scripts/polaris-preflight.sh` reports READY, with `ruff` installed (CI lints first).
+- The drills the change needs: `python3 scripts/polaris-ship.py drills --run`.
+- A change to a signed artifact keeps the frozen version-1 set passing (`scripts/polaris-compat-suite.py`).
+
+## How pull requests are handled
+
+- The maintainer aims to reply within two days and to decide within a week.
+- A first-time contributor's CI runs once the maintainer approves it, and on its own after that.
+- The maintainer reads every line of an outside change and merges it; write access stays with the
+  maintainer role ([GOVERNANCE.md](GOVERNANCE.md)). Workflows, dependencies, cryptography,
+  verification and the schema get the closest reading.
+- A merged contribution is credited on its CHANGELOG line, `(thanks @user)`, and in the release
+  notes; the merge commit keeps your authorship in the history.
+- You are responsible for what you submit, however it was written: you have run it, you can
+  explain it, and you signed it off.
+- A pull request outside the [operating contract](docs/OPERATING-CONTRACT.md) or the list below is
+  closed with the reason. One that waits on its author for 30 days is closed and can be reopened.
 
 How to write checks, tests and drills that actually detect something: [docs/CONVENTIONS.md](docs/CONVENTIONS.md), section 14.
 
@@ -91,4 +113,4 @@ Do not open a public issue for a vulnerability; see [SECURITY.md](SECURITY.md).
 [Apache 2.0](LICENSE). Building on Polaris is encouraged, provided the constitutional constraints are
 not weakened in the derivative.
 
-*Maintainer: Egor Khaklin. Last updated: 2026-09-28 (v1.0.0-rc.66).*
+*Maintainer: Egor Khaklin. Last updated: 2026-09-29 (v1.0.0-rc.66).*

@@ -1301,18 +1301,18 @@ def test_table_count_check_fails_on_doc_drift(tmp_path):
 
     # 1. ARCHITECTURE-OVERVIEW drift -> FAIL.
     arch.write_text("PostgreSQL 16. 27 tables, stored procedures.\n")
-    readme.write_text("a working reference implementation: 2 schema tables.\n")
+    readme.write_text("a working pre-pilot system: 2 schema tables.\n")
     assert checks.check_table_count_matches_doc(tmp_path)[0].level == "FAIL", \
         "must FAIL when the architecture-doc table count contradicts the schema"
 
     # 2. Architecture doc correct, but the README count drifts -> FAIL (now guarded).
     arch.write_text("PostgreSQL 16. 2 tables, stored procedures.\n")
-    readme.write_text("a working reference implementation: 26 schema tables.\n")
+    readme.write_text("a working pre-pilot system: 26 schema tables.\n")
     assert checks.check_table_count_matches_doc(tmp_path)[0].level == "FAIL", \
         "must FAIL when the README schema-table count drifts from the schema"
 
     # 3. Both match the schema -> OK.
-    readme.write_text("a working reference implementation: 2 schema tables.\n")
+    readme.write_text("a working pre-pilot system: 2 schema tables.\n")
     assert checks.check_table_count_matches_doc(tmp_path)[0].level == "OK", \
         "must PASS when both docs match the schema"
 
@@ -6217,7 +6217,7 @@ def test_table_count_check_guards_every_document_and_the_migrated_total(tmp_path
     write({
         "polaris_sql/01_schema.sql": "CREATE TABLE A (id SERIAL);\nCREATE TABLE B (id SERIAL);\n",
         "polaris_sql/migrations/2026-01-01-001-x.up.sql": "CREATE TABLE IF NOT EXISTS C (id SERIAL);\n",
-        "README.md": "a working reference implementation: 2 schema tables.\n",
+        "README.md": "a working pre-pilot system: 2 schema tables.\n",
         "docs/ARCHITECTURE-OVERVIEW.md": "PostgreSQL 16. 2 tables.\nKey tables (3 total, partial list):\n",
         "docs/reference/DATA-MODEL.md": "The schema is **2 tables** (a migrated deployment holds 3 tables).\n",
         "polaris_sql/README.md": "implements **2 tables**\n",
@@ -7224,35 +7224,35 @@ def test_verify_witness_sampling_check_discriminates(tmp_path):
 
 def test_public_claims_honest_check_discriminates(tmp_path):
     # The outward surfaces must not overstate what exists now: understate to reality.
-    README = ("# POLARIS\n\nA reference implementation on notional data.\n\n"
+    README = ("# POLARIS\n\nPre-pilot, on notional data.\n\n"
               "**Relying-party correlation, bounded rather than permanent.** What a verifier should store "
               "is a per-verifier handle; what it is shown by a full credential still includes a stable "
               "token_value, so two that keep the raw material can correlate.\n\n"
               "| System | Deployed to a real population | National-scope issuance | PQ |\n"
               "| **Polaris** | **✗** | **✗** | ✓ |\n")
-    SITE = ('<title>Polaris: a reference implementation of an identity-token system</title>\n'
-            '<meta property="og:title" content="Polaris: a reference implementation of a system">\n')
+    SITE = ('<title>Polaris: a pre-pilot identity-token system</title>\n'
+            '<meta property="og:title" content="Polaris: a pre-pilot system">\n')
     def write(readme=README, site=SITE):
         (tmp_path / "README.md").write_text(readme)
         (tmp_path / "site").mkdir(exist_ok=True)
         (tmp_path / "site" / "index.html").write_text(site)
     write()
     assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must PASS the honest surfaces"
-    # bare title (Polaris presented AS a system, not a reference implementation)
-    write(site=SITE.replace("a reference implementation of an identity-token system",
+    # bare title (Polaris presented AS a system, not as pre-pilot)
+    write(site=SITE.replace("a pre-pilot identity-token system",
                             "an identity-token system"))
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a bare title"
     # the 'national' category leaks back into the shareable title
-    write(site=SITE.replace("a reference implementation of an identity-token system",
-                            "a reference implementation of a national identity-token system"))
+    write(site=SITE.replace("a pre-pilot identity-token system",
+                            "a pre-pilot national identity-token system"))
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL if the title calls it 'national'"
     # a bare 'unlinkable' on the shareable surface, without the issuer qualifier
-    write(site=SITE.replace("a reference implementation of an identity-token system",
-                            "a reference implementation of an unlinkable-by-default identity-token system"))
+    write(site=SITE.replace("a pre-pilot identity-token system",
+                            "a pre-pilot unlinkable-by-default identity-token system"))
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on bare 'unlinkable' without the issuer qualifier"
     # the qualified form passes
-    write(site=SITE.replace("a reference implementation of an identity-token system",
-                            "a reference implementation of an issuer-unlinkable identity-token system"))
+    write(site=SITE.replace("a pre-pilot identity-token system",
+                            "a pre-pilot issuer-unlinkable identity-token system"))
     assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must PASS when unlinkability is qualified as issuer-side"
     # an overclaim returns to the README
     write(readme=README + "Polaris consolidates them into one physical token per person.\n")
@@ -8395,7 +8395,7 @@ def test_wallet_presentation_check_discriminates(tmp_path):
         'scripts/polaris-verifier-fuzz.py': "V.verify_presentation(o)\n",
         'scripts/polaris-presentation-drill.py': "V.decode_presentation_frames(f); 'polaris-wallet.py'\n",
         '.github/workflows/ci.yml': '      - run: python scripts/polaris-presentation-drill.py\n',
-        'docs/design/wallet-protocol.md': "wallet\nThe browser bridge and native clients are out of scope for a reference implementation.\n",
+        'docs/design/wallet-protocol.md': "wallet\nThe browser bridge and native clients are out of scope for a pre-pilot system.\n",
     }
 
     def write(overrides=None):

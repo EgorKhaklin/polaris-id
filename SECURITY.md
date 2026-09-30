@@ -1,7 +1,7 @@
 # Security Policy
 
 How to report a vulnerability, what is in scope, what to expect, and how to verify a release.
-Polaris is a reference implementation on notional data; it has never held real identity data.
+Polaris is pre-pilot software on notional data; it has never held real identity data.
 Related: [security controls](docs/operator/SECURITY-CONTROLS.md) · [threat model](docs/design/threat-model.md) · [red-team scope](docs/RED-TEAM-SCOPE.md) · [review packet](docs/REVIEW-PACKET.md).
 
 ---
@@ -146,7 +146,7 @@ your first message and it will be handled accordingly.
 
 Researchers who report Critical or High findings and coordinate disclosure are credited, with
 consent, in the release that ships the fix; anonymity is honoured on request. There is no bug
-bounty: Polaris is a reference implementation, not a deployed service.
+bounty: Polaris is pre-pilot software, not a deployed service.
 
 ---
 

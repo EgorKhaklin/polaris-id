@@ -10,8 +10,8 @@ document explains why each piece looks the way it does.
 
 ## §I. What Polaris is
 
-Polaris is a reference implementation of a national identity token
-system. It demonstrates a substrate where:
+Polaris is a pre-pilot identity-token system, designed for national
+scale and running on notional data. It demonstrates a substrate where:
 
 - **One identity per person** is enforced by a partial unique index,
   not by application logic.

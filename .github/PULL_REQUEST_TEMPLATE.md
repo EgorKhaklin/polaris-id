@@ -16,9 +16,11 @@
 
 ## Test discipline
 
+- [ ] Every commit is signed off (`git commit -s`)
+- [ ] The tests for what this touches pass, and new behaviour carries a test that fails without it (or a `check_*` with a detection test)
 - [ ] `python3 -m polaris_checks.run` reports READY
-- [ ] `./scripts/polaris-test.sh` passes (the DB-backed suites)
 - [ ] `./scripts/polaris-link-check.sh --ci` resolves every reference
-- [ ] New behaviour carries a test that fails without it, or a `check_*` with a detection test
-- [ ] `polaris_web/__version__.py`, `deploy/helm/polaris/Chart.yaml` and CHANGELOG.md are updated in this PR
+- [ ] One CHANGELOG line under `## Unreleased` for anything externally observable, and no version bump
 - [ ] Documentation that describes the changed behaviour is updated in this PR
+
+<!-- The maintainer runs the database suites and the drills before merging. -->

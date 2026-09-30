@@ -64,7 +64,7 @@ still do not qualify, and a roadmap row, a paper or a competitor's feature list 
 analysis. Everything else goes to `lab/`. Do not invent a seventh justification.
 
 **Why the count changed.** The first four reasons are all reactive: each waits for somebody
-outside to act. That is the right default for a reference implementation and it has a failure
+outside to act. That is the right default for a pre-pilot system and it has a failure
 mode, which is that Polaris can only ever answer questions it has already been asked. The
 owner's judgement on 2026-09-19 was that the passivity now costs more than the discipline
 buys. The decision record is what keeps the fifth reason from swallowing the other four: it

@@ -417,7 +417,7 @@ def security_txt():
         f"Preferred-Languages: {preferred_lang}",
         "Canonical: /security.txt",
         # Polaris-specific addenda
-        "Policy: This is a reference implementation. Vulnerabilities should",
+        "Policy: Polaris is pre-pilot software. Vulnerabilities should",
         "Policy: be reported privately to the contact above. The maintainers",
         "Policy: aim to acknowledge within 72 hours.",
     ]

@@ -10420,7 +10420,7 @@ def check_verify_witness_sampling(root: pathlib.Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 _OVERCLAIM_PHRASES = (
     "one physical token per person",   # the hardware token is modeled, not manufactured
-    "the complete working system",     # it is a reference implementation, not a deployment
+    "the complete working system",     # it is pre-pilot, not a deployment
     # Issuance is two-witness fail-closed; verify-at-use is single-witness plus
     # sampling. "every cryptographic verdict" flattens the two into one guarantee.
     "Two independent witnesses for every cryptographic verdict",
@@ -10889,7 +10889,7 @@ def check_ci_jobs_install_what_they_run(root: pathlib.Path) -> list[Finding]:
 
 #: The one SPDX identifier this work is under. Apache 2.0 rather than MIT or BSD because
 #: of section 3: an express, irrevocable patent grant from every contributor, with a
-#: defensive termination clause. For a reference implementation of a lattice signature
+#: defensive termination clause. For software built on a lattice signature
 #: scheme -- a field whose patent landscape is younger than the algorithms -- a permissive
 #: license that grants copyright permission and says nothing about patents leaves the
 #: integrator to carry that risk alone. Copyleft would contradict the purpose: the point
@@ -11124,7 +11124,7 @@ def check_post_quantum_claims_are_agility(root: pathlib.Path) -> list[Finding]:
 
 
 def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
-    """The site title and social card must name Polaris a reference implementation
+    """The site title and social card must name Polaris pre-pilot
     (not present it AS a national identity system in a browser tab or a shared
     link); the README must not carry the retired overclaims; and the 'Where
     Polaris sits' comparison must keep the honest 'Deployed to a real population'
@@ -11138,17 +11138,17 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     title = re.search(r"<title>([^<]*)</title>", site)
     ogt = re.search(r'og:title"\s+content="([^"]*)"', site)
     for label, m in (("<title>", title), ("og:title", ogt)):
-        if not m or "reference implementation" not in m.group(1).lower():
+        if not m or "pre-pilot" not in m.group(1).lower():
             return _fail("public_claims",
-                         f"the site {label} must name Polaris a reference implementation, not present it AS a "
+                         f"the site {label} must name Polaris pre-pilot, not present it AS a "
                          "national identity system in a browser tab or a shared social card")
-        # The category must match the honest GitHub one (identity-token reference
-        # implementation): the shareable surface must not call Polaris a "national"
+        # The category must match the honest GitHub one (a pre-pilot identity-token
+        # system): the shareable surface must not call Polaris a "national"
         # system, which reads as a deployment. Understate, do not overstate.
         if "national" in m.group(1).lower():
             return _fail("public_claims",
-                         f"the site {label} calls Polaris a 'national' system; that category overstates a reference "
-                         "implementation on notional data. Drop 'national' from the title and social card.")
+                         f"the site {label} calls Polaris a 'national' system; that category overstates pre-pilot "
+                         "software on notional data. Drop 'national' from the title and social card.")
         # Unlinkability is issuer-side and ZK-mode-scoped. A bare "unlinkable-by-default"
         # on the shareable surface reads as covering the holder-to-verifier hop, which it
         # does not; the qualifier must be beside the claim, so say "issuer-unlinkable".
@@ -11162,7 +11162,7 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
         if bad in readme:
             return _fail("public_claims",
                          f"the README carries the overclaim {bad!r}; shrink the claim to what the code does now "
-                         "(the hardware token is modeled; this is a reference implementation)")
+                         "(the hardware token is modeled; Polaris is pre-pilot)")
     if "Deployed to a real population" not in readme:
         return _fail("public_claims",
                      "the 'Where Polaris sits' comparison must keep the 'Deployed to a real population' column so "
@@ -11196,7 +11196,7 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
                      "does not issue at national scale, so both leading columns must be a negative (the paragraph "
                      "and the table must not argue)")
     return _ok("public_claims",
-               "the outward surfaces name Polaris a reference implementation and drop the 'national' category "
+               "the outward surfaces name Polaris pre-pilot and drop the 'national' category "
                "(title + social card), carry no retired overclaim, and the comparison marks Polaris neither deployed "
                "nor issuing at national scale so its design ticks are not read as a deployment")
 
@@ -19158,7 +19158,7 @@ def check_assurance_mapping(root: pathlib.Path) -> list[Finding]:
     object, and the drill resolves each one and RUNS every cited check. This check pins the
     shape that makes that possible, and three properties of the document itself.
 
-    IT MUST NOT CLAIM CONFORMANCE. Polaris is a reference implementation on notional data. A
+    IT MUST NOT CLAIM CONFORMANCE. Polaris is pre-pilot software on notional data. A
     row marked MET means the mechanism is here and CI proves it still is; it does not mean an
     assessor agreed, and a deployment does not inherit it by running the code. The front matter
     has to say so, because this is the file somebody quotes after reading only its first page.

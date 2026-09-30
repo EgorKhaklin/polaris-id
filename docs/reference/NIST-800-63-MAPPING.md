@@ -4,7 +4,7 @@
 a gap. **Job:** map what Polaris actually does onto the three assurance dimensions, cite the
 artifact behind every row, and name every gap rather than rounding it away.
 
-**Status, before anything else.** Polaris is a reference implementation running on notional
+**Status, before anything else.** Polaris is pre-pilot software running on notional
 data. **This is not a conformance claim and no assessment has been performed.** A control
 marked MET here means the mechanism exists in this tree and something in CI proves it still
 does; it does not mean an assessor has agreed, and it does not mean a deployment inherits it.

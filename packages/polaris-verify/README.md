@@ -139,4 +139,4 @@ A release candidate. No named external implementation has exercised this command
 other than the author has run it; see
 [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
 
-Apache 2.0. Part of the Polaris reference implementation, which runs on notional data.
+Apache 2.0. Part of Polaris, pre-pilot software that runs on notional data.
