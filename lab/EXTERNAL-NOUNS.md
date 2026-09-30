@@ -111,7 +111,7 @@ become installable only when a maintainer approves them with a second factor.
 | `polaris-verify` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc5, 2026-09-30 |
 | `polaris-oid4vp` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc10, 2026-09-30 (1.0.0rc7 is the certified one) |
 | `polaris-sdk-python` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc5, 2026-09-30 |
-| `polaris-sdk-ts` (npm) | 0.1.0, 2026-09-15 | 1.0.0-rc.1, 2026-09-16, under `next` | 1.0.0-rc.5, 2026-09-28, under `next` |
+| `polaris-sdk-ts` (npm) | 0.1.0, 2026-09-15 | 1.0.0-rc.1, 2026-09-16, under `next` | 1.0.0-rc.6, 2026-09-30, under `next` |
 
 Every run is recorded in [docs/RELEASING.md](../docs/RELEASING.md). Being installable is not
 external use: a download count is not a person.
