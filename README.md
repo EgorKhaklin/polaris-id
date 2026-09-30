@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="docs/assets/hero.svg" width="100%" alt="Polaris">
+<img src="docs/assets/hero.svg" width="100%" alt="Polaris ID">
 
-**A working, pre-pilot identity-token system: issuer-unlinkable, duress-aware,<br>signed with ML-DSA-65 under an audited algorithm-migration path.**
+**Polaris ID is a working, pre-pilot identity-token system: issuer-unlinkable, duress-aware,<br>signed with ML-DSA-65 under an audited algorithm-migration path.**
 
 Pre-pilot: it works end to end, and outside wallets and an outside conformance suite have exercised it, but it has not run a pilot, held real identity data or had an independent security review. CI boots the production-profile stack, the post-quantum TLS handshake, the backup round trip and the disaster-recovery drill on every push.
 
@@ -218,7 +218,8 @@ Test counts: reference machine, v1.0.0-rc.62 (`pytest -q` per suite, 2026-09-26)
 On every push, CI also boots the five-service production-profile stack, round-trips backups,
 fails over the HA profile under writes, proves the post-quantum TLS handshake and real ML-DSA-65
 signing, runs the federation and compatibility drills and the mutation drills, and gates on CVE
-scans ([ci.yml](.github/workflows/ci.yml)).
+scans ([ci.yml](.github/workflows/ci.yml)). What the mutation drills broke, what noticed and which run each number
+is from: [the review packet](docs/REVIEW-PACKET.md#4-broken-on-purpose).
 
 ```bash
 python3 -m polaris_checks.run        # the invariant layer, no database needed
@@ -290,6 +291,7 @@ The first two columns matter most: every other row is deployed at national scale
 | Operating an instance | [docs/operator/](docs/operator/README.md) |
 | Asking why a mechanism is built this way | [docs/design/](docs/design/README.md) |
 | Reading it as research | [Project report, Version 3](docs/paper/polaris_project_report_v3.pdf) (the system at 1.0.0-rc.7) · [Russian edition](docs/paper/polaris_project_report_v3_ru.pdf) · [CITATION.cff](CITATION.cff) |
+| Asking a question | [Discussions](https://github.com/EgorKhaklin/polaris-id/discussions) · [where each kind of message goes](.github/SUPPORT.md) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md) |
 
 <img src="docs/assets/rule.svg" width="100%" alt="">

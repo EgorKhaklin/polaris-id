@@ -1,6 +1,6 @@
 cff-version: 1.2.0
-message: "If you use or build on Polaris, please cite it as below."
-title: "Polaris: a pre-pilot, issuer-unlinkable, duress-aware identity-token system signed with ML-DSA-65 under an audited algorithm-migration path"
+message: "If you use or build on Polaris ID, please cite it as below."
+title: "Polaris ID: a pre-pilot, issuer-unlinkable, duress-aware identity-token system signed with ML-DSA-65 under an audited algorithm-migration path"
 type: software
 authors:
   - family-names: Khaklin
@@ -17,10 +17,10 @@ keywords:
   - ML-DSA
   - anti-coercion
 abstract: >-
-  A working, pre-pilot identity-token system whose
+  Polaris ID is a working, pre-pilot identity-token system whose
   guarantees are enforced in the database schema: post-quantum signatures
   (ML-DSA-65 by default, ML-DSA-87 accepted), zero-knowledge verification with
-  an independent second witness, an append-only audit of record, duress-resistant
+  an independent second witness, an append-only audit of record, duress-aware
   operation, and an institutional protocol of signed statements (a registry, a
   trust list, exchange receipts, timestamps, signed documents, a credential-bound
   login token, offline wallet presentations) verified offline by a detached

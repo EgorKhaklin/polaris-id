@@ -1,7 +1,7 @@
 {
   "name": "polaris-sdk-ts",
   "version": "1.0.0-rc.5",
-  "description": "Server-side SDK to verify Polaris identity credentials (offline authenticity + online status).",
+  "description": "Server-side SDK to verify Polaris ID credentials (offline authenticity + online status).",
   "type": "module",
   "license": "Apache-2.0",
   "engines": {

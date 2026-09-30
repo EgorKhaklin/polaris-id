@@ -461,6 +461,47 @@ SERIAL_MARKERS = ("subprocess", "gunicorn", "socket", "multiprocessing")
 DB_PREFIX = "polaris_test_s"
 REDIS_BASE_PORT = 6400
 
+#: One run at a time per server. Every run drops and reloads the same shard databases by name, so a
+#: second run beside the first (a gate beside a coverage run, or two sessions' gates) dropped the
+#: first one's databases mid-suite. Measured 2026-09-30: a coverage run's real-signer stage failed
+#: 79 tests on "database polaris_test_s0 does not exist", and the gate beside it died mid-migration
+#: on "tuple concurrently updated". A session-level advisory lock, held by one psql session for the
+#: whole run, makes the second run refuse before it touches a database, and the lock goes with the
+#: session however the run ends.
+RUN_LOCK = int.from_bytes(hashlib.sha256(("polaris-ship run " + DB_PREFIX).encode()).digest()[:8],
+                          "big", signed=True)
+
+
+def hold_run_lock(env, key=RUN_LOCK):
+    """(session, None) with the run lock held by `session`, or (None, why) when it cannot be
+    taken: another run holds it, or the server gave no answer."""
+    session = subprocess.Popen(
+        ["psql", "-X", "-A", "-t", "-q", "-v", "ON_ERROR_STOP=1",
+         "-h", env.get("POLARIS_DB_HOST", "localhost"), "-d", "postgres"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=dict(env, PGCONNECT_TIMEOUT="10"), text=True)
+    try:
+        session.stdin.write("SELECT pg_try_advisory_lock(%d);\n" % key)
+        session.stdin.flush()
+        answer = session.stdout.readline().strip()
+    except OSError:  # psql exited before it read the question: it could not connect
+        answer = ""
+    if answer == "t":
+        return session, None
+    said = release_run_lock(session)
+    if answer == "f":
+        return None, "another polaris-ship run holds the shard databases (%s*) on this server" % DB_PREFIX
+    return None, "the run lock could not be taken: %s" % (said or "psql gave no answer")
+
+
+def release_run_lock(session):
+    """End the session that holds the lock, which releases it; returns what psql said on stderr.
+    communicate() closes psql's stdin, which ends the session, and reaps it."""
+    if session is None or session.returncode is not None:
+        return ""
+    _out, err = session.communicate(timeout=30)
+    return (err or "").strip()
+
 
 def _python():
     py = os.environ.get("POLARIS_TEST_PYTHON") or sys.executable
@@ -642,6 +683,11 @@ def run(argv, out=None):
                      "POLARIS_TEST_RELOAD_USER": owner, "PGUSER": owner, "PYTHON_COLORS": "0", "NO_COLOR": "1"})
     if base_env["POLARIS_DB_PASSWORD"]:
         base_env["PGPASSWORD"] = base_env["POLARIS_DB_PASSWORD"]
+    lock, why = hold_run_lock(base_env)
+    if lock is None:
+        print("run: refused: %s. Two runs drop each other's databases mid-suite; wait for it to "
+              "finish." % why, file=out)
+        return 75
     t0 = time.time()
     print("run: loading %d database(s) and listing the tests of %s" % (n_shards, ", ".join(modules)), file=out)
     dbs = ["%s%d" % (DB_PREFIX, i) for i in range(n_shards)]
@@ -821,6 +867,7 @@ def run(argv, out=None):
         if not keep:
             for db in dbs:
                 drop_db(db, base_env)
+        release_run_lock(lock)  # after the drops, so the next run never loads beside them
 
 
 def _opt(argv, name, default):

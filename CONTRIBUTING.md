@@ -7,6 +7,9 @@ governed by the [Code of Conduct](CODE_OF_CONDUCT.md); decisions and roles by [G
 
 ## How to propose a change
 
+Questions go to [Discussions](https://github.com/EgorKhaklin/polaris-id/discussions), not issues;
+[.github/SUPPORT.md](.github/SUPPORT.md) says where each kind of message goes.
+
 - **Small fixes** (a typo, a broken link, a missed test, an isolated bug): open an issue or a pull
   request. The [pull-request template](.github/PULL_REQUEST_TEMPLATE.md) asks for the motivation,
   the change and the blast radius.
@@ -42,7 +45,8 @@ Before merging, the maintainer also runs what needs a database or a long drill, 
 does not need Postgres or Redis on your machine:
 
 - `python3 scripts/polaris-ship.py run`: the sharded database suites and every unsharded suite CI
-  runs. (`./scripts/polaris-test.sh` covers only four suites; use it for an inner loop.)
+  runs, one run per database server at a time. (`./scripts/polaris-test.sh` covers only four
+  suites; use it for an inner loop.)
 - `./scripts/polaris-preflight.sh` reports READY, with `ruff` installed (CI lints first).
 - The drills the change needs: `python3 scripts/polaris-ship.py drills --run`.
 - A change to a signed artifact keeps the frozen version-1 set passing (`scripts/polaris-compat-suite.py`).
