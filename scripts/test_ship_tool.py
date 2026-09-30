@@ -329,6 +329,53 @@ class TriageHonestyTests(unittest.TestCase):
                         "the no-log case must be handled BEFORE classification, or the "
                         "classifier runs over a refusal string and reports on it")
 
+    def _triage_with(self, jobs, log, annotations):
+        """triage() against a stand-in for gh: the run's jobs, the failed-job log, annotations."""
+        import io
+        import json
+        from unittest import mock
+        calls = []
+
+        def fake_gh(*args):
+            calls.append(args)
+            if args[:2] == ("run", "view"):
+                return json.dumps(jobs)
+            if args[0] == "api" and args[1].endswith("/annotations"):
+                return json.dumps(annotations)
+            raise AssertionError("unexpected gh call %r" % (args,))
+        out = io.StringIO()
+        with mock.patch.object(ship, "_gh", fake_gh), \
+                mock.patch.object(ship.subprocess, "run", return_value=mock.Mock(stdout=log)):
+            rc = ship.triage("123", out=out)
+        return rc, out.getvalue(), calls
+
+    def test_a_job_that_never_got_a_runner_is_named_not_left_unknown(self):
+        # Run 36712294233, 2026-09-30: finished, one job failed without ever starting, no log.
+        jobs = {"conclusion": "failure", "jobs": [
+            {"name": "Full prod compose", "conclusion": "failure", "steps": [], "databaseId": 9}]}
+        note = [{"message": "The job was not started because it repeatedly failed to be "
+                            "acquired (5 attempts)."}]
+        rc, text, _ = self._triage_with(jobs, "", note)
+        self.assertIn("known flake [runner-not-acquired]", text)
+        self.assertIn("gh run rerun 123 --failed", text)
+        self.assertEqual(rc, 0)
+
+    def test_a_finished_run_with_no_log_and_no_reason_stays_unknown(self):
+        jobs = {"conclusion": "failure", "jobs": [
+            {"name": "x", "conclusion": "failure", "steps": [], "databaseId": 9}]}
+        rc, text, _ = self._triage_with(jobs, "", [])
+        self.assertIn("UNKNOWN, no log to read yet", text)
+        self.assertEqual(rc, 1)
+
+    def test_a_run_still_going_reads_no_annotations_and_stays_unknown(self):
+        jobs = {"conclusion": None, "jobs": [
+            {"name": "x", "conclusion": "failure", "steps": [], "databaseId": 9}]}
+        rc, text, calls = self._triage_with(jobs, "", [{"message": "was not started because it "
+                                                          "repeatedly failed to be acquired"}])
+        self.assertIn("UNKNOWN, no log to read yet", text)
+        self.assertEqual([c for c in calls if c[0] == "api"], [])
+        self.assertEqual(rc, 1)
+
 
 def _write(path, text):
     with open(path, "w") as fh:
