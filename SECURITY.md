@@ -51,7 +51,9 @@ key whose hex has whitespace between bytes, and `polaris-sdk-ts` 1.0.0-rc.5 acce
 that is not hex; each verifier accepted spellings the others refused. The tree carries the fix and three
 conformance cases that hold all three to it. `polaris-verify` 1.0.0rc4 also raises in `--verify-dir` on a
 vector that is not a JSON object, and its long-term-validation note calls missing revocation evidence a
-revocation; both are fixed in the tree.
+revocation; both are fixed in the tree. `polaris-oid4vp` 1.0.0rc9's `serve` accepts TLS 1.0 and 1.1
+where the Python build's default allows them, as the macOS system Python 3.9 does; the tree sets
+the floor at TLS 1.2.
 
 If you installed or pinned an older version, upgrade. The Current column is checked against
 [docs/RELEASING.md](docs/RELEASING.md) on every run. The packages are for evaluation and

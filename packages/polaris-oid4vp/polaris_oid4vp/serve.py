@@ -227,6 +227,11 @@ def serve(verifier, *, host="0.0.0.0", port=9443, certfile=None, keyfile=None,
     httpd.daemon_threads = True
     if certfile:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        # TLS 1.0 and 1.1 are deprecated (RFC 8996). Python 3.10 and later refuse them by
+        # default, but this package supports 3.9, whose default follows the TLS library: the
+        # macOS system Python 3.9 (LibreSSL 2.8.3) completed a TLS 1.0 handshake here. So the
+        # floor is set, not inherited.
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(certfile, keyfile)
         httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
     if background:
