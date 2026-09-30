@@ -1,0 +1,82 @@
+# ============================================================================
+# Coverage-guided fuzzing of polaris-oid4vp (atheris, libFuzzer).
+#
+# polaris-oid4vp is the package that reads what a wallet it has never met sends it,
+# and its functions promise totality in their own docstrings: verify_presentation
+# "never raises on bad input", decrypt_compact raises nothing but JweError,
+# handle_direct_post never answers 500, status.decide is "total on hostile input".
+# The targets in packages/polaris-oid4vp/fuzz hold each function to its promise.
+#
+# A pull request that touches the package runs every target for a minute; the
+# nightly run gives each ten, starting from the corpus the previous run left. A
+# crash fails the job and uploads the input that caused it, which reproduces with
+# `python3 fuzz_<target>.py <file>` (packages/polaris-oid4vp/fuzz/README.md).
+# ============================================================================
+
+name: Fuzz polaris-oid4vp
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/polaris-oid4vp/**"
+      - ".github/workflows/fuzz.yml"
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: Coverage-guided fuzzing, five targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      SECONDS_EACH: ${{ github.event_name == 'pull_request' && '60' || '600' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Install atheris and the package's one dependency, hash-pinned
+        run: pip install --require-hashes -r packages/polaris-oid4vp/fuzz/requirements.txt
+
+      - name: Restore the corpus the last run grew
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/corpus
+          key: fuzz-oid4vp-corpus-${{ github.run_id }}
+          restore-keys: fuzz-oid4vp-corpus-
+
+      - name: Fuzz each target
+        working-directory: packages/polaris-oid4vp/fuzz
+        run: |
+          mkdir -p "$RUNNER_TEMP/corpus" "$RUNNER_TEMP/crashes"
+          fail=0
+          for t in presentation signed jwe response status; do
+            echo "::group::$t, ${SECONDS_EACH}s"
+            python "fuzz_$t.py" "$RUNNER_TEMP/corpus/$t" -max_total_time="$SECONDS_EACH" \
+              -max_len=16384 -timeout=30 -print_final_stats=1 \
+              -artifact_prefix="$RUNNER_TEMP/crashes/$t-" \
+              || { echo "::error::fuzz_$t.py found an input that breaks its promise"; fail=1; }
+            echo "::endgroup::"
+          done
+          [ "$fail" = 0 ]
+
+      - name: Keep the inputs that crashed
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fuzz-crashes
+          path: ${{ runner.temp }}/crashes/
+          if-no-files-found: ignore
