@@ -29,8 +29,10 @@ set -eo pipefail
 echo "== packages (Fedora) =="
 dnf -y -q install kryoptic python3 python3-pip python3-devel gcc cmake ninja-build git openssl-devel opensc >/dev/null
 rpm -q kryoptic
-pip -q install "$(grep -E '^python-pkcs11==' /src/polaris_web/requirements-custody.txt)" \
-    "$(grep -E '^cryptography==' /src/polaris_web/requirements.txt)" liboqs-python 2>&1 | grep -v WARNING || true
+# The pins as the locks hold them; -o keeps a hashed lock's continuation backslash out.
+pip -q install "$(grep -oE '^python-pkcs11==[^ ]+' /src/polaris_web/requirements-custody.txt)" \
+    "$(grep -oE '^cryptography==[^ ]+' /src/polaris_web/requirements.txt)" \
+    "$(grep -oE '^liboqs-python==[^ ]+' /src/polaris_web/requirements-pqc.txt)" 2>&1 | grep -v WARNING || true
 
 echo "== liboqs (built by the binding on first import; Fedora installs it under lib64) =="
 python3 -c "import oqs" >/dev/null 2>&1 || true
