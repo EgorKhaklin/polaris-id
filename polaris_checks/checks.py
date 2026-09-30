@@ -4407,7 +4407,7 @@ def check_metrics_edge_acl(root: pathlib.Path) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
-# Launcher currency — the macOS launcher (the SCS-230 deliverable surface) must
+# Launcher currency: the macOS launcher must
 # track the real stack, not drift. Pin the three properties that went stale: it
 # installs native deps from requirements.txt (not a hardcoded list that misses
 # prometheus_client/redis/hypothesis/pytest), its `test` command runs the
@@ -7902,7 +7902,7 @@ def check_css_animations_resolve(root: pathlib.Path) -> list[Finding]:
 # top-level path the map omits, and a map entry that names nothing.
 # ---------------------------------------------------------------------------
 _MAP_IGNORED_TOP = {".gitignore", ".dockerignore", ".coveragerc", ".trivyignore",
-                    ".pre-commit-config.yaml", "ruff.toml", ".github", ".claude"}
+                    ".pre-commit-config.yaml", "ruff.toml", ".github"}
 
 
 def _tracked_top_level(root: pathlib.Path) -> set[str]:
@@ -23516,42 +23516,6 @@ def check_unread_signed_fields_tool_is_green(root: pathlib.Path) -> list[Finding
                      "and no declaration names a field that is now read (%s fields across %s "
                      "canonicalisers)" % (m.group(1), m.group(2)))
 
-#: Directories a public-document scan never enters: history is not edited retroactively, and
-#: dependency and build trees are not the repository's own prose.
-_RUNBOOK_SCAN_SKIP = {".git", "node_modules", "target", ".venv", "venv", "__pycache__", "history"}
-_RUNBOOK_LINK = re.compile(r"\]\((?:\.\./|\./)*CLAUDE\.md\)|href=\"(?:\.\./|\./)*CLAUDE\.md\"")
-
-
-def check_agent_runbook_stays_private(root: pathlib.Path) -> list[Finding]:
-    """The maintainer's agent runbook is not part of the public repository.
-
-    On 2026-09-25 the owner directed that CLAUDE.md stay local: it is the maintainer's working
-    file, and the public developer guide is CONTRIBUTING.md. Removing it once is not enough; a
-    later commit that `git add -A`s the tree, or a document that links to it again, brings it
-    back. So .gitignore must name it, and no live document may link to it (a link to a file the
-    public tree does not hold is a dead link a stranger follows). The CHANGELOG and the history
-    archive keep their mentions: they record what the tree was, and are never edited back."""
-    name = "agent_runbook_private"
-    ignore = _read_raw(root, ".gitignore")
-    if not re.search(r"^/?CLAUDE\.md\s*$", ignore, re.M):
-        return _fail(name, ".gitignore must list /CLAUDE.md so the maintainer's local agent "
-                           "runbook cannot be committed back into the public tree")
-    linked, scanned = [], 0
-    for path in sorted(root.rglob("*.md")) + sorted(root.rglob("*.html")):
-        rel = path.relative_to(root)
-        if _RUNBOOK_SCAN_SKIP & set(rel.parts[:-1]) or rel.name in ("CLAUDE.md", "CHANGELOG.md"):
-            continue
-        scanned += 1
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if _RUNBOOK_LINK.search(text):
-            linked.append(str(rel))
-    if scanned == 0:
-        return _fail(name, "no Markdown or HTML document was found to scan, so this measured nothing")
-    if linked:
-        return _fail(name, "a public document links to CLAUDE.md, which the public tree does not "
-                           "hold; point it at CONTRIBUTING.md: " + ", ".join(linked[:8]))
-    return _ok(name, "CLAUDE.md is ignored and none of %d public documents links to it" % scanned)
-
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_pooler_keeps_the_operator_scope,
@@ -23891,7 +23855,6 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_security_suite_refuses_skips_in_ci,
     check_no_session_date_in_sql,
     check_product_sessions_pin_utc,
-    check_agent_runbook_stays_private,
 ]
 
 

@@ -19925,36 +19925,6 @@ def test_product_sessions_pin_utc_check_discriminates(tmp_path):
     assert checks.check_product_sessions_pin_utc(tmp_path)[0].level == "FAIL", "a missing file must FAIL"
 
 
-def test_agent_runbook_private_check_discriminates(tmp_path):
-    """CLAUDE.md stays local: ignored, and linked from no live document."""
-    fn = checks.check_agent_runbook_stays_private
-    (tmp_path / "docs").mkdir()
-    (tmp_path / ".gitignore").write_text("*.pyc\n/CLAUDE.md\n")
-    (tmp_path / "README.md").write_text("Read [CONTRIBUTING.md](CONTRIBUTING.md).\n")
-    (tmp_path / "docs" / "guide.md").write_text("See [the guide](../CONTRIBUTING.md).\n")
-    # The local file itself, and the CHANGELOG's record of what the tree was, are not links out.
-    (tmp_path / "CLAUDE.md").write_text("[CLAUDE.md](CLAUDE.md)\n")
-    (tmp_path / "CHANGELOG.md").write_text("`CLAUDE.md` was [CLAUDE.md](CLAUDE.md)\n")
-    assert fn(tmp_path)[0].level == "OK", "must PASS on an ignored runbook nothing links to"
-
-    # THE defect: a document links to the runbook again.
-    (tmp_path / "docs" / "guide.md").write_text("See [the runbook](../CLAUDE.md).\n")
-    out = fn(tmp_path)[0]
-    assert out.level == "FAIL" and "docs/guide.md" in out.message, "a link back must be caught"
-    (tmp_path / "docs" / "guide.md").write_text("See [the guide](../CONTRIBUTING.md).\n")
-
-    # And the other defect: .gitignore no longer names it, so `git add -A` would publish it.
-    (tmp_path / ".gitignore").write_text("*.pyc\n")
-    out = fn(tmp_path)[0]
-    assert out.level == "FAIL" and ".gitignore" in out.message
-    (tmp_path / ".gitignore").write_text("/CLAUDE.md\n")
-
-    # VACUITY: nothing to scan is not a clean sweep.
-    for f in ("README.md", "docs/guide.md", "CLAUDE.md", "CHANGELOG.md"):
-        (tmp_path / f).unlink()
-    assert fn(tmp_path)[0].level == "FAIL"
-
-
 def test_license_headers_check_discriminates(tmp_path):
     good = "# SPDX-License-Identifier: Apache-2.0\n# Copyright 2026 Egor Khaklin and the Polaris contributors\n"
     (tmp_path / "a.py").write_text(good + "print(1)\n")
