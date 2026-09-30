@@ -85,6 +85,10 @@ It is a self-certification the Foundation reviewed and published, not an endorse
 independent verification (Certification Terms 3(e)). It covers that version in the verifier role
 on that profile. It does not cover the rest of Polaris, other versions (1.0.0rc8 to 1.0.0rc10 are
 not certified), the wallet role, other formats, or anything the suite does not test.
+Measured after it, on 2026-09-30: 1.0.0rc7 refuses an issuer certificate whose extended key
+usage is ISO 18013-5's document signer, as EUDI issuers' are (eudi-dev's PID Provider: its chain
+check answers no), and its `serve` takes issuer keys only as a JWKS (`--issuer-jwks`), so an `x5c`
+issuer can be trusted only through the library call. The tree takes the document signer.
 
 Earlier runs, same plan: a hosted run of 0.1.0 on 2026-09-15 finished 11 of 11 with zero FAILURE
 or WARNING (7 negative modules PASSED automatically, 4 positive in human REVIEW), after a first
