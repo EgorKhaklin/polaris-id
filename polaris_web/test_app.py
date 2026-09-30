@@ -12837,9 +12837,10 @@ class WebAuthnCeremonyTests(PolarisTestCase):
         self.assertIn('WEBAUTHN_REGISTRATION_REFUSED', _audit_events('admin'))
 
     def test_a_fault_that_is_not_the_librarys_verdict_is_not_echoed(self):
-        """Code scanning alert 39 (CWE-209): the catch-all answered with any exception's text. The
-        library's verdict on the operator's own response is still theirs to read; any other fault
-        (a database, a key, a programming error) goes to the audit detail, and the answer is fixed."""
+        """Code scanning alerts 39 and 353 (CWE-209): the catch-all answered with an exception's
+        text. The answer now names only the kind of a WebAuthn library verdict; any other fault
+        (a database, a key, a programming error) answers the bare message. The audit detail keeps
+        the whole fault either way."""
         from unittest import mock
         from webauthn.helpers.exceptions import InvalidRegistrationResponse
         internal = 'connection to server at "db-internal.example" (10.0.0.9), port 5432 failed'
@@ -12861,8 +12862,9 @@ class WebAuthnCeremonyTests(PolarisTestCase):
             r = self.client.post('/auth/webauthn/register/finish', json={'id': 'x'},
                                  headers={'X-CSRFToken': self._csrf()})
         self.assertEqual(r.status_code, 400)
-        self.assertIn('Unexpected client data challenge', r.get_json()['error'],
-                      "control: the library's verdict on the response still reaches the operator")
+        self.assertEqual(r.get_json()['error'],
+                         'registration verification failed (InvalidRegistrationResponse)',
+                         "control: the kind of the library's verdict reaches the operator, not its text")
 
     # ---- the v9.189 policy knobs ------------------------------------------------
 

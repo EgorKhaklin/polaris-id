@@ -311,11 +311,12 @@ def webauthn_register_finish():
         security._audit(get_db, 'WEBAUTHN_REGISTRATION_REFUSED',
             username=user['username'], user_id=user['user_id'],
             detail=f'{type(e).__name__}: {str(e)[:440]}')
-        # The library's verdict on the operator's own response is theirs to read. Any other
-        # fault (a database, a key or a programming error) stays in the audit detail above and
-        # never reaches the answer (CWE-209, code scanning alert 39).
+        # The answer names the kind of verdict when the WebAuthn library gave one, and nothing
+        # else: no exception text reaches the caller (CWE-209, code scanning alerts 39 and 353).
+        # A database, key or programming fault answers the bare message. The audit detail above
+        # keeps the whole of either.
         if isinstance(e, WebAuthnException):
-            return jsonify(error=f'registration verification failed: {e}'), 400
+            return jsonify(error='registration verification failed (%s)' % type(e).__name__), 400
         return jsonify(error='registration verification failed'), 400
 
     conn = get_db()
