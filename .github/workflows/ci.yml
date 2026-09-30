@@ -1918,18 +1918,18 @@ jobs:
           # runtime surface moved to 50.0.1 for PYSEC-2026-3552/3553/3554 +
           # GHSA-537c-gmf6-5ccf, so the job under test would have reinstalled the
           # vulnerable version that cve-scan had just rejected.
-          pip install "$(grep -E '^cryptography==' polaris_web/requirements.txt)"
+          pip install "$(grep -oE '^cryptography==[^ ]+' polaris_web/requirements.txt)"
           # v9.362 (P3.7) — cbor2 for the ISO 18013-5 bridge drill, pinned from the same
           # requirements file for the same reason the line above derives its pin: a literal
           # repeated here drifts, and the drill would then run against a version the CVE
           # scan had not seen.
-          pip install "$(grep -E '^cbor2==' polaris_web/requirements.txt)"
+          pip install "$(grep -oE '^cbor2==[^ ]+' polaris_web/requirements.txt)"
           # v9.369 — psycopg2 for the quantum-event drill (v9.365), which measures a
           # population migration against a real database. Added late: the drill was wired into
           # this job without checking that this job installs what it imports, so it exited 3
           # ("needs psycopg2") and failed the step for three ships. Pinned from the same
           # requirements file, for the reason the cryptography line above spells out.
-          pip install "$(grep -E '^psycopg2-binary==' polaris_web/requirements.txt)"
+          pip install "$(grep -oE '^psycopg2-binary==[^ ]+' polaris_web/requirements.txt)"
           # v9.178 (P1.2) — the custody drivers, so test_custody runs here with BOTH
           # witnesses (liboqs + OpenSSL): the file driver for real, the AWS KMS
           # driver against its wire-faithful stand-in, rotation end to end.
@@ -2461,7 +2461,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r polaris_web/requirements.txt
           pip install liboqs-python
-          pip install "$(grep -E '^cryptography==' polaris_web/requirements.txt)"
+          pip install "$(grep -oE '^cryptography==[^ ]+' polaris_web/requirements.txt)"
 
       - name: Wait for Postgres
         run: |
@@ -2616,8 +2616,8 @@ jobs:
       - name: Each check fails on its broken fixture
         run: |
           # pytest from the dev set; PyYAML for the one detection test that parses the pre-commit config.
-          pip install "$(grep -E '^pytest[>=<]' polaris_web/requirements-dev.txt)" \
-                      "$(grep -E '^PyYAML==' polaris_web/requirements-patroni.txt)"
+          pip install "$(grep -ohE '^pytest[>=<][^ ]+' polaris_web/requirements-dev.txt polaris_web/requirements-test.txt 2>/dev/null | head -n1)" \
+                      "$(grep -oiE '^pyyaml==[^ ]+' polaris_web/requirements-patroni.txt)"
           python3 -m pytest polaris_checks/test_checks.py -q -p no:cacheprovider
 
   dco:

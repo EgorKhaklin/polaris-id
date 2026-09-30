@@ -67,20 +67,34 @@ WORKDIR /build
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# v9.05 / Wave 1 / C3: pinned via requirements.txt for reproducibility.
-# (Pre-v9.05 listed 5 packages with loose version specs inline.)
+# The runtime lock: every package pinned and hashed, compiled from requirements.in,
+# so pip refuses any file whose hash the lock does not hold.
 COPY polaris_web/requirements.txt /tmp/requirements.txt
-# (v9.190: redis is an exact pin in requirements.txt now; the separate
-# redis 5 install that used to follow here was a second source of truth.)
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.txt
 
-# v9.116 — Real post-quantum signing in production. liboqs-python builds the
-# liboqs C library from source (to /root/_oqs) on first import; we trigger that
-# here so the runtime stage can copy the prebuilt library and never needs a
-# compiler. With this present + POLARIS_USE_REAL_PQC=1 (set in the prod compose),
-# issuance signs with real ML-DSA-65 instead of the SHA3-256 placeholder.
-RUN pip install --no-cache-dir liboqs-python \
-    && python -c "import oqs; print('liboqs', oqs.oqs_version(), 'built into the image')"
+# Real post-quantum signing in production (v9.116): with this library and
+# POLARIS_USE_REAL_PQC=1 (set in the prod compose), issuance signs with ML-DSA-65.
+# liboqs is built here from its release commit, checked, with the flags
+# liboqs-python's own installer uses, into the path liboqs-python loads from
+# (/root/_oqs, which the runtime stage copies). Left to itself, liboqs-python
+# would shallow-clone a movable tag on first import. The import below runs with
+# a PYOQS_VERSION that installer refuses, so a missing library fails the build
+# rather than being fetched.
+ARG LIBOQS_TAG=0.16.0
+ARG LIBOQS_COMMIT=5a1a854b0dc9f2141bdc771c555ee60c37950183
+RUN git clone --depth 1 --branch "$LIBOQS_TAG" https://github.com/open-quantum-safe/liboqs /tmp/liboqs \
+    && test "$(git -C /tmp/liboqs rev-parse HEAD)" = "$LIBOQS_COMMIT" \
+    && cmake -S /tmp/liboqs -B /tmp/liboqs/build -G Ninja \
+        -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON \
+        -DOQS_ENABLE_SIG_STFL_LMS=ON -DOQS_ENABLE_SIG_STFL_XMSS=ON \
+        -DOQS_HAZARDOUS_EXPERIMENTAL_ENABLE_SIG_STFL_KEY_SIG_GEN=ON \
+        -DCMAKE_INSTALL_PREFIX=/root/_oqs \
+    && cmake --build /tmp/liboqs/build --parallel 4 \
+    && cmake --build /tmp/liboqs/build --target install \
+    && rm -rf /tmp/liboqs
+COPY polaris_web/requirements-pqc.txt /tmp/requirements-pqc.txt
+RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements-pqc.txt \
+    && PYOQS_VERSION=refused-no-fetch python -c "import oqs; print('liboqs', oqs.oqs_version(), 'built into the image')"
 
 # v9.178 (roadmap P1.2) — optional key-custody drivers (python-pkcs11 for an
 # HSM / PKCS#11 token, boto3 for AWS KMS). Off by default so the image stays
@@ -88,7 +102,7 @@ RUN pip install --no-cache-dir liboqs-python \
 # lives behind one of them. The file driver needs nothing extra.
 ARG POLARIS_CUSTODY_EXTRAS=0
 COPY polaris_web/requirements-custody.txt /tmp/requirements-custody.txt
-RUN if [ "$POLARIS_CUSTODY_EXTRAS" = "1" ]; then pip install --no-cache-dir -r /tmp/requirements-custody.txt; fi
+RUN if [ "$POLARIS_CUSTODY_EXTRAS" = "1" ]; then pip install --no-cache-dir --require-hashes -r /tmp/requirements-custody.txt; fi
 
 # ---------------------------------------------------------------------------
 # Stage 3: Runtime (minimal Debian-slim, non-root)

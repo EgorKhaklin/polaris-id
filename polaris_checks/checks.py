@@ -1645,6 +1645,62 @@ def check_prod_image_no_test_deps(root: pathlib.Path) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# Every Python package an image installs comes from a hash-pinned lock. Until
+# 2026-09-30 the requirements files pinned only the direct dependencies (their own
+# resolved at build time), and Dockerfile.prod installed liboqs-python with no
+# version at all, which then shallow-cloned a movable liboqs tag at first import.
+# Each requirements*.in is now compiled into a hashed lock that the Dockerfiles
+# install with --require-hashes, and liboqs is built from a checked commit. This
+# keeps a later edit from bringing back a bare install.
+# ---------------------------------------------------------------------------
+_IMAGE_DOCKERFILES = ("polaris_web/Dockerfile", "polaris_web/Dockerfile.prod",
+                      "polaris_web/Dockerfile.postgres")
+
+
+def check_images_install_hashed_locks(root: pathlib.Path) -> list[Finding]:
+    name = "image_hashed_locks"
+    installs = 0
+    for rel in _IMAGE_DOCKERFILES:
+        df = _read(root, rel)
+        if not df:
+            return _fail(name, f"{rel} is missing")
+        # Comments dropped (a comment may say "pip install"), then one RUN per logical line.
+        code = "\n".join(ln for ln in df.splitlines() if not ln.lstrip().startswith("#"))
+        logical = code.replace("\\\n", " ")
+        for cmd in re.findall(r"\bpip3?\s+install\b[^\n&;|]*", logical):
+            installs += 1
+            if "--require-hashes" not in cmd:
+                return _fail(name, f"{rel}: `{' '.join(cmd.split())[:90]}` installs without "
+                                   "--require-hashes")
+            locks = re.findall(r"(?:^|\s)-r\s+(\S+)", cmd)
+            if not locks or re.sub(r"(?:^|\s)(-r\s+\S+|--\S+)", " ", cmd).split()[2:]:
+                return _fail(name, f"{rel}: `{' '.join(cmd.split())[:90]}` names a package on the "
+                                   "command line; an image installs only hashed locks")
+            for lock in locks:
+                path = "polaris_web/" + lock.rsplit("/", 1)[-1]
+                text = _read(root, path)
+                pins = re.findall(r"(?m)^[A-Za-z0-9_.\-]+\S*", text)
+                hashed = re.findall(r"(?m)^[A-Za-z0-9_.\-]+==[^\s\\]+ \\\n\s+--hash=sha256:[0-9a-f]{64}", text)
+                if not pins:
+                    return _fail(name, f"{path} (installed by {rel}) is missing or empty")
+                if len(hashed) != len(pins):
+                    return _fail(name, f"{path}: {len(pins) - len(hashed)} requirement(s) are not "
+                                       "pinned with == and a sha256 hash; recompile it from its .in")
+    if installs < 3:
+        return _fail(name, f"only {installs} pip install(s) found in the image Dockerfiles; the parse "
+                           "has broken and this check would pass by finding nothing")
+    prod = _read(root, "polaris_web/Dockerfile.prod")
+    if not re.search(r"LIBOQS_COMMIT=[0-9a-f]{40}\b", prod) or "rev-parse HEAD" not in prod:
+        return _fail(name, "Dockerfile.prod must build liboqs from a pinned 40-hex LIBOQS_COMMIT and check "
+                           "the clone against it (git rev-parse HEAD)")
+    if not re.search(r"PYOQS_VERSION=\S+\s+python\s+-c\s+\"import oqs", prod):
+        return _fail(name, "Dockerfile.prod must import oqs with a PYOQS_VERSION its installer refuses, so a "
+                           "missing library fails the build rather than being fetched")
+    return _ok(name, f"all {installs} pip installs in the image Dockerfiles take hashed locks with "
+                     "--require-hashes, every pin carries its sha256, and liboqs builds from a checked commit")
+
+
+# ---------------------------------------------------------------------------
 # The dependency surface must be CVE-scanned, and the scan must GATE on the
 # runtime surface (requirements.txt) — a known CVE in a package the production
 # image installs has to fail the build, not ship silently. pip-audit on the dev
@@ -7086,15 +7142,16 @@ def check_ha_automation(root: pathlib.Path) -> list[Finding]:
     init = _read(root, "polaris_web/docker-init.sh")
     df = _read(root, "polaris_web/Dockerfile.postgres")
     reqs = _read(root, "polaris_web/requirements-patroni.txt")
+    reqs_in = _read(root, "polaris_web/requirements-patroni.in")
     etcd = _read(root, "polaris_web/Dockerfile.etcd")
     hap = _read(root, "polaris_web/haproxy-pg.cfg")
     drill = _read(root, "scripts/polaris-failover-drill.sh")
     ci = _read(root, ".github/workflows/ci.yml")
     doc = _read(root, "docs/operator/FAILOVER.md")
     build = _read(root, "scripts/polaris-image-build.sh")
-    if not all((overlay, entry, post, init, df, reqs, etcd, hap, drill, ci, doc, build)):
+    if not all((overlay, entry, post, init, df, reqs, reqs_in, etcd, hap, drill, ci, doc, build)):
         return _fail("ha_automation", "an HA-profile file is missing (docker-compose.ha.yml, patroni-entrypoint.sh, "
-                     "patroni-post-init.sh, docker-init.sh, Dockerfile.postgres, requirements-patroni.txt, "
+                     "patroni-post-init.sh, docker-init.sh, Dockerfile.postgres, requirements-patroni.in/.txt, "
                      "Dockerfile.etcd, haproxy-pg.cfg, polaris-failover-drill.sh, ci.yml, FAILOVER.md, "
                      "polaris-image-build.sh)")
     for needle in ("polaris-patroni-entrypoint.sh", "postgres2:", "etcd1:", "etcd2:", "etcd3:", "pg-router:",
@@ -7117,8 +7174,15 @@ def check_ha_automation(root: pathlib.Path) -> list[Finding]:
         return _fail("ha_automation", "docker-init.sh must honour POLARIS_INIT_MANAGED_BY (skip ALTER SYSTEM under Patroni)")
     if "requirements-patroni.txt" not in df or "patroni --version" not in df:
         return _fail("ha_automation", "Dockerfile.postgres must install the pinned requirements-patroni.txt and verify patroni")
-    if not re.search(r"(?m)^patroni\[etcd3\]==\d", reqs):
-        return _fail("ha_automation", "requirements-patroni.txt must pin patroni[etcd3]==<version>")
+    # The extra is chosen in the .in; the hashed lock (pip-compile --strip-extras) pins patroni
+    # itself and must carry the etcd3 extra's client, or the lease store is unreachable.
+    chosen = re.search(r"(?m)^patroni\[etcd3\]==(\S+)", reqs_in)
+    if not chosen:
+        return _fail("ha_automation", "requirements-patroni.in must pin patroni[etcd3]==<version>")
+    if not re.search(r"(?m)^patroni==%s\b" % re.escape(chosen.group(1)), reqs) or \
+            not re.search(r"(?m)^python-etcd==", reqs):
+        return _fail("ha_automation", "the requirements-patroni.txt lock must pin patroni==%s and python-etcd "
+                     "(the etcd3 extra); recompile it from requirements-patroni.in" % chosen.group(1))
     if not re.search(r"(?m)^FROM \S+@sha256:[0-9a-f]{64}", etcd) or not re.search(r"(?m)^USER etcd", etcd):
         return _fail("ha_automation", "Dockerfile.etcd must build from a digest-pinned base and run as the etcd user")
     if "Dockerfile.etcd" not in build:
@@ -12124,8 +12188,14 @@ def check_lint_enforced(root: pathlib.Path) -> list[Finding]:
     if not re.search(r'select\s*=\s*\[[^\]]*"F"', cfg):
         return _fail("lint_enforced",
                      "ruff.toml must select the pyflakes F rules (unused imports, dead code, undefined names)")
-    if "ruff" not in _read(root, "polaris_web/requirements-dev.txt"):
-        return _fail("lint_enforced", "ruff must be a dev dependency (polaris_web/requirements-dev.txt)")
+    # requirements-dev.txt may hold the pins itself or, since the hash-pinned locks, only the
+    # `-r` lines that pull the locks in; either way ruff is a dev dependency if the install has it.
+    dev = _read(root, "polaris_web/requirements-dev.txt")
+    dev += "".join(_read(root, "polaris_web/" + inc)
+                   for inc in re.findall(r"(?m)^\s*-r\s+(\S+)", dev))
+    if "ruff" not in dev:
+        return _fail("lint_enforced", "ruff must be a dev dependency (polaris_web/requirements-dev.txt "
+                                      "or a file it includes with -r)")
     if "ruff check" not in _read(root, ".pre-commit-config.yaml"):
         return _fail("lint_enforced", "ruff must run in pre-commit (.pre-commit-config.yaml)")
     if "ruff check" not in _read(root, ".github/workflows/ci.yml"):
@@ -23745,6 +23815,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_prod_real_pqc,
     check_sql_console_readonly,
     check_prod_image_no_test_deps,
+    check_images_install_hashed_locks,
     check_cve_scanning,
     check_image_cve_scanning,
     check_sast_scanning,

@@ -129,9 +129,10 @@ image digest to sign yet.
 A dependency is added only when the standard library or an existing dependency cannot do the
 job; each published package declares a dependency budget that a check holds on every push
 (`polaris-verify` has none). Dependencies come from PyPI, npm and crates.io through their package
-managers. npm and Rust dependencies are fully locked (package-lock.json, Cargo.lock); Python's
-direct dependencies are pinned in the requirements files, but their own dependencies resolve at
-build time, which a hash-pinned lock will close. Container base images are pinned by digest. Dependabot alerts and weekly updates cover Python, Rust, GitHub Actions and Docker. Patch and
+managers. npm and Rust dependencies are fully locked (package-lock.json, Cargo.lock), and so is
+every Python package the images install: each `requirements*.in` is compiled into a hash-pinned
+lock that the Dockerfiles install with `--require-hashes`, and liboqs is built from its release
+commit, checked, never fetched by liboqs-python at import. Container base images are pinned by digest. Dependabot alerts and weekly updates cover Python, Rust, GitHub Actions and Docker. Patch and
 minor bumps are applied in batches and validated by a full CI run; majors of foundation
 dependencies are planned work. The `cve-scan` and `image-cve-scan` CI jobs fail the build on a
 known CVE in the runtime surface or a fixable critical in an image.

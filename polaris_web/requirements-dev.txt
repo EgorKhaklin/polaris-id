@@ -1,44 +1,15 @@
-# polaris_web/requirements-dev.txt — pinned TEST/DEV dependencies
+# polaris_web/requirements-dev.txt: run AND test, in one install.
 #
-# v9.105 split these out of requirements.txt. They are the test tooling
-# only; they must NEVER ship in the production image. Installing this
-# file also installs the full runtime surface (the `-r` line below), so a
-# developer or CI needs only one install to both run and test.
+# The runtime lock (what the images install) and the test lock, both hashed, so
+# pip checks every file it installs. The images never install this file.
 #
-# Usage (develop + run the test suites):
-#   python3 -m venv polaris_web/venv
+#   python3.12 -m venv polaris_web/venv
 #   source polaris_web/venv/bin/activate
 #   pip install -r polaris_web/requirements-dev.txt
 #
-# CI (.github/workflows/ci.yml) installs THIS file. The Dockerfiles do
-# NOT — they install requirements.txt (runtime only). pip-audit gates on
-# requirements.txt and audits this file informationally (a test-tool CVE
-# is tracked but does not gate the production image).
+# CI installs this file; pip-audit gates on requirements.txt (the image surface)
+# and audits this one informationally. To change a version, edit the .in file
+# and recompile its .txt (see the header of each .in).
 
 -r requirements.txt
-
-# ---- Test-only: property testing (10 Hypothesis tests) ----
-hypothesis>=6.168.1,<7.0
-
-# ---- Test-only: pytest (ZK two-witness suites, v9.44/v9.46) ----
-# polaris_zk/witness2/test_witness2.py and polaris_web/test_zk_second_witness.py
-# are pytest-style (functions + pytest.mark); they ImportError without this.
-pytest>=9.1.1,<10.0
-
-# ---- Test-only: Playwright (v9.33 Atlas-globe E2E) ----
-# After installing this package, run `playwright install chromium` once
-# to download the browser binary (~250MB). polaris_web/test_e2e_atlas.py
-# gracefully skips if either the package OR the browser is unavailable.
-playwright>=1.63.0,<2.0
-
-# ---- Test-only: coverage.py (v9.171 / roadmap P0.8) ----
-# scripts/polaris-coverage.sh runs the suites under coverage, combines them, and
-# gates CI on a line-coverage floor. Subprocess coverage (test_cli shells into
-# polaris.py) relies on coverage.process_startup(), which this provides.
-coverage>=7.16.1,<8.0
-
-# ---- Lint: ruff (v9.306) ----
-# The pyflakes-family hygiene gate (unused imports, unused locals, undefined
-# names, placeholder-free f-strings), configured in ruff.toml with select = F.
-# Run by the pre-commit hook and the CI "Ruff" step; formatting is not enforced.
-ruff==0.16.9
+-r requirements-test.txt

@@ -16,9 +16,11 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-verify` abstains on an agent grant or a presentation with no `--issuer-anchor`, as it already did for a pack.
 - `polaris-verify` binds a stapled status assertion to the credential's own key; another trusted authority's assertion was accepted.
 - Both SDKs verify a credential's own signature before binding an agent grant to it.
+- Every Python package the images install is hash-pinned, and liboqs builds from a checked commit; liboqs-python was unpinned and fetched it.
 
 ### Fixed
 
+- A NUL character in a path, query, form field or JSON string is refused as bad input; it escaped as a 500.
 - Installed as a package, `polaris-id` refuses the four commands that need a clone and says which; `--version` printed `unknown`.
 - Both SDKs refuse a status bundle whose signed `member_count` differs from its members, as WIRE-SPEC 3.4 requires.
 - The three verifiers read an inclusion proof's index and size as JSON integers and its path as a list; each coerced differently.
