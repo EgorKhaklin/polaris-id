@@ -281,9 +281,9 @@ class WalletAgainstAnIssuerTests(unittest.TestCase):
         signed = {"format": "polaris-signed-document/1", "signature_hex": "ef"}
         issuer = self._issuer({"/api/v1/sign/1/holder": (200, signed)})
         doc = os.path.join(self.dir, "report.pdf")
-        secret = b"%PDF-1.7 contents that must stay on this machine"
+        contents = b"%PDF-1.7 contents that must stay on this machine"
         with open(doc, "wb") as f:
-            f.write(secret)
+            f.write(contents)
         out = os.path.join(self.dir, "signed.json")
         r = self._run("sign", "--document", doc, "--instance", issuer.url + "/", "--agency", "1",
                       "--purpose", "approval", "--out", out)
@@ -293,7 +293,7 @@ class WalletAgainstAnIssuerTests(unittest.TestCase):
         self.assertNotIn(b"contents that must stay", raw, "the document itself left the wallet")
         body = json.loads(raw)
         self.assertEqual((body["digest_hex"], body["digest_algorithm"], body["name"], body["purpose"]),
-                         (hashlib.sha3_256(secret).hexdigest(), "SHA3-256", "report.pdf", "approval"))
+                         (hashlib.sha3_256(contents).hexdigest(), "SHA3-256", "report.pdf", "approval"))
         self.assertEqual((body["token_value"], body["signature_hex"]), (self.PACK["token_value"], "ab"))
         with open(out) as f:
             self.assertEqual(json.load(f), signed)
