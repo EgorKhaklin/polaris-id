@@ -130,7 +130,9 @@ What must hold for any publish:
    with none of Polaris present, verifies real signed material, packs and installs the npm
    tarball into a bare project, and opens a conformance-suite response with `polaris-oid4vp`
    from outside the repository. It carries three negative controls.
-2. `python -m twine check` passes on every distribution.
+2. `python -m twine check` passes on every distribution. The distributions are built by the
+   toolchain pinned with hashes in `.github/publish/requirements.txt` (build, setuptools,
+   twine), without build isolation, so no unpinned setuptools is fetched into the build.
 3. The version was bumped. **A version number on a registry can never be reused**, even
    after a yank, so a mistake costs a number rather than being undone.
 
@@ -185,9 +187,9 @@ uploads the tarball and stops. The version is not on the registry, `npm install`
 reach it, and it becomes available only when a maintainer approves it with a 2FA code that
 no workflow can produce. So the workflow, compromised or merely run by mistake with
 `confirm: PUBLISH`, cannot put code in front of an installer by itself. `npm stage publish`
-needs npm 11.15.0 and Node 22.14.0, and the job asserts both rather than trusting
-`npm@latest` to be new enough: a silent fall back to a direct publish is the one outcome
-staging exists to prevent.
+needs npm 11.15.0 and Node 22.14.0. The job installs one exact npm (12.1.0), checked against
+its registry sha512 integrity before it runs, and asserts both floors: a silent fall back to a
+direct publish is the one outcome staging exists to prevent.
 
 Finish it from your own machine, where the 2FA code lives:
 
