@@ -232,6 +232,17 @@ A cosignature that verifies must also be OF this head: the `timestamp-anchor-var
 head for another log does not anchor, and a genuine cosignature over another tree size or
 another root does not count toward the threshold; the base anchor is their positive control.
 
+Hostile shapes (1.0.0-rc.68). Six cases take a published vector and change one field to a shape
+the wire specification does not allow, with no new signature: an inclusion proof whose index is
+`false`, whose tree size is the string `"1"` or whose path is an object
+(`timestamp-anchor-proof-*`, on the one-leaf anchor, so a verifier that coerces the field reads
+the genuine proof back); a status bundle whose members match its root and whose signed
+`member_count` does not (`federation-status-bundle-count-mismatch`); and a grant whose
+credential's signature does not verify, or whose binding arrives with no credential
+(`agent-grant-use-principal-credential-forged`, `agent-grant-use-principal-no-credential`).
+Each was accepted by at least one of the three verifiers in this repository, and each MUST be
+refused.
+
 Holder-proof window (`artifact: holder-chain`, 1.0.0-rc.66). A holder proof is fresh from one
 minute before its `issued_at` (clock skew) until five minutes after it, both ends inclusive.
 The `holder-chain-proof-window-*` cases take a chain whose binding opens a day before the proof,

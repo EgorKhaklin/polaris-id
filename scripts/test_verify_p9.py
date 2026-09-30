@@ -807,6 +807,30 @@ class TheInclusionProofSitesRefuseANonFiniteIndexTests(unittest.TestCase):
         self.assertFalse(out["published"])
         self.assertIn("malformed", out["note"])
 
+    def test_a_publication_receipt_index_or_path_of_the_wrong_type_is_malformed(self):
+        """2026-09-30. `int()` read 0.5 and "0" as the index 0 and `or []` read an object as
+        the empty path, so a receipt with a malformed field reached the proof arithmetic as if
+        it were well formed. An inclusion proof's index is a JSON integer and its path a list,
+        in every Polaris verifier."""
+        log_sth = {"log_id": "L", "tree_size": 4, "root_hash_hex": "00"}
+        real = V.verify_sth
+        V.verify_sth = lambda sth, issuer_key=None: {
+            "sth_authentic": True, "issuer_matches": True, "tree_size": sth.get("tree_size"),
+            "note": None}
+        try:
+            for over in ({"leaf_index": 0.5}, {"leaf_index": "0"}, {"leaf_index": True},
+                         {"inclusion_proof_hex": {}}):
+                receipt = {"format": V._PUBLICATION_FORMAT, "log_id": "L", "tree_size": 4,
+                           "root_hash_hex": "00", "leaf_index": 0, "inclusion_proof_hex": [],
+                           "ledger_sth": {"tree_size": 9, "root_hash_hex": "00"}}
+                receipt.update(over)
+                with self.subTest(**{k: repr(v) for k, v in over.items()}):
+                    out = V.verify_publication(log_sth, receipt, None)
+                    self.assertFalse(out["published"])
+                    self.assertIn("malformed", out["note"])
+        finally:
+            V.verify_sth = real
+
     def test_an_ordinary_index_still_verifies_the_same_way(self):
         """The refusal must be narrow. A finite index reaches the proof arithmetic, which is
         what a document from an honest log does, and the note is not 'malformed'."""

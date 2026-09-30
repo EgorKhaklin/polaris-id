@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polaris-verify"
-version = "1.0.0rc5"
+version = "1.0.0rc6"
 description = "Detached verifier for Polaris ID credentials and signed artifacts: offline authenticity, no server, no database."
 readme = "README.md"
 requires-python = ">=3.9"

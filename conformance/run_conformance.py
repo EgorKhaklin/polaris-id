@@ -98,6 +98,8 @@ def _load_cases():
                 payload["agent_proof"] = _load_file(c["proof_file"])
             if "binding_file" in c:
                 payload["binding"] = _load_file(c["binding_file"])
+            # A binding may arrive without its credential (1.0.0-rc.68), and it then binds nothing.
+            if "credential_file" in c:
                 payload["credential"] = _load_file(c["credential_file"])
             for k in ("requested_action", "expected_nonce", "verifier_scope", "now"):
                 if k in c:

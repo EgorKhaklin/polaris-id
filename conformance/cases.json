@@ -2429,6 +2429,82 @@
       },
       "since": "1.0.0-rc.66",
       "note": "A hex field holds hex digits and nothing else: a byte of public_key_hex written with a character that is not hex; a reader that stops at the first bad character decodes the genuine key. Before this case the TypeScript SDK accepted a character that is not hex and the Python verifiers accepted whitespace, each where the others refused."
+    },
+    {
+      "name": "federation-status-bundle-count-mismatch",
+      "artifact": "federation-status-bundle",
+      "object_file": "conformance/vectors/federation-status-bundle-count-mismatch.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "WIRE-SPEC 3.4: member_count MUST equal the number of members. The root matches the one member listed and the signed count says two; before this case both SDKs accepted it and only the detached verifier refused."
+    },
+    {
+      "name": "timestamp-anchor-proof-index-not-a-number",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/timestamp-anchor-proof-index-not-a-number.json",
+      "log_key": "sth",
+      "trusted_witnesses": "cosigners",
+      "threshold": 2,
+      "expect": {
+        "anchored": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "An inclusion proof's index and tree size are JSON integers and its path a list (WIRE-SPEC, anchoring): an index of false, which int() and Number() both read as 0. Read leniently it is the genuine one-leaf proof of timestamp-anchor-variants-base; before this case the three verifiers each accepted it."
+    },
+    {
+      "name": "timestamp-anchor-proof-size-not-a-number",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/timestamp-anchor-proof-size-not-a-number.json",
+      "log_key": "sth",
+      "trusted_witnesses": "cosigners",
+      "threshold": 2,
+      "expect": {
+        "anchored": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "An inclusion proof's index and tree size are JSON integers and its path a list (WIRE-SPEC, anchoring): a tree size written as the string \"1\", which int() and Number() both read as 1. Read leniently it is the genuine one-leaf proof of timestamp-anchor-variants-base; before this case the three verifiers each accepted it."
+    },
+    {
+      "name": "timestamp-anchor-proof-path-not-a-list",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/timestamp-anchor-proof-path-not-a-list.json",
+      "log_key": "sth",
+      "trusted_witnesses": "cosigners",
+      "threshold": 2,
+      "expect": {
+        "anchored": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "An inclusion proof's index and tree size are JSON integers and its path a list (WIRE-SPEC, anchoring): an audit path that is an object, which `or []` and a non-array fallback both read as the empty path. Read leniently it is the genuine one-leaf proof of timestamp-anchor-variants-base; before this case the three verifiers each accepted it."
+    },
+    {
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/grant-principal-grant.json",
+      "binding_file": "conformance/vectors/grant-principal-binding-active.json",
+      "now": "2026-05-01T00:00:30Z",
+      "since": "1.0.0-rc.68",
+      "name": "agent-grant-use-principal-credential-forged",
+      "credential_file": "conformance/vectors/grant-principal-credential-forged.json",
+      "expect": {
+        "authentic": true,
+        "principal_bound": false
+      },
+      "note": "WIRE-SPEC 3.17 names the issuer's signature on the credential as a link a verifier MUST check. The binding names this credential and is signed by its key, and the credential's signature does not verify; before this case all three verifiers bound the grant to it."
+    },
+    {
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/grant-principal-grant.json",
+      "binding_file": "conformance/vectors/grant-principal-binding-active.json",
+      "now": "2026-05-01T00:00:30Z",
+      "since": "1.0.0-rc.68",
+      "name": "agent-grant-use-principal-no-credential",
+      "expect": {
+        "authentic": true,
+        "principal_bound": false
+      },
+      "note": "A binding with no credential beside it binds the holder key to nothing a verifier has checked; before this case the detached verifier bound it."
     }
   ]
 }

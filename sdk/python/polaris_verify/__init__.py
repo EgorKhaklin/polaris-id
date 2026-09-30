@@ -470,6 +470,35 @@ def _revoked_root(leaves) -> str:
     return hashlib.sha3_256("\n".join(uniq).encode("utf-8")).hexdigest()
 
 
+def _count_is(count, n) -> bool:
+    """A signed count equals `n`, read as JSON: a number, never a boolean. Python's `True == 1`
+    otherwise accepts `"member_count": true` for one member, which the TypeScript SDK's `===`
+    refuses; the same artifact would get two verdicts."""
+    return isinstance(count, (int, float)) and not isinstance(count, bool) and count == n
+
+
+def _wire_int(x) -> int:
+    """An inclusion proof's index or tree size, read as a JSON integer: a finite number with
+    no fractional part, never a boolean or a string. Raises ValueError otherwise. `int()`
+    alone read 1.5 as 1 and "1" and true as 1, and the TypeScript SDK's `Number()` read null
+    and false as 0, so the same proof was anchored under one SDK and refused under the other
+    (2026-09-30)."""
+    if (isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x)
+            or (isinstance(x, float) and not x.is_integer())):
+        raise ValueError("not a JSON integer: %r" % (x,))
+    return int(x)
+
+
+def _wire_path(p) -> list:
+    """An inclusion proof's audit path: absent or null is empty, a list is read element by
+    element, and anything else is malformed rather than read as empty or iterated."""
+    if p is None:
+        return []
+    if not isinstance(p, list):
+        raise ValueError("an inclusion proof's path must be a list")
+    return [_unhex(str(x)) for x in p]
+
+
 def _members_root(members) -> str:
     if not isinstance(members, list):
         members = []
@@ -544,11 +573,16 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         # so a verifier checks the set with SHA3-256 alone and never needs the proving library.
         leaves = obj.get("all_leaves_hex") if isinstance(obj.get("all_leaves_hex"), list) else []
         ok = (_revoked_root(leaves) == str(obj.get("leaves_root_hex") or "").lower()
-              and len(leaves) == obj.get("leaf_count"))
+              and _count_is(obj.get("leaf_count"), len(leaves)))
         note = None if ok else "the published leaves do not match the committed set"
     elif ok and fmt == "polaris-federation-status-bundle/1":
-        ok = _members_root(obj.get("members")) == str(obj.get("members_root_hex") or "").lower()
-        note = None if ok else "the status bundle's members_root does not match its members"
+        # 2026-09-30: WIRE-SPEC 3.4 says member_count MUST equal the number of members, and
+        # only the detached verifier checked it: a bundle whose signed count and listed
+        # members disagreed was authentic here and in the TypeScript SDK.
+        members = obj.get("members") if isinstance(obj.get("members"), list) else []
+        ok = (_members_root(members) == str(obj.get("members_root_hex") or "").lower()
+              and _count_is(obj.get("member_count"), len(members)))
+        note = None if ok else "the status bundle's members_root or member_count does not match its members"
     elif ok and fmt == "polaris-federation-manifest/1":
         active = {str(a.get("public_key_hex", "")).lower() for a in (obj.get("anchors") or [])
                   if isinstance(a, dict) and (a.get("status") or "active") == "active"}
@@ -619,7 +653,7 @@ def verify_inclusion(idx: int, tree_size: int, leaf: bytes, root: bytes, proof) 
     """RFC 6962 section 2.1.1: is `leaf` the entry at `idx` in a tree of `tree_size` whose
     head is `root`? Total on hostile input: a malformed path is False, never an exception."""
     try:
-        idx, tree_size = int(idx), int(tree_size)
+        idx, tree_size = _wire_int(idx), _wire_int(tree_size)
     except (TypeError, ValueError, OverflowError):
         return False
     if idx < 0 or idx >= tree_size:
@@ -701,9 +735,9 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
         v.note = "the head is not a %s head" % _TIMESTAMP_LOG_ID
         return v
     try:
-        idx, size = int(proof.get("index")), int(proof.get("tree_size"))
+        idx, size = _wire_int(proof.get("index")), _wire_int(proof.get("tree_size"))
         root = _unhex(str(sth.get("root_hash_hex")))
-        path = [_unhex(str(x)) for x in (proof.get("proof_hex") or [])]
+        path = _wire_path(proof.get("proof_hex"))
     except (TypeError, ValueError, OverflowError):
         v.note = "malformed proof"
         return v
@@ -860,7 +894,9 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
     trusted = {t.lower() for t in trusted_anchors} if trusted_anchors is not None else None
     via = None
     signed_edge = None
-    for m in (manifests or []):
+    # A manifest set that is not a list is no manifests, as in the detached verifier: `or []`
+    # let `true` through to the loop, which raised TypeError (2026-09-30).
+    for m in (manifests if isinstance(manifests, (list, tuple)) else []):
         m = m if isinstance(m, dict) else {}
         mv = verify_signed_artifact(m, now=now)   # manifest: signature + self-consistency + freshness
         if not (mv.authentic and mv.fresh):
@@ -1175,7 +1211,7 @@ def grant_principal_bound(grant, binding, credential, now=None) -> bool:
     """Does the key that signed this grant speak for somebody?
 
     It must be the holder key an ISSUER bound to this credential, under a binding that is
-    genuine, fresh and ACTIVE. A revoked binding is published so that a verifier sees the
+    genuine, fresh and ACTIVE, and the credential's own signature must verify. A revoked binding is published so that a verifier sees the
     holder has no usable key (the lost-device case, where the key is what a thief holds); a
     grant signed with it speaks for nobody. The grant's own signature is the caller's
     `verify_signed_artifact` step.
@@ -1183,6 +1219,13 @@ def grant_principal_bound(grant, binding, credential, now=None) -> bool:
     if not isinstance(grant, dict) or not isinstance(binding, dict) or not isinstance(credential, dict):
         return False
     if binding.get("format") != "polaris-holder-binding/1":
+        return False
+    # 2026-09-30: the credential's own signature, the first link WIRE-SPEC 3.17 names. The
+    # binding was compared with the credential but the credential was never verified, so a
+    # chain signed end to end under an attacker's key, with a credential whose signature
+    # does not verify at all, was bound. Whether its issuer is one you trust is the caller's
+    # verify_authenticity(credential, anchors).
+    if not verify_authenticity(credential).authentic:
         return False
     bv = verify_signed_artifact(binding, now=now)
     return bool(bv.authentic and bv.fresh is not False

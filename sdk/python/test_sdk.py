@@ -912,6 +912,19 @@ class HostileFieldsAreAVerdictTests(unittest.TestCase):
             with self.subTest(feed=type(bad).__name__):
                 self.assertEqual(decide(bad), "reject")
 
+    def test_manifests_that_are_not_a_list_are_no_manifests(self):
+        """2026-09-30: `manifests or []` let `true` and `5` reach the loop, which raised
+        TypeError; the detached verifier reads a manifest set that is not a list as none."""
+        f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json")))
+
+        def decide(manifests):
+            return pv.verify_cross_authority(f["pack"], f["_fixture"]["context_id"], manifests,
+                                             [f["trusted_anchor"]], None, now=f["_fixture"]["now"]).decision
+        self.assertEqual(decide([f["manifests"]["base"]]), "accept")
+        for bad in (True, 5, "manifests", f["manifests"]["base"]):
+            with self.subTest(manifests=type(bad).__name__):
+                self.assertEqual(decide(bad), "reject")
+
     def test_the_conformance_adapter_answers_a_binding_that_is_not_an_object(self):
         import contextlib
         import io
@@ -927,6 +940,61 @@ class HostileFieldsAreAVerdictTests(unittest.TestCase):
         verdict = json.loads(out.getvalue())
         self.assertFalse(verdict["principal_bound"])
         self.assertIsNone(verdict["pairwise_handle"])
+
+
+class SignedCountsAreNumbersTests(unittest.TestCase):
+    """A signed count is a JSON number, never a boolean, and it must equal what it counts
+    (2026-09-30, a three-way differential sweep of the published cases). Python's `==` has
+    `True == 1`, so a count of `true` over one member or leaf read as one here and was refused
+    by the TypeScript SDK's `===`. The signature is stubbed to verify: only a signer can write
+    these counts, so what is under test is the count rule and nothing else."""
+
+    def _authentic(self, obj):
+        from unittest import mock
+        with mock.patch.object(pv, "_verify_cryptography", return_value=True), \
+                mock.patch.object(pv, "_verify_liboqs", return_value=True):
+            return pv.verify_signed_artifact(obj).authentic
+
+    def test_a_status_bundle_is_held_to_its_member_count(self):
+        b = _conformance_vector("federation-status-bundle-count-mismatch.json")
+        self.assertTrue(self._authentic(dict(b, member_count=1)), "control: one member, counted as one")
+        self.assertFalse(self._authentic(b), "the published case: two counted, one listed")
+        for bad in (True, "1", None):
+            with self.subTest(member_count=bad):
+                self.assertFalse(self._authentic(dict(b, member_count=bad)))
+
+    def test_an_epoch_leaves_count_of_true_is_not_one_leaf(self):
+        one = ["aa" * 32]
+        e = dict(_conformance_vector("epoch-leaves-valid.json"), all_leaves_hex=one,
+                 leaves_root_hex=pv._revoked_root(one))
+        self.assertTrue(self._authentic(dict(e, leaf_count=1)), "control: one leaf, counted as one")
+        self.assertFalse(self._authentic(dict(e, leaf_count=True)))
+
+
+class InclusionProofShapeTests(unittest.TestCase):
+    """An inclusion proof's index and tree size are JSON integers and its path a list
+    (2026-09-30). `int()` read 1.5 as 1 and true and "1" as 1, while the TypeScript SDK's
+    `Number()` read null and false as 0: one proof, anchored under one SDK only."""
+
+    def test_the_index_and_size_are_json_integers(self):
+        leaf = b"\x11" * 32
+        self.assertTrue(pv.verify_inclusion(0, 1, leaf, leaf, []), "control: a one-leaf tree")
+        self.assertTrue(pv.verify_inclusion(0.0, 1.0, leaf, leaf, []), "JSON cannot tell 1.0 from 1")
+        for idx, size in ((False, 1), (0, True), ("0", 1), (0, "1"), (0, 1.5), (None, 1), (0, float("inf"))):
+            with self.subTest(index=idx, tree_size=size):
+                self.assertFalse(pv.verify_inclusion(idx, size, leaf, leaf, []))
+
+    def test_a_path_that_is_not_a_list_is_malformed(self):
+        import copy
+        ts = copy.deepcopy(_conformance_vector("timestamp-anchor-variants-base.json"))
+        key = ts["anchor"]["sth"]["public_key_hex"]
+        self.assertTrue(pv.verify_timestamp_anchor(ts, log_key=key).anchored, "control")
+        for bad in ({}, 0, "", False):
+            with self.subTest(proof_hex=bad):
+                ts["anchor"]["proof"]["proof_hex"] = bad
+                v = pv.verify_timestamp_anchor(ts, log_key=key)
+                self.assertFalse(v.anchored)
+                self.assertEqual(v.note, "malformed proof")
 
 
 class GrantCoverageTests(unittest.TestCase):

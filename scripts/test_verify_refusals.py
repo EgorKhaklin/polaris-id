@@ -930,6 +930,34 @@ class CommandLineExitCodes(unittest.TestCase):
         self.assertEqual(self.main("--pqc-provider", "auto", "--presentation", str(self.blob)), 2,
                          "and with the real verdict: {} is no presentation anyone can use")
 
+    def test_a_usable_presentation_without_a_trust_root_abstains(self):
+        """2026-09-30. The presentation path exited 0 with no --issuer-anchor, where the pack
+        and stapled paths abstain, so a presentation whose credential and status assertion
+        were signed by anybody's key was accepted."""
+        from unittest import mock
+        for trusted, flags, code in ((None, (), 2), (None, ("--signature-only",), 0),
+                                     (True, (), 0), (False, (), 2)):
+            verdict = {"usable_offline": trusted is not False, "issuer_trusted": trusted, "note": None}
+            with self.subTest(issuer_trusted=trusted, flags=flags), \
+                    mock.patch.object(V, "verify_presentation", return_value=verdict):
+                self.assertEqual(self.main("--pqc-provider", "auto", "--presentation", str(self.blob),
+                                           *flags), code)
+
+    def test_a_usable_agent_grant_without_a_trust_root_abstains(self):
+        """2026-09-30. The grant path had no abstention: it exited 0 whenever the chain was
+        usable, whether or not any trust root was given."""
+        from unittest import mock
+        base = {"grant_authentic": True, "fresh": True, "credential_authentic": True,
+                "principal_bound": True, "action_in_scope": True, "revoked": None,
+                "agent_proved": True, "pairwise_handle": None, "correlation": None, "note": None}
+        for trusted, usable, flags, code in ((None, True, (), 2), (None, True, ("--signature-only",), 0),
+                                             (True, True, (), 0), (True, False, (), 2)):
+            verdict = dict(base, usable=usable, issuer_trusted=trusted)
+            with self.subTest(issuer_trusted=trusted, usable=usable, flags=flags), \
+                    mock.patch.object(V, "verify_agent_grant", return_value=verdict):
+                self.assertEqual(self.main("--pqc-provider", "auto", "--agent-grant", str(self.blob),
+                                           *flags), code)
+
     def test_frames_that_do_not_decode_exit_1(self):
         """Row 1, the documented inconsistency: kept, because a script may depend on it."""
         frames = self.tmp / "frames.txt"
@@ -997,21 +1025,60 @@ class AgentGrantPrincipalBinding(unittest.TestCase):
     NOW = "2026-05-01T00:00:30Z"
 
     def setUp(self):
-        self.grant = json.loads((ROOT / "conformance" / "vectors" / "agent-grant-valid.json").read_text())
+        vec = lambda n: json.loads((ROOT / "conformance" / "vectors" / n).read_text())  # noqa: E731
+        self.grant, self.proof = vec("agent-grant-valid.json"), vec("agent-proof-valid.json")
         self.good = {"binding_authentic": True, "fresh": True, "bound_to_credential": True,
                      "holder_public_key_hex": self.grant["public_key_hex"], "note": None}
 
     def verdict(self, **binding):
+        # 2026-09-30: a usable grant is the WHOLE chain (WIRE-SPEC 3.17), so the starting point
+        # carries the credential's verdict, the action, the agent's proof and the service's
+        # nonce; before, a link nobody supplied counted as passed. The credential verdict is
+        # replaced as the binding's is, so each test still breaks one property of the binding.
         from unittest import mock
-        with mock.patch.object(V, "verify_holder_binding", return_value=dict(self.good, **binding)):
+        with mock.patch.object(V, "verify_holder_binding", return_value=dict(self.good, **binding)), \
+                mock.patch.object(V, "verify_pack", return_value={"signature_valid": True,
+                                                                  "issuer_trusted": None, "note": None}):
             return V.verify_agent_grant(self.grant, binding={"format": "x"}, credential={},
-                                        now=self.NOW)
+                                        now=self.NOW, requested_action="read:status",
+                                        agent_proof=self.proof, expected_nonce="svc-nonce-1")
 
     def test_a_good_binding_leaves_the_grant_usable(self):
         v = self.verdict()
         self.assertTrue(v["grant_authentic"], v["note"])
         self.assertIs(v["principal_bound"], True)
         self.assertIs(v["usable"], True)
+
+    def test_each_missing_link_makes_the_grant_unusable(self):
+        """WIRE-SPEC 3.17 names five links and `usable` must have CHECKED each; a link nobody
+        supplied counted as passed until 2026-09-30."""
+        from unittest import mock
+        full = dict(binding={"format": "x"}, credential={}, now=self.NOW, requested_action="read:status",
+                    agent_proof=self.proof, expected_nonce="svc-nonce-1")
+        for missing in ("binding", "requested_action", "agent_proof", "expected_nonce"):
+            with self.subTest(missing=missing), \
+                    mock.patch.object(V, "verify_holder_binding", return_value=dict(self.good)), \
+                    mock.patch.object(V, "verify_pack", return_value={"signature_valid": True,
+                                                                      "issuer_trusted": None, "note": None}):
+                v = V.verify_agent_grant(self.grant, **dict(full, **{missing: None}))
+                self.assertIs(v["usable"], False)
+
+    def test_the_credentials_verdict_decides_the_principal(self):
+        from unittest import mock
+        for label, pack, anchors in (("a credential signature that does not verify",
+                                      {"signature_valid": False, "issuer_trusted": None, "note": None}, None),
+                                     ("an issuer outside the anchors",
+                                      {"signature_valid": True, "issuer_trusted": False, "note": None},
+                                      ["ab" * 32])):
+            with self.subTest(label), \
+                    mock.patch.object(V, "verify_holder_binding", return_value=dict(self.good)), \
+                    mock.patch.object(V, "verify_pack", return_value=pack):
+                v = V.verify_agent_grant(self.grant, binding={"format": "x"}, credential={},
+                                         now=self.NOW, requested_action="read:status",
+                                         agent_proof=self.proof, expected_nonce="svc-nonce-1",
+                                         anchor_keys=anchors)
+                self.assertIs(v["principal_bound"], False)
+                self.assertIs(v["usable"], False)
 
     def test_each_broken_property_of_the_binding_makes_the_grant_unusable(self):
         for label, change in (("not authentic", {"binding_authentic": False}),
@@ -1022,6 +1089,96 @@ class AgentGrantPrincipalBinding(unittest.TestCase):
                 v = self.verdict(**change)
                 self.assertIs(v["principal_bound"], False)
                 self.assertIs(v["usable"], False)
+
+
+class SignedCountsAreNumbers(unittest.TestCase):
+    """A signed count is a JSON number equal to what it counts: never a boolean, and never
+    absent (2026-09-30). `(x or 0)` read an absent member_count as zero members, and Python's
+    `True == 1` read `true` as one member or one leaf, where the TypeScript SDK's `===`
+    refuses both. The signature is stubbed to verify: only a signer can write these counts,
+    so the count rule is what is under test."""
+
+    def stub(self):
+        from unittest import mock
+        return mock.patch.object(V, "_two_witness_verify", return_value=(True, ["stub"], None))
+
+    def test_a_status_bundle_is_held_to_its_member_count(self):
+        b = json.loads((ROOT / "conformance" / "vectors" / "federation-status-bundle-count-mismatch.json").read_text())
+        with self.stub():
+            self.assertIs(V.verify_status_bundle(dict(b, member_count=1))["commitment_ok"], True, "control")
+            for bad in (2, True, "1", None):
+                with self.subTest(member_count=bad):
+                    self.assertFalse(V.verify_status_bundle(dict(b, member_count=bad))["commitment_ok"])
+            empty = {k: v for k, v in b.items() if k != "member_count"}
+            empty.update(members=[], members_root_hex=V.bundle_members_root([]))
+            self.assertFalse(V.verify_status_bundle(empty)["commitment_ok"], "an absent count is not zero")
+
+    def test_an_epoch_leaves_count_of_true_is_not_one_leaf(self):
+        one = ["aa" * 32]
+        e = dict(json.loads((ROOT / "conformance" / "vectors" / "epoch-leaves-valid.json").read_text()),
+                 all_leaves_hex=one, leaves_root_hex=V._leaves_root(one))
+        with self.stub():
+            self.assertIs(V.verify_epoch_leaves(dict(e, leaf_count=1))["count_matches"], True, "control")
+            self.assertIs(V.verify_epoch_leaves(dict(e, leaf_count=True))["count_matches"], False)
+
+
+@unittest.skipUnless(any(V._provider_available(p) for p in V.REAL_PROVIDERS),
+                     "no real ML-DSA backend; these run on real signatures")
+class AgentGrantChainsToTheTrustedIssuer(unittest.TestCase):
+    """WIRE-SPEC 3.17: a verifier MUST check the issuer's signature on the credential and on the
+    holder binding. Until 2026-09-30 the credential was compared with the binding and never
+    verified, a binding with no credential counted as bound, and `anchor_keys` reached a field
+    nothing read: a chain an attacker signed end to end under a key of their own, checked with
+    the documented command against the real issuer's anchor, was usable and exited 0. The
+    published grant-principal chain is genuine; each test changes one input."""
+
+    NOW = "2026-05-01T00:00:30Z"
+
+    @classmethod
+    def setUpClass(cls):
+        vec = lambda n: json.loads((ROOT / "conformance" / "vectors" / n).read_text())  # noqa: E731
+        cls.grant = vec("grant-principal-grant.json")
+        cls.binding = vec("grant-principal-binding-active.json")
+        cls.credential = vec("grant-principal-credential.json")
+        cls.forged = vec("grant-principal-credential-forged.json")
+        cls.issuer = cls.credential["public_key_hex"]
+
+    def chain(self, credential, anchors):
+        return V.verify_agent_grant(self.grant, binding=self.binding, credential=credential,
+                                    now=self.NOW, anchor_keys=anchors)
+
+    def test_the_genuine_chain_under_its_issuers_anchor_is_bound(self):
+        v = self.chain(self.credential, [self.issuer])
+        self.assertIs(v["principal_bound"], True, v["note"])
+        self.assertIs(v["credential_authentic"], True)
+        self.assertIs(v["issuer_trusted"], True)
+
+    def test_a_chain_by_an_issuer_outside_the_anchors_is_not_bound(self):
+        """An attacker's own chain, as a verifier sees it: genuine throughout, and signed by a
+        key the relying party never trusted."""
+        v = self.chain(self.credential, ["ab" * 1952])
+        self.assertIs(v["issuer_trusted"], False)
+        self.assertIs(v["principal_bound"], False)
+        self.assertIn("not in the trusted anchors", v["note"])
+
+    def test_a_credential_whose_signature_does_not_verify_binds_nothing(self):
+        for anchors in (None, [self.issuer]):
+            with self.subTest(anchors=anchors):
+                v = self.chain(self.forged, anchors)
+                self.assertIs(v["credential_authentic"], False)
+                self.assertIs(v["principal_bound"], False)
+
+    def test_a_binding_without_its_credential_binds_nothing(self):
+        v = self.chain(None, [self.issuer])
+        self.assertIs(v["principal_bound"], False)
+        self.assertIn("no credential", v["note"])
+
+    def test_a_chain_missing_a_link_is_not_usable(self):
+        """`usable` read a link nobody supplied as a pass, so a bare grant was usable."""
+        v = V.verify_agent_grant(self.grant, now=self.NOW)
+        self.assertIs(v["grant_authentic"], True, "control: the grant itself is genuine")
+        self.assertIs(v["usable"], False)
+        self.assertIn("incomplete", v["note"])
 
 
 @unittest.skipUnless(any(V._provider_available(p) for p in V.REAL_PROVIDERS),
@@ -1362,7 +1519,10 @@ class ReceiptInclusionDecisions(unittest.TestCase):
         self.assertIn(V._RECEIPT_LOG_ID, v["note"])
 
     def test_a_malformed_proof_is_refused_not_raised(self):
-        for over in ({"index": float("inf")}, {"index": "three"}, {"proof_hex": ["zz"]}):
+        # 2026-09-30: 3.5 and "7" were read by int() as 3 and 7, the genuine index and size,
+        # so a proof with a malformed field was included; the SDKs read them otherwise.
+        for over in ({"index": float("inf")}, {"index": "three"}, {"proof_hex": ["zz"]},
+                     {"index": 3.5}, {"tree_size": "7"}, {"index": True}, {"proof_hex": "00"}):
             with self.subTest(**{k: str(v) for k, v in over.items()}):
                 v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, **over), self.head())
                 self.assertFalse(v["included"])
