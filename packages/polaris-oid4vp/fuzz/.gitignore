@@ -1,0 +1,6 @@
+corpus/
+crash-*
+oom-*
+timeout-*
+leak-*
+slow-unit-*

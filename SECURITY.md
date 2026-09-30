@@ -135,7 +135,9 @@ image is reviewed before each release and fixed once a fixed version exists. A d
 license does not allow its use in an Apache-2.0 project is not added (NOTICE lists every license). Code findings (SAST): bandit fails the build on a high-severity
 finding; medium findings are reviewed before each release. CodeQL and zizmor report every push and
 pull request to the Security tab, and a high or critical alert is fixed, or dismissed with its
-reason written on the alert, before the next release. Every change is also scanned by OSV-Scanner for malicious packages (the OpenSSF Malicious Packages
+reason written on the alert, before the next release. The functions in `polaris-oid4vp` that read what a wallet or a
+status list server sends are fuzzed, coverage-guided, on every change to that package and
+nightly; an input that breaks a function's documented promise fails the job. Every change is also scanned by OSV-Scanner for malicious packages (the OpenSSF Malicious Packages
 data) and known vulnerabilities, in the Python sets the images install and in the npm and Rust
 lockfiles; any finding blocks the merge unless it is declared, with its reason, in
 `osv-scanner.toml`. No release is cut while any of these jobs fails. A finding that does not affect Polaris is declared, with the reason, in

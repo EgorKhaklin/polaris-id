@@ -58,6 +58,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `vectors/anchors/ml-dsa-65-issuer.json`, the sample issuer's key, to try `polaris-verify` from PyPI without a clone.
 - `TRADEMARKS.md`: the license covers the files, not the Polaris, owl, Khaklin Technologies or OpenID Certified marks.
 - Discussions forms for questions, needs and interop results; `.github/SUPPORT.md` says where each kind of message goes.
+- Coverage-guided fuzzing (atheris) of `polaris-oid4vp`'s hostile-input functions, on each change to the package and nightly.
 - Code scanning: CodeQL (security-extended) over the Python, TypeScript, Rust and workflows, zizmor over the workflows, and OpenSSF Scorecard.
 
 ### Changed
