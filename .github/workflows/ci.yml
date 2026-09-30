@@ -110,8 +110,9 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           # v9.436: the procedure drill's --changed mode refuses rather than passing when it
           # cannot reach its baseline. Since 2026-09-28 the baseline is the commit the push
           # started from (POLARIS_CHANGED_BASE), which can be any number of commits back, so
@@ -119,7 +120,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
@@ -232,7 +233,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -444,7 +445,7 @@ jobs:
       # job without checking what that job provides is how the mdoc drill (cbor2) and the
       # quantum-event drill (psycopg2) each went red after they were added.
       - name: Set up Java (for the TLA+ model checker)
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: temurin
           java-version: '21'
@@ -642,7 +643,7 @@ jobs:
 
       - name: Upload the smoke baseline JSON
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: perf-baseline-smoke
           path: /tmp/perf-baseline.json
@@ -662,7 +663,7 @@ jobs:
       # understate the tested surface. The floor is a ratchet set below the
       # measured baseline (~92% lines); raise it as coverage climbs.
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov
       - name: ZK library coverage floor
         working-directory: polaris_zk
         run: |
@@ -766,10 +767,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
@@ -807,7 +810,7 @@ jobs:
       # without checking what that job installs is how the mdoc drill (cbor2) and the
       # quantum-event drill (psycopg2) each went red after they were added.
       - name: Set up Node (for the pinned axe-core)
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '24'
 
@@ -835,7 +838,7 @@ jobs:
 
       - name: Upload UI drill screenshots
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ui-drill-screenshots
           path: ui-drill-out/
@@ -856,7 +859,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Build the dev image and bring up the stack
         working-directory: polaris_web
@@ -921,7 +926,7 @@ jobs:
       # any other prod-build breakage fails CI, not a deploy. Buildx + gha cache
       # keep the Rust layer warm across runs.
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Read the shipping version
         id: polaris_version
@@ -933,7 +938,7 @@ jobs:
       # losing the gha cache, so the step is repeated once instead.
       - name: Build the prod image (deploy artifact)
         id: prod_image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         continue-on-error: true
         with:
           context: .
@@ -946,7 +951,7 @@ jobs:
 
       - name: Build the prod image, second attempt (registry flake)
         if: steps.prod_image.outcome == 'failure'
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: polaris_web/Dockerfile.prod
@@ -1308,7 +1313,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Build the self-built Caddy image (compiles caddy-ratelimit)
         run: bash scripts/polaris-image-build.sh polaris_web/Dockerfile.caddy polaris-caddy:ci polaris_web
@@ -1484,7 +1491,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: promtool + amtool validate the shipped configs, then the page drill
         run: bash scripts/polaris-page-drill.sh
@@ -1506,10 +1515,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
@@ -1533,10 +1544,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
@@ -1551,7 +1564,7 @@ jobs:
 
       - name: Upload the drill JSON
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dr-drill-ci
           path: /tmp/dr-drill.json
@@ -1574,7 +1587,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: packages stage, for real, on Debian 12 and Rocky Linux 9
         run: |
@@ -1635,7 +1650,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: PKCS#11 custody drill inside Fedora 43 (kryoptic token, ML-DSA-65 in-token, both witnesses)
         # The recipe is scripts/polaris-custody-pkcs11-drill.sh, run identically
@@ -1664,7 +1681,9 @@ jobs:
       POLARIS_COMPOSE_EXTRA: "-f docker-compose.citest.yml -f docker-compose.bluegreen.yml"
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Build the prod images
         run: |
@@ -1723,7 +1742,9 @@ jobs:
       POLARIS_COMPOSE_EXTRA: "-f docker-compose.citest.yml -f docker-compose.bluegreen.yml -f docker-compose.ha.yml -f docker-compose.dr.yml"
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Build the prod images (the database image carries Patroni; etcd is self-built)
         run: bash scripts/polaris-image-build.sh --stack prod
@@ -1738,7 +1759,7 @@ jobs:
 
       - name: Upload the RTO/RPO ledger
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: region-evacuation
           path: /tmp/evacuation.json
@@ -1759,7 +1780,9 @@ jobs:
       POLARIS_COMPOSE_EXTRA: "-f docker-compose.citest.yml -f docker-compose.bluegreen.yml -f docker-compose.ha.yml"
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Build the prod images (the database image carries Patroni; etcd is self-built)
         run: |
@@ -1789,7 +1812,7 @@ jobs:
 
       - name: Upload the drill summary
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: failover-drill
           path: /tmp/failover.json
@@ -1816,7 +1839,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Build the prod images
         run: |
@@ -1824,7 +1849,7 @@ jobs:
           bash scripts/polaris-image-build.sh --stack prod
 
       - name: Install kind (kubectl + helm are on the runner)
-        uses: helm/kind-action@v1.15.0
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
         with:
           install_only: true
           version: v0.33.0
@@ -1867,12 +1892,13 @@ jobs:
       # REFUSES rather than reporting a clean run, which is the right behaviour and would
       # fail this job.
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
@@ -2270,7 +2296,7 @@ jobs:
       # the drill refuses to report -- correctly, but the job dies on setup rather than
       # on a finding. node itself is preinstalled on the runner; the dependencies are not.
       - name: Set up Node (the drill inverts the TypeScript SDK too)
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '24'
       - name: Install the TypeScript SDK's pinned dependencies
@@ -2415,10 +2441,12 @@ jobs:
       POLARIS_FED_B_DB: polaris_fb
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
@@ -2480,15 +2508,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Set up Python 3.12
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
       # The drill's npm leg packs the TypeScript SDK and installs the tarball into a bare
       # project. npm ci here builds the dist/ the package now points `exports` at.
       - name: Set up Node (the drill packs and installs the TypeScript SDK too)
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '24'
       - name: Install the TypeScript SDK's pinned dependencies
@@ -2547,9 +2577,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Set up Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '24'
       - name: Install pinned dependencies
@@ -2573,8 +2605,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
       - name: The invariant layer
@@ -2595,8 +2629,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Every commit in the pull request carries Signed-off-by
         env:
@@ -2624,9 +2659,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Set up Python 3.12
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
       - name: Resolve each image's Python set exactly as it installs
@@ -2664,10 +2701,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
@@ -2713,7 +2752,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Build the self-built prod images
         run: bash scripts/polaris-image-build.sh --stack cve
@@ -2764,7 +2805,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Build the prod images
         run: |

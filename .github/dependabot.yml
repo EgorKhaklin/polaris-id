@@ -15,11 +15,22 @@ updates:
     directory: /polaris_web
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     labels:
       - dependencies
     commit-message:
       prefix: deps
+    groups:
+      # psycopg[binary] X requires psycopg-binary==X exactly, so a PR that bumps
+      # one alone cannot be installed: on 2026-09-25 the psycopg 3.3.6 PR left
+      # psycopg-binary at 3.3.5 and every container job failed to resolve. One
+      # group, one PR, both pins together.
+      psycopg:
+        patterns:
+          - "psycopg"
+          - "psycopg-binary"
     ignore:
       # patroni 4.1.5 declares ydiff!=1.4.0,!=1.4.1,<1.5,>=1.2.0. A ydiff at or
       # above 1.5 cannot be installed beside it and makes the postgres/patroni
@@ -34,6 +45,8 @@ updates:
     directory: /polaris_zk
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     labels:
       - dependencies
@@ -50,6 +63,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     labels:
       - dependencies
     commit-message:
@@ -62,6 +77,8 @@ updates:
     directory: /polaris_web
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     labels:
       - dependencies
     commit-message:

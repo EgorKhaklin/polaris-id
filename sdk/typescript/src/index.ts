@@ -1158,8 +1158,17 @@ export function grantCovers(grant: any, action: unknown): boolean {
  * unlimited; that is how a bounded grant silently becomes an unbounded one.
  */
 export function grantWithinLimits(grant: any, usesSoFar = 0, amount?: number): [boolean, string | null] {
-  const limits = grant && typeof grant === "object" && grant.limits && typeof grant.limits === "object"
-    ? grant.limits as Record<string, unknown> : {};
+  // 2026-09-30: a `limits` that was a string or a number read as no limits, while the Python
+  // verifiers also read a list that way; the same grant answered differently. Absent means
+  // unlimited; anything present that is not a plain object is refused.
+  if (!grant || typeof grant !== "object" || Array.isArray(grant)) {
+    return [false, "the grant is not an object"];
+  }
+  const raw = grant.limits;
+  if (raw !== undefined && raw !== null && (typeof raw !== "object" || Array.isArray(raw))) {
+    return [false, "the grant's limits are not an object; refusing rather than ignoring them"];
+  }
+  const limits = (raw ?? {}) as Record<string, unknown>;
   const unknown = Object.keys(limits).filter((k) => k !== "max_uses" && k !== "max_amount").sort();
   if (unknown.length) {
     return [false, `the grant carries limits this verifier does not understand (${unknown.join(", ")}); refusing rather than ignoring them`];

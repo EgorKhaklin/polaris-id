@@ -118,20 +118,24 @@ def _oauth_status_checker(issuer_url, client_id, client_secret, credential):
     party — a bank, a kiosk — reaches the status check: as itself, with its own
     credential, not by borrowing an operator login. It presents the genuine issued
     signature (a possession proof), and the issuer returns the verdict with no
-    personal data. Returns the status shape verify_presentation reads."""
+    personal data. Returns the status shape verify_presentation reads.
+
+    The client-credentials exchange runs inside the check, so an issuer that refuses the
+    client is a status that could not be read, as an unreachable issuer is: a reject with its
+    reason, not a traceback outside the exit table."""
     import base64
     base = issuer_url.rstrip("/")
     creds = base64.b64encode(("%s:%s" % (client_id, client_secret)).encode()).decode()
-    token_req = urllib.request.Request(
-        "%s/api/v1/oauth/token" % base, data=b"grant_type=client_credentials",
-        headers={"Authorization": "Basic " + creds,
-                 "Content-Type": "application/x-www-form-urlencoded"})
-    with urllib.request.urlopen(token_req, timeout=30) as r:
-        bearer = json.loads(r.read())["access_token"]
     body = json.dumps({"token_value": credential.get("token_value"),
                        "signature_hex": credential.get("signature_hex")}).encode()
 
     def check(_token_id):
+        token_req = urllib.request.Request(
+            "%s/api/v1/oauth/token" % base, data=b"grant_type=client_credentials",
+            headers={"Authorization": "Basic " + creds,
+                     "Content-Type": "application/x-www-form-urlencoded"})
+        with urllib.request.urlopen(token_req, timeout=30) as r:
+            bearer = json.loads(r.read())["access_token"]
         req = urllib.request.Request(
             "%s/api/v1/verify" % base, data=body,
             headers={"Authorization": "Bearer " + bearer, "Content-Type": "application/json"})

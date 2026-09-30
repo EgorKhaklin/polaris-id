@@ -60,7 +60,7 @@ Around the credential:
 | | version | where |
 |---|---|---|
 | this tree | 1.0.0-rc.66 | the source you are reading |
-| `polaris-oid4vp` | 1.0.0rc8 | PyPI; 1.0.0rc7 is the certified version |
+| `polaris-oid4vp` | 1.0.0rc9 | PyPI; 1.0.0rc7 is the certified version |
 | `polaris-verify`, `polaris-sdk-python` | 1.0.0rc4 | PyPI |
 | `polaris-sdk-ts` | 1.0.0-rc.5 | npm, under `next` (`latest` stays 0.1.0) |
 
@@ -218,7 +218,8 @@ Test counts: reference machine, v1.0.0-rc.62 (`pytest -q` per suite, 2026-09-26)
 On every push, CI also boots the five-service production-profile stack, round-trips backups,
 fails over the HA profile under writes, proves the post-quantum TLS handshake and real ML-DSA-65
 signing, runs the federation and compatibility drills and the mutation drills, and gates on CVE
-scans ([ci.yml](.github/workflows/ci.yml)).
+scans ([ci.yml](.github/workflows/ci.yml)). What the mutation drills broke, what noticed and which run each number
+is from: [the review packet](docs/REVIEW-PACKET.md#4-broken-on-purpose).
 
 ```bash
 python3 -m polaris_checks.run        # the invariant layer, no database needed

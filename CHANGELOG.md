@@ -13,8 +13,11 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - `polaris-oid4vp` refuses an x5c credential whose `iss` its certificate does not name.
 - A wallet-copy offer is recorded under the operator's account before it is returned; nothing recorded who made one.
+- Every GitHub Action is pinned to a full commit SHA, checkouts drop the workflow token, and Dependabot waits seven days on a new release.
 - `polaris-oid4vp serve` refuses TLS below 1.2; on Python 3.9 builds that default lower, 1.0.0rc9 accepted TLS 1.0 and 1.1.
+- The three verifiers refuse a grant whose `limits` is present but not an object; the Python ones read it as unlimited.
 - The Python SDK refuses an `issuer_url` whose scheme is not `https` or `http` before `urlopen`. (thanks @DYNOSuprovo)
+- The `pypi` and `npm` environments deploy only from `main`, and a published release's tag and assets cannot be changed.
 
 ### Fixed
 
@@ -32,6 +35,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `/api/v1/verify`, the possession routes and the exchange gateway read hex that way too; whitespace is refused.
 - The exchange gateway answers 502, not 500, when its upstream returns JSON nested past the parser.
 - A second `polaris-ship.py run` on the same database server is refused; two runs dropped each other's databases.
+- `polaris issue` signs what it issues; it stored a placeholder that verifies under nothing.
+- `polaris key-register`, `key-retire` and `key-compromise` work as the schema owner; each failed reading its new row.
+- `polaris bulk-enroll` signs under the issuing agency's own key and refuses another, as the issuing route does.
 - `polaris-verify --verify-dir` reports a vector that is not a JSON object instead of raising.
 - `polaris-verify` no longer calls missing revocation evidence a revocation in its long-term-validation note.
 - NOTICE names psycopg 3 and certifi, which are not permissive, and drops files the tree no longer ships.
@@ -42,6 +48,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The TypeScript SDK trims an issuer URL's trailing slashes in linear time; its regular expression took 30 s on 200 KB of slashes.
 - `polaris-oid4vp serve` counts a body's raw bytes against Content-Length; invalid UTF-8 hid a truncated body.
 - CITATION.cff says duress-aware, not duress-resistant; the vocabulary check now refuses the duress forms it missed.
+- `polaris-relying-party.py` rejects, instead of crashing, when the issuer refuses its OAuth client.
 
 ### Added
 
@@ -50,6 +57,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `vectors/anchors/ml-dsa-65-issuer.json`, the sample issuer's key, to try `polaris-verify` from PyPI without a clone.
 - `TRADEMARKS.md`: the license covers the files, not the Polaris, owl, Khaklin Technologies or OpenID Certified marks.
 - Discussions forms for questions, needs and interop results; `.github/SUPPORT.md` says where each kind of message goes.
+- Code scanning: CodeQL (security-extended) over the Python, TypeScript, Rust and workflows, zizmor over the workflows, and OpenSSF Scorecard.
 
 ### Changed
 
@@ -58,7 +66,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - NOTICE and the macOS launcher drop the course reference; the privacy page names no vendor.
 - The three Python packages link their documentation, changelog, issues and source for PyPI.
 - The site, README, citation and package summaries name the project Polaris ID, as its repository does (owner's direction).
+- The review packet's drill table names the CI run behind each number, restated from the 2026-09-30 runs.
 - Published: `polaris-verify` and `polaris-sdk-python` 1.0.0rc4 and `polaris-oid4vp` 1.0.0rc8 (not certified; 1.0.0rc7 is) on PyPI, `polaris-sdk-ts` 1.0.0-rc.4, then 1.0.0-rc.5 with the TypeScript format fix, on npm under `next`.
+- Published: `polaris-oid4vp` 1.0.0rc9 on PyPI, with the review fixes above (not certified; 1.0.0rc7 is).
 
 ## v1.0.0-rc.66 — 2026-09-28 (a Polaris credential in a wallet Polaris did not write)
 

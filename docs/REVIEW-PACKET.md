@@ -107,9 +107,9 @@ their own property in a comment were repaired in the same ship -- a fixture that
 property in a comment is testing the thing the drill forbids.
 
 The drill now gates at zero on every push, across THREE mutations. The first comments out every
-line carrying a check's own search strings: 125 checks reached, none survive. The second deletes
+line carrying a check's own search strings: 134 checks reached, none survive. The second deletes
 every file a check names and requires it to notice, which is what reaches the ones that compute
-rather than grep: 273 reached, none survive, and it found four passing vacuously when it was
+rather than grep: 291 reached, none survive, and it found four passing vacuously when it was
 written, two of them constitutional. C10's money-table prohibition and the canonical-version
 rule were both perfectly true of a schema and an `app.py` that did not exist.
 
@@ -117,23 +117,25 @@ The third closed the gap this paragraph used to send a reviewer to. A check that
 file which is PRESENT but wrong was caught by neither of the first two, since one only removes
 lines it can name and the other removes the file entirely. For DOCUMENTS that is now covered:
 `#` in Markdown is a heading rather than a comment, so the first mutation had to skip every
-check that reads one, and the third deletes the matching sentences and leaves the file there. 84
-checks reach it and 79 notice.
+check that reads one, and the third deletes the matching sentences and leaves the file there. 85
+checks reach it and 80 notice (these counts, and the next paragraph's, are from [CI run
+36661832758](https://github.com/EgorKhaklin/polaris-id/actions/runs/36661832758), 2026-09-30).
 
 The 5 that do not are reported rather than failed, and they are worth a reviewer's attention for
 a different reason: each asserts that a document is PUBLISHED, not what it says. `conformance/SPEC.md`,
 `docs/design/transparency-log.md` and three others could have their wording replaced wholesale
 and no check on this page would notice.
 
-**Where the weakest ground actually is, in order.** 82 checks are not mutation-tested at all,
-and the drill names them in three groups on every run: 34 assert through no literal this harness
-can find; 44 read a file type no mutation here can express, 12 of them JSON, where deleting a
-line breaks the parse so the check would fail for a reason that is about the file rather than
-the property; and 4 have needles matching nothing in the files they name, which is correct for
-an absence check and worth confirming is true of all four. A further 21 read inputs the harness
-cannot enumerate. **Those 103 checks are the part of this page that rests on care rather than on
-a machine**, and the drill prints the list, so a reviewer does not have to take this paragraph's
-word for which ones they are.
+**Where the weakest ground actually is, in order.** 93 checks are not mutation-tested at all,
+and the drill names them on every run: 8 assert through no literal needle or pattern; 31 have
+something to search for but read a glob or a computed path the harness cannot name; 49 read a
+file the comment mutation cannot express and the document pass does not reach, 13 of them JSON,
+where deleting a line breaks the parse so the check would fail for a reason that is about the
+file rather than the property; and 5 have needles matching nothing in the files they name, which
+is correct for an absence check and worth confirming is true of all five. A further 25 read
+inputs the harness cannot enumerate. **Those 118 checks are the part of this page that rests on
+care rather than on a machine**, and the drill prints the list, so a reviewer does not have to
+take this paragraph's word for which ones they are.
 
 ---
 
@@ -143,20 +145,28 @@ Each drill deletes or inverts one security control at a time and requires a test
 **survivor** is a control nothing noticed; a **declared** survivor is one the drill's source
 names with the reason it is acceptable (a twin check refuses the same case, or a drill outside
 the suites covers it). An undeclared survivor, or a declaration nothing needs any more, fails
-the drill. Measured on 2026-09-27 by running each drill to completion.
+the drill. Each row names the run its numbers were read from, a CI run unless it says otherwise;
+they move as the tree does.
 
-| Drill | What is broken, one at a time | Broken | Noticed | Declared survivors | Runs |
-| --- | --- | --- | --- | --- | --- |
-| [constraint](../scripts/polaris-constraint-mutation-drill.py) | a named constraint or row-level security policy, dropped | 49 | 49 | 0 | every push |
-| [trigger](../scripts/polaris-trigger-mutation-drill.py) | a whole trigger, dropped | 53 | 53 | 0 | every push; exhaustive weekly |
-| [trigger `--refusals`](../scripts/polaris-trigger-mutation-drill.py) | one refusal inside a trigger function, deleted | 65 | 56 | 9: masked, a later check in the same function refuses the case | every push |
-| [procedure](../scripts/polaris-procedure-mutation-drill.py) | one refusal inside a stored procedure, deleted | 90 | 88 | 2: pre-lock copies whose twins under the row lock refuse | changed procedures per push; all weekly |
-| [constitution](../scripts/polaris-constitution-mutation-drill.py) | the enforcement of one of C1 to C10, deleted | 10 | 10 | 0 | every push |
-| [application](../scripts/polaris-app-mutation-drill.py) | one 4xx/5xx refusal in the web application, switched off | 116 | 94 | 22: coarse rate limiters pinned structurally, gateway checks covered by the two-instance drill | weekly |
-| [SDK](../scripts/polaris-sdk-mutation-drill.py) | one refusal in either SDK or the detached verifier, inverted to accept | 158 | 137 | 21 | changed files per push |
-| [OpenID4VP](../scripts/polaris-oid4vp-mutation-drill.py) | one refusal in the OpenID4VP verifier, inverted to accept | 104 | 98 | 6 | every push |
-| [ZK](../scripts/polaris-zk-mutation-drill.py) | a ZK witness, disabled or weakened | 3 | 3 | 0 | every push |
-| [check layer](../scripts/polaris-check-mutation-drill.py) | an invariant check's search strings, commented out | 133 | 133 | 0 | every push |
+| Drill | What is broken, one at a time | Broken | Noticed | Declared survivors | Runs | Measured |
+| --- | --- | --- | --- | --- | --- | --- |
+| [constraint](../scripts/polaris-constraint-mutation-drill.py) | a named constraint or row-level security policy, dropped | 50 | 50 | 0 | every push | [36661832758](https://github.com/EgorKhaklin/polaris-id/actions/runs/36661832758) |
+| [trigger](../scripts/polaris-trigger-mutation-drill.py) | a whole trigger, dropped | 54 | 54 | 0 | every push; exhaustive weekly | [36661832758](https://github.com/EgorKhaklin/polaris-id/actions/runs/36661832758) |
+| [trigger `--refusals`](../scripts/polaris-trigger-mutation-drill.py) | one refusal inside a trigger function, deleted | 65 | 56 | 9: masked, a later check in the same function refuses the case | every push | [36661832758](https://github.com/EgorKhaklin/polaris-id/actions/runs/36661832758) |
+| [procedure](../scripts/polaris-procedure-mutation-drill.py) | one refusal inside a stored procedure, deleted | 90 | 88 | 2: pre-lock copies whose twins under the row lock refuse | changed procedures per push; all weekly | [36269239522](https://github.com/EgorKhaklin/polaris-id/actions/runs/36269239522), the full sweep |
+| [constitution](../scripts/polaris-constitution-mutation-drill.py) | the enforcement of one of C1 to C10, deleted | 10 | 10 | 0 | every push | [36661832758](https://github.com/EgorKhaklin/polaris-id/actions/runs/36661832758) |
+| [application](../scripts/polaris-app-mutation-drill.py) | one 4xx/5xx refusal in the web application, switched off | 116 | 94 | 22: coarse rate limiters pinned structurally, gateway checks covered by the two-instance drill | weekly | a local run, 2026-09-27; the weekly sweep first runs 2026-10-01 |
+| [SDK](../scripts/polaris-sdk-mutation-drill.py) | one refusal in either SDK or the detached verifier, inverted to accept | 178 | 162 | 16 | changed files per push | [36661944211](https://github.com/EgorKhaklin/polaris-id/actions/runs/36661944211) |
+| [OpenID4VP](../scripts/polaris-oid4vp-mutation-drill.py) | one refusal in the OpenID4VP verifier, inverted to accept | 107 | 102 | 5 | every push | [36666780941](https://github.com/EgorKhaklin/polaris-id/actions/runs/36666780941) |
+| [ZK](../scripts/polaris-zk-mutation-drill.py) | a ZK witness, disabled or weakened | 3 | 3 | 0 | every push | [36661832758](https://github.com/EgorKhaklin/polaris-id/actions/runs/36661832758) |
+| [check layer](../scripts/polaris-check-mutation-drill.py) | an invariant check's search strings, commented out | 134 | 134 | 0 | every push | [36661832758](https://github.com/EgorKhaklin/polaris-id/actions/runs/36661832758) |
+
+Across the nine rows measured in CI, 691 controls were broken one at a time: 659 turned a test
+red and 32 are declared survivors; none is undeclared. Beside the drills, three attack suites
+attempt 21 attacks that must fail (cryptography 9, access and audit controls 11, database 1), and
+all 21 held in [run 36661832758](https://github.com/EgorKhaklin/polaris-id/actions/runs/36661832758). The attack runner refuses a suite without a positive
+control, a defense defeated on purpose that must be reported broken, so a clean sweep is a result
+the harness could have failed to give.
 
 What this does and does not say:
 

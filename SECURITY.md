@@ -41,7 +41,7 @@ lists what older versions still carry.
 
 | Package | Current | Older versions still carrying known defects |
 |---|---|---|
-| `polaris-oid4vp` | `1.0.0rc8` | `1.0.0rc7` (the certified version) and earlier: with an x5c issuer, **accept an `iss` its certificate does not name** and pass it to the status resolver; accept a `vp_token` under a key the DCQL query did not use. `1.0.0rc7` (measured): **raises instead of refusing** a non-string disclosure name, `vct` or JWE `enc`, or JSON nested about 20,000 deep (`serve` answers 400; a library caller gets `TypeError` or `RecursionError`). `1.0.0rc3`: no Token Status List support. `1.0.0rc1`, `0.1.0`: **never read `exp`**; missing input bounds. |
+| `polaris-oid4vp` | `1.0.0rc9` | `1.0.0rc8` and earlier: decrypt a JWE whose tag is not 128 bits (other splits of the same bytes); read an `x5c` header that is present but empty, or not a list, as absent; verify under only the first issuer key that parses, so a rotated key fails; report the `no_authority` and `list_refused` revocation answers as `unreachable`; in `serve`, miss a truncated body that is not valid UTF-8. `1.0.0rc7` (the certified version) and earlier: with an x5c issuer, **accept an `iss` its certificate does not name** and pass it to the status resolver; accept a `vp_token` under a key the DCQL query did not use. `1.0.0rc7` (measured): **raises instead of refusing** a non-string disclosure name, `vct` or JWE `enc`, or JSON nested about 20,000 deep (`serve` answers 400; a library caller gets `TypeError` or `RecursionError`). `1.0.0rc3`: no Token Status List support. `1.0.0rc1`, `0.1.0`: **never read `exp`**; missing input bounds. |
 | `polaris-verify` | `1.0.0rc4` | `1.0.0rc3` and earlier: **report any authority-signed artifact re-wrapped as an authenticity pack as an authentic credential**; with **no context presented**, accept a trust edge from any context; accept an **unsigned** trust edge past, or without a readable, `valid_until`. `1.0.0rc3` also: a grant under a **revoked** holder binding reads as bound, a receipt stating no context reads as requester-authorized, and timestamp-anchor `cosignatures` that are not a list **raise** instead of refusing (measured). `1.0.0rc1`, `0.1.0`: **never read a trust attestation's `valid_until`**; no finite-number guards. |
 | `polaris-sdk-python` | `1.0.0rc4` | `1.0.0rc3` and earlier: `verify_authenticity` **accepts any authority-signed artifact re-wrapped as a pack**; `verify_cross_authority` accepts a signed or **unsigned** trust edge past, or without a readable, `valid_until`, and with **no context presented** an edge from any context. `1.0.0rc3` (measured): an artifact `format` that is not a string, `cosignatures` that are not a list, or a revocation feed that is not an object **raise** instead of refusing. `1.0.0rc1`, `0.1.0`: no finite-number guards on grant limits; cached tokens outlive a revoked client. |
 | `polaris-sdk-ts` (npm) | `1.0.0-rc.5` under `next` | `1.0.0-rc.4` and earlier: read an artifact `format` that is a list as the string it coerces to. `1.0.0-rc.3` and earlier: `verifyAuthenticity` **accepts any authority-signed artifact re-wrapped as a pack**; `verifyCrossAuthority` accepts a signed or **unsigned** trust edge past, or without a readable, `valid_until`, and with **no context presented** an edge from any context. `0.1.0` (what `latest` resolves): canonicalisation and parsing divergences from the wire specification. |
@@ -53,7 +53,9 @@ conformance cases that hold all three to it. `polaris-verify` 1.0.0rc4 also rais
 vector that is not a JSON object, and its long-term-validation note calls missing revocation evidence a
 revocation; both are fixed in the tree. `polaris-oid4vp` 1.0.0rc9's `serve` accepts TLS 1.0 and 1.1
 where the Python build's default allows them, as the macOS system Python 3.9 does; the tree sets
-the floor at TLS 1.2.
+the floor at TLS 1.2. `polaris-verify` and `polaris-sdk-python` 1.0.0rc4 read a signed grant whose
+`limits` is not an object as unlimited, and `polaris-sdk-ts` 1.0.0-rc.5 does so when it is a string
+or a number; the tree refuses it in all three.
 
 If you installed or pinned an older version, upgrade. The Current column is checked against
 [docs/RELEASING.md](docs/RELEASING.md) on every run. The packages are for evaluation and
@@ -131,11 +133,36 @@ Thresholds. Dependency findings (SCA): a known vulnerability in a runtime depend
 critical in an image, fails the build and is fixed before anything merges; a high finding in an
 image is reviewed before each release and fixed once a fixed version exists. A dependency whose
 license does not allow its use in an Apache-2.0 project is not added (NOTICE lists every license). Code findings (SAST): bandit fails the build on a high-severity
-finding; medium findings are reviewed before each release. Every change is also scanned by OSV-Scanner for malicious packages (the OpenSSF Malicious Packages
+finding; medium findings are reviewed before each release. CodeQL and zizmor report every push and
+pull request to the Security tab, and a high or critical alert is fixed, or dismissed with its
+reason written on the alert, before the next release. Every change is also scanned by OSV-Scanner for malicious packages (the OpenSSF Malicious Packages
 data) and known vulnerabilities, in the Python sets the images install and in the npm and Rust
 lockfiles; any finding blocks the merge unless it is declared, with its reason, in
 `osv-scanner.toml`. No release is cut while any of these jobs fails. A finding that does not affect Polaris is declared, with the reason, in
 [vex.openvex.json](vex.openvex.json) and, for the image scan, in `.trivyignore`.
+
+---
+
+## Repository controls
+
+These are settings rather than files, so they are listed here; each can be read back through
+the API (`gh api repos/EgorKhaklin/polaris-id/rulesets`, `.../environments`,
+`.../immutable-releases`):
+
+- `main` takes changes only through pull requests: merge commits only, the six required checks
+  [CONTRIBUTING.md](CONTRIBUTING.md) names, review conversations resolved, no force push, no
+  deletion, and no bypass for anyone, the owner included.
+- Version tags (`v*`) cannot be moved or deleted, and a published release's tag and assets
+  cannot be changed.
+- The `pypi` and `npm` environments deploy only from `main`, so only reviewed, merged workflow
+  code can publish; an npm publish also waits for a maintainer's second factor.
+- Secret scanning with push protection, private vulnerability reporting, and Dependabot alerts,
+  malware alerts and security updates are on. Workflow tokens default to read-only, and a
+  first-time contributor's workflow run waits for approval.
+- Code scanning ([code-scanning.yml](.github/workflows/code-scanning.yml)): CodeQL with the
+  security-extended queries over the Python, the TypeScript SDK, the Rust prover and the
+  workflows, and zizmor over the workflows. OpenSSF Scorecard
+  ([scorecard.yml](.github/workflows/scorecard.yml)) publishes its results.
 
 ---
 

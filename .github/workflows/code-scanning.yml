@@ -1,0 +1,82 @@
+# ============================================================================
+# Code scanning: three tools, each for a surface Polaris actually has, all
+# reporting to the repository's Security tab.
+#
+#   CodeQL   data-flow analysis of the Python, the TypeScript SDK, the Rust
+#            prover and the workflows, with the security-extended queries.
+#            What it ignores, and why, is in .github/codeql/codeql-config.yml.
+#   zizmor   the workflows themselves: template injection, over-broad tokens,
+#            unpinned or mutable action refs, credentials left in checkouts.
+#            publish.yml mints a PyPI token over OIDC, so the workflows are a
+#            supply-chain door, not configuration.
+#
+# The existing gates stay where they are (ci.yml: bandit, pip-audit, OSV,
+# Trivy); this workflow adds findings, it does not replace a gate. Scorecard
+# runs in its own workflow because publishing its results requires that.
+#
+# Every action is pinned to a full commit SHA, with its tag beside it.
+# ============================================================================
+
+name: Code scanning
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: code-scanning-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript, rust, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          config-file: ./.github/codeql/codeql-config.yml
+      - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          category: /language:${{ matrix.language }}
+
+  zizmor:
+    name: Workflow security (zizmor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Audit the workflows
+        env:
+          # Read-only; lets the online audits ask GitHub whether a pinned ref is a
+          # known-vulnerable or impostor commit.
+          GH_TOKEN: ${{ github.token }}
+        run: pipx run --spec 'zizmor==1.30.1' zizmor --format sarif --no-exit-codes . > zizmor.sarif
+      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
