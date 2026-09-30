@@ -1,0 +1,12 @@
+# .github/ci/audit.in: the dependency-audit tools the CVE-scan job runs (pip-audit, bandit),
+# which no image and no test suite imports, so they have a lock of their own.
+#
+# audit.txt is compiled from this file with every transitive package pinned and hashed, and
+# the job installs it with pip --require-hashes. Change a version here, then recompile:
+#   pip-compile 7.6.1 --generate-hashes --allow-unsafe --strip-extras --no-emit-index-url \
+#       --output-file=audit.txt audit.in
+# on linux/amd64 under Python 3.12 (the runner's), then delete the `--no-index` pip-compile
+# writes into the header. Dependabot recompiles it; a version stays out until it is 7 days old.
+
+pip-audit
+bandit
