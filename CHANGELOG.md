@@ -46,6 +46,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-verify --verify-dir` reports a vector that is not a JSON object instead of raising.
 - `polaris-verify` no longer calls missing revocation evidence a revocation in its long-term-validation note.
 - NOTICE names psycopg 3 and certifi, which are not permissive, and drops files the tree no longer ships.
+- SECURITY-CONTROLS.md says Polaris is built for national-scale identity data and holds notional data; it said it stored such data.
 - `polaris-oid4vp` tries every configured issuer key, not only the first that parses, so a rotated key verifies.
 - `polaris-oid4vp` refuses an `x5c` header that is present but empty or not a list, instead of reading it as absent.
 - **Breaking**: `polaris-oid4vp` reports the `no_authority` and `list_refused` revocation states it called `unreachable`.
