@@ -14,6 +14,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-oid4vp` refuses an x5c credential whose `iss` its certificate does not name.
 - A wallet-copy offer is recorded under the operator's account before it is returned; nothing recorded who made one.
 - The Python SDK refuses an `issuer_url` whose scheme is not `https` or `http` before `urlopen`. (thanks @DYNOSuprovo)
+- The `pypi` and `npm` environments deploy only from `main`, and a published release's tag and assets cannot be changed.
 
 ### Fixed
 
@@ -47,6 +48,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - 3 conformance cases (187 in all): a hex field with a character that is not hex, or a space, is refused.
 - `vectors/anchors/ml-dsa-65-issuer.json`, the sample issuer's key, to try `polaris-verify` from PyPI without a clone.
 - `TRADEMARKS.md`: the license covers the files, not the Polaris, owl, Khaklin Technologies or OpenID Certified marks.
+- Code scanning: CodeQL (security-extended) over the Python, TypeScript, Rust and workflows, zizmor over the workflows, and OpenSSF Scorecard.
 
 ### Changed
 
