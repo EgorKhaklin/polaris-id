@@ -997,6 +997,32 @@ class InclusionProofShapeTests(unittest.TestCase):
                 self.assertEqual(v.note, "malformed proof")
 
 
+class WitnessThresholdTests(unittest.TestCase):
+    """A witness threshold is a whole number of at least one (2026-09-30): 0.5 and -1 were met by
+    no cosignature at all, and the two SDKs disagreed at 0.5."""
+
+    def test_the_threshold_is_a_whole_number_of_at_least_one(self):
+        ts = _conformance_vector("timestamp-anchor-witnessed.json")
+        both = [c["public_key_hex"] for c in ts["anchor"]["cosignatures"]]
+        self.assertTrue(pv.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=2).witnessed, "control")
+        for bad in (0.5, -1, 0, "2", True, float("nan")):
+            with self.subTest(threshold=bad):
+                v = pv.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=bad)
+                self.assertIs(v.witnessed, False)
+                self.assertIn("whole number", v.note)
+
+
+class CrossAuthorityViaTests(unittest.TestCase):
+    def test_via_names_the_authority_the_edge_was_found_under(self):
+        """2026-09-30: `via` kept only a string, and every manifest's authority is an object, so
+        it was always None; the TypeScript SDK reports the object."""
+        f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json")))
+        v = pv.verify_cross_authority(f["pack"], f["_fixture"]["context_id"], [f["manifests"]["base"]],
+                                      [f["trusted_anchor"]], None, now=f["_fixture"]["now"])
+        self.assertEqual(v.decision, "accept")
+        self.assertEqual(v.via, f["manifests"]["base"]["authority"])
+
+
 class GrantCoverageTests(unittest.TestCase):
     """2026-09-23: a held-out mutation made grant_covers answer yes to ANY action of a grant
     with a non-empty list, and this suite stayed green: every test here asked about empty or

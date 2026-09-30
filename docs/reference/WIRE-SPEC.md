@@ -20,7 +20,7 @@ All artifacts are UTF-8 JSON objects unless a section states otherwise (the
 authenticity pack and the published-head leaf are the two exceptions).
 
 An inclusion proof's index (`index`, `leaf_index`) and `tree_size`, and a signed
-`member_count` or `leaf_count`, are JSON numbers with no fractional part. A verifier MUST
+`member_count`, `leaf_count` or `revoked_count`, are JSON numbers with no fractional part. A verifier MUST
 refuse a boolean, a string or null in their place rather than coerce it: languages coerce
 differently, so a coerced field gives one artifact two verdicts.
 
@@ -80,7 +80,9 @@ A verifier MUST: confirm the signature under `public_key_hex`; confirm
 `public_key_hex` is one of the manifest's own declared active `anchors` (a manifest
 MUST be self-signed by one of its roots, so a stranger key cannot mint one); and
 check freshness. With a set of trusted anchor keys, the manifest's authority is
-trusted iff one of its active anchors is trusted.
+trusted iff the key that signed it (one of its own active anchors) is trusted. An anchor
+the manifest merely lists vouches for nothing: the list is the authority's claim about
+itself, so a root becomes trusted only when the relying party adds it.
 
 ### 3.2 `polaris-epoch-checkpoint/1`
 
@@ -339,7 +341,8 @@ widened after the fact, and the window, so it cannot be extended.
 An attestation published inside a federation manifest carries `format`, `signature_hex` and
 `public_key_hex` beside the edge's fields. A verifier MUST, when those are present, verify the
 signature over the canonical statement, MUST require `attesting_agency_id` to equal the
-publishing manifest's authority, and MUST require `attested_public_key_hex` to equal the
+publishing manifest's authority and the signing key (`public_key_hex`) to be one of that
+manifest's active anchors, and MUST require `attested_public_key_hex` to equal the
 credential key it is deciding; a present-but-invalid signature MUST refuse the edge, which is
 stricter than an absent one. An attestation with no signature is LEGACY, recorded before
 v9.348: a verifier MAY accept it for one major and MUST report that it did, and a relying
@@ -371,7 +374,8 @@ presentation, so a captured proof cannot be replayed to another verifier.
 A verifier MUST verify the binding's signature under its issuer anchors, MUST require the
 binding to be about the credential presented and signed by the same issuer key, MUST require
 the proof's signing key to equal `holder_public_key_hex` with the binding `active`, MUST
-require `verifier_nonce` to equal the one it issued, and MUST bound the proof's age. A
+require the proof's `token_value` to be the credential presented, MUST require
+`verifier_nonce` to equal the one it issued, and MUST bound the proof's age. A
 verifier that requires possession of the KEY, not only of the file, says so
 (`require_holder_proof`); until it does, a presentation with no holder proof is decided as
 before, which is how credentials issued before v9.349 stay usable.

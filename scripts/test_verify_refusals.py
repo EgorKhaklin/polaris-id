@@ -1015,6 +1015,30 @@ class CommandLineExitCodes(unittest.TestCase):
                     self.assertEqual(self.main("--pqc-provider", "auto", flag, str(target),
                                                "--issuer-anchor", str(bad)), 3)
 
+    def test_the_trusted_anchor_flag_is_a_trust_root_on_every_path(self):
+        """2026-09-30: --trusted-anchor reached only --zk-proof; on a pack it was ignored, so a
+        run that named its trust root with it abstained whatever key it named (README: both
+        flags are trust roots)."""
+        key = json.loads(self.pack.read_text())["public_key_hex"]
+        self.assertEqual(self.main("--pqc-provider", "auto", "--pack", str(self.pack), "--trusted-anchor", key), 0)
+        self.assertEqual(self.main("--pqc-provider", "auto", "--pack", str(self.pack),
+                                   "--trusted-anchor", "ab" * 1952), 2)
+
+    def test_a_presentation_with_a_holder_proof_is_held_to_this_services_nonce(self):
+        """2026-09-30: --nonce and --verifier-scope never reached the presentation path, so a
+        captured holder proof replayed; without a nonce the run now abstains."""
+        from unittest import mock
+        verdict = {"usable_offline": True, "issuer_trusted": True, "holder": {"present": True}, "note": None}
+        with mock.patch.object(V, "verify_presentation", return_value=verdict) as vp:
+            self.assertEqual(self.main("--pqc-provider", "auto", "--presentation", str(self.blob)), 2)
+            self.assertEqual(self.main("--pqc-provider", "auto", "--presentation", str(self.blob),
+                                       "--nonce", "n-1", "--verifier-scope", "bank.example"), 0)
+            self.assertEqual(vp.call_args.kwargs.get("expected_nonce"), "n-1")
+            self.assertEqual(vp.call_args.kwargs.get("verifier_scope"), "bank.example")
+
+    def test_a_zero_knowledge_nonce_must_be_an_integer(self):
+        self.assertEqual(self.main("--pqc-provider", "auto", "--zk-proof", str(self.blob), "--nonce", "abc"), 3)
+
     def test_frames_that_do_not_decode_exit_1(self):
         """Row 1, the documented inconsistency: kept, because a script may depend on it."""
         frames = self.tmp / "frames.txt"
@@ -1146,6 +1170,22 @@ class AgentGrantPrincipalBinding(unittest.TestCase):
                 v = self.verdict(**change)
                 self.assertIs(v["principal_bound"], False)
                 self.assertIs(v["usable"], False)
+
+
+@unittest.skipUnless(any(V._provider_available(p) for p in V.REAL_PROVIDERS),
+                     "no real ML-DSA backend; the control needs real cosignatures")
+class WitnessThresholdIsAWholeNumber(unittest.TestCase):
+    def test_a_threshold_below_one_or_not_a_whole_number_witnesses_nothing(self):
+        """2026-09-30: -1 was met by no cosignature at all, and a string raised."""
+        ts = json.loads((ROOT / "conformance" / "vectors" / "timestamp-anchor-witnessed.json").read_text())
+        sth, cos = ts["anchor"]["sth"], ts["anchor"]["cosignatures"]
+        both = [c["public_key_hex"] for c in cos]
+        self.assertIs(V.verify_witnessed_checkpoint(sth, cos, both, threshold=2)["witnessed"], True, "control")
+        for bad in (-1, 0, 0.5, "2", True, float("nan")):
+            with self.subTest(threshold=bad):
+                v = V.verify_witnessed_checkpoint(sth, cos, both, threshold=bad)
+                self.assertIs(v["witnessed"], False)
+                self.assertIn("whole number", v["note"])
 
 
 class SignedCountsAreNumbers(unittest.TestCase):

@@ -567,8 +567,24 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         return ArtifactVerdict(False, None, note, ran)
     ok = bool(ok)
     if ok and fmt == "polaris-revocation-feed/1":
-        ok = _revoked_root(obj.get("revoked_leaves")) == str(obj.get("revoked_root_hex") or "").lower()
-        note = None if ok else "the revocation feed's commitment does not match its leaves"
+        # WIRE-SPEC 3.3: `revoked_count` MUST equal the number of distinct leaves; only the root
+        # was compared until 2026-09-30, where the detached verifier compared both.
+        leaves = obj.get("revoked_leaves") if isinstance(obj.get("revoked_leaves"), list) else []
+        ok = (_revoked_root(leaves) == str(obj.get("revoked_root_hex") or "").lower()
+              and _count_is(obj.get("revoked_count"), len({str(x).lower() for x in leaves})))
+        note = None if ok else "the revocation feed's commitment or count does not match its leaves"
+    elif ok and fmt == "polaris-timestamp/1":
+        # WIRE-SPEC 3.9: `digest_algorithm` MUST be SHA3-256 and `digest_hex` its lowercase hex; and
+        # the instant must be one. Until 2026-09-30 none of the three was checked here.
+        dh = obj.get("digest_hex")
+        ok = (obj.get("digest_algorithm") == "SHA3-256" and isinstance(dh, str) and len(dh) == 64
+              and all(c in "0123456789abcdef" for c in dh))
+        if ok:
+            try:
+                _strict_instant(obj.get("issued_at"))
+            except (TypeError, ValueError):
+                ok = False
+        note = None if ok else "a timestamp binds a lowercase SHA3-256 digest at a valid instant"
     elif ok and fmt == "polaris-epoch-leaves/1":
         # P9.2: the leaves ride outside the signed statement, committed to by leaves_root_hex,
         # so a verifier checks the set with SHA3-256 alone and never needs the proving library.
@@ -772,9 +788,16 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
                 if w in trusted:
                     seen.add(w)
         v.cosigner_count = len(seen)
-        v.witnessed = v.cosigner_count >= int(threshold or 1)
-        if not v.witnessed:
-            v.note = "only %d trusted witness cosignature(s) over this head, need %d" % (v.cosigner_count, threshold)
+        # A threshold is a whole number of witnesses, at least one: 0.5 and -1 were met by no
+        # cosignature at all, and the two SDKs disagreed at 0.5 (2026-09-30).
+        if (isinstance(threshold, bool) or not isinstance(threshold, (int, float))
+                or not float(threshold).is_integer() or threshold < 1):
+            v.witnessed = False
+            v.note = "the witness threshold must be a whole number of at least 1, got %r" % (threshold,)
+        else:
+            v.witnessed = v.cosigner_count >= int(threshold)
+            if not v.witnessed:
+                v.note = "only %d trusted witness cosignature(s) over this head, need %d" % (v.cosigner_count, threshold)
     return v
 
 
@@ -783,7 +806,7 @@ class CrossAuthorityVerdict:
     decision: str                    # "accept" | "reject"
     authentic: bool
     issuer_trusted: bool
-    via: Optional[str] = None
+    via: Any = None
     reason: Optional[str] = None
     # P9.5: was the trust edge signed by the agency that made it, or is it an unsigned
     # legacy row the manifest's signature carries on an operator's behalf? None when no
@@ -830,8 +853,12 @@ def verify_holder(credential: dict, binding: dict, proof: dict, expected_nonce=N
     ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(pr, keys)).digest(),
                                         pr.get("signature_hex"), pr.get("public_key_hex"), pr.get("algorithm"))
     v.proof_authentic = None if ok is None else bool(ok)
+    # The proof names the credential it is about (`token_value`, which the holder signed); it
+    # must be this one. Until 2026-09-30 only the key was compared, so a proof made for one
+    # credential passed with another bound to the same holder key.
     v.key_matches_binding = (str(pr.get("public_key_hex") or "").lower()
                              == str(b.get("holder_public_key_hex") or "").lower()
+                             and str(pr.get("token_value")) == str(b.get("token_value"))
                              and (b.get("status") or "active") == "active")
     if expected_nonce is not None:
         v.nonce_matches = (str(pr.get("verifier_nonce")) == str(expected_nonce))
@@ -902,10 +929,12 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
         mv = verify_signed_artifact(m, now=now)   # manifest: signature + self-consistency + freshness
         if not (mv.authentic and mv.fresh):
             continue
-        active = {str(x.get("public_key_hex", "")).lower() for x in (m.get("anchors") or [])
-                  if isinstance(x, dict) and (x.get("status") or "active") == "active"}
-        if trusted is not None and not (active & trusted):
-            continue   # the relying party does not trust this manifest's authority
+        # Trusted iff the key that SIGNED the manifest (one of its own active anchors, which
+        # verify_signed_artifact requires) is one the relying party trusts. Until 2026-09-30 it
+        # was any key the manifest merely LISTED, so an attacker's manifest that listed the
+        # relying party's anchor beside the attacker's own root was trusted (WIRE-SPEC section 4).
+        if trusted is not None and str(m.get("public_key_hex") or "").lower() not in trusted:
+            continue   # the relying party does not trust this manifest's signer
         for att in (m.get("attestations") or []):
             if not isinstance(att, dict):
                 continue
@@ -918,7 +947,13 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
                 auth = m.get("authority") if isinstance(m.get("authority"), dict) else {}
                 av = verify_attestation(att, attesting_agency_id=auth.get("agency_id"), expected_key=token_key)
                 unsigned = not att.get("signature_hex") and not att.get("public_key_hex")
-                if not unsigned and not av.authentic:
+                # A signed edge is the attesting agency's only if one of ITS roots signed it: the
+                # key must be among the carrying manifest's active anchors (2026-09-30; until then
+                # any key's valid signature counted, so a stranger met require_signed_attestation).
+                roots = {str(x.get("public_key_hex") or "").lower() for x in (m.get("anchors") or [])
+                         if isinstance(x, dict) and (x.get("status") or "active") == "active"}
+                if not unsigned and (not av.authentic
+                                     or str(att.get("public_key_hex") or "").lower() not in roots):
                     continue    # a present-but-bad signature is worse than none: refuse the edge
                 # An edge whose own window has closed is not an edge, however fresh the manifest
                 # carrying it (WIRE-SPEC section 4). Until 2026-09-27 this decision never read
@@ -936,7 +971,10 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
     if via is None:
         return CrossAuthorityVerdict("reject", True, False,
                                      reason="no trusted authority attests to this credential's issuer in this context")
-    via_str = via if isinstance(via, str) else None
+    # The authority the edge was found under, as the manifest names it (an object), as the
+    # TypeScript SDK reports it; until 2026-09-30 anything but a string became None, so it
+    # always did.
+    via_str = via
     if revocation_feed is not None:
         # A feed that is not an object is not authentic, as in the detached verifier; the
         # binding below read `.get` off it and raised AttributeError (2026-09-28).
