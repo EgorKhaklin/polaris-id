@@ -36,6 +36,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris issue` signs what it issues; it stored a placeholder that verifies under nothing.
 - `polaris key-register`, `key-retire` and `key-compromise` work as the schema owner; each failed reading its new row.
 - `polaris bulk-enroll` signs under the issuing agency's own key and refuses another, as the issuing route does.
+- `polaris-create-operator.sh`, `polaris-generate-recovery-code.sh` and `polaris-recover-admin.sh` work with `--target=docker-stack`; each handed psql a host file.
 - `polaris-verify --verify-dir` reports a vector that is not a JSON object instead of raising.
 - `polaris-verify` no longer calls missing revocation evidence a revocation in its long-term-validation note.
 - NOTICE names psycopg 3 and certifi, which are not permissive, and drops files the tree no longer ships.
@@ -49,6 +50,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- `check_container_psql_reads_sql_from_stdin`: no script hands a host file to a psql that runs in a container.
 - 3 conformance cases (184 in all): a third party's field of the wrong type is refused, not a crash.
 - 3 conformance cases (187 in all): a hex field with a character that is not hex, or a space, is refused.
 - `vectors/anchors/ml-dsa-65-issuer.json`, the sample issuer's key, to try `polaris-verify` from PyPI without a clone.

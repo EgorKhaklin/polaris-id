@@ -4587,6 +4587,36 @@ def test_archive_version_derived_check_discriminates(tmp_path):
         "must PASS when the version is derived from the canonical __version__.py"
 
 
+def test_container_psql_stdin_check_discriminates(tmp_path):
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    sh = scripts / "polaris-recover-admin.sh"
+    wrapper = ('run_psql() {\n'
+               '    docker compose -f "${COMPOSE_FILE}" exec -T postgres \\\n'
+               '        psql -U postgres -d polaris -tA "$@"\n'
+               '}\n')
+
+    # The good fixture: the SQL on stdin, which both the host and the container read.
+    sh.write_text(wrapper + 'run_psql -v ON_ERROR_STOP=1 < "${sql_tmp}" >/dev/null\n')
+    assert checks.check_container_psql_reads_sql_from_stdin(tmp_path)[0].level == "OK", \
+        "must PASS when the SQL goes on stdin"
+
+    # The real defect: the host temp file does not exist inside the container.
+    sh.write_text(wrapper + 'run_psql -v ON_ERROR_STOP=1 -f "${sql_tmp}" >/dev/null\n')
+    assert checks.check_container_psql_reads_sql_from_stdin(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a container-routed run_psql is handed a host file with -f"
+
+    # The old form kept only as a comment does not trip it.
+    sh.write_text(wrapper + '#     if ! run_psql -f "${SQL_TMP}"; then\nrun_psql < "${SQL_TMP}"\n')
+    assert checks.check_container_psql_reads_sql_from_stdin(tmp_path)[0].level == "OK", \
+        "must PASS when the -f form appears only inside a comment"
+
+    # A psql that never runs in a container may read a host file.
+    sh.write_text('run_psql() { psql -tA "$@"; }\nrun_psql -f "${sql_tmp}"\n')
+    assert checks.check_container_psql_reads_sql_from_stdin(tmp_path)[0].level == "OK", \
+        "must PASS when run_psql never goes through docker compose exec"
+
+
 def test_no_grep_q_psql_check_discriminates(tmp_path):
     scripts = tmp_path / "scripts"
     scripts.mkdir()
