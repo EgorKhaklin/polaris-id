@@ -15,6 +15,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- A NUL character in a path, query, form field or JSON string is refused as bad input; it escaped as a 500.
 - Installed as a package, `polaris-id` refuses the four commands that need a clone and says which; `--version` printed `unknown`.
 
 ### Changed

@@ -4286,6 +4286,31 @@ class IssuerFederationTests(PolarisTestCase):
         self.assertEqual(r.status_code, 401, r.get_data(as_text=True)[:200])
         self.assertEqual(r.get_json()['error'], 'invalid_client')
 
+    def test_a_nul_character_is_bad_input_not_a_500(self):
+        """PostgreSQL text cannot hold NUL, and psycopg2 raised ValueError on one, which escaped
+        as a 500 from query, form and JSON input alike (API.md: 400 is bad input). The door
+        refuses it in the path, query and form fields; inside a JSON body the provider refuses
+        it, and the route answers the malformed body as its contract says."""
+        for url in ('/api/atlas/facet/agencies?window=all&q=a%00b',
+                    '/api/atlas/subjects/search?q=a%00b',
+                    '/tokens?status=a%00b', '/verifications?outcome=a%00b'):
+            r = self.client.get(url)
+            self.assertEqual(r.status_code, 400, url)
+        self.assertIn('NUL', self.client.get('/api/atlas/subjects/search?q=a%00b').get_json()['error'])
+        csrf = self._csrf_token_from('/verifications/new')
+        r = self.client.post('/tokens/1/transition', data={'csrf_token': csrf, 'new_status': 'a\x00b'})
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post('/api/v1/auth/authorize', data='{"client_id": "a\\u0000b"}',
+                             content_type='application/json')
+        self.assertEqual((r.status_code, r.get_json()['error']), (401, 'invalid_client'))
+
+    def test_the_json_door_refuses_a_nul_and_admits_an_escaped_backslash(self):
+        for bad in ('{"a": "x\\u0000y"}', '{"a\\u0000": 1}', '[[["\\u0000"]]]'):
+            with self.assertRaises(ValueError, msg=bad):
+                flask_app.app.json.loads(bad)
+        # A backslash followed by "u0000" is six characters, not a NUL.
+        self.assertEqual(flask_app.app.json.loads('["\\\\u0000"]'), ['\\u0000'])
+
 
 # ============================================================================
 # v8.23 / R10-1 / M2-1 — ZK-SNARK (Plonky2 + Hybrid-Merkle, C3+A4+B3)
