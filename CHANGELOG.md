@@ -48,6 +48,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - 3 conformance cases (187 in all): a hex field with a character that is not hex, or a space, is refused.
 - `vectors/anchors/ml-dsa-65-issuer.json`, the sample issuer's key, to try `polaris-verify` from PyPI without a clone.
 - `TRADEMARKS.md`: the license covers the files, not the Polaris, owl, Khaklin Technologies or OpenID Certified marks.
+- Discussions forms for questions, needs and interop results; `.github/SUPPORT.md` says where each kind of message goes.
 - Code scanning: CodeQL (security-extended) over the Python, TypeScript, Rust and workflows, zizmor over the workflows, and OpenSSF Scorecard.
 
 ### Changed
@@ -57,6 +58,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - NOTICE and the macOS launcher drop the course reference; the privacy page names no vendor.
 - The three Python packages link their documentation, changelog, issues and source for PyPI.
 - The site, README, citation and package summaries name the project Polaris ID, as its repository does (owner's direction).
+- The review packet's drill table names the CI run behind each number, restated from the 2026-09-30 runs.
 - Published: `polaris-verify` and `polaris-sdk-python` 1.0.0rc4 and `polaris-oid4vp` 1.0.0rc8 (not certified; 1.0.0rc7 is) on PyPI, `polaris-sdk-ts` 1.0.0-rc.4, then 1.0.0-rc.5 with the TypeScript format fix, on npm under `next`.
 
 ## v1.0.0-rc.66 — 2026-09-28 (a Polaris credential in a wallet Polaris did not write)
