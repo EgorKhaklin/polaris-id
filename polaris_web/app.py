@@ -263,7 +263,7 @@ class _FiniteNumbersOnly(DefaultJSONProvider):
     `1e400` is valid JSON grammar that overflows to infinity without ever being a constant.
     Both raise ValueError, which is what Flask already treats as a malformed body. So does a
     body nested past the parser's depth, which raises RecursionError that `get_json`'s silent
-    mode would not catch.
+    mode would not catch, and a NUL in any string or key, which PostgreSQL cannot store.
     """
 
     @staticmethod
@@ -277,13 +277,36 @@ class _FiniteNumbersOnly(DefaultJSONProvider):
             raise ValueError("JSON number %s is not finite" % raw)
         return value
 
+    @staticmethod
+    def _carries_nul(value):
+        """A NUL in any string or key. PostgreSQL text cannot hold one (psycopg2 raises
+        ValueError, which escaped as a 500). Iterative, so a body as deep as the parser allows
+        cannot overflow the walk."""
+        stack = [value]
+        while stack:
+            item = stack.pop()
+            if isinstance(item, str):
+                if "\x00" in item:
+                    return True
+            elif isinstance(item, dict):
+                for key, member in item.items():
+                    if "\x00" in key:
+                        return True
+                    stack.append(member)
+            elif isinstance(item, list):
+                stack.extend(item)
+        return False
+
     def loads(self, s, **kwargs):
         kwargs.setdefault("parse_constant", self._refuse_constant)
         kwargs.setdefault("parse_float", self._finite_float)
         try:
-            return super().loads(s, **kwargs)
+            value = super().loads(s, **kwargs)
         except RecursionError:
             raise ValueError("JSON nested deeper than the parser allows") from None
+        if self._carries_nul(value):
+            raise ValueError("JSON contained a NUL character")
+        return value
 
 
 app.json = _FiniteNumbersOnly(app)
@@ -1021,9 +1044,11 @@ def _security_before_request():
     """
     Runs before every request. Enforces:
       - Body size limit (CWE-770)
+      - No NUL character in the path, query or form fields (400; JSON: the provider)
       - Per-IP rate limit on login + state-changing routes (CWE-307, CWE-770)
     """
     security.enforce_body_size_limit()
+    security.refuse_nul_input()
 
     # Rate-limit login attempts (per IP)
     if request.path == '/login' and request.method == 'POST':

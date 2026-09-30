@@ -1468,6 +1468,27 @@ def enforce_body_size_limit():
         abort(413)
 
 
+_NUL_REFUSED = "the request contains a NUL character, which no Polaris input accepts"
+
+
+def refuse_nul_input():
+    """Refuse (400) a request carrying a NUL character in its path, query or form fields.
+    PostgreSQL text cannot hold one: psycopg2 raises ValueError on it, and that escaped as a 500
+    where API.md promises 400 for bad input. No input Polaris accepts contains one, so the door
+    refuses it before any handler reads it. A NUL inside a JSON body is the JSON provider's to
+    refuse (app.py): the body is then malformed, and each route answers that as it documents."""
+    if "\x00" in request.path:
+        abort(400, description=_NUL_REFUSED)
+    for key, values in request.args.lists():
+        if "\x00" in key or any("\x00" in v for v in values):
+            abort(400, description=_NUL_REFUSED)
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and \
+            request.mimetype in ("application/x-www-form-urlencoded", "multipart/form-data"):
+        for key, values in request.form.lists():
+            if "\x00" in key or any("\x00" in v for v in values):
+                abort(400, description=_NUL_REFUSED)
+
+
 # ----------------------------------------------------------------------------
 # Helpers for templates
 # ----------------------------------------------------------------------------
