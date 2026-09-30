@@ -20,6 +20,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - WebAuthn registration no longer answers with an internal fault's text; the audit log keeps it.
 - The app no longer makes its development state directory world-writable; the macOS launcher trusts only a secret file the user owns.
 - The `pypi` and `npm` environments deploy only from `main`, and a published release's tag and assets cannot be changed.
+- Workflow tokens are read-only at every workflow's top level; the jobs that write ask for it themselves.
 
 ### Fixed
 
@@ -49,6 +50,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-oid4vp` refuses an `x5c` header that is present but empty or not a list, instead of reading it as absent.
 - **Breaking**: `polaris-oid4vp` reports the `no_authority` and `list_refused` revocation states it called `unreachable`.
 - `polaris-oid4vp` refuses a JWE whose tag is not 128 bits; other splits of the same bytes decrypted.
+- `polaris-oid4vp` refuses a status list whose compressed stream never ends; a truncated one was accepted.
+- `polaris-oid4vp` refuses an issuer `kid` that is present but empty or not a string; `""` matched any listed key.
 - The TypeScript SDK trims an issuer URL's trailing slashes in linear time; its regular expression took 30 s on 200 KB of slashes.
 - `polaris-oid4vp serve` counts a body's raw bytes against Content-Length; invalid UTF-8 hid a truncated body.
 - CITATION.cff says duress-aware, not duress-resistant; the vocabulary check now refuses the duress forms it missed.
@@ -57,6 +60,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The exchange gateway answers 502, not a non-JSON reply, when its upstream answers NaN, Infinity or 1e400.
 - The trust-anchors loader refuses a key of no accepted length; signature checks refuse, not raise, on a non-string.
 - `polaris-create-operator.sh --target=docker-stack` hashes the password in the app container; the host needs no werkzeug.
+- The SBOM workflow attaches the SBOMs to a draft release, then publishes it; an immutable release refuses them afterwards.
 
 ### Added
 
@@ -69,6 +73,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Code scanning: CodeQL (security-extended) over the Python, TypeScript, Rust and workflows, zizmor over the workflows, and OpenSSF Scorecard.
 - `lab/strategy/006/try.sh`: from a clone, one command to a credential that PyPI's polaris-verify verifies under a key minted on the machine.
 - A workflow runs `try.sh` from clean images nightly and on main; the README's Run it section names it.
+- Each release carries its SBOMs' provenance bundle, so `gh attestation verify --bundle` checks them without GitHub's attestation store.
 
 ### Changed
 

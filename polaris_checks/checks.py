@@ -5474,9 +5474,21 @@ def check_sbom_workflow(root: pathlib.Path) -> list[Finding]:
         return _fail("sbom", "sbom.yml does not generate the Python-surface SBOM")
     if "gh release upload" not in wf:
         return _fail("sbom", "sbom.yml does not attach the SBOMs to the release")
+    # A published release is immutable (SECURITY.md, Repository controls): GitHub refuses an
+    # asset added after publication. So the SBOMs and their provenance bundle go into the DRAFT,
+    # and the workflow publishes it only once they are attached.
+    upload = re.search(r"^\s*gh release upload\b[^\n]*sbom-provenance\.intoto\.jsonl", wf, re.M)
+    publish = re.search(r"^\s*gh release edit\b[^\n]*--draft=false", wf, re.M)
+    if not upload:
+        return _fail("sbom", "sbom.yml does not attach the provenance bundle "
+                     "(sbom-provenance.intoto.jsonl) beside the SBOMs, so they verify only online")
+    if not publish or publish.start() < upload.start():
+        return _fail("sbom", "sbom.yml must attach the SBOMs to the draft release and only then "
+                     "publish it; a published release is immutable and refuses them")
     return _ok("sbom",
                "every release generates SPDX SBOMs for the Python surface + all five "
-               "self-built images and attaches them to the release")
+               "self-built images and attaches them, with their provenance bundle, to the "
+               "draft before publishing it")
 
 
 # P0.5 — the SBOM generator and the CVE scanner must be the SAME Trivy version.

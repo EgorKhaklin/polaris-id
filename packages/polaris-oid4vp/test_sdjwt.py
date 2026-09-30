@@ -358,6 +358,20 @@ class IssuerKeyChoiceTests(unittest.TestCase):
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "issuer_signature")
 
+    def test_a_kid_that_is_present_but_not_a_name_is_refused_not_ignored(self):
+        """The review of 2026-09-30: `"kid": ""` ruled nothing out, so it matched a key listed as
+        "issuer-1". The signature still had to verify, but the header named no key and got one."""
+        for value in ("", 5, None, ["issuer-1"]):
+            with self.subTest(kid=value):
+                v = self.w.verify(self.w.present(issuer_header=dict(self.HEADER, kid=value)),
+                                  issuer_jwks=[dict(self.bare_issuer, kid="issuer-1")])
+                self.assertFalse(v.authentic, "a kid of %r was read as absent" % (value,))
+                self.assertEqual(v.code, "issuer_key")
+                self.assertIn("kid is present but is not a non-empty string", v.reason)
+        v = self.w.verify(self.w.present(issuer_header=dict(self.HEADER)),
+                          issuer_jwks=[dict(self.bare_issuer, kid="issuer-1")])
+        self.assertTrue(v.authentic, "control: no kid at all still meets the listed keys")
+
     def test_an_x5c_that_is_present_but_falsy_is_refused_not_ignored(self):
         for value in ([], "", {}, 0, False):
             with self.subTest(x5c=value):

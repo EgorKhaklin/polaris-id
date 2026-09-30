@@ -378,13 +378,34 @@ class PrimitiveRefusalsTests(unittest.TestCase):
                 S._b64u(bad, "list")
 
     def test_a_bomb_is_refused_at_the_primitive(self):
-        # The first site refuses before the bomb is built; the length check after flush() only
-        # refuses once it has been, so it is a backstop and not a twin. The bomb test above
-        # asserts the first by what zlib produced.
+        # The first site refuses before the bomb is built; the bomb test above asserts it by
+        # what zlib produced. The second is tested below: it is not the spare this said it was.
         raw = zlib.compress(b"\x00" * 150, 9)
         with self.assertRaises(ValueError):
             S._inflate_bounded(raw, limit=100)
         self.assertEqual(len(S._inflate_bounded(raw, limit=150)), 150)
+
+    def test_a_bomb_with_its_trailer_cut_off_is_stopped_by_the_second_bound(self):
+        """The review of 2026-09-30: cut the zlib trailer and no input is left unconsumed, so the
+        first bound passes 776 bytes and flush() produces the other 224. Only the length check
+        after flush() refuses it; removing that check returned all 1000."""
+        raw = zlib.compress(b"\x00" * 1000, 9)[:-5]
+        with self.assertRaises(ValueError) as caught:
+            S._inflate_bounded(raw, limit=776)
+        self.assertIn("more than 776 bytes", str(caught.exception))
+
+    def test_a_stream_that_never_ends_is_refused(self):
+        """A status list with its trailer cut off inflated to all its data and was accepted, while
+        zlib.decompress refuses the same bytes. The list an issuer signed ends."""
+        whole = zlib.compress(bytes([0b10111001]) * 64, 9)
+        self.assertEqual(len(S._inflate_bounded(whole)), 64, "control: the complete stream")
+        for cut in (4, 5):
+            with self.subTest(cut=cut):
+                with self.assertRaises(ValueError) as caught:
+                    S._inflate_bounded(whole[:-cut])
+                self.assertIn("truncated", str(caught.exception))
+                with self.assertRaises(zlib.error):
+                    zlib.decompress(whole[:-cut])
 
     def test_the_encoder_refuses_what_it_cannot_represent(self):
         self.assertIsInstance(S.encode_status_list([0, 1, 1], bits=1), str)

@@ -437,6 +437,11 @@ def _issuer_public_keys(header, issuer_jwks, trust_anchors):
         return [], "the x5c leaf does not chain to any configured trust anchor", None
     if issuer_jwks:
         kid = header.get("kid")
+        # 2026-09-30: an empty `kid` ruled nothing out, so `"kid": ""` matched a key listed
+        # under any name. A `kid` that is present is a name (RFC 7515 4.1.4) or it is refused,
+        # as an `x5c` that is present but empty is.
+        if "kid" in header and (not isinstance(kid, str) or not kid):
+            return [], "kid is present but is not a non-empty string", None
         keys = []
         for jwk in issuer_jwks:
             # A configured JWK list is operator input and can hold anything. Reading `kid`

@@ -76,13 +76,10 @@ DECLARED_SURVIVORS = {
     # resolver's is the innermost. It is kept because it is the guard that holds if either
     # outer bound is ever loosened, and tested directly against `_resolve` in
     # TheBoundsThemselvesAreAssertedTests rather than through `verify_presentation`.
-    # 2026-09-30. The two bounds in _inflate_bounded are not twins, which this list said until
-    # the review routine measured it: the first refuses a bomb before it is built, and the bomb
-    # test now asserts that by what zlib produced, so its mutant is caught. The length check
-    # after flush() is a backstop behind it: the first bound refuses every input that would
-    # reach the second, so removing the second changes no answer.
-    "status:_inflate_bounded:135276#2":
-        "a backstop behind the first bound, which refuses every input that would reach it",
+    # `status:_inflate_bounded:135276#2`, the length check after flush(), was declared here on
+    # 2026-09-30 as "a backstop the first bound makes unreachable". The same day's review showed
+    # it was not: a bomb with its zlib trailer cut off leaves no unconsumed tail, passes the first
+    # bound, and only the second refuses it. test_status now drives that input.
     "sdjwt:verify_presentation:3f535a":
         "the resolver depth cap; two outer bounds refuse first, so no presentation can reach "
         "it. Tested directly against _resolve",
