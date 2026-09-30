@@ -1,8 +1,9 @@
 # 005: issue a Polaris credential into a wallet Polaris did not write (OpenID4VCI)
 
 **Opened 2026-09-27.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md).
-**State: OPEN.** The wallet loop is built and closed in two wallets; criterion 4 counts from
-rc.66 ([decision so far](#decision-so-far-2026-09-28)).
+**State: OPEN, a demonstration.** The wallet loop is built and closed in two wallets; criterion 4
+fired at rc.67: no outside party has held a wallet copy yet
+([decision so far](#decision-so-far-2026-09-28)).
 
 | Step | Result |
 |---|---|
@@ -136,4 +137,8 @@ Written before the work starts:
   grant, which needs the holder to sign in to Polaris, and Polaris has no holder sign-in; PAR,
   DPoP and attestation-based client authentication come with it ([WALL.md](005/WALL.md)). It is
   decided when a named wallet or relying party requires HAIP issuance from Polaris.
-- **Criterion 4 counts from rc.66** and is decided at rc.67.
+- **Criterion 4 fired at rc.67 (2026-09-30).** By the release after wallet copies shipped,
+  no outside party had issued into or presented from a wallet with one. The scoreboard carries
+  the blank the criterion asks for: wallet copies are a demonstration, not yet a dependency.
+  Criteria 1 and 2 still hold, so the capability stays built; stage 2 and any further work on
+  it wait for a named outside party.
