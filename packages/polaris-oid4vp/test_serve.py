@@ -359,9 +359,17 @@ class TransportTests(unittest.TestCase):
         real = ssl.SSLContext
 
         class OldDefault(real):
+            # The old default twice over: the lowest protocol version, and security level 0, as
+            # LibreSSL has. On OpenSSL 3 the default level alone refuses TLS 1.1 whatever serve
+            # does, so without the level the handshake half of this test proved nothing there
+            # (the review of 2026-09-30 removed the floor assertion and it still passed).
             def __new__(cls, protocol=ssl.PROTOCOL_TLS_SERVER, *args, **kwargs):
                 ctx = super().__new__(cls, protocol, *args, **kwargs)
                 ctx.minimum_version = ssl.TLSVersion.MINIMUM_SUPPORTED
+                try:
+                    ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
+                except ssl.SSLError:
+                    pass
                 return ctx
 
         def client(low=None, high=None):

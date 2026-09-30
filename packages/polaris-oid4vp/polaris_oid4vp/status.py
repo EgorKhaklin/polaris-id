@@ -238,7 +238,10 @@ def _inflate_bounded(raw, limit=MAX_DECOMPRESSED_BYTES):
 
     decompressobj with a max_length is the only form that refuses a bomb without first
     building it. `zlib.decompress` has no bound and is the wrong call here however tidy it
-    looks.
+    looks. The length check after flush() is not a spare: a stream whose trailer is cut off
+    leaves no unconsumed tail, so the first bound passes it and flush() produces the rest.
+    And the stream must END: a truncated one inflated to its data and was accepted, where
+    zlib.decompress refuses it (both found by the review of 2026-09-30).
     """
     obj = zlib.decompressobj()
     out = obj.decompress(raw, limit)
@@ -247,6 +250,8 @@ def _inflate_bounded(raw, limit=MAX_DECOMPRESSED_BYTES):
     out += obj.flush()
     if len(out) > limit:
         raise ValueError("the status list decompresses to more than %d bytes" % limit)
+    if not obj.eof:
+        raise ValueError("the status list's compressed data is truncated: the stream never ends")
     return out
 
 

@@ -53,7 +53,9 @@ conformance cases that hold all three to it. `polaris-verify` 1.0.0rc4 also rais
 vector that is not a JSON object, and its long-term-validation note calls missing revocation evidence a
 revocation; both are fixed in the tree. `polaris-oid4vp` 1.0.0rc9's `serve` accepts TLS 1.0 and 1.1
 where the Python build's default allows them, as the macOS system Python 3.9 does; the tree sets
-the floor at TLS 1.2. `polaris-verify` and `polaris-sdk-python` 1.0.0rc4 read a signed grant whose
+the floor at TLS 1.2. It also accepts a Token Status List whose compressed data is
+truncated, and reads an issuer `kid` of `""` as no `kid`; the tree refuses both.
+`polaris-verify` and `polaris-sdk-python` 1.0.0rc4 read a signed grant whose
 `limits` is not an object as unlimited, and `polaris-sdk-ts` 1.0.0-rc.5 does so when it is a string
 or a number; the tree refuses it in all three.
 
