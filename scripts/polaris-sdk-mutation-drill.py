@@ -112,6 +112,17 @@ DECLARED_SURVIVORS: dict[str, str] = {
     # 2026-09-29 as "garbage bytes and the same not-authentic verdict". Since the decoder
     # refuses any character outside [0-9a-fA-F], removing that throw lets "eg" read as 0x0e
     # and a re-spelled genuine signature verify; sdk.test.ts asserts it does not.
+    # verifyTimestampAnchor's two malformed-proof throws (2026-09-30): an index or tree size that
+    # is not a JSON integer, and a path that is not a list. Belt and braces: without the first,
+    # the null index reaches verifyInclusion, whose own Number.isInteger check refuses it, and a
+    # null size fails the head's `tree_size` comparison; without the second, `.map` on an object
+    # throws inside the same try. The proof is refused either way; these give the reason.
+    "typescript:verifyTimestampAnchor:956341":
+        "belt and braces: verifyInclusion's integer check and the head's tree_size comparison "
+        "refuse the same index and size",
+    "typescript:verifyTimestampAnchor:bb135f":
+        "belt and braces: `.map` on a path that is not an array throws inside the same try, "
+        "so the proof is malformed either way",
     "typescript:hexToBytes:7c7d1e":
         "unreachable: the HEX_DIGITS test above has already refused every pair parseInt could "
         "fail on, so parseInt never returns NaN here",
