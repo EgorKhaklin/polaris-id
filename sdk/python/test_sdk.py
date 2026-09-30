@@ -424,6 +424,30 @@ class RefusalsAreTestedTests(unittest.TestCase):
                                  "%s must not prove the agent" % label)
         self.assertFalse(pv.agent_proof_proves(good, "grant"))
 
+    # -- online status URL scheme ----------------------------------------
+
+    def test_a_non_http_issuer_url_is_refused_before_urlopen(self):
+        import time
+        from unittest import mock
+        answer = mock.MagicMock()
+        answer.__enter__.return_value.read.return_value = json.dumps(
+            {"access_token": "new", "expires_in": 300, "currently_authoritative": True, "status": "ACTIVE"}
+        ).encode()
+        authentic = pv.AuthenticityVerdict(True, True, pv.ALGORITHM)
+        for url in ("file:///etc/passwd", "ftp://issuer.example", "http://", "https://"):
+            with self.subTest(issuer_url=url):
+                v = pv.PolarisVerifier(issuer_url=url, client_id="c", client_secret="s")
+                with mock.patch("urllib.request.urlopen", return_value=answer) as call, \
+                     mock.patch.object(pv, "verify_authenticity", return_value=authentic):
+                    with self.assertRaises(ValueError):
+                        v._access_token()
+                    v._bearer, v._bearer_exp = "tok", time.time() + 60
+                    with self.assertRaises(ValueError):
+                        v._online_status({})
+                    out = v.verify_presentation({"credential": {}})
+                    self.assertEqual(out.decision, "reject")
+                    self.assertEqual(call.call_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

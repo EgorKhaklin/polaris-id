@@ -13,6 +13,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - `polaris-oid4vp` refuses an x5c credential whose `iss` its certificate does not name.
 - A wallet-copy offer is recorded under the operator's account before it is returned; nothing recorded who made one.
+- The Python SDK refuses an `issuer_url` whose scheme is not `https` or `http` before `urlopen`.
 
 ### Fixed
 
