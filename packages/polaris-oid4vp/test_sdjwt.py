@@ -1425,6 +1425,47 @@ class IssuerCertificateTests(unittest.TestCase):
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "issuer_key")
 
+    #: ISO/IEC 18013-5's document signer EKU, as EUDI issuers mark their signing certificates.
+    MDL_DS = x509.ObjectIdentifier("1.0.18013.5.1.2")
+    SIGN_ONLY = x509.KeyUsage(digital_signature=True, content_commitment=False,
+                              key_encipherment=False, data_encipherment=False,
+                              key_agreement=False, key_cert_sign=False, crl_sign=False,
+                              encipher_only=False, decipher_only=False)
+
+    def test_a_document_signer_certificate_is_an_issuer(self):
+        """The shape of eudi-dev's PID Provider certificate (2026-09-30): a critical EKU naming
+        only ISO 18013-5's document signer, and digitalSignature. It was refused, so the first
+        credential here from an issuer this repository did not write could not be verified."""
+        ca_key, ca_name, ca = self._ca()
+        leaf, leaf_key = self._leaf(ca_key, ca_name, extensions=(
+            (self.SIGN_ONLY, True), (x509.ExtendedKeyUsage([self.MDL_DS]), True)))
+        v = self._verify(leaf, leaf_key, ca)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
+    def test_a_document_signer_that_may_not_sign_is_still_refused(self):
+        """The EKU names the purpose; KeyUsage still has to permit the act."""
+        ca_key, ca_name, ca = self._ca()
+        leaf, leaf_key = self._leaf(ca_key, ca_name, extensions=(
+            (x509.KeyUsage(digital_signature=False, content_commitment=False,
+                           key_encipherment=True, data_encipherment=False,
+                           key_agreement=False, key_cert_sign=False, crl_sign=False,
+                           encipher_only=False, decipher_only=False), True),
+            (x509.ExtendedKeyUsage([self.MDL_DS]), True)))
+        v = self._verify(leaf, leaf_key, ca)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key")
+
+    def test_a_time_stamping_certificate_is_still_not_an_issuer(self):
+        """Adding one purpose is not accepting every purpose: an EKU that names only
+        timeStamping signs, and says it signs something else."""
+        ca_key, ca_name, ca = self._ca()
+        leaf, leaf_key = self._leaf(ca_key, ca_name, extensions=(
+            (self.SIGN_ONLY, True),
+            (x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.TIME_STAMPING]), True)))
+        v = self._verify(leaf, leaf_key, ca)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key")
+
     def test_a_leaf_whose_key_usage_permits_signing_is_accepted(self):
         """The other direction: a certificate that states its usage AND names signing is a
         signing certificate, and a check that refused it would refuse real issuers."""

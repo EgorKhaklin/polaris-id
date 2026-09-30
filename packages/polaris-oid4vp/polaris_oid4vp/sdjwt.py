@@ -98,11 +98,19 @@ MAX_RESOLVE_DEPTH = 64
 
 #: Extended key usages an issuer certificate may carry. A certificate that states EKUs and
 #: names none of these is saying what it is for, and it is not this.
+#:
+#: 1.0.18013.5.1.2 is ISO/IEC 18013-5's document signer (id-mdl-kp-mdlDS), the usage EUDI
+#: credential issuers put on their signing certificates. Until 2026-09-30 it was missing, and
+#: eudi-dev's PID Provider certificate (critical EKU = that OID, digitalSignature, under its
+#: own CA) was refused as "does not chain to any configured trust anchor": the first
+#: credential here signed by an issuer this repository did not write was refused for naming
+#: exactly the purpose it is for.
 if _HAVE_CRYPTO:
     _ISSUER_EKUS = frozenset((
         x509.oid.ExtendedKeyUsageOID.CLIENT_AUTH,
         x509.oid.ExtendedKeyUsageOID.CODE_SIGNING,
         x509.oid.ExtendedKeyUsageOID.EMAIL_PROTECTION,
+        x509.ObjectIdentifier("1.0.18013.5.1.2"),
     ))
 else:  # pragma: no cover
     _ISSUER_EKUS = frozenset()

@@ -13,7 +13,7 @@ Foundation [lists the certification](https://openid.net/certification/certified-
 (2026-09-24). It covers that version in that role: not an endorsement, not an audit, and not
 other versions.
 
-**Status:** 1.0.0rc10, a release candidate, not certified: it carries the fixes made since
+**Status:** 1.0.0rc11, a release candidate, not certified: it carries the fixes made since
 1.0.0rc7. Outside results: the Foundation's hosted suite (0.1.0, then 1.0.0rc7 for
 certification) and four unmodified external wallets: walt.id Wallet API v2 (last against
 1.0.0-rc.3), Credo 0.6.3 (against 1.0.0rc7, 2026-09-27), eudi-dev v2.3.7 and OID4VCgo 0.12.0
@@ -40,7 +40,8 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   as HAIP issuers do (repeatable; each file may hold several PEM certificates). The leaf must
   chain to an anchor in one link, be inside its validity period, and, when it states a key
   usage, include digitalSignature; one that states extended key usages must name one an
-  issuer may hold. A leaf that states no key usage is not restricted by one. An `iss` must be
+  issuer may hold (ISO 18013-5's document signer, as EUDI issuers use, or client auth, code
+  signing or email protection). A leaf that states no key usage is not restricted by one. An `iss` must be
   a name the leaf gives: a URI subjectAltName exactly, or, for a leaf naming only DNS hosts, an
   https URL on one. Without `iss`, the certificate's subject is the issuer.
 - `--issuer-jwks` trusts every key it lists for every `iss`; list one issuer's keys per verifier.
@@ -140,7 +141,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 337 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 340 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 108 refusals accept and requires a

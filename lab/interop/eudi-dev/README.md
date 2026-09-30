@@ -78,6 +78,36 @@ wallet, credential and path with one thing wrong.
 (c) is a control on the wallet: it shows eudi-dev reads the signed request object and compares
 it with what it was launched with, rather than presenting to whatever it is pointed at.
 
+## An issuer nobody here wrote (2026-09-30)
+
+eudi-dev also issues. `eudi issue sdjwt --wallet --pid` signs a full EUDI PID Rulebook SD-JWT VC
+with its PID Provider certificate in `x5c`, bound to the wallet's own holder key, with nested and
+array disclosures and a status list reference. The certificate chains in one link to
+"OID4VC Dev Wallet CA" (`eudi wallet ca-cert` exports it), carries digitalSignature, and states
+one critical extended key usage: ISO/IEC 18013-5's document signer, `1.0.18013.5.1.2`, the usage
+EUDI issuers put on their signing certificates. The verifier trusted only that CA
+(`serve --issuer-trust-anchor`), and the wallet presented with `--haip --mode strict`:
+
+| | `polaris-oid4vp` | Result |
+|---|---|---|
+| The genuine presentation | 1.0.0rc10 from PyPI | refused: `issuer_key`, because the document signer was not among the usages it took from an issuer certificate |
+| The same | this repository at c8014978 (1.0.0rc11) | accepted: `<- 200 authentic, claims ['cnf', 'exp', 'family_name', 'given_name', 'iat', 'iss', 'status', 'vct']` |
+| Control: the answered request again | c8014978 | refused at the request: `request_uri returned HTTP 404` |
+| Control: the verifier trusts an unrelated CA | c8014978 | refused: `issuer_key` |
+
+Walked by hand on macOS (arm64), with eudi-dev v2.3.7's own binary and the system Python 3.9.6.
+It is the first row here in which neither the wallet nor the credential's issuer is this
+repository's: the verifier is the only Polaris software in the exchange. The credential's status
+reference points at eudi-dev's own status list, which nothing here fetched, so revocation reads
+`not_evaluated`.
+
+    eudi wallet info --wallet-dir W; eudi issue sdjwt --wallet --pid --wallet-dir W
+    eudi wallet ca-cert --wallet-dir W > eudi-ca.pem
+    polaris-oid4vp keygen --out pki --host localhost --port 9443
+    polaris-oid4vp serve --pki pki --host localhost --bind 127.0.0.1 --port 9443 \
+      --issuer-trust-anchor eudi-ca.pem --once
+    eudi wallet accept "<the launch URI serve prints>" --auto-accept --haip --mode strict --no-open --wallet-dir W
+
 ## What this does not establish
 
 - **Not observed.** Whether eudi-dev posted a `wallet_nonce` with `request_uri_method=post`
@@ -88,8 +118,9 @@ it with what it was launched with, rather than presenting to whatever it is poin
   require that chain to reach anything it trusts: the `x509_hash` binding is what it checks. It
   does not validate the verifier's TLS certificate either (above). Both are the wallet's own
   behaviour, recorded here and not absorbed.
-- One credential format, one path, ES256/P-256 throughout, the credential minted by this
-  repository's issuer script and trusted through a JWKS rather than `x5c`.
+- One credential format, one path, ES256/P-256 throughout. Except in the run above, the
+  credential was minted by this repository's issuer script and trusted through a JWKS rather
+  than `x5c`.
 - It is the same category of evidence as the walt.id and Credo rows: the author drove a
   published wallet on one machine. It is not an outside party using Polaris, and not a claim
   that `polaris-oid4vp` is interoperable in general.
