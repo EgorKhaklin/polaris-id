@@ -149,7 +149,9 @@ run_standalone "$ROOT/packages/polaris-oid4vp" unittest test_sdjwt test_jwe test
 
 echo "== combining =="
 "$PY" -m coverage combine
-"$PY" -m coverage report --skip-covered | tail -25
+# Sorted by missed statements, so the tail CI prints is where the gap is: the files missing the
+# most, then TOTAL. Sorted by name, the tail was the last 25 files alphabetically.
+"$PY" -m coverage report --skip-covered --sort=miss | tail -42
 "$PY" -m coverage xml -o "$ROOT/coverage.xml" >/dev/null 2>&1 || true
 "$PY" -m coverage json -q -o "$ROOT/coverage.json"
 
