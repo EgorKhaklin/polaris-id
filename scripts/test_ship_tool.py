@@ -644,6 +644,51 @@ class FailureBlockTests(unittest.TestCase):
         self.assertNotIn("FAIL: test_race", blocks[1])
 
 
+class RunLockTests(unittest.TestCase):
+    """One `run` per server (2026-09-30): two runs drop and reload the same shard databases, and a
+    coverage run beside a gate lost its real-signer stage to "database does not exist". The lock
+    is tested against the real server under its own key, because a gate running this suite holds
+    the run's key; that run() refuses is tested with the lock's answer given and every process
+    start forbidden, so a run that failed to refuse stops here instead of dropping databases."""
+
+    KEY = ship.RUN_LOCK ^ 0x5EED
+
+    def setUp(self):
+        self.env = dict(os.environ, POLARIS_DB_HOST=os.environ.get("POLARIS_DB_HOST", "localhost"))
+
+    def test_a_second_holder_is_refused_until_the_first_lets_go(self):
+        first, why = ship.hold_run_lock(self.env, self.KEY)
+        if first is None:
+            self.skipTest("no PostgreSQL to hold the lock on: %s" % why)
+        self.addCleanup(ship.release_run_lock, first)
+        second, why = ship.hold_run_lock(self.env, self.KEY)
+        self.assertIsNone(second, "a second holder must be refused while the first holds it")
+        self.assertIn("another polaris-ship run holds the shard databases", why)
+        ship.release_run_lock(first)
+        third, why = ship.hold_run_lock(self.env, self.KEY)
+        self.assertIsNotNone(third, "released with its session, the lock is free again: %s" % why)
+        ship.release_run_lock(third)
+
+    def test_a_run_refuses_before_it_starts_anything(self):
+        import io
+        from unittest import mock
+
+        def no_process(*args, **kwargs):
+            raise AssertionError("run() started a process while refused: %r" % (args[:1],))
+
+        out = io.StringIO()
+        refused = (None, "another polaris-ship run holds the shard databases (polaris_test_s*) on this server")
+        with mock.patch.dict(os.environ, {"POLARIS_DB_USER": "drill"}), \
+                mock.patch.object(ship, "_python", return_value="python3"), \
+                mock.patch.object(ship, "hold_run_lock", return_value=refused), \
+                mock.patch.object(ship.subprocess, "Popen", side_effect=no_process), \
+                mock.patch.object(ship.subprocess, "run", side_effect=no_process):
+            rc = ship.run(["--shards", "1"], out=out)
+        self.assertEqual(rc, 75, out.getvalue())
+        self.assertIn("run: refused: another polaris-ship run holds the shard databases", out.getvalue())
+        self.assertNotIn("loading", out.getvalue())
+
+
 class BoundedSuiteRunTests(unittest.TestCase):
     """scripts/polaris_bounded_run.py: a drill's suite run has a bound, and hitting it is reported.
 
