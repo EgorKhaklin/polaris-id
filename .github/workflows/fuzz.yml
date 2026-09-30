@@ -22,7 +22,7 @@ on:
       - "packages/polaris-oid4vp/**"
       - ".github/workflows/fuzz.yml"
   schedule:
-    - cron: "41 3 * * *"
+    - cron: "17 2 * * *"
   workflow_dispatch:
 
 permissions:
