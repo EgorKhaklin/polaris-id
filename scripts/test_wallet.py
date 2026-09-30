@@ -208,5 +208,162 @@ class HolderWalletTests(unittest.TestCase):
         self.assertIn("placeholder", (r.stdout + r.stderr).lower())
 
 
+
+def _load_verifier():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("polaris_verify_for_wallet_tests",
+                                                  os.path.join(_HERE, "polaris-verify.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+class _StandInIssuer:
+    """An issuing authority on 127.0.0.1 that answers from a route table and records requests."""
+
+    def __init__(self, routes):
+        import http.server
+        import threading
+        seen = self.seen = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                seen.append((self.path, body))
+                code, payload = routes.get(self.path, (404, {"error": "no route"}))
+                data = json.dumps(payload).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = "http://127.0.0.1:%d" % self.server.server_address[1]
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class WalletAgainstAnIssuerTests(unittest.TestCase):
+    """The commands that reach an issuing authority, and the presentation variants, driven as a
+    holder runs them. Until 2026-09-30 no test ran `sign`, `login` or any `present` option but
+    the duress one, so none of their promises was held: that a document never leaves the wallet,
+    that a login presents under PKCE S256, that a refusal is an exit with its reason."""
+
+    PACK = {"format": "polaris-authenticity-pack/1", "token_id": 42, "token_value": "WALLET-TEST-TOKEN-0002",
+            "algorithm": "ML-DSA-65", "signature_hex": "ab", "public_key_hex": "cd", "issuer": "Issuer A",
+            "issued_at": "2026-09-08T00:00:00"}
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.wallet = os.path.join(self.dir, "w")
+        pack = os.path.join(self.dir, "cred.json")
+        with open(pack, "w") as f:
+            json.dump(self.PACK, f)
+        self.assertEqual(self._run("enroll", "--pack", pack).returncode, 0)
+
+    def _run(self, *args):
+        return subprocess.run([sys.executable, _WALLET, "--wallet", self.wallet, *args],
+                              capture_output=True, text=True)
+
+    def _issuer(self, routes):
+        issuer = _StandInIssuer(routes)
+        self.addCleanup(issuer.close)
+        return issuer
+
+    def test_sign_sends_the_digest_and_never_the_document(self):
+        signed = {"format": "polaris-signed-document/1", "signature_hex": "ef"}
+        issuer = self._issuer({"/api/v1/sign/1/holder": (200, signed)})
+        doc = os.path.join(self.dir, "report.pdf")
+        contents = b"%PDF-1.7 contents that must stay on this machine"
+        with open(doc, "wb") as f:
+            f.write(contents)
+        out = os.path.join(self.dir, "signed.json")
+        r = self._run("sign", "--document", doc, "--instance", issuer.url + "/", "--agency", "1",
+                      "--purpose", "approval", "--out", out)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (path, raw), = issuer.seen
+        self.assertEqual(path, "/api/v1/sign/1/holder")
+        self.assertNotIn(b"contents that must stay", raw, "the document itself left the wallet")
+        body = json.loads(raw)
+        self.assertEqual((body["digest_hex"], body["digest_algorithm"], body["name"], body["purpose"]),
+                         (hashlib.sha3_256(contents).hexdigest(), "SHA3-256", "report.pdf", "approval"))
+        self.assertEqual((body["token_value"], body["signature_hex"]), (self.PACK["token_value"], "ab"))
+        with open(out) as f:
+            self.assertEqual(json.load(f), signed)
+
+    def test_a_refused_signature_is_an_exit_with_the_reason(self):
+        issuer = self._issuer({"/api/v1/sign/1/holder": (403, {"error": "not this credential"})})
+        doc = os.path.join(self.dir, "report.pdf")
+        with open(doc, "wb") as f:
+            f.write(b"x")
+        r = self._run("sign", "--document", doc, "--instance", issuer.url, "--agency", "1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("signing refused: HTTP 403", r.stderr)
+
+    def test_login_presents_the_credential_under_pkce_and_prints_the_code(self):
+        issuer = self._issuer({"/api/v1/auth/authorize": (200, {"code": "code-1"})})
+        base = ["login", "--instance", issuer.url, "--client-id", "rp-1", "--nonce", "n-1",
+                "--code-challenge", "ch-1", "--context", "3"]
+        r = self._run(*base)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout), {"code": "code-1"})
+        r = self._run(*base, "--code", "4321")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (p1, b1), (p2, b2) = issuer.seen
+        first, second = json.loads(b1), json.loads(b2)
+        self.assertEqual((p1, first["code_challenge_method"], first["code_challenge"], first["client_id"],
+                          first["nonce"], first["context_id"], first["disclosure_level"], first["token_value"]),
+                         ("/api/v1/auth/authorize", "S256", "ch-1", "rp-1", "n-1", 3, "ZERO_KNOWLEDGE",
+                          self.PACK["token_value"]))
+        self.assertNotIn("presented_code", first, "no code is sent unless the holder gives one")
+        self.assertEqual(second["presented_code"], "4321")
+
+    def test_a_refused_login_is_an_exit_with_the_reason(self):
+        issuer = self._issuer({"/api/v1/auth/authorize": (401, {"error": "invalid_client"})})
+        r = self._run("login", "--instance", issuer.url, "--client-id", "rp-1", "--nonce", "n",
+                      "--code-challenge", "c", "--context", "1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("authorization refused: HTTP 401", r.stderr)
+
+    def test_present_carries_what_the_holder_staples_and_scopes(self):
+        sa = {"format": "polaris-status-assertion/1", "status": "ACTIVE"}
+        zk = {"proof_hex": "00", "epoch_id": 1}
+        files = {}
+        for name, obj in (("sa", sa), ("zk", zk)):
+            files[name] = os.path.join(self.dir, name + ".json")
+            with open(files[name], "w") as f:
+                json.dump(obj, f)
+        out = os.path.join(self.dir, "p.json")
+        r = self._run("present", "--status-assertion", files["sa"], "--zk-proof", files["zk"], "--context", "3",
+                      "--disclosure-level", "ZERO_KNOWLEDGE", "--verifier-scope", "rp.example", "--out", out)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(out) as f:
+            p = json.load(f)
+        self.assertEqual((p["status_assertion"], p["zk_proof"], p["context_id"], p["disclosure_level"],
+                          p["verifier_scope"]), (sa, zk, 3, "ZERO_KNOWLEDGE", "rp.example"))
+        V = _load_verifier()
+        self.assertEqual(p["pairwise_handle"], V.pairwise_handle(self.PACK["token_value"], "rp.example"),
+                         "with no holder key bound, the handle is keyed on the credential")
+        self.assertNotEqual(p["pairwise_handle"], V.pairwise_handle(self.PACK["token_value"], "other.example"))
+
+    def test_present_as_qr_frames_round_trips_to_the_same_presentation(self):
+        plain = self._run("present", "--context", "3")
+        frames = self._run("present", "--context", "3", "--qr", "--frame-bytes", "120")
+        self.assertEqual((plain.returncode, frames.returncode), (0, 0), plain.stderr + frames.stderr)
+        lines = [line for line in frames.stdout.splitlines() if line.strip()]
+        self.assertGreater(len(lines), 1, "a presentation longer than one frame is split")
+        V = _load_verifier()
+        decoded = V.decode_presentation_frames(lines)
+        decoded = decoded[0] if isinstance(decoded, tuple) else decoded
+        self.assertEqual(decoded, json.loads(plain.stdout))
+
+
 if __name__ == "__main__":
     unittest.main()
