@@ -76,14 +76,13 @@ DECLARED_SURVIVORS = {
     # resolver's is the innermost. It is kept because it is the guard that holds if either
     # outer bound is ever loosened, and tested directly against `_resolve` in
     # TheBoundsThemselvesAreAssertedTests rather than through `verify_presentation`.
-    # 2026-09-23. The two bounds in _inflate_bounded refuse the same input: any input that
-    # decompresses past the limit leaves unconsumed input behind, so the first fires; remove it
-    # and the length check after the flush fires instead. Each is redundant with the other, and
-    # the bomb is refused either way (TestStatusPrimitiveRefusals drives the primitive directly).
-    "status:_inflate_bounded:135276":
-        "redundant with its twin: removing either, the other refuses the same decompression bomb",
+    # 2026-09-30. The two bounds in _inflate_bounded are not twins, which this list said until
+    # the review routine measured it: the first refuses a bomb before it is built, and the bomb
+    # test now asserts that by what zlib produced, so its mutant is caught. The length check
+    # after flush() is a backstop behind it: the first bound refuses every input that would
+    # reach the second, so removing the second changes no answer.
     "status:_inflate_bounded:135276#2":
-        "redundant with its twin: removing either, the other refuses the same decompression bomb",
+        "a backstop behind the first bound, which refuses every input that would reach it",
     "sdjwt:verify_presentation:3f535a":
         "the resolver depth cap; two outer bounds refuse first, so no presentation can reach "
         "it. Tested directly against _resolve",

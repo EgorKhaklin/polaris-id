@@ -170,6 +170,8 @@ NOT_EVALUATED = "not_evaluated"            # it points at one and nobody was ask
 UNSUPPORTED_STATUS = "unsupported_status"  # it points at one in a form this code cannot read
 CHECKED = "checked"                        # a resolver answered; `status` carries what it said
 UNREACHABLE = "unreachable"                # a resolver was asked and could not answer
+NO_AUTHORITY = "no_authority"              # no key is stated as entitled to publish it; nothing was fetched
+LIST_REFUSED = "list_refused"              # a list was obtained and is not usable as evidence; `code` says why
 
 #: NOT_EVALUATED and UNREACHABLE are the pair most worth keeping apart, and the easiest to
 #: merge by accident. The first says nobody looked. The second says somebody looked and the
@@ -229,7 +231,15 @@ def _revocation_state(payload, resolver=None):
                               "nothing was established about revocation"
                               % type(answer).__name__}
         out = dict(answer)
-        out.setdefault("state", CHECKED if answer.get("checked") else UNREACHABLE)
+        if answer.get("checked"):
+            out.setdefault("state", CHECKED)
+        else:
+            # status.py's outcomes stay apart: a missing statement of who may publish, or a
+            # list that was obtained and refused, is not a network failure, and a relying party
+            # that treats `unreachable` as an outage must not be told one happened.
+            code = answer.get("code")
+            out.setdefault("state", NO_AUTHORITY if code == NO_AUTHORITY
+                           else UNREACHABLE if code in (None, UNREACHABLE) else LIST_REFUSED)
         out["uri"], out["idx"] = ref["uri"], ref["idx"]
         return out
     return {"state": UNSUPPORTED_STATUS, "checked": False, "uri": None, "idx": None,
@@ -398,31 +408,36 @@ def _verify_es256(public_key, signing_input, signature):
     return True
 
 
-def _issuer_public_key(header, issuer_jwks, trust_anchors):
-    """(key, reason, leaf): the key the issuer JWS is checked under, or why there is none,
-    and the x5c leaf it came from (None for a configured JWK).
+def _issuer_public_keys(header, issuer_jwks, trust_anchors):
+    """(keys, reason, leaf): the keys the issuer JWS may be checked under, or why there are
+    none, and the x5c leaf they came from (None for configured JWKs).
 
     Two ways, both explicit: an `x5c` chain whose leaf chains to a configured trust anchor,
-    or a JWK the caller configured out of band. A verifier that takes the key from the token
-    without either is not verifying anything, so there is no third way and no fallback.
+    or JWKs the caller configured out of band. A verifier that takes the key from the token
+    without either is not verifying anything, so there is no third way and no fallback: an
+    `x5c` that is present decides the way even when it is empty or not a list, and is then
+    refused. Every configured JWK that could be the signer is a candidate, because
+    `--issuer-jwks` trusts every key it lists; a `kid` that the header and a key both carry,
+    and that differs, rules that key out.
     """
-    chain = header.get("x5c")
-    if chain:
+    if "x5c" in header:
+        chain = header["x5c"]
         if not isinstance(chain, list) or not chain:
-            return None, "x5c is present but is not a non-empty array", None
+            return [], "x5c is present but is not a non-empty array", None
         try:
             leaf = load_der_x509_certificate(base64.b64decode(chain[0]))
         except Exception as exc:  # noqa: BLE001  any parse failure is the same refusal
-            return None, "the x5c leaf certificate does not parse: %s" % exc, None
+            return [], "the x5c leaf certificate does not parse: %s" % exc, None
         if not trust_anchors:
-            return None, ("the credential presents an x5c chain and no trust anchor is "
-                          "configured, so nothing can be said about who signed it"), None
+            return [], ("the credential presents an x5c chain and no trust anchor is "
+                        "configured, so nothing can be said about who signed it"), None
         for anchor in trust_anchors:
             if _chains_to(leaf, anchor):
-                return leaf.public_key(), "", leaf
-        return None, "the x5c leaf does not chain to any configured trust anchor", None
+                return [leaf.public_key()], "", leaf
+        return [], "the x5c leaf does not chain to any configured trust anchor", None
     if issuer_jwks:
         kid = header.get("kid")
+        keys = []
         for jwk in issuer_jwks:
             # A configured JWK list is operator input and can hold anything. Reading `kid`
             # off a string raised AttributeError straight out of a function whose contract
@@ -433,12 +448,14 @@ def _issuer_public_key(header, issuer_jwks, trust_anchors):
             if kid and jwk.get("kid") and jwk["kid"] != kid:
                 continue
             try:
-                return _es256_public_key(jwk), "", None
+                keys.append(_es256_public_key(jwk))
             except ValueError:
                 continue
-        return None, "no configured issuer JWK matches this credential's kid", None
-    return None, ("the credential carries no x5c and no issuer JWK is configured, so there "
-                  "is no key to check the issuer signature against"), None
+        if keys:
+            return keys, "", None
+        return [], "no configured issuer JWK matches this credential's kid", None
+    return [], ("the credential carries no x5c and no issuer JWK is configured, so there "
+                "is no key to check the issuer signature against"), None
 
 
 def _chains_to(leaf, anchor):
@@ -725,12 +742,12 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
     if header.get("alg") not in ACCEPTED_ALGS:
         return _refuse("issuer_alg", "the issuer JWT declares alg=%r, which is not in the "
                                      "accepted set %r" % (header.get("alg"), ACCEPTED_ALGS))
-    key, why, leaf = _issuer_public_key(header, issuer_jwks, trust_anchors)
-    if key is None:
+    keys, why, leaf = _issuer_public_keys(header, issuer_jwks, trust_anchors)
+    if not keys:
         return _refuse("issuer_key", why)
-    if not _verify_es256(key, signing_input, signature):
+    if not any(_verify_es256(key, signing_input, signature) for key in keys):
         return _refuse("issuer_signature", "the issuer signature over the credential does "
-                                           "not verify under the trusted issuer key")
+                                           "not verify under any trusted issuer key")
     if leaf is not None and "iss" in payload:
         why = _leaf_names(leaf, payload["iss"])
         if why:

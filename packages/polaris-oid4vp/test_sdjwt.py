@@ -83,7 +83,7 @@ class Wallet:
                 claims=(("given_name", "Jean"), ("family_name", "Dupont")),
                 corrupt_issuer_sig=False, corrupt_kb_sig=False, drop_key_binding=False,
                 extra_disclosure=None, issuer_typ="dc+sd-jwt", kb_typ="kb+jwt",
-                issuer_alg="ES256", include_cnf=True, payload_extra=None):
+                issuer_alg="ES256", include_cnf=True, payload_extra=None, issuer_header=None):
         disclosures = [_disclosure("salt%d" % i, name, value)
                        for i, (name, value) in enumerate(claims)]
         digests = [b64u_encode(hashlib.sha256(d.encode("ascii")).digest()) for d in disclosures]
@@ -98,7 +98,8 @@ class Wallet:
         if payload_extra:
             payload.update(payload_extra)
         issuer_jwt = _jws(self.issuer_key,
-                          {"alg": issuer_alg, "typ": issuer_typ, "kid": "issuer-1"}, payload)
+                          issuer_header or {"alg": issuer_alg, "typ": issuer_typ, "kid": "issuer-1"},
+                          payload)
         if corrupt_issuer_sig:
             head, _, sig = issuer_jwt.rpartition(".")
             flipped = bytearray(base64.urlsafe_b64decode(sig + "=" * (-len(sig) % 4)))
@@ -264,6 +265,35 @@ class RevocationIsStatedTests(unittest.TestCase):
                 self.assertFalse(v.revocation["checked"])
                 self.assertEqual(v.revocation["state"], self.S.UNREACHABLE)
 
+    def _answered(self, answer):
+        ref = {"status_list": {"uri": "https://issuer.example/sl/1", "idx": 5}}
+        return self.w.verify(self.w.present(payload_extra={"status": ref}),
+                             status_resolver=lambda *, uri, idx, issuer: dict(answer))
+
+    def test_no_stated_authority_is_its_own_state_not_unreachable(self):
+        """Nothing was asked and nothing was fetched: a missing trust statement is not an
+        outage, and status.py keeps its five outcomes apart, so the verdict does too."""
+        v = self._answered({"checked": False, "code": "no_authority", "reason": "not stated"})
+        self.assertTrue(v.authentic, v.reason)
+        self.assertEqual(v.revocation["state"], self.S.NO_AUTHORITY)
+        self.assertNotEqual(v.revocation["state"], self.S.UNREACHABLE)
+        self.assertEqual(v.revocation["code"], "no_authority")
+
+    def test_a_list_obtained_and_refused_is_its_own_state_not_unreachable(self):
+        """A bad signature, a broken list or an expired one was obtained: that is an answer
+        refused as evidence, not the absence of one."""
+        for code in ("signature", "lst", "expired", "index"):
+            with self.subTest(code=code):
+                v = self._answered({"checked": False, "code": code, "reason": "refused"})
+                self.assertEqual(v.revocation["state"], self.S.LIST_REFUSED)
+                self.assertEqual(v.revocation["code"], code)
+
+    def test_an_unreachable_answer_and_a_codeless_one_stay_unreachable(self):
+        for answer in ({"checked": False, "code": "unreachable", "reason": "timed out"},
+                       {"checked": False, "reason": "no code"}):
+            with self.subTest(answer=answer):
+                self.assertEqual(self._answered(answer).revocation["state"], self.S.UNREACHABLE)
+
     def test_no_resolver_never_asks_and_never_claims(self):
         """The default is unchanged, which is the other half of opt-in meaning anything."""
         ref = {"status_list": {"uri": "https://issuer.example/sl/1", "idx": 1}}
@@ -288,6 +318,54 @@ class RevocationIsStatedTests(unittest.TestCase):
         v = self.w.verify(self.w.present())
         self.assertIn("revocation", v.as_dict())
 
+
+
+class IssuerKeyChoiceTests(unittest.TestCase):
+    """`--issuer-jwks` trusts every key it lists, and an `x5c` that is present decides the way.
+
+    Until 2026-09-30 the first key that parsed was THE key, so a second listed key (a rotation)
+    never verified anything, and an empty or falsy `x5c` was read as absent and fell through to
+    the JWKs. Both are the review routine's findings against this package, reproduced here.
+    """
+
+    HEADER = {"alg": "ES256", "typ": "dc+sd-jwt"}
+
+    def setUp(self):
+        self.w = Wallet()
+        other = ec.generate_private_key(ec.SECP256R1())
+        self.bare_issuer = _public_jwk(self.w.issuer_key)
+        self.bare_other = _public_jwk(other)
+
+    def test_a_credential_signed_by_the_second_listed_key_verifies(self):
+        v = self.w.verify(self.w.present(issuer_header=dict(self.HEADER)),
+                          issuer_jwks=[self.bare_other, self.bare_issuer])
+        self.assertTrue(v.authentic, v.reason)
+
+    def test_a_header_kid_meets_keys_that_carry_none(self):
+        v = self.w.verify(self.w.present(issuer_header=dict(self.HEADER, kid="issuer-1")),
+                          issuer_jwks=[self.bare_other, self.bare_issuer])
+        self.assertTrue(v.authentic, v.reason)
+
+    def test_a_kid_both_sides_carry_and_that_differs_rules_the_key_out(self):
+        v = self.w.verify(self.w.present(issuer_header=dict(self.HEADER, kid="issuer-1")),
+                          issuer_jwks=[dict(self.bare_issuer, kid="someone-else")])
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key")
+
+    def test_no_listed_key_verifying_is_one_signature_refusal(self):
+        v = self.w.verify(self.w.present(issuer_header=dict(self.HEADER)),
+                          issuer_jwks=[self.bare_other, _public_jwk(ec.generate_private_key(ec.SECP256R1()))])
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_signature")
+
+    def test_an_x5c_that_is_present_but_falsy_is_refused_not_ignored(self):
+        for value in ([], "", {}, 0, False):
+            with self.subTest(x5c=value):
+                v = self.w.verify(self.w.present(
+                    issuer_header=dict(self.HEADER, kid="issuer-1", x5c=value)))
+                self.assertFalse(v.authentic, "an x5c of %r was read as absent" % (value,))
+                self.assertEqual(v.code, "issuer_key")
+                self.assertIn("x5c is present but is not a non-empty array", v.reason)
 
 class TheSevenConformanceRefusalsTests(unittest.TestCase):
     """One test per negative module in oid4vp-1final-verifier-haip-test-plan."""

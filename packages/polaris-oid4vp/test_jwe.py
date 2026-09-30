@@ -12,6 +12,7 @@ What these tests do establish is the refusal surface, and that is worth having o
 verifier that opens a response encrypted to somebody else's key, or follows `alg` wherever the
 header points it, has no confidentiality property to talk about.
 """
+import base64
 import json
 import os
 import sys
@@ -284,6 +285,32 @@ def _decode(value):
     import base64
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
+
+
+class TagLengthTests(unittest.TestCase):
+    """One plaintext, one token. AES-GCM receives ciphertext + tag as one string, so before
+    the tag was held to 128 bits (RFC 7518 section 5.3) moving bytes between the two segments
+    produced other tokens that decrypted to the same plaintext."""
+
+    def test_only_the_canonical_split_decrypts(self):
+        key = ec.generate_private_key(ec.SECP256R1())
+        token = encrypt_compact(b"hello", key.public_key(), "A128GCM")
+        self.assertEqual(decrypt_compact(token, key), b"hello")
+        head, enc_key, iv, ct, tag = token.split(".")
+        ct_raw = base64.urlsafe_b64decode(ct + "=" * (-len(ct) % 4))
+        tag_raw = base64.urlsafe_b64decode(tag + "=" * (-len(tag) % 4))
+        self.assertEqual(len(tag_raw), 16)
+        for moved in (16, 4):
+            with self.subTest(tag_bytes_moved_into_ciphertext=moved):
+                bad = ".".join((head, enc_key, iv, b64u_encode(ct_raw + tag_raw[:moved]),
+                                b64u_encode(tag_raw[moved:])))
+                with self.assertRaises(JweError):
+                    decrypt_compact(bad, key)
+        with self.subTest("ciphertext bytes moved into the tag"):
+            bad = ".".join((head, enc_key, iv, b64u_encode(ct_raw[:-4]),
+                            b64u_encode(ct_raw[-4:] + tag_raw)))
+            with self.assertRaises(JweError):
+                decrypt_compact(bad, key)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

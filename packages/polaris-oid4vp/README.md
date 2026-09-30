@@ -100,7 +100,7 @@ only.
 
 ## Revocation
 
-`verdict.revocation` is one of five states:
+`verdict.revocation` is one of seven states:
 
 | State | Meaning |
 |---|---|
@@ -109,6 +109,8 @@ only.
 | `unsupported_status` | its status claim is in a form this verifier cannot read |
 | `checked` | a resolver answered; `status` carries the issuer's value |
 | `unreachable` | a resolver was asked and got no answer |
+| `no_authority` | no key is stated as entitled to publish this issuer's status, so nothing was fetched |
+| `list_refused` | a status list was obtained and is not usable as evidence; `code` says why |
 
 - **Opt-in:** pass `status_resolver=` to `Verifier(...)` or `verify_presentation`. Without one
   nothing is fetched and the state is `not_evaluated`.
@@ -138,7 +140,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 323 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 333 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 103 refusals accept and requires a
