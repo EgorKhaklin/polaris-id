@@ -4384,7 +4384,15 @@ def grant_within_limits(grant, uses_so_far=0, amount=None):
     ignored: a grant that says `max_transfers: 3` to a service that has never heard of
     `max_transfers` must not be treated as unlimited.
     """
-    limits = grant.get("limits") if isinstance(grant, dict) and isinstance(grant.get("limits"), dict) else {}
+    # 2026-09-30: a `limits` present but not an object was read as no limits, so a signed
+    # bounded grant answered as unlimited. Absent means unlimited; anything else is refused.
+    if not isinstance(grant, dict):
+        return False, "the grant is not an object"
+    limits = grant.get("limits")
+    if limits is None:
+        limits = {}
+    elif not isinstance(limits, dict):
+        return False, "the grant's limits are not an object; refusing rather than ignoring them"
     known = {"max_uses", "max_amount"}
     unknown = sorted(set(limits) - known)
     if unknown:

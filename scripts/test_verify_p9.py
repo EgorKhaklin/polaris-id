@@ -530,6 +530,30 @@ class GrantLimitsSurviveANonFiniteNumberTests(unittest.TestCase):
         self.assertFalse(V.grant_within_limits({"limits": {"max_uses": 3}}, 3)[0])
 
 
+class GrantLimitsThatAreNotAnObjectTests(unittest.TestCase):
+    """2026-09-30: `limits` present but not an object (a list, a string, a number) read as no
+    limits, so a signed bounded grant answered as unlimited: `{"limits": [{"max_uses": 1}]}`
+    passed at any use count here and in polaris-verify, while the TypeScript SDK refused the
+    list. Absent means unlimited; present and unreadable is refused, as the docstring says."""
+
+    def test_limits_that_are_not_an_object_are_refused(self):
+        for limits in ([{"max_uses": 1}], [], "max_uses=1", 1, 0, True):
+            with self.subTest(limits=limits):
+                ok, note = V.grant_within_limits({"limits": limits}, 5, 10 ** 9)
+                self.assertFalse(ok, "a limit this verifier cannot read must be refused, not ignored")
+                self.assertIn("not an object", note)
+
+    def test_a_grant_that_is_not_an_object_is_refused(self):
+        for grant in (None, [], "grant", 3):
+            with self.subTest(grant=grant):
+                self.assertFalse(V.grant_within_limits(grant, 0)[0])
+
+    def test_absent_or_empty_limits_still_mean_unlimited(self):
+        for grant in ({}, {"limits": None}, {"limits": {}}):
+            with self.subTest(grant=grant):
+                self.assertEqual(V.grant_within_limits(grant, 10 ** 6, 10 ** 9), (True, None))
+
+
 class TheCrossAuthorityDecisionReadsEveryStatedWindowTests(unittest.TestCase):
     """The detached verifier held to the SDKs' answers on one fixture, under real ML-DSA-65.
 

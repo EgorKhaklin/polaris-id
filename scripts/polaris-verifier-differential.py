@@ -54,12 +54,14 @@ HOSTILE = [
     {"issued_at": _NAN}, {"expires_at": _INF}, {"iat": _NAN}, {"exp": 0},
     {"limits": {"max_amount": _NAN}}, {"limits": {"max_uses": _INF}},
     {"limits": {"max_uses": 3}}, {"keys": 5}, {"epoch": {"number": _NAN}},
+    # 2026-09-30: a `limits` that is not an object read as unlimited in both of these.
+    {"limits": [{"max_uses": 1}]}, {"limits": "max_uses=1"}, {"limits": 1},
 ]
 
 #: How each shared function is called. A function whose two implementations take different
 #: argument shapes is not comparable and is named here rather than quietly skipped.
 CALLS = {
-    "grant_within_limits":     lambda m, x: m.grant_within_limits(x if isinstance(x, dict) else {}, 0, 100),
+    "grant_within_limits":     lambda m, x: m.grant_within_limits(x, 5, 100),
     "handles_link":            lambda m, x: m.handles_link(x, x),
     "pairwise_handle":         lambda m, x: m.pairwise_handle("ab" * 32, x),
     "timestamp_hash":          lambda m, x: m.timestamp_hash(x),
