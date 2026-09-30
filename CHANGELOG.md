@@ -38,6 +38,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - **Breaking**: `polaris-oid4vp` reports the `no_authority` and `list_refused` revocation states it called `unreachable`.
 - `polaris-oid4vp` refuses a JWE whose tag is not 128 bits; other splits of the same bytes decrypted.
 - `polaris-oid4vp serve` counts a body's raw bytes against Content-Length; invalid UTF-8 hid a truncated body.
+- CITATION.cff says duress-aware, not duress-resistant; the vocabulary check now refuses the duress forms it missed.
 
 ### Added
 

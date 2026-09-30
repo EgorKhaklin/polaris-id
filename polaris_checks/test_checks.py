@@ -19419,12 +19419,13 @@ def test_overclaims_are_refused_on_the_pages_a_registry_renders(tmp_path):
         "naming @noble/post-quantum must not demand a readiness-ledger link"
 
 
-def test_the_compulsion_ban_covers_both_nouns_and_all_three_shapes(tmp_path):
+def test_the_compulsion_ban_covers_all_three_nouns_and_all_three_shapes(tmp_path):
     """A denylist is only as good as the phrasings somebody thought of.
 
     Until 2026-09-20 this banned "resists compulsion" and "resistant to compulsion" and
     neither coercion form, so the identical claim written with the other noun passed. It
     carried no "-proof" spelling either, while the post-quantum list next to it did.
+    Until 2026-09-30 it carried no duress form, and CITATION.cff said "duress-resistant".
     """
     for phrase in checks._COMPULSION_ASSERTIONS:
         _write_outward(tmp_path, extra_readme="Polaris is %s.\n" % phrase)
@@ -19432,10 +19433,10 @@ def test_the_compulsion_ban_covers_both_nouns_and_all_three_shapes(tmp_path):
         assert any(f.level == "FAIL" for f in out), \
             "%r must be refused; the vocation is what this list protects" % phrase
 
-    for noun in ("compulsion", "coercion"):
+    for noun in ("compulsion", "coercion", "duress"):
         for shape in ("%s-resistant", "resists %s", "%s-proof"):
             assert shape % noun in checks._COMPULSION_ASSERTIONS, \
-                "the two nouns and three shapes must stay symmetric; %r is missing" % (shape % noun)
+                "the three nouns and three shapes must stay symmetric; %r is missing" % (shape % noun)
 
 
 def test_runner_last_refuses_a_tree_where_no_file_has_a_runner(tmp_path):
