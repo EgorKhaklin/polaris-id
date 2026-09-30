@@ -1046,6 +1046,8 @@ def api_atlas_facet_agencies():
         if kind not in ('verification', 'lifecycle'):
             raise ValueError("kind must be 'verification' or 'lifecycle'")
         limit = min(int(request.args.get('limit', '20')), _ATLAS_MAX_CATEGORIES)
+        if limit < 0:
+            raise ValueError("limit must not be negative")   # it reached SQL's LIMIT as a 500
         search = (request.args.get('q') or '').strip()[:60] or None
         f = _parse_atlas_filters(request.args)
     except ValueError as e:

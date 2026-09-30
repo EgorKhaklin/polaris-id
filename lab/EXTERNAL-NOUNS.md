@@ -50,6 +50,11 @@ jurisdiction. Credo fetched the
 status list on receipt; walt.id did not. Evidence: [lab/strategy/005/STEP5.md](strategy/005/STEP5.md),
 [STEP6.md](strategy/005/STEP6.md); `product/run.py` and `product/present.py` reproduce both.
 
+**No outside holder at rc.67 (2026-09-30).** Strategy 005's fourth criterion asked whether, by the
+release after wallet copies shipped, an outside party had issued into or presented from a
+wallet with one. None had. The paragraph above stays what it is, the author's own
+interoperability run, and the criterion's blank is recorded here.
+
 **walt.id refused Polaris first, and was right.** `polaris-oid4vp keygen` issued a
 request-signing leaf with no `digitalSignature` key usage; eleven conformance modules, 142
 package tests and every internal check had passed over it. Fixed in v9.465 with a test. Two

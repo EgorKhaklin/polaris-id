@@ -1823,6 +1823,19 @@ def athena_console():
                            algorithms=algorithms, contexts=contexts, trust=trust)
 
 
+# The three Athena functions take INTEGER ids. An integer outside that type's range is not an
+# id: PostgreSQL resolved no function for the bigint or numeric it became, and the request
+# escaped as a 500 where API.md promises 400 for bad input.
+_INT4_MIN, _INT4_MAX = -2 ** 31, 2 ** 31 - 1
+
+
+def _int_id_arg(name):
+    value = int(request.args[name])
+    if not _INT4_MIN <= value <= _INT4_MAX:
+        raise ValueError(name)
+    return value
+
+
 @app.route('/api/athena/authority-chain')
 @security.login_required
 @replica_reads
@@ -1831,10 +1844,10 @@ def api_athena_authority_chain():
     chain (agency -> algorithm -> may_issue grant); a missing may_issue step
     means the agency is not authorized to issue it."""
     try:
-        agency = int(request.args['agency'])
-        algorithm = int(request.args['algorithm'])
+        agency = _int_id_arg('agency')
+        algorithm = _int_id_arg('algorithm')
     except (KeyError, ValueError):
-        return jsonify(error="agency and algorithm must be integers"), 400
+        return jsonify(error="agency and algorithm must be integer ids"), 400
     rows = query("SELECT step, relation, detail, source "
                  "FROM athena_authority_chain(%s, %s) ORDER BY step",
                  (agency, algorithm))
@@ -1851,9 +1864,9 @@ def api_athena_affected_by_algorithm():
     contexts it currently serves, and its post-quantum successors. Authority-only
     (no token, signature, or event data)."""
     try:
-        algorithm = int(request.args['algorithm'])
+        algorithm = _int_id_arg('algorithm')
     except (KeyError, ValueError):
-        return jsonify(error="algorithm must be an integer"), 400
+        return jsonify(error="algorithm must be an integer id"), 400
     rows = query("SELECT impact_kind, ref_id, ref_label, detail, source "
                  "FROM athena_affected_by_algorithm(%s) ORDER BY impact_kind, ref_id",
                  (algorithm,))
@@ -1870,9 +1883,9 @@ def api_athena_explain_proof():
     """What proof / disclosure policy bounds this verification context? Returns
     the context requirements and the three C6-enforced disclosure levels."""
     try:
-        context = int(request.args['context'])
+        context = _int_id_arg('context')
     except (KeyError, ValueError):
-        return jsonify(error="context must be an integer"), 400
+        return jsonify(error="context must be an integer id"), 400
     rows = query("SELECT context_type, min_security_level, requires_biometric, "
                  "disclosure_level, disclosure_note FROM athena_explain_proof(%s) "
                  "ORDER BY CASE disclosure_level WHEN 'ZERO_KNOWLEDGE' THEN 1 "

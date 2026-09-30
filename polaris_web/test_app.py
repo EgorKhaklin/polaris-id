@@ -9109,6 +9109,12 @@ class AtlasConsoleAPITests(PolarisTestCase):
         self.assertEqual(r.status_code, 200)
         self.assertLessEqual(len(r.get_json()['results']), atlas_routes._ATLAS_MAX_CATEGORIES)
 
+    def test_agency_facet_refuses_a_negative_limit(self):
+        # API.md: 400 is bad input. The cap bounded the limit from above only, so -1
+        # reached SQL's LIMIT and was a 500.
+        r = self.client.get('/api/atlas/facet/agencies?window=all&limit=-1')
+        self.assertEqual((r.status_code, r.get_json()['error']), (400, 'limit must not be negative'))
+
     def test_global_filter_narrows_every_aggregate(self):
         # A facet filter must flow through the aggregates (coordinated views):
         # filtering to FAILURE returns fewer than the unfiltered total.
@@ -14020,6 +14026,21 @@ class AthenaConsoleAPITests(PolarisTestCase):
         levels = {d['level'] for d in data['disclosures']}
         self.assertEqual(levels, {'ZERO_KNOWLEDGE', 'SELECTIVE', 'FULL'})
         self.assertEqual(self.client.get('/api/athena/explain-proof?context=x').status_code, 400)
+
+    def test_an_id_outside_the_integer_range_is_a_400(self):
+        # API.md: integer ids, 400 otherwise; 400 is bad input. An id past INTEGER's range
+        # reached the SQL function as bigint or numeric, found no function, and was a 500.
+        for url in ('/api/athena/authority-chain?agency=1&algorithm=2147483648',
+                    '/api/athena/authority-chain?agency=2147483648&algorithm=1',
+                    '/api/athena/affected-by-algorithm?algorithm=2147483648',
+                    '/api/athena/affected-by-algorithm?algorithm=-2147483649',
+                    '/api/athena/explain-proof?context=99999999999999999999'):
+            r = self.client.get(url)
+            self.assertEqual(r.status_code, 400, url)
+            self.assertIn('integer id', r.get_json()['error'], url)
+        # The largest INTEGER is still an id: it answers, with nothing affected.
+        r = self.client.get('/api/athena/affected-by-algorithm?algorithm=2147483647')
+        self.assertEqual((r.status_code, r.get_json()['impacts']), (200, {}))
 
 
 class VerifyWitnessSamplingTests(PolarisTestCase):

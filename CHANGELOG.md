@@ -7,7 +7,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
-## Unreleased
+## v1.0.0-rc.67 — 2026-09-30 (one command to a verified result)
+
+From a clone, one command runs the production stack and has published polaris-verify verify an ML-DSA-65 credential it issued; code scanning and fuzzing, releases sealed with SBOMs and provenance; 11 security changes, 40 fixes.
 
 ### Security
 
@@ -47,6 +49,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-verify --verify-dir` reports a vector that is not a JSON object instead of raising.
 - `polaris-verify` no longer calls missing revocation evidence a revocation in its long-term-validation note.
 - NOTICE names psycopg 3 and certifi, which are not permissive, and drops files the tree no longer ships.
+- SECURITY-CONTROLS.md says Polaris is built for national-scale identity data and holds notional data; it said it stored such data.
 - `polaris-oid4vp` tries every configured issuer key, not only the first that parses, so a rotated key verifies.
 - `polaris-oid4vp` refuses an `x5c` header that is present but empty or not a list, instead of reading it as absent.
 - **Breaking**: `polaris-oid4vp` reports the `no_authority` and `list_refused` revocation states it called `unreachable`.
@@ -59,6 +62,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-relying-party.py` rejects, instead of crashing, when the issuer refuses its OAuth client.
 - `polaris-relying-party.py` exits 3, instead of crashing, on a presentation that is not an object or an anchor it cannot read.
 - The exchange gateway answers 502, not a non-JSON reply, when its upstream answers NaN, Infinity or 1e400.
+- The Athena routes answer 400, not 500, to an id outside INTEGER's range; the agency facet, to a negative `limit`.
 - The trust-anchors loader refuses a key of no accepted length; signature checks refuse, not raise, on a non-string.
 - `polaris-create-operator.sh --target=docker-stack` hashes the password in the app container; the host needs no werkzeug.
 - The eudi-dev and OID4VCgo interop records no longer say the wallet trusts the verifier's TLS listener; measured, neither validates it.
