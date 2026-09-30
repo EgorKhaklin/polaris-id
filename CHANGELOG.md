@@ -86,6 +86,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The review packet's drill table names the CI run behind each number, restated from the 2026-09-30 runs.
 - Published: `polaris-verify` and `polaris-sdk-python` 1.0.0rc4 and `polaris-oid4vp` 1.0.0rc8 (not certified; 1.0.0rc7 is) on PyPI, `polaris-sdk-ts` 1.0.0-rc.4, then 1.0.0-rc.5 with the TypeScript format fix, on npm under `next`.
 - Published: `polaris-oid4vp` 1.0.0rc9 on PyPI, with the review fixes above (not certified; 1.0.0rc7 is).
+- Published: `polaris-verify` and `polaris-sdk-python` 1.0.0rc5 and `polaris-oid4vp` 1.0.0rc10 (not certified; 1.0.0rc7 is) on PyPI.
 
 ## v1.0.0-rc.66 — 2026-09-28 (a Polaris credential in a wallet Polaris did not write)
 
