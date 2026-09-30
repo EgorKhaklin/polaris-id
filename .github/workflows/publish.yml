@@ -21,6 +21,7 @@ on:
           - polaris-verify (PyPI)
           - polaris-sdk-python (PyPI)
           - polaris-oid4vp (PyPI)
+          - polaris-id-cli (PyPI)
           - polaris-sdk-ts (npm)
       confirm:
         description: 'Type PUBLISH to actually publish. Anything else stays a dry run.'
@@ -62,8 +63,15 @@ jobs:
           python -m build --no-isolation --outdir dist/polaris-verify packages/polaris-verify
           python -m build --no-isolation --outdir dist/polaris-sdk-python sdk/python
           python -m build --no-isolation --outdir dist/polaris-oid4vp packages/polaris-oid4vp
+          python -m build --no-isolation --outdir dist/polaris-id-cli polaris_cli
       - name: Validate the distribution metadata
         run: python -m twine check dist/*/*
+      # The operator CLI from its wheel alone, in a fresh venv outside the repository: --version
+      # and --help answer, and the commands that need a checkout refuse and name it.
+      - name: polaris-id-cli installs and behaves without the repository
+        env:
+          PYTHON: python
+        run: bash scripts/polaris-cli-package-check.sh dist/polaris-id-cli/polaris_id_cli-*-py3-none-any.whl
       - name: Pack the npm tarball
         run: cd sdk/typescript && npm pack --pack-destination "$GITHUB_WORKSPACE/dist"
 
@@ -90,7 +98,7 @@ jobs:
   pypi:
     name: Publish to PyPI
     needs: build-and-gate
-    if: inputs.confirm == 'PUBLISH' && (inputs.target == 'polaris-verify (PyPI)' || inputs.target == 'polaris-sdk-python (PyPI)' || inputs.target == 'polaris-oid4vp (PyPI)')
+    if: inputs.confirm == 'PUBLISH' && (inputs.target == 'polaris-verify (PyPI)' || inputs.target == 'polaris-sdk-python (PyPI)' || inputs.target == 'polaris-oid4vp (PyPI)' || inputs.target == 'polaris-id-cli (PyPI)')
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -112,6 +120,7 @@ jobs:
             "polaris-verify (PyPI)")     cp dist/polaris-verify/* upload/ ;;
             "polaris-sdk-python (PyPI)") cp dist/polaris-sdk-python/* upload/ ;;
             "polaris-oid4vp (PyPI)")     cp dist/polaris-oid4vp/* upload/ ;;
+            "polaris-id-cli (PyPI)")     cp dist/polaris-id-cli/* upload/ ;;
             *) echo "::error::unknown target: $TARGET"; exit 1 ;;
           esac
           ls -l upload
