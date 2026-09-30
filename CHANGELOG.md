@@ -60,7 +60,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The exchange gateway answers 502, not a non-JSON reply, when its upstream answers NaN, Infinity or 1e400.
 - The trust-anchors loader refuses a key of no accepted length; signature checks refuse, not raise, on a non-string.
 - `polaris-create-operator.sh --target=docker-stack` hashes the password in the app container; the host needs no werkzeug.
-- The eudi-dev interop record no longer says the wallet trusts the verifier's TLS listener; measured, it validates no TLS certificate.
+- The eudi-dev and OID4VCgo interop records no longer say the wallet trusts the verifier's TLS listener; measured, neither validates it.
 - The SBOM workflow attaches the SBOMs to a draft release, then publishes it; an immutable release refuses them afterwards.
 
 ### Added
