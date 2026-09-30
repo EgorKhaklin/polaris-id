@@ -55,15 +55,20 @@ jobs:
     steps:
       - name: Resolve the release tag
         id: tag
+        # The tag reaches the shell as data in the environment, not spliced into the script.
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          TAG="${{ github.event.release.tag_name }}"
-          [ -n "$TAG" ] || TAG="${{ github.event.inputs.tag }}"
+          TAG="$RELEASE_TAG"
+          [ -n "$TAG" ] || TAG="$INPUT_TAG"
           [ -n "$TAG" ] || { echo "::error::no release tag resolved"; exit 1; }
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Checkout at the release tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           ref: ${{ steps.tag.outputs.tag }}
 
       - name: Python runtime surface SBOM (SPDX)
@@ -109,8 +114,9 @@ jobs:
       - name: Attach SBOMs to the release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          gh release upload "${{ steps.tag.outputs.tag }}" sbom/*.spdx.json --clobber
+          gh release upload "$TAG" sbom/*.spdx.json --clobber
 
       # P0.6 — SLSA build-provenance over every SBOM, signed keyless through
       # GitHub OIDC + Sigstore (Fulcio cert, Rekor transparency log). Each SBOM
@@ -118,6 +124,6 @@ jobs:
       # workflow run; a consumer verifies with:
       #   gh attestation verify sbom-python.spdx.json --repo ${{ github.repository }}
       - name: Attest SBOM provenance (SLSA, keyless)
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: "sbom/*.spdx.json"

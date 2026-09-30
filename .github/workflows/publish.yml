@@ -36,11 +36,13 @@ jobs:
     name: Build every artifact and prove it installs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '24'
       - name: Install the TypeScript SDK's pinned dependencies
@@ -75,7 +77,7 @@ jobs:
           fi
           find dist -type f | sort
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: distributions
           path: dist/
@@ -93,7 +95,7 @@ jobs:
       # https://pypi.org/manage/account/publishing/ — see docs/RELEASING.md.
       id-token: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: distributions
           path: dist
@@ -109,7 +111,7 @@ jobs:
             *) echo "::error::unknown target: $TARGET"; exit 1 ;;
           esac
           ls -l upload
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           packages-dir: upload
 
@@ -124,13 +126,15 @@ jobs:
       # workflow's identity and the package gets a provenance attestation.
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       # No registry-url here on purpose: setup-node would write an _authToken placeholder
       # into .npmrc, and a token in the config, even a placeholder, is what npm uses instead
       # of the OIDC exchange. Trusted publishing wants no token anywhere. The CLI is upgraded
       # because the exchange needs npm 11.5.1 or later, and the publish runs verbose so that
       # the exchange's answer is in the log if the registry refuses.
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           # `npm stage publish` needs Node 22.14.0 or later. 24 satisfies it; the assertion
           # below is what actually holds the floor, because a pin can be edited.

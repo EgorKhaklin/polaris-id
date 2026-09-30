@@ -56,9 +56,11 @@ jobs:
       # want of the binary would read as a refusal nothing notices.
       POLARIS_ZK_BINARY: ${{ github.workspace }}/polaris_zk/target/release/polaris-zk
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
@@ -76,7 +78,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
