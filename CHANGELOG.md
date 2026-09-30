@@ -18,6 +18,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The three verifiers refuse a grant whose `limits` is present but not an object; the Python ones read it as unlimited.
 - The Python SDK refuses an `issuer_url` whose scheme is not `https` or `http` before `urlopen`. (thanks @DYNOSuprovo)
 - The `pypi` and `npm` environments deploy only from `main`, and a published release's tag and assets cannot be changed.
+- Workflow tokens are read-only at every workflow's top level; the jobs that write ask for it themselves.
 
 ### Fixed
 
@@ -50,6 +51,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - CITATION.cff says duress-aware, not duress-resistant; the vocabulary check now refuses the duress forms it missed.
 - `polaris-relying-party.py` rejects, instead of crashing, when the issuer refuses its OAuth client.
 - `polaris-relying-party.py` exits 3, instead of crashing, on a presentation that is not an object or an anchor it cannot read.
+- The SBOM workflow attaches the SBOMs to a draft release, then publishes it; an immutable release refuses them afterwards.
 
 ### Added
 
@@ -59,6 +61,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `TRADEMARKS.md`: the license covers the files, not the Polaris, owl, Khaklin Technologies or OpenID Certified marks.
 - Discussions forms for questions, needs and interop results; `.github/SUPPORT.md` says where each kind of message goes.
 - Code scanning: CodeQL (security-extended) over the Python, TypeScript, Rust and workflows, zizmor over the workflows, and OpenSSF Scorecard.
+- Each release carries its SBOMs' provenance bundle, so `gh attestation verify --bundle` checks them without GitHub's attestation store.
 
 ### Changed
 

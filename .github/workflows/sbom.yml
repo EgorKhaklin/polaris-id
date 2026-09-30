@@ -1,12 +1,21 @@
 # ============================================================================
 # SBOM + provenance per release (roadmap P0.5 / v9.167, P0.6 / v9.168).
 #
-# On every published release, generate an SPDX 2.3 Software Bill of Materials
-# for each shipped artifact, attach them to the release, and produce a signed
-# SLSA build-provenance attestation over them. A downstream operator can then
-# answer "what is in this exact release" from an SBOM AND cryptographically
-# verify "this SBOM was built by this repo's release workflow, not forged"
-# with a single `gh attestation verify` (see SECURITY.md).
+# For every release, generate an SPDX 2.3 Software Bill of Materials for each
+# shipped artifact, produce a signed SLSA build-provenance attestation over
+# them, and attach both to the release. A downstream operator can then answer
+# "what is in this exact release" from an SBOM AND cryptographically verify
+# "this SBOM was built by this repo's release workflow, not forged" with a
+# single `gh attestation verify` (see SECURITY.md), offline if they keep the
+# attached bundle.
+#
+# Releases are immutable once published (SECURITY.md, Repository controls):
+# GitHub refuses an asset added after publication. So a release is assembled
+# as a DRAFT on a tag that already exists, this workflow is dispatched with
+# that tag, attaches the SBOMs and the provenance bundle to the draft, and
+# publishes it last. The release is born complete and then sealed. Publishing
+# any other way still runs the verify job, which fails when the SBOMs are not
+# there, so a release without them is loud rather than quiet.
 #
 # SBOM tooling: Trivy, the SAME version the image-cve-scan job in ci.yml pins.
 # One tool for the CVE gate and the SBOM keeps the bill of materials consistent
@@ -21,7 +30,7 @@
 # with the P1.5 Kubernetes/registry work; there is nothing at a registry ref
 # to sign today.
 #
-# Five artifacts: the Python runtime surface (requirements.txt) and the four
+# Six artifacts: the Python runtime surface (requirements.txt) and the five
 # self-built images (app, caddy, pgbouncer, postgres, etcd). Image SBOMs require the
 # built image, so this rebuilds them at the release tag; that is release-cadence
 # work, not per-push, so the cost is acceptable.
@@ -30,18 +39,17 @@
 name: SBOM + provenance per release
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to (re)generate SBOMs for"
+        description: "Tag of the DRAFT release to complete and publish"
         required: true
+  release:
+    types: [published]
 
+# Read-only by default; the job that attaches, attests and publishes asks for its writes itself.
 permissions:
-  contents: write        # upload assets to the release
-  id-token: write        # OIDC identity for keyless Sigstore signing
-  attestations: write    # store the SLSA provenance attestation
+  contents: read
 
 env:
   # The one place the SBOM generator's Trivy version lives in THIS file. It
@@ -50,19 +58,32 @@ env:
 
 jobs:
   sbom:
-    name: Generate + attach SPDX SBOMs
+    name: Generate, attest and attach the SBOMs, then publish the draft
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # attach assets to the draft release and publish it
+      id-token: write        # OIDC identity for keyless Sigstore signing
+      attestations: write    # store the SLSA provenance attestation
     steps:
-      - name: Resolve the release tag
+      - name: Resolve the draft release
         id: tag
         # The tag reaches the shell as data in the environment, not spliced into the script.
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          TAG="$RELEASE_TAG"
-          [ -n "$TAG" ] || TAG="$INPUT_TAG"
-          [ -n "$TAG" ] || { echo "::error::no release tag resolved"; exit 1; }
+          TAG="$INPUT_TAG"
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] \
+            || { echo "::error::'$TAG' is not a version tag"; exit 1; }
+          # The SBOMs describe the tagged tree, so the tag must exist before the draft is completed.
+          git ls-remote --exit-code --tags "https://github.com/$GH_REPO" "refs/tags/$TAG" >/dev/null \
+            || { echo "::error::tag $TAG does not exist; push it, then create the draft on it"; exit 1; }
+          draft=$(gh release view "$TAG" --json isDraft --jq .isDraft) \
+            || { echo "::error::no release for $TAG; create it with gh release create $TAG --draft --verify-tag"; exit 1; }
+          [ "$draft" = "true" ] \
+            || { echo "::error::$TAG is already published, and a published release is immutable: it cannot take the SBOMs"; exit 1; }
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Checkout at the release tag
@@ -111,19 +132,68 @@ jobs:
           done
           [ "$fail" = 0 ] || exit 1
 
-      - name: Attach SBOMs to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          gh release upload "$TAG" sbom/*.spdx.json --clobber
-
       # P0.6 — SLSA build-provenance over every SBOM, signed keyless through
       # GitHub OIDC + Sigstore (Fulcio cert, Rekor transparency log). Each SBOM
       # gets a provenance attestation binding its sha256 to this repo + this
       # workflow run; a consumer verifies with:
       #   gh attestation verify sbom-python.spdx.json --repo ${{ github.repository }}
       - name: Attest SBOM provenance (SLSA, keyless)
+        id: attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: "sbom/*.spdx.json"
+
+      # The same Sigstore bundle, one per line (the form `gh attestation download` writes), so a
+      # stranger can verify offline with --bundle. Checked here exactly as they will check it.
+      - name: Keep the provenance bundle beside the SBOMs, and verify it offline
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          jq -c . "$BUNDLE" > sbom/sbom-provenance.intoto.jsonl
+          for f in sbom/*.spdx.json; do
+            gh attestation verify "$f" --repo "$GH_REPO" --bundle sbom/sbom-provenance.intoto.jsonl \
+              --signer-workflow "$GH_REPO/.github/workflows/sbom.yml"
+          done
+
+      - name: Attach the SBOMs and the bundle to the draft, then publish it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh release upload "$TAG" sbom/*.spdx.json sbom/sbom-provenance.intoto.jsonl --clobber
+          gh release edit "$TAG" --draft=false
+
+  # Runs after the job above, and on its own whenever a release is published some other way:
+  # a published release must carry the six SBOMs and a bundle that verifies each of them.
+  verify:
+    name: The published release carries its SBOMs and their provenance
+    needs: [sbom]
+    if: always() && (github.event_name == 'release' || needs.sbom.result == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - name: Download the release's SBOMs and bundle, and verify each
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          TAG="$RELEASE_TAG"
+          [ -n "$TAG" ] || TAG="$INPUT_TAG"
+          mkdir rel
+          gh release download "$TAG" -D rel -p '*.spdx.json' -p 'sbom-provenance.intoto.jsonl' \
+            || { echo "::error::$TAG was published without its SBOMs; it is immutable, so the fix is the next release"; exit 1; }
+          fail=0
+          for name in python image-app image-caddy image-pgbouncer image-postgres image-etcd; do
+            f="rel/sbom-${name}.spdx.json"
+            [ -s "$f" ] || { echo "::error::$TAG carries no sbom-${name}.spdx.json"; fail=1; continue; }
+            gh attestation verify "$f" --repo "$GH_REPO" --bundle rel/sbom-provenance.intoto.jsonl \
+              --signer-workflow "$GH_REPO/.github/workflows/sbom.yml" || fail=1
+          done
+          [ "$fail" = 0 ] || exit 1

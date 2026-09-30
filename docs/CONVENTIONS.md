@@ -197,8 +197,11 @@ semantic versions in their manifests and go out through `publish.yml`
 than four hundred ships and tagged none of them, because a tag per ship makes the tag list
 useless for the one thing it is for, which is finding the versions a stranger can install. A
 release also gets a GitHub Release object, which is a separate thing from the tag and does not
-appear by pushing one: render its body with `scripts/polaris-release-notes.sh <version>` and
-create it with `gh release create`. A tag with no Release leaves the Releases page showing the
+appear by pushing one: render its body with `scripts/polaris-release-notes.sh <version>`, push
+the tag, create the Release as a draft on it (`gh release create v<version> --draft
+--verify-tag`), and dispatch `sbom.yml` with the tag, which attaches the SBOMs and their
+provenance and then publishes the draft. A published release is immutable, so nothing can be
+attached afterwards. A tag with no Release leaves the Releases page showing the
 previous version as Latest, which is how rc.2 sat unannounced for an hour on 2026-09-17.
 
 **Bump procedure** (the version discipline in [`RELEASING.md`](RELEASING.md)), all in one ship:

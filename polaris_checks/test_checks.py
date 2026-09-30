@@ -2344,10 +2344,34 @@ def test_sbom_workflow_check_discriminates(tmp_path):
                     "          docker build -t polaris-caddy:sbom .\n"
                     "          docker build -t polaris-pgbouncer:sbom .\n"
                     "          docker build -t polaris-postgres:sbom .\n"
-                    "          docker build -t polaris-etcd:sbom .\n"
-                    "      - run: gh release upload \"$TAG\" sbom/*.spdx.json\n")
+                    "          docker build -t polaris-etcd:sbom .\n")
+    head = sbom.read_text()
+
+    # Attached after publication: an immutable release refuses the upload.
+    sbom.write_text(head + "      - run: |\n"
+                    "          gh release edit \"$TAG\" --draft=false\n"
+                    "          gh release upload \"$TAG\" sbom/*.spdx.json sbom/sbom-provenance.intoto.jsonl\n")
+    assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the release is published before the SBOMs are attached"
+
+    # Attached to the draft, but without the bundle a stranger needs to verify offline.
+    sbom.write_text(head + "      - run: |\n"
+                    "          gh release upload \"$TAG\" sbom/*.spdx.json\n"
+                    "          gh release edit \"$TAG\" --draft=false\n")
+    assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the provenance bundle is not attached"
+
+    # Attached to the draft and never published: the release would sit as a draft.
+    sbom.write_text(head + "      - run: gh release upload \"$TAG\" sbom/*.spdx.json "
+                    "sbom/sbom-provenance.intoto.jsonl\n")
+    assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the workflow never publishes the draft"
+
+    sbom.write_text(head + "      - run: |\n"
+                    "          gh release upload \"$TAG\" sbom/*.spdx.json sbom/sbom-provenance.intoto.jsonl\n"
+                    "          gh release edit \"$TAG\" --draft=false\n")
     assert checks.check_sbom_workflow(tmp_path)[0].level == "OK", \
-        "must PASS with release trigger, SPDX, all five images, python, and upload"
+        "must PASS with release trigger, SPDX, all five images, python, and upload before publishing"
 
 
 def test_sbom_trivy_match_check_discriminates(tmp_path):
