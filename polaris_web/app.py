@@ -1255,14 +1255,12 @@ def _ensure_state_dir():
         # In production the container owns this directory and no host launcher
         # shares it, so lock it to the owner (0o700). It can hold sensitive state
         # (in dev, the persisted secret_key), so a world-writable mode there would
-        # let any local account replace those files. The looser 0o777 below is a
-        # DEV-only convenience: the watch-mode launcher runs as a different uid on
-        # the docker dev path and reads/writes the same heartbeat/quit/secret
-        # files, so it needs cross-uid access — never reached in production.
+        # let any local account replace those files. Outside production the mode
+        # is left as it is and never widened here: the watch-mode launcher, whose
+        # docker dev path shares these files across uids, creates the directory
+        # and sets the mode it needs before the stack starts (prepare_state_dir).
         if _PRODUCTION:
             os.chmod(POLARIS_STATE_DIR, 0o700)
-        else:
-            os.chmod(POLARIS_STATE_DIR, 0o777)  # nosec B103
     except (OSError, PermissionError):
         pass
 

@@ -6100,17 +6100,18 @@ class GunicornConfigTests(unittest.TestCase):
 
 class StateDirPermsTests(unittest.TestCase):
     """v9.112: _ensure_state_dir must lock the state dir to its owner (0o700) in
-    production — the dir can hold sensitive state (in dev, the persisted
+    production: the dir can hold sensitive state (in dev, the persisted
     secret_key), and a world-writable mode would let any local account replace
-    those files. The looser 0o777 is reached only outside production (the
-    cross-uid dev launcher share)."""
+    those files. Outside production it never widens the mode; the watch-mode
+    launcher sets the cross-uid mode its docker dev path needs."""
 
-    def _resulting_mode(self, production):
+    def _resulting_mode(self, production, start):
         import tempfile, shutil, stat
         from unittest import mock
         import app as polaris_app
         d = tempfile.mkdtemp()
         try:
+            os.chmod(d, start)
             with mock.patch.object(polaris_app, 'POLARIS_STATE_DIR', d), \
                  mock.patch.object(polaris_app, '_PRODUCTION', production):
                 polaris_app._ensure_state_dir()
@@ -6119,12 +6120,13 @@ class StateDirPermsTests(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
     def test_production_state_dir_is_owner_only(self):
-        self.assertEqual(self._resulting_mode(True), 0o700,
+        # From 0o755, so the assertion sees the tightening (mkdtemp alone makes 0o700).
+        self.assertEqual(self._resulting_mode(True, 0o755), 0o700,
             "production state dir must be 0o700 (not world-writable)")
 
-    def test_dev_state_dir_allows_cross_uid_share(self):
-        self.assertEqual(self._resulting_mode(False), 0o777,
-            "dev keeps the cross-uid launcher share")
+    def test_dev_never_widens_the_state_dir(self):
+        self.assertEqual(self._resulting_mode(False, 0o750), 0o750,
+            "outside production the mode is the launcher's, never widened by the app")
 
 
 class Uc5BindDeviceExpiryTests(PolarisTestCase):

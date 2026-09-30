@@ -18,6 +18,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The three verifiers refuse a grant whose `limits` is present but not an object; the Python ones read it as unlimited.
 - The Python SDK refuses an `issuer_url` whose scheme is not `https` or `http` before `urlopen`. (thanks @DYNOSuprovo)
 - WebAuthn registration no longer answers with an internal fault's text; the audit log keeps it.
+- The app no longer makes its development state directory world-writable; the macOS launcher trusts only a secret file the user owns.
 - The `pypi` and `npm` environments deploy only from `main`, and a published release's tag and assets cannot be changed.
 
 ### Fixed
