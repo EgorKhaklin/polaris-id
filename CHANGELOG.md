@@ -47,6 +47,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - 3 conformance cases (187 in all): a hex field with a character that is not hex, or a space, is refused.
 - `vectors/anchors/ml-dsa-65-issuer.json`, the sample issuer's key, to try `polaris-verify` from PyPI without a clone.
 - `TRADEMARKS.md`: the license covers the files, not the Polaris, owl, Khaklin Technologies or OpenID Certified marks.
+- Discussions forms for questions, needs and interop results; `.github/SUPPORT.md` says where each kind of message goes.
 
 ### Changed
 

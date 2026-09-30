@@ -1,0 +1,26 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A need: something you need Polaris ID to do. Polaris changes its product for a named outside need ([the operating contract](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/OPERATING-CONTRACT.md)), so who needs it matters as much as what. A need without a name is still welcome here; it is weighed differently.
+  - type: textarea
+    id: need
+    attributes:
+      label: What you need it to do
+    validations:
+      required: true
+  - type: input
+    id: who
+    attributes:
+      label: Who needs it
+      description: Your organization or role, and whether you would run it. Optional, but it is what turns an idea into a reason.
+  - type: textarea
+    id: today
+    attributes:
+      label: What you use today
+      description: The system or workaround this would replace, and where it falls short.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: What would show it works
+      description: A test, a conformance case, or a wallet or verifier it must work with.

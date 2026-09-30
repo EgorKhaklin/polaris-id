@@ -3,6 +3,9 @@ contact_links:
   - name: Report a security vulnerability (private)
     url: https://github.com/EgorKhaklin/polaris-id/security/advisories/new
     about: Security findings go through a private advisory, never a public issue. See SECURITY.md for scope and response times.
+  - name: Questions, needs and interop results
+    url: https://github.com/EgorKhaklin/polaris-id/discussions
+    about: Ask in Discussions (Q&A), describe a need and who has it (Ideas), or share something you ran against Polaris ID (Show and tell).
   - name: Operator questions
     url: https://github.com/EgorKhaklin/polaris-id/tree/main/docs/operator
     about: The runbooks cover install, deployment, day-2 operation, secrets, recovery and hardening.

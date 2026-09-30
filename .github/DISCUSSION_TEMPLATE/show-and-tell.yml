@@ -1,0 +1,42 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Something you built or ran against Polaris ID: a wallet, a verifier, an integration, a test. A failure is as useful as a success. If you walked the stranger's path, use [its report form](https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml) instead, so the walk can be counted.
+  - type: input
+    id: against
+    attributes:
+      label: What you ran it with
+      description: The other side and its version, for example a wallet and its release.
+    validations:
+      required: true
+  - type: input
+    id: polaris
+    attributes:
+      label: Polaris version
+      description: The package and version, or the commit.
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - It worked
+        - It worked after a change (say which below)
+        - It did not work
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: What happened
+      description: Logs, a link to your code, anything you had to change.
+    validations:
+      required: true
+  - type: checkboxes
+    id: credit
+    attributes:
+      label: Credit
+      options:
+        - label: You may name me and this result in the project's record of outside results (lab/EXTERNAL-NOUNS.md).
