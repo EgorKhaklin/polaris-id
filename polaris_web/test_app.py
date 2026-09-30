@@ -3566,10 +3566,10 @@ class IssuerFederationTests(PolarisTestCase):
 
     # -- Seed assertions ----------------------------------------------------
 
-    def test_seed_graph_six_rows(self):
+    def test_seed_graph_eight_rows(self):
         with self._db() as conn, conn.cursor() as cur:
             cur.execute("SELECT count(*) AS n FROM AgencyTrustAttestation")
-            self.assertEqual(cur.fetchone()['n'], 6)
+            self.assertEqual(cur.fetchone()['n'], 8)
 
     def test_seed_graph_covers_tsa_and_bank(self):
         with self._db() as conn, conn.cursor() as cur:
@@ -3581,6 +3581,37 @@ class IssuerFederationTests(PolarisTestCase):
             rows = {r['attesting_agency_id']: r['n'] for r in cur.fetchall()}
             self.assertEqual(rows.get(4), 3, 'TSA should attest 3 issuers for TRAVEL')
             self.assertEqual(rows.get(5), 3, 'Bank should attest 3 issuers for BANKING')
+            self.assertEqual((rows.get(1), rows.get(6)), (1, 1),
+                             'federal attests CA for EMPLOYMENT; the county health authority, federal for benefits')
+
+    def test_every_seeded_success_is_one_the_rules_allow(self):
+        """2026-09-30. The seed said its attestations make the demo verifications explicable
+        through federation; two cross-agency SUCCESS rows had no attestation at all, so the sample
+        recorded what /verifications/new refuses. Each seeded SUCCESS on a credential is now one
+        the form would record: the verifier is the issuer or attested it for the context at that
+        instant, and the credential is permitted there."""
+        with self._db() as conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT ve.token_id, ve.requesting_agency_id, ve.context_id,
+                       EXISTS (SELECT 1 FROM TokenPermission p
+                                WHERE p.token_id = ve.token_id AND p.context_id = ve.context_id) AS permitted,
+                       ve.requesting_agency_id = t.issuing_agency_id OR EXISTS (
+                           SELECT 1 FROM AgencyTrustAttestation a
+                            WHERE a.attesting_agency_id = ve.requesting_agency_id
+                              AND a.attested_agency_id = t.issuing_agency_id
+                              AND a.context_id = ve.context_id
+                              AND a.attested_date <= ve.event_timestamp
+                              AND a.valid_until >= ve.event_timestamp::date
+                              AND (a.revocation_date IS NULL OR a.revocation_date > ve.event_timestamp)) AS trusted
+                  FROM VerificationEvent ve JOIN IdentityToken t ON t.token_id = ve.token_id
+                 WHERE ve.outcome = 'SUCCESS'
+            """)
+            rows = cur.fetchall()
+        self.assertGreaterEqual(len(rows), 3, 'fixture: the seed records SUCCESS verifications of credentials')
+        for r in rows:
+            with self.subTest(token=r['token_id'], verifier=r['requesting_agency_id'], context=r['context_id']):
+                self.assertTrue(r['trusted'], 'no attestation explains this cross-agency SUCCESS')
+                self.assertTrue(r['permitted'], 'the credential is not permitted in this context')
 
     # -- Schema-layer guards (R5: self-attestation) -------------------------
 
@@ -10748,8 +10779,9 @@ class V2SubstrateUITests(PolarisTestCase):
         self.assertEqual(r.status_code, 200)
         body = r.data.decode()
         self.assertIn('Issuer Federation', body)
-        # Seed has 6 attestations: TSA→{federal,CA,PA} for TRAVEL +
-        # Bank→{federal,CA,PA} for BANKING
+        # Seed has 8 attestations: TSA→{federal,CA,PA} for TRAVEL,
+        # Bank→{federal,CA,PA} for BANKING, federal→CA for EMPLOYMENT and
+        # county health→federal for GOVERNMENT_BENEFITS
         self.assertIn('Transportation Security Admin', body)
         self.assertIn('First National Bank', body)
         self.assertIn('ACTIVE', body)

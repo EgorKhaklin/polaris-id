@@ -100,10 +100,13 @@ ignored when it is read.
 
 ## The seeded graph
 
-The sample data carries six attestations: a federal travel authority accepting
-three issuers for travel, and a bank accepting the same three for banking. No
-healthcare edges exist, because the only healthcare-permitted token in the
-sample verifies at same-agency checkpoints.
+The sample data carries eight attestations: a federal travel authority accepting
+three issuers for travel, a bank accepting the same three for banking, the
+federal service accepting California's credentials for employment, and a county
+health authority accepting federal credentials for government benefits. No
+healthcare edges exist, and the sample holds no healthcare verification. Until
+2026-09-30 the last two edges were missing, so two sample successes were ones
+the trust rule refuses.
 
 The point of seeding it is that the sample verification events become
 explicable through the graph rather than through hard-coded trust.
