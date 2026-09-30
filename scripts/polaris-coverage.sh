@@ -133,6 +133,13 @@ run_standalone "$ROOT/scripts" unittest test_verify_load test_wallet test_relyin
 # run from the repo root with the dotted module path, not from inside the dir.
 run "$ROOT" unittest polaris_sim.test_sim
 
+# The card profile, its emulator and the verifier device, and the ZK second witness's own suites,
+# run in this job's other steps but were not measured (2026-09-30): polaris_card was missing from
+# the denominator altogether, and the witness was measured only through test_app. Measuring them
+# counts what they test and puts polaris_card where it belongs, even though it lowers the total.
+run_standalone "$ROOT" unittest discover -s polaris_card -t . -p 'test_*.py'
+run_standalone "$ROOT" pytest -q polaris_zk/witness2/test_witness2.py polaris_web/test_zk_second_witness.py
+
 # The standalone packages, as they ship (2026-09-29). Their suites run in CI beside these; leaving
 # them out measured the tree and not what PyPI and npm carry.
 run_standalone "$ROOT/sdk/python" unittest test_sdk
