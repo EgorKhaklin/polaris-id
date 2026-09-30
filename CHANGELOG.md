@@ -20,6 +20,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- Both SDKs' conformance adapters report no pairwise handle for an object that is not a holder binding, as the detached verifier and the contract do.
 - A NUL character in a path, query, form field or JSON string is refused as bad input; it escaped as a 500.
 - Installed as a package, `polaris-id` refuses the four commands that need a clone and says which; `--version` printed `unknown`.
 - Both SDKs refuse a status bundle whose signed `member_count` differs from its members, as WIRE-SPEC 3.4 requires.
@@ -41,6 +42,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- `scripts/polaris-hostile-agreement-drill.py` has all three verifiers decide 130,068 hostile variants of the published cases; CI runs a third.
 - `lab/interop/eudi-dev/run.sh` with `EUDI_ISSUER=1` has eudi-dev's own issuer sign the credential; the wallet canary runs it weekly.
 - Six conformance cases, each a published vector with one hostile field, pin these rules; the suite has 193 cases.
 

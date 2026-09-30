@@ -32,30 +32,24 @@ _SIGNED_ARTIFACTS = {"epoch-checkpoint", "revocation-feed", "federation-manifest
                      "agent-grant", "grant-revocation", "agent-proof"}
 
 
-def main(argv=None):
-    try:
-        case = json.load(sys.stdin)
-    except Exception as e:
-        print(json.dumps({"error": "could not read case: %s" % e}))
-        return 2
+def decide(case):
+    """Decide ONE conformance case: the verdict object main() prints. Exported so a harness can
+    decide many cases in one process; the stdin CLI below is the contract the runner drives."""
     if not isinstance(case, dict):
         case = {"pack": case}
     artifact = case.get("artifact", "authenticity-pack")
     if artifact == "authenticity-pack":
         pack = case.get("pack") if "pack" in case else case
         v = verify_authenticity(pack or {}, case.get("anchors"))
-        print(json.dumps({"authentic": v.authentic, "issuer_trusted": v.issuer_trusted}))
-        return 0
+        return {"authentic": v.authentic, "issuer_trusted": v.issuer_trusted}
     if artifact == "status-assertion":
         v = verify_status_assertion(case.get("assertion") or {}, now=case.get("now"))
-        print(json.dumps({"authentic": v.authentic, "fresh": v.fresh, "active": v.active}))
-        return 0
+        return {"authentic": v.authentic, "fresh": v.fresh, "active": v.active}
     if artifact == "trust-attestation":
         v = verify_attestation(case.get("object") or {},
                                attesting_agency_id=case.get("attesting_agency_id"),
                                expected_key=case.get("expected_key"))
-        print(json.dumps({"authentic": v.authentic, "fresh": v.fresh}))
-        return 0
+        return {"authentic": v.authentic, "fresh": v.fresh}
     if artifact == "id-token":
         # v9.420: an ID token verified as a generic signed artifact is verified for
         # its SIGNATURE only, and a token minted for one relying party carries a
@@ -67,19 +61,17 @@ def main(argv=None):
             anchors = [(case.get("object") or {}).get("public_key_hex")]
         v = verify_id_token(case.get("object") or {}, audience=case.get("audience"),
                             nonce=case.get("nonce"), now=case.get("now"), anchors=anchors)
-        print(json.dumps({"authentic": v.authentic, "audience_matches": v.audience_matches,
+        return {"authentic": v.authentic, "audience_matches": v.audience_matches,
                           "nonce_matches": v.nonce_matches, "fresh": v.fresh,
-                          "issuer_trusted": v.issuer_trusted}))
-        return 0
+                          "issuer_trusted": v.issuer_trusted}
     if artifact in _SIGNED_ARTIFACTS:
         anchors = case.get("anchors")
         if anchors == "self":
             anchors = [(case.get("object") or {}).get("public_key_hex")]
         v = verify_signed_artifact(case.get("object") or {}, now=case.get("now"),
                                    anchors=anchors)
-        print(json.dumps({"authentic": v.authentic, "fresh": v.fresh,
-                          "issuer_trusted": v.issuer_trusted}))
-        return 0
+        return {"authentic": v.authentic, "fresh": v.fresh,
+                          "issuer_trusted": v.issuer_trusted}
     if artifact == "agent-grant-use":
         # 2026-09-27: a grant IN USE. The signed-artifact cases ask only whether each of the
         # three objects is genuine; a service must also ask whether the action is in scope,
@@ -96,8 +88,7 @@ def main(argv=None):
         if not g.authentic:
             # A grant the holder did not sign grants nothing, so no later question is answered:
             # reading the scope of a forged grant would honour the forger's own actions.
-            print(json.dumps(verdict))
-            return 0
+            return verdict
         if action is not None:
             verdict["action_in_scope"] = grant_covers(grant, action)
         binding = case.get("binding")
@@ -106,7 +97,12 @@ def main(argv=None):
             if case.get("verifier_scope") is not None:
                 # A binding is the holder's to send; one that is not an object has no key,
                 # so no handle, as in the TypeScript adapter (it raised AttributeError here).
-                key = binding.get("holder_public_key_hex") if isinstance(binding, dict) else None
+                # Nor has an object whose format says it is not a holder binding: the handle is
+                # "of the bound holder key" (SPEC.md), as the detached verifier reports it
+                # (2026-09-30, the hostile-agreement drill).
+                key = (binding.get("holder_public_key_hex")
+                       if isinstance(binding, dict) and binding.get("format") == "polaris-holder-binding/1"
+                       else None)
                 verdict["pairwise_handle"] = pairwise_handle(key, case["verifier_scope"])
                 verdict["correlation"] = "exposed"
         rev = case.get("revocation")
@@ -118,8 +114,7 @@ def main(argv=None):
             verdict["agent_proved"] = bool(verify_signed_artifact(proof, now=now, anchors=None).authentic
                                            and agent_proof_proves(proof, grant, action,
                                                                   case.get("expected_nonce")))
-        print(json.dumps(verdict))
-        return 0
+        return verdict
     if artifact == "exchange-use":
         # 1.0.0-rc.64: an exchange artifact IN USE. The signed-artifact cases ask only whether
         # it is genuine; a party holding one must also ask whether it is by the requester or
@@ -133,42 +128,48 @@ def main(argv=None):
                                         responder_key=case.get("responder_key"),
                                         request_body=case.get("request_body"),
                                         response_body=case.get("response_body"))
-            print(json.dumps({"authentic": r.authentic, "responder_matches": r.responder_matches,
+            return {"authentic": r.authentic, "responder_matches": r.responder_matches,
                               "requester_authorized": r.requester_authorized, "via": r.via,
                               "request_bound": r.request_bound, "response_bound": r.response_bound,
-                              "responder": r.responder}))
+                              "responder": r.responder}
         elif fmt == "polaris-exchange-mint/1":
             m = verify_exchange_mint(obj, responder_key=case.get("responder_key"))
-            print(json.dumps({"authentic": m.authentic, "responder_matches": m.responder_matches}))
+            return {"authentic": m.authentic, "responder_matches": m.responder_matches}
         else:
             q = verify_exchange_request(obj, requester_key=case.get("requester_key"),
                                         trusted_manifests=case.get("manifests"),
                                         body=case.get("body"), now=now)
-            print(json.dumps({"authentic": q.authentic, "requester_matches": q.requester_matches,
+            return {"authentic": q.authentic, "requester_matches": q.requester_matches,
                               "requester_authorized": q.requester_authorized,
-                              "body_bound": q.body_bound}))
-        return 0
+                              "body_bound": q.body_bound}
     if artifact == "timestamp-anchor":
         v = verify_timestamp_anchor(case.get("timestamp") or {}, log_key=case.get("log_key"),
                                     trusted_witnesses=case.get("trusted_witnesses"),
                                     threshold=int(case.get("threshold") or 1))
-        print(json.dumps({"anchored": v.anchored, "witnessed": v.witnessed}))
-        return 0
+        return {"anchored": v.anchored, "witnessed": v.witnessed}
     if artifact == "holder-chain":
         v = verify_holder(case.get("credential") or {}, case.get("binding") or {}, case.get("proof") or {},
                           expected_nonce=case.get("expected_nonce"), expected_context=case.get("expected_context"),
                           now=case.get("now"))
-        print(json.dumps({"proved": v.proved}))
-        return 0
+        return {"proved": v.proved}
     if artifact == "cross-authority":
         v = verify_cross_authority(case.get("pack") or {}, case.get("context_id"),
                                    case.get("manifests") or [], trusted_anchors=case.get("trusted_anchors"),
                                    revocation_feed=case.get("revocation_feed"), now=case.get("now"),
                                    require_signed_attestation=case.get("require_signed_attestation") is True)
-        print(json.dumps({"decision": v.decision, "authentic": v.authentic, "issuer_trusted": v.issuer_trusted}))
-        return 0
-    print(json.dumps({"error": "unknown artifact: %s" % artifact}))
-    return 2
+        return {"decision": v.decision, "authentic": v.authentic, "issuer_trusted": v.issuer_trusted}
+    return {"error": "unknown artifact: %s" % artifact}
+
+
+def main(argv=None):
+    try:
+        case = json.load(sys.stdin)
+    except Exception as e:
+        print(json.dumps({"error": "could not read case: %s" % e}))
+        return 2
+    verdict = decide(case)
+    print(json.dumps(verdict))
+    return 2 if "error" in verdict else 0
 
 
 if __name__ == "__main__":
