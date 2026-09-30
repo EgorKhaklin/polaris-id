@@ -26,6 +26,7 @@ polaris/
 ├── GOVERNANCE.md                 ← how decisions are made, the roles, and continuity
 ├── CITATION.cff                  ← how to cite this work, and the shipped version
 ├── LICENSE / NOTICE              ← Apache 2.0; provenance and third-party notices
+├── TRADEMARKS.md                 ← the names and marks the license does not cover
 │
 ├── Polaris.command               ← double-click launcher (macOS)
 ├── polaris_mac_launch.sh         ← launcher logic
@@ -79,7 +80,7 @@ polaris/
 │   ├── reference/      ← this directory
 │   ├── design/         ← why it is built this way: the threat model, the mechanisms, the substrate
 │   ├── history/        ← the changelog archive: entries older than the root CHANGELOG keeps, by major
-│   └── paper/          ← the academic report (TeX and PDF)
+│   └── paper/          ← the report, its evidence record and the mathematical edition (PDF)
 ├── DEVNOTES/           ← the contributor's working notes: gotchas, house style, the project record
 ├── meta/               ← structural records (redaction proof, structural architecture, the TLA+ model)
 ├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks; the detached verifier polaris-verify.py, its vector generator, and the holder wallet polaris-wallet.py live here too
@@ -89,7 +90,8 @@ polaris/
 ├── .github/dependabot.yml, .pre-commit-config.yaml, .gitignore, .coveragerc, .trivyignore, ruff.toml
 ├── osv-scanner.toml   ← declared exceptions for the malicious-package and vulnerability scan (none today)
 ├── vex.openvex.json   ← scanner findings that do not affect Polaris, and why (OpenVEX)
-├── REUSE.toml         ← license and copyright of the pinned files that cannot carry a header
+├── REUSE.toml         ← license and copyright of the files that cannot carry a header: the pinned files, the brand files, the OpenID Certified mark
+├── LICENSES/          ← the note on the OpenID Certified mark, which the project does not license
 ├── wrangler.jsonc     ← how Cloudflare publishes site/: the directory, and site/404.html for unknown paths
 ├── .mailmap           ← names the author of the commits a test fixture identity signed on 2026-09-28
 ```

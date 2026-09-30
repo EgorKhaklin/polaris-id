@@ -303,7 +303,7 @@ The first two columns matter most: every other row is deployed at national scale
 
 ## License
 
-[Apache License 2.0](LICENSE), for its express patent grant. Copyright 2026 Egor Khaklin. If you build on it, retain [LICENSE](LICENSE) and [NOTICE](NOTICE); NOTICE names every dependency license (all permissive except psycopg2, LGPL 3 with an OpenSSL exception, used unmodified).
+[Apache License 2.0](LICENSE), for its express patent grant. Copyright 2026 Egor Khaklin. If you build on it, retain [LICENSE](LICENSE) and [NOTICE](NOTICE). NOTICE names every dependency license: all are permissive except psycopg2 and psycopg 3 (LGPL 3) and certifi (MPL 2.0), each used unmodified. The license covers the files, not the names and logos: see [TRADEMARKS.md](TRADEMARKS.md).
 
 <br>
 

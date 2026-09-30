@@ -43,32 +43,55 @@ copyright MapLibre contributors; original license header preserved in the
 vendored source. The street-level basemap uses CARTO's free dark-matter
 vector tiles, which are derived from OpenStreetMap data (© OpenStreetMap
 contributors, ODbL) and served by CARTO (© CARTO); both are attributed in
-the on-map attribution control. D3 and TopoJSON (both BSD-3-Clause) are
-vendored for the earlier globe renderer; original copyright notices are
-preserved in the vendored source.
+the on-map attribution control.
 
 The web application uses Flask, Werkzeug, psycopg2 and redis-py. Each
 retains its own license; consult requirements.txt for versions and the
-upstream repositories for license text. Named specifically because it is the
-one dependency whose license is not permissive: psycopg2 (used through the
-psycopg2-binary wheel) is LGPL 3 with an OpenSSL exception. It is used as an
-unmodified library through its public API, which is the use the LGPL is
-written for; its terms attach to psycopg2 itself, not to this work. A
-redistributor who MODIFIES psycopg2 takes on the LGPL's obligations for that
-modified copy.
+upstream repositories for license text. Three dependencies are named here
+because their licenses are not permissive. Each is used unmodified, as a
+library through its public API, which is the use its license is written for;
+its terms attach to it, not to this work:
+
+- psycopg2 (used through the psycopg2-binary wheel) is LGPL 3 with an
+  OpenSSL exception.
+- psycopg 3 (psycopg and psycopg-binary), which Patroni uses in the database
+  image (polaris_web/requirements-patroni.txt), is LGPL 3.
+- certifi, the CA certificate bundle that requests reads, is MPL 2.0.
+  requests arrives through the OpenTelemetry exporter, and the database
+  image pins certifi directly.
+
+A redistributor who MODIFIES one of them takes on its license's obligations
+for that modified copy.
 
 Every other dependency of every package (Python, Rust and npm) is under a
-permissive license: Apache-2.0, MIT, BSD-2/3-Clause, PSF-2.0, or a dual
-MIT/Apache-2.0. None is incompatible with this work's Apache 2.0 license, and
+permissive license: Apache-2.0, MIT, MIT-0, BSD-2/3-Clause, ISC, PSF-2.0,
+CC0-1.0 or Unicode-3.0, or a choice of licenses that includes MIT or
+Apache-2.0. None is incompatible with this work's Apache 2.0 license, and
 none imposes a copyleft obligation on it.
 
 The macOS launcher (Polaris.command + polaris_mac_launch.sh) is original
 to this work.
 
-The academic project report polaris_project_report.pdf and its TeX source
-polaris_project_report.tex are part of the same release and inherit the
-same Apache 2.0 license. The report's bibliography credits external
-sources under fair-use academic citation conventions.
+The project report in its three versions (polaris_project_report.pdf,
+polaris_project_report_v2.pdf and polaris_project_report_v3.pdf), the Russian
+edition of Version 3 (polaris_project_report_v3_ru.pdf), the evidence record
+and its Russian edition (polaris_evidence_record_v3.pdf and
+polaris_evidence_record_v3_ru.pdf) and the mathematical edition
+(polaris_math.pdf), all under docs/paper/, are part of the same release and
+inherit the same Apache 2.0 license. The report's bibliography credits
+external sources under fair-use academic citation conventions.
+
+================================================================================
+Names and marks
+================================================================================
+
+The Apache License covers this work's code, documents and image files, except
+the OpenID Certified mark (openid-certified-mark-on-white.png, in docs/assets/
+and site/), which belongs to the OpenID Foundation and is used under its
+certification terms. The license grants no right to the names and marks the
+files carry (section 6): the Polaris name, logo and star mark, the owl
+emblem, and the Khaklin Technologies name and lockup. TRADEMARKS.md says what
+that allows.
 
 ================================================================================
 Attribution
