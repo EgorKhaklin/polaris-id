@@ -1446,6 +1446,22 @@ class TokenTests(PolarisTestCase):
         self.assertEqual(r.status_code, 200)
         self.assertHTML(r, 'Illegal token state transition')
 
+    def test_a_malformed_acting_agency_is_refused_not_a_500(self):
+        """2026-09-30. The gate read a non-numeric actor_agency_id's ValueError as "not
+        denied", and the GUC write then raised it: a 500 for an operator's typo."""
+        for value in ('abc', '1e5'):
+            r = self._post('/tokens/2/transition', csrf_from='/tokens/2',
+                           data={'new_status': 'DORMANT', 'actor_agency_id': value},
+                           follow_redirects=True)
+            self.assertEqual(r.status_code, 200, value)
+            self.assertHTML(r, 'The acting agency must be an agency number')
+        with psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG) as conn, conn.cursor() as cur:
+            cur.execute("SELECT status FROM IdentityToken WHERE token_id = 2")
+            self.assertEqual(cur.fetchone()['status'], 'ACTIVE', 'a refused transition moved the token')
+        r = self._post('/tokens/2/transition', csrf_from='/tokens/2',
+                       data={'new_status': 'DORMANT', 'actor_agency_id': ' 3 '}, follow_redirects=True)
+        self.assertHTML(r, 'Token #2 is now DORMANT')
+
     def test_state_change_writes_audit_row_automatically(self):
         """The AFTER UPDATE auto-audit trigger guarantees that every status
         change produces a TokenLifecycleEvent row, independent of whether the
