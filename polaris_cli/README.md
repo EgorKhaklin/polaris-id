@@ -12,18 +12,15 @@ Not wrapped as subcommands: `close_anchor_batch` (R10-2),
 
 ## Install
 
-```bash
-pip install polaris-id-cli                 # every read command and use-case procedure
-pip install 'polaris-id-cli[user-mgmt]'    # adds werkzeug for user-create / user-passwd
-polaris-id --help
-```
-
-From source:
+The CLI is not published to a package index, so install it from a clone. `issue` and
+`bulk-enroll` sign through `polaris_web/pqc_signing` in the same clone, which an editable install
+keeps within reach:
 
 ```bash
-git clone https://github.com/EgorKhaklin/polaris.git
+git clone https://github.com/EgorKhaklin/polaris-id.git polaris
 cd polaris/polaris_cli
-pip install -e '.[user-mgmt]'
+pip install -e '.[user-mgmt]'    # user-mgmt adds werkzeug for user-create / user-passwd
+polaris-id --help
 
 # or without installing:
 pip install psycopg2-binary werkzeug

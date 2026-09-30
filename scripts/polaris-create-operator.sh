@@ -268,7 +268,11 @@ SQL
 # Same lesson as the v9.100 DR-restore fix: verify the outcome, not the exit
 # code. ON_ERROR_STOP makes psql abort on the first SQL error rather than
 # continuing and returning 0.
-INSERT_OUT=$(run_psql -v ON_ERROR_STOP=1 -f "${SQL_TMP}" 2>&1) || true
+#
+# The SQL goes to psql on stdin, not as -f: under --target=docker-stack psql runs INSIDE the
+# postgres container, where the host's temp file does not exist ("No such file or
+# directory"), so that mode could never create an account (found 2026-09-30, strategy 006).
+INSERT_OUT=$(run_psql -v ON_ERROR_STOP=1 < "${SQL_TMP}" 2>&1) || true
 
 CREATED=$(run_psql -c "SELECT 1 FROM AppUser WHERE username='${USERNAME}'" 2>/dev/null | tr -d '[:space:]')
 if [[ "${CREATED}" != "1" ]]; then

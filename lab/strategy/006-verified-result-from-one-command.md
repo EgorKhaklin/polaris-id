@@ -1,7 +1,7 @@
 # 006: a stranger's verified result from one command
 
 **Opened 2026-09-30.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md).
-State: OPEN, record only.
+State: OPEN. Step 1 done (2026-09-30): the verified result was reached by hand.
 
 ---
 
@@ -110,3 +110,45 @@ presentation and wallet copies. Each can join once the base path is proven.
 - **It is too slow to be tried.** It takes more than 15 minutes from `git clone` to the verified
   result on a laptop, build included. Then the image build is the gap, and the answer would be a
   published image, which is the owner's decision.
+
+## Step 1: the walk by hand (2026-09-30)
+
+From a fresh checkout of main (68ffcfd2) on a laptop (macOS, Docker Desktop, 8 CPUs),
+`polaris-verify` 1.0.0rc4 from PyPI verified a credential that the local production stack
+issued: `signature_valid: True`, `issuer_trusted: True`, exit 0. The key was the ML-DSA-65 key
+`polaris-generate-secrets.sh` minted on that machine. From checkout to verified result took nine
+minutes, about five of them machine time, mostly the image build (277 s on a warm layer cache).
+
+The commands a stranger needs, in order:
+1. Build the images.
+2. Generate the secrets.
+3. Start the stack with the citest overlay.
+4. Create an operator.
+5. Log in and issue through the operator console. The browser warns about Caddy's local
+   certificate authority; the walk trusted its root certificate.
+6. Fetch the authenticity pack.
+7. Write the anchor from the public half of the minted key.
+8. Install `polaris-verify` and run it.
+
+What stood in the way:
+- **Fixed:** `polaris-create-operator.sh --target=docker-stack` could not create an account.
+  psql ran inside the container and was handed a file that exists only on the host.
+  `polaris-generate-recovery-code.sh` and `polaris-recover-admin.sh` had the same defect, so admin
+  recovery could not run in that mode either. All three now send the SQL on stdin, and a check
+  keeps it that way.
+- **Fixed:** the CLI's README told readers to install a package that is not published. It now
+  installs from a clone. The CLI is not in the production image.
+- **Open:** the operator script needs werkzeug in the host's python3. The one command must hash
+  inside the image, or bring its own.
+- **Open:** the production compose shares a project name and one container name with the laptop
+  stack. Running both needs a project name and reset container names, which the one command must
+  set.
+- **Open:** the build time on a clean machine is not measured, because this cache was warm. liboqs
+  compiles every algorithm family, including those the product does not use.
+
+No falsifier fired:
+- Once the defects were fixed, nothing in the product needed editing.
+- The stack was the production stack, with only the TLS edge and the container names changed.
+- The time was under the bound on this machine.
+
+Next: section 9 step 2, the script, run from a fresh clone on a clean Docker cache.

@@ -4950,6 +4950,35 @@ def check_no_grep_q_transaction_scrape(root: pathlib.Path) -> list[Finding]:
                "by verifying the outcome")
 
 
+# A psql that runs INSIDE a container (a run_psql routed through `docker compose ... exec`)
+# cannot read a file on the host. polaris-create-operator.sh, polaris-generate-recovery-code.sh
+# and polaris-recover-admin.sh wrote their SQL to a host temp file and ran `run_psql -f` on it,
+# so under --target=docker-stack, the way the production compose is reached, each failed with
+# "No such file or directory": the first account, the recovery code and the recovery window
+# could not be made there (2026-09-30). The SQL goes on stdin, which both modes read.
+def check_container_psql_reads_sql_from_stdin(root: pathlib.Path) -> list[Finding]:
+    offenders = []
+    sdir = root / "scripts"
+    if sdir.is_dir():
+        for sh in sorted(sdir.glob("*.sh")):
+            text = _read_path(sh)
+            if "run_psql" not in text or not re.search(r"docker compose\b[^\n]*\bexec\b", text):
+                continue
+            for num, line in enumerate(text.splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                if re.search(r"\brun_psql\b[^|;&]*\s-f\s", line):
+                    offenders.append(f"{sh.name}:{num}")
+    if offenders:
+        return _fail("container_psql_stdin",
+                     "a run_psql that can run psql inside a container is handed a host file "
+                     "with -f, which the container cannot read; send the SQL on stdin: "
+                     + ", ".join(offenders))
+    return _ok("container_psql_stdin",
+               "no script hands a host file to a psql that may run inside a container; the SQL "
+               "goes on stdin, which both the host and the container read")
+
+
 # `_out=$(cmd)` followed by `_rc=$?` does not work under `set -e`: the shell
 # exits at the assignment, so the status is never inspected. In
 # polaris-recover-admin.sh that made the entire fail-safe-never-open refusal
@@ -21919,6 +21948,7 @@ VACUOUS_IS_CORRECT = {
     "check_no_debug_artifacts": "asserts no pdb/breakpoint call exists",
     "check_no_local_date": "asserts no local-date call exists; empty files make none",
     "check_no_grep_q_transaction_scrape": "asserts a fragile shell idiom is absent",
+    "check_container_psql_reads_sql_from_stdin": "asserts a host file is never handed to a container psql",
     "check_no_migration_column_drift": "asserts no migration drifts from the schema",
     "check_psql_status_capture_set_e_safe": "asserts an unsafe psql capture idiom is absent",
     "check_ci_ssl_probe_aggregated": "asserts a per-host SSL probe idiom is absent",
@@ -23750,6 +23780,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_purge_binds_archive_to_database,
     check_archive_version_derived,
     check_no_grep_q_transaction_scrape,
+    check_container_psql_reads_sql_from_stdin,
     check_psql_status_capture_set_e_safe,
     check_recover_admin_refuses_self_pairing,
     check_test_reload_fails_loudly,

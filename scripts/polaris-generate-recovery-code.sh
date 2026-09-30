@@ -210,8 +210,10 @@ UPDATE AppUser
    AND role = 'admin';
 COMMIT;
 SQL
-    if ! run_psql -v ON_ERROR_STOP=1 -f "${sql_tmp}" >/dev/null 2>&1; then
-        out=$(run_psql -v ON_ERROR_STOP=1 -f "${sql_tmp}" 2>&1 || true)
+    # On stdin, not -f: under --target=docker-stack psql runs inside the postgres container,
+    # where the host's temp file does not exist, so the bind always failed there (2026-09-30).
+    # Captured once: the error arm used to run the transaction a second time to read its error.
+    if ! out=$(run_psql -v ON_ERROR_STOP=1 < "${sql_tmp}" 2>&1); then
         rm -f "${sql_tmp}"
         echo "error: database update failed:" >&2
         echo "${out}" >&2

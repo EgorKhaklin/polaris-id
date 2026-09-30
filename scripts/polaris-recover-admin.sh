@@ -339,8 +339,10 @@ SQL
 # defect that posture exists to prevent: on a failing write the operator got
 # exit 5 with ZERO output. The handler that used to follow was also unreachable,
 # because run_psql exits rather than returning. Call it plainly and let it speak;
-# only stdout is discarded, so its diagnostics still reach the operator.
-run_psql -v ON_ERROR_STOP=1 -f "${sql_tmp}" >/dev/null
+# only stdout is discarded, so its diagnostics still reach the operator. The SQL goes on
+# stdin, not -f: under --target=docker-stack psql runs inside the postgres container, where
+# the host's temp file does not exist, so no window could open there (2026-09-30).
+run_psql -v ON_ERROR_STOP=1 < "${sql_tmp}" >/dev/null
 rm -f "${sql_tmp}"
 
 echo "  ✓ Window opened. The target may now log in with password only"

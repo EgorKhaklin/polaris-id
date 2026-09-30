@@ -26,6 +26,7 @@ from flask import (
 import observability
 import security
 import webauthn_auth
+from webauthn.helpers.exceptions import WebAuthnException
 from app import _json_object, app, get_db
 
 
@@ -310,7 +311,13 @@ def webauthn_register_finish():
         security._audit(get_db, 'WEBAUTHN_REGISTRATION_REFUSED',
             username=user['username'], user_id=user['user_id'],
             detail=f'{type(e).__name__}: {str(e)[:440]}')
-        return jsonify(error=f'registration verification failed: {e}'), 400
+        # The answer names the kind of verdict when the WebAuthn library gave one, and nothing
+        # else: no exception text reaches the caller (CWE-209, code scanning alerts 39 and 353).
+        # A database, key or programming fault answers the bare message. The audit detail above
+        # keeps the whole of either.
+        if isinstance(e, WebAuthnException):
+            return jsonify(error='registration verification failed (%s)' % type(e).__name__), 400
+        return jsonify(error='registration verification failed'), 400
 
     conn = get_db()
     try:

@@ -12836,6 +12836,36 @@ class WebAuthnCeremonyTests(PolarisTestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn('WEBAUTHN_REGISTRATION_REFUSED', _audit_events('admin'))
 
+    def test_a_fault_that_is_not_the_librarys_verdict_is_not_echoed(self):
+        """Code scanning alerts 39 and 353 (CWE-209): the catch-all answered with an exception's
+        text. The answer now names only the kind of a WebAuthn library verdict; any other fault
+        (a database, a key, a programming error) answers the bare message. The audit detail keeps
+        the whole fault either way."""
+        from unittest import mock
+        from webauthn.helpers.exceptions import InvalidRegistrationResponse
+        internal = 'connection to server at "db-internal.example" (10.0.0.9), port 5432 failed'
+        self._begin_registration()
+        with mock.patch.object(flask_app.webauthn_auth, 'verify_registration',
+                               side_effect=RuntimeError(internal)):
+            r = self.client.post('/auth/webauthn/register/finish', json={'id': 'x'},
+                                 headers={'X-CSRFToken': self._csrf()})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.get_json()['error'], 'registration verification failed')
+        self.assertNotIn('db-internal', r.get_data(as_text=True))
+        row = _sql("SELECT detail FROM AuthAuditLog WHERE event_type='WEBAUTHN_REGISTRATION_REFUSED' "
+                   "ORDER BY audit_id DESC LIMIT 1", fetch='one')
+        self.assertIn('db-internal', row['detail'], 'the operator side keeps the whole fault')
+
+        self._begin_registration()
+        with mock.patch.object(flask_app.webauthn_auth, 'verify_registration',
+                               side_effect=InvalidRegistrationResponse('Unexpected client data challenge')):
+            r = self.client.post('/auth/webauthn/register/finish', json={'id': 'x'},
+                                 headers={'X-CSRFToken': self._csrf()})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.get_json()['error'],
+                         'registration verification failed (InvalidRegistrationResponse)',
+                         "control: the kind of the library's verdict reaches the operator, not its text")
+
     # ---- the v9.189 policy knobs ------------------------------------------------
 
     def test_user_verification_required_on_both_ceremonies(self):
