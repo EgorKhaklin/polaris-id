@@ -175,6 +175,24 @@ ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")
 _WITNESS_CLASSES = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey"}
 
 
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def unhex(s):
+    """`bytes.fromhex`, minus the whitespace it skips between bytes.
+
+    A hex field holds hex digits and nothing else (WIRE-SPEC section 1), and the three published
+    verifiers read it that way. `bytes.fromhex` also skips ASCII whitespace, so the genuine
+    signature written with a space between bytes was authentic at this server's doors and
+    refused by every verifier a relying party can hold: one presentation, two verdicts. The
+    exceptions are bytes.fromhex's own: TypeError for a value that is not a string, ValueError
+    for one that is not hex.
+    """
+    if isinstance(s, str) and (len(s) % 2 or not _HEX_DIGITS.issuperset(s)):
+        raise ValueError("not hex: a hex field holds hex digits and nothing else")
+    return bytes.fromhex(s)
+
+
 def algorithm_for_public_key_hex(public_key_hex):
     """The accepted parameter set a public key's length identifies, or None."""
     try:
@@ -611,8 +629,8 @@ def verify(
 
     digest = hashlib.sha3_256(message).digest()
     try:
-        public_key = bytes.fromhex(public_key_hex)
-        signature = bytes.fromhex(signature_hex)
+        public_key = unhex(public_key_hex)
+        signature = unhex(signature_hex)
     except ValueError:
         return False
 
@@ -641,8 +659,8 @@ def _verify_second_witness(message: bytes, signature_hex: str, public_key_hex: s
     if not _WITNESS_AVAILABLE:
         return None
     try:
-        pk_bytes = bytes.fromhex(public_key_hex)
-        sig_bytes = bytes.fromhex(signature_hex)
+        pk_bytes = unhex(public_key_hex)
+        sig_bytes = unhex(signature_hex)
     except ValueError:
         return False
     try:
@@ -734,7 +752,7 @@ def trust_anchor_public_keys() -> list:
                 doc = json.load(fh)
             for entry in doc.get("anchors", []):
                 pk = entry["public_key_hex"]
-                bytes.fromhex(pk)
+                unhex(pk)
                 if pk not in anchors:
                     anchors.append(pk)
         except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
