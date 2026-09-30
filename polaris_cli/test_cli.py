@@ -16,6 +16,7 @@ Run:
 
 import contextlib
 import io
+import json
 import os
 import re
 import sys
@@ -294,6 +295,43 @@ class IssueCommandTests(CLIBaseTestCase):
         self.assertTrue(polaris._load_signer().verify_stored_signature(
             'TKN-OH-CLI-SIGNED', sig, key, witnesses='single'),
             'the stored signature must verify under the check every door makes')
+
+    def test_issue_signs_under_the_issuing_agencys_key(self):
+        """issue signs as the issuing route does: the issuing agency's own key, refused when the
+        agency is registered to another. Under the placeholder profile no key is involved, so the
+        signature test above cannot see a CLI that signs without the agency; a stand-in signer
+        answers with a key other than agency 1's registered one."""
+        import argparse
+        from unittest import mock
+        import polaris
+        run_cli('key-register', '1', 'ab' * 1952, '--note', 'the agency key this test registers')
+        asked = []
+
+        class OtherKeySigner:
+            class SigningError(Exception):
+                pass
+
+            class PQCUnavailableError(Exception):
+                pass
+
+            @staticmethod
+            def signature_with_key_for_token(value, agency_id=None):
+                asked.append(agency_id)
+                return b'\x01' * 3309, 'ML-DSA-65', 'cd' * 1952
+
+        args = argparse.Namespace(
+            legal_name='Other Key Holder', dob='1990-01-15', jurisdiction='US-OH', agency=1,
+            algorithm=1, biometric='IRIS', witness=None, liveness='MULTI_MODAL',
+            token_value='TKN-OH-CLI-OTHERKEY', serial='SN-OH-CLI-OTHERKEY', hardware='TitanQ-3',
+            contexts='1')
+        err = io.StringIO()
+        with mock.patch.object(polaris, '_load_signer', return_value=OtherKeySigner), \
+                contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+            polaris.cmd_issue(args)
+        self.assertEqual(stop.exception.code, 3, err.getvalue())
+        self.assertEqual(asked, [1], 'the signer is asked for the issuing agency, as the issuing route asks')
+        self.assertIn('registered to a different signing key', err.getvalue())
+        self.assertEqual(self._stored_signatures('TKN-OH-CLI-OTHERKEY'), [])
 
     def test_issue_with_unauthorized_algorithm_fails(self):
         # Agency 2 (PA) doesn't have a grant on algorithm 4 (SLH-DSA-256s)
@@ -892,6 +930,72 @@ class KeyEventCommandTests(CLIBaseTestCase):
         ret = run_cli('key-retire', '1', self.KEY, '--note', 'retired by this test')
         self.assertIn('retired', ret.stdout)
         self.assertEqual(self._events()[0], ['registered', 'retired'])
+
+    def test_the_owner_declares_a_key_compromised(self):
+        run_cli('key-register', '1', self.KEY, '--note', 'a key this test registers')
+        comp = run_cli('key-compromise', '1', self.KEY, '--note', 'compromised, in this test')
+        self.assertIn('reject signatures under this key', comp.stdout)
+        self.assertEqual(self._events()[0], ['registered', 'compromised'])
+
+
+class CommandsNoTestRanTests(CLIBaseTestCase):
+    """Five commands had never been run by a test (2026-09-30). key-register, one of the untested
+    success paths beside them, had failed for three weeks unnoticed, so each is run here and its
+    effect read back: the row it wrote, or the digest it printed recomputed from the report."""
+
+    def _fetch(self, sql, params=()):
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                return cur.fetchall()
+        finally:
+            conn.close()
+
+    def test_activate_reserve_promotes_the_reserve_and_marks_the_lost_credential(self):
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                # Individual 1's seeded credential is a RESERVE; give them an ACTIVE one to lose.
+                cur.execute("INSERT INTO IdentityToken (token_value, physical_serial, hardware_model, "
+                            "biometric_binding_type, individual_id, issuing_agency_id, algorithm_id, "
+                            "status, issued_date, expiration_date) VALUES ('TKN-CLI-UC4', 'SN-CLI-UC4', "
+                            "'TitanQ-3', 'IRIS', 1, 2, 1, 'RESERVE', CURRENT_TIMESTAMP, "
+                            "(polaris_utc_date() + 3650)) RETURNING token_id")
+                lost = cur.fetchone()['token_id']
+                cur.execute("UPDATE IdentityToken SET status = 'ACTIVE', activated_date = CURRENT_TIMESTAMP "
+                            "WHERE token_id = %s", (lost,))
+            conn.commit()
+        finally:
+            conn.close()
+        r = run_cli('activate-reserve', '--lost-token', str(lost), '--reserve-token', '1',
+                    '--actor-agency', '2', '--crl-url', 'https://crl.example/uc4-cli')
+        self.assertIn('Promoted reserve token #1 to ACTIVE', r.stdout)
+        rows = {t['token_id']: t['status'] for t in
+                self._fetch("SELECT token_id, status FROM IdentityToken WHERE token_id IN (1, %s)", (lost,))}
+        self.assertEqual(rows, {1: 'ACTIVE', lost: 'LOST'})
+
+    def test_agency_create_records_the_authority_and_its_reason(self):
+        r = run_cli('agency-create', 'Ohio Identity Office', '--agency-type', 'STATE',
+                    '--jurisdiction', 'US-OH', '--justification', 'a test authority for the CLI')
+        agency_id = int(re.search(r'Authority #(\d+)', r.stdout).group(1))
+        row = self._fetch("SELECT name, agency_type, jurisdiction FROM Agency WHERE agency_id = %s",
+                          (agency_id,))[0]
+        self.assertEqual((row['name'], row['agency_type'], row['jurisdiction']),
+                         ('Ohio Identity Office', 'STATE', 'US-OH'))
+        history = run_cli('agency-history', str(agency_id))
+        self.assertIn('CREATED', history.stdout)
+        self.assertIn('a test authority for the CLI', history.stdout,
+                      'agency-history shows the reason the creation recorded')
+
+    def test_transparency_report_prints_the_digest_of_what_it_printed(self):
+        sys.path.insert(0, os.path.dirname(HERE))
+        from polaris_web import transparency
+        r = run_cli('transparency-report', '--period', '2026-Q3', '--since', '2026-07-01', '--json')
+        report = json.loads(r.stdout)
+        recomputed = transparency.report_digest({k: v for k, v in report.items() if k != 'digest'})
+        self.assertEqual(report['digest'], recomputed, 'the digest covers the report it is printed with')
+        self.assertIn('digest %s' % recomputed, r.stderr, 'the digest to anchor is the same one')
 
 
 class GovernanceCommandsRefuseTheAppRole(unittest.TestCase):

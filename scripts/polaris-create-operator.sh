@@ -191,17 +191,24 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
     exit "${EXIT_OK}"
 fi
 
-# Compute werkzeug scrypt hash (matches security.py:hash_password).
-# We shell out to python3 to use the same werkzeug version the app uses.
-HASH=$(POLARIS_PASSWORD="${PASSWORD}" python3 -c "
-import os, sys
+# Compute werkzeug scrypt hash (matches security.py:hash_password). Under --target=docker-stack
+# the running app container computes it: that is the werkzeug that will check the hash, and the
+# host needs nothing installed (a stock python3 has no werkzeug; 2026-09-30). The password goes on
+# stdin, never into an environment or an argument.
+HASH_PY="
+import sys
 try:
     from werkzeug.security import generate_password_hash
 except ImportError:
-    sys.stderr.write('error: werkzeug not on PYTHONPATH; install it or run via the prod docker image\n')
+    sys.stderr.write('error: werkzeug not on PYTHONPATH; install it or use --target=docker-stack\n')
     sys.exit(1)
-print(generate_password_hash(os.environ['POLARIS_PASSWORD'], method='scrypt'))
-")
+print(generate_password_hash(sys.stdin.read(), method='scrypt'))
+"
+if [[ "${USE_DOCKER_STACK}" -eq 1 ]]; then
+    HASH=$(printf '%s' "${PASSWORD}" | docker compose -f "${COMPOSE_FILE}" exec -T app python -c "${HASH_PY}")
+else
+    HASH=$(printf '%s' "${PASSWORD}" | python3 -c "${HASH_PY}")
+fi
 if [[ -z "${HASH}" ]]; then
     echo "error: hash computation failed" >&2
     exit "${EXIT_DB}"

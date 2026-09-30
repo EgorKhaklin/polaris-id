@@ -18,6 +18,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The three verifiers refuse a grant whose `limits` is present but not an object; the Python ones read it as unlimited.
 - The Python SDK refuses an `issuer_url` whose scheme is not `https` or `http` before `urlopen`. (thanks @DYNOSuprovo)
 - WebAuthn registration no longer answers with an internal fault's text; the audit log keeps it.
+- The app no longer makes its development state directory world-writable; the macOS launcher trusts only a secret file the user owns.
 - The `pypi` and `npm` environments deploy only from `main`, and a published release's tag and assets cannot be changed.
 - Workflow tokens are read-only at every workflow's top level; the jobs that write ask for it themselves.
 
@@ -56,6 +57,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - CITATION.cff says duress-aware, not duress-resistant; the vocabulary check now refuses the duress forms it missed.
 - `polaris-relying-party.py` rejects, instead of crashing, when the issuer refuses its OAuth client.
 - `polaris-relying-party.py` exits 3, instead of crashing, on a presentation that is not an object or an anchor it cannot read.
+- The exchange gateway answers 502, not a non-JSON reply, when its upstream answers NaN, Infinity or 1e400.
+- The trust-anchors loader refuses a key of no accepted length; signature checks refuse, not raise, on a non-string.
+- `polaris-create-operator.sh --target=docker-stack` hashes the password in the app container; the host needs no werkzeug.
 - The SBOM workflow attaches the SBOMs to a draft release, then publishes it; an immutable release refuses them afterwards.
 
 ### Added
@@ -68,6 +72,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Discussions forms for questions, needs and interop results; `.github/SUPPORT.md` says where each kind of message goes.
 - Coverage-guided fuzzing (atheris) of `polaris-oid4vp`'s hostile-input functions, on each change to the package and nightly.
 - Code scanning: CodeQL (security-extended) over the Python, TypeScript, Rust and workflows, zizmor over the workflows, and OpenSSF Scorecard.
+- `lab/strategy/006/try.sh`: from a clone, one command to a credential that PyPI's polaris-verify verifies under a key minted on the machine.
+- A workflow runs `try.sh` from clean images nightly and on main; the README's Run it section names it.
 - Each release carries its SBOMs' provenance bundle, so `gh attestation verify --bundle` checks them without GitHub's attestation store.
 
 ### Changed

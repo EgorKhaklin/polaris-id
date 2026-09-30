@@ -313,6 +313,14 @@ class SecondWitnessTests(unittest.TestCase):
     def test_verify_both_false_when_both_agree_invalid(self):
         self.assertFalse(pqc_signing.verify_both(b"WRONG", self._sig_hex, self._pk_hex))
 
+    def test_a_value_that_is_not_text_is_false_not_raised(self):
+        """verify's docstring: it returns False on any failure and does not raise. A key or
+        signature that is not a string raised bytes.fromhex's TypeError out of it."""
+        for sig, pk in ((None, self._pk_hex), (self._sig_hex, None), (123, self._pk_hex)):
+            self.assertIs(pqc_signing.verify(self._msg, sig, pk), False, (type(sig), type(pk)))
+            self.assertIs(pqc_signing._verify_second_witness(self._msg, sig, pk), False)
+            self.assertIs(pqc_signing.verify_both(self._msg, sig, pk), False)
+
     def test_a_genuine_signature_respelled_verifies_under_neither_witness(self):
         """The exchange doors verify a partner's signature_hex with verify_both, so this is
         where they read hex: the genuine signature with a space between bytes is refused by
@@ -494,7 +502,7 @@ class HeldOutVerificationTests(unittest.TestCase):
 
     def test_a_previous_anchor_is_read_from_the_file(self):
         """The control for the two refusals below: a well-formed file adds its anchors."""
-        self.assertEqual(self._anchors({'anchors': [{'public_key_hex': 'ab' * 4}]}), ['ab' * 4])
+        self.assertEqual(self._anchors({'anchors': [{'public_key_hex': 'ab' * 1952}]}), ['ab' * 1952])
 
     def test_an_anchor_that_is_not_hex_fails_loud(self):
         """Trust must not shrink silently, and it must not grow by a key nothing can parse."""
@@ -504,6 +512,13 @@ class HeldOutVerificationTests(unittest.TestCase):
     def test_an_anchor_entry_with_no_key_fails_loud(self):
         with self.assertRaises(RuntimeError):
             self._anchors({'anchors': [{'label': 'retired 2026', 'retired': True}]})
+
+    def test_an_anchor_of_no_accepted_length_fails_loud(self):
+        """KEY-CEREMONY: a malformed anchors file fails loud rather than silently shrinking
+        trust. An empty key, a short one or a genuine key cut short loaded and verified nothing."""
+        for pk in ('', 'abababab', 'ab' * 1951):
+            with self.assertRaises(RuntimeError, msg='%d hex characters' % len(pk)):
+                self._anchors({'anchors': [{'public_key_hex': pk}]})
 
     def test_an_anchor_written_with_whitespace_fails_loud(self):
         """Every verify reads a key as hex digits only, so an anchor with a space in it would

@@ -368,7 +368,14 @@ rotate_session_secret_if_unset() {
     local secret_file="$state_dir/secret_key"
     mkdir -p "$state_dir"
 
-    if [ -f "$secret_file" ] && [ -s "$secret_file" ]; then
+    # prepare_state_dir makes this directory world-writable so the container's
+    # uid can share it, so another account could plant a file here or swap one
+    # in. Read only a regular file this user owns, and create one only where
+    # nothing exists (noclobber also refuses a link planted between the check
+    # and the write). Anything else gets a secret for this run, not persisted.
+    if [ -L "$secret_file" ] || { [ -e "$secret_file" ] && [ ! -O "$secret_file" ]; }; then
+        warn "Not using $secret_file: a link, or not owned by $(id -un)"
+    elif [ -f "$secret_file" ] && [ -s "$secret_file" ]; then
         POLARIS_SECRET_KEY="$(cat "$secret_file")"
         export POLARIS_SECRET_KEY
         log "Loaded persistent session secret from $secret_file"
@@ -382,13 +389,18 @@ rotate_session_secret_if_unset() {
     else
         POLARIS_SECRET_KEY="$(head -c 32 /dev/urandom | xxd -p -c 64)"
     fi
-
-    # Mode 0600 — owner read/write only. /tmp is multi-user on macOS.
-    ( umask 077; printf '%s' "$POLARIS_SECRET_KEY" > "$secret_file" )
-    chmod 600 "$secret_file" 2>/dev/null || true
     export POLARIS_SECRET_KEY
-    log "Generated + persisted session secret to $secret_file"
-    log "(rm this file + relaunch to force-rotate; v8.56 defense preserved)"
+
+    # Mode 0600, owner read/write only. /tmp is multi-user on macOS.
+    if [ -f "$secret_file" ] && [ ! -L "$secret_file" ] && [ -O "$secret_file" ]; then
+        rm -f "$secret_file"    # this user's own empty file
+    fi
+    if ( set -C; umask 077; printf '%s' "$POLARIS_SECRET_KEY" > "$secret_file" ) 2>/dev/null; then
+        log "Generated + persisted session secret to $secret_file"
+        log "(rm this file + relaunch to force-rotate; v8.56 defense preserved)"
+    else
+        warn "Session secret not persisted: sessions end with this run"
+    fi
 }
 
 open_browser() {

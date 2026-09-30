@@ -1,7 +1,8 @@
 # 006: a stranger's verified result from one command
 
 **Opened 2026-09-30.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md).
-State: OPEN. Step 1 done (2026-09-30): the verified result was reached by hand.
+State: OPEN. Steps 1 to 3 done (2026-09-30): the verified result is one command, `lab/strategy/006/try.sh`,
+and a workflow runs it from clean images every night.
 
 ---
 
@@ -152,3 +153,60 @@ No falsifier fired:
 - The time was under the bound on this machine.
 
 Next: section 9 step 2, the script, run from a fresh clone on a clean Docker cache.
+
+## Step 2: one command (2026-09-30)
+
+`lab/strategy/006/try.sh` does step 1's commands in order and takes care of the three open items:
+- it runs the stack as its own compose project (`polaris-try`), with `names.yml` resetting the
+  container names;
+- `polaris-create-operator.sh --target=docker-stack` now hashes the password inside the running
+  app container, so the host needs no werkzeug;
+- it trusts Caddy's local root for every request instead of switching TLS checks off.
+
+Run from a clean checkout on the same laptop, with a stock python3 and `--no-cache` on the image
+build, it printed `signature_valid: True` and `issuer_trusted: True` and exited 0 after 431
+seconds:
+
+| step | seconds |
+|---|---|
+| build, no cache | 397 |
+| secrets | 2 |
+| stack healthy | 23 |
+| operator | 2 |
+| issue and pack | under 1 |
+| polaris-verify from PyPI | 6 |
+
+The base images were already on the machine. A first run elsewhere also downloads them, so
+network speed adds to the 397 seconds. `--down` removes the stack and its data, and leaves the
+key in `polaris_web/secrets/`.
+
+No falsifier fired:
+- It is one command.
+- Nothing in the product was edited to pass. The operator script's in-image hash is a
+  deployment fix, not a demo flag.
+- It took 7 minutes, against a bound of 15.
+
+Next: section 9 step 3, a README line and the weekly stranger's-path routine pointed at it.
+
+## Step 3: a machine nobody configured (2026-09-30)
+
+The README's Run it section names the command, and `.github/workflows/one-command.yml` runs it
+on every push to main, every night, and on a pull request that changes a path it exercises. That
+workflow takes the place the plan gave the weekly stranger's-path routine: it runs the script
+itself, from clean images, every night instead of once a week.
+
+Its first run, on pull request #120 at 53816424, used GitHub's `ubuntu-latest` runner with no
+layer cache, so the base images came over the network. `polaris-verify` 1.0.0rc4 from PyPI printed
+`signature_valid: True` and `issuer_trusted: True` and exited 0, 439 seconds after the script
+started; the whole job took 7 minutes 28 seconds.
+
+This is still the author's run. The runner is a machine nobody configured by hand, not an operator
+who is not the author, so the operating contract's open 1.0.0 condition is unchanged.
+
+No falsifier fired:
+- It is one command, on a machine the author never touched.
+- Nothing in the product was edited to pass.
+- It took 7 minutes 19 seconds, against a bound of 15.
+
+Next: nothing in the tree. What 006 was for, an operator who is not the author reaching a verified
+result without help, only that operator can supply.
