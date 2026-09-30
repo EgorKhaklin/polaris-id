@@ -14489,6 +14489,29 @@ class RelyingPartyApiTests(PolarisTestCase):
         self.assertEqual(unknown, tampered)
         self.assertEqual(unknown['reason'], 'not a verifiable presentation')
 
+    def test_a_genuine_signature_respelled_is_not_verifiable(self):
+        """A hex field holds hex digits and nothing else (WIRE-SPEC section 1), which is how the
+        three published verifiers read it. bytes.fromhex also skips whitespace, so the genuine
+        signature with a space between bytes, or a newline after it, was authentic here and
+        refused by every verifier a relying party can hold: one presentation, two verdicts."""
+        cid = self._register_rp('secret-iii', suffix='0009')
+        bearer = self._bearer(cid, 'secret-iii')
+        pack = self._issue_and_pack('RP-API-RESPELL-0001')
+        tv, sig = pack['token_value'], pack['signature_hex']
+
+        def verdict(signature_hex):
+            return self.client.post('/api/v1/verify', headers=bearer,
+                                    json={'token_value': tv, 'signature_hex': signature_hex}).get_json()
+
+        self.assertTrue(verdict(sig)['authentic'], 'control: the genuine signature verifies')
+        self.assertTrue(verdict(sig.upper())['authentic'],
+                        'control: hex digits in either case, as the three verifiers read them')
+        spaced = ' '.join(sig[i:i + 2] for i in range(0, len(sig), 2))
+        for respelled in (spaced, sig + '\n', '\t' + sig):
+            v = verdict(respelled)
+            self.assertFalse(v['authentic'], repr(respelled[:8]))
+            self.assertEqual(v['reason'], 'not a verifiable presentation')
+
     def test_rp_credential_grants_nothing_but_verification(self):
         """The bounded-authority core: an RP bearer reaches ONLY /api/v1/verify. It
         establishes no operator session, so every operator surface denies it."""
@@ -14717,6 +14740,21 @@ class OfflineStatusAssertionTests(PolarisTestCase):
                                json={'token_value': 'NO-SUCH', 'signature_hex': pack['signature_hex']})
         self.assertEqual(unk.status_code, 400)
         self.assertEqual(unk.get_json()['error'], 'not_verifiable')
+
+    def test_possession_reads_the_signature_as_hex_digits_only(self):
+        """The possession proof behind the status assertion, holder-key binding, document signing
+        and login reads signature_hex as the three verifiers do: the genuine signature with a
+        space between bytes is not the genuine signature."""
+        _tid, pack = self._issue_pack('OFFLINE-RESPELL-0001')
+        sig = pack['signature_hex']
+        ok = self.client.post('/api/v1/status-assertion',
+                              json={'token_value': pack['token_value'], 'signature_hex': sig})
+        self.assertEqual(ok.status_code, 200, 'control: the genuine signature proves possession')
+        spaced = ' '.join(sig[i:i + 2] for i in range(0, len(sig), 2))
+        r = self.client.post('/api/v1/status-assertion',
+                             json={'token_value': pack['token_value'], 'signature_hex': spaced})
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'not_verifiable')
 
     def test_assertion_shape_is_short_lived_and_carries_no_pii(self):
         _tid, pack = self._issue_pack('OFFLINE-SHAPE-0001')
@@ -17399,6 +17437,44 @@ class RefusalsTheAppMutationDrillFound(PolarisTestCase):
         self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
         self.assertEqual(r.get_json()['error_description'],
                          'envelope.nonce must be a string of 1 to 64 characters')
+
+    def test_an_upstream_answer_nested_past_the_parser_is_a_502_not_a_500(self):
+        """API.md: the gateway answers 502 when the upstream does not answer, and the nonce stays
+        consumed. Malformed JSON from the upstream was already a 502; JSON nested deeper than the
+        parser allows raised RecursionError, which nothing caught: a 500 that never told the
+        requester its nonce was spent. Signature and authorization are not under test, so both
+        are granted; the upstream is a stub that returns fixed bytes."""
+        self._exchange_setup()
+
+        class _Upstream:
+            def __init__(self, raw):
+                self._raw = raw
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return self._raw
+
+        def forward(raw):
+            payload = self._exchange_request(requester={'public_key_hex': 'ab' * 16},
+                                             nonce='nonce-upstream-' + os.urandom(6).hex())
+            with patch.object(rp_api.pqc_signing, 'verify_both', return_value=True), \
+                    patch.object(rp_api, '_exchange_attestation', return_value=True), \
+                    patch('urllib.request.urlopen', return_value=_Upstream(raw)):
+                return self.client.post('/api/v1/exchange/1', json=payload)
+
+        malformed = forward(b'{"answer": ')
+        self.assertEqual(malformed.status_code, 502, malformed.get_data(as_text=True)[:200])
+        self.assertEqual(malformed.get_json()['error'], 'upstream_unavailable',
+                         'control: the stub is reached, and malformed JSON is the documented 502')
+        r = forward(b'[' * 100000 + b']' * 100000)
+        self.assertEqual(r.status_code, 502, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'upstream_unavailable')
+        self.assertIn('the nonce is consumed', r.get_json()['error_description'])
 
     def test_holder_signing_refuses_a_presentation_without_a_signature(self):
         """/api/v1/sign/<agency>/holder with token_value but no signature_hex is invalid_request."""

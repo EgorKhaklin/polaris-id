@@ -214,7 +214,7 @@ def api_v1_verify():
     stored_raw = row['signature_bytes']
     stored_sig = bytes(stored_raw) if stored_raw is not None else b''
     try:
-        presented_sig = bytes.fromhex(presented_sig_hex)
+        presented_sig = pqc_signing.unhex(presented_sig_hex)
     except (ValueError, TypeError):
         return _not_verifiable()
     # Possession proof: the caller holds the GENUINE issued signature (constant
@@ -297,7 +297,7 @@ def _possession_authenticated(token_value, presented_sig_hex):
     stored_raw = row['signature_bytes']
     stored_sig = bytes(stored_raw) if stored_raw is not None else b''
     try:
-        presented_sig = bytes.fromhex(presented_sig_hex)
+        presented_sig = pqc_signing.unhex(presented_sig_hex)
     except (ValueError, TypeError):
         return None
     if not stored_sig or not hmac.compare_digest(presented_sig, stored_sig):
@@ -1977,7 +1977,8 @@ def api_v1_exchange(target_agency_id):
         with urllib.request.urlopen(up, timeout=_EXCHANGE_UPSTREAM_TIMEOUT) as r:
             raw = r.read().decode('utf-8')
         response_body = json.loads(raw) if raw else None
-    except (urllib.error.URLError, ValueError, OSError) as e:
+    # RecursionError: an answer nested deeper than the parser allows is no answer either.
+    except (urllib.error.URLError, ValueError, OSError, RecursionError) as e:
         return jsonify(error='upstream_unavailable', error_description='the service did not answer (%s); the nonce is consumed, retry with a new one' % type(e).__name__), 502
     receipt, err = _build_exchange_receipt(target, target_agency_id, {
         'requester_public_key_hex': req_key, 'context_id': context_id,

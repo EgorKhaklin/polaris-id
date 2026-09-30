@@ -313,6 +313,17 @@ class SecondWitnessTests(unittest.TestCase):
     def test_verify_both_false_when_both_agree_invalid(self):
         self.assertFalse(pqc_signing.verify_both(b"WRONG", self._sig_hex, self._pk_hex))
 
+    def test_a_genuine_signature_respelled_verifies_under_neither_witness(self):
+        """The exchange doors verify a partner's signature_hex with verify_both, so this is
+        where they read hex: the genuine signature with a space between bytes is refused by
+        both witnesses, as it is by the three published verifiers."""
+        self.assertTrue(pqc_signing.verify_both(self._msg, self._sig_hex, self._pk_hex), 'control')
+        spaced = ' '.join(self._sig_hex[i:i + 2] for i in range(0, len(self._sig_hex), 2))
+        self.assertFalse(pqc_signing.verify(self._msg, spaced, self._pk_hex))
+        self.assertFalse(pqc_signing._verify_second_witness(self._msg, spaced, self._pk_hex))
+        self.assertFalse(pqc_signing.verify_both(self._msg, spaced, self._pk_hex))
+        self.assertFalse(pqc_signing.verify_both(self._msg, self._sig_hex, self._pk_hex + '\n'))
+
     def test_verify_both_false_on_disagreement(self):
         # The load-bearing case: if the witness DISAGREES with the primary, the
         # signature is refused even though the primary alone would accept it.
@@ -420,6 +431,26 @@ class SecondWitnessDegradationTests(unittest.TestCase):
         self.assertFalse(pqc_signing.second_witness_available())
 
 
+class HexFieldTests(unittest.TestCase):
+    """unhex reads a hex field the way the three published verifiers do (1218b649): hex digits
+    in either case and nothing else, with bytes.fromhex's own exceptions."""
+
+    def test_hex_digits_in_either_case_decode(self):
+        self.assertEqual(pqc_signing.unhex('00ff7e'), b'\x00\xff\x7e')
+        self.assertEqual(pqc_signing.unhex('00FF7E'), b'\x00\xff\x7e')
+        self.assertEqual(pqc_signing.unhex(''), b'')
+
+    def test_anything_but_an_even_run_of_hex_digits_is_refused(self):
+        for bad in ('00 ff', '00ff\n', '\t00ff', '00\u00a0ff', '0ff', '0g', '\u0660\u0661'):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                pqc_signing.unhex(bad)
+
+    def test_a_value_that_is_not_a_string_is_a_type_error(self):
+        for bad in (None, b'00ff', 255, ['00']):
+            with self.assertRaises(TypeError, msg=repr(bad)):
+                pqc_signing.unhex(bad)
+
+
 class HeldOutVerificationTests(unittest.TestCase):
     """A held-out round on 2026-09-24: of eleven mutations of the verification functions,
     five survived test_pqc_signing, test_custody, the simulator and nine test_app classes.
@@ -473,6 +504,12 @@ class HeldOutVerificationTests(unittest.TestCase):
     def test_an_anchor_entry_with_no_key_fails_loud(self):
         with self.assertRaises(RuntimeError):
             self._anchors({'anchors': [{'label': 'retired 2026', 'retired': True}]})
+
+    def test_an_anchor_written_with_whitespace_fails_loud(self):
+        """Every verify reads a key as hex digits only, so an anchor with a space in it would
+        load and then verify nothing: trust shrinking silently, which this loader refuses."""
+        with self.assertRaises(RuntimeError):
+            self._anchors({'anchors': [{'public_key_hex': 'abab abab'}]})
 
 
 @unittest.skipUnless(pqc_signing.is_available(),
