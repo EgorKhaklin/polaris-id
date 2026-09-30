@@ -963,6 +963,15 @@ export type VerifierOptions = {
   timeoutMs?: number;
 };
 
+// The issuer URL's trailing slashes, removed in one pass. /\/+$/ did the same in time
+// quadratic in a run of slashes that is not at the end, which is all a regular
+// expression engine can do with it.
+function trimTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 47) end--;
+  return url.slice(0, end);
+}
+
 export class PolarisVerifier {
   private issuerUrl?: string;
   private clientId?: string;
@@ -973,7 +982,7 @@ export class PolarisVerifier {
   private bearerExp = 0;
 
   constructor(opts: VerifierOptions = {}) {
-    this.issuerUrl = opts.issuerUrl ? opts.issuerUrl.replace(/\/+$/, "") : undefined;
+    this.issuerUrl = opts.issuerUrl ? trimTrailingSlashes(opts.issuerUrl) : undefined;
     this.clientId = opts.clientId;
     this.clientSecret = opts.clientSecret;
     this.anchors = opts.anchors ?? null;

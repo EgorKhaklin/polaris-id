@@ -265,6 +265,33 @@ class DonePageTests(ServeTestCase):
         self.assertEqual(first, _get(self.base + "/done?state=anything&x=1"))
 
 
+def _self_signed_tls(tmp):
+    """A throwaway localhost certificate and key, written into tmp."""
+    import datetime
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+            .public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(now - datetime.timedelta(days=1))
+            .not_valid_after(now + datetime.timedelta(days=1))
+            .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]),
+                           critical=False)
+            .sign(key, hashes.SHA256()))
+    cert_path, key_path = os.path.join(tmp, "cert.pem"), os.path.join(tmp, "key.pem")
+    with open(cert_path, "wb") as fh:
+        fh.write(cert.public_bytes(serialization.Encoding.PEM))
+    with open(key_path, "wb") as fh:
+        fh.write(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                   serialization.NoEncryption()))
+    return cert_path, key_path
+
+
 class TransportTests(unittest.TestCase):
     """TLS and logging, the two things `serve` does that are not routing."""
 
@@ -313,6 +340,70 @@ class TransportTests(unittest.TestCase):
                 with urllib.request.urlopen(url, context=ctx, timeout=10) as r:
                     self.assertEqual(r.status, 200)
                     self.assertEqual(r.read().decode(), jar)
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+
+    def test_it_refuses_tls_below_1_2_whatever_the_platform_default(self):
+        """Code scanning (py/insecure-protocol, 2026-09-30), then a counterexample: on the macOS
+        system Python 3.9 with LibreSSL 2.8.3, which this package supports, a server context
+        defaults to TLS 1.0, and `serve` from the published 1.0.0rc9 completed TLS 1.0 and 1.1
+        handshakes. Python 3.10 and later default to 1.2, which would hide a missing floor on
+        the interpreters CI runs, so the context class is swapped for one with the old default."""
+        import socket
+        import ssl
+        import tempfile
+        import types
+        from unittest import mock
+        import polaris_oid4vp.serve as serve_module
+        real = ssl.SSLContext
+
+        class OldDefault(real):
+            def __new__(cls, protocol=ssl.PROTOCOL_TLS_SERVER, *args, **kwargs):
+                ctx = super().__new__(cls, protocol, *args, **kwargs)
+                ctx.minimum_version = ssl.TLSVersion.MINIMUM_SUPPORTED
+                return ctx
+
+        def client(low=None, high=None):
+            ctx = real(ssl.PROTOCOL_TLS_CLIENT)
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            if low is not None:
+                ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
+                ctx.minimum_version, ctx.maximum_version = low, high
+            return ctx
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cert_path, key_path = _self_signed_tls(tmp)
+            cert_pem, key_pem = _client_chain()
+            verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                                request_uri="https://127.0.0.1:0/request.jwt",
+                                response_uri="https://127.0.0.1:0/response")
+            # Only serve's view of the module changes: ssl.py's own properties look the name
+            # SSLContext up at call time, so replacing the module global recurses.
+            old_ssl = types.SimpleNamespace(**{k: getattr(ssl, k) for k in dir(ssl)
+                                               if not k.startswith("__")})
+            old_ssl.SSLContext = OldDefault
+            with mock.patch.object(serve_module, "ssl", old_ssl):
+                httpd = serve(verifier, host="127.0.0.1", port=0,
+                              certfile=cert_path, keyfile=key_path)
+            try:
+                self.assertEqual(httpd.socket.context.minimum_version, ssl.TLSVersion.TLSv1_2,
+                                 "the floor must be set by serve, not left to the platform")
+                port = httpd.server_address[1]
+                with socket.create_connection(("127.0.0.1", port), timeout=10) as raw, \
+                        client().wrap_socket(raw) as tls:
+                    self.assertIn(tls.version(), ("TLSv1.2", "TLSv1.3"))
+                if not ssl.HAS_TLSv1_1:
+                    return  # this TLS library cannot offer 1.1 at all; the floor above stands
+                try:
+                    old = client(ssl.TLSVersion.TLSv1, ssl.TLSVersion.TLSv1_1)
+                except (ssl.SSLError, ValueError):
+                    return
+                with self.assertRaises((ssl.SSLError, OSError)):
+                    with socket.create_connection(("127.0.0.1", port), timeout=10) as raw, \
+                            old.wrap_socket(raw):
+                        pass
             finally:
                 httpd.shutdown()
                 httpd.server_close()
