@@ -132,15 +132,14 @@ jobs:
 
       - name: Install Python deps
         run: |
-          python -m pip install --upgrade pip
           # CI runs the test suites, so it needs the dev tooling (pytest,
           # hypothesis, playwright). requirements-dev.txt pulls in the full
           # runtime surface via its `-r requirements.txt` line. The Docker
           # images, by contrast, install requirements.txt only (no test deps).
-          pip install -r polaris_web/requirements-dev.txt
+          pip install --require-hashes -r polaris_web/requirements-dev.txt
           # v9.178 (P1.2) — the optional custody drivers (boto3, python-pkcs11) so
           # test_custody's KMS stand-in and env-selection tests run here.
-          pip install -r polaris_web/requirements-custody.txt
+          pip install --require-hashes -r polaris_web/requirements-custody.txt
 
       # v9.306 — ruff (pyflakes F rules, ruff.toml). Runs before the slow DB
       # setup so an unused import or dead local fails fast. Formatting is not
@@ -786,8 +785,7 @@ jobs:
         # requirements-dev.txt pulls in the full runtime surface (-r requirements.txt)
         # plus the dev tooling, which already includes playwright.
         run: |
-          python -m pip install --upgrade pip
-          pip install -r polaris_web/requirements-dev.txt
+          pip install --require-hashes -r polaris_web/requirements-dev.txt
 
       - name: Wait for Postgres
         run: |
@@ -907,7 +905,7 @@ jobs:
       # browser into a hard failure, so "ran zero tests" can never pass again.
       - name: Atlas e2e (Playwright, headless chromium)
         run: |
-          python3 -m pip install --quiet playwright pytest
+          python3 -m pip install --quiet --require-hashes -r polaris_web/requirements-test.txt
           sudo rm -f /etc/apt/sources.list.d/google-chrome*.list   # the runner's Chrome apt source is not ours and flakes (index hash mismatch, v9.343)
           python3 -m playwright install --with-deps chromium
           POLARIS_E2E_REQUIRE=1 POLARIS_E2E_PORT=5000 \
@@ -1525,7 +1523,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install runtime deps (the prod image surface, no dev extras)
-        run: pip install -r polaris_web/requirements.txt
+        run: pip install --require-hashes -r polaris_web/requirements.txt
 
       - name: Trace drill
         run: bash scripts/polaris-trace-drill.sh
@@ -1554,7 +1552,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install the app's runtime requirements (the RTO includes the application coming up)
-        run: pip install -r polaris_web/requirements.txt
+        run: pip install --require-hashes -r polaris_web/requirements.txt
 
       - name: DR drill
         env:
@@ -1910,30 +1908,19 @@ jobs:
           # database, so it needs psql/createdb/dropdb. Without them it exits 3, which
           # fails this step rather than skipping quietly.
           sudo apt-get install -y cmake ninja-build postgresql-client
-          pip install liboqs-python
+          pip install --require-hashes -r polaris_web/requirements-pqc.txt
           # The independent second witness (v9.133): cryptography provides an
           # OpenSSL-backed ML-DSA-65, a DIFFERENT FIPS 204 implementation than liboqs.
-          # Derive the pin from requirements.txt instead of repeating the literal
-          # here. The duplicate drifted: this line still said 48.0.0 after the
-          # runtime surface moved to 50.0.1 for PYSEC-2026-3552/3553/3554 +
-          # GHSA-537c-gmf6-5ccf, so the job under test would have reinstalled the
-          # vulnerable version that cve-scan had just rejected.
-          pip install "$(grep -oE '^cryptography==[^ ]+' polaris_web/requirements.txt)"
-          # v9.362 (P3.7) — cbor2 for the ISO 18013-5 bridge drill, pinned from the same
-          # requirements file for the same reason the line above derives its pin: a literal
-          # repeated here drifts, and the drill would then run against a version the CVE
-          # scan had not seen.
-          pip install "$(grep -oE '^cbor2==[^ ]+' polaris_web/requirements.txt)"
-          # v9.369 — psycopg2 for the quantum-event drill (v9.365), which measures a
-          # population migration against a real database. Added late: the drill was wired into
-          # this job without checking that this job installs what it imports, so it exited 3
-          # ("needs psycopg2") and failed the step for three ships. Pinned from the same
-          # requirements file, for the reason the cryptography line above spells out.
-          pip install "$(grep -oE '^psycopg2-binary==[^ ]+' polaris_web/requirements.txt)"
+          # cbor2 serves the ISO 18013-5 bridge drill (v9.362) and psycopg2 the
+          # quantum-event drill (v9.365). All three come from the runtime lock, hashed,
+          # never from a pin repeated here: a repeated literal once still said 48.0.0
+          # after the runtime moved to 50.0.1 for PYSEC-2026-3552/3553/3554 +
+          # GHSA-537c-gmf6-5ccf, and the job reinstalled what cve-scan had rejected.
+          pip install --require-hashes -r polaris_web/requirements.txt
           # v9.178 (P1.2) — the custody drivers, so test_custody runs here with BOTH
           # witnesses (liboqs + OpenSSL): the file driver for real, the AWS KMS
           # driver against its wire-faithful stand-in, rotation end to end.
-          pip install -r polaris_web/requirements-custody.txt
+          pip install --require-hashes -r polaris_web/requirements-custody.txt
 
       - name: Real ML-DSA-65 persistent-key sign + verify
         working-directory: polaris_web
@@ -2326,7 +2313,7 @@ jobs:
       # this fails the build if it changes without SPEC.md and the drill being updated.
       - name: Contract reach — what the 118 published cases do not constrain
         run: |
-          python -m pip install --quiet coverage
+          python -m pip install --quiet --require-hashes -r polaris_web/requirements-test.txt
           python scripts/polaris-contract-reach-drill.py
           python scripts/polaris-contract-reach-drill.py --prove-control
 
@@ -2394,7 +2381,7 @@ jobs:
           POLARIS_STATE_DIR: /tmp/polaris-state
           POLARIS_TEST_REDIS_URL: redis://localhost:6379/0
         run: |
-          pip install -r polaris_web/requirements-dev.txt
+          pip install --require-hashes -r polaris_web/requirements-dev.txt
           mkdir -p "$POLARIS_STATE_DIR"
           createdb -h localhost -U postgres polaris_test
           (cd polaris_sql && psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -q -f 00_load_all.sql)
@@ -2458,10 +2445,8 @@ jobs:
 
       - name: Install the app runtime + liboqs + the cryptography witness
         run: |
-          python -m pip install --upgrade pip
-          pip install -r polaris_web/requirements.txt
-          pip install liboqs-python
-          pip install "$(grep -oE '^cryptography==[^ ]+' polaris_web/requirements.txt)"
+          pip install --require-hashes -r polaris_web/requirements.txt
+          pip install --require-hashes -r polaris_web/requirements-pqc.txt
 
       - name: Wait for Postgres
         run: |
@@ -2532,7 +2517,7 @@ jobs:
       # here rather than in the product job because it is a package, it needs no database,
       # and it takes 0.03 seconds.
       - name: Install cryptography (polaris-oid4vp checks ES256, which is HAIP's floor)
-        run: python -m pip install --quiet 'cryptography>=42'
+        run: python -m pip install --quiet --require-hashes -r polaris_web/requirements.txt
       - name: SD-JWT VC verification — the seven conformance refusals
         run: cd packages/polaris-oid4vp && python -m unittest test_sdjwt
       # HAIP pins direct_post.jwt, so the response arrives encrypted and has to be opened
@@ -2615,9 +2600,8 @@ jobs:
         run: python3 -m polaris_checks.run
       - name: Each check fails on its broken fixture
         run: |
-          # pytest from the dev set; PyYAML for the one detection test that parses the pre-commit config.
-          pip install "$(grep -ohE '^pytest[>=<][^ ]+' polaris_web/requirements-dev.txt polaris_web/requirements-test.txt 2>/dev/null | head -n1)" \
-                      "$(grep -oiE '^pyyaml==[^ ]+' polaris_web/requirements-patroni.txt)"
+          # pytest, and PyYAML for the one detection test that parses the pre-commit config.
+          pip install --require-hashes -r polaris_web/requirements-test.txt
           python3 -m pytest polaris_checks/test_checks.py -q -p no:cacheprovider
 
   dco:
@@ -2711,7 +2695,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install pip-audit + bandit
-        run: pip install pip-audit bandit
+        run: pip install --require-hashes -r .github/ci/audit.txt
 
       - name: Audit the RUNTIME surface (gating)
         run: |
