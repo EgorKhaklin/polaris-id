@@ -115,14 +115,17 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return self._send(413, {"error": "invalid_request",
                                     "error_description": "the request body exceeds %d bytes"
                                                          % MAX_BODY_BYTES})
-        raw = self.rfile.read(length).decode("utf-8", "replace")
-        if len(raw.encode("utf-8", "replace")) < length:
+        body = self.rfile.read(length)
+        # Count the bytes read, not a re-encoded decode: decoding with "replace" turns each
+        # invalid byte into U+FFFD, three bytes, so a short body could pass as whole.
+        if len(body) < length:
             # The client declared more than it sent and then stopped. Without this the
             # handler would carry on and parse a truncated body as though it were whole.
             self.close_connection = True
             return self._send(400, {"error": "invalid_request",
                                     "error_description": "the body is shorter than "
                                                          "Content-Length declared"})
+        raw = body.decode("utf-8", "replace")
         if path == REQUEST_PATH:
             # request_uri_method=post, OpenID4VP 1.0 section 5.10. A posted `wallet_nonce`
             # MUST come back as a claim in the request object, so this is not a POST that can

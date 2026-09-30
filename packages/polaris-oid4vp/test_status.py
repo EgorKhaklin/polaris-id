@@ -142,12 +142,42 @@ class RefusalsTests(unittest.TestCase):
         self.assertEqual(v["code"], "signature")
 
     def test_a_decompression_bomb_is_refused_without_expanding(self):
+        """Without expanding, measured: what zlib produced stays within the bound. Asserting only
+        the refusal passed with the bound removed, because the length check after flush()
+        still refused, after inflating the whole bomb (the review routine's finding)."""
         bomb = base64.urlsafe_b64encode(
             zlib.compress(b"\x00" * (S.MAX_DECOMPRESSED_BYTES * 4), 9)).rstrip(b"=").decode()
         p = payload()
         p["status_list"]["lst"] = bomb
-        v = decide(token(p), issuer_key_verify=accept)
+        real, produced = zlib.decompressobj, []
+
+        class Counting:
+            def __init__(self, *a, **kw):
+                self._o = real(*a, **kw)
+
+            def decompress(self, data, max_length=0):
+                out = self._o.decompress(data, max_length)
+                produced.append(len(out))
+                return out
+
+            def flush(self, *a):
+                out = self._o.flush(*a)
+                produced.append(len(out))
+                return out
+
+            @property
+            def unconsumed_tail(self):
+                return self._o.unconsumed_tail
+
+        zlib.decompressobj = Counting
+        try:
+            v = decide(token(p), issuer_key_verify=accept)
+        finally:
+            zlib.decompressobj = real
         self.assertEqual(v["code"], "lst")
+        self.assertTrue(produced, "control: the bounded inflate ran")
+        self.assertLessEqual(sum(produced), S.MAX_DECOMPRESSED_BYTES,
+                             "the bomb was built before it was refused")
 
     def test_an_unknown_status_is_not_folded_into_valid(self):
         v = decide(token(payload(statuses=(0, 3, 0, 0))), issuer_key_verify=accept)
@@ -348,8 +378,9 @@ class PrimitiveRefusalsTests(unittest.TestCase):
                 S._b64u(bad, "list")
 
     def test_a_bomb_is_refused_at_the_primitive(self):
-        # Both sites in _inflate_bounded refuse the same input, so either one alone holds;
-        # the mutation drill records the pair as redundant rather than untested.
+        # The first site refuses before the bomb is built; the length check after flush() only
+        # refuses once it has been, so it is a backstop and not a twin. The bomb test above
+        # asserts the first by what zlib produced.
         raw = zlib.compress(b"\x00" * 150, 9)
         with self.assertRaises(ValueError):
             S._inflate_bounded(raw, limit=100)
@@ -455,6 +486,8 @@ class HeldOutBoundaryTests(unittest.TestCase):
         self.assertTrue(at_edge["checked"], at_edge)
         self.assertEqual((at_edge["stale"], at_edge["fresh"]), (False, True),
                          "a list dated ahead is taken as just issued, not as a negative age")
+        self.assertEqual(at_edge["age_seconds"], 0,
+                         "a list dated ahead reports an age of zero, not a negative one")
 
     def test_a_list_dated_one_second_ahead_is_decided(self):
         """walt.id presenting a Polaris wallet copy (lab/strategy/005, S6): the issuer signed its

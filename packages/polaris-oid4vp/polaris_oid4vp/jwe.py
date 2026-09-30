@@ -210,6 +210,11 @@ def decrypt_compact(token, private_key):
         raise JweError("a JWE segment is not base64url: %s" % exc) from exc
     if len(iv) != 12:
         raise JweError("AES-GCM takes a 96-bit iv, this one is %d bits" % (len(iv) * 8))
+    if len(tag) != 16:
+        # RFC 7518 section 5.3 fixes the tag at 128 bits. Handed to AES-GCM as ciphertext + tag,
+        # any other split between the two segments decrypts the same bytes, so without this
+        # one plaintext had many accepted tokens.
+        raise JweError("AES-GCM takes a 128-bit tag, this one is %d bits" % (len(tag) * 8))
 
     try:
         # The AAD is the ASCII of the protected header AS RECEIVED. Re-serializing the parsed
