@@ -17506,6 +17506,41 @@ class RefusalsTheAppMutationDrillFound(PolarisTestCase):
         self.assertEqual(r.get_json()['error'], 'upstream_unavailable')
         self.assertIn('the nonce is consumed', r.get_json()['error_description'])
 
+    def test_an_upstream_answer_with_a_non_finite_number_is_a_502(self):
+        """The gateway re-serves the upstream's answer and hashes it into the receipt. Python's
+        parser reads NaN, Infinity and 1e400, which are not JSON: the reply carried them verbatim,
+        so it was not RFC 8259 JSON, and response_hash covered text no other parser reproduces.
+        The app's own parser refuses them at the request door; the upstream's answer is read by
+        it too. Signature and authorization are granted, and the upstream is a stub."""
+        self._exchange_setup()
+
+        class _Upstream:
+            def __init__(self, raw):
+                self._raw = raw
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return self._raw
+
+        def forward(raw):
+            payload = self._exchange_request(requester={'public_key_hex': 'ab' * 16},
+                                             nonce='nonce-upstream-' + os.urandom(6).hex())
+            with patch.object(rp_api.pqc_signing, 'verify_both', return_value=True), \
+                    patch.object(rp_api, '_exchange_attestation',
+                                 return_value={'authority_id': 1, 'authority_name': 'Notional Authority'}), \
+                    patch('urllib.request.urlopen', return_value=_Upstream(raw)):
+                return self.client.post('/api/v1/exchange/1', json=payload)
+
+        for raw in (b'{"answer": NaN}', b'[Infinity]', b'{"answer": -Infinity}', b'{"answer": 1e400}'):
+            r = forward(raw)
+            self.assertEqual(r.status_code, 502, (raw, r.get_data(as_text=True)[:200]))
+            self.assertEqual(r.get_json()['error'], 'upstream_unavailable', raw)
+
     def test_holder_signing_refuses_a_presentation_without_a_signature(self):
         """/api/v1/sign/<agency>/holder with token_value but no signature_hex is invalid_request."""
         self._federate(1)

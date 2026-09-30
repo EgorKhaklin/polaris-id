@@ -1976,8 +1976,10 @@ def api_v1_exchange(target_agency_id):
     try:
         with urllib.request.urlopen(up, timeout=_EXCHANGE_UPSTREAM_TIMEOUT) as r:
             raw = r.read().decode('utf-8')
-        response_body = json.loads(raw) if raw else None
-    # RecursionError: an answer nested deeper than the parser allows is no answer either.
+        # The app's own parser, as at the request door: NaN, Infinity or 1e400 would be re-served
+        # in a reply that is not JSON and hashed into a receipt no other parser reproduces, and an
+        # answer nested past the parser's depth is refused the same way (all ValueError).
+        response_body = app.json.loads(raw) if raw else None
     except (urllib.error.URLError, ValueError, OSError, RecursionError) as e:
         return jsonify(error='upstream_unavailable', error_description='the service did not answer (%s); the nonce is consumed, retry with a new one' % type(e).__name__), 502
     receipt, err = _build_exchange_receipt(target, target_agency_id, {

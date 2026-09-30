@@ -53,6 +53,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - CITATION.cff says duress-aware, not duress-resistant; the vocabulary check now refuses the duress forms it missed.
 - `polaris-relying-party.py` rejects, instead of crashing, when the issuer refuses its OAuth client.
 - `polaris-relying-party.py` exits 3, instead of crashing, on a presentation that is not an object or an anchor it cannot read.
+- The exchange gateway answers 502, not a non-JSON reply, when its upstream answers NaN, Infinity or 1e400.
 
 ### Added
 
