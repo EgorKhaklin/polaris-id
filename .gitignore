@@ -88,7 +88,6 @@ yarn-error.log*
 .project
 .classpath
 .settings/
-.claude/
 
 # ============================================================================
 # Shell and process artifacts
@@ -159,5 +158,3 @@ ui-drill-out/
 # points TLC at a scratch metadir, and this is the belt to that suspenders.
 meta/tla/states/
 
-# The agent runbook is local to the maintainer, not part of the public repository (2026-09-25).
-/CLAUDE.md

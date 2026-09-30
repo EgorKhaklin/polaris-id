@@ -51,7 +51,7 @@ cat <<'EOF'
 ║                                                              ║
 ║                   P  O  L  A  R  I  S                        ║
 ║                                                              ║
-║              Identity Token System / SCS-230                 ║
+║                  Identity Token System                       ║
 ║                  Fixus inter mutabilia                       ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝

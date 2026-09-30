@@ -255,8 +255,8 @@ Possible cross-system flows:
   spatially-aggregated counts. They do NOT return holder identifiers
   for clusters; only for individual events at high zoom (`/api/atlas/points`).
 
-There is no third-party tracking or telemetry. No data goes to
-Anthropic, Google, AWS, or any other vendor by default.
+There is no third-party tracking or telemetry. No data goes to any
+vendor by default.
 
 ---
 

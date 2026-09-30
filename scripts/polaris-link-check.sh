@@ -68,7 +68,7 @@ SCAN_EXTS = ('.md', '.py', '.sh', '.sql', '.html', '.js', '.css', '.json')
 TARGET_EXTS = ('.md', '.py', '.sh', '.sql', '.html', '.js', '.css', '.json',
                '.png', '.jpg', '.pdf', '.tex')
 # Directories we never scan into.
-SKIP_DIRS = {'.git', 'node_modules', 'venv', '__pycache__', '.claude',
+SKIP_DIRS = {'.git', 'node_modules', 'venv', '__pycache__',
              'archive'}  # v9.24: archive/ preserves historical AoR with
                           # paths relative to original (root-level) location;
                           # link-checking from archive/ would always fail.
