@@ -7,6 +7,12 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
+## Unreleased
+
+### Changed
+
+- Published: `polaris-sdk-ts` 1.0.0-rc.6 on npm under `next`, approved by the maintainer with a second factor.
+
 ## v1.0.0-rc.67 — 2026-09-30 (one command to a verified result)
 
 From a clone, one command runs the production stack and has published polaris-verify verify an ML-DSA-65 credential it issued; code scanning and fuzzing, releases sealed with SBOMs and provenance; 11 security changes, 40 fixes.

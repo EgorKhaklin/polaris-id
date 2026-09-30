@@ -13,7 +13,7 @@ externally observable changes.
 | `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc5, 2026-09-30 | 1.0.0rc4, 2026-09-28 |
 | `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc10, 2026-09-30 | 1.0.0rc9, 2026-09-30 |
 | `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc5, 2026-09-30 | 1.0.0rc4, 2026-09-28 |
-| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.5, 2026-09-28 | 1.0.0-rc.4, 2026-09-28 |
+| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.6, 2026-09-30 | 1.0.0-rc.5, 2026-09-28 |
 
 > **2026-09-30, later:** `polaris-verify` and `polaris-sdk-python` 1.0.0rc5 and `polaris-oid4vp`
 > 1.0.0rc10 went out the same way, each read back from the live registry, carrying the fixes
@@ -272,6 +272,8 @@ worse state to be in than three runs.
 | 36702201606 | 2026-09-30 | `polaris-verify` 1.0.0rc5 | published to PyPI by trusted publishing; read back from the live registry |
 | 36702209438 | 2026-09-30 | `polaris-sdk-python` 1.0.0rc5 | published to PyPI the same way; read back from the live registry |
 | 36702217173 | 2026-09-30 | `polaris-oid4vp` 1.0.0rc10 | published to PyPI the same way; read back, and STRANGER-PATH walked against it. Not certified: 1.0.0rc7 stays the certified version |
+| 36712332414 | 2026-09-30 | `polaris-sdk-ts` 1.0.0-rc.6 | staged (id d1d7abd7-f1ed-47ab-adb6-5f62497f3f0c); not published by the job; npm requires a maintainer's second factor |
+| (by hand) | 2026-09-30 | `polaris-sdk-ts` 1.0.0-rc.6 | approved by the maintainer with a second factor and read back from the live registry under `next`; shasum e57ef6929e7bf809efccd51c325a0592ca53b88d |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different
