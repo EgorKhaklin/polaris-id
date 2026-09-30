@@ -532,12 +532,21 @@ def cmd_issue(args):
         sys.stderr.write(red(
             "--contexts must be a comma-separated list of integers (e.g. 1,4,6).\n"))
         sys.exit(1)
+    # Signed as the issuing route signs. Without a signature uc1 stores its legacy literal,
+    # which verifies under nothing, and bulk-enroll's rule is never to store one (_load_signer).
+    signer = _load_signer()
     conn = connect()
     try:
         with conn.cursor() as cur:
+            try:
+                sig, pubkey = _issuance_signature(signer, cur, args.token_value, args.agency)
+            except (signer.PQCUnavailableError, signer.SigningError) as e:
+                conn.rollback()
+                sys.stderr.write(red(f"UC-1 rejected: {e}\n"))
+                sys.exit(3)
             cur.execute("""
                 SELECT uc1_issue_and_activate(
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 ) AS token_id
             """, (
                 args.legal_name, args.dob, args.jurisdiction,
@@ -545,6 +554,7 @@ def cmd_issue(args):
                 args.biometric, args.witness,
                 args.liveness, args.token_value, args.serial,
                 args.hardware, contexts,
+                psycopg2.Binary(sig), pubkey,
             ))
             new_id = cur.fetchone()['token_id']
             conn.commit()
@@ -2070,6 +2080,22 @@ def _load_signer():
         sys.exit(2)
 
 
+def _issuance_signature(signer, cur, token_value, agency_id):
+    """(signature_bytes, public_key_hex) for a credential the CLI issues, made the way the issuing
+    route makes them (use_case_routes.uc1_issue): under the issuing agency's own key when it has
+    one, and refused when the agency is registered to a key other than the one that signed."""
+    sig, _label, pubkey = signer.signature_with_key_for_token(token_value, agency_id=agency_id)
+    if pubkey is not None:
+        cur.execute("SELECT signing_public_key_hex FROM Agency WHERE agency_id = %s", (agency_id,))
+        row = cur.fetchone()
+        registered = row["signing_public_key_hex"] if row else None
+        if registered and registered != pubkey:
+            raise signer.SigningError(
+                "issuing agency %d is registered to a different signing key; refusing to issue a "
+                "token signed by a non-agency key (PE.3b federation binding)" % agency_id)
+    return sig, pubkey
+
+
 def cmd_bulk_enroll(args):
     if not os.path.isfile(args.csv):
         sys.stderr.write(red(f"No such extract file: {args.csv}\n"))
@@ -2123,7 +2149,14 @@ def cmd_bulk_enroll(args):
                         f"Bulk enrollment rejected (whole batch rolled back): the row for "
                         f"physical serial {r['physical_serial']!r} is refused: {problem}\n"))
                     sys.exit(3)
-                sig, _label, pubkey = signer.signature_with_key_for_token(r["token_value"])
+                try:
+                    sig, pubkey = _issuance_signature(signer, cur, r["token_value"], args.agency)
+                except (signer.PQCUnavailableError, signer.SigningError) as e:
+                    conn.rollback()
+                    sys.stderr.write(red(
+                        f"Bulk enrollment rejected (whole batch rolled back): the row for "
+                        f"physical serial {r['physical_serial']!r} could not be signed: {e}\n"))
+                    sys.exit(3)
                 values.append((
                     batch_id, r["legal_name"], r["date_of_birth"], r["jurisdiction"],
                     r["biometric_binding_type"], r["token_value"], r["physical_serial"],
@@ -2601,7 +2634,7 @@ def _cmd_key_event(args, event):
                 "INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, event, effective_at, note) "
                 "VALUES (%s, %s, %s, %s, COALESCE(%s::timestamp, CURRENT_TIMESTAMP), %s) RETURNING event_id",
                 (args.agency_id, args.public_key_hex.lower(), _key_algorithm(args), event, args.effective_at, args.note))
-            event_id = cur.fetchone()[0]
+            event_id = cur.fetchone()['event_id']  # connect() returns rows as dicts
             if event == 'registered':
                 cur.execute("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = %s",
                             (args.public_key_hex.lower(), args.agency_id))
