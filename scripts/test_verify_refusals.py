@@ -1152,6 +1152,223 @@ class CrossAuthorityZkTrustChain(unittest.TestCase):
 
 ABSENT_SIZE = "the checkpoint has no committed_count"
 
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class SignedTreeHeadDecisions(unittest.TestCase):
+    """verify_log_consistency and verify_equivocation over GENUINELY signed heads.
+
+    The primitives underneath (verify_consistency, merkle_tree_head) are tested above; these
+    are the decisions a monitor and two gossiping observers act on. Each refusal is the one
+    genuine pair with exactly one thing changed, so a refusal is attributable to that change.
+    """
+
+    ENTRIES = ["entry-%02d" % i for i in range(13)]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sign, cls.pk = _mldsa_signer()
+        cls.other_sign, cls.other_pk = _mldsa_signer()
+
+    def sth(self, size, *, log_id="log-1", root=None, sign=None, pk=None, **over):
+        head = {"format": V._STH_FORMAT, "log_id": log_id, "tree_size": size,
+                "root_hash_hex": root if root is not None else V.merkle_tree_head(self.ENTRIES[:size]).hex(),
+                "timestamp": "2026-09-30T00:00:00Z", "algorithm": V._ALG}
+        head.update(over)
+        head["public_key_hex"] = (pk or self.pk).hex()
+        head["signature_hex"] = (sign or self.sign)(
+            __import__("hashlib").sha3_256(V._sth_canonical(head)).digest()).hex()
+        return head
+
+    def proof(self, m, n):
+        return [h.hex() for h in V.consistency_proof(m, self.ENTRIES[:n])]
+
+    # -- verify_log_consistency ----------------------------------------------------------
+
+    def test_a_genuine_extension_is_consistent(self):
+        v = V.verify_log_consistency(self.sth(5), self.sth(11), self.proof(5, 11), issuer_key=self.pk.hex())
+        self.assertEqual((v["consistent"], v["fork"]), (True, False), v["note"])
+
+    def test_equal_sizes_decide_on_the_roots(self):
+        same = V.verify_log_consistency(self.sth(6), self.sth(6), [])
+        self.assertEqual((same["consistent"], same["fork"]), (True, False), same["note"])
+        other = V.merkle_tree_head(["x"] * 6).hex()
+        split = V.verify_log_consistency(self.sth(6), self.sth(6, root=other), [])
+        self.assertEqual((split["consistent"], split["fork"]), (False, True), split["note"])
+
+    def test_a_shrinking_tree_is_a_fork(self):
+        v = V.verify_log_consistency(self.sth(9), self.sth(4), [])
+        self.assertEqual((v["consistent"], v["fork"]), (False, True))
+        self.assertIn("SMALLER", v["note"])
+
+    def test_a_rewritten_history_is_a_fork(self):
+        rewritten = self.ENTRIES[:2] + ["rewritten"] + self.ENTRIES[3:11]
+        head = self.sth(11, root=V.merkle_tree_head(rewritten).hex())
+        proof = [h.hex() for h in V.consistency_proof(5, rewritten)]
+        v = V.verify_log_consistency(self.sth(5), head, proof)
+        self.assertEqual((v["consistent"], v["fork"]), (False, True), v["note"])
+
+    def test_heads_from_two_logs_are_not_compared(self):
+        v = V.verify_log_consistency(self.sth(5), self.sth(11, log_id="log-2"), self.proof(5, 11))
+        self.assertEqual((v["consistent"], v["fork"]), (False, False))
+        self.assertIn("different logs", v["note"])
+
+    def test_an_inauthentic_head_decides_nothing(self):
+        forged = dict(self.sth(11), root_hash_hex=V.merkle_tree_head(["x"] * 11).hex())
+        v = V.verify_log_consistency(self.sth(5), forged, self.proof(5, 11))
+        self.assertEqual((v["consistent"], v["fork"]), (False, False))
+        self.assertIn("not authentic", v["note"])
+
+    def test_a_head_from_another_key_is_refused_when_a_key_is_expected(self):
+        foreign = self.sth(11, sign=self.other_sign, pk=self.other_pk)
+        v = V.verify_log_consistency(self.sth(5), foreign, self.proof(5, 11), issuer_key=self.pk.hex())
+        self.assertFalse(v["consistent"])
+        self.assertIn("expected log key", v["note"])
+
+    def test_a_boolean_or_missing_size_is_refused(self):
+        for bad in (True, None, -1, "5"):
+            with self.subTest(tree_size=bad):
+                v = V.verify_log_consistency(self.sth(5), self.sth(11, tree_size=bad), self.proof(5, 11))
+                self.assertFalse(v["consistent"])
+                self.assertIn("tree_size", v["note"])
+
+    def test_a_proof_that_is_not_hex_is_refused(self):
+        v = V.verify_log_consistency(self.sth(5), self.sth(11), ["zz"])
+        self.assertFalse(v["consistent"])
+        self.assertIn("not valid hex", v["note"])
+
+    # -- verify_equivocation --------------------------------------------------------------
+
+    def test_two_signed_roots_at_one_size_are_proven_equivocation(self):
+        other = V.merkle_tree_head(["x"] * 7).hex()
+        v = V.verify_equivocation(self.sth(7), self.sth(7, root=other), self.pk.hex())
+        self.assertTrue(v["proven"], v["note"])
+
+    def test_identical_heads_prove_nothing(self):
+        head = self.sth(7)
+        self.assertFalse(V.verify_equivocation(head, dict(head), self.pk.hex())["proven"])
+
+    def test_heads_of_different_sizes_are_left_to_consistency(self):
+        v = V.verify_equivocation(self.sth(5), self.sth(7), self.pk.hex())
+        self.assertFalse(v["proven"])
+        self.assertIn("verify_log_consistency", v["note"])
+
+    def test_heads_of_two_logs_prove_nothing(self):
+        other = V.merkle_tree_head(["x"] * 7).hex()
+        v = V.verify_equivocation(self.sth(7), self.sth(7, log_id="log-2", root=other), self.pk.hex())
+        self.assertFalse(v["proven"])
+
+    def test_a_head_not_signed_by_the_log_key_proves_nothing(self):
+        other = V.merkle_tree_head(["x"] * 7).hex()
+        foreign = self.sth(7, root=other, sign=self.other_sign, pk=self.other_pk)
+        v = V.verify_equivocation(self.sth(7), foreign, self.pk.hex())
+        self.assertFalse(v["proven"])
+        self.assertIn("validly signed by the log key", v["note"])
+
+    # -- verify_sth -----------------------------------------------------------------------
+
+    def test_a_placeholder_or_unknown_head_is_not_authentic(self):
+        head = self.sth(3)
+        for over in ({"algorithm": V._PLACEHOLDER}, {"public_key_hex": None},
+                     {"format": "something-else/1"}, {"signature_hex": "not hex"}):
+            with self.subTest(**{k: str(v) for k, v in over.items()}):
+                self.assertFalse(V.verify_sth(dict(head, **over))["sth_authentic"])
+        self.assertFalse(V.verify_sth("not a head")["sth_authentic"])
+
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class ReceiptInclusionDecisions(unittest.TestCase):
+    """verify_receipt_inclusion over a genuinely signed receipt-log head (P8.2c).
+
+    A receipt is in the log when its hash is the proof's entry, the RFC 6962 path rebuilds
+    the head, and the head is an authentic head of THE receipt log. The genuine case first;
+    every refusal changes one thing.
+    """
+
+    # The fields the canonical statement signs; a receipt is its statement, so fixtures that
+    # differed only in other fields would all be one entry.
+    RECEIPTS = [{"format": "polaris-exchange-receipt/1", "requester": "agency-a", "responder": "agency-b",
+                 "context_id": 1, "request_hash": "%064x" % i, "response_hash": "%064x" % (100 + i),
+                 "authorized_via": "trust-edge", "occurred_at": "2026-09-30T00:00:%02dZ" % i,
+                 "algorithm": "ML-DSA-65"} for i in range(7)]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sign, cls.pk = _mldsa_signer()
+        cls.other_sign, cls.other_pk = _mldsa_signer()
+        cls.hashes = [V.receipt_hash(r) for r in cls.RECEIPTS]
+        assert len(set(cls.hashes)) == len(cls.RECEIPTS), "control: each receipt is its own entry"
+        cls.root = V.merkle_tree_head(cls.hashes).hex()
+
+    def head(self, *, sign=None, pk=None, **over):
+        h = {"format": V._STH_FORMAT, "log_id": V._RECEIPT_LOG_ID, "tree_size": len(self.hashes),
+             "root_hash_hex": self.root, "timestamp": "2026-09-30T00:01:00Z", "algorithm": V._ALG}
+        h.update(over)
+        h["public_key_hex"] = (pk or self.pk).hex()
+        h["signature_hex"] = (sign or self.sign)(
+            __import__("hashlib").sha3_256(V._sth_canonical(h)).digest()).hex()
+        return h
+
+    def proof(self, idx=3, **over):
+        p = {"entry_hex": self.hashes[idx], "index": idx, "tree_size": len(self.hashes),
+             "root_hash_hex": self.root, "proof_hex": [x.hex() for x in V.inclusion_proof(idx, self.hashes)]}
+        p.update(over)
+        return p
+
+    def test_a_logged_receipt_is_included(self):
+        for idx in range(len(self.RECEIPTS)):
+            with self.subTest(index=idx):
+                v = V.verify_receipt_inclusion(self.RECEIPTS[idx], self.proof(idx), self.head(),
+                                               log_key=self.pk.hex())
+                self.assertTrue(v["included"], v["note"])
+                self.assertTrue(v["log_matches"])
+
+    def test_a_proof_for_another_receipt_is_refused(self):
+        v = V.verify_receipt_inclusion(self.RECEIPTS[2], self.proof(3), self.head())
+        self.assertFalse(v["included"])
+        self.assertIn("not for this receipt", v["note"])
+
+    def test_a_head_of_another_log_is_refused(self):
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3), self.head(log_id="another-log"))
+        self.assertFalse(v["included"])
+        self.assertIn(V._RECEIPT_LOG_ID, v["note"])
+
+    def test_a_malformed_proof_is_refused_not_raised(self):
+        for over in ({"index": float("inf")}, {"index": "three"}, {"proof_hex": ["zz"]}):
+            with self.subTest(**{k: str(v) for k, v in over.items()}):
+                v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, **over), self.head())
+                self.assertFalse(v["included"])
+                self.assertEqual(v["note"], "malformed proof")
+
+    def test_a_proof_and_head_of_different_trees_are_refused(self):
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, tree_size=6), self.head())
+        self.assertFalse(v["included"])
+        self.assertIn("different trees", v["note"])
+
+    def test_an_inauthentic_head_is_refused(self):
+        altered = dict(self.head(), timestamp="2026-10-01T00:00:00Z")
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3), altered)
+        self.assertFalse(v["included"])
+        self.assertFalse(v["sth_authentic"])
+
+    def test_a_head_from_another_key_is_refused_when_a_key_is_expected(self):
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3),
+                                       self.head(sign=self.other_sign, pk=self.other_pk),
+                                       log_key=self.pk.hex())
+        self.assertFalse(v["included"])
+        self.assertIn("expected log key", v["note"])
+
+    def test_a_path_that_does_not_rebuild_the_head_is_refused(self):
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, index=4), self.head())
+        self.assertFalse(v["included"])
+        self.assertIn("does not reconstruct", v["note"])
+
+    def test_anything_but_three_objects_is_refused(self):
+        v = V.verify_receipt_inclusion("receipt", self.proof(3), self.head())
+        self.assertFalse(v["included"])
+        self.assertIn("must be objects", v["note"])
+
+
 if __name__ == "__main__":
     unittest.main()
 
