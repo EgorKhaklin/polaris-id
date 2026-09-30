@@ -631,7 +631,7 @@ def verify(
     try:
         public_key = unhex(public_key_hex)
         signature = unhex(signature_hex)
-    except ValueError:
+    except (ValueError, TypeError):  # not hex text, or not text at all: not a valid signature
         return False
 
     alg = algorithm or custody.algorithm_for_public_key(public_key)
@@ -661,7 +661,7 @@ def _verify_second_witness(message: bytes, signature_hex: str, public_key_hex: s
     try:
         pk_bytes = unhex(public_key_hex)
         sig_bytes = unhex(signature_hex)
-    except ValueError:
+    except (ValueError, TypeError):
         return False
     try:
         alg = algorithm or custody.algorithm_for_public_key(pk_bytes)
@@ -752,7 +752,11 @@ def trust_anchor_public_keys() -> list:
                 doc = json.load(fh)
             for entry in doc.get("anchors", []):
                 pk = entry["public_key_hex"]
-                unhex(pk)
+                # A key of no accepted parameter set's length verifies nothing, so loading it
+                # would shrink trust silently: refused like any other malformed anchor.
+                if custody.algorithm_for_public_key(unhex(pk)) is None:
+                    raise ValueError("an anchor is not a public key of an accepted parameter set "
+                                     "(%s)" % ", ".join(ACCEPTED_ALGORITHMS))
                 if pk not in anchors:
                     anchors.append(pk)
         except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:

@@ -152,6 +152,8 @@ polaris_web/secrets.sealed.prev/
 # not .out, so a `git add -A` after a drill swept five PNGs into v9.440 and
 # check_system_map failed on the untracked top-level path.
 ui-drill-out/
+# lab/strategy/006/try.sh: its logs, the operator password, the pack and a venv
+lab/strategy/006/out/
 
 # TLC writes its fingerprint and state-queue files beside the spec it is checking.
 # They reach a gigabyte on a large run and have no business in the tree; the drill

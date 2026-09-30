@@ -250,6 +250,12 @@ auditor   Auditor@123!    read-only, warrant audits, duress dashboard
 The laptop stack signs with a named development placeholder, not ML-DSA-65, so `polaris-verify`
 reports what it issues as not authenticatable. Real signing is the production image (liboqs).
 
+**Real signing, on your machine:** `bash lab/strategy/006/try.sh` builds the production images,
+generates an ML-DSA-65 key on your machine, and runs the production stack on
+`https://localhost:8443` beside anything else running. It then issues one credential and verifies
+it with `polaris-verify` from PyPI against that key. It needs Docker and Python 3.9 or later, and
+takes about seven minutes, most of them the image build. `--down` removes the stack.
+
 **Single host:**
 
 ```bash

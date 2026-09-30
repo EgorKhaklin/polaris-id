@@ -1,0 +1,5 @@
+# The fuzz job's dependencies. requirements.txt is compiled from this with hashes:
+#   pip-compile --generate-hashes --allow-unsafe --strip-extras requirements.in
+# and installed with pip install --require-hashes -r requirements.txt.
+atheris==3.1.0
+cryptography>=42

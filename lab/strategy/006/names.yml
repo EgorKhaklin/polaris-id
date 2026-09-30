@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
+#
+# lab/strategy/006/names.yml: layered over the production compose by try.sh. The production
+# compose fixes container names, and polaris-app is also the laptop stack's (./Polaris.command),
+# so a second stack on the same machine resets them to its own project's names. Nothing else in
+# the production stack changes; the TLS edge is docker-compose.citest.yml's, as in CI.
+services:
+  caddy:
+    container_name: !reset null
+  app:
+    container_name: !reset null
+  pgbouncer:
+    container_name: !reset null
+  postgres:
+    container_name: !reset null
+  redis:
+    container_name: !reset null
