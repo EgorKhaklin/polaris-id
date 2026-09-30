@@ -58,6 +58,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-relying-party.py` rejects, instead of crashing, when the issuer refuses its OAuth client.
 - `polaris-relying-party.py` exits 3, instead of crashing, on a presentation that is not an object or an anchor it cannot read.
 - The exchange gateway answers 502, not a non-JSON reply, when its upstream answers NaN, Infinity or 1e400.
+- The Athena routes answer 400, not 500, to an id outside INTEGER's range; the agency facet, to a negative `limit`.
 - The trust-anchors loader refuses a key of no accepted length; signature checks refuse, not raise, on a non-string.
 - `polaris-create-operator.sh --target=docker-stack` hashes the password in the app container; the host needs no werkzeug.
 - The SBOM workflow attaches the SBOMs to a draft release, then publishes it; an immutable release refuses them afterwards.
