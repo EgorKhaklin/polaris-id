@@ -36,6 +36,7 @@ Verifier. The run below used exactly those two releases, and then the wallet's c
     EUDI_IMAGE=ghcr.io/dominikschlosser/eudi-dev:v2.4.3 lab/interop/eudi-dev/run.sh
     POLARIS_OID4VP=polaris-oid4vp==1.0.0rc7 lab/interop/eudi-dev/run.sh    # the run above, exactly
     EUDI_NATIVE=1 lab/interop/eudi-dev/run.sh                              # no Docker
+    EUDI_ISSUER=1 lab/interop/eudi-dev/run.sh                              # eudi-dev's own issuer
 
 One command, about a minute once the image is local. It installs the verifier from PyPI into a
 fresh venv in a scratch directory (`WORK`, default a new temporary one), the newest release as
@@ -91,11 +92,15 @@ EUDI issuers put on their signing certificates. The verifier trusted only that C
 | | `polaris-oid4vp` | Result |
 |---|---|---|
 | The genuine presentation | 1.0.0rc10 from PyPI | refused: `issuer_key`, because the document signer was not among the usages it took from an issuer certificate |
-| The same | this repository at c8014978 (1.0.0rc11) | accepted: `<- 200 authentic, claims ['cnf', 'exp', 'family_name', 'given_name', 'iat', 'iss', 'status', 'vct']` |
-| Control: the answered request again | c8014978 | refused at the request: `request_uri returned HTTP 404` |
-| Control: the verifier trusts an unrelated CA | c8014978 | refused: `issuer_key` |
+| The same | this repository at c8014978, then 1.0.0rc11 from PyPI | accepted: `<- 200 authentic, claims ['cnf', 'exp', 'family_name', 'given_name', 'iat', 'iss', 'status', 'vct']` |
+| Control: the answered request again | c8014978, 1.0.0rc11 | refused at the request: `request_uri returned HTTP 404` |
+| Control: the verifier trusts an unrelated CA | c8014978, 1.0.0rc11 | refused: `issuer_key` |
+| Control: a launch URI whose `client_id` is not the signed request's | 1.0.0rc11 | refused by the wallet |
 
 Walked by hand on macOS (arm64), with eudi-dev v2.3.7's own binary and the system Python 3.9.6.
+`EUDI_ISSUER=1 run.sh` does the same with the three controls above, in Docker or without it
+(accepted, all three refused, both ways, against 1.0.0rc11 from PyPI on 2026-09-30), and
+[`wallet-canary.yml`](../../../.github/workflows/wallet-canary.yml) runs it weekly.
 It is the first row here in which neither the wallet nor the credential's issuer is this
 repository's: the verifier is the only Polaris software in the exchange. The credential's status
 reference points at eudi-dev's own status list, which nothing here fetched, so revocation reads

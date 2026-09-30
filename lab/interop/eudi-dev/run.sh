@@ -10,6 +10,7 @@
 #   lab/interop/eudi-dev/run.sh                       # eudi-dev v2.3.7, newest polaris-oid4vp
 #   EUDI_IMAGE=ghcr.io/dominikschlosser/eudi-dev:v2.4.3 lab/interop/eudi-dev/run.sh
 #   EUDI_NATIVE=1 lab/interop/eudi-dev/run.sh         # the wallet's own binary, no Docker
+#   EUDI_ISSUER=1 lab/interop/eudi-dev/run.sh         # eudi-dev's own issuer signs the credential
 #
 # With Docker running, the wallet runs from its image. Without it (or with EUDI_NATIVE=1), the
 # wallet's release binary for this machine (macOS or Linux, x86-64 or arm64) is downloaded and
@@ -119,14 +120,31 @@ wallet() {
     EUDI_DEV_STORAGE=file ./eudi wallet "$@" --wallet-dir "$WORK/home/wallet"
   fi
 }
+eudi() {  # a top-level eudi-dev command (issue), on the same wallet
+  if [ "$MODE" = docker ]; then
+    docker run --rm -v "$WORK/home:/home/app/.eudi-dev" -e EUDI_DEV_STORAGE=file "$IMAGE" "$@"
+  else
+    EUDI_DEV_STORAGE=file ./eudi "$@" --wallet-dir "$WORK/home/wallet"
+  fi
+}
 in_wallet_view() {  # a file of the work dir, as the wallet sees it
   if [ "$MODE" = docker ]; then echo "/in/$1"; else echo "$WORK/$1"; fi
 }
 
+wallet info >/dev/null
+if [ "${EUDI_ISSUER:-}" = 1 ]; then
+  # EUDI_ISSUER=1: the credential comes from eudi-dev's OWN issuer, a full EUDI PID signed with
+  # its PID Provider certificate in x5c (ISO 18013-5's document signer as its key usage), bound
+  # to the wallet's own key. Nothing of this repository's signs it: the verifier trusts only the
+  # CA the wallet exports, and control (a) trusts an unrelated CA (keygen's own) instead.
+  eudi issue sdjwt --wallet --pid >/dev/null
+  wallet ca-cert > issuer-ca.pem
+  TRUST=--issuer-trust-anchor TRUSTED=issuer-ca.pem OTHER=pki/anchor.pem REFUSAL_A=issuer_key
+  echo "credential eudi-dev's own issuer (PID Provider, x5c)"
+else
 # The wallet makes its own holder key on first use. In Docker it is read through the container,
 # as the user that owns it: on Linux the file belongs to the image's user, mode 0600, and this
 # shell cannot open it. Only the public half is kept; the copy is removed as soon as it is read.
-wallet info >/dev/null
 if [ "$MODE" = docker ]; then
   docker run --rm -v "$WORK/home:/home/app/.eudi-dev" --entrypoint cat "$IMAGE" \
     /home/app/.eudi-dev/wallet/holder.pem > holder.pem
@@ -160,6 +178,8 @@ json.dump([{"kty": "EC", "crv": "P-256", "x": b(n.x), "y": b(n.y),
             "kid": issued["issuer_jwks"][0]["kid"]}], open("issuer-jwks-other.json", "w"))
 EOF
 wallet import "$(in_wallet_view credential.txt)" | tail -1
+TRUST=--issuer-jwks TRUSTED=issuer-jwks.json OTHER=issuer-jwks-other.json REFUSAL_A=issuer_signature
+fi
 
 VERIFIER_PID=""
 stop_verifier() {  # `wait` returns the killed server's 143, which set -e would take as ours
@@ -171,9 +191,9 @@ stop_verifier() {  # `wait` returns the killed server's 143, which set -e would 
 }
 trap stop_verifier EXIT
 
-start_verifier() {  # $1 issuer JWKS, $2 log file
+start_verifier() {  # $1 what the verifier trusts (a JWKS or a CA, per $TRUST), $2 log file
   PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host "$VHOST" \
-    --bind "$BIND" --port "$PORT" --issuer-jwks "$1" --once > "$2" 2>&1 &
+    --bind "$BIND" --port "$PORT" "$TRUST" "$1" --once > "$2" 2>&1 &
   VERIFIER_PID=$!
   for _ in $(seq 1 40); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
   echo "verifier did not start; see $WORK/$2" >&2
@@ -201,7 +221,7 @@ expect() {  # $1 label, $2 file, $3 pattern that must appear
 }
 
 echo "== genuine presentation"
-start_verifier issuer-jwks.json verifier.log
+start_verifier "$TRUSTED" verifier.log
 URI=$(launch_uri verifier.log)
 present "$URI" wallet.log
 expect "the wallet submitted and was answered 200" wallet.log 'Response: 200'
@@ -214,14 +234,18 @@ expect "refused at the request stage" wallet-replay.log 'request_uri returned HT
 stop_verifier
 
 echo "== control (c): a launch URI whose client_id is not the signed request's"
-start_verifier issuer-jwks-other.json verifier-other.log
+start_verifier "$OTHER" verifier-other.log
 present "$(launch_uri verifier-other.log x509_hash:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA)" wallet-c.log
 expect "the wallet refused the request" wallet-c.log 'does not match outer client_id'
 
-echo "== control (a): the verifier trusts a different issuer key under the same kid"
+if [ "$TRUST" = --issuer-jwks ]; then
+  echo "== control (a): the verifier trusts a different issuer key under the same kid"
+else
+  echo "== control (a): the verifier trusts an unrelated CA"
+fi
 present "$(launch_uri verifier-other.log)" wallet-a.log
 expect "the wallet was told only that it was not accepted" wallet-a.log 'Response: 400'
-expect "the verifier refused the issuer signature" verifier-other.log '<- 400 refused: issuer_signature'
+expect "the verifier refused the issuer" verifier-other.log "<- 400 refused: $REFUSAL_A"
 stop_verifier
 
 [ "$fail" -eq 0 ] && echo "RESULT: accepted, and all three controls refused" || echo "RESULT: FAILED"
