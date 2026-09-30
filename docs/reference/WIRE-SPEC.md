@@ -6,7 +6,7 @@ decision, so that an independent implementation, importing no Polaris code, can
 produce and verify them and be certified by the conformance suite. It is the
 keystone of the P8 exchange fabric (see [ROADMAP.md](../../ROADMAP.md), P8.1).
 
-Where this document and the reference implementation disagree, that is a defect in
+Where this document and the implementation in this repository disagree, that is a defect in
 one of them; `check_wire_spec_matches_code` fails CI when a format string or a
 signed-field list here diverges from the signer in `polaris_web/app.py` and the
 detached verifier in `scripts/polaris-verify.py`.

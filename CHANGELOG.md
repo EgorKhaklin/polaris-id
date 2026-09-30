@@ -1,6 +1,6 @@
 # Changelog
 
-Externally observable changes to Polaris, a reference implementation on notional data.
+Externally observable changes to Polaris, pre-pilot software on notional data.
 Entries before v9.453 are in [docs/history/CHANGELOG-v9.md](docs/history/CHANGELOG-v9.md).
 The full reasoning for each change, with its tests and measurements, is in its commit message.
 Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security, Fixed, Added, Changed.
@@ -40,6 +40,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- Polaris describes itself as pre-pilot, not a reference implementation, in MISSION.md and on every outward surface (owner's direction).
+- CONTRIBUTING.md says how pull requests are handled and credited and names all six required checks; the PR template no longer asks for a version bump.
 - Published: `polaris-verify` and `polaris-sdk-python` 1.0.0rc4 and `polaris-oid4vp` 1.0.0rc8 (not certified; 1.0.0rc7 is) on PyPI, `polaris-sdk-ts` 1.0.0-rc.4, then 1.0.0-rc.5 with the TypeScript format fix, on npm under `next`.
 
 ## v1.0.0-rc.66 — 2026-09-28 (a Polaris credential in a wallet Polaris did not write)

@@ -4,7 +4,7 @@
 "verified" light actually means. **Job:** what a device reads, what it decides, and what it
 learns about the holder while doing it.
 
-The reference implementation is
+The implementation is
 [`polaris_card/verifier_device.py`](../../polaris_card/verifier_device.py), and
 [`scripts/polaris-verifier-device-drill.py`](../../scripts/polaris-verifier-device-drill.py)
 runs it through the accept/reject matrix under real signatures on every push.

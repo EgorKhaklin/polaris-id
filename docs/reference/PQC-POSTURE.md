@@ -29,7 +29,7 @@ The reference standards are NIST FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), and FIPS
 205 (SLH-DSA), all final as of 2024-08-13, and the NIST IR 8547 transition draft
 (deprecate classical public-key after 2030, disallow after 2035). CNSA 2.0 is NSA
 policy for National Security Systems and is reference context only; Polaris is a
-civilian reference implementation.
+civilian, pre-pilot system.
 
 ## What is post-quantum today
 

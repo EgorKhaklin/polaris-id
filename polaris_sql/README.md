@@ -188,7 +188,7 @@ sync with the view.
 
 ## Deployment notes
 
-Polaris is a reference implementation on notional data and is not
+Polaris is pre-pilot software on notional data and is not
 production-ready. For a hardened deployment:
 
 1. Keep the grants in `09_grants.sql`: the application role cannot write the tables only a procedure or the owner may write, and a trigger limits its UPDATE of `IdentityToken` to status.

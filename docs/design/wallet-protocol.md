@@ -14,7 +14,7 @@ agent -- it holds a credential, presents it, proves membership in zero knowledge
 document on the holder's behalf (P8.5) and logs in to a relying party (P8.4) -- and every
 message it emits is specified so that any client can emit the same. Native mobile and
 desktop clients, card and NFC middleware, and a WebAuthn browser bridge are product
-engineering a reference implementation does not attempt; they follow this protocol when
+engineering this pre-pilot system does not attempt; they follow this protocol when
 someone builds them, and never lead it.
 
 ## The presentation
@@ -51,7 +51,7 @@ needs a key.
   document signing is notarial (P8.5) and login is by possession (P8.4). A holder-key binding
   is a future credential extension, not a wallet feature; the bridge waits on it.
 - **Native clients and card middleware.** Product engineering, not a research problem, and
-  not what a reference implementation on notional data should carry. The protocol above is
+  not what a pre-pilot system on notional data should carry. The protocol above is
   what they would implement.
 
 ## What runs

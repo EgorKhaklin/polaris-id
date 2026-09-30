@@ -96,7 +96,7 @@ RUN if [ "$POLARIS_CUSTODY_EXTRAS" = "1" ]; then pip install --no-cache-dir -r /
 FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS runtime
 
 LABEL org.opencontainers.image.title="Polaris (production)"
-LABEL org.opencontainers.image.description="National identity token reference implementation"
+LABEL org.opencontainers.image.description="Polaris identity-token system (pre-pilot, notional data)"
 LABEL org.opencontainers.image.source="https://github.com/EgorKhaklin/polaris-id"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 

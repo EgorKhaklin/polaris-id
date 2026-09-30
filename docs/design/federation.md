@@ -77,7 +77,7 @@ cryptographic signature from the attesting agency.
 That is an honest limit rather than an oversight. Operator accounts have no
 link to an agency and no cryptographic standing on an agency's behalf. The
 model assumes Polaris is run by an authority with the standing to record
-attestations, which is true of a reference implementation and would not be
+attestations, which is true of this pre-pilot system and would not be
 enough for a production federation.
 
 The upgrade is a migration that adds a nullable signature and its algorithm,

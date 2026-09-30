@@ -249,7 +249,7 @@ Responsive breakpoints: masthead at 720px, Atlas single column at 980px.
 
 ## Deployment checklist
 
-This is a reference implementation on notional data and is not
+Polaris is pre-pilot software on notional data and is not
 production-ready. For a hardened deployment:
 
 1. Set a real `POLARIS_SECRET_KEY` (32 bytes hex)

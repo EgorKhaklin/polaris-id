@@ -1442,7 +1442,7 @@ triad. Implements PDF §9.4.
 | `csrf_token` | string | yes | |
 
 The signature bytes are inserted as a deterministic placeholder
-(reference implementation). Production deployments would derive
+(the development signing path). Production deployments would derive
 `signature_bytes` from a hardware-attested signing ceremony.
 
 Errors:

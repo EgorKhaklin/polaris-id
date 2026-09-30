@@ -42,8 +42,8 @@ refused on that ground.
 
 ## Why Polaris exists
 
-Polaris is a reference implementation of a national identity token
-system: what a sovereign-grade identity layer looks like when it is
+Polaris is a pre-pilot identity-token system: what a sovereign-grade
+identity layer looks like when it is
 designed from first principles in 2026, knowing what is now known about
 post-quantum cryptography, zero-knowledge proofs, append-only audit, and
 the failure modes of every CBDC pilot.
