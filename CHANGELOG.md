@@ -15,6 +15,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A wallet-copy offer is recorded under the operator's account before it is returned; nothing recorded who made one.
 - `polaris-oid4vp serve` refuses TLS below 1.2; on Python 3.9 builds that default lower, 1.0.0rc9 accepted TLS 1.0 and 1.1.
 - The Python SDK refuses an `issuer_url` whose scheme is not `https` or `http` before `urlopen`. (thanks @DYNOSuprovo)
+- The `pypi` and `npm` environments deploy only from `main`, and a published release's tag and assets cannot be changed.
 
 ### Fixed
 
@@ -53,6 +54,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `vectors/anchors/ml-dsa-65-issuer.json`, the sample issuer's key, to try `polaris-verify` from PyPI without a clone.
 - `TRADEMARKS.md`: the license covers the files, not the Polaris, owl, Khaklin Technologies or OpenID Certified marks.
 - Discussions forms for questions, needs and interop results; `.github/SUPPORT.md` says where each kind of message goes.
+- Code scanning: CodeQL (security-extended) over the Python, TypeScript, Rust and workflows, zizmor over the workflows, and OpenSSF Scorecard.
 
 ### Changed
 

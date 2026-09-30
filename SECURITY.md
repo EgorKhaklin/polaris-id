@@ -131,11 +131,36 @@ Thresholds. Dependency findings (SCA): a known vulnerability in a runtime depend
 critical in an image, fails the build and is fixed before anything merges; a high finding in an
 image is reviewed before each release and fixed once a fixed version exists. A dependency whose
 license does not allow its use in an Apache-2.0 project is not added (NOTICE lists every license). Code findings (SAST): bandit fails the build on a high-severity
-finding; medium findings are reviewed before each release. Every change is also scanned by OSV-Scanner for malicious packages (the OpenSSF Malicious Packages
+finding; medium findings are reviewed before each release. CodeQL and zizmor report every push and
+pull request to the Security tab, and a high or critical alert is fixed, or dismissed with its
+reason written on the alert, before the next release. Every change is also scanned by OSV-Scanner for malicious packages (the OpenSSF Malicious Packages
 data) and known vulnerabilities, in the Python sets the images install and in the npm and Rust
 lockfiles; any finding blocks the merge unless it is declared, with its reason, in
 `osv-scanner.toml`. No release is cut while any of these jobs fails. A finding that does not affect Polaris is declared, with the reason, in
 [vex.openvex.json](vex.openvex.json) and, for the image scan, in `.trivyignore`.
+
+---
+
+## Repository controls
+
+These are settings rather than files, so they are listed here; each can be read back through
+the API (`gh api repos/EgorKhaklin/polaris-id/rulesets`, `.../environments`,
+`.../immutable-releases`):
+
+- `main` takes changes only through pull requests: merge commits only, the six required checks
+  [CONTRIBUTING.md](CONTRIBUTING.md) names, review conversations resolved, no force push, no
+  deletion, and no bypass for anyone, the owner included.
+- Version tags (`v*`) cannot be moved or deleted, and a published release's tag and assets
+  cannot be changed.
+- The `pypi` and `npm` environments deploy only from `main`, so only reviewed, merged workflow
+  code can publish; an npm publish also waits for a maintainer's second factor.
+- Secret scanning with push protection, private vulnerability reporting, and Dependabot alerts,
+  malware alerts and security updates are on. Workflow tokens default to read-only, and a
+  first-time contributor's workflow run waits for approval.
+- Code scanning ([code-scanning.yml](.github/workflows/code-scanning.yml)): CodeQL with the
+  security-extended queries over the Python, the TypeScript SDK, the Rust prover and the
+  workflows, and zizmor over the workflows. OpenSSF Scorecard
+  ([scorecard.yml](.github/workflows/scorecard.yml)) publishes its results.
 
 ---
 

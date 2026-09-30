@@ -1,0 +1,16 @@
+# CodeQL configuration for .github/workflows/code-scanning.yml.
+#
+# security-extended: the wider security query set. Quality-only queries are left
+# to ruff and to the invariant checks, which already hold the tree to its rules.
+name: Polaris CodeQL
+queries:
+  - uses: security-extended
+
+# Each ignored path says why an alert there could not be acted on.
+paths-ignore:
+  # The frozen version-1 protocol and its pinned verifier are never edited
+  # (conformance/frozen/v1/FREEZE.md, pinned by SHA256SUMS); an alert in them
+  # could only be dismissed.
+  - conformance/frozen
+  # Lab code falsifies claims against test services and is not shipped.
+  - lab
