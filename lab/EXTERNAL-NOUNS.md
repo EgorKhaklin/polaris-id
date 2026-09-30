@@ -76,8 +76,8 @@ The fee was waived on 2026-09-23 under the Foundation's open-source policy.
 
 It is a self-certification the Foundation reviewed and published, not an endorsement and not an
 independent verification (Certification Terms 3(e)). It covers that version in the verifier role
-on that profile. It does not cover the rest of Polaris, other versions (1.0.0rc8 is not
-certified), the wallet role, other formats, or anything the suite does not test.
+on that profile. It does not cover the rest of Polaris, other versions (1.0.0rc8 and 1.0.0rc9 are
+not certified), the wallet role, other formats, or anything the suite does not test.
 
 Earlier runs, same plan: a hosted run of 0.1.0 on 2026-09-15 finished 11 of 11 with zero FAILURE
 or WARNING (7 negative modules PASSED automatically, 4 positive in human REVIEW), after a first
@@ -104,7 +104,7 @@ become installable only when a maintainer approves them with a second factor.
 | Package | First | Release candidate | Current |
 |---|---|---|---|
 | `polaris-verify` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc4, 2026-09-28 |
-| `polaris-oid4vp` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc8, 2026-09-28 (1.0.0rc7 is the certified one) |
+| `polaris-oid4vp` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc9, 2026-09-30 (1.0.0rc7 is the certified one) |
 | `polaris-sdk-python` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc4, 2026-09-28 |
 | `polaris-sdk-ts` (npm) | 0.1.0, 2026-09-15 | 1.0.0-rc.1, 2026-09-16, under `next` | 1.0.0-rc.5, 2026-09-28, under `next` |
 
