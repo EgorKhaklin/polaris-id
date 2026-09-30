@@ -42,7 +42,8 @@ Before merging, the maintainer also runs what needs a database or a long drill, 
 does not need Postgres or Redis on your machine:
 
 - `python3 scripts/polaris-ship.py run`: the sharded database suites and every unsharded suite CI
-  runs. (`./scripts/polaris-test.sh` covers only four suites; use it for an inner loop.)
+  runs, one run per database server at a time. (`./scripts/polaris-test.sh` covers only four
+  suites; use it for an inner loop.)
 - `./scripts/polaris-preflight.sh` reports READY, with `ruff` installed (CI lints first).
 - The drills the change needs: `python3 scripts/polaris-ship.py drills --run`.
 - A change to a signed artifact keeps the frozen version-1 set passing (`scripts/polaris-compat-suite.py`).

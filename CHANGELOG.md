@@ -30,6 +30,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The Python SDK and `polaris-verify` refuse hex with whitespace between bytes, which `bytes.fromhex` skipped.
 - `/api/v1/verify`, the possession routes and the exchange gateway read hex that way too; whitespace is refused.
 - The exchange gateway answers 502, not 500, when its upstream returns JSON nested past the parser.
+- A second `polaris-ship.py run` on the same database server is refused; two runs dropped each other's databases.
 - `polaris-verify --verify-dir` reports a vector that is not a JSON object instead of raising.
 - `polaris-verify` no longer calls missing revocation evidence a revocation in its long-term-validation note.
 - NOTICE names psycopg 3 and certifi, which are not permissive, and drops files the tree no longer ships.
