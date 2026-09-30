@@ -101,7 +101,8 @@ GRANT SELECT ON IndividualCurrentEnrollment TO polaris_rp;
 GRANT SELECT ON EnrollmentStatusEvent TO polaris_rp;
 GRANT SELECT (individual_id, legal_name, jurisdiction, enrollment_date) ON Individual TO polaris_rp;
 
--- POST /api/v1/mdoc and /api/v1/verifiable-credential: the credential's first context type.
+-- POST /api/v1/mdoc and /api/v1/verifiable-credential: the credential's first context type;
+-- POST /api/v1/auth/authorize: whether it is permitted in the context the ID token names.
 GRANT SELECT ON VerificationContext, TokenPermission TO polaris_rp;
 
 -- POST /api/v1/verify (_issuer_key_facts), GET /api/v1/federation-manifest/<id> and
