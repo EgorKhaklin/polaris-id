@@ -21,8 +21,9 @@ on:
     - cron: "17 5 1 * *"      # 05:17 UTC on the 1st
   workflow_dispatch:
 
+# Read-only by default; the one job that pushes its ledger row asks for write itself.
 permissions:
-  contents: write             # commit the ledger row
+  contents: read
 
 concurrency:
   group: dr-drill
@@ -32,6 +33,8 @@ jobs:
   drill:
     name: Kill the primary, restore from the archive, measure RPO + RTO, commit the row
     runs-on: ubuntu-latest
+    permissions:
+      contents: write         # commit the ledger row
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7  # zizmor: ignore[artipacked] -- this job pushes its ledger row with the checkout's token

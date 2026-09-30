@@ -104,10 +104,19 @@ lead to an insecure deployment.
 ## Verifying a release
 
 Every release carries SPDX SBOMs (the Python surface and the five images) with signed, keyless
-SLSA build provenance (Sigstore via GitHub OIDC):
+SLSA build provenance (Sigstore via GitHub OIDC), attached before the release is published, so
+the immutable release holds them:
 
 ```bash
 gh attestation verify sbom-python.spdx.json --repo EgorKhaklin/polaris-id
+```
+
+The provenance bundle is attached beside the SBOMs, so the same check also runs without
+GitHub's attestation store:
+
+```bash
+gh attestation verify sbom-python.spdx.json --repo EgorKhaklin/polaris-id \
+  --bundle sbom-provenance.intoto.jsonl --signer-workflow EgorKhaklin/polaris-id/.github/workflows/sbom.yml
 ```
 
 The attestation names the repository and the workflow run that built the artifact, so a passing

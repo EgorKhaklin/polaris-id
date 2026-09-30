@@ -7,7 +7,9 @@
 #
 # Usage:
 #   scripts/polaris-release-notes.sh 9.205            # prints the body to stdout
-#   scripts/polaris-release-notes.sh 9.205 > notes.md && gh release create v9.205 --notes-file notes.md
+#   scripts/polaris-release-notes.sh 9.205 > notes.md
+#   git push origin v9.205 && gh release create v9.205 --draft --verify-tag --notes-file notes.md
+#   gh workflow run sbom.yml -f tag=v9.205    # attaches the SBOMs and publishes the draft
 #
 # The summary and the item list come from the CHANGELOG block, the list with its
 # group headings and folded in <details>; relative links are rewritten to the file
@@ -68,9 +70,11 @@ print("Pull the tag, rebuild the images, and run `scripts/polaris-deploy.sh prod
       + "\n")
 print("### Verify this release\n")
 print("Every release carries SPDX SBOMs with signed SLSA build provenance "
-      "(`sbom-python.spdx.json` and `sbom-image-{app,caddy,pgbouncer,postgres}.spdx.json`, "
-      "attached by the sbom workflow after publication):\n")
-print("```bash\ngh attestation verify sbom-python.spdx.json --repo " + repo + "\n```\n")
+      "(`sbom-python.spdx.json` and `sbom-image-{app,caddy,pgbouncer,postgres,etcd}.spdx.json`, "
+      "attached before publication with their provenance bundle, `sbom-provenance.intoto.jsonl`):\n")
+print("```bash\ngh attestation verify sbom-python.spdx.json --repo " + repo + "\n"
+      "gh attestation verify sbom-python.spdx.json --repo " + repo
+      + " --bundle sbom-provenance.intoto.jsonl\n```\n")
 print("### Details\n")
 if details:
     print("<details><summary>Every change in this release</summary>\n")

@@ -13,8 +13,9 @@ on:
     - cron: "47 5 * * 1"
   workflow_dispatch:
 
+# Read-only by default; the one job that pushes its ledger row asks for write itself.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: chaos-drill
@@ -25,6 +26,8 @@ jobs:
     name: Induced failures against the booted stack
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    permissions:
+      contents: write         # push the ledger row to its drill-ledger branch
     env:
       # Every compose invocation needs the domain, the teardown included.
       POLARIS_DOMAIN: localhost
