@@ -35,6 +35,7 @@ Verifier. The run below used exactly those two releases, and then the wallet's c
     lab/interop/eudi-dev/run.sh                                            # v2.3.7
     EUDI_IMAGE=ghcr.io/dominikschlosser/eudi-dev:v2.4.3 lab/interop/eudi-dev/run.sh
     POLARIS_OID4VP=polaris-oid4vp==1.0.0rc7 lab/interop/eudi-dev/run.sh    # the run above, exactly
+    EUDI_NATIVE=1 lab/interop/eudi-dev/run.sh                              # no Docker
 
 One command, about a minute once the image is local. It installs the verifier from PyPI into a
 fresh venv in a scratch directory (`WORK`, default a new temporary one), the newest release as
@@ -46,8 +47,22 @@ VC bound to it with [`../waltid/issue_sdjwt_vc.py`](../waltid/issue_sdjwt_vc.py)
 and runs the presentation and the controls. It exits 0 only if the genuine presentation is
 accepted and every control is refused where it should be. Port 9443 by default (`PORT`).
 
-The wallet trusts the verifier's TLS listener through `SSL_CERT_FILE`, set to the test anchor
-`keygen` wrote. Nothing else is configured on the wallet side.
+**Without Docker.** When Docker is not running, or with `EUDI_NATIVE=1`, the script downloads
+the wallet's own release binary for the machine (macOS or Linux, x86-64 or arm64) and runs it
+instead of the image. The v2.3.7 binaries' SHA-256 are pinned in `run.sh`, so a download is
+checked against this repository, not only against the checksums published beside it; a
+mismatch stops the run before the binary is executed. Walked 2026-09-30 on macOS (arm64) with
+the system Python 3.9.6 and no Docker: accepted, all three controls refused, 15 s from an empty
+directory. [`wallet-canary.yml`](../../../.github/workflows/wallet-canary.yml) runs this mode too.
+
+**Nothing is configured for the verifier's TLS listener, and nothing needs to be.** `keygen`'s
+listener certificate is self-signed; its test anchor signs the request object's certificate,
+not the listener's. Until 2026-09-30 this script set `SSL_CERT_FILE` to that anchor and this page
+said the wallet trusted the listener through it. It did not: eudi-dev v2.3.7 and v2.4.3 present
+with the setting removed, and v2.3.7 as its own binary on macOS presents to `127.0.0.1` with a
+listener certificate that names only `localhost`. The wallet does not validate the verifier's
+TLS certificate. What binds the exchange is the signed request object (`x509_hash`) and the
+response encrypted to its key, which control (c) exercises from the wallet's side.
 
 ## Controls
 
@@ -67,9 +82,12 @@ it with what it was launched with, rather than presenting to whatever it is poin
 
 - **Not observed.** Whether eudi-dev posted a `wallet_nonce` with `request_uri_method=post`
   (neither side's log records it at the default verbosity). It chose A128GCM (its debug line
-  prints a 16-byte content key), so A256GCM was not reached. Whether it validates the request
-  object's certificate chain against the anchor it was given as a TLS root, or checks only the
-  `x509_hash` binding, was not isolated.
+  prints a 16-byte content key), so A256GCM was not reached.
+- **Observed 2026-09-30, the wallet's trust.** Given no trust anchor at all, eudi-dev still
+  accepts a request object whose certificate chains only to `keygen`'s test CA, so it does not
+  require that chain to reach anything it trusts: the `x509_hash` binding is what it checks. It
+  does not validate the verifier's TLS certificate either (above). Both are the wallet's own
+  behaviour, recorded here and not absorbed.
 - One credential format, one path, ES256/P-256 throughout, the credential minted by this
   repository's issuer script and trusted through a JWKS rather than `x5c`.
 - It is the same category of evidence as the walt.id and Credo rows: the author drove a

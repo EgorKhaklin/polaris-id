@@ -12,7 +12,8 @@
 # moved (the registry, a dependency, the verifier). `latest` floats on purpose: if it
 # alone stops working, the wallet moved, and that is worth knowing before a stranger
 # finds it. docs/STRANGER-PATH.md opens with the same script, so this is also the
-# stranger's first minute, run on a machine nobody here set up.
+# stranger's first minute, run on a machine nobody here set up. The third job is that
+# minute without Docker: v2.3.7's own release binary, checked against the SHA-256 run.sh pins.
 #
 # Kept out of the Polaris CI workflow: a change on the wallet's side is news, not a
 # defect in the commit that happened to be pushed that day.
@@ -40,6 +41,10 @@ jobs:
             image: ghcr.io/dominikschlosser/eudi-dev@sha256:2df7ac5c79206a29c66eb8c49acdcc07d0ec76c7d6d260056edccaac9257e081
           - label: latest
             image: ghcr.io/dominikschlosser/eudi-dev:latest
+          # The stranger's first minute on a machine without Docker: v2.3.7's own binary,
+          # checked against the SHA-256 run.sh pins.
+          - label: v2.3.7, its own binary, no Docker
+            native: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -50,5 +55,6 @@ jobs:
       - name: Present, then the three controls
         env:
           EUDI_IMAGE: ${{ matrix.wallet.image }}
+          EUDI_NATIVE: ${{ matrix.wallet.native }}
           WORK: ${{ runner.temp }}/eudi
         run: bash lab/interop/eudi-dev/run.sh

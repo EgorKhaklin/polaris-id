@@ -45,8 +45,8 @@ page for the person holding the phone. walt.id, Credo and eudi-dev never followe
 It installs the verifier from this repository into a fresh venv (`POLARIS_OID4VP` overrides),
 builds the wallet at the pinned version inside the official Go image, writes a test PKI
 ([`setup_pki.py`](setup_pki.py): the issuer CA, the issuer's CA-issued leaf, the holder key, the
-wallet's own TLS pair, and an unrelated CA for control (a)), runs the wallet in a container that
-trusts only the verifier's test TLS anchor, and drives it through its `/authorize` endpoint. It
+wallet's own TLS pair, and an unrelated CA for control (a)), runs the wallet in a container, and
+drives it through its `/authorize` endpoint. It
 exits 0 only if the genuine presentation is accepted and every control is refused. Ports 9443
 and 8443 (`PORT`, `WALLET_PORT`).
 
@@ -66,3 +66,8 @@ and 8443 (`PORT`, `WALLET_PORT`).
   not a published release.
 - The same category of evidence as the other three rows: the author drove a published
   implementation on one machine. It is not an outside party using Polaris.
+- **The wallet's TLS, observed 2026-09-30.** Until then this page said the wallet trusted only
+  the verifier's test TLS anchor, set through `SSL_CERT_FILE`. That file was `keygen`'s CA, which
+  does not sign the listener's certificate (`keygen` makes it self-signed), and with the setting
+  removed, in an alpine container with no CA bundle at all, the run still passes: v0.12.0
+  validates no TLS certificate. The wallet's own behaviour, recorded here and not absorbed.

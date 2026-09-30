@@ -60,6 +60,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The exchange gateway answers 502, not a non-JSON reply, when its upstream answers NaN, Infinity or 1e400.
 - The trust-anchors loader refuses a key of no accepted length; signature checks refuse, not raise, on a non-string.
 - `polaris-create-operator.sh --target=docker-stack` hashes the password in the app container; the host needs no werkzeug.
+- The eudi-dev and OID4VCgo interop records no longer say the wallet trusts the verifier's TLS listener; measured, neither validates it.
 - The SBOM workflow attaches the SBOMs to a draft release, then publishes it; an immutable release refuses them afterwards.
 
 ### Added
@@ -87,6 +88,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Published: `polaris-verify` and `polaris-sdk-python` 1.0.0rc4 and `polaris-oid4vp` 1.0.0rc8 (not certified; 1.0.0rc7 is) on PyPI, `polaris-sdk-ts` 1.0.0-rc.4, then 1.0.0-rc.5 with the TypeScript format fix, on npm under `next`.
 - Published: `polaris-oid4vp` 1.0.0rc9 on PyPI, with the review fixes above (not certified; 1.0.0rc7 is).
 - Published: `polaris-verify` and `polaris-sdk-python` 1.0.0rc5 and `polaris-oid4vp` 1.0.0rc10 (not certified; 1.0.0rc7 is) on PyPI.
+- The stranger's one-minute script runs without Docker, on the wallet's own binary checked against a pinned SHA-256.
 
 ## v1.0.0-rc.66 — 2026-09-28 (a Polaris credential in a wallet Polaris did not write)
 
