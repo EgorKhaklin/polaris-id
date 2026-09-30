@@ -53,7 +53,10 @@ def verify_presentation(presentation, anchor_keys=None, status_checker=None):
     status_checker: a callable token_id -> the issuer's /verify JSON (dict), or None
     to skip the online status check (offline / provisional). Injectable so this is
     testable without a live server; the CLI supplies an HTTP one."""
-    cred = presentation.get("credential") or {}
+    # A presentation and its credential are the holder's; either can be any JSON at all.
+    presentation = presentation if isinstance(presentation, dict) else {}
+    cred = presentation.get("credential")
+    cred = cred if isinstance(cred, dict) else {}
     V = _load_verifier()
     a = V.verify_pack(cred, anchor_keys)
     authentic = bool(a.get("signature_valid"))
@@ -167,16 +170,24 @@ def main(argv=None):
     except Exception as e:
         print("could not read the presentation: %s" % e, file=sys.stderr)
         return 3
+    if not isinstance(presentation, dict):
+        print("could not read the presentation: it is not a JSON object", file=sys.stderr)
+        return 3
     anchor = None
     if args.issuer_anchor:
         V = _load_verifier()
-        anchor = V._load_anchor(args.issuer_anchor)
+        try:
+            anchor = V._load_anchor(args.issuer_anchor)
+        except Exception as e:
+            print("could not read the issuer anchor: %s" % e, file=sys.stderr)
+            return 3
     status_checker = None
     if args.issuer_url and not args.offline:
         if args.oauth_client_id and args.oauth_client_secret:
             # P3.4: authenticate as a relying-party org and use the versioned
             # /api/v1/verify contract, presenting this credential.
-            cred = presentation.get("credential") or {}
+            cred = presentation.get("credential")
+            cred = cred if isinstance(cred, dict) else {}
             status_checker = _oauth_status_checker(
                 args.issuer_url, args.oauth_client_id, args.oauth_client_secret, cred)
         else:

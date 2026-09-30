@@ -237,6 +237,38 @@ class RelyingPartyCommandLineTests(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertIn("could not read the presentation", out.getvalue())
 
+    def test_input_that_is_json_but_not_a_presentation_exits_3_or_rejects(self):
+        """The review of 2026-09-30: a presentation file holding `[1]` raised AttributeError and
+        an anchor path that did not exist raised FileNotFoundError, both tracebacks outside the
+        exit table. A credential that is not an object got as far as `.get` too."""
+        with open(self.garbage, "w") as f:
+            f.write("[1]")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = self.rp.main(["verify-presentation", "--presentation", self.garbage, "--offline"])
+        self.assertEqual(code, 3)
+        self.assertIn("not a JSON object", err.getvalue())
+
+        class _FileAnchors:
+            def verify_pack(self, pack, anchor_keys=None):
+                return {"signature_valid": True, "issuer_trusted": None, "note": None}
+
+            def _load_anchor(self, path):
+                return json.load(open(path))
+        self.rp._load_verifier = lambda: _FileAnchors()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = self.rp.main(["verify-presentation", "--presentation", self.presentation,
+                                 "--issuer-anchor", "/nonexistent/issuer.json", "--offline"])
+        self.assertEqual(code, 3)
+        self.assertIn("could not read the issuer anchor", err.getvalue())
+
+        for credential in ([1], "credential", 7):
+            with self.subTest(credential=credential):
+                v = self.rp.verify_presentation({"credential": credential})
+                self.assertIsNone(v["token_value"])
+                self.assertIn(v["decision"], ("reject", "provisional"))
+
     def test_an_anchor_is_loaded_and_passed_to_the_verifier(self):
         seen = {}
 
