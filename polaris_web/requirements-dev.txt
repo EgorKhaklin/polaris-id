@@ -18,7 +18,7 @@
 -r requirements.txt
 
 # ---- Test-only: property testing (10 Hypothesis tests) ----
-hypothesis>=6.168.0,<7.0
+hypothesis>=6.168.1,<7.0
 
 # ---- Test-only: pytest (ZK two-witness suites, v9.44/v9.46) ----
 # polaris_zk/witness2/test_witness2.py and polaris_web/test_zk_second_witness.py
@@ -29,7 +29,7 @@ pytest>=9.1.1,<10.0
 # After installing this package, run `playwright install chromium` once
 # to download the browser binary (~250MB). polaris_web/test_e2e_atlas.py
 # gracefully skips if either the package OR the browser is unavailable.
-playwright>=1.62.0,<2.0
+playwright>=1.63.0,<2.0
 
 # ---- Test-only: coverage.py (v9.171 / roadmap P0.8) ----
 # scripts/polaris-coverage.sh runs the suites under coverage, combines them, and
