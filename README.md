@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="docs/assets/hero.svg" width="100%" alt="Polaris">
+<img src="docs/assets/hero.svg" width="100%" alt="Polaris ID">
 
-**A working, pre-pilot identity-token system: issuer-unlinkable, duress-aware,<br>signed with ML-DSA-65 under an audited algorithm-migration path.**
+**Polaris ID is a working, pre-pilot identity-token system: issuer-unlinkable, duress-aware,<br>signed with ML-DSA-65 under an audited algorithm-migration path.**
 
 Pre-pilot: it works end to end, and outside wallets and an outside conformance suite have exercised it, but it has not run a pilot, held real identity data or had an independent security review. CI boots the production-profile stack, the post-quantum TLS handshake, the backup round trip and the disaster-recovery drill on every push.
 
