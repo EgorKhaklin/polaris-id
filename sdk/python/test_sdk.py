@@ -1112,3 +1112,105 @@ class TokenValueIsASerialTests(unittest.TestCase):
         self.assertFalse(v.authentic)
         self.assertIsNone(v.issuer_trusted)
         self.assertIn("not a credential serial", v.note or "")
+
+
+
+def _have_mldsa_backend():
+    """True when cryptography carries ML-DSA, which is what makes a verification RUN."""
+    try:
+        from cryptography.hazmat.primitives.asymmetric import mldsa  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+class RefusalsNoTestTookTests(unittest.TestCase):
+    """2026-09-30, measured the way CI's coverage job measures (this suite plus the conformance
+    runner in child processes): these refusals ran in no test. Each is driven by the input that
+    should produce it, and asserts the refusal itself, not only that nothing raised."""
+
+    def artifact(self, **over):
+        """A holder proof whose signature is well formed and wrong, so verification RUNS and fails."""
+        base = {"format": "polaris-holder-proof/1", "token_value": "T", "context_id": "ctx",
+                "verifier_nonce": "n", "issued_at": "2026-09-30T00:00:00Z", "algorithm": "ML-DSA-65",
+                "public_key_hex": "ab" * 1952, "signature_hex": "cd" * 3309}
+        base.update(over)
+        return base
+
+    def test_an_unaccepted_algorithm_is_refused_before_any_key_is_read(self):
+        for verdict in (pv.verify_signed_artifact(self.artifact(algorithm="RSA-2048")),
+                        pv.verify_status_assertion({"format": "polaris-status-assertion/1", "algorithm": "RSA-2048",
+                                                    "public_key_hex": "ab", "signature_hex": "cd"}),
+                        pv.verify_cosignature({"format": "polaris-transparency-cosignature/1", "algorithm": "RSA-2048",
+                                               "public_key_hex": "ab", "signature_hex": "cd"}),
+                        pv.verify_attestation({"format": "polaris-trust-attestation/1", "algorithm": "RSA-2048",
+                                               "public_key_hex": "ab", "signature_hex": "cd"})):
+            with self.subTest(verdict=type(verdict).__name__):
+                self.assertFalse(verdict.authentic)
+                self.assertIn("unaccepted signature algorithm", verdict.note or "")
+
+    def test_hex_that_is_not_hex_is_refused(self):
+        v = pv.verify_signed_artifact(self.artifact(signature_hex="zz" * 3309))
+        self.assertFalse(v.authentic)
+        self.assertIn("not valid hex", v.note or "")
+
+    @unittest.skipUnless(_have_mldsa_backend(), "needs cryptography with ML-DSA to run a verification")
+    def test_a_holder_proof_is_fresh_only_inside_its_window_and_only_on_a_readable_clock(self):
+        issued = self.artifact(issued_at="2026-09-30T00:00:00Z")
+        self.assertTrue(pv.verify_signed_artifact(issued, now="2026-09-30T00:01:00Z").fresh, "control: 60 s old")
+        self.assertFalse(pv.verify_signed_artifact(issued, now="2026-09-30T00:06:00Z").fresh, "past 300 s")
+        self.assertIsNone(pv.verify_signed_artifact(self.artifact(issued_at=None), now="2026-09-30T00:01:00Z").fresh,
+                          "no readable issuance: not fresh, not stale")
+        self.assertIsNone(pv.verify_signed_artifact(issued, now="not a time").fresh,
+                          "an unreadable clock decides nothing")
+
+    @unittest.skipUnless(_have_mldsa_backend(), "needs cryptography with ML-DSA to run a verification")
+    def test_anchors_that_are_not_a_collection_trust_nothing(self):
+        self.assertIs(pv.verify_signed_artifact(self.artifact(), anchors=5).issuer_trusted, False)
+        self.assertIs(pv.verify_signed_artifact(self.artifact(), anchors=["AB" * 1952]).issuer_trusted, True,
+                      "control: the signing key, in any case, is trusted")
+
+    @unittest.skipUnless(_have_mldsa_backend(), "needs cryptography with ML-DSA to run a verification")
+    def test_a_status_assertion_on_an_unreadable_clock_is_not_fresh(self):
+        a = {"format": "polaris-status-assertion/1", "algorithm": "ML-DSA-65", "status": "ACTIVE",
+             "issued_at": "2026-09-30T00:00:00Z", "expires_at": "2026-09-30T01:00:00Z",
+             "public_key_hex": "ab" * 1952, "signature_hex": "cd" * 3309}
+        self.assertTrue(pv.verify_status_assertion(a, now="2026-09-30T00:30:00Z").fresh, "control")
+        self.assertIsNone(pv.verify_status_assertion(a, now="not a time").fresh)
+
+    def test_a_timestamp_anchor_that_is_not_shaped_like_one_is_refused_by_name(self):
+        # A proof for THIS timestamp from the timestamp log, whose index is not a number: the
+        # shape checks before it pass, so only the parse can refuse.
+        body = {"format": "polaris-timestamp/1", "digest_hex": "ab" * 32}
+        entry = pv.timestamp_hash(body)
+        bad_index = dict(body, anchor={"proof": {"entry_hex": entry, "index": "x", "tree_size": 1},
+                                       "sth": {"log_id": "polaris-timestamp-log", "root_hash_hex": "00"}})
+        for ts, words in (("x", "must be an object"),
+                          ({}, "unanchored"),
+                          ({"anchor": {"proof": [], "sth": {}}}, "must be objects"),
+                          (bad_index, "malformed proof")):
+            with self.subTest(ts=ts):
+                v = pv.verify_timestamp_anchor(ts)
+                self.assertFalse(v.anchored)
+                self.assertIn(words, v.note or "")
+
+    def test_a_credential_that_is_not_authentic_never_crosses_authorities(self):
+        v = pv.verify_cross_authority({}, "ctx", manifests=[])
+        self.assertEqual((v.decision, v.authentic), ("reject", False))
+        self.assertIn("not authentic", v.reason or "")
+
+    def test_links_and_handles_are_never_made_from_what_is_not_a_string(self):
+        self.assertFalse(pv.nullifiers_link(1, 1))
+        self.assertFalse(pv.handles_link(None, None))
+        self.assertTrue(pv.handles_link("AB", "ab"), "control: the same handle, case aside")
+        self.assertTrue(pv.nullifiers_link("AB", " ab "), "control: exact hex, case and edges aside")
+        key = "ab" * 32
+        self.assertIsNone(pv.pairwise_handle(key, ""))
+        self.assertIsNone(pv.pairwise_handle(key, "   "))
+        self.assertIsInstance(pv.pairwise_handle(key, "scope"), str, "control: a scope gives a handle")
+
+    def test_a_verdict_serialises_every_field(self):
+        v = pv.Verdict(decision="reject", authentic=False, issuer_trusted=None,
+                       currently_authoritative=None, status=None, reasons=["x"])
+        self.assertEqual(v.as_dict(), {"decision": "reject", "authentic": False, "issuer_trusted": None,
+                                       "currently_authoritative": None, "status": None, "reasons": ["x"]})
