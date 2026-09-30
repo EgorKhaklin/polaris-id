@@ -35,6 +35,10 @@ polaris-verify = "polaris_verify_cli.verifier:main"
 
 [project.urls]
 Homepage = "https://github.com/EgorKhaklin/polaris-id"
+Documentation = "https://github.com/EgorKhaklin/polaris-id/tree/main/packages/polaris-verify#readme"
+Changelog = "https://github.com/EgorKhaklin/polaris-id/blob/main/CHANGELOG.md"
+Issues = "https://github.com/EgorKhaklin/polaris-id/issues"
+Source = "https://github.com/EgorKhaklin/polaris-id/tree/main/packages/polaris-verify"
 Conformance = "https://github.com/EgorKhaklin/polaris-id/tree/main/conformance"
 
 [tool.setuptools.packages.find]
