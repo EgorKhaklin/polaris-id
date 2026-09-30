@@ -1088,3 +1088,36 @@ test("a hex field holds hex digits and nothing else", () => {
     assert.match(v.note ?? "", /bad hex/);
   }
 });
+
+// Code scanning (js/polynomial-redos, 2026-09-30): the constructor trimmed the issuer URL with
+// /\/+$/, which takes time quadratic in a run of slashes that is not at the end. It is the
+// caller's own configuration, so this is hygiene rather than an attack, but the replacement has
+// to trim exactly what the expression trimmed, and in linear time.
+test("the issuer URL loses its trailing slashes and nothing else", async () => {
+  const saved = globalThis.fetch;
+  const urls: string[] = [];
+  globalThis.fetch = (async (url: string) => {
+    urls.push(url);
+    return { ok: true, status: 200, json: async () => ({ access_token: "t", expires_in: 300 }) };
+  }) as any;
+  try {
+    for (const [given, base] of [["http://x", "http://x"], ["http://x/", "http://x"],
+                                 ["http://x///", "http://x"], ["http://x/a//b/", "http://x/a//b"],
+                                 ["http://x/a", "http://x/a"]]) {
+      const v = new PolarisVerifier({ issuerUrl: given, clientId: "c", clientSecret: "s" });
+      await (v as any).accessToken();
+      assert.equal(urls.pop(), `${base}/api/v1/oauth/token`, given);
+    }
+  } finally {
+    globalThis.fetch = saved;
+  }
+});
+
+test("a long run of slashes inside the issuer URL is trimmed in linear time", () => {
+  const url = "http://x" + "/".repeat(200_000) + "y" + "/".repeat(3);
+  const started = Date.now();
+  const v = new PolarisVerifier({ issuerUrl: url });
+  assert.ok(Date.now() - started < 1000, `took ${Date.now() - started} ms`);
+  assert.equal((v as any).issuerUrl, url.slice(0, -3));
+});
+
