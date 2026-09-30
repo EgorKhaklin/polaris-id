@@ -38,6 +38,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris key-register`, `key-retire` and `key-compromise` work as the schema owner; each failed reading its new row.
 - `polaris bulk-enroll` signs under the issuing agency's own key and refuses another, as the issuing route does.
 - `polaris-create-operator.sh`, `polaris-generate-recovery-code.sh` and `polaris-recover-admin.sh` work with `--target=docker-stack`; each handed psql a host file.
+- The CLI README installs from a clone; it named a package that is not published.
 - `polaris-verify --verify-dir` reports a vector that is not a JSON object instead of raising.
 - `polaris-verify` no longer calls missing revocation evidence a revocation in its long-term-validation note.
 - NOTICE names psycopg 3 and certifi, which are not permissive, and drops files the tree no longer ships.
