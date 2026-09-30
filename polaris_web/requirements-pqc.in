@@ -1,0 +1,10 @@
+# polaris_web/requirements-pqc.in: the ML-DSA binding the production image signs
+# with. Dockerfile.prod builds liboqs itself, from a verified commit, into the
+# path this package loads from, so the package's own automatic install (a
+# shallow clone of a movable tag) never runs. 0.16.0.1 fixes a security issue
+# in that automatic install and is built for liboqs 0.16.0, which is the
+# release the Dockerfile builds.
+#   pip-compile --generate-hashes --allow-unsafe --strip-extras \
+#       --output-file=requirements-pqc.txt requirements-pqc.in
+
+liboqs-python==0.16.0.1

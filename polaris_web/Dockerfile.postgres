@@ -60,7 +60,7 @@ RUN apk upgrade --no-cache \
 COPY polaris_web/requirements-patroni.txt /tmp/requirements-patroni.txt
 RUN apk add --no-cache python3 \
     && apk add --no-cache --virtual .pip py3-pip \
-    && pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements-patroni.txt \
+    && pip3 install --no-cache-dir --break-system-packages --require-hashes -r /tmp/requirements-patroni.txt \
     && apk del .pip \
     && rm -f /tmp/requirements-patroni.txt \
     && patroni --version

@@ -1,0 +1,13 @@
+# polaris_web/requirements-custody.in: optional custody drivers for the issuer
+# signing key (roadmap P1.2). The file driver needs nothing beyond liboqs; the
+# pkcs11 and awskms drivers need these. Dockerfile.prod installs the compiled,
+# hashed requirements-custody.txt only when built with POLARIS_CUSTODY_EXTRAS=1,
+# on top of the runtime lock, so a package both need is held to the runtime
+# lock's version (the -c line).
+#   pip-compile --generate-hashes --allow-unsafe --strip-extras \
+#       --output-file=requirements-custody.txt requirements-custody.in
+
+-c requirements.txt
+
+python-pkcs11==0.10.0
+boto3==1.43.103

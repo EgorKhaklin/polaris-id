@@ -2863,6 +2863,51 @@ def test_sql_console_readonly_check_discriminates(tmp_path):
         "must FAIL when app.py is absent"
 
 
+def test_images_install_hashed_locks_check_discriminates(tmp_path):
+    # 2026-09-30: the images install hash-pinned locks with --require-hashes, and liboqs builds
+    # from a checked commit. Each perturbation takes away one leg of that.
+    lock = lambda name, h: "%s \\\n    --hash=sha256:%s\n" % (name, h * 64)
+    commit = "a" * 40
+    prod = ("ARG LIBOQS_COMMIT=%s\n"
+            "RUN git clone --branch x https://example.invalid/liboqs /tmp/liboqs \\\n"
+            "    && test \"$(git -C /tmp/liboqs rev-parse HEAD)\" = \"$LIBOQS_COMMIT\"\n"
+            "RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.txt\n"
+            "RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements-pqc.txt \\\n"
+            "    && PYOQS_VERSION=refused-no-fetch python -c \"import oqs\"\n" % commit)
+    good = {
+        "polaris_web/Dockerfile": "# pip install flask psycopg2 (history)\nCOPY requirements.txt /tmp/requirements.txt\n"
+                                  "RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.txt\n",
+        "polaris_web/Dockerfile.prod": prod,
+        "polaris_web/Dockerfile.postgres": "RUN apk add python3 \\\n    && pip3 install --break-system-packages "
+                                           "--require-hashes -r /tmp/requirements-patroni.txt \\\n    && patroni --version\n",
+        "polaris_web/requirements.txt": lock("flask==3.1.3", "0") + lock("werkzeug==3.1.8", "1"),
+        "polaris_web/requirements-pqc.txt": lock("liboqs-python==0.16.0.1", "2"),
+        "polaris_web/requirements-patroni.txt": lock("patroni==4.1.5", "3"),
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_images_install_hashed_locks(tmp_path)[0].level == "OK", "must PASS on the good fixture (a comment naming pip install included)"
+    write({"polaris_web/Dockerfile": "RUN pip install --no-cache-dir -r /tmp/requirements.txt\n"})
+    assert checks.check_images_install_hashed_locks(tmp_path)[0].level == "FAIL", "must FAIL on an install without --require-hashes"
+    write({"polaris_web/Dockerfile.prod": prod + "RUN pip install --require-hashes liboqs-python\n"})
+    assert checks.check_images_install_hashed_locks(tmp_path)[0].level == "FAIL", "must FAIL on a package named on the command line"
+    write({"polaris_web/requirements.txt": lock("flask==3.1.3", "0") + "werkzeug==3.1.8\n"})
+    assert checks.check_images_install_hashed_locks(tmp_path)[0].level == "FAIL", "must FAIL on a pin without its hash"
+    write({"polaris_web/Dockerfile.prod": prod.replace("rev-parse HEAD", "log -1")})
+    assert checks.check_images_install_hashed_locks(tmp_path)[0].level == "FAIL", "must FAIL when the liboqs clone is not checked against its commit"
+    write({"polaris_web/Dockerfile.prod": prod.replace("PYOQS_VERSION=refused-no-fetch ", "")})
+    assert checks.check_images_install_hashed_locks(tmp_path)[0].level == "FAIL", "must FAIL when the import could fetch liboqs"
+    write({"polaris_web/Dockerfile": "FROM x\n", "polaris_web/Dockerfile.postgres": "FROM y\n",
+           "polaris_web/Dockerfile.prod": "FROM z\n"})
+    assert checks.check_images_install_hashed_locks(tmp_path)[0].level == "FAIL", "must FAIL when it finds nothing to check"
+
+
 def test_prod_image_no_test_deps_check_discriminates(tmp_path):
     web = tmp_path / "polaris_web"
     web.mkdir()
@@ -5288,7 +5333,8 @@ def test_ha_automation_check_discriminates(tmp_path):
         "polaris_web/patroni-post-init.sh": "export POLARIS_INIT_MANAGED_BY=patroni\nexec bash /docker-entrypoint-initdb.d/00-init.sh\n",
         "polaris_web/docker-init.sh": "MANAGED=\"${POLARIS_INIT_MANAGED_BY:-}\"\n",
         "polaris_web/Dockerfile.postgres": "COPY polaris_web/requirements-patroni.txt /tmp/r.txt\nRUN pip3 install -r /tmp/r.txt && patroni --version\n",
-        "polaris_web/requirements-patroni.txt": "patroni[etcd3]==4.1.5\n",
+        "polaris_web/requirements-patroni.in": "patroni[etcd3]==4.1.5\n",
+        "polaris_web/requirements-patroni.txt": "patroni==4.1.5 \\\n    --hash=sha256:ab\npython-etcd==0.4.5 \\\n    --hash=sha256:cd\n",
         "polaris_web/Dockerfile.etcd": "FROM alpine:3.24@sha256:" + "b" * 64 + "\nRUN apk add etcd\nUSER etcd\n",
         "polaris_web/haproxy-pg.cfg": "resolvers docker\noption httpchk GET /primary\noption httpchk GET /replica\ndefault-server on-marked-down shutdown-sessions tcp-ut 3000 on-error mark-down\n",
         "scripts/polaris-failover-drill.sh": DRILL,
@@ -5327,6 +5373,10 @@ def test_ha_automation_check_discriminates(tmp_path):
     # The analysis missing from the runbook.
     write({"docs/operator/FAILOVER.md": "`patronictl switchover`\nscripts/polaris-failover-drill.sh\n"})
     assert checks.check_ha_automation(tmp_path)[0].level == "FAIL", "must FAIL when FAILOVER.md has no split-brain analysis"
+    write({"polaris_web/requirements-patroni.txt": "patroni==4.1.4 \\\n    --hash=sha256:ab\npython-etcd==0.4.5\n"})
+    assert checks.check_ha_automation(tmp_path)[0].level == "FAIL", "must FAIL when the lock pins another patroni than the .in chose"
+    write({"polaris_web/requirements-patroni.txt": "patroni==4.1.5 \\\n    --hash=sha256:ab\n"})
+    assert checks.check_ha_automation(tmp_path)[0].level == "FAIL", "must FAIL when the lock lacks the etcd3 extra's client"
 
 
 def test_event_table_partitioning_check_discriminates(tmp_path):
@@ -9352,6 +9402,14 @@ def test_lint_enforced_check_discriminates(tmp_path):
     # 3. ruff is not a dev dependency
     write({"polaris_web/requirements-dev.txt": "coverage>=7.6\n"})
     assert checks.check_lint_enforced(tmp_path)[0].level == "FAIL", "must FAIL without ruff in the dev deps"
+    # 3b. the dev file only includes the locks: ruff counts where the include has it, and not otherwise
+    write({"polaris_web/requirements-dev.txt": "-r requirements.txt\n-r requirements-test.txt\n",
+           "polaris_web/requirements-test.txt": "ruff==0.16.9 \\\n    --hash=sha256:ab\n"})
+    assert checks.check_lint_enforced(tmp_path)[0].level == "OK", "must PASS when an included lock pins ruff"
+    write({"polaris_web/requirements-dev.txt": "-r requirements.txt\n-r requirements-test.txt\n",
+           "polaris_web/requirements-test.txt": "coverage==7.16.1\n"})
+    assert checks.check_lint_enforced(tmp_path)[0].level == "FAIL", "must FAIL when no included file has ruff"
+    write({"polaris_web/requirements-test.txt": ""})
     # 4. ruff is not wired into pre-commit
     write({".pre-commit-config.yaml": "  - id: other\n    entry: echo\n"})
     assert checks.check_lint_enforced(tmp_path)[0].level == "FAIL", "must FAIL without the pre-commit hook"
