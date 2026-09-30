@@ -102,8 +102,10 @@ def status_resolver(anchor, product_port, product_cafile):
         return urllib.request.urlopen(local, context=ctx, timeout=15).read()
 
     def resolver(*, uri, idx, issuer=None):
+        # Failures carry the package's own codes and let the verifier name the state, so a list
+        # nobody is entitled to publish reads as no_authority, not as an outage (unreachable).
         if not (isinstance(issuer, str) and isinstance(uri, str) and uri.startswith(issuer + "/status/")):
-            return {"checked": False, "state": "unreachable",
+            return {"checked": False, "code": "no_authority",
                     "reason": "the status list is not under the issuer's own path"}
         authority = tsl.StatedAuthority().state(
             credential_issuer=issuer, status_uri=uri, verify=verify_for(issuer),
@@ -112,7 +114,7 @@ def status_resolver(anchor, product_port, product_cafile):
         try:
             token = fetch(uri)
         except Exception as exc:  # noqa: BLE001  no list is no answer, not a negative one
-            return {"checked": False, "state": "unreachable",
+            return {"checked": False, "code": "unreachable",
                     "reason": "fetching the status list raised %s" % type(exc).__name__}
         # Judged at the time the list ARRIVED. decide_by_fetching takes `now` before its fetch,
         # so a list the issuer signs during the request reads as dated in the future
