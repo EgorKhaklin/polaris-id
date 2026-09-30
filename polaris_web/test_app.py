@@ -4078,6 +4078,32 @@ class IssuerFederationTests(PolarisTestCase):
         self.assertNotIn('/verifications/new', post(ctx_bank, 'SUCCESS').location)
         self.assertEqual(count(ctx_bank, 'SUCCESS'), before + 1, 'control: a permitted context records SUCCESS')
 
+    def test_a_selective_success_names_its_credential(self):
+        """2026-09-30 review. The schema lets SELECTIVE go without a token, and every SUCCESS rule
+        reads the token, so a SELECTIVE SUCCESS with an empty token_id passed trust, liveness and
+        permission unchecked: agency 6, no attestation, a context nobody was checked against. A
+        refused presentation may still be recorded without one."""
+        ctx_hc = self._context_id('HEALTHCARE')
+
+        def post(outcome):
+            return self._post('/verifications/new', data={
+                'token_id': '', 'requesting_agency_id': '6', 'context_id': str(ctx_hc),
+                'outcome': outcome, 'disclosure_level': 'SELECTIVE',
+            }, follow_redirects=False)
+
+        def count(outcome):
+            with psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG) as conn, conn.cursor() as cur:
+                cur.execute("SELECT count(*) AS n FROM VerificationEvent WHERE token_id IS NULL "
+                            "AND disclosure_level = 'SELECTIVE' AND outcome = %s", (outcome,))
+                return cur.fetchone()['n']
+
+        before = count('SUCCESS')
+        self.assertIn('/verifications/new', post('SUCCESS').location)
+        self.assertEqual(count('SUCCESS'), before, 'a SELECTIVE SUCCESS naming no credential was recorded')
+        before = count('FAILURE')
+        self.assertNotIn('/verifications/new', post('FAILURE').location)
+        self.assertEqual(count('FAILURE'), before + 1, 'a refused presentation may omit the credential')
+
     def test_cross_agency_success_blocked_without_attestation(self):
         """No attestation between Agency 6 and Agency 1 for BANKING →
         SUCCESS verification must be blocked. BANKING, not HEALTHCARE: James is

@@ -291,6 +291,15 @@ def verifications_new():
             context_id = int(request.form['context_id'])
             outcome = request.form['outcome']
 
+            # 2026-09-30 (review): a SELECTIVE success names the credential it verified. The schema
+            # lets SELECTIVE go without a token (a disclosure need not identify its credential), but
+            # every SUCCESS rule below reads the token, so a SELECTIVE SUCCESS with none passed trust,
+            # liveness and permission unchecked. A refused presentation may still omit it.
+            if outcome == 'SUCCESS' and disclosure == 'SELECTIVE' and token_id_val is None:
+                flash('A SELECTIVE success names the credential it verified, so its issuer, status '
+                      'and context can be checked. Enter its token.', 'error')
+                return redirect(url_for('verifications_new'))
+
             # R11-3 federation check: only gates SUCCESS outcomes. FAILURE,
             # UNAUTHORIZED, EXPIRED already represent denied verifications;
             # blocking those would prevent the audit log from recording them.
