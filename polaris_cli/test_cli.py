@@ -292,7 +292,7 @@ class IssueCommandTests(CLIBaseTestCase):
         sig, key = bytes(rows[0]['signature_bytes']), rows[0]['signing_public_key_hex']
         self.assertFalse(sig.startswith(b'UC1_ISSUE_PLACEHOLDER'), sig[:40])
         import polaris
-        self.assertTrue(polaris._load_signer().verify_stored_signature(
+        self.assertTrue(polaris._load_signer('issue').verify_stored_signature(
             'TKN-OH-CLI-SIGNED', sig, key, witnesses='single'),
             'the stored signature must verify under the check every door makes')
 
@@ -1507,6 +1507,62 @@ class DiscretionCommandTests(CLIBaseTestCase):
                     '--justification', self.WHY, expect_success=False)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn('No such agency', r.stderr)
+
+
+class PackageInstallTests(unittest.TestCase):
+    """polaris-id-cli installed as a package: polaris_web/ is not beside it. The four commands
+    that run through the application's own modules must refuse with exit 2 and say where they
+    run, never with a traceback, and --version must report the package's version, where it
+    printed "unknown". No database is involved: the host is unresolvable, so a command that
+    reached connect() would say "Database connection failed" instead."""
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        cls.tmp = tempfile.mkdtemp(prefix="polaris-cli-pkg-")
+        cls.site = os.path.join(cls.tmp, "site")
+        os.makedirs(os.path.join(cls.site, "polaris_cli"))
+        for name in ("__init__.py", "polaris.py"):
+            shutil.copy(os.path.join(HERE, name), os.path.join(cls.site, "polaris_cli", name))
+        dist = os.path.join(cls.site, "polaris_id_cli-1.0.0rc1.dist-info")
+        os.makedirs(dist)
+        with open(os.path.join(dist, "METADATA"), "w", encoding="utf-8") as fh:
+            fh.write("Metadata-Version: 2.1\nName: polaris-id-cli\nVersion: 1.0.0rc1\n")
+        cls.extract = os.path.join(cls.tmp, "extract.psv")
+        open(cls.extract, "w", encoding="utf-8").close()
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _run(self, *args):
+        env = dict(os.environ, NO_COLOR="1", PYTHONPATH=self.site, POLARIS_DB_HOST="db.invalid")
+        return subprocess.run([sys.executable, "-m", "polaris_cli.polaris", *args], capture_output=True,
+                              text=True, env=env, cwd=self.tmp, timeout=60)
+
+    def test_version_is_the_packages_own(self):
+        r = self._run("--version")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("polaris-id 1.0.0rc1 (polaris-id-cli)", r.stdout)
+
+    def test_commands_that_need_the_application_refuse_and_say_where_they_run(self):
+        cases = {
+            "issue": ["--legal-name", "A. Holder", "--dob", "1990-01-15", "--jurisdiction", "US-PA",
+                      "--agency", "1", "--algorithm", "1", "--token-value", "TKN-PKG-1",
+                      "--serial", "SN-PKG-1", "--contexts", "1"],
+            "bulk-enroll": [self.extract, "--agency", "1", "--algorithm", "1"],
+            "migrate-population": ["--to", "ML-DSA-87"],
+            "transparency-report": ["--period", "2026-Q3", "--since", "2026-07-01"],
+        }
+        for command, argv in cases.items():
+            with self.subTest(command):
+                r = self._run(command, *argv)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertIn("not in this package", r.stderr)
+                self.assertIn("python3 polaris_cli/polaris.py %s" % command, r.stderr)
+                self.assertNotIn("Traceback", r.stderr)
+                self.assertNotIn("Database connection failed", r.stderr)
 
 
 class HelpAndErrorTests(unittest.TestCase):

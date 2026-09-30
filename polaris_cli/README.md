@@ -1,9 +1,11 @@
 # polaris-id-cli
 
-Command-line interface to the [Polaris Identity Token System](https://github.com/EgorKhaklin/polaris):
+The operator command line for a [Polaris ID](https://github.com/EgorKhaklin/polaris-id) database:
 the use-case stored procedures, inspection and read-only queries, and the
 operator records (users, authorities, quotas, revocation bounds, relying
-parties, authority keys, retention), without a browser.
+parties, authority keys, retention), without a browser. Polaris ID is
+pre-pilot software on notional data; the project README says what it is and
+what it is not.
 
 Not wrapped as subcommands: `close_anchor_batch` (R10-2),
 `uc10_attest_trust` / `uc10_revoke_attestation` (R11-3), `uc11_close_epoch`
@@ -12,19 +14,23 @@ Not wrapped as subcommands: `close_anchor_batch` (R10-2),
 
 ## Install
 
-The CLI is not published to a package index, so install it from a clone. `issue` and
-`bulk-enroll` sign through `polaris_web/pqc_signing` in the same clone, which an editable install
-keeps within reach:
+```bash
+pip install --pre polaris-id-cli                  # --pre: 1.0.0rc1 is a release candidate
+pip install --pre 'polaris-id-cli[user-mgmt]'     # adds werkzeug for user-create and user-passwd
+polaris-id --help
+```
+
+Every command talks to a running Polaris PostgreSQL (below). Four also run through modules
+of the Polaris application, which ship in the repository and not in this package: `issue`
+and `bulk-enroll` sign through `polaris_web/pqc_signing`, `migrate-population` uses
+`polaris_web/migration`, and `transparency-report` uses `polaris_web/transparency`. From a
+package install those four refuse (exit 2) and say so. Run them from a clone:
 
 ```bash
-git clone https://github.com/EgorKhaklin/polaris-id.git polaris
-cd polaris/polaris_cli
-pip install -e '.[user-mgmt]'    # user-mgmt adds werkzeug for user-create / user-passwd
-polaris-id --help
-
-# or without installing:
-pip install psycopg2-binary werkzeug
-python3 polaris.py health
+git clone https://github.com/EgorKhaklin/polaris-id.git
+cd polaris-id/polaris_cli
+pip install -e '.[user-mgmt]'
+polaris-id issue --help
 ```
 
 ## Configuration
@@ -140,7 +146,7 @@ Passwords need at least 12 characters with a digit, a letter and a symbol.
 
 An `admin` account gets a 30-day WebAuthn deadline, the same one
 `scripts/polaris-create-operator.sh --role admin` sets
-([docs/design/webauthn.md](../docs/design/webauthn.md)). During the 30 days a
+([docs/design/webauthn.md](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/design/webauthn.md)). During the 30 days a
 password alone signs in and the interface asks for enrolment; after it, a
 registered credential is required, and with none the login is refused and the
 recovery path named. Operator and auditor accounts get no deadline.
@@ -187,8 +193,8 @@ years; `MINIMIZED` keeps the civic record five years and operational history
 two. Three refusals: below 365 days (a CHECK constraint, so lowering the floor
 is a schema change); editing or deleting a decision (decisions are superseded,
 never changed); and a `uc_archive_purge` cutoff inside the window.
-See [docs/design/retention.md](../docs/design/retention.md) and
-[OPERATIONS.md](../docs/operator/OPERATIONS.md).
+See [docs/design/retention.md](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/design/retention.md) and
+[OPERATIONS.md](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/operator/OPERATIONS.md).
 
 ```bash
 polaris-id retention-show --jurisdiction=US-CA --history
