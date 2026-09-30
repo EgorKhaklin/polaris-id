@@ -14,6 +14,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-oid4vp` refuses an x5c credential whose `iss` its certificate does not name.
 - A wallet-copy offer is recorded under the operator's account before it is returned; nothing recorded who made one.
 - Every GitHub Action is pinned to a full commit SHA, checkouts drop the workflow token, and Dependabot waits seven days on a new release.
+- `publish.yml` builds with a hash-pinned toolchain and no build isolation, and installs one npm checked against its integrity.
 - `polaris-oid4vp serve` refuses TLS below 1.2; on Python 3.9 builds that default lower, 1.0.0rc9 accepted TLS 1.0 and 1.1.
 - The three verifiers refuse a grant whose `limits` is present but not an object; the Python ones read it as unlimited.
 - The Python SDK refuses an `issuer_url` whose scheme is not `https` or `http` before `urlopen`. (thanks @DYNOSuprovo)
@@ -62,6 +63,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The Athena routes answer 400, not 500, to an id outside INTEGER's range; the agency facet, to a negative `limit`.
 - The trust-anchors loader refuses a key of no accepted length; signature checks refuse, not raise, on a non-string.
 - `polaris-create-operator.sh --target=docker-stack` hashes the password in the app container; the host needs no werkzeug.
+- The eudi-dev and OID4VCgo interop records no longer say the wallet trusts the verifier's TLS listener; measured, neither validates it.
 - The SBOM workflow attaches the SBOMs to a draft release, then publishes it; an immutable release refuses them afterwards.
 
 ### Added
@@ -88,6 +90,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The review packet's drill table names the CI run behind each number, restated from the 2026-09-30 runs.
 - Published: `polaris-verify` and `polaris-sdk-python` 1.0.0rc4 and `polaris-oid4vp` 1.0.0rc8 (not certified; 1.0.0rc7 is) on PyPI, `polaris-sdk-ts` 1.0.0-rc.4, then 1.0.0-rc.5 with the TypeScript format fix, on npm under `next`.
 - Published: `polaris-oid4vp` 1.0.0rc9 on PyPI, with the review fixes above (not certified; 1.0.0rc7 is).
+- Published: `polaris-verify` and `polaris-sdk-python` 1.0.0rc5 and `polaris-oid4vp` 1.0.0rc10 (not certified; 1.0.0rc7 is) on PyPI.
+- The stranger's one-minute script runs without Docker, on the wallet's own binary checked against a pinned SHA-256.
 
 ## v1.0.0-rc.66 — 2026-09-28 (a Polaris credential in a wallet Polaris did not write)
 

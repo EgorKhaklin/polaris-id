@@ -10,11 +10,15 @@ externally observable changes.
 
 | Artifact | Registry | Name | On the registry | Before it |
 |---|---|---|---|---|
-| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc4, 2026-09-28 | 1.0.0rc3, 2026-09-18 |
-| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc9, 2026-09-30 | 1.0.0rc8, 2026-09-28 |
-| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc4, 2026-09-28 | 1.0.0rc3, 2026-09-18 |
+| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc5, 2026-09-30 | 1.0.0rc4, 2026-09-28 |
+| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc10, 2026-09-30 | 1.0.0rc9, 2026-09-30 |
+| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc5, 2026-09-30 | 1.0.0rc4, 2026-09-28 |
 | `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.5, 2026-09-28 | 1.0.0-rc.4, 2026-09-28 |
 
+> **2026-09-30, later:** `polaris-verify` and `polaris-sdk-python` 1.0.0rc5 and `polaris-oid4vp`
+> 1.0.0rc10 went out the same way, each read back from the live registry, carrying the fixes
+> SECURITY.md lists against their predecessors. 1.0.0rc10 is not certified; 1.0.0rc7 is.
+>
 > **2026-09-30:** `polaris-oid4vp` 1.0.0rc9 went out through trusted publishing over OIDC and was
 > read back from the live registry. It carries the fixes a review found in 1.0.0rc8 and is not
 > certified; the certified version is 1.0.0rc7.
@@ -130,7 +134,9 @@ What must hold for any publish:
    with none of Polaris present, verifies real signed material, packs and installs the npm
    tarball into a bare project, and opens a conformance-suite response with `polaris-oid4vp`
    from outside the repository. It carries three negative controls.
-2. `python -m twine check` passes on every distribution.
+2. `python -m twine check` passes on every distribution. The distributions are built by the
+   toolchain pinned with hashes in `.github/publish/requirements.txt` (build, setuptools,
+   twine), without build isolation, so no unpinned setuptools is fetched into the build.
 3. The version was bumped. **A version number on a registry can never be reused**, even
    after a yank, so a mistake costs a number rather than being undone.
 
@@ -185,9 +191,9 @@ uploads the tarball and stops. The version is not on the registry, `npm install`
 reach it, and it becomes available only when a maintainer approves it with a 2FA code that
 no workflow can produce. So the workflow, compromised or merely run by mistake with
 `confirm: PUBLISH`, cannot put code in front of an installer by itself. `npm stage publish`
-needs npm 11.15.0 and Node 22.14.0, and the job asserts both rather than trusting
-`npm@latest` to be new enough: a silent fall back to a direct publish is the one outcome
-staging exists to prevent.
+needs npm 11.15.0 and Node 22.14.0. The job installs one exact npm (12.1.0), checked against
+its registry sha512 integrity before it runs, and asserts both floors: a silent fall back to a
+direct publish is the one outcome staging exists to prevent.
 
 Finish it from your own machine, where the 2FA code lives:
 
@@ -262,6 +268,10 @@ worse state to be in than three runs.
 | 36467934686 | 2026-09-28 | `polaris-sdk-ts` 1.0.0-rc.5 | staged (id 0af1ec71); approved by the maintainer with a second factor, then read back from the live registry under `next`; the installed package passes all 184 conformance cases |
 | 36673380963 | 2026-09-30 | dry run | built and gated all four; nothing published |
 | 36673624400 | 2026-09-30 | `polaris-oid4vp` 1.0.0rc9 | published to PyPI by trusted publishing; read back from the live registry and installed into a clean environment outside the tree. Not certified: 1.0.0rc7 stays the certified version |
+| 36700255631 | 2026-09-30 | dry run | built and gated all four at the new versions; nothing published |
+| 36702201606 | 2026-09-30 | `polaris-verify` 1.0.0rc5 | published to PyPI by trusted publishing; read back from the live registry |
+| 36702209438 | 2026-09-30 | `polaris-sdk-python` 1.0.0rc5 | published to PyPI the same way; read back from the live registry |
+| 36702217173 | 2026-09-30 | `polaris-oid4vp` 1.0.0rc10 | published to PyPI the same way; read back, and STRANGER-PATH walked against it. Not certified: 1.0.0rc7 stays the certified version |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different

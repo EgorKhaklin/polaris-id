@@ -7,8 +7,14 @@
 # verifier's test PKI, and the wallet's own state. The wallet generates its holder key itself;
 # this script reads only the public half, to bind the credential to it.
 #
-#   lab/interop/eudi-dev/run.sh                       # eudi-dev v2.3.7, polaris-oid4vp 1.0.0rc7
+#   lab/interop/eudi-dev/run.sh                       # eudi-dev v2.3.7, newest polaris-oid4vp
 #   EUDI_IMAGE=ghcr.io/dominikschlosser/eudi-dev:v2.4.3 lab/interop/eudi-dev/run.sh
+#   EUDI_NATIVE=1 lab/interop/eudi-dev/run.sh         # the wallet's own binary, no Docker
+#
+# With Docker running, the wallet runs from its image. Without it (or with EUDI_NATIVE=1), the
+# wallet's release binary for this machine (macOS or Linux, x86-64 or arm64) is downloaded and
+# checked against the SHA-256 pinned below for v2.3.7, or, for another EUDI_VERSION, against the
+# checksums the release publishes.
 #
 # Exits 0 only if the genuine presentation is accepted AND every control is refused where it
 # should be. A run that only printed the success line would say nothing: a verifier that
@@ -16,6 +22,7 @@
 set -euo pipefail
 
 IMAGE="${EUDI_IMAGE:-ghcr.io/dominikschlosser/eudi-dev:v2.3.7}"
+EUDI_VERSION="${EUDI_VERSION:-v2.3.7}"
 # What a stranger installs: the newest release, candidates included. Pin it to repeat a run.
 PKG="${POLARIS_OID4VP:-polaris-oid4vp}"
 PORT="${PORT:-9443}"
@@ -35,9 +42,47 @@ fi
 ISSUER="$(cd "$(dirname "$ISSUER")" && pwd)/$(basename "$ISSUER")"
 WORK="${WORK:-$(mktemp -d)}"
 PY="${PYTHON:-python3}"
-ADD_HOST=()
-# Docker Desktop supplies host.docker.internal; Docker Engine on Linux does not.
-[ "$(uname)" = Linux ] && ADD_HOST=(--add-host host.docker.internal:host-gateway)
+if [ "${EUDI_NATIVE:-}" != 1 ] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  MODE=docker
+  # The verifier as the container reaches it. Docker Desktop supplies host.docker.internal;
+  # Docker Engine on Linux does not.
+  VHOST=host.docker.internal BIND=0.0.0.0
+  ADD_HOST=()
+  [ "$(uname)" = Linux ] && ADD_HOST=(--add-host host.docker.internal:host-gateway)
+else
+  MODE=native VHOST=localhost BIND=127.0.0.1
+fi
+
+# v2.3.7's release binaries, pinned here so a download is checked against this repository and
+# not only against a file published beside it.
+pinned_sha256() {
+  case "$1" in
+    eudi-v2.3.7-darwin-amd64) echo 983f9d51b0792bc4456458e91ec3a5906f45858bea192c48413e7704d93d9b36 ;;
+    eudi-v2.3.7-darwin-arm64) echo 2cefced5cce8c25c4b1d5cf35796e8e4ce470c92067b176dd18e8c6061385fef ;;
+    eudi-v2.3.7-linux-amd64) echo 075732b061128e37481d35397c16e80ff54302b9b335637a5d5164230630dd64 ;;
+    eudi-v2.3.7-linux-arm64) echo ff944f0f2dac473ef22a02265b4abcd6c13407b91f3dd8c1f24a882ddefec28f ;;
+  esac
+}
+
+fetch_wallet() {  # the release binary for this machine, into ./eudi, or exit 2
+  local os arch name want got rel
+  case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;;
+    *) echo "no eudi-dev binary for $(uname -s); install Docker instead" >&2; exit 2 ;; esac
+  case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; arm64|aarch64) arch=arm64 ;;
+    *) echo "no eudi-dev binary for $(uname -m); install Docker instead" >&2; exit 2 ;; esac
+  name="eudi-$EUDI_VERSION-$os-$arch"
+  rel="https://github.com/dominikschlosser/eudi-dev/releases/download/$EUDI_VERSION"
+  curl -fsSL -o eudi "$rel/$name"
+  want="$(pinned_sha256 "$name")"
+  [ -n "$want" ] || want="$(curl -fsSL "$rel/checksums.txt" | awk -v n="$name" '$2 == n {print $1}')"
+  got="$( (sha256sum eudi 2>/dev/null || shasum -a 256 eudi) | cut -d' ' -f1)"
+  if [ -z "$want" ] || [ "$got" != "$want" ]; then
+    echo "the $name download does not match its SHA-256; not running it" >&2
+    rm -f eudi
+    exit 2
+  fi
+  chmod +x eudi
+}
 
 if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "port $PORT is in use; set PORT (keygen writes it into the certificate)" >&2
@@ -45,33 +90,49 @@ if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
 fi
 
 echo "work dir   $WORK"
-echo "wallet     $IMAGE"
+if [ "$MODE" = docker ]; then echo "wallet     $IMAGE"; else echo "wallet     eudi-dev $EUDI_VERSION, its own binary (no Docker)"; fi
 echo "verifier   pip install --pre $PKG"
 mkdir -p "$WORK" && cd "$WORK"
 "$PY" -m venv venv
 venv/bin/pip install -q --pre "$PKG"
 echo "installed  polaris-oid4vp $(venv/bin/python -c 'import importlib.metadata as m; print(m.version("polaris-oid4vp"))')"
-venv/bin/polaris-oid4vp keygen --out pki --host host.docker.internal --port "$PORT" >/dev/null
+venv/bin/polaris-oid4vp keygen --out pki --host "$VHOST" --port "$PORT" >/dev/null
 mkdir -p home
-# The wallet runs as the image's own user and keeps its state in this directory. Docker Desktop
-# maps file ownership across the mount and Docker Engine does not, so on Linux that user could
-# not create its state here without this.
+# In Docker the wallet runs as the image's own user and keeps its state in this directory.
+# Docker Desktop maps file ownership across the mount and Docker Engine does not, so on Linux
+# that user could not create its state here without this.
 chmod a+rwx home
+[ "$MODE" = native ] && fetch_wallet
 
+# No trust is configured for the verifier's TLS listener. keygen's listener certificate is
+# self-signed, and eudi-dev (v2.3.7 and v2.4.3, measured 2026-09-30) presents without being given
+# it, even to a host name the certificate does not carry: it does not validate it. What binds
+# the exchange is the signed request object (x509_hash) and the response encrypted to its key.
 wallet() {
-  # The ${a[@]+...} form because macOS's bash 3.2 calls an empty array unbound under set -u.
   # File storage through the environment: v2.4 reads EUDI_DEV_STORAGE, v2.3.7 has no
   # --storage flag and keeps files by default.
-  docker run --rm ${ADD_HOST[@]+"${ADD_HOST[@]}"} -v "$WORK/home:/home/app/.eudi-dev" -v "$WORK:/in" \
-    -e SSL_CERT_FILE=/in/pki/anchor.pem -e EUDI_DEV_STORAGE=file "$IMAGE" wallet "$@"
+  if [ "$MODE" = docker ]; then
+    # The ${a[@]+...} form because macOS's bash 3.2 calls an empty array unbound under set -u.
+    docker run --rm ${ADD_HOST[@]+"${ADD_HOST[@]}"} -v "$WORK/home:/home/app/.eudi-dev" -v "$WORK:/in" \
+      -e EUDI_DEV_STORAGE=file "$IMAGE" wallet "$@"
+  else
+    EUDI_DEV_STORAGE=file ./eudi wallet "$@" --wallet-dir "$WORK/home/wallet"
+  fi
+}
+in_wallet_view() {  # a file of the work dir, as the wallet sees it
+  if [ "$MODE" = docker ]; then echo "/in/$1"; else echo "$WORK/$1"; fi
 }
 
-# The wallet makes its own holder key on first use. It is read through the container, as the
-# user that owns it: on Linux the file belongs to the image's user, mode 0600, and this shell
-# cannot open it. Only the public half is kept; the copy is removed as soon as it is read.
+# The wallet makes its own holder key on first use. In Docker it is read through the container,
+# as the user that owns it: on Linux the file belongs to the image's user, mode 0600, and this
+# shell cannot open it. Only the public half is kept; the copy is removed as soon as it is read.
 wallet info >/dev/null
-docker run --rm -v "$WORK/home:/home/app/.eudi-dev" --entrypoint cat "$IMAGE" \
-  /home/app/.eudi-dev/wallet/holder.pem > holder.pem
+if [ "$MODE" = docker ]; then
+  docker run --rm -v "$WORK/home:/home/app/.eudi-dev" --entrypoint cat "$IMAGE" \
+    /home/app/.eudi-dev/wallet/holder.pem > holder.pem
+else
+  cp "$WORK/home/wallet/holder.pem" holder.pem
+fi
 venv/bin/python - <<'EOF'
 import base64, json, os
 from cryptography.hazmat.primitives import serialization
@@ -98,7 +159,7 @@ b = lambda i: base64.urlsafe_b64encode(i.to_bytes(32, "big")).decode().rstrip("=
 json.dump([{"kty": "EC", "crv": "P-256", "x": b(n.x), "y": b(n.y),
             "kid": issued["issuer_jwks"][0]["kid"]}], open("issuer-jwks-other.json", "w"))
 EOF
-wallet import /in/credential.txt | tail -1
+wallet import "$(in_wallet_view credential.txt)" | tail -1
 
 VERIFIER_PID=""
 stop_verifier() {  # `wait` returns the killed server's 143, which set -e would take as ours
@@ -111,8 +172,8 @@ stop_verifier() {  # `wait` returns the killed server's 143, which set -e would 
 trap stop_verifier EXIT
 
 start_verifier() {  # $1 issuer JWKS, $2 log file
-  PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host host.docker.internal \
-    --bind 0.0.0.0 --port "$PORT" --issuer-jwks "$1" --once > "$2" 2>&1 &
+  PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host "$VHOST" \
+    --bind "$BIND" --port "$PORT" --issuer-jwks "$1" --once > "$2" 2>&1 &
   VERIFIER_PID=$!
   for _ in $(seq 1 40); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
   echo "verifier did not start; see $WORK/$2" >&2

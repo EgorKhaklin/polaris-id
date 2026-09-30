@@ -6,9 +6,11 @@
 #
 # The wallet is cmd/conformance-wallet-vp from github.com/idfoundry/oid4vcgo, the binary its
 # author certified with against the OpenID Foundation's wallet test plan. It is built here, at a
-# pinned version, inside the official Go image, and run in a container that trusts only the
-# verifier's test TLS anchor. It issues its own fixture credential with an x5c chain under a CA
-# this script generates, and polaris-oid4vp is told to trust that CA (--issuer-trust-anchor).
+# pinned version, inside the official Go image, and run in a container given no trust for the
+# verifier's TLS listener: keygen's listener certificate is self-signed, and the wallet presents
+# without it (measured 2026-09-30), so it does not validate it. It issues its own fixture
+# credential with an x5c chain under a CA this script generates, and polaris-oid4vp is told to
+# trust that CA (--issuer-trust-anchor).
 #
 #   lab/interop/oid4vcgo/run.sh                                  # OID4VCgo v0.12.0
 #   OID4VCGO_VERSION=v0.19.0 lab/interop/oid4vcgo/run.sh
@@ -77,7 +79,7 @@ start_verifier() {  # $1 issuer trust anchor, $2 log file
 }
 
 docker run -d --name polaris-oid4vcgo-wallet ${ADD_HOST[@]+"${ADD_HOST[@]}"} -p "$WALLET_PORT:8443" \
-  -v "$WORK:/w" -e SSL_CERT_FILE=/w/pki/anchor.pem alpine:3.20 /w/wallet -config /w/config.json >/dev/null
+  -v "$WORK:/w" alpine:3.20 /w/wallet -config /w/config.json >/dev/null
 for _ in $(seq 1 40); do docker logs polaris-oid4vcgo-wallet 2>&1 | grep -q "listening" && break; sleep 0.25; done
 
 authorize() {  # $1 log to read the request from, $2 optional client_id, $3 output file
