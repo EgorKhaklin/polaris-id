@@ -5322,12 +5322,18 @@ def main(argv=None):
         print("could not read the authenticity pack: %s" % e, file=sys.stderr)
         return 3
     # Another signed artifact handed to --pack was reported as a signature that did not verify. It
-    # is not a pack, which the README's exit 2 names; the library verifies it (2026-10-01).
+    # is not a pack, which the README's exit 2 names; the library verifies it (2026-10-01). The
+    # --json verdict carries the refusal in the keys a pack verdict and a stapled one are read by.
     fmt = pack.get("format") if isinstance(pack, dict) else None
     if isinstance(fmt, str) and fmt != "polaris-authenticity-pack/1":
-        print("not an authenticity pack: this is a %s. From the command line polaris-verify decides "
-              "packs, presentations and QR frames, agent grants and zero-knowledge proofs; the "
-              "library verifies every artifact (see the README)." % fmt, file=sys.stderr)
+        note = ("not an authenticity pack: this is a %s. From the command line polaris-verify decides "
+                "packs, presentations and QR frames, agent grants and zero-knowledge proofs; the "
+                "library verifies every artifact (see the README)." % fmt)
+        if args.json:
+            print(json.dumps(stamp_crypto({"decision": "reject", "signature_valid": False,
+                                           "issuer_trusted": None, "reasons": [note], "note": note},
+                                          _mode), indent=2))
+        print(note, file=sys.stderr)
         return 2
     try:
         anchor = _anchor_keys(args)

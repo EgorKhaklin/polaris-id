@@ -1111,12 +1111,17 @@ class CommandLineExitCodes(unittest.TestCase):
         --pack read as a signature that did not verify (2026-10-01)."""
         import contextlib
         import io
-        err = io.StringIO()
         grant = ROOT / "conformance" / "vectors" / "agent-grant-valid.json"
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-            code = V.main(["--pqc-provider", "auto", "--signature-only", "--pack", str(grant)])
-        self.assertEqual(code, 2)
-        self.assertIn("not an authenticity pack: this is a polaris-agent-grant/1", err.getvalue())
+        for flags in ((), ("--json",), ("--json", "--status-assertion", str(self.blob))):
+            out, err = io.StringIO(), io.StringIO()
+            with self.subTest(flags=flags), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = V.main(["--pqc-provider", "auto", "--signature-only", "--pack", str(grant), *flags])
+            self.assertEqual(code, 2)
+            self.assertIn("not an authenticity pack: this is a polaris-agent-grant/1", err.getvalue())
+            if "--json" in flags:
+                verdict = json.loads(out.getvalue())
+                self.assertEqual((verdict["decision"], verdict["signature_valid"]), ("reject", False),
+                                 "a --json reader gets a verdict that agrees with the exit code")
 
 
 class CallerKeysThatAreNotTextTests(unittest.TestCase):
