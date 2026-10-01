@@ -23438,8 +23438,26 @@ def check_definer_routines_pin_search_path(root: pathlib.Path) -> list[Finding]:
                            "DEFINER routine (a loop over pg_proc.prosecdef): each one runs as its "
                            "owner, so PUBLIC's default EXECUTE lends the owner's rights to any "
                            "role that can connect")
-    return _ok(name, f"all {found} SECURITY DEFINER routines pin their own search_path, and "
-                     "09_grants.sql takes PUBLIC's EXECUTE off every one")
+    # 2026-10-01 (review F2): that loop lends every definer routine to polaris_app, and the
+    # retention routines take the acting admin as a parameter the role can name at will. They
+    # are taken back AFTER the loop (before it, the loop lends them again), by name, in code.
+    code = re.sub(r"--[^\n]*", "", grants)
+    lend = re.search(r"GRANT\s+EXECUTE\s+ON\s+ROUTINE\s+%s\s+TO\s+polaris_app", code, re.I)
+    take = re.search(r"REVOKE\s+EXECUTE\s+ON\s+ROUTINE\s+%s\s+FROM\s+polaris_app",
+                     code[lend.end():] if lend else "", re.I)
+    block = ""
+    if lend and take:
+        at = lend.end() + take.start()
+        block = code[code.rfind("DO $$", 0, at):at]
+    missing = [r for r in ("uc_archive_purge", "uc_set_retention_policy", "uc_apply_retention_template")
+               if f"'{r}'" not in block]
+    if missing:
+        return _fail(name, "09_grants.sql must take EXECUTE on the retention routines back from "
+                           "polaris_app after the loop that lends it every definer routine: they "
+                           "take the acting admin as a parameter (missing: " + ", ".join(missing) + ")")
+    return _ok(name, f"all {found} SECURITY DEFINER routines pin their own search_path, "
+                     "09_grants.sql takes PUBLIC's EXECUTE off every one, and the retention "
+                     "routines are the owner's alone")
 
 
 # 2026-09-25. Operator isolation is row-level security, and a view is evaluated with its OWNER's
