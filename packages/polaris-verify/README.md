@@ -60,7 +60,8 @@ goes to stderr. Development crypto is never mistaken for production crypto.
 
 ## Exit codes
 
-What a script built on this command can rely on:
+What a script built on this command can rely on, measured on 2026-10-01 against 1.0.0rc7 from PyPI
+(the `--zk-proof` rows through the test suite, which needs no proof a binary would accept):
 
 | exit | meaning |
 |---|---|
