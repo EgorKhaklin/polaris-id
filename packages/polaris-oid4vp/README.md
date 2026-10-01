@@ -13,7 +13,7 @@ Foundation [lists the certification](https://openid.net/certification/certified-
 (2026-09-24). It covers that version in that role: not an endorsement, not an audit, and not
 other versions.
 
-**Status:** 1.0.0rc11, a release candidate, not certified: it carries the fixes made since
+**Status:** 1.0.0rc12, a release candidate, not certified: it carries the fixes made since
 1.0.0rc7. Outside results: the Foundation's hosted suite (0.1.0, then 1.0.0rc7 for
 certification) and four unmodified external wallets: walt.id Wallet API v2 (last against
 1.0.0-rc.3), Credo 0.6.3 (against 1.0.0rc7, 2026-09-27), eudi-dev v2.3.7 and OID4VCgo 0.12.0
@@ -78,6 +78,8 @@ make every presentation replayable. `sdjwt.py` touches no socket and reads no co
 | `kb_signature` | a key-binding signature that does not verify |
 | `nonce`, `audience` | a key-binding JWT for another request or verifier |
 | `kb_freshness` | a key-binding `iat` outside the window |
+| `claims` | (`Verifier`) a presentation that withholds a claim the request asked for |
+| `revoked` | (`Verifier`) a credential whose checked status value is not VALID (0) |
 | `credential_validity` | a credential past its `exp` or before its `nbf` |
 | `vct` | a credential of a type the query did not ask for |
 | `disclosure` | a disclosure of a claim that must be signed (`iss`, `exp`, `cnf`, ...), a colliding claim, or nesting past the depth cap |
@@ -113,6 +115,9 @@ only.
 | `no_authority` | no key is stated as entitled to publish this issuer's status at that URI, so no list can count as evidence |
 | `list_refused` | the status reference, the list or its signature failed a check, so nothing is usable as evidence; `code` says which |
 
+- **A checked status that is not VALID is refused:** with a resolver, `Verifier` answers a
+  credential whose status list value is not 0 with the same 400 as any refusal (`revoked`).
+  The other states are not facts about the credential and stay in the verdict for your policy.
 - **Opt-in:** pass `status_resolver=` to `Verifier(...)` or `verify_presentation`. Without one
   nothing is fetched and the state is `not_evaluated`.
 - `status.py` decides a Token Status List (`draft-ietf-oauth-status-list`) without opening a
@@ -141,7 +146,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 340 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 347 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 108 refusals accept and requires a

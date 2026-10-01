@@ -407,6 +407,17 @@ class HeldOutHeaderTests(unittest.TestCase):
         token, key = self._seal(lambda h, n: None)
         self.assertEqual(decrypt_compact(token, key), b"hello")
 
+    def test_a_critical_extension_is_refused(self):
+        """The review of 2026-09-30: `crit` was never read, so a header naming an extension the
+        recipient must understand was decrypted by one that understands none (RFC 7516 4.1.13).
+        The control is the sealing test above: the same token without `crit` opens."""
+        for crit in (["exp"], ["urn:example:extension"], []):
+            with self.subTest(crit=crit):
+                token, key = self._seal(lambda h, n: h.update(crit=crit))
+                with self.assertRaises(JweError) as caught:
+                    decrypt_compact(token, key)
+                self.assertIn("crit", str(caught.exception))
+
     def test_alg_is_matched_exactly_not_by_case(self):
         for alg in ("ecdh-es", "Ecdh-Es"):
             with self.subTest(alg=alg):

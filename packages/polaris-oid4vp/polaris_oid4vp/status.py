@@ -314,6 +314,13 @@ def decide(token, *, index, expected_uri, authority, now, credential_issuer=None
                                     % (len(token), MAX_TOKEN_BYTES))
     if not isinstance(now, int) or isinstance(now, bool):
         return _refuse("misconfigured", "now must be an integer POSIX time")
+    # The `sub` binding below is half of a token's provenance, and the docstring says the uri
+    # MUST equal it. With None it was skipped, so any status list a trusted key ever signed
+    # answered for any credential (2026-10-01).
+    if not isinstance(expected_uri, str) or not expected_uri:
+        return _refuse("misconfigured", "expected_uri, the uri the credential's own status claim "
+                                        "names, must be supplied: without it the status list is "
+                                        "bound to no credential")
 
     parts = bytes(token).split(b".")
     if len(parts) != 3:
@@ -340,7 +347,7 @@ def decide(token, *, index, expected_uri, authority, now, credential_issuer=None
     subject = payload.get("sub")
     if not isinstance(subject, str) or not subject:
         return _refuse("sub", "the status list token carries no sub, so it is bound to no URI")
-    if expected_uri is not None and subject != expected_uri:
+    if subject != expected_uri:
         return _refuse("sub_mismatch",
                        "the credential points at %r and this status list is published for "
                        "%r; it is a real status list for somebody else"

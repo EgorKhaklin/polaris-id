@@ -139,7 +139,11 @@ class Verifier:
         minted before the wallet existed, and the mirror of the `nonce` we send it, so a
         verifier that serves a cached object to a POST has taken that protection away.
         """
+        # An outstanding request only: a session past its lifetime is gone, and neither its cached
+        # object nor a fresh one minted for a wallet nonce is served. Until 2026-10-01 this path
+        # never expired anything, so an hour-old request was re-signed with a new `exp`.
         with self._lock:
+            self._expire_locked()
             session = self._sessions.get(state)
             cached = self._by_request.get(state)
         if wallet_nonce is None:
@@ -271,6 +275,27 @@ class Verifier:
             # The reason goes to the operator through the returned verdict, and the wallet
             # gets the same constant refusal every other cause gets.
             return self._error(verdict.code, verdict.reason)
+
+        # The claims the DCQL query above asked for. Every one is required (it names no
+        # `claim_sets`), and a presentation that discloses fewer does not answer the request;
+        # until 2026-10-01 a wallet that withheld one got the same 200 as one that did not.
+        disclosed = verdict.claims if isinstance(verdict.claims, dict) else {}
+        missing = [c for c in self.claims if c not in disclosed]
+        if missing:
+            return self._error("claims", "the presentation does not disclose %s, which the "
+                                         "request asked for" % ", ".join(repr(c) for c in missing))
+
+        # A status the operator's resolver CHECKED, whose value is not VALID (0): the issuer
+        # says this credential is revoked or suspended. That is a fact, not a policy question, so
+        # the wallet is refused; until 2026-10-01 it got 200. The states that are not a fact
+        # (unreachable, no_authority, list_refused, unsupported_status) stay in the verdict for
+        # the relying party's own policy, as the README's revocation section says.
+        rev = verdict.revocation if isinstance(verdict.revocation, dict) else {}
+        if rev.get("state") == "checked" and rev.get("status") != 0:
+            # The refusal keeps the resolver's answer, so the operator sees why.
+            return 400, dict(self.REFUSAL_BODY), Verdict(
+                False, "revoked", "the issuer's status list gives this credential the value %r, "
+                                  "not VALID (0)" % (rev.get("status"),), revocation=rev)
 
         # HAIP 5.1: 200, application/json, and ONLY a redirect_uri. The suite checks that
         # last part, so anything helpful added here fails the test.

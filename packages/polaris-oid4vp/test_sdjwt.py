@@ -547,6 +547,38 @@ class X5CTests(unittest.TestCase):
                                 trust_anchors=[ca])
         self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
 
+    def test_a_leaf_is_valid_only_at_the_verdicts_now(self):
+        """The review of 2026-09-30: `now` governed the key binding and the credential's exp and
+        nbf, and the leaf's own validity alone read the wall clock, so a leaf that had expired by
+        `now` still chained. Presented without key binding, so its iat cannot answer first."""
+        ca, leaf, leaf_key = self._chain()            # valid from yesterday for thirty days
+        w = Wallet()
+        w.issuer_key = leaf_key
+        der = leaf.public_bytes(serialization.Encoding.DER)
+        original = _jws
+
+        def patched(key, header, payload):
+            if header.get("typ") == "dc+sd-jwt":
+                header = dict(header, x5c=[base64.b64encode(der).decode()])
+                header.pop("kid", None)
+            return original(key, header, payload)
+        globals()["_jws"] = patched
+        try:
+            bare = w.present(drop_key_binding=True)
+        finally:
+            globals()["_jws"] = original
+        day = 86400
+
+        def at(now):
+            return verify_presentation(bare, expected_nonce=NONCE, expected_audience=AUDIENCE,
+                                       trust_anchors=[ca], require_key_binding=False, now=now)
+        ok = at(time.time())
+        self.assertTrue(ok.authentic, "control: %s: %s" % (ok.code, ok.reason))
+        for label, now in (("after it expired", time.time() + 60 * day),
+                           ("before it was valid", time.time() - 5 * day)):
+            with self.subTest(label):
+                self.assertEqual(at(now).code, "issuer_key")
+
     def test_a_leaf_from_another_anchor_is_refused(self):
         _, leaf, leaf_key = self._chain()
         other_ca, _, _ = self._chain()
@@ -874,6 +906,26 @@ class ResolverAndOptionsTests(unittest.TestCase):
         v = w.verify(bare, require_key_binding=False)
         self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
         self.assertEqual(v.claims["given_name"], "Jean")
+
+    def test_an_orphan_disclosure_is_refused_with_key_binding_waived(self):
+        """The review of 2026-09-30: the orphan rule ran only on the key-binding path. A
+        disclosure the issuer committed to in `_sd` that resolves to nothing (here an array
+        element, `[salt, value]`, committed where only object properties resolve) was refused
+        with key binding and accepted without it. An uncommitted disclosure was always refused
+        on both paths, earlier, so it cannot test this rule."""
+        w = Wallet()
+        claims = (("given_name", "Jean"), ("family_name", "Dupont"))
+        digest = lambda d: b64u_encode(hashlib.sha256(d.encode("ascii")).digest())
+        committed = [digest(_disclosure("salt%d" % i, n, v)) for i, (n, v) in enumerate(claims)]
+        element = b64u_encode(json.dumps(["salt-element", "resolves to nothing"],
+                                         separators=(",", ":")).encode())
+        sd = {"_sd": committed + [digest(element)]}
+        ok = w.verify(w.present(drop_key_binding=True, payload_extra=sd), require_key_binding=False)
+        self.assertTrue(ok.authentic, "control: %s: %s" % (ok.code, ok.reason))
+        bare = w.present(drop_key_binding=True, payload_extra=sd, extra_disclosure=element)
+        v = w.verify(bare, require_key_binding=False)
+        self.assertEqual((v.authentic, v.code), (False, "disclosure"))
+        self.assertIn("resolve to nothing", v.reason)
 
     def test_a_key_binding_jwt_that_does_not_parse_is_refused(self):
         w = Wallet()
