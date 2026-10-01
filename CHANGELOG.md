@@ -27,6 +27,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-oid4vp` refuses a credential that commits to a digest twice (RFC 9901 7.1); one disclosure could stand in two places.
 - `polaris-oid4vp` refuses an `x5c` leaf that is self-signed or a CA (HAIP 1.0 6.1.1); the trust anchor itself verified as an issuer.
 
+- The application's database role can no longer run the retention and archive-purge routines; naming any admin, it could set retention or purge audit rows past the floor.
 ### Fixed
 
 - The rc.68 notes list only what rc.68 released; a merge after the cut had filed the `polaris-oid4vp` 1.0.0rc12 lines there.
