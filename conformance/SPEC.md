@@ -278,6 +278,15 @@ without the nonce, the credential or the binding's window. No verifier reported 
 without them the SDKs trust no manifest, while the detached verifier's function takes the
 manifests it is handed as the relying party's own (its parameter is `trusted_manifests`).
 
+SDK parity (1.0.0-rc.69). Ten cases pin signed bytes on which a function-by-function comparison of
+the two reference SDKs found them answering differently. One instant grammar, read the same way:
+ASCII digits only, no surrounding whitespace, offsets below 24 hours, and years 1 to 99 as written
+(`timestamp-issued-at-*`). The canonical form writes a small non-integral number as Python does,
+1.5e-05 (`agent-grant-small-amount-limit`), and orders keys by code point
+(`registry-keys-outside-the-bmp`). An agency id matches only an equal integer
+(`registry-publisher-agency-id-missing`, `trust-list-publisher-agency-id-*`). Before these cases
+the Python verifiers failed four and the TypeScript SDK a different five.
+
 WIRE-SPEC rules (1.0.0-rc.69). Eleven cases pin three rules a read of every verifier requirement
 found split or unenforced. A revoked leaf and an epoch leaf are 64 hex digits (3.3, 3.16): a feed
 with a `null` leaf, rooted as Python spells it or as JavaScript does, was accepted by one language's

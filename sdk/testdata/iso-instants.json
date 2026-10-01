@@ -64,6 +64,51 @@
    "input": "2026-09-17T09:00:00.1234567Z",
    "epoch": null,
    "why": "seven fractional digits"
+  },
+  {
+   "input": "2026-10-01T00:00:00+24:00",
+   "epoch": null,
+   "why": "an offset of 24 hours is not one RFC 3339 allows; the TypeScript SDK read it (2026-10-01)"
+  },
+  {
+   "input": "2026-10-01T00:00:00+01:60",
+   "epoch": null,
+   "why": "nor is 60 minutes; both SDKs read it as +02:00"
+  },
+  {
+   "input": "\u0662\u0660\u0662\u0666-10-01T00:00:00Z",
+   "epoch": null,
+   "why": "Arabic-Indic digits; Python's \\d matched them and int() converted them"
+  },
+  {
+   "input": "0099-01-01T00:00:00Z",
+   "epoch": -59042995200,
+   "why": "year 99, read as written; Date.UTC read years 0 to 99 as 1900 onwards"
+  },
+  {
+   "input": "0000-01-01T00:00:00Z",
+   "epoch": null,
+   "why": "there is no year 0 in the Python reference"
+  },
+  {
+   "input": " 2026-10-01T00:00:00Z",
+   "epoch": null,
+   "why": "RFC 3339 has no surrounding whitespace"
+  },
+  {
+   "input": "\u001c2026-10-01T00:00:00Z",
+   "epoch": null,
+   "why": "a file separator, which Python's strip() removed and trim() did not"
+  },
+  {
+   "input": "\ufeff2026-10-01T00:00:00Z",
+   "epoch": null,
+   "why": "a byte-order mark, which trim() removed and Python's strip() did not"
+  },
+  {
+   "input": "2026-10-01T00:00:00Z\n",
+   "epoch": null,
+   "why": "a trailing newline, which Python's $ let through before strip() was dropped"
   }
  ]
 }

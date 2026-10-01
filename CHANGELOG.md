@@ -30,6 +30,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-verify` calls an agent grant usable only when it understands its limits; one signed with an unknown limit or a non-finite `max_amount` was usable.
 - All three verifiers refuse a revocation feed or epoch leaf set whose leaves are not 64 hex digits; a `null` leaf split Python from TypeScript.
 - All three verifiers refuse a signed document whose digest is not lowercase SHA3-256, as WIRE-SPEC 3.12 requires.
+- All three verifiers read one instant grammar: ASCII digits, no surrounding whitespace, offsets below 24 hours, years 1 to 99 as written.
+- An agency id matches only an equal integer in all three verifiers; Python matched a missing id with a null one, and `true` with 1.
+- Both SDKs read only the JSON `true` as currently authoritative; both read a status answer of `"false"` as current.
 
 - The application's database role can no longer run the retention and archive-purge routines; naming any admin, it could set retention or purge audit rows past the floor.
 ### Fixed
@@ -37,12 +40,18 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The TypeScript SDK reads a presentation that names a credential and supplies none as having none; it decided the object itself.
 - The TypeScript SDK reads an instant to the microsecond, as both Python verifiers do; it rounded to the millisecond.
 - Both Python verifiers refuse a fractional use limit or use count, as the TypeScript SDK does; `int()` truncated it.
+- The TypeScript SDK writes a small number and orders keys as the signer does, so a genuine artifact with `1.5e-05` or an emoji key verifies.
+- All three verifiers read an agent proof's grant id, nonce and action as text; a proof must name its grant.
+- All three verifiers trim only ASCII whitespace from a pairwise handle or nullifier; other Unicode spaces split the SDKs.
+- The TypeScript SDK refuses a credential that is not an object instead of throwing, and checks each grant limit present.
+- The Python SDK reports no nonce match for a holder proof it cannot check, as the TypeScript SDK does.
 - The rc.68 notes list only what rc.68 released; a merge after the cut had filed the `polaris-oid4vp` 1.0.0rc12 lines there.
 
 ### Added
 
 - Thirteen conformance cases pin the status rule for manifests, registries, holder chains, grants in use and trust edges.
-- Eleven conformance cases pin WIRE-SPEC 3.3, 3.16, 3.12 and 2.2 for leaves, signed documents and instants; the suite has 243 cases.
+- Eleven conformance cases pin WIRE-SPEC 3.3, 3.16, 3.12 and 2.2 for leaves, signed documents and instants.
+- Ten conformance cases pin where the two SDKs disagreed on signed bytes; the suite has 253 cases.
 
 ### Changed
 

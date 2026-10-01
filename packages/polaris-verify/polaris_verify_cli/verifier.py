@@ -530,9 +530,11 @@ def _status_assertion_canonical(assertion):
     }, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+# ASCII digits only: Python's `\d` also matches Arabic-Indic and every other script's digits,
+# and `int()` converts them, so an instant written in them parsed here and nowhere else.
 _ISO_INSTANT = __import__("re").compile(
-    r"^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?"
-    r"(?:([Zz])|([+-])(\d{2}):?(\d{2}))?$")
+    r"([0-9]{4})-([0-9]{2})-([0-9]{2})(?:[Tt ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.([0-9]{1,6}))?)?)?"
+    r"(?:([Zz])|([+-])([0-9]{2}):?([0-9]{2}))?")
 
 
 def _strict_instant(s):
@@ -547,12 +549,17 @@ def _strict_instant(s):
     fields are built one by one, so an impossible date ("2026-02-31") is refused rather
     than rolled over."""
     from datetime import datetime, timedelta, timezone
-    m = _ISO_INSTANT.match(s.strip()) if isinstance(s, str) else None
+    # The whole string, as written. `strip()` removed a different set of characters than the
+    # TypeScript SDK's `trim()` (a file separator here, a byte-order mark there), and `$`
+    # matched before a trailing newline; RFC 3339 has no surrounding whitespace (2026-10-01).
+    m = _ISO_INSTANT.fullmatch(s) if isinstance(s, str) else None
     if not m:
         raise ValueError("not an ISO 8601 instant in the accepted subset: %r" % (s,))
     y, mo, d, hh, mi, ss, frac, z, sign, oh, om = m.groups()
     micro = int((frac or "").ljust(6, "0") or 0)
     tz = timezone.utc
+    if sign and (int(oh) > 23 or int(om) > 59):
+        raise ValueError("an offset of %s:%s is not one RFC 3339 allows" % (oh, om))
     if sign:
         shift = timedelta(hours=int(oh), minutes=int(om))
         tz = timezone(shift if sign == "+" else -shift)
@@ -2036,11 +2043,19 @@ def _registry_canonical(r):
     return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def _same_agency(a, b):
+    """Two agency ids name the same agency only when both are integers and equal. `==` let a
+    missing id match a null one (None == None) and True match 1, where the TypeScript SDK's
+    `===` refused both (2026-10-01)."""
+    return (isinstance(a, int) and not isinstance(a, bool) and isinstance(b, int)
+            and not isinstance(b, bool) and a == b)
+
+
 def _registry_publisher_key(reg):
     """The registered key the registry itself lists for its publisher, or None."""
     pub = reg.get("publisher") if isinstance(reg.get("publisher"), dict) else {}
     for a in (reg.get("authorities") if isinstance(reg.get("authorities"), list) else []):
-        if isinstance(a, dict) and a.get("agency_id") == pub.get("agency_id") \
+        if isinstance(a, dict) and _same_agency(a.get("agency_id"), pub.get("agency_id")) \
                 and _status_of(a) == "active" and a.get("public_key_hex"):
             return str(a["public_key_hex"]).lower()
     return None
@@ -2704,7 +2719,7 @@ def _trust_list_canonical(t):
 def _trust_list_publisher_key(tl):
     pub = tl.get("publisher") if isinstance(tl.get("publisher"), dict) else {}
     for k in (tl.get("keys") if isinstance(tl.get("keys"), list) else []):
-        if isinstance(k, dict) and k.get("agency_id") == pub.get("agency_id") and k.get("status") == "active" and k.get("public_key_hex"):
+        if isinstance(k, dict) and _same_agency(k.get("agency_id"), pub.get("agency_id")) and k.get("status") == "active" and k.get("public_key_hex"):
             yield str(k["public_key_hex"]).lower()
 
 
@@ -3412,6 +3427,10 @@ _PRESENTATION_FORMAT = "polaris-presentation/1"
 # P9.4: the pairwise handle. The domain tag is inside the hash so a handle cannot be
 # confused with any other SHA3-256 value in the protocol, and so a future construction
 # can be told apart from this one by its tag rather than by its length.
+#: The whitespace a pairwise handle or a nullifier is trimmed of: ASCII only. `strip()` also
+#: removed a file separator and other Unicode spaces, and JavaScript's `trim()` a byte-order mark,
+#: so one scope gave two handles (2026-10-01).
+_ASCII_WS = " \t\n\r\x0b\x0c"
 _PAIRWISE_TAG = "polaris-pairwise/1"
 
 
@@ -3442,12 +3461,12 @@ def pairwise_handle(holder_public_key_hex, verifier_scope):
     Returns None on input it cannot use, because a verifier must not silently key its
     records on the hash of an empty string, which would collide every holder into one.
     """
-    if not isinstance(holder_public_key_hex, str) or not holder_public_key_hex.strip():
+    if not isinstance(holder_public_key_hex, str) or not holder_public_key_hex.strip(_ASCII_WS):
         return None
-    if verifier_scope is None or not str(verifier_scope).strip():
+    if verifier_scope is None or not str(verifier_scope).strip(_ASCII_WS):
         return None
-    material = "%s|%s|%s" % (_PAIRWISE_TAG, holder_public_key_hex.strip().lower(),
-                             str(verifier_scope).strip())
+    material = "%s|%s|%s" % (_PAIRWISE_TAG, holder_public_key_hex.strip(_ASCII_WS).lower(),
+                             str(verifier_scope).strip(_ASCII_WS))
     return hashlib.sha3_256(material.encode("utf-8")).hexdigest()
 
 
@@ -3460,7 +3479,7 @@ def handles_link(a, b):
     """
     if not isinstance(a, str) or not isinstance(b, str):
         return False
-    return a.strip().lower() == b.strip().lower()
+    return a.strip(_ASCII_WS).lower() == b.strip(_ASCII_WS).lower()
 _QR_FORMAT = "polaris-qr/1"
 _QR_PREFIX = "PLRS1"
 QR_FRAME_BYTES = 1800   # a QR version-40 byte-mode frame holds 2953; 1800 leaves margin for any encoder
@@ -4350,6 +4369,17 @@ def _cbor_sig_structure(protected, payload):
             + _cbor_bstr_header(len(payload)) + payload)
 
 
+def _wire_text(x):
+    """A string or an integer as the text the TypeScript SDK's String() gives it, else None.
+    `str(x or "")` read 0 as missing, and `str()` writes 1.0 as "1.0" and True as "True" where
+    String() writes "1" and "true", so a proof naming nonce 0 failed here and passed there."""
+    if isinstance(x, str):
+        return x
+    if isinstance(x, int) and not isinstance(x, bool):
+        return str(x)
+    return None
+
+
 def verify_agent_grant(grant, binding=None, credential=None, now=None, requested_action=None,
                        revocation=None, agent_proof=None, expected_nonce=None,
                        anchor_keys=None, verifier_scope=None):
@@ -4465,13 +4495,14 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
         v["agent_proved"] = False
         if not isinstance(agent_proof, dict) or agent_proof.get("format") != _AGENT_PROOF_FORMAT:
             v["note"] = "the agent proof is not a %s" % _AGENT_PROOF_FORMAT
-        elif str(agent_proof.get("grant_id") or "") != str(grant.get("grant_id") or ""):
+        elif (_wire_text(agent_proof.get("grant_id")) is None
+              or _wire_text(agent_proof.get("grant_id")) != _wire_text(grant.get("grant_id"))):
             v["note"] = "the agent proof names a different grant"
         elif str(agent_proof.get("public_key_hex") or "").lower() != str(grant.get("agent_public_key_hex") or "").lower():
             v["note"] = "the agent proof is signed by a key the grant does not name"
-        elif expected_nonce is not None and str(agent_proof.get("service_nonce") or "") != str(expected_nonce):
+        elif expected_nonce is not None and _wire_text(agent_proof.get("service_nonce")) != _wire_text(expected_nonce):
             v["note"] = "the agent proof does not name this service's nonce (a replay)"
-        elif requested_action is not None and str(agent_proof.get("action") or "") != str(requested_action):
+        elif requested_action is not None and _wire_text(agent_proof.get("action")) != _wire_text(requested_action):
             v["note"] = "the agent proof is for a different action than the one requested"
         elif (grant.get("agent_algorithm") is not None
                 and agent_proof.get("algorithm") != grant.get("agent_algorithm")):
@@ -4563,6 +4594,12 @@ def grant_within_limits(grant, uses_so_far=0, amount=None):
     # catch, so the infinity case crashed rather than being refused. The docstring above
     # promises a limit this verifier cannot evaluate is REFUSED, not ignored, and neither
     # branch delivered that.
+    # Each argument that is present is a finite number, whether or not the limit it is compared
+    # with exists, as the Python SDK reads them: a NaN amount with no limit passed here (2026-10-01).
+    if not _finite(uses_so_far):
+        return False, "the use count is not a finite number (%r)" % (uses_so_far,)
+    if amount is not None and not _finite(amount):
+        return False, "the requested amount is not a finite number (%r)" % (amount,)
     max_uses = limits.get("max_uses")
     if max_uses is not None:
         if not _finite(max_uses) or not _finite(uses_so_far):

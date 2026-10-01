@@ -120,6 +120,11 @@ export function tokenValueSerialProblem(tokenValue: unknown): string | null {
 /** Verify a Polaris authenticity pack OFFLINE. `anchors` (optional) are trusted
  * issuer public keys as hex; issuerTrusted says whether the pack's key is one. */
 export function verifyAuthenticity(pack: Pack, anchors?: string[] | null): AuthenticityVerdict {
+  // A verdict, never an exception, on input that is not an object: `null.token_value` threw here
+  // where the Python SDK answered not authentic (2026-10-01).
+  if (pack === null || typeof pack !== "object" || Array.isArray(pack)) {
+    return { authentic: false, issuerTrusted: null, algorithm: null, note: "the credential is not an object" };
+  }
   const tok = pack.token_value;
   const alg = pack.algorithm ?? null;
   const sigHex = pack.signature_hex;
@@ -223,11 +228,37 @@ export function __canonicalJsonForTest(value: any): string {
   return canonicalJson(value);
 }
 
+/** A number as Python's json.dumps writes it. Both languages pick the shortest digits that
+ * round-trip, but Python switches to exponent form below 1e-4 with at least two exponent
+ * digits ("1.5e-05", "1e-07") where JavaScript waits until 1e-6 and writes "1e-7", so a
+ * statement signed with 0.000015 in it failed here (2026-10-01). Integral values are the other
+ * known limit, and hasIntegralNumber names them. */
+function pythonJsonNumber(x: number): string {
+  if (Number.isFinite(x) && !Number.isInteger(x) && Math.abs(x) < 1e-4) {
+    const [mant, exp] = x.toExponential().split("e");
+    const e = Number(exp);
+    return mant + "e" + (e < 0 ? "-" : "+") + String(Math.abs(e)).padStart(2, "0");
+  }
+  return JSON.stringify(x);
+}
+
+/** Python's sort_keys orders keys by code point; JavaScript's sort() by UTF-16 unit, which puts
+ * a key outside the Basic Multilingual Plane before "\uffff" where Python puts it after. */
+function codePointOrder(a: string, b: string): number {
+  const x = Array.from(a, (c) => c.codePointAt(0) as number);
+  const y = Array.from(b, (c) => c.codePointAt(0) as number);
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    if (x[i] !== y[i]) return x[i] - y[i];
+  }
+  return x.length - y.length;
+}
+
 function canonicalJson(value: any): string {
   if (typeof value === "string") return pythonJsonString(value);
+  if (typeof value === "number") return pythonJsonNumber(value);
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return "[" + value.map(canonicalJson).join(",") + "]";
-  const keys = Object.keys(value).sort();
+  const keys = Object.keys(value).sort(codePointOrder);
   return "{" + keys.map((k) => pythonJsonString(k) + ":" + canonicalJson(value[k])).join(",") + "}";
 }
 
@@ -285,11 +316,24 @@ function isoToEpoch(s: unknown): number | null {
   // ISO 8601 only, and the same subset Python's fromisoformat accepts: a date, optionally a
   // time, optionally fractional seconds, optionally an offset. Anything else is refused
   // rather than guessed at.
-  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?(?:([Zz])|([+-])(\d{2}):?(\d{2}))?$/.exec(s.trim());
+  // The whole string, as written: `trim()` removed a different set of characters than the
+  // Python verifiers' `strip()` (a byte-order mark here, a file separator there), and RFC
+  // 3339 has no surrounding whitespace (2026-10-01).
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?(?:([Zz])|([+-])(\d{2}):?(\d{2}))?$/.exec(s);
   if (!m) return null;
   const [, y, mo, d, hh, mi, ss, frac, z, sign, oh, om] = m;
+  // An offset of 24 hours or 60 minutes is not one RFC 3339 allows, and Python refuses it.
+  if (sign && (Number(oh) > 23 || Number(om) > 59)) return null;
+  // Year 0 does not exist in the Python reference; years 1 to 99 do, and Date.UTC reads them as
+  // 1901 to 1999, so a credential dated 0099 was refused here and read as 0099 there.
+  if (Number(y) === 0) return null;
   let t = Date.UTC(Number(y), Number(mo) - 1, Number(d),
                    Number(hh || 0), Number(mi || 0), Number(ss || 0), 0);
+  if (Number(y) < 100) {
+    const fixed = new Date(t);
+    fixed.setUTCFullYear(Number(y));
+    t = fixed.getTime();
+  }
   // The fraction to the microsecond, as the Python verifiers read it. Until 2026-10-01 it was
   // rounded to the millisecond here, so an artifact dated 100 microseconds ahead of `now` was
   // fresh in this SDK and not yet valid in both Python verifiers: the same bytes, two answers.
@@ -598,7 +642,7 @@ export function verifySignedArtifact(obj: any, now?: string | null,
     const pub = o.publisher && typeof o.publisher === "object" ? o.publisher : {};
     const listed = new Set<string>(
       (Array.isArray(o.authorities) ? o.authorities : [])
-        .filter((a: any) => a && a.agency_id === pub.agency_id && (a.status ?? "active") === "active")
+        .filter((a: any) => a && sameAgency(a.agency_id, pub.agency_id) && (a.status ?? "active") === "active")
         .map((a: any) => String(a.public_key_hex ?? "").toLowerCase()),
     );
     ok = listed.has(String(o.public_key_hex ?? "").toLowerCase());
@@ -606,7 +650,7 @@ export function verifySignedArtifact(obj: any, now?: string | null,
     const pub = o.publisher && typeof o.publisher === "object" ? o.publisher : {};
     const active = new Set<string>(
       (Array.isArray(o.keys) ? o.keys : [])
-        .filter((k: any) => k && k.agency_id === pub.agency_id && k.status === "active")
+        .filter((k: any) => k && sameAgency(k.agency_id, pub.agency_id) && k.status === "active")
         .map((k: any) => String(k.public_key_hex ?? "").toLowerCase()),
     );
     ok = active.has(String(o.public_key_hex ?? "").toLowerCase());
@@ -1153,7 +1197,9 @@ export class PolarisVerifier {
       reasons.push("status check failed: " + (e as Error).message);
       return { decision: "reject", authentic: true, issuerTrusted: a.issuerTrusted, currentlyAuthoritative: null, reasons };
     }
-    const current = Boolean(status.currently_authoritative);
+    // Only the JSON boolean true. Boolean() read {} and "false" as true; the Python SDK
+    // read "false" as true too, and {} as false (2026-10-01).
+    const current = status.currently_authoritative === true;
     if (!current) reasons.push(`not currently authoritative (revoked/inactive): status=${status.status}`);
     return {
       decision: current ? "accept" : "reject",
@@ -1196,12 +1242,18 @@ export class PolarisVerifier {
  */
 export function nullifiersLink(a: unknown, b: unknown): boolean {
   if (typeof a !== "string" || typeof b !== "string") return false;
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
+  return asciiTrim(a).toLowerCase() === asciiTrim(b).toLowerCase();
 }
 
 // ---------------------------------------------------------------------------
 // P9.4 — the pairwise handle, for a relying party keying its own records.
 // ---------------------------------------------------------------------------
+
+/** Trim ASCII whitespace only, as the Python verifiers do: `trim()` also removed a byte-order
+ * mark, and Python's `strip()` a file separator, so one scope gave two handles (2026-10-01). */
+function asciiTrim(s: string): string {
+  return s.replace(/^[ \t\n\r\v\f]+|[ \t\n\r\v\f]+$/g, "");
+}
 
 const PAIRWISE_TAG = "polaris-pairwise/1";
 
@@ -1226,9 +1278,9 @@ const PAIRWISE_TAG = "polaris-pairwise/1";
  * would collide every holder into one record.
  */
 export function pairwiseHandle(holderPublicKeyHex: unknown, verifierScope: unknown): string | null {
-  if (typeof holderPublicKeyHex !== "string" || holderPublicKeyHex.trim() === "") return null;
-  if (verifierScope === null || verifierScope === undefined || String(verifierScope).trim() === "") return null;
-  const material = `${PAIRWISE_TAG}|${holderPublicKeyHex.trim().toLowerCase()}|${String(verifierScope).trim()}`;
+  if (typeof holderPublicKeyHex !== "string" || asciiTrim(holderPublicKeyHex) === "") return null;
+  if (verifierScope === null || verifierScope === undefined || asciiTrim(String(verifierScope)) === "") return null;
+  const material = `${PAIRWISE_TAG}|${asciiTrim(holderPublicKeyHex).toLowerCase()}|${asciiTrim(String(verifierScope))}`;
   return bytesToHex(sha3_256(new TextEncoder().encode(material)));
 }
 
@@ -1241,7 +1293,7 @@ export function pairwiseHandle(holderPublicKeyHex: unknown, verifierScope: unkno
  */
 export function handlesLink(a: unknown, b: unknown): boolean {
   if (typeof a !== "string" || typeof b !== "string") return false;
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
+  return asciiTrim(a).toLowerCase() === asciiTrim(b).toLowerCase();
 }
 
 // ---------------------------------------------------------------------------
@@ -1301,6 +1353,14 @@ export function grantWithinLimits(grant: any, usesSoFar = 0, amount?: number): [
     if (usesSoFar >= maxUses) return [false, `the grant's use limit (${maxUses}) is exhausted`];
   }
   const maxAmount = limits["max_amount"];
+  // Each value that is present is a finite number, whether or not the other side of its
+  // comparison is: read only in pairs, `max_amount: "100"` with no amount, or a NaN amount with
+  // no limit, passed here where the Python SDK refuses both (2026-10-01).
+  for (const [label, value] of [["max_amount", maxAmount], ["the requested amount", amount]] as const) {
+    if (value !== null && value !== undefined && (typeof value !== "number" || !Number.isFinite(value))) {
+      return [false, `${label} is not a finite number`];
+    }
+  }
   if (maxAmount !== null && maxAmount !== undefined && amount !== undefined) {
     if (typeof maxAmount !== "number" || !Number.isFinite(maxAmount)
         || typeof amount !== "number" || !Number.isFinite(amount)) {
@@ -1355,15 +1415,30 @@ export function grantPrincipalBound(grant: any, binding: any, credential: any, n
     && String(binding.public_key_hex ?? "").toLowerCase() === String(credential.public_key_hex ?? "").toLowerCase());
 }
 
+/** Two agency ids name the same agency only when both are integers and equal: `===` let two
+ * missing ids match, where the Python SDK read a null against a missing one as equal. */
+function sameAgency(a: unknown, b: unknown): boolean {
+  return typeof a === "number" && Number.isInteger(a) && a === b;
+}
+
+/** A string or an integer as text, else null: the one reading of a signed id, nonce or action
+ * that the Python verifiers share. `String(x ?? "")` here and `str(x or "")` there disagreed on
+ * 0, 1.0 and true, and both let a proof that names no grant match a grant that has none. */
+function wireText(x: unknown): string | null {
+  if (typeof x === "string") return x;
+  if (typeof x === "number" && Number.isInteger(x)) return String(x);
+  return null;
+}
+
 export function agentProofProves(proof: any, grant: any, action?: unknown, nonce?: unknown): boolean {
   if (!proof || typeof proof !== "object" || !grant || typeof grant !== "object") return false;
   if (proof.format !== "polaris-agent-proof/1") return false;
-  if (String(proof.grant_id ?? "") !== String(grant.grant_id ?? "")) return false;
+  if (wireText(proof.grant_id) === null || wireText(proof.grant_id) !== wireText(grant.grant_id)) return false;
   if (String(proof.public_key_hex ?? "").toLowerCase() !== String(grant.agent_public_key_hex ?? "").toLowerCase()) return false;
   if (grant.agent_algorithm !== undefined && grant.agent_algorithm !== null
       && proof.algorithm !== grant.agent_algorithm) return false;
-  if (nonce !== undefined && nonce !== null && String(proof.service_nonce ?? "") !== String(nonce)) return false;
-  if (action !== undefined && action !== null && String(proof.action ?? "") !== String(action)) return false;
+  if (nonce !== undefined && nonce !== null && wireText(proof.service_nonce) !== wireText(nonce)) return false;
+  if (action !== undefined && action !== null && wireText(proof.action) !== wireText(action)) return false;
   return true;
 }
 

@@ -50,6 +50,46 @@ test("a presentation that names a credential and supplies none is not read as a 
   }
 });
 
+// 2026-10-01: the two reference SDKs answered differently on these inputs, and no published case
+// constrained the answer. Each test pins the answer both now give.
+test("only the JSON boolean true is currently authoritative", async () => {
+  const pres = { credential: vec("ml-dsa-65-valid.json") };
+  for (const [answer, decision] of [[true, "accept"], [{}, "reject"], ["true", "reject"], [1, "reject"]] as const) {
+    const v = new PolarisVerifier({ issuerUrl: "http://x" });
+    (v as any).onlineStatus = async () => ({ currently_authoritative: answer, status: "ACTIVE" });
+    assert.equal((await v.verifyPresentation(pres)).decision, decision, JSON.stringify(answer));
+  }
+});
+
+test("every limit value that is present is a finite number, read alone", () => {
+  assert.equal(grantWithinLimits({ limits: { max_amount: "100" } }, 0)[0], false);
+  assert.equal(grantWithinLimits({ limits: {} }, 0, Number.NaN)[0], false);
+  assert.equal(grantWithinLimits({ limits: { max_amount: 100 } }, 0)[0], true, "control");
+});
+
+test("an agent proof's nonce, action and grant id are read as text, and must be named", () => {
+  const grant = { grant_id: "g-1", agent_public_key_hex: "ab" };
+  const proof = { format: "polaris-agent-proof/1", grant_id: "g-1", public_key_hex: "ab", service_nonce: 0, action: "read" };
+  assert.equal(agentProofProves(proof, grant, "read", 0), true, "nonce 0 is a nonce");
+  assert.equal(agentProofProves(proof, grant, "read", "0"), true, "and its text is 0");
+  assert.equal(agentProofProves({ ...proof, service_nonce: 1.5 }, grant, "read", "1.5"), false, "a fraction is not text");
+  assert.equal(agentProofProves({ ...proof, grant_id: undefined }, { ...grant, grant_id: undefined }, "read", 0), false,
+               "a proof that names no grant binds none");
+});
+
+test("a pairwise handle trims ASCII whitespace only", () => {
+  const key = "ab".repeat(32);
+  assert.equal(pairwiseHandle(key, " scope\t"), pairwiseHandle(key, "scope"));
+  assert.notEqual(pairwiseHandle(key, "scope\ufeff"), pairwiseHandle(key, "scope"), "a byte-order mark stays");
+  assert.notEqual(pairwiseHandle(key, "\u001cscope"), pairwiseHandle(key, "scope"), "so does a file separator");
+});
+
+test("verifyAuthenticity answers input that is not an object", () => {
+  for (const pack of [null, "x", 1, []]) {
+    assert.equal(verifyAuthenticity(pack as any).authentic, false, JSON.stringify(pack));
+  }
+});
+
 test("offline presentation is provisional", async () => {
   const v = new PolarisVerifier();
   const out = await v.verifyPresentation({ credential: vec("ml-dsa-65-valid.json") });
@@ -503,6 +543,13 @@ test("canonical JSON escapes non-ASCII the way the wire format does", () => {
      '{"\\u00e9":"an accented KEY"}'],
     [{ z: 1, a: [1, { y: "\u00ff", x: null }] },
      '{"a":[1,{"x":null,"y":"\\u00ff"}],"z":1}'],
+    // 2026-10-01: Python writes a non-integral number below 1e-4 in exponent form with two
+    // exponent digits, and sorts keys by code point; this wrote 0.000015 and sorted by UTF-16.
+    [{ x: 0.000015 }, '{"x":1.5e-05}'],
+    [{ x: 1e-7 }, '{"x":1e-07}'],
+    [{ x: -2.5e-5 }, '{"x":-2.5e-05}'],
+    [{ x: 0.5, y: 123.25 }, '{"x":0.5,"y":123.25}'],
+    [{ "\uffff": 1, "\u{1F600}": 2 }, '{"\\uffff":1,"\\ud83d\\ude00":2}'],
   ];
   for (const [value, expected] of cases) {
     assert.equal(__canonicalJsonForTest(value), expected,

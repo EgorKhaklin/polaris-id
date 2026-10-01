@@ -58,9 +58,12 @@ object. `polaris-verify` 1.0.0rc6 and `polaris-sdk-python` 1.0.0rc6 read a signe
 authority or holder binding whose `status` is `false` or `""` as active; `polaris-verify` 1.0.0rc6 calls a
 grant usable whose limits it does not understand; all three read a revocation feed's non-hex leaf by
 its spelling, so a `null` leaf passes one language and not the other, and accept a signed document
-whose digest is not lowercase SHA3-256; both Python packages read a use limit of 2.5 as 2; and
-`polaris-sdk-ts` 1.0.0-rc.7 rounds instants to the millisecond and decides a presentation naming
-`credential: null` as the object itself. The tree carries
+whose digest is not lowercase SHA3-256; both Python packages read a use limit of 2.5 as 2, an
+instant in non-ASCII digits as valid, and a missing agency id as matching a null one; both SDKs read
+a status answer of `currently_authoritative: "false"` as current; and `polaris-sdk-ts` 1.0.0-rc.7
+rounds instants to the millisecond, reads an offset of 24 hours, refuses a genuine artifact signed
+with a number like 1.5e-05 or a key outside the Basic Multilingual Plane, and decides a presentation
+naming `credential: null` as the object itself. The tree carries
 the fixes; releases follow the maintainer's approval.
 
 If you installed or pinned an older version, upgrade. The Current column is checked against

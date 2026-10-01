@@ -3157,6 +3157,113 @@
       },
       "since": "1.0.0-rc.69",
       "note": "The positive control: the same checkpoint 100 microseconds after it was issued."
+    },
+    {
+      "name": "timestamp-issued-at-year-0099",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-issued-at-year-0099.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "Year 99, a valid RFC 3339 year. Both Python verifiers read it; the TypeScript SDK's Date.UTC read it as 1999 and its own check then refused the date."
+    },
+    {
+      "name": "timestamp-issued-at-offset-24-hours",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-issued-at-offset-24-hours.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "An offset of 24 hours is not one RFC 3339 allows; the TypeScript SDK read it."
+    },
+    {
+      "name": "timestamp-issued-at-non-ascii-digits",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-issued-at-non-ascii-digits.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "A year in Arabic-Indic digits. Python's `\\d` matched them and int() converted them."
+    },
+    {
+      "name": "timestamp-issued-at-byte-order-mark",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-issued-at-byte-order-mark.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "A leading byte-order mark, which the TypeScript SDK's trim() removed."
+    },
+    {
+      "name": "timestamp-issued-at-file-separator",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-issued-at-file-separator.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "A leading file separator, which Python's strip() removed."
+    },
+    {
+      "name": "agent-grant-small-amount-limit",
+      "artifact": "agent-grant",
+      "object_file": "conformance/vectors/agent-grant-small-amount-limit.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "A genuine grant whose signed max_amount is 0.000015, which the signer writes as 1.5e-05. The TypeScript SDK wrote it as 0.000015 when it rebuilt the statement, and refused the grant."
+    },
+    {
+      "name": "registry-keys-outside-the-bmp",
+      "artifact": "registry",
+      "object_file": "conformance/vectors/registry-keys-outside-the-bmp.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "A genuine registry whose signed instance holds a key outside the Basic Multilingual Plane. Python sorts it after \"\\uffff\" (code point); the TypeScript SDK sorted it before (UTF-16 unit) and refused the registry."
+    },
+    {
+      "name": "registry-publisher-agency-id-missing",
+      "artifact": "registry",
+      "object_file": "conformance/vectors/registry-publisher-agency-id-missing.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "A registry whose publisher names no agency id, signed by a key listed for an authority whose id is null. Python's == matched the two; the TypeScript SDK did not."
+    },
+    {
+      "name": "trust-list-publisher-agency-id-true",
+      "artifact": "trust-list",
+      "object_file": "conformance/vectors/trust-list-publisher-agency-id-true.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "A trust list whose publisher's agency id is the boolean true, signed by a key listed for agency 1. Python's == read True as 1; the TypeScript SDK did not."
+    },
+    {
+      "name": "trust-list-publisher-agency-id-control",
+      "artifact": "trust-list",
+      "object_file": "conformance/vectors/trust-list-publisher-agency-id-control.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: the published trust list, signed by a key it lists for its own publisher."
     }
   ]
 }

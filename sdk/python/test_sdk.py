@@ -84,6 +84,14 @@ class PresentationDecisionTests(unittest.TestCase):
         v = self._verifier(status={"currently_authoritative": True, "status": "ACTIVE"})
         self.assertEqual(v.verify_presentation(self._pres()).decision, "accept")
 
+    def test_only_the_json_boolean_true_is_currently_authoritative(self):
+        """2026-10-01: bool() read {} as false and the string "false" as true, and the TypeScript
+        SDK read {} as true. Only true is authoritative, in both."""
+        for answer, decision in ((True, "accept"), ({}, "reject"), ("true", "reject"), ("false", "reject"), (1, "reject")):
+            with self.subTest(answer=answer):
+                v = self._verifier(status={"currently_authoritative": answer, "status": "ACTIVE"})
+                self.assertEqual(v.verify_presentation(self._pres()).decision, decision)
+
     def test_revoked_is_reject_but_authentic(self):
         v = self._verifier(status={"currently_authoritative": False, "status": "REVOKED"})
         out = v.verify_presentation(self._pres())
@@ -1100,6 +1108,36 @@ class GrantLimitsThatAreNotAnObjectTests(unittest.TestCase):
         for grant in ({}, {"limits": None}, {"limits": {}}):
             with self.subTest(grant=grant):
                 self.assertEqual(pv.grant_within_limits(grant, 10 ** 6, 10 ** 9), (True, None))
+
+
+class ParityWithTheTypeScriptSdkTests(unittest.TestCase):
+    """2026-10-01: inputs on which the two reference SDKs answered differently, each pinned to
+    the answer both now give."""
+
+    GRANT = {"grant_id": "g-1", "agent_public_key_hex": "ab"}
+    PROOF = {"format": "polaris-agent-proof/1", "grant_id": "g-1", "public_key_hex": "ab",
+             "service_nonce": 0, "action": "read"}
+
+    def test_an_agent_proofs_nonce_action_and_grant_id_are_text_and_must_be_named(self):
+        self.assertIs(pv.agent_proof_proves(self.PROOF, self.GRANT, "read", 0), True, "nonce 0 is a nonce")
+        self.assertIs(pv.agent_proof_proves(self.PROOF, self.GRANT, "read", "0"), True)
+        self.assertIs(pv.agent_proof_proves(dict(self.PROOF, service_nonce=1.5), self.GRANT, "read", "1.5"), False)
+        self.assertIs(pv.agent_proof_proves(dict(self.PROOF, grant_id=None), dict(self.GRANT, grant_id=None), "read", 0),
+                      False, "a proof that names no grant binds none")
+
+    def test_a_pairwise_handle_trims_ascii_whitespace_only(self):
+        key = "ab" * 32
+        self.assertEqual(pv.pairwise_handle(key, " scope\t"), pv.pairwise_handle(key, "scope"))
+        self.assertNotEqual(pv.pairwise_handle(key, "scope\ufeff"), pv.pairwise_handle(key, "scope"))
+        self.assertNotEqual(pv.pairwise_handle(key, "\x1cscope"), pv.pairwise_handle(key, "scope"))
+
+    def test_a_holder_proof_that_cannot_be_checked_reports_no_nonce(self):
+        e = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "holder-chain-early-binding.json")))
+        v = pv.verify_holder(e["credential"], e["binding"], dict(e["proof"], algorithm="ML-DSA-44"),
+                             expected_nonce="held-out-nonce", expected_context=1, now="2026-05-01T00:00:10Z")
+        self.assertIs(v.proof_authentic, None)
+        self.assertIs(v.nonce_matches, None, "the TypeScript SDK reports null here, and now so does this")
+        self.assertIs(v.proved, False)
 
 
 class GrantLimitsAreWholeNumbersTests(unittest.TestCase):

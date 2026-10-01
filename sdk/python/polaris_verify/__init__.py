@@ -283,9 +283,11 @@ def _verify_over_digest(digest, sig_hex, pk_hex, alg=ALGORITHM):
     return (primary if primary is not None else witness), ran, None
 
 
+# ASCII digits only: Python's `\d` also matches Arabic-Indic and every other script's digits,
+# and `int()` converts them, so an instant written in them parsed here and nowhere else.
 _ISO_INSTANT = __import__("re").compile(
-    r"^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?"
-    r"(?:([Zz])|([+-])(\d{2}):?(\d{2}))?$")
+    r"([0-9]{4})-([0-9]{2})-([0-9]{2})(?:[Tt ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.([0-9]{1,6}))?)?)?"
+    r"(?:([Zz])|([+-])([0-9]{2}):?([0-9]{2}))?")
 
 
 def _strict_instant(s):
@@ -300,12 +302,17 @@ def _strict_instant(s):
     fields are built one by one, so an impossible date ("2026-02-31") is refused rather
     than rolled over."""
     from datetime import datetime, timedelta, timezone
-    m = _ISO_INSTANT.match(s.strip()) if isinstance(s, str) else None
+    # The whole string, as written. `strip()` removed a different set of characters than the
+    # TypeScript SDK's `trim()` (a file separator here, a byte-order mark there), and `$`
+    # matched before a trailing newline; RFC 3339 has no surrounding whitespace (2026-10-01).
+    m = _ISO_INSTANT.fullmatch(s) if isinstance(s, str) else None
     if not m:
         raise ValueError("not an ISO 8601 instant in the accepted subset: %r" % (s,))
     y, mo, d, hh, mi, ss, frac, z, sign, oh, om = m.groups()
     micro = int((frac or "").ljust(6, "0") or 0)
     tz = timezone.utc
+    if sign and (int(oh) > 23 or int(om) > 59):
+        raise ValueError("an offset of %s:%s is not one RFC 3339 allows" % (oh, om))
     if sign:
         shift = timedelta(hours=int(oh), minutes=int(om))
         tz = timezone(shift if sign == "+" else -shift)
@@ -644,14 +651,14 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
     elif ok and fmt == "polaris-registry/1":
         pub = obj.get("publisher") if isinstance(obj.get("publisher"), dict) else {}
         listed = [str(a.get("public_key_hex") or "").lower() for a in (obj.get("authorities") or [])
-                  if isinstance(a, dict) and a.get("agency_id") == pub.get("agency_id")
+                  if isinstance(a, dict) and _same_agency(a.get("agency_id"), pub.get("agency_id"))
                   and _status_of(a) == "active"]
         ok = str(obj.get("public_key_hex") or "").lower() in listed
         note = None if ok else "the registry is not signed by the key it lists for its own publisher"
     elif ok and fmt == "polaris-trust-list/1":
         pub = obj.get("publisher") if isinstance(obj.get("publisher"), dict) else {}
         active = [str(k.get("public_key_hex") or "").lower() for k in (obj.get("keys") or [])
-                  if isinstance(k, dict) and k.get("agency_id") == pub.get("agency_id") and k.get("status") == "active"]
+                  if isinstance(k, dict) and _same_agency(k.get("agency_id"), pub.get("agency_id")) and k.get("status") == "active"]
         ok = str(obj.get("public_key_hex") or "").lower() in active
         note = None if ok else "the trust list is not signed by a key it lists as active for its own publisher"
     # A replay-windowed format answers freshness the other way round; _within_window
@@ -909,6 +916,12 @@ def verify_holder(credential: dict, binding: dict, proof: dict, expected_nonce=N
     ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(pr, keys)).digest(),
                                         pr.get("signature_hex"), pr.get("public_key_hex"), pr.get("algorithm"))
     v.proof_authentic = None if ok is None else bool(ok)
+    if ok is None:
+        # A proof that cannot be checked (an algorithm outside the accepted set, or no verifier)
+        # says nothing about its key, credential or nonce, as in the TypeScript SDK, which stops
+        # here; this went on and reported nonce_matches True for it (2026-10-01).
+        v.note = note
+        return v
     # The proof names the credential it is about (`token_value`, which the holder signed); it
     # must be this one. Until 2026-09-30 only the key was compared, so a proof made for one
     # credential passed with another bound to the same holder key.
@@ -1129,7 +1142,9 @@ class PolarisVerifier:
         except Exception as e:
             reasons.append("status check failed: %s" % e)
             return Verdict("reject", True, a.issuer_trusted, None, reasons=reasons)
-        current = bool(status.get("currently_authoritative"))
+        # Only the JSON boolean true. bool() read {} as false and "false" as true, and the
+        # TypeScript SDK read both as true (2026-10-01).
+        current = status.get("currently_authoritative") is True
         if not current:
             reasons.append("not currently authoritative (revoked/inactive): status=%s" % status.get("status"))
         return Verdict("accept" if current else "reject", True, a.issuer_trusted, current,
@@ -1167,13 +1182,17 @@ def nullifiers_link(a, b) -> bool:
     """
     if not isinstance(a, str) or not isinstance(b, str):
         return False
-    return a.strip().lower() == b.strip().lower()
+    return a.strip(_ASCII_WS).lower() == b.strip(_ASCII_WS).lower()
 
 
 # ---------------------------------------------------------------------------
 # P9.4 — the pairwise handle, for a relying party keying its own records.
 # ---------------------------------------------------------------------------
 
+#: The whitespace a pairwise handle or a nullifier is trimmed of: ASCII only. `strip()` also
+#: removed a file separator and other Unicode spaces, and JavaScript's `trim()` a byte-order mark,
+#: so one scope gave two handles (2026-10-01).
+_ASCII_WS = " \t\n\r\x0b\x0c"
 _PAIRWISE_TAG = "polaris-pairwise/1"
 
 
@@ -1198,12 +1217,12 @@ def pairwise_handle(holder_public_key_hex, verifier_scope):
     collide every holder into one record.
     """
     import hashlib as _h
-    if not isinstance(holder_public_key_hex, str) or not holder_public_key_hex.strip():
+    if not isinstance(holder_public_key_hex, str) or not holder_public_key_hex.strip(_ASCII_WS):
         return None
-    if verifier_scope is None or not str(verifier_scope).strip():
+    if verifier_scope is None or not str(verifier_scope).strip(_ASCII_WS):
         return None
-    material = "%s|%s|%s" % (_PAIRWISE_TAG, holder_public_key_hex.strip().lower(),
-                             str(verifier_scope).strip())
+    material = "%s|%s|%s" % (_PAIRWISE_TAG, holder_public_key_hex.strip(_ASCII_WS).lower(),
+                             str(verifier_scope).strip(_ASCII_WS))
     return _h.sha3_256(material.encode("utf-8")).hexdigest()
 
 
@@ -1216,7 +1235,7 @@ def handles_link(a, b) -> bool:
     """
     if not isinstance(a, str) or not isinstance(b, str):
         return False
-    return a.strip().lower() == b.strip().lower()
+    return a.strip(_ASCII_WS).lower() == b.strip(_ASCII_WS).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -1357,6 +1376,25 @@ def grant_principal_bound(grant, binding, credential, now=None) -> bool:
                 == str(credential.get("public_key_hex") or "").lower())
 
 
+def _same_agency(a, b):
+    """Two agency ids name the same agency only when both are integers and equal. `==` let a
+    missing id match a null one (None == None) and True match 1, where the TypeScript SDK's
+    `===` refused both (2026-10-01)."""
+    return (isinstance(a, int) and not isinstance(a, bool) and isinstance(b, int)
+            and not isinstance(b, bool) and a == b)
+
+
+def _wire_text(x):
+    """A string or an integer as the text the TypeScript SDK's String() gives it, else None.
+    `str(x or "")` read 0 as missing, and `str()` writes 1.0 as "1.0" and True as "True" where
+    String() writes "1" and "true", so a proof naming nonce 0 failed here and passed there."""
+    if isinstance(x, str):
+        return x
+    if isinstance(x, int) and not isinstance(x, bool):
+        return str(x)
+    return None
+
+
 def agent_proof_proves(proof, grant, action=None, nonce=None) -> bool:
     """Is this agent proof bound to THIS grant, this action and this service's nonce?
 
@@ -1370,15 +1408,15 @@ def agent_proof_proves(proof, grant, action=None, nonce=None) -> bool:
         return False
     if proof.get("format") != "polaris-agent-proof/1":
         return False
-    if str(proof.get("grant_id") or "") != str(grant.get("grant_id") or ""):
+    if _wire_text(proof.get("grant_id")) is None or _wire_text(proof.get("grant_id")) != _wire_text(grant.get("grant_id")):
         return False
     if str(proof.get("public_key_hex") or "").lower() != str(grant.get("agent_public_key_hex") or "").lower():
         return False
     if grant.get("agent_algorithm") is not None and proof.get("algorithm") != grant.get("agent_algorithm"):
         return False
-    if nonce is not None and str(proof.get("service_nonce") or "") != str(nonce):
+    if nonce is not None and _wire_text(proof.get("service_nonce")) != _wire_text(nonce):
         return False
-    if action is not None and str(proof.get("action") or "") != str(action):
+    if action is not None and _wire_text(proof.get("action")) != _wire_text(action):
         return False
     return True
 

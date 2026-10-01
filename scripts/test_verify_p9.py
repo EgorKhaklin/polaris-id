@@ -845,6 +845,54 @@ class TheInclusionProofSitesRefuseANonFiniteIndexTests(unittest.TestCase):
         self.assertEqual(out["index"], 0)
 
 
+class ParityWithBothSdksTests(unittest.TestCase):
+    """2026-10-01: inputs on which this verifier and the reference SDKs answered differently,
+    each pinned to the answer all three now give."""
+
+    def test_every_limit_argument_that_is_present_is_a_finite_number(self):
+        self.assertIs(V.grant_within_limits({"limits": {}}, 0, amount=float("nan"))[0], False)
+        self.assertIs(V.grant_within_limits({"limits": {}}, float("nan"))[0], False)
+        self.assertIs(V.grant_within_limits({"limits": {"max_amount": 100}}, 0)[0], True, "control")
+
+    def test_a_pairwise_handle_trims_ascii_whitespace_only(self):
+        key = "ab" * 32
+        self.assertEqual(V.pairwise_handle(key, " scope\t"), V.pairwise_handle(key, "scope"))
+        self.assertNotEqual(V.pairwise_handle(key, "scope\ufeff"), V.pairwise_handle(key, "scope"))
+        self.assertNotEqual(V.pairwise_handle(key, "\x1cscope"), V.pairwise_handle(key, "scope"))
+
+
+class AnAgentProofsTextFieldsTests(unittest.TestCase):
+    """The agent proof's grant id, nonce and action are strings or integers, compared as text, as
+    in both SDKs: `str(x or "")` read nonce 0 as missing (2026-10-01). Signatures are stubbed, so
+    only the comparisons decide."""
+
+    GRANT = {"format": "polaris-agent-grant/1", "grant_id": "g-1", "public_key_hex": "cd" * 32,
+             "algorithm": "ML-DSA-65", "agent_public_key_hex": "ab" * 32, "agent_algorithm": "ML-DSA-65",
+             "actions": ["read"], "limits": {}}
+
+    def setUp(self):
+        self._real = V._signed_by
+        V._signed_by = lambda obj, msg, pk, alg: (True, ["stub"], None)
+
+    def tearDown(self):
+        V._signed_by = self._real
+
+    def _proved(self, grant=None, **proof):
+        p = dict({"format": "polaris-agent-proof/1", "grant_id": "g-1", "public_key_hex": "ab" * 32,
+                  "action": "read", "service_nonce": 0, "algorithm": "ML-DSA-65", "signature_hex": "00" * 8}, **proof)
+        return V.verify_agent_grant(grant or self.GRANT, agent_proof=p, requested_action="read",
+                                    expected_nonce=0)["agent_proved"]
+
+    def test_nonce_zero_is_a_nonce(self):
+        self.assertIs(self._proved(), True)
+
+    def test_a_fractional_nonce_is_not_text(self):
+        self.assertIs(self._proved(service_nonce=0.0), False)
+
+    def test_a_proof_that_names_no_grant_binds_none(self):
+        self.assertIs(self._proved(grant=dict(self.GRANT, grant_id=None), grant_id=None), False)
+
+
 class GrantLimitsAreWholeNumbersTests(unittest.TestCase):
     """2026-10-01, the detached verifier's twin of the SDK test: `int()` read 2.5 uses as 2, where
     the TypeScript SDK refuses a fraction, so one signed grant had two answers."""
