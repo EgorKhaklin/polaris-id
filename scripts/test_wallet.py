@@ -387,5 +387,38 @@ class WalletAgainstAnIssuerTests(unittest.TestCase):
         self.assertEqual(decoded, json.loads(plain.stdout))
 
 
+
+class GrantLimitsAreSignedAsVerifiersReadThem(unittest.TestCase):
+    """2026-10-01: --max-amount 100 was signed as 100.0, which the TypeScript SDK reads as 100, so its
+    canonical bytes differed and a genuine grant failed there. A whole amount is now an integer."""
+
+    def _grant(self, amount):
+        import argparse
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("polaris_wallet", _WALLET)
+        w = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(w)
+        w._sign_with_holder_key = lambda wallet, digest, algorithm=None: ("00", "ab" * 32, "ML-DSA-65")
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "grant.json")
+            args = argparse.Namespace(wallet=d, action=["pay"], max_uses=None, max_amount=amount,
+                                      grant_id="g-1", agent_key="cd" * 32, agent_algorithm="ML-DSA-65",
+                                      context=1, hours=1, out=out)
+            w.cmd_grant(args)
+            with open(out) as f:
+                return json.load(f)
+
+    def test_a_whole_amount_is_an_integer(self):
+        g = self._grant(100.0)
+        self.assertEqual(g["limits"]["max_amount"], 100)
+        self.assertIs(type(g["limits"]["max_amount"]), int)
+
+    def test_a_fraction_stays_a_fraction(self):
+        self.assertEqual(self._grant(12.5)["limits"]["max_amount"], 12.5)
+
+    def test_a_limit_that_is_not_finite_is_refused(self):
+        with self.assertRaises(SystemExit):
+            self._grant(float("nan"))
+
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import stat
 import subprocess
@@ -420,7 +421,14 @@ def cmd_grant(args):
     if args.max_uses is not None:
         limits["max_uses"] = int(args.max_uses)
     if args.max_amount is not None:
-        limits["max_amount"] = float(args.max_amount)
+        # A whole amount is signed as an integer. JavaScript reads 100.0 as 100, so a grant this
+        # wallet signed for --max-amount 100 (as 100.0) failed the TypeScript SDK's signature check
+        # while both Python verifiers accepted it (2026-10-01; WIRE-SPEC 2.1). A limit that is not
+        # a finite number is no limit, and every verifier refuses it.
+        amount = float(args.max_amount)
+        if not math.isfinite(amount):
+            raise SystemExit("--max-amount must be a finite number")
+        limits["max_amount"] = int(amount) if amount.is_integer() and abs(amount) <= 2 ** 53 - 1 else amount
     now = datetime.now(timezone.utc).replace(microsecond=0)
     iso = lambda d: d.isoformat().replace("+00:00", "Z")
     V = _load_verifier()

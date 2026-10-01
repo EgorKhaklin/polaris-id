@@ -15,6 +15,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - An agency or context id matches only the same string or integer in all three verifiers; Python's `==` read `true` as 1 and a missing id as a null one.
 - Both SDKs read only the JSON `true` as currently authoritative; both read a status answer of `"false"` as current.
 - All three verifiers refuse an agent grant whose `grant_id` is not text; it is the grant's only revocation handle (WIRE-SPEC 3.17).
+- All three verifiers read a key or a digest only as a hex string; the TypeScript SDK read a signed `[K]` as K, and two missing keys matched in Python.
 
 ### Fixed
 
@@ -24,11 +25,14 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - All three verifiers trim only ASCII whitespace from a pairwise handle or nullifier; other Unicode spaces split the SDKs.
 - The TypeScript SDK refuses a credential that is not an object instead of throwing, and checks each grant limit and the use count alone.
 - The Python SDK reports no nonce match for a holder proof it cannot check, as the TypeScript SDK does.
+- A trusted anchor, witness or log key that is not text matches nothing in all three verifiers; each raised on it.
+- `polaris-wallet grant --max-amount 100` signs 100, not 100.0, which the TypeScript SDK could not verify.
 
 ### Added
 
 - Ten conformance cases pin where the two SDKs disagreed on signed bytes.
-- Twenty-two more pin nonces, contexts, agencies, grant ids, actions and ids beyond 2**53, from three reviews of that fix; the suite has 275 cases.
+- Twenty-two more pin nonces, contexts, agencies, grant ids, actions and ids beyond 2**53, from three reviews of that fix.
+- Six conformance cases pin keys and digests as hex text; the suite has 281 cases.
 
 ## v1.0.0-rc.69 — 2026-10-01 (a holder's key changes only by its own signature)
 

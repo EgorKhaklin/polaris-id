@@ -56,6 +56,12 @@ Everything below is offline and self-contained. Signatures are accepted under tw
 parameter sets, ML-DSA-65 (the default) and ML-DSA-87; ML-DSA-44 and any other value are
 refused (wire spec section 6).
 
+Both SDKs, and the detached verifier, read the values they compare one way (wire spec section 1):
+a key or a digest is a hex string in any case; an agency or context id is a string or an integer
+of at most 2^53 - 1; a grant id, a nonce, an action or a token value is a string or such an
+integer, read as text. Anything else matches nothing, so the same bytes get one answer in every
+language.
+
 - `verifyAuthenticity(pack, anchors?)`: the authenticity pack.
 - `verifyStatusAssertion(assertion, now?)`: the short-lived signed status assertion.
 - `verifyPresentation(presentation, ...)`: a wallet presentation, or a bare pack.
@@ -70,7 +76,7 @@ refused (wire spec section 6).
   attested in its context at a stated instant (and by whom, for a receipt), and whether the
   bodies held match the commitments.
 
-The SDK passes every case of the conformance suite (275 cases, measured against the repository on 2026-10-01) and every case of the frozen
+The SDK passes every case of the conformance suite (281 cases, measured against the repository on 2026-10-01) and every case of the frozen
 version-1 set under `scripts/polaris-compat-suite.py --typescript-only`, which runs on every CI push.
 
 ## Running and building
@@ -102,7 +108,7 @@ python3 ../../conformance/run_conformance.py --verifier "node src/conformance.ts
 npm install polaris-sdk-ts@next
 ```
 
-A release candidate (1.0.0-rc.7) under the `next` dist-tag; a plain `npm install polaris-sdk-ts`
+A release candidate (1.0.0-rc.8) under the `next` dist-tag; a plain `npm install polaris-sdk-ts`
 resolves 0.1.0 until 1.0.0.
 
 From a clone, if you are working on the SDK itself (`npm install github:...` does not work, because

@@ -12,7 +12,7 @@ import { verifyAuthenticity, PolarisVerifier, pairwiseHandle, handlesLink,
          verifyInclusion, verifyStatusAssertion, verifyIdToken, verifyHolder, verifyTimestampAnchor,
          verifySignedArtifact, verifyCosignature,
          verifyAttestation, verifyCrossAuthority,
-         __canonicalJsonForTest, __isoToEpochForTest, expiresIn, tokenValueSerialProblem } from "../src/index.ts";
+         __canonicalJsonForTest, __isoToEpochForTest, __hexInForTest, expiresIn, tokenValueSerialProblem } from "../src/index.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const vec = (n: string) => JSON.parse(readFileSync(join(ROOT, "vectors", n), "utf8"));
@@ -103,6 +103,32 @@ test("a value with no wire text matches nothing, and nor does an integer beyond 
   const top = Number.MAX_SAFE_INTEGER;
   assert.equal(agentProofProves({ ...proof, grant_id: top }, { ...grant, grant_id: String(top) }, "read"), true,
                "the largest integer both hold is one");
+});
+
+test("a value with no hex text is in no collection, even one holding null", () => {
+  for (const x of [null, undefined, "", ["ab"], 0]) {
+    assert.equal(__hexInForTest(x, [null, "ab", ""]), false, JSON.stringify(x));
+    assert.equal(__hexInForTest(x, new Set<string | null>([null, "ab"])), false, JSON.stringify(x));
+  }
+  assert.equal(__hexInForTest("AB", ["ab"]), true, "case is not a key");
+});
+
+test("a key is hex text: a key held in a list is not the key", () => {
+  const grant = { grant_id: "g-1", agent_public_key_hex: "ab" };
+  const proof = { format: "polaris-agent-proof/1", grant_id: "g-1", public_key_hex: "ab", action: "read" };
+  assert.equal(agentProofProves(proof, { ...grant, agent_public_key_hex: ["ab"] }, "read"), false);
+  assert.equal(agentProofProves(proof, { ...grant, agent_public_key_hex: "AB" }, "read"), true, "case is not a key");
+  const rev = { format: "polaris-grant-revocation/1", grant_id: "g-1" };
+  assert.equal(revocationEndsGrant({ ...rev, public_key_hex: ["cd"] }, { grant_id: "g-1", public_key_hex: "cd" }), false);
+  assert.equal(revocationEndsGrant({ ...rev }, { grant_id: "g-1" }), false, "two missing keys are not one holder");
+});
+
+test("anchors that are not text are skipped, not thrown on", () => {
+  const cred = vec("ml-dsa-65-valid.json");
+  const v = verifyAuthenticity(cred, [null as any, 7 as any, cred.public_key_hex.toUpperCase()]);
+  assert.equal(v.authentic, true);
+  assert.equal(v.issuerTrusted, true);
+  assert.equal(verifyAuthenticity(cred, [null as any]).issuerTrusted, false);
 });
 
 test("a revocation names its grant as text", () => {

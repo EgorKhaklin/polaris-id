@@ -1167,6 +1167,27 @@ class ParityWithTheTypeScriptSdkTests(unittest.TestCase):
             with self.subTest(rid=rid, gid=gid):
                 self.assertIs(pv.revocation_ends_grant(dict(rev, grant_id=rid), dict(grant, grant_id=gid)), False)
 
+    def test_a_key_is_hex_text(self):
+        """A key or a digest is a non-empty string, in any case. JavaScript's String() read [K] as K,
+        and str(x or "") read two missing keys as one empty key (2026-10-01)."""
+        self.assertTrue(pv._same_hex("AB", "ab"))
+        for a, b in ((None, None), ("", ""), (["ab"], "ab"), (0, False)):
+            with self.subTest(a=a, b=b):
+                self.assertFalse(pv._same_hex(a, b))
+        self.assertFalse(pv._hex_in(None, {None, "ab"}), "a value with no hex text is in no set")
+        proof = dict(self.PROOF, public_key_hex="ab")
+        self.assertIs(pv.agent_proof_proves(proof, dict(self.GRANT, agent_public_key_hex=["ab"]), "read", 0), False)
+        self.assertIs(pv.agent_proof_proves(proof, dict(self.GRANT, agent_public_key_hex="AB"), "read", 0), True)
+
+    @unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+    def test_anchors_that_are_not_text_are_skipped_not_raised(self):
+        """`a.lower()` raised AttributeError on an anchor list holding null (2026-10-01)."""
+        cred = _vector("ml-dsa-65-valid.json")
+        v = pv.verify_authenticity(cred, [None, 7, cred["public_key_hex"].upper()])
+        self.assertIs(v.authentic, True)
+        self.assertIs(v.issuer_trusted, True)
+        self.assertIs(pv.verify_authenticity(cred, [None]).issuer_trusted, False)
+
     def test_an_id_is_the_same_string_or_integer(self):
         """An agency or context id: True is not 1, and a missing id is not a null one."""
         self.assertTrue(pv._same_id(1, 1) and pv._same_id("B", "B"))

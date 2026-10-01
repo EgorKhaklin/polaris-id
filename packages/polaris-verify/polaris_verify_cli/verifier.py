@@ -371,7 +371,7 @@ def verify_pack(pack: dict, anchor_keys=None) -> dict:
     verdict["authenticity"] = "genuine" if ok else "forged-or-tampered"
 
     if anchor_keys is not None:
-        trusted = pk_hex.lower() in {a.lower() for a in anchor_keys}
+        trusted = _hex_in(pk_hex, {_hex_text(a) for a in anchor_keys})
         verdict["issuer_trusted"] = trusted
         if ok and not trusted:
             verdict["note"] = ("signature is genuine but its public key is NOT in the issuer "
@@ -656,7 +656,7 @@ def verify_status_assertion(assertion, now=None, max_window_seconds=None, anchor
     elif not window_ok:
         v["note"] = "window %ds exceeds the accepted maximum %ds" % (int(window), max_window_seconds)
     if anchor_keys is not None:
-        v["issuer_trusted"] = pk_hex.lower() in {a.lower() for a in anchor_keys}
+        v["issuer_trusted"] = _hex_in(pk_hex, {_hex_text(a) for a in anchor_keys})
     return v
 
 
@@ -677,7 +677,7 @@ def verify_stapled(pack, assertion, now=None, max_window_seconds=None, anchor_ke
     # ACTIVE assertion overrode the first one's revocation (2026-09-30). verify_presentation has
     # always required both, as WIRE-SPEC's presentation section does.
     bound = (bool(pack.get("token_value")) and pack.get("token_value") == assertion.get("token_value")
-             and str(pack.get("public_key_hex") or "").lower() == str(assertion.get("public_key_hex") or "").lower())
+             and _same_hex(pack.get("public_key_hex"), assertion.get("public_key_hex")))
     reasons = []
     if not a["signature_valid"]:
         reasons.append("credential is not authentic")
@@ -746,7 +746,7 @@ def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors
         return v
     # Self-consistency: the manifest must be signed by one of the ACTIVE anchor keys
     # it declares as its own roots, so a manifest cannot be signed by a stranger key.
-    active = {str(a.get("public_key_hex", "")).lower() for a in v["anchors"]
+    active = {_hex_text(a.get("public_key_hex", "")) for a in v["anchors"]
               if isinstance(a, dict) and _status_of(a) == "active"}
     if pk_hex.lower() not in active:
         v["note"] = "the manifest is not signed by one of its own declared active anchors"
@@ -797,8 +797,8 @@ def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors
         # beside it was a trusted authority, and their attestations were honoured (WIRE-SPEC
         # section 4: "signed by a trusted anchor"). A manifest's anchor list is the authority's
         # claim about itself, and a claim cannot vouch for its own signer.
-        trusted = {str(t).lower() for t in trusted_anchors}
-        v["issuer_trusted"] = str(pk_hex).lower() in trusted
+        trusted = {_hex_text(t) for t in trusted_anchors}
+        v["issuer_trusted"] = _hex_in(pk_hex, trusted)
     return v
 
 
@@ -888,7 +888,7 @@ def verify_attestation(att, attesting_agency_id=None, expected_key=None, now=Non
         if not v["attester_matches"]:
             v["note"] = "the attestation names a different attesting agency than the manifest that published it"
     if expected_key is not None:
-        v["key_matches"] = (str(att.get("attested_public_key_hex") or "").lower() == str(expected_key).lower())
+        v["key_matches"] = (_same_hex(att.get("attested_public_key_hex"), expected_key))
         if not v["key_matches"]:
             v["note"] = "the attestation is signed over a different attested key"
 
@@ -943,7 +943,7 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
         return {"decision": "reject", "authentic": False,
                 "reasons": ["credential is not authentic"], "via": None,
                 "revocation_checked": False, "revoked": None}
-    token_key = (pack.get("public_key_hex") or "").lower()
+    token_key = _hex_text(pack.get("public_key_hex"))
     via = None
     attestation_signed = None       # P9.5: None until an edge is found
     for manifest in trusted_manifests:
@@ -956,7 +956,7 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
         for att in mv["attestations"]:
             if not isinstance(att, dict):
                 continue
-            same_key = str(att.get("attested_public_key_hex") or "").lower() == token_key
+            same_key = token_key is not None and _hex_text(att.get("attested_public_key_hex")) == token_key
             # In-context means a context was presented (WIRE-SPEC section 4). Before
             # 2026-09-27 a missing one matched an edge from ANY context, so a presentation
             # that left out `context_id` was accepted under another context's trust.
@@ -971,12 +971,12 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
                 # key must be among the active anchors of the (trusted) manifest carrying it.
                 # Until 2026-09-30 any key's valid signature with the right agency id counted
                 # as the agency's, so `require_signed_attestation` was met by a stranger.
-                roots = {str(a.get("public_key_hex") or "").lower() for a in (manifest.get("anchors") or [])
+                roots = {_hex_text(a.get("public_key_hex")) for a in (manifest.get("anchors") or [])
                          if isinstance(a, dict) and _status_of(a) == "active"}
                 if av["signed"] and not (av["attestation_authentic"]
                                          and av["attester_matches"] is not False
                                          and av["key_matches"] is not False
-                                         and str(att.get("public_key_hex") or "").lower() in roots):
+                                         and _hex_in(att.get("public_key_hex"), roots)):
                     continue   # a present-but-bad signature is worse than none: refuse the edge
                 # An edge whose own window has closed is not an edge, however fresh the
                 # manifest carrying it. Before 2026-09-17 nothing read `valid_until` and a
@@ -1206,7 +1206,7 @@ def verify_epoch_checkpoint(cp, now=None, max_window_seconds=None, issuer_key=No
         return v
     _verify_window(cp, v, now, max_window_seconds)
     if issuer_key is not None:
-        v["issuer_matches"] = (pk_hex.lower() == issuer_key.lower())
+        v["issuer_matches"] = _same_hex(pk_hex, issuer_key)
     return v
 
 
@@ -1225,8 +1225,8 @@ def check_epoch_chain(cp1, cp2):
     cp2 = cp2 if isinstance(cp2, dict) else {}
     e1 = cp1.get("epoch") if isinstance(cp1.get("epoch"), dict) else {}
     e2 = cp2.get("epoch") if isinstance(cp2.get("epoch"), dict) else {}
-    pk1 = str(cp1.get("public_key_hex") or "").lower()
-    pk2 = str(cp2.get("public_key_hex") or "").lower()
+    pk1 = _hex_text(cp1.get("public_key_hex"))
+    pk2 = _hex_text(cp2.get("public_key_hex"))
     if pk1 and pk2 and pk1 != pk2:
         return {"consistent": False, "fork": False,
                 "note": "checkpoints are signed by different keys; not one authority's chain"}
@@ -1247,13 +1247,13 @@ def check_epoch_chain(cp1, cp2):
     (_, elo), (hi, ehi) = ((cp1, e1), (cp2, e2)) if n1 <= n2 else ((cp2, e2), (cp1, e1))
     nlo, nhi = elo["number"], ehi["number"]
     if nlo == nhi:
-        if str(elo.get("root_hex") or "").lower() != str(ehi.get("root_hex") or "").lower():
+        if not _same_hex(elo.get("root_hex"), ehi.get("root_hex")):
             return {"consistent": False, "fork": True,
                     "note": "FORK: two different roots signed at epoch %s" % nlo}
         return {"consistent": True, "fork": False, "note": "identical epoch checkpoint"}
     hp = hi.get("prev") if isinstance(hi.get("prev"), dict) else {}
     if nhi == nlo + 1:
-        if hp.get("number") != nlo or str(hp.get("root_hex") or "").lower() != str(elo.get("root_hex") or "").lower():
+        if hp.get("number") != nlo or not _same_hex(hp.get("root_hex"), elo.get("root_hex")):
             return {"consistent": False, "fork": True,
                     "note": "FORK: epoch %s does not extend the published epoch %s" % (nhi, nlo)}
         return {"consistent": True, "fork": False, "note": "adjacent checkpoints chain cleanly"}
@@ -1276,7 +1276,7 @@ def epoch_aligned(manifest, checkpoint):
     if me.get("number") is None or ce.get("number") is None:
         return None
     return (me.get("number") == ce.get("number")
-            and str(me.get("root_hex") or "").lower() == str(ce.get("root_hex") or "").lower())
+            and _same_hex(me.get("root_hex"), ce.get("root_hex")))
 
 
 def verify_revocation_feed(feed, now=None, max_window_seconds=None, issuer_key=None):
@@ -1305,7 +1305,7 @@ def verify_revocation_feed(feed, now=None, max_window_seconds=None, issuer_key=N
     if not isinstance(leaves, (list, tuple, set)):
         leaves = []
     uniq = {str(x).lower() for x in leaves}
-    v["commitment_ok"] = (hex_ok and revoked_root(leaves) == str(feed.get("revoked_root_hex") or "").lower()
+    v["commitment_ok"] = (hex_ok and revoked_root(leaves) == _hex_text(feed.get("revoked_root_hex"))
                           and _finite(feed.get("revoked_count")) and len(uniq) == feed.get("revoked_count"))
     try:
         sig, pk = _unhex(sig_hex), _unhex(pk_hex)
@@ -1327,7 +1327,7 @@ def verify_revocation_feed(feed, now=None, max_window_seconds=None, issuer_key=N
     v["feed_authentic"] = True
     _verify_window(feed, v, now, max_window_seconds)
     if issuer_key is not None:
-        v["issuer_matches"] = (pk_hex.lower() == issuer_key.lower())
+        v["issuer_matches"] = _same_hex(pk_hex, issuer_key)
     return v
 
 
@@ -1356,8 +1356,8 @@ def check_revocation_progression(prev_feed, next_feed):
     # the function: two artifacts from two different sources, compared.
     prev_feed = prev_feed if isinstance(prev_feed, dict) else {}
     next_feed = next_feed if isinstance(next_feed, dict) else {}
-    pk1 = str(prev_feed.get("public_key_hex") or "").lower()
-    pk2 = str(next_feed.get("public_key_hex") or "").lower()
+    pk1 = _hex_text(prev_feed.get("public_key_hex"))
+    pk2 = _hex_text(next_feed.get("public_key_hex"))
     if pk1 and pk2 and pk1 != pk2:
         return {"progresses": False, "rolled_back": False,
                 "note": "feeds are signed by different keys; not one issuer's history"}
@@ -1464,7 +1464,7 @@ def verify_status_bundle(bundle, now=None, max_window_seconds=None, publisher_ke
     # member_count is a number, not a boolean, and not absent: `(x or 0)` read an absent
     # count as 0 and Python's `True == 1` read `true` as one member (WIRE-SPEC 3.4).
     member_count = bundle.get("member_count")
-    v["commitment_ok"] = (bundle_members_root(members) == str(bundle.get("members_root_hex") or "").lower()
+    v["commitment_ok"] = (bundle_members_root(members) == _hex_text(bundle.get("members_root_hex"))
                           and _finite(member_count) and member_count == len(members))
     try:
         sig, pk = _unhex(sig_hex), _unhex(pk_hex)
@@ -1486,7 +1486,7 @@ def verify_status_bundle(bundle, now=None, max_window_seconds=None, publisher_ke
     v["bundle_authentic"] = True
     _verify_window(bundle, v, now, max_window_seconds)
     if publisher_key is not None:
-        v["publisher_matches"] = (pk_hex.lower() == publisher_key.lower())
+        v["publisher_matches"] = _same_hex(pk_hex, publisher_key)
     return v
 
 
@@ -1522,7 +1522,7 @@ def verify_cross_authority_via_bundle(pack, context_id, trusted_manifests, bundl
     if publisher_key is not None and not bv["publisher_matches"]:
         return {**base, "decision": "reject", "authentic": None,
                 "reasons": ["the status bundle is not signed by the pinned publisher key"]}
-    token_key = str(pack.get("public_key_hex") or "").lower()
+    token_key = _hex_text(pack.get("public_key_hex"))
     member = None
     for m in bv["members"]:
         if not isinstance(m, dict):
@@ -1530,7 +1530,7 @@ def verify_cross_authority_via_bundle(pack, context_id, trusted_manifests, bundl
         feed = m.get("revocation_feed")
         if not isinstance(feed, dict):
             continue
-        if str(feed.get("public_key_hex") or "").lower() == token_key:
+        if token_key is not None and _hex_text(feed.get("public_key_hex")) == token_key:
             member = m
             break
     if member is None:
@@ -1634,7 +1634,7 @@ def verify_zk_against_root(proof_bundle, expected_root_hex, expected_epoch_id,
     if not isinstance(pi, dict):
         v["note"] = "proof bundle has no public inputs"
         return v
-    if str(pi.get("epoch_root_hex") or "").lower() != str(expected_root_hex or "").lower():
+    if not _same_hex(pi.get("epoch_root_hex"), expected_root_hex):
         v["note"] = "proof is not bound to the trusted epoch root"
         return v
     try:
@@ -1712,7 +1712,7 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
             "fresh_nullifier": None, "via": None, "reasons": []}
     if not (cv["checkpoint_authentic"] and cv["fresh"]):
         return {**base, "reasons": ["the foreign epoch checkpoint is not authentic or not fresh"]}
-    cp_key = str((epoch_checkpoint or {}).get("public_key_hex") or "").lower() if isinstance(epoch_checkpoint, dict) else ""
+    cp_key = _hex_text((epoch_checkpoint or {}).get("public_key_hex")) if isinstance(epoch_checkpoint, dict) else None
     if not isinstance(trusted_manifests, (list, tuple)):
         trusted_manifests = []
     via = None
@@ -1726,7 +1726,7 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
         for att in mv["attestations"]:
             if not isinstance(att, dict):
                 continue
-            if (str(att.get("attested_public_key_hex") or "").lower() == cp_key
+            if (cp_key is not None and _hex_text(att.get("attested_public_key_hex")) == cp_key
                     and _same_id(att.get("context_id"), context_id)
                     and _attestation_window_open(att, now)):
                 via = mv["authority"]
@@ -1877,7 +1877,7 @@ def verify_timestamp(ts, now=None, anchor_keys=None):
     v["timestamp_authentic"] = True
     if anchor_keys is not None:
         try:
-            v["issuer_trusted"] = str(pk_hex).lower() in {str(k).lower() for k in anchor_keys}
+            v["issuer_trusted"] = _hex_in(pk_hex, {_hex_text(k) for k in anchor_keys})
         except TypeError:
             v["issuer_trusted"] = False
     return v
@@ -1891,7 +1891,7 @@ def timestamp_binds(ts, data):
         return None
     if str(ts.get("digest_algorithm") or "SHA3-256").upper() != "SHA3-256":
         return None
-    return hashlib.sha3_256(bytes(data)).hexdigest() == str(ts.get("digest_hex") or "").lower()
+    return hashlib.sha3_256(bytes(data)).hexdigest() == _hex_text(ts.get("digest_hex"))
 
 
 _RECEIPT_LOG_ID = "polaris-exchange-receipt-log"
@@ -1933,7 +1933,7 @@ def verify_timestamp_anchor(ts, log_key=None, trusted_witnesses=None, threshold=
         return v
     h = timestamp_hash(ts)
     v["timestamp_hash"] = h
-    if str(proof.get("entry_hex") or "").lower() != h:
+    if _hex_text(proof.get("entry_hex")) != h:
         v["note"] = "the proof is not for this timestamp"
         return v
     sv = verify_sth(sth, issuer_key=log_key)
@@ -1954,7 +1954,7 @@ def verify_timestamp_anchor(ts, log_key=None, trusted_witnesses=None, threshold=
         return v
     v["index"], v["tree_size"] = idx, size
     if size != sth.get("tree_size") or \
-            str(proof.get("root_hash_hex") or "").lower() != str(sth.get("root_hash_hex") or "").lower():
+            not _same_hex(proof.get("root_hash_hex"), sth.get("root_hash_hex")):
         v["note"] = "the proof and the head describe different trees"
         return v
     if not v["sth_authentic"]:
@@ -1992,7 +1992,7 @@ def verify_receipt_inclusion(receipt, proof, sth, log_key=None):
         return v
     h = receipt_hash(receipt)
     v["receipt_hash"] = h
-    if str(proof.get("entry_hex") or "").lower() != h:
+    if _hex_text(proof.get("entry_hex")) != h:
         v["note"] = "the proof is not for this receipt"
         return v
     sv = verify_sth(sth, issuer_key=log_key)
@@ -2013,7 +2013,7 @@ def verify_receipt_inclusion(receipt, proof, sth, log_key=None):
         return v
     v["index"], v["tree_size"] = idx, size
     if size != sth.get("tree_size") or \
-            str(proof.get("root_hash_hex") or "").lower() != str(sth.get("root_hash_hex") or "").lower():
+            not _same_hex(proof.get("root_hash_hex"), sth.get("root_hash_hex")):
         v["note"] = "the proof and the head describe different trees"
         return v
     if not v["sth_authentic"]:
@@ -2053,6 +2053,26 @@ def _safe_int(x):
     return isinstance(x, int) and not isinstance(x, bool) and abs(x) <= _MAX_SAFE_INTEGER
 
 
+def _hex_text(x):
+    """A hex field (a key or a digest) as both languages compare it: a non-empty string, in lower
+    case; anything else None. JavaScript's String() reads a one-element list as its element where
+    Python's str() writes the brackets, so a signed `public_key_hex: [K]` matched K in the
+    TypeScript SDK alone; and `str(x or "")` read null, 0 and false as one empty key (2026-10-01)."""
+    return x.lower() if isinstance(x, str) and x else None
+
+
+def _same_hex(a, b):
+    """Both are hex text and the same in any case; a value with none matches nothing."""
+    t = _hex_text(a)
+    return t is not None and t == _hex_text(b)
+
+
+def _hex_in(x, texts):
+    """`x` is hex text and one of `texts`; a value with none is in no list, even one holding None."""
+    t = _hex_text(x)
+    return t is not None and t in texts
+
+
 def _same_id(a, b):
     """Two agency or context ids name the same one only when both are strings, or both integers
     JavaScript holds exactly, and equal: what the TypeScript SDK's `===` gives on values both
@@ -2069,7 +2089,7 @@ def _registry_publisher_key(reg):
     for a in (reg.get("authorities") if isinstance(reg.get("authorities"), list) else []):
         if isinstance(a, dict) and _same_id(a.get("agency_id"), pub.get("agency_id")) \
                 and _status_of(a) == "active" and a.get("public_key_hex"):
-            return str(a["public_key_hex"]).lower()
+            return _hex_text(a["public_key_hex"])
     return None
 
 
@@ -2099,7 +2119,7 @@ def verify_registry(reg, now=None, max_window_seconds=None, trusted_anchors=None
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
     listed = _registry_publisher_key(reg)
-    if listed is None or listed != str(pk_hex).lower():
+    if listed is None or listed != _hex_text(pk_hex):
         v["note"] = "the registry is not signed by the key it lists for its own publisher"
         return v
     digest = hashlib.sha3_256(_registry_canonical(reg)).digest()
@@ -2137,7 +2157,7 @@ def verify_registry(reg, now=None, max_window_seconds=None, trusted_anchors=None
         v["note"] = "issued_at/expires_at or the caller's `now` are not valid instants"
     if trusted_anchors is not None:
         try:
-            v["issuer_trusted"] = str(pk_hex).lower() in {str(k).lower() for k in trusted_anchors}
+            v["issuer_trusted"] = _hex_in(pk_hex, {_hex_text(k) for k in trusted_anchors})
         except TypeError:
             v["issuer_trusted"] = False
     return v
@@ -2150,11 +2170,6 @@ def registry_service(reg, kind):
         if isinstance(s, dict) and s.get("kind") == kind:
             return s
     return None
-
-
-def _hexstr(v):
-    """A hex string compared case-insensitively; anything else compares to nothing."""
-    return v.lower() if isinstance(v, str) else ""
 
 
 def registry_speaks(reg, format_string):
@@ -2173,14 +2188,15 @@ def registry_key_status(reg, public_key_hex):
     """The status the registry lists for `public_key_hex` ('active', 'retired', 'compromised'),
     wherever the key appears (an authority's `keys` register, else its configured key), or
     None when the registry does not list the key at all."""
-    key = _hexstr(public_key_hex)
+    # _hex_text, not the `_hexstr` this read before: it said "anything else compares to nothing"
+    # and returned "" for any non-string, so two of them compared equal (2026-10-01).
     for a in (reg.get("authorities") if isinstance(reg, dict) and isinstance(reg.get("authorities"), list) else []):
         if not isinstance(a, dict):
             continue
         for k in (a.get("keys") if isinstance(a.get("keys"), list) else []):
-            if isinstance(k, dict) and _hexstr(k.get("public_key_hex")) == key:
+            if isinstance(k, dict) and _same_hex(k.get("public_key_hex"), public_key_hex):
                 return _status_of(k)
-        if _hexstr(a.get("public_key_hex")) == key:
+        if _same_hex(a.get("public_key_hex"), public_key_hex):
             return _status_of(a)
     return None
 
@@ -2188,13 +2204,15 @@ def registry_key_status(reg, public_key_hex):
 def registry_authority(reg, public_key_hex):
     """The authority entry whose active key is `public_key_hex` (its configured key, or any
     key its `keys` register lists as active), or None."""
-    want = str(public_key_hex or "").lower()
+    want = _hex_text(public_key_hex)
+    if want is None:
+        return None
     for a in (reg.get("authorities") if isinstance(reg, dict) and isinstance(reg.get("authorities"), list) else []):
-        if isinstance(a, dict) and str(a.get("public_key_hex") or "").lower() == want \
+        if isinstance(a, dict) and _hex_text(a.get("public_key_hex")) == want \
                 and _status_of(a) == "active":
             return a
         for k in (a.get("keys") if isinstance(a, dict) and isinstance(a.get("keys"), list) else []):
-            if isinstance(k, dict) and _hexstr(k.get("public_key_hex")) == _hexstr(public_key_hex) \
+            if isinstance(k, dict) and _same_hex(k.get("public_key_hex"), public_key_hex) \
                     and _status_of(k) == "active":
                 return a
     return None
@@ -2203,10 +2221,12 @@ def registry_authority(reg, public_key_hex):
 def registry_trusts(reg, attested_public_key_hex, context_id):
     """The attesting agency ids that, per the registry's trust graph, attest the given key IN
     the given context (non-transitive, in-context, like every Polaris trust decision)."""
-    want = str(attested_public_key_hex or "").lower()
+    want = _hex_text(attested_public_key_hex)
     out = []
+    if want is None:
+        return out
     for t in (reg.get("trust") if isinstance(reg, dict) and isinstance(reg.get("trust"), list) else []):
-        if isinstance(t, dict) and str(t.get("attested_public_key_hex") or "").lower() == want \
+        if isinstance(t, dict) and _hex_text(t.get("attested_public_key_hex")) == want \
                 and _same_id(t.get("context_id"), context_id):
             out.append(t.get("attesting_agency_id"))
     return sorted(x for x in out if x is not None)
@@ -2246,8 +2266,8 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
     if not isinstance(envelope, dict):
         envelope = {}
     req = envelope.get("requester") if isinstance(envelope.get("requester"), dict) else {}
-    claimed = str(req.get("public_key_hex") or "").lower()
-    pk_hex = str(envelope.get("public_key_hex") or "").lower()
+    claimed = _hex_text(req.get("public_key_hex"))
+    pk_hex = _hex_text(envelope.get("public_key_hex"))
     v = {"request_authentic": False, "requester_matches": None, "requester_authorized": None,
          "body_bound": None, "requester": envelope.get("requester"), "target": envelope.get("target"),
          "context_id": envelope.get("context_id"), "request_hash": envelope.get("request_hash"),
@@ -2293,7 +2313,7 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
         v["note"] = "envelope signature is invalid"
         return v
     if requester_key is not None:
-        v["requester_matches"] = (pk_hex == str(requester_key).lower())
+        v["requester_matches"] = (pk_hex is not None and pk_hex == _hex_text(requester_key))
     if trusted_manifests is not None:
         ctx = envelope.get("context_id")
         authorized = False
@@ -2302,13 +2322,13 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
             if not (mv.get("manifest_authentic") and mv.get("fresh")):
                 continue
             for att in mv.get("attestations") or []:
-                if isinstance(att, dict) and str(att.get("attested_public_key_hex") or "").lower() == pk_hex \
+                if isinstance(att, dict) and pk_hex is not None and _hex_text(att.get("attested_public_key_hex")) == pk_hex \
                         and _same_id(att.get("context_id"), ctx) \
                         and _attestation_window_open(att, now):
                     authorized = True
         v["requester_authorized"] = authorized
     if body is not None:
-        v["body_bound"] = (canonical_body_hash(body) == str(envelope.get("request_hash") or "").lower())
+        v["body_bound"] = (canonical_body_hash(body) == _hex_text(envelope.get("request_hash")))
     return v
 
 
@@ -2362,7 +2382,7 @@ def verify_exchange_mint(mint, responder_key=None):
         return v
     v["mint_authentic"] = True
     if responder_key is not None:
-        v["responder_matches"] = _hexstr(pk_hex) == _hexstr(responder_key)
+        v["responder_matches"] = _same_hex(pk_hex, responder_key)
     return v
 
 
@@ -2374,9 +2394,9 @@ def exchange_evidence(envelope, receipt):
         return None
     req_e = envelope.get("requester") if isinstance(envelope.get("requester"), dict) else {}
     req_r = receipt.get("requester") if isinstance(receipt.get("requester"), dict) else {}
-    return (str(req_e.get("public_key_hex") or "").lower() == str(req_r.get("public_key_hex") or "").lower()
+    return (_same_hex(req_e.get("public_key_hex"), req_r.get("public_key_hex"))
             and _same_id(envelope.get("context_id"), receipt.get("context_id"))
-            and str(envelope.get("request_hash") or "").lower() == str(receipt.get("request_hash") or "").lower()
+            and _same_hex(envelope.get("request_hash"), receipt.get("request_hash"))
             and envelope.get("issued_at") == receipt.get("occurred_at"))
 
 
@@ -2507,15 +2527,15 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
         v["document_authentic"] = False
         v["note"] = "a signed document binds a lowercase SHA3-256 digest (digest_algorithm SHA3-256)"
         return v
-    signer_key = str(pk_hex).lower()
+    signer_key = _hex_text(pk_hex)
     if trusted_anchors is not None:
         try:
-            v["signer_trusted"] = signer_key in {str(k).lower() for k in trusted_anchors}
+            v["signer_trusted"] = _hex_in(pk_hex, {_hex_text(k) for k in trusted_anchors})
         except TypeError:
             v["signer_trusted"] = False
     if document_bytes is not None:
         v["binds"] = (isinstance(document_bytes, (bytes, bytearray))
-                      and hashlib.sha3_256(bytes(document_bytes)).hexdigest() == str(d.get("digest_hex") or "").lower())
+                      and hashlib.sha3_256(bytes(document_bytes)).hexdigest() == _hex_text(d.get("digest_hex")))
     ltv = doc.get("ltv") if isinstance(doc.get("ltv"), dict) else None
     if not ltv:
         v["note"] = "no long-term-validation evidence attached"
@@ -2532,7 +2552,7 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     L["timestamp_authentic"] = bool(tv.get("timestamp_authentic"))
     L["timestamp_binds"] = bool(timestamp_binds(ts, document_signature_material(doc)))
     L["timestamp_authority_trusted"] = tv.get("issuer_trusted")
-    ts_key = str((ts.get("public_key_hex") if isinstance(ts, dict) else "") or "").lower()
+    ts_key = _hex_text((ts.get("public_key_hex") if isinstance(ts, dict) else ""))
     L["timestamp_independent"] = bool(ts_key) and ts_key != signer_key
     L["instant"] = tv.get("issued_at")
     try:
@@ -2542,10 +2562,10 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     manifest = ltv.get("manifest")
     if instant is not None and isinstance(manifest, dict):
         mv = verify_manifest(manifest, now=instant)
-        active = any(isinstance(a, dict) and str(a.get("public_key_hex") or "").lower() == signer_key
+        active = signer_key is not None and any(isinstance(a, dict) and _hex_text(a.get("public_key_hex")) == signer_key
                      and _status_of(a) == "active" for a in mv.get("anchors") or [])
         L["signer_key_active_at_instant"] = bool(mv.get("manifest_authentic") and mv.get("fresh")
-                                                 and str(manifest.get("public_key_hex") or "").lower() == signer_key and active)
+                                                 and _hex_text(manifest.get("public_key_hex")) == signer_key and active)
     else:
         L["signer_key_active_at_instant"] = False
     obo = doc.get("on_behalf_of") if isinstance(doc.get("on_behalf_of"), dict) else None
@@ -2584,7 +2604,7 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
         if not isinstance(t, dict):
             continue
         tv_i = verify_timestamp(t, anchor_keys=timestamp_anchors)
-        t_key = str(t.get("public_key_hex") or "").lower()
+        t_key = _hex_text(t.get("public_key_hex"))
         entry = {"authority": t.get("authority"), "authentic": bool(tv_i.get("timestamp_authentic")),
                  "binds": bool(timestamp_binds(t, material)), "trusted": tv_i.get("issuer_trusted"),
                  "independent": bool(t_key) and t_key != signer_key, "anchored": None, "witnessed": None,
@@ -2710,7 +2730,7 @@ def verify_id_token(tok, audience=None, nonce=None, now=None, trusted_anchors=No
         v["note"] = "iat/exp or the caller's `now` are not valid instants"
     if trusted_anchors is not None:
         try:
-            v["issuer_trusted"] = str(pk_hex).lower() in {str(k).lower() for k in trusted_anchors}
+            v["issuer_trusted"] = _hex_in(pk_hex, {_hex_text(k) for k in trusted_anchors})
         except TypeError:
             v["issuer_trusted"] = False
     return v
@@ -2732,7 +2752,7 @@ def _trust_list_publisher_key(tl):
     pub = tl.get("publisher") if isinstance(tl.get("publisher"), dict) else {}
     for k in (tl.get("keys") if isinstance(tl.get("keys"), list) else []):
         if isinstance(k, dict) and _same_id(k.get("agency_id"), pub.get("agency_id")) and k.get("status") == "active" and k.get("public_key_hex"):
-            yield str(k["public_key_hex"]).lower()
+            yield _hex_text(k["public_key_hex"])
 
 
 def verify_trust_list(tl, now=None, max_window_seconds=None, trusted_anchors=None):
@@ -2757,7 +2777,7 @@ def verify_trust_list(tl, now=None, max_window_seconds=None, trusted_anchors=Non
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    if str(pk_hex).lower() not in set(_trust_list_publisher_key(tl)):
+    if not _hex_in(pk_hex, set(_trust_list_publisher_key(tl))):
         v["note"] = "the trust list is not signed by a key it lists as active for its own publisher"
         return v
     digest = hashlib.sha3_256(_trust_list_canonical(tl)).digest()
@@ -2795,7 +2815,7 @@ def verify_trust_list(tl, now=None, max_window_seconds=None, trusted_anchors=Non
         v["note"] = "issued_at/expires_at or the caller's `now` are not valid instants"
     if trusted_anchors is not None:
         try:
-            v["issuer_trusted"] = str(pk_hex).lower() in {str(k).lower() for k in trusted_anchors}
+            v["issuer_trusted"] = _hex_in(pk_hex, {_hex_text(k) for k in trusted_anchors})
         except TypeError:
             v["issuer_trusted"] = False
     return v
@@ -2808,8 +2828,8 @@ def key_status_at(tl, public_key_hex, instant=None):
     registration. Decides long-term validity and cross-authority trust independently of the
     signer's own word."""
     from datetime import datetime, timezone
-    want = str(public_key_hex or "").lower()
-    if not isinstance(tl, dict):
+    want = _hex_text(public_key_hex)
+    if not isinstance(tl, dict) or want is None:
         return None
     if instant is None:
         instant = datetime.now(timezone.utc)
@@ -2819,7 +2839,7 @@ def key_status_at(tl, public_key_hex, instant=None):
         except Exception:
             return None
     for k in (tl.get("keys") if isinstance(tl.get("keys"), list) else []):
-        if not isinstance(k, dict) or str(k.get("public_key_hex") or "").lower() != want:
+        if not isinstance(k, dict) or _hex_text(k.get("public_key_hex")) != want:
             continue
         def _at(field):
             val = k.get(field)
@@ -2902,7 +2922,7 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
         return v
     v["receipt_authentic"] = True
     if responder_key is not None:
-        v["responder_matches"] = (pk_hex.lower() == responder_key.lower())
+        v["responder_matches"] = _same_hex(pk_hex, responder_key)
     # The responder a receipt names is its signer's claim until `responder_key` shows the signer
     # IS that responder (2026-09-30: a stranger's receipt reported the victim it named).
     if v["responder_matches"] is True:
@@ -2910,13 +2930,13 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
     # Payload binding, only for a party that holds the bodies: the commitment must match.
     if request_body is not None:
         h = hashlib.sha3_256(request_body if isinstance(request_body, bytes) else str(request_body).encode("utf-8")).hexdigest()
-        v["request_bound"] = (h == str(receipt.get("request_hash") or "").lower())
+        v["request_bound"] = (h == _hex_text(receipt.get("request_hash")))
     if response_body is not None:
         h = hashlib.sha3_256(response_body if isinstance(response_body, bytes) else str(response_body).encode("utf-8")).hexdigest()
-        v["response_bound"] = (h == str(receipt.get("response_hash") or "").lower())
+        v["response_bound"] = (h == _hex_text(receipt.get("response_hash")))
     # Authorization: some trusted manifest attests the REQUESTER's key in the receipt's context.
     if trusted_manifests is not None:
-        req_key = str((receipt.get("requester") or {}).get("public_key_hex") or "").lower() if isinstance(receipt.get("requester"), dict) else ""
+        req_key = _hex_text((receipt.get("requester") or {}).get("public_key_hex")) if isinstance(receipt.get("requester"), dict) else None
         ctx = receipt.get("context_id")
         via = None
         for manifest in (trusted_manifests if isinstance(trusted_manifests, (list, tuple)) else []):
@@ -2929,7 +2949,7 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
                 # The receipt's context, exactly (WIRE-SPEC 3.8 and section 4 step 2), as the
                 # request path compares it. Before 1.0.0-rc.64 a receipt stating no context
                 # was authorized by an attestation from ANY context.
-                if str(att.get("attested_public_key_hex") or "").lower() == req_key and \
+                if req_key is not None and _hex_text(att.get("attested_public_key_hex")) == req_key and \
                    _same_id(att.get("context_id"), ctx) and \
                    _attestation_window_open(att, now):
                     via = mv["authority"]
@@ -3130,7 +3150,7 @@ def verify_sth(sth, issuer_key=None):
     if not ok:
         v["note"] = "STH signature is invalid"
     if issuer_key is not None:
-        v["issuer_matches"] = (pk_hex.lower() == issuer_key.lower())
+        v["issuer_matches"] = _same_hex(pk_hex, issuer_key)
     return v
 
 
@@ -3239,7 +3259,7 @@ def verify_cosignature(cosig, witness_key=None):
     if not ok:
         v["note"] = "cosignature signature is invalid"
     if witness_key is not None:
-        v["witness_matches"] = (pk_hex.lower() == witness_key.lower())
+        v["witness_matches"] = _same_hex(pk_hex, witness_key)
     return v
 
 
@@ -3258,7 +3278,7 @@ def verify_witnessed_checkpoint(sth, cosignatures, trusted_witnesses, threshold=
         return {"witnessed": False, "cosigner_count": 0, "note": "the STH is not log-authentic"}
     if issuer_key is not None and sv["issuer_matches"] is False:
         return {"witnessed": False, "cosigner_count": 0, "note": "the STH is not signed by the expected log key"}
-    trusted = {t.lower() for t in (trusted_witnesses or [])}
+    trusted = {_hex_text(t) for t in (trusted_witnesses or [])}
     seen = set()
     # A list, or nothing witnessed: `True` raised TypeError out of verify_timestamp_anchor,
     # which says it is total on hostile input (2026-09-28).
@@ -3267,9 +3287,9 @@ def verify_witnessed_checkpoint(sth, cosignatures, trusted_witnesses, threshold=
         if not cv["cosignature_authentic"]:
             continue
         if (c.get("log_id") == sth.get("log_id") and c.get("tree_size") == sth.get("tree_size")
-                and (c.get("root_hash_hex") or "").lower() == (sth.get("root_hash_hex") or "").lower()):
-            w = (c.get("public_key_hex") or "").lower()
-            if w in trusted:
+                and _same_hex(c.get("root_hash_hex"), sth.get("root_hash_hex"))):
+            w = _hex_text(c.get("public_key_hex"))
+            if w is not None and w in trusted:
                 seen.add(w)
     n = len(seen)
     ok = n >= threshold
@@ -3291,7 +3311,7 @@ def verify_equivocation(sth_a, sth_b, log_key):
     if sth_a.get("log_id") != sth_b.get("log_id"):
         return {"proven": False, "note": "the heads are for different logs"}
     if sth_a.get("tree_size") == sth_b.get("tree_size"):
-        if (sth_a.get("root_hash_hex") or "").lower() != (sth_b.get("root_hash_hex") or "").lower():
+        if not _same_hex(sth_a.get("root_hash_hex"), sth_b.get("root_hash_hex")):
             return {"proven": True,
                     "note": "PROVEN equivocation: the log signed two different roots at tree_size %s"
                             % sth_a.get("tree_size")}
@@ -3339,8 +3359,7 @@ def verify_publication(log_sth, receipt, ledger_key):
         return v
     if (receipt.get("log_id") != log_sth.get("log_id")
             or receipt.get("tree_size") != log_sth.get("tree_size")
-            or str(receipt.get("root_hash_hex") or "").lower()
-                != str(log_sth.get("root_hash_hex") or "").lower()):
+            or not _same_hex(receipt.get("root_hash_hex"), log_sth.get("root_hash_hex"))):
         v["note"] = "the receipt does not bind to this log head"
         return v
     ledger_sth = receipt.get("ledger_sth")
@@ -3663,7 +3682,7 @@ def verify_epoch_leaves(bundle, now=None, max_window_seconds=None, anchor_keys=N
     hex_ok = _leaves_are_hex(leaves)
     leaves = leaves if isinstance(leaves, list) else []
     v["leaf_count"] = len(leaves)
-    v["commitment_matches"] = (hex_ok and _leaves_root(leaves) == str(bundle.get("leaves_root_hex") or "").lower())
+    v["commitment_matches"] = (hex_ok and _leaves_root(leaves) == _hex_text(bundle.get("leaves_root_hex")))
     # A number, not a boolean: `True == 1` read `"leaf_count": true` as one leaf, which the
     # TypeScript SDK's `===` refuses (2026-09-30).
     v["count_matches"] = (_finite(bundle.get("leaf_count")) and len(leaves) == bundle.get("leaf_count"))
@@ -3676,12 +3695,11 @@ def verify_epoch_leaves(bundle, now=None, max_window_seconds=None, anchor_keys=N
     v["leaves_authentic"] = True
     _verify_window(bundle, v, now, max_window_seconds)
     if anchor_keys is not None:
-        v["issuer_trusted"] = str(pk_hex).lower() in {str(a).lower() for a in anchor_keys}
+        v["issuer_trusted"] = _hex_in(pk_hex, {_hex_text(a) for a in anchor_keys})
     if isinstance(epoch_checkpoint, dict):
         v["epoch_matches"] = (
-            str(bundle.get("merkle_root") or "").lower()
-            == str((epoch_checkpoint.get("epoch") or {}).get("root_hex")
-                   or epoch_checkpoint.get("merkle_root") or "").lower())
+            _same_hex(bundle.get("merkle_root"), (epoch_checkpoint.get("epoch") or {}).get("root_hex")
+                   or epoch_checkpoint.get("merkle_root")))
         if v["epoch_matches"] is False:
             v["note"] = "the bundle names a different epoch root than the published checkpoint"
     return v
@@ -3765,11 +3783,11 @@ def verify_holder_binding(binding, credential=None, now=None, max_window_seconds
         return v
     _verify_window(binding, v, now, max_window_seconds)
     if anchor_keys is not None:
-        v["issuer_trusted"] = str(pk_hex).lower() in {str(a).lower() for a in anchor_keys}
+        v["issuer_trusted"] = _hex_in(pk_hex, {_hex_text(a) for a in anchor_keys})
     if isinstance(credential, dict):
         v["bound_to_credential"] = (
             _wire_text_equal(binding.get("token_value"), credential.get("token_value"))
-            and str(pk_hex).lower() == str(credential.get("public_key_hex") or "").lower())
+            and _same_hex(pk_hex, credential.get("public_key_hex")))
         if not v["bound_to_credential"]:
             v["note"] = "the binding is not about this credential, or not signed by its issuer key"
     return v
@@ -3835,7 +3853,7 @@ def verify_holder_proof(proof, binding=None, expected_nonce=None, expected_conte
         # was compared, so a proof a holder made for one credential passed with another
         # bound to the same holder key.
         v["key_matches_binding"] = (
-            str(pk_hex).lower() == str(binding.get("holder_public_key_hex") or "").lower()
+            _same_hex(pk_hex, binding.get("holder_public_key_hex"))
             and _wire_text_equal(proof.get("token_value"), binding.get("token_value"))
             and _status_of(binding) == "active")
         if not v["key_matches_binding"]:
@@ -4092,7 +4110,7 @@ def verify_verifiable_credential(document, anchor_keys=None, now=None):
         v["note"] = "the credential proof is invalid"
         return v
     if anchor_keys is not None:
-        v["issuer_trusted"] = str(key_hex).lower() in {str(a).lower() for a in anchor_keys}
+        v["issuer_trusted"] = _hex_in(key_hex, {_hex_text(a) for a in anchor_keys})
     return v
 
 
@@ -4346,7 +4364,7 @@ def verify_mdoc(document_bytes, anchor_keys=None, now=None):
         v["note"] = "the MSO signature is invalid"
         return v
     if anchor_keys is not None:
-        v["issuer_trusted"] = str(key_hex).lower() in {str(a).lower() for a in anchor_keys}
+        v["issuer_trusted"] = _hex_in(key_hex, {_hex_text(a) for a in anchor_keys})
     return v
 
 
@@ -4468,7 +4486,7 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
         active = _status_of(binding) == "active" if isinstance(binding, dict) else False
         v["principal_bound"] = bool(
             bv["binding_authentic"] and bv["fresh"] is not False and active
-            and str(bv["holder_public_key_hex"] or "").lower() == str(holder_key or "").lower()
+            and _same_hex(bv["holder_public_key_hex"], holder_key)
             and (bv["bound_to_credential"] is not False)
             and v["credential_authentic"] and v["issuer_trusted"] is not False)
         if not v["principal_bound"]:
@@ -4515,7 +4533,7 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
                 v["note"] = rnote
             elif not rok:
                 v["note"] = "the revocation signature is invalid"
-            elif str(revocation.get("public_key_hex") or "").lower() != str(holder_key or "").lower():
+            elif not _same_hex(revocation.get("public_key_hex"), holder_key):
                 # Anyone may publish bytes; only the holder may end the grant.
                 v["note"] = "the revocation is signed by a key other than the grant's holder"
             else:
@@ -4530,7 +4548,7 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
             v["note"] = "the agent proof is not a %s" % _AGENT_PROOF_FORMAT
         elif not _wire_text_equal(agent_proof.get("grant_id"), grant.get("grant_id")):
             v["note"] = "the agent proof names a different grant"
-        elif str(agent_proof.get("public_key_hex") or "").lower() != str(grant.get("agent_public_key_hex") or "").lower():
+        elif not _same_hex(agent_proof.get("public_key_hex"), grant.get("agent_public_key_hex")):
             v["note"] = "the agent proof is signed by a key the grant does not name"
         elif expected_nonce is not None and not _wire_text_equal(agent_proof.get("service_nonce"), expected_nonce):
             v["note"] = "the agent proof does not name this service's nonce (a replay)"
@@ -4823,8 +4841,8 @@ def verify_presentation(presentation, anchor_keys=None, now=None, max_window_sec
         S["authentic"] = bool(sv.get("status_authentic"))
         S["fresh"] = sv.get("fresh")
         S["active"] = (sv.get("status") == "ACTIVE")
-        S["bound"] = (str(sa.get("token_value")) == str(cred.get("token_value"))
-                      and str(sa.get("public_key_hex") or "").lower() == str(cred.get("public_key_hex") or "").lower())
+        S["bound"] = (_wire_text_equal(sa.get("token_value"), cred.get("token_value"))
+                      and _same_hex(sa.get("public_key_hex"), cred.get("public_key_hex")))
     # P9.1: a holder proof, when present, must chain to a binding the issuer signed. When the
     # verifier requires one (require_holder_proof), a presentation without it is not usable:
     # possession of a file stops being sufficient and possession of a KEY is required.
