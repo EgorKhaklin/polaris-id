@@ -1,229 +1,279 @@
-{# The operations page (v9.238): service state, the token population, verification
-   behaviour, what needs a human, the cryptographic posture, and the audit of
-   record. Every figure is a bounded aggregate. CSP-safe: no inline scripts. #}
+{# The Overview (docs/design/console-design.md): whether the service is up and which signer is live,
+   what needs a person, the credential population, how verification behaves, the cryptographic
+   posture, and the audit of record. Every figure is a bounded aggregate (C8); nothing here lists a
+   population. The signals row and its attention item render for admin and auditor only.
+   CSP C5: no inline script. #}
 {% extends "base.html" %}
-{% block title %}Operations{% endblock %}
-{% block body_class %} body-dashboard{% endblock %}
+{% block title %}Overview{% endblock %}
+{% block body_class %}body-overview{% endblock %}
 {% block content %}
+{% import "_ui.html" as ui with context %}
 {% set privileged_view = current_user.role in ('admin', 'auditor') %}
+{% set can_operate = current_user.role in ('admin', 'operator') %}
+{% set env_label = environment.label or ('Production' if environment.production else 'Notional data') %}
 
-<div class="ops-head">
-    <div>
-        <h1>Operations</h1>
-        <p class="subtitle">
-            {% if environment.label %}{{ environment.label }}{% elif environment.production %}Production{% else %}Notional data{% endif %}
-            · Polaris {{ environment.version }}
-            · as of {{ as_of.strftime('%Y-%m-%d %H:%M') }} UTC
-        </p>
-    </div>
-    <div class="ops-head-links">
-        <a href="{{ url_for('atlas') }}">Atlas</a>
-        <a href="{{ url_for('api_health') }}">Health JSON</a>
-    </div>
+{% call ui.page_head('Overview', eyebrow=env_label, lede='As of ' ~ as_of.strftime('%Y-%m-%d %H:%M') ~ ' UTC') %}
+    {% if can_operate %}<a class="btn btn-primary" href="{{ url_for('uc1_issue') }}">{{ ui.icon('badge-plus') }}Issue a credential</a>{% endif %}
+{% endcall %}
+
+<div class="overview">
+
+{% if not signing.real %}
+<div class="callout callout-warn" role="note">
+    {{ ui.icon('triangle-alert') }}
+    <p><strong>Development signing.</strong> Credentials this instance issues carry a named
+       placeholder, not an {{ signing.algorithm }} signature. Real signing needs
+       <span class="mono">POLARIS_USE_REAL_PQC=1</span> and liboqs.</p>
 </div>
+{% endif %}
 
-{# ---- Service ---------------------------------------------------------- #}
-<section class="ops-section" aria-labelledby="svc-h">
-    <div class="ops-section-head">
+<div class="overview-cols">
+{# ---- Service: the readiness roll-up and the signer in force ----------------------------------- #}
+<section class="panel" aria-labelledby="svc-h">
+    <div class="panel-head">
         <h2 id="svc-h">Service</h2>
-        <span class="svc-overall svc-{{ service_overall }}">{{ service_overall }}</span>
+        <div class="row">
+            <span class="pill svc-overall svc-{{ service_overall }}">{{ service_overall }}</span>
+            <a class="small" href="{{ url_for('api_health') }}">Health JSON</a>
+        </div>
     </div>
-    <div class="svc-strip">
+    {% set sign_status = 'healthy' if signing.real else ('unhealthy' if environment.production else 'degraded') %}
+    <div class="svc svc-signer svc-{{ sign_status }}">
+        <span class="svc-dot" aria-hidden="true"></span>
+        <span class="svc-name">Signing</span>
+        <span class="svc-state">{{ sign_status }}</span>
+        <span class="svc-detail">{{ signing.algorithm }} · {{ signing.backend }}{% if signing.custody and signing.custody.driver %} · custody {{ signing.custody.driver }}{% endif %}{% if signing.real and signing.second_witness %} · two witnesses{% endif %}</span>
+    </div>
+    <ul class="svc-grid">
         {% for c in service %}
-        <div class="svc svc-{{ c.status }}">
+        <li class="svc svc-{{ c.status }}">
             <span class="svc-dot" aria-hidden="true"></span>
             <span class="svc-name">{{ c.label }}</span>
+            <span class="svc-state">{{ c.status }}</span>
             <span class="svc-detail">{{ c.detail }}</span>
-        </div>
-        {% endfor %}
-        <div class="svc {% if signing.real %}svc-healthy{% elif environment.production %}svc-unhealthy{% else %}svc-degraded{% endif %}">
-            <span class="svc-dot" aria-hidden="true"></span>
-            <span class="svc-name">Signing</span>
-            <span class="svc-detail">{{ signing.algorithm }} · {{ signing.backend }}{% if signing.custody and signing.custody.driver %} · custody {{ signing.custody.driver }}{% endif %}{% if signing.real and signing.second_witness %} · two witnesses{% endif %}</span>
-        </div>
-    </div>
-</section>
-
-{# ---- Population and activity ----------------------------------------- #}
-<div class="atlas-row">
-    <section class="atlas-panel" aria-labelledby="tok-h">
-        <div class="ops-section-head">
-            <h2 id="tok-h">Tokens</h2>
-            <a class="ops-more" href="{{ url_for('tokens_list') }}">All tokens</a>
-        </div>
-        <div class="kpi-row">
-            <div class="kpi kpi-primary"><span class="kpi-value">{{ tokens.by_status.ACTIVE }}</span><span class="kpi-label">active</span></div>
-            <div class="kpi"><span class="kpi-value">{{ tokens.by_status.RESERVE }}</span><span class="kpi-label">reserve</span></div>
-            <div class="kpi"><span class="kpi-value">{{ tokens.by_status.REVOKED }}</span><span class="kpi-label">revoked</span></div>
-            <div class="kpi"><span class="kpi-value">{{ tokens.by_status.LOST }}</span><span class="kpi-label">lost</span></div>
-            <div class="kpi"><span class="kpi-value">{{ tokens.by_status.EXPIRED }}</span><span class="kpi-label">expired</span></div>
-            <div class="kpi"><span class="kpi-value">{{ tokens.by_status.DORMANT }}</span><span class="kpi-label">dormant</span></div>
-        </div>
-        <table class="data compact">
-            <thead><tr><th>Lifecycle events</th><th class="num">24 h</th><th class="num">7 d</th></tr></thead>
-            <tbody>
-                <tr><td>Issued</td><td class="num">{{ tokens.issued['24h'] }}</td><td class="num">{{ tokens.issued['7d'] }}</td></tr>
-                <tr><td>Revoked</td><td class="num">{{ tokens.revoked['24h'] }}</td><td class="num">{{ tokens.revoked['7d'] }}</td></tr>
-            </tbody>
-        </table>
-        <p class="ops-note">{{ tokens.expiring_30d }} active token{{ 's' if tokens.expiring_30d != 1 }} expire{{ '' if tokens.expiring_30d != 1 else 's' }} within 30 days.</p>
-        <table class="data compact">
-            <thead><tr><th>Issuing agency</th><th class="num">Active</th><th class="num">Reserve</th><th class="num">Issued</th></tr></thead>
-            <tbody>
-                {% for a in tokens.by_issuer %}
-                <tr><td>{{ a.name }} <span class="agency-type agency-type-{{ a.agency_type|lower|replace('_', '-') }}">{{ a.agency_type }}</span></td><td class="num">{{ a.active }}</td><td class="num">{{ a.reserve }}</td><td class="num">{{ a.issued }}</td></tr>
-                {% else %}
-                <tr><td colspan="4" class="empty">No tokens issued.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </section>
-
-    <section class="atlas-panel" aria-labelledby="ver-h">
-        <div class="ops-section-head">
-            <h2 id="ver-h">Verifications</h2>
-            <a class="ops-more" href="{{ url_for('verifications_list') }}">Verification log</a>
-        </div>
-        <div class="kpi-row">
-            <div class="kpi kpi-primary"><span class="kpi-value">{{ verifications.volume['24h'] }}</span><span class="kpi-label">last 24 h</span></div>
-            <div class="kpi"><span class="kpi-value">{{ verifications.volume['7d'] }}</span><span class="kpi-label">last 7 d</span></div>
-            <div class="kpi {% if verifications.failure_rate_7d and verifications.failure_rate_7d >= 5 %}kpi-warn{% endif %}">
-                <span class="kpi-value">{% if verifications.failure_rate_7d is none %}·{% else %}{{ '%.1f'|format(verifications.failure_rate_7d) }}%{% endif %}</span>
-                <span class="kpi-label">not successful, 7 d</span>
-            </div>
-        </div>
-        {% set disc_total = verifications.disclosure_total %}
-        <div class="mix" aria-label="Disclosure levels across all verifications">
-            <div class="mix-bar">
-                {% for d in verifications.disclosure %}{% if d.n %}<span class="mix-seg mix-{{ d.level|lower }}" style="width: {{ '%.2f'|format(d.pct) }}%" title="{{ d.level }} {{ d.n }}"></span>{% endif %}{% endfor %}
-            </div>
-            <div class="mix-legend">
-                {% for d in verifications.disclosure %}
-                <span><i class="mix-key mix-{{ d.level|lower }}" aria-hidden="true"></i>{{ d.level }} {{ '%.0f'|format(d.pct) }}%</span>
-                {% endfor %}
-            </div>
-            <p class="ops-note">A zero-knowledge verification stores no token identifier; the share is structural, not access control.</p>
-        </div>
-        <table class="data compact">
-            <thead><tr><th>Context</th><th class="num">7 d</th><th class="num">not OK</th><th class="num">all time</th></tr></thead>
-            <tbody>
-                {% for c in verifications.by_context %}
-                <tr><td>{{ c.context_type }}</td><td class="num">{{ c.v7d }}</td><td class="num {% if c.notok7d %}warn{% endif %}">{{ c.notok7d }}</td><td class="num">{{ c.total }}</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </section>
-</div>
-
-{# ---- Attention -------------------------------------------------------- #}
-<section class="atlas-panel" aria-labelledby="att-h">
-    <div class="ops-section-head">
-        <h2 id="att-h">Needs attention</h2>
-        <span class="ops-note">
-            {{ operators.privileged }} privileged account{{ 's' if operators.privileged != 1 }},
-            {{ operators.with_credential }} with a WebAuthn credential
-            · <a href="{{ url_for('webauthn_settings') }}">your credentials</a>
-        </span>
-    </div>
-    {% set visible = attention if privileged_view else attention|rejectattr('key', 'equalto', 'duress')|list %}
-    {% set open_items = visible|rejectattr('severity', 'equalto', 'ok')|list %}
-    {% if not open_items %}
-    <p class="attention-clear">Nothing needs attention.</p>
-    {% endif %}
-    <ul class="attention">
-        {% for a in visible %}
-        <li class="attention-item att-{{ a.severity }}">
-            <span class="att-count">{{ a.count }}</span>
-            <span class="att-label">{% if a.href %}<a href="{{ a.href }}">{{ a.label }}</a>{% else %}{{ a.label }}{% endif %}</span>
-            {% if a.note %}<span class="att-note">{{ a.note }}</span>{% endif %}
         </li>
         {% endfor %}
     </ul>
 </section>
 
-{# ---- Cryptographic posture and the audit of record ------------------- #}
-<div class="atlas-row">
-    <section class="atlas-panel" aria-labelledby="pq-h">
-        <div class="ops-section-head">
-            <h2 id="pq-h">Cryptographic posture</h2>
-            <span class="ops-note">{% if crypto.pq_pct is none %}no active signatures{% else %}{{ '%.0f'|format(crypto.pq_pct) }}% of active tokens post-quantum{% endif %}</span>
+{# ---- What needs a person ------------------------------------------------------------------------ #}
+{% set visible = attention if privileged_view else attention|rejectattr('key', 'equalto', 'duress')|list %}
+{% set open_items = visible|rejectattr('severity', 'equalto', 'ok')|list %}
+{% set clear_items = visible|selectattr('severity', 'equalto', 'ok')|list %}
+{% set severity_pill = {'critical': 'pill-danger', 'warning': 'pill-warn', 'info': 'pill-info'} %}
+<section class="panel" aria-labelledby="att-h">
+    <div class="panel-head">
+        <h2 id="att-h">Needs attention</h2>
+        <span class="ops-note">{{ open_items|length }} open · {{ clear_items|length }} clear</span>
+    </div>
+    <div class="panel-body">
+    {% if open_items %}
+    <ul class="attn">
+        {% for severity in ('critical', 'warning', 'info') %}
+        {% for a in open_items if a.severity == severity %}
+        <li class="attn-item attn-{{ a.severity }}">
+            <span class="attn-count">{{ a.count }}</span>
+            <span class="attn-body">
+                <span class="attn-label">{% if a.href %}<a href="{{ a.href }}">{{ a.label }}</a>{% else %}{{ a.label }}{% endif %}</span>
+                {% if a.note %}<span class="attn-note">{{ a.note }}</span>{% endif %}
+            </span>
+            <span class="pill {{ severity_pill[a.severity] }}">{{ a.severity }}</span>
+        </li>
+        {% endfor %}
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="attn-none">{{ ui.icon('circle-check') }}<span>Nothing needs attention.</span></p>
+    {% endif %}
+    {% if clear_items %}
+    <details class="attn-clear">
+        <summary>{{ clear_items|length }} checked and clear</summary>
+        <ul>
+            {% for a in clear_items %}<li>{{ ui.icon('check', 'icon-sm') }}<span>{{ a.count }} {{ a.label }}</span></li>{% endfor %}
+        </ul>
+    </details>
+    {% endif %}
+    </div>
+    <p class="panel-foot">
+        {{ operators.privileged }} privileged account{{ 's' if operators.privileged != 1 }},
+        {{ operators.with_credential }} with a WebAuthn credential.
+        <a href="{{ url_for('webauthn_settings') }}">Your security keys</a>
+    </p>
+</section>
+</div>
+
+{# ---- Population and activity ------------------------------------------------------------------ #}
+<div class="overview-cols">
+    <section class="panel" aria-labelledby="tok-h">
+        <div class="panel-head">
+            <h2 id="tok-h">Credentials</h2>
+            <a class="small" href="{{ url_for('tokens_list') }}">All credentials</a>
+        </div>
+        <div class="kpi-row kpi-row-3">
+            {% for state, label in (('ACTIVE', 'active'), ('RESERVE', 'reserve'), ('REVOKED', 'revoked'),
+                                    ('LOST', 'lost'), ('EXPIRED', 'expired'), ('DORMANT', 'dormant')) %}
+            <a class="kpi kpi-link{% if state == 'ACTIVE' %} kpi-primary{% endif %}" href="{{ url_for('tokens_list', status=state) }}"><span class="kpi-value">{{ tokens.by_status[state] }}</span><span class="kpi-label">{{ label }}</span></a>
+            {% endfor %}
+        </div>
+        <div class="table-wrap">
+            <table class="data compact">
+                <thead><tr><th scope="col">Lifecycle events</th><th scope="col" class="num">24 h</th><th scope="col" class="num">7 d</th></tr></thead>
+                <tbody>
+                    <tr><td>Issued</td><td class="num">{{ tokens.issued['24h'] }}</td><td class="num">{{ tokens.issued['7d'] }}</td></tr>
+                    <tr><td>Revoked</td><td class="num">{{ tokens.revoked['24h'] }}</td><td class="num">{{ tokens.revoked['7d'] }}</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <p class="ops-note">{{ tokens.expiring_30d }} active credential{{ 's' if tokens.expiring_30d != 1 }} expire{{ 's' if tokens.expiring_30d == 1 }} within 30 days.</p>
+        <div class="table-wrap">
+            <table class="data compact">
+                <thead><tr><th scope="col">Issuing authority</th><th scope="col" class="num">Active</th><th scope="col" class="num">Reserve</th><th scope="col" class="num">Issued</th></tr></thead>
+                <tbody>
+                    {% for a in tokens.by_issuer %}
+                    <tr><td>{{ a.name }} <span class="type-tag">{{ a.agency_type }}</span></td><td class="num">{{ a.active }}</td><td class="num">{{ a.reserve }}</td><td class="num">{{ a.issued }}</td></tr>
+                    {% else %}
+                    <tr><td colspan="4" class="empty">No credentials issued.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="panel" aria-labelledby="ver-h">
+        <div class="panel-head">
+            <h2 id="ver-h">Verifications</h2>
+            <a class="small" href="{{ url_for('verifications_list') }}">Verification log</a>
+        </div>
+        {% set rate = verifications.failure_rate_7d %}
+        <div class="kpi-row kpi-row-3">
+            <div class="kpi kpi-primary"><span class="kpi-value">{{ verifications.volume['24h'] }}</span><span class="kpi-label">last 24 h</span></div>
+            <div class="kpi"><span class="kpi-value">{{ verifications.volume['7d'] }}</span><span class="kpi-label">last 7 d</span></div>
+            <div class="kpi{% if rate is not none and rate >= 5 %} kpi-warn{% endif %}">
+                <span class="kpi-value"{% if rate is none %} title="No verifications in the last 7 days"{% endif %}>{% if rate is none %}n/a{% else %}{{ '%.1f'|format(rate) }}%{% endif %}</span>
+                <span class="kpi-label">not successful, 7 d</span>
+            </div>
         </div>
         <div class="mix">
-            <div class="mix-bar">
-                {% set signed = crypto.pq_active + crypto.classical_active %}
-                {% if crypto.pq_active %}<span class="mix-seg mix-pq" style="width: {{ '%.2f'|format(100 * crypto.pq_active / signed) }}%" title="post-quantum {{ crypto.pq_active }}"></span>{% endif %}
-                {% if crypto.classical_active %}<span class="mix-seg mix-classical" style="width: {{ '%.2f'|format(100 * crypto.classical_active / signed) }}%" title="classical {{ crypto.classical_active }}"></span>{% endif %}
+            <div class="mix-head">
+                <span class="mix-cap">Disclosure level, all time</span>
+                <span class="ops-note">{{ verifications.disclosure_total }} verification{{ 's' if verifications.disclosure_total != 1 }}</span>
             </div>
-            <div class="mix-legend">
-                <span><i class="mix-key mix-pq" aria-hidden="true"></i>post-quantum {{ crypto.pq_active }}</span>
-                <span><i class="mix-key mix-classical" aria-hidden="true"></i>classical {{ crypto.classical_active }}</span>
-            </div>
-        </div>
-        <table class="data compact">
-            <thead><tr><th>Algorithm</th><th class="num">Active tokens</th><th class="num">Issuers</th><th class="num">Verifiers</th><th>Deprecation</th></tr></thead>
-            <tbody>
-                {% for a in crypto.algorithms %}
-                <tr>
-                    <td class="mono">{{ a.name }} <span class="pill {% if a.quantum_resistant %}pill-pq{% else %}pill-classical{% endif %}">{{ 'PQ' if a.quantum_resistant else 'CLASSICAL' }}</span></td>
-                    <td class="num">{{ a.active_tokens }}</td>
-                    <td class="num">{{ a.agencies_issue }}</td>
-                    <td class="num">{{ a.agencies_verify }}</td>
-                    <td>{% if a.deprecation_date %}{{ a.deprecation_date.strftime('%Y-%m-%d') }}{% else %}<span class="muted">none scheduled</span>{% endif %}</td>
-                </tr>
+            <div class="mix-bar" aria-hidden="true">{% for d in verifications.disclosure %}{% if d.n %}<span class="mix-seg mix-{{ d.level|lower }}" style="width: {{ '%.2f'|format(d.pct) }}%"></span>{% endif %}{% endfor %}</div>
+            <ul class="mix-legend">
+                {% for d in verifications.disclosure %}
+                <li><i class="mix-key mix-{{ d.level|lower }}" aria-hidden="true"></i><span class="mono">{{ d.level }}</span> {{ d.n }} · {{ '%.0f'|format(d.pct) }}%</li>
                 {% endfor %}
-            </tbody>
-        </table>
-        <details class="ops-details">
-            <summary>Authorization matrix: {{ agencies|length }} agencies × {{ crypto.algorithms|length }} algorithms</summary>
-            <table class="auth-matrix">
-                <thead>
-                    <tr>
-                        <th class="agency-col">Agency</th>
-                        {% for alg in crypto.algorithms %}<th class="alg-col"><div class="alg-name {% if not alg.quantum_resistant %}alg-classical{% endif %}">{{ alg.name }}</div></th>{% endfor %}
-                    </tr>
-                </thead>
+            </ul>
+            <p class="ops-note">A zero-knowledge verification stores no credential identifier; the schema refuses one (C2).</p>
+        </div>
+        <div class="table-wrap">
+            <table class="data compact">
+                <thead><tr><th scope="col">Context</th><th scope="col" class="num">7 d</th><th scope="col" class="num">Not OK, 7 d</th><th scope="col" class="num">All time</th></tr></thead>
                 <tbody>
-                    {% for ag in agencies %}
+                    {% for c in verifications.by_context %}
+                    <tr><td class="mono">{{ c.context_type }}</td><td class="num">{{ c.v7d }}</td><td class="num{% if c.notok7d %} is-warn{% endif %}">{{ c.notok7d }}</td><td class="num">{{ c.total }}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+
+{# ---- Cryptographic posture and the audit of record ------------------------------------------- #}
+<div class="overview-cols overview-cols-wide">
+    <section class="panel" aria-labelledby="pq-h">
+        <div class="panel-head">
+            <h2 id="pq-h">Cryptographic posture</h2>
+        </div>
+        {% set signed = crypto.pq_active + crypto.classical_active %}
+        <div class="mix">
+            <div class="mix-head">
+                <span class="mix-cap">Signatures on active credentials</span>
+                <span class="ops-note">{% if crypto.pq_pct is none %}none{% else %}{{ '%.0f'|format(crypto.pq_pct) }}% under a post-quantum algorithm{% endif %}</span>
+            </div>
+            <div class="mix-bar" aria-hidden="true">
+                {%- if crypto.pq_active %}<span class="mix-seg mix-pq" style="width: {{ '%.2f'|format(100 * crypto.pq_active / signed) }}%"></span>{% endif -%}
+                {%- if crypto.classical_active %}<span class="mix-seg mix-classical" style="width: {{ '%.2f'|format(100 * crypto.classical_active / signed) }}%"></span>{% endif -%}
+            </div>
+            <ul class="mix-legend">
+                <li><i class="mix-key mix-pq" aria-hidden="true"></i>post-quantum {{ crypto.pq_active }}</li>
+                <li><i class="mix-key mix-classical" aria-hidden="true"></i>classical {{ crypto.classical_active }}</li>
+            </ul>
+        </div>
+        <div class="table-wrap">
+            <table class="data compact">
+                <thead><tr><th scope="col">Algorithm</th><th scope="col" class="num">Active</th><th scope="col" class="num">Issuers</th><th scope="col" class="num">Verifiers</th><th scope="col">Deprecation</th></tr></thead>
+                <tbody>
+                    {% for a in crypto.algorithms %}
                     <tr>
-                        <td class="agency-cell agency-cell-{{ ag.agency_type|lower|replace('_', '-') }}"><strong>{{ ag.name }}</strong><div class="agency-type agency-type-{{ ag.agency_type|lower|replace('_', '-') }}">{{ ag.agency_type }}</div></td>
-                        {% for alg in crypto.algorithms %}
-                        {% set grant = auth_matrix.get((ag.agency_id, alg.algorithm_id)) %}
-                        <td class="auth-cell auth-{{ (grant or 'none')|lower }}">
-                            {%- if grant == 'BOTH' %}<span class="auth-mark auth-mark-both">issue + verify</span>
-                            {%- elif grant == 'ISSUE' %}<span class="auth-mark">issue</span>
-                            {%- elif grant == 'VERIFY' %}<span class="auth-mark">verify</span>
-                            {%- else %}<span class="auth-empty">·</span>{% endif -%}
-                        </td>
-                        {% endfor %}
+                        <td class="nowrap"><span class="mono">{{ a.name }}</span>{% if a.quantum_resistant %}<span class="type-tag type-tag-pq">PQ</span>{% else %}<span class="type-tag">Classical</span>{% endif %}</td>
+                        <td class="num">{{ a.active_tokens }}</td>
+                        <td class="num">{{ a.agencies_issue }}</td>
+                        <td class="num">{{ a.agencies_verify }}</td>
+                        <td class="nowrap">{% if a.deprecation_date %}<span class="mono">{{ a.deprecation_date.strftime('%Y-%m-%d') }}</span>{% else %}<span class="muted">none scheduled</span>{% endif %}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
+        </div>
+        <details class="ops-details">
+            <summary>Authorization matrix: {{ agencies|length }} authorities × {{ crypto.algorithms|length }} algorithms</summary>
+            <div class="table-wrap">
+                <table class="data compact auth-matrix">
+                    <thead>
+                        <tr><th scope="col">Authority</th>{% for alg in crypto.algorithms %}<th scope="col" class="mono">{{ alg.name }}</th>{% endfor %}</tr>
+                    </thead>
+                    <tbody>
+                        {% for ag in agencies %}
+                        <tr>
+                            <th scope="row">{{ ag.name }} <span class="type-tag">{{ ag.agency_type }}</span></th>
+                            {% for alg in crypto.algorithms %}
+                            {% set grant = auth_matrix.get((ag.agency_id, alg.algorithm_id)) %}
+                            <td>{% if grant == 'BOTH' %}issue + verify{% elif grant == 'ISSUE' %}issue{% elif grant == 'VERIFY' %}verify{% else %}<span class="muted">none</span>{% endif %}</td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </details>
     </section>
 
-    <section class="atlas-panel" aria-labelledby="aud-h">
-        <div class="ops-section-head">
+    <section class="panel" aria-labelledby="aud-h">
+        <div class="panel-head">
             <h2 id="aud-h">Audit of record</h2>
         </div>
-        <dl class="kv kv-ops">
-            <div><dt>ZK epochs</dt><dd><a href="{{ url_for('epochs_list') }}">{{ audit.epochs.closed }} closed</a>{% if audit.epochs.open %}, {{ audit.epochs.open }} open{% endif %}{% if audit.epochs.last_closed %} · last {{ audit.epochs.last_closed.strftime('%Y-%m-%d') }}{% endif %}</dd></div>
-            <div><dt>Anchor batches</dt><dd><a href="{{ url_for('anchors_list') }}">{{ audit.anchors.count }}</a>{% if audit.anchors.uncommitted %} · {{ audit.anchors.uncommitted }} not on chain{% endif %}{% if audit.anchors.latest %} · last {{ audit.anchors.latest.strftime('%Y-%m-%d') }}{% endif %}</dd></div>
+        <dl class="kv">
+            <dt>ZK epochs</dt>
+            <dd><a href="{{ url_for('epochs_list') }}">{{ audit.epochs.closed }} closed</a>{% if audit.epochs.open %}, {{ audit.epochs.open }} open{% endif %}{% if audit.epochs.last_closed %} · last <span class="mono">{{ audit.epochs.last_closed.strftime('%Y-%m-%d') }}</span>{% endif %}</dd>
+            <dt>Anchor batches</dt>
+            <dd><a href="{{ url_for('anchors_list') }}">{{ audit.anchors.count }} batch{{ 'es' if audit.anchors.count != 1 }}</a>{% if audit.anchors.uncommitted %} · {{ audit.anchors.uncommitted }} not on a chain{% endif %}{% if audit.anchors.latest %} · last <span class="mono">{{ audit.anchors.latest.strftime('%Y-%m-%d') }}</span>{% endif %}</dd>
             {% if privileged_view %}
-            <div><dt>Duress signals</dt><dd><a href="{{ url_for('duress_dashboard') }}">{{ audit.duress.total }} on record</a>{% if audit.duress.latest %} · last {{ audit.duress.latest.strftime('%Y-%m-%d %H:%M') }}{% endif %}</dd></div>
+            <dt>Duress signals</dt>
+            <dd><a href="{{ url_for('duress_dashboard') }}">{{ audit.duress.total }} on record</a>{% if audit.duress.latest %} · last <span class="mono">{{ audit.duress.latest.strftime('%Y-%m-%d %H:%M') }}</span>{% endif %}</dd>
             {% endif %}
-            <div><dt>Retention in force</dt><dd>{% for r in audit.retention %}{{ r.table_class|lower|replace('_', ' ') }} {{ r.days }} d{% if not loop.last %} · {% endif %}{% endfor %}</dd></div>
-            <div><dt>Last archive purge</dt><dd>{% if audit.last_checkpoint %}{{ audit.last_checkpoint.purged_at.strftime('%Y-%m-%d') }} · {{ audit.last_checkpoint.rows_purged_total }} rows · {{ audit.last_checkpoint.cutoff_source|lower }} cutoff{% else %}<span class="muted">none yet</span>{% endif %}</dd></div>
+            <dt>Retention in force</dt>
+            <dd>{% for r in audit.retention %}{{ r.table_class|lower|replace('_', ' ') }} {{ r.days }} d{% if not loop.last %} · {% endif %}{% endfor %}</dd>
+            <dt>Last archive purge</dt>
+            <dd>{% if audit.last_checkpoint %}<span class="mono">{{ audit.last_checkpoint.purged_at.strftime('%Y-%m-%d') }}</span> · {{ audit.last_checkpoint.rows_purged_total }} rows · {{ audit.last_checkpoint.cutoff_source|lower }} cutoff{% else %}<span class="muted">none yet</span>{% endif %}</dd>
         </dl>
-        <h3 class="ops-sub">Recent lifecycle events</h3>
+    </section>
+</div>
+
+<section class="panel" aria-labelledby="evt-h">
+    <div class="panel-head">
+        <h2 id="evt-h">Recent lifecycle events</h2>
+        <span class="ops-note">The latest ten, newest first</span>
+    </div>
+    <div class="table-wrap">
         <table class="data compact">
-            <thead><tr><th>When</th><th>Event</th><th>Token</th><th>Actor</th><th>Reason</th></tr></thead>
+            <thead><tr><th scope="col">When (UTC)</th><th scope="col">Event</th><th scope="col">Credential</th><th scope="col">Actor</th><th scope="col">Reason</th></tr></thead>
             <tbody>
                 {% for e in audit.recent_events %}
                 <tr>
                     <td class="mono nowrap">{{ e.event_timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
-                    <td><span class="pill pill-{{ e.event_type|lower }}">{{ e.event_type }}</span></td>
-                    <td><a href="{{ url_for('tokens_detail', tok_id=e.token_id) }}">#{{ e.token_id }}</a></td>
+                    <td><span class="pill pill-{{ e.event_type|lower }}">{{ e.event_type|replace('_', ' ') }}</span></td>
+                    <td><a class="mono" href="{{ url_for('tokens_detail', tok_id=e.token_id) }}">#{{ e.token_id }}</a></td>
                     <td>{{ e.actor_name or absent }}</td>
                     <td class="mono">{{ e.reason_code or absent }}</td>
                 </tr>
@@ -232,6 +282,8 @@
                 {% endfor %}
             </tbody>
         </table>
-    </section>
+    </div>
+</section>
+
 </div>
 {% endblock %}

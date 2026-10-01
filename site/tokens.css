@@ -1,41 +1,20 @@
 /* ============================================================================
-   site/tokens.css — the design tokens this page shares with the application.
+   site/tokens.css: the design tokens this page shares with the application.
 
-   Every name and value here matches the :root block of
-   polaris_web/static/polaris.css. The page used to fork the palette under
-   different names (--dim for --ink-dim, --gold-b for --gold-bright), so a
-   change to the application's colours could not be seen to have skipped the
-   site. Same names, same values, one greppable pair.
-
-   Only the tokens this page actually uses are carried; the application's
-   surface, tint and legacy-alias tokens stay where they are used.
+   Every name and value here matches the first :root block of
+   polaris_web/static/polaris.css (the console's dark theme), which
+   check_site_tokens_match_app holds. Only the tokens this page uses are carried.
    ============================================================================ */
 :root {
-    /* Surfaces */
-    --void:        #050a12;
-    --bg0:         #0a1421;
-    --bg1:         #0e1a2b;
-    --line:        rgba(141, 166, 196, 0.16);
-    --line-strong: rgba(141, 166, 196, 0.32);
-
-    /* Ink */
-    --ink:         #dce9f6;
-    --ink-dim:     #9db1c7;
-    --ink-faint:   #7b8fa6;   /* was #6e8299: 4.43:1 on the panel ground, under the
-                                4.5:1 WCAG AA floor for normal text. 5.26:1 now, and
-                                kept identical to the application's token so
-                                check_design_tokens holds. (P6.5) */
-
-    /* Accents */
-    --gold:        #c9a352;
-    --gold-bright: #e8be64;
-    --cyan:        #5dd6ff;
-    --cyan-deep:   #2a8fb8;
-    --red:         #ff7478;
-    --amber:       #ffc861;
-    --green:       #5fd9a2;
-
-    /* Type */
-    --font-mono:   'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, Monaco,
-                   Consolas, monospace;
+    --accent: #8fb3e8;
+    --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+    --gold: #ddca9b;
+    --ground: #09090b;
+    --ink: #f4f4f5;
+    --ink-2: #b4b4bb;
+    --ink-3: #8e8e96;
+    --line: #232328;
+    --line-strong: #303037;
+    --surface-2: #18181c;
+    --warn: #e3b55b;
 }

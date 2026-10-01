@@ -1254,6 +1254,9 @@ def _inject_security_context():
         # The error page shows this so an operator can quote one string that
         # matches the log line and the X-Request-ID response header.
         'request_id': observability.get_request_id(),
+        # Every console page states the signing mode in force, so nobody mistakes the
+        # development placeholder for a signature (docs/design/console-design.md).
+        'signing': {'real': pqc_signing.is_enabled(), 'algorithm': pqc_signing.algorithm_name()},
     })
     return ctx
 

@@ -6702,6 +6702,20 @@ def test_site_tokens_match_app_check_fails_when_the_palette_forks(tmp_path):
         "must FAIL when the page's own stylesheet redeclares the palette"
     (tmp_path / "site/index.css").unlink()
 
+    # The application's sheet may open with a comment naming :root and @font-face rules before
+    # its first :root block (2026-10-01): the tokens are still read from that block.
+    write({"polaris_web/static/polaris.css": "/* the first :root block holds the tokens */\n"
+                                             "@font-face { font-family: X; src: url(x.woff2); }\n" + app,
+           "site/index.html": good["site/index.html"],
+           "site/index.css": "body{color:var(--ink)}\n"})
+    assert checks.check_site_tokens_match_app(tmp_path)[0].level == "OK", \
+        "must read the tokens from the first :root block, not from a comment naming it"
+    write({"site/tokens.css": ":root {\n  --ink: #ffffff;\n}\n"})
+    assert checks.check_site_tokens_match_app(tmp_path)[0].level == "FAIL", \
+        "must still FAIL on a drifted value behind a leading comment and @font-face"
+    write({"site/tokens.css": good["site/tokens.css"]})
+    (tmp_path / "site/index.css").unlink()
+
     write({"site/index.html": good["site/index.html"]})
     (tmp_path / "site/tokens.css").unlink()
     assert checks.check_site_tokens_match_app(tmp_path)[0].level == "FAIL", \

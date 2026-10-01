@@ -1,0 +1,92 @@
+{# Shared presentation macros for the console (docs/design/console-design.md).
+   Import with: {% import "_ui.html" as ui %} #}
+
+{# An icon from the vendored Lucide sprite (static/vendor/lucide/sprite.svg). Decorative by
+   default; pass a label when the icon is the only thing that names a control. #}
+{% macro icon(name, cls='', label=None) -%}
+<svg class="icon {{ cls }}"{% if label %} role="img" aria-label="{{ label }}"{% else %} aria-hidden="true" focusable="false"{% endif %}><use href="{{ url_for('static', filename='vendor/lucide/sprite.svg') }}?v={{ polaris_version }}#i-{{ name }}"></use></svg>
+{%- endmacro %}
+
+{# The page header: an eyebrow naming the section, the title, an optional lede, and actions. #}
+{% macro page_head(title, eyebrow=None, lede=None) -%}
+<header class="page-head">
+    <div class="page-head-text">
+        {% if eyebrow %}<p class="eyebrow">{{ eyebrow }}</p>{% endif %}
+        <h1>{{ title }}</h1>
+        {% if lede %}<p class="lede">{{ lede }}</p>{% endif %}
+    </div>
+    {% if caller %}<div class="page-head-actions">{{ caller() }}</div>{% endif %}
+</header>
+{%- endmacro %}
+
+{# A state pill. `state` is the stored value (ACTIVE, RESERVE, REVOKED, ...); the class carries
+   it so the palette follows the state, and the text stays readable without colour. #}
+{% macro pill(state, text=None) -%}
+<span class="pill pill-{{ state }}">{{ text or state|replace('_', ' ')|title }}</span>
+{%- endmacro %}
+
+{# The navigation, as data: (group caption or None, [(endpoint, label, icon, roles or None,
+   [other endpoints that belong to this entry])]). roles None = every signed-in user. The
+   breadcrumb and the current-page mark are derived from the same table, so they cannot drift. #}
+{% set NAV = [
+    (None, [
+        ('dashboard', 'Overview', 'layout-dashboard', None, []),
+    ]),
+    ('Registry', [
+        ('tokens_list', 'Credentials', 'id-card', None, ['tokens_detail', 'investigate_token']),
+        ('individuals_list', 'People', 'users', None, ['individuals_new', 'individuals_edit', 'investigate_individual', 'enrollment_summary']),
+        ('agencies_list', 'Authorities', 'landmark', None, ['agencies_new', 'agencies_edit']),
+    ]),
+    ('Operations', [
+        ('uc1_issue', 'Issue a credential', 'badge-plus', ('admin', 'operator'), []),
+        ('uc4_activate_reserve', 'Activate a reserve', 'power', ('admin', 'operator'), []),
+        ('uc5_bind_device', 'Bind a device', 'smartphone', ('admin', 'operator'), []),
+        ('uc6_migrate', 'Migrate an algorithm', 'arrow-right-left', ('admin', 'operator'), []),
+        ('uc8_revoke', 'Revoke', 'octagon-x', ('admin', 'operator'), []),
+        ('uc9_queue', 'Recovery', 'life-buoy', ('admin', 'operator'), ['uc9_initiate', 'uc9_decide']),
+    ]),
+    ('Verification', [
+        ('verifications_list', 'Verification log', 'shield-check', None, ['verifications_new']),
+    ]),
+    ('Transparency', [
+        ('anchors_list', 'Anchor batches', 'anchor', None, []),
+        ('epochs_list', 'ZK epochs', 'layers', None, []),
+        ('federation_viewer', 'Federation', 'network', None, []),
+    ]),
+    ('Governance', [
+        ('athena_console', 'Athena', 'scale', None, []),
+    ]),
+    ('Analytics', [
+        ('atlas', 'Atlas', 'globe', None, []),
+    ]),
+    ('Audit', [
+        ('uc7_warrant_audit', 'Warrant audit', 'gavel', ('admin', 'auditor'), []),
+        ('duress_dashboard', 'Duress signals', 'siren', ('admin', 'auditor'), []),
+        ('sql_query', 'SQL console', 'terminal', ('admin', 'auditor'), []),
+    ]),
+] %}
+
+{# The breadcrumb for the current endpoint: the group (not a page, so plain text), the section
+   entry, and the page itself when its title differs. An ordered list with aria-current on the
+   last item (the WAI-ARIA breadcrumb pattern); the separators are drawn in CSS, so a screen
+   reader does not announce them. #}
+{% macro crumbs(endpoint, title) -%}
+{%- set found = namespace(group=None, label=None, href=None) -%}
+{%- for group, items in NAV -%}
+  {%- for ep, label, ic, roles, also in items -%}
+    {%- if endpoint == ep or endpoint in also -%}
+      {%- set found.group = group -%}{%- set found.label = label -%}{%- set found.href = url_for(ep) -%}
+    {%- endif -%}
+  {%- endfor -%}
+{%- endfor -%}
+<ol class="crumbs">
+{%- if found.group %}<li>{{ found.group }}</li>{% endif -%}
+{%- if found.label and title and title != found.label -%}
+<li><a href="{{ found.href }}">{{ found.label }}</a></li><li aria-current="page">{{ title }}</li>
+{%- elif found.label -%}
+<li aria-current="page">{{ found.label }}</li>
+{%- elif title -%}
+<li aria-current="page">{{ title }}</li>
+{%- endif -%}
+</ol>
+{%- endmacro %}

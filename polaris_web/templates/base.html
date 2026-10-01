@@ -1,156 +1,141 @@
+{% import "_ui.html" as ui with context %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Polaris{% endblock %} | Identity Token System</title>
-    {# The console names no duress property, in any wording. This surface is what a coercer
-       standing behind an operator reads, and test_anti_revealing_verifications_list_excludes_duress
-       asserts the word appears nowhere in an operator's page. The nav entry below is role-gated
-       to admin and auditor for the same reason; an unconditional meta tag is not. #}
-    <meta name="description" content="Polaris identity-token console: post-quantum signing, zero-knowledge verification, append-only audit-of-record.">{# SEO: Lighthouse meta-description audit #}
-    {# The asset query string is the shipped version, so a release busts every
-       cached asset at once and no hand-maintained stamp can go stale.
-       (Historically each file carried its own hand-bumped stamp.
-       layer was merged into polaris.css (single dark design system). #}
+    <title>{% block title %}Polaris{% endblock %} · Polaris</title>
+    {# The console names no duress property, in any wording, on a page an operator can see. This
+       surface is what a coercer standing behind an operator reads, and
+       test_anti_revealing_verifications_list_excludes_duress asserts the word appears nowhere in an
+       operator's page. Its navigation entry is role-gated to admin and auditor in _ui.html. #}
+    <meta name="description" content="Polaris identity-credential console. Pre-pilot software on notional data.">
+    <meta name="color-scheme" content="dark light">
+    {# The theme is applied before first paint by an external script (C5: no inline script). #}
+    <script src="{{ url_for('static', filename='theme.js') }}?v={{ polaris_version }}"></script>
+    <link rel="preload" href="{{ url_for('static', filename='vendor/fonts/inter/InterVariable.woff2') }}" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="{{ url_for('static', filename='polaris.css') }}?v={{ polaris_version }}">
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='brand/polaris-logo.png') }}">
+    {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
-    <header class="masthead">
-        <div class="masthead-inner">
-            <div class="brand">
-                <a href="{{ url_for('dashboard') if current_user else url_for('home') }}">
-                    <span class="brand-mark">POLARIS</span>
-                    <span class="brand-sub">Identity Token System</span>
+    <a class="skip-link" href="#main">Skip to content</a>
+{% if current_user %}
+    <div class="shell" data-shell>
+        <aside class="sidebar" id="sidebar" aria-label="Primary">
+            <a class="sidebar-brand" href="{{ url_for('dashboard') }}" aria-label="Polaris, overview">
+                <img src="{{ url_for('static', filename='brand/polaris-logo.png') }}" alt="" width="28" height="28">
+                <span>
+                    <span class="wordmark">POLARIS</span>
+                    <span class="wordmark-sub">Identity authority</span>
+                </span>
+            </a>
+            <nav class="nav" aria-label="Sections">
+                {% for group, items in ui.NAV %}
+                    {% set visible = [] %}
+                    {% for item in items %}{% if not item[3] or current_user.role in item[3] %}{% set _ = visible.append(item) %}{% endif %}{% endfor %}
+                    {% if visible %}
+                    <div class="nav-group">
+                        {% if group %}<div class="nav-caption">{{ group }}</div>{% endif %}
+                        {% for ep, label, ic, roles, also in visible %}
+                        <a class="nav-item" href="{{ url_for(ep) }}"{% if request.endpoint == ep or request.endpoint in also %} aria-current="page"{% endif %}>
+                            {{ ui.icon(ic) }}<span>{{ label }}</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            </nav>
+            <div class="sidebar-foot">
+                <div class="env-badge">Pre-pilot · notional data</div>
+                <div class="env-version">
+                    v{{ polaris_version }} ·
+                    {% if signing.real %}<span title="Credentials are signed with {{ signing.algorithm }}">{{ signing.algorithm }}</span>
+                    {% else %}<span title="The development signing path writes a named placeholder, not a signature">placeholder signing</span>{% endif %}
+                </div>
+                <a class="maker" href="https://github.com/EgorKhaklin" rel="noopener" aria-label="Khaklin Technologies">
+                    <span class="maker-lockup" aria-hidden="true"></span>
                 </a>
             </div>
+        </aside>
 
-            {% if current_user %}
-                <nav class="primary-nav">
-                    <a href="{{ url_for('dashboard') }}">Dashboard</a>
-                    <a href="{{ url_for('atlas') }}" class="nav-atlas">Atlas</a>
-                    <a href="{{ url_for('athena_console') }}" class="nav-athena">Athena</a>
-                    <a href="{{ url_for('individuals_list') }}">Individuals</a>
-                    <a href="{{ url_for('agencies_list') }}">Agencies</a>
-                    <a href="{{ url_for('tokens_list') }}">Tokens</a>
-                    <a href="{{ url_for('verifications_list') }}">Verifications</a>
-                    {% if current_user.role in ('admin', 'auditor') %}
-                        <a href="{{ url_for('sql_query') }}">SQL Console</a>
-                    {% endif %}
-                    {% if current_user.role in ('admin', 'operator', 'auditor') %}
-                        <details class="nav-uc-menu">
-                            <summary class="nav-uc-summary">PROOFS</summary>
-                            <div class="nav-uc-panel" role="menu">
-                                <a href="{{ url_for('anchors_list') }}" class="nav-uc-item" role="menuitem">
-                                    <span class="uc-id">Merkle</span>
-                                    <span class="uc-name">Anchor Batches</span>
-                                </a>
-                                <a href="{{ url_for('epochs_list') }}" class="nav-uc-item" role="menuitem">
-                                    <span class="uc-id">ZK</span>
-                                    <span class="uc-name">ZK Epochs</span>
-                                </a>
-                                <a href="{{ url_for('federation_viewer') }}" class="nav-uc-item" role="menuitem">
-                                    <span class="uc-id">Trust</span>
-                                    <span class="uc-name">Federation</span>
-                                </a>
-                            </div>
-                        </details>
-                        <details class="nav-uc-menu">
-                            <summary class="nav-uc-summary">USE CASES</summary>
-                            <div class="nav-uc-panel" role="menu">
-                                {# Numeric ordering: UC-1, UC-4, UC-5, UC-6, UC-7, UC-8, UC-9, UC-12.
-                                   Each item carries its own role gate so the visible order stays
-                                   numeric regardless of which roles the viewer holds. #}
-                                {% if current_user.role in ('admin', 'operator') %}
-                                    <a href="{{ url_for('uc1_issue') }}" class="nav-uc-item" role="menuitem">
-                                        <span class="uc-id">UC-1</span>
-                                        <span class="uc-name">Issue</span>
-                                    </a>
-                                    <a href="{{ url_for('uc4_activate_reserve') }}" class="nav-uc-item" role="menuitem">
-                                        <span class="uc-id">UC-4</span>
-                                        <span class="uc-name">Activate Reserve</span>
-                                    </a>
-                                    <a href="{{ url_for('uc5_bind_device') }}" class="nav-uc-item" role="menuitem">
-                                        <span class="uc-id">UC-5</span>
-                                        <span class="uc-name">Bind Device</span>
-                                    </a>
-                                    <a href="{{ url_for('uc6_migrate') }}" class="nav-uc-item" role="menuitem">
-                                        <span class="uc-id">UC-6</span>
-                                        <span class="uc-name">Migrate Alg</span>
-                                    </a>
-                                {% endif %}
-                                {% if current_user.role in ('admin', 'auditor') %}
-                                    <a href="{{ url_for('uc7_warrant_audit') }}" class="nav-uc-item" role="menuitem">
-                                        <span class="uc-id">UC-7</span>
-                                        <span class="uc-name">Warrant Audit</span>
-                                    </a>
-                                {% endif %}
-                                {% if current_user.role in ('admin', 'operator') %}
-                                    <a href="{{ url_for('uc8_revoke') }}" class="nav-uc-item" role="menuitem">
-                                        <span class="uc-id">UC-8</span>
-                                        <span class="uc-name">Revoke</span>
-                                    </a>
-                                    <a href="{{ url_for('uc9_queue') }}" class="nav-uc-item" role="menuitem">
-                                        <span class="uc-id">UC-9</span>
-                                        <span class="uc-name">Recovery</span>
-                                    </a>
-                                {% endif %}
-                                {% if current_user.role in ('admin', 'auditor') %}
-                                    <a href="{{ url_for('duress_dashboard') }}" class="nav-uc-item" role="menuitem">
-                                        <span class="uc-id">UC-12</span>
-                                        <span class="uc-name">Duress Signals</span>
-                                    </a>
-                                {% endif %}
-                            </div>
-                        </details>
-                    {% endif %}
-                </nav>
-
-                <div class="user-strip">
-                    <span class="user-name">{{ current_user.username }}</span>
-                    <span class="user-role role-{{ current_user.role }}">{{ current_user.role|upper }}</span>
-                    <a href="{{ url_for('webauthn_settings') }}" class="user-strip-link"
-                       title="Account settings (WebAuthn enrollment)">⚙</a>
-                    <form method="post" action="{{ url_for('logout') }}" style="display:inline;">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn-logout" title="Sign out">⏻</button>
-                    </form>
-                </div>
-            {% endif %}
-        </div>
-    </header>
-
-    <main class="content">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                <div class="flash-region">
-                    {% for category, message in messages %}
-                        <div class="flash flash-{{ category }}">
-                            <span class="flash-icon">{% if category == 'success' %}✓{% elif category == 'error' %}✕{% elif category == 'warning' %}⚠{% else %}ⓘ{% endif %}</span>
-                            <span class="flash-text">{{ message }}</span>
-                            {% if category != 'success' %}
-                            <button type="button" class="flash-dismiss" aria-label="Dismiss this message">✕</button>
-                            {% endif %}
+        <div class="main-col">
+            <header class="topbar">
+                <button type="button" class="icon-btn sidebar-toggle" data-nav-toggle aria-controls="sidebar" aria-expanded="false" aria-label="Open navigation">{{ ui.icon('menu') }}</button>
+                <nav class="topbar-context" aria-label="Breadcrumb">{{ ui.crumbs(request.endpoint, self.title()) }}</nav>
+                <div class="topbar-spacer"></div>
+                <button type="button" class="icon-btn theme-toggle" data-theme-toggle aria-label="Change theme (system, light, dark)" title="Theme">
+                    <span class="icon-theme icon-theme-system">{{ ui.icon('monitor') }}</span>
+                    <span class="icon-theme icon-theme-light">{{ ui.icon('sun') }}</span>
+                    <span class="icon-theme icon-theme-dark">{{ ui.icon('moon') }}</span>
+                </button>
+                <details class="user-menu" data-menu>
+                    <summary aria-label="Account menu for {{ current_user.username }}">
+                        <span class="avatar" aria-hidden="true">{{ current_user.username[:1] }}</span>
+                        <span class="user-name">{{ current_user.username }}</span>
+                        {{ ui.icon('chevron-down', 'icon-sm') }}
+                    </summary>
+                    <div class="menu-panel">
+                        <div class="menu-head">
+                            <strong>{{ current_user.username }}</strong>
+                            <span class="role-badge role-{{ current_user.role }}">{{ current_user.role }}</span>
                         </div>
-                    {% endfor %}
-                </div>
-            {% endif %}
-        {% endwith %}
+                        <a class="menu-item" href="{{ url_for('webauthn_settings') }}">{{ ui.icon('key-round') }}Security keys</a>
+                        <form method="post" action="{{ url_for('logout') }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="menu-item">{{ ui.icon('log-out') }}Sign out</button>
+                        </form>
+                    </div>
+                </details>
+            </header>
 
-        {% block content %}{% endblock %}
+            <main id="main" class="page" tabindex="-1">
+                {% include "_flash.html" %}
+                {% block content %}{% endblock %}
+            </main>
+
+            <footer class="page-foot">
+                <span class="foot-meta">
+                    <span>Polaris {{ polaris_version }}</span><span class="sep">·</span>
+                    <span>Pre-pilot software on notional data</span>
+                </span>
+                <span class="foot-meta">
+                    <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md" rel="noopener">What it is not yet</a>
+                </span>
+            </footer>
+        </div>
+    </div>
+{% else %}
+    {% block public %}
+    <header class="public-bar">
+        <a class="sidebar-brand" href="{{ url_for('home') }}" aria-label="Polaris, home">
+            <img src="{{ url_for('static', filename='brand/polaris-logo.png') }}" alt="" width="28" height="28">
+            <span class="wordmark">POLARIS</span>
+        </a>
+        <span class="row">
+            <button type="button" class="icon-btn theme-toggle" data-theme-toggle aria-label="Change theme (system, light, dark)" title="Theme">
+                <span class="icon-theme icon-theme-system">{{ ui.icon('monitor') }}</span>
+                <span class="icon-theme icon-theme-light">{{ ui.icon('sun') }}</span>
+                <span class="icon-theme icon-theme-dark">{{ ui.icon('moon') }}</span>
+            </button>
+            {% if request.endpoint != 'login' %}<a class="btn btn-primary btn-sm" href="{{ url_for('login') }}">Sign in</a>{% endif %}
+        </span>
+    </header>
+    <main id="main" class="public-main" tabindex="-1">
+        <div class="page">{% include "_flash.html" %}</div>
+        {{ self.content() }}
     </main>
-
-    <footer class="page-footer">
-        <span>Polaris Identity Token System</span>
-        <span class="footer-sep">·</span>
-        <span>Version {{ polaris_version }}</span>
+    <footer class="page-foot">
+        <span class="foot-meta"><span>Polaris {{ polaris_version }}</span><span class="sep">·</span><span>Pre-pilot software on notional data</span></span>
+        <a class="maker" href="https://github.com/EgorKhaklin" rel="noopener" aria-label="Khaklin Technologies"><span class="maker-lockup" aria-hidden="true"></span></a>
     </footer>
+    {% endblock %}
+{% endif %}
     {% block scripts %}{% endblock %}
-
     {% if launcher_watch %}<script src="{{ url_for('static', filename='heartbeat.js') }}?v={{ polaris_version }}" defer></script>{% endif %}
+    <script src="{{ url_for('static', filename='shell.js') }}?v={{ polaris_version }}" defer></script>
     <script src="{{ url_for('static', filename='flash-dismiss.js') }}?v={{ polaris_version }}" defer></script>
-    <script src="{{ url_for('static', filename='nav-dropdown.js') }}?v={{ polaris_version }}" defer></script>
     <script src="{{ url_for('static', filename='confirm-submit.js') }}?v={{ polaris_version }}" defer></script>
 </body>
 </html>

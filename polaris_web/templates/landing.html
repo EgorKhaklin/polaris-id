@@ -1,222 +1,102 @@
 {% extends "base.html" %}
-{% block title %}Polaris: Identity Token System{% endblock %}
-{% block body_class %} body-landing{% endblock %}
+{% block title %}Polaris{% endblock %}
+{% block body_class %}body-landing{% endblock %}
 {% block content %}
+{% import "_ui.html" as ui with context %}
 
-<section class="landing-hero" aria-labelledby="landing-title">
-    <h1 id="landing-title" class="landing-title">POLARIS</h1>
-    <p class="landing-subtitle">A pre-pilot identity-token system, running on notional data.</p>
-    <p class="landing-tagline">
-        Audit-of-record by construction. Post-quantum from the substrate.
-        One identity per person, zero financial entanglement.
-    </p>
-
-    <div class="landing-cta">
-        {% if demo_mode %}
-        <a href="{{ url_for('demo') }}" class="btn btn-gold" data-cta="demo">
-            Try the demo
-            <span class="cta-sub">no sign-in needed</span>
-        </a>
-        <a href="{{ url_for('login') }}" class="btn btn-ghost" data-cta="signin">
-            Sign in
-            <span class="cta-sub">for operators</span>
-        </a>
-        {% else %}
-        <a href="{{ url_for('login') }}" class="btn btn-gold" data-cta="signin">
-            Sign in
-            <span class="cta-sub">for operators</span>
-        </a>
-        {% endif %}
+<section class="hero" aria-labelledby="landing-title">
+    <div>
+        <p class="eyebrow">Pre-pilot software · notional data · v{{ polaris_version }}</p>
+        <h1 id="landing-title">An identity authority anyone can check.</h1>
+        <p class="lede">Polaris issues identity credentials signed with ML-DSA-65, keeps their status
+           current, and publishes what a relying party needs to verify them offline, with no Polaris
+           code and no network.</p>
+        <div class="hero-actions">
+            {% if demo_mode %}
+            <a href="{{ url_for('demo') }}" class="btn btn-primary btn-lg" data-cta="demo">Try the walkthrough</a>
+            <a href="{{ url_for('login') }}" class="btn btn-lg" data-cta="signin">Sign in</a>
+            {% else %}
+            <a href="{{ url_for('login') }}" class="btn btn-primary btn-lg" data-cta="signin">Sign in</a>
+            {% endif %}
+            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md" class="btn btn-ghost btn-lg" rel="noopener">Verify a credential yourself {{ ui.icon('arrow-right') }}</a>
+        </div>
     </div>
-
-    <p class="landing-version">
-        Version <strong>{{ polaris_version }}</strong> ·
-        10 constitutional constraints enforced at the schema level ·
-        append-only audit-of-record · post-quantum signatures ·
-        zero-knowledge verification
-    </p>
+    <div class="hero-mark" aria-hidden="true">
+        <img src="{{ url_for('static', filename='brand/polaris-logo.png') }}" alt="" width="220" height="220">
+    </div>
 </section>
 
-<section class="landing-claims" aria-labelledby="claims-title">
-    <h2 id="claims-title" class="landing-section-title">What the schema enforces</h2>
-    <p class="landing-section-lede">
-        Ten hard constraints (C1–C10) are not policies. They are
-        triggers, CHECK constraints, partial unique indexes, and
-        append-only audit trails. The system cannot be operated
-        in a way that violates them.
-    </p>
-
-    <div class="claim-grid">
-        <article class="claim-card" aria-labelledby="claim-c1">
-            <header>
-                <span class="claim-id">C1</span>
-                <h3 id="claim-c1" class="claim-title">Audit of record</h3>
-            </header>
-            <p>
-                Every state change of an identity token writes a
-                <code>TokenLifecycleEvent</code> row. Every
-                verification writes a <code>VerificationEvent</code>.
-                Both tables are append-only at the trigger level.
-                Nine schema tables are append-only audit-of-record
-                instances, each enforced by a trigger.
-            </p>
-        </article>
-
-        <article class="claim-card" aria-labelledby="claim-c2">
-            <header>
-                <span class="claim-id">C2</span>
-                <h3 id="claim-c2" class="claim-title">Zero knowledge</h3>
-            </header>
-            <p>
-                Verifications at the <code>ZERO_KNOWLEDGE</code>
-                disclosure level have <code>token_id IS NULL</code>,
-                enforced by a CHECK constraint on the row and by form
-                coercion before it.
-                The verification graph cannot be reconstructed
-                from ZK events. A real Plonky2 ZK-SNARK proves
-                membership without revealing which token.
-            </p>
-        </article>
-
-        <article class="claim-card" aria-labelledby="claim-c3">
-            <header>
-                <span class="claim-id">C3</span>
-                <h3 id="claim-c3" class="claim-title">One identity per person</h3>
-            </header>
-            <p>
-                A partial unique index makes a second
-                <code>ACTIVE</code> token for the same individual
-                a database-level error. Concurrent writes lose
-                the race deterministically.
-            </p>
-        </article>
-
-        <article class="claim-card" aria-labelledby="claim-c10">
-            <header>
-                <span class="claim-id">C10</span>
-                <h3 id="claim-c10" class="claim-title">Identity is not money</h3>
-            </header>
-            <p>
-                The schema has no transactions, balances,
-                spending patterns, or merchant codes. Adding any
-                of those would require a constitutional amendment
-                that the project refuses on sight. If a value
-                system is ever built on top, it lives in a separate
-                database whose foreign keys prove the separation
-                rather than merely claim it.
-            </p>
-        </article>
+<section class="section" aria-labelledby="does-title">
+    <div class="section-head">
+        <h2 id="does-title">What it does</h2>
+        <p>The engine is the credential: issued here, held by a person, checked by anyone. Everything
+           else on this instance serves that path.</p>
     </div>
-
-    <p class="landing-section-aside">
-        Six more constraints round out C1-C10:
-        <strong>C4</strong> atomic failed-login counters (no TOCTOU race);
-        <strong>C5</strong> CSP forbids inline scripts (no <code>script-src 'unsafe-inline'</code>);
-        <strong>C6</strong> server-side disclosure enforcement (client cannot upgrade ZK to FULL);
-        <strong>C7</strong> no hardcoded cryptography (algorithm references the
-        <code>CryptographicAlgorithm</code> table; rotation is a row update);
-        <strong>C8</strong> bounded result sets on all
-        <code>/api/atlas/*</code> endpoints (no unbounded query exhaust);
-        <strong>C9</strong> concurrency hazards tested with real threading,
-        not mocks. The four cards above are the highlight reel for first-time
-        visitors; the canonical text for all ten lives in
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/MISSION.md#the-hard-constraints-do-not-violate">MISSION.md, "The hard constraints"</a>.
-        Anti-coercion is the <em>vocation</em> all ten constraints serve,
-        stated in
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/MISSION.md#vocation">MISSION.md, "Vocation"</a>,
-        above C1 to C10.
-    </p>
-</section>
-
-<section class="landing-substrate" aria-labelledby="substrate-title">
-    <h2 id="substrate-title" class="landing-section-title">Built on real cryptography</h2>
-    <div class="substrate-grid">
-        <div class="substrate-cell">
-            <h3>ML-DSA-65</h3>
-            <p>NIST FIPS 204 lattice signatures on every token, real under the production default and a labelled deterministic placeholder otherwise. The full posture, including what is still classical, is in PQC-POSTURE.md.</p>
-        </div>
-        <div class="substrate-cell">
-            <h3>Plonky2 ZK-SNARK</h3>
-            <p>FRI-based, transparent setup, hash-only commitments. Proves epoch membership without revealing which token.</p>
-        </div>
-        <div class="substrate-cell">
-            <h3>Merkle anchoring</h3>
-            <p>SHA3-256 Merkle commitments over batched anchor sets. Per-leaf inclusion proof is logarithmic in batch size.</p>
-        </div>
-        <div class="substrate-cell">
-            <h3>Multi-sig migration</h3>
-            <p>M-of-N signature schemes per token. Algorithm rotation without invalidating existing tokens.</p>
-        </div>
-        <div class="substrate-cell">
-            <h3>Duress codes</h3>
-            <p>Constant-time comparison. Coercer-visible flow is identical to the legitimate one. <code>DuressEvent</code> row appears in the audit table.</p>
-        </div>
-        <div class="substrate-cell">
+    <div class="feature-grid">
+        <article class="feature">
+            {{ ui.icon('badge-check') }}
+            <h3>Issue</h3>
+            <p>After enrolment, under the authority's ML-DSA-65 key. Two independent implementations
+               must agree before a signature is stored.</p>
+        </article>
+        <article class="feature">
+            {{ ui.icon('shield-check') }}
+            <h3>Verify offline</h3>
+            <p><span class="mono">polaris-verify</span> checks a credential against the authority's
+               published keys, with no Polaris code and no network.</p>
+        </article>
+        <article class="feature">
+            {{ ui.icon('activity') }}
+            <h3>Status, online or stapled</h3>
+            <p>Whether a credential is authoritative right now: the relying-party API, or a
+               short-lived signed status assertion the holder carries.</p>
+        </article>
+        <article class="feature">
+            {{ ui.icon('key-round') }}
+            <h3>Holder keys</h3>
+            <p>A credential can be bound to a key on the holder's device. Changing that key takes its
+               own signature.</p>
+        </article>
+        <article class="feature">
+            {{ ui.icon('wallet') }}
+            <h3>Wallets</h3>
+            <p>Copies for OpenID4VCI wallets. <span class="mono">polaris-oid4vp</span> 1.0.0rc7 is
+               OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile; Polaris as a whole
+               is not certified.</p>
+        </article>
+        <article class="feature">
+            {{ ui.icon('eye-off') }}
+            <h3>Zero-knowledge mode</h3>
+            <p>Issuer-unlinkable proofs of a valid credential. What a relying party can correlate is
+               bounded, not eliminated.</p>
+        </article>
+        <article class="feature">
+            {{ ui.icon('anchor') }}
+            <h3>Transparency</h3>
+            <p>Anchored batches, append-only logs and anonymity epochs, published so the authority's
+               record can be checked rather than trusted.</p>
+        </article>
+        <article class="feature">
+            {{ ui.icon('network') }}
             <h3>Federation</h3>
-            <p>Per-context trust attestations. Agency V accepts agency I for context C until date D. No transitive trust.</p>
-        </div>
+            <p>Trust between authorities is explicit, signed, and never transitive.</p>
+        </article>
     </div>
 </section>
 
-<section class="landing-cognitive" aria-labelledby="cognitive-title">
-    <h2 id="cognitive-title" class="landing-section-title">Guarantees you can check, not take on faith</h2>
-    <p class="landing-section-lede">
-        Every constitutional constraint is enforced where application
-        code cannot bypass it: database triggers, partial unique
-        indexes, and CHECK constraints. On top of the schema, a flat
-        check layer re-verifies each constraint on every run, and its
-        ability to catch a violation is itself tested against broken
-        fixtures.
-    </p>
-
-    <ul class="cognitive-list">
-        <li><strong>Schema-level enforcement</strong>: C1-C10 live in the database, not in policy. A reviewer can read the triggers and indexes and see each guarantee directly.</li>
-        <li><strong>polaris_checks</strong>: a flat layer of plain check functions: one per constitutional constraint plus production-posture pins, each provably able to catch its violation, gating CI on every run.</li>
-        <li><strong>Independent second witness</strong>: the zero-knowledge epoch root is recomputed by a separate Python implementation and checked bit-for-bit against the Rust prover. No single implementation is trusted alone.</li>
-        <li><strong>Append-only audit-of-record</strong>: every state change leaves a row the system can reconstruct; UPDATE and DELETE are rejected by trigger.</li>
+<section class="section" aria-labelledby="not-title">
+    <div class="section-head">
+        <h2 id="not-title">What it is not yet</h2>
+        <p>Stated here because it is true, and because a claim this page cannot back would cost more
+           than it gains.</p>
+    </div>
+    <ul class="plain-list limits">
+        <li>{{ ui.icon('circle-x') }}<span>Not piloted, not deployed, and not production-ready.</span></li>
+        <li>{{ ui.icon('circle-x') }}<span>Never held real identity data; this instance runs on notional records.</span></li>
+        <li>{{ ui.icon('circle-x') }}<span>No independent security review yet.</span></li>
+        <li>{{ ui.icon('circle-x') }}<span>Algorithm agility under an audited migration path, not a claim of quantum safety.</span></li>
     </ul>
-</section>
-
-<section class="landing-deploy" aria-labelledby="deploy-title">
-    <h2 id="deploy-title" class="landing-section-title">Deploying the stack</h2>
-    <p class="landing-section-lede">
-        The deployment path ships in the repository and is scripted end to
-        end. Polaris is pre-pilot: it is not yet a system you can run with
-        real identity data, and what still stands
-        between here and there is listed openly in
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md">PRODUCTION-READINESS.md</a>.
-    </p>
-
-    <pre class="landing-codeblock" aria-label="Production deployment commands"><code>git clone &lt;polaris repo&gt; &amp;&amp; cd polaris
-./scripts/polaris-generate-secrets.sh
-export POLARIS_DOMAIN=polaris.example.com
-./scripts/polaris-deploy.sh prod
-curl -fsS https://${POLARIS_DOMAIN}/api/health | jq .</code></pre>
-
-    <p class="landing-deploy-after">
-        Within ~90 seconds: Caddy provisions Let's Encrypt TLS,
-        Postgres + Redis + gunicorn come up, <code>/api/health</code>
-        returns structured per-component status. The operator
-        runbook is
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/operator/OPERATIONS.md">OPERATIONS.md</a>;
-        the secrets primer is
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/operator/SECRETS.md">SECRETS.md</a>,
-        and what a deployment still needs from its operator is
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md">PRODUCTION-READINESS.md</a>.
-    </p>
-</section>
-
-<section class="landing-foot" aria-labelledby="foot-title">
-    <h2 id="foot-title" class="landing-section-title">Read more</h2>
-    <ul class="landing-foot-links">
-        <li><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/THESIS.md">The thesis</a>: why identity cannot outrun its cryptographic primitives</li>
-        <li><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/GLOSSARY.md">Glossary</a>: every defined term</li>
-        <li><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/DATA-MODEL.md">Data model</a>: every table and every constraint</li>
-        <li><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/API.md">API reference</a>: every endpoint</li>
-        <li><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/PQC-POSTURE.md">Post-quantum posture</a>: what is post-quantum today and what is not</li>
-        <li><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/operator/SECURITY-CONTROLS.md">Security posture</a>: the threat model, the controls, the audit</li>
-        <li><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/operator/PRIVACY.md">Privacy posture</a>: data minimization, rotation, and what the schema does not carry</li>
-    </ul>
+    <p class="footnote"><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md" rel="noopener">The readiness ledger</a> is the bound on what Polaris may claim.</p>
 </section>
 
 {% endblock %}

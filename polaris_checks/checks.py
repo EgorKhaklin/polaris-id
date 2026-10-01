@@ -7821,7 +7821,9 @@ def check_image_builds_are_retried(root: pathlib.Path) -> list[Finding]:
 # same values, and this check is the pair that makes a drift visible.
 # ---------------------------------------------------------------------------
 def _css_root_tokens(text: str) -> dict[str, str]:
-    """Every custom property declared in the first :root block, normalised."""
+    """Every custom property declared in the first :root block, normalised. Comments go first,
+    so a header comment that names :root ahead of an @font-face block is not taken for it."""
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
     start = text.find(":root")
     if start < 0:
         return {}

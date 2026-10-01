@@ -1028,7 +1028,8 @@ class DashboardTests(PolarisTestCase):
     def test_dashboard_renders(self):
         r = self.client.get('/dashboard')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'POLARIS', 'Operations', 'Service', 'Needs attention',
+        # Titled Overview since the console was rethought (docs/design/console-design.md).
+        self.assertHTML(r, 'POLARIS', '<h1>Overview</h1>', 'Service', 'Needs attention',
                         'Cryptographic posture', 'Audit of record')
 
     def test_dashboard_reports_service_state(self):
@@ -6624,7 +6625,7 @@ class F01_AuthenticationTests(UnauthenticatedTestCase):
         """The login page itself must be reachable without auth."""
         r = self.client.get('/login')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'POLARIS', 'Sign In')
+        self.assertHTML(r, 'POLARIS', 'Sign in')
 
     def test_login_success_with_valid_credentials(self):
         r = self.client.post('/login', data={
@@ -7530,28 +7531,28 @@ class RoleBasedAccessControlTests(PolarisTestCase):
         r = self.client.get('/dashboard')
         # Operator can't use SQL console, so the nav link shouldn't appear
         # (The role-based template hides it.)
-        self.assertNotHTML(r, '>SQL Console<')
+        self.assertNotHTML(r, '>SQL console<')
         # v8.14 iteration 11: UC-* nav items moved into a <details>
         # dropdown menu; operator sees UC-1 / UC-4 / UC-5 / UC-6 / UC-8 / UC-9.
         # v8.15 R11-6: UC-8 (bounded revocation) added to the operator set.
         # v8.17 R11-2: UC-9 (recovery queue) added to the operator set.
         # v8.18 R11-1: UC-6 (algorithm migration) added to the operator set.
-        self.assertHTML(r, '>UC-1<')   # in the dropdown menu
-        self.assertHTML(r, '>UC-6<')
-        self.assertHTML(r, '>UC-8<')
-        self.assertHTML(r, '>UC-9<')
+        self.assertHTML(r, '>Issue a credential<')   # in the Operations group
+        self.assertHTML(r, '>Migrate an algorithm<')
+        self.assertHTML(r, '>Revoke<')
+        self.assertHTML(r, '>Recovery<')
 
         self._logout()
         self._login('auditor')
         r = self.client.get('/dashboard')
         # Auditor sees SQL but not UC-1/6/8/9 (only UC-7 in the dropdown)
-        self.assertHTML(r, '>SQL Console<')
-        self.assertNotHTML(r, '>UC-1<')
-        self.assertNotHTML(r, '>UC-6<')
-        self.assertNotHTML(r, '>UC-8<')
-        self.assertNotHTML(r, '>UC-9<')
+        self.assertHTML(r, '>SQL console<')
+        self.assertNotHTML(r, '>Issue a credential<')
+        self.assertNotHTML(r, '>Migrate an algorithm<')
+        self.assertNotHTML(r, '>Revoke<')
+        self.assertNotHTML(r, '>Recovery<')
         # Auditor still sees UC-7 in the dropdown
-        self.assertHTML(r, '>UC-7<')
+        self.assertHTML(r, '>Warrant audit<')
 
 
 class PasswordHashingTests(unittest.TestCase):
@@ -10758,16 +10759,16 @@ class V2SubstrateUITests(PolarisTestCase):
 
     def test_dashboard_duress_tile_visible_for_admin(self):
         r = self.client.get('/dashboard')
-        self.assertIn('Duress Signals', r.data.decode())
+        self.assertIn('Duress signals', r.data.decode())
 
     def test_dashboard_duress_tile_hidden_for_operator(self):
         self._logout()
         self._login('operator')
         r = self.client.get('/dashboard')
         body = r.data.decode()
-        self.assertNotIn('Duress Signals', body)
+        self.assertNotIn('Duress signals', body)
         # The other four substrate tiles should still be visible
-        self.assertIn('Anchor Batches', body)
+        self.assertIn('Anchor batches', body)
 
     # ---------- /anchors ----------
 
@@ -10867,16 +10868,16 @@ class V2SubstrateUITests(PolarisTestCase):
     def test_substrate_menu_visible_for_admin(self):
         r = self.client.get('/dashboard')
         body = r.data.decode()
-        self.assertIn('PROOFS', body)
-        self.assertIn('Anchor Batches', body)
-        self.assertIn('ZK Epochs', body)
+        self.assertIn('Transparency', body)
+        self.assertIn('Anchor batches', body)
+        self.assertIn('ZK epochs', body)
         self.assertIn('Federation', body)
 
     def test_substrate_menu_visible_for_operator(self):
         self._logout()
         self._login('operator')
         r = self.client.get('/dashboard')
-        self.assertIn('PROOFS', r.data.decode())
+        self.assertIn('Transparency', r.data.decode())
 
 
 class NextUrlSafetyTests(unittest.TestCase):
