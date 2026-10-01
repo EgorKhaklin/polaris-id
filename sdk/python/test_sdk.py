@@ -1102,6 +1102,23 @@ class GrantLimitsThatAreNotAnObjectTests(unittest.TestCase):
                 self.assertEqual(pv.grant_within_limits(grant, 10 ** 6, 10 ** 9), (True, None))
 
 
+class GrantLimitsAreWholeNumbersTests(unittest.TestCase):
+    """2026-10-01. `int()` read a use limit of 2.5 as 2, so a grant the TypeScript SDK refuses was
+    within its limit here: the same signed bytes, two answers. A use limit and a use count are
+    whole numbers; the whole-number limits are the control."""
+
+    def test_whole_numbers_are_read(self):
+        self.assertEqual(pv.grant_within_limits({"limits": {"max_uses": 3}}, uses_so_far=2), (True, None))
+        self.assertIs(pv.grant_within_limits({"limits": {"max_uses": 3}}, uses_so_far=3)[0], False)
+
+    def test_a_fractional_limit_or_count_is_refused(self):
+        for limits, uses in (({"max_uses": 2.5}, 2), ({"max_uses": 3}, 1.5)):
+            with self.subTest(limits=limits, uses=uses):
+                ok, note = pv.grant_within_limits({"limits": limits}, uses_so_far=uses)
+                self.assertIs(ok, False)
+                self.assertIn("whole numbers", note)
+
+
 class TheTokenCacheLifetimeIsBoundedTests(unittest.TestCase):
     """The issuer says how long its access token lives. The client believed it without
     reading it.

@@ -3035,6 +3035,128 @@
       },
       "since": "1.0.0-rc.69",
       "note": "The same edge, its signer listed by the authority with status '', with a signed edge required. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed '' as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "revocation-feed-leaf-rules-control",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-leaf-rules-control.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: the same feed, re-signed, listing one genuine leaf."
+    },
+    {
+      "name": "revocation-feed-leaf-null-python-root",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-leaf-null-python-root.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "A null leaf, its root computed as Python spells it (\"none\"). Both Python verifiers accepted this feed and the TypeScript SDK refused it."
+    },
+    {
+      "name": "revocation-feed-leaf-null-javascript-root",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-leaf-null-javascript-root.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same null leaf, its root computed as JavaScript spells it (\"null\"). The TypeScript SDK accepted this feed and both Python verifiers refused it."
+    },
+    {
+      "name": "revocation-feed-leaf-a-number",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-leaf-a-number.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "A leaf that is the number 1.0, rooted as Python spells it. A leaf is a SHA3-256, so 64 hex digits; anything else is refused before the root is computed."
+    },
+    {
+      "name": "epoch-leaves-leaf-not-hex",
+      "artifact": "epoch-leaves",
+      "object_file": "conformance/vectors/epoch-leaves-leaf-not-hex.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "A published anonymity set with one entry that is not a SHA3-256, its commitment recomputed over it. Every verifier here accepted it; the entries are SHA3-256 hexes (WIRE-SPEC 3.16), so the set is refused."
+    },
+    {
+      "name": "epoch-leaves-leaf-rules-control",
+      "artifact": "epoch-leaves",
+      "object_file": "conformance/vectors/epoch-leaves-leaf-rules-control.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: the published set, re-signed."
+    },
+    {
+      "name": "signed-document-digest-rules-control",
+      "artifact": "signed-document",
+      "object_file": "conformance/vectors/signed-document-digest-rules-control.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: the published document, re-signed."
+    },
+    {
+      "name": "signed-document-digest-algorithm-not-sha3",
+      "artifact": "signed-document",
+      "object_file": "conformance/vectors/signed-document-digest-algorithm-not-sha3.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same document labelled MD5. WIRE-SPEC 3.12: digest_algorithm MUST be SHA3-256. No verifier here checked it."
+    },
+    {
+      "name": "signed-document-digest-hex-uppercase",
+      "artifact": "signed-document",
+      "object_file": "conformance/vectors/signed-document-digest-hex-uppercase.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same digest in upper case. WIRE-SPEC 3.12: digest_hex MUST be lowercase. No verifier here checked it, and the detached verifier's binding compared a lowercased copy."
+    },
+    {
+      "name": "epoch-checkpoint-issued-microseconds-ahead",
+      "artifact": "epoch-checkpoint",
+      "object_file": "conformance/vectors/epoch-checkpoint-issued-microseconds.json",
+      "now": "2026-05-01T00:00:00.000100Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "A checkpoint issued 100 microseconds after `now`. WIRE-SPEC 2.2: issued_at <= now. The TypeScript SDK rounded both instants to the millisecond and read it as fresh; both Python verifiers read it as not yet valid."
+    },
+    {
+      "name": "epoch-checkpoint-issued-microseconds-behind",
+      "artifact": "epoch-checkpoint",
+      "object_file": "conformance/vectors/epoch-checkpoint-issued-microseconds.json",
+      "now": "2026-05-01T00:00:00.000300Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: the same checkpoint 100 microseconds after it was issued."
     }
   ]
 }

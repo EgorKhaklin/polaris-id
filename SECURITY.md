@@ -56,8 +56,11 @@ and a status list token, and the key binding JWT's `exp` and `nbf`, accepts a di
 and the trust anchor or a CA certificate as the issuer's `x5c` leaf; and it serves an expired request
 object. `polaris-verify` 1.0.0rc6 and `polaris-sdk-python` 1.0.0rc6 read a signed anchor, registry
 authority or holder binding whose `status` is `false` or `""` as active; `polaris-verify` 1.0.0rc6 calls a
-grant usable whose limits it does not understand; and `polaris-sdk-ts`
-1.0.0-rc.7 decides a presentation naming `credential: null` as the object itself. The tree carries
+grant usable whose limits it does not understand; all three read a revocation feed's non-hex leaf by
+its spelling, so a `null` leaf passes one language and not the other, and accept a signed document
+whose digest is not lowercase SHA3-256; both Python packages read a use limit of 2.5 as 2; and
+`polaris-sdk-ts` 1.0.0-rc.7 rounds instants to the millisecond and decides a presentation naming
+`credential: null` as the object itself. The tree carries
 the fixes; releases follow the maintainer's approval.
 
 If you installed or pinned an older version, upgrade. The Current column is checked against

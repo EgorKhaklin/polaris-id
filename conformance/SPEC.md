@@ -278,6 +278,16 @@ without the nonce, the credential or the binding's window. No verifier reported 
 without them the SDKs trust no manifest, while the detached verifier's function takes the
 manifests it is handed as the relying party's own (its parameter is `trusted_manifests`).
 
+WIRE-SPEC rules (1.0.0-rc.69). Eleven cases pin three rules a read of every verifier requirement
+found split or unenforced. A revoked leaf and an epoch leaf are 64 hex digits (3.3, 3.16): a feed
+with a `null` leaf, rooted as Python spells it or as JavaScript does, was accepted by one language's
+verifiers and refused by the other's (`revocation-feed-leaf-*`, `epoch-leaves-leaf-not-hex`). A
+signed document binds a lowercase SHA3-256 digest (3.12), which no verifier checked
+(`signed-document-digest-*`). A window is read to the microsecond (2.2): the TypeScript SDK rounded
+instants to the millisecond, and read a checkpoint issued 100 microseconds after `now` as fresh
+(`epoch-checkpoint-issued-microseconds-*`). Each refusal sits beside a control signed by the same
+key.
+
 Status values (1.0.0-rc.69). A `status` that is absent means active, and one that is present has
 to be the string `active`; `false` and `""` name no state. Thirteen cases pin that wherever a
 signed status decides: a manifest's own signer (`manifest-signer-status-*`), a registry's

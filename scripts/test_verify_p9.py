@@ -845,6 +845,21 @@ class TheInclusionProofSitesRefuseANonFiniteIndexTests(unittest.TestCase):
         self.assertEqual(out["index"], 0)
 
 
+class GrantLimitsAreWholeNumbersTests(unittest.TestCase):
+    """2026-10-01, the detached verifier's twin of the SDK test: `int()` read 2.5 uses as 2, where
+    the TypeScript SDK refuses a fraction, so one signed grant had two answers."""
+
+    def test_whole_numbers_are_read(self):
+        self.assertEqual(V.grant_within_limits({"limits": {"max_uses": 3}}, uses_so_far=2), (True, None))
+
+    def test_a_fractional_limit_or_count_is_refused(self):
+        for limits, uses in (({"max_uses": 2.5}, 2), ({"max_uses": 3}, 1.5)):
+            with self.subTest(limits=limits, uses=uses):
+                ok, note = V.grant_within_limits({"limits": limits}, uses_so_far=uses)
+                self.assertIs(ok, False)
+                self.assertIn("whole numbers", note)
+
+
 class AGrantWhoseLimitsAreNotUnderstoodIsNotUsableTests(unittest.TestCase):
     """2026-10-01. `verify_agent_grant` called a grant usable without reading its limits, while
     `grant_within_limits` in the same module refuses a limit it does not understand: a grant
