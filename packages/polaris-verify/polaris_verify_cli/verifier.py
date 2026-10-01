@@ -2819,7 +2819,7 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
         receipt = {}
     v = {"receipt_authentic": False, "responder_matches": None, "requester_authorized": None,
          "request_bound": None, "response_bound": None, "via": None,
-         "requester": receipt.get("requester"), "responder": receipt.get("responder"),
+         "requester": receipt.get("requester"), "responder": None,
          "context_id": receipt.get("context_id"), "occurred_at": receipt.get("occurred_at"),
          "witnesses": [], "note": None}
     if receipt.get("format") != _EXCHANGE_RECEIPT_FORMAT:
@@ -2846,6 +2846,10 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
     v["receipt_authentic"] = True
     if responder_key is not None:
         v["responder_matches"] = (pk_hex.lower() == responder_key.lower())
+    # The responder a receipt names is its signer's claim until `responder_key` shows the signer
+    # IS that responder (2026-09-30: a stranger's receipt reported the victim it named).
+    if v["responder_matches"] is True:
+        v["responder"] = receipt.get("responder")
     # Payload binding, only for a party that holds the bodies: the commitment must match.
     if request_body is not None:
         h = hashlib.sha3_256(request_body if isinstance(request_body, bytes) else str(request_body).encode("utf-8")).hexdigest()

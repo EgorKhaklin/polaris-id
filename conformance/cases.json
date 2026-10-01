@@ -2704,6 +2704,155 @@
       "since": "1.0.0-rc.68",
       "note": "WIRE-SPEC 3.1: a manifest MUST be signed by one of its own active anchors, so a stranger key cannot mint one. Every verifier here enforced it and nothing pinned it: with the rule removed from all three, every suite still passed.",
       "now": "2026-06-01T00:00:00Z"
+    },
+    {
+      "name": "timestamp-anchor-head-is-an-sth",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/trust-root-anchor-by-sth.json",
+      "log_key": "0320ce0c8dafb6241131173e3d7ea213ba3fe805c75bef9c8f1f3a01fb6431ae140da682041dc72388ddd3af0018b024a24d141f5670116d627e66878bafcbadafc6d8bc3d6791eea38a199ef42f53a709814527e07becc0f1d9025e06f65a8fab6dae0433b77c7bc2695f0c6b06c3bb8f710a8748db664c1ce348b71497bf3e11daa6d765d57a774f965e3eecc64504420a92782bf15e2c24476a9819b3dc5274ccebc3e999049f7d641534a64a884b12e3799542cabfdcd40495af50e55be6592ccef497545bd6483bf926bfb0305832088d503509f835494c9293581e3020bcec1cf42e90796adbbf370412b200162c5d98d72ddafee7a5ab175653b5903c142a62800b3ff0ec9cf3023a0477e370548196cad98a2d5c4bd92eb5f62a2c3a603f2e54f7b0f2796b38a1eb5817d9aa5a2dd2f29a5b0d2a8b56290c66dd508eb914f19992bee89c427b7ebcdda3efcf03c8f711092a98e08913ab18e57a4a763ce7825c7a104d9803258ee6cff89533a75d997c9d79d6f3281ca24394afc7d505dcd921b87a7d62afa931022df29b2e48c9f9acbc05ead1c5beb84d266e218cfd567c4504dff2dfe4896612637a25a43eb70a82d1a95a499998d9b3f41a007a06cfbcd6456391e89a0b180c0d93dc4d5d25b18282ad5797d50a79230708aad47b04b437505d81515e09f53bbdd97582fdd9ed85083b7907c7e687143ae783170899137dac2a7b5019a7e60ddda22eaf74af1fc1d74d03eec5c5f3a1a9babe29832374e856a8e4b15611e2399eeb0c1a6ec04a3fbc9fa476e65336556a85bf510fb0f3170ad62cd1421526ebb62bab86d0f4ebf9a8c54641b3f96a21e355601150349fb98e9c54e4de3177d99ddec275fdf8de5670c9d473ff4c84bcebdb47258ff24395eeed7cb7302731ba3d1756a8f4ba1e400eb5e6425420eb31e7fdab7a86c52486d7d0c7ed0ae5d4bbb073f420a6ade55fa363c8ad95009d0d51d5d9c66e11bfab751ce0bff16e13011b70728b3f549203db24fe0ba249db9561c286915c9a50dc3f909ff2438e4a2e23e3b4e4e0726daba156f0d3cafbe72b3e9280021c45d2b56676b40992a3b4455a2d0ebd38a9f93ddff902e59db81d82b0939320c5d222bd2e1b27c85210d90f913df1a3d5664b07f1391e527262ba926e76a7c72e7a6e2801d6e87dec3ed9d75c585ab6cb3ed94efb681ac12cdc4c445140b67b72ddb9de606e770c4e614cee26c9734829d769da8f5044ac82612c45f42012c8632238af96d0f125dd12d473f166ff932b63db12554c707b641ef2c05a8b04b40bc7bf2085c14d8055509d3066f46e941ad8fe7f3002de2671e5b499a2d8876595c8cedb908e1345e854da69beb31b5ede2a32361551e8b8b467bb9279b2e82c56d59a1903b87830843b6e2307323e9e4d9444791ff2e1ab7e0d565a8d29fb9bc58fdd29c584e035365685e6436f784c8e3e3689eaa3bfa1fc9ec28821cfcd43e11e66f0813a8486890dde0e2ef1c35c6510807cae0810261f1e081d35e73b59dbc0a4c10ff87ef4802b433c1c5e6b85dfcb9f8054e1b1ea03c52930dc83ff45b2bfd44bf00c67bd87e40e88a1c9cc80df21cba6f5dd1adb3d292996b36469999789760dbba10a62f201eccda0504d2f3efd32ea0889c38e83be833f4ea3f24cf7c3a08f2f0e6c78d6ffe14170597eaa5f8867d277f1e0298e9c99ad3efc3dfd6b0d7359858c02e0fce81fd2be7e7a45f0200c656e026a4bf9a7efba2b6fe2f3a344cde24e070ad5701a59b6fd7aa091380e8380a5dbf0a9a1c1b5ec36d4618eb8c8c430e7e1f159c0f3f45fa9529087d2fb4213bf773efe373420b619968f14f4435341c8d2011c0d85d002fd2e461ba7c060942b86dc0bde751429817328a106ac490837dbe9cf89a89e4d96251666d0d34312b979b95243340cc9a75c4a19714acfbd00e910851321e3065ab6247ca913b54ac8d990d1534ee052cc144013b72f6ba223c5c1808b0a31e35144926efc7c7cec7be3ab29e62a86dc78094752d060f277b194b2617600c47f5cae549319b6418c21b73f8a7f53a80288f405e9f3cddfe4507059eafbebf62c7636e3b0a72529f1eb8bdc4cb78b805d0fef4969fd547af72cacb7b644f7ef78ff4c029955bd2715772ba01cdd1602c0f710dff1f0545c929b2a69d062301a633a4bd7ab7b86e08cb039e2f6084b6effb0f18d4224f3b9dd3034e118efa364ac01214c8b9402cef26a119700276163a8f203219fe49a79c850e08b0c6493ad00adc19cc8c91dfcad91e85bfd8d78510c839836835d161e8377dc86fd479eccd5f3e1f330a76c5ee5947207983d6548731693bedc328559a047c179236af2e8c7cb0ef6f7f69c29ed22470f7c53f299ef0905e0ac74bbc2c6ab9d38afcbb1aca6fb401b759da77b8d6b56b5e1abec10143b74aba66abb246b2cf5bcb85885f07e86c72492af595c5bb03062a7d1ad813130246bb4b52d9c6b7bc7017fbd71ba4e52c29fda1663a57a153e52b503a455c004efddf236a804b99bcec094d01327ab294d809d640c9f17f7c27bd1a0f841a28f971083f02d7e1e2047f06e0775e313cf4907d05c3de48f163b40ee298e816bfb4da805ed1d8c7efcddcb1424e4b30a0903a85b5692f1ef7d1c5beb38e84bf1d1b2171056f6d69767f5ccc00170976e001e927816aca77c99d47acac66bd5ac254a3a84602b74d0d9b41b8a81aed8a26a72b5b5808bb7a6a4d55acaa16cf87af531e398",
+      "expect": {
+        "anchored": true,
+        "witnessed": null
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The positive control: a one-leaf log, its signed tree head by the log key, and the inclusion proof of this timestamp in it."
+    },
+    {
+      "name": "timestamp-anchor-head-is-not-an-sth",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/trust-root-anchor-by-non-sth.json",
+      "log_key": "0320ce0c8dafb6241131173e3d7ea213ba3fe805c75bef9c8f1f3a01fb6431ae140da682041dc72388ddd3af0018b024a24d141f5670116d627e66878bafcbadafc6d8bc3d6791eea38a199ef42f53a709814527e07becc0f1d9025e06f65a8fab6dae0433b77c7bc2695f0c6b06c3bb8f710a8748db664c1ce348b71497bf3e11daa6d765d57a774f965e3eecc64504420a92782bf15e2c24476a9819b3dc5274ccebc3e999049f7d641534a64a884b12e3799542cabfdcd40495af50e55be6592ccef497545bd6483bf926bfb0305832088d503509f835494c9293581e3020bcec1cf42e90796adbbf370412b200162c5d98d72ddafee7a5ab175653b5903c142a62800b3ff0ec9cf3023a0477e370548196cad98a2d5c4bd92eb5f62a2c3a603f2e54f7b0f2796b38a1eb5817d9aa5a2dd2f29a5b0d2a8b56290c66dd508eb914f19992bee89c427b7ebcdda3efcf03c8f711092a98e08913ab18e57a4a763ce7825c7a104d9803258ee6cff89533a75d997c9d79d6f3281ca24394afc7d505dcd921b87a7d62afa931022df29b2e48c9f9acbc05ead1c5beb84d266e218cfd567c4504dff2dfe4896612637a25a43eb70a82d1a95a499998d9b3f41a007a06cfbcd6456391e89a0b180c0d93dc4d5d25b18282ad5797d50a79230708aad47b04b437505d81515e09f53bbdd97582fdd9ed85083b7907c7e687143ae783170899137dac2a7b5019a7e60ddda22eaf74af1fc1d74d03eec5c5f3a1a9babe29832374e856a8e4b15611e2399eeb0c1a6ec04a3fbc9fa476e65336556a85bf510fb0f3170ad62cd1421526ebb62bab86d0f4ebf9a8c54641b3f96a21e355601150349fb98e9c54e4de3177d99ddec275fdf8de5670c9d473ff4c84bcebdb47258ff24395eeed7cb7302731ba3d1756a8f4ba1e400eb5e6425420eb31e7fdab7a86c52486d7d0c7ed0ae5d4bbb073f420a6ade55fa363c8ad95009d0d51d5d9c66e11bfab751ce0bff16e13011b70728b3f549203db24fe0ba249db9561c286915c9a50dc3f909ff2438e4a2e23e3b4e4e0726daba156f0d3cafbe72b3e9280021c45d2b56676b40992a3b4455a2d0ebd38a9f93ddff902e59db81d82b0939320c5d222bd2e1b27c85210d90f913df1a3d5664b07f1391e527262ba926e76a7c72e7a6e2801d6e87dec3ed9d75c585ab6cb3ed94efb681ac12cdc4c445140b67b72ddb9de606e770c4e614cee26c9734829d769da8f5044ac82612c45f42012c8632238af96d0f125dd12d473f166ff932b63db12554c707b641ef2c05a8b04b40bc7bf2085c14d8055509d3066f46e941ad8fe7f3002de2671e5b499a2d8876595c8cedb908e1345e854da69beb31b5ede2a32361551e8b8b467bb9279b2e82c56d59a1903b87830843b6e2307323e9e4d9444791ff2e1ab7e0d565a8d29fb9bc58fdd29c584e035365685e6436f784c8e3e3689eaa3bfa1fc9ec28821cfcd43e11e66f0813a8486890dde0e2ef1c35c6510807cae0810261f1e081d35e73b59dbc0a4c10ff87ef4802b433c1c5e6b85dfcb9f8054e1b1ea03c52930dc83ff45b2bfd44bf00c67bd87e40e88a1c9cc80df21cba6f5dd1adb3d292996b36469999789760dbba10a62f201eccda0504d2f3efd32ea0889c38e83be833f4ea3f24cf7c3a08f2f0e6c78d6ffe14170597eaa5f8867d277f1e0298e9c99ad3efc3dfd6b0d7359858c02e0fce81fd2be7e7a45f0200c656e026a4bf9a7efba2b6fe2f3a344cde24e070ad5701a59b6fd7aa091380e8380a5dbf0a9a1c1b5ec36d4618eb8c8c430e7e1f159c0f3f45fa9529087d2fb4213bf773efe373420b619968f14f4435341c8d2011c0d85d002fd2e461ba7c060942b86dc0bde751429817328a106ac490837dbe9cf89a89e4d96251666d0d34312b979b95243340cc9a75c4a19714acfbd00e910851321e3065ab6247ca913b54ac8d990d1534ee052cc144013b72f6ba223c5c1808b0a31e35144926efc7c7cec7be3ab29e62a86dc78094752d060f277b194b2617600c47f5cae549319b6418c21b73f8a7f53a80288f405e9f3cddfe4507059eafbebf62c7636e3b0a72529f1eb8bdc4cb78b805d0fef4969fd547af72cacb7b644f7ef78ff4c029955bd2715772ba01cdd1602c0f710dff1f0545c929b2a69d062301a633a4bd7ab7b86e08cb039e2f6084b6effb0f18d4224f3b9dd3034e118efa364ac01214c8b9402cef26a119700276163a8f203219fe49a79c850e08b0c6493ad00adc19cc8c91dfcad91e85bfd8d78510c839836835d161e8377dc86fd479eccd5f3e1f330a76c5ee5947207983d6548731693bedc328559a047c179236af2e8c7cb0ef6f7f69c29ed22470f7c53f299ef0905e0ac74bbc2c6ab9d38afcbb1aca6fb401b759da77b8d6b56b5e1abec10143b74aba66abb246b2cf5bcb85885f07e86c72492af595c5bb03062a7d1ad813130246bb4b52d9c6b7bc7017fbd71ba4e52c29fda1663a57a153e52b503a455c004efddf236a804b99bcec094d01327ab294d809d640c9f17f7c27bd1a0f841a28f971083f02d7e1e2047f06e0775e313cf4907d05c3de48f163b40ee298e816bfb4da805ed1d8c7efcddcb1424e4b30a0903a85b5692f1ef7d1c5beb38e84bf1d1b2171056f6d69767f5ccc00170976e001e927816aca77c99d47acac66bd5ac254a3a84602b74d0d9b41b8a81aed8a26a72b5b5808bb7a6a4d55acaa16cf87af531e398",
+      "expect": {
+        "anchored": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The same proof under a head that is a genuine timestamp the log key signed, with the tree fields attached outside what a timestamp signs. Signed by the log key is not a head of the log; before this case both SDKs here anchored it."
+    },
+    {
+      "artifact": "holder-chain",
+      "binding_file": "conformance/vectors/holder-token-binding.json",
+      "proof_file": "conformance/vectors/holder-token-proof-this.json",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "since": "1.0.0-rc.68",
+      "name": "holder-chain-no-nonce",
+      "credential_file": "conformance/vectors/holder-token-credential.json",
+      "expect": {
+        "proved": false
+      },
+      "note": "The genuine chain of holder-chain-proof-for-this-credential, checked against no verifier nonce. A proof checked against no challenge is replayable (WIRE-SPEC 3.15: MUST require verifier_nonce to equal the one it issued); before this case both SDKs here proved it."
+    },
+    {
+      "artifact": "holder-chain",
+      "binding_file": "conformance/vectors/holder-token-binding.json",
+      "proof_file": "conformance/vectors/holder-token-proof-this.json",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "since": "1.0.0-rc.68",
+      "name": "holder-chain-credential-signature-forged",
+      "credential_file": "conformance/vectors/holder-token-credential-forged-signature.json",
+      "expected_nonce": "rp-nonce-1",
+      "expect": {
+        "proved": false
+      },
+      "note": "The same chain and nonce, with one byte of the credential's own signature flipped. A binding to a credential that does not verify binds a key to nothing; before this case both SDKs here proved it."
+    },
+    {
+      "name": "holder-chain-binding-current",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/trust-root-holder-credential.json",
+      "binding_file": "conformance/vectors/trust-root-holder-binding-current.json",
+      "proof_file": "conformance/vectors/trust-root-holder-proof.json",
+      "expected_nonce": "rp-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": true
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The positive control: a fresh proof under a binding inside its window."
+    },
+    {
+      "name": "holder-chain-binding-expired",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/trust-root-holder-credential.json",
+      "binding_file": "conformance/vectors/trust-root-holder-binding-expired.json",
+      "proof_file": "conformance/vectors/trust-root-holder-proof.json",
+      "expected_nonce": "rp-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The same chain, issuer and proof under a binding whose window closed a month earlier: the issuer vouches for the holder key only inside it. Both SDKs refused it; the detached verifier's contract adapter never read the binding's window."
+    },
+    {
+      "name": "exchange-use-receipt-responder-unconfirmed",
+      "artifact": "exchange-use",
+      "object_file": "conformance/vectors/exchange-use-receipt.json",
+      "expect": {
+        "authentic": true,
+        "responder_matches": null,
+        "responder": null
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The receipt of exchange-use-receipt-authorized, checked with no responder key. It names its responder in the statement its signer wrote, so the name is a claim until the key is confirmed; before this case every verifier here reported it."
+    },
+    {
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-grant-valid.json",
+      "requested_action": "read:status",
+      "since": "1.0.0-rc.68",
+      "name": "agent-grant-use-grant-fresh",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true,
+        "action_in_scope": true
+      },
+      "note": "The positive control: the grant of agent-grant-use-action-in-scope, inside its window."
+    },
+    {
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-grant-valid.json",
+      "requested_action": "read:status",
+      "since": "1.0.0-rc.68",
+      "name": "agent-grant-use-grant-expired",
+      "now": "2026-05-01T06:00:30Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      },
+      "note": "The same grant thirty seconds after its expires_at. WIRE-SPEC 2.2: a verifier MUST reject an artifact outside its window. Before this case the contract asked only whether the grant was genuine, and an expired grant came back in scope."
+    },
+    {
+      "name": "agent-grant-use-binding-windowed",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/trust-root-grant.json",
+      "binding_file": "conformance/vectors/trust-root-binding-windowed.json",
+      "credential_file": "conformance/vectors/trust-root-grant-credential.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "principal_bound": true
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The positive control: the issuer bound the holder's key under a binding with a window, and the grant is signed by that key."
+    },
+    {
+      "name": "agent-grant-use-binding-without-window",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/trust-root-grant.json",
+      "binding_file": "conformance/vectors/trust-root-binding-no-window.json",
+      "credential_file": "conformance/vectors/trust-root-grant-credential.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "principal_bound": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The same chain and issuer key with the binding's window left out, which WIRE-SPEC 2.2 makes unacceptable. Before this case both SDKs here read it as fresh; the detached verifier refused it."
     }
   ]
 }

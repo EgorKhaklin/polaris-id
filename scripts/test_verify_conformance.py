@@ -171,7 +171,8 @@ def _verdict_for(case):
             binding=_load(case["binding_file"]) if "binding_file" in case else None,
             credential=_load(case["credential_file"]) if "credential_file" in case else None,
             verifier_scope=case.get("verifier_scope"))
-        return {"authentic": v["grant_authentic"], "action_in_scope": v["action_in_scope"],
+        return {"authentic": v["grant_authentic"], "fresh": v["fresh"],
+                "action_in_scope": v["action_in_scope"],
                 "revoked": v["revoked"], "agent_proved": v["agent_proved"],
                 "principal_bound": v["principal_bound"], "pairwise_handle": v["pairwise_handle"],
                 "correlation": v["correlation"]}
@@ -222,9 +223,15 @@ def _verdict_for(case):
                                       expected_nonce=case.get("expected_nonce"),
                                       expected_context=case.get("expected_context"),
                                       now=case.get("now"))
-        proved = bool(binding["binding_authentic"] and binding["bound_to_credential"]
+        # The detached verifier's presentation decision: the credential's own signature, a fresh
+        # binding, and the verifier's nonce MATCHED (its CLI abstains without --nonce). Until
+        # 2026-09-30 this composed the checks without the credential or the binding's window, and
+        # read a nonce nobody expected as a match.
+        proved = bool(V.verify_pack(credential)["signature_valid"]
+                      and binding["binding_authentic"] and binding["fresh"] is True
+                      and binding["bound_to_credential"]
                       and proof["proof_authentic"] and proof["key_matches_binding"]
-                      and proof["nonce_matches"] is not False
+                      and proof["nonce_matches"] is True
                       and proof["context_matches"] is not False
                       and proof["fresh"] is not False)
         return {"proved": proved}

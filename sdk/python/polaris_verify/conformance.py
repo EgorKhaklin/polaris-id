@@ -90,7 +90,10 @@ def main(argv=None):
         now = case.get("now")
         g = verify_signed_artifact(grant, now=now, anchors=None)
         action = case.get("requested_action")
-        verdict = {"authentic": g.authentic, "action_in_scope": None, "revoked": None,
+        # `fresh` is the grant's own window (WIRE-SPEC 2.2): an expired grant grants nothing. The
+        # contract asked only whether each object was genuine, so an expired grant with a proof
+        # a year old came back in scope and proved (2026-09-30).
+        verdict = {"authentic": g.authentic, "fresh": g.fresh, "action_in_scope": None, "revoked": None,
                    "agent_proved": None, "principal_bound": None, "pairwise_handle": None,
                    "correlation": None}
         if not g.authentic:

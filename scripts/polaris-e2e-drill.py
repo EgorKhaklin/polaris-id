@@ -119,11 +119,12 @@ def main():
     # The relying party trusts only the home issuer.
     anchor = [home_kp["public_key_hex"]]
 
-    # The issuer's status service, stubbed in memory: token_id -> authoritative.
-    STATUS = {101: True, 202: False}  # 101 active, 202 revoked
+    # The issuer's status service, stubbed in memory, asked by the credential's signed serial
+    # (never by the presentation's unsigned token_id): token_value -> authoritative.
+    STATUS = {"E2E-ACTIVE-0001": True, "E2E-REVOKED-0002": False, "E2E-FOREIGN-0003": True}
 
-    def status_checker(token_id):
-        active = STATUS.get(int(token_id), False)
+    def status_checker(credential):
+        active = STATUS.get(str(credential.get("token_value")), False)
         return {"currently_authoritative": active,
                 "status": "ACTIVE" if active else "REVOKED"}
 
