@@ -44,6 +44,7 @@ try:
 except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
 
+from .sdjwt import _es256_public_key, _not_an_es256_verification_key
 from .serve import REQUEST_PATH, RESPONSE_PATH, serve
 from .verifier import Verifier
 
@@ -161,6 +162,33 @@ def _load_trust_anchors(paths):
     return anchors
 
 
+def _load_issuer_jwks(path):
+    """The keys of --issuer-jwks: a JWK Set ({"keys": [...]}), a list of JWKs, or one JWK.
+    Anything else is refused before the listener starts (2026-10-01): a file that did not parse
+    was a traceback, and a `keys` that is not a list was read one character at a time, so the
+    verifier started with no key and said nothing."""
+    try:
+        doc = json.loads(pathlib.Path(path).read_text())
+    except (OSError, ValueError) as exc:
+        raise SystemExit("polaris-oid4vp: --issuer-jwks %s is not a readable JSON file: %s" % (path, exc))
+    keys = doc.get("keys", [doc]) if isinstance(doc, dict) else doc
+    if not (isinstance(keys, list) and all(isinstance(k, dict) for k in keys)):
+        raise SystemExit("polaris-oid4vp: --issuer-jwks %s is not a JWK Set, a list of JWKs or "
+                         "one JWK" % path)
+    return keys
+
+
+def _verifies_es256(jwk):
+    """Whether the verifier would check an issuer signature under this configured JWK."""
+    if _not_an_es256_verification_key(jwk):
+        return False
+    try:
+        _es256_public_key(jwk)
+    except ValueError:
+        return False
+    return True
+
+
 def _cmd_keygen(args) -> int:
     out = pathlib.Path(args.out)
     keygen(out, args.host)
@@ -182,16 +210,24 @@ def _cmd_serve(args) -> int:
         print("polaris-oid4vp: %s is missing %s. Run `polaris-oid4vp keygen --out %s` first."
               % (pki, ", ".join(missing), pki), file=sys.stderr)
         return 2
-    issuer_jwks = json.loads(pathlib.Path(args.issuer_jwks).read_text()) if args.issuer_jwks \
-        else []
-    if isinstance(issuer_jwks, dict):
-        issuer_jwks = issuer_jwks.get("keys", [issuer_jwks])
-
     try:
+        issuer_jwks = _load_issuer_jwks(args.issuer_jwks) if args.issuer_jwks else []
         anchors = _load_trust_anchors(args.issuer_trust_anchor)
     except SystemExit as exc:
         print(exc, file=sys.stderr)
         return 2
+    # Keys named and none usable is a configuration that cannot be what was meant: every
+    # credential from those issuers would be refused, with no word at startup (2026-10-01).
+    if args.issuer_jwks and not any(_verifies_es256(k) for k in issuer_jwks):
+        why = ("none of the %d keys in --issuer-jwks %s can verify an ES256 issuer signature: each "
+               "is not a P-256 key, or its use, key_ops or alg says it is for something else"
+               % (len(issuer_jwks), args.issuer_jwks))
+        if not anchors:
+            print("polaris-oid4vp: %s. Refusing to start a verifier that could verify nothing." % why,
+                  file=sys.stderr)
+            return 2
+        print("polaris-oid4vp: %s; only issuers whose x5c chains to --issuer-trust-anchor can be "
+              "verified." % why, file=sys.stderr)
     verifier = verifier_from(pki, args.host, args.port, issuer_jwks, anchors)
     if not issuer_jwks and not anchors:
         print("polaris-oid4vp: no --issuer-jwks or --issuer-trust-anchor given, so no "

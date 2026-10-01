@@ -299,6 +299,34 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         _, seen, _, _ = self._serve("--issuer-jwks", self._jwks_file(self.jwk))
         self.assertEqual(seen["verifier"].issuer_jwks, [self.jwk])
 
+    def test_an_issuer_jwks_file_it_cannot_use_is_refused_before_the_listener(self):
+        """2026-10-01: a file that did not parse was a traceback; a `keys` that is not a list
+        was read a character at a time; and a file none of whose keys can verify started a
+        verifier that refused every credential and said nothing."""
+        bad = self.tmp / "broken.json"
+        bad.write_text("{not json")
+        enc = dict(self.jwk, use="enc", alg="ECDH-ES")
+        for arg, said in ((str(bad), "not a readable JSON file"),
+                          (str(self.tmp / "absent.json"), "not a readable JSON file"),
+                          ({"keys": "abc"}, "not a JWK Set"),
+                          ([1, 2], "not a JWK Set"),
+                          ({"keys": [enc]}, "none of the 1 keys"),
+                          ({"keys": []}, "none of the 0 keys"),
+                          ({"kty": "RSA", "n": "AQAB", "e": "AQAB"}, "none of the 1 keys")):
+            with self.subTest(said=said, arg=str(arg)[-24:]):
+                path = arg if isinstance(arg, str) else self._jwks_file(arg)
+                rc, seen, _, err = self._serve("--issuer-jwks", path)
+                self.assertEqual(rc, 2)
+                self.assertNotIn("verifier", seen, "no listener may start on keys it cannot use")
+                self.assertIn(said, err)
+        rc, seen, _, err = self._serve("--issuer-jwks", self._jwks_file({"keys": [enc]}),
+                                       "--issuer-trust-anchor", self._anchor_file(1))
+        self.assertEqual(rc, 0, "x5c issuers can still be verified, so it starts and says what it cannot do")
+        self.assertIn("only issuers whose x5c chains", err)
+        rc, _, _, err = self._serve("--issuer-jwks", self._jwks_file({"keys": [enc, self.jwk]}))
+        self.assertEqual(rc, 0)
+        self.assertNotIn("none of the", err)
+
     def test_a_list_of_jwks_is_trusted_as_given(self):
         _, seen, _, _ = self._serve("--issuer-jwks", self._jwks_file([self.jwk]))
         self.assertEqual(seen["verifier"].issuer_jwks, [self.jwk])
