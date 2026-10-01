@@ -45,6 +45,7 @@ import app as flask_app
 # works: app.py imports it at the end of its own startup, so it is already loaded here.
 import atlas_routes
 import rp_api          # and the relying-party API v1, the same day
+import population      # lab/strategy/008: figures that cost the same at any population
 
 
 # ----------------------------------------------------------------------------
@@ -1208,6 +1209,407 @@ class DashboardAnalyticsTests(PolarisTestCase):
         body = self.client.get('/dashboard').get_data(as_text=True)
         self.assertLessEqual(body.count('class="pill pill-issued"') + body.count('class="pill pill-activated"')
                              + body.count('class="pill pill-revoked"'), 10 + 3)
+
+
+#: Tables that grow with the population or its activity (lab/strategy/008). A console page may
+#: read them only through a bounded plan; see _assert_bounded_plan.
+POPULATION_TABLES = {
+    'identitytoken', 'individual', 'tokensignature', 'tokenlifecycleevent', 'verificationevent',
+    'enrollmentstatusevent', 'enrollmentproofing', 'enrollmentevidence', 'devicebinding',
+    'revocationlist', 'holderkeyevent', 'credentialcopy', 'duressevent', 'authauditlog',
+    'recoveryrequest', 'tokenpermission', 'tokenstateepochleaf', 'blockchainanchor',
+    'cardpersonalization', 'individualerasureevent',
+}
+_PARTITION_SUFFIX = re.compile(r'_(\d{4}_\d{2}|default)$')
+
+
+def _population_relation(name):
+    """The population table a relation (or one of its partitions) belongs to, or None."""
+    base = _PARTITION_SUFFIX.sub('', (name or '').lower())
+    return base if base in POPULATION_TABLES else None
+
+
+#: Plan nodes that read their whole input before passing a row on, so a LIMIT above one of them
+#: bounds nothing below it. An incremental sort is not one: it sorts one presorted group at a time.
+_BLOCKING_NODES = ('Sort', 'Aggregate', 'Hash', 'Materialize', 'Unique', 'WindowAgg', 'SetOp',
+                   'Gather Merge')
+
+
+def _population_scans(plan, under_limit=False):
+    """(table, node type, rows examined, under a LIMIT) for every scan of a population table in an
+    EXPLAIN (ANALYZE, FORMAT JSON) plan. Rows examined counts what the scan read, kept or not:
+    rows returned plus rows a filter or a recheck removed, over every loop."""
+    out = []
+    node = plan.get('Node Type')
+    rel = _population_relation(plan.get('Relation Name'))
+    if rel:
+        loops = plan.get('Actual Loops') or 1
+        examined = loops * (plan.get('Actual Rows', 0) + plan.get('Rows Removed by Filter', 0)
+                            + plan.get('Rows Removed by Index Recheck', 0))
+        out.append((rel, node, examined, under_limit))
+    limit_here = (under_limit or node == 'Limit') and node not in _BLOCKING_NODES
+    for child in plan.get('Plans') or []:
+        out += _population_scans(child, limit_here)
+    return out
+
+
+def _assert_bounded_plans(testcase, statements, budget, sample_rows):
+    """Run EXPLAIN ANALYZE on each (sql, params) that reads a population table, with sequential
+    and bitmap scans priced out as they are at scale, and fail on any scan that examined more
+    rows than the page's own bounds allow: a block sample beyond a few times its target, any other
+    scan beyond `budget`, or a sequential scan with no LIMIT over it. A read proportional to the
+    table shows up here as a count far above the budget; a filter hunting a rare row does too."""
+    conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+    problems = []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET enable_seqscan = off; SET enable_bitmapscan = off;")
+            for sql, params in statements:
+                if not re.search(r'\b(' + '|'.join(POPULATION_TABLES) + r')\b', sql, re.I):
+                    continue
+                cur.execute('EXPLAIN (ANALYZE, FORMAT JSON) ' + sql, params)
+                plan = cur.fetchone()[0][0]['Plan']
+                for rel, node, examined, limited in _population_scans(plan):
+                    if node == 'Sample Scan':
+                        bad = examined > 4 * sample_rows
+                    elif node == 'Seq Scan' and not limited:
+                        bad = True
+                    else:
+                        bad = examined > budget
+                    if bad:
+                        problems.append('%s on %s examined %d rows (budget %d)\n      in: %s'
+                                        % (node, rel, examined, budget, ' '.join(sql.split())[:220]))
+            conn.rollback()
+    finally:
+        conn.close()
+    testcase.assertEqual(problems, [], 'unbounded population reads:\n  ' + '\n  '.join(problems))
+
+
+def _synthetic_population(people=30_000, verifications=100_000):
+    """A population large enough that the planner chooses the plans it would choose at scale
+    (lab/strategy/008/gen.sql, smaller): every person one ACTIVE credential, half a RESERVE,
+    a quarter a REVOKED one; a live signature each; ISSUED, ACTIVATED and REVOKED events; and
+    verifications over the last thirty days, a third of them zero-knowledge with no token id
+    (C2). Written as the owner with triggers off, consistent by construction, then analysed.
+    The next test's reload truncates all of it (04_data.sql, RESTART IDENTITY CASCADE)."""
+    conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("SET LOCAL session_replication_role = replica")
+            cur.execute("SELECT (SELECT COALESCE(max(individual_id), 0) FROM Individual), "
+                        "(SELECT COALESCE(max(token_id), 0) FROM IdentityToken)")
+            bp, bt = cur.fetchone()
+            cur.execute("""
+                INSERT INTO Individual (individual_id, legal_name, date_of_birth, jurisdiction, enrollment_date)
+                SELECT %(bp)s + g, 'Synthetic ' || g, date '1950-01-01' + g %% 20000, 'US-PA',
+                       now()::timestamp - interval '40 days'
+                  FROM generate_series(1, %(n)s) g;
+                INSERT INTO IdentityToken (token_id, token_value, physical_serial, biometric_binding_type,
+                       individual_id, issuing_agency_id, algorithm_id, status, issued_date,
+                       activated_date, expiration_date)
+                SELECT %(bt)s + row_number() OVER (), 'TKN-SYN-' || k || '-' || g, 'SN-SYN-' || k || '-' || g,
+                       'NONE', %(bp)s + g, 1 + g %% 3, CASE WHEN g %% 100 = 0 THEN 5 ELSE 1 END, s,
+                       now()::timestamp - interval '35 days',
+                       CASE WHEN s = 'ACTIVE' THEN now()::timestamp - interval '34 days' END,
+                       (now() + interval '5 years')::date + g %% 365
+                  FROM (VALUES (0, 'ACTIVE', 1), (1, 'RESERVE', 2), (2, 'REVOKED', 4)) AS kinds(k, s, every)
+                 CROSS JOIN LATERAL generate_series(1, %(n)s) g
+                 WHERE g %% every = 0;
+                INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signed_at)
+                SELECT token_id, algorithm_id, decode(repeat('ab', 64), 'hex'), issued_date
+                  FROM IdentityToken WHERE token_id > %(bt)s;
+                INSERT INTO TokenLifecycleEvent (token_id, actor_agency_id, event_type, event_timestamp, reason_code)
+                SELECT token_id, issuing_agency_id, 'ISSUED', issued_date, 'INITIAL_ENROLLMENT'
+                  FROM IdentityToken WHERE token_id > %(bt)s
+                UNION ALL
+                SELECT token_id, issuing_agency_id, 'REVOKED', now()::timestamp - interval '1 day' * (token_id %% 30),
+                       'ADMINISTRATIVE_PAPERWORK_ERROR'
+                  FROM IdentityToken WHERE token_id > %(bt)s AND status = 'REVOKED';
+                INSERT INTO VerificationEvent (token_id, requesting_agency_id, context_id, event_timestamp,
+                       outcome, disclosure_level, proof_commitment)
+                SELECT CASE WHEN g %% 3 = 0 THEN NULL ELSE %(bt)s + 1 + (g::bigint * 7919) %% %(n)s END,
+                       1 + g %% 6, 1 + g %% 7,
+                       now()::timestamp - interval '30 days' * (g::float8 / %(v)s),
+                       CASE WHEN g %% 33 = 0 THEN 'FAILURE' ELSE 'SUCCESS' END,
+                       CASE g %% 3 WHEN 0 THEN 'ZERO_KNOWLEDGE' WHEN 1 THEN 'SELECTIVE' ELSE 'FULL' END,
+                       CASE WHEN g %% 3 = 0 THEN md5(g::text) END
+                  FROM generate_series(1, %(v)s) g;
+            """, {'bp': bp, 'bt': bt, 'n': people, 'v': verifications})
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("SELECT uc_rebuild_population_counts()")   # triggers were off for the load
+            cur.execute("ANALYZE")
+    finally:
+        conn.close()
+
+
+def _statements_of(client, path):
+    """Every (sql, params) the application runs through query() to serve GET `path`. Recorded at
+    _run_query, below query(), which route modules import by name and so must not be repointed
+    (check_no_module_imports_an_unstable_name)."""
+    seen = []
+    real = flask_app._run_query
+
+    def recording(conn, sql, params, fetch):
+        seen.append((sql, params))
+        return real(conn, sql, params, fetch)
+    with patch.object(flask_app, '_run_query', recording):
+        r = client.get(path)
+    return r, seen
+
+
+class PopulationScaleTests(PolarisTestCase):
+    """lab/strategy/008: the Overview costs the same at any population. Its credential and
+    signature counts are exact at any size (PopulationCount, kept by triggers); its activity
+    windows are exact counts up to a cap that says "or more" beyond it; its shares describe the
+    latest slice of verifications and say so; and every query it runs has a bounded plan."""
+
+    def test_a_figure_is_an_int_that_knows_how_it_was_counted(self):
+        f = population.Figure(12.6, exact=False)
+        self.assertEqual(f, 13)
+        self.assertFalse(f.exact)
+        self.assertFalse(f.at_least)
+        c = population.Figure(10, at_least=True)
+        self.assertTrue(c.at_least)
+        self.assertFalse(c.exact, 'a capped count is not exact')
+        self.assertTrue(population.Figure(3).exact)
+        self.assertEqual(f + 1, 14)
+
+    def test_counts_format_to_thirteen_digits_and_beyond(self):
+        P = population
+        self.assertEqual(P.fmt_int(8_123_456_789), '8,123,456,789')
+        self.assertEqual(P.fmt_compact(8_123_456_789), '8.12 B')
+        self.assertEqual(P.fmt_compact(999_999), '999,999')
+        self.assertEqual(P.fmt_compact(1_000_000), '1 M')
+        self.assertEqual(P.fmt_compact(999_960_000), '1 B', 'rounds up into the next scale, not 1000 M')
+        self.assertEqual(P.fmt_compact(2 ** 63 - 1), '9.22 Qi', 'total over BIGINT')
+        self.assertEqual(P.fmt_words(350_000_000), '350 million')
+        self.assertEqual(P.fmt_estimate(12_345), '12,300', 'an estimate keeps three significant figures')
+        self.assertEqual(P.fmt_figure(P.Figure(8_123_456_789, exact=False)), 'about 8.12 billion')
+        self.assertEqual(P.fmt_figure(P.Figure(10_000, at_least=True)), '10,000 or more')
+        self.assertEqual(P.fmt_figure(P.Figure(8_123_456_789)), '8,123,456,789')
+
+    def test_a_capped_count_says_or_more(self):
+        n = flask_app.query("SELECT count(*) AS n FROM IdentityToken", fetch='one')['n']
+        self.assertGreater(n, 2)
+        f = population.capped(flask_app.query, "SELECT 1 FROM IdentityToken", cap=2)
+        self.assertTrue(f.at_least)
+        self.assertEqual(f, 2)
+        g = population.capped(flask_app.query, "SELECT 1 FROM IdentityToken", cap=n)
+        self.assertTrue(g.exact)
+        self.assertEqual(g, n)
+
+    def test_the_latest_slice_reports_only_what_it_read(self):
+        """Recent counts, mixes and rates over the slice it read, and nothing beyond it."""
+        total = flask_app.query("SELECT count(*) AS n FROM VerificationEvent", fetch='one')['n']
+        self.assertGreater(total, 2)
+        whole = population.Recent(flask_app.query, 'VerificationEvent', ['outcome'])
+        self.assertTrue(whole.complete)
+        self.assertEqual(len(whole), total)
+        self.assertEqual(whole.count(), total)
+        self.assertEqual(sum(whole.mix('outcome').values()), total)
+        part = population.Recent(flask_app.query, 'VerificationEvent', ['outcome'], limit=2)
+        self.assertFalse(part.complete)
+        self.assertEqual(len(part), 2)
+        self.assertGreaterEqual(part.newest, part.oldest)
+        newest = flask_app.query("SELECT max(event_timestamp) AS t FROM VerificationEvent", fetch='one')['t']
+        self.assertEqual(part.newest, newest)
+
+    def test_the_rate_is_measured_over_the_slice_not_up_to_now(self):
+        """Ten events a minute apart, an hour ago: the rate is one a minute, however long the
+        quiet since. (A rate up to now is how a window estimate missed a day by 57%.)"""
+        self._owner("""
+            INSERT INTO VerificationEvent (token_id, requesting_agency_id, context_id, event_timestamp,
+                                           outcome, disclosure_level, proof_commitment)
+            SELECT NULL, 1, 1, now() - interval '1 hour' - make_interval(mins => g), 'SUCCESS',
+                   'ZERO_KNOWLEDGE', md5(g::text)
+              FROM generate_series(0, 9) g""")
+        part = population.Recent(flask_app.query, 'VerificationEvent', ['outcome'], limit=10)
+        self.assertAlmostEqual(part.per_second(), 1 / 60.0, places=6)
+
+    def test_the_overview_is_exact_on_small_data(self):
+        """Falsifier 5 of record 008: on a small population every figure is exact."""
+        body = self.client.get('/dashboard').get_data(as_text=True)
+        self.assertNotIn('class="approx"', body)
+        self.assertNotIn('or more', body)
+
+    def test_the_overview_marks_every_capped_count(self):
+        """No count beyond its cap without its mark: with the activity cap at one and three
+        verifications from the last hour, both verification windows read "1+" and are heard as
+        "or more", and the credential counts beside them stay exact."""
+        self._owner("""
+            INSERT INTO VerificationEvent (token_id, requesting_agency_id, context_id, event_timestamp,
+                                           outcome, disclosure_level, proof_commitment)
+            SELECT NULL, 1, 1, now() - make_interval(mins => g), 'SUCCESS', 'ZERO_KNOWLEDGE', md5(g::text)
+              FROM generate_series(1, 3) g""")
+        with patch.object(flask_app, '_OVERVIEW_ACTIVITY_CAP', 1):
+            body = self.client.get('/dashboard').get_data(as_text=True)
+        tiles = dict((label, value) for value, label in re.findall(
+            r'<span class="kpi-value">(.*?)</span>\s*<span class="kpi-label">([a-z0-9 ,]+)</span>', body, re.S))
+        for label in ('last 24 h', 'last 7 d'):
+            self.assertIn('1+', tiles[label], label)
+            self.assertIn('or more', tiles[label], label)
+        for label in ('active', 'reserve', 'revoked', 'lost', 'expired', 'dormant'):
+            self.assertNotIn('+', tiles[label], label)
+            self.assertNotIn('approx', tiles[label], label)
+
+    # -- The maintained counts -------------------------------------------------------------
+
+    def _truth(self):
+        """What the tables hold, by a full count: the reference the triggers must equal."""
+        return {(r['facet'], r['agency_id'], r['item']): r['n'] for r in flask_app.query("""
+            SELECT 'credential_status' AS facet, issuing_agency_id AS agency_id, status AS item,
+                   count(*) AS n
+              FROM IdentityToken GROUP BY 2, 3
+            UNION ALL
+            SELECT 'live_signature', t.issuing_agency_id, s.algorithm_id::TEXT, count(*)
+              FROM TokenSignature s JOIN IdentityToken t ON t.token_id = s.token_id
+             WHERE s.deprecation_date IS NULL AND t.status = 'ACTIVE'
+             GROUP BY 2, 3""")}
+
+    def _assert_counts_exact(self, step):
+        self.assertEqual({k: int(v) for k, v in population.counts(flask_app.query).items()},
+                         self._truth(), 'counts drifted after: %s' % step)
+
+    def _owner(self, sql, args=(), fetch=False):
+        conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute(sql, args)
+                return cur.fetchall() if fetch else None
+        finally:
+            conn.close()
+
+    def test_the_counts_equal_a_full_count_after_every_kind_of_change(self):
+        """Every statement that can move a count, then the count compared with a full count:
+        an insert, each status move, a signature added and one deprecated (an algorithm
+        migration), a statement over many rows that moves nothing counted, a rolled-back change,
+        a fold, and a delete."""
+        self._assert_counts_exact('the seed')
+        person = self._owner("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                             "VALUES ('Count Check', '1990-01-01', 'US-PA') RETURNING individual_id",
+                             fetch=True)[0][0]
+        tok = self._owner("""
+            WITH t AS (
+                INSERT INTO IdentityToken (token_value, physical_serial, biometric_binding_type,
+                                           individual_id, issuing_agency_id, algorithm_id, status)
+                VALUES ('TKN-COUNT-1', 'SN-COUNT-1', 'NONE', %s, 2, 1, 'RESERVE') RETURNING token_id)
+            INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes)
+            SELECT token_id, 1, '\\x00'::bytea FROM t RETURNING token_id""", (person,), fetch=True)[0][0]
+        self._assert_counts_exact('a RESERVE credential and its signature')
+        self._owner("UPDATE IdentityToken SET status = 'ACTIVE', activated_date = now() WHERE token_id = %s", (tok,))
+        self._assert_counts_exact('RESERVE to ACTIVE')
+        self._owner("""INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes) VALUES (%s, 2, '\\x01'::bytea);
+                       UPDATE TokenSignature SET deprecation_date = now() + interval '1 second'
+                        WHERE token_id = %s AND algorithm_id = 1""", (tok, tok))
+        self._assert_counts_exact('an algorithm migration: a new signature, the old one deprecated')
+        self._owner("UPDATE IdentityToken SET hardware_model = 'count-check' WHERE issuing_agency_id IN (1, 2)")
+        self._assert_counts_exact('a statement over many rows that moves nothing counted')
+        conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE IdentityToken SET status = 'LOST' WHERE token_id = %s", (tok,))
+            conn.rollback()
+        finally:
+            conn.close()
+        self._assert_counts_exact('a change rolled back')
+        self._owner("UPDATE IdentityToken SET status = 'LOST' WHERE token_id = %s", (tok,))
+        self._assert_counts_exact('ACTIVE to LOST')
+        folded = self._owner("SELECT uc_fold_population_counts()", fetch=True)[0][0]
+        self.assertGreater(folded, 0, 'control: there were changes to fold')
+        self.assertEqual(self._owner("SELECT count(*) FROM PopulationCountDelta", fetch=True)[0][0], 0)
+        self._assert_counts_exact('a fold')
+        # A signature is never deleted (enforce_token_signature_immutability), so the delete path
+        # is a credential that was never signed.
+        other = self._owner("""
+            INSERT INTO IdentityToken (token_value, physical_serial, biometric_binding_type,
+                                       individual_id, issuing_agency_id, algorithm_id, status)
+            VALUES ('TKN-COUNT-2', 'SN-COUNT-2', 'NONE', %s, 3, 1, 'RESERVE') RETURNING token_id""",
+                            (person,), fetch=True)[0][0]
+        self._assert_counts_exact('an unsigned RESERVE credential')
+        self._owner("DELETE FROM IdentityToken WHERE token_id = %s", (other,))
+        self._assert_counts_exact('a credential deleted')
+
+    def test_a_fresh_load_starts_with_exact_counts(self):
+        """A fresh load runs the seed (04_data.sql) before the count triggers exist
+        (06_triggers.sql), so the seed is counted only by the recount that file ends with.
+        Reproduced: the insert triggers dropped, the seed reloaded uncounted, the file run."""
+        self._owner("DROP TRIGGER trg_population_count_token_insert ON IdentityToken; "
+                    "DROP TRIGGER trg_population_count_signature_insert ON TokenSignature;")
+        reload_sample_data()
+        self.assertTrue(population.counts(flask_app.query), 'control: the seed has credentials')
+        self._assert_counts_exact('a load whose seed ran before the triggers')
+
+    def test_the_application_role_reads_the_counts_and_writes_none(self):
+        """A count the application role could write is one a compromised application could
+        forge: it reads them and may fold changes in; every write and the full recount are
+        refused by privilege."""
+        conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET ROLE polaris_app")
+                cur.execute("SELECT count(*) FROM PopulationCount")
+                self.assertGreater(cur.fetchone()[0], 0, 'control: the role reads the counts')
+                cur.execute("SELECT uc_fold_population_counts()")
+                for stmt in ("INSERT INTO PopulationCount VALUES ('credential_status', 1, 'ACTIVE', 1)",
+                             "UPDATE PopulationCount SET n = n + 1",
+                             "DELETE FROM PopulationCount",
+                             "INSERT INTO PopulationCountDelta (facet, agency_id, item, n) "
+                             "VALUES ('credential_status', 1, 'ACTIVE', 1)",
+                             "UPDATE PopulationCountDelta SET n = 2",
+                             "DELETE FROM PopulationCountDelta",
+                             "SELECT uc_rebuild_population_counts()"):
+                    cur.execute("SAVEPOINT attempt")
+                    with self.assertRaises(psycopg2.errors.InsufficientPrivilege, msg=stmt):
+                        cur.execute(stmt)
+                    cur.execute("ROLLBACK TO SAVEPOINT attempt")
+        finally:
+            conn.rollback()
+            conn.close()
+
+    def test_an_authority_bound_session_reads_only_its_own_counts(self):
+        conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET ROLE polaris_app")
+                cur.execute("SELECT DISTINCT agency_id FROM PopulationCount")
+                self.assertGreater(len(cur.fetchall()), 1, 'control: an unscoped session sees every authority')
+                cur.execute("SELECT set_config('polaris.operator_agency_id', '1', true)")
+                cur.execute("SELECT DISTINCT agency_id FROM PopulationCount UNION "
+                            "SELECT DISTINCT agency_id FROM PopulationCountDelta")
+                self.assertEqual({r[0] for r in cur.fetchall()}, {1})
+        finally:
+            conn.rollback()
+            conn.close()
+
+    def test_every_overview_query_has_a_bounded_plan(self):
+        """Falsifier 2 of record 008: with sequential and bitmap scans priced out, no query the
+        Overview runs reads a population table except through a capped index range, a slice of
+        the latest rows, or a row-by-row lookup. Planned and run over a synthetic population,
+        because on the seed's few rows the planner prefers whichever index is nearest."""
+        _synthetic_population()
+        # Every bound shrunk far below the synthetic tables (52,500 credentials, 100,000
+        # verifications), so a read that grows with a table cannot hide under one of them.
+        with patch.object(population, 'RECENT_ROWS', 2_000), \
+                patch.object(flask_app, '_OVERVIEW_ATTENTION_CAP', 500), \
+                patch.object(flask_app, '_OVERVIEW_ACTIVITY_CAP', 500):
+            r, statements = _statements_of(self.client, '/dashboard')
+        self.assertEqual(r.status_code, 200)
+        self.assertGreater(len(statements), 10)
+        _assert_bounded_plans(self, statements, budget=6_000, sample_rows=2_000)
+
+    def test_the_bounded_plan_guard_sees_a_proportional_read(self):
+        """The guard's own control: the Overview's old population count, a GROUP BY over every
+        credential, must fail it on the same synthetic population."""
+        _synthetic_population()
+        with self.assertRaises(AssertionError):
+            _assert_bounded_plans(self, [("SELECT status, COUNT(*) AS n FROM IdentityToken GROUP BY status", None)],
+                                  budget=6_000, sample_rows=2_000)
+        with self.assertRaises(AssertionError):
+            # A capped count of a rare condition through a filter rather than an index.
+            _assert_bounded_plans(self, [("SELECT count(*) FROM (SELECT 1 FROM IdentityToken "
+                                          "WHERE status = 'ACTIVE' AND duress_code_hash IS NOT NULL LIMIT 501) c", None)],
+                                  budget=6_000, sample_rows=2_000)
 
 
 class HeartbeatTests(PolarisTestCase):
@@ -8901,6 +9303,100 @@ class ConcurrencyTests(PolarisTestCase):
                 (tid, algorithm_id, ('LPMIG_%d' % algorithm_id).encode(), False))
 
         self.assertContends(migrate(2), migrate(3), 'Same-token migrations')
+
+    # 2026-10-01. Locks taken in FUNCTIONS, which check_advisory_locks_have_a_contention_test
+    # did not see until then: the holder key register's per-credential lock (a domain with an
+    # underscore, which the check did not read) and the population counts' fold lock.
+
+    def _live_credential(self, tag):
+        """A fresh ACTIVE credential with a live signature, for a lock test of its own."""
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                        "VALUES (%s, '1990-01-01', 'US-PA') RETURNING individual_id", ('C9 ' + tag,))
+            iid = cur.fetchone()['individual_id']
+            cur.execute("""
+                INSERT INTO IdentityToken
+                    (token_value, physical_serial, biometric_binding_type, individual_id,
+                     issuing_agency_id, algorithm_id, status, issued_date, activated_date,
+                     expiration_date)
+                VALUES (%s, %s, 'NONE', %s, 1, 1, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        (polaris_utc_date() + INTERVAL '10 years')::date)
+                RETURNING token_id
+            """, ('TKN-C9-%s-%s' % (tag, iid), 'SN-C9-%s-%s' % (tag, iid), iid))
+            tid = cur.fetchone()['token_id']
+            cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes) "
+                        "VALUES (%s, 1, %s)", (tid, ('C9_%s_%d' % (tag, tid)).encode()))
+            conn.commit()
+        return tid
+
+    def test_holder_key_events_on_two_credentials_do_not_block(self):
+        a, b = self._live_credential('hk-a'), self._live_credential('hk-b')
+
+        def bind(tid, key_byte):
+            return lambda cur: cur.execute(
+                "SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'bound')", (tid, key_byte * 32))
+        self.assertDoesNotContend(bind(a, 'ab'), bind(b, 'cd'), 'Holder keys bound to two credentials')
+
+    def test_holder_key_events_on_one_credential_serialize(self):
+        """The register's writer takes its lock before reading the key in force, so a second
+        change to the same credential waits at the lock, not at a constraint."""
+        a = self._live_credential('hk-one')
+
+        def bind(key_byte):
+            return lambda cur: cur.execute(
+                "SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'bound')", (a, key_byte * 32))
+        self.assertContends(bind('ab'), bind('cd'), 'Two holder key changes to one credential')
+
+    def test_a_population_recount_takes_its_lock(self):
+        recount = lambda cur: cur.execute("SELECT uc_rebuild_population_counts()")  # noqa: E731
+        self.assertContends(recount, recount, 'Two population recounts')
+
+    def test_a_fold_skips_while_a_recount_holds_the_lock(self):
+        """uc_fold_population_counts takes its lock with pg_try_advisory_xact_lock: while a
+        recount holds it, a fold returns at once having folded nothing, and leaves the changes
+        for the next fold. A try-lock never waits, so assertContends cannot see it; this does."""
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE IdentityToken SET status = 'LOST' WHERE token_id = 4")
+            conn.commit()
+        holder = self._new_conn()
+        try:
+            with holder.cursor() as cur:
+                cur.execute("SELECT uc_rebuild_population_counts()")   # holds the lock, left open
+            probe = self._new_conn()
+            try:
+                with probe.cursor() as cur:
+                    cur.execute("SET lock_timeout = '2s'")
+                    cur.execute("SELECT uc_fold_population_counts() AS folded")
+                    self.assertEqual(cur.fetchone()['folded'], 0,
+                                     'a fold ran while a recount held the lock')
+                probe.commit()
+            finally:
+                probe.close()
+        finally:
+            holder.rollback()
+            holder.close()
+        # The control: with nobody holding the lock, the fold folds every change there is, and
+        # the totals it leaves equal a full count. The change above is a pure decrement of two
+        # existing totals (an ACTIVE credential and its live signature), the case INSERT ... ON
+        # CONFLICT refused before the fold updated existing totals in their own statement.
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM PopulationCountDelta")
+            pending = cur.fetchone()['n']
+            cur.execute("SELECT uc_fold_population_counts() AS folded")
+            self.assertEqual(cur.fetchone()['folded'], pending)
+            conn.commit()
+            cur.execute("SELECT count(*) AS n FROM PopulationCountDelta")
+            self.assertEqual(cur.fetchone()['n'], 0)
+            cur.execute("""
+                SELECT facet, agency_id, item, n FROM PopulationCount WHERE n <> 0
+                EXCEPT
+                (SELECT 'credential_status', issuing_agency_id, status, count(*)
+                   FROM IdentityToken GROUP BY 2, 3
+                 UNION ALL
+                 SELECT 'live_signature', t.issuing_agency_id, s.algorithm_id::TEXT, count(*)
+                   FROM TokenSignature s JOIN IdentityToken t ON t.token_id = s.token_id
+                  WHERE s.deprecation_date IS NULL AND t.status = 'ACTIVE' GROUP BY 2, 3)""")
+            self.assertEqual(cur.fetchall(), [], 'a folded total disagrees with a full count')
 
     # uc9_complete_recovery's advisory lock is NOT independently observable, and
     # this is where a test proving it takes one would go. The key is

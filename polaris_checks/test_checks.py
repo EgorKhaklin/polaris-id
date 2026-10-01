@@ -17713,6 +17713,64 @@ def test_advisory_lock_contention_check_discriminates(tmp_path):
         tests=GOOD_TESTS.replace("assertContends", "assertNothing")))
     assert any(f.level == "FAIL" for f in bad), bad
 
+    # 2026-10-01. A FUNCTION holds a lock as a procedure does. The check used to credit a
+    # function's lock to the procedure above it, and it did not read a domain with an
+    # underscore at all, so polaris.holder_key's per-credential lock had no test demanded of it.
+    FUNCS = (
+        "CREATE OR REPLACE FUNCTION uc_record_holder_key_event(p_token_id INTEGER)\n"
+        "RETURNS BIGINT LANGUAGE plpgsql AS $$\nBEGIN\n"
+        "    PERFORM pg_advisory_xact_lock(hashtext('polaris.holder_key'), p_token_id);\n"
+        "END$$;\n"
+        "CREATE OR REPLACE FUNCTION uc_fold_population_counts()\n"
+        "RETURNS BIGINT LANGUAGE plpgsql AS $$\nBEGIN\n"
+        "    IF NOT pg_try_advisory_xact_lock(hashtext('polaris.population.fold')) THEN\n"
+        "        RETURN 0;\n    END IF;\n"
+        "END$$;\n"
+        "CREATE OR REPLACE FUNCTION uc_rebuild_population_counts()\n"
+        "RETURNS VOID LANGUAGE plpgsql AS $$\nBEGIN\n"
+        "    PERFORM pg_advisory_xact_lock(hashtext('polaris.population.fold'));\n"
+        "END$$;\n"
+    )
+    FUNC_TESTS = (
+        "    def test_holder_key_events_on_two_credentials_do_not_block(self):\n"
+        "        def bind(tok):\n"
+        "            return lambda cur: cur.execute('SELECT uc_record_holder_key_event(%s)', (tok,))\n"
+        "        self.assertDoesNotContend(bind(3), bind(4), 'Two credentials')\n"
+        "    def test_holder_key_events_on_one_credential_serialize(self):\n"
+        "        def bind(tok):\n"
+        "            return lambda cur: cur.execute('SELECT uc_record_holder_key_event(%s)', (tok,))\n"
+        "        self.assertContends(bind(3), bind(3), 'One credential')\n"
+        "    def test_a_population_recount_takes_its_lock(self):\n"
+        "        recount = lambda cur: cur.execute('SELECT uc_rebuild_population_counts()')\n"
+        "        self.assertContends(recount, recount, 'Two recounts')\n"
+        "    def test_a_fold_skips_while_a_recount_holds_the_lock(self):\n"
+        "        pass\n"
+    )
+    ok = checks.check_advisory_locks_have_a_contention_test(write(
+        procs=GOOD_PROCS + FUNCS, tests=GOOD_TESTS + FUNC_TESTS))
+    assert all(f.level == "OK" for f in ok), ok
+
+    # The function's lock with nothing driving it: named as the FUNCTION's, not the procedure's.
+    bad = checks.check_advisory_locks_have_a_contention_test(write(
+        procs=GOOD_PROCS + FUNCS,
+        tests=GOOD_TESTS + FUNC_TESTS.replace("uc_record_holder_key_event", "something_else")))
+    assert any(f.level == "FAIL" and "uc_record_holder_key_event" in f.message for f in bad), bad
+    assert not any("uc11_close_epoch takes" in f.message for f in bad), bad
+
+    # The two-key form is per-entity; the same lock with the entity dropped is not.
+    bad = checks.check_advisory_locks_have_a_contention_test(write(
+        procs=GOOD_PROCS + FUNCS.replace("hashtext('polaris.holder_key'), p_token_id",
+                                         "hashtext('polaris.holder_key')"),
+        tests=GOOD_TESTS + FUNC_TESTS))
+    assert any(f.level == "FAIL" and "takes no parameter" in f.message for f in bad), bad
+
+    # A try-lock is shown skipping by the test it names; without that test it is unwatched.
+    bad = checks.check_advisory_locks_have_a_contention_test(write(
+        procs=GOOD_PROCS + FUNCS,
+        tests=GOOD_TESTS + FUNC_TESTS.replace("test_a_fold_skips_while_a_recount_holds_the_lock",
+                                              "test_something_else")))
+    assert any(f.level == "FAIL" and "uc_fold_population_counts" in f.message for f in bad), bad
+
     # A SECOND procedure joins an existing domain and no test drives it. The two can
     # reach the key by different routes -- one hashing a parameter, one hashing a
     # column it looked up -- and nothing would notice the routes disagreeing.

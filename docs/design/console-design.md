@@ -70,5 +70,12 @@ relying-party registration are the schema owner's acts through the CLI; the cons
 - **An operator's page never names the duress mechanism** in any wording. The signals queue and its
   entry exist for admin and auditor only.
 - **Honest labels:** pre-pilot, notional data, and the signing mode in force, on every page.
-- **Scale:** lists are server-paged and filtered, never one unbounded table.
+- **Population scale** ([record 008](../../lab/strategy/008-population-scale.md)): a page costs the
+  same at any population. It reads a primary-key or unique lookup, a slice of an index under a
+  `LIMIT`, an exact count the database keeps (`PopulationCount`), or a count capped where it stops
+  and says "or more". A share says which slice it describes. An estimate is marked as one, and none
+  is stretched over a window it did not read. Lists page by key, not by offset; a form looks a
+  record up by its identifier and never lists a population.
+- **Counts** go through `_ui.html`'s `figure()`: grouped digits, three figures and a scale word in a
+  tile (8.12 B), "+" on a capped count, and the full value or "or more" for a screen reader.
 - **WCAG 2.2 AA**, held by `scripts/polaris-accessibility-drill.sh` on every operator surface.

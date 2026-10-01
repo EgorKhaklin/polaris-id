@@ -2131,3 +2131,174 @@ DROP TRIGGER IF EXISTS trg_enrollment_event_by_recorder ON EnrollmentStatusEvent
 CREATE TRIGGER trg_enrollment_event_by_recorder
     BEFORE INSERT ON EnrollmentStatusEvent
     FOR EACH ROW EXECUTE FUNCTION enforce_enrollment_status_written_by_its_recorder();
+
+-- ----------------------------------------------------------------------------
+-- Population counts (lab/strategy/008). Statement triggers on IdentityToken and TokenSignature
+-- append each statement's net change to PopulationCountDelta: the rows it removed, counted
+-- negative, and the rows it left, counted positive, grouped by key. A change that moves nothing
+-- counted (a field other than status, say) nets to zero and appends nothing. No row identity is
+-- needed, and a bulk statement costs one pass. Writers only append, so no writer waits on another
+-- writer's counter row. Now and then a writer folds the changes in, so they stay few when
+-- nobody reads.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION population_count_tokens()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    -- Each branch names only the transition tables its event has.
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO PopulationCountDelta (facet, agency_id, item, n)
+        SELECT 'credential_status', issuing_agency_id, status, count(*)
+          FROM new_rows GROUP BY issuing_agency_id, status;
+        -- A credential has no signature when it is inserted: the signature's insert counts it.
+    ELSIF TG_OP = 'DELETE' THEN
+        INSERT INTO PopulationCountDelta (facet, agency_id, item, n)
+        SELECT 'credential_status', issuing_agency_id, status, -count(*)
+          FROM old_rows GROUP BY issuing_agency_id, status;
+        INSERT INTO PopulationCountDelta (facet, agency_id, item, n)
+        SELECT 'live_signature', o.issuing_agency_id, s.algorithm_id::TEXT, -count(*)
+          FROM old_rows o
+          JOIN TokenSignature s ON s.token_id = o.token_id AND s.deprecation_date IS NULL
+         WHERE o.status = 'ACTIVE'
+         GROUP BY o.issuing_agency_id, s.algorithm_id;
+    ELSE
+        INSERT INTO PopulationCountDelta (facet, agency_id, item, n)
+        SELECT 'credential_status', agency_id, status, sum(d)
+          FROM (SELECT issuing_agency_id AS agency_id, status, -1 AS d FROM old_rows
+                UNION ALL
+                SELECT issuing_agency_id, status, 1 FROM new_rows) c
+         GROUP BY agency_id, status
+        HAVING sum(d) <> 0;
+        INSERT INTO PopulationCountDelta (facet, agency_id, item, n)
+        SELECT 'live_signature', agency_id, algorithm_id::TEXT, sum(d)
+          FROM (SELECT o.issuing_agency_id AS agency_id, s.algorithm_id, -1 AS d
+                  FROM old_rows o
+                  JOIN TokenSignature s ON s.token_id = o.token_id AND s.deprecation_date IS NULL
+                 WHERE o.status = 'ACTIVE'
+                UNION ALL
+                SELECT n.issuing_agency_id, s.algorithm_id, 1
+                  FROM new_rows n
+                  JOIN TokenSignature s ON s.token_id = n.token_id AND s.deprecation_date IS NULL
+                 WHERE n.status = 'ACTIVE') c
+         GROUP BY agency_id, algorithm_id
+        HAVING sum(d) <> 0;
+    END IF;
+    -- Now and then fold, so the changes stay few when nobody reads. A count must never stop a
+    -- credential write: should the fold fail, the changes stay unfolded (a reader still sums
+    -- them) and the write goes on.
+    IF random() < 0.002 THEN
+        BEGIN
+            PERFORM uc_fold_population_counts();
+        EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING 'population counts not folded: %', SQLERRM;
+        END;
+    END IF;
+    RETURN NULL;
+END$$;
+
+CREATE OR REPLACE FUNCTION population_count_signatures()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    -- A live signature (no deprecation date) on an ACTIVE credential, by the credential's
+    -- authority and the signature's algorithm.
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO PopulationCountDelta (facet, agency_id, item, n)
+        SELECT 'live_signature', t.issuing_agency_id, n.algorithm_id::TEXT, count(*)
+          FROM new_rows n JOIN IdentityToken t ON t.token_id = n.token_id
+         WHERE n.deprecation_date IS NULL AND t.status = 'ACTIVE'
+         GROUP BY t.issuing_agency_id, n.algorithm_id;
+    ELSIF TG_OP = 'DELETE' THEN
+        INSERT INTO PopulationCountDelta (facet, agency_id, item, n)
+        SELECT 'live_signature', t.issuing_agency_id, o.algorithm_id::TEXT, -count(*)
+          FROM old_rows o JOIN IdentityToken t ON t.token_id = o.token_id
+         WHERE o.deprecation_date IS NULL AND t.status = 'ACTIVE'
+         GROUP BY t.issuing_agency_id, o.algorithm_id;
+    ELSE
+        INSERT INTO PopulationCountDelta (facet, agency_id, item, n)
+        SELECT 'live_signature', agency_id, algorithm_id::TEXT, sum(d)
+          FROM (SELECT t.issuing_agency_id AS agency_id, o.algorithm_id, -1 AS d
+                  FROM old_rows o JOIN IdentityToken t ON t.token_id = o.token_id
+                 WHERE o.deprecation_date IS NULL AND t.status = 'ACTIVE'
+                UNION ALL
+                SELECT t.issuing_agency_id, n.algorithm_id, 1
+                  FROM new_rows n JOIN IdentityToken t ON t.token_id = n.token_id
+                 WHERE n.deprecation_date IS NULL AND t.status = 'ACTIVE') c
+         GROUP BY agency_id, algorithm_id
+        HAVING sum(d) <> 0;
+    END IF;
+    -- Now and then fold, so the changes stay few when nobody reads. A count must never stop a
+    -- credential write: should the fold fail, the changes stay unfolded (a reader still sums
+    -- them) and the write goes on.
+    IF random() < 0.002 THEN
+        BEGIN
+            PERFORM uc_fold_population_counts();
+        EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING 'population counts not folded: %', SQLERRM;
+        END;
+    END IF;
+    RETURN NULL;
+END$$;
+
+-- TRUNCATE fires no row or statement-row events, so it clears what it invalidates: every count
+-- for IdentityToken (both facets read it), the live-signature counts for TokenSignature.
+CREATE OR REPLACE FUNCTION population_count_truncated()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    IF TG_TABLE_NAME = 'identitytoken' THEN
+        DELETE FROM PopulationCountDelta;
+        DELETE FROM PopulationCount;
+    ELSE
+        DELETE FROM PopulationCountDelta WHERE facet = 'live_signature';
+        DELETE FROM PopulationCount WHERE facet = 'live_signature';
+    END IF;
+    RETURN NULL;
+END$$;
+
+DROP TRIGGER IF EXISTS trg_population_count_token_insert ON IdentityToken;
+CREATE TRIGGER trg_population_count_token_insert
+    AFTER INSERT ON IdentityToken REFERENCING NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION population_count_tokens();
+DROP TRIGGER IF EXISTS trg_population_count_token_update ON IdentityToken;
+CREATE TRIGGER trg_population_count_token_update
+    AFTER UPDATE ON IdentityToken REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION population_count_tokens();
+DROP TRIGGER IF EXISTS trg_population_count_token_delete ON IdentityToken;
+CREATE TRIGGER trg_population_count_token_delete
+    AFTER DELETE ON IdentityToken REFERENCING OLD TABLE AS old_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION population_count_tokens();
+DROP TRIGGER IF EXISTS trg_population_count_token_truncate ON IdentityToken;
+CREATE TRIGGER trg_population_count_token_truncate
+    AFTER TRUNCATE ON IdentityToken
+    FOR EACH STATEMENT EXECUTE FUNCTION population_count_truncated();
+
+DROP TRIGGER IF EXISTS trg_population_count_signature_insert ON TokenSignature;
+CREATE TRIGGER trg_population_count_signature_insert
+    AFTER INSERT ON TokenSignature REFERENCING NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION population_count_signatures();
+DROP TRIGGER IF EXISTS trg_population_count_signature_update ON TokenSignature;
+CREATE TRIGGER trg_population_count_signature_update
+    AFTER UPDATE ON TokenSignature REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION population_count_signatures();
+DROP TRIGGER IF EXISTS trg_population_count_signature_delete ON TokenSignature;
+CREATE TRIGGER trg_population_count_signature_delete
+    AFTER DELETE ON TokenSignature REFERENCING OLD TABLE AS old_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION population_count_signatures();
+DROP TRIGGER IF EXISTS trg_population_count_signature_truncate ON TokenSignature;
+CREATE TRIGGER trg_population_count_signature_truncate
+    AFTER TRUNCATE ON TokenSignature
+    FOR EACH STATEMENT EXECUTE FUNCTION population_count_truncated();
+
+-- The seed (04_data.sql) is loaded before these triggers exist, and a reload runs this file
+-- again: recount from the tables, so the counts start exact.
+SELECT uc_rebuild_population_counts();

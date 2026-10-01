@@ -397,6 +397,27 @@ BEGIN
     END IF;
 END$$;
 
+-- 2026-10-01 (lab/strategy/008). The population counts are written only by the owner's routines
+-- and triggers: a count the application role could write is a count a compromised application
+-- could forge. It reads them, and may fold changes in, which only moves counted changes into the
+-- totals. Recounting the whole population SHARE-locks the credential tables, a maintenance act
+-- for the owner (the loop above would otherwise lend it).
+REVOKE INSERT, UPDATE, DELETE ON PopulationCount, PopulationCountDelta FROM polaris_app;
+DO $$
+DECLARE
+    v_sig TEXT;
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'polaris_app') THEN
+        FOR v_sig IN
+            SELECT p.oid::regprocedure::text
+              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = 'public' AND p.proname = 'uc_rebuild_population_counts'
+        LOOP
+            EXECUTE format('REVOKE EXECUTE ON ROUTINE %s FROM polaris_app', v_sig);
+        END LOOP;
+    END IF;
+END$$;
+
 -- 2026-09-25: the minimum anonymity set for a zero-knowledge epoch, 20 unless something already
 -- set it (the notional sample data sets 1, and says why). uc11_close_epoch refuses to close an
 -- epoch below it and the verifier refuses a proof against one.

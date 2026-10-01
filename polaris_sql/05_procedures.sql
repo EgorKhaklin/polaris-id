@@ -2748,3 +2748,90 @@ COMMENT ON FUNCTION uc_record_holder_key_event(INTEGER, TEXT, VARCHAR, VARCHAR) 
   'The only writer of HolderKeyEvent: sets the instant and holds bound / rotated / revoked in order '
   'for a live credential. The holder''s consent to a change (a signature by the live key) is the '
   'caller''s to verify.';
+
+-- ----------------------------------------------------------------------------
+-- Population counts (lab/strategy/008). PopulationCount holds folded totals and
+-- PopulationCountDelta the signed changes the triggers append; a reader sums both.
+-- ----------------------------------------------------------------------------
+
+-- Move every visible change into the totals. Safe to call at any time and from any session:
+-- a change committed after this statement's snapshot is left for the next fold, and a caller
+-- that finds a fold already running returns at once rather than waiting for it. The Overview
+-- calls it before reading; the triggers call it now and then, so the changes stay few even when
+-- nobody reads.
+CREATE OR REPLACE FUNCTION uc_fold_population_counts()
+RETURNS BIGINT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_folded BIGINT := 0;
+BEGIN
+    IF NOT pg_try_advisory_xact_lock(hashtext('polaris.population.fold')) THEN
+        RETURN 0;
+    END IF;
+    -- An existing total is updated and a new one inserted, in two statements of one: INSERT ...
+    -- ON CONFLICT DO UPDATE checks the proposed row's CHECK (n >= 0) before it finds the
+    -- conflict, so a decrement of an existing total would be refused as a negative new row.
+    -- One fold runs at a time (the lock above), so the two never race for a new key.
+    WITH moved AS (
+        DELETE FROM PopulationCountDelta
+        RETURNING facet, agency_id, item, n
+    ), summed AS (
+        SELECT facet, agency_id, item, sum(n) AS n, count(*) AS deltas
+          FROM moved
+         GROUP BY facet, agency_id, item
+    ), updated AS (
+        UPDATE PopulationCount c SET n = c.n + s.n
+          FROM summed s
+         WHERE c.facet = s.facet AND c.agency_id = s.agency_id AND c.item = s.item AND s.n <> 0
+        RETURNING 1
+    ), inserted AS (
+        INSERT INTO PopulationCount (facet, agency_id, item, n)
+        SELECT s.facet, s.agency_id, s.item, s.n
+          FROM summed s
+         WHERE s.n <> 0
+           AND NOT EXISTS (SELECT 1 FROM PopulationCount c
+                            WHERE c.facet = s.facet AND c.agency_id = s.agency_id AND c.item = s.item)
+        RETURNING 1
+    )
+    SELECT COALESCE(sum(deltas), 0) INTO v_folded FROM summed;
+    RETURN v_folded;
+END$$;
+
+COMMENT ON FUNCTION uc_fold_population_counts() IS
+  'Folds PopulationCountDelta into PopulationCount (lab/strategy/008). Idempotent and '
+  'non-blocking: one fold at a time, and a caller that finds one running returns 0.';
+
+-- Recount from the tables themselves: the load scripts call it after the seed, the bench after a
+-- bulk load with triggers off, and an operator to reconcile. It SHARE-locks IdentityToken and
+-- TokenSignature, so every writer waits until it commits and the recount is exact in any
+-- isolation level; on a large population that is a maintenance window, so the application role
+-- may not run it (09_grants.sql).
+CREATE OR REPLACE FUNCTION uc_rebuild_population_counts()
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtext('polaris.population.fold'));
+    LOCK TABLE IdentityToken, TokenSignature IN SHARE MODE;
+    DELETE FROM PopulationCountDelta;
+    DELETE FROM PopulationCount;
+    INSERT INTO PopulationCount (facet, agency_id, item, n)
+    SELECT 'credential_status', issuing_agency_id, status, count(*)
+      FROM IdentityToken
+     GROUP BY issuing_agency_id, status;
+    INSERT INTO PopulationCount (facet, agency_id, item, n)
+    SELECT 'live_signature', t.issuing_agency_id, s.algorithm_id::TEXT, count(*)
+      FROM TokenSignature s
+      JOIN IdentityToken t ON t.token_id = s.token_id
+     WHERE s.deprecation_date IS NULL AND t.status = 'ACTIVE'
+     GROUP BY t.issuing_agency_id, s.algorithm_id;
+END$$;
+
+COMMENT ON FUNCTION uc_rebuild_population_counts() IS
+  'Recounts PopulationCount from IdentityToken and TokenSignature under a SHARE lock '
+  '(lab/strategy/008). Owner-only: a full count of the population is a maintenance act.';

@@ -314,3 +314,38 @@ DROP INDEX IF EXISTS uq_effective_retention_policy;
 CREATE UNIQUE INDEX uq_effective_retention_policy
     ON RetentionPolicy (table_class, COALESCE(jurisdiction, ''))
     WHERE superseded_at IS NULL;
+
+-- ----------------------------------------------------------------------------
+-- Population scale (lab/strategy/008). Each index serves a read a console page
+-- makes on every view, which must cost the same at any population; without it
+-- the read went through a whole table or a whole status.
+-- ----------------------------------------------------------------------------
+
+-- The Overview's expiry counts: active credentials past, or within 30 days of,
+-- their expiry date, counted up to a cap. Through idx_identitytoken_status the
+-- count filtered every active credential to find the few that match.
+DROP INDEX IF EXISTS idx_identitytoken_active_expiry;
+CREATE INDEX idx_identitytoken_active_expiry
+    ON IdentityToken (expiration_date)
+    WHERE status = 'ACTIVE';
+
+-- Credentials by status, newest first, paged by key: serves
+-- WHERE status = $1 AND token_id < $2 ORDER BY token_id DESC LIMIT n at any depth.
+DROP INDEX IF EXISTS idx_identitytoken_status_id;
+CREATE INDEX idx_identitytoken_status_id
+    ON IdentityToken (status, token_id);
+
+-- Credentials issued in a window, counted up to a cap by the Overview: the
+-- same shape as idx_lifecycle_revoked_time, for ISSUED.
+DROP INDEX IF EXISTS idx_lifecycle_issued_time;
+CREATE INDEX idx_lifecycle_issued_time
+    ON TokenLifecycleEvent (event_timestamp DESC, token_id)
+    WHERE event_type = 'ISSUED';
+
+-- One credential's verifications, newest first: the credential and
+-- investigation pages and the warrant audit (UC-7). A zero-knowledge row
+-- carries no token id (C2), so it is not in this index.
+DROP INDEX IF EXISTS idx_verificationevent_token_time;
+CREATE INDEX idx_verificationevent_token_time
+    ON VerificationEvent (token_id, event_timestamp DESC)
+    WHERE token_id IS NOT NULL;

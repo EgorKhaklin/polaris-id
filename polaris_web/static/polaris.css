@@ -871,6 +871,9 @@ legend {
 
 /* Tables */
 .table-wrap {
+    /* A containing block, so screen-reader text (position: absolute) in a scrolled cell is
+       clipped with the table instead of widening the page. */
+    position: relative;
     overflow-x: auto;
     border: 1px solid var(--line);
     border-radius: var(--r-lg);
@@ -1045,6 +1048,7 @@ td.empty { border: 0; border-radius: 0; padding: var(--s-6); }
     color: var(--ink-3);
 }
 .kpi-primary .kpi-value { color: var(--gold); }
+.approx { white-space: nowrap; }
 .kpi-warn .kpi-value { color: var(--warn); }
 
 /* Tabs */
@@ -1396,12 +1400,21 @@ table.data td.is-warn { color: var(--warn); font-weight: 600; }
 .pill.svc-unhealthy { color: var(--danger); background: var(--danger-wash); border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
 
 /* Needs attention: open items by severity, then what was checked and found clear. */
-.attn { margin: 0; padding: 0; list-style: none; }
+/* One grid for the list, a subgrid per item, so counts of any width (12, 10,000+, about
+   8.12 B) share one column and every label starts at the same edge. */
+.attn {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr) auto;
+    column-gap: var(--s-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
 .attn-item {
     display: grid;
-    grid-template-columns: 4ch minmax(0, 1fr) auto;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
     align-items: center;
-    gap: var(--s-3);
     padding: 10px 0;
     border-bottom: 1px solid var(--line);
 }
@@ -1590,6 +1603,11 @@ a.kpi-link:hover .kpi-label { color: var(--ink-2); }
     .kpi-value { font-size: 22px; }
     .svc-grid { grid-template-columns: minmax(0, 1fr); }
     .svc-grid .svc:nth-child(n+2) { border-top: 1px solid var(--line); }
+    /* The severity pill goes under its label, so the label keeps the width. */
+    .attn { grid-template-columns: max-content minmax(0, 1fr); }
+    .attn-item { row-gap: 6px; }
+    .attn-item > .pill { grid-column: 2; justify-self: start; }
+    .attn-count { font-size: 16px; }
     .kv dd, .facts dd { margin-bottom: var(--s-2); }
     .topbar-context { display: none; }
     .hero, .section { padding-left: var(--s-4); padding-right: var(--s-4); }

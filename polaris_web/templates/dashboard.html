@@ -72,7 +72,7 @@
         {% for severity in ('critical', 'warning', 'info') %}
         {% for a in open_items if a.severity == severity %}
         <li class="attn-item attn-{{ a.severity }}">
-            <span class="attn-count">{{ a.count }}</span>
+            <span class="attn-count">{{ ui.figure(a.count, compact=True) }}</span>
             <span class="attn-body">
                 <span class="attn-label">{% if a.href %}<a href="{{ a.href }}">{{ a.label }}</a>{% else %}{{ a.label }}{% endif %}</span>
                 {% if a.note %}<span class="attn-note">{{ a.note }}</span>{% endif %}
@@ -89,14 +89,14 @@
     <details class="attn-clear">
         <summary>{{ clear_items|length }} checked and clear</summary>
         <ul>
-            {% for a in clear_items %}<li>{{ ui.icon('check', 'icon-sm') }}<span>{{ a.count }} {{ a.label }}</span></li>{% endfor %}
+            {% for a in clear_items %}<li>{{ ui.icon('check', 'icon-sm') }}<span>{{ ui.figure(a.count) }} {{ a.label }}</span></li>{% endfor %}
         </ul>
     </details>
     {% endif %}
     </div>
     <p class="panel-foot">
-        {{ operators.privileged }} privileged account{{ 's' if operators.privileged != 1 }},
-        {{ operators.with_credential }} with a WebAuthn credential.
+        {{ operators.privileged|num }} privileged account{{ 's' if operators.privileged != 1 }},
+        {{ operators.with_credential|num }} with a WebAuthn credential.
         <a href="{{ url_for('webauthn_settings') }}">Your security keys</a>
     </p>
 </section>
@@ -107,30 +107,33 @@
     <section class="panel" aria-labelledby="tok-h">
         <div class="panel-head">
             <h2 id="tok-h">Credentials</h2>
-            <a class="small" href="{{ url_for('tokens_list') }}">All credentials</a>
+            <span class="row">
+                <span class="ops-note">{{ ui.figure(tokens.total, compact=True) }} in all</span>
+                <a class="small" href="{{ url_for('tokens_list') }}">All credentials</a>
+            </span>
         </div>
         <div class="kpi-row kpi-row-3">
             {% for state, label in (('ACTIVE', 'active'), ('RESERVE', 'reserve'), ('REVOKED', 'revoked'),
                                     ('LOST', 'lost'), ('EXPIRED', 'expired'), ('DORMANT', 'dormant')) %}
-            <a class="kpi kpi-link{% if state == 'ACTIVE' %} kpi-primary{% endif %}" href="{{ url_for('tokens_list', status=state) }}"><span class="kpi-value">{{ tokens.by_status[state] }}</span><span class="kpi-label">{{ label }}</span></a>
+            <a class="kpi kpi-link{% if state == 'ACTIVE' %} kpi-primary{% endif %}" href="{{ url_for('tokens_list', status=state) }}"><span class="kpi-value">{{ ui.figure(tokens.by_status[state], compact=True) }}</span><span class="kpi-label">{{ label }}</span></a>
             {% endfor %}
         </div>
         <div class="table-wrap">
             <table class="data compact">
                 <thead><tr><th scope="col">Lifecycle events</th><th scope="col" class="num">24 h</th><th scope="col" class="num">7 d</th></tr></thead>
                 <tbody>
-                    <tr><td>Issued</td><td class="num">{{ tokens.issued['24h'] }}</td><td class="num">{{ tokens.issued['7d'] }}</td></tr>
-                    <tr><td>Revoked</td><td class="num">{{ tokens.revoked['24h'] }}</td><td class="num">{{ tokens.revoked['7d'] }}</td></tr>
+                    <tr><td>Issued</td><td class="num">{{ ui.figure(tokens.issued['24h']) }}</td><td class="num">{{ ui.figure(tokens.issued['7d']) }}</td></tr>
+                    <tr><td>Revoked</td><td class="num">{{ ui.figure(tokens.revoked['24h']) }}</td><td class="num">{{ ui.figure(tokens.revoked['7d']) }}</td></tr>
                 </tbody>
             </table>
         </div>
-        <p class="ops-note">{{ tokens.expiring_30d }} active credential{{ 's' if tokens.expiring_30d != 1 }} expire{{ 's' if tokens.expiring_30d == 1 }} within 30 days.</p>
+        <p class="ops-note">{{ ui.figure(tokens.expiring_30d) }} active credential{{ 's' if tokens.expiring_30d != 1 }} expire{{ 's' if tokens.expiring_30d == 1 }} within 30 days.</p>
         <div class="table-wrap">
             <table class="data compact">
                 <thead><tr><th scope="col">Issuing authority</th><th scope="col" class="num">Active</th><th scope="col" class="num">Reserve</th><th scope="col" class="num">Issued</th></tr></thead>
                 <tbody>
                     {% for a in tokens.by_issuer %}
-                    <tr><td>{{ a.name }} <span class="type-tag">{{ a.agency_type }}</span></td><td class="num">{{ a.active }}</td><td class="num">{{ a.reserve }}</td><td class="num">{{ a.issued }}</td></tr>
+                    <tr><td>{{ a.name }} <span class="type-tag">{{ a.agency_type }}</span></td><td class="num">{{ ui.figure(a.active) }}</td><td class="num">{{ ui.figure(a.reserve) }}</td><td class="num">{{ ui.figure(a.issued) }}</td></tr>
                     {% else %}
                     <tr><td colspan="4" class="empty">No credentials issued.</td></tr>
                     {% endfor %}
@@ -144,34 +147,38 @@
             <h2 id="ver-h">Verifications</h2>
             <a class="small" href="{{ url_for('verifications_list') }}">Verification log</a>
         </div>
-        {% set rate = verifications.failure_rate_7d %}
+        {% set rate = verifications.not_success_pct %}
         <div class="kpi-row kpi-row-3">
-            <div class="kpi kpi-primary"><span class="kpi-value">{{ verifications.volume['24h'] }}</span><span class="kpi-label">last 24 h</span></div>
-            <div class="kpi"><span class="kpi-value">{{ verifications.volume['7d'] }}</span><span class="kpi-label">last 7 d</span></div>
+            <div class="kpi kpi-primary"><span class="kpi-value">{{ ui.figure(verifications.volume['24h'], compact=True) }}</span><span class="kpi-label">last 24 h</span></div>
+            <div class="kpi"><span class="kpi-value">{{ ui.figure(verifications.volume['7d'], compact=True) }}</span><span class="kpi-label">last 7 d</span></div>
             <div class="kpi{% if rate is not none and rate >= 5 %} kpi-warn{% endif %}">
-                <span class="kpi-value"{% if rate is none %} title="No verifications in the last 7 days"{% endif %}>{% if rate is none %}n/a{% else %}{{ '%.1f'|format(rate) }}%{% endif %}</span>
-                <span class="kpi-label">not successful, 7 d</span>
+                <span class="kpi-value"{% if rate is none %} title="No verifications recorded"{% endif %}>{% if rate is none %}n/a{% else %}{{ '%.1f'|format(rate) }}%{% endif %}</span>
+                <span class="kpi-label">not successful</span>
             </div>
         </div>
+        <p class="ops-note">
+            {%- if verifications.recent_complete %}The share, the mix and the contexts below are of all {{ verifications.recent|num }} verifications
+            {%- else %}The share, the mix and the contexts below are of the latest {{ verifications.recent|num }} verifications{% endif %}
+            {%- if verifications.recent_newest %}; the newest at <span class="mono">{{ verifications.recent_newest.strftime('%Y-%m-%d %H:%M') }}</span> UTC{% endif %}
+            {%- if verifications.recent_per_second and not verifications.recent_complete %}, arriving at {{ '%.1f'|format(verifications.recent_per_second) }} a second{% endif %}.</p>
         <div class="mix">
             <div class="mix-head">
-                <span class="mix-cap">Disclosure level, all time</span>
-                <span class="ops-note">{{ verifications.disclosure_total }} verification{{ 's' if verifications.disclosure_total != 1 }}</span>
+                <span class="mix-cap">Disclosure level</span>
             </div>
             <div class="mix-bar" aria-hidden="true">{% for d in verifications.disclosure %}{% if d.n %}<span class="mix-seg mix-{{ d.level|lower }}" style="width: {{ '%.2f'|format(d.pct) }}%"></span>{% endif %}{% endfor %}</div>
             <ul class="mix-legend">
                 {% for d in verifications.disclosure %}
-                <li><i class="mix-key mix-{{ d.level|lower }}" aria-hidden="true"></i><span class="mono">{{ d.level }}</span> {{ d.n }} · {{ '%.0f'|format(d.pct) }}%</li>
+                <li><i class="mix-key mix-{{ d.level|lower }}" aria-hidden="true"></i><span class="mono">{{ d.level }}</span> {{ d.n|num }} · {{ '%.0f'|format(d.pct) }}%</li>
                 {% endfor %}
             </ul>
             <p class="ops-note">A zero-knowledge verification stores no credential identifier; the schema refuses one (C2).</p>
         </div>
         <div class="table-wrap">
             <table class="data compact">
-                <thead><tr><th scope="col">Context</th><th scope="col" class="num">7 d</th><th scope="col" class="num">Not OK, 7 d</th><th scope="col" class="num">All time</th></tr></thead>
+                <thead><tr><th scope="col">Context</th><th scope="col" class="num">Verifications</th><th scope="col" class="num">Not OK</th></tr></thead>
                 <tbody>
                     {% for c in verifications.by_context %}
-                    <tr><td class="mono">{{ c.context_type }}</td><td class="num">{{ c.v7d }}</td><td class="num{% if c.notok7d %} is-warn{% endif %}">{{ c.notok7d }}</td><td class="num">{{ c.total }}</td></tr>
+                    <tr><td class="mono">{{ c.context_type }}</td><td class="num">{{ c.n|num }}</td><td class="num{% if c.not_ok %} is-warn{% endif %}">{{ c.not_ok|num }}</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
@@ -196,8 +203,8 @@
                 {%- if crypto.classical_active %}<span class="mix-seg mix-classical" style="width: {{ '%.2f'|format(100 * crypto.classical_active / signed) }}%"></span>{% endif -%}
             </div>
             <ul class="mix-legend">
-                <li><i class="mix-key mix-pq" aria-hidden="true"></i>post-quantum {{ crypto.pq_active }}</li>
-                <li><i class="mix-key mix-classical" aria-hidden="true"></i>classical {{ crypto.classical_active }}</li>
+                <li><i class="mix-key mix-pq" aria-hidden="true"></i>post-quantum {{ ui.figure(crypto.pq_active) }}</li>
+                <li><i class="mix-key mix-classical" aria-hidden="true"></i>classical {{ ui.figure(crypto.classical_active) }}</li>
             </ul>
         </div>
         <div class="table-wrap">
@@ -207,7 +214,7 @@
                     {% for a in crypto.algorithms %}
                     <tr>
                         <td class="nowrap"><span class="mono">{{ a.name }}</span>{% if a.quantum_resistant %}<span class="type-tag type-tag-pq">PQ</span>{% else %}<span class="type-tag">Classical</span>{% endif %}</td>
-                        <td class="num">{{ a.active_tokens }}</td>
+                        <td class="num">{{ ui.figure(a.active_tokens) }}</td>
                         <td class="num">{{ a.agencies_issue }}</td>
                         <td class="num">{{ a.agencies_verify }}</td>
                         <td class="nowrap">{% if a.deprecation_date %}<span class="mono">{{ a.deprecation_date.strftime('%Y-%m-%d') }}</span>{% else %}<span class="muted">none scheduled</span>{% endif %}</td>
@@ -250,7 +257,7 @@
             <dd><a href="{{ url_for('anchors_list') }}">{{ audit.anchors.count }} batch{{ 'es' if audit.anchors.count != 1 }}</a>{% if audit.anchors.uncommitted %} · {{ audit.anchors.uncommitted }} not on a chain{% endif %}{% if audit.anchors.latest %} · last <span class="mono">{{ audit.anchors.latest.strftime('%Y-%m-%d') }}</span>{% endif %}</dd>
             {% if privileged_view %}
             <dt>Duress signals</dt>
-            <dd><a href="{{ url_for('duress_dashboard') }}">{{ audit.duress.total }} on record</a>{% if audit.duress.latest %} · last <span class="mono">{{ audit.duress.latest.strftime('%Y-%m-%d %H:%M') }}</span>{% endif %}</dd>
+            <dd><a href="{{ url_for('duress_dashboard') }}">{{ audit.duress.total|figure_text }} on record</a>{% if audit.duress.latest %} · last <span class="mono">{{ audit.duress.latest.strftime('%Y-%m-%d %H:%M') }}</span>{% endif %}</dd>
             {% endif %}
             <dt>Retention in force</dt>
             <dd>{% for r in audit.retention %}{{ r.table_class|lower|replace('_', ' ') }} {{ r.days }} d{% if not loop.last %} · {% endif %}{% endfor %}</dd>

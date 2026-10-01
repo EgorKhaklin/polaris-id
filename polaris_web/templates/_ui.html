@@ -25,6 +25,22 @@
 <span class="pill pill-{{ state }}">{{ text or state|replace('_', ' ')|title }}</span>
 {%- endmacro %}
 
+{# A count at any scale (lab/strategy/008). An exact count prints its grouped digits, or with
+   compact=True, at a million and above, three figures (8.12 B) with the digits for a screen
+   reader. An estimate prints "≈" and three significant figures, and is read as "about"; a
+   capped count prints "+" and is read as "or more". A plain int prints as an exact count. #}
+{% macro figure(f, compact=False) -%}
+{%- if f.at_least is defined and f.at_least -%}
+<span aria-hidden="true">{{ f|num }}+</span><span class="visually-hidden">{{ f|figure_text }}</span>
+{%- elif f.exact is defined and not f.exact -%}
+<span class="approx" aria-hidden="true">&#8776;&#8239;{{ f|estimate }}</span><span class="visually-hidden">{{ f|figure_text }}</span>
+{%- elif compact and f >= 1000000 -%}
+<span aria-hidden="true">{{ f|compact }}</span><span class="visually-hidden">{{ f|num }}</span>
+{%- else -%}
+{{ f|num }}
+{%- endif -%}
+{%- endmacro %}
+
 {# The navigation, as data: (group caption or None, [(endpoint, label, icon, roles or None,
    [other endpoints that belong to this entry])]). roles None = every signed-in user. The
    breadcrumb and the current-page mark are derived from the same table, so they cannot drift. #}

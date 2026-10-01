@@ -7,8 +7,9 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **46 tables** in `01_schema.sql` (v9.443; the 46th, CredentialCopy, 2026-09-28), organized
-into six functional groups. A migrated deployment holds **53 tables**: those,
+The Polaris schema is **48 tables** in `01_schema.sql` (v9.443; the 46th, CredentialCopy, 2026-09-28; the 47th
+and 48th, PopulationCount and PopulationCountDelta, 2026-10-01), organized
+into six functional groups. A migrated deployment holds **55 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -410,6 +411,27 @@ records who, when and why, never the prior name. Append-only by trigger
 The single-use nonce store behind `/api/zk/verify`. A verified proof
 consumes `(epoch_id, context_id, nonce)`; a replay of the same bundle
 hits the primary key and is rejected. Holds no token or holder data.
+
+### `PopulationCount` (lab/strategy/008)
+
+Exact counts by issuing authority, for pages that must cost the same at any
+population: credentials by status (`facet` `credential_status`, `item` a
+status) and live signatures on active credentials by algorithm (`facet`
+`live_signature`, `item` an algorithm id). One row per authority and item,
+whatever the population. Folded from `PopulationCountDelta` by
+`uc_fold_population_counts()`; a reader sums both, so a count is exact
+whether or not the latest changes are folded. `uc_rebuild_population_counts()`
+recounts from the tables under a SHARE lock, owner-only. Row-level security
+scopes it by authority like `IdentityToken`; the application role reads it and
+writes neither table.
+
+### `PopulationCountDelta` (lab/strategy/008)
+
+The signed changes to `PopulationCount` not yet folded in. Statement triggers on
+`IdentityToken` and `TokenSignature` append each statement's net change (the
+rows it removed counted negative, the rows it left positive), so writers only
+append and never wait on, or deadlock over, a counter row. A fold deletes what
+it moves into the totals.
 
 ### `BulkEnrollmentBatch` (roadmap P2.4)
 
