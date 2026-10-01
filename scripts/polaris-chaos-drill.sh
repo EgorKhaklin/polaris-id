@@ -144,11 +144,15 @@ traffic_start() { : > "$1"; python3 "$WORK/traffic.py" "$URL" "$1" & TRAFFIC_PID
 traffic_stop()  { kill -TERM "$TRAFFIC_PID" 2>/dev/null || true; wait "$TRAFFIC_PID" 2>/dev/null || true; TRAFFIC_PID=""; }
 stat() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])" "$1" "$2"; }
 edge_ok() { curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" 2>/dev/null | grep -q 200; }
+# The health JSON is fetched into a variable and parsed from argv, not piped into python: a fetch
+# piped into an interpreter reads, to a supply-chain scanner, as downloaded code being run.
 db_healthy() {
-    curl -sk "$URL/api/health" 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d['checks']['database']['status']=='healthy' else 1)" 2>/dev/null
+    local body; body=$(curl -sk "$URL/api/health" 2>/dev/null) || return 1
+    python3 -c "import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if d['checks']['database']['status']=='healthy' else 1)" "$body" 2>/dev/null
 }
 db_down() {
-    curl -sk "$URL/api/health" 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d['checks']['database']['status']!='healthy' else 1)" 2>/dev/null
+    local body; body=$(curl -sk "$URL/api/health" 2>/dev/null) || return 1
+    python3 -c "import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if d['checks']['database']['status']!='healthy' else 1)" "$body" 2>/dev/null
 }
 wait_for() {  # wait_for SECONDS FN ... -> prints elapsed seconds, returns 1 on timeout
     local limit="$1"; shift; local t0 i; t0=$(date +%s)

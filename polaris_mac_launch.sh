@@ -802,7 +802,8 @@ launch_native() {
         ok "Python dependencies up-to-date (requirements.txt unchanged)"
     else
         log "Installing Python dependencies (requirements.txt)"
-        pip install --quiet --disable-pip-version-check -r "$req"
+        # requirements.txt is hash-pinned, as CI installs it; refuse anything that is not.
+        pip install --quiet --disable-pip-version-check --require-hashes -r "$req"
         echo "$want" > "$stamp"
     fi
 
