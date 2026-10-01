@@ -34,7 +34,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Ten conformance cases pin where the two SDKs disagreed on signed bytes.
 - Twenty-two more pin nonces, contexts, agencies, grant ids, actions and ids beyond 2**53, from three reviews of that fix.
 - Six conformance cases pin keys and digests as hex text; the suite has 281 cases.
-- `scripts/polaris-hostile-agreement-drill.py` has all three verifiers decide every published case with each presenter-supplied node retyped or deleted, 146,619 inputs; CI runs a third.
+- `scripts/polaris-hostile-agreement-drill.py` has all three verifiers decide every published case with each presenter-supplied node retyped or deleted, 184,331 inputs from 281 cases; CI runs a third.
 
 ## v1.0.0-rc.69 — 2026-10-01 (a holder's key changes only by its own signature)
 
