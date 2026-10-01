@@ -4645,10 +4645,9 @@ def grant_within_limits(grant, uses_so_far=0, amount=None):
         return False, ("max_amount is not a finite number (%r); refusing rather than ignoring "
                        "the limit" % (max_amount,))
     if max_amount is not None and amount is not None:
-        if not _finite(max_amount) or not _finite(amount):
-            return False, ("max_amount or the requested amount is not a finite number "
-                           "(%r, %r); refusing rather than ignoring the limit"
-                           % (max_amount, amount))
+        # Both are finite numbers by here: each was refused above, alone, if it was not. The
+        # pair check that stood here could no longer refuse anything (the SDK mutation drill,
+        # 2026-10-01).
         try:
             if float(amount) > float(max_amount):
                 return False, "the requested amount exceeds the grant's limit (%s)" % max_amount
