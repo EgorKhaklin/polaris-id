@@ -11,6 +11,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- The application's database role no longer writes the holder key register directly; the route has recorded events only through its routine since rc.69.
 - All three verifiers read one instant grammar: ASCII digits, no surrounding whitespace, offsets below 24 hours, years 1 to 99 as written.
 - An agency or context id matches only the same string or integer in all three verifiers; Python's `==` read `true` as 1 and a missing id as a null one.
 - Both SDKs read only the JSON `true` as currently authoritative; both read a status answer of `"false"` as current.
