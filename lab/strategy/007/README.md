@@ -40,8 +40,35 @@ real, and they check:
 Wallets reach the verifier on 9443. Relying parties discover the provider at
 `https://host.docker.internal:9444/.well-known/openid-configuration`.
 
+## Pomerium, end to end
+
+    PYTHON=python3 lab/strategy/007/pomerium-demo.sh
+
+It runs four things:
+- the gate;
+- walt.id's wallet (`waltid/wallet-api2:1.0.0`, unmodified), with one credential issued into it;
+- Pomerium 0.33.3 (unmodified, pinned by digest), with the gate as its generic OIDC provider,
+  protecting `traefik/whoami`;
+- a headless browser standing in for the person.
+
+The browser opens the protected page, Pomerium sends it to the gate, the wallet presents, and
+Pomerium admits the person; whoami shows the claims the gate released. Then the gate stops trusting
+the credential's issuer, the same wallet presents again, and the person is refused. The script
+exits 0 only if both happen.
+
+It needs Docker, a `python3` with `cryptography` and `playwright` (Chromium installed), and ports
+7006, 8443, 9443 and 9444. Measured 2026-10-01 on macOS with Docker Desktop, in 42 seconds once
+the images were local:
+
+    ok    admitted to https://verify.localhost.pomerium.io:8443/ with given_name=Jean family_name=Dupont
+    ok    not admitted (ended at https://authenticate.localhost.pomerium.io:8443/oauth2/callback?error=access_den)
+    RESULT: admitted by credential, and refused when the issuer is not trusted
+
+Pomerium needed no change: it is configured with `idp_provider: oidc` and the gate's URL, as for
+any OIDC provider.
+
 ## Status
 
 - Step 2, the gate and its tests: done.
-- Step 3, Pomerium end to end with a foreign wallet: next.
-- Step 4, agent grants as per-request tokens: after step 3.
+- Step 3, Pomerium end to end with a foreign wallet: done.
+- Step 4, agent grants as per-request tokens Pomerium checks: next.

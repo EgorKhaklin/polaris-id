@@ -1,8 +1,10 @@
 # 007: a gate that admits people and agents by credential
 
 **Opened 2026-10-01.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md).
-State: OPEN. The falsifiers below were written first (632b01b4). Step 2, the gate and its tests
-([`007/`](007/README.md)), followed the same day.
+State: OPEN. The falsifiers below were written first (632b01b4). The same day came step 2, the gate and
+its tests, and step 3: unmodified Pomerium 0.33.3 admitted a person whose walt.id wallet presented to
+the gate, and refused the same wallet once the gate stopped trusting the issuer
+([`007/`](007/README.md)).
 
 ---
 
