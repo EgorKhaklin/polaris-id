@@ -4434,6 +4434,12 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
     if not ok:
         v["note"] = "the grant signature is invalid"
         return v
+    # WIRE-SPEC 3.17: `grant_id` is the revocation handle and names this grant alone. A grant
+    # without one as text could never be revoked once a revocation names a grant as text
+    # (2026-10-01), so it is not a grant.
+    if _wire_text(grant.get("grant_id")) is None:
+        v["note"] = "a grant names itself: its grant_id is its revocation handle"
+        return v
     v["grant_authentic"] = True
 
     _verify_window(grant, v, now, None)
@@ -4497,7 +4503,7 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
         v["revoked"] = False
         if not isinstance(revocation, dict) or revocation.get("format") != _GRANT_REVOCATION_FORMAT:
             v["note"] = "the revocation is not a %s" % _GRANT_REVOCATION_FORMAT
-        elif str(revocation.get("grant_id") or "") != str(grant.get("grant_id") or ""):
+        elif not _wire_text_equal(revocation.get("grant_id"), grant.get("grant_id")):
             v["note"] = "the revocation names a different grant"
         else:
             rok, rran, rnote = _signed_by(revocation, _grant_revocation_canonical(revocation),

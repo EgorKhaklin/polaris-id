@@ -117,7 +117,6 @@ SURVIVORS_EXPECTED = (
     "verify_epoch_leaves.count_matches",
     "verify_epoch_leaves.epoch_matches",
     "verify_epoch_leaves.leaf_count",
-    "verify_holder_binding.bound_to_credential",
     "verify_manifest.anchors",
     "verify_pack.algorithm",
     "verify_pack.authenticity",

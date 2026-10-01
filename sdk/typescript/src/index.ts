@@ -613,6 +613,11 @@ export function verifySignedArtifact(obj: any, now?: string | null,
       && revokedRoot(leaves) === String(o.revoked_root_hex ?? "").toLowerCase()
       && typeof o.revoked_count === "number"
       && o.revoked_count === new Set(leaves.map((x: any) => String(x).toLowerCase())).size;
+  } else if (ok && o.format === "polaris-agent-grant/1") {
+    // WIRE-SPEC 3.17: grant_id is the revocation handle and names this grant alone. A grant
+    // without one as text could never be revoked once a revocation names a grant as text
+    // (2026-10-01), so it is not a grant.
+    ok = wireText(o.grant_id) !== null;
   } else if (ok && o.format === "polaris-signed-document/1") {
     // WIRE-SPEC 3.12: the document's digest_algorithm MUST be SHA3-256 and digest_hex its
     // lowercase hex, as for a timestamp. No verifier here checked either until 2026-10-01.
@@ -1395,7 +1400,9 @@ export function grantWithinLimits(grant: any, usesSoFar = 0, amount?: number): [
 export function revocationEndsGrant(revocation: any, grant: any): boolean {
   if (!revocation || typeof revocation !== "object" || !grant || typeof grant !== "object") return false;
   if (revocation.format !== "polaris-grant-revocation/1") return false;
-  if (String(revocation.grant_id ?? "") !== String(grant.grant_id ?? "")) return false;
+  // As text, as the Python verifiers read it: String(x ?? "") and str(x or "") disagreed on 0, true
+  // and integers beyond 2**53 (2026-10-01).
+  if (!wireTextEqual(revocation.grant_id, grant.grant_id)) return false;
   return String(revocation.public_key_hex ?? "").toLowerCase() === String(grant.public_key_hex ?? "").toLowerCase();
 }
 
@@ -1424,7 +1431,7 @@ export function grantPrincipalBound(grant: any, binding: any, credential: any, n
   // (2026-09-30).
   return !!(bv.authentic && bv.fresh === true && (binding.status ?? "active") === "active"
     && String(binding.holder_public_key_hex ?? "").toLowerCase() === String(grant.public_key_hex ?? "").toLowerCase()
-    && String(binding.token_value) === String(credential.token_value)
+    && wireTextEqual(binding.token_value, credential.token_value)
     && String(binding.public_key_hex ?? "").toLowerCase() === String(credential.public_key_hex ?? "").toLowerCase());
 }
 

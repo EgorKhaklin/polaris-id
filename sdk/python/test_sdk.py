@@ -1158,6 +1158,15 @@ class ParityWithTheTypeScriptSdkTests(unittest.TestCase):
         self.assertIs(pv.agent_proof_proves(dict(self.PROOF, grant_id=top), dict(self.GRANT, grant_id=str(top)),
                                             "read", 0), True, "the largest integer both hold is one")
 
+    def test_a_revocation_names_its_grant_as_text(self):
+        """str(x or "") matched a revocation naming 0 to a grant naming none, and "True" to true."""
+        rev = {"format": "polaris-grant-revocation/1", "public_key_hex": "cd"}
+        grant = {"public_key_hex": "cd"}
+        self.assertIs(pv.revocation_ends_grant(dict(rev, grant_id=7), dict(grant, grant_id="7")), True)
+        for rid, gid in ((0, None), (True, "True"), (None, None), (2 ** 53 + 1, str(2 ** 53 + 1))):
+            with self.subTest(rid=rid, gid=gid):
+                self.assertIs(pv.revocation_ends_grant(dict(rev, grant_id=rid), dict(grant, grant_id=gid)), False)
+
     def test_an_id_is_the_same_string_or_integer(self):
         """An agency or context id: True is not 1, and a missing id is not a null one."""
         self.assertTrue(pv._same_id(1, 1) and pv._same_id("B", "B"))

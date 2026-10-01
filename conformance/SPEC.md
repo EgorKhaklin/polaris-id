@@ -287,14 +287,18 @@ ASCII digits only, no surrounding whitespace, offsets below 24 hours, and years 
 (`registry-publisher-agency-id-missing`, `trust-list-publisher-agency-id-*`). Before these cases
 the Python verifiers failed four and the TypeScript SDK a different five.
 
-SDK parity, reviewed (1.0.0-rc.70). Eleven cases pin what a hostile review of that fix found. A
+SDK parity, reviewed (1.0.0-rc.70). Nineteen cases pin what two hostile reviews of that fix found. A
 holder proof's nonce is text, so the boolean true and the number 1e-05 match no nonce
 (`holder-chain-verifier-nonce-*`). A context or attesting agency of true is not 1
 (`holder-chain-context-boolean`, `trust-attestation-attesting-agency-*`,
 `cross-authority-edge-context-*`). A value with no wire text matches nothing, which the fix itself
 had opened (`agent-grant-use-proof-names-no-nonce`), and an integer beyond 2**53, which JavaScript
-reads as the nearest double, is no id (`agent-grant-use-grant-id-beyond-safe-integer`). Before these
-cases the Python verifiers failed five and the TypeScript SDK three.
+reads as the nearest double, is no id (`agent-grant-use-grant-id-beyond-safe-integer`). A grant names
+itself: its grant_id is its revocation handle, so a grant without one as text is refused
+(`agent-grant-without-grant-id`, `agent-grant-grant-id-boolean`), and a revocation or a principal
+binding names its grant or credential as text (`agent-grant-use-revocation-*`,
+`agent-grant-use-principal-token-*`). Before these cases the Python verifiers failed nine and the
+TypeScript SDK six.
 
 WIRE-SPEC rules (1.0.0-rc.69). Eleven cases pin three rules a read of every verifier requirement
 found split or unenforced. A revoked leaf and an epoch leaf are 64 hex digits (3.3, 3.16): a feed

@@ -186,6 +186,66 @@ def main():
              grant_file=VEC + grant_file, now=NOW, proof_file=VEC + fname,
              requested_action="read:status", expected_nonce=expected_nonce)
 
+    # --- a grant names itself, and a revocation names a grant, as text ------------------------
+    for label, grant_id, ok, note in (
+            ("names-itself-control", "conformance-parity-2-grant", True,
+             "The positive control: a grant whose grant_id, its revocation handle, is text."),
+            ("without-grant-id", None, False,
+             "A grant signed with grant_id null. WIRE-SPEC 3.17: grant_id is the revocation handle "
+             "and names this grant alone; a grant without one could never be revoked, so it is not a "
+             "grant. Every verifier here read it as authentic."),
+            ("grant-id-boolean", True, False,
+             "A grant signed with grant_id true, which is not text, so it names no grant and no "
+             "revocation can name it. Every verifier here read it as authentic.")):
+        g = dict(grant, grant_id=grant_id)
+        for k in ("signature_hex", "public_key_hex"):
+            g.pop(k, None)
+        fname = "parity2-agent-grant-%s.json" % label
+        files[fname] = sign(g, hol2_sk, hol2_pk, V._agent_grant_canonical)
+        case("agent-grant-" + label, "agent-grant", {"authentic": ok}, note, object_file=VEC + fname, now=NOW)
+    named = dict(grant, grant_id="True")
+    for k in ("signature_hex", "public_key_hex"):
+        named.pop(k, None)
+    files["parity2-agent-grant-named-true.json"] = sign(named, hol2_sk, hol2_pk, V._agent_grant_canonical)
+    for label, rev_id, revoked, note in (
+            ("revocation-names-grant-control", "True", True,
+             "The positive control: the holder revokes the grant named \"True\", by that text."),
+            ("revocation-grant-id-boolean", True, False,
+             "A revocation naming the boolean true, for the grant named \"True\". Python's str() "
+             "spelled true \"True\" and revoked it; the TypeScript SDK's String() spelled it \"true\" "
+             "and did not. true is not text, so it names no grant.")):
+        rev = {"format": "polaris-grant-revocation/1", "grant_id": rev_id, "revoked_at": "2026-05-01T00:00:10Z",
+               "algorithm": "ML-DSA-65"}
+        fname = "parity2-%s.json" % label
+        files[fname] = sign(rev, hol2_sk, hol2_pk, V._grant_revocation_canonical)
+        case("agent-grant-use-" + label, "agent-grant-use", {"authentic": True, "revoked": revoked}, note,
+             grant_file=VEC + "parity2-agent-grant-named-true.json", now=NOW, revocation_file=VEC + fname)
+
+    # --- a principal binding names the credential as text -------------------------------------
+    iss3_sk, iss3_pk = key()
+    for label, cred_token, bind_token, bound, note in (
+            ("principal-token-text-control", "CONFORMANCE-PARITY-2-PRINCIPAL", "CONFORMANCE-PARITY-2-PRINCIPAL", True,
+             "The positive control: the issuer binds the grant's signing key to this credential, by "
+             "its token value."),
+            ("principal-token-boolean-javascript", "true", True, False,
+             "A binding the issuer signed with token_value true, beside the credential \"true\". The "
+             "TypeScript SDK's String() spelled it \"true\" and bound the grant; Python did not."),
+            ("principal-token-boolean-python", "True", True, False,
+             "The same binding beside the credential \"True\". Python's str() spelled true \"True\" and "
+             "bound the grant; the TypeScript SDK did not. true is not text and names no credential.")):
+        cred = {"format": "polaris-authenticity-pack/1", "token_value": cred_token, "algorithm": "ML-DSA-65",
+                "public_key_hex": iss3_pk,
+                "signature_hex": iss3_sk.sign(hashlib.sha3_256(cred_token.encode("utf-8")).digest()).hex()}
+        files["parity2-%s-credential.json" % label] = cred
+        b = {"format": "polaris-holder-binding/1", "token_value": bind_token, "holder_public_key_hex": hol2_pk,
+             "holder_algorithm": "ML-DSA-65", "bound_at": "2026-04-30T00:00:00Z", "status": "active",
+             "issued_at": "2026-05-01T00:00:00Z", "expires_at": "2026-05-02T00:00:00Z", "algorithm": "ML-DSA-65"}
+        files["parity2-%s-binding.json" % label] = sign(b, iss3_sk, iss3_pk, V._holder_binding_canonical)
+        case("agent-grant-use-" + label, "agent-grant-use", {"authentic": True, "principal_bound": bound}, note,
+             grant_file=VEC + "parity2-agent-grant.json", now=NOW,
+             binding_file=VEC + "parity2-%s-binding.json" % label,
+             credential_file=VEC + "parity2-%s-credential.json" % label)
+
     # Every expected value, against the detached verifier and the Python SDK, before writing.
     def obj(path):
         return files[path[len(VEC):]]
@@ -218,6 +278,21 @@ def main():
             s = P.verify_cross_authority(cp, c["context_id"], cm, trusted_anchors=c["trusted_anchors"], now=c["now"],
                                          require_signed_attestation=True).decision
             got, want = (d, s), (e["decision"],) * 2
+        elif a == "agent-grant":
+            o = obj(c["object_file"])
+            got = (bool(V.verify_agent_grant(o, now=c["now"])["grant_authentic"]),
+                   P.verify_signed_artifact(o, now=c["now"]).authentic)
+            want = (e["authentic"],) * 2
+        elif "revocation_file" in c:
+            g, rev = obj(c["grant_file"]), obj(c["revocation_file"])
+            dv = V.verify_agent_grant(g, now=c["now"], revocation=rev)
+            s = bool(P.verify_signed_artifact(rev, now=c["now"]).authentic and P.revocation_ends_grant(rev, g))
+            got, want = (dv["revoked"] is True, s), (e["revoked"],) * 2
+        elif "binding_file" in c:
+            g, b, cr = obj(c["grant_file"]), obj(c["binding_file"]), obj(c["credential_file"])
+            dv = V.verify_agent_grant(g, binding=b, credential=cr, now=c["now"])
+            got = (dv["principal_bound"] is True, P.grant_principal_bound(g, b, cr, now=c["now"]))
+            want = (e["principal_bound"],) * 2
         else:
             g, pr = obj(c["grant_file"]), obj(c["proof_file"])
             dv = V.verify_agent_grant(g, now=c["now"], requested_action=c["requested_action"], agent_proof=pr,

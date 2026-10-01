@@ -105,6 +105,15 @@ test("a value with no wire text matches nothing, and nor does an integer beyond 
                "the largest integer both hold is one");
 });
 
+test("a revocation names its grant as text", () => {
+  const rev = { format: "polaris-grant-revocation/1", public_key_hex: "cd" };
+  const grant = { public_key_hex: "cd" };
+  assert.equal(revocationEndsGrant({ ...rev, grant_id: 7 }, { ...grant, grant_id: "7" }), true);
+  for (const [rid, gid] of [[0, undefined], [true, "true"], [null, null], [2 ** 53 + 2, String(2 ** 53 + 2)]] as const) {
+    assert.equal(revocationEndsGrant({ ...rev, grant_id: rid }, { ...grant, grant_id: gid }), false, String(rid));
+  }
+});
+
 test("trimming is linear in a run of whitespace inside the input", () => {
   // A holder key arrives in a presentation. The first trim was a regular expression that took
   // about 75 seconds on 400,000 tabs between two letters; a scan takes milliseconds.

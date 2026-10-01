@@ -890,7 +890,15 @@ class AnAgentProofsTextFieldsTests(unittest.TestCase):
         self.assertIs(self._proved(service_nonce=0.0), False)
 
     def test_a_proof_that_names_no_grant_binds_none(self):
-        self.assertIs(self._proved(grant=dict(self.GRANT, grant_id=None), grant_id=None), False)
+        """A grant with no grant_id has no revocation handle (WIRE-SPEC 3.17), so it is not a grant
+        and nothing is proved for it."""
+        p = {"format": "polaris-agent-proof/1", "grant_id": None, "public_key_hex": "ab" * 32,
+             "action": "read", "service_nonce": 0, "algorithm": "ML-DSA-65", "signature_hex": "00" * 8}
+        v = V.verify_agent_grant(dict(self.GRANT, grant_id=None), agent_proof=p, requested_action="read",
+                                 expected_nonce=0)
+        self.assertIs(v["grant_authentic"], False)
+        self.assertIs(v["usable"], False)
+        self.assertIs(self._proved(grant_id=None), False, "and a proof naming none binds a real grant to nothing")
 
     def test_a_value_with_no_wire_text_matches_nothing(self):
         """Compared bare, None == None let a proof naming no nonce match an expected nonce of 1.5."""

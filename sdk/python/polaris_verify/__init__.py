@@ -607,6 +607,12 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
               and _revoked_root(leaves) == str(obj.get("revoked_root_hex") or "").lower()
               and _count_is(obj.get("revoked_count"), len({str(x).lower() for x in leaves})))
         note = None if ok else "the revocation feed's commitment or count does not match its leaves"
+    elif ok and fmt == "polaris-agent-grant/1":
+        # WIRE-SPEC 3.17: `grant_id` is the revocation handle and names this grant alone. A grant
+        # without one as text could never be revoked once a revocation names a grant as text
+        # (2026-10-01), so it is not a grant.
+        ok = _wire_text(obj.get("grant_id")) is not None
+        note = None if ok else "a grant names itself: its grant_id is its revocation handle"
     elif ok and fmt == "polaris-signed-document/1":
         # WIRE-SPEC 3.12: the document's `digest_algorithm` MUST be SHA3-256 and `digest_hex` its
         # lowercase hex, as for a timestamp. No verifier here checked either until 2026-10-01.
@@ -1340,7 +1346,9 @@ def revocation_ends_grant(revocation, grant) -> bool:
         return False
     if revocation.get("format") != "polaris-grant-revocation/1":
         return False
-    if str(revocation.get("grant_id") or "") != str(grant.get("grant_id") or ""):
+    # As text, as the TypeScript SDK reads it: str(x or "") matched a revocation naming 0 to a
+    # grant naming none, and "True" to true (2026-10-01).
+    if not _wire_text_equal(revocation.get("grant_id"), grant.get("grant_id")):
         return False
     return str(revocation.get("public_key_hex") or "").lower() == \
         str(grant.get("public_key_hex") or "").lower()
@@ -1374,7 +1382,7 @@ def grant_principal_bound(grant, binding, credential, now=None) -> bool:
                 and _status_of(binding) == "active"
                 and str(binding.get("holder_public_key_hex") or "").lower()
                 == str(grant.get("public_key_hex") or "").lower()
-                and str(binding.get("token_value")) == str(credential.get("token_value"))
+                and _wire_text_equal(binding.get("token_value"), credential.get("token_value"))
                 and str(binding.get("public_key_hex") or "").lower()
                 == str(credential.get("public_key_hex") or "").lower())
 
