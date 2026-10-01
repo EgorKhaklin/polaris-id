@@ -67,9 +67,11 @@ process.stdin.on("end", () => {
     const grant = caseObj.grant ?? {};
     const now = caseObj.now ?? null;
     const action = caseObj.requested_action ?? null;
-    const authentic = verifySignedArtifact(grant, now, null).authentic;
+    const gv = verifySignedArtifact(grant, now, null);
+    const authentic = gv.authentic;
+    // `fresh` is the grant's own window (WIRE-SPEC 2.2); see the Python SDK's conformance CLI.
     const verdict: Record<string, boolean | string | null> = {
-      authentic, action_in_scope: null, revoked: null, agent_proved: null,
+      authentic, fresh: gv.fresh, action_in_scope: null, revoked: null, agent_proved: null,
       principal_bound: null, pairwise_handle: null, correlation: null };
     const binding = caseObj.binding ?? null;
     if (authentic && binding !== null) {

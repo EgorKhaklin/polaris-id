@@ -746,6 +746,13 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
     if str(proof.get("entry_hex") or "").lower() != v.timestamp_hash:
         v.note = "the proof is not for this timestamp"
         return v
+    # A head is a signed tree head: its log_id, tree_size and root are what its signature covers.
+    # Any other artifact the log key signed carries those fields UNSIGNED, so "signed by the log
+    # key" is not "a head of the log". Until 2026-09-30 a timestamp signed by that key, with a
+    # tree invented beside it, anchored itself; the detached verifier refused it.
+    if sth.get("format") != _STH_FORMAT:
+        v.note = "the head is not a %s" % _STH_FORMAT
+        return v
     sv = verify_signed_artifact(sth)
     v.sth_authentic = bool(sv.authentic)
     if sth.get("log_id") != _TIMESTAMP_LOG_ID or proof.get("log_id") not in (None, _TIMESTAMP_LOG_ID):
@@ -805,7 +812,7 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
 class CrossAuthorityVerdict:
     decision: str                    # "accept" | "reject"
     authentic: bool
-    issuer_trusted: bool
+    issuer_trusted: Optional[bool]   # None when no trust anchors were given
     via: Any = None
     reason: Optional[str] = None
     # P9.5: was the trust edge signed by the agency that made it, or is it an unsigned
@@ -825,10 +832,13 @@ class HolderVerdict:
     key_matches_binding: Optional[bool]
     nonce_matches: Optional[bool]
     note: Optional[str] = None
+    credential_authentic: Optional[bool] = None
+    issuer_trusted: Optional[bool] = None     # None when no anchors were given
 
 
 def verify_holder(credential: dict, binding: dict, proof: dict, expected_nonce=None,
-                  expected_context=None, now=None, max_age_seconds: int = 300) -> HolderVerdict:
+                  expected_context=None, now=None, max_age_seconds: int = 300,
+                  anchors=None) -> HolderVerdict:
     """Decide the holder key chain offline (P9.1): issuer anchor -> binding -> holder key -> proof.
 
     Polaris was issuer-centric until v9.349: a holder held a credential, not a key pair, so
@@ -836,7 +846,12 @@ def verify_holder(credential: dict, binding: dict, proof: dict, expected_nonce=N
     question, whether the party presenting it holds the key the ISSUER bound to that
     credential. The proof is signed over the credential, the context, the verifier's nonce
     and the instant, and deliberately NOT over the presented code, so a coerced presentation
-    stays byte-indistinguishable from a consenting one."""
+    stays byte-indistinguishable from a consenting one.
+
+    `proved` needs the credential's own signature to verify and the verifier's own
+    `expected_nonce` to match: a proof checked against no nonce is replayable, and a chain whose
+    credential does not verify binds a key to nothing. With `anchors`, the credential's issuer
+    must also be one of them (`issuer_trusted`); without, `issuer_trusted` is None."""
     v = HolderVerdict(False, None, None, None, None, None, None)
     b = binding if isinstance(binding, dict) else {}
     pr = proof if isinstance(proof, dict) else {}
@@ -846,6 +861,11 @@ def verify_holder(credential: dict, binding: dict, proof: dict, expected_nonce=N
     bv = verify_signed_artifact(b, now=now)
     v.binding_authentic, v.binding_fresh = bv.authentic, bv.fresh
     cred = credential if isinstance(credential, dict) else {}
+    # 2026-09-30: the credential was compared with the binding and never verified, and no nonce
+    # was required, so a chain an attacker signed end to end under a key of their own, replayed
+    # without the verifier's challenge, was proved.
+    av = verify_authenticity(cred, anchors)
+    v.credential_authentic, v.issuer_trusted = av.authentic, av.issuer_trusted
     v.bound_to_credential = (str(b.get("token_value")) == str(cred.get("token_value"))
                              and str(b.get("public_key_hex") or "").lower()
                              == str(cred.get("public_key_hex") or "").lower())
@@ -866,11 +886,19 @@ def verify_holder(credential: dict, binding: dict, proof: dict, expected_nonce=N
     issued = _iso_to_epoch(pr.get("issued_at"))
     ref = _iso_to_epoch(now) if now else __import__("time").time()
     fresh = issued is not None and ref is not None and issued <= ref + 60 and (ref - issued) <= max_age_seconds
-    v.proved = bool(v.binding_authentic and v.binding_fresh and v.bound_to_credential
+    v.proved = bool(v.credential_authentic and v.issuer_trusted is not False
+                    and v.binding_authentic and v.binding_fresh and v.bound_to_credential
                     and v.proof_authentic and v.key_matches_binding
-                    and v.nonce_matches is not False and ctx_ok and fresh)
+                    and v.nonce_matches is True and ctx_ok and fresh)
     if not v.proved:
-        v.note = "the holder proof does not chain to a fresh issuer-signed binding for this credential"
+        if expected_nonce is None:
+            v.note = "no nonce was expected: a holder proof checked against no challenge is replayable"
+        elif not v.credential_authentic:
+            v.note = "the credential's own signature does not verify"
+        elif v.issuer_trusted is False:
+            v.note = "the credential's issuer key is not in the anchors"
+        else:
+            v.note = "the holder proof does not chain to a fresh issuer-signed binding for this credential"
     return v
 
 
@@ -910,16 +938,25 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
                            require_signed_attestation: bool = False) -> CrossAuthorityVerdict:
     """Decide a FOREIGN credential across authorities OFFLINE (P8.1, wire spec section 4).
     Accept iff: the authenticity pack is genuine; some federation manifest the relying party
-    trusts (authentic, fresh, and signed by a trusted anchor) attests the credential's signing
-    key in the presented context, non-transitively; and, if a revocation feed is supplied, the
-    credential is not revoked (the feed authentic, fresh, and bound to the issuer's key).
-    Standalone, no network."""
+    trusts (authentic, fresh, and signed by one of `trusted_anchors`) attests the credential's
+    signing key in the presented context, non-transitively; and, if a revocation feed is
+    supplied, the credential is not revoked (the feed authentic, fresh, and bound to the
+    issuer's key). With no `trusted_anchors` nothing is trusted: the decision is reject and
+    `issuer_trusted` is None. Standalone, no network."""
     pack = pack if isinstance(pack, dict) else {}
     a = verify_authenticity(pack)
     if not a.authentic:
         return CrossAuthorityVerdict("reject", False, False, reason="credential is not authentic")
     token_key = str(pack.get("public_key_hex") or "").lower()
-    trusted = {t.lower() for t in trusted_anchors} if trusted_anchors is not None else None
+    if trusted_anchors is None:
+        # No root, no trusted authority. Every manifest is signed by a key it lists itself, so
+        # with no anchor the relying party chose, an attacker's own manifest attesting the
+        # attacker's own credential decided (2026-09-30). The detached verifier's equivalent takes
+        # `trusted_manifests`, a set its caller vouches for by name; this function takes the
+        # manifests a presentation brought, so it trusts none of them unaided.
+        return CrossAuthorityVerdict("reject", True, None,
+                                     reason="no trust anchors were given: a manifest vouches for nothing by itself")
+    trusted = {str(t).lower() for t in trusted_anchors}
     via = None
     signed_edge = None
     # A manifest set that is not a list is no manifests, as in the detached verifier: `or []`
@@ -933,7 +970,7 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
         # verify_signed_artifact requires) is one the relying party trusts. Until 2026-09-30 it
         # was any key the manifest merely LISTED, so an attacker's manifest that listed the
         # relying party's anchor beside the attacker's own root was trusted (WIRE-SPEC section 4).
-        if trusted is not None and str(m.get("public_key_hex") or "").lower() not in trusted:
+        if str(m.get("public_key_hex") or "").lower() not in trusted:
             continue   # the relying party does not trust this manifest's signer
         for att in (m.get("attestations") or []):
             if not isinstance(att, dict):
@@ -1267,7 +1304,10 @@ def grant_principal_bound(grant, binding, credential, now=None) -> bool:
     if not verify_authenticity(credential).authentic:
         return False
     bv = verify_signed_artifact(binding, now=now)
-    return bool(bv.authentic and bv.fresh is not False
+    # Fresh means CHECKED fresh: a binding with no window, or a `now` that is not an instant, left
+    # `fresh` None and `is not False` read it as fresh, so a binding that expired in 2024 was
+    # bound (2026-09-30).
+    return bool(bv.authentic and bv.fresh is True
                 and (binding.get("status") or "active") == "active"
                 and str(binding.get("holder_public_key_hex") or "").lower()
                 == str(grant.get("public_key_hex") or "").lower()
@@ -1413,7 +1453,8 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
 def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder_key=None,
                             request_body=None, response_body=None) -> ExchangeReceiptVerdict:
     """Verify a responder-signed exchange receipt OFFLINE (wire spec 3.8): the signature; with
-    `responder_key`, that the expected responder signed it; with `trusted_manifests`, that one
+    `responder_key`, that the expected responder signed it (and only then `responder`, the
+    responder the receipt names); with `trusted_manifests`, that one
     of them, genuine and fresh at `now`, attests the REQUESTER in exactly the receipt's
     context (a receipt stating no context is not authorized by an attestation from another),
     and which authority (`via`); with a body, that its commitment binds. A receipt commits to
@@ -1425,9 +1466,14 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
     base = verify_signed_artifact(r, now=now)
     if not base.authentic:
         return ExchangeReceiptVerdict(False, note=base.note)
-    v = ExchangeReceiptVerdict(True, responder=r.get("responder"))
+    v = ExchangeReceiptVerdict(True)
     if responder_key is not None:
         v.responder_matches = _same_key(r.get("public_key_hex"), responder_key)
+    # A receipt names its responder in the statement its signer wrote, so the name is the
+    # signer's claim until `responder_key` shows the signer IS that responder. Until 2026-09-30 a
+    # receipt signed by a stranger reported the victim agency it named as its responder.
+    if v.responder_matches is True:
+        v.responder = r.get("responder")
     if request_body is not None:
         v.request_bound = _sha3_hex(request_body) == str(r.get("request_hash") or "").lower()
     if response_body is not None:

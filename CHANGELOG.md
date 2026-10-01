@@ -22,6 +22,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-verify` binds a stapled status assertion to the credential's own key; another trusted authority's assertion was accepted.
 - Both SDKs verify a credential's own signature before binding an agent grant to it.
 - Every Python package the images install is hash-pinned, and liboqs builds from a checked commit; liboqs-python was unpinned and fetched it.
+- Both SDKs take a timestamp anchor's head only as a signed tree head; any artifact the log key signed was read as one.
+- Both SDKs trust no federation manifest when the relying party names no trust anchor; a manifest's own signature decided.
+- Both SDKs prove a holder chain only with the verifier's nonce and a credential whose signature verifies.
+- All three verifiers name a receipt's responder only once `responder_key` confirms the signer; a stranger's receipt named its victim.
+- Both SDKs count a holder binding only when it is checked fresh; one with no window counted as fresh.
+- The conformance contract asks whether a grant in use is inside its window; an expired grant came back in scope.
+- The relying-party script asks about a credential by its signed serial and verifies the answer; it asked by an id the holder could edit.
 
 ### Fixed
 
@@ -38,6 +45,12 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- **Breaking**: both SDKs' cross-authority decision trusts no manifest without `trusted_anchors`; pass the anchors you trust.
+- **Breaking**: both SDKs' holder chain proves only with `expected_nonce` and a credential whose signature verifies.
+- **Breaking**: an exchange receipt's `responder` is null until `responder_key` confirms the signer, in all three verifiers.
+- **Breaking**: the agent-grant-use verdict carries `fresh`; a verifier implementing the contract must report it.
+- **Breaking**: both SDKs bind a grant only under a holder binding checked fresh; one with no window binds nothing.
+- **Breaking**: the relying-party script hands its status checker the credential, not `token_id`, and asks by possession.
 - Published: `polaris-oid4vp` 1.0.0rc11 (not certified; 1.0.0rc7 is) and the first `polaris-id-cli`, 1.0.0rc1, on PyPI, each approved at the environment gate.
 - `publish.yml` can publish `polaris-id-cli`, gated on its wheel installing and behaving alone; every publish now waits for the maintainer to approve the run.
 - Published: `polaris-sdk-ts` 1.0.0-rc.6 on npm under `next`, approved by the maintainer with a second factor.
@@ -53,7 +66,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `lab/interop/eudi-dev/run.sh` with `EUDI_ISSUER=1` has eudi-dev's own issuer sign the credential; the wallet canary runs it weekly.
 - Six conformance cases, each a published vector with one hostile field, pin these rules.
 - Six more, three attacks and their controls, pin who signed a manifest or a trust edge and which credential a holder proof names.
-- Nine more pin the timestamp, revocation-feed and manifest-signer rules of WIRE-SPEC 3.9, 3.3 and 3.1; the suite has 208 cases.
+- Nine more pin the timestamp, revocation-feed and manifest-signer rules of WIRE-SPEC 3.9, 3.3 and 3.1.
+- Eleven more pin what a tree head, a holder chain, a receipt and a grant in use are trusted on; the suite has 219 cases.
 
 ## v1.0.0-rc.67 — 2026-09-30 (one command to a verified result)
 

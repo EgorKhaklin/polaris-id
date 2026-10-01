@@ -613,6 +613,7 @@ export function verifySignedArtifact(obj: any, now?: string | null,
 // be absent from every witnessed head of its claimed era. Until now only Polaris's own
 // detached verifier could check that. Here it is in the SDK an outsider installs.
 const TIMESTAMP_LOG_ID = "polaris-timestamp-log";
+const STH_FORMAT = "polaris-transparency-sth/1";
 const COSIGNATURE_FORMAT = "polaris-transparency-cosignature/1";
 const COSIGNATURE_KEYS = ["format", "log_id", "tree_size", "root_hash_hex"];
 
@@ -746,6 +747,14 @@ export function verifyTimestampAnchor(ts: any, logKey?: string | null, trustedWi
     v.note = "the proof is not for this timestamp";
     return v;
   }
+  // A head is a signed tree head: its log_id, tree_size and root are what its signature covers.
+  // Any other artifact the log key signed carries those fields UNSIGNED, so "signed by the log
+  // key" is not "a head of the log". Until 2026-09-30 a timestamp signed by that key, with a tree
+  // invented beside it, anchored itself; the detached verifier refused it.
+  if (sth.format !== STH_FORMAT) {
+    v.note = "the head is not a " + STH_FORMAT;
+    return v;
+  }
   const sv = verifySignedArtifact(sth);
   v.sthAuthentic = sv.authentic;
   if (sth.log_id !== TIMESTAMP_LOG_ID || (proof.log_id != null && proof.log_id !== TIMESTAMP_LOG_ID)) {
@@ -814,17 +823,12 @@ export function verifyTimestampAnchor(ts: any, logKey?: string | null, trustedWi
 export type CrossAuthorityVerdict = {
   decision: string; // "accept" | "reject"
   authentic: boolean;
-  issuerTrusted: boolean;
+  issuerTrusted: boolean | null; // null when no trust anchors were given
   via?: unknown;
   reason?: string;
   attestationSigned?: boolean | null;
 };
 
-/** Decide a FOREIGN credential across authorities OFFLINE (P8.1, wire spec section 4). Accept
- * iff the authenticity pack is genuine, some federation manifest the relying party trusts
- * (authentic, fresh, signed by a trusted anchor) attests the credential's signing key in the
- * presented context (non-transitive), and -- if a revocation feed is supplied -- the credential
- * is not revoked (feed authentic, fresh, and bound to the issuer key). No network. */
 export type HolderVerdict = {
   proved: boolean;
   bindingAuthentic: boolean | null;
@@ -834,6 +838,8 @@ export type HolderVerdict = {
   keyMatchesBinding: boolean | null;
   nonceMatches: boolean | null;
   note?: string;
+  credentialAuthentic?: boolean | null;
+  issuerTrusted?: boolean | null; // null when no anchors were given
 };
 
 /** Decide the holder key chain offline (P9.1): issuer anchor -> binding -> holder key -> proof.
@@ -843,10 +849,15 @@ export type HolderVerdict = {
  * whether the party presenting it holds the key the ISSUER bound to that credential. The proof
  * is signed over the credential, the context, the verifier's nonce and the instant, and
  * deliberately NOT over the presented code, so a coerced presentation stays
- * byte-indistinguishable from a consenting one. */
+ * byte-indistinguishable from a consenting one.
+ *
+ * `proved` needs the credential's own signature to verify and the verifier's own `expectedNonce`
+ * to match: a proof checked against no nonce is replayable, and a chain whose credential does not
+ * verify binds a key to nothing. With `anchors`, the credential's issuer must also be one of them
+ * (`issuerTrusted`); without, `issuerTrusted` is null. */
 export function verifyHolder(credential: any, binding: any, proof: any, expectedNonce?: string | null,
                              expectedContext?: any, now?: string | null,
-                             maxAgeSeconds: number = 300): HolderVerdict {
+                             maxAgeSeconds: number = 300, anchors?: string[] | null): HolderVerdict {
   const v: HolderVerdict = { proved: false, bindingAuthentic: null, boundToCredential: null,
                              bindingFresh: null, proofAuthentic: null, keyMatchesBinding: null,
                              nonceMatches: null };
@@ -859,6 +870,12 @@ export function verifyHolder(credential: any, binding: any, proof: any, expected
   v.bindingAuthentic = bv.authentic;
   v.bindingFresh = bv.fresh;
   const cred = credential ?? {};
+  // 2026-09-30: the credential was compared with the binding and never verified, and no nonce was
+  // required, so a chain an attacker signed end to end under a key of their own, replayed without
+  // the verifier's challenge, was proved.
+  const av = verifyAuthenticity(cred, anchors ?? null);
+  v.credentialAuthentic = av.authentic;
+  v.issuerTrusted = av.issuerTrusted;
   v.boundToCredential = String(b.token_value) === String(cred.token_value)
     && String(b.public_key_hex ?? "").toLowerCase() === String(cred.public_key_hex ?? "").toLowerCase();
   const impl = verifierFor(pr.algorithm);
@@ -887,9 +904,15 @@ export function verifyHolder(credential: any, binding: any, proof: any, expected
   const issued = isoToEpoch(pr.issued_at);
   const ref = now ? isoToEpoch(now) : Date.now() / 1000;
   const fresh = issued !== null && ref !== null && issued <= ref + 60 && (ref - issued) <= maxAgeSeconds;
-  v.proved = !!(v.bindingAuthentic && v.bindingFresh && v.boundToCredential && v.proofAuthentic
-                && v.keyMatchesBinding && v.nonceMatches !== false && ctxOk && fresh);
-  if (!v.proved) v.note = "the holder proof does not chain to a fresh issuer-signed binding for this credential";
+  v.proved = !!(v.credentialAuthentic && v.issuerTrusted !== false
+                && v.bindingAuthentic && v.bindingFresh && v.boundToCredential && v.proofAuthentic
+                && v.keyMatchesBinding && v.nonceMatches === true && ctxOk && fresh);
+  if (!v.proved) {
+    v.note = expectedNonce == null ? "no nonce was expected: a holder proof checked against no challenge is replayable"
+      : !v.credentialAuthentic ? "the credential's own signature does not verify"
+      : v.issuerTrusted === false ? "the credential's issuer key is not in the anchors"
+      : "the holder proof does not chain to a fresh issuer-signed binding for this credential";
+  }
   return v;
 }
 
@@ -930,6 +953,13 @@ export function verifyAttestation(att: any, attestingAgencyId?: number | null,
   return { authentic: ok, fresh: null, note: ok ? undefined : "the attestation signature is invalid" };
 }
 
+/** Decide a FOREIGN credential across authorities OFFLINE (P8.1, wire spec section 4). Accept
+ * iff the authenticity pack is genuine, some federation manifest the relying party trusts
+ * (authentic, fresh, signed by one of `trustedAnchors`) attests the credential's signing key in
+ * the presented context (non-transitive), and -- if a revocation feed is supplied -- the
+ * credential is not revoked (feed authentic, fresh, and bound to the issuer key). With no
+ * `trustedAnchors` nothing is trusted: the decision is reject and `issuerTrusted` is null. No
+ * network. */
 export function verifyCrossAuthority(
   pack: any, contextId: any, manifests: any[], trustedAnchors?: string[] | null,
   revocationFeed?: any, now?: string | null, requireSignedAttestation: boolean = false,
@@ -939,7 +969,16 @@ export function verifyCrossAuthority(
     return { decision: "reject", authentic: false, issuerTrusted: false, reason: "credential is not authentic" };
   }
   const tokenKey = String(p.public_key_hex ?? "").toLowerCase();
-  const trusted = trustedAnchors != null ? new Set(trustedAnchors.map((t) => t.toLowerCase())) : null;
+  if (trustedAnchors == null) {
+    // No root, no trusted authority. Every manifest is signed by a key it lists itself, so with no
+    // anchor the relying party chose, an attacker's own manifest attesting the attacker's own
+    // credential decided (2026-09-30). The detached verifier's equivalent takes
+    // `trusted_manifests`, a set its caller vouches for by name; this function takes the manifests
+    // a presentation brought, so it trusts none of them unaided.
+    return { decision: "reject", authentic: true, issuerTrusted: null,
+             reason: "no trust anchors were given: a manifest vouches for nothing by itself" };
+  }
+  const trusted = new Set(trustedAnchors.map((t) => String(t).toLowerCase()));
   let via: unknown = null;
   let signedEdge: boolean | null = null;
   // A manifest set that is not an array is no manifests, as in the detached verifier:
@@ -951,7 +990,7 @@ export function verifyCrossAuthority(
     // verifySignedArtifact requires) is one the relying party trusts. Until 2026-09-30 it was
     // any key the manifest merely LISTED, so an attacker's manifest that listed the relying
     // party's anchor beside the attacker's own root was trusted (WIRE-SPEC section 4).
-    if (trusted != null && !trusted.has(String(mm.public_key_hex ?? "").toLowerCase())) continue;
+    if (!trusted.has(String(mm.public_key_hex ?? "").toLowerCase())) continue;
     for (const att of Array.isArray(mm.attestations) ? mm.attestations : []) {
       if (att && String(att.attested_public_key_hex ?? "").toLowerCase() === tokenKey
           && contextId != null && att.context_id === contextId) {
@@ -1283,7 +1322,10 @@ export function grantPrincipalBound(grant: any, binding: any, credential: any, n
   // issuer is one you trust is the caller's verifyAuthenticity(credential, anchors).
   if (!verifyAuthenticity(credential).authentic) return false;
   const bv = verifySignedArtifact(binding, now ?? null, null);
-  return !!(bv.authentic && bv.fresh !== false && (binding.status ?? "active") === "active"
+  // Fresh means CHECKED fresh: a binding with no window, or a `now` that is not an instant, left
+  // `fresh` null and `!== false` read it as fresh, so a binding that expired in 2024 was bound
+  // (2026-09-30).
+  return !!(bv.authentic && bv.fresh === true && (binding.status ?? "active") === "active"
     && String(binding.holder_public_key_hex ?? "").toLowerCase() === String(grant.public_key_hex ?? "").toLowerCase()
     && String(binding.token_value) === String(credential.token_value)
     && String(binding.public_key_hex ?? "").toLowerCase() === String(credential.public_key_hex ?? "").toLowerCase());
@@ -1410,8 +1452,12 @@ export function verifyExchangeReceipt(receipt: any, now?: string | null, trusted
   }
   const base = verifySignedArtifact(r, now ?? null, null);
   if (!base.authentic) return { authentic: false, ...none, note: base.note };
-  const v: ExchangeReceiptVerdict = { authentic: true, ...none, responder: r.responder ?? null };
+  const v: ExchangeReceiptVerdict = { authentic: true, ...none };
   if (responderKey !== undefined && responderKey !== null) v.responderMatches = sameKey(r.public_key_hex, responderKey);
+  // A receipt names its responder in the statement its signer wrote, so the name is the signer's
+  // claim until `responderKey` shows the signer IS that responder. Until 2026-09-30 a receipt
+  // signed by a stranger reported the victim agency it named as its responder.
+  if (v.responderMatches === true) v.responder = r.responder ?? null;
   if (requestBody !== undefined && requestBody !== null) {
     v.requestBound = sha3Hex(requestBody) === String(r.request_hash ?? "").toLowerCase();
   }

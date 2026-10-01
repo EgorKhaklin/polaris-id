@@ -64,13 +64,13 @@ refused (wire spec section 6).
   timestamp, registry, exchange request, exchange receipt, mint statement, signed document,
   ID token and trust list (authenticity, freshness where windowed, and the artifact's
   commitment or self-consistency).
-- `verifyCrossAuthority(...)`: the federation trust decision (accept / reject).
+- `verifyCrossAuthority(...)`: the federation trust decision (accept / reject) under the relying party's trust anchors; with none, no manifest is trusted.
 - `verifyExchangeRequest(...)`, `verifyExchangeReceipt(...)`, `verifyExchangeMint(...)`: an
   exchange artifact in use: whether it is by the party expected, whether the requester was
   attested in its context at a stated instant (and by whom, for a receipt), and whether the
   bodies held match the commitments.
 
-The SDK passes every case of the conformance suite (208 cases, measured against the repository on 2026-09-30) and every case of the frozen
+The SDK passes every case of the conformance suite (219 cases, measured against the repository on 2026-09-30) and every case of the frozen
 version-1 set under `scripts/polaris-compat-suite.py --typescript-only`, which runs on every CI push.
 
 ## Running and building

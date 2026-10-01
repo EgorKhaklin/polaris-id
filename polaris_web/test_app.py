@@ -14123,8 +14123,8 @@ class VerifyWitnessSamplingTests(PolarisTestCase):
 # --- End-to-end holder<->verifier flow (v9.287) -----------------------------
 # The full path with a REAL database status service: issue -> authenticity pack
 # -> the holder wallet presents -> a relying party decides ACCEPT/REJECT by
-# combining offline authenticity (the detached verifier) with the ONLINE status
-# from GET /api/tokens/<id>/verify. Gated on real ML-DSA (so authenticity is the
+# combining offline authenticity (the detached verifier) with the ONLINE status,
+# a signed assertion asked for by possession of the credential. Gated on real ML-DSA (so authenticity is the
 # genuine article); it runs wherever liboqs + cryptography are present and is
 # skipped in the placeholder CI suite. The stubbed-status form of the same
 # decision matrix runs every release in scripts/polaris-e2e-drill.py, and the
@@ -14207,8 +14207,21 @@ class EndToEndFlowTests(PolarisTestCase):
         return rp
 
     def _status_checker(self):
-        # The relying party's ONLINE status call, made against the real endpoint.
-        return lambda tid: self.client.get('/api/tokens/%s/verify' % tid).get_json()
+        # The relying party's ONLINE status call against the real issuer, made as
+        # scripts/polaris-relying-party.py makes it: asked by the credential's own signed serial
+        # (POST /api/v1/status-assertion, possession-authenticated) and believed only once the
+        # issuer's signed assertion verifies for THIS credential. It was asked by the
+        # presentation's token_id, which nothing signs, so an edited id read another credential's
+        # status (2026-09-30).
+        verify = _e2e_load("polaris_verify_e2e_status", "polaris-verify.py")
+
+        def check(credential):
+            r = self.client.post('/api/v1/status-assertion', json={
+                'token_value': credential.get('token_value'),
+                'signature_hex': credential.get('signature_hex')})
+            d = verify.verify_stapled(credential, r.get_json())
+            return {'currently_authoritative': d['decision'] == 'accept', 'status': d['status']}
+        return check
 
     def test_active_credential_is_accepted_then_rejected_after_revocation(self):
         rp = self._relying_party()
