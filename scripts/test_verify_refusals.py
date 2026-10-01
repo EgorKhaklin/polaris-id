@@ -1127,6 +1127,28 @@ class CommandLineExitCodes(unittest.TestCase):
                 self.assertEqual(V.main(["--pqc-provider", "auto", *argv]), 4)
                 self.assertIn("does not read %s;" % flag, err.getvalue())
 
+    def test_a_value_flag_given_twice_refuses_to_start(self):
+        """Row 4, 2026-10-01: argparse keeps the last of a repeated flag, so `--issuer-anchor A
+        --issuer-anchor B` trusted B alone and `--pack X --pack Y` decided Y. The files named here
+        do not exist, so 4 is the refusal before any is read; a flag that collects every value
+        (--trusted-manifest) and one that takes no value lose nothing by repeating."""
+        import contextlib
+        import io
+        a, b = str(self.tmp / "absent-a.json"), str(self.tmp / "absent-b.json")
+        for argv, flag in ((("--pack", a, "--issuer-anchor", a, "--issuer-anchor", b), "--issuer-anchor"),
+                           (("--pack", a, "--pack", b), "--pack"),
+                           (("--pack", a, "--issuer-anc", a, "--issuer-anchor", b), "--issuer-anchor"),
+                           (("--presentation", a, "--nonce", "n-1", "--nonce", "n-2"), "--nonce")):
+            err = io.StringIO()
+            with self.subTest(argv=argv), contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(err):
+                self.assertEqual(V.main(["--pqc-provider", "auto", *argv]), 4)
+                self.assertIn("%s given more than once" % flag, err.getvalue())
+        self.assertEqual(self.main("--pqc-provider", "auto", "--zk-proof", a, "--trusted-manifest", a,
+                                   "--trusted-manifest", b), 3, "every manifest is read, so the run reads")
+        self.assertEqual(self.main("--pqc-provider", "auto", "--signature-only", "--signature-only",
+                                   "--pack", str(self.pack)), 0)
+
     def test_an_argument_it_does_not_take_exits_4(self):
         """Row 4: argparse's own exit was 2, this table's "not accepted", so a mistyped flag read
         to a script as a credential that did not verify (2026-10-01)."""

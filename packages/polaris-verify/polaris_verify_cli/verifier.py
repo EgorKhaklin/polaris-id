@@ -5094,12 +5094,27 @@ def _mode_of(args):
     return "--pack without --status-assertion"
 
 
+class _Counted(argparse.Namespace):
+    """A namespace that counts how often each flag was set, which is once per time it was given
+    when no defaults are applied."""
+
+    def __setattr__(self, name, value):
+        counts = self.__dict__.setdefault("_counts", {})
+        counts[name] = counts.get(name, 0) + 1
+        super().__setattr__(name, value)
+
+
 def _given(ap, argv):
-    """The flags the command line names, whatever their values: a flag given its default value is
-    still one the caller expects read. Parses again with no defaults, so call it last."""
+    """(given, repeated): the flags the command line names, whatever their values, since a flag
+    given its default value is still one the caller expects read; and those given more than once
+    whose second value replaced the first. `--issuer-anchor A --issuer-anchor B` trusted B alone,
+    and `--pack X --pack Y` decided Y (2026-10-01). Parses again with no defaults, so call it last."""
     for a in ap._actions:
         a.default = argparse.SUPPRESS
-    return set(vars(ap.parse_args(argv)))
+    ns = ap.parse_args(argv, namespace=_Counted())
+    counts = ns.__dict__.pop("_counts", {})
+    replacing = {a.dest for a in ap._actions if isinstance(a, argparse._StoreAction)}
+    return set(vars(ns)), {d for d, n in counts.items() if n > 1 and d in replacing}
 
 
 def main(argv=None):
@@ -5163,7 +5178,12 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     mode = _mode_of(args)
-    ignored = sorted("--" + d.replace("_", "-") for d in _given(ap, argv) - _ALWAYS - _MODE_FLAGS[mode])
+    given, repeated = _given(ap, argv)
+    if repeated:
+        print("polaris-verify: %s given more than once; refusing to start rather than read only the "
+              "last" % ", ".join(sorted("--" + d.replace("_", "-") for d in repeated)), file=sys.stderr)
+        return 4
+    ignored = sorted("--" + d.replace("_", "-") for d in given - _ALWAYS - _MODE_FLAGS[mode])
     if ignored:
         print("polaris-verify: %s does not read %s; refusing to start rather than ignore %s"
               % (mode, ", ".join(ignored), "them" if len(ignored) > 1 else "it"), file=sys.stderr)

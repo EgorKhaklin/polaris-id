@@ -18,6 +18,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - All three verifiers read a key or a digest only as a hex string; the TypeScript SDK read a signed `[K]` as K, and two missing keys matched in Python.
 - `polaris-verify --zk-proof` reads `--issuer-anchor` and abstains without a trust root or a `--nonce`; it accepted with neither.
 - `polaris-verify` refuses a flag the chosen mode would not read; `--presentation` ignored `--status-assertion`.
+- `polaris-verify` refuses a value flag given twice; a second `--issuer-anchor` replaced the first.
 
 ### Fixed
 

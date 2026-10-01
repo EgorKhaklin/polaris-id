@@ -69,9 +69,10 @@ object itself, proves a holder chain whose signed nonce is `true` against the no
 grant through a binding naming `true` to the credential "true", reads a grant action of `true` or
 `["x"]` as "true" or "x", and reads a signed key or digest held in a one-element list as that key or
 digest. The `polaris-verify` 1.0.0rc6 command **accepts a zero-knowledge proof with no trust root and no
-nonce**, ignoring `--issuer-anchor` there and `--status-assertion` beside `--presentation`, and exits 2
-for an unknown flag and for a proof it could not check. The tree carries the fixes; releases follow the
-maintainer's approval.
+nonce**, ignoring `--issuer-anchor` there and `--status-assertion` beside `--presentation`, reads only the
+last of a flag given twice, so a second `--issuer-anchor` replaces the first, and exits 2 for an unknown
+flag and for a proof it could not check. The tree carries the fixes; releases follow the maintainer's
+approval.
 
 If you installed or pinned an older version, upgrade. The Current column is checked against
 [docs/RELEASING.md](docs/RELEASING.md) on every run. The packages are for evaluation and
