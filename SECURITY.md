@@ -36,7 +36,8 @@ verdict fields the published cases do not constrain.
 
 ## Published packages
 
-The current versions carry none of the defects below; each row lists what older versions still carry.
+The current versions carry none of the defects below except those stated after the table; each row
+lists what older versions still carry.
 
 | Package | Current | Older versions still carrying known defects |
 |---|---|---|
@@ -45,6 +46,19 @@ The current versions carry none of the defects below; each row lists what older 
 | `polaris-sdk-python` | `1.0.0rc5` | `1.0.0rc4` and earlier: pass an `issuer_url` whose scheme is not `https` or `http` to `urlopen`; accept a signature or key whose hex has whitespace between bytes; read a signed grant whose `limits` is not an object as unlimited. `1.0.0rc3` and earlier: `verify_authenticity` **accepts any authority-signed artifact re-wrapped as a pack**; `verify_cross_authority` accepts a signed or **unsigned** trust edge past, or without a readable, `valid_until`, and with **no context presented** an edge from any context. `1.0.0rc3` (measured): an artifact `format` that is not a string, `cosignatures` that are not a list, or a revocation feed that is not an object **raise** instead of refusing. `1.0.0rc1`, `0.1.0`: no finite-number guards on grant limits; cached tokens outlive a revoked client. |
 | `polaris-id-cli` | `1.0.0rc1` | None: the first release. |
 | `polaris-sdk-ts` (npm) | `1.0.0-rc.6` under `next` | `1.0.0-rc.5` and earlier: accept a signature or key whose hex has a character that is not hex, which the other verifiers refuse; read a signed grant whose `limits` is a string or a number as unlimited. `1.0.0-rc.4` and earlier: read an artifact `format` that is a list as the string it coerces to. `1.0.0-rc.3` and earlier: `verifyAuthenticity` **accepts any authority-signed artifact re-wrapped as a pack**; `verifyCrossAuthority` accepts a signed or **unsigned** trust edge past, or without a readable, `valid_until`, and with **no context presented** an edge from any context. `0.1.0` (what `latest` resolves): canonicalisation and parsing divergences from the wire specification. |
+
+Exception until the next publish: `polaris-verify` 1.0.0rc5 **accepts an agent-grant chain whose
+credential does not verify, or whose issuer is outside `--issuer-anchor`**, calls a grant with a link
+missing usable, exits 0 on a presentation with no `--issuer-anchor`, **accepts a stapled status
+assertion signed by another trusted key than the credential's**, and ignores `--nonce` and
+`--trusted-anchor` on a presentation. All three verifiers, polaris-verify 1.0.0rc5 and both
+SDKs below, also **trust a federation manifest that merely lists a trusted anchor**, count any
+key's signature on a trust edge as the attesting authority's, accept a holder proof made for
+another credential, and accept a timestamp over a SHA-1 or uppercase digest; the SDKs also accept
+a revocation feed whose count differs from its leaves; `polaris-sdk-python`
+1.0.0rc5 and `polaris-sdk-ts` 1.0.0-rc.6 bind a grant to a credential whose signature does not
+verify and accept a status bundle whose `member_count` differs from its members. The tree carries
+the fixes; releases follow the maintainer's approval.
 
 If you installed or pinned an older version, upgrade. The Current column is checked against
 [docs/RELEASING.md](docs/RELEASING.md) on every run. The packages are for evaluation and

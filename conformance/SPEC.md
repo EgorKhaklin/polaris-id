@@ -232,6 +232,35 @@ A cosignature that verifies must also be OF this head: the `timestamp-anchor-var
 head for another log does not anchor, and a genuine cosignature over another tree size or
 another root does not count toward the threshold; the base anchor is their positive control.
 
+Hostile shapes (1.0.0-rc.68). Six cases take a published vector and change one field to a shape
+the wire specification does not allow, with no new signature: an inclusion proof whose index is
+`false`, whose tree size is the string `"1"` or whose path is an object
+(`timestamp-anchor-proof-*`, on the one-leaf anchor, so a verifier that coerces the field reads
+the genuine proof back); a status bundle whose members match its root and whose signed
+`member_count` does not (`federation-status-bundle-count-mismatch`); and a grant whose
+credential's signature does not verify, or whose binding arrives with no credential
+(`agent-grant-use-principal-credential-forged`, `agent-grant-use-principal-no-credential`).
+Each was accepted by at least one of the three verifiers in this repository, and each MUST be
+refused.
+
+Who signed (1.0.0-rc.68). Three cases, each beside its positive control, ask who put a key's
+weight behind a statement. `cross-authority-manifest-lists-trusted-anchor` is a manifest signed by
+an attacker's root that LISTS the relying party's anchor: it is not trusted, because a manifest is
+trusted when a trusted key signed it (WIRE-SPEC 3.1, section 4). `cross-authority-edge-signed-by-a-stranger`
+carries a trust edge validly signed by a key that is none of the authority's anchors: it is not
+the authority's edge (WIRE-SPEC 3.14). `holder-chain-proof-for-another-credential` is the holder's
+genuine proof naming another credential: it proves nothing about this one (WIRE-SPEC 3.15). Every
+verifier in this repository accepted all three before these cases.
+
+Statement rules (1.0.0-rc.68). Three rules a correctly signed statement can still break, each
+beside a control signed by the same key: a timestamp's digest is lowercase SHA3-256
+(`timestamp-digest-algorithm-not-sha3`, `timestamp-digest-hex-uppercase`) at a real instant
+(`timestamp-issued-at-not-an-instant`), WIRE-SPEC 3.9; a revocation feed's `revoked_count` is the
+number of its distinct leaves (`revocation-feed-count-mismatch`, `revocation-feed-count-not-a-number`),
+3.3; and a manifest is signed by one of its own active anchors
+(`federation-manifest-signed-by-a-stranger`), 3.1. Every verifier here enforced the last and
+nothing pinned it: an audit removed it from all three and every suite still passed.
+
 Holder-proof window (`artifact: holder-chain`, 1.0.0-rc.66). A holder proof is fresh from one
 minute before its `issued_at` (clock skew) until five minutes after it, both ends inclusive.
 The `holder-chain-proof-window-*` cases take a chain whose binding opens a day before the proof,

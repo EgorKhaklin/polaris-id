@@ -112,6 +112,17 @@ DECLARED_SURVIVORS: dict[str, str] = {
     # 2026-09-29 as "garbage bytes and the same not-authentic verdict". Since the decoder
     # refuses any character outside [0-9a-fA-F], removing that throw lets "eg" read as 0x0e
     # and a re-spelled genuine signature verify; sdk.test.ts asserts it does not.
+    # verifyTimestampAnchor's two malformed-proof throws (2026-09-30): an index or tree size that
+    # is not a JSON integer, and a path that is not a list. Belt and braces: without the first,
+    # the null index reaches verifyInclusion, whose own Number.isInteger check refuses it, and a
+    # null size fails the head's `tree_size` comparison; without the second, `.map` on an object
+    # throws inside the same try. The proof is refused either way; these give the reason.
+    "typescript:verifyTimestampAnchor:956341":
+        "belt and braces: verifyInclusion's integer check and the head's tree_size comparison "
+        "refuse the same index and size",
+    "typescript:verifyTimestampAnchor:bb135f":
+        "belt and braces: `.map` on a path that is not an array throws inside the same try, "
+        "so the proof is malformed either way",
     "typescript:hexToBytes:7c7d1e":
         "unreachable: the HEX_DIGITS test above has already refused every pair parseInt could "
         "fail on, so parseInt never returns NaN here",
@@ -126,12 +137,10 @@ DECLARED_SURVIVORS: dict[str, str] = {
     # without removing the thing the tests need in order to run.
     "python:verify_authenticity:a78e3f":
         "the no-backend-available branch; a suite with cryptography installed cannot reach it",
-    "python:verify_status_assertion:4a55a6":
-        "ok is None: the verification could not run, which needs no backend installed",
-    "python:verify_cosignature:930d0e":
-        "ok is None: the verification could not run, which needs no backend installed",
-    "python:verify_attestation:930d0e":
-        "ok is None: the verification could not run, which needs no backend installed",
+    # python:verify_status_assertion:4a55a6, python:verify_cosignature:930d0e and
+    # python:verify_attestation:930d0e, each "ok is None: the verification could not run",
+    # were declared here until 2026-09-30, when the drill measured all three caught: an input
+    # whose signature cannot be checked now reaches each, so they are refusals, not dead code.
     # The TypeScript catch-all arms of verifyStatusAssertion, verifySignedArtifact,
     # verifyCosignature and verifyAttestation were declared here until 2026-09-29 as
     # "reachable only by making the crypto library throw". A signature that does not decode

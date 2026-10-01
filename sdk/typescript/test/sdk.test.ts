@@ -796,6 +796,74 @@ test("held-out: each federation variant is refused", () => {
 });
 
 
+// 2026-09-30: verifyHolder read a proof's age with Date.parse, which reads an issued_at with no
+// offset as LOCAL time, so the replay window moved with the machine's time zone: a proof seven
+// hours old was stale under UTC and fresh in Los Angeles. The shared ISO grammar reads such an
+// instant as UTC, as the Python SDK does. The zone is pinned away from UTC to show it.
+test("a holder proof's age is read in UTC whatever the machine's time zone", async () => {
+  const zone = process.env.TZ;
+  process.env.TZ = "America/Los_Angeles";
+  try {
+    const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
+    const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
+    const enc = (x: string) => new TextEncoder().encode(x);
+    const canon = (o: any, keys: string[]) =>
+      enc(JSON.stringify(Object.fromEntries([...keys].sort().map((k) => [k, o[k] ?? null]))));
+    const iss = ml_dsa65.keygen(new Uint8Array(32).fill(1));
+    const hol = ml_dsa65.keygen(new Uint8Array(32).fill(2));
+    const tv = "TS-HOLDER-OFFSET-0001";
+    const cred = { format: "polaris-authenticity-pack/1", token_value: tv, algorithm: "ML-DSA-65",
+      public_key_hex: hex(iss.publicKey), signature_hex: hex(ml_dsa65.sign(sha3_256(enc(tv)), iss.secretKey)) };
+    const b: any = { format: "polaris-holder-binding/1", token_value: tv, holder_public_key_hex: hex(hol.publicKey),
+      holder_algorithm: "ML-DSA-65", bound_at: "2026-04-30T00:00:00Z", status: "active",
+      issued_at: "2026-05-01T00:00:00Z", expires_at: "2026-05-02T00:00:00Z", algorithm: "ML-DSA-65" };
+    b.signature_hex = hex(ml_dsa65.sign(sha3_256(canon(b, ["format", "token_value", "holder_public_key_hex",
+      "holder_algorithm", "bound_at", "status", "issued_at", "expires_at", "algorithm"])), iss.secretKey));
+    b.public_key_hex = hex(iss.publicKey);
+    const proof = (issuedAt: string) => {
+      const p: any = { format: "polaris-holder-proof/1", token_value: tv, context_id: 1, verifier_nonce: "n-1",
+        issued_at: issuedAt, algorithm: "ML-DSA-65" };
+      p.signature_hex = hex(ml_dsa65.sign(sha3_256(canon(p, ["format", "token_value", "context_id",
+        "verifier_nonce", "issued_at", "algorithm"])), hol.secretKey));
+      p.public_key_hex = hex(hol.publicKey);
+      return p;
+    };
+    const offsetless = proof("2026-05-01T00:00:00");
+    assert.equal(verifyHolder(cred, b, offsetless, "n-1", 1, "2026-05-01T00:00:30Z").proved, true,
+      "thirty seconds old, read in UTC");
+    assert.equal(verifyHolder(cred, b, offsetless, "n-1", 1, "2026-05-01T07:00:00Z").proved, false,
+      "seven hours old, read in UTC: stale, as the Python SDK decides it");
+  } finally {
+    if (zone === undefined) delete process.env.TZ; else process.env.TZ = zone;
+  }
+});
+
+// 2026-09-30: a witness threshold is a whole number of at least one. -1 was met by no
+// cosignature at all, and the two SDKs disagreed at 0.5.
+test("a witness threshold is a whole number of at least one", () => {
+  const ts = JSON.parse(readFileSync(join(ROOT, "conformance", "vectors", "timestamp-anchor-witnessed.json"), "utf8"));
+  const both = ts.anchor.cosignatures.map((c: any) => c.public_key_hex);
+  assert.equal(verifyTimestampAnchor(ts, null, both, 2).witnessed, true, "control");
+  for (const bad of [0.5, -1, 0, "2" as any, true as any, NaN]) {
+    const v = verifyTimestampAnchor(ts, null, both, bad);
+    assert.equal(v.witnessed, false, String(bad));
+    assert.match(v.note ?? "", /whole number/);
+  }
+});
+
+// 2026-09-30: a manifest set that is not an array is no manifests, as in the detached
+// verifier. `manifests ?? []` let `false`, a number or a lone object through to `.map`, which
+// threw; the Python SDK threw on `true`. A verdict, never an exception.
+test("a manifest set that is not an array is refused, never thrown", () => {
+  for (const bad of [false, true, 5, "manifests", FED.manifests.base]) {
+    const v = verifyCrossAuthority(FED.pack, FED._fixture.context_id, bad as any, [FED.trusted_anchor],
+      FED.feeds.clean, FED._fixture.now);
+    assert.equal(v.decision, "reject", String(bad));
+  }
+  assert.equal(fedDecide(), "accept", "control: the same setup with its manifest in an array");
+});
+
+
 // 2026-09-27: verifyCrossAuthority never read a signed edge's `valid_until`, so an edge its
 // authority time-boxed kept granting acceptance after the box closed while the manifest carrying
 // it was fresh (WIRE-SPEC 3.14). One signed edge in three windows, each under a fresh manifest.

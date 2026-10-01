@@ -396,7 +396,8 @@ def verify_status_assertion(assertion: dict, now=None) -> StatusAssertionVerdict
     expires_at}); freshness (now within [issued_at, expires_at)); and whether the status is
     ACTIVE. `now` is an ISO-8601 string or None for the current time. No network, no Polaris
     code. A relying party deciding authorization offline requires authentic AND fresh AND
-    active, all bound to the presented credential's token_value."""
+    active, all bound to the presented credential: the same token_value, signed by the credential's
+    own public_key_hex (WIRE-SPEC 3.5)."""
     assertion = assertion if isinstance(assertion, dict) else {}
     alg = assertion.get("algorithm")
     status = assertion.get("status")
@@ -470,6 +471,35 @@ def _revoked_root(leaves) -> str:
     return hashlib.sha3_256("\n".join(uniq).encode("utf-8")).hexdigest()
 
 
+def _count_is(count, n) -> bool:
+    """A signed count equals `n`, read as JSON: a number, never a boolean. Python's `True == 1`
+    otherwise accepts `"member_count": true` for one member, which the TypeScript SDK's `===`
+    refuses; the same artifact would get two verdicts."""
+    return isinstance(count, (int, float)) and not isinstance(count, bool) and count == n
+
+
+def _wire_int(x) -> int:
+    """An inclusion proof's index or tree size, read as a JSON integer: a finite number with
+    no fractional part, never a boolean or a string. Raises ValueError otherwise. `int()`
+    alone read 1.5 as 1 and "1" and true as 1, and the TypeScript SDK's `Number()` read null
+    and false as 0, so the same proof was anchored under one SDK and refused under the other
+    (2026-09-30)."""
+    if (isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x)
+            or (isinstance(x, float) and not x.is_integer())):
+        raise ValueError("not a JSON integer: %r" % (x,))
+    return int(x)
+
+
+def _wire_path(p) -> list:
+    """An inclusion proof's audit path: absent or null is empty, a list is read element by
+    element, and anything else is malformed rather than read as empty or iterated."""
+    if p is None:
+        return []
+    if not isinstance(p, list):
+        raise ValueError("an inclusion proof's path must be a list")
+    return [_unhex(str(x)) for x in p]
+
+
 def _members_root(members) -> str:
     if not isinstance(members, list):
         members = []
@@ -537,18 +567,39 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         return ArtifactVerdict(False, None, note, ran)
     ok = bool(ok)
     if ok and fmt == "polaris-revocation-feed/1":
-        ok = _revoked_root(obj.get("revoked_leaves")) == str(obj.get("revoked_root_hex") or "").lower()
-        note = None if ok else "the revocation feed's commitment does not match its leaves"
+        # WIRE-SPEC 3.3: `revoked_count` MUST equal the number of distinct leaves; only the root
+        # was compared until 2026-09-30, where the detached verifier compared both.
+        leaves = obj.get("revoked_leaves") if isinstance(obj.get("revoked_leaves"), list) else []
+        ok = (_revoked_root(leaves) == str(obj.get("revoked_root_hex") or "").lower()
+              and _count_is(obj.get("revoked_count"), len({str(x).lower() for x in leaves})))
+        note = None if ok else "the revocation feed's commitment or count does not match its leaves"
+    elif ok and fmt == "polaris-timestamp/1":
+        # WIRE-SPEC 3.9: `digest_algorithm` MUST be SHA3-256 and `digest_hex` its lowercase hex; and
+        # the instant must be one. Until 2026-09-30 none of the three was checked here.
+        dh = obj.get("digest_hex")
+        ok = (obj.get("digest_algorithm") == "SHA3-256" and isinstance(dh, str) and len(dh) == 64
+              and all(c in "0123456789abcdef" for c in dh))
+        if ok:
+            try:
+                _strict_instant(obj.get("issued_at"))
+            except (TypeError, ValueError):
+                ok = False
+        note = None if ok else "a timestamp binds a lowercase SHA3-256 digest at a valid instant"
     elif ok and fmt == "polaris-epoch-leaves/1":
         # P9.2: the leaves ride outside the signed statement, committed to by leaves_root_hex,
         # so a verifier checks the set with SHA3-256 alone and never needs the proving library.
         leaves = obj.get("all_leaves_hex") if isinstance(obj.get("all_leaves_hex"), list) else []
         ok = (_revoked_root(leaves) == str(obj.get("leaves_root_hex") or "").lower()
-              and len(leaves) == obj.get("leaf_count"))
+              and _count_is(obj.get("leaf_count"), len(leaves)))
         note = None if ok else "the published leaves do not match the committed set"
     elif ok and fmt == "polaris-federation-status-bundle/1":
-        ok = _members_root(obj.get("members")) == str(obj.get("members_root_hex") or "").lower()
-        note = None if ok else "the status bundle's members_root does not match its members"
+        # 2026-09-30: WIRE-SPEC 3.4 says member_count MUST equal the number of members, and
+        # only the detached verifier checked it: a bundle whose signed count and listed
+        # members disagreed was authentic here and in the TypeScript SDK.
+        members = obj.get("members") if isinstance(obj.get("members"), list) else []
+        ok = (_members_root(members) == str(obj.get("members_root_hex") or "").lower()
+              and _count_is(obj.get("member_count"), len(members)))
+        note = None if ok else "the status bundle's members_root or member_count does not match its members"
     elif ok and fmt == "polaris-federation-manifest/1":
         active = {str(a.get("public_key_hex", "")).lower() for a in (obj.get("anchors") or [])
                   if isinstance(a, dict) and (a.get("status") or "active") == "active"}
@@ -619,7 +670,7 @@ def verify_inclusion(idx: int, tree_size: int, leaf: bytes, root: bytes, proof) 
     """RFC 6962 section 2.1.1: is `leaf` the entry at `idx` in a tree of `tree_size` whose
     head is `root`? Total on hostile input: a malformed path is False, never an exception."""
     try:
-        idx, tree_size = int(idx), int(tree_size)
+        idx, tree_size = _wire_int(idx), _wire_int(tree_size)
     except (TypeError, ValueError, OverflowError):
         return False
     if idx < 0 or idx >= tree_size:
@@ -701,9 +752,9 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
         v.note = "the head is not a %s head" % _TIMESTAMP_LOG_ID
         return v
     try:
-        idx, size = int(proof.get("index")), int(proof.get("tree_size"))
+        idx, size = _wire_int(proof.get("index")), _wire_int(proof.get("tree_size"))
         root = _unhex(str(sth.get("root_hash_hex")))
-        path = [_unhex(str(x)) for x in (proof.get("proof_hex") or [])]
+        path = _wire_path(proof.get("proof_hex"))
     except (TypeError, ValueError, OverflowError):
         v.note = "malformed proof"
         return v
@@ -737,9 +788,16 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
                 if w in trusted:
                     seen.add(w)
         v.cosigner_count = len(seen)
-        v.witnessed = v.cosigner_count >= int(threshold or 1)
-        if not v.witnessed:
-            v.note = "only %d trusted witness cosignature(s) over this head, need %d" % (v.cosigner_count, threshold)
+        # A threshold is a whole number of witnesses, at least one: 0.5 and -1 were met by no
+        # cosignature at all, and the two SDKs disagreed at 0.5 (2026-09-30).
+        if (isinstance(threshold, bool) or not isinstance(threshold, (int, float))
+                or not float(threshold).is_integer() or threshold < 1):
+            v.witnessed = False
+            v.note = "the witness threshold must be a whole number of at least 1, got %r" % (threshold,)
+        else:
+            v.witnessed = v.cosigner_count >= int(threshold)
+            if not v.witnessed:
+                v.note = "only %d trusted witness cosignature(s) over this head, need %d" % (v.cosigner_count, threshold)
     return v
 
 
@@ -748,7 +806,7 @@ class CrossAuthorityVerdict:
     decision: str                    # "accept" | "reject"
     authentic: bool
     issuer_trusted: bool
-    via: Optional[str] = None
+    via: Any = None
     reason: Optional[str] = None
     # P9.5: was the trust edge signed by the agency that made it, or is it an unsigned
     # legacy row the manifest's signature carries on an operator's behalf? None when no
@@ -795,8 +853,12 @@ def verify_holder(credential: dict, binding: dict, proof: dict, expected_nonce=N
     ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(pr, keys)).digest(),
                                         pr.get("signature_hex"), pr.get("public_key_hex"), pr.get("algorithm"))
     v.proof_authentic = None if ok is None else bool(ok)
+    # The proof names the credential it is about (`token_value`, which the holder signed); it
+    # must be this one. Until 2026-09-30 only the key was compared, so a proof made for one
+    # credential passed with another bound to the same holder key.
     v.key_matches_binding = (str(pr.get("public_key_hex") or "").lower()
                              == str(b.get("holder_public_key_hex") or "").lower()
+                             and str(pr.get("token_value")) == str(b.get("token_value"))
                              and (b.get("status") or "active") == "active")
     if expected_nonce is not None:
         v.nonce_matches = (str(pr.get("verifier_nonce")) == str(expected_nonce))
@@ -860,15 +922,19 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
     trusted = {t.lower() for t in trusted_anchors} if trusted_anchors is not None else None
     via = None
     signed_edge = None
-    for m in (manifests or []):
+    # A manifest set that is not a list is no manifests, as in the detached verifier: `or []`
+    # let `true` through to the loop, which raised TypeError (2026-09-30).
+    for m in (manifests if isinstance(manifests, (list, tuple)) else []):
         m = m if isinstance(m, dict) else {}
         mv = verify_signed_artifact(m, now=now)   # manifest: signature + self-consistency + freshness
         if not (mv.authentic and mv.fresh):
             continue
-        active = {str(x.get("public_key_hex", "")).lower() for x in (m.get("anchors") or [])
-                  if isinstance(x, dict) and (x.get("status") or "active") == "active"}
-        if trusted is not None and not (active & trusted):
-            continue   # the relying party does not trust this manifest's authority
+        # Trusted iff the key that SIGNED the manifest (one of its own active anchors, which
+        # verify_signed_artifact requires) is one the relying party trusts. Until 2026-09-30 it
+        # was any key the manifest merely LISTED, so an attacker's manifest that listed the
+        # relying party's anchor beside the attacker's own root was trusted (WIRE-SPEC section 4).
+        if trusted is not None and str(m.get("public_key_hex") or "").lower() not in trusted:
+            continue   # the relying party does not trust this manifest's signer
         for att in (m.get("attestations") or []):
             if not isinstance(att, dict):
                 continue
@@ -881,7 +947,13 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
                 auth = m.get("authority") if isinstance(m.get("authority"), dict) else {}
                 av = verify_attestation(att, attesting_agency_id=auth.get("agency_id"), expected_key=token_key)
                 unsigned = not att.get("signature_hex") and not att.get("public_key_hex")
-                if not unsigned and not av.authentic:
+                # A signed edge is the attesting agency's only if one of ITS roots signed it: the
+                # key must be among the carrying manifest's active anchors (2026-09-30; until then
+                # any key's valid signature counted, so a stranger met require_signed_attestation).
+                roots = {str(x.get("public_key_hex") or "").lower() for x in (m.get("anchors") or [])
+                         if isinstance(x, dict) and (x.get("status") or "active") == "active"}
+                if not unsigned and (not av.authentic
+                                     or str(att.get("public_key_hex") or "").lower() not in roots):
                     continue    # a present-but-bad signature is worse than none: refuse the edge
                 # An edge whose own window has closed is not an edge, however fresh the manifest
                 # carrying it (WIRE-SPEC section 4). Until 2026-09-27 this decision never read
@@ -899,7 +971,10 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
     if via is None:
         return CrossAuthorityVerdict("reject", True, False,
                                      reason="no trusted authority attests to this credential's issuer in this context")
-    via_str = via if isinstance(via, str) else None
+    # The authority the edge was found under, as the manifest names it (an object), as the
+    # TypeScript SDK reports it; until 2026-09-30 anything but a string became None, so it
+    # always did.
+    via_str = via
     if revocation_feed is not None:
         # A feed that is not an object is not authentic, as in the detached verifier; the
         # binding below read `.get` off it and raised AttributeError (2026-09-28).
@@ -1175,7 +1250,7 @@ def grant_principal_bound(grant, binding, credential, now=None) -> bool:
     """Does the key that signed this grant speak for somebody?
 
     It must be the holder key an ISSUER bound to this credential, under a binding that is
-    genuine, fresh and ACTIVE. A revoked binding is published so that a verifier sees the
+    genuine, fresh and ACTIVE, and the credential's own signature must verify. A revoked binding is published so that a verifier sees the
     holder has no usable key (the lost-device case, where the key is what a thief holds); a
     grant signed with it speaks for nobody. The grant's own signature is the caller's
     `verify_signed_artifact` step.
@@ -1183,6 +1258,13 @@ def grant_principal_bound(grant, binding, credential, now=None) -> bool:
     if not isinstance(grant, dict) or not isinstance(binding, dict) or not isinstance(credential, dict):
         return False
     if binding.get("format") != "polaris-holder-binding/1":
+        return False
+    # 2026-09-30: the credential's own signature, the first link WIRE-SPEC 3.17 names. The
+    # binding was compared with the credential but the credential was never verified, so a
+    # chain signed end to end under an attacker's key, with a credential whose signature
+    # does not verify at all, was bound. Whether its issuer is one you trust is the caller's
+    # verify_authenticity(credential, anchors).
+    if not verify_authenticity(credential).authentic:
         return False
     bv = verify_signed_artifact(binding, now=now)
     return bool(bv.authentic and bv.fresh is not False

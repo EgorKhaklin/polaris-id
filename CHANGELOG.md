@@ -11,16 +11,36 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- All three verifiers trust a federation manifest only when a trusted key signed it; one that merely listed a trusted anchor was trusted.
+- All three verifiers require a signed trust edge's key to be one of the attesting authority's anchors; any key's signature counted.
+- All three verifiers require a holder proof to name the credential presented; a proof made for another credential passed.
+- `polaris-verify` holds a presentation's holder proof to `--nonce` and abstains without one; `--trusted-anchor` is a trust root on every path.
+- The TypeScript SDK reads a holder proof's age in UTC; an instant with no offset was read in the machine's time zone.
+- `polaris-verify` refuses an agent-grant chain whose credential does not verify or whose issuer is outside `--issuer-anchor`.
+- `polaris-verify` calls an agent grant usable only when all five links were supplied and checked; a bare grant was usable.
+- `polaris-verify` abstains on an agent grant or a presentation with no `--issuer-anchor`, as it already did for a pack.
+- `polaris-verify` binds a stapled status assertion to the credential's own key; another trusted authority's assertion was accepted.
+- Both SDKs verify a credential's own signature before binding an agent grant to it.
 - Every Python package the images install is hash-pinned, and liboqs builds from a checked commit; liboqs-python was unpinned and fetched it.
 - A login signs only a context the credential is permitted in; `/api/v1/auth/authorize` signed any `context_id`, even one that does not exist.
 
 ### Fixed
 
+- All three verifiers require a timestamp's digest to be lowercase SHA3-256, as WIRE-SPEC 3.9 says; SHA-1 and uppercase were accepted.
+- Both SDKs refuse a timestamp whose `issued_at` is not an instant, and a revocation feed whose `revoked_count` differs from its leaves.
+- A witness threshold is a whole number of at least 1 in all three verifiers; 0.5 and -1 were met by no cosignature.
+- The Python SDK reports the authority a cross-authority decision was made under; `via` was always empty.
 - A NUL character in a path, query, form field or JSON string is refused as bad input; it escaped as a 500.
 - Installed as a package, `polaris-id` refuses the four commands that need a clone and says which; `--version` printed `unknown`.
+- Both SDKs refuse a status bundle whose signed `member_count` differs from its members, as WIRE-SPEC 3.4 requires.
+- The three verifiers read an inclusion proof's index and size as JSON integers and its path as a list; each coerced differently.
+- Both SDKs return a verdict for a manifest set that is not a list; the Python SDK raised on `true`, the TypeScript SDK on any.
+- `polaris-verify` exits 3 on an anchor file that is not a key list; the presentation and grant paths raised.
 
 ### Changed
 
+- **Breaking**: `polaris-verify` abstains (exit 2) on a presentation carrying a holder proof when no `--nonce` is given.
+- **Breaking**: a manifest that lists a trusted anchor but is signed by another key is no longer trusted, in all three verifiers.
 - CI installs every Python dependency with `--require-hashes` from a lock; `pip-audit` and `bandit` have one of their own.
 - Published: `polaris-oid4vp` 1.0.0rc11 (not certified; 1.0.0rc7 is) and the first `polaris-id-cli`, 1.0.0rc1, on PyPI, each approved at the environment gate.
 - `publish.yml` can publish `polaris-id-cli`, gated on its wheel installing and behaving alone; every publish now waits for the maintainer to approve the run.
@@ -41,7 +61,11 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- `lab/interop/oid4vcgo` runs OID4VCgo v0.22.0, which checks the verifier's request-object chain after our report, with a fourth control.
 - `lab/interop/eudi-dev/run.sh` with `EUDI_ISSUER=1` has eudi-dev's own issuer sign the credential; the wallet canary runs it weekly.
+- Six conformance cases, each a published vector with one hostile field, pin these rules.
+- Six more, three attacks and their controls, pin who signed a manifest or a trust edge and which credential a holder proof names.
+- Nine more pin the timestamp, revocation-feed and manifest-signer rules of WIRE-SPEC 3.9, 3.3 and 3.1; the suite has 208 cases.
 
 ## v1.0.0-rc.67 — 2026-09-30 (one command to a verified result)
 

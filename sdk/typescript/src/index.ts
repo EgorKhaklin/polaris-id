@@ -383,7 +383,9 @@ function withinWindow(obj: any, now?: string | null): boolean | null {
 /** Verify a Polaris status assertion OFFLINE (P3.6, wire spec section 3.5): the ML-DSA-65
  * signature over SHA3-256(canonical statement of {format, token_value, status, issued_at,
  * expires_at}); freshness (now within [issued_at, expires_at)); and ACTIVE status. `now` is
- * an ISO-8601 string or null for the current time. No network. */
+ * an ISO-8601 string or null for the current time. No network. A relying party deciding
+ * authorization offline also requires it bound to the presented credential: the same
+ * token_value, signed by the credential's own public_key_hex (WIRE-SPEC 3.5). */
 export function verifyStatusAssertion(assertion: any, now?: string | null): StatusAssertionVerdict {
   const a = assertion ?? {};
   const status = a.status ?? null;
@@ -448,6 +450,12 @@ function revokedRoot(leaves: any): string {
   const arr: string[] = Array.isArray(leaves) ? leaves.map((x) => String(x).toLowerCase()) : [];
   const uniq = [...new Set(arr)].sort();
   return bytesToHex(sha3_256(new TextEncoder().encode(uniq.join("\n"))));
+}
+
+/** An inclusion proof's index or tree size as a JSON integer, or null: never a boolean, a
+ * string, null or a fraction, each of which `Number()` would have turned into an integer. */
+function wireInt(x: unknown): number | null {
+  return typeof x === "number" && Number.isInteger(x) ? x : null;
 }
 
 function membersRoot(members: any): string {
@@ -543,9 +551,24 @@ export function verifySignedArtifact(obj: any, now?: string | null,
     if (!ok) commitmentNote = "the published leaves do not match the committed set";
   }
   if (ok && o.format === "polaris-revocation-feed/1") {
-    ok = revokedRoot(o.revoked_leaves) === String(o.revoked_root_hex ?? "").toLowerCase();
+    // WIRE-SPEC 3.3: revoked_count MUST equal the number of distinct leaves; only the root was
+    // compared until 2026-09-30, where the detached verifier compared both.
+    const leaves = Array.isArray(o.revoked_leaves) ? o.revoked_leaves : [];
+    ok = revokedRoot(leaves) === String(o.revoked_root_hex ?? "").toLowerCase()
+      && typeof o.revoked_count === "number"
+      && o.revoked_count === new Set(leaves.map((x: any) => String(x).toLowerCase())).size;
+  } else if (ok && o.format === "polaris-timestamp/1") {
+    // WIRE-SPEC 3.9: digest_algorithm MUST be SHA3-256 and digest_hex its lowercase hex; and the
+    // instant must be one. Until 2026-09-30 none of the three was checked here.
+    ok = o.digest_algorithm === "SHA3-256" && typeof o.digest_hex === "string"
+      && /^[0-9a-f]{64}$/.test(o.digest_hex) && isoToEpoch(o.issued_at) !== null;
   } else if (ok && o.format === "polaris-federation-status-bundle/1") {
-    ok = membersRoot(o.members) === String(o.members_root_hex ?? "").toLowerCase();
+    // 2026-09-30: WIRE-SPEC 3.4 says member_count MUST equal the number of members, and only
+    // the detached verifier checked it: a bundle whose signed count and listed members
+    // disagreed was authentic here and in the Python SDK.
+    const members = Array.isArray(o.members) ? o.members : [];
+    ok = membersRoot(members) === String(o.members_root_hex ?? "").toLowerCase()
+      && typeof o.member_count === "number" && o.member_count === members.length;
   } else if (ok && o.format === "polaris-federation-manifest/1") {
     const active = new Set(
       (Array.isArray(o.anchors) ? o.anchors : [])
@@ -729,17 +752,23 @@ export function verifyTimestampAnchor(ts: any, logKey?: string | null, trustedWi
     v.note = "the head is not a " + TIMESTAMP_LOG_ID + " head";
     return v;
   }
-  const idx = Number(proof.index), size = Number(proof.tree_size);
+  // 2026-09-30: the index and tree size are JSON integers, read strictly, and a path that is
+  // not a list is malformed. `Number()` read null and false as 0 and a non-list path as empty,
+  // where the Python verifiers' `int()` read 1.5 and true as 1: the same inclusion proof was
+  // anchored under one Polaris verifier and refused under another. All three share one rule.
+  const idx = wireInt(proof.index), size = wireInt(proof.tree_size);
   let root: Uint8Array, path: Uint8Array[];
   try {
+    if (idx === null || size === null) throw new Error("not a JSON integer");
     root = hexToBytes(String(sth.root_hash_hex));
-    path = (Array.isArray(proof.proof_hex) ? proof.proof_hex : []).map((x: any) => hexToBytes(String(x)));
+    if (proof.proof_hex != null && !Array.isArray(proof.proof_hex)) throw new Error("the path is not a list");
+    path = (proof.proof_hex ?? []).map((x: any) => hexToBytes(String(x)));
   } catch (e) {
     v.note = "malformed proof";
     return v;
   }
-  v.index = Number.isInteger(idx) ? idx : null;
-  v.treeSize = Number.isInteger(size) ? size : null;
+  v.index = idx;
+  v.treeSize = size;
   if (size !== sth.tree_size ||
       String(proof.root_hash_hex ?? "").toLowerCase() !== String(sth.root_hash_hex ?? "").toLowerCase()) {
     v.note = "the proof and the head describe different trees";
@@ -764,9 +793,16 @@ export function verifyTimestampAnchor(ts: any, logKey?: string | null, trustedWi
       }
     }
     v.cosignerCount = seen.size;
-    v.witnessed = v.cosignerCount >= (threshold || 1);
-    if (!v.witnessed) {
-      v.note = "only " + v.cosignerCount + " trusted witness cosignature(s) over this head, need " + threshold;
+    // A threshold is a whole number of witnesses, at least one: -1 was met by no cosignature at
+    // all, and the two SDKs disagreed at 0.5 (2026-09-30).
+    if (!(typeof threshold === "number" && Number.isInteger(threshold) && threshold >= 1)) {
+      v.witnessed = false;
+      v.note = "the witness threshold must be a whole number of at least 1, got " + String(threshold);
+    } else {
+      v.witnessed = v.cosignerCount >= threshold;
+      if (!v.witnessed) {
+        v.note = "only " + v.cosignerCount + " trusted witness cosignature(s) over this head, need " + threshold;
+      }
     }
   }
   return v;
@@ -837,14 +873,20 @@ export function verifyHolder(credential: any, binding: any, proof: any, expected
     v.note = "verification error: " + (e as Error).message;
     return v;
   }
+  // The proof names the credential it is about (token_value, which the holder signed); it must
+  // be this one. Until 2026-09-30 only the key was compared, so a proof made for one credential
+  // passed with another bound to the same holder key.
   v.keyMatchesBinding = String(pr.public_key_hex ?? "").toLowerCase()
-    === String(b.holder_public_key_hex ?? "").toLowerCase() && (b.status ?? "active") === "active";
+    === String(b.holder_public_key_hex ?? "").toLowerCase()
+    && String(pr.token_value) === String(b.token_value) && (b.status ?? "active") === "active";
   if (expectedNonce != null) v.nonceMatches = String(pr.verifier_nonce) === String(expectedNonce);
   const ctxOk = expectedContext == null || pr.context_id === expectedContext;
-  const issued = Date.parse(String(pr.issued_at ?? ""));
-  const ref = now ? Date.parse(now) : Date.now();
-  const fresh = Number.isFinite(issued) && Number.isFinite(ref)
-    && issued <= ref + 60_000 && (ref - issued) / 1000 <= maxAgeSeconds;
+  // isoToEpoch, as every other freshness path here reads time. Date.parse read an issued_at with
+  // no offset as LOCAL time, so the replay window moved with the machine's time zone: a proof
+  // seven hours old was stale under UTC and fresh in Los Angeles (2026-09-30).
+  const issued = isoToEpoch(pr.issued_at);
+  const ref = now ? isoToEpoch(now) : Date.now() / 1000;
+  const fresh = issued !== null && ref !== null && issued <= ref + 60 && (ref - issued) <= maxAgeSeconds;
   v.proved = !!(v.bindingAuthentic && v.bindingFresh && v.boundToCredential && v.proofAuthentic
                 && v.keyMatchesBinding && v.nonceMatches !== false && ctxOk && fresh);
   if (!v.proved) v.note = "the holder proof does not chain to a fresh issuer-signed binding for this credential";
@@ -900,15 +942,16 @@ export function verifyCrossAuthority(
   const trusted = trustedAnchors != null ? new Set(trustedAnchors.map((t) => t.toLowerCase())) : null;
   let via: unknown = null;
   let signedEdge: boolean | null = null;
-  for (const mm of (manifests ?? []).map((m) => m ?? {})) {
+  // A manifest set that is not an array is no manifests, as in the detached verifier:
+  // `?? []` let `false` or an object through to `.map`, which threw (2026-09-30).
+  for (const mm of (Array.isArray(manifests) ? manifests : []).map((m) => m ?? {})) {
     const mv = verifySignedArtifact(mm, now);
     if (!(mv.authentic && mv.fresh)) continue;
-    const active = new Set<string>(
-      (Array.isArray(mm.anchors) ? mm.anchors : [])
-        .filter((x: any) => x && (x.status ?? "active") === "active")
-        .map((x: any) => String(x.public_key_hex ?? "").toLowerCase()),
-    );
-    if (trusted != null && ![...active].some((x: string) => trusted!.has(x))) continue;
+    // Trusted iff the key that SIGNED the manifest (one of its own active anchors, which
+    // verifySignedArtifact requires) is one the relying party trusts. Until 2026-09-30 it was
+    // any key the manifest merely LISTED, so an attacker's manifest that listed the relying
+    // party's anchor beside the attacker's own root was trusted (WIRE-SPEC section 4).
+    if (trusted != null && !trusted.has(String(mm.public_key_hex ?? "").toLowerCase())) continue;
     for (const att of Array.isArray(mm.attestations) ? mm.attestations : []) {
       if (att && String(att.attested_public_key_hex ?? "").toLowerCase() === tokenKey
           && contextId != null && att.context_id === contextId) {
@@ -918,7 +961,13 @@ export function verifyCrossAuthority(
         // word carried by the manifest's signature?
         const unsigned = !att.signature_hex && !att.public_key_hex;
         const av = verifyAttestation(att, mm.authority?.agency_id ?? null, tokenKey);
-        if (!unsigned && !av.authentic) continue;
+        // A signed edge is the attesting agency's only if one of ITS roots signed it: the key must
+        // be among the carrying manifest's active anchors (2026-09-30; until then any key's valid
+        // signature counted, so a stranger met requireSignedAttestation).
+        const roots = new Set<string>((Array.isArray(mm.anchors) ? mm.anchors : [])
+          .filter((x: any) => x && (x.status ?? "active") === "active")
+          .map((x: any) => String(x.public_key_hex ?? "").toLowerCase()));
+        if (!unsigned && (!av.authentic || !roots.has(String(att.public_key_hex ?? "").toLowerCase()))) continue;
         // An edge whose own window has closed is not an edge, however fresh the manifest
         // carrying it (WIRE-SPEC section 4). Until 2026-09-27 this decision never read
         // `valid_until`, and until 2026-09-28 it read it only for a SIGNED edge. A legacy edge
@@ -1228,6 +1277,11 @@ export function grantPrincipalBound(grant: any, binding: any, credential: any, n
   if (!grant || typeof grant !== "object" || !binding || typeof binding !== "object"
       || !credential || typeof credential !== "object") return false;
   if (binding.format !== "polaris-holder-binding/1") return false;
+  // 2026-09-30: the credential's own signature, the first link WIRE-SPEC 3.17 names. It was
+  // compared with the binding and never verified, so a chain signed end to end under an
+  // attacker's key, with a credential whose signature does not verify, was bound. Whether its
+  // issuer is one you trust is the caller's verifyAuthenticity(credential, anchors).
+  if (!verifyAuthenticity(credential).authentic) return false;
   const bv = verifySignedArtifact(binding, now ?? null, null);
   return !!(bv.authentic && bv.fresh !== false && (binding.status ?? "active") === "active"
     && String(binding.holder_public_key_hex ?? "").toLowerCase() === String(grant.public_key_hex ?? "").toLowerCase()

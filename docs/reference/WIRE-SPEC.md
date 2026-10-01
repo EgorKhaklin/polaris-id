@@ -19,6 +19,11 @@ in RFC 2119. A verifier that does not perform a MUST check is not conformant.
 All artifacts are UTF-8 JSON objects unless a section states otherwise (the
 authenticity pack and the published-head leaf are the two exceptions).
 
+An inclusion proof's index (`index`, `leaf_index`) and `tree_size`, and a signed
+`member_count`, `leaf_count` or `revoked_count`, are JSON numbers with no fractional part. A verifier MUST
+refuse a boolean, a string or null in their place rather than coerce it: languages coerce
+differently, so a coerced field gives one artifact two verdicts.
+
 ## 2. The signature envelope
 
 Every signed artifact except the authenticity pack is a JSON object that carries a
@@ -75,7 +80,9 @@ A verifier MUST: confirm the signature under `public_key_hex`; confirm
 `public_key_hex` is one of the manifest's own declared active `anchors` (a manifest
 MUST be self-signed by one of its roots, so a stranger key cannot mint one); and
 check freshness. With a set of trusted anchor keys, the manifest's authority is
-trusted iff one of its active anchors is trusted.
+trusted iff the key that signed it (one of its own active anchors) is trusted. An anchor
+the manifest merely lists vouches for nothing: the list is the authority's claim about
+itself, so a root becomes trusted only when the relying party adds it.
 
 ### 3.2 `polaris-epoch-checkpoint/1`
 
@@ -121,7 +128,9 @@ A short-lived, issuer-signed statement of a single credential's current status.
 Signed fields: format, token_value, status, issued_at, expires_at
 
 A verifier deciding authorization offline MUST require the assertion to be authentic,
-bound to the presented credential (`token_value`), `status == "ACTIVE"`, and fresh.
+bound to the presented credential (the same `token_value`, signed by the credential's own
+key), `status == "ACTIVE"`, and fresh. A key the verifier trusts for other credentials does
+not answer for this one.
 Note that `algorithm` is not a signed field of this artifact; a verifier MUST still
 reject a placeholder-signed assertion.
 
@@ -205,7 +214,8 @@ relying-party decision over its trusted keys.
 **Anchoring (P8.5b, minor 1.1).** At the requester's choice a timestamp MAY carry an unsigned
 `anchor` object outside the signed statement: `log_id` (`polaris-timestamp-log`),
 `timestamp_hash` (the lowercase SHA3-256 hex of the signed statement's canonical bytes), an
-RFC-6962 inclusion `proof` for that hash, the log's signed head `sth` (section 4), and
+RFC-6962 inclusion `proof` for that hash (its `index` and `tree_size` integers as section 1
+defines them, its `proof_hex` a list of node hashes), the log's signed head `sth` (section 4), and
 optionally `cosignatures` (section 4) by witnesses. The authority appends the hash to its
 append-only timestamp log only for an anchored request. A verifier that relies on an anchor
 MUST check that the proof is for this timestamp's hash, that the head is an authentic head of
@@ -331,7 +341,8 @@ widened after the fact, and the window, so it cannot be extended.
 An attestation published inside a federation manifest carries `format`, `signature_hex` and
 `public_key_hex` beside the edge's fields. A verifier MUST, when those are present, verify the
 signature over the canonical statement, MUST require `attesting_agency_id` to equal the
-publishing manifest's authority, and MUST require `attested_public_key_hex` to equal the
+publishing manifest's authority and the signing key (`public_key_hex`) to be one of that
+manifest's active anchors, and MUST require `attested_public_key_hex` to equal the
 credential key it is deciding; a present-but-invalid signature MUST refuse the edge, which is
 stricter than an absent one. An attestation with no signature is LEGACY, recorded before
 v9.348: a verifier MAY accept it for one major and MUST report that it did, and a relying
@@ -363,7 +374,8 @@ presentation, so a captured proof cannot be replayed to another verifier.
 A verifier MUST verify the binding's signature under its issuer anchors, MUST require the
 binding to be about the credential presented and signed by the same issuer key, MUST require
 the proof's signing key to equal `holder_public_key_hex` with the binding `active`, MUST
-require `verifier_nonce` to equal the one it issued, and MUST bound the proof's age. A
+require the proof's `token_value` to be the credential presented, MUST require
+`verifier_nonce` to equal the one it issued, and MUST bound the proof's age. A
 verifier that requires possession of the KEY, not only of the file, says so
 (`require_holder_proof`); until it does, a presentation with no holder proof is decided as
 before, which is how credentials issued before v9.349 stay usable.
@@ -446,7 +458,9 @@ because "this grant was revoked" and "this agent does not hold the key it names"
 different responses: the issuer's signature on the credential, the issuer's signature on the
 holder binding (section 3.15), the holder's signature on the grant, the holder's signature on
 any revocation, and the agent's signature on its proof. The grant's signing key MUST equal
-the binding's `holder_public_key_hex`.
+the binding's `holder_public_key_hex`. A link that was not supplied has not passed: a verifier
+MUST NOT report a chain usable without all five, nor one whose credential's issuer is outside
+the trust anchors it was given.
 
 What a service learns is bounded but not nothing. Under a plain holder binding it also sees
 the credential's `token_value`, so a verifier reports the correlation as `exposed`, exactly

@@ -70,7 +70,7 @@ refused (wire spec section 6).
   attested in its context at a stated instant (and by whom, for a receipt), and whether the
   bodies held match the commitments.
 
-The SDK passes every case of the conformance suite (151 cases, measured against the repository on 2026-09-27) and every case of the frozen
+The SDK passes every case of the conformance suite (208 cases, measured against the repository on 2026-09-30) and every case of the frozen
 version-1 set under `scripts/polaris-compat-suite.py --typescript-only`, which runs on every CI push.
 
 ## Running and building
@@ -102,7 +102,7 @@ python3 ../../conformance/run_conformance.py --verifier "node src/conformance.ts
 npm install polaris-sdk-ts@next
 ```
 
-A release candidate (1.0.0-rc.6) under the `next` dist-tag; a plain `npm install polaris-sdk-ts`
+A release candidate (1.0.0-rc.7) under the `next` dist-tag; a plain `npm install polaris-sdk-ts`
 resolves 0.1.0 until 1.0.0.
 
 From a clone, if you are working on the SDK itself (`npm install github:...` does not work, because
