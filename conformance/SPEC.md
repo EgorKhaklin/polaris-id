@@ -404,6 +404,18 @@ first either way. Harmonising them would be a behaviour change justified by noth
 tidiness, so the drill accounts for these two rules and **fails on any divergence outside
 them**. The known ones stay visible rather than being buried in a count.
 
+**The same question on hostile input.** A presenter does not send published cases.
+`scripts/polaris-hostile-agreement-drill.py` takes every case, replaces each node of what a
+presenter supplies with a value of the wrong JSON type or deletes it (184,331 inputs from the
+281 cases, measured 2026-10-01), and has
+all three verifiers decide each one. It fails on a verifier that raises, on any disagreement
+about the primary decision, and on any other disagreement that is not between two refusals or
+one of the conventions it names with its reason; `--prove-control` requires an inverted verdict
+to be caught. Its first run, 2026-09-30, found the disagreements the `1.0.0-rc.68` hostile-shape
+cases now pin, and one more on the handle: both SDK adapters derived a `pairwise_handle` from an
+object whose format says it is not a holder binding, where the detached verifier and this contract
+("of the bound holder key") give none. CI runs a third of the variants on every push.
+
 ## Self-certifying
 
 ```bash

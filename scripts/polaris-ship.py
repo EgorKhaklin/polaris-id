@@ -127,6 +127,7 @@ VERIFICATION = [
     (r"^sdk/|^conformance/",
      ["python3 scripts/polaris-sdk-mutation-drill.py",
       "python3 scripts/polaris-sdk-agreement-drill.py (and --prove-control)",
+      "python3 scripts/polaris-hostile-agreement-drill.py (and --prove-control)",
       "python3 scripts/polaris-contract-reach-drill.py",
       "cd sdk/python && python3 -m unittest test_sdk",
       "cd sdk/typescript && npx tsc --noEmit && node --test"],
@@ -144,7 +145,8 @@ VERIFICATION = [
     (r"^packages/polaris-verify/",
      ["python3 scripts/polaris-compat-suite.py",
       "python3 conformance/run_conformance.py --self",
-      "python3 scripts/polaris-product-boundary-drill.py"],
+      "python3 scripts/polaris-product-boundary-drill.py",
+      "python3 scripts/polaris-hostile-agreement-drill.py (and --prove-control)"],
      "the detached verifier moved: it promises no socket and no dependencies"),
     # 2026-09-23. The mutation drill that inverts a surface's refusals was named for neither
     # of the two packages: a change to the detached verifier never named the SDK mutation
