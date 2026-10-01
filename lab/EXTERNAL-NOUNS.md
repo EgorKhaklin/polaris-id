@@ -35,6 +35,7 @@ accepts everything prints the same success line.
 | 2026-09-30 | eudi-dev v2.3.7 (Go), HAIP strict, presenting a PID credential its own issuer signed (`x5c`, ISO 18013-5 document signer) | PyPI 1.0.0rc11 (c8014978); 1.0.0rc10 refused it | accepted | an unrelated CA; the answered request again | [lab/interop/eudi-dev](interop/eudi-dev/README.md#an-issuer-nobody-here-wrote-2026-09-30) |
 | 2026-09-28 | OID4VCgo 0.12.0 and 0.19.0 (Go), presenting a credential it issued under an x5c chain | this repository, 1156db81 | accepted; the wallet followed the `redirect_uri` into a 404, fixed | an unrelated CA; the answered request again; a mismatched `client_id` (the wallet refused) | [lab/interop/oid4vcgo](interop/oid4vcgo/README.md) |
 | 2026-09-30 | OID4VCgo 0.22.0 (Go), checking the verifier's request-object chain against its CA | this repository, c655b1ea | accepted; the wallet logged that it does not verify TLS | the three above, and the wallet trusting an unrelated CA for the verifier (the wallet refused) | [lab/interop/oid4vcgo](interop/oid4vcgo/README.md#v0220-the-wallet-checks-the-verifiers-chain-2026-09-30) |
+| 2026-10-01 | OID4VCgo 0.23.0 (Go), which also refuses a verifier leaf that is a CA, cannot sign, or travels with its anchor | this repository, 4e208b5a | accepted | the same four (the wallet refused) | [lab/interop/oid4vcgo](interop/oid4vcgo/README.md#v0230-the-verifiers-leaf-is-held-to-haip-2026-10-01) |
 | 2026-10-01 | Pomerium 0.33.3 (identity-aware proxy, unmodified), with the lab gate as its OIDC provider and walt.id's wallet presenting | this repository, lab/strategy/007 | admitted; the released claims reached the protected app | the issuer untrusted (refused, not admitted) | [lab/strategy/007](strategy/007/README.md) |
 | weekly since 2026-09-28 | eudi-dev v2.3.7 (by digest) and latest | the newest PyPI release | accepted (rc7, then rc8) | all three | `.github/workflows/wallet-canary.yml` |
 
@@ -62,8 +63,9 @@ interoperability run, and the criterion's blank is recorded here.
 certificate without saying so; reported as [issue 312](https://github.com/IDFoundry/OID4VCgo/issues/312),
 its author shipped v0.22.0 the same day ([PR 314](https://github.com/IDFoundry/OID4VCgo/pull/314)):
 a startup warning, an optional check of the verifier's request-object chain against configured
-anchors, and a README section on what a passing run shows. The row above is that version, checked
-here on request. It is an outside project acting on a report, not an outside party using Polaris.
+anchors, and a README section on what a passing run shows. Its author closed the issue as fixed on
+2026-10-01 and shipped v0.23.0, which also holds the verifier's leaf to HAIP 1.0 section 5. The
+last two rows are those versions, checked here on request. It is an outside project acting on a report, not an outside party using Polaris.
 
 **walt.id refused Polaris first, and was right.** `polaris-oid4vp keygen` issued a
 request-signing leaf with no `digitalSignature` key usage; eleven conformance modules, 142
@@ -92,7 +94,7 @@ The fee was waived on 2026-09-23 under the Foundation's open-source policy.
 
 It is a self-certification the Foundation reviewed and published, not an endorsement and not an
 independent verification (Certification Terms 3(e)). It covers that version in the verifier role
-on that profile. It does not cover the rest of Polaris, other versions (1.0.0rc8 to 1.0.0rc11 are
+on that profile. It does not cover the rest of Polaris, other versions (1.0.0rc8 to 1.0.0rc12 are
 not certified), the wallet role, other formats, or anything the suite does not test.
 Measured after it, on 2026-09-30: 1.0.0rc7 refuses an issuer certificate whose extended key
 usage is ISO 18013-5's document signer, as EUDI issuers' are (eudi-dev's PID Provider: its chain
@@ -123,11 +125,11 @@ become installable only when a maintainer approves them with a second factor.
 
 | Package | First | Release candidate | Current |
 |---|---|---|---|
-| `polaris-verify` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc6, 2026-10-01 |
-| `polaris-oid4vp` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc11, 2026-09-30 (1.0.0rc7 is the certified one) |
-| `polaris-sdk-python` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc6, 2026-10-01 |
+| `polaris-verify` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc7, 2026-10-01 |
+| `polaris-oid4vp` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc12, 2026-10-01 (1.0.0rc7 is the certified one) |
+| `polaris-sdk-python` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc7, 2026-10-01 |
 | `polaris-id-cli` (PyPI) | 1.0.0rc1, 2026-09-30 | 1.0.0rc1, 2026-09-30 | 1.0.0rc1, 2026-09-30 |
-| `polaris-sdk-ts` (npm) | 0.1.0, 2026-09-15 | 1.0.0-rc.1, 2026-09-16, under `next` | 1.0.0-rc.7, 2026-10-01, under `next` |
+| `polaris-sdk-ts` (npm) | 0.1.0, 2026-09-15 | 1.0.0-rc.1, 2026-09-16, under `next` | 1.0.0-rc.8, 2026-10-01, under `next` |
 
 Every run is recorded in [docs/RELEASING.md](../docs/RELEASING.md). Being installable is not
 external use: a download count is not a person.

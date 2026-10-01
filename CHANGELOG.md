@@ -43,9 +43,11 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Twenty-two more pin nonces, contexts, agencies, grant ids, actions and ids beyond 2**53, from three reviews of that fix.
 - Six conformance cases pin keys and digests as hex text; the suite has 281 cases.
 - `scripts/polaris-hostile-agreement-drill.py` has all three verifiers decide every published case with each presenter-supplied node retyped or deleted, 184,331 inputs from 281 cases; CI runs a third.
+- `lab/interop/oid4vcgo` runs OID4VCgo v0.23.0, which holds the verifier's leaf to HAIP; accepted, and all four controls refused.
 
 ### Changed
 
+- Published: `polaris-oid4vp` 1.0.0rc12 on PyPI (not certified; 1.0.0rc7 is), built before #157 and #168; 1.0.0rc13 carries them.
 - `polaris-verify` exits 4 on an unknown flag or a mistyped value, and 3 without `polaris-zk`; each exited 2.
 - `polaris-verify --pack` names another signed artifact as such, and its README separates the command from the library.
 ## v1.0.0-rc.69 — 2026-10-01 (a holder's key changes only by its own signature)

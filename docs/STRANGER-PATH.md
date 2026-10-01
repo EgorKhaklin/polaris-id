@@ -5,8 +5,8 @@ asking anyone a question.** If you cannot, that is the bug and we want to hear i
 [open a report](https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml).
 
 This page is run start to finish before it is changed, from outside the repository, against the
-package on PyPI rather than a working copy. Last walked 2026-09-30 against `polaris-oid4vp`
-1.0.0rc11 installed from the registry, with the system Python 3.9 and `waltid/wallet-api2:1.0.0`, on
+package on PyPI rather than a working copy. Last walked 2026-10-01 against `polaris-oid4vp`
+1.0.0rc12 installed from the registry, with the system Python 3.9 and `waltid/wallet-api2:1.0.0`, on
 macOS with Docker Desktop: the wallet reported `transmission_success` and the verifier printed the
 step 7 line exactly. Nothing here is from memory.
 
@@ -32,11 +32,10 @@ It installs `polaris-oid4vp` from PyPI into a venv of its own, lets the wallet g
 key, mints one credential bound to it, has the wallet present it with HAIP enforced, then runs
 three controls that must each be refused ([what they are](../lab/interop/eudi-dev/README.md)). It
 does every step for you, so it shows THAT the path works; the ten minutes below show what each
-step is. Walked 2026-09-30 as written, from an empty directory outside the repository, with the
-system Python 3.9.6 on macOS: it installed 1.0.0rc11 and printed the line above, with Docker
-Desktop in under twenty seconds once the image was local, and without Docker in fifteen seconds
-or less,
-the binary's download included.
+step is. Walked 2026-10-01 as written, from an empty directory outside the repository, with the
+system Python 3.9.6 on macOS: it installed 1.0.0rc12 and printed the line above, with Docker
+Desktop in 23 seconds once the image was local, and without Docker in 9 seconds, the binary's
+download included.
 
 ## 0. Prerequisites
 
@@ -67,7 +66,7 @@ and splitting them across two directories is the single most common way this pat
     mkdir -p ~/polaris-try && cd ~/polaris-try
     python3 -m venv .venv && . .venv/bin/activate
 
-From the registry. You do not need this repository. `--pre` because 1.0.0rc11 is a release
+From the registry. You do not need this repository. `--pre` because 1.0.0rc12 is a release
 candidate and pip skips those unless told; 0.1.0 is the previous release and also works.
 
     pip install --pre polaris-oid4vp
