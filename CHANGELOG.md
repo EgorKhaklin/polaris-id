@@ -60,6 +60,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- `lab/interop/oid4vcgo` runs OID4VCgo v0.22.0, which checks the verifier's request-object chain after our report, with a fourth control.
 - `lab/interop/eudi-dev/run.sh` with `EUDI_ISSUER=1` has eudi-dev's own issuer sign the credential; the wallet canary runs it weekly.
 - Six conformance cases, each a published vector with one hostile field, pin these rules.
 - Six more, three attacks and their controls, pin who signed a manifest or a trust edge and which credential a holder proof names.
