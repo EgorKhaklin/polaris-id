@@ -50,12 +50,25 @@ the wallet trusted an unrelated CA for the verifier and presented nothing:
     untrusted verifier: wallet: verifier certificate: certchain: certificate chain does not
     verify against a trusted root: x509: certificate signed by unknown authority
 
+## v0.23.0: the verifier's leaf is held to HAIP (2026-10-01)
+
+OID4VCgo's author closed issue 312 as fixed in v0.22.0 and said v0.23.0 goes further: the wallet
+refuses a verifier leaf that is a CA certificate or whose key usage does not allow
+`digitalSignature`, and an `x5c` that carries its own trust anchor (HAIP 1.0 section 5).
+`keygen` already makes that shape, and `test_cli` holds it there: the anchor is a CA and the leaf
+is not, the leaf's critical key usage asserts `digitalSignature`, and the chain the verifier sends
+stops below the anchor.
+
+Measured 2026-10-01 with `OID4VCGO_VERSION=v0.23.0` against this repository at 4e208b5a
+(`polaris-oid4vp` 1.0.0rc12 in the tree): accepted, `<- 200 authentic`, and all four controls
+refused, (d) with the same `certificate signed by unknown authority`.
+
 ## Versions
 
 | | |
 |---|---|
-| Wallet | `github.com/idfoundry/oid4vcgo` v0.12.0 (`h1:0S48shym0HCNkh95aBA9W+v3r5daoOVG858PX3B7RrQ=`), v0.19.0 (`h1:avvf87LFxqfqjiHFdqvqJp/A5qsV1VU9vtvvlqFJqSo=`) and v0.22.0, `cmd/conformance-wallet-vp`, built with `go install` in `golang:1.26`, run in `alpine:3.20` |
-| Verifier | `polaris-oid4vp` from this repository (its version string still reads 1.0.0rc7), because `--issuer-trust-anchor` is in no published release yet; the published 1.0.0rc7 is what [`../eudi-dev/`](../eudi-dev/README.md) exercises |
+| Wallet | `github.com/idfoundry/oid4vcgo` v0.12.0 (`h1:0S48shym0HCNkh95aBA9W+v3r5daoOVG858PX3B7RrQ=`), v0.19.0 (`h1:avvf87LFxqfqjiHFdqvqJp/A5qsV1VU9vtvvlqFJqSo=`) v0.22.0 and v0.23.0, `cmd/conformance-wallet-vp`, built with `go install` in `golang:1.26`, run in `alpine:3.20` |
+| Verifier | `polaris-oid4vp` from this repository by default, so a run tests the tree (1.0.0rc12 at 4e208b5a); `--issuer-trust-anchor`, which the run needs, is in every release from 1.0.0rc8, so `POLARIS_OID4VP=polaris-oid4vp==1.0.0rc11` runs a published one |
 | Runtime | Python 3.12, Docker 29.4.3, macOS 26.3 |
 
 ## Run it

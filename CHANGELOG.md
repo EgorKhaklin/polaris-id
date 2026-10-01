@@ -43,6 +43,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Twenty-two more pin nonces, contexts, agencies, grant ids, actions and ids beyond 2**53, from three reviews of that fix.
 - Six conformance cases pin keys and digests as hex text; the suite has 281 cases.
 - `scripts/polaris-hostile-agreement-drill.py` has all three verifiers decide every published case with each presenter-supplied node retyped or deleted, 184,331 inputs from 281 cases; CI runs a third.
+- `lab/interop/oid4vcgo` runs OID4VCgo v0.23.0, which holds the verifier's leaf to HAIP; accepted, and all four controls refused.
 
 ### Changed
 
