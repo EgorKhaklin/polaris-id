@@ -1250,9 +1250,16 @@ export function nullifiersLink(a: unknown, b: unknown): boolean {
 // ---------------------------------------------------------------------------
 
 /** Trim ASCII whitespace only, as the Python verifiers do: `trim()` also removed a byte-order
- * mark, and Python's `strip()` a file separator, so one scope gave two handles (2026-10-01). */
+ * mark, and Python's `strip()` a file separator, so one scope gave two handles (2026-10-01).
+ * A scan from each end, not a regular expression: `[ \t...]+$` retries every run of whitespace
+ * that is not at the end, quadratic in its length. */
 function asciiTrim(s: string): string {
-  return s.replace(/^[ \t\n\r\v\f]+|[ \t\n\r\v\f]+$/g, "");
+  const ws = " \t\n\r\v\f";
+  let i = 0;
+  let j = s.length;
+  while (i < j && ws.includes(s[i])) i++;
+  while (j > i && ws.includes(s[j - 1])) j--;
+  return s.slice(i, j);
 }
 
 const PAIRWISE_TAG = "polaris-pairwise/1";

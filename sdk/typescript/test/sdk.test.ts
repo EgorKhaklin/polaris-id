@@ -84,6 +84,16 @@ test("a pairwise handle trims ASCII whitespace only", () => {
   assert.notEqual(pairwiseHandle(key, "\u001cscope"), pairwiseHandle(key, "scope"), "so does a file separator");
 });
 
+test("trimming is linear in a run of whitespace inside the input", () => {
+  // A holder key arrives in a presentation. The first trim was a regular expression that took
+  // about 75 seconds on 400,000 tabs between two letters; a scan takes milliseconds.
+  const hostile = "a" + "\t".repeat(400000) + "b";
+  const start = performance.now();
+  assert.equal(pairwiseHandle(hostile, "scope") === null, false);
+  assert.equal(handlesLink(hostile, hostile), true);
+  assert.ok(performance.now() - start < 3000, "took " + Math.round(performance.now() - start) + " ms");
+});
+
 test("verifyAuthenticity answers input that is not an object", () => {
   for (const pack of [null, "x", 1, []]) {
     assert.equal(verifyAuthenticity(pack as any).authentic, false, JSON.stringify(pack));
