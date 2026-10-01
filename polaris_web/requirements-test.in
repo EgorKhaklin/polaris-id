@@ -33,3 +33,13 @@ coverage>=7.16.1,<8.0
 # names, placeholder-free f-strings), configured in ruff.toml with select = F.
 # Run by the pre-commit hook and the CI "Ruff" step; formatting is not enforced.
 ruff==0.16.9
+
+# ---- Test-only: PyYAML (the pre-commit config's detection test) ----
+# polaris_checks/test_checks.py parses .pre-commit-config.yaml to hold the hooks to one
+# command per line. CI read its pin out of the Patroni lock until 2026-09-30.
+pyyaml>=6.0.3,<7.0
+
+# ---- CI: pip itself ----
+# The workflow jobs that install this set upgraded pip with a bare, unhashed
+# `pip install --upgrade pip`; pinned here, it is hashed like everything else.
+pip

@@ -97,6 +97,7 @@ STATEMENTS = [
     ('POST /api/v1/auth/authorize', "SELECT rp_id, client_id, scope, enabled, require_zk, required_enrollment, required_context_id "
                                     "FROM RelyingParty WHERE client_id = %s", ('x',)),
     ('_check_and_record_duress (auth/authorize)', "SELECT duress_code_hash FROM IdentityToken WHERE token_id = %s", (1,)),
+    ('POST /api/v1/auth/authorize', "SELECT 1 FROM TokenPermission WHERE token_id = %s AND context_id = %s", (1, 1)),
     ('POST /api/v1/auth/authorize', "SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = %s", (1,)),
     ('_zk_verify_and_consume (auth/authorize step-up)', """
         SELECT merkle_root, valid_until, committed_count,

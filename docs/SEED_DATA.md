@@ -98,7 +98,7 @@ Both batches `committed_to_chain = FALSE` (operator-discretion field).
 
 ### `AgencyTrustAttestation` (R11-3 / M2-8: v8.22)
 
-Six seed attestations explaining the 8 demo verifications:
+Eight seed attestations explaining the 8 demo verifications:
 
 - TSA (4) → federal NY (1) for TRAVEL
 - TSA (4) → CA (3) for TRAVEL
@@ -106,9 +106,12 @@ Six seed attestations explaining the 8 demo verifications:
 - Bank (5) → federal NY (1) for BANKING
 - Bank (5) → CA (3) for BANKING
 - Bank (5) → PA (2) for BANKING
+- federal NY (1) → CA (3) for EMPLOYMENT (verification 2)
+- Allegheny County Health (6) → federal NY (1) for GOVERNMENT_BENEFITS (verification 6)
 
-NO transitive trust. No HEALTHCARE attestations (Maria's HEALTHCARE
-verifications happen at same-agency CA: implicit trust).
+NO transitive trust. No HEALTHCARE attestations; the demo holds no
+HEALTHCARE verification. Until 2026-09-30 the last two rows were
+missing, and verifications 2 and 6 were successes the trust rule refuses.
 
 ### `TokenStateEpoch` (R10-1 / M2-1: v8.23)
 

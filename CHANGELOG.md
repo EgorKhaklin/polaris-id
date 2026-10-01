@@ -22,6 +22,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-verify` binds a stapled status assertion to the credential's own key; another trusted authority's assertion was accepted.
 - Both SDKs verify a credential's own signature before binding an agent grant to it.
 - Every Python package the images install is hash-pinned, and liboqs builds from a checked commit; liboqs-python was unpinned and fetched it.
+- A login signs only a context the credential is permitted in; `/api/v1/auth/authorize` signed any `context_id`, even one that does not exist.
 
 ### Fixed
 
@@ -38,6 +39,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- **Breaking**: `polaris-verify` abstains (exit 2) on a presentation carrying a holder proof when no `--nonce` is given.
+- **Breaking**: a manifest that lists a trusted anchor but is signed by another key is no longer trusted, in all three verifiers.
+- CI installs every Python dependency with `--require-hashes` from a lock; `pip-audit` and `bandit` have one of their own.
 - Published: `polaris-oid4vp` 1.0.0rc11 (not certified; 1.0.0rc7 is) and the first `polaris-id-cli`, 1.0.0rc1, on PyPI, each approved at the environment gate.
 - `publish.yml` can publish `polaris-id-cli`, gated on its wheel installing and behaving alone; every publish now waits for the maintainer to approve the run.
 - Published: `polaris-sdk-ts` 1.0.0-rc.6 on npm under `next`, approved by the maintainer with a second factor.
@@ -46,6 +50,12 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Fixed
 
 - `polaris-ship.py triage` names a job GitHub never gave a runner, from its annotation, instead of calling the finished run unknown.
+- Two image checks read each Dockerfile's instructions, not its comments, and require a hash-checked install in every image; a comment could pass for one.
+- A login's requested enrollment status applies alongside the registered one, and a malformed requirement is refused; the registered status replaced the request's.
+- An operator cannot record a SUCCESS in a context the credential is not permitted in; UNAUTHORIZED records that presentation.
+- An operator's SELECTIVE success names its credential; one naming none passed every success rule unchecked.
+- The sample data's trust graph explains every sample verification; two cross-agency successes had no attestation.
+- SECURITY-CONTROLS and the threat model say what the definer routines bound: their rules, not their caller. The threat model said none existed.
 - `polaris-oid4vp` accepts an issuer certificate whose extended key usage is ISO 18013-5's document signer, as EUDI issuers' are; it refused eudi-dev's PID Provider.
 
 ### Added
