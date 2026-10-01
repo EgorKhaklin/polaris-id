@@ -158,8 +158,7 @@ export function verifyAuthenticity(pack: Pack, anchors?: string[] | null): Authe
   let issuerTrusted: boolean | null = null;
   let note: string | undefined;
   if (anchors != null) {
-    const set = new Set(anchors.map((a) => a.toLowerCase()));
-    issuerTrusted = set.has(pkHex.toLowerCase());
+    issuerTrusted = hexIn(pkHex, anchors.map((a) => hexText(a)));
     if (ok && !issuerTrusted) note = "signature is genuine but its key is not in the trusted issuer anchors";
   }
   return { authentic: ok, issuerTrusted, algorithm: alg, note };

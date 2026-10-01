@@ -241,7 +241,7 @@ def verify_authenticity(pack: dict, anchors=None) -> AuthenticityVerdict:
     trusted = None
     note = None
     if anchors is not None:
-        trusted = pk_hex.lower() in {a.lower() for a in anchors}
+        trusted = _hex_in(pk_hex, {_hex_text(a) for a in anchors})
         if ok and not trusted:
             note = "signature is genuine but its key is not in the trusted issuer anchors"
     return AuthenticityVerdict(bool(ok), trusted, alg, note=note, witnesses=ran)

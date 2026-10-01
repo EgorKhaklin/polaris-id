@@ -371,7 +371,7 @@ def verify_pack(pack: dict, anchor_keys=None) -> dict:
     verdict["authenticity"] = "genuine" if ok else "forged-or-tampered"
 
     if anchor_keys is not None:
-        trusted = pk_hex.lower() in {a.lower() for a in anchor_keys}
+        trusted = _hex_in(pk_hex, {_hex_text(a) for a in anchor_keys})
         verdict["issuer_trusted"] = trusted
         if ok and not trusted:
             verdict["note"] = ("signature is genuine but its public key is NOT in the issuer "
@@ -656,7 +656,7 @@ def verify_status_assertion(assertion, now=None, max_window_seconds=None, anchor
     elif not window_ok:
         v["note"] = "window %ds exceeds the accepted maximum %ds" % (int(window), max_window_seconds)
     if anchor_keys is not None:
-        v["issuer_trusted"] = pk_hex.lower() in {a.lower() for a in anchor_keys}
+        v["issuer_trusted"] = _hex_in(pk_hex, {_hex_text(a) for a in anchor_keys})
     return v
 
 
@@ -1206,7 +1206,7 @@ def verify_epoch_checkpoint(cp, now=None, max_window_seconds=None, issuer_key=No
         return v
     _verify_window(cp, v, now, max_window_seconds)
     if issuer_key is not None:
-        v["issuer_matches"] = (pk_hex.lower() == issuer_key.lower())
+        v["issuer_matches"] = _same_hex(pk_hex, issuer_key)
     return v
 
 
@@ -1327,7 +1327,7 @@ def verify_revocation_feed(feed, now=None, max_window_seconds=None, issuer_key=N
     v["feed_authentic"] = True
     _verify_window(feed, v, now, max_window_seconds)
     if issuer_key is not None:
-        v["issuer_matches"] = (pk_hex.lower() == issuer_key.lower())
+        v["issuer_matches"] = _same_hex(pk_hex, issuer_key)
     return v
 
 
@@ -1486,7 +1486,7 @@ def verify_status_bundle(bundle, now=None, max_window_seconds=None, publisher_ke
     v["bundle_authentic"] = True
     _verify_window(bundle, v, now, max_window_seconds)
     if publisher_key is not None:
-        v["publisher_matches"] = (pk_hex.lower() == publisher_key.lower())
+        v["publisher_matches"] = _same_hex(pk_hex, publisher_key)
     return v
 
 
@@ -2420,7 +2420,7 @@ def document_signature_material(doc):
     MUST match polaris_web/app.py's _document_signature_material."""
     if not isinstance(doc, dict):
         return b""
-    return _signed_document_canonical(doc) + b"\n" + _hex_text(doc.get("signature_hex")).encode("utf-8")
+    return _signed_document_canonical(doc) + b"\n" + str(doc.get("signature_hex") or "").lower().encode("utf-8")
 
 
 def is_revoked_leaf(feed, leaf_hex):
@@ -2922,7 +2922,7 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
         return v
     v["receipt_authentic"] = True
     if responder_key is not None:
-        v["responder_matches"] = (pk_hex.lower() == responder_key.lower())
+        v["responder_matches"] = _same_hex(pk_hex, responder_key)
     # The responder a receipt names is its signer's claim until `responder_key` shows the signer
     # IS that responder (2026-09-30: a stranger's receipt reported the victim it named).
     if v["responder_matches"] is True:
@@ -3150,7 +3150,7 @@ def verify_sth(sth, issuer_key=None):
     if not ok:
         v["note"] = "STH signature is invalid"
     if issuer_key is not None:
-        v["issuer_matches"] = (pk_hex.lower() == issuer_key.lower())
+        v["issuer_matches"] = _same_hex(pk_hex, issuer_key)
     return v
 
 
@@ -3259,7 +3259,7 @@ def verify_cosignature(cosig, witness_key=None):
     if not ok:
         v["note"] = "cosignature signature is invalid"
     if witness_key is not None:
-        v["witness_matches"] = (pk_hex.lower() == witness_key.lower())
+        v["witness_matches"] = _same_hex(pk_hex, witness_key)
     return v
 
 
@@ -3278,7 +3278,7 @@ def verify_witnessed_checkpoint(sth, cosignatures, trusted_witnesses, threshold=
         return {"witnessed": False, "cosigner_count": 0, "note": "the STH is not log-authentic"}
     if issuer_key is not None and sv["issuer_matches"] is False:
         return {"witnessed": False, "cosigner_count": 0, "note": "the STH is not signed by the expected log key"}
-    trusted = {t.lower() for t in (trusted_witnesses or [])}
+    trusted = {_hex_text(t) for t in (trusted_witnesses or [])}
     seen = set()
     # A list, or nothing witnessed: `True` raised TypeError out of verify_timestamp_anchor,
     # which says it is total on hostile input (2026-09-28).
@@ -3289,7 +3289,7 @@ def verify_witnessed_checkpoint(sth, cosignatures, trusted_witnesses, threshold=
         if (c.get("log_id") == sth.get("log_id") and c.get("tree_size") == sth.get("tree_size")
                 and _same_hex(c.get("root_hash_hex"), sth.get("root_hash_hex"))):
             w = _hex_text(c.get("public_key_hex"))
-            if w in trusted:
+            if w is not None and w in trusted:
                 seen.add(w)
     n = len(seen)
     ok = n >= threshold
@@ -3339,7 +3339,7 @@ _PUBLICATION_FORMAT = "polaris-transparency-publication/1"
 def _publication_entry(log_id, tree_size, root_hash_hex):
     """The stable string a ledger records to publish a log head. It binds the head's full
     identity so a receipt cannot be transplanted onto a different head."""
-    return "polaris-published-head/1|%s|%s|%s" % (log_id, tree_size, _hex_text(root_hash_hex))
+    return "polaris-published-head/1|%s|%s|%s" % (log_id, tree_size, (root_hash_hex or "").lower())
 
 
 def verify_publication(log_sth, receipt, ledger_key):

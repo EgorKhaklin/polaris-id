@@ -1179,6 +1179,15 @@ class ParityWithTheTypeScriptSdkTests(unittest.TestCase):
         self.assertIs(pv.agent_proof_proves(proof, dict(self.GRANT, agent_public_key_hex=["ab"]), "read", 0), False)
         self.assertIs(pv.agent_proof_proves(proof, dict(self.GRANT, agent_public_key_hex="AB"), "read", 0), True)
 
+    @unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+    def test_anchors_that_are_not_text_are_skipped_not_raised(self):
+        """`a.lower()` raised AttributeError on an anchor list holding null (2026-10-01)."""
+        cred = _vector("ml-dsa-65-valid.json")
+        v = pv.verify_authenticity(cred, [None, 7, cred["public_key_hex"].upper()])
+        self.assertIs(v.authentic, True)
+        self.assertIs(v.issuer_trusted, True)
+        self.assertIs(pv.verify_authenticity(cred, [None]).issuer_trusted, False)
+
     def test_an_id_is_the_same_string_or_integer(self):
         """An agency or context id: True is not 1, and a missing id is not a null one."""
         self.assertTrue(pv._same_id(1, 1) and pv._same_id("B", "B"))

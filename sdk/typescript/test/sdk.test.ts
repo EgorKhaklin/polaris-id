@@ -115,6 +115,14 @@ test("a key is hex text: a key held in a list is not the key", () => {
   assert.equal(revocationEndsGrant({ ...rev }, { grant_id: "g-1" }), false, "two missing keys are not one holder");
 });
 
+test("anchors that are not text are skipped, not thrown on", () => {
+  const cred = vec("ml-dsa-65-valid.json");
+  const v = verifyAuthenticity(cred, [null as any, 7 as any, cred.public_key_hex.toUpperCase()]);
+  assert.equal(v.authentic, true);
+  assert.equal(v.issuerTrusted, true);
+  assert.equal(verifyAuthenticity(cred, [null as any]).issuerTrusted, false);
+});
+
 test("a revocation names its grant as text", () => {
   const rev = { format: "polaris-grant-revocation/1", public_key_hex: "cd" };
   const grant = { public_key_hex: "cd" };

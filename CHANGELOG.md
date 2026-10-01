@@ -48,6 +48,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - All three verifiers trim only ASCII whitespace from a pairwise handle or nullifier; other Unicode spaces split the SDKs.
 - The TypeScript SDK refuses a credential that is not an object instead of throwing, and checks each grant limit and the use count alone.
 - The Python SDK reports no nonce match for a holder proof it cannot check, as the TypeScript SDK does.
+- A trusted anchor, witness or log key that is not text matches nothing in all three verifiers; each raised on it.
 - The rc.68 notes list only what rc.68 released; a merge after the cut had filed the `polaris-oid4vp` 1.0.0rc12 lines there.
 
 ### Added
