@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Egor Khaklin and the Polaris contributors
-"""Generate the SDK parity vectors and cases (1.0.0-rc.69).
+"""Generate the SDK parity vectors and cases (1.0.0-rc.70).
 
 A function-by-function comparison of the two reference SDKs found signed bytes on which they
 answered differently, and no published case constrained the answer:
@@ -33,7 +33,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT = ROOT / "conformance" / "vectors"
 CASES = ROOT / "conformance" / "cases.json"
-SINCE = "1.0.0-rc.69"
+SINCE = "1.0.0-rc.70"
 VEC = "conformance/vectors/"
 
 

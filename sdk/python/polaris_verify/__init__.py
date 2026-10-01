@@ -651,14 +651,14 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
     elif ok and fmt == "polaris-registry/1":
         pub = obj.get("publisher") if isinstance(obj.get("publisher"), dict) else {}
         listed = [str(a.get("public_key_hex") or "").lower() for a in (obj.get("authorities") or [])
-                  if isinstance(a, dict) and _same_agency(a.get("agency_id"), pub.get("agency_id"))
+                  if isinstance(a, dict) and _same_id(a.get("agency_id"), pub.get("agency_id"))
                   and _status_of(a) == "active"]
         ok = str(obj.get("public_key_hex") or "").lower() in listed
         note = None if ok else "the registry is not signed by the key it lists for its own publisher"
     elif ok and fmt == "polaris-trust-list/1":
         pub = obj.get("publisher") if isinstance(obj.get("publisher"), dict) else {}
         active = [str(k.get("public_key_hex") or "").lower() for k in (obj.get("keys") or [])
-                  if isinstance(k, dict) and _same_agency(k.get("agency_id"), pub.get("agency_id")) and k.get("status") == "active"]
+                  if isinstance(k, dict) and _same_id(k.get("agency_id"), pub.get("agency_id")) and k.get("status") == "active"]
         ok = str(obj.get("public_key_hex") or "").lower() in active
         note = None if ok else "the trust list is not signed by a key it lists as active for its own publisher"
     # A replay-windowed format answers freshness the other way round; _within_window
@@ -909,7 +909,7 @@ def verify_holder(credential: dict, binding: dict, proof: dict, expected_nonce=N
     # without the verifier's challenge, was proved.
     av = verify_authenticity(cred, anchors)
     v.credential_authentic, v.issuer_trusted = av.authentic, av.issuer_trusted
-    v.bound_to_credential = (str(b.get("token_value")) == str(cred.get("token_value"))
+    v.bound_to_credential = (_wire_text_equal(b.get("token_value"), cred.get("token_value"))
                              and str(b.get("public_key_hex") or "").lower()
                              == str(cred.get("public_key_hex") or "").lower())
     keys = _ARTIFACT_KEYS["polaris-holder-proof/1"]
@@ -927,11 +927,14 @@ def verify_holder(credential: dict, binding: dict, proof: dict, expected_nonce=N
     # credential passed with another bound to the same holder key.
     v.key_matches_binding = (str(pr.get("public_key_hex") or "").lower()
                              == str(b.get("holder_public_key_hex") or "").lower()
-                             and str(pr.get("token_value")) == str(b.get("token_value"))
+                             and _wire_text_equal(pr.get("token_value"), b.get("token_value"))
                              and _status_of(b) == "active")
+    # A nonce and a context read as the TypeScript SDK reads them: str() spelled true "True" and
+    # 1e-05 "1e-05" where String() spells them "true" and "0.00001", and == read True as context 1
+    # (2026-10-01).
     if expected_nonce is not None:
-        v.nonce_matches = (str(pr.get("verifier_nonce")) == str(expected_nonce))
-    ctx_ok = expected_context is None or pr.get("context_id") == expected_context
+        v.nonce_matches = _wire_text_equal(pr.get("verifier_nonce"), expected_nonce)
+    ctx_ok = expected_context is None or _same_id(pr.get("context_id"), expected_context)
     issued = _iso_to_epoch(pr.get("issued_at"))
     ref = _iso_to_epoch(now) if now else __import__("time").time()
     fresh = issued is not None and ref is not None and issued <= ref + 60 and (ref - issued) <= max_age_seconds
@@ -973,7 +976,7 @@ def verify_attestation(att: dict, attesting_agency_id=None, expected_key=None) -
                                         a.get("signature_hex"), a.get("public_key_hex"), a.get("algorithm"))
     if ok is None:
         return ArtifactVerdict(False, None, note, ran)
-    if ok and attesting_agency_id is not None and a.get("attesting_agency_id") != attesting_agency_id:
+    if ok and attesting_agency_id is not None and not _same_id(a.get("attesting_agency_id"), attesting_agency_id):
         return ArtifactVerdict(False, None, "the attestation names a different attesting agency "
                                             "than the manifest that published it", ran)
     if ok and expected_key is not None and \
@@ -1025,7 +1028,7 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
             if not isinstance(att, dict):
                 continue
             if (str(att.get("attested_public_key_hex") or "").lower() == token_key
-                    and context_id is not None and att.get("context_id") == context_id):
+                    and _same_id(att.get("context_id"), context_id)):
                 # In-context means a context was presented (WIRE-SPEC section 4); before
                 # 2026-09-27 a missing one matched an edge from ANY context.
                 # P9.5: is the edge signed by the agency that made it, or is it the
@@ -1376,23 +1379,44 @@ def grant_principal_bound(grant, binding, credential, now=None) -> bool:
                 == str(credential.get("public_key_hex") or "").lower())
 
 
-def _same_agency(a, b):
-    """Two agency ids name the same agency only when both are integers and equal. `==` let a
-    missing id match a null one (None == None) and True match 1, where the TypeScript SDK's
-    `===` refused both (2026-10-01)."""
-    return (isinstance(a, int) and not isinstance(a, bool) and isinstance(b, int)
-            and not isinstance(b, bool) and a == b)
+#: The largest integer both languages hold exactly. JavaScript reads a larger one as the nearest
+#: double, so 2**64 and 2**64 + 1 are one number in the TypeScript SDK and two here.
+_MAX_SAFE_INTEGER = 2 ** 53 - 1
+
+
+def _safe_int(x):
+    """An integer, not a boolean, that JavaScript holds exactly."""
+    return isinstance(x, int) and not isinstance(x, bool) and abs(x) <= _MAX_SAFE_INTEGER
+
+
+def _same_id(a, b):
+    """Two agency or context ids name the same one only when both are strings, or both integers
+    JavaScript holds exactly, and equal: what the TypeScript SDK's `===` gives on values both
+    languages read alike. `==` let a missing id match a null one (None == None) and True match 1,
+    where `===` refused both (2026-10-01)."""
+    if isinstance(a, str) and isinstance(b, str):
+        return a == b
+    return _safe_int(a) and _safe_int(b) and a == b
 
 
 def _wire_text(x):
-    """A string or an integer as the text the TypeScript SDK's String() gives it, else None.
-    `str(x or "")` read 0 as missing, and `str()` writes 1.0 as "1.0" and True as "True" where
-    String() writes "1" and "true", so a proof naming nonce 0 failed here and passed there."""
+    """A string, or an integer JavaScript holds exactly, as the text the TypeScript SDK's String()
+    gives it; anything else None. `str(x or "")` read 0 as missing, and `str()` writes 1.0 as
+    "1.0" and True as "True" where String() writes "1" and "true", so a proof naming nonce 0
+    failed here and passed there."""
     if isinstance(x, str):
         return x
-    if isinstance(x, int) and not isinstance(x, bool):
+    if _safe_int(x):
         return str(x)
     return None
+
+
+def _wire_text_equal(signed, expected):
+    """The signed field names the expected value: both have a wire text and it is the same. A
+    value with none (absent, null, a boolean, a fraction, a container) matches nothing; compared
+    bare, None == None let a proof naming no nonce match an expected nonce of 1.5 (2026-10-01)."""
+    t = _wire_text(signed)
+    return t is not None and t == _wire_text(expected)
 
 
 def agent_proof_proves(proof, grant, action=None, nonce=None) -> bool:
@@ -1408,15 +1432,15 @@ def agent_proof_proves(proof, grant, action=None, nonce=None) -> bool:
         return False
     if proof.get("format") != "polaris-agent-proof/1":
         return False
-    if _wire_text(proof.get("grant_id")) is None or _wire_text(proof.get("grant_id")) != _wire_text(grant.get("grant_id")):
+    if not _wire_text_equal(proof.get("grant_id"), grant.get("grant_id")):
         return False
     if str(proof.get("public_key_hex") or "").lower() != str(grant.get("agent_public_key_hex") or "").lower():
         return False
     if grant.get("agent_algorithm") is not None and proof.get("algorithm") != grant.get("agent_algorithm"):
         return False
-    if nonce is not None and _wire_text(proof.get("service_nonce")) != _wire_text(nonce):
+    if nonce is not None and not _wire_text_equal(proof.get("service_nonce"), nonce):
         return False
-    if action is not None and _wire_text(proof.get("action")) != _wire_text(action):
+    if action is not None and not _wire_text_equal(proof.get("action"), action):
         return False
     return True
 
@@ -1483,7 +1507,7 @@ def _exchange_authorities(key_hex, context_id, manifests, now=None):
             continue
         if any(isinstance(att, dict)
                and str(att.get("attested_public_key_hex") or "").lower() == want
-               and att.get("context_id") == context_id
+               and _same_id(att.get("context_id"), context_id)
                and _attestation_open(att, now)
                for att in (m.get("attestations") if isinstance(m.get("attestations"), list) else [])):
             found.append(m.get("authority"))

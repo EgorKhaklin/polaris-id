@@ -3165,7 +3165,7 @@
       "expect": {
         "authentic": true
       },
-      "since": "1.0.0-rc.69",
+      "since": "1.0.0-rc.70",
       "note": "Year 99, a valid RFC 3339 year. Both Python verifiers read it; the TypeScript SDK's Date.UTC read it as 1999 and its own check then refused the date."
     },
     {
@@ -3175,7 +3175,7 @@
       "expect": {
         "authentic": false
       },
-      "since": "1.0.0-rc.69",
+      "since": "1.0.0-rc.70",
       "note": "An offset of 24 hours is not one RFC 3339 allows; the TypeScript SDK read it."
     },
     {
@@ -3185,7 +3185,7 @@
       "expect": {
         "authentic": false
       },
-      "since": "1.0.0-rc.69",
+      "since": "1.0.0-rc.70",
       "note": "A year in Arabic-Indic digits. Python's `\\d` matched them and int() converted them."
     },
     {
@@ -3195,7 +3195,7 @@
       "expect": {
         "authentic": false
       },
-      "since": "1.0.0-rc.69",
+      "since": "1.0.0-rc.70",
       "note": "A leading byte-order mark, which the TypeScript SDK's trim() removed."
     },
     {
@@ -3205,7 +3205,7 @@
       "expect": {
         "authentic": false
       },
-      "since": "1.0.0-rc.69",
+      "since": "1.0.0-rc.70",
       "note": "A leading file separator, which Python's strip() removed."
     },
     {
@@ -3216,7 +3216,7 @@
       "expect": {
         "authentic": true
       },
-      "since": "1.0.0-rc.69",
+      "since": "1.0.0-rc.70",
       "note": "A genuine grant whose signed max_amount is 0.000015, which the signer writes as 1.5e-05. The TypeScript SDK wrote it as 0.000015 when it rebuilt the statement, and refused the grant."
     },
     {
@@ -3228,7 +3228,7 @@
         "authentic": true,
         "fresh": true
       },
-      "since": "1.0.0-rc.69",
+      "since": "1.0.0-rc.70",
       "note": "A genuine registry whose signed instance holds a key outside the Basic Multilingual Plane. Python sorts it after \"\\uffff\" (code point); the TypeScript SDK sorted it before (UTF-16 unit) and refused the registry."
     },
     {
@@ -3239,7 +3239,7 @@
       "expect": {
         "authentic": false
       },
-      "since": "1.0.0-rc.69",
+      "since": "1.0.0-rc.70",
       "note": "A registry whose publisher names no agency id, signed by a key listed for an authority whose id is null. Python's == matched the two; the TypeScript SDK did not."
     },
     {
@@ -3250,7 +3250,7 @@
       "expect": {
         "authentic": false
       },
-      "since": "1.0.0-rc.69",
+      "since": "1.0.0-rc.70",
       "note": "A trust list whose publisher's agency id is the boolean true, signed by a key listed for agency 1. Python's == read True as 1; the TypeScript SDK did not."
     },
     {
@@ -3262,8 +3262,176 @@
         "authentic": true,
         "fresh": true
       },
-      "since": "1.0.0-rc.69",
+      "since": "1.0.0-rc.70",
       "note": "The positive control: the published trust list, signed by a key it lists for its own publisher."
+    },
+    {
+      "name": "holder-chain-verifier-nonce-control",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/parity2-holder-credential.json",
+      "binding_file": "conformance/vectors/parity2-holder-binding.json",
+      "proof_file": "conformance/vectors/parity2-holder-proof-verifier-nonce-control.json",
+      "expected_nonce": "parity-2-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": true
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The positive control: a proof naming the relying party's nonce, as text, in context 1."
+    },
+    {
+      "name": "holder-chain-verifier-nonce-boolean",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/parity2-holder-credential.json",
+      "binding_file": "conformance/vectors/parity2-holder-binding.json",
+      "proof_file": "conformance/vectors/parity2-holder-proof-verifier-nonce-boolean.json",
+      "expected_nonce": "true",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A proof whose signed verifier_nonce is the boolean true, checked against the nonce \"true\". A nonce is text; true is not. The TypeScript SDK's String() spelled it \"true\" and proved the chain; Python's str() spelled it \"True\" and did not."
+    },
+    {
+      "name": "holder-chain-verifier-nonce-small-number",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/parity2-holder-credential.json",
+      "binding_file": "conformance/vectors/parity2-holder-binding.json",
+      "proof_file": "conformance/vectors/parity2-holder-proof-verifier-nonce-small-number.json",
+      "expected_nonce": "0.00001",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A proof whose signed verifier_nonce is the number 0.00001 (signed as 1e-05), checked against the nonce \"0.00001\". The TypeScript SDK's String() wrote \"0.00001\" and proved the chain; Python's str() wrote \"1e-05\" and did not."
+    },
+    {
+      "name": "holder-chain-context-boolean",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/parity2-holder-credential.json",
+      "binding_file": "conformance/vectors/parity2-holder-binding.json",
+      "proof_file": "conformance/vectors/parity2-holder-proof-context-boolean.json",
+      "expected_nonce": "parity-2-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A proof whose signed context_id is the boolean true, checked in context 1. Python's == read true as 1 and proved the chain; the TypeScript SDK's === did not. A context is an id, and true is not one."
+    },
+    {
+      "name": "trust-attestation-attesting-agency-control",
+      "artifact": "trust-attestation",
+      "object_file": "conformance/vectors/parity2-attestation-attesting-agency-control.json",
+      "attesting_agency_id": 1,
+      "expect": {
+        "authentic": true
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The positive control: an attestation by agency 1, checked for agency 1."
+    },
+    {
+      "name": "trust-attestation-attesting-agency-boolean",
+      "artifact": "trust-attestation",
+      "object_file": "conformance/vectors/parity2-attestation-attesting-agency-boolean.json",
+      "attesting_agency_id": 1,
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "An attestation whose signed attesting_agency_id is the boolean true, checked for agency 1. Python's == read true as 1 and relied on it; the TypeScript SDK's === did not."
+    },
+    {
+      "name": "cross-authority-edge-context-control",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/parity2-edge-pack.json",
+      "manifest_files": [
+        "conformance/vectors/parity2-edge-manifest-context-control.json"
+      ],
+      "trusted_anchors": [
+        "9d23aa0a8f7e19acc6209684280881417f7d67fb9cf7ef073d5428947bc0bd35c3358f05ee248dafffe3d3d741c074cecfa7c66d3b0481a783e9e66fdd2ca4c3ae7316feb47eb5fc1ac0d859662a65f71b0435dccb9eedb70bbdb4fa565bf3256a2dd219a2078b3a454299203539b477f77ae82ffd701b2843de68bdf38f44000714713c1602b5d8424fbd7c819f999692bde2e03cd833d38457a08b0af03eab2ea3024021541981cc0114fcdf9839f131526c2480fd0b9c965df13f73fbafac6ecc2433d8da8e890fd07761a7705414a9c704ab72e8271ea3d21cad8bdb68442fc6d7798e185199ca9c8ee6fc7a8b879ecf080b8c8e1eaf54545cfc73e6b55d4585d0309f0f4fd600f2c355455f59521b87af52836bafa10675a8db7c174d386bf20bea568617ae387a31c2ffa7a3a9dc72af7fd9aeb22c59e24105ad9504a6a8737a74d6760f5c0bdeee7e1ca05b94d35ed6f268a421f510bd91ed2a4ac228f1961d50d622535e6b9b9b9d80a572c18e166231bc6248a7af6f2d42602591ba547d35cfc55d549d7092509dd21953354f3781456b13b29a8169db3b349f8c9c69e66a56acdd05d3a0efc1e64aaad621fdbf33747b09e0f61cccb98ef0b4216119e1cfc3f4226c65417e73b44f3831964ccf637c92d06290490c7555ee53a1e88a4afaf1bbd1818d1db458deab0f2f39580fea752a7b1da1cfc03cfb59394eb178ea918e4067e41ff6007b968e3c1caa79bc1dcd8fcf73dfabf636d28576f215286233a32e60a7355af2184b69587233f289d6d0c62913d161cbe8eac2c08a8a775f1f0dcbbe91b2efdee2c77a2ef61802676872b8df70557d95f01c18a09c251c731d85674d8a6e435918b8890c645b6efcebc9bd24d06fe876944b9ce3f4944fe852fbcbfd14914d0c837d9d54e9cb0524714b7c22da0f5cf998576c0859d8f0d1ef0419929db2f0c2618480fd1456a40b520efeb3688c9962ccf2bd7717e3d073d77477cabc817a17309f0d40db1768610d7f5671d090344d3fcd07616d821582ae761be4240ba312f9402e3b5b4ea6e17302ff1f31435527144354cb8409ca82b370e7f59a1d534ca4e52a36145fc26d8d972cc3cf08beb7bad479984c05d0b362d11d864a6a179be8648b41efe53c83c2a2a74ed3c906b0cbdee09783a07de1bda50fe149e2c8956b4d9ce8b41a3fc32d81bad44d4637686ebe340a301777817a5f6ec2e3fce7a9e6891704e688e1b83ed3119572b8c847289e9161ea648217a5a5ae16eed696a2437c54c75a92ae8532b8797ba04c7c911f3e52764b1489e534d3db20995ed20a270dfa054e901f2e5099da004c486e5295fcec92a604b0507ef59f2a0a10033f925b4204b96138d442c593daf5f986d7e982dde4c8fbbab748b4cd6da1f71d0cdc9648dfaa25db148ad037e9e81fe074f4accd7b16742ac7617c02e4b92250cba82195f7b23f04a00299d703af4740a2121c755df64614c52a89a6a9032f0d5ca88a61a2c374285bbb9ccdcc4376c72f3b139c36fe2f73ca3bb4cc0f2b78b66abbdd515545ad3f19f585b1c7a548560896b2bf9532afbe5a4db4cdc21b477b345b524942a9d1c28971b508d77f4acb0dac9f719a3162408aa395f3432e6163111c17074d8461942f213a59eed462227d7fada49cd4c6f72cf3d8c4fed3f89f41e8880a77056b41f838f18194c12ccf82ff8a60d4fb5373d28849f9f4faea15c32c9cad9be6cc9b5c6942283b494a21735977e90ec7e74b9f68df6111ac609f17a84a030538b614da4af768153a6a998732e31f972e77cbd2760fd0d7f940985b223b64805d8e8cc8427541d1a737cb18481476f33cd0d8c02526272a447727d90d0fa5cc99d2ac6f82a7946ebd0b049d7c14c0d9ef257b913dfd312481d48c1256eea8854f06e41e81497d77878c9bfa6b25f0aea6c9e7103450f341a185b5ba18c6665b0fee9538694e6b4e3368bdd2244e8862fad96d5a8cd2a9d2bb63d8620912cce88526976d2ec22d9520f09c1e7e2e3c2aa3205c995cb911b8e35737577c773525a6d071e6cd75750ac414fd7bbf0f5fc1ae3577d5cdf33eda1f3d4ba6d478080d40c3d3596774462fdf5e3baee6ef838b0baca38fa2e560b3202fe5c1ecd4d08f45bfa692331010aa44997467014b5329920d876c1b9245e2759bdac957e4c77264f70809efb8e781954c9d7ba65738fef518ae8ea2e7b4b8e65a689bcfadd53e0d2f8770f6eebd09904b9cf37b5df24c7f015cb896c209a419c8f58709afedb310d9a79d485ac76f94a6f5f932dc85797bd73b32b8d7e016632b9a2c2cdf845f73653d23e4e3fe73e7b6e04954ef47e25f4028c5ce57aba73c1d8cc6d5e5fa1d7750264c8121b08e3e34a8d8b50de3d0caa89916fd654239be0b845a92827f80c3c5ccccbe7ae67586ae06c178d8bceeb02755006077a360a3ae43039834690d9157b70b90bb608991d5a5711b2fc5b6e1b1317d22f4d3e8c85f3be3cf301d8872e4dc6a08dfab40b842935e281ede823a01ee34644ac17b395e9bdd54c1f483f795167dfda5fb00422374b3b41de9a65ed8be360f4a892c02af8af56517333a7f987a1843048108a1051da415fea6bdcefe4a28d5310f27d2bd5756d2d8ac96cc42a8c48adea6d7028a081b8fb9321f1909e254876542bb1e90e8ab88a43442cf2bf83e3772ec7fbac90aade6d1a7f681d9dc30d0fc0446028b2fed77d8ef8a675db431ba19331aedbdb8cbb8b17b71632e"
+      ],
+      "context_id": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "require_signed_attestation": true,
+      "expect": {
+        "decision": "accept"
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The positive control: a signed edge in context 1, presented in context 1."
+    },
+    {
+      "name": "cross-authority-edge-context-boolean",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/parity2-edge-pack.json",
+      "manifest_files": [
+        "conformance/vectors/parity2-edge-manifest-context-boolean.json"
+      ],
+      "trusted_anchors": [
+        "9d23aa0a8f7e19acc6209684280881417f7d67fb9cf7ef073d5428947bc0bd35c3358f05ee248dafffe3d3d741c074cecfa7c66d3b0481a783e9e66fdd2ca4c3ae7316feb47eb5fc1ac0d859662a65f71b0435dccb9eedb70bbdb4fa565bf3256a2dd219a2078b3a454299203539b477f77ae82ffd701b2843de68bdf38f44000714713c1602b5d8424fbd7c819f999692bde2e03cd833d38457a08b0af03eab2ea3024021541981cc0114fcdf9839f131526c2480fd0b9c965df13f73fbafac6ecc2433d8da8e890fd07761a7705414a9c704ab72e8271ea3d21cad8bdb68442fc6d7798e185199ca9c8ee6fc7a8b879ecf080b8c8e1eaf54545cfc73e6b55d4585d0309f0f4fd600f2c355455f59521b87af52836bafa10675a8db7c174d386bf20bea568617ae387a31c2ffa7a3a9dc72af7fd9aeb22c59e24105ad9504a6a8737a74d6760f5c0bdeee7e1ca05b94d35ed6f268a421f510bd91ed2a4ac228f1961d50d622535e6b9b9b9d80a572c18e166231bc6248a7af6f2d42602591ba547d35cfc55d549d7092509dd21953354f3781456b13b29a8169db3b349f8c9c69e66a56acdd05d3a0efc1e64aaad621fdbf33747b09e0f61cccb98ef0b4216119e1cfc3f4226c65417e73b44f3831964ccf637c92d06290490c7555ee53a1e88a4afaf1bbd1818d1db458deab0f2f39580fea752a7b1da1cfc03cfb59394eb178ea918e4067e41ff6007b968e3c1caa79bc1dcd8fcf73dfabf636d28576f215286233a32e60a7355af2184b69587233f289d6d0c62913d161cbe8eac2c08a8a775f1f0dcbbe91b2efdee2c77a2ef61802676872b8df70557d95f01c18a09c251c731d85674d8a6e435918b8890c645b6efcebc9bd24d06fe876944b9ce3f4944fe852fbcbfd14914d0c837d9d54e9cb0524714b7c22da0f5cf998576c0859d8f0d1ef0419929db2f0c2618480fd1456a40b520efeb3688c9962ccf2bd7717e3d073d77477cabc817a17309f0d40db1768610d7f5671d090344d3fcd07616d821582ae761be4240ba312f9402e3b5b4ea6e17302ff1f31435527144354cb8409ca82b370e7f59a1d534ca4e52a36145fc26d8d972cc3cf08beb7bad479984c05d0b362d11d864a6a179be8648b41efe53c83c2a2a74ed3c906b0cbdee09783a07de1bda50fe149e2c8956b4d9ce8b41a3fc32d81bad44d4637686ebe340a301777817a5f6ec2e3fce7a9e6891704e688e1b83ed3119572b8c847289e9161ea648217a5a5ae16eed696a2437c54c75a92ae8532b8797ba04c7c911f3e52764b1489e534d3db20995ed20a270dfa054e901f2e5099da004c486e5295fcec92a604b0507ef59f2a0a10033f925b4204b96138d442c593daf5f986d7e982dde4c8fbbab748b4cd6da1f71d0cdc9648dfaa25db148ad037e9e81fe074f4accd7b16742ac7617c02e4b92250cba82195f7b23f04a00299d703af4740a2121c755df64614c52a89a6a9032f0d5ca88a61a2c374285bbb9ccdcc4376c72f3b139c36fe2f73ca3bb4cc0f2b78b66abbdd515545ad3f19f585b1c7a548560896b2bf9532afbe5a4db4cdc21b477b345b524942a9d1c28971b508d77f4acb0dac9f719a3162408aa395f3432e6163111c17074d8461942f213a59eed462227d7fada49cd4c6f72cf3d8c4fed3f89f41e8880a77056b41f838f18194c12ccf82ff8a60d4fb5373d28849f9f4faea15c32c9cad9be6cc9b5c6942283b494a21735977e90ec7e74b9f68df6111ac609f17a84a030538b614da4af768153a6a998732e31f972e77cbd2760fd0d7f940985b223b64805d8e8cc8427541d1a737cb18481476f33cd0d8c02526272a447727d90d0fa5cc99d2ac6f82a7946ebd0b049d7c14c0d9ef257b913dfd312481d48c1256eea8854f06e41e81497d77878c9bfa6b25f0aea6c9e7103450f341a185b5ba18c6665b0fee9538694e6b4e3368bdd2244e8862fad96d5a8cd2a9d2bb63d8620912cce88526976d2ec22d9520f09c1e7e2e3c2aa3205c995cb911b8e35737577c773525a6d071e6cd75750ac414fd7bbf0f5fc1ae3577d5cdf33eda1f3d4ba6d478080d40c3d3596774462fdf5e3baee6ef838b0baca38fa2e560b3202fe5c1ecd4d08f45bfa692331010aa44997467014b5329920d876c1b9245e2759bdac957e4c77264f70809efb8e781954c9d7ba65738fef518ae8ea2e7b4b8e65a689bcfadd53e0d2f8770f6eebd09904b9cf37b5df24c7f015cb896c209a419c8f58709afedb310d9a79d485ac76f94a6f5f932dc85797bd73b32b8d7e016632b9a2c2cdf845f73653d23e4e3fe73e7b6e04954ef47e25f4028c5ce57aba73c1d8cc6d5e5fa1d7750264c8121b08e3e34a8d8b50de3d0caa89916fd654239be0b845a92827f80c3c5ccccbe7ae67586ae06c178d8bceeb02755006077a360a3ae43039834690d9157b70b90bb608991d5a5711b2fc5b6e1b1317d22f4d3e8c85f3be3cf301d8872e4dc6a08dfab40b842935e281ede823a01ee34644ac17b395e9bdd54c1f483f795167dfda5fb00422374b3b41de9a65ed8be360f4a892c02af8af56517333a7f987a1843048108a1051da415fea6bdcefe4a28d5310f27d2bd5756d2d8ac96cc42a8c48adea6d7028a081b8fb9321f1909e254876542bb1e90e8ab88a43442cf2bf83e3772ec7fbac90aade6d1a7f681d9dc30d0fc0446028b2fed77d8ef8a675db431ba19331aedbdb8cbb8b17b71632e"
+      ],
+      "context_id": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "require_signed_attestation": true,
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The same edge signed with context_id true, presented in context 1. Python's == read true as 1 and accepted it; the TypeScript SDK's === did not."
+    },
+    {
+      "name": "agent-grant-use-proof-nonce-control",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/parity2-agent-grant.json",
+      "now": "2026-05-01T00:00:30Z",
+      "proof_file": "conformance/vectors/parity2-agent-proof-proof-nonce-control.json",
+      "requested_action": "read:status",
+      "expected_nonce": "svc-parity-2-1",
+      "expect": {
+        "authentic": true,
+        "action_in_scope": true,
+        "agent_proved": true
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The positive control: a proof naming the grant and the service's nonce, as text."
+    },
+    {
+      "name": "agent-grant-use-proof-names-no-nonce",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/parity2-agent-grant.json",
+      "now": "2026-05-01T00:00:30Z",
+      "proof_file": "conformance/vectors/parity2-agent-proof-proof-names-no-nonce.json",
+      "requested_action": "read:status",
+      "expected_nonce": true,
+      "expect": {
+        "authentic": true,
+        "action_in_scope": true,
+        "agent_proved": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A proof that names no service nonce, checked against an expected nonce of true, which has no wire text. Neither side names a nonce, so nothing matches. The first parity fix compared the two readings bare (None == None, null === null) and proved it in all three verifiers; the published packages refuse it."
+    },
+    {
+      "name": "agent-grant-use-grant-id-beyond-safe-integer",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/parity2-agent-grant-large-id.json",
+      "now": "2026-05-01T00:00:30Z",
+      "proof_file": "conformance/vectors/parity2-agent-proof-grant-id-beyond-safe-integer.json",
+      "requested_action": "read:status",
+      "expected_nonce": "svc-parity-2-1",
+      "expect": {
+        "authentic": true,
+        "action_in_scope": true,
+        "agent_proved": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A proof whose signed grant_id is the integer 2**53 + 1, for a grant whose id is that number written as text. Python read the exact integer and matched it; JavaScript reads the nearest double, 2**53. An id beyond 2**53 is not one both languages can read."
     }
   ]
 }

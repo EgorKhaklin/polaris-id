@@ -892,6 +892,19 @@ class AnAgentProofsTextFieldsTests(unittest.TestCase):
     def test_a_proof_that_names_no_grant_binds_none(self):
         self.assertIs(self._proved(grant=dict(self.GRANT, grant_id=None), grant_id=None), False)
 
+    def test_a_value_with_no_wire_text_matches_nothing(self):
+        """Compared bare, None == None let a proof naming no nonce match an expected nonce of 1.5."""
+        p = {"format": "polaris-agent-proof/1", "grant_id": "g-1", "public_key_hex": "ab" * 32,
+             "action": "read", "algorithm": "ML-DSA-65", "signature_hex": "00" * 8}
+        for nonce in (1.5, True, [1]):
+            with self.subTest(nonce=nonce):
+                self.assertIs(V.verify_agent_grant(self.GRANT, agent_proof=p, requested_action="read",
+                                                   expected_nonce=nonce)["agent_proved"], False)
+
+    def test_an_integer_beyond_2_53_is_not_an_id(self):
+        big = 2 ** 53 + 1
+        self.assertIs(self._proved(grant=dict(self.GRANT, grant_id=str(big)), grant_id=big), False)
+
 
 class GrantLimitsAreWholeNumbersTests(unittest.TestCase):
     """2026-10-01, the detached verifier's twin of the SDK test: `int()` read 2.5 uses as 2, where

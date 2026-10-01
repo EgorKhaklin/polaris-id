@@ -31,7 +31,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - All three verifiers refuse a revocation feed or epoch leaf set whose leaves are not 64 hex digits; a `null` leaf split Python from TypeScript.
 - All three verifiers refuse a signed document whose digest is not lowercase SHA3-256, as WIRE-SPEC 3.12 requires.
 - All three verifiers read one instant grammar: ASCII digits, no surrounding whitespace, offsets below 24 hours, years 1 to 99 as written.
-- An agency id matches only an equal integer in all three verifiers; Python matched a missing id with a null one, and `true` with 1.
+- An agency or context id matches only the same string or integer in all three verifiers; Python's `==` read `true` as 1 and a missing id as a null one.
 - Both SDKs read only the JSON `true` as currently authoritative; both read a status answer of `"false"` as current.
 
 - The application's database role can no longer run the retention and archive-purge routines; naming any admin, it could set retention or purge audit rows past the floor.
@@ -41,9 +41,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The TypeScript SDK reads an instant to the microsecond, as both Python verifiers do; it rounded to the millisecond.
 - Both Python verifiers refuse a fractional use limit or use count, as the TypeScript SDK does; `int()` truncated it.
 - The TypeScript SDK writes a small number and orders keys as the signer does, so a genuine artifact with `1.5e-05` or an emoji key verifies.
-- All three verifiers read an agent proof's grant id, nonce and action as text; a proof must name its grant.
+- All three verifiers read an agent proof's grant id, nonce and action, and a holder proof's nonce and credential, as text; a value with none matches nothing.
+- An id, nonce or action beyond 2**53 is not one any verifier reads; JavaScript reads the nearest double there.
 - All three verifiers trim only ASCII whitespace from a pairwise handle or nullifier; other Unicode spaces split the SDKs.
-- The TypeScript SDK refuses a credential that is not an object instead of throwing, and checks each grant limit present.
+- The TypeScript SDK refuses a credential that is not an object instead of throwing, and checks each grant limit and the use count alone.
 - The Python SDK reports no nonce match for a holder proof it cannot check, as the TypeScript SDK does.
 - The rc.68 notes list only what rc.68 released; a merge after the cut had filed the `polaris-oid4vp` 1.0.0rc12 lines there.
 
@@ -51,7 +52,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - Thirteen conformance cases pin the status rule for manifests, registries, holder chains, grants in use and trust edges.
 - Eleven conformance cases pin WIRE-SPEC 3.3, 3.16, 3.12 and 2.2 for leaves, signed documents and instants.
-- Ten conformance cases pin where the two SDKs disagreed on signed bytes; the suite has 253 cases.
+- Ten conformance cases pin where the two SDKs disagreed on signed bytes.
+- Eleven more pin nonces, contexts, agencies and ids beyond 2**53, from a review of that fix; the suite has 264 cases.
 
 ### Changed
 

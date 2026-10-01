@@ -884,7 +884,7 @@ def verify_attestation(att, attesting_agency_id=None, expected_key=None, now=Non
         v["note"] = "the attestation signature is invalid"
         return v
     if attesting_agency_id is not None:
-        v["attester_matches"] = (att.get("attesting_agency_id") == attesting_agency_id)
+        v["attester_matches"] = _same_id(att.get("attesting_agency_id"), attesting_agency_id)
         if not v["attester_matches"]:
             v["note"] = "the attestation names a different attesting agency than the manifest that published it"
     if expected_key is not None:
@@ -960,7 +960,7 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
             # In-context means a context was presented (WIRE-SPEC section 4). Before
             # 2026-09-27 a missing one matched an edge from ANY context, so a presentation
             # that left out `context_id` was accepted under another context's trust.
-            same_ctx = (context_id is not None and att.get("context_id") == context_id)
+            same_ctx = _same_id(att.get("context_id"), context_id)
             if same_key and same_ctx:
                 # P9.5: is this edge signed by the agency that made it, or is it the
                 # operator's word carried by the manifest's signature?
@@ -1727,7 +1727,7 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
             if not isinstance(att, dict):
                 continue
             if (str(att.get("attested_public_key_hex") or "").lower() == cp_key
-                    and context_id is not None and att.get("context_id") == context_id
+                    and _same_id(att.get("context_id"), context_id)
                     and _attestation_window_open(att, now)):
                 via = mv["authority"]
                 break
@@ -2043,19 +2043,31 @@ def _registry_canonical(r):
     return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def _same_agency(a, b):
-    """Two agency ids name the same agency only when both are integers and equal. `==` let a
-    missing id match a null one (None == None) and True match 1, where the TypeScript SDK's
-    `===` refused both (2026-10-01)."""
-    return (isinstance(a, int) and not isinstance(a, bool) and isinstance(b, int)
-            and not isinstance(b, bool) and a == b)
+#: The largest integer both languages hold exactly. JavaScript reads a larger one as the nearest
+#: double, so 2**64 and 2**64 + 1 are one number in the TypeScript SDK and two here.
+_MAX_SAFE_INTEGER = 2 ** 53 - 1
+
+
+def _safe_int(x):
+    """An integer, not a boolean, that JavaScript holds exactly."""
+    return isinstance(x, int) and not isinstance(x, bool) and abs(x) <= _MAX_SAFE_INTEGER
+
+
+def _same_id(a, b):
+    """Two agency or context ids name the same one only when both are strings, or both integers
+    JavaScript holds exactly, and equal: what the TypeScript SDK's `===` gives on values both
+    languages read alike. `==` let a missing id match a null one (None == None) and True match 1,
+    where `===` refused both (2026-10-01)."""
+    if isinstance(a, str) and isinstance(b, str):
+        return a == b
+    return _safe_int(a) and _safe_int(b) and a == b
 
 
 def _registry_publisher_key(reg):
     """The registered key the registry itself lists for its publisher, or None."""
     pub = reg.get("publisher") if isinstance(reg.get("publisher"), dict) else {}
     for a in (reg.get("authorities") if isinstance(reg.get("authorities"), list) else []):
-        if isinstance(a, dict) and _same_agency(a.get("agency_id"), pub.get("agency_id")) \
+        if isinstance(a, dict) and _same_id(a.get("agency_id"), pub.get("agency_id")) \
                 and _status_of(a) == "active" and a.get("public_key_hex"):
             return str(a["public_key_hex"]).lower()
     return None
@@ -2195,7 +2207,7 @@ def registry_trusts(reg, attested_public_key_hex, context_id):
     out = []
     for t in (reg.get("trust") if isinstance(reg, dict) and isinstance(reg.get("trust"), list) else []):
         if isinstance(t, dict) and str(t.get("attested_public_key_hex") or "").lower() == want \
-                and t.get("context_id") == context_id:
+                and _same_id(t.get("context_id"), context_id):
             out.append(t.get("attesting_agency_id"))
     return sorted(x for x in out if x is not None)
 
@@ -2291,7 +2303,7 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
                 continue
             for att in mv.get("attestations") or []:
                 if isinstance(att, dict) and str(att.get("attested_public_key_hex") or "").lower() == pk_hex \
-                        and att.get("context_id") == ctx \
+                        and _same_id(att.get("context_id"), ctx) \
                         and _attestation_window_open(att, now):
                     authorized = True
         v["requester_authorized"] = authorized
@@ -2363,7 +2375,7 @@ def exchange_evidence(envelope, receipt):
     req_e = envelope.get("requester") if isinstance(envelope.get("requester"), dict) else {}
     req_r = receipt.get("requester") if isinstance(receipt.get("requester"), dict) else {}
     return (str(req_e.get("public_key_hex") or "").lower() == str(req_r.get("public_key_hex") or "").lower()
-            and envelope.get("context_id") == receipt.get("context_id")
+            and _same_id(envelope.get("context_id"), receipt.get("context_id"))
             and str(envelope.get("request_hash") or "").lower() == str(receipt.get("request_hash") or "").lower()
             and envelope.get("issued_at") == receipt.get("occurred_at"))
 
@@ -2719,7 +2731,7 @@ def _trust_list_canonical(t):
 def _trust_list_publisher_key(tl):
     pub = tl.get("publisher") if isinstance(tl.get("publisher"), dict) else {}
     for k in (tl.get("keys") if isinstance(tl.get("keys"), list) else []):
-        if isinstance(k, dict) and _same_agency(k.get("agency_id"), pub.get("agency_id")) and k.get("status") == "active" and k.get("public_key_hex"):
+        if isinstance(k, dict) and _same_id(k.get("agency_id"), pub.get("agency_id")) and k.get("status") == "active" and k.get("public_key_hex"):
             yield str(k["public_key_hex"]).lower()
 
 
@@ -2918,7 +2930,7 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
                 # request path compares it. Before 1.0.0-rc.64 a receipt stating no context
                 # was authorized by an attestation from ANY context.
                 if str(att.get("attested_public_key_hex") or "").lower() == req_key and \
-                   att.get("context_id") == ctx and \
+                   _same_id(att.get("context_id"), ctx) and \
                    _attestation_window_open(att, now):
                     via = mv["authority"]
                     break
@@ -3756,7 +3768,7 @@ def verify_holder_binding(binding, credential=None, now=None, max_window_seconds
         v["issuer_trusted"] = str(pk_hex).lower() in {str(a).lower() for a in anchor_keys}
     if isinstance(credential, dict):
         v["bound_to_credential"] = (
-            str(binding.get("token_value")) == str(credential.get("token_value"))
+            _wire_text_equal(binding.get("token_value"), credential.get("token_value"))
             and str(pk_hex).lower() == str(credential.get("public_key_hex") or "").lower())
         if not v["bound_to_credential"]:
             v["note"] = "the binding is not about this credential, or not signed by its issuer key"
@@ -3795,10 +3807,13 @@ def verify_holder_proof(proof, binding=None, expected_nonce=None, expected_conte
     if not ok:
         v["note"] = "the holder proof signature is invalid"
         return v
+    # A nonce and a context read as the TypeScript SDK reads them: str() spelled true "True" and
+    # 1e-05 "1e-05" where String() spells them "true" and "0.00001", and == read True as context 1
+    # (2026-10-01).
     if expected_nonce is not None:
-        v["nonce_matches"] = (str(proof.get("verifier_nonce")) == str(expected_nonce))
+        v["nonce_matches"] = _wire_text_equal(proof.get("verifier_nonce"), expected_nonce)
     if expected_context is not None:
-        v["context_matches"] = (proof.get("context_id") == expected_context)
+        v["context_matches"] = _same_id(proof.get("context_id"), expected_context)
     from datetime import timedelta
     try:
         ref = _instant(now)
@@ -3821,7 +3836,7 @@ def verify_holder_proof(proof, binding=None, expected_nonce=None, expected_conte
         # bound to the same holder key.
         v["key_matches_binding"] = (
             str(pk_hex).lower() == str(binding.get("holder_public_key_hex") or "").lower()
-            and str(proof.get("token_value")) == str(binding.get("token_value"))
+            and _wire_text_equal(proof.get("token_value"), binding.get("token_value"))
             and _status_of(binding) == "active")
         if not v["key_matches_binding"]:
             v["note"] = ("the proof is not signed by the key the issuer bound to this credential, "
@@ -4370,14 +4385,23 @@ def _cbor_sig_structure(protected, payload):
 
 
 def _wire_text(x):
-    """A string or an integer as the text the TypeScript SDK's String() gives it, else None.
-    `str(x or "")` read 0 as missing, and `str()` writes 1.0 as "1.0" and True as "True" where
-    String() writes "1" and "true", so a proof naming nonce 0 failed here and passed there."""
+    """A string, or an integer JavaScript holds exactly, as the text the TypeScript SDK's String()
+    gives it; anything else None. `str(x or "")` read 0 as missing, and `str()` writes 1.0 as
+    "1.0" and True as "True" where String() writes "1" and "true", so a proof naming nonce 0
+    failed here and passed there."""
     if isinstance(x, str):
         return x
-    if isinstance(x, int) and not isinstance(x, bool):
+    if _safe_int(x):
         return str(x)
     return None
+
+
+def _wire_text_equal(signed, expected):
+    """The signed field names the expected value: both have a wire text and it is the same. A
+    value with none (absent, null, a boolean, a fraction, a container) matches nothing; compared
+    bare, None == None let a proof naming no nonce match an expected nonce of 1.5 (2026-10-01)."""
+    t = _wire_text(signed)
+    return t is not None and t == _wire_text(expected)
 
 
 def verify_agent_grant(grant, binding=None, credential=None, now=None, requested_action=None,
@@ -4495,14 +4519,13 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
         v["agent_proved"] = False
         if not isinstance(agent_proof, dict) or agent_proof.get("format") != _AGENT_PROOF_FORMAT:
             v["note"] = "the agent proof is not a %s" % _AGENT_PROOF_FORMAT
-        elif (_wire_text(agent_proof.get("grant_id")) is None
-              or _wire_text(agent_proof.get("grant_id")) != _wire_text(grant.get("grant_id"))):
+        elif not _wire_text_equal(agent_proof.get("grant_id"), grant.get("grant_id")):
             v["note"] = "the agent proof names a different grant"
         elif str(agent_proof.get("public_key_hex") or "").lower() != str(grant.get("agent_public_key_hex") or "").lower():
             v["note"] = "the agent proof is signed by a key the grant does not name"
-        elif expected_nonce is not None and _wire_text(agent_proof.get("service_nonce")) != _wire_text(expected_nonce):
+        elif expected_nonce is not None and not _wire_text_equal(agent_proof.get("service_nonce"), expected_nonce):
             v["note"] = "the agent proof does not name this service's nonce (a replay)"
-        elif requested_action is not None and _wire_text(agent_proof.get("action")) != _wire_text(requested_action):
+        elif requested_action is not None and not _wire_text_equal(agent_proof.get("action"), requested_action):
             v["note"] = "the agent proof is for a different action than the one requested"
         elif (grant.get("agent_algorithm") is not None
                 and agent_proof.get("algorithm") != grant.get("agent_algorithm")):
@@ -4782,7 +4805,7 @@ def verify_presentation(presentation, anchor_keys=None, now=None, max_window_sec
     v["presented_code_present"] = presentation.get("presented_code") is not None   # opaque; never interpreted
     v["zk_present"] = isinstance(presentation.get("zk_proof"), dict)
     if expected_context is not None:
-        v["context_matches"] = (presentation.get("context_id") == expected_context)
+        v["context_matches"] = _same_id(presentation.get("context_id"), expected_context)
     H_binding_key = None
     sa = presentation.get("status_assertion")
     S = v["status"]

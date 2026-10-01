@@ -1139,6 +1139,32 @@ class ParityWithTheTypeScriptSdkTests(unittest.TestCase):
         self.assertIs(v.nonce_matches, None, "the TypeScript SDK reports null here, and now so does this")
         self.assertIs(v.proved, False)
 
+    def test_a_value_with_no_wire_text_matches_nothing(self):
+        """Compared bare, None == None let a proof naming no nonce match an expected nonce of 1.5:
+        the first parity fix opened it and a review found it; the published packages refuse it."""
+        bare = {k: v for k, v in self.PROOF.items() if k != "service_nonce"}
+        for nonce in (1.5, True, [1], {}):
+            with self.subTest(nonce=nonce):
+                self.assertIs(pv.agent_proof_proves(bare, self.GRANT, "read", nonce), False)
+        no_action = {k: v for k, v in self.PROOF.items() if k != "action"}
+        self.assertIs(pv.agent_proof_proves(no_action, self.GRANT, 1.5, 0), False)
+
+    def test_an_integer_beyond_2_53_is_not_wire_text(self):
+        """JavaScript reads an integer beyond 2**53 as the nearest double; Python reads it exactly."""
+        big = 2 ** 53 + 1
+        self.assertIs(pv.agent_proof_proves(dict(self.PROOF, grant_id=big), dict(self.GRANT, grant_id=str(big)),
+                                            "read", 0), False)
+        top = 2 ** 53 - 1
+        self.assertIs(pv.agent_proof_proves(dict(self.PROOF, grant_id=top), dict(self.GRANT, grant_id=str(top)),
+                                            "read", 0), True, "the largest integer both hold is one")
+
+    def test_an_id_is_the_same_string_or_integer(self):
+        """An agency or context id: True is not 1, and a missing id is not a null one."""
+        self.assertTrue(pv._same_id(1, 1) and pv._same_id("B", "B"))
+        for a, b in ((True, 1), (None, None), (1, "1"), (2 ** 53 + 1, 2 ** 53 + 1)):
+            with self.subTest(a=a, b=b):
+                self.assertFalse(pv._same_id(a, b))
+
 
 class GrantLimitsAreWholeNumbersTests(unittest.TestCase):
     """2026-10-01. `int()` read a use limit of 2.5 as 2, so a grant the TypeScript SDK refuses was

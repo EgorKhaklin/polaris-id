@@ -84,6 +84,27 @@ test("a pairwise handle trims ASCII whitespace only", () => {
   assert.notEqual(pairwiseHandle(key, "\u001cscope"), pairwiseHandle(key, "scope"), "so does a file separator");
 });
 
+test("a use count is a finite number whether or not the grant limits uses", () => {
+  for (const uses of [Number.NaN, "3", true]) {
+    assert.equal(grantWithinLimits({ limits: {} }, uses as any)[0], false, String(uses));
+  }
+  assert.equal(grantWithinLimits({ limits: {} }, 1.5)[0], true, "no use limit, so no whole-number rule");
+  assert.equal(grantWithinLimits({ limits: {} }, 0)[0], true, "control");
+});
+
+test("a value with no wire text matches nothing, and nor does an integer beyond 2**53", () => {
+  const grant = { grant_id: "g-1", agent_public_key_hex: "ab" };
+  const proof = { format: "polaris-agent-proof/1", grant_id: "g-1", public_key_hex: "ab", action: "read" };
+  for (const nonce of [1.5, true, [1], {}]) {
+    assert.equal(agentProofProves(proof, grant, "read", nonce), false, JSON.stringify(nonce));
+  }
+  const big = 2 ** 53 + 2;
+  assert.equal(agentProofProves({ ...proof, grant_id: big }, { ...grant, grant_id: String(big) }, "read"), false);
+  const top = Number.MAX_SAFE_INTEGER;
+  assert.equal(agentProofProves({ ...proof, grant_id: top }, { ...grant, grant_id: String(top) }, "read"), true,
+               "the largest integer both hold is one");
+});
+
 test("trimming is linear in a run of whitespace inside the input", () => {
   // A holder key arrives in a presentation. The first trim was a regular expression that took
   // about 75 seconds on 400,000 tabs between two letters; a scan takes milliseconds.

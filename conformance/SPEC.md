@@ -278,14 +278,23 @@ without the nonce, the credential or the binding's window. No verifier reported 
 without them the SDKs trust no manifest, while the detached verifier's function takes the
 manifests it is handed as the relying party's own (its parameter is `trusted_manifests`).
 
-SDK parity (1.0.0-rc.69). Ten cases pin signed bytes on which a function-by-function comparison of
+SDK parity (1.0.0-rc.70). Ten cases pin signed bytes on which a function-by-function comparison of
 the two reference SDKs found them answering differently. One instant grammar, read the same way:
 ASCII digits only, no surrounding whitespace, offsets below 24 hours, and years 1 to 99 as written
 (`timestamp-issued-at-*`). The canonical form writes a small non-integral number as Python does,
 1.5e-05 (`agent-grant-small-amount-limit`), and orders keys by code point
-(`registry-keys-outside-the-bmp`). An agency id matches only an equal integer
+(`registry-keys-outside-the-bmp`). An agency id matches only the same string or integer
 (`registry-publisher-agency-id-missing`, `trust-list-publisher-agency-id-*`). Before these cases
 the Python verifiers failed four and the TypeScript SDK a different five.
+
+SDK parity, reviewed (1.0.0-rc.70). Eleven cases pin what a hostile review of that fix found. A
+holder proof's nonce is text, so the boolean true and the number 1e-05 match no nonce
+(`holder-chain-verifier-nonce-*`). A context or attesting agency of true is not 1
+(`holder-chain-context-boolean`, `trust-attestation-attesting-agency-*`,
+`cross-authority-edge-context-*`). A value with no wire text matches nothing, which the fix itself
+had opened (`agent-grant-use-proof-names-no-nonce`), and an integer beyond 2**53, which JavaScript
+reads as the nearest double, is no id (`agent-grant-use-grant-id-beyond-safe-integer`). Before these
+cases the Python verifiers failed five and the TypeScript SDK three.
 
 WIRE-SPEC rules (1.0.0-rc.69). Eleven cases pin three rules a read of every verifier requirement
 found split or unenforced. A revoked leaf and an epoch leaf are 64 hex digits (3.3, 3.16): a feed

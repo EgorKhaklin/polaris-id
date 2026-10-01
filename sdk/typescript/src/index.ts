@@ -642,7 +642,7 @@ export function verifySignedArtifact(obj: any, now?: string | null,
     const pub = o.publisher && typeof o.publisher === "object" ? o.publisher : {};
     const listed = new Set<string>(
       (Array.isArray(o.authorities) ? o.authorities : [])
-        .filter((a: any) => a && sameAgency(a.agency_id, pub.agency_id) && (a.status ?? "active") === "active")
+        .filter((a: any) => a && sameId(a.agency_id, pub.agency_id) && (a.status ?? "active") === "active")
         .map((a: any) => String(a.public_key_hex ?? "").toLowerCase()),
     );
     ok = listed.has(String(o.public_key_hex ?? "").toLowerCase());
@@ -650,7 +650,7 @@ export function verifySignedArtifact(obj: any, now?: string | null,
     const pub = o.publisher && typeof o.publisher === "object" ? o.publisher : {};
     const active = new Set<string>(
       (Array.isArray(o.keys) ? o.keys : [])
-        .filter((k: any) => k && sameAgency(k.agency_id, pub.agency_id) && k.status === "active")
+        .filter((k: any) => k && sameId(k.agency_id, pub.agency_id) && k.status === "active")
         .map((k: any) => String(k.public_key_hex ?? "").toLowerCase()),
     );
     ok = active.has(String(o.public_key_hex ?? "").toLowerCase());
@@ -938,7 +938,7 @@ export function verifyHolder(credential: any, binding: any, proof: any, expected
   const av = verifyAuthenticity(cred, anchors ?? null);
   v.credentialAuthentic = av.authentic;
   v.issuerTrusted = av.issuerTrusted;
-  v.boundToCredential = String(b.token_value) === String(cred.token_value)
+  v.boundToCredential = wireTextEqual(b.token_value, cred.token_value)
     && String(b.public_key_hex ?? "").toLowerCase() === String(cred.public_key_hex ?? "").toLowerCase();
   const impl = verifierFor(pr.algorithm);
   if (!impl) {
@@ -957,9 +957,12 @@ export function verifyHolder(credential: any, binding: any, proof: any, expected
   // passed with another bound to the same holder key.
   v.keyMatchesBinding = String(pr.public_key_hex ?? "").toLowerCase()
     === String(b.holder_public_key_hex ?? "").toLowerCase()
-    && String(pr.token_value) === String(b.token_value) && (b.status ?? "active") === "active";
-  if (expectedNonce != null) v.nonceMatches = String(pr.verifier_nonce) === String(expectedNonce);
-  const ctxOk = expectedContext == null || pr.context_id === expectedContext;
+    && wireTextEqual(pr.token_value, b.token_value) && (b.status ?? "active") === "active";
+  // A nonce and a context read as the Python verifiers read them: String() spelled true "true"
+  // and 1e-05 "0.00001" where str() spells them "True" and "1e-05", and Python's == read true as
+  // context 1 (2026-10-01).
+  if (expectedNonce != null) v.nonceMatches = wireTextEqual(pr.verifier_nonce, expectedNonce);
+  const ctxOk = expectedContext == null || sameId(pr.context_id, expectedContext);
   // isoToEpoch, as every other freshness path here reads time. Date.parse read an issued_at with
   // no offset as LOCAL time, so the replay window moved with the machine's time zone: a proof
   // seven hours old was stale under UTC and fresh in Los Angeles (2026-09-30).
@@ -1005,7 +1008,7 @@ export function verifyAttestation(att: any, attestingAgencyId?: number | null,
   } catch (e) {
     return { authentic: false, fresh: null, note: "verification error: " + (e as Error).message };
   }
-  if (ok && attestingAgencyId != null && a.attesting_agency_id !== attestingAgencyId) {
+  if (ok && attestingAgencyId != null && !sameId(a.attesting_agency_id, attestingAgencyId)) {
     return { authentic: false, fresh: null, note: "the attestation names a different attesting agency than the manifest that published it" };
   }
   if (ok && expectedKey != null &&
@@ -1055,7 +1058,7 @@ export function verifyCrossAuthority(
     if (!trusted.has(String(mm.public_key_hex ?? "").toLowerCase())) continue;
     for (const att of Array.isArray(mm.attestations) ? mm.attestations : []) {
       if (att && String(att.attested_public_key_hex ?? "").toLowerCase() === tokenKey
-          && contextId != null && att.context_id === contextId) {
+          && sameId(att.context_id, contextId)) {
         // In-context means a context was presented (WIRE-SPEC section 4); before 2026-09-27
         // a missing one matched an edge from ANY context.
         // P9.5: is the edge signed by the agency that made it, or is it the operator's
@@ -1363,7 +1366,10 @@ export function grantWithinLimits(grant: any, usesSoFar = 0, amount?: number): [
   // Each value that is present is a finite number, whether or not the other side of its
   // comparison is: read only in pairs, `max_amount: "100"` with no amount, or a NaN amount with
   // no limit, passed here where the Python SDK refuses both (2026-10-01).
-  for (const [label, value] of [["max_amount", maxAmount], ["the requested amount", amount]] as const) {
+  // The use count too: with no max_uses it went unread, so a NaN, "3" or true count passed here
+  // where both Python verifiers refuse it (2026-10-01).
+  for (const [label, value] of [["the use count", usesSoFar], ["max_amount", maxAmount],
+                                ["the requested amount", amount]] as const) {
     if (value !== null && value !== undefined && (typeof value !== "number" || !Number.isFinite(value))) {
       return [false, `${label} is not a finite number`];
     }
@@ -1422,30 +1428,40 @@ export function grantPrincipalBound(grant: any, binding: any, credential: any, n
     && String(binding.public_key_hex ?? "").toLowerCase() === String(credential.public_key_hex ?? "").toLowerCase());
 }
 
-/** Two agency ids name the same agency only when both are integers and equal: `===` let two
- * missing ids match, where the Python SDK read a null against a missing one as equal. */
-function sameAgency(a: unknown, b: unknown): boolean {
-  return typeof a === "number" && Number.isInteger(a) && a === b;
+/** Two agency or context ids name the same one only when both are strings, or both integers
+ * held exactly, and equal: `===` let two missing ids match, where the Python SDK read a null
+ * against a missing one as equal, and true as 1 (2026-10-01). */
+function sameId(a: unknown, b: unknown): boolean {
+  return (typeof a === "string" || Number.isSafeInteger(a)) && a === b;
 }
 
-/** A string or an integer as text, else null: the one reading of a signed id, nonce or action
- * that the Python verifiers share. `String(x ?? "")` here and `str(x or "")` there disagreed on
- * 0, 1.0 and true, and both let a proof that names no grant match a grant that has none. */
+/** A string, or an integer held exactly, as text, else null: the one reading of a signed id,
+ * nonce or action that the Python verifiers share. `String(x ?? "")` here and `str(x or "")`
+ * there disagreed on 0, 1.0 and true, and both let a proof that names no grant match a grant that
+ * has none. Beyond 2**53 this SDK reads the nearest double and Python the exact integer. */
 function wireText(x: unknown): string | null {
   if (typeof x === "string") return x;
-  if (typeof x === "number" && Number.isInteger(x)) return String(x);
+  if (Number.isSafeInteger(x)) return String(x);
   return null;
+}
+
+/** The signed field names the expected value: both have a wire text and it is the same. A value
+ * with none matches nothing; compared bare, null === null let a proof naming no nonce match an
+ * expected nonce of 1.5 (2026-10-01). */
+function wireTextEqual(signed: unknown, expected: unknown): boolean {
+  const t = wireText(signed);
+  return t !== null && t === wireText(expected);
 }
 
 export function agentProofProves(proof: any, grant: any, action?: unknown, nonce?: unknown): boolean {
   if (!proof || typeof proof !== "object" || !grant || typeof grant !== "object") return false;
   if (proof.format !== "polaris-agent-proof/1") return false;
-  if (wireText(proof.grant_id) === null || wireText(proof.grant_id) !== wireText(grant.grant_id)) return false;
+  if (!wireTextEqual(proof.grant_id, grant.grant_id)) return false;
   if (String(proof.public_key_hex ?? "").toLowerCase() !== String(grant.agent_public_key_hex ?? "").toLowerCase()) return false;
   if (grant.agent_algorithm !== undefined && grant.agent_algorithm !== null
       && proof.algorithm !== grant.agent_algorithm) return false;
-  if (nonce !== undefined && nonce !== null && wireText(proof.service_nonce) !== wireText(nonce)) return false;
-  if (action !== undefined && action !== null && wireText(proof.action) !== wireText(action)) return false;
+  if (nonce !== undefined && nonce !== null && !wireTextEqual(proof.service_nonce, nonce)) return false;
+  if (action !== undefined && action !== null && !wireTextEqual(proof.action, action)) return false;
   return true;
 }
 
@@ -1485,7 +1501,7 @@ function exchangeAuthorities(keyHex: unknown, contextId: unknown, manifests: unk
     const atts = Array.isArray(m.attestations) ? m.attestations : [];
     if (atts.some((att: any) => att && typeof att === "object"
         && String(att.attested_public_key_hex ?? "").toLowerCase() === want
-        && (att.context_id ?? null) === (contextId ?? null)
+        && sameId(att.context_id, contextId)
         && attestationOpen(att, now))) {
       found.push(m.authority ?? null);
     }
