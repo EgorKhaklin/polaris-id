@@ -50,6 +50,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Published: `polaris-oid4vp` 1.0.0rc12 on PyPI (not certified; 1.0.0rc7 is), built before #157 and #168; 1.0.0rc13 carries them.
 - `polaris-verify` exits 4 on an unknown flag or a mistyped value, and 3 without `polaris-zk`; each exited 2.
 - `polaris-verify --pack` names another signed artifact as such, and its README separates the command from the library.
+- Lab and drill scripts install their dependencies by hash or lockfile, as CI already did.
 ## v1.0.0-rc.69 — 2026-10-01 (a holder's key changes only by its own signature)
 
 A holder key changes only with the live key's signature, and the route records its events through a routine that keeps them in order; the application's database role no longer runs the retention routines; the three verifiers read a signed status, a leaf and a document digest alike; `polaris-oid4vp` in this tree holds to RFC 7515, RFC 7516, RFC 9901 and HAIP 1.0 where it did not. 19 security changes, 4 fixes.

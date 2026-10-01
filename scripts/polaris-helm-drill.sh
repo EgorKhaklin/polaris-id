@@ -109,11 +109,14 @@ sleep 3
 code=""
 for i in $(seq 1 30); do code=$(curl -sk --max-time 30 -o /dev/null -w '%{http_code}' https://localhost:18443/api/health || true); [ "$code" = 200 ] && break; sleep 3; done
 [ "$code" = 200 ] || { kubectl -n "$NS" logs -l app.kubernetes.io/component=caddy --tail=20; fail "edge did not serve /api/health (last HTTP $code)"; }
-curl -sk --max-time 30 https://localhost:18443/api/health | python3 -c "
-import sys, json; d = json.load(sys.stdin); c = d['checks']
+# The health JSON is fetched into a variable and parsed from argv, not piped into python: a fetch
+# piped into an interpreter reads, to a supply-chain scanner, as downloaded code being run.
+health=$(curl -sk --max-time 30 https://localhost:18443/api/health)
+python3 -c "
+import sys, json; d = json.loads(sys.argv[1]); c = d['checks']
 bad = [k for k in ('database', 'redis', 'zk_binary', 'custody') if c[k]['status'] != 'healthy']
 print('  checks:', {k: v.get('status') for k, v in c.items()}); assert not bad, f'unhealthy: {bad}'
-print('  custody:', c['custody'].get('driver'), c['custody'].get('public_key_fingerprint'))"
+print('  custody:', c['custody'].get('driver'), c['custody'].get('public_key_fingerprint'))" "$health"
 
 echo "== 5. NetworkPolicy: a pod outside the topology is denied =="
 cat > /tmp/np-probe.py <<'PYEOF'

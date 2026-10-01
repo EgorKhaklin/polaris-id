@@ -1,0 +1,9 @@
+{
+  "name": "polaris-accessibility-drill",
+  "private": true,
+  "description": "The axe-core engine scripts/polaris-accessibility-drill.sh audits with, pinned by package-lock.json.",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "axe-core": "4.13.0"
+  }
+}

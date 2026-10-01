@@ -99,8 +99,11 @@ wait_edge() {  # $1 = seconds
     done
     return 1
 }
+# The health JSON is fetched into a variable and parsed from argv, not piped into python: a fetch
+# piped into an interpreter reads, to a supply-chain scanner, as downloaded code being run.
 db_healthy() {
-    curl -sk "$URL/api/health" | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d['checks']['database']['status']=='healthy' else 1)" 2>/dev/null
+    local body; body=$(curl -sk "$URL/api/health") || return 1
+    python3 -c "import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if d['checks']['database']['status']=='healthy' else 1)" "$body" 2>/dev/null
 }
 
 echo "== window drill against $URL =="

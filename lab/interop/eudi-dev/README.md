@@ -40,8 +40,8 @@ Verifier. The run below used exactly those two releases, and then the wallet's c
 
 One command, about a minute once the image is local. It installs the verifier from PyPI into a
 fresh venv in a scratch directory (`WORK`, default a new temporary one), the newest release as
-`pip install --pre` gives a stranger unless `POLARIS_OID4VP` pins one, and prints the version it
-got. [`wallet-canary.yml`](../../../.github/workflows/wallet-canary.yml) runs it weekly on a
+`pip install --pre` gives a stranger unless `POLARIS_OID4VP` pins one, with its dependencies by hash
+from [`../requirements.txt`](../requirements.txt), and prints the version it got. [`wallet-canary.yml`](../../../.github/workflows/wallet-canary.yml) runs it weekly on a
 machine nobody here set up, against v2.3.7 and the wallet's latest release. It makes the verifier's
 test PKI with `polaris-oid4vp keygen`, lets the wallet generate its holder key, mints one SD-JWT
 VC bound to it with [`../waltid/issue_sdjwt_vc.py`](../waltid/issue_sdjwt_vc.py), imports it,

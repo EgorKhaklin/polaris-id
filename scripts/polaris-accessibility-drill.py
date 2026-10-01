@@ -41,7 +41,7 @@ URL = os.environ.get("POLARIS_UI_URL", "http://127.0.0.1:5077")
 USER = os.environ.get("POLARIS_UI_USER", "admin")
 PASSWORD = os.environ.get("POLARIS_UI_PASS", "Admin@123!")
 AXE = os.environ.get("POLARIS_AXE_JS",
-                     os.path.join(ROOT, "node_modules", "axe-core", "axe.min.js"))
+                     os.path.join(ROOT, "scripts", "accessibility", "node_modules", "axe-core", "axe.min.js"))
 
 # The rule tags. WCAG 2.2 AA is the target, and it is cumulative: a 2.2 AA claim includes
 # every 2.0 and 2.1 A and AA criterion.
@@ -105,7 +105,7 @@ def main():
         return 3
     if not os.path.exists(AXE):
         print("accessibility drill needs axe-core at %s "
-              "(npm install --no-save axe-core@4.13.0)" % AXE, file=sys.stderr)
+              "(npm ci in scripts/accessibility installs axe-core@4.13.0)" % AXE, file=sys.stderr)
         return 3
     with open(AXE) as fh:
         axe_source = fh.read()

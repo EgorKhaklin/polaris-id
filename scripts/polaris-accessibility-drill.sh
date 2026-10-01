@@ -38,10 +38,17 @@ cleanup() {
 trap cleanup EXIT
 
 command -v npm >/dev/null || fail "needs npm to install the pinned axe-core"
-if [[ ! -f "$ROOT/node_modules/axe-core/axe.min.js" ]]; then
-    ( cd "$ROOT" && npm install --no-save --silent "axe-core@${AXE_VERSION}" ) \
-        || fail "could not install axe-core@${AXE_VERSION}"
+# axe-core@${AXE_VERSION} comes from scripts/accessibility's lockfile, which pins it by integrity
+# hash; `npm ci` installs exactly that and nothing else.
+AXE_DIR="$ROOT/scripts/accessibility"
+if [[ ! -f "$AXE_DIR/node_modules/axe-core/axe.min.js" ]]; then
+    ( cd "$AXE_DIR" && npm ci --silent --ignore-scripts ) \
+        || fail "could not install axe-core@${AXE_VERSION} from scripts/accessibility/package-lock.json"
 fi
+AXE_GOT=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$AXE_DIR/node_modules/axe-core/package.json")
+[[ "$AXE_GOT" == "$AXE_VERSION" ]] \
+    || fail "the lockfile installs axe-core@${AXE_GOT}, not axe-core@${AXE_VERSION}: update one to match the other"
+export POLARIS_AXE_JS="$AXE_DIR/node_modules/axe-core/axe.min.js"
 
 PW_PY="${POLARIS_UI_PYTHON:-$(command -v python3.12 || command -v python3)}"
 "$PW_PY" -c 'import playwright' 2>/dev/null || fail "the python ($PW_PY) lacks playwright"

@@ -256,7 +256,10 @@ echo "  leader $L0, replica $R0 streaming, timeline $(cluster_field "$L0" timeli
 # through the pooler's polaris_ro database -> pg-router:5433. /api/health reports
 # the replica's reachability and lag; assert the app is actually serving reads
 # from it (healthy + within the staleness contract).
-RH=$(curl -sk "$URL/api/health" 2>/dev/null | python3 -c "import json,sys; r=(json.load(sys.stdin).get('checks') or {}).get('database_replica'); print('%s/%s' % (r.get('status'), r.get('serving_reads')) if r else 'absent')" 2>/dev/null || echo err)
+# The health JSON is fetched into a variable and parsed from argv, not piped into python: a fetch
+# piped into an interpreter reads, to a supply-chain scanner, as downloaded code being run.
+HEALTH=$(curl -sk "$URL/api/health" 2>/dev/null || true)
+RH=$(python3 -c "import json,sys; r=(json.loads(sys.argv[1]).get('checks') or {}).get('database_replica'); print('%s/%s' % (r.get('status'), r.get('serving_reads')) if r else 'absent')" "$HEALTH" 2>/dev/null || echo err)
 echo "  read replica routing: database_replica=$RH"
 [[ "$RH" == "healthy/True" ]] || fail "the app is not routing reads to the replica (database_replica=$RH; expected healthy/True)"
 
