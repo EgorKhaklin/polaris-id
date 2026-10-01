@@ -21,6 +21,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-oid4vp` refuses a JWE response whose `crit` names any extension, as RFC 7516 requires.
 - `polaris-oid4vp`'s `status.decide` binds a list to the credential's own `uri` always; with none it skipped the check.
 - `polaris-oid4vp serve` stops serving a request object past its lifetime; a wallet nonce re-signed an expired one.
+- `polaris-oid4vp` refuses an issuer JWT typed `vc+sd-jwt`, a W3C VC Data Model credential whose `validUntil` and `credentialStatus` it does not read; it accepted one.
 
 ### Fixed
 

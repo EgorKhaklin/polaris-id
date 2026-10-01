@@ -56,6 +56,9 @@ DEFAULT_MAX_SKEW_SECONDS = 300
 
 #: The only `typ` the profile mints. A presentation that says something else is not a thing
 #: this verifier knows how to check, and guessing is how a verifier accepts the wrong format.
+#: `vc+sd-jwt`, the typ SD-JWT VC used before it was renamed, now names a W3C VC Data Model
+#: 2.0 credential secured with SD-JWT (VC-JOSE-COSE), which ends in `validUntil` and is
+#: revoked through `credentialStatus`; this verifier reads neither, so it refuses that typ.
 ISSUER_TYP = "dc+sd-jwt"
 KB_TYP = "kb+jwt"
 
@@ -753,9 +756,12 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         header, payload, signing_input, signature = _parse_jws(issuer_jwt)
     except (ValueError, json.JSONDecodeError) as exc:
         return _refuse("malformed", "the issuer-signed JWT does not parse: %s" % exc)
-    if header.get("typ") not in (ISSUER_TYP, "vc+sd-jwt"):
+    if header.get("typ") != ISSUER_TYP:
+        why = (": `vc+sd-jwt` is a W3C VC Data Model credential, whose `validUntil` and "
+               "`credentialStatus` this verifier does not read"
+               if header.get("typ") == "vc+sd-jwt" else "")
         return _refuse("issuer_typ", "the issuer JWT declares typ=%r, and this verifier only "
-                                     "checks %r" % (header.get("typ"), ISSUER_TYP))
+                                     "checks %r%s" % (header.get("typ"), ISSUER_TYP, why))
     if header.get("alg") not in ACCEPTED_ALGS:
         return _refuse("issuer_alg", "the issuer JWT declares alg=%r, which is not in the "
                                      "accepted set %r" % (header.get("alg"), ACCEPTED_ALGS))

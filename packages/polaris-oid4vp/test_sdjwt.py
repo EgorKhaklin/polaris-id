@@ -448,6 +448,24 @@ class StructuralRefusalsTests(unittest.TestCase):
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "issuer_typ")
 
+    def test_a_w3c_vc_typed_credential_is_refused(self):
+        # `vc+sd-jwt` is the typ of a W3C VC Data Model 2.0 credential secured with SD-JWT
+        # (W3C VC-JOSE-COSE, Recommendation 2025-05-15); SD-JWT VC took `dc+sd-jwt` so the two
+        # would not collide (draft-ietf-oauth-sd-jwt-vc-19: the typ MUST be `dc+sd-jwt`). That
+        # model ends a credential with `validUntil` and revokes it through `credentialStatus`,
+        # neither of which this verifier reads, so one its issuer had ended was accepted.
+        w = Wallet()
+        ended = {"validUntil": "2020-01-01T00:00:00Z",
+                 "credentialStatus": {"type": "BitstringStatusListEntry",
+                                      "statusPurpose": "revocation", "statusListIndex": "7",
+                                      "statusListCredential": "https://issuer.example/status/1"}}
+        v = w.verify(w.present(issuer_typ="vc+sd-jwt", payload_extra=ended))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_typ")
+        # Positive control: typed as an SD-JWT VC, the same signed payload verifies (those two
+        # members mean nothing there), so `typ` alone is what refuses the W3C credential.
+        self.assertTrue(w.verify(w.present(payload_extra=ended)).authentic)
+
     def test_an_unknown_kb_typ_is_refused(self):
         w = Wallet()
         v = w.verify(w.present(kb_typ="JWT"))
