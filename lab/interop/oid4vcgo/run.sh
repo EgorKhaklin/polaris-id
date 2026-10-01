@@ -15,14 +15,15 @@
 #   lab/interop/oid4vcgo/run.sh                                  # OID4VCgo v0.12.0
 #   OID4VCGO_VERSION=v0.19.0 lab/interop/oid4vcgo/run.sh
 #   OID4VCGO_VERSION=v0.22.0 lab/interop/oid4vcgo/run.sh         # also checks the verifier's chain
+#   OID4VCGO_VERSION=v0.23.0 lab/interop/oid4vcgo/run.sh         # and holds its leaf to HAIP
 #
 # Exits 0 only if the genuine presentation is accepted AND every control is refused.
 set -euo pipefail
 
 VERSION="${OID4VCGO_VERSION:-v0.12.0}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# --issuer-trust-anchor is in the tree and not in any published release yet (1.0.0rc7 has only
-# --issuer-jwks), so a clone's own package is the default; POLARIS_OID4VP overrides it.
+# A clone's own package is the default, so a run tests the tree; POLARIS_OID4VP overrides it, and
+# --issuer-trust-anchor, which the run needs, is in every published release from 1.0.0rc8.
 PKG="${POLARIS_OID4VP:-$HERE/../../../packages/polaris-oid4vp}"
 PORT="${PORT:-9443}"
 WALLET_PORT="${WALLET_PORT:-8443}"

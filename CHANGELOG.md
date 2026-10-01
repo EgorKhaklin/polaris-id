@@ -37,6 +37,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Twenty-two more pin nonces, contexts, agencies, grant ids, actions and ids beyond 2**53, from three reviews of that fix.
 - Six conformance cases pin keys and digests as hex text; the suite has 281 cases.
 
+- `lab/interop/oid4vcgo` runs OID4VCgo v0.23.0, which holds the verifier's leaf to HAIP; accepted, and all four controls refused.
 ## v1.0.0-rc.69 — 2026-10-01 (a holder's key changes only by its own signature)
 
 A holder key changes only with the live key's signature, and the route records its events through a routine that keeps them in order; the application's database role no longer runs the retention routines; the three verifiers read a signed status, a leaf and a document digest alike; `polaris-oid4vp` in this tree holds to RFC 7515, RFC 7516, RFC 9901 and HAIP 1.0 where it did not. 19 security changes, 4 fixes.
