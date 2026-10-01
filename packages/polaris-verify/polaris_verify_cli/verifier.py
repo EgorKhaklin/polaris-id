@@ -5286,34 +5286,35 @@ def main(argv=None):
         verdict = verify_cross_authority_zk(
             proof, checkpoint, args.context, manifests, max_window_seconds=args.max_window,
             trusted_anchors=anchor, expected_nonce=zk_nonce, min_anonymity_set=args.min_anonymity_set)
+        # The rules of every other path. --trusted-anchor alone reached this path, and with no
+        # trust root every manifest named was trusted: a manifest is its authority's word about
+        # itself (WIRE-SPEC 3.1). And a proof checked against no challenge is replayable, as a
+        # holder proof is on the presentation path (2026-10-01).
+        held = None
+        if verdict["decision"] == "accept" and anchor is None and not args.signature_only:
+            held = ("abstain: no --trusted-anchor or --issuer-anchor, so nothing here establishes that "
+                    "the authority attesting the checkpoint's issuer is one you trust. Pass a trust "
+                    "root, or --signature-only to say that the proof and its binding are the question.")
+        elif verdict["decision"] == "accept" and zk_nonce is None:
+            held = ("abstain: no --nonce, so nothing here shows the proof was made for this service "
+                    "rather than replayed. Pass the nonce this service issued with --nonce.")
+        if held:
+            # The printed verdict says what the exit code says; an accept that exits 2 read as one.
+            verdict = dict(verdict, decision="abstain", reasons=list(verdict.get("reasons") or []) + [held])
         if args.json:
             print(json.dumps(stamp_crypto(verdict, _mode), indent=2))
         else:
             print("decision: %s" % verdict["decision"])
             for r in verdict.get("reasons", []):
                 print("  - %s" % r)
-        # Abstain is the one decision a missing polaris-zk binary makes: the check could not run
-        # (3), not a proof that failed (2), which it exited until 2026-10-01.
+        if held:
+            print(held, file=sys.stderr)
+            return 2
+        # The verifier's own abstain is the one decision a missing polaris-zk binary makes: the
+        # check could not run (3), not a proof that failed (2), which it exited until 2026-10-01.
         if verdict["decision"] == "abstain":
             return 3
-        if verdict["decision"] != "accept":
-            return 2
-        # The rules of every other path. --trusted-anchor alone reached this path, and with no
-        # trust root every manifest named was trusted: a manifest is its authority's word about
-        # itself (WIRE-SPEC 3.1). And a proof checked against no challenge is replayable, as a
-        # holder proof is on the presentation path (2026-10-01).
-        if anchor is None and not args.signature_only:
-            print("abstain: no --trusted-anchor or --issuer-anchor, so nothing here establishes that "
-                  "the authority attesting the checkpoint's issuer is one you trust. Pass a trust "
-                  "root, or --signature-only to say that the proof and its binding are the question.",
-                  file=sys.stderr)
-            return 2
-        if zk_nonce is None:
-            print("abstain: no --nonce, so nothing here shows the proof was made for this service "
-                  "rather than replayed. Pass the nonce this service issued with --nonce.",
-                  file=sys.stderr)
-            return 2
-        return 0
+        return 0 if verdict["decision"] == "accept" else 2
 
     try:
         raw = open(args.pack).read() if args.pack else sys.stdin.read()
@@ -5349,6 +5350,14 @@ def main(argv=None):
             print("could not read the status assertion: %s" % e, file=sys.stderr)
             return 3
         verdict = verify_stapled(pack, assertion, max_window_seconds=args.max_window, anchor_keys=anchor)
+        held = not args.signature_only and not (
+            verdict.get("credential", {}).get("trust_evaluated")
+            and verdict.get("status_assertion", {}).get("trust_evaluated"))
+        if held and verdict["decision"] == "accept":
+            # The printed verdict says what the exit code says: it read "accept" with exit 2
+            # whenever the trust abstention below decided the run (2026-10-01).
+            verdict = dict(verdict, decision="abstain", reasons=list(verdict.get("reasons") or []) + [
+                "no --issuer-anchor: issuer trust was not evaluated"])
         if args.json:
             print(json.dumps(stamp_crypto(verdict, _mode), indent=2))
         else:
@@ -5359,14 +5368,11 @@ def main(argv=None):
             print("bound:            %s" % verdict["bound"])
             for r in verdict["reasons"]:
                 print("  - %s" % r)
-        if not args.signature_only and not (
-                verdict.get("credential", {}).get("trust_evaluated")
-                and verdict.get("status_assertion", {}).get("trust_evaluated")):
+        if held:
             print("abstain: no --issuer-anchor, so issuer trust was NOT evaluated for the "
                   "credential, the status assertion, or both. A genuine signature is not a "
                   "trusted issuer. Pass --issuer-anchor to decide it, or --signature-only to "
                   "say that cryptographic validity alone is the question.", file=sys.stderr)
-            return 2
         return 0 if verdict["decision"] == "accept" else 2
 
     verdict = verify_pack(pack, anchor)
