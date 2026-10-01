@@ -63,6 +63,21 @@ def decide(tok, index=1, uri=URI, issuer=ISSUER, **kw):
                     credential_issuer=issuer, now=NOW, **kw)
 
 
+class CritTests(unittest.TestCase):
+    """RFC 7515 4.1.11, as for the credential and its key binding JWT: a crit naming an
+    extension this implementation does not understand makes the JWS invalid."""
+
+    def test_a_token_whose_crit_names_an_extension_is_refused(self):
+        self.assertTrue(decide(token(payload()), issuer_key_verify=accept)["checked"],
+                        "positive control: the same token without crit")
+        header = {"alg": "ES256", "typ": "statuslist+jwt", "kid": "k1",
+                  "crit": ["urn:x:must-understand"], "urn:x:must-understand": True}
+        tok = ".".join([b64u(json.dumps(header)), b64u(json.dumps(payload())), b64u(b"sig")])
+        v = decide(tok, issuer_key_verify=accept)
+        self.assertFalse(v["checked"])
+        self.assertEqual(v["code"], "crit")
+
+
 class PositiveControlTests(unittest.TestCase):
     """If these fail, every refusal below passes for the wrong reason."""
 
