@@ -2544,6 +2544,11 @@ jobs:
       # endpoint failing rather than the issuer publishing a broken list.
       - name: Token Status List — what was established about revocation, and what was not
         run: cd packages/polaris-oid4vp && python -m unittest test_status
+      # lab/strategy/007: the access gate, an OIDC provider whose sign-in is a presentation to
+      # this package's verifier, driven by the package's own test wallet. Lab code, run here so
+      # its tests stay true as the verifier moves under it.
+      - name: The access gate (lab/strategy/007) — a presentation in, an OIDC ID token out
+        run: python -m unittest lab/strategy/007/test_gate.py
       # The refusals as HTTP status codes, which is the form the conformance plan scores.
       # Noticing a forged presentation and answering 200 anyway fails seven modules at once
       # while every unit test stays green.
