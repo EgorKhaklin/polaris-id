@@ -1107,7 +1107,13 @@ export class PolarisVerifier {
   /** Decide accept / reject / provisional for a holder's presentation (a wallet
    * presentation object, or a bare authenticity pack). */
   async verifyPresentation(presentation: any): Promise<Verdict> {
-    const cred: Pack = presentation && presentation.credential ? presentation.credential : (presentation ?? {});
+    // A `credential` key that is present decides, as it does in the Python SDK: an object that
+    // names a credential and supplies none (`credential: null`) was read here as a bare pack,
+    // so the same bytes were provisional in this SDK and rejected in the other. Without the
+    // key, the object itself is the pack, as before.
+    const named = presentation !== null && typeof presentation === "object" && "credential" in presentation;
+    const chosen = named ? presentation.credential : presentation;
+    const cred: Pack = chosen !== null && typeof chosen === "object" ? chosen : {};
     const a = verifyAuthenticity(cred, this.anchors);
     const reasons: string[] = [];
     if (!a.authentic) {

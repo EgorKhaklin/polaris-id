@@ -278,6 +278,16 @@ without the nonce, the credential or the binding's window. No verifier reported 
 without them the SDKs trust no manifest, while the detached verifier's function takes the
 manifests it is handed as the relying party's own (its parameter is `trusted_manifests`).
 
+Status values (1.0.0-rc.69). A `status` that is absent means active, and one that is present has
+to be the string `active`; `false` and `""` name no state. Thirteen cases pin that wherever a
+signed status decides: a manifest's own signer (`manifest-signer-status-*`), a registry's
+publisher (`registry-publisher-status-*`), the binding under a holder chain and under a grant in
+use (`holder-chain-binding-status-*`, `agent-grant-use-binding-status-*`), and the anchor that
+signed a trust edge (`cross-authority-edge-anchor-status-*`), each refusal beside a control signed
+`active`. Before these cases the Python SDK and the detached verifier read both values as active
+and failed all eight refusals, and the TypeScript SDK refused them: two answers on the same
+signed bytes.
+
 Holder-proof window (`artifact: holder-chain`, 1.0.0-rc.66). A holder proof is fresh from one
 minute before its `issued_at` (clock skew) until five minutes after it, both ends inclusive.
 The `holder-chain-proof-window-*` cases take a chain whose binding opens a day before the proof,

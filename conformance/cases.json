@@ -2853,6 +2853,188 @@
       },
       "since": "1.0.0-rc.68",
       "note": "The same chain and issuer key with the binding's window left out, which WIRE-SPEC 2.2 makes unacceptable. Before this case both SDKs here read it as fresh; the detached verifier refused it."
+    },
+    {
+      "name": "manifest-signer-status-active",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/status-value-manifest-signer-active.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: a manifest signed by its one anchor, listed active."
+    },
+    {
+      "name": "manifest-signer-status-empty",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/status-value-manifest-signer-empty.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same manifest with its signer's anchor entry signed as ''. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed '' as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "manifest-signer-status-false",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/status-value-manifest-signer-false.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same manifest with its signer's anchor entry signed as False. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed False as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "registry-publisher-status-active",
+      "artifact": "registry",
+      "object_file": "conformance/vectors/status-value-registry-publisher-active.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: the published registry re-signed by a fresh publisher key it lists as active."
+    },
+    {
+      "name": "registry-publisher-status-empty",
+      "artifact": "registry",
+      "object_file": "conformance/vectors/status-value-registry-publisher-empty.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same registry with its publisher's entry signed as ''. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed '' as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "holder-chain-binding-status-active",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/status-value-credential.json",
+      "binding_file": "conformance/vectors/status-value-binding-active.json",
+      "proof_file": "conformance/vectors/status-value-holder-proof.json",
+      "expected_nonce": "status-value-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: an active binding inside its window."
+    },
+    {
+      "name": "agent-grant-use-binding-status-active",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/status-value-grant.json",
+      "binding_file": "conformance/vectors/status-value-binding-active.json",
+      "credential_file": "conformance/vectors/status-value-credential.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "principal_bound": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: an active binding inside its window."
+    },
+    {
+      "name": "holder-chain-binding-status-empty",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/status-value-credential.json",
+      "binding_file": "conformance/vectors/status-value-binding-empty.json",
+      "proof_file": "conformance/vectors/status-value-holder-proof.json",
+      "expected_nonce": "status-value-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same chain under a binding the issuer signed with status ''. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed '' as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "agent-grant-use-binding-status-empty",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/status-value-grant.json",
+      "binding_file": "conformance/vectors/status-value-binding-empty.json",
+      "credential_file": "conformance/vectors/status-value-credential.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "principal_bound": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same grant under a binding the issuer signed with status ''. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed '' as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "holder-chain-binding-status-false",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/status-value-credential.json",
+      "binding_file": "conformance/vectors/status-value-binding-false.json",
+      "proof_file": "conformance/vectors/status-value-holder-proof.json",
+      "expected_nonce": "status-value-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same chain under a binding the issuer signed with status False. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed False as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "agent-grant-use-binding-status-false",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/status-value-grant.json",
+      "binding_file": "conformance/vectors/status-value-binding-false.json",
+      "credential_file": "conformance/vectors/status-value-credential.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "principal_bound": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same grant under a binding the issuer signed with status False. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed False as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "cross-authority-edge-anchor-status-active",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/status-value-edge-pack.json",
+      "manifest_files": [
+        "conformance/vectors/status-value-edge-manifest-active.json"
+      ],
+      "trusted_anchors": [
+        "8198906dafa53587a9a44211536f51e956dc8eeba9f0d3db9421f48bc4f95e2f543d614faea240b79a9cffafdb4b703c0e863cb353f50cdaa0936edca5e13315b75bc4011ec010b2c66a29def490d3618c0f2d53742163ce2171f98b028cc4629c6d0ee985c47f39563c4068157c045e95a87d4bb8734695bc686e99cf6c2a85ca75982d929d8a221237cb116d6f05367ed89f99f863788cc419247138d60a7c562818b21d095849f9c8c930333aa2629ba87f701b55e30847ff8fd896fbf9c991d14bdd2b207ecd24f43034d35a365164c5916ba36e7cb5a02c31bf4968f17637d0a577617f520d28b7975f5e1f5e7b8afb217840621f4d87896b0ae253f35d267eca36340ba2e85c4dbc4023a341b4f8e798fb22c13a03cc6f6ee17038f934d4ff56f751e76bfad72ea168ee7225a64343e578b841155e74c2cacbdc0f4e3c5856cfe16666b8559e79357f9be5f8e370ec6c946177b2ea67b7f7b09fb97564d5b89aea8c675664f51bdf32ea166721223243b9b24697435cb051a18227b4b1a7bd97fdfb2036c40e31aa84d2024dc4f77d196b65c53d586a7f24caf7f3dcea340dd045fa3674e0b6e7ba433df8b9cc0c60ba331a65b89d2ce6b02a26fe85c652bac1364d9229235c725997158ade202b307d2c2981a5716e83de8dcc311239c03497ffa10e41dcbd563539ff70af3f998a2923b4445b131914d4193b64fde52f7a75b5f7cb871acd5d093ede7023ddf6b12ab2ca44d89e68046942a99678e121f58b7c0987efc30eea8ccdb7acf55851cfd0f5c81b54ecdc5d1ffb9dff950adea10aafe8f55a7dc736ad52f150c0d038a9f722399c274c4bc8ab5c375a9651646799f57d1f5bbf5436ce988cbeaabdaf3f0f650d3dab1dbbc3a6f271e782f8b9c26279b8a509f53a02fe96904abe86e81bf61aa50a602861666e4ffb84dc35d4b6a9b00cc2e0c2808c81c61130ee13d4c06ed01e8a8346bd6f9000a7af62598e2d10196815a075b3250412112792ac9f21be0a79ea5d32b68f78ed4380e89980f3cec8c6701462a95f59d2f9b036620cb50412a514c4a9321f1701ac8c02ad2fc8c14c50833245effd732e3d10b69b619b18714ba0a1e5927c9afa41c6a0fc62f40646530e2855693425e51694552c47ae5008b61b22fac40139e586f4e1c69aa115a3051458e74b2be7735ff5bbecb55cffde6fefa03ee59a701739d85019993aac970ae23cab1b6148006ac2a629bc49fc06f7102535712f634fbb4b47dd9ab17e06f8ebe07fd19392de023018626a0e08800cf91fe98577d3b54bad596bee0821e631c2d4d9df5153f75b5757a35a48e58ddc16a4e22bec1f8336b906b9a27242a0eb7c8cbfef643bad91f0599b241cba35687f62a2f45ddfec5402e8b9b7454280e1f9f7f427da05871711cd92e6a370528cc91b86aeaed3f81a0339a21486363605c26d8eab299381d856cf869c1d6ddfe7e8b6d4c8fc5447be4a01ca556068e97f07d8050fdd127f9f48232490f856fe1c0377cfbf00b0c2cd046db41b744da94ef459fb5ead6aadb42a2c2bc407a955bf46acd9db42f025f89d2890bf1f83e0ff920bd55a9ddef5fe7540b41e00e877fce102762b1d78f03545501b84296f6c74df21a910bbc906de3552cd9bee4a55d7fe238a61044a2df012e080a2135499502017cf57d42892917e4bd5348f6fdfef94f0cc88e518bd3c033ce694d549c1be485e981d259a81ae0681612a362057b2f75c08741c7478db4a50c3f8f6a3a973310a5b7e2fa5cc23976521d8f26a6c0aba223ff70d00c62260f43f6d8fcca80104adac2956fd4de7e30d22c94e79f2ad4b2dd33eee2dcce401962cec04260e7dc75d49f61795ce4f23b7216c5a1f50ad609fbac89ac31d80770e6efe752ba186114e2d000569b8175311b27f367bcb1a80b359b9c06dd86f2dc35fc16d713168cdfa3b091caeee6271a597a713e77483eebee3564d3d4668f2e7e6cbc0022f9638827cd4c87d7f230887cc7300e4f37e979594ff95d0f07f19300b3a1b2219e4ed77266ca8c46ebb90e72639e9f3daca816d6dd364757edf5a00cf9414bb6967af9941b7b5dbc210d50fed7eb46b2942e299bed2d2094a9a70e0b3ffbcdd8d4c1bfab6da8a64bd1ebdc92cf32866d74b023d0b5ae457316d700bc1d5fe64f1f428893cb79bf2362bc0264a817a48415418b181d3d67abbc1a279f0b2289b1476c29c7edf8dfd21c65dd05db30b63b507d0406a5981b2b3f6b4bed642ec9a1c150d53af0536b610594bb0d511e6e49fd22881afc03e06b415ba06bc3d78d9fcf3bc53bdb711d9a679b1fb88ff2a3e2ff13db3e968e457079efd701e7d5341bb914b166cf8c71d0deabc499a50ec8469fd5bd9e963f648e561f6d3d3bc1b131bcd40e441356dc3ce1c3bd1714968faa987a602526f1b10bd595169294c989207c122d2d0d5e0da9ee4e3a7fec845ac76b8370e13ad473011bb1ed0e152fa3a6753b065eb3f88563e92151fd123641a76bffdc3846c98d7622b94467bfa7a497224270e2645c9fd6dd1ca8c5fec714c765d006248b19fb567af20ff10737042811f5f7c3998b02c3ceb8030afdb538a7b443b47e73cdbb40ab0370c9bb33cdcdec3b9a1d01a71610f45a516a6696426936a18ef795a60416c1f3e71b4381e6745193dee2dca5f20f46fb0cfd8823b97804f52636fc3343d3e24dcd8faf7780bb2f3ecf388c17606bbc4d0139d76f2fcf8120e45da17b7c7f2f3b97b1d"
+      ],
+      "context_id": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "require_signed_attestation": true,
+      "expect": {
+        "decision": "accept"
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: the edge is signed by an anchor its authority lists as active, with a signed edge required."
+    },
+    {
+      "name": "cross-authority-edge-anchor-status-empty",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/status-value-edge-pack.json",
+      "manifest_files": [
+        "conformance/vectors/status-value-edge-manifest-empty.json"
+      ],
+      "trusted_anchors": [
+        "8198906dafa53587a9a44211536f51e956dc8eeba9f0d3db9421f48bc4f95e2f543d614faea240b79a9cffafdb4b703c0e863cb353f50cdaa0936edca5e13315b75bc4011ec010b2c66a29def490d3618c0f2d53742163ce2171f98b028cc4629c6d0ee985c47f39563c4068157c045e95a87d4bb8734695bc686e99cf6c2a85ca75982d929d8a221237cb116d6f05367ed89f99f863788cc419247138d60a7c562818b21d095849f9c8c930333aa2629ba87f701b55e30847ff8fd896fbf9c991d14bdd2b207ecd24f43034d35a365164c5916ba36e7cb5a02c31bf4968f17637d0a577617f520d28b7975f5e1f5e7b8afb217840621f4d87896b0ae253f35d267eca36340ba2e85c4dbc4023a341b4f8e798fb22c13a03cc6f6ee17038f934d4ff56f751e76bfad72ea168ee7225a64343e578b841155e74c2cacbdc0f4e3c5856cfe16666b8559e79357f9be5f8e370ec6c946177b2ea67b7f7b09fb97564d5b89aea8c675664f51bdf32ea166721223243b9b24697435cb051a18227b4b1a7bd97fdfb2036c40e31aa84d2024dc4f77d196b65c53d586a7f24caf7f3dcea340dd045fa3674e0b6e7ba433df8b9cc0c60ba331a65b89d2ce6b02a26fe85c652bac1364d9229235c725997158ade202b307d2c2981a5716e83de8dcc311239c03497ffa10e41dcbd563539ff70af3f998a2923b4445b131914d4193b64fde52f7a75b5f7cb871acd5d093ede7023ddf6b12ab2ca44d89e68046942a99678e121f58b7c0987efc30eea8ccdb7acf55851cfd0f5c81b54ecdc5d1ffb9dff950adea10aafe8f55a7dc736ad52f150c0d038a9f722399c274c4bc8ab5c375a9651646799f57d1f5bbf5436ce988cbeaabdaf3f0f650d3dab1dbbc3a6f271e782f8b9c26279b8a509f53a02fe96904abe86e81bf61aa50a602861666e4ffb84dc35d4b6a9b00cc2e0c2808c81c61130ee13d4c06ed01e8a8346bd6f9000a7af62598e2d10196815a075b3250412112792ac9f21be0a79ea5d32b68f78ed4380e89980f3cec8c6701462a95f59d2f9b036620cb50412a514c4a9321f1701ac8c02ad2fc8c14c50833245effd732e3d10b69b619b18714ba0a1e5927c9afa41c6a0fc62f40646530e2855693425e51694552c47ae5008b61b22fac40139e586f4e1c69aa115a3051458e74b2be7735ff5bbecb55cffde6fefa03ee59a701739d85019993aac970ae23cab1b6148006ac2a629bc49fc06f7102535712f634fbb4b47dd9ab17e06f8ebe07fd19392de023018626a0e08800cf91fe98577d3b54bad596bee0821e631c2d4d9df5153f75b5757a35a48e58ddc16a4e22bec1f8336b906b9a27242a0eb7c8cbfef643bad91f0599b241cba35687f62a2f45ddfec5402e8b9b7454280e1f9f7f427da05871711cd92e6a370528cc91b86aeaed3f81a0339a21486363605c26d8eab299381d856cf869c1d6ddfe7e8b6d4c8fc5447be4a01ca556068e97f07d8050fdd127f9f48232490f856fe1c0377cfbf00b0c2cd046db41b744da94ef459fb5ead6aadb42a2c2bc407a955bf46acd9db42f025f89d2890bf1f83e0ff920bd55a9ddef5fe7540b41e00e877fce102762b1d78f03545501b84296f6c74df21a910bbc906de3552cd9bee4a55d7fe238a61044a2df012e080a2135499502017cf57d42892917e4bd5348f6fdfef94f0cc88e518bd3c033ce694d549c1be485e981d259a81ae0681612a362057b2f75c08741c7478db4a50c3f8f6a3a973310a5b7e2fa5cc23976521d8f26a6c0aba223ff70d00c62260f43f6d8fcca80104adac2956fd4de7e30d22c94e79f2ad4b2dd33eee2dcce401962cec04260e7dc75d49f61795ce4f23b7216c5a1f50ad609fbac89ac31d80770e6efe752ba186114e2d000569b8175311b27f367bcb1a80b359b9c06dd86f2dc35fc16d713168cdfa3b091caeee6271a597a713e77483eebee3564d3d4668f2e7e6cbc0022f9638827cd4c87d7f230887cc7300e4f37e979594ff95d0f07f19300b3a1b2219e4ed77266ca8c46ebb90e72639e9f3daca816d6dd364757edf5a00cf9414bb6967af9941b7b5dbc210d50fed7eb46b2942e299bed2d2094a9a70e0b3ffbcdd8d4c1bfab6da8a64bd1ebdc92cf32866d74b023d0b5ae457316d700bc1d5fe64f1f428893cb79bf2362bc0264a817a48415418b181d3d67abbc1a279f0b2289b1476c29c7edf8dfd21c65dd05db30b63b507d0406a5981b2b3f6b4bed642ec9a1c150d53af0536b610594bb0d511e6e49fd22881afc03e06b415ba06bc3d78d9fcf3bc53bdb711d9a679b1fb88ff2a3e2ff13db3e968e457079efd701e7d5341bb914b166cf8c71d0deabc499a50ec8469fd5bd9e963f648e561f6d3d3bc1b131bcd40e441356dc3ce1c3bd1714968faa987a602526f1b10bd595169294c989207c122d2d0d5e0da9ee4e3a7fec845ac76b8370e13ad473011bb1ed0e152fa3a6753b065eb3f88563e92151fd123641a76bffdc3846c98d7622b94467bfa7a497224270e2645c9fd6dd1ca8c5fec714c765d006248b19fb567af20ff10737042811f5f7c3998b02c3ceb8030afdb538a7b443b47e73cdbb40ab0370c9bb33cdcdec3b9a1d01a71610f45a516a6696426936a18ef795a60416c1f3e71b4381e6745193dee2dca5f20f46fb0cfd8823b97804f52636fc3343d3e24dcd8faf7780bb2f3ecf388c17606bbc4d0139d76f2fcf8120e45da17b7c7f2f3b97b1d"
+      ],
+      "context_id": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "require_signed_attestation": true,
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same edge, its signer listed by the authority with status '', with a signed edge required. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed '' as active and the TypeScript SDK did not."
     }
   ]
 }

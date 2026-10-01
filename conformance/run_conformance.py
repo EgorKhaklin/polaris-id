@@ -141,7 +141,7 @@ def _load_cases():
                 # trust every active anchor the supplied manifests declare
                 anchors = sorted({a["public_key_hex"] for m in manifests
                                   for a in m.get("anchors", [])
-                                  if (a.get("status") or "active") == "active" and a.get("public_key_hex")})
+                                  if a.get("status") in (None, "active") and a.get("public_key_hex")})
             payload["trusted_anchors"] = anchors
             if "feed_file" in c:
                 payload["revocation_feed"] = _load_file(c["feed_file"])

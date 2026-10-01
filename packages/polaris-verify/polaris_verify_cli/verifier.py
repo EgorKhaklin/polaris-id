@@ -256,6 +256,16 @@ def _verify_cryptography(digest: bytes, sig: bytes, pk: bytes, alg=_ALG):
         return False
 
 
+def _status_of(entry):
+    """The status an anchor, key or binding states: "active" when it states none (absent or
+    null), otherwise exactly what it states. A status of false or "" is a value that names no
+    state, so it is not "active". Until 2026-10-01 this read `entry.get("status") or
+    "active"`, which made those two active here while the TypeScript SDK refused them: three
+    verifiers, two answers, on the same signed bytes."""
+    status = entry.get("status")
+    return "active" if status is None else status
+
+
 def verify_pack(pack: dict, anchor_keys=None) -> dict:
     """Verify an authenticity pack. Returns a verdict dict. Total: hostile non-dict input
     fails closed rather than raising."""
@@ -730,7 +740,7 @@ def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors
     # Self-consistency: the manifest must be signed by one of the ACTIVE anchor keys
     # it declares as its own roots, so a manifest cannot be signed by a stranger key.
     active = {str(a.get("public_key_hex", "")).lower() for a in v["anchors"]
-              if isinstance(a, dict) and (a.get("status") or "active") == "active"}
+              if isinstance(a, dict) and _status_of(a) == "active"}
     if pk_hex.lower() not in active:
         v["note"] = "the manifest is not signed by one of its own declared active anchors"
         return v
@@ -955,7 +965,7 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
                 # Until 2026-09-30 any key's valid signature with the right agency id counted
                 # as the agency's, so `require_signed_attestation` was met by a stranger.
                 roots = {str(a.get("public_key_hex") or "").lower() for a in (manifest.get("anchors") or [])
-                         if isinstance(a, dict) and (a.get("status") or "active") == "active"}
+                         if isinstance(a, dict) and _status_of(a) == "active"}
                 if av["signed"] and not (av["attestation_authentic"]
                                          and av["attester_matches"] is not False
                                          and av["key_matches"] is not False
@@ -2020,7 +2030,7 @@ def _registry_publisher_key(reg):
     pub = reg.get("publisher") if isinstance(reg.get("publisher"), dict) else {}
     for a in (reg.get("authorities") if isinstance(reg.get("authorities"), list) else []):
         if isinstance(a, dict) and a.get("agency_id") == pub.get("agency_id") \
-                and (a.get("status") or "active") == "active" and a.get("public_key_hex"):
+                and _status_of(a) == "active" and a.get("public_key_hex"):
             return str(a["public_key_hex"]).lower()
     return None
 
@@ -2131,9 +2141,9 @@ def registry_key_status(reg, public_key_hex):
             continue
         for k in (a.get("keys") if isinstance(a.get("keys"), list) else []):
             if isinstance(k, dict) and _hexstr(k.get("public_key_hex")) == key:
-                return k.get("status") or "active"
+                return _status_of(k)
         if _hexstr(a.get("public_key_hex")) == key:
-            return a.get("status") or "active"
+            return _status_of(a)
     return None
 
 
@@ -2143,11 +2153,11 @@ def registry_authority(reg, public_key_hex):
     want = str(public_key_hex or "").lower()
     for a in (reg.get("authorities") if isinstance(reg, dict) and isinstance(reg.get("authorities"), list) else []):
         if isinstance(a, dict) and str(a.get("public_key_hex") or "").lower() == want \
-                and (a.get("status") or "active") == "active":
+                and _status_of(a) == "active":
             return a
         for k in (a.get("keys") if isinstance(a, dict) and isinstance(a.get("keys"), list) else []):
             if isinstance(k, dict) and _hexstr(k.get("public_key_hex")) == _hexstr(public_key_hex) \
-                    and (k.get("status") or "active") == "active":
+                    and _status_of(k) == "active":
                 return a
     return None
 
@@ -2486,7 +2496,7 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     if instant is not None and isinstance(manifest, dict):
         mv = verify_manifest(manifest, now=instant)
         active = any(isinstance(a, dict) and str(a.get("public_key_hex") or "").lower() == signer_key
-                     and (a.get("status") or "active") == "active" for a in mv.get("anchors") or [])
+                     and _status_of(a) == "active" for a in mv.get("anchors") or [])
         L["signer_key_active_at_instant"] = bool(mv.get("manifest_authentic") and mv.get("fresh")
                                                  and str(manifest.get("public_key_hex") or "").lower() == signer_key and active)
     else:
@@ -3772,7 +3782,7 @@ def verify_holder_proof(proof, binding=None, expected_nonce=None, expected_conte
         v["key_matches_binding"] = (
             str(pk_hex).lower() == str(binding.get("holder_public_key_hex") or "").lower()
             and str(proof.get("token_value")) == str(binding.get("token_value"))
-            and (binding.get("status") or "active") == "active")
+            and _status_of(binding) == "active")
         if not v["key_matches_binding"]:
             v["note"] = ("the proof is not signed by the key the issuer bound to this credential, "
                          "is about another credential, or the binding is revoked")
@@ -4374,7 +4384,7 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
         # freshness and the key but not the status, so a grant signed with a key the issuer had
         # revoked (the lost-device case, where the key is what the thief holds) was bound and
         # usable.
-        active = (binding.get("status") or "active") == "active" if isinstance(binding, dict) else False
+        active = _status_of(binding) == "active" if isinstance(binding, dict) else False
         v["principal_bound"] = bool(
             bv["binding_authentic"] and bv["fresh"] is not False and active
             and str(bv["holder_public_key_hex"] or "").lower() == str(holder_key or "").lower()
@@ -4472,12 +4482,22 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
     # failed. `is not False` read a link nobody supplied as a pass, so a bare grant signed by
     # any key at all, with no binding, credential, proof or service nonce behind it, was
     # usable. A revocation stays optional: a grant nobody revoked has none to show.
+    # The limits are inside the statement the holder signed. This verifier keeps no count of
+    # uses, so it cannot say that a use stays inside them; it can say whether it understands
+    # them, and until 2026-10-01 it never looked. A grant signed with `max_transfers: 3` was
+    # usable here, while grant_within_limits below refuses exactly that: "how a bounded grant
+    # silently becomes an unbounded one". Read with no uses and no amount, it refuses a limit
+    # that is not an object, a key it does not know and a value that is not a finite number.
+    limits_ok, limits_note = grant_within_limits(grant)
     v["usable"] = bool(v["grant_authentic"] and v["fresh"] is not False
                        and v["principal_bound"] is True
                        and v["action_in_scope"] is True
                        and not v["revoked"]
                        and v["agent_proved"] is True
-                       and expected_nonce is not None)
+                       and expected_nonce is not None
+                       and limits_ok)
+    if not limits_ok and v["note"] is None:
+        v["note"] = limits_note
     if not v["usable"] and v["note"] is None:
         missing = [what for what, absent in (
             ("holder binding", binding is None),
@@ -4533,6 +4553,12 @@ def grant_within_limits(grant, uses_so_far=0, amount=None):
         except (TypeError, ValueError, OverflowError):
             return False, "max_uses is not a number"
     max_amount = limits.get("max_amount")
+    # A limit that is not a finite number is refused whether or not this use names an amount,
+    # as the Python SDK does: read only beside an amount, a signed `max_amount: NaN` left a grant
+    # usable here that the SDK refused (2026-10-01).
+    if max_amount is not None and not _finite(max_amount):
+        return False, ("max_amount is not a finite number (%r); refusing rather than ignoring "
+                       "the limit" % (max_amount,))
     if max_amount is not None and amount is not None:
         if not _finite(max_amount) or not _finite(amount):
             return False, ("max_amount or the requested amount is not a finite number "

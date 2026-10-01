@@ -54,7 +54,11 @@ marked `crit`, and a W3C VC Data Model credential typed `vc+sd-jwt` as an SD-JWT
 `validUntil` and `credentialStatus`; it also ignores a `crit` on the credential, its key binding JWT
 and a status list token, and the key binding JWT's `exp` and `nbf`, accepts a digest committed twice
 and the trust anchor or a CA certificate as the issuer's `x5c` leaf; and it serves an expired request
-object. The tree carries the fixes; 1.0.0rc12 follows the maintainer's approval.
+object. `polaris-verify` 1.0.0rc6 and `polaris-sdk-python` 1.0.0rc6 read a signed anchor, registry
+authority or holder binding whose `status` is `false` or `""` as active; `polaris-verify` 1.0.0rc6 calls a
+grant usable whose limits it does not understand; and `polaris-sdk-ts`
+1.0.0-rc.7 decides a presentation naming `credential: null` as the object itself. The tree carries
+the fixes; releases follow the maintainer's approval.
 
 If you installed or pinned an older version, upgrade. The Current column is checked against
 [docs/RELEASING.md](docs/RELEASING.md) on every run. The packages are for evaluation and
