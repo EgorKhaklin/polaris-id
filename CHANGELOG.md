@@ -35,12 +35,14 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-oid4vp serve` refuses an `--issuer-jwks` file it cannot read or use; one raised, and one with no usable key started silently.
 - `polaris-verify --json` prints `abstain` for a zero-knowledge or stapled accept that exits 2; it printed `accept`.
 - `polaris-verify` reads zero-knowledge public inputs as `polaris-zk` does: integers below 2**64 and a 64-digit nullifier; it read `"7"` and `true`.
+- Both SDKs' conformance adapters report no pairwise handle for an object that is not a holder binding, as the detached verifier and the contract do.
 
 ### Added
 
 - Ten conformance cases pin where the two SDKs disagreed on signed bytes.
 - Twenty-two more pin nonces, contexts, agencies, grant ids, actions and ids beyond 2**53, from three reviews of that fix.
 - Six conformance cases pin keys and digests as hex text; the suite has 281 cases.
+- `scripts/polaris-hostile-agreement-drill.py` has all three verifiers decide every published case with each presenter-supplied node retyped or deleted, 184,331 inputs from 281 cases; CI runs a third.
 
 ### Changed
 

@@ -2326,6 +2326,15 @@ jobs:
           python scripts/polaris-sdk-agreement-drill.py
           python scripts/polaris-sdk-agreement-drill.py --prove-control
 
+      # The agreement drill compares the three verifiers on the published cases; this compares
+      # them on what a presenter could send instead: every presenter-supplied node of every case
+      # replaced by a value of the wrong type, or deleted. Every third variant here (about 43,000
+      # inputs); the plan names the full run.
+      - name: The three verifiers agree on hostile input (sampled)
+        run: |
+          python scripts/polaris-hostile-agreement-drill.py --sample 3
+          python scripts/polaris-hostile-agreement-drill.py --prove-control
+
       # v9.279 (roadmap PE.8) — real numbers from the runner: single-core ML-DSA-65
       # sign/verify throughput, printed with the box spec and version. Re-measured
       # every release so the published dyno (docs/reference/DYNO.md) cannot rot; the
