@@ -39,7 +39,13 @@ import urllib.parse
 import urllib.request
 from typing import Any, List, Optional
 
-__version__ = "0.1.0"
+try:
+    # The distribution's own version, so the module cannot disagree with what pip installed.
+    # It said "0.1.0" through every 1.0.0 release candidate (2026-09-30).
+    from importlib.metadata import version as _dist_version
+    __version__ = _dist_version("polaris-sdk-python")
+except Exception:  # noqa: BLE001  imported from a source tree, not installed
+    __version__ = "0+unknown"
 ALGORITHM = "ML-DSA-65"   # the default parameter set
 # P8.8a: the accepted FIPS 204 parameter sets -> the cryptography witness class. ML-DSA-44 is
 # below the floor and is rejected like any unknown algorithm.

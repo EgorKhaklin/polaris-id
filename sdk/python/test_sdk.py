@@ -1048,6 +1048,19 @@ class TrustComesFromTheRelyingPartyTests(unittest.TestCase):
         self.assertIn("not in the anchors", v.note)
 
 
+class TheVersionIsTheDistributionsTests(unittest.TestCase):
+    def test_the_module_says_the_installed_version_or_that_it_is_not_installed(self):
+        """`__version__` said "0.1.0" through every 1.0.0 release candidate (2026-09-30), whatever
+        pip had installed. It is the distribution's own version now, and from a source tree that
+        is not installed it says so rather than guess."""
+        import importlib.metadata as m
+        try:
+            installed = m.version("polaris-sdk-python")
+        except m.PackageNotFoundError:
+            installed = "0+unknown"
+        self.assertEqual(pv.__version__, installed)
+
+
 class GrantCoverageTests(unittest.TestCase):
     """2026-09-23: a held-out mutation made grant_covers answer yes to ANY action of a grant
     with a non-empty list, and this suite stayed green: every test here asked about empty or

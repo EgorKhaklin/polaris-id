@@ -21,4 +21,10 @@ from .verifier import (  # noqa: F401
     stamp_crypto,
 )
 
-__version__ = "0.1.0"
+try:
+    # The distribution's own version, so the module cannot disagree with what pip installed.
+    # It said "0.1.0" through every 1.0.0 release candidate (2026-09-30).
+    from importlib.metadata import version as _dist_version
+    __version__ = _dist_version("polaris-verify")
+except Exception:  # noqa: BLE001  imported from a source tree, not installed
+    __version__ = "0+unknown"
