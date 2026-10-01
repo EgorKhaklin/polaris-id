@@ -1611,6 +1611,16 @@ def _zk_verify_proof(proof_bundle, zk_binary=None):
         return False
 
 
+def _zk_input(value):
+    """A public input as the polaris-zk binary reads it: a JSON integer from 0 below 2**64, never
+    a bool, a float or text. `int()` read "7", 7.9 and `true` as 7, 7 and 1, which the binary
+    refuses, so such a proof was reported bound, and with no binary here it abstained (exit 3)
+    where the binary refuses it (2026-10-01)."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < 2 ** 64:
+        return None
+    return value
+
+
 def verify_zk_against_root(proof_bundle, expected_root_hex, expected_epoch_id,
                            expected_context_id, expected_nonce=None, zk_binary=None,
                            expected_scope=None, seen_nullifiers=None):
@@ -1636,25 +1646,22 @@ def verify_zk_against_root(proof_bundle, expected_root_hex, expected_epoch_id,
     if not _same_hex(pi.get("epoch_root_hex"), expected_root_hex):
         v["note"] = "proof is not bound to the trusted epoch root"
         return v
-    try:
-        if int(pi.get("epoch_id", -1)) != int(expected_epoch_id):
-            v["note"] = "proof epoch number does not match the checkpoint"
-            return v
-        if int(pi.get("context_id", -1)) != int(expected_context_id):
-            v["note"] = "proof context does not match the presented context"
-            return v
-        if expected_nonce is not None and int(pi.get("nonce", -1)) != int(expected_nonce):
-            v["note"] = "proof nonce does not match the verifier challenge"
-            return v
-        if expected_scope is not None and int(pi.get("scope", -1)) != int(expected_scope):
-            v["note"] = "proof scope is not this verifier's; a proof made elsewhere is not valid here"
-            return v
-    except (TypeError, ValueError, OverflowError):
-        # OverflowError, 2026-09-17: `json.loads` accepts the bare literal `Infinity`, and
-        # `int(float('inf'))` raises OverflowError, which `(TypeError, ValueError)` does not
-        # catch. A proof bundle with `"epoch_id": Infinity` crashed a function whose
-        # docstring promises a verdict on hostile input.
+    # Every one of the four is one the binary requires; a bundle missing one never verifies.
+    inputs = {k: _zk_input(pi.get(k)) for k in ("epoch_id", "context_id", "nonce", "scope")}
+    if None in inputs.values():
         v["note"] = "proof public inputs are malformed"
+        return v
+    if inputs["epoch_id"] != _zk_input(expected_epoch_id):
+        v["note"] = "proof epoch number does not match the checkpoint"
+        return v
+    if inputs["context_id"] != _zk_input(expected_context_id):
+        v["note"] = "proof context does not match the presented context"
+        return v
+    if expected_nonce is not None and inputs["nonce"] != _zk_input(expected_nonce):
+        v["note"] = "proof nonce does not match the verifier challenge"
+        return v
+    if expected_scope is not None and inputs["scope"] != _zk_input(expected_scope):
+        v["note"] = "proof scope is not this verifier's; a proof made elsewhere is not valid here"
         return v
     v["bound"] = True
     nullifier = str(pi.get("nullifier_hex") or "").lower() or None

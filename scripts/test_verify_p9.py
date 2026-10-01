@@ -133,6 +133,29 @@ class ScopedNullifierTests(unittest.TestCase):
         v = V.verify_zk_against_root(self._bundle(), self.ROOT, 7, 3)
         self.assertIsNone(v["fresh_nullifier"], "no ledger means no opinion, not a free pass")
 
+    def test_a_public_input_is_an_integer_as_the_binary_reads_it(self):
+        """2026-10-01: `int()` read "7", 7.9 and `true` as 7, 7 and 1, which the polaris-zk binary
+        refuses, so such a proof was reported bound, and with no binary it abstained (exit 3)
+        where the binary refuses it. Each of the four is one the binary requires."""
+        absent = "/nonexistent/polaris-zk"
+        for key, value in (("epoch_id", "7"), ("epoch_id", 7.0), ("context_id", True),
+                           ("context_id", 3.9), ("nonce", "11"), ("scope", 2 ** 64), ("nonce", -1)):
+            with self.subTest(key=key, value=value):
+                v = V.verify_zk_against_root(self._bundle(**{key: value}), self.ROOT, 7, 3, zk_binary=absent)
+                self.assertFalse(v["bound"])
+                self.assertIn("malformed", v["note"])
+        for key in ("nonce", "scope"):
+            bundle = self._bundle()
+            del bundle["public_inputs"][key]
+            with self.subTest(missing=key):
+                self.assertFalse(V.verify_zk_against_root(bundle, self.ROOT, 7, 3, zk_binary=absent)["bound"])
+        v = V.verify_zk_against_root(self._bundle(scope=2 ** 64 - 1), self.ROOT, 7, 3, zk_binary=absent)
+        self.assertTrue(v["bound"], "the largest u64 is one the binary reads")
+        self.assertIsNone(v["proof_verified"], "and with no binary the check abstains")
+        self.assertFalse(V.verify_zk_against_root(self._bundle(), self.ROOT, 7, 3, expected_nonce="11",
+                                                  zk_binary=absent)["bound"],
+                         "a caller's nonce that is not an integer matches nothing")
+
     def test_it_is_total_on_hostile_public_inputs(self):
         for bad in (None, {}, {"public_inputs": None}, {"public_inputs": {"scope": "many"}},
                     {"public_inputs": {"epoch_root_hex": ROOT_JUNK}}):
