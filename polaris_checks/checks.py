@@ -23636,6 +23636,27 @@ _CROSS_AUTHORITY_TOKEN_ROUTES = {
 _TOKEN_IN_REQUEST = re.compile(r"""(form|payload|body|_json_object\(\))\s*(\.get\()?\[?\(?['"]\w*token_id['"]""")
 _BINDING_ASKED = re.compile(r"_operator_authority_permits|_token_authority_denied|"
                             r"operator_agency_id")
+_TOKEN_FIELD = re.compile(r"""(?:form|payload|body|_json_object\(\))\s*(?:\.get\()?\[?\(?['"](\w*token_id)['"]""")
+
+
+def _token_fields_never_asked(body: str) -> list:
+    """The token fields a route's request names whose issuer the route never asks about. A field
+    is asked about when a line that calls _token_authority_denied names it, or names a variable
+    a line assigned from it. 2026-10-01: /uc4/activate-reserve names the lost credential and the
+    reserve, asked about the first, and was counted as bound because the call appeared once."""
+    lines = body.splitlines()
+    never = []
+    for field in sorted(set(_TOKEN_FIELD.findall(body))):
+        names = {field}
+        for ln in lines:
+            m = re.match(r"\s*(\w+)\s*=[^=]", ln)
+            if m and re.search(r"""['"]%s['"]""" % re.escape(field), ln):
+                names.add(m.group(1))
+        if not any("_token_authority_denied" in ln
+                   and any(re.search(r"(?<!\w)%s(?!\w)" % re.escape(n), ln) for n in names)
+                   for ln in lines):
+            never.append(field)
+    return never
 
 
 def check_state_changing_routes_ask_the_binding(root: pathlib.Path) -> list[Finding]:
@@ -23681,6 +23702,11 @@ def check_state_changing_routes_ask_the_binding(root: pathlib.Path) -> list[Find
                     # 1.0.0-rc.33: the same for a token named in the FORM. /uc8/revoke asked
                     # only about the actor it was told to act as, never whose token it was.
                     unbound.append(f"{f.name}: {route} (names a token, never asks its issuer)")
+                # 2026-10-01: about EVERY token the request names, each by its own field.
+                elif route not in _CROSS_AUTHORITY_TOKEN_ROUTES and _token_fields_never_asked(body):
+                    unbound.append(f"{f.name}: {route} (names "
+                                   + ", ".join(_token_fields_never_asked(body))
+                                   + " and never asks its issuer)")
             after = k
     if not seen:
         return _fail(name, "no state-changing admin or operator route found; the scan is blind")

@@ -2599,7 +2599,8 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         uc8_revoke_token as the owner. Measured with a role holding no grant at all: it entered
         the body and was stopped only by the business rules. Now it is refused at the door, and
         the application role keeps its EXECUTE, except on the retention routines, which take
-        the acting admin as a parameter and are the owner's alone (2026-10-01, review F2)."""
+        the acting admin as a parameter and are the owner's alone (2026-10-01, review F2), and the
+        population recount, which SHARE-locks the credential tables (lab/strategy/008)."""
         owner = psycopg2.connect(**DB_CONFIG)
         try:
             with owner.cursor() as cur:
@@ -2607,9 +2608,10 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                             "WHERE p.prosecdef AND p.pronamespace = 'public'::regnamespace")
                 routines = [r[0] for r in cur.fetchall()]
                 self.assertGreaterEqual(len(routines), 9)
-                owner_only = {"uc_archive_purge", "uc_set_retention_policy", "uc_apply_retention_template"}
+                owner_only = {"uc_archive_purge", "uc_set_retention_policy", "uc_apply_retention_template",
+                              "uc_rebuild_population_counts"}
                 self.assertEqual({sig.split("(")[0] for sig in routines} & owner_only, owner_only,
-                                 "the owner-only retention routines must exist for this to mean anything")
+                                 "the owner-only routines must exist for this to mean anything")
                 for sig in routines:
                     cur.execute("SELECT has_function_privilege('polaris_app', %s, 'EXECUTE'), "
                                 "       has_function_privilege('public', %s, 'EXECUTE')", (sig, sig))
