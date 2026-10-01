@@ -23,6 +23,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Both SDKs verify a credential's own signature before binding an agent grant to it.
 - Every Python package the images install is hash-pinned, and liboqs builds from a checked commit; liboqs-python was unpinned and fetched it.
 - A login signs only a context the credential is permitted in; `/api/v1/auth/authorize` signed any `context_id`, even one that does not exist.
+- `polaris-oid4vp` refuses a credential its configured status resolver checked as revoked or suspended; it answered the wallet 200.
+- `polaris-oid4vp` refuses a presentation that withholds a claim the request asked for.
+- `polaris-oid4vp` refuses an orphan disclosure with key binding waived; only the key-binding path refused it.
+- `polaris-oid4vp` judges an `x5c` leaf's validity at the verdict's `now`, not at the wall clock.
+- `polaris-oid4vp` refuses a JWE response whose `crit` names any extension, as RFC 7516 requires.
+- `polaris-oid4vp`'s `status.decide` binds a list to the credential's own `uri` always; with none it skipped the check.
+- `polaris-oid4vp serve` stops serving a request object past its lifetime; a wallet nonce re-signed an expired one.
 
 ### Fixed
 
@@ -39,6 +46,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- **Breaking**: `polaris-oid4vp`'s `Verifier` answers 400 to a credential its resolver checked as not VALID, and to one missing a requested claim.
+- **Breaking**: `polaris_oid4vp.status.decide` requires `expected_uri`.
 - **Breaking**: `polaris-verify` abstains (exit 2) on a presentation carrying a holder proof when no `--nonce` is given.
 - **Breaking**: a manifest that lists a trusted anchor but is signed by another key is no longer trusted, in all three verifiers.
 - CI installs every Python dependency with `--require-hashes` from a lock; `pip-audit` and `bandit` have one of their own.

@@ -57,8 +57,11 @@ key's signature on a trust edge as the attesting authority's, accept a holder pr
 another credential, and accept a timestamp over a SHA-1 or uppercase digest; the SDKs also accept
 a revocation feed whose count differs from its leaves; `polaris-sdk-python`
 1.0.0rc5 and `polaris-sdk-ts` 1.0.0-rc.6 bind a grant to a credential whose signature does not
-verify and accept a status bundle whose `member_count` differs from its members. The tree carries
-the fixes; releases follow the maintainer's approval.
+verify and accept a status bundle whose `member_count` differs from its members. `polaris-oid4vp`
+1.0.0rc11 **answers a wallet 200 for a credential its configured status resolver found revoked**,
+accepts a presentation that withholds a requested claim, an orphan disclosure with key binding
+waived, an `x5c` leaf expired at the verdict's `now` and a JWE marked `crit`, and serves an expired
+request object. The tree carries the fixes; releases follow the maintainer's approval.
 
 If you installed or pinned an older version, upgrade. The Current column is checked against
 [docs/RELEASING.md](docs/RELEASING.md) on every run. The packages are for evaluation and
