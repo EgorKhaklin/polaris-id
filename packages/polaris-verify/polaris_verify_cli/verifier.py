@@ -1092,6 +1092,16 @@ def _revocation_feed_canonical(feed):
     return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def _leaves_are_hex(leaves):
+    """WIRE-SPEC 3.3 and 3.16: a revoked leaf and an epoch leaf are each a SHA3-256, so a list of
+    64 hex digits in either case. Until 2026-10-01 a leaf of any type was turned into a string
+    before hashing, and Python and JavaScript turn `null` and `1.0` into different strings, so
+    one signed feed had two verdicts; a field that was not a list read as the empty set."""
+    return isinstance(leaves, list) and all(
+        isinstance(x, str) and len(x) == 64 and all(c in "0123456789abcdefABCDEF" for c in x)
+        for x in leaves)
+
+
 def revoked_root(leaves):
     """A deterministic commitment over the revoked-leaf set: SHA3-256 over the sorted,
     de-duplicated, newline-joined lowercase hex leaves. Order-independent, so anyone who
@@ -1284,10 +1294,11 @@ def verify_revocation_feed(feed, now=None, max_window_seconds=None, issuer_key=N
     # its own members is rejected before its signature is even considered meaningful. A
     # wrong-typed leaf set or root (hostile input) fails the commitment rather than raising.
     leaves = feed.get("revoked_leaves")
+    hex_ok = _leaves_are_hex(leaves)
     if not isinstance(leaves, (list, tuple, set)):
         leaves = []
     uniq = {str(x).lower() for x in leaves}
-    v["commitment_ok"] = (revoked_root(leaves) == str(feed.get("revoked_root_hex") or "").lower()
+    v["commitment_ok"] = (hex_ok and revoked_root(leaves) == str(feed.get("revoked_root_hex") or "").lower()
                           and _finite(feed.get("revoked_count")) and len(uniq) == feed.get("revoked_count"))
     try:
         sig, pk = _unhex(sig_hex), _unhex(pk_hex)
@@ -2460,6 +2471,15 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     if not ok:
         v["note"] = "document signature is invalid"
         return v
+    # WIRE-SPEC 3.12: `document.digest_algorithm` MUST be SHA3-256 and `digest_hex` its lowercase
+    # hex, as for a timestamp (3.9). Until 2026-10-01 neither was checked in any verifier here: a
+    # document labelled MD5, or carrying an uppercase digest, was authentic.
+    dh = d.get("digest_hex")
+    if not (d.get("digest_algorithm") == "SHA3-256" and isinstance(dh, str) and len(dh) == 64
+            and all(c in "0123456789abcdef" for c in dh)):
+        v["document_authentic"] = False
+        v["note"] = "a signed document binds a lowercase SHA3-256 digest (digest_algorithm SHA3-256)"
+        return v
     signer_key = str(pk_hex).lower()
     if trusted_anchors is not None:
         try:
@@ -3609,9 +3629,10 @@ def verify_epoch_leaves(bundle, now=None, max_window_seconds=None, anchor_keys=N
     # purpose of the bundle. verify_revocation_feed refuses the same shape of tamper for the
     # same reason, and these two must not disagree about what a broken commitment means.
     leaves = bundle.get("all_leaves_hex")
+    hex_ok = _leaves_are_hex(leaves)
     leaves = leaves if isinstance(leaves, list) else []
     v["leaf_count"] = len(leaves)
-    v["commitment_matches"] = (_leaves_root(leaves) == str(bundle.get("leaves_root_hex") or "").lower())
+    v["commitment_matches"] = (hex_ok and _leaves_root(leaves) == str(bundle.get("leaves_root_hex") or "").lower())
     # A number, not a boolean: `True == 1` read `"leaf_count": true` as one leaf, which the
     # TypeScript SDK's `===` refuses (2026-09-30).
     v["count_matches"] = (_finite(bundle.get("leaf_count")) and len(leaves) == bundle.get("leaf_count"))
@@ -4547,6 +4568,10 @@ def grant_within_limits(grant, uses_so_far=0, amount=None):
         if not _finite(max_uses) or not _finite(uses_so_far):
             return False, ("max_uses or the use count is not a finite number (%r, %r); "
                            "refusing rather than ignoring the limit" % (max_uses, uses_so_far))
+        # Whole numbers, as the TypeScript SDK requires: `int()` read 2.5 uses as 2, so the same
+        # signed grant was within its limit here and refused there (2026-10-01).
+        if float(max_uses) != int(max_uses) or float(uses_so_far) != int(uses_so_far):
+            return False, "max_uses and the use count must be whole numbers (%r, %r)" % (max_uses, uses_so_far)
         try:
             if int(uses_so_far) >= int(max_uses):
                 return False, "the grant's use limit (%s) is exhausted" % max_uses

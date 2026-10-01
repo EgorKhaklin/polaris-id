@@ -115,6 +115,11 @@ PINNED_KNOWN_DEFECTS = {
     "cross-authority-edge-anchor-status-empty":
         "2026-10-01: the same rule for the anchor that signed a trust edge; the pinned verifier read "
         "status \"\" as active",
+    "revocation-feed-leaf-null-python-root":
+        "2026-10-01: a revoked leaf is 64 hex digits (WIRE-SPEC 3.3); the pinned verifier turns a null "
+        "leaf into the string \"none\" and accepts a root computed over it",
+    "revocation-feed-leaf-a-number":
+        "2026-10-01: the same rule; the pinned verifier turns the leaf 1.0 into \"1.0\" and accepts it",
 }
 
 

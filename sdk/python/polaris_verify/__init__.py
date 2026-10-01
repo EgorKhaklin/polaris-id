@@ -470,6 +470,16 @@ class ArtifactVerdict:
     issuer_trusted: Optional[bool] = None
 
 
+def _leaves_are_hex(leaves):
+    """WIRE-SPEC 3.3 and 3.16: a revoked leaf and an epoch leaf are each a SHA3-256, so a list of
+    64 hex digits in either case. Until 2026-10-01 a leaf of any type was turned into a string
+    before hashing, and Python and JavaScript turn `null` and `1.0` into different strings, so
+    one signed feed had two verdicts; a field that was not a list read as the empty set."""
+    return isinstance(leaves, list) and all(
+        isinstance(x, str) and len(x) == 64 and all(c in "0123456789abcdefABCDEF" for c in x)
+        for x in leaves)
+
+
 def _revoked_root(leaves) -> str:
     if not isinstance(leaves, (list, tuple)):
         leaves = []
@@ -586,9 +596,18 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         # WIRE-SPEC 3.3: `revoked_count` MUST equal the number of distinct leaves; only the root
         # was compared until 2026-09-30, where the detached verifier compared both.
         leaves = obj.get("revoked_leaves") if isinstance(obj.get("revoked_leaves"), list) else []
-        ok = (_revoked_root(leaves) == str(obj.get("revoked_root_hex") or "").lower()
+        ok = (_leaves_are_hex(obj.get("revoked_leaves"))
+              and _revoked_root(leaves) == str(obj.get("revoked_root_hex") or "").lower()
               and _count_is(obj.get("revoked_count"), len({str(x).lower() for x in leaves})))
         note = None if ok else "the revocation feed's commitment or count does not match its leaves"
+    elif ok and fmt == "polaris-signed-document/1":
+        # WIRE-SPEC 3.12: the document's `digest_algorithm` MUST be SHA3-256 and `digest_hex` its
+        # lowercase hex, as for a timestamp. No verifier here checked either until 2026-10-01.
+        d = obj.get("document") if isinstance(obj.get("document"), dict) else {}
+        dh = d.get("digest_hex")
+        ok = (d.get("digest_algorithm") == "SHA3-256" and isinstance(dh, str) and len(dh) == 64
+              and all(c in "0123456789abcdef" for c in dh))
+        note = None if ok else "a signed document binds a lowercase SHA3-256 digest"
     elif ok and fmt == "polaris-timestamp/1":
         # WIRE-SPEC 3.9: `digest_algorithm` MUST be SHA3-256 and `digest_hex` its lowercase hex; and
         # the instant must be one. Until 2026-09-30 none of the three was checked here.
@@ -605,7 +624,8 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         # P9.2: the leaves ride outside the signed statement, committed to by leaves_root_hex,
         # so a verifier checks the set with SHA3-256 alone and never needs the proving library.
         leaves = obj.get("all_leaves_hex") if isinstance(obj.get("all_leaves_hex"), list) else []
-        ok = (_revoked_root(leaves) == str(obj.get("leaves_root_hex") or "").lower()
+        ok = (_leaves_are_hex(obj.get("all_leaves_hex"))
+              and _revoked_root(leaves) == str(obj.get("leaves_root_hex") or "").lower()
               and _count_is(obj.get("leaf_count"), len(leaves)))
         note = None if ok else "the published leaves do not match the committed set"
     elif ok and fmt == "polaris-federation-status-bundle/1":
@@ -1270,6 +1290,11 @@ def grant_within_limits(grant, uses_so_far: int = 0, amount=None):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             return False, ("%s is not a finite number (%r); refusing rather than ignoring "
                            "the limit" % (label, value))
+    # Whole numbers, as the TypeScript SDK requires: `int()` read 2.5 uses as 2, so the same
+    # signed grant was within its limit here and refused there (2026-10-01).
+    if limits.get("max_uses") is not None and (float(limits["max_uses"]) != int(limits["max_uses"])
+                                               or float(uses_so_far) != int(uses_so_far)):
+        return False, "max_uses and the use count must be whole numbers"
     try:
         if limits.get("max_uses") is not None and int(uses_so_far) >= int(limits["max_uses"]):
             return False, "the grant's use limit (%s) is exhausted" % limits["max_uses"]

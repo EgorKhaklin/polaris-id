@@ -289,8 +289,11 @@ function isoToEpoch(s: unknown): number | null {
   if (!m) return null;
   const [, y, mo, d, hh, mi, ss, frac, z, sign, oh, om] = m;
   let t = Date.UTC(Number(y), Number(mo) - 1, Number(d),
-                   Number(hh || 0), Number(mi || 0), Number(ss || 0),
-                   frac ? Math.round(Number("0." + frac) * 1000) : 0);
+                   Number(hh || 0), Number(mi || 0), Number(ss || 0), 0);
+  // The fraction to the microsecond, as the Python verifiers read it. Until 2026-10-01 it was
+  // rounded to the millisecond here, so an artifact dated 100 microseconds ahead of `now` was
+  // fresh in this SDK and not yet valid in both Python verifiers: the same bytes, two answers.
+  const micro = frac ? Number(frac.padEnd(6, "0")) : 0;
   if (Number.isNaN(t)) return null;
   // Date.UTC rolls an impossible date over instead of refusing it: "2026-02-31" became
   // 3 March and "T25:00" the next day, where Python's fromisoformat, whose subset this
@@ -310,7 +313,7 @@ function isoToEpoch(s: unknown): number | null {
     // Deliberately nothing: Date.UTC already read it as UTC. Named so that a later reader
     // does not "helpfully" reintroduce local time here.
   }
-  return t / 1000;
+  return t / 1000 + micro / 1e6;
 }
 
 /** Formats whose freshness is a REPLAY WINDOW rather than a validity interval, with the
@@ -446,6 +449,13 @@ const ARTIFACT_KEYS: Record<string, string[]> = {
 export type ArtifactVerdict = { authentic: boolean; fresh: boolean | null; note?: string;
                                 issuerTrusted?: boolean | null };
 
+/** WIRE-SPEC 3.3 and 3.16: a revoked leaf and an epoch leaf are each a SHA3-256, so a list of
+ * 64 hex digits in either case. `String(null)` is "null" here and `str(None)` "None" in Python,
+ * so a leaf of another type gave one signed feed two verdicts (2026-10-01). */
+function leavesAreHex(leaves: unknown): boolean {
+  return Array.isArray(leaves) && leaves.every((x) => typeof x === "string" && /^[0-9a-fA-F]{64}$/.test(x));
+}
+
 function revokedRoot(leaves: any): string {
   const arr: string[] = Array.isArray(leaves) ? leaves.map((x) => String(x).toLowerCase()) : [];
   const uniq = [...new Set(arr)].sort();
@@ -541,7 +551,8 @@ export function verifySignedArtifact(obj: any, now?: string | null,
   if (ok && o.format === "polaris-epoch-leaves/1") {
     // P9.2: the leaves ride outside the signed statement, committed to by leaves_root_hex.
     const leaves = Array.isArray(o.all_leaves_hex) ? o.all_leaves_hex : [];
-    ok = revokedRoot(leaves) === String(o.leaves_root_hex ?? "").toLowerCase() && leaves.length === o.leaf_count;
+    ok = leavesAreHex(o.all_leaves_hex)
+      && revokedRoot(leaves) === String(o.leaves_root_hex ?? "").toLowerCase() && leaves.length === o.leaf_count;
     // NOT an early return. This is one of five commitment checks in this function and the
     // other four fall through to the tail, so returning here reported `fresh: null` where
     // its four siblings report the window's answer: the same class of failure, two
@@ -554,9 +565,16 @@ export function verifySignedArtifact(obj: any, now?: string | null,
     // WIRE-SPEC 3.3: revoked_count MUST equal the number of distinct leaves; only the root was
     // compared until 2026-09-30, where the detached verifier compared both.
     const leaves = Array.isArray(o.revoked_leaves) ? o.revoked_leaves : [];
-    ok = revokedRoot(leaves) === String(o.revoked_root_hex ?? "").toLowerCase()
+    ok = leavesAreHex(o.revoked_leaves)
+      && revokedRoot(leaves) === String(o.revoked_root_hex ?? "").toLowerCase()
       && typeof o.revoked_count === "number"
       && o.revoked_count === new Set(leaves.map((x: any) => String(x).toLowerCase())).size;
+  } else if (ok && o.format === "polaris-signed-document/1") {
+    // WIRE-SPEC 3.12: the document's digest_algorithm MUST be SHA3-256 and digest_hex its
+    // lowercase hex, as for a timestamp. No verifier here checked either until 2026-10-01.
+    const d = o.document !== null && typeof o.document === "object" ? o.document : {};
+    ok = d.digest_algorithm === "SHA3-256" && typeof d.digest_hex === "string"
+      && /^[0-9a-f]{64}$/.test(d.digest_hex);
   } else if (ok && o.format === "polaris-timestamp/1") {
     // WIRE-SPEC 3.9: digest_algorithm MUST be SHA3-256 and digest_hex its lowercase hex; and the
     // instant must be one. Until 2026-09-30 none of the three was checked here.
