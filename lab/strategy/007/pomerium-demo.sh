@@ -2,20 +2,26 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Egor Khaklin and the Polaris contributors
 #
-# lab/strategy/007/pomerium-demo.sh -- Pomerium admits a person whose wallet presented to the gate.
+# lab/strategy/007/pomerium-demo.sh -- Pomerium admits a person whose wallet presented to the gate,
+# and an agent whose holder granted it an action.
 #
 # Everything runs on this machine, and none of it was written for Polaris except the gate:
-#   - the gate (lab/strategy/007/gate.py, this tree's code), an OIDC provider over polaris-oid4vp;
+#   - the gate (lab/strategy/007/gate.py, this tree's code), an OIDC provider over polaris-oid4vp
+#     and polaris-verify;
 #   - walt.id's wallet (waltid/wallet-api2, unmodified), holding a credential it was issued;
 #   - Pomerium (unmodified, pinned by digest), an identity-aware proxy configured with the gate as
 #     its generic OIDC provider, protecting traefik/whoami (pinned), which echoes what it is sent;
-#   - a headless browser (Playwright) standing in for the person.
+#   - a headless browser (Playwright) standing in for the person;
+#   - an agent holding an ML-DSA-65 grant chain (grants.py), calling two API routes.
 #
-# Exits 0 only if the person reaches the protected page with the claims the gate released, AND
-# the same wallet is refused once the gate no longer trusts the credential's issuer.
+# Exits 0 only if all of this holds:
+#   - the person reaches the protected page with the claims the gate released;
+#   - the agent reaches each API route with a token for that route's action, and every control
+#     is refused (agent_drive.py lists them);
+#   - the same wallet is refused once the gate no longer trusts the credential's issuer.
 #
-# Needs Docker, a python3 with `cryptography` and `playwright` (chromium installed), and ports
-# 7006, 8443, 9443 and 9444 free. PYTHON overrides the interpreter.
+# Needs Docker, a python3 with `playwright` (chromium installed) and a `cryptography` with ML-DSA,
+# and ports 7006, 8443, 9443 and 9444 free. PYTHON overrides the interpreter.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -32,13 +38,13 @@ ADD_HOST=()
 for p in 7006 8443 9443 9444; do
   if lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then echo "port $p is in use" >&2; exit 2; fi
 done
-"$PY" -c 'import cryptography, playwright' 2>/dev/null \
-  || { echo "this python ($PY) needs cryptography and playwright" >&2; exit 2; }
+"$PY" -c 'import playwright; from cryptography.hazmat.primitives.asymmetric import mldsa' 2>/dev/null \
+  || { echo "this python ($PY) needs playwright, and a cryptography with ML-DSA" >&2; exit 2; }
 
 GATE_PID=""
 cleanup() {   # keeps the script's own exit status: a failed run must not exit 0
   rc=$?
-  [ -n "$GATE_PID" ] && kill "$GATE_PID" 2>/dev/null || true
+  if [ -n "$GATE_PID" ]; then kill "$GATE_PID" 2>/dev/null || true; wait "$GATE_PID" 2>/dev/null || true; fi
   docker rm -f polaris-gate-pomerium polaris-gate-whoami polaris-gate-wallet >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
   exit "$rc"
@@ -51,6 +57,9 @@ export PYTHONPATH="$ROOT/packages/polaris-oid4vp"
 
 echo "== the gate's certificates (polaris-oid4vp keygen)"
 "$PY" -m polaris_oid4vp.cli keygen --out ./pki --host host.docker.internal --port 9443 >/dev/null
+
+echo "== an issuer, a holder and the agent the holder grants read:status and write:config"
+"$PY" "$HERE/grants.py" mint --out ./agent --actions read:status,write:config
 
 echo "== walt.id's wallet, and one credential in it"
 docker run -d --name polaris-gate-wallet -p 7006:7006 ${ADD_HOST[@]+"${ADD_HOST[@]}"} "$WALLET" >/dev/null
@@ -67,7 +76,7 @@ EOF
 start_gate() {   # start_gate ISSUER_JWKS_FILE
   [ -n "$GATE_PID" ] && { kill "$GATE_PID" 2>/dev/null || true; wait "$GATE_PID" 2>/dev/null || true; }
   "$PY" -u "$HERE/gate.py" --pki ./pki --clients clients.json --host host.docker.internal \
-    --issuer-jwks "$1" >gate.log 2>&1 &
+    --issuer-jwks "$1" --grant-issuer-keys agent/issuer.pub >gate.log 2>&1 &
   GATE_PID=$!
   for _ in $(seq 1 30); do
     curl -sfk https://localhost:9444/.well-known/openid-configuration >/dev/null && return 0; sleep 0.5
@@ -79,6 +88,8 @@ echo "== the gate, trusting the credential's issuer"
 start_gate issuer-jwks.json
 
 echo "== Pomerium, with the gate as its OIDC provider, protecting whoami"
+# It listens on 8443 inside the container as well: it calls its own authenticate URL to verify
+# an agent's bearer token, and that URL must reach it from inside.
 "$PY" - <<'EOF'
 import base64, secrets
 from cryptography.hazmat.primitives import serialization
@@ -87,7 +98,7 @@ signing = ec.generate_private_key(ec.SECP256R1()).private_bytes(
     serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
 b64 = lambda raw: base64.b64encode(raw).decode()
 client_secret = __import__("json").load(open("clients.json"))["pomerium"]["secret"]
-open("pomerium.yaml", "w").write("""address: ":443"
+open("pomerium.yaml", "w").write("""address: ":8443"
 authenticate_service_url: https://authenticate.localhost.pomerium.io:8443
 idp_provider: oidc
 idp_provider_url: https://host.docker.internal:9444
@@ -97,17 +108,33 @@ certificate_authority_file: /pki/tls.pem
 shared_secret: %s
 cookie_secret: %s
 signing_key: %s
-jwt_claims_headers: [given_name, family_name]
+jwt_claims_headers: [given_name, family_name, action, holder]
 routes:
   - from: https://verify.localhost.pomerium.io:8443
     to: http://polaris-gate-whoami:80
     allow_any_authenticated_user: true
     pass_identity_headers: true
+  - from: https://status.localhost.pomerium.io:8443
+    to: http://polaris-gate-whoami:80
+    bearer_token_format: idp_identity_token
+    pass_identity_headers: true
+    policy:
+      - allow:
+          and:
+            - claim/action: read:status
+  - from: https://config.localhost.pomerium.io:8443
+    to: http://polaris-gate-whoami:80
+    bearer_token_format: idp_identity_token
+    pass_identity_headers: true
+    policy:
+      - allow:
+          and:
+            - claim/action: write:config
 """ % (client_secret, b64(secrets.token_bytes(32)), b64(secrets.token_bytes(32)), b64(signing)))
 EOF
 docker network create "$NET" >/dev/null
 docker run -d --name polaris-gate-whoami --network "$NET" "$WHOAMI" >/dev/null
-docker run -d --name polaris-gate-pomerium --network "$NET" -p 8443:443 ${ADD_HOST[@]+"${ADD_HOST[@]}"} \
+docker run -d --name polaris-gate-pomerium --network "$NET" -p 8443:8443 ${ADD_HOST[@]+"${ADD_HOST[@]}"} \
   -e SSL_CERT_FILE=/pki/tls.pem -v "$WORK/pomerium.yaml:/pomerium/config.yaml:ro" -v "$WORK/pki:/pki:ro" \
   "$POMERIUM" >/dev/null
 for _ in $(seq 1 60); do
@@ -132,6 +159,12 @@ print("  %s    admitted to %s with given_name=%s family_name=%s" % (
 sys.exit(0 if ok else 1)
 EOF
 
+echo "== an agent calls two API routes with tokens the gate issued against its grant"
+"$PY" "$HERE/agent_drive.py" --dir ./agent --gate https://localhost:9444 --cafile pki/tls.pem \
+  --audience pomerium --read https://status.localhost.pomerium.io:8443/ \
+  --write https://config.localhost.pomerium.io:8443/ > agent.out || fail=1
+grep -v '^{' agent.out
+
 echo "== control: the gate no longer trusts that issuer"
 "$PY" -c '
 import json
@@ -149,6 +182,6 @@ print("  %s    not admitted (ended at %s)" % ("FAIL" if r["reached"] else "ok", 
 sys.exit(1 if r["reached"] else 0)
 EOF
 
-[ "$fail" -eq 0 ] && echo "RESULT: admitted by credential, and refused when the issuer is not trusted" \
+[ "$fail" -eq 0 ] && echo "RESULT: a person admitted by credential, an agent by grant, and every control refused" \
                   || { echo "RESULT: FAILED"; tail -20 gate.log; docker logs --tail 30 polaris-gate-pomerium 2>&1 | tail -30; }
 exit "$fail"

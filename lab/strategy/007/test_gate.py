@@ -2,16 +2,19 @@
 # Copyright 2026 Egor Khaklin and the Polaris contributors
 """lab/strategy/007/test_gate.py -- the gate's OIDC flow, end to end, with a wallet the certified
 verifier judges for real. The wallet is polaris-oid4vp's own test wallet; nothing is mocked
-between its presentation and the ID token.
+between its presentation and the ID token. The agent half signs real ML-DSA-65 grant chains,
+which needs a `cryptography` with ML-DSA (polaris_web/requirements.txt pins one).
 
     python3 -m unittest lab/strategy/007/test_gate.py
 """
 import base64
+import datetime
 import hashlib
 import json
 import pathlib
 import secrets
 import sys
+import tempfile
 import unittest
 import urllib.error
 import urllib.parse
@@ -27,6 +30,7 @@ from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature  # noqa: E402
 
 import gate as G  # noqa: E402
+import grants  # noqa: E402
 from polaris_oid4vp.jwe import b64u_decode, b64u_encode  # noqa: E402
 from test_verifier import Wallet, _client_chain  # noqa: E402
 
@@ -246,7 +250,219 @@ class CodeAndClientTests(GateTestCase):
         self.assertEqual(self.gate.userinfo(None), (401, {"error": "invalid_token"}))
 
 
+class AgentTests(GateTestCase):
+    """An agent's grant chain under real ML-DSA-65, which polaris-verify decides: nothing is
+    mocked between the holder's signature and the token."""
+
+    def setUp(self):
+        super().setUp()
+        self.issuer, self.holder, self.agent = grants.Key(), grants.Key(), grants.Key()
+        self.gate.grant_issuer_keys = [self.issuer.public_hex]
+        self.chain = self.mint()
+
+    def mint(self, issuer=None, holder=None, actions=("read:status", "write:config"), **kw):
+        return grants.chain(issuer or self.issuer, holder or self.holder, self.agent, actions,
+                            now=self.instant(), **kw)
+
+    def instant(self):
+        return datetime.datetime.fromtimestamp(self.clock.t, datetime.timezone.utc)
+
+    def nonce(self, audience="proxy"):
+        status, body = self.gate.agent_nonce({"audience": audience})
+        self.assertEqual(status, 200, body)
+        return body["nonce"]
+
+    def request(self, action="read:status", audience="proxy", chain=None, nonce=None, agent=None,
+                proved_action=None):
+        chain = chain or self.chain
+        nonce = nonce or self.nonce(audience)
+        proof = grants.proof(agent or self.agent, chain["grant"], proved_action or action, nonce,
+                             now=self.instant())
+        return dict(chain, audience=audience, action=action, proof=proof)
+
+    def token(self, **kw):
+        return self.gate.agent_token(self.request(**kw))
+
+    def revoke(self, chain=None, holder=None):
+        chain = chain or self.chain
+        return self.gate.agent_revoke(dict(
+            chain, revocation=grants.revocation(holder or self.holder, chain["grant"], now=self.instant())))
+
+    def test_an_agent_with_a_grant_gets_a_token_for_one_action(self):
+        status, body = self.token()
+        self.assertEqual(status, 200, body)
+        claims = self.verified_claims(body["token"])
+        self.assertEqual((claims["iss"], claims["aud"], claims["action"]),
+                         ("https://gate.test:9444", "proxy", "read:status"))
+        self.assertEqual(claims["exp"] - claims["iat"], G.AGENT_TOKEN_TTL)
+        self.assertNotIn("actions", claims, "the token carries the one action proved, not the grant's list")
+        for name in ("sub", "holder"):
+            self.assertRegex(claims[name], r"^[A-Za-z0-9_-]{43}$")
+        self.assertRegex(claims["act"]["sub"], r"^[A-Za-z0-9_-]{43}$")
+
+    def test_each_action_has_its_own_subject_and_the_holder_one_handle(self):
+        read = self.verified_claims(self.token()[1]["token"])
+        write = self.verified_claims(self.token(action="write:config")[1]["token"])
+        again = self.verified_claims(self.token()[1]["token"])
+        self.assertNotEqual(read["sub"], write["sub"])
+        self.assertEqual(read["sub"], again["sub"])
+        self.assertEqual(read["holder"], write["holder"])
+        self.assertEqual(read["act"], write["act"])
+        elsewhere = self.verified_claims(self.token(audience="other")[1]["token"])
+        self.assertNotEqual(read["holder"], elsewhere["holder"], "the holder handle is pairwise")
+        self.assertNotEqual(read["act"], elsewhere["act"])
+
+    def test_an_action_outside_the_grant_gets_no_token(self):
+        status, body = self.token(action="delete:account")
+        self.assertEqual((status, body["error"]), (403, "access_denied"))
+        self.assertIn("scope", body["error_description"])
+
+    def test_a_proof_for_another_action_gets_no_token(self):
+        status, body = self.token(action="write:config", proved_action="read:status")
+        self.assertEqual((status, body["error"]), (403, "access_denied"))
+
+    def test_a_nonce_serves_one_request_whatever_its_outcome(self):
+        request = self.request()
+        self.assertEqual(self.gate.agent_token(request)[0], 200)
+        self.assertEqual(self.gate.agent_token(request)[1]["error"], "invalid_grant", "a replay")
+        refused = self.request(action="delete:account")
+        self.assertEqual(self.gate.agent_token(refused)[0], 403)
+        self.assertEqual(self.gate.agent_token(refused)[0], 400, "a refused request spends its nonce")
+
+    def test_a_nonce_is_for_the_audience_it_was_issued_for(self):
+        status, body = self.token(nonce=self.nonce("other"))
+        self.assertEqual((status, body["error"]), (400, "invalid_grant"))
+
+    def test_a_nonce_the_gate_never_issued_or_let_expire_gets_no_token(self):
+        self.assertEqual(self.token(nonce="made-up")[0], 400)
+        nonce = self.nonce()
+        self.clock.t += G.AGENT_NONCE_TTL + 1
+        self.assertEqual(self.token(nonce=nonce)[0], 400)
+        self.assertEqual(self.gate._nonces, {}, "an expired nonce is forgotten")
+
+    def test_an_agent_holding_another_key_cannot_use_the_grant(self):
+        status, body = self.token(agent=grants.Key())
+        self.assertEqual((status, body["error"]), (403, "access_denied"))
+
+    def test_a_credential_from_an_issuer_the_gate_does_not_trust_gets_no_token(self):
+        status, body = self.token(chain=self.mint(issuer=grants.Key()))
+        self.assertEqual((status, body["error"]), (403, "access_denied"))
+
+    def test_a_limited_grant_is_refused_rather_than_widened(self):
+        status, body = self.token(chain=self.mint(limits={"max_uses": 3}))
+        self.assertEqual((status, body["error"]), (403, "access_denied"))
+        self.assertIn("limits", body["error_description"])
+
+    def test_a_token_never_outlives_its_grant(self):
+        status, body = self.token(chain=self.mint(hours=10 / 3600))
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["expires_in"], 10)
+        claims = self.verified_claims(body["token"])
+        self.assertEqual(claims["exp"], int(self.clock.t) + 10)
+
+    def test_the_holder_revokes_and_the_gate_issues_no_more_tokens(self):
+        self.assertEqual(self.token()[0], 200)
+        self.assertEqual(self.revoke(), (200, {"revoked": True}))
+        status, body = self.token()
+        self.assertEqual((status, body["error"]), (403, "access_denied"))
+        self.assertIn("revoked", body["error_description"])
+
+    def test_only_the_grant_holder_can_revoke_it(self):
+        status, body = self.revoke(holder=self.agent)
+        self.assertEqual((status, body["error"]), (403, "access_denied"))
+        self.assertEqual(self.gate._revocations, {})
+        self.assertEqual(self.token()[0], 200)
+
+    def test_a_holder_no_trusted_issuer_bound_cannot_fill_the_store(self):
+        stranger = grants.Key()
+        status, body = self.revoke(chain=self.mint(issuer=grants.Key(), holder=stranger), holder=stranger)
+        self.assertEqual((status, body["error"]), (403, "access_denied"))
+        self.assertEqual(self.gate._revocations, {})
+
+    def test_a_revoked_grant_stays_revoked_when_its_binding_is_renewed(self):
+        short = self.mint(binding_hours=1)
+        self.clock.t += 2 * 3600
+        self.assertEqual(self.revoke(chain=short), (200, {"revoked": True}),
+                         "the holder can end a grant whose binding has lapsed")
+        fresh = self.mint()   # the issuer binds the same holder key again, to a fresh credential
+        renewed = dict(short, binding=fresh["binding"], credential=fresh["credential"])
+        status, body = self.token(chain=renewed)
+        self.assertEqual((status, body["error"]), (403, "access_denied"))
+        self.assertIn("revoked", body["error_description"])
+        self.gate._revocations.clear()
+        self.assertEqual(self.token(chain=renewed)[0], 200, "without the revocation it would be usable")
+
+    def test_a_revocation_is_kept_until_the_grant_would_have_expired(self):
+        self.revoke(chain=self.mint(hours=1))
+        self.assertEqual(len(self.gate._revocations), 1)
+        self.clock.t += 3600 + 1
+        self.gate.agent_nonce({"audience": "proxy"})
+        self.assertEqual(self.gate._revocations, {})
+
+    def test_a_gate_trusting_no_grant_issuer_admits_no_agents(self):
+        self.gate.grant_issuer_keys = []
+        status, body = self.gate.agent_nonce({"audience": "proxy"})
+        self.assertEqual((status, body["error"]), (400, "invalid_request"))
+
+    def test_an_unknown_audience_gets_no_nonce_and_no_token(self):
+        self.assertEqual(self.gate.agent_nonce({"audience": "nobody"})[0], 400)
+        self.assertEqual(self.gate.agent_token(dict(self.request(), audience="nobody"))[0], 400)
+
+    def test_hostile_bodies_are_refused_not_raised(self):
+        for body in (None, [], "x", {"audience": "proxy", "action": "read:status"},
+                     {"audience": "proxy", "action": "read:status", "proof": {"service_nonce": 1}},
+                     dict(self.request(), grant="not a grant"), dict(self.request(), action=["read:status"])):
+            with self.subTest(body=str(body)[:60]):
+                self.assertIn(self.gate.agent_token(body)[0], (400, 403))
+        for body in (None, {}, {"grant": {}, "revocation": {}}):
+            with self.subTest(body=body):
+                self.assertIn(self.gate.agent_revoke(body)[0], (400, 403))
+
+    def test_grant_issuer_keys_load_strictly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "issuers.keys"
+            path.write_text("# trusted\n%s\n\n" % self.issuer.public_hex.upper())
+            self.assertEqual(G.load_grant_issuer_keys(path), [self.issuer.public_hex])
+            path.write_text(self.issuer.public_hex[:-2] + "\n")
+            with self.assertRaises(ValueError):
+                G.load_grant_issuer_keys(path)
+            path.write_text("# nothing\n")
+            with self.assertRaises(ValueError):
+                G.load_grant_issuer_keys(path)
+
+
 class HttpTests(GateTestCase):
+
+    def test_the_agent_endpoints_over_http(self):
+        issuer, holder, agent = grants.Key(), grants.Key(), grants.Key()
+        self.gate.grant_issuer_keys = [issuer.public_hex]
+        now = datetime.datetime.fromtimestamp(self.clock.t, datetime.timezone.utc)
+        chain = grants.chain(issuer, holder, agent, ["read:status"], now=now)
+        httpd = G.serve_gate(self.gate, host="127.0.0.1", port=0)
+        base = "http://127.0.0.1:%d" % httpd.server_address[1]
+
+        def post(path, data, content_type):
+            request = urllib.request.Request(base + path, data=data, method="POST",
+                                             headers={"Content-Type": content_type})
+            try:
+                with urllib.request.urlopen(request) as r:
+                    return r.status, json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read())
+
+        try:
+            status, body = post("/agent/nonce", b"audience=proxy", "application/x-www-form-urlencoded")
+            self.assertEqual(status, 200, body)
+            proof = grants.proof(agent, chain["grant"], "read:status", body["nonce"], now=now)
+            request = dict(chain, audience="proxy", action="read:status", proof=proof)
+            status, body = post("/agent/token", json.dumps(request).encode(), "application/json")
+            self.assertEqual(status, 200, body)
+            self.assertEqual(self.verified_claims(body["token"])["action"], "read:status")
+            self.assertEqual(post("/agent/token", b"{not json", "application/json")[0], 400)
+            self.assertEqual(post("/agent/revoke", b"[]", "application/json")[0], 400)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
 
     def test_the_http_layer_serves_discovery_and_refuses_unknown_paths(self):
         httpd = G.serve_gate(self.gate, host="127.0.0.1", port=0)

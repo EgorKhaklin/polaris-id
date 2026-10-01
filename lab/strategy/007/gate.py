@@ -13,8 +13,15 @@ The ID token's subject is pairwise: an HMAC, under this gate's secret, of the cl
 the pending requests, codes and tokens in memory, each until it expires, and writes no record of
 who signed in where.
 
-Post-quantum signatures stay where they are verified, in the credential. The token a proxy reads
-is classical because the proxies are (lab/strategy/007-access-gate.md).
+An agent gets in the same way a person does, by what it can prove. It presents its holder's
+agent grant (WIRE-SPEC 3.17) and a proof, signed with the key the grant names, over a nonce this
+gate issued. polaris-verify decides the chain: the issuer's credential, the issuer's binding of
+the holder key, the holder's grant covering the action, no holder revocation, and the agent's
+proof. The answer is a token for that one action and one relying party, valid for a minute,
+which the relying party checks on every request.
+
+Post-quantum signatures stay where they are verified, in the credential and the grant. The token
+a proxy reads is classical because the proxies are (lab/strategy/007-access-gate.md).
 
 Lab code under record 007: not a product, not reviewed, not for a deployment.
 
@@ -22,9 +29,11 @@ Lab code under record 007: not a product, not reviewed, not for a deployment.
 
 `--pki` is what `polaris-oid4vp keygen` writes. `clients.json` maps a client_id to its secret and
 redirect URIs: {"pomerium": {"secret": "...", "redirect_uris": ["https://.../oauth2/callback"]}}.
+`--grant-issuer-keys` names the ML-DSA issuer keys whose credentials may stand behind a grant.
 """
 import argparse
 import base64
+import datetime
 import hashlib
 import hmac
 import html
@@ -39,8 +48,9 @@ import time
 import urllib.parse
 
 HERE = pathlib.Path(__file__).resolve().parent
-# The tree's verifier, as the interop scripts use by default: a run tests the tree.
+# The tree's verifiers, as the interop scripts use by default: a run tests the tree.
 sys.path.insert(0, str(HERE.parents[2] / "packages" / "polaris-oid4vp"))
+sys.path.insert(0, str(HERE.parents[2] / "packages" / "polaris-verify"))
 
 from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
 
@@ -48,11 +58,16 @@ from polaris_oid4vp.jwe import b64u_encode, decrypt_response  # noqa: E402
 from polaris_oid4vp.serve import REQUEST_PATH, RESPONSE_PATH  # noqa: E402
 from polaris_oid4vp.serve import serve as serve_oid4vp  # noqa: E402
 from polaris_oid4vp.verifier import Verifier, _sign_es256  # noqa: E402
+from polaris_verify_cli import verifier as polaris_verify  # noqa: E402
 
 PENDING_TTL = 300   # seconds a person has to present after the relying party sends them here
 CODE_TTL = 60       # seconds an authorization code lives; it is exchanged once
 TOKEN_TTL = 300     # seconds an access token answers userinfo, and an ID token is valid
 PROFILE_CLAIMS = ("given_name", "family_name")
+AGENT_NONCE_TTL = 60    # seconds an agent has to sign its proof over a nonce and send it
+AGENT_TOKEN_TTL = 60    # seconds an agent's token is good for at the relying party
+AGENT_BODY_MAX = 262144  # a grant chain carries five ML-DSA-65 signatures and keys, in hex
+_ML_DSA_PUBLIC_KEY_BYTES = (1952, 2592)  # ML-DSA-65, ML-DSA-87
 
 
 def _thumbprint(jwk):
@@ -104,7 +119,7 @@ class Gate:
     """The OIDC half. Pure decisions over in-memory state; the HTTP layer is `serve_gate`."""
 
     def __init__(self, *, issuer, verifier, clients, signing_key=None, pairwise_secret=None,
-                 now=time.time):
+                 grant_issuer_keys=(), now=time.time):
         self.issuer = issuer.rstrip("/")
         self.verifier = verifier
         verifier.on_answer = self._on_answer
@@ -112,11 +127,14 @@ class Gate:
         self.key = signing_key or ec.generate_private_key(ec.SECP256R1())
         self.kid = _thumbprint(_public_jwk(self.key, "-"))
         self.secret = pairwise_secret or secrets.token_bytes(32)
+        self.grant_issuer_keys = [k.lower() for k in grant_issuer_keys]
         self.now = now
         self._pending = {}   # the OpenID4VP request's state -> what the relying party asked for
         self._tickets = {}   # the browser's ticket -> that state
         self._codes = {}
         self._tokens = {}
+        self._nonces = {}       # an agent nonce -> the audience it was issued for
+        self._revocations = {}  # (grant_id, holder key) -> the holder's revocation, until the grant expires
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------ discovery
@@ -270,6 +288,123 @@ class Gate:
             return 401, {"error": "invalid_token"}
         return 200, dict(entry["info"])
 
+    # ------------------------------------------------------------------ agents
+
+    def agent_nonce(self, form):
+        """A nonce for one agent proof, bound to the relying party the token will be for. It
+        serves one token request, whatever that request's outcome."""
+        if not self.grant_issuer_keys:
+            return 400, {"error": "invalid_request",
+                         "error_description": "this gate admits no agents: it trusts no grant issuer"}
+        audience = form.get("audience", "")
+        if audience not in self.clients:
+            return 400, {"error": "invalid_request", "error_description": "unknown audience"}
+        nonce = secrets.token_urlsafe(24)
+        with self._lock:
+            self._expire_locked()
+            self._nonces[nonce] = {"audience": audience, "created": self.now()}
+        return 200, {"nonce": nonce, "expires_in": AGENT_NONCE_TTL}
+
+    def agent_token(self, body):
+        """An agent's grant chain, and its proof over one of this gate's nonces, in. A token for
+        one action at one relying party out, valid for AGENT_TOKEN_TTL seconds at most."""
+        if not isinstance(body, dict):
+            return 400, {"error": "invalid_request", "error_description": "the body is not a JSON object"}
+        audience, action = body.get("audience"), body.get("action")
+        if not isinstance(audience, str) or audience not in self.clients:
+            return 400, {"error": "invalid_request", "error_description": "unknown audience"}
+        if not isinstance(action, str) or not action:
+            return 400, {"error": "invalid_request", "error_description": "a token is for one named action"}
+        grant, agent_proof = body.get("grant"), body.get("proof")
+        nonce = agent_proof.get("service_nonce") if isinstance(agent_proof, dict) else None
+        with self._lock:
+            self._expire_locked()
+            # One use, whatever the outcome: a refused proof is not retried at the same nonce.
+            issued = self._nonces.pop(nonce, None) if isinstance(nonce, str) else None
+        if issued is None or issued["audience"] != audience:
+            return 400, {"error": "invalid_grant", "error_description":
+                         "the proof does not name an unused nonce this gate issued for this audience"}
+        if not isinstance(grant, dict):
+            return 400, {"error": "invalid_grant", "error_description": "no grant"}
+        if grant.get("limits") not in (None, {}):
+            # Enforcing a use or amount limit takes a count of uses, and a relying party
+            # admitting requests on a token keeps none. Refused rather than widened.
+            return 403, {"error": "access_denied", "error_description":
+                         "the grant limits its uses or amounts, which no relying party here counts"}
+        with self._lock:
+            held = self._revocations.get(self._revocation_key(grant))
+        verdict = polaris_verify.verify_agent_grant(
+            grant, binding=body.get("binding"), credential=body.get("credential"),
+            requested_action=action, revocation=held["revocation"] if held else None,
+            agent_proof=agent_proof, expected_nonce=nonce,
+            anchor_keys=self.grant_issuer_keys, now=self._instant())
+        if not verdict["usable"] or verdict["issuer_trusted"] is not True:
+            return 403, {"error": "access_denied",
+                         "error_description": verdict["note"] or "the grant is not usable"}
+        now = int(self.now())
+        expires = min(now + AGENT_TOKEN_TTL, self._grant_expiry(grant))
+        holder = grant["public_key_hex"].lower()
+        claims = {
+            "iss": self.issuer, "aud": audience, "iat": now, "exp": expires,
+            # One subject per holder, grant and action. A relying party that merges what it
+            # learns per subject then never lends one action's token another action's claims.
+            "sub": self._pairwise(audience, json.dumps(["agent-grant", holder, grant["grant_id"], action])),
+            "holder": self._pairwise(audience, json.dumps(["holder", holder])),
+            "act": {"sub": self._pairwise(audience, json.dumps(
+                ["agent", grant["agent_public_key_hex"].lower()]))},
+            "action": action}
+        token = _sign_es256(self.key, {"alg": "ES256", "typ": "JWT", "kid": self.kid}, claims)
+        return 200, {"token": token, "token_type": "Bearer", "expires_in": expires - now}
+
+    def agent_revoke(self, body):
+        """The holder ends a grant. The gate keeps the revocation until the grant would have
+        expired, and refuses every token for the grant from then on. Only the grant's holder
+        can end it, and only a holder some trusted issuer bound, so strangers cannot fill the
+        store."""
+        if not isinstance(body, dict):
+            return 400, {"error": "invalid_request", "error_description": "the body is not a JSON object"}
+        grant, revocation = body.get("grant"), body.get("revocation")
+        verdict = polaris_verify.verify_agent_grant(grant, revocation=revocation, now=self._instant())
+        if not verdict["grant_authentic"] or verdict["revoked"] is not True:
+            return 403, {"error": "access_denied",
+                         "error_description": verdict["note"] or "not a revocation by this grant's holder"}
+        if not self._bound_once(grant, body.get("binding"), body.get("credential")):
+            return 403, {"error": "access_denied",
+                         "error_description": "no trusted issuer bound this grant's holder key"}
+        until = self._grant_expiry(grant)
+        if until > self.now():
+            with self._lock:
+                self._expire_locked()
+                self._revocations[self._revocation_key(grant)] = {"revocation": revocation, "until": until}
+        return 200, {"revoked": True}
+
+    def _bound_once(self, grant, binding, credential):
+        """A trusted issuer bound the grant's holder key to a credential it signed. The binding
+        may have lapsed since: a revoked grant must stay revoked when the binding is renewed."""
+        cv = (polaris_verify.verify_pack(credential, self.grant_issuer_keys)
+              if isinstance(credential, dict) else None)
+        bv = polaris_verify.verify_holder_binding(binding, credential=credential,
+                                                  anchor_keys=self.grant_issuer_keys)
+        return bool(cv and cv.get("signature_valid") and cv.get("issuer_trusted")
+                    and bv["binding_authentic"] and bv["issuer_trusted"] and bv["bound_to_credential"]
+                    and polaris_verify._same_hex(bv["holder_public_key_hex"], grant.get("public_key_hex")))
+
+    @staticmethod
+    def _revocation_key(grant):
+        # As polaris-verify compares them: the grant id as wire text, the holder key as hex text.
+        return (polaris_verify._wire_text(grant.get("grant_id")),
+                polaris_verify._hex_text(grant.get("public_key_hex")))
+
+    @staticmethod
+    def _grant_expiry(grant):
+        try:
+            return int(polaris_verify._parse_iso(grant.get("expires_at")).timestamp())
+        except Exception:  # noqa: BLE001  an unreadable expiry is no time at all
+            return 0
+
+    def _instant(self):
+        return datetime.datetime.fromtimestamp(self.now(), datetime.timezone.utc)
+
     # ------------------------------------------------------------------ helpers
 
     def _pairwise(self, client_id, thumbprint):
@@ -297,6 +432,10 @@ class Gate:
             del self._codes[code]
         for token in [t for t, e in self._tokens.items() if now > e["expires"]]:
             del self._tokens[token]
+        for nonce in [n for n, e in self._nonces.items() if now - e["created"] > AGENT_NONCE_TTL]:
+            del self._nonces[nonce]
+        for key in [k for k, e in self._revocations.items() if now > e["until"]]:
+            del self._revocations[key]
 
 
 _PAGE = """<!doctype html><html lang="en"><meta charset="utf-8">
@@ -342,14 +481,29 @@ def _handler_for(gate):
 
         def do_POST(self):  # noqa: N802
             url = urllib.parse.urlsplit(self.path)
-            length = int(self.headers.get("Content-Length") or 0)
-            if length > 65536:
+            agent_json = {"/agent/token": gate.agent_token, "/agent/revoke": gate.agent_revoke}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = -1
+            if length < 0:
+                return self._json(400, {"error": "invalid_request"})
+            if length > (AGENT_BODY_MAX if url.path in agent_json else 65536):
                 return self._json(413, {"error": "invalid_request"})
-            form = dict(urllib.parse.parse_qsl(self.rfile.read(length).decode("utf-8", "replace")))
+            raw = self.rfile.read(length)
+            if url.path in agent_json:
+                try:
+                    body = json.loads(raw)
+                except (ValueError, RecursionError):
+                    return self._json(400, {"error": "invalid_request", "error_description": "the body is not JSON"})
+                return self._json(*agent_json[url.path](body))
+            form = dict(urllib.parse.parse_qsl(raw.decode("utf-8", "replace")))
             if url.path == "/token":
                 return self._json(*gate.token(form, self.headers.get("Authorization")))
             if url.path == "/userinfo":
                 return self._json(*gate.userinfo(self.headers.get("Authorization")))
+            if url.path == "/agent/nonce":
+                return self._json(*gate.agent_nonce(form))
             return self._json(404, {"error": "not_found"})
 
         def _json(self, status, body):
@@ -381,6 +535,27 @@ def serve_gate(gate, *, host="0.0.0.0", port=9444, certfile=None, keyfile=None):
     return httpd
 
 
+def load_grant_issuer_keys(path):
+    """One ML-DSA public key per line, in hex; blank lines and # comments are skipped. A line
+    that is not a whole ML-DSA-65 or ML-DSA-87 key is an error: a typo would otherwise trust
+    nobody, silently."""
+    keys = []
+    for number, line in enumerate(pathlib.Path(path).read_text().splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            size = len(bytes.fromhex(line))
+        except ValueError:
+            size = 0
+        if size not in _ML_DSA_PUBLIC_KEY_BYTES:
+            raise ValueError("%s:%d is not an ML-DSA-65 or ML-DSA-87 public key in hex" % (path, number))
+        keys.append(line.lower())
+    if not keys:
+        raise ValueError("%s names no key" % path)
+    return keys
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="An OIDC provider whose sign-in is a wallet presentation (lab).")
     ap.add_argument("--pki", required=True, help="what `polaris-oid4vp keygen` wrote")
@@ -392,7 +567,14 @@ def main(argv=None):
     ap.add_argument("--issuer", default=None, help="the OIDC issuer URL (default https://HOST:PORT)")
     ap.add_argument("--issuer-jwks", default=None, help="a JSON file of credential issuer JWKs to trust")
     ap.add_argument("--issuer-trust-anchor", action="append", default=[], help="a PEM CA for x5c issuers")
+    ap.add_argument("--grant-issuer-keys", default=None,
+                    help="a file of ML-DSA issuer public keys (hex, one per line) whose credentials "
+                         "may stand behind an agent grant; without it the gate admits no agents")
     args = ap.parse_args(argv)
+    try:
+        grant_issuer_keys = load_grant_issuer_keys(args.grant_issuer_keys) if args.grant_issuer_keys else []
+    except (OSError, ValueError) as e:
+        ap.error(str(e))
 
     from polaris_oid4vp.cli import FILES, _load_issuer_jwks, _load_trust_anchors
     pki = pathlib.Path(args.pki)
@@ -405,7 +587,7 @@ def main(argv=None):
         issuer_trust_anchors=_load_trust_anchors(args.issuer_trust_anchor))
     clients = json.loads(pathlib.Path(args.clients).read_text())
     issuer = args.issuer or "https://%s:%d" % (args.host, args.port)
-    gate = Gate(issuer=issuer, verifier=verifier, clients=clients)
+    gate = Gate(issuer=issuer, verifier=verifier, clients=clients, grant_issuer_keys=grant_issuer_keys)
     tls = dict(certfile=str(pki / FILES["tls_cert"]), keyfile=str(pki / FILES["tls_key"]))
     serve_oid4vp(verifier, host=args.bind, port=args.oid4vp_port, **tls)
     serve_gate(gate, host=args.bind, port=args.port, **tls)
