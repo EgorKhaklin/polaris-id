@@ -95,7 +95,11 @@ if [ "$MODE" = docker ]; then echo "wallet     $IMAGE"; else echo "wallet     eu
 echo "verifier   pip install --pre $PKG"
 mkdir -p "$WORK" && cd "$WORK"
 "$PY" -m venv venv
-venv/bin/pip install -q --pre "$PKG"
+# Every third-party package by hash (../requirements.txt); then polaris-oid4vp itself, built from
+# $PKG with nothing else fetched and installed as that one wheel.
+venv/bin/pip install -q --require-hashes -r "$HERE/../requirements.txt"
+venv/bin/pip wheel -q --pre --no-deps --no-build-isolation -w wheel "$PKG"
+venv/bin/pip install -q --no-deps wheel/*.whl
 echo "installed  polaris-oid4vp $(venv/bin/python -c 'import importlib.metadata as m; print(m.version("polaris-oid4vp"))')"
 venv/bin/polaris-oid4vp keygen --out pki --host "$VHOST" --port "$PORT" >/dev/null
 mkdir -p home

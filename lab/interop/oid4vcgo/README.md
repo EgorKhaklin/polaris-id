@@ -64,7 +64,8 @@ the wallet trusted an unrelated CA for the verifier and presented nothing:
     OID4VCGO_VERSION=v0.19.0 lab/interop/oid4vcgo/run.sh
     OID4VCGO_VERSION=v0.22.0 lab/interop/oid4vcgo/run.sh          # adds control (d)
 
-It installs the verifier from this repository into a fresh venv (`POLARIS_OID4VP` overrides),
+It installs the verifier from this repository into a fresh venv, its dependencies by hash from
+[`../requirements.txt`](../requirements.txt) (`POLARIS_OID4VP` overrides the verifier),
 builds the wallet at the pinned version inside the official Go image, writes a test PKI
 ([`setup_pki.py`](setup_pki.py): the issuer CA, the issuer's CA-issued leaf, the holder key, the
 wallet's own TLS pair, and an unrelated CA for control (a)), runs the wallet in a container, and

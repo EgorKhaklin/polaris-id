@@ -2,14 +2,15 @@
 # wallet-canary.yml - a wallet nobody here wrote presents to the PUBLISHED verifier.
 #
 # lab/interop/eudi-dev/run.sh installs polaris-oid4vp from PyPI into a fresh venv (the
-# newest release, as `pip install --pre` gives a stranger), lets the eudi-dev wallet
+# newest release, as `pip install --pre` gives a stranger; its dependencies by hash from
+# lab/interop/requirements.txt, which Dependabot keeps current), lets the eudi-dev wallet
 # generate its own key, mints one credential bound to it, has the wallet present it
 # with HAIP enforced in strict mode, and runs three controls that must each be refused.
 # It exits non-zero if any outcome differs.
 #
 # Two wallets, weekly. v2.3.7 by digest is the release the OpenID Foundation lists as a
 # certified OpenID4VP 1.0 + HAIP 1.0 wallet: if it stops working, something on OUR side
-# moved (the registry, a dependency, the verifier). `latest` floats on purpose: if it
+# moved (the registry, the verifier, or a dependency pin Dependabot moved). `latest` floats on purpose: if it
 # alone stops working, the wallet moved, and that is worth knowing before a stranger
 # finds it. docs/STRANGER-PATH.md opens with the same script, so this is also the
 # stranger's first minute, run on a machine nobody here set up. The third job is that

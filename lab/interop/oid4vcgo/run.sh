@@ -40,10 +40,14 @@ done
 
 echo "work dir   $WORK"
 echo "wallet     github.com/idfoundry/oid4vcgo $VERSION, cmd/conformance-wallet-vp"
-echo "verifier   pip install $PKG"
+echo "verifier   $PKG, built as a wheel; its dependencies by hash"
 mkdir -p "$WORK" && cd "$WORK"
 "$PY" -m venv venv
-venv/bin/pip install -q "$PKG"
+# Every third-party package by hash (../requirements.txt); then polaris-oid4vp itself, built from
+# $PKG with nothing else fetched and installed as that one wheel.
+venv/bin/pip install -q --require-hashes -r "$HERE/../requirements.txt"
+venv/bin/pip wheel -q --no-deps --no-build-isolation -w wheel "$PKG"
+venv/bin/pip install -q --no-deps wheel/*.whl
 echo "installed  polaris-oid4vp $(venv/bin/python -c 'import importlib.metadata as m; print(m.version("polaris-oid4vp"))')"
 venv/bin/polaris-oid4vp serve --help | grep -q -- --issuer-trust-anchor || {
   echo "this polaris-oid4vp has no --issuer-trust-anchor; set POLARIS_OID4VP to one that does" >&2
