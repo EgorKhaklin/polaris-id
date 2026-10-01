@@ -26,6 +26,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - The rc.68 notes list only what rc.68 released; a merge after the cut had filed the `polaris-oid4vp` 1.0.0rc12 lines there.
 
+### Changed
+
+- Published: `polaris-verify` and `polaris-sdk-python` 1.0.0rc6 on PyPI, each approved at the environment gate, and `polaris-sdk-ts` 1.0.0-rc.7 on npm under `next`, approved by the maintainer with a second factor.
+
 ## v1.0.0-rc.68 — 2026-10-01 (trust enters only where the relying party puts it)
 
 The verifiers and SDKs trust a manifest, a tree head or a receipt's responder only through keys the relying party trusts; a login signs only a context the credential is permitted in; a verification record claims a success only when its rules allow it; every Python package the images install is hash-pinned. 19 security changes, 19 fixes.
