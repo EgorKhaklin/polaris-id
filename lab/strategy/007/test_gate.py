@@ -30,9 +30,16 @@ from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature  # noqa: E402
 
 import gate as G  # noqa: E402
-import grants  # noqa: E402
 from polaris_oid4vp.jwe import b64u_decode, b64u_encode  # noqa: E402
 from test_verifier import Wallet, _client_chain  # noqa: E402
+
+try:
+    # The agent half signs real ML-DSA-65 chains; `grants` needs a cryptography that has ML-DSA.
+    # The person half (ES256 only) runs without it, so those tests must still load and pass.
+    import grants  # noqa: E402
+    _HAVE_MLDSA = True
+except ImportError:
+    _HAVE_MLDSA = False
 
 REDIRECT = "https://proxy.test/oauth2/callback"
 OTHER = "https://other.test/callback"
@@ -250,6 +257,7 @@ class CodeAndClientTests(GateTestCase):
         self.assertEqual(self.gate.userinfo(None), (401, {"error": "invalid_token"}))
 
 
+@unittest.skipUnless(_HAVE_MLDSA, "needs a cryptography with ML-DSA to sign grant chains")
 class AgentTests(GateTestCase):
     """An agent's grant chain under real ML-DSA-65, which polaris-verify decides: nothing is
     mocked between the holder's signature and the token."""
@@ -433,6 +441,7 @@ class AgentTests(GateTestCase):
 
 class HttpTests(GateTestCase):
 
+    @unittest.skipUnless(_HAVE_MLDSA, "needs a cryptography with ML-DSA to sign grant chains")
     def test_the_agent_endpoints_over_http(self):
         issuer, holder, agent = grants.Key(), grants.Key(), grants.Key()
         self.gate.grant_issuer_keys = [issuer.public_hex]
