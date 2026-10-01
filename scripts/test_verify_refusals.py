@@ -1093,14 +1093,20 @@ class CommandLineExitCodes(unittest.TestCase):
                  ("--pack", str(self.pack), "--status-assertion", str(self.blob)), "abstain", 2),
                 ("verify_stapled", stapled,
                  ("--pack", str(self.pack), "--status-assertion", str(self.blob), "--signature-only"),
-                 "accept", 0))
+                 "accept", 0),
+                ("verify_stapled", dict(stapled, decision="reject"),
+                 ("--pack", str(self.pack), "--status-assertion", str(self.blob)), "reject", 2),
+                ("verify_cross_authority_zk", {"decision": "abstain", "reasons": ["no polaris-zk binary"]},
+                 ("--zk-proof", str(self.blob), "--signature-only", "--nonce", "7"), "abstain", 3),
+                ("verify_cross_authority_zk", {"decision": "reject", "reasons": ["tampered"]},
+                 ("--zk-proof", str(self.blob), "--nonce", "7"), "reject", 2))
         for fn, verdict, argv, decision, code in runs:
             out, err = io.StringIO(), io.StringIO()
             with self.subTest(argv=argv), mock.patch.object(V, fn, return_value=verdict), \
                     contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 self.assertEqual(V.main(["--pqc-provider", "auto", "--json", *argv]), code)
                 self.assertEqual(json.loads(out.getvalue())["decision"], decision)
-                self.assertEqual("abstain: no" in err.getvalue(), decision == "abstain",
+                self.assertEqual("abstain:" in err.getvalue(), decision == "abstain",
                                  "an abstention says why on stderr, and only an abstention does")
 
     def test_a_flag_the_mode_does_not_read_refuses_to_start(self):

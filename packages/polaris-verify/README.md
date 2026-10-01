@@ -67,7 +67,7 @@ What a script built on this command can rely on:
 | 0 | accepted: the signature is genuine, and with `--issuer-anchor` the key is one you trust |
 | 2 | not accepted: a signature that does not verify, a JSON file that is not an authenticity pack, or an abstention because no trust anchor was given, or no `--nonce` for a holder proof or a zero-knowledge proof |
 | 3 | the check could not run: the input could not be read or is not JSON, `--selftest` without liboqs, or `--zk-proof` when the `polaris-zk` binary is missing, will not start, or does not answer within 60 seconds |
-| 4 | refused to start: no cryptography declared, the declared backend is not usable here, or an argument it does not take (an unknown flag, a value of the wrong type, a flag given twice, or a flag the chosen mode would not read); your files are not read |
+| 4 | refused to start: no cryptography declared, the declared backend is not usable here, or an argument it does not take (an unknown flag, a value of the wrong type, a flag that takes a value given twice, or a flag the chosen mode would not read); your files are not read |
 | 1 | `--qr-frames` that do not decode into a presentation |
 
 The last row is the one inconsistency: every other unreadable input exits 3. It is recorded

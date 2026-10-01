@@ -155,6 +155,19 @@ class ScopedNullifierTests(unittest.TestCase):
         self.assertFalse(V.verify_zk_against_root(self._bundle(), self.ROOT, 7, 3, expected_nonce="11",
                                                   zk_binary=absent)["bound"],
                          "a caller's nonce that is not an integer matches nothing")
+        # The nullifier too: 64 hex digits, as the binary decodes it, and always present.
+        for value in (5, "cd" * 31, "zz" * 32, " " + "cd" * 32, ["cd" * 32]):
+            with self.subTest(nullifier_hex=value):
+                v = V.verify_zk_against_root(self._bundle(nullifier_hex=value), self.ROOT, 7, 3, zk_binary=absent)
+                self.assertFalse(v["bound"])
+                self.assertIn("malformed", v["note"])
+        bundle = self._bundle()
+        del bundle["public_inputs"]["nullifier_hex"]
+        v = V.verify_zk_against_root(bundle, self.ROOT, 7, 3, zk_binary=absent)
+        self.assertFalse(v["bound"], "a bundle with no nullifier is one the binary refuses")
+        self.assertIn("no nullifier", v["note"])
+        self.assertTrue(V.verify_zk_against_root(self._bundle(nullifier_hex=self.NULL.upper()), self.ROOT, 7, 3,
+                                                 zk_binary=absent)["bound"])
 
     def test_it_is_total_on_hostile_public_inputs(self):
         for bad in (None, {}, {"public_inputs": None}, {"public_inputs": {"scope": "many"}},

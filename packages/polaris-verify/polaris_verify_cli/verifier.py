@@ -1663,15 +1663,20 @@ def verify_zk_against_root(proof_bundle, expected_root_hex, expected_epoch_id,
     if expected_scope is not None and inputs["scope"] != _zk_input(expected_scope):
         v["note"] = "proof scope is not this verifier's; a proof made elsewhere is not valid here"
         return v
+    # The nullifier as the binary reads it too: 64 hex digits, always present. A bundle without one,
+    # or with a number there, was reported bound and abstained with no binary (2026-10-01).
+    raw = pi.get("nullifier_hex")
+    if raw is None:
+        v["note"] = ("the proof carries no nullifier, so one person cannot be held to one proof; a "
+                     "pre-P9.3 proof is not one the polaris-zk binary reads")
+        return v
+    if not (isinstance(raw, str) and len(raw) == 64 and all(c in _HEX_DIGITS for c in raw)):
+        v["note"] = "proof public inputs are malformed"
+        return v
     v["bound"] = True
-    nullifier = str(pi.get("nullifier_hex") or "").lower() or None
+    nullifier = raw.lower()
     v["nullifier"] = nullifier
     if seen_nullifiers is not None:
-        if nullifier is None:
-            v["fresh_nullifier"] = False
-            v["note"] = ("the proof carries no nullifier, so one person cannot be held to one "
-                         "proof; a pre-P9.3 proof cannot satisfy a scoped verifier")
-            return v
         v["fresh_nullifier"] = nullifier not in {str(x).lower() for x in seen_nullifiers}
         if not v["fresh_nullifier"]:
             v["note"] = "this nullifier has already been accepted in this scope and epoch"
@@ -5340,6 +5345,8 @@ def main(argv=None):
         # The verifier's own abstain is the one decision a missing polaris-zk binary makes: the
         # check could not run (3), not a proof that failed (2), which it exited until 2026-10-01.
         if verdict["decision"] == "abstain":
+            print("abstain: %s" % "; ".join(verdict.get("reasons") or ["the proof could not be checked"]),
+                  file=sys.stderr)
             return 3
         return 0 if verdict["decision"] == "accept" else 2
 
@@ -5377,10 +5384,10 @@ def main(argv=None):
             print("could not read the status assertion: %s" % e, file=sys.stderr)
             return 3
         verdict = verify_stapled(pack, assertion, max_window_seconds=args.max_window, anchor_keys=anchor)
-        held = not args.signature_only and not (
+        held = verdict["decision"] == "accept" and not args.signature_only and not (
             verdict.get("credential", {}).get("trust_evaluated")
             and verdict.get("status_assertion", {}).get("trust_evaluated"))
-        if held and verdict["decision"] == "accept":
+        if held:
             # The printed verdict says what the exit code says: it read "accept" with exit 2
             # whenever the trust abstention below decided the run (2026-10-01).
             verdict = dict(verdict, decision="abstain", reasons=list(verdict.get("reasons") or []) + [
