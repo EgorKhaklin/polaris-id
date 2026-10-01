@@ -11,11 +11,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- The application's database role no longer writes the holder key register directly; the route has recorded events only through its routine since rc.69.
 - All three verifiers read one instant grammar: ASCII digits, no surrounding whitespace, offsets below 24 hours, years 1 to 99 as written.
 - An agency or context id matches only the same string or integer in all three verifiers; Python's `==` read `true` as 1 and a missing id as a null one.
 - Both SDKs read only the JSON `true` as currently authoritative; both read a status answer of `"false"` as current.
 - All three verifiers refuse an agent grant whose `grant_id` is not text; it is the grant's only revocation handle (WIRE-SPEC 3.17).
 - All three verifiers read a key or a digest only as a hex string; the TypeScript SDK read a signed `[K]` as K, and two missing keys matched in Python.
+- `polaris-oid4vp` verifies an issuer signature or a key binding JWT only under a JWK meant for ES256 signatures; an encryption key verified either.
 
 ### Fixed
 
@@ -27,6 +29,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The Python SDK reports no nonce match for a holder proof it cannot check, as the TypeScript SDK does.
 - A trusted anchor, witness or log key that is not text matches nothing in all three verifiers; each raised on it.
 - `polaris-wallet grant --max-amount 100` signs 100, not 100.0, which the TypeScript SDK could not verify.
+- `polaris-oid4vp serve` refuses an `--issuer-jwks` file it cannot read or use; one raised, and one with no usable key started silently.
 - Both SDKs' conformance adapters report no pairwise handle for an object that is not a holder binding, as the detached verifier and the contract do.
 
 ### Added

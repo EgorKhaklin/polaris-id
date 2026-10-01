@@ -157,11 +157,11 @@ REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;
 -- revocation only from uc10_revoke_attestation.
 REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;
 
--- 2026-10-01 (review S2). The holder key route records events through uc_record_holder_key_event
--- (SECURITY DEFINER), which sets the instant and holds bound / rotated / revoked in order. The
--- application role keeps INSERT on HolderKeyEvent for now: 1.0.0-rc.68's route inserts directly
--- and runs during a rolling upgrade, and withdrawing a privilege the previous release uses is a
--- contract step (polaris_sql/migrations/README.md), shipped in a later release.
+-- 2026-10-01 (review S2). The holder key register is written only by uc_record_holder_key_event
+-- (SECURITY DEFINER), which sets the instant and holds bound / rotated / revoked in order. Since
+-- 1.0.0-rc.69 the route records every event through it, so the INSERT goes in the contract step
+-- (migration 2026-10-01-003).
+REVOKE INSERT ON HolderKeyEvent FROM polaris_app;
 
 -- 2026-09-25. The anchoring layer is written only by close_anchor_batch (SECURITY DEFINER) and by
 -- the sample data. With INSERT on AnchorBatch the application role could record a batch whose

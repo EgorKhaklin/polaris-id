@@ -1720,6 +1720,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     epochs = ("REVOKE INSERT, UPDATE, DELETE ON TokenStateEpoch FROM polaris_app;\n"
               "REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;\n"
               "REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;\n"
+              "REVOKE INSERT ON HolderKeyEvent FROM polaris_app;\n"
               "REVOKE INSERT ON AnchorBatch FROM polaris_app;\n"
               "REVOKE INSERT, UPDATE, DELETE ON BlockchainAnchor FROM polaris_app;\n"
               "REVOKE INSERT ON DuressEvent FROM polaris_app;\n"
@@ -1852,7 +1853,10 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
         assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", table
     write(full, True, True)
 
-    # 11. 2026-10-01: the routine the holder key route records events through.
+    # 11. 2026-10-01: the holder key register and its only writer.
+    write(full.replace("REVOKE INSERT ON HolderKeyEvent FROM polaris_app;\n", ""), True, True)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the application keeps INSERT on the holder key register"
     write(full, True, True, hk_definer=False)
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
         "must FAIL when uc_record_holder_key_event runs with the caller's rights"
