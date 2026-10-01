@@ -49,8 +49,13 @@ lists what older versions still carry.
 
 Exception until the next publish: `polaris-verify` 1.0.0rc5 **accepts an agent-grant chain whose
 credential does not verify, or whose issuer is outside `--issuer-anchor`**, calls a grant with a link
-missing usable, exits 0 on a presentation with no `--issuer-anchor`, and **accepts a stapled status
-assertion signed by another trusted key than the credential's**; `polaris-sdk-python`
+missing usable, exits 0 on a presentation with no `--issuer-anchor`, **accepts a stapled status
+assertion signed by another trusted key than the credential's**, and ignores `--nonce` and
+`--trusted-anchor` on a presentation. All three verifiers, polaris-verify 1.0.0rc5 and both
+SDKs below, also **trust a federation manifest that merely lists a trusted anchor**, count any
+key's signature on a trust edge as the attesting authority's, accept a holder proof made for
+another credential, and accept a timestamp over a SHA-1 or uppercase digest; the SDKs also accept
+a revocation feed whose count differs from its leaves; `polaris-sdk-python`
 1.0.0rc5 and `polaris-sdk-ts` 1.0.0-rc.6 bind a grant to a credential whose signature does not
 verify and accept a status bundle whose `member_count` differs from its members. The tree carries
 the fixes; releases follow the maintainer's approval.

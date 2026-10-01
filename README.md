@@ -35,7 +35,7 @@ Polaris issues, holds, presents and verifies one credential per person, and answ
 Around the credential:
 
 - **The schema is the security boundary.** A 46-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client: **the guarantees live in the database, not in application code.**
-- **Verifiers anyone can hold to a contract.** Python and TypeScript SDKs and a conformance suite of 193 published cases; version 1 of the signed-statement protocol is frozen and re-verified on every push.
+- **Verifiers anyone can hold to a contract.** Python and TypeScript SDKs and a conformance suite of 208 published cases; version 1 of the signed-statement protocol is frozen and re-verified on every push.
 - **Explicit federation.** Trust between agencies is explicit and non-transitive.
 - **Zero-knowledge by default.** A zero-knowledge verification stores no token identifier; a Plonky2 SNARK, re-checked by an independent second witness, proves ledger membership and nothing else.
 - **Gated by invariants.** 339 machine-checked invariants (v1.0.0-rc.67) gate every change in CI.
@@ -123,7 +123,7 @@ From a clone (`pip install liboqs-python cryptography`):
 ```bash
 python3 scripts/polaris-verify.py --pqc-provider oqs --selftest        # live ML-DSA-65 round trip
 python3 scripts/polaris-verify.py --pqc-provider oqs --verify-dir vectors   # published packs
-python3 conformance/run_conformance.py --self                          # 193 published cases
+python3 conformance/run_conformance.py --self                          # 208 published cases
 python3 scripts/polaris-compat-suite.py                                # frozen v1 protocol
 ```
 

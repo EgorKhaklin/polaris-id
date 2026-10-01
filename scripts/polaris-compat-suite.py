@@ -97,6 +97,16 @@ PINNED_KNOWN_DEFECTS = {
     "pack-signature-hex-whitespace":
         "2026-09-29: bytes.fromhex skips whitespace between bytes, so a genuine signature with a "
         "space in its hex verified; the pinned verifier predates the strict hex reader",
+    "cross-authority-manifest-lists-trusted-anchor":
+        "2026-09-30: a manifest was trusted when any key it merely LISTED was trusted, so one signed "
+        "by a stranger that listed the relying party's anchor was a trusted authority; the pinned "
+        "verifier predates the signer rule",
+    "cross-authority-edge-signed-by-a-stranger":
+        "2026-09-30: a signed edge counts only when one of its authority's anchors signed it; the "
+        "pinned verifier predates signed attestations and reads every edge as the manifest's word",
+    "revocation-feed-count-not-a-number":
+        "2026-09-30: a revoked_count of true read as 1; the pinned verifier predates the rule that a "
+        "count is a JSON integer",
 }
 
 
