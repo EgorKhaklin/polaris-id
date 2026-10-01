@@ -1904,8 +1904,9 @@ def cmd_retention_set(args):
                 scope = args.jurisdiction or '(deployment default)'
                 print(green(f"✓ {args.template} adopted for {scope}"))
             else:
-                # 2026-09-25: through the procedure. A direct UPDATE here was refused for
-                # polaris_app, which is what this command connects as in a deployment.
+                # 2026-09-25: through the procedure, since a direct UPDATE is refused for
+                # polaris_app. 2026-10-01: and the procedure is the owner's too (it takes the acting
+                # admin as a parameter), so a deployment runs this command as the schema owner.
                 cur.execute("CALL uc_set_retention_policy(%s, %s, %s, %s, %s, NULL, NULL)",
                             (args.table_class, args.jurisdiction, args.days,
                              args.justification.strip(), args.actor_user_id))
@@ -1923,9 +1924,11 @@ def cmd_retention_set(args):
         conn.rollback()
         sys.stderr.write(red(f"Refused: {str(e).split(chr(10))[0]}\n"))
         sys.exit(3)
-    except psycopg2.errors.InsufficientPrivilege as e:
+    except psycopg2.errors.InsufficientPrivilege:
         conn.rollback()
-        sys.stderr.write(red(f"Refused: {str(e).split(chr(10))[0]}\n"))
+        sys.stderr.write(red("Refused: a retention decision is a governance act the application's "
+                             "database role cannot take. Run it as the schema owner (set "
+                             "POLARIS_DB_USER).\n"))
         sys.exit(3)
     except psycopg2.Error as e:
         conn.rollback()

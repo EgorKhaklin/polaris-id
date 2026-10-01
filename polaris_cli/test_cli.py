@@ -1022,6 +1022,19 @@ class GovernanceCommandsRefuseTheAppRole(unittest.TestCase):
                 self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
                 self.assertIn("schema owner", r.stderr)
 
+    def test_the_app_role_cannot_set_retention(self):
+        """2026-10-01 (review F2): the retention routines took the acting admin as a parameter, so the
+        application role recorded a policy, or adopted a template, under any admin. They are the owner's."""
+        for args in (('retention-set', '--actor-user-id', '1', '--jurisdiction', 'US-APP',
+                      '--table-class', 'AUTH_AUDIT', '--days', '1095',
+                      '--justification', 'the application choosing its own retention'),
+                     ('retention-set', '--actor-user-id', '1', '--jurisdiction', 'US-APP',
+                      '--template', 'MINIMIZED')):
+            with self.subTest(args[-2]):
+                r = self._as_app(*args)
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                self.assertIn("schema owner", r.stderr)
+
     def test_the_app_role_cannot_register_an_authority_key(self):
         """2026-09-27: a registered key then made the authority's signing key, as the application
         role. Key events are the owner's."""

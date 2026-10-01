@@ -278,6 +278,56 @@ without the nonce, the credential or the binding's window. No verifier reported 
 without them the SDKs trust no manifest, while the detached verifier's function takes the
 manifests it is handed as the relying party's own (its parameter is `trusted_manifests`).
 
+SDK parity (1.0.0-rc.70). Ten cases pin signed bytes on which a function-by-function comparison of
+the two reference SDKs found them answering differently. One instant grammar, read the same way:
+ASCII digits only, no surrounding whitespace, offsets below 24 hours, and years 1 to 99 as written
+(`timestamp-issued-at-*`). The canonical form writes a small non-integral number as Python does,
+1.5e-05 (`agent-grant-small-amount-limit`), and orders keys by code point
+(`registry-keys-outside-the-bmp`). An agency id matches only the same string or integer
+(`registry-publisher-agency-id-missing`, `trust-list-publisher-agency-id-*`). Before these cases
+the Python verifiers failed four and the TypeScript SDK a different five.
+
+SDK parity, reviewed (1.0.0-rc.70). Twenty-two cases pin what three hostile reviews of that fix found. A
+holder proof's nonce is text, so the boolean true and the number 1e-05 match no nonce
+(`holder-chain-verifier-nonce-*`). A context or attesting agency of true is not 1
+(`holder-chain-context-boolean`, `trust-attestation-attesting-agency-*`,
+`cross-authority-edge-context-*`). A value with no wire text matches nothing, which the fix itself
+had opened (`agent-grant-use-proof-names-no-nonce`), and an integer beyond 2**53, which JavaScript
+reads as the nearest double, is no id (`agent-grant-use-grant-id-beyond-safe-integer`). A grant names
+itself: its grant_id is its revocation handle, so a grant without one as text is refused
+(`agent-grant-without-grant-id`, `agent-grant-grant-id-boolean`), and a revocation or a principal
+binding names its grant or credential as text (`agent-grant-use-revocation-*`,
+`agent-grant-use-principal-token-*`). A grant's action is text, so a list, true or null among its
+actions covers nothing (`agent-grant-use-action-*`). Before these cases the Python verifiers failed
+ten and the TypeScript SDK eight.
+
+Hex text (1.0.0-rc.70). Six cases pin that a key or a digest is a hex string and nothing else.
+JavaScript's String() reads a one-element list as its element where Python's str() writes the
+brackets, so a manifest anchor, an agent key, a holder key, an attested key or a feed root signed
+as [K] matched K in the TypeScript SDK alone (`*-a-list`). Before these cases the TypeScript SDK
+failed five; both Python verifiers passed them, and a missing key on either side of their
+comparisons no longer matches a missing key on the other.
+
+WIRE-SPEC rules (1.0.0-rc.69). Eleven cases pin three rules a read of every verifier requirement
+found split or unenforced. A revoked leaf and an epoch leaf are 64 hex digits (3.3, 3.16): a feed
+with a `null` leaf, rooted as Python spells it or as JavaScript does, was accepted by one language's
+verifiers and refused by the other's (`revocation-feed-leaf-*`, `epoch-leaves-leaf-not-hex`). A
+signed document binds a lowercase SHA3-256 digest (3.12), which no verifier checked
+(`signed-document-digest-*`). A window is read to the microsecond (2.2): the TypeScript SDK rounded
+instants to the millisecond, and read a checkpoint issued 100 microseconds after `now` as fresh
+(`epoch-checkpoint-issued-microseconds-*`). Each refusal sits beside a control signed by the same
+key.
+
+Status values (1.0.0-rc.69). A `status` that is absent means active, and one that is present has
+to be the string `active`; `false` and `""` name no state. Thirteen cases pin that wherever a
+signed status decides: a manifest's own signer (`manifest-signer-status-*`), a registry's
+publisher (`registry-publisher-status-*`), the binding under a holder chain and under a grant in
+use (`holder-chain-binding-status-*`, `agent-grant-use-binding-status-*`), and the anchor that
+signed a trust edge (`cross-authority-edge-anchor-status-*`), each refusal beside a control signed
+`active`. Before these cases the Python SDK and the detached verifier read both values as active
+and failed all eight refusals, and the TypeScript SDK refused them: two answers on the same
+signed bytes.
+
 Holder-proof window (`artifact: holder-chain`, 1.0.0-rc.66). A holder proof is fresh from one
 minute before its `issued_at` (clock skew) until five minutes after it, both ends inclusive.
 The `holder-chain-proof-window-*` cases take a chain whose binding opens a day before the proof,

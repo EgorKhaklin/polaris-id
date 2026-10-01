@@ -84,6 +84,14 @@ class PresentationDecisionTests(unittest.TestCase):
         v = self._verifier(status={"currently_authoritative": True, "status": "ACTIVE"})
         self.assertEqual(v.verify_presentation(self._pres()).decision, "accept")
 
+    def test_only_the_json_boolean_true_is_currently_authoritative(self):
+        """2026-10-01: bool() read {} as false and the string "false" as true, and the TypeScript
+        SDK read {} as true. Only true is authoritative, in both."""
+        for answer, decision in ((True, "accept"), ({}, "reject"), ("true", "reject"), ("false", "reject"), (1, "reject")):
+            with self.subTest(answer=answer):
+                v = self._verifier(status={"currently_authoritative": answer, "status": "ACTIVE"})
+                self.assertEqual(v.verify_presentation(self._pres()).decision, decision)
+
     def test_revoked_is_reject_but_authentic(self):
         v = self._verifier(status={"currently_authoritative": False, "status": "REVOKED"})
         out = v.verify_presentation(self._pres())
@@ -1100,6 +1108,109 @@ class GrantLimitsThatAreNotAnObjectTests(unittest.TestCase):
         for grant in ({}, {"limits": None}, {"limits": {}}):
             with self.subTest(grant=grant):
                 self.assertEqual(pv.grant_within_limits(grant, 10 ** 6, 10 ** 9), (True, None))
+
+
+class ParityWithTheTypeScriptSdkTests(unittest.TestCase):
+    """2026-10-01: inputs on which the two reference SDKs answered differently, each pinned to
+    the answer both now give."""
+
+    GRANT = {"grant_id": "g-1", "agent_public_key_hex": "ab"}
+    PROOF = {"format": "polaris-agent-proof/1", "grant_id": "g-1", "public_key_hex": "ab",
+             "service_nonce": 0, "action": "read"}
+
+    def test_an_agent_proofs_nonce_action_and_grant_id_are_text_and_must_be_named(self):
+        self.assertIs(pv.agent_proof_proves(self.PROOF, self.GRANT, "read", 0), True, "nonce 0 is a nonce")
+        self.assertIs(pv.agent_proof_proves(self.PROOF, self.GRANT, "read", "0"), True)
+        self.assertIs(pv.agent_proof_proves(dict(self.PROOF, service_nonce=1.5), self.GRANT, "read", "1.5"), False)
+        self.assertIs(pv.agent_proof_proves(dict(self.PROOF, grant_id=None), dict(self.GRANT, grant_id=None), "read", 0),
+                      False, "a proof that names no grant binds none")
+
+    def test_a_pairwise_handle_trims_ascii_whitespace_only(self):
+        key = "ab" * 32
+        self.assertEqual(pv.pairwise_handle(key, " scope\t"), pv.pairwise_handle(key, "scope"))
+        self.assertNotEqual(pv.pairwise_handle(key, "scope\ufeff"), pv.pairwise_handle(key, "scope"))
+        self.assertNotEqual(pv.pairwise_handle(key, "\x1cscope"), pv.pairwise_handle(key, "scope"))
+
+    def test_a_holder_proof_that_cannot_be_checked_reports_no_nonce(self):
+        e = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "holder-chain-early-binding.json")))
+        v = pv.verify_holder(e["credential"], e["binding"], dict(e["proof"], algorithm="ML-DSA-44"),
+                             expected_nonce="held-out-nonce", expected_context=1, now="2026-05-01T00:00:10Z")
+        self.assertIs(v.proof_authentic, None)
+        self.assertIs(v.nonce_matches, None, "the TypeScript SDK reports null here, and now so does this")
+        self.assertIs(v.proved, False)
+
+    def test_a_value_with_no_wire_text_matches_nothing(self):
+        """Compared bare, None == None let a proof naming no nonce match an expected nonce of 1.5:
+        the first parity fix opened it and a review found it; the published packages refuse it."""
+        bare = {k: v for k, v in self.PROOF.items() if k != "service_nonce"}
+        for nonce in (1.5, True, [1], {}):
+            with self.subTest(nonce=nonce):
+                self.assertIs(pv.agent_proof_proves(bare, self.GRANT, "read", nonce), False)
+        no_action = {k: v for k, v in self.PROOF.items() if k != "action"}
+        self.assertIs(pv.agent_proof_proves(no_action, self.GRANT, 1.5, 0), False)
+
+    def test_an_integer_beyond_2_53_is_not_wire_text(self):
+        """JavaScript reads an integer beyond 2**53 as the nearest double; Python reads it exactly."""
+        big = 2 ** 53 + 1
+        self.assertIs(pv.agent_proof_proves(dict(self.PROOF, grant_id=big), dict(self.GRANT, grant_id=str(big)),
+                                            "read", 0), False)
+        top = 2 ** 53 - 1
+        self.assertIs(pv.agent_proof_proves(dict(self.PROOF, grant_id=top), dict(self.GRANT, grant_id=str(top)),
+                                            "read", 0), True, "the largest integer both hold is one")
+
+    def test_a_revocation_names_its_grant_as_text(self):
+        """str(x or "") matched a revocation naming 0 to a grant naming none, and "True" to true."""
+        rev = {"format": "polaris-grant-revocation/1", "public_key_hex": "cd"}
+        grant = {"public_key_hex": "cd"}
+        self.assertIs(pv.revocation_ends_grant(dict(rev, grant_id=7), dict(grant, grant_id="7")), True)
+        for rid, gid in ((0, None), (True, "True"), (None, None), (2 ** 53 + 1, str(2 ** 53 + 1))):
+            with self.subTest(rid=rid, gid=gid):
+                self.assertIs(pv.revocation_ends_grant(dict(rev, grant_id=rid), dict(grant, grant_id=gid)), False)
+
+    def test_a_key_is_hex_text(self):
+        """A key or a digest is a non-empty string, in any case. JavaScript's String() read [K] as K,
+        and str(x or "") read two missing keys as one empty key (2026-10-01)."""
+        self.assertTrue(pv._same_hex("AB", "ab"))
+        for a, b in ((None, None), ("", ""), (["ab"], "ab"), (0, False)):
+            with self.subTest(a=a, b=b):
+                self.assertFalse(pv._same_hex(a, b))
+        self.assertFalse(pv._hex_in(None, {None, "ab"}), "a value with no hex text is in no set")
+        proof = dict(self.PROOF, public_key_hex="ab")
+        self.assertIs(pv.agent_proof_proves(proof, dict(self.GRANT, agent_public_key_hex=["ab"]), "read", 0), False)
+        self.assertIs(pv.agent_proof_proves(proof, dict(self.GRANT, agent_public_key_hex="AB"), "read", 0), True)
+
+    @unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+    def test_anchors_that_are_not_text_are_skipped_not_raised(self):
+        """`a.lower()` raised AttributeError on an anchor list holding null (2026-10-01)."""
+        cred = _vector("ml-dsa-65-valid.json")
+        v = pv.verify_authenticity(cred, [None, 7, cred["public_key_hex"].upper()])
+        self.assertIs(v.authentic, True)
+        self.assertIs(v.issuer_trusted, True)
+        self.assertIs(pv.verify_authenticity(cred, [None]).issuer_trusted, False)
+
+    def test_an_id_is_the_same_string_or_integer(self):
+        """An agency or context id: True is not 1, and a missing id is not a null one."""
+        self.assertTrue(pv._same_id(1, 1) and pv._same_id("B", "B"))
+        for a, b in ((True, 1), (None, None), (1, "1"), (2 ** 53 + 1, 2 ** 53 + 1)):
+            with self.subTest(a=a, b=b):
+                self.assertFalse(pv._same_id(a, b))
+
+
+class GrantLimitsAreWholeNumbersTests(unittest.TestCase):
+    """2026-10-01. `int()` read a use limit of 2.5 as 2, so a grant the TypeScript SDK refuses was
+    within its limit here: the same signed bytes, two answers. A use limit and a use count are
+    whole numbers; the whole-number limits are the control."""
+
+    def test_whole_numbers_are_read(self):
+        self.assertEqual(pv.grant_within_limits({"limits": {"max_uses": 3}}, uses_so_far=2), (True, None))
+        self.assertIs(pv.grant_within_limits({"limits": {"max_uses": 3}}, uses_so_far=3)[0], False)
+
+    def test_a_fractional_limit_or_count_is_refused(self):
+        for limits, uses in (({"max_uses": 2.5}, 2), ({"max_uses": 3}, 1.5)):
+            with self.subTest(limits=limits, uses=uses):
+                ok, note = pv.grant_within_limits({"limits": limits}, uses_so_far=uses)
+                self.assertIs(ok, False)
+                self.assertIn("whole numbers", note)
 
 
 class TheTokenCacheLifetimeIsBoundedTests(unittest.TestCase):

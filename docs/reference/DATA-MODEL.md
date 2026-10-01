@@ -257,8 +257,11 @@ public key is bound to which credential, from which instant, as `bound`, `rotate
 Polaris was issuer-centric until this version: a holder held a credential, not a key pair, so
 presenting the file was the whole of the proof. This register is the missing primitive, and it
 holds a PUBLIC key and an instant only. The private key lives on the holder's device and never
-reaches the database. Binding is authenticated by POSSESSION of the credential, so an operator
-cannot bind a key to a credential they do not hold.
+reaches the database. The first binding is authenticated by POSSESSION of the credential; a
+rotation or revocation by the live key's signature over `polaris-holder-key-change/1`
+(WIRE-SPEC 3.15). The route records events through `uc_record_holder_key_event`, which sets
+each event's instant and keeps `bound`, `rotated` and `revoked` in order for a live credential;
+the application role's own INSERT is withdrawn by a contract migration in a later release.
 
 Append-only by `trg_holder_key_append_only` and by privilege: a binding that could be updated
 or deleted would let an operator replace the holder. A rotation is a new event; the previous

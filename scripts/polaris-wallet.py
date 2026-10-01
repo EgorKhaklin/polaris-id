@@ -36,6 +36,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import stat
 import subprocess
@@ -242,12 +243,26 @@ def _holder_key_path(wallet):
     return os.path.join(wallet, _HOLDER_KEY_FILE)
 
 
+def _holder_key_change_canonical(body):
+    """Canonical bytes of polaris-holder-key-change/1, the LIVE holder key's consent to a
+    rotation or revocation (2026-10-01). Only the issuer verifies one, so the detached verifier
+    has no twin; polaris_web/rp_api.py's _holder_key_change_statement builds the same bytes, and
+    a test pins the pair."""
+    statement = {k: body.get(k) for k in
+                 ("format", "token_value", "event", "holder_public_key_hex", "holder_algorithm",
+                  "issued_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
 def cmd_holder_keygen(args):
     """Generate a holder key pair and bind its PUBLIC half to the held credential.
 
-    The private key is written here and goes nowhere else: the binding endpoint is
-    authenticated by POSSESSION of the credential, never by handing over a secret. Losing
-    this file loses the key, not the credential; bind a new one with --rotate."""
+    The private key is written here and goes nowhere else. A first binding is authenticated by
+    POSSESSION of the credential. A rotation (--rotate) is signed by the key it replaces: the
+    pair a credential is presented with reaches every relying party, so since 2026-10-01 the
+    issuer changes a bound key only on that key's word. The new key waits in
+    holder_key.json.pending until the instance agrees, so a refusal or a lost answer never costs
+    the live key."""
     wallet = _wallet_dir(args)
     pack = _load_credential(wallet)
     try:
@@ -256,16 +271,34 @@ def cmd_holder_keygen(args):
         sys.stderr.write("holder-keygen needs liboqs-python (pip install liboqs-python): %s\n" % e)
         return 3
     alg = args.algorithm
+    path = _holder_key_path(wallet)
+    live = None
+    if args.rotate:
+        if not os.path.isfile(path):
+            raise SystemExit("no holder key in this wallet to rotate from. A bound key is changed only "
+                             "by that key; without it, the credential's recovery is the way back.")
+        with open(path) as f:
+            live = json.load(f)
     with oqs.Signature(alg) as signer:
         pk = bytes(signer.generate_keypair())
         sk = bytes(signer.export_secret_key())
-    path = _holder_key_path(wallet)
-    with open(path, "w") as f:
-        json.dump({"algorithm": alg, "public_key_hex": pk.hex(), "secret_key_hex": sk.hex()}, f, indent=2)
-    os.chmod(path, 0o600)
     body = {"token_value": pack["token_value"], "signature_hex": pack["signature_hex"],
             "holder_public_key_hex": pk.hex(), "holder_algorithm": alg,
             "event": ("rotated" if args.rotate else "bound")}
+    if live:
+        from datetime import datetime, timezone
+        issued_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        statement = _holder_key_change_canonical({
+            "format": "polaris-holder-key-change/1", "token_value": pack["token_value"],
+            "event": "rotated", "holder_public_key_hex": pk.hex(), "holder_algorithm": alg,
+            "issued_at": issued_at, "algorithm": live["algorithm"]})
+        with oqs.Signature(live["algorithm"], secret_key=bytes.fromhex(live["secret_key_hex"])) as signer:
+            sig = bytes(signer.sign(hashlib.sha3_256(statement).digest()))
+        body["change_proof"] = {"issued_at": issued_at, "signature_hex": sig.hex()}
+    target = path + ".pending" if live else path
+    with open(target, "w") as f:
+        json.dump({"algorithm": alg, "public_key_hex": pk.hex(), "secret_key_hex": sk.hex()}, f, indent=2)
+    os.chmod(target, 0o600)
     import urllib.error
     import urllib.request
     req = urllib.request.Request(args.instance.rstrip("/") + "/api/v1/holder-key",
@@ -275,8 +308,19 @@ def cmd_holder_keygen(args):
         with urllib.request.urlopen(req, timeout=20) as r:
             binding = json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
+        if live:
+            os.remove(target)   # refused: the live key is unchanged, and so is this wallet
         raise SystemExit("binding refused: HTTP %d %s" % (e.code, e.read().decode("utf-8", "replace")[:200]))
     except urllib.error.URLError as e:
+        if live:
+            raise SystemExit(
+                "could not reach %s to record the rotation (%s).\n"
+                "\n"
+                "The live key is unchanged in %s, and the new one waits in %s. If the instance did\n"
+                "record the rotation before the connection failed, the new key is now the live one:\n"
+                "fetch the binding (holder-binding) and, if it names the new key, move the .pending\n"
+                "file over the live one. Otherwise re-run --rotate."
+                % (args.instance.rstrip("/"), e.reason, path, target))
         # The key is ALREADY on disk at this point, and only HTTPError was caught, so a
         # connection failure exited with a traceback and left the wallet in a state nobody
         # had named. lab/linkability measured what that state does: `present --holder-nonce`
@@ -295,8 +339,10 @@ def cmd_holder_keygen(args):
             "\n"
             "Re-run `holder-keygen` against a reachable instance to finish the binding. It\n"
             "reuses nothing: a second run mints a new key, so pass --rotate if the first one\n"
-            "was ever registered."
+            "was ever registered (it signs the change with the key saved here)."
             % (args.instance.rstrip("/"), e.reason, path))
+    if live:
+        os.replace(target, path)
     out = os.path.join(wallet, "holder_binding.json")
     with open(out, "w") as f:
         json.dump(binding, f, indent=2)
@@ -375,7 +421,14 @@ def cmd_grant(args):
     if args.max_uses is not None:
         limits["max_uses"] = int(args.max_uses)
     if args.max_amount is not None:
-        limits["max_amount"] = float(args.max_amount)
+        # A whole amount is signed as an integer. JavaScript reads 100.0 as 100, so a grant this
+        # wallet signed for --max-amount 100 (as 100.0) failed the TypeScript SDK's signature check
+        # while both Python verifiers accepted it (2026-10-01; WIRE-SPEC 2.1). A limit that is not
+        # a finite number is no limit, and every verifier refuses it.
+        amount = float(args.max_amount)
+        if not math.isfinite(amount):
+            raise SystemExit("--max-amount must be a finite number")
+        limits["max_amount"] = int(amount) if amount.is_integer() and abs(amount) <= 2 ** 53 - 1 else amount
     now = datetime.now(timezone.utc).replace(microsecond=0)
     iso = lambda d: d.isoformat().replace("+00:00", "Z")
     V = _load_verifier()

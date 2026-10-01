@@ -120,6 +120,11 @@ export function tokenValueSerialProblem(tokenValue: unknown): string | null {
 /** Verify a Polaris authenticity pack OFFLINE. `anchors` (optional) are trusted
  * issuer public keys as hex; issuerTrusted says whether the pack's key is one. */
 export function verifyAuthenticity(pack: Pack, anchors?: string[] | null): AuthenticityVerdict {
+  // A verdict, never an exception, on input that is not an object: `null.token_value` threw here
+  // where the Python SDK answered not authentic (2026-10-01).
+  if (pack === null || typeof pack !== "object" || Array.isArray(pack)) {
+    return { authentic: false, issuerTrusted: null, algorithm: null, note: "the credential is not an object" };
+  }
   const tok = pack.token_value;
   const alg = pack.algorithm ?? null;
   const sigHex = pack.signature_hex;
@@ -153,8 +158,7 @@ export function verifyAuthenticity(pack: Pack, anchors?: string[] | null): Authe
   let issuerTrusted: boolean | null = null;
   let note: string | undefined;
   if (anchors != null) {
-    const set = new Set(anchors.map((a) => a.toLowerCase()));
-    issuerTrusted = set.has(pkHex.toLowerCase());
+    issuerTrusted = hexIn(pkHex, anchors.map((a) => hexText(a)));
     if (ok && !issuerTrusted) note = "signature is genuine but its key is not in the trusted issuer anchors";
   }
   return { authentic: ok, issuerTrusted, algorithm: alg, note };
@@ -223,11 +227,37 @@ export function __canonicalJsonForTest(value: any): string {
   return canonicalJson(value);
 }
 
+/** A number as Python's json.dumps writes it. Both languages pick the shortest digits that
+ * round-trip, but Python switches to exponent form below 1e-4 with at least two exponent
+ * digits ("1.5e-05", "1e-07") where JavaScript waits until 1e-6 and writes "1e-7", so a
+ * statement signed with 0.000015 in it failed here (2026-10-01). Integral values are the other
+ * known limit, and hasIntegralNumber names them. */
+function pythonJsonNumber(x: number): string {
+  if (Number.isFinite(x) && !Number.isInteger(x) && Math.abs(x) < 1e-4) {
+    const [mant, exp] = x.toExponential().split("e");
+    const e = Number(exp);
+    return mant + "e" + (e < 0 ? "-" : "+") + String(Math.abs(e)).padStart(2, "0");
+  }
+  return JSON.stringify(x);
+}
+
+/** Python's sort_keys orders keys by code point; JavaScript's sort() by UTF-16 unit, which puts
+ * a key outside the Basic Multilingual Plane before "\uffff" where Python puts it after. */
+function codePointOrder(a: string, b: string): number {
+  const x = Array.from(a, (c) => c.codePointAt(0) as number);
+  const y = Array.from(b, (c) => c.codePointAt(0) as number);
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    if (x[i] !== y[i]) return x[i] - y[i];
+  }
+  return x.length - y.length;
+}
+
 function canonicalJson(value: any): string {
   if (typeof value === "string") return pythonJsonString(value);
+  if (typeof value === "number") return pythonJsonNumber(value);
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return "[" + value.map(canonicalJson).join(",") + "]";
-  const keys = Object.keys(value).sort();
+  const keys = Object.keys(value).sort(codePointOrder);
   return "{" + keys.map((k) => pythonJsonString(k) + ":" + canonicalJson(value[k])).join(",") + "}";
 }
 
@@ -285,12 +315,28 @@ function isoToEpoch(s: unknown): number | null {
   // ISO 8601 only, and the same subset Python's fromisoformat accepts: a date, optionally a
   // time, optionally fractional seconds, optionally an offset. Anything else is refused
   // rather than guessed at.
-  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?(?:([Zz])|([+-])(\d{2}):?(\d{2}))?$/.exec(s.trim());
+  // The whole string, as written: `trim()` removed a different set of characters than the
+  // Python verifiers' `strip()` (a byte-order mark here, a file separator there), and RFC
+  // 3339 has no surrounding whitespace (2026-10-01).
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?(?:([Zz])|([+-])(\d{2}):?(\d{2}))?$/.exec(s);
   if (!m) return null;
   const [, y, mo, d, hh, mi, ss, frac, z, sign, oh, om] = m;
+  // An offset of 24 hours or 60 minutes is not one RFC 3339 allows, and Python refuses it.
+  if (sign && (Number(oh) > 23 || Number(om) > 59)) return null;
+  // Year 0 does not exist in the Python reference; years 1 to 99 do, and Date.UTC reads them as
+  // 1901 to 1999, so a credential dated 0099 was refused here and read as 0099 there.
+  if (Number(y) === 0) return null;
   let t = Date.UTC(Number(y), Number(mo) - 1, Number(d),
-                   Number(hh || 0), Number(mi || 0), Number(ss || 0),
-                   frac ? Math.round(Number("0." + frac) * 1000) : 0);
+                   Number(hh || 0), Number(mi || 0), Number(ss || 0), 0);
+  if (Number(y) < 100) {
+    const fixed = new Date(t);
+    fixed.setUTCFullYear(Number(y));
+    t = fixed.getTime();
+  }
+  // The fraction to the microsecond, as the Python verifiers read it. Until 2026-10-01 it was
+  // rounded to the millisecond here, so an artifact dated 100 microseconds ahead of `now` was
+  // fresh in this SDK and not yet valid in both Python verifiers: the same bytes, two answers.
+  const micro = frac ? Number(frac.padEnd(6, "0")) : 0;
   if (Number.isNaN(t)) return null;
   // Date.UTC rolls an impossible date over instead of refusing it: "2026-02-31" became
   // 3 March and "T25:00" the next day, where Python's fromisoformat, whose subset this
@@ -310,7 +356,7 @@ function isoToEpoch(s: unknown): number | null {
     // Deliberately nothing: Date.UTC already read it as UTC. Named so that a later reader
     // does not "helpfully" reintroduce local time here.
   }
-  return t / 1000;
+  return t / 1000 + micro / 1e6;
 }
 
 /** Formats whose freshness is a REPLAY WINDOW rather than a validity interval, with the
@@ -446,6 +492,13 @@ const ARTIFACT_KEYS: Record<string, string[]> = {
 export type ArtifactVerdict = { authentic: boolean; fresh: boolean | null; note?: string;
                                 issuerTrusted?: boolean | null };
 
+/** WIRE-SPEC 3.3 and 3.16: a revoked leaf and an epoch leaf are each a SHA3-256, so a list of
+ * 64 hex digits in either case. `String(null)` is "null" here and `str(None)` "None" in Python,
+ * so a leaf of another type gave one signed feed two verdicts (2026-10-01). */
+function leavesAreHex(leaves: unknown): boolean {
+  return Array.isArray(leaves) && leaves.every((x) => typeof x === "string" && /^[0-9a-fA-F]{64}$/.test(x));
+}
+
 function revokedRoot(leaves: any): string {
   const arr: string[] = Array.isArray(leaves) ? leaves.map((x) => String(x).toLowerCase()) : [];
   const uniq = [...new Set(arr)].sort();
@@ -541,7 +594,8 @@ export function verifySignedArtifact(obj: any, now?: string | null,
   if (ok && o.format === "polaris-epoch-leaves/1") {
     // P9.2: the leaves ride outside the signed statement, committed to by leaves_root_hex.
     const leaves = Array.isArray(o.all_leaves_hex) ? o.all_leaves_hex : [];
-    ok = revokedRoot(leaves) === String(o.leaves_root_hex ?? "").toLowerCase() && leaves.length === o.leaf_count;
+    ok = leavesAreHex(o.all_leaves_hex)
+      && revokedRoot(leaves) === hexText(o.leaves_root_hex) && leaves.length === o.leaf_count;
     // NOT an early return. This is one of five commitment checks in this function and the
     // other four fall through to the tail, so returning here reported `fresh: null` where
     // its four siblings report the window's answer: the same class of failure, two
@@ -554,9 +608,21 @@ export function verifySignedArtifact(obj: any, now?: string | null,
     // WIRE-SPEC 3.3: revoked_count MUST equal the number of distinct leaves; only the root was
     // compared until 2026-09-30, where the detached verifier compared both.
     const leaves = Array.isArray(o.revoked_leaves) ? o.revoked_leaves : [];
-    ok = revokedRoot(leaves) === String(o.revoked_root_hex ?? "").toLowerCase()
+    ok = leavesAreHex(o.revoked_leaves)
+      && revokedRoot(leaves) === hexText(o.revoked_root_hex)
       && typeof o.revoked_count === "number"
       && o.revoked_count === new Set(leaves.map((x: any) => String(x).toLowerCase())).size;
+  } else if (ok && o.format === "polaris-agent-grant/1") {
+    // WIRE-SPEC 3.17: grant_id is the revocation handle and names this grant alone. A grant
+    // without one as text could never be revoked once a revocation names a grant as text
+    // (2026-10-01), so it is not a grant.
+    ok = wireText(o.grant_id) !== null;
+  } else if (ok && o.format === "polaris-signed-document/1") {
+    // WIRE-SPEC 3.12: the document's digest_algorithm MUST be SHA3-256 and digest_hex its
+    // lowercase hex, as for a timestamp. No verifier here checked either until 2026-10-01.
+    const d = o.document !== null && typeof o.document === "object" ? o.document : {};
+    ok = d.digest_algorithm === "SHA3-256" && typeof d.digest_hex === "string"
+      && /^[0-9a-f]{64}$/.test(d.digest_hex);
   } else if (ok && o.format === "polaris-timestamp/1") {
     // WIRE-SPEC 3.9: digest_algorithm MUST be SHA3-256 and digest_hex its lowercase hex; and the
     // instant must be one. Until 2026-09-30 none of the three was checked here.
@@ -567,31 +633,31 @@ export function verifySignedArtifact(obj: any, now?: string | null,
     // the detached verifier checked it: a bundle whose signed count and listed members
     // disagreed was authentic here and in the Python SDK.
     const members = Array.isArray(o.members) ? o.members : [];
-    ok = membersRoot(members) === String(o.members_root_hex ?? "").toLowerCase()
+    ok = membersRoot(members) === hexText(o.members_root_hex)
       && typeof o.member_count === "number" && o.member_count === members.length;
   } else if (ok && o.format === "polaris-federation-manifest/1") {
-    const active = new Set(
+    const active = new Set<string | null>(
       (Array.isArray(o.anchors) ? o.anchors : [])
         .filter((a: any) => a && (a.status ?? "active") === "active")
-        .map((a: any) => String(a.public_key_hex ?? "").toLowerCase()),
+        .map((a: any) => hexText(a.public_key_hex)),
     );
-    ok = active.has(String(o.public_key_hex ?? "").toLowerCase());
+    ok = hexIn(o.public_key_hex, active);
   } else if (ok && o.format === "polaris-registry/1") {
     const pub = o.publisher && typeof o.publisher === "object" ? o.publisher : {};
     const listed = new Set<string>(
       (Array.isArray(o.authorities) ? o.authorities : [])
-        .filter((a: any) => a && a.agency_id === pub.agency_id && (a.status ?? "active") === "active")
-        .map((a: any) => String(a.public_key_hex ?? "").toLowerCase()),
+        .filter((a: any) => a && sameId(a.agency_id, pub.agency_id) && (a.status ?? "active") === "active")
+        .map((a: any) => hexText(a.public_key_hex)),
     );
-    ok = listed.has(String(o.public_key_hex ?? "").toLowerCase());
+    ok = hexIn(o.public_key_hex, listed);
   } else if (ok && o.format === "polaris-trust-list/1") {
     const pub = o.publisher && typeof o.publisher === "object" ? o.publisher : {};
     const active = new Set<string>(
       (Array.isArray(o.keys) ? o.keys : [])
-        .filter((k: any) => k && k.agency_id === pub.agency_id && k.status === "active")
-        .map((k: any) => String(k.public_key_hex ?? "").toLowerCase()),
+        .filter((k: any) => k && sameId(k.agency_id, pub.agency_id) && k.status === "active")
+        .map((k: any) => hexText(k.public_key_hex)),
     );
-    ok = active.has(String(o.public_key_hex ?? "").toLowerCase());
+    ok = hexIn(o.public_key_hex, active);
   }
   // A replay-windowed format answers freshness the other way round; withinWindow needs
   // both ends of an interval and such an artifact has only its issuance.
@@ -600,8 +666,7 @@ export function verifySignedArtifact(obj: any, now?: string | null,
   // lowercased, is in the anchor set. Null when the caller supplied none.
   const issuerTrusted = anchors == null
     ? null
-    : anchors.map((a) => String(a).toLowerCase())
-             .includes(String(o.public_key_hex ?? "").toLowerCase());
+    : hexIn(o.public_key_hex, anchors.map((a) => hexText(a)));
   return { authentic: ok, fresh: replay !== null ? replay : withinWindow(o, now),
            issuerTrusted, ...(commitmentNote ? { note: commitmentNote } : {}) };
 }
@@ -703,7 +768,7 @@ export function verifyCosignature(cosig: any, witnessKey?: string | null): Artif
   } catch (e) {
     return { authentic: false, fresh: null, note: "verification error: " + (e as Error).message };
   }
-  if (ok && witnessKey != null && String(c.public_key_hex).toLowerCase() !== String(witnessKey).toLowerCase()) {
+  if (ok && witnessKey != null && !sameHex(c.public_key_hex, witnessKey)) {
     return { authentic: false, fresh: null, note: "the cosignature is not from the expected witness" };
   }
   return { authentic: ok, fresh: null, note: ok ? undefined : "cosignature signature is invalid" };
@@ -743,7 +808,7 @@ export function verifyTimestampAnchor(ts: any, logKey?: string | null, trustedWi
     return v;
   }
   v.timestampHash = timestampHash(ts);
-  if (String(proof.entry_hex ?? "").toLowerCase() !== v.timestampHash) {
+  if (hexText(proof.entry_hex) !== v.timestampHash) {
     v.note = "the proof is not for this timestamp";
     return v;
   }
@@ -779,26 +844,26 @@ export function verifyTimestampAnchor(ts: any, logKey?: string | null, trustedWi
   v.index = idx;
   v.treeSize = size;
   if (size !== sth.tree_size ||
-      String(proof.root_hash_hex ?? "").toLowerCase() !== String(sth.root_hash_hex ?? "").toLowerCase()) {
+      !sameHex(proof.root_hash_hex, sth.root_hash_hex)) {
     v.note = "the proof and the head describe different trees";
     return v;
   }
   if (!v.sthAuthentic) { v.note = sv.note ?? "the head is not authentic"; return v; }
-  if (logKey != null && String(sth.public_key_hex ?? "").toLowerCase() !== String(logKey).toLowerCase()) {
+  if (logKey != null && !sameHex(sth.public_key_hex, logKey)) {
     v.note = "the head is not signed by the expected log key";
     return v;
   }
   v.anchored = verifyInclusion(idx, size, leafHash(v.timestampHash), root, path);
   if (!v.anchored) { v.note = "the inclusion proof does not reconstruct the head"; return v; }
   if (trustedWitnesses != null) {
-    const trusted = new Set(trustedWitnesses.map((t) => String(t).toLowerCase()));
+    const trusted = new Set(trustedWitnesses.map((t) => hexText(t)));
     const seen = new Set<string>();
     for (const c of (Array.isArray(anchor.cosignatures) ? anchor.cosignatures : [])) {
       if (c === null || typeof c !== "object" || !verifyCosignature(c).authentic) continue;
       if (c.log_id === sth.log_id && c.tree_size === sth.tree_size &&
-          String(c.root_hash_hex ?? "").toLowerCase() === String(sth.root_hash_hex ?? "").toLowerCase()) {
-        const w = String(c.public_key_hex ?? "").toLowerCase();
-        if (trusted.has(w)) seen.add(w);
+          sameHex(c.root_hash_hex, sth.root_hash_hex)) {
+        const w = hexText(c.public_key_hex);
+        if (w !== null && trusted.has(w)) seen.add(w);
       }
     }
     v.cosignerCount = seen.size;
@@ -876,8 +941,8 @@ export function verifyHolder(credential: any, binding: any, proof: any, expected
   const av = verifyAuthenticity(cred, anchors ?? null);
   v.credentialAuthentic = av.authentic;
   v.issuerTrusted = av.issuerTrusted;
-  v.boundToCredential = String(b.token_value) === String(cred.token_value)
-    && String(b.public_key_hex ?? "").toLowerCase() === String(cred.public_key_hex ?? "").toLowerCase();
+  v.boundToCredential = wireTextEqual(b.token_value, cred.token_value)
+    && sameHex(b.public_key_hex, cred.public_key_hex);
   const impl = verifierFor(pr.algorithm);
   if (!impl) {
     v.note = "unknown or unaccepted signature algorithm: " + String(pr.algorithm);
@@ -893,11 +958,13 @@ export function verifyHolder(credential: any, binding: any, proof: any, expected
   // The proof names the credential it is about (token_value, which the holder signed); it must
   // be this one. Until 2026-09-30 only the key was compared, so a proof made for one credential
   // passed with another bound to the same holder key.
-  v.keyMatchesBinding = String(pr.public_key_hex ?? "").toLowerCase()
-    === String(b.holder_public_key_hex ?? "").toLowerCase()
-    && String(pr.token_value) === String(b.token_value) && (b.status ?? "active") === "active";
-  if (expectedNonce != null) v.nonceMatches = String(pr.verifier_nonce) === String(expectedNonce);
-  const ctxOk = expectedContext == null || pr.context_id === expectedContext;
+  v.keyMatchesBinding = sameHex(pr.public_key_hex, b.holder_public_key_hex)
+    && wireTextEqual(pr.token_value, b.token_value) && (b.status ?? "active") === "active";
+  // A nonce and a context read as the Python verifiers read them: String() spelled true "true"
+  // and 1e-05 "0.00001" where str() spells them "True" and "1e-05", and Python's == read true as
+  // context 1 (2026-10-01).
+  if (expectedNonce != null) v.nonceMatches = wireTextEqual(pr.verifier_nonce, expectedNonce);
+  const ctxOk = expectedContext == null || sameId(pr.context_id, expectedContext);
   // isoToEpoch, as every other freshness path here reads time. Date.parse read an issued_at with
   // no offset as LOCAL time, so the replay window moved with the machine's time zone: a proof
   // seven hours old was stale under UTC and fresh in Los Angeles (2026-09-30).
@@ -943,11 +1010,11 @@ export function verifyAttestation(att: any, attestingAgencyId?: number | null,
   } catch (e) {
     return { authentic: false, fresh: null, note: "verification error: " + (e as Error).message };
   }
-  if (ok && attestingAgencyId != null && a.attesting_agency_id !== attestingAgencyId) {
+  if (ok && attestingAgencyId != null && !sameId(a.attesting_agency_id, attestingAgencyId)) {
     return { authentic: false, fresh: null, note: "the attestation names a different attesting agency than the manifest that published it" };
   }
   if (ok && expectedKey != null &&
-      String(a.attested_public_key_hex ?? "").toLowerCase() !== String(expectedKey).toLowerCase()) {
+      !sameHex(a.attested_public_key_hex, expectedKey)) {
     return { authentic: false, fresh: null, note: "the attestation is signed over a different attested key" };
   }
   return { authentic: ok, fresh: null, note: ok ? undefined : "the attestation signature is invalid" };
@@ -968,7 +1035,7 @@ export function verifyCrossAuthority(
   if (!verifyAuthenticity(p).authentic) {
     return { decision: "reject", authentic: false, issuerTrusted: false, reason: "credential is not authentic" };
   }
-  const tokenKey = String(p.public_key_hex ?? "").toLowerCase();
+  const tokenKey = hexText(p.public_key_hex);
   if (trustedAnchors == null) {
     // No root, no trusted authority. Every manifest is signed by a key it lists itself, so with no
     // anchor the relying party chose, an attacker's own manifest attesting the attacker's own
@@ -978,7 +1045,7 @@ export function verifyCrossAuthority(
     return { decision: "reject", authentic: true, issuerTrusted: null,
              reason: "no trust anchors were given: a manifest vouches for nothing by itself" };
   }
-  const trusted = new Set(trustedAnchors.map((t) => String(t).toLowerCase()));
+  const trusted = new Set(trustedAnchors.map((t) => hexText(t)));
   let via: unknown = null;
   let signedEdge: boolean | null = null;
   // A manifest set that is not an array is no manifests, as in the detached verifier:
@@ -990,10 +1057,10 @@ export function verifyCrossAuthority(
     // verifySignedArtifact requires) is one the relying party trusts. Until 2026-09-30 it was
     // any key the manifest merely LISTED, so an attacker's manifest that listed the relying
     // party's anchor beside the attacker's own root was trusted (WIRE-SPEC section 4).
-    if (!trusted.has(String(mm.public_key_hex ?? "").toLowerCase())) continue;
+    if (!hexIn(mm.public_key_hex, trusted)) continue;
     for (const att of Array.isArray(mm.attestations) ? mm.attestations : []) {
-      if (att && String(att.attested_public_key_hex ?? "").toLowerCase() === tokenKey
-          && contextId != null && att.context_id === contextId) {
+      if (att && tokenKey !== null && hexText(att.attested_public_key_hex) === tokenKey
+          && sameId(att.context_id, contextId)) {
         // In-context means a context was presented (WIRE-SPEC section 4); before 2026-09-27
         // a missing one matched an edge from ANY context.
         // P9.5: is the edge signed by the agency that made it, or is it the operator's
@@ -1005,8 +1072,8 @@ export function verifyCrossAuthority(
         // signature counted, so a stranger met requireSignedAttestation).
         const roots = new Set<string>((Array.isArray(mm.anchors) ? mm.anchors : [])
           .filter((x: any) => x && (x.status ?? "active") === "active")
-          .map((x: any) => String(x.public_key_hex ?? "").toLowerCase()));
-        if (!unsigned && (!av.authentic || !roots.has(String(att.public_key_hex ?? "").toLowerCase()))) continue;
+          .map((x: any) => hexText(x.public_key_hex)));
+        if (!unsigned && (!av.authentic || !hexIn(att.public_key_hex, roots))) continue;
         // An edge whose own window has closed is not an edge, however fresh the manifest
         // carrying it (WIRE-SPEC section 4). Until 2026-09-27 this decision never read
         // `valid_until`, and until 2026-09-28 it read it only for a SIGNED edge. A legacy edge
@@ -1027,14 +1094,14 @@ export function verifyCrossAuthority(
   if (revocationFeed != null) {
     const rf = revocationFeed ?? {};
     const rv = verifySignedArtifact(rf, now);
-    const bound = String(rf.public_key_hex ?? "").toLowerCase() === tokenKey;
+    const bound = tokenKey !== null && hexText(rf.public_key_hex) === tokenKey;
     if (!(rv.authentic && rv.fresh && bound)) {
       return { decision: "reject", authentic: true, issuerTrusted: true, via,
                reason: "the revocation feed is not authentic, fresh, and bound to the issuer key",
                attestationSigned: signedEdge };
     }
     const leaf = bytesToHex(sha3_256(new TextEncoder().encode(String(p.token_value ?? ""))));
-    const leaves = new Set((Array.isArray(rf.revoked_leaves) ? rf.revoked_leaves : []).map((x: any) => String(x).toLowerCase()));
+    const leaves = new Set((Array.isArray(rf.revoked_leaves) ? rf.revoked_leaves : []).map((x: any) => hexText(x)));
     if (leaves.has(leaf)) {
       return { decision: "reject", authentic: true, issuerTrusted: true, via, reason: "credential is revoked",
                attestationSigned: signedEdge };
@@ -1107,7 +1174,13 @@ export class PolarisVerifier {
   /** Decide accept / reject / provisional for a holder's presentation (a wallet
    * presentation object, or a bare authenticity pack). */
   async verifyPresentation(presentation: any): Promise<Verdict> {
-    const cred: Pack = presentation && presentation.credential ? presentation.credential : (presentation ?? {});
+    // A `credential` key that is present decides, as it does in the Python SDK: an object that
+    // names a credential and supplies none (`credential: null`) was read here as a bare pack,
+    // so the same bytes were provisional in this SDK and rejected in the other. Without the
+    // key, the object itself is the pack, as before.
+    const named = presentation !== null && typeof presentation === "object" && "credential" in presentation;
+    const chosen = named ? presentation.credential : presentation;
+    const cred: Pack = chosen !== null && typeof chosen === "object" ? chosen : {};
     const a = verifyAuthenticity(cred, this.anchors);
     const reasons: string[] = [];
     if (!a.authentic) {
@@ -1129,7 +1202,9 @@ export class PolarisVerifier {
       reasons.push("status check failed: " + (e as Error).message);
       return { decision: "reject", authentic: true, issuerTrusted: a.issuerTrusted, currentlyAuthoritative: null, reasons };
     }
-    const current = Boolean(status.currently_authoritative);
+    // Only the JSON boolean true. Boolean() read {} and "false" as true; the Python SDK
+    // read "false" as true too, and {} as false (2026-10-01).
+    const current = status.currently_authoritative === true;
     if (!current) reasons.push(`not currently authoritative (revoked/inactive): status=${status.status}`);
     return {
       decision: current ? "accept" : "reject",
@@ -1172,12 +1247,25 @@ export class PolarisVerifier {
  */
 export function nullifiersLink(a: unknown, b: unknown): boolean {
   if (typeof a !== "string" || typeof b !== "string") return false;
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
+  return asciiTrim(a).toLowerCase() === asciiTrim(b).toLowerCase();
 }
 
 // ---------------------------------------------------------------------------
 // P9.4 — the pairwise handle, for a relying party keying its own records.
 // ---------------------------------------------------------------------------
+
+/** Trim ASCII whitespace only, as the Python verifiers do: `trim()` also removed a byte-order
+ * mark, and Python's `strip()` a file separator, so one scope gave two handles (2026-10-01).
+ * A scan from each end, not a regular expression: `[ \t...]+$` retries every run of whitespace
+ * that is not at the end, quadratic in its length. */
+function asciiTrim(s: string): string {
+  const ws = " \t\n\r\v\f";
+  let i = 0;
+  let j = s.length;
+  while (i < j && ws.includes(s[i])) i++;
+  while (j > i && ws.includes(s[j - 1])) j--;
+  return s.slice(i, j);
+}
 
 const PAIRWISE_TAG = "polaris-pairwise/1";
 
@@ -1202,9 +1290,9 @@ const PAIRWISE_TAG = "polaris-pairwise/1";
  * would collide every holder into one record.
  */
 export function pairwiseHandle(holderPublicKeyHex: unknown, verifierScope: unknown): string | null {
-  if (typeof holderPublicKeyHex !== "string" || holderPublicKeyHex.trim() === "") return null;
-  if (verifierScope === null || verifierScope === undefined || String(verifierScope).trim() === "") return null;
-  const material = `${PAIRWISE_TAG}|${holderPublicKeyHex.trim().toLowerCase()}|${String(verifierScope).trim()}`;
+  if (typeof holderPublicKeyHex !== "string" || asciiTrim(holderPublicKeyHex) === "") return null;
+  if (verifierScope === null || verifierScope === undefined || asciiTrim(String(verifierScope)) === "") return null;
+  const material = `${PAIRWISE_TAG}|${asciiTrim(holderPublicKeyHex).toLowerCase()}|${asciiTrim(String(verifierScope))}`;
   return bytesToHex(sha3_256(new TextEncoder().encode(material)));
 }
 
@@ -1217,7 +1305,7 @@ export function pairwiseHandle(holderPublicKeyHex: unknown, verifierScope: unkno
  */
 export function handlesLink(a: unknown, b: unknown): boolean {
   if (typeof a !== "string" || typeof b !== "string") return false;
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
+  return asciiTrim(a).toLowerCase() === asciiTrim(b).toLowerCase();
 }
 
 // ---------------------------------------------------------------------------
@@ -1235,7 +1323,10 @@ export function grantCovers(grant: any, action: unknown): boolean {
   if (!grant || typeof grant !== "object") return false;
   const actions = (grant as any).actions;
   if (!Array.isArray(actions) || actions.length === 0) return false;
-  return actions.map((a: unknown) => String(a)).includes(String(action));
+  // As text on both sides, as the Python verifiers read them: String() spelled true "true" where
+  // str() spells it "True", so a signed `actions: [true]` covered "true" here only (2026-10-01).
+  const want = wireText(action);
+  return want !== null && actions.some((a: unknown) => wireText(a) === want);
 }
 
 /**
@@ -1277,6 +1368,17 @@ export function grantWithinLimits(grant: any, usesSoFar = 0, amount?: number): [
     if (usesSoFar >= maxUses) return [false, `the grant's use limit (${maxUses}) is exhausted`];
   }
   const maxAmount = limits["max_amount"];
+  // Each value that is present is a finite number, whether or not the other side of its
+  // comparison is: read only in pairs, `max_amount: "100"` with no amount, or a NaN amount with
+  // no limit, passed here where the Python SDK refuses both (2026-10-01).
+  // The use count too: with no max_uses it went unread, so a NaN, "3" or true count passed here
+  // where both Python verifiers refuse it (2026-10-01).
+  for (const [label, value] of [["the use count", usesSoFar], ["max_amount", maxAmount],
+                                ["the requested amount", amount]] as const) {
+    if (value !== null && value !== undefined && (typeof value !== "number" || !Number.isFinite(value))) {
+      return [false, `${label} is not a finite number`];
+    }
+  }
   if (maxAmount !== null && maxAmount !== undefined && amount !== undefined) {
     if (typeof maxAmount !== "number" || !Number.isFinite(maxAmount)
         || typeof amount !== "number" || !Number.isFinite(amount)) {
@@ -1298,8 +1400,10 @@ export function grantWithinLimits(grant: any, usesSoFar = 0, amount?: number): [
 export function revocationEndsGrant(revocation: any, grant: any): boolean {
   if (!revocation || typeof revocation !== "object" || !grant || typeof grant !== "object") return false;
   if (revocation.format !== "polaris-grant-revocation/1") return false;
-  if (String(revocation.grant_id ?? "") !== String(grant.grant_id ?? "")) return false;
-  return String(revocation.public_key_hex ?? "").toLowerCase() === String(grant.public_key_hex ?? "").toLowerCase();
+  // As text, as the Python verifiers read it: String(x ?? "") and str(x or "") disagreed on 0, true
+  // and integers beyond 2**53 (2026-10-01).
+  if (!wireTextEqual(revocation.grant_id, grant.grant_id)) return false;
+  return sameHex(revocation.public_key_hex, grant.public_key_hex);
 }
 
 /**
@@ -1326,20 +1430,72 @@ export function grantPrincipalBound(grant: any, binding: any, credential: any, n
   // `fresh` null and `!== false` read it as fresh, so a binding that expired in 2024 was bound
   // (2026-09-30).
   return !!(bv.authentic && bv.fresh === true && (binding.status ?? "active") === "active"
-    && String(binding.holder_public_key_hex ?? "").toLowerCase() === String(grant.public_key_hex ?? "").toLowerCase()
-    && String(binding.token_value) === String(credential.token_value)
-    && String(binding.public_key_hex ?? "").toLowerCase() === String(credential.public_key_hex ?? "").toLowerCase());
+    && sameHex(binding.holder_public_key_hex, grant.public_key_hex)
+    && wireTextEqual(binding.token_value, credential.token_value)
+    && sameHex(binding.public_key_hex, credential.public_key_hex));
+}
+
+/** A hex field (a key or a digest) as all three verifiers compare it: a non-empty string, in lower
+ * case; anything else null. String() reads a one-element list as its element where Python's str()
+ * writes the brackets, so a signed `public_key_hex: [K]` matched K here alone (2026-10-01). */
+function hexText(x: unknown): string | null {
+  return typeof x === "string" && x !== "" ? x.toLowerCase() : null;
+}
+
+/** Both are hex text and the same in any case; a value with none matches nothing. */
+function sameHex(a: unknown, b: unknown): boolean {
+  const t = hexText(a);
+  return t !== null && t === hexText(b);
+}
+
+/** `x` is hex text and one of `texts`; a value with none is in no collection, even one holding null. */
+function hexIn(x: unknown, texts: Set<string | null> | readonly (string | null)[]): boolean {
+  const t = hexText(x);
+  if (t === null) return false;
+  return texts instanceof Set ? texts.has(t) : texts.includes(t);
+}
+
+/** @internal Exported for the hex-text test; not public surface. Every caller reaches hexIn after a
+ * signature check that a value with no hex text has already failed, so only a direct test can
+ * hold its first refusal (the SDK mutation drill, 2026-10-01). */
+export function __hexInForTest(x: unknown, texts: Set<string | null> | readonly (string | null)[]): boolean {
+  return hexIn(x, texts);
+}
+
+/** Two agency or context ids name the same one only when both are strings, or both integers
+ * held exactly, and equal: `===` let two missing ids match, where the Python SDK read a null
+ * against a missing one as equal, and true as 1 (2026-10-01). */
+function sameId(a: unknown, b: unknown): boolean {
+  return (typeof a === "string" || Number.isSafeInteger(a)) && a === b;
+}
+
+/** A string, or an integer held exactly, as text, else null: the one reading of a signed id,
+ * nonce or action that the Python verifiers share. `String(x ?? "")` here and `str(x or "")`
+ * there disagreed on 0, 1.0 and true, and both let a proof that names no grant match a grant that
+ * has none. Beyond 2**53 this SDK reads the nearest double and Python the exact integer. */
+function wireText(x: unknown): string | null {
+  if (typeof x === "string") return x;
+  if (Number.isSafeInteger(x)) return String(x);
+  return null;
+}
+
+/** The signed field names the expected value: both have a wire text and it is the same. A value
+ * with none matches nothing; compared bare, null === null let a proof naming no nonce match an
+ * expected nonce of 1.5 (2026-10-01). */
+function wireTextEqual(signed: unknown, expected: unknown): boolean {
+  const t = wireText(signed);
+  return t !== null && t === wireText(expected);
 }
 
 export function agentProofProves(proof: any, grant: any, action?: unknown, nonce?: unknown): boolean {
   if (!proof || typeof proof !== "object" || !grant || typeof grant !== "object") return false;
   if (proof.format !== "polaris-agent-proof/1") return false;
-  if (String(proof.grant_id ?? "") !== String(grant.grant_id ?? "")) return false;
-  if (String(proof.public_key_hex ?? "").toLowerCase() !== String(grant.agent_public_key_hex ?? "").toLowerCase()) return false;
+  if (!wireTextEqual(proof.grant_id, grant.grant_id)) return false;
+  if (!sameHex(proof.public_key_hex, grant.agent_public_key_hex)) return false;
   if (grant.agent_algorithm !== undefined && grant.agent_algorithm !== null
       && proof.algorithm !== grant.agent_algorithm) return false;
-  if (nonce !== undefined && nonce !== null && String(proof.service_nonce ?? "") !== String(nonce)) return false;
-  if (action !== undefined && action !== null && String(proof.action ?? "") !== String(action)) return false;
+  if (nonce !== undefined && nonce !== null && !wireTextEqual(proof.service_nonce, nonce)) return false;
+  if (action !== undefined && action !== null && !wireTextEqual(proof.action, action)) return false;
   return true;
 }
 
@@ -1369,7 +1525,7 @@ function attestationOpen(att: any, now?: string | null): boolean {
 /** The authority of every manifest the caller trusts that is genuine and fresh at `now` and
  * attests `keyHex` in EXACTLY `contextId`, inside the attestation's own window, in order. */
 function exchangeAuthorities(keyHex: unknown, contextId: unknown, manifests: unknown, now?: string | null): any[] {
-  const want = String(keyHex ?? "").toLowerCase();
+  const want = hexText(keyHex);
   const found: any[] = [];
   if (!want) return found;
   for (const raw of Array.isArray(manifests) ? manifests : []) {
@@ -1378,8 +1534,8 @@ function exchangeAuthorities(keyHex: unknown, contextId: unknown, manifests: unk
     if (!(mv.authentic && mv.fresh === true)) continue;
     const atts = Array.isArray(m.attestations) ? m.attestations : [];
     if (atts.some((att: any) => att && typeof att === "object"
-        && String(att.attested_public_key_hex ?? "").toLowerCase() === want
-        && (att.context_id ?? null) === (contextId ?? null)
+        && hexText(att.attested_public_key_hex) === want
+        && sameId(att.context_id, contextId)
         && attestationOpen(att, now))) {
       found.push(m.authority ?? null);
     }
@@ -1431,7 +1587,7 @@ export function verifyExchangeRequest(envelope: any, requesterKey?: string | nul
     v.requesterAuthorized = exchangeAuthorities(e.public_key_hex, e.context_id, trustedManifests, now).length > 0;
   }
   if (body !== undefined && body !== null) {
-    v.bodyBound = sha3Hex(canonicalJson(body)) === String(e.request_hash ?? "").toLowerCase();
+    v.bodyBound = sha3Hex(canonicalJson(body)) === hexText(e.request_hash);
   }
   return v;
 }
@@ -1459,10 +1615,10 @@ export function verifyExchangeReceipt(receipt: any, now?: string | null, trusted
   // signed by a stranger reported the victim agency it named as its responder.
   if (v.responderMatches === true) v.responder = r.responder ?? null;
   if (requestBody !== undefined && requestBody !== null) {
-    v.requestBound = sha3Hex(requestBody) === String(r.request_hash ?? "").toLowerCase();
+    v.requestBound = sha3Hex(requestBody) === hexText(r.request_hash);
   }
   if (responseBody !== undefined && responseBody !== null) {
-    v.responseBound = sha3Hex(responseBody) === String(r.response_hash ?? "").toLowerCase();
+    v.responseBound = sha3Hex(responseBody) === hexText(r.response_hash);
   }
   if (trustedManifests !== undefined && trustedManifests !== null) {
     const req = r.requester && typeof r.requester === "object" ? r.requester : {};

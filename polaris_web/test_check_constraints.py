@@ -1562,7 +1562,8 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             # Since rc.40 the lifecycle log, and since 2026-09-25 the epoch leaves and the anchor
             # batches, are written only by SECURITY DEFINER routines; since 2026-09-27 the key
             # register, card personalization and retention policy only by the owner; since
-            # 2026-09-28 the wallet copy record only by uc_issue_credential_copy.
+            # 2026-09-28 the wallet copy record only by uc_issue_credential_copy. The holder key
+            # register keeps INSERT until its contract migration: the previous release's route uses it.
             self.assertEqual(bool(row["ins"]),
                              tbl.lower() not in ("tokenlifecycleevent", "tokenstateepochleaf",
                                                  "anchorbatch", "duressevent", "authoritykeyevent",
@@ -2100,6 +2101,75 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 cur.execute("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", (key,))
         conn.rollback()
 
+    def test_app_role_cannot_run_the_retention_routines(self):
+        """2026-10-01 (review F2). The definer grant loop lends every routine to polaris_app, and
+        the retention routines take the acting admin as a parameter, which the role can name at
+        will: as polaris_app, uc_set_retention_policy recorded a policy under an admin it was not.
+        No route calls them; the CLI and scripts/polaris-purge.sh run them as the schema owner."""
+        owner = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        self.addCleanup(owner.close)
+        with owner.cursor() as cur:
+            cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' ORDER BY user_id LIMIT 1")
+            admin = cur.fetchone()["user_id"]
+        conn = self._app_conn()
+        for label, sql, params in (
+                ("set a retention policy",
+                 "CALL uc_set_retention_policy(%s, %s, %s, %s, %s, NULL, NULL)",
+                 ("VERIFICATION", "APP-ROLE", 4000, "an admin the application named, not one who acted", admin)),
+                ("apply a retention template",
+                 "CALL uc_apply_retention_template(%s, %s, %s)", ("MINIMIZED", "APP-ROLE", admin)),
+                ("purge the audit of record",
+                 "CALL uc_archive_purge(p_cutoff_timestamp := %s::timestamptz, p_archive_uri := %s, "
+                 "p_archive_sha256 := %s, p_actor_user_id := %s)",
+                 ("1900-01-01T00:00:00Z", "file:///dev/null", "0" * 64, admin))):
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql, params)
+            conn.rollback()
+
+    def test_the_holder_key_routine_keeps_events_in_order(self):
+        """2026-10-01 (review S2). The holder key route records events through
+        uc_record_holder_key_event, run here as polaris_app: it sets the instant and holds bound /
+        rotated / revoked in order for a live credential."""
+        owner = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        self.addCleanup(owner.close)
+        with owner.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken t WHERE status = 'ACTIVE' AND NOT EXISTS "
+                        "(SELECT 1 FROM HolderKeyEvent h WHERE h.token_id = t.token_id) ORDER BY token_id LIMIT 1")
+            tid = cur.fetchone()["token_id"]
+            cur.execute("SELECT token_id FROM IdentityToken WHERE status <> 'ACTIVE' ORDER BY token_id LIMIT 1")
+            dead = cur.fetchone()["token_id"]
+        k1, k2 = "a1" * 40, "b2" * 40
+        conn = self._app_conn()
+        try:
+            with conn.cursor() as cur:
+                for label, args in (("rotate a key never bound", (tid, k2, 'ML-DSA-65', 'rotated')),
+                                    ("revoke a key never bound", (tid, k1, 'ML-DSA-65', 'revoked')),
+                                    ("bind to a credential that is not live", (dead, k1, 'ML-DSA-65', 'bound')),
+                                    ("an event the register does not know", (tid, k1, 'ML-DSA-65', 'transferred'))):
+                    with self.subTest(label):
+                        cur.execute("SAVEPOINT s")
+                        with self.assertRaises(pg_errors.CheckViolation):
+                            cur.execute("SELECT uc_record_holder_key_event(%s, %s, %s, %s)", args)
+                        cur.execute("ROLLBACK TO SAVEPOINT s")
+                cur.execute("SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'bound')", (tid, k1))
+                cur.execute("SELECT effective_at <= CURRENT_TIMESTAMP AS now FROM HolderKeyEvent "
+                            "WHERE token_id = %s AND public_key_hex = %s", (tid, k1))
+                self.assertTrue(cur.fetchone()["now"], "the routine records the first binding, in force now")
+                for label, args in (("bind over the live key", (tid, k2, 'ML-DSA-65', 'bound')),
+                                    ("revoke a key that is not the live one", (tid, k2, 'ML-DSA-65', 'revoked'))):
+                    with self.subTest(label):
+                        cur.execute("SAVEPOINT s")
+                        with self.assertRaises(pg_errors.CheckViolation):
+                            cur.execute("SELECT uc_record_holder_key_event(%s, %s, %s, %s)", args)
+                        cur.execute("ROLLBACK TO SAVEPOINT s")
+                cur.execute("SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'rotated')", (tid, k2))
+                cur.execute("SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'revoked')", (tid, k2))
+                cur.execute("SELECT event FROM HolderKeyCurrent WHERE token_id = %s", (tid,))
+                self.assertEqual(cur.fetchone()["event"], "revoked", "rotate then revoke, in order")
+        finally:
+            conn.rollback()
+
     def test_app_role_cannot_rewrite_a_relying_party(self):
         """2026-09-27. As polaris_app, writing its own justification, a zero-knowledge-only
         relying party was made full-disclosure and its client secret replaced with one the
@@ -2512,7 +2582,8 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         its owner and authenticates its actor by parameter, so any role that could connect ran
         uc8_revoke_token as the owner. Measured with a role holding no grant at all: it entered
         the body and was stopped only by the business rules. Now it is refused at the door, and
-        the application role keeps its EXECUTE."""
+        the application role keeps its EXECUTE, except on the retention routines, which take
+        the acting admin as a parameter and are the owner's alone (2026-10-01, review F2)."""
         owner = psycopg2.connect(**DB_CONFIG)
         try:
             with owner.cursor() as cur:
@@ -2520,11 +2591,17 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                             "WHERE p.prosecdef AND p.pronamespace = 'public'::regnamespace")
                 routines = [r[0] for r in cur.fetchall()]
                 self.assertGreaterEqual(len(routines), 9)
+                owner_only = {"uc_archive_purge", "uc_set_retention_policy", "uc_apply_retention_template"}
+                self.assertEqual({sig.split("(")[0] for sig in routines} & owner_only, owner_only,
+                                 "the owner-only retention routines must exist for this to mean anything")
                 for sig in routines:
                     cur.execute("SELECT has_function_privilege('polaris_app', %s, 'EXECUTE'), "
                                 "       has_function_privilege('public', %s, 'EXECUTE')", (sig, sig))
                     app, public = cur.fetchone()
-                    self.assertTrue(app, "the application must still call " + sig)
+                    if sig.split("(")[0] in owner_only:
+                        self.assertFalse(app, "the application role can call " + sig + ", the owner's alone")
+                    else:
+                        self.assertTrue(app, "the application must still call " + sig)
                     self.assertFalse(public, "PUBLIC can call " + sig + " as its owner")
                 cur.execute("CREATE ROLE polaris_nobody_probe NOLOGIN")
                 cur.execute("SET LOCAL ROLE polaris_nobody_probe")
@@ -2684,35 +2761,37 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         owner.close()
 
     def test_archive_purge_still_deletes_via_security_definer(self):
-        """The legitimate purge path still works for polaris_app: uc_archive_purge
-        is SECURITY DEFINER, so it deletes with the owner's rights despite the
-        REVOKE. The cutoff is older than the shipped five-year retention, since
-        v9.234 the purge refuses anything younger. The whole exercise rolls back."""
-        conn = self._app_conn()
-        with conn.cursor() as cur:
-            cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' LIMIT 1")
-            admin = cur.fetchone()
-            if admin is None:
-                self.skipTest("no admin user to authorize the purge")
-            admin_id = admin["user_id"]
-            # Since rc.40 the application cannot write the lifecycle log, so the owner seeds
-            # the old row (committed) and the finally below removes it if the purge did not.
-            self._seed_old_lifecycle_row()
-            cutoff = "now() - INTERVAL '2000 days'"
-            cur.execute(
-                f"SELECT count(*) AS n FROM TokenLifecycleEvent WHERE event_timestamp < {cutoff}")
-            before = cur.fetchone()["n"]
-            self.assertGreaterEqual(before, 1)
-            cur.execute(
-                "CALL uc_archive_purge((now() - INTERVAL '2000 days')::timestamptz, "
-                "%s, %s, %s, NULL, NULL)",
-                ("s3://polaris-archive/definer-test.tar.zst", "a" * 64, admin_id))
-            cur.execute(
-                f"SELECT count(*) AS n FROM TokenLifecycleEvent WHERE event_timestamp < {cutoff}")
-            after = cur.fetchone()["n"]
-            self.assertEqual(after, 0,
-                             "uc_archive_purge (SECURITY DEFINER) must still purge old audit rows")
-        conn.rollback()
+        """The purge still deletes old audit rows through uc_archive_purge, now for its only caller,
+        the schema owner (scripts/polaris-purge.sh). Until 2026-10-01 this test ran it as
+        polaris_app, which is the door review F2 closed: the routine takes the acting admin as a
+        parameter, so the application role is refused it. The cutoff is older than the shipped
+        five-year retention, since v9.234 the purge refuses anything younger. Rolls back."""
+        call = ("CALL uc_archive_purge((now() - INTERVAL '2000 days')::timestamptz, "
+                "%s, %s, %s, NULL, NULL)")
+        app = self._app_conn()
+        with app.cursor() as cur:
+            with self.assertRaises(pg_errors.InsufficientPrivilege):
+                cur.execute(call, ("s3://polaris-archive/definer-test.tar.zst", "a" * 64, 1))
+        app.rollback()
+        owner = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with owner.cursor() as cur:
+                cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' LIMIT 1")
+                admin = cur.fetchone()
+                if admin is None:
+                    self.skipTest("no admin user to authorize the purge")
+                # The owner seeds the old row (committed); the cleanup removes it if the purge did not.
+                self._seed_old_lifecycle_row()
+                cutoff = "now() - INTERVAL '2000 days'"
+                cur.execute(f"SELECT count(*) AS n FROM TokenLifecycleEvent WHERE event_timestamp < {cutoff}")
+                self.assertGreaterEqual(cur.fetchone()["n"], 1)
+                cur.execute(call, ("s3://polaris-archive/definer-test.tar.zst", "a" * 64, admin["user_id"]))
+                cur.execute(f"SELECT count(*) AS n FROM TokenLifecycleEvent WHERE event_timestamp < {cutoff}")
+                self.assertEqual(cur.fetchone()["n"], 0,
+                                 "uc_archive_purge (SECURITY DEFINER) must still purge old audit rows")
+        finally:
+            owner.rollback()
+            owner.close()
 
 
 class TestCredentialCopyRecord(unittest.TestCase):

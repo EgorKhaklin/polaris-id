@@ -157,6 +157,12 @@ REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;
 -- revocation only from uc10_revoke_attestation.
 REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;
 
+-- 2026-10-01 (review S2). The holder key route records events through uc_record_holder_key_event
+-- (SECURITY DEFINER), which sets the instant and holds bound / rotated / revoked in order. The
+-- application role keeps INSERT on HolderKeyEvent for now: 1.0.0-rc.68's route inserts directly
+-- and runs during a rolling upgrade, and withdrawing a privilege the previous release uses is a
+-- contract step (polaris_sql/migrations/README.md), shipped in a later release.
+
 -- 2026-09-25. The anchoring layer is written only by close_anchor_batch (SECURITY DEFINER) and by
 -- the sample data. With INSERT on AnchorBatch the application role could record a batch whose
 -- size no leaves bear out, or under a deprecated algorithm; with UPDATE on BlockchainAnchor,
@@ -367,6 +373,28 @@ BEGIN
             EXECUTE format('GRANT EXECUTE ON ROUTINE %s TO polaris_app', v_sig);
         END IF;
     END LOOP;
+END$$;
+
+-- 2026-10-01 (review F2). The loop above lends every definer routine to the application role,
+-- and the retention routines take the acting admin as a PARAMETER, which that role can name at
+-- will: as polaris_app, uc_set_retention_policy recorded a policy under an admin it was not, and
+-- uc_archive_purge could delete audit rows past the floor. No route calls them; the CLI and
+-- scripts/polaris-purge.sh run them as the schema owner. So the application role keeps none of
+-- the three. By name, every overload, after the loop that would otherwise lend them again.
+DO $$
+DECLARE
+    v_sig TEXT;
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'polaris_app') THEN
+        FOR v_sig IN
+            SELECT p.oid::regprocedure::text
+              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = 'public'
+               AND p.proname IN ('uc_archive_purge', 'uc_set_retention_policy', 'uc_apply_retention_template')
+        LOOP
+            EXECUTE format('REVOKE EXECUTE ON ROUTINE %s FROM polaris_app', v_sig);
+        END LOOP;
+    END IF;
 END$$;
 
 -- 2026-09-25: the minimum anonymity set for a zero-knowledge epoch, 20 unless something already

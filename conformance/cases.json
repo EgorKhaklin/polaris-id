@@ -2853,6 +2853,809 @@
       },
       "since": "1.0.0-rc.68",
       "note": "The same chain and issuer key with the binding's window left out, which WIRE-SPEC 2.2 makes unacceptable. Before this case both SDKs here read it as fresh; the detached verifier refused it."
+    },
+    {
+      "name": "manifest-signer-status-active",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/status-value-manifest-signer-active.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: a manifest signed by its one anchor, listed active."
+    },
+    {
+      "name": "manifest-signer-status-empty",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/status-value-manifest-signer-empty.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same manifest with its signer's anchor entry signed as ''. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed '' as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "manifest-signer-status-false",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/status-value-manifest-signer-false.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same manifest with its signer's anchor entry signed as False. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed False as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "registry-publisher-status-active",
+      "artifact": "registry",
+      "object_file": "conformance/vectors/status-value-registry-publisher-active.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: the published registry re-signed by a fresh publisher key it lists as active."
+    },
+    {
+      "name": "registry-publisher-status-empty",
+      "artifact": "registry",
+      "object_file": "conformance/vectors/status-value-registry-publisher-empty.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same registry with its publisher's entry signed as ''. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed '' as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "holder-chain-binding-status-active",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/status-value-credential.json",
+      "binding_file": "conformance/vectors/status-value-binding-active.json",
+      "proof_file": "conformance/vectors/status-value-holder-proof.json",
+      "expected_nonce": "status-value-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: an active binding inside its window."
+    },
+    {
+      "name": "agent-grant-use-binding-status-active",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/status-value-grant.json",
+      "binding_file": "conformance/vectors/status-value-binding-active.json",
+      "credential_file": "conformance/vectors/status-value-credential.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "principal_bound": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: an active binding inside its window."
+    },
+    {
+      "name": "holder-chain-binding-status-empty",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/status-value-credential.json",
+      "binding_file": "conformance/vectors/status-value-binding-empty.json",
+      "proof_file": "conformance/vectors/status-value-holder-proof.json",
+      "expected_nonce": "status-value-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same chain under a binding the issuer signed with status ''. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed '' as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "agent-grant-use-binding-status-empty",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/status-value-grant.json",
+      "binding_file": "conformance/vectors/status-value-binding-empty.json",
+      "credential_file": "conformance/vectors/status-value-credential.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "principal_bound": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same grant under a binding the issuer signed with status ''. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed '' as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "holder-chain-binding-status-false",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/status-value-credential.json",
+      "binding_file": "conformance/vectors/status-value-binding-false.json",
+      "proof_file": "conformance/vectors/status-value-holder-proof.json",
+      "expected_nonce": "status-value-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same chain under a binding the issuer signed with status False. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed False as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "agent-grant-use-binding-status-false",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/status-value-grant.json",
+      "binding_file": "conformance/vectors/status-value-binding-false.json",
+      "credential_file": "conformance/vectors/status-value-credential.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "principal_bound": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same grant under a binding the issuer signed with status False. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed False as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "cross-authority-edge-anchor-status-active",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/status-value-edge-pack.json",
+      "manifest_files": [
+        "conformance/vectors/status-value-edge-manifest-active.json"
+      ],
+      "trusted_anchors": [
+        "8198906dafa53587a9a44211536f51e956dc8eeba9f0d3db9421f48bc4f95e2f543d614faea240b79a9cffafdb4b703c0e863cb353f50cdaa0936edca5e13315b75bc4011ec010b2c66a29def490d3618c0f2d53742163ce2171f98b028cc4629c6d0ee985c47f39563c4068157c045e95a87d4bb8734695bc686e99cf6c2a85ca75982d929d8a221237cb116d6f05367ed89f99f863788cc419247138d60a7c562818b21d095849f9c8c930333aa2629ba87f701b55e30847ff8fd896fbf9c991d14bdd2b207ecd24f43034d35a365164c5916ba36e7cb5a02c31bf4968f17637d0a577617f520d28b7975f5e1f5e7b8afb217840621f4d87896b0ae253f35d267eca36340ba2e85c4dbc4023a341b4f8e798fb22c13a03cc6f6ee17038f934d4ff56f751e76bfad72ea168ee7225a64343e578b841155e74c2cacbdc0f4e3c5856cfe16666b8559e79357f9be5f8e370ec6c946177b2ea67b7f7b09fb97564d5b89aea8c675664f51bdf32ea166721223243b9b24697435cb051a18227b4b1a7bd97fdfb2036c40e31aa84d2024dc4f77d196b65c53d586a7f24caf7f3dcea340dd045fa3674e0b6e7ba433df8b9cc0c60ba331a65b89d2ce6b02a26fe85c652bac1364d9229235c725997158ade202b307d2c2981a5716e83de8dcc311239c03497ffa10e41dcbd563539ff70af3f998a2923b4445b131914d4193b64fde52f7a75b5f7cb871acd5d093ede7023ddf6b12ab2ca44d89e68046942a99678e121f58b7c0987efc30eea8ccdb7acf55851cfd0f5c81b54ecdc5d1ffb9dff950adea10aafe8f55a7dc736ad52f150c0d038a9f722399c274c4bc8ab5c375a9651646799f57d1f5bbf5436ce988cbeaabdaf3f0f650d3dab1dbbc3a6f271e782f8b9c26279b8a509f53a02fe96904abe86e81bf61aa50a602861666e4ffb84dc35d4b6a9b00cc2e0c2808c81c61130ee13d4c06ed01e8a8346bd6f9000a7af62598e2d10196815a075b3250412112792ac9f21be0a79ea5d32b68f78ed4380e89980f3cec8c6701462a95f59d2f9b036620cb50412a514c4a9321f1701ac8c02ad2fc8c14c50833245effd732e3d10b69b619b18714ba0a1e5927c9afa41c6a0fc62f40646530e2855693425e51694552c47ae5008b61b22fac40139e586f4e1c69aa115a3051458e74b2be7735ff5bbecb55cffde6fefa03ee59a701739d85019993aac970ae23cab1b6148006ac2a629bc49fc06f7102535712f634fbb4b47dd9ab17e06f8ebe07fd19392de023018626a0e08800cf91fe98577d3b54bad596bee0821e631c2d4d9df5153f75b5757a35a48e58ddc16a4e22bec1f8336b906b9a27242a0eb7c8cbfef643bad91f0599b241cba35687f62a2f45ddfec5402e8b9b7454280e1f9f7f427da05871711cd92e6a370528cc91b86aeaed3f81a0339a21486363605c26d8eab299381d856cf869c1d6ddfe7e8b6d4c8fc5447be4a01ca556068e97f07d8050fdd127f9f48232490f856fe1c0377cfbf00b0c2cd046db41b744da94ef459fb5ead6aadb42a2c2bc407a955bf46acd9db42f025f89d2890bf1f83e0ff920bd55a9ddef5fe7540b41e00e877fce102762b1d78f03545501b84296f6c74df21a910bbc906de3552cd9bee4a55d7fe238a61044a2df012e080a2135499502017cf57d42892917e4bd5348f6fdfef94f0cc88e518bd3c033ce694d549c1be485e981d259a81ae0681612a362057b2f75c08741c7478db4a50c3f8f6a3a973310a5b7e2fa5cc23976521d8f26a6c0aba223ff70d00c62260f43f6d8fcca80104adac2956fd4de7e30d22c94e79f2ad4b2dd33eee2dcce401962cec04260e7dc75d49f61795ce4f23b7216c5a1f50ad609fbac89ac31d80770e6efe752ba186114e2d000569b8175311b27f367bcb1a80b359b9c06dd86f2dc35fc16d713168cdfa3b091caeee6271a597a713e77483eebee3564d3d4668f2e7e6cbc0022f9638827cd4c87d7f230887cc7300e4f37e979594ff95d0f07f19300b3a1b2219e4ed77266ca8c46ebb90e72639e9f3daca816d6dd364757edf5a00cf9414bb6967af9941b7b5dbc210d50fed7eb46b2942e299bed2d2094a9a70e0b3ffbcdd8d4c1bfab6da8a64bd1ebdc92cf32866d74b023d0b5ae457316d700bc1d5fe64f1f428893cb79bf2362bc0264a817a48415418b181d3d67abbc1a279f0b2289b1476c29c7edf8dfd21c65dd05db30b63b507d0406a5981b2b3f6b4bed642ec9a1c150d53af0536b610594bb0d511e6e49fd22881afc03e06b415ba06bc3d78d9fcf3bc53bdb711d9a679b1fb88ff2a3e2ff13db3e968e457079efd701e7d5341bb914b166cf8c71d0deabc499a50ec8469fd5bd9e963f648e561f6d3d3bc1b131bcd40e441356dc3ce1c3bd1714968faa987a602526f1b10bd595169294c989207c122d2d0d5e0da9ee4e3a7fec845ac76b8370e13ad473011bb1ed0e152fa3a6753b065eb3f88563e92151fd123641a76bffdc3846c98d7622b94467bfa7a497224270e2645c9fd6dd1ca8c5fec714c765d006248b19fb567af20ff10737042811f5f7c3998b02c3ceb8030afdb538a7b443b47e73cdbb40ab0370c9bb33cdcdec3b9a1d01a71610f45a516a6696426936a18ef795a60416c1f3e71b4381e6745193dee2dca5f20f46fb0cfd8823b97804f52636fc3343d3e24dcd8faf7780bb2f3ecf388c17606bbc4d0139d76f2fcf8120e45da17b7c7f2f3b97b1d"
+      ],
+      "context_id": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "require_signed_attestation": true,
+      "expect": {
+        "decision": "accept"
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: the edge is signed by an anchor its authority lists as active, with a signed edge required."
+    },
+    {
+      "name": "cross-authority-edge-anchor-status-empty",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/status-value-edge-pack.json",
+      "manifest_files": [
+        "conformance/vectors/status-value-edge-manifest-empty.json"
+      ],
+      "trusted_anchors": [
+        "8198906dafa53587a9a44211536f51e956dc8eeba9f0d3db9421f48bc4f95e2f543d614faea240b79a9cffafdb4b703c0e863cb353f50cdaa0936edca5e13315b75bc4011ec010b2c66a29def490d3618c0f2d53742163ce2171f98b028cc4629c6d0ee985c47f39563c4068157c045e95a87d4bb8734695bc686e99cf6c2a85ca75982d929d8a221237cb116d6f05367ed89f99f863788cc419247138d60a7c562818b21d095849f9c8c930333aa2629ba87f701b55e30847ff8fd896fbf9c991d14bdd2b207ecd24f43034d35a365164c5916ba36e7cb5a02c31bf4968f17637d0a577617f520d28b7975f5e1f5e7b8afb217840621f4d87896b0ae253f35d267eca36340ba2e85c4dbc4023a341b4f8e798fb22c13a03cc6f6ee17038f934d4ff56f751e76bfad72ea168ee7225a64343e578b841155e74c2cacbdc0f4e3c5856cfe16666b8559e79357f9be5f8e370ec6c946177b2ea67b7f7b09fb97564d5b89aea8c675664f51bdf32ea166721223243b9b24697435cb051a18227b4b1a7bd97fdfb2036c40e31aa84d2024dc4f77d196b65c53d586a7f24caf7f3dcea340dd045fa3674e0b6e7ba433df8b9cc0c60ba331a65b89d2ce6b02a26fe85c652bac1364d9229235c725997158ade202b307d2c2981a5716e83de8dcc311239c03497ffa10e41dcbd563539ff70af3f998a2923b4445b131914d4193b64fde52f7a75b5f7cb871acd5d093ede7023ddf6b12ab2ca44d89e68046942a99678e121f58b7c0987efc30eea8ccdb7acf55851cfd0f5c81b54ecdc5d1ffb9dff950adea10aafe8f55a7dc736ad52f150c0d038a9f722399c274c4bc8ab5c375a9651646799f57d1f5bbf5436ce988cbeaabdaf3f0f650d3dab1dbbc3a6f271e782f8b9c26279b8a509f53a02fe96904abe86e81bf61aa50a602861666e4ffb84dc35d4b6a9b00cc2e0c2808c81c61130ee13d4c06ed01e8a8346bd6f9000a7af62598e2d10196815a075b3250412112792ac9f21be0a79ea5d32b68f78ed4380e89980f3cec8c6701462a95f59d2f9b036620cb50412a514c4a9321f1701ac8c02ad2fc8c14c50833245effd732e3d10b69b619b18714ba0a1e5927c9afa41c6a0fc62f40646530e2855693425e51694552c47ae5008b61b22fac40139e586f4e1c69aa115a3051458e74b2be7735ff5bbecb55cffde6fefa03ee59a701739d85019993aac970ae23cab1b6148006ac2a629bc49fc06f7102535712f634fbb4b47dd9ab17e06f8ebe07fd19392de023018626a0e08800cf91fe98577d3b54bad596bee0821e631c2d4d9df5153f75b5757a35a48e58ddc16a4e22bec1f8336b906b9a27242a0eb7c8cbfef643bad91f0599b241cba35687f62a2f45ddfec5402e8b9b7454280e1f9f7f427da05871711cd92e6a370528cc91b86aeaed3f81a0339a21486363605c26d8eab299381d856cf869c1d6ddfe7e8b6d4c8fc5447be4a01ca556068e97f07d8050fdd127f9f48232490f856fe1c0377cfbf00b0c2cd046db41b744da94ef459fb5ead6aadb42a2c2bc407a955bf46acd9db42f025f89d2890bf1f83e0ff920bd55a9ddef5fe7540b41e00e877fce102762b1d78f03545501b84296f6c74df21a910bbc906de3552cd9bee4a55d7fe238a61044a2df012e080a2135499502017cf57d42892917e4bd5348f6fdfef94f0cc88e518bd3c033ce694d549c1be485e981d259a81ae0681612a362057b2f75c08741c7478db4a50c3f8f6a3a973310a5b7e2fa5cc23976521d8f26a6c0aba223ff70d00c62260f43f6d8fcca80104adac2956fd4de7e30d22c94e79f2ad4b2dd33eee2dcce401962cec04260e7dc75d49f61795ce4f23b7216c5a1f50ad609fbac89ac31d80770e6efe752ba186114e2d000569b8175311b27f367bcb1a80b359b9c06dd86f2dc35fc16d713168cdfa3b091caeee6271a597a713e77483eebee3564d3d4668f2e7e6cbc0022f9638827cd4c87d7f230887cc7300e4f37e979594ff95d0f07f19300b3a1b2219e4ed77266ca8c46ebb90e72639e9f3daca816d6dd364757edf5a00cf9414bb6967af9941b7b5dbc210d50fed7eb46b2942e299bed2d2094a9a70e0b3ffbcdd8d4c1bfab6da8a64bd1ebdc92cf32866d74b023d0b5ae457316d700bc1d5fe64f1f428893cb79bf2362bc0264a817a48415418b181d3d67abbc1a279f0b2289b1476c29c7edf8dfd21c65dd05db30b63b507d0406a5981b2b3f6b4bed642ec9a1c150d53af0536b610594bb0d511e6e49fd22881afc03e06b415ba06bc3d78d9fcf3bc53bdb711d9a679b1fb88ff2a3e2ff13db3e968e457079efd701e7d5341bb914b166cf8c71d0deabc499a50ec8469fd5bd9e963f648e561f6d3d3bc1b131bcd40e441356dc3ce1c3bd1714968faa987a602526f1b10bd595169294c989207c122d2d0d5e0da9ee4e3a7fec845ac76b8370e13ad473011bb1ed0e152fa3a6753b065eb3f88563e92151fd123641a76bffdc3846c98d7622b94467bfa7a497224270e2645c9fd6dd1ca8c5fec714c765d006248b19fb567af20ff10737042811f5f7c3998b02c3ceb8030afdb538a7b443b47e73cdbb40ab0370c9bb33cdcdec3b9a1d01a71610f45a516a6696426936a18ef795a60416c1f3e71b4381e6745193dee2dca5f20f46fb0cfd8823b97804f52636fc3343d3e24dcd8faf7780bb2f3ecf388c17606bbc4d0139d76f2fcf8120e45da17b7c7f2f3b97b1d"
+      ],
+      "context_id": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "require_signed_attestation": true,
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same edge, its signer listed by the authority with status '', with a signed edge required. A status that is absent means active; any other value has to BE \"active\". Before this case the Python SDK and the detached verifier read a signed '' as active and the TypeScript SDK did not."
+    },
+    {
+      "name": "revocation-feed-leaf-rules-control",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-leaf-rules-control.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: the same feed, re-signed, listing one genuine leaf."
+    },
+    {
+      "name": "revocation-feed-leaf-null-python-root",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-leaf-null-python-root.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "A null leaf, its root computed as Python spells it (\"none\"). Both Python verifiers accepted this feed and the TypeScript SDK refused it."
+    },
+    {
+      "name": "revocation-feed-leaf-null-javascript-root",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-leaf-null-javascript-root.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same null leaf, its root computed as JavaScript spells it (\"null\"). The TypeScript SDK accepted this feed and both Python verifiers refused it."
+    },
+    {
+      "name": "revocation-feed-leaf-a-number",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-leaf-a-number.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "A leaf that is the number 1.0, rooted as Python spells it. A leaf is a SHA3-256, so 64 hex digits; anything else is refused before the root is computed."
+    },
+    {
+      "name": "epoch-leaves-leaf-not-hex",
+      "artifact": "epoch-leaves",
+      "object_file": "conformance/vectors/epoch-leaves-leaf-not-hex.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "A published anonymity set with one entry that is not a SHA3-256, its commitment recomputed over it. Every verifier here accepted it; the entries are SHA3-256 hexes (WIRE-SPEC 3.16), so the set is refused."
+    },
+    {
+      "name": "epoch-leaves-leaf-rules-control",
+      "artifact": "epoch-leaves",
+      "object_file": "conformance/vectors/epoch-leaves-leaf-rules-control.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: the published set, re-signed."
+    },
+    {
+      "name": "signed-document-digest-rules-control",
+      "artifact": "signed-document",
+      "object_file": "conformance/vectors/signed-document-digest-rules-control.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: the published document, re-signed."
+    },
+    {
+      "name": "signed-document-digest-algorithm-not-sha3",
+      "artifact": "signed-document",
+      "object_file": "conformance/vectors/signed-document-digest-algorithm-not-sha3.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same document labelled MD5. WIRE-SPEC 3.12: digest_algorithm MUST be SHA3-256. No verifier here checked it."
+    },
+    {
+      "name": "signed-document-digest-hex-uppercase",
+      "artifact": "signed-document",
+      "object_file": "conformance/vectors/signed-document-digest-hex-uppercase.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The same digest in upper case. WIRE-SPEC 3.12: digest_hex MUST be lowercase. No verifier here checked it, and the detached verifier's binding compared a lowercased copy."
+    },
+    {
+      "name": "epoch-checkpoint-issued-microseconds-ahead",
+      "artifact": "epoch-checkpoint",
+      "object_file": "conformance/vectors/epoch-checkpoint-issued-microseconds.json",
+      "now": "2026-05-01T00:00:00.000100Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      },
+      "since": "1.0.0-rc.69",
+      "note": "A checkpoint issued 100 microseconds after `now`. WIRE-SPEC 2.2: issued_at <= now. The TypeScript SDK rounded both instants to the millisecond and read it as fresh; both Python verifiers read it as not yet valid."
+    },
+    {
+      "name": "epoch-checkpoint-issued-microseconds-behind",
+      "artifact": "epoch-checkpoint",
+      "object_file": "conformance/vectors/epoch-checkpoint-issued-microseconds.json",
+      "now": "2026-05-01T00:00:00.000300Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.69",
+      "note": "The positive control: the same checkpoint 100 microseconds after it was issued."
+    },
+    {
+      "name": "timestamp-issued-at-year-0099",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-issued-at-year-0099.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "1.0.0-rc.70",
+      "note": "Year 99, a valid RFC 3339 year. Both Python verifiers read it; the TypeScript SDK's Date.UTC read it as 1999 and its own check then refused the date."
+    },
+    {
+      "name": "timestamp-issued-at-offset-24-hours",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-issued-at-offset-24-hours.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "An offset of 24 hours is not one RFC 3339 allows; the TypeScript SDK read it."
+    },
+    {
+      "name": "timestamp-issued-at-non-ascii-digits",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-issued-at-non-ascii-digits.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A year in Arabic-Indic digits. Python's `\\d` matched them and int() converted them."
+    },
+    {
+      "name": "timestamp-issued-at-byte-order-mark",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-issued-at-byte-order-mark.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A leading byte-order mark, which the TypeScript SDK's trim() removed."
+    },
+    {
+      "name": "timestamp-issued-at-file-separator",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-issued-at-file-separator.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A leading file separator, which Python's strip() removed."
+    },
+    {
+      "name": "agent-grant-small-amount-limit",
+      "artifact": "agent-grant",
+      "object_file": "conformance/vectors/agent-grant-small-amount-limit.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A genuine grant whose signed max_amount is 0.000015, which the signer writes as 1.5e-05. The TypeScript SDK wrote it as 0.000015 when it rebuilt the statement, and refused the grant."
+    },
+    {
+      "name": "registry-keys-outside-the-bmp",
+      "artifact": "registry",
+      "object_file": "conformance/vectors/registry-keys-outside-the-bmp.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A genuine registry whose signed instance holds a key outside the Basic Multilingual Plane. Python sorts it after \"\\uffff\" (code point); the TypeScript SDK sorted it before (UTF-16 unit) and refused the registry."
+    },
+    {
+      "name": "registry-publisher-agency-id-missing",
+      "artifact": "registry",
+      "object_file": "conformance/vectors/registry-publisher-agency-id-missing.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A registry whose publisher names no agency id, signed by a key listed for an authority whose id is null. Python's == matched the two; the TypeScript SDK did not."
+    },
+    {
+      "name": "trust-list-publisher-agency-id-true",
+      "artifact": "trust-list",
+      "object_file": "conformance/vectors/trust-list-publisher-agency-id-true.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A trust list whose publisher's agency id is the boolean true, signed by a key listed for agency 1. Python's == read True as 1; the TypeScript SDK did not."
+    },
+    {
+      "name": "trust-list-publisher-agency-id-control",
+      "artifact": "trust-list",
+      "object_file": "conformance/vectors/trust-list-publisher-agency-id-control.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The positive control: the published trust list, signed by a key it lists for its own publisher."
+    },
+    {
+      "name": "holder-chain-verifier-nonce-control",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/parity2-holder-credential.json",
+      "binding_file": "conformance/vectors/parity2-holder-binding.json",
+      "proof_file": "conformance/vectors/parity2-holder-proof-verifier-nonce-control.json",
+      "expected_nonce": "parity-2-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": true
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The positive control: a proof naming the relying party's nonce, as text, in context 1."
+    },
+    {
+      "name": "holder-chain-verifier-nonce-boolean",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/parity2-holder-credential.json",
+      "binding_file": "conformance/vectors/parity2-holder-binding.json",
+      "proof_file": "conformance/vectors/parity2-holder-proof-verifier-nonce-boolean.json",
+      "expected_nonce": "true",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A proof whose signed verifier_nonce is the boolean true, checked against the nonce \"true\". A nonce is text; true is not. The TypeScript SDK's String() spelled it \"true\" and proved the chain; Python's str() spelled it \"True\" and did not."
+    },
+    {
+      "name": "holder-chain-verifier-nonce-small-number",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/parity2-holder-credential.json",
+      "binding_file": "conformance/vectors/parity2-holder-binding.json",
+      "proof_file": "conformance/vectors/parity2-holder-proof-verifier-nonce-small-number.json",
+      "expected_nonce": "0.00001",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A proof whose signed verifier_nonce is the number 0.00001 (signed as 1e-05), checked against the nonce \"0.00001\". The TypeScript SDK's String() wrote \"0.00001\" and proved the chain; Python's str() wrote \"1e-05\" and did not."
+    },
+    {
+      "name": "holder-chain-context-boolean",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/parity2-holder-credential.json",
+      "binding_file": "conformance/vectors/parity2-holder-binding.json",
+      "proof_file": "conformance/vectors/parity2-holder-proof-context-boolean.json",
+      "expected_nonce": "parity-2-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A proof whose signed context_id is the boolean true, checked in context 1. Python's == read true as 1 and proved the chain; the TypeScript SDK's === did not. A context is an id, and true is not one."
+    },
+    {
+      "name": "trust-attestation-attesting-agency-control",
+      "artifact": "trust-attestation",
+      "object_file": "conformance/vectors/parity2-attestation-attesting-agency-control.json",
+      "attesting_agency_id": 1,
+      "expect": {
+        "authentic": true
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The positive control: an attestation by agency 1, checked for agency 1."
+    },
+    {
+      "name": "trust-attestation-attesting-agency-boolean",
+      "artifact": "trust-attestation",
+      "object_file": "conformance/vectors/parity2-attestation-attesting-agency-boolean.json",
+      "attesting_agency_id": 1,
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "An attestation whose signed attesting_agency_id is the boolean true, checked for agency 1. Python's == read true as 1 and relied on it; the TypeScript SDK's === did not."
+    },
+    {
+      "name": "cross-authority-edge-context-control",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/parity2-edge-pack.json",
+      "manifest_files": [
+        "conformance/vectors/parity2-edge-manifest-context-control.json"
+      ],
+      "trusted_anchors": [
+        "ab644f81424c0e6c5f5e980a57954625b998f7b490565d86bfb31eb59bf538ba20bdb669a84f9255551f6ef45779d5c9ae2a24b7aaf544d12bc2edf284d29e9f7ba89d97e2c50dd9d7455849902decc24cf5c8567a9cabb650c2789e6c78a4bf43fb5f3c12fbaa9b5f4fe209b5dafb0861205d1f9761de275072560b315f2280df632922325132bf2ec7c6838efbe89ff611ec35ad96885f48dcf1f5e62c463d4cc5d70f5da2aeac0a12bca57373c114efb1c9c84b687635a9cdeb8ab11d06c219a6f465aa9f2ce3456b898b8fffff3ada521342efa82f2c9926c9c0b3e45372d5017ae9ba48e8544bb3271220dbe79af0ab844327ea0f7404e69b0e5f77883e9231a2d3e11c1f19b89abd3db25b065b37a945c83c7295399e271eccdb9086474d99dbd5800ebf09cbc798a5eb34c264794cb7b20ea13da9c8d52df9e98a38ab411f8888eba6ca4ad3a0f60d8d893714f6e4f8e7d85b964d136f99441bda35a78b32fbf688be55429ece47273e373f24a85cf239f0dff6f7c9d7901986afa0d1200358bcc98777625da2e0041cd6cdae8ba6a5b095d75b160163d12d3b4907bbb450982f9b0d11be856dbe04dc2879578f5774c91d8d0a83a6fdf14be4ba92ee63e01ed621f90d8a6da697428f435c4cf0b8daa59cf53902a11a898605ab280a824fd56ce8bec8fc590bd313feeac3a0534850057cbdd5c94eff3ec3f7d00409f198958cf48ab635f4371977253fbb49977489870b2ff29787e94b5e9f84401e4b23e67b9dabc4597a204c334a12fd8c410c302b6494a520238bd5cf47aa3d9441adf50d9797297208820f66601d37bea33cf0ee0b1721791634c9bc421292d74f96b38226e7d855a7c0a84a416d449e3be5bc0bdfc3fd6ec5a42782479fc6072501ad8212ea958a67876c13b29f6697f82bfedc7ce8c537f5270feb4bf0bc8280e0fa450f18d1ff4defdf257a2ae79725b2234462df5546d63b5d3efb2237158326ee47a2a8cd5b09b64a971df90f672915690658c4ec88a47070059aa7d0578e43583849644fb8caae9a28a2ac34ca47fcbb0cc271f9969b8ea4d493137a785f69c754f2c505f84183707dad7bff12d5c3f76c31f3492fe67d525c7d045a2f83db71c52fa133cb4ce706db60d3ec44d1633e033e28c6220beddd9a0c4987b07e7508da7dfccb003fa41d7b3c202f1e764f4e2952567cabf6ed3e9814d4bf6b5970588d5f5540d95caad9f1579d6c62b5eab816b203d340f1065a94b522ea5095f3b0234b4cb83658444cd343300fc585a2db32aed1e00024a7ffc6f57cb5657547d8fe744110abe234e1b6fe1dc00b2714b7f58682c87446b4e0614a0586dc18d082c13ea0cf02a8c4cfb05c557de086af57732c84984ad9d6bb9a1c6eca33c447a89a1f1ebfd37e1d4465576a7625e60dfa7e4dc4cac8c50964dfbab4de96f6d239cf4faa3be9c1fdf0d281885335b4c323d406fe1aa10e9341a8e01bfc05c45e4d5b6aa920207c1a394b0b837c152196b45b6fd271b55418b0adc445ad22f184b806733e1fdb98153c09c9357268da5de93d301f4a53bbdf8942657f8ca3e0ed046b21f893de4c0a958db730afd936abd22c86f4b5b1bb48284749c7b681c37beae1c81cdcf9bc5e272fef7e0fdc7b8af8796e4fd537541b522d9ceeb7bee1d4653b668d6864294f6e0358ff6c36b3c40f3053a61d9802f4cd50a3b7d2396f79665a07f246da692c567295852beb872c23b8343f1fa4a6553a860f4f2b30d727882fb7080c1eadca40d689374d352a6525ea981d317267a91c21c094d4a4c2ae10836be90ab55e10e3429f2490d2036ad51d52f10f89223cae5595a6a38c42a3e4ecd783b0b55ebf7371212e1007219f3cfc1a425e6987ba0b504f8fff55a14711d3fe0e4c7e55d05e7d9e9efdf53681bbd027ad207c6c2169732a179f8f5edc915fb3a9ccaef80b9214f60333bc52f56ed5c914375b610425c9b2cb62847a91fa8ad89f0c51de5b5e01bd7afae20a02beda693025255ae12de52354982409e0af93a53cbde4363b0e1a675f92d3c99933cff28e815c65dc659e1af6d29164a815cdcf5698fdb5f7b91dcb26370ec546e36810954ff196096fe91ab5dd2bbcea02edecd49e570b3944eb5531d8f078e928cb76b77b2927db08ff1b2e75ae2e43f76c992c58b8c17bb19f0c6917e0b0d479fc0b71225f8917e93a355d47e511d1868ff749a21da1aec3f213173bcd5863b539d257f59bb13502eb6dc3eaf8d5661e08188d3a5c4fdd7a117f7ceacc09bd6a403019fdd7f9e614552f0aaf908dd457ea9551f6f6316d4c37ed716194a39768862ce33ca7a91dfa339c3f0cc4e43eb321cf6fde90896f5b6a1bb7796316043a8da2c1ae86d377b382fa1eeb2f08a0027423224477037fce1ea908eca80070bba9ac103408dd2bb529a86ca2fc957381d4ddf4b002bf6abf8ba0ac4c0627d0fff1c7df10c3043b5a19178b42b754e964397c863d1be1683c9a1b171a04b9cd55050945b1c7e57a2d8e4784340cf27f4d54bf05d63625ac6a2e1278b5055c26e81bde1c78a7857edb2fadd458ae49714f68a050c2900c301ce820470f614b7c7bb0a7a6d095744108ddecf3b9a8bff580adbaef974c145ce651ba849f3a73604ca9db42a01c9dd97d28bbbed576323eb7042a042927989b855d5cdbfc09522cc1b4dee955e801d24abf71785025ed537bfb9fe4b0a3348f7919444b800fdafbaf6872217994fb6464a925bcb4de"
+      ],
+      "context_id": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "require_signed_attestation": true,
+      "expect": {
+        "decision": "accept"
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The positive control: a signed edge in context 1, presented in context 1."
+    },
+    {
+      "name": "cross-authority-edge-context-boolean",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/parity2-edge-pack.json",
+      "manifest_files": [
+        "conformance/vectors/parity2-edge-manifest-context-boolean.json"
+      ],
+      "trusted_anchors": [
+        "ab644f81424c0e6c5f5e980a57954625b998f7b490565d86bfb31eb59bf538ba20bdb669a84f9255551f6ef45779d5c9ae2a24b7aaf544d12bc2edf284d29e9f7ba89d97e2c50dd9d7455849902decc24cf5c8567a9cabb650c2789e6c78a4bf43fb5f3c12fbaa9b5f4fe209b5dafb0861205d1f9761de275072560b315f2280df632922325132bf2ec7c6838efbe89ff611ec35ad96885f48dcf1f5e62c463d4cc5d70f5da2aeac0a12bca57373c114efb1c9c84b687635a9cdeb8ab11d06c219a6f465aa9f2ce3456b898b8fffff3ada521342efa82f2c9926c9c0b3e45372d5017ae9ba48e8544bb3271220dbe79af0ab844327ea0f7404e69b0e5f77883e9231a2d3e11c1f19b89abd3db25b065b37a945c83c7295399e271eccdb9086474d99dbd5800ebf09cbc798a5eb34c264794cb7b20ea13da9c8d52df9e98a38ab411f8888eba6ca4ad3a0f60d8d893714f6e4f8e7d85b964d136f99441bda35a78b32fbf688be55429ece47273e373f24a85cf239f0dff6f7c9d7901986afa0d1200358bcc98777625da2e0041cd6cdae8ba6a5b095d75b160163d12d3b4907bbb450982f9b0d11be856dbe04dc2879578f5774c91d8d0a83a6fdf14be4ba92ee63e01ed621f90d8a6da697428f435c4cf0b8daa59cf53902a11a898605ab280a824fd56ce8bec8fc590bd313feeac3a0534850057cbdd5c94eff3ec3f7d00409f198958cf48ab635f4371977253fbb49977489870b2ff29787e94b5e9f84401e4b23e67b9dabc4597a204c334a12fd8c410c302b6494a520238bd5cf47aa3d9441adf50d9797297208820f66601d37bea33cf0ee0b1721791634c9bc421292d74f96b38226e7d855a7c0a84a416d449e3be5bc0bdfc3fd6ec5a42782479fc6072501ad8212ea958a67876c13b29f6697f82bfedc7ce8c537f5270feb4bf0bc8280e0fa450f18d1ff4defdf257a2ae79725b2234462df5546d63b5d3efb2237158326ee47a2a8cd5b09b64a971df90f672915690658c4ec88a47070059aa7d0578e43583849644fb8caae9a28a2ac34ca47fcbb0cc271f9969b8ea4d493137a785f69c754f2c505f84183707dad7bff12d5c3f76c31f3492fe67d525c7d045a2f83db71c52fa133cb4ce706db60d3ec44d1633e033e28c6220beddd9a0c4987b07e7508da7dfccb003fa41d7b3c202f1e764f4e2952567cabf6ed3e9814d4bf6b5970588d5f5540d95caad9f1579d6c62b5eab816b203d340f1065a94b522ea5095f3b0234b4cb83658444cd343300fc585a2db32aed1e00024a7ffc6f57cb5657547d8fe744110abe234e1b6fe1dc00b2714b7f58682c87446b4e0614a0586dc18d082c13ea0cf02a8c4cfb05c557de086af57732c84984ad9d6bb9a1c6eca33c447a89a1f1ebfd37e1d4465576a7625e60dfa7e4dc4cac8c50964dfbab4de96f6d239cf4faa3be9c1fdf0d281885335b4c323d406fe1aa10e9341a8e01bfc05c45e4d5b6aa920207c1a394b0b837c152196b45b6fd271b55418b0adc445ad22f184b806733e1fdb98153c09c9357268da5de93d301f4a53bbdf8942657f8ca3e0ed046b21f893de4c0a958db730afd936abd22c86f4b5b1bb48284749c7b681c37beae1c81cdcf9bc5e272fef7e0fdc7b8af8796e4fd537541b522d9ceeb7bee1d4653b668d6864294f6e0358ff6c36b3c40f3053a61d9802f4cd50a3b7d2396f79665a07f246da692c567295852beb872c23b8343f1fa4a6553a860f4f2b30d727882fb7080c1eadca40d689374d352a6525ea981d317267a91c21c094d4a4c2ae10836be90ab55e10e3429f2490d2036ad51d52f10f89223cae5595a6a38c42a3e4ecd783b0b55ebf7371212e1007219f3cfc1a425e6987ba0b504f8fff55a14711d3fe0e4c7e55d05e7d9e9efdf53681bbd027ad207c6c2169732a179f8f5edc915fb3a9ccaef80b9214f60333bc52f56ed5c914375b610425c9b2cb62847a91fa8ad89f0c51de5b5e01bd7afae20a02beda693025255ae12de52354982409e0af93a53cbde4363b0e1a675f92d3c99933cff28e815c65dc659e1af6d29164a815cdcf5698fdb5f7b91dcb26370ec546e36810954ff196096fe91ab5dd2bbcea02edecd49e570b3944eb5531d8f078e928cb76b77b2927db08ff1b2e75ae2e43f76c992c58b8c17bb19f0c6917e0b0d479fc0b71225f8917e93a355d47e511d1868ff749a21da1aec3f213173bcd5863b539d257f59bb13502eb6dc3eaf8d5661e08188d3a5c4fdd7a117f7ceacc09bd6a403019fdd7f9e614552f0aaf908dd457ea9551f6f6316d4c37ed716194a39768862ce33ca7a91dfa339c3f0cc4e43eb321cf6fde90896f5b6a1bb7796316043a8da2c1ae86d377b382fa1eeb2f08a0027423224477037fce1ea908eca80070bba9ac103408dd2bb529a86ca2fc957381d4ddf4b002bf6abf8ba0ac4c0627d0fff1c7df10c3043b5a19178b42b754e964397c863d1be1683c9a1b171a04b9cd55050945b1c7e57a2d8e4784340cf27f4d54bf05d63625ac6a2e1278b5055c26e81bde1c78a7857edb2fadd458ae49714f68a050c2900c301ce820470f614b7c7bb0a7a6d095744108ddecf3b9a8bff580adbaef974c145ce651ba849f3a73604ca9db42a01c9dd97d28bbbed576323eb7042a042927989b855d5cdbfc09522cc1b4dee955e801d24abf71785025ed537bfb9fe4b0a3348f7919444b800fdafbaf6872217994fb6464a925bcb4de"
+      ],
+      "context_id": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "require_signed_attestation": true,
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The same edge signed with context_id true, presented in context 1. Python's == read true as 1 and accepted it; the TypeScript SDK's === did not."
+    },
+    {
+      "name": "agent-grant-use-proof-nonce-control",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/parity2-agent-grant.json",
+      "now": "2026-05-01T00:00:30Z",
+      "proof_file": "conformance/vectors/parity2-agent-proof-proof-nonce-control.json",
+      "requested_action": "read:status",
+      "expected_nonce": "svc-parity-2-1",
+      "expect": {
+        "authentic": true,
+        "action_in_scope": true,
+        "agent_proved": true
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The positive control: a proof naming the grant and the service's nonce, as text."
+    },
+    {
+      "name": "agent-grant-use-proof-names-no-nonce",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/parity2-agent-grant.json",
+      "now": "2026-05-01T00:00:30Z",
+      "proof_file": "conformance/vectors/parity2-agent-proof-proof-names-no-nonce.json",
+      "requested_action": "read:status",
+      "expected_nonce": true,
+      "expect": {
+        "authentic": true,
+        "action_in_scope": true,
+        "agent_proved": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A proof that names no service nonce, checked against an expected nonce of true, which has no wire text. Neither side names a nonce, so nothing matches. The first parity fix compared the two readings bare (None == None, null === null) and proved it in all three verifiers; the published packages refuse it."
+    },
+    {
+      "name": "agent-grant-use-grant-id-beyond-safe-integer",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/parity2-agent-grant-large-id.json",
+      "now": "2026-05-01T00:00:30Z",
+      "proof_file": "conformance/vectors/parity2-agent-proof-grant-id-beyond-safe-integer.json",
+      "requested_action": "read:status",
+      "expected_nonce": "svc-parity-2-1",
+      "expect": {
+        "authentic": true,
+        "action_in_scope": true,
+        "agent_proved": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A proof whose signed grant_id is the integer 2**53 + 1, for a grant whose id is that number written as text. Python read the exact integer and matched it; JavaScript reads the nearest double, 2**53. An id beyond 2**53 is not one both languages can read."
+    },
+    {
+      "name": "agent-grant-names-itself-control",
+      "artifact": "agent-grant",
+      "object_file": "conformance/vectors/parity2-agent-grant-names-itself-control.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The positive control: a grant whose grant_id, its revocation handle, is text."
+    },
+    {
+      "name": "agent-grant-without-grant-id",
+      "artifact": "agent-grant",
+      "object_file": "conformance/vectors/parity2-agent-grant-without-grant-id.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A grant signed with grant_id null. WIRE-SPEC 3.17: grant_id is the revocation handle and names this grant alone; a grant without one could never be revoked, so it is not a grant. Every verifier here read it as authentic."
+    },
+    {
+      "name": "agent-grant-grant-id-boolean",
+      "artifact": "agent-grant",
+      "object_file": "conformance/vectors/parity2-agent-grant-grant-id-boolean.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A grant signed with grant_id true, which is not text, so it names no grant and no revocation can name it. Every verifier here read it as authentic."
+    },
+    {
+      "name": "agent-grant-use-revocation-names-grant-control",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/parity2-agent-grant-named-true.json",
+      "now": "2026-05-01T00:00:30Z",
+      "revocation_file": "conformance/vectors/parity2-revocation-names-grant-control.json",
+      "expect": {
+        "authentic": true,
+        "revoked": true
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The positive control: the holder revokes the grant named \"True\", by that text."
+    },
+    {
+      "name": "agent-grant-use-revocation-grant-id-boolean",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/parity2-agent-grant-named-true.json",
+      "now": "2026-05-01T00:00:30Z",
+      "revocation_file": "conformance/vectors/parity2-revocation-grant-id-boolean.json",
+      "expect": {
+        "authentic": true,
+        "revoked": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A revocation naming the boolean true, for the grant named \"True\". Python's str() spelled true \"True\" and revoked it; the TypeScript SDK's String() spelled it \"true\" and did not. true is not text, so it names no grant."
+    },
+    {
+      "name": "agent-grant-use-action-nested-list",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/parity2-agent-grant-action-nested-list.json",
+      "now": "2026-05-01T00:00:30Z",
+      "requested_action": "read:status",
+      "expect": {
+        "authentic": true,
+        "action_in_scope": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A grant whose signed actions list holds the list [\"read:status\"]. The TypeScript SDK's String() read it as \"read:status\" and found the action in scope; Python's str() did not. An action is text, and a list is not."
+    },
+    {
+      "name": "agent-grant-use-action-boolean",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/parity2-agent-grant-action-boolean.json",
+      "now": "2026-05-01T00:00:30Z",
+      "requested_action": "true",
+      "expect": {
+        "authentic": true,
+        "action_in_scope": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A grant whose signed actions list holds the boolean true, asked for the action \"true\". The TypeScript SDK's String() spelled it \"true\" and found it in scope; Python's str() spelled it \"True\"."
+    },
+    {
+      "name": "agent-grant-use-action-null",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/parity2-agent-grant-action-null.json",
+      "now": "2026-05-01T00:00:30Z",
+      "requested_action": "None",
+      "expect": {
+        "authentic": true,
+        "action_in_scope": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A grant whose signed actions list holds null, asked for the action \"None\". Python's str() spelled null \"None\" and found it in scope; the TypeScript SDK's String() spelled it \"null\"."
+    },
+    {
+      "name": "agent-grant-use-principal-token-text-control",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/parity2-agent-grant.json",
+      "now": "2026-05-01T00:00:30Z",
+      "binding_file": "conformance/vectors/parity2-principal-token-text-control-binding.json",
+      "credential_file": "conformance/vectors/parity2-principal-token-text-control-credential.json",
+      "expect": {
+        "authentic": true,
+        "principal_bound": true
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The positive control: the issuer binds the grant's signing key to this credential, by its token value."
+    },
+    {
+      "name": "agent-grant-use-principal-token-boolean-javascript",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/parity2-agent-grant.json",
+      "now": "2026-05-01T00:00:30Z",
+      "binding_file": "conformance/vectors/parity2-principal-token-boolean-javascript-binding.json",
+      "credential_file": "conformance/vectors/parity2-principal-token-boolean-javascript-credential.json",
+      "expect": {
+        "authentic": true,
+        "principal_bound": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A binding the issuer signed with token_value true, beside the credential \"true\". The TypeScript SDK's String() spelled it \"true\" and bound the grant; Python did not."
+    },
+    {
+      "name": "agent-grant-use-principal-token-boolean-python",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/parity2-agent-grant.json",
+      "now": "2026-05-01T00:00:30Z",
+      "binding_file": "conformance/vectors/parity2-principal-token-boolean-python-binding.json",
+      "credential_file": "conformance/vectors/parity2-principal-token-boolean-python-credential.json",
+      "expect": {
+        "authentic": true,
+        "principal_bound": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The same binding beside the credential \"True\". Python's str() spelled true \"True\" and bound the grant; the TypeScript SDK did not. true is not text and names no credential."
+    },
+    {
+      "name": "manifest-anchor-key-control",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/hex-text-manifest-anchor-control.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The positive control: a manifest signed by the one anchor it lists."
+    },
+    {
+      "name": "manifest-anchor-key-a-list",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/hex-text-manifest-anchor-a-list.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A manifest signed by K whose one anchor lists its key as [K]. A key or a digest is a hex string; JavaScript's String() read the one-element list as its element, so the TypeScript SDK accepted this and both Python verifiers did not."
+    },
+    {
+      "name": "agent-grant-use-agent-key-a-list",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/hex-text-agent-grant-key-a-list.json",
+      "now": "2026-05-01T00:00:30Z",
+      "proof_file": "conformance/vectors/hex-text-agent-proof.json",
+      "requested_action": "read:status",
+      "expected_nonce": "svc-hex-text-1",
+      "expect": {
+        "authentic": true,
+        "action_in_scope": true,
+        "agent_proved": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A grant naming its agent key as [AK], and a proof signed by AK. A key or a digest is a hex string; JavaScript's String() read the one-element list as its element, so the TypeScript SDK accepted this and both Python verifiers did not."
+    },
+    {
+      "name": "holder-chain-binding-key-a-list",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/hex-text-holder-credential.json",
+      "binding_file": "conformance/vectors/hex-text-holder-binding-key-a-list.json",
+      "proof_file": "conformance/vectors/hex-text-holder-proof.json",
+      "expected_nonce": "hex-text-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A binding the issuer signed naming the holder key as [HK], and a proof signed by HK. A key or a digest is a hex string; JavaScript's String() read the one-element list as its element, so the TypeScript SDK accepted this and both Python verifiers did not."
+    },
+    {
+      "name": "cross-authority-attested-key-a-list",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/hex-text-edge-pack.json",
+      "manifest_files": [
+        "conformance/vectors/hex-text-edge-manifest-key-a-list.json"
+      ],
+      "trusted_anchors": [
+        "2b71322a04edff2d8e9f0bef9d728289788baee0d44e4519375aac3661a1a7b2cbf28efbf1fe786b1ae2a0db1299c1c695d3580ff43c19f1133557f63bd2d47b7a5c6331f67dba93f0bdccdfb5dccce28056df31e81dcc3050d91d74e2d96f308f5ab797058e51ce8cb847bed008415a33c1eef74bb0549d937b04964b75916334abfc7815a410bfbfc3686bc4dc12187794d48a021d35032d174549c66e1b47240613de9d6c4d93502fbe209c3674e0aa89950c868b6c54b059b487f6b144167f2d596dd0173e5bccf5290c94820e50baa59881a8e2ddeb3874791ad09f92c28e29a91aa653bf920fe4994599923d952e61ecd20c97ceb78e1a1056eb16e5b64b5c11357f2e41d16cd5a202bb6aed3c9190f3f85c6b11658b07f299f69c4033d60f915931280e0e60ae3499b6f1cdba34b2b84cd7443a4627af9bb550f1d5d83d0f33015afbd7e1d71059c285b4185c891b5e10d5e04889a41d356a22f237ed197a4a9874e968789351b45a60bb144b4939892f4c7c72a0e506a794b8f102bcdfb941cb16a4b6beb70cd35261155d34411d3f9835e2009a3ad45ccf89b81a0830f6287bcc0c6bbdf5ecae0fcbb778f814fda6c6392d84711ec9ac51746ee4b3d070e82886b2b8762b16bb6b4b77abaebcce14426a18d889598b2f887dd7116886d70eb035756a2e937e3db32223e95879c7d068d4a79236a1d7d80d65506c3368da20dbc087dc459c5bdb4210ed141dc6ca728e642b5a6ffa3460d60e13a49398afe539ac9f2735e9c257c1e164ea5dbd602dc98ce3f21e8c94068573890333b8934b31bc30f954edf739ce5ed9f7616df7ed47b415ebdc865334ee3c43ffb14856a409f1f1ec8d5eb42c897ebf907e58e18ed693913b3ba2caf6fd6468d8a89e990fb14375b11404568258ab6b31cac735e8bdf81a14d52b7d8137850da662d556917cb4a83044f37de115651dc01a474713991db11daa81baead3b5e4e59487636310f9e449b8c79f7eb9262f4e9e1bd8c085a6d13752d3e8913403937f6f4de9a9fdd9b40f90a95ccd260bbd2130bac4039bf545375c3eea778b303bde9cdf5dd892d25770d18736a103440365ad5f4ccfcda53bb24272daf61490560029ce44e6bf47816663498810e41e5b1025b41bdf6616514d99c0465b74710fe06d129cc23b7d284e31df56c2c74d7980e4c88133675f1d359ad9cb56b3259356257ac60d227c95e033deb0a014ded02574275fc29afbc3dd319f60ff2eb25f4a126f6eaf0d2cce39d763218835fc65043f876ddf0f614a3d6adebcc1bee4fd8336c50f4316cdf4b699931fa3013f9057de917fe25c84a74a0f6a5faa24b3e6533559967ed2bc695fb5f1e0207b7e3aae1261e3540af3789272bb8e1364bde25bb152c96b722a21d4dcc16d56ebba8f164e1b7b7a1eccfb574218fcde6483971fe93755cf4f71a63a1b2e1f5db65e4b9f1a4d0691a0d92a438bc1a42fd758680e2c38f289d572d8c4a833bead30b74d949ce29fec2b7b19b2f81ded40f8dd198464213011d39b60351966123aa432641077b13ab942a7e4efb553eea55ba8a1dab1953415d203d2df348c611dab2ec63e5c1cc3ce84ff79c33ed2b9b60628d4534003944459db787ce0bb874f97f346a864a2dc3509b2a748d281639423f6bb3ea89cc1e910580639a84f93efd3c5eb90a2ddb3c3334a14e895ff809a88b3c087d7623252132491d9399686ab979a39aa0d571e3866393eaa8e740adbf45047ac4582fbb99bc82287b3c8624c5c7148aadb838b19aef6911668974b1613d6e94e1310cdb9433476389cd782ddb4b0c5ee9d3c2e3fab83ab905e4f02dd3a0fa9a22b45f70e95dd2a8381f832666c2aa04e4d4efc41f1c9ea965a21aced1bb18a4f481067d9e422650ae496379f2b2855d620194d685de938b46d78d170b420a90c4fe11cc0857b0d1be94bc3b314c6dfa6e0c765af92b01cada27c3c2fc394f665135b703a5ee826db0db2e23dae87b22ed812a651b8c541c4c3c6e12a67e013e29bcc127bed794999d6ff14b081716d1b227c8d87fbbb16768478ff429587e2adaa17cf90be01bdea943d9264e1ff30d7909c0b78b2f1adc591bce870fced8cbf744cbbc64b6e73a84904e34b350702af809c81875dc941e6963adc6750eff1ef12a37a67abd9654a2966d4fdf12520a0347878c105f20007456e01770e604f300d94f11bc809d88414e372076b2dd0896be165a11332bdb24f336571d4de342de05e24cb5b7ba96d68e112a909d0e0e2dd5adb6e23eb24dbed1cac6de40a5566ea7328312343fdd0b2853acb658f7b35b97d9c08f22a70ceefe35528f3b5f5fa55fe5618a13684743892682432ff2817a9a303c82ee4ec52ec0d4d795e5733baf12b5ddfd45968fecca0553716d30367bcac06566565c8a267854c884b9cc82d920aaf069b014b5959852abe1bee26f76ddb09e3d908eb6723c3317a4adf4273705bf975e5a81665aed21fee09a88428fa364113d98c4e1e7b71bed4dd94c8f2aecf22d1ec0ed68330e895f813e81393270a40975eb69d9b3bac2c83c3b18f1e1185a726cfa692a343020e0fc633673d0d546957d4f9e1e6edafe09735b7d9dfdf07846653e49dca2620b7d0c92acaa1af2999412095ced546e48198e2ec02b27ac74c10ba10b09f02e3be4e6a329cd8604aca5b776012e7eef6dc0a66902357ebc90a5e001b6d7eaeca6a49a195049af44d75d290c867d63c6398ff6d6d718425"
+      ],
+      "context_id": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "require_signed_attestation": true,
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A signed edge naming the attested key as [K], presented by a credential signed by K. A key or a digest is a hex string; JavaScript's String() read the one-element list as its element, so the TypeScript SDK accepted this and both Python verifiers did not."
+    },
+    {
+      "name": "revocation-feed-root-a-list",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/hex-text-revocation-feed-root-a-list.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A feed whose signed revoked_root_hex is [R], R being the root of its one leaf. A key or a digest is a hex string; JavaScript's String() read the one-element list as its element, so the TypeScript SDK accepted this and both Python verifiers did not."
     }
   ]
 }

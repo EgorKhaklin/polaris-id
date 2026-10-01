@@ -340,6 +340,13 @@ def decide(token, *, index, expected_uri, authority, now, credential_issuer=None
     if header.get("typ") != STATUS_LIST_TYP:
         return _refuse("typ", "the token declares typ=%r and a status list must declare %r"
                               % (header.get("typ"), STATUS_LIST_TYP))
+    # RFC 7515 4.1.11, as for the credential and its key binding JWT: a `crit` naming an
+    # extension this implementation does not understand makes the JWS invalid, and it
+    # understands none.
+    if "crit" in header:
+        return _refuse("crit", "the status list token's crit names %r, and this verifier "
+                               "implements no JWS extension (RFC 7515 4.1.11)"
+                               % (header.get("crit"),))
 
     # PROVENANCE, first half. `sub` binds the token to the URI the credential named. Without
     # it, a status list legitimately published for one credential population can be served in

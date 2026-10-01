@@ -107,6 +107,22 @@ PINNED_KNOWN_DEFECTS = {
     "revocation-feed-count-not-a-number":
         "2026-09-30: a revoked_count of true read as 1; the pinned verifier predates the rule that a "
         "count is a JSON integer",
+    "manifest-signer-status-empty":
+        "2026-10-01: a status that is present and not \"active\" names no state; the pinned verifier "
+        "reads `status or \"active\"`, so an anchor signed with status \"\" was active",
+    "manifest-signer-status-false":
+        "2026-10-01: the same rule; the pinned verifier read an anchor signed with status false as active",
+    "cross-authority-edge-anchor-status-empty":
+        "2026-10-01: the same rule for the anchor that signed a trust edge; the pinned verifier read "
+        "status \"\" as active",
+    "revocation-feed-leaf-null-python-root":
+        "2026-10-01: a revoked leaf is 64 hex digits (WIRE-SPEC 3.3); the pinned verifier turns a null "
+        "leaf into the string \"none\" and accepts a root computed over it",
+    "revocation-feed-leaf-a-number":
+        "2026-10-01: the same rule; the pinned verifier turns the leaf 1.0 into \"1.0\" and accepts it",
+    "cross-authority-edge-context-boolean":
+        "2026-10-01: a context is an id, so true is not context 1; the pinned verifier compares "
+        "with Python's ==, which reads true as 1, and accepts the edge",
 }
 
 
@@ -142,7 +158,7 @@ def decide(V, case):
         anchors = case.get("trusted_anchors")
         if anchors == "manifest":
             anchors = sorted({a["public_key_hex"] for m in ms for a in m.get("anchors", [])
-                              if (a.get("status") or "active") == "active" and a.get("public_key_hex")})
+                              if a.get("status") in (None, "active") and a.get("public_key_hex")})
         kw = {"now": _at(case.get("now"))}
         if "feed_file" in case:
             kw["revocation_feed"] = _read(case["feed_file"])
@@ -252,7 +268,7 @@ def run_sdk_cli(cmd, env, cases):
             anchors = c.get("trusted_anchors")
             if anchors == "manifest":
                 anchors = sorted({a["public_key_hex"] for m in ms for a in m.get("anchors", [])
-                                  if (a.get("status") or "active") == "active" and a.get("public_key_hex")})
+                                  if a.get("status") in (None, "active") and a.get("public_key_hex")})
             payload["trusted_anchors"] = anchors
             if "feed_file" in c:
                 payload["revocation_feed"] = _read(c["feed_file"])

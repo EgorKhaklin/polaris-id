@@ -1658,7 +1658,8 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                    "anchorbatch tokenstateepochleaf duressevent authauditlog "
                    "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed", "authoritykeyevent", "timestamplog", "holderkeyevent")
 
-    def write(grants, mig_revoke, proc_definer, uc11_definer=True, uc10_definer=True, uc9r_definer=True):
+    def write(grants, mig_revoke, proc_definer, uc11_definer=True, uc10_definer=True, uc9r_definer=True,
+              hk_definer=True, hk_path=True):
         (sql / "09_grants.sql").write_text(grants)
         (mig / "2026-05-15-003-audit-access-log.up.sql").write_text(
             "REVOKE UPDATE, DELETE ON AuditAccessLog FROM polaris_app;\n"
@@ -1677,7 +1678,11 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                       for r in ("uc10_attest_trust", "uc10_revoke_attestation", "uc_pseudonymize_individual"))
             + "CREATE OR REPLACE PROCEDURE uc9_record_recovery_channel(p INTEGER)\nLANGUAGE plpgsql\n"
             + ("SECURITY DEFINER\nSET search_path = public, pg_temp\n" if uc9r_definer else "")
-            + "AS $$ BEGIN NULL; END; $$;\n")
+            + "AS $$ BEGIN NULL; END; $$;\n"
+            + "CREATE OR REPLACE FUNCTION uc_record_holder_key_event(p INTEGER) RETURNS BIGINT\n"
+            + "LANGUAGE plpgsql\n" + ("SECURITY DEFINER\n" if hk_definer else "")
+            + ("SET search_path = public, pg_temp\n" if hk_path else "")
+            + "AS $$ BEGIN RETURN 1; END; $$;\n")
 
     # A real REVOKE naming the tables, not a comment listing them: the check reads
     # 09_grants.sql for the statement, and a comment is not one (v9.399).
@@ -1846,6 +1851,16 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
         write(full.replace("REVOKE INSERT, UPDATE, DELETE ON %s FROM polaris_app;\n" % table, ""), True, True)
         assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", table
     write(full, True, True)
+
+    # 11. 2026-10-01: the routine the holder key route records events through.
+    write(full, True, True, hk_definer=False)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when uc_record_holder_key_event runs with the caller's rights"
+    write(full, True, True, hk_path=False)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when uc_record_holder_key_event leaves search_path to the caller"
+    write(full, True, True)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "OK"
 
 
 def test_prod_app_password_synced_check_discriminates(tmp_path):
@@ -10662,8 +10677,9 @@ def test_agent_grant_check_discriminates(tmp_path):
         '    return {k: p.get(k) for k in ("format", "grant_id", "action", "service_nonce")}\n'
         "\ndef verify_agent_grant(g, revocation=None, agent_proof=None, requested_action=None):\n"
         "    actions = g.get('actions')\n"
-        "    actions = [str(a) for a in actions] if isinstance(actions, (list, tuple)) else []\n"
-        '    v["action_in_scope"] = str(requested_action) in actions\n'
+        "    actions = list(actions) if isinstance(actions, (list, tuple)) else []\n"
+        "    want = _wire_text(requested_action)\n"
+        '    v["action_in_scope"] = want is not None and any(_wire_text(a) == want for a in actions)\n'
         '    note = "the revocation names a different grant"\n'
         '    note = "the revocation is signed by a key other than the grant\'s holder"\n'
         '    note = "the agent proof is signed by a key the grant does not name"\n'
@@ -10718,10 +10734,18 @@ def test_agent_grant_check_discriminates(tmp_path):
     # A malformed action list stops collapsing to empty, so a grant naming nothing could be
     # read as naming everything.
     write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace(
-        "    actions = [str(a) for a in actions] if isinstance(actions, (list, tuple)) else []\n",
+        "    actions = list(actions) if isinstance(actions, (list, tuple)) else []\n",
         "    actions = actions or ['*']\n")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when a grant with no actions is not treated as granting nothing"
+
+    # The action is compared through str(), which spells null "None" and true "True" where the
+    # TypeScript SDK's String() does not (2026-10-01): the form this check pinned, and the defect.
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace(
+        '    v["action_in_scope"] = want is not None and any(_wire_text(a) == want for a in actions)\n',
+        '    v["action_in_scope"] = str(requested_action) in [str(a) for a in actions]\n')})
+    assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the requested action is compared through str() rather than as wire text"
 
     # Anyone who can publish bytes can end someone else's delegation.
     write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace(
@@ -19938,13 +19962,32 @@ def test_definer_routines_pin_search_path_check_discriminates(tmp_path):
     good = ("CREATE OR REPLACE FUNCTION f(a INTEGER) RETURNS INTEGER\nLANGUAGE plpgsql\n"
             "SECURITY DEFINER\nSET search_path = public, pg_temp\nAS $$ BEGIN RETURN a; END; $$;\n"
             "CREATE OR REPLACE FUNCTION g() RETURNS INTEGER LANGUAGE sql AS $$ SELECT 1 $$;\n")
-    loop = ("DO $$ BEGIN FOR v IN SELECT p.oid FROM pg_proc p WHERE p.prosecdef LOOP\n"
-            "  EXECUTE format('REVOKE EXECUTE ON ROUTINE %s FROM PUBLIC', v);\nEND LOOP; END$$;\n")
+    lend = ("DO $$ BEGIN FOR v IN SELECT p.oid FROM pg_proc p WHERE p.prosecdef LOOP\n"
+            "  EXECUTE format('REVOKE EXECUTE ON ROUTINE %s FROM PUBLIC', v);\n"
+            "  EXECUTE format('GRANT EXECUTE ON ROUTINE %s TO polaris_app', v);\nEND LOOP; END$$;\n")
+    take = ("DO $$ BEGIN FOR v IN SELECT p.oid FROM pg_proc p WHERE p.proname IN\n"
+            "  ('uc_archive_purge', 'uc_set_retention_policy', 'uc_apply_retention_template') LOOP\n"
+            "  EXECUTE format('REVOKE EXECUTE ON ROUTINE %s FROM polaris_app', v);\nEND LOOP; END$$;\n")
+    loop = lend + take
+    grants = tmp_path / "polaris_sql" / "09_grants.sql"
     f.write_text(good)
     assert checks.check_definer_routines_pin_search_path(tmp_path)[0].level == "FAIL", \
         "no PUBLIC revoke must FAIL"
-    (tmp_path / "polaris_sql" / "09_grants.sql").write_text(loop)
+    grants.write_text(loop)
     assert checks.check_definer_routines_pin_search_path(tmp_path)[0].level == "OK", "pinned must PASS"
+    # 2026-10-01 (review F2): the retention routines are taken back from polaris_app after the loop.
+    grants.write_text(lend)
+    assert checks.check_definer_routines_pin_search_path(tmp_path)[0].level == "FAIL", "no take-back must FAIL"
+    grants.write_text(take + lend)
+    assert checks.check_definer_routines_pin_search_path(tmp_path)[0].level == "FAIL", \
+        "a take-back before the loop lends them again and must FAIL"
+    grants.write_text(lend + take.replace("'uc_archive_purge', ", ""))
+    r = checks.check_definer_routines_pin_search_path(tmp_path)[0]
+    assert r.level == "FAIL" and "uc_archive_purge" in r.message, "a routine left lent must FAIL"
+    grants.write_text(lend + "".join("-- " + ln + "\n" for ln in take.splitlines()))
+    assert checks.check_definer_routines_pin_search_path(tmp_path)[0].level == "FAIL", \
+        "a commented-out take-back must FAIL"
+    grants.write_text(loop)
     f.write_text(good.replace("SET search_path = public, pg_temp\n", ""))
     r = checks.check_definer_routines_pin_search_path(tmp_path)[0]
     assert r.level == "FAIL" and "05_procedures.sql:f" in r.message, "an unpinned definer must FAIL"

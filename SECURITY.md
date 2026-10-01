@@ -50,8 +50,25 @@ lists what older versions still carry.
 Exception until the next publish: `polaris-oid4vp` 1.0.0rc11 **answers a wallet 200 for a credential
 its configured status resolver found revoked**, accepts a presentation that withholds a requested claim,
 an orphan disclosure with key binding waived, an `x5c` leaf expired at the verdict's `now` and a JWE
-marked `crit`, and serves an expired request object. The tree carries the fixes; 1.0.0rc12 follows the
-maintainer's approval.
+marked `crit`, and a W3C VC Data Model credential typed `vc+sd-jwt` as an SD-JWT VC, ignoring its
+`validUntil` and `credentialStatus`; it also ignores a `crit` on the credential, its key binding JWT
+and a status list token, and the key binding JWT's `exp` and `nbf`, accepts a digest committed twice
+and the trust anchor or a CA certificate as the issuer's `x5c` leaf; and it serves an expired request
+object. `polaris-verify` 1.0.0rc6 and `polaris-sdk-python` 1.0.0rc6 read a signed anchor, registry
+authority or holder binding whose `status` is `false` or `""` as active; `polaris-verify` 1.0.0rc6 calls a
+grant usable whose limits it does not understand; all three read a revocation feed's non-hex leaf by
+its spelling, so a `null` leaf passes one language and not the other, accept an agent grant with no
+`grant_id`, which no revocation can name, and accept a signed document whose digest is not lowercase
+SHA3-256; both Python packages read a use limit of 2.5 as 2, an instant in non-ASCII digits as valid, a
+missing agency id as matching a null one, and `true` as context or agency 1 and as the credential or
+grant `"True"`, and a `null` action as the action "None"; both SDKs read a status answer of
+`currently_authoritative: "false"` as current; and `polaris-sdk-ts` 1.0.0-rc.7 rounds instants to the
+millisecond, reads an offset of 24 hours, refuses a genuine artifact signed with a number like 1.5e-05
+or a key outside the Basic Multilingual Plane, decides a presentation naming `credential: null` as the
+object itself, proves a holder chain whose signed nonce is `true` against the nonce "true", binds a
+grant through a binding naming `true` to the credential "true", reads a grant action of `true` or
+`["x"]` as "true" or "x", and reads a signed key or digest held in a one-element list as that key or
+digest. The tree carries the fixes; releases follow the maintainer's approval.
 
 If you installed or pinned an older version, upgrade. The Current column is checked against
 [docs/RELEASING.md](docs/RELEASING.md) on every run. The packages are for evaluation and
@@ -189,5 +206,5 @@ bounty: Polaris is pre-pilot software, not a deployed service.
 ---
 
 *Maintainer: Egor Khaklin (VANTA)*
-*Last updated: 2026-10-01 (v1.0.0-rc.68)*
+*Last updated: 2026-10-01 (v1.0.0-rc.69)*
 *Machine-readable: the live `/.well-known/security.txt` route (RFC 9116)*

@@ -9,8 +9,40 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ## Unreleased
 
+### Security
+
+- All three verifiers read one instant grammar: ASCII digits, no surrounding whitespace, offsets below 24 hours, years 1 to 99 as written.
+- An agency or context id matches only the same string or integer in all three verifiers; Python's `==` read `true` as 1 and a missing id as a null one.
+- Both SDKs read only the JSON `true` as currently authoritative; both read a status answer of `"false"` as current.
+- All three verifiers refuse an agent grant whose `grant_id` is not text; it is the grant's only revocation handle (WIRE-SPEC 3.17).
+- All three verifiers read a key or a digest only as a hex string; the TypeScript SDK read a signed `[K]` as K, and two missing keys matched in Python.
+
+### Fixed
+
+- The TypeScript SDK writes a small number and orders keys as the signer does, so a genuine artifact with `1.5e-05` or an emoji key verifies.
+- All three verifiers read the ids, nonces, actions and credentials that grants, proofs, bindings and revocations name as text; a value with none matches nothing.
+- An id, nonce or action beyond 2**53 is not one any verifier reads; JavaScript reads the nearest double there.
+- All three verifiers trim only ASCII whitespace from a pairwise handle or nullifier; other Unicode spaces split the SDKs.
+- The TypeScript SDK refuses a credential that is not an object instead of throwing, and checks each grant limit and the use count alone.
+- The Python SDK reports no nonce match for a holder proof it cannot check, as the TypeScript SDK does.
+- A trusted anchor, witness or log key that is not text matches nothing in all three verifiers; each raised on it.
+- `polaris-wallet grant --max-amount 100` signs 100, not 100.0, which the TypeScript SDK could not verify.
+- Both SDKs' conformance adapters report no pairwise handle for an object that is not a holder binding, as the detached verifier and the contract do.
+
+### Added
+
+- Ten conformance cases pin where the two SDKs disagreed on signed bytes.
+- Twenty-two more pin nonces, contexts, agencies, grant ids, actions and ids beyond 2**53, from three reviews of that fix.
+- Six conformance cases pin keys and digests as hex text; the suite has 281 cases.
+- `scripts/polaris-hostile-agreement-drill.py` has all three verifiers decide every published case with each presenter-supplied node retyped or deleted, 146,619 inputs; CI runs a third.
+
+## v1.0.0-rc.69 — 2026-10-01 (a holder's key changes only by its own signature)
+
+A holder key changes only with the live key's signature, and the route records its events through a routine that keeps them in order; the application's database role no longer runs the retention routines; the three verifiers read a signed status, a leaf and a document digest alike; `polaris-oid4vp` in this tree holds to RFC 7515, RFC 7516, RFC 9901 and HAIP 1.0 where it did not. 19 security changes, 4 fixes.
+
 - **Breaking**: `polaris-oid4vp`'s `Verifier` answers 400 to a credential its resolver checked as not VALID, and to one missing a requested claim.
 - **Breaking**: `polaris_oid4vp.status.decide` requires `expected_uri`.
+- **Breaking**: `POST /api/v1/holder-key` answers 409 to a binding over a live key, and 401 to a rotation or revocation without `change_proof` signed by the live key.
 
 ### Security
 
@@ -21,18 +53,34 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-oid4vp` refuses a JWE response whose `crit` names any extension, as RFC 7516 requires.
 - `polaris-oid4vp`'s `status.decide` binds a list to the credential's own `uri` always; with none it skipped the check.
 - `polaris-oid4vp serve` stops serving a request object past its lifetime; a wallet nonce re-signed an expired one.
+- `polaris-oid4vp` refuses an issuer JWT typed `vc+sd-jwt`, a W3C VC Data Model credential whose `validUntil` and `credentialStatus` it does not read; it accepted one.
+- `polaris-oid4vp` refuses a credential, key binding JWT or status list token whose `crit` names an extension, as RFC 7515 requires.
+- `polaris-oid4vp` refuses a key binding JWT past its `exp` or before its `nbf` (RFC 9901 7.3); both were ignored.
+- `polaris-oid4vp` refuses a credential that commits to a digest twice (RFC 9901 7.1); one disclosure could stand in two places.
+- `polaris-oid4vp` refuses an `x5c` leaf that is self-signed or a CA (HAIP 1.0 6.1.1); the trust anchor itself verified as an issuer.
+- All three verifiers read a signed `status` that is present and not `active` as not active; the Python SDK and `polaris-verify` read `false` and `""` as active.
+- `polaris-verify` calls an agent grant usable only when it understands its limits; one signed with an unknown limit or a non-finite `max_amount` was usable.
+- All three verifiers refuse a revocation feed or epoch leaf set whose leaves are not 64 hex digits; a `null` leaf split Python from TypeScript.
+- All three verifiers refuse a signed document whose digest is not lowercase SHA3-256, as WIRE-SPEC 3.12 requires.
+- The application's database role can no longer run the retention and archive-purge routines; naming any admin, it could set retention or purge audit rows past the floor.
+- A holder key changes only with the live key's signature; presenting the credential, which any relying party that took a full presentation can do, could rebind, rotate or revoke it.
+- The holder key route records events through a routine that sets their instant and keeps them in order; the application role's own INSERT goes in a later release, under the expand-contract policy.
 
 ### Fixed
 
-- Both SDKs' conformance adapters report no pairwise handle for an object that is not a holder binding, as the detached verifier and the contract do.
+- The TypeScript SDK reads a presentation that names a credential and supplies none as having none; it decided the object itself.
+- The TypeScript SDK reads an instant to the microsecond, as both Python verifiers do; it rounded to the millisecond.
+- Both Python verifiers refuse a fractional use limit or use count, as the TypeScript SDK does; `int()` truncated it.
 - The rc.68 notes list only what rc.68 released; a merge after the cut had filed the `polaris-oid4vp` 1.0.0rc12 lines there.
 
 ### Added
 
-- `scripts/polaris-hostile-agreement-drill.py` has all three verifiers decide every published case with each presenter-supplied node retyped or deleted, 146,619 inputs; CI runs a third.
+- Thirteen conformance cases pin the status rule for manifests, registries, holder chains, grants in use and trust edges.
+- Eleven conformance cases pin WIRE-SPEC 3.3, 3.16, 3.12 and 2.2 for leaves, signed documents and instants; the suite has 243 cases.
 
 ### Changed
 
+- `polaris-wallet holder-keygen --rotate` signs the change with the live key and keeps that key until the issuer accepts the new one.
 - Published: `polaris-verify` and `polaris-sdk-python` 1.0.0rc6 on PyPI, each approved at the environment gate, and `polaris-sdk-ts` 1.0.0-rc.7 on npm under `next`, approved by the maintainer with a second factor.
 
 ## v1.0.0-rc.68 — 2026-10-01 (trust enters only where the relying party puts it)

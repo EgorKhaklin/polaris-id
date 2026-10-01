@@ -1054,6 +1054,32 @@ class CommandLineExitCodes(unittest.TestCase):
                 self.assertEqual(self.main("--pqc-provider", "auto", "--zk-proof", str(self.blob)), code)
 
 
+class CallerKeysThatAreNotTextTests(unittest.TestCase):
+    """Total on hostile input: a caller's key that is not text matches nothing, where `.lower()`
+    raised AttributeError, and the bytes a timestamp or a ledger binds keep their form (2026-10-01)."""
+
+    def setUp(self):
+        import json
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "conformance", "vectors", "timestamp-anchor-witnessed.json")) as f:
+            self.ts = json.load(f)
+
+    @unittest.skipUnless(any(V._provider_available(p) for p in V.REAL_PROVIDERS),
+                         "no real ML-DSA backend; the cosignatures must verify")
+    def test_witnesses_and_log_keys_that_are_not_text(self):
+        sth, cos = self.ts["anchor"]["sth"], self.ts["anchor"]["cosignatures"]
+        both = [c["public_key_hex"] for c in cos]
+        v = V.verify_witnessed_checkpoint(sth, cos, [None, 7] + both, threshold=2)
+        self.assertIs(v["witnessed"], True)
+        self.assertIs(V.verify_witnessed_checkpoint(sth, cos, [None, None], threshold=1)["witnessed"], False)
+        self.assertIs(V.verify_sth(sth, issuer_key=123)["issuer_matches"], False)
+
+    def test_material_keeps_its_bytes(self):
+        self.assertTrue(V.document_signature_material({"document": {}, "signature_hex": None}).endswith(b"\n"))
+        self.assertTrue(V._publication_entry("log", 1, None).endswith("|"))
+
+
 class StapledDecisionNeedsEveryFact(unittest.TestCase):
     """verify_stapled accepts only when seven facts hold at once. 2026-09-23: a held-out round
     dropped each from the acceptance in turn, and five survived every suite and the offline
@@ -1064,11 +1090,12 @@ class StapledDecisionNeedsEveryFact(unittest.TestCase):
     GOOD_PACK = {"signature_valid": True, "issuer_trusted": True}
     GOOD_SA = {"status_authentic": True, "issuer_trusted": True, "fresh": True, "status": "ACTIVE"}
 
-    def decide(self, pack=None, sa=None, token=("T", "T")):
+    def decide(self, pack=None, sa=None, token=("T", "T"), key=("ab" * 32, "AB" * 32)):
         from unittest import mock
         with mock.patch.object(V, "verify_pack", return_value=dict(self.GOOD_PACK, **(pack or {}))), \
                 mock.patch.object(V, "verify_status_assertion", return_value=dict(self.GOOD_SA, **(sa or {}))):
-            return V.verify_stapled({"token_value": token[0]}, {"token_value": token[1]})["decision"]
+            return V.verify_stapled({"token_value": token[0], "public_key_hex": key[0]},
+                                    {"token_value": token[1], "public_key_hex": key[1]})["decision"]
 
     def test_all_seven_facts_accept(self):
         self.assertEqual(self.decide(), "accept")
@@ -1091,6 +1118,9 @@ class StapledDecisionNeedsEveryFact(unittest.TestCase):
         self.assertEqual(self.decide(token=("", "")), "reject",
                          "two missing token values are not a binding")
         self.assertEqual(self.decide(token=(None, None)), "reject")
+        self.assertEqual(self.decide(key=(None, None)), "reject",
+                         "two missing keys are not the same issuer (they compared as \"\" until 2026-10-01)")
+        self.assertEqual(self.decide(key=(["ab" * 32], "ab" * 32)), "reject", "a list is not a key")
 
 
 @unittest.skipUnless(any(V._provider_available(p) for p in V.REAL_PROVIDERS),

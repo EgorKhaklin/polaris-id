@@ -35,10 +35,10 @@ Polaris issues, holds, presents and verifies one credential per person, and answ
 Around the credential:
 
 - **The schema is the security boundary.** A 46-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client: **the guarantees live in the database, not in application code.**
-- **Verifiers anyone can hold to a contract.** Python and TypeScript SDKs and a conformance suite of 219 published cases; version 1 of the signed-statement protocol is frozen and re-verified on every push.
+- **Verifiers anyone can hold to a contract.** Python and TypeScript SDKs and a conformance suite of 281 published cases; version 1 of the signed-statement protocol is frozen and re-verified on every push.
 - **Explicit federation.** Trust between agencies is explicit and non-transitive.
 - **Zero-knowledge by default.** A zero-knowledge verification stores no token identifier; a Plonky2 SNARK, re-checked by an independent second witness, proves ledger membership and nothing else.
-- **Gated by invariants.** 339 machine-checked invariants (v1.0.0-rc.68) gate every change in CI.
+- **Gated by invariants.** 339 machine-checked invariants (v1.0.0-rc.69) gate every change in CI.
 
 **The problem it models.** Americans carry six to eight credentials (driver's license, passport, Social Security card and more) with no shared revocation path or audit trail. Polaris models one active credential record per person, verified through context-scoped events (banking, voting, healthcare) at three disclosure levels.
 
@@ -58,7 +58,7 @@ Around the credential:
 
 | | version | where |
 |---|---|---|
-| this tree | 1.0.0-rc.68 | the source you are reading |
+| this tree | 1.0.0-rc.69 | the source you are reading |
 | `polaris-oid4vp` | 1.0.0rc11 | PyPI; 1.0.0rc7 is the certified version |
 | `polaris-verify`, `polaris-sdk-python` | 1.0.0rc6 | PyPI |
 | `polaris-id-cli` | 1.0.0rc1 | PyPI; the operator CLI, for a running Polaris PostgreSQL |
@@ -123,7 +123,7 @@ From a clone (`pip install liboqs-python cryptography`):
 ```bash
 python3 scripts/polaris-verify.py --pqc-provider oqs --selftest        # live ML-DSA-65 round trip
 python3 scripts/polaris-verify.py --pqc-provider oqs --verify-dir vectors   # published packs
-python3 conformance/run_conformance.py --self                          # 219 published cases
+python3 conformance/run_conformance.py --self                          # 281 published cases
 python3 scripts/polaris-compat-suite.py                                # frozen v1 protocol
 ```
 
@@ -146,7 +146,7 @@ The vocation above them: **no person can be compelled to renounce, transfer, or 
 | **C9** | Concurrency is tested with real threads. | Engineering | Threaded suites against a live database |
 | **C10** | Identity is not money. | Constitutional | Structural absence, pinned by a check |
 
-Each is machine-checked by [`polaris_checks`](polaris_checks/): 339 plain `check_*` functions (v1.0.0-rc.68), each with a detection test proving it fails on a broken fixture. Why these ten: [MISSION.md](MISSION.md).
+Each is machine-checked by [`polaris_checks`](polaris_checks/): 339 plain `check_*` functions (v1.0.0-rc.69), each with a detection test proving it fails on a broken fixture. Why these ten: [MISSION.md](MISSION.md).
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
@@ -175,7 +175,7 @@ and writes nothing; the signer is ML-DSA-65, the algorithm a registry row ([over
 | [`polaris_web/`](polaris_web/) | Flask application: use-case flows, the Atlas, WebAuthn operator MFA, health and metrics. |
 | [`polaris_zk/`](polaris_zk/) | Plonky2 prover (Rust) and [`witness2/`](polaris_zk/witness2/), an independent Python reimplementation. |
 | [`polaris_cli/`](polaris_cli/) | Operator CLI for issuance, revocation, recovery and audit. |
-| [`polaris_checks/`](polaris_checks/) | The invariant layer: 339 checks (v1.0.0-rc.68). |
+| [`polaris_checks/`](polaris_checks/) | The invariant layer: 339 checks (v1.0.0-rc.69). |
 | [`packages/`](packages/), [`sdk/`](sdk/), [`conformance/`](conformance/) | The detached verifier, the OpenID4VP verifier, the verify SDKs and the conformance suite. |
 | [`scripts/`](scripts/), [`deploy/`](deploy/) | Wallet and relying-party tools, operator tooling, observability config. |
 

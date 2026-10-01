@@ -845,6 +845,142 @@ class TheInclusionProofSitesRefuseANonFiniteIndexTests(unittest.TestCase):
         self.assertEqual(out["index"], 0)
 
 
+class ParityWithBothSdksTests(unittest.TestCase):
+    """2026-10-01: inputs on which this verifier and the reference SDKs answered differently,
+    each pinned to the answer all three now give."""
+
+    def test_every_limit_argument_that_is_present_is_a_finite_number(self):
+        self.assertIs(V.grant_within_limits({"limits": {}}, 0, amount=float("nan"))[0], False)
+        self.assertIs(V.grant_within_limits({"limits": {}}, float("nan"))[0], False)
+        self.assertIs(V.grant_within_limits({"limits": {"max_amount": 100}}, 0)[0], True, "control")
+
+    def test_a_pairwise_handle_trims_ascii_whitespace_only(self):
+        key = "ab" * 32
+        self.assertEqual(V.pairwise_handle(key, " scope\t"), V.pairwise_handle(key, "scope"))
+        self.assertNotEqual(V.pairwise_handle(key, "scope\ufeff"), V.pairwise_handle(key, "scope"))
+        self.assertNotEqual(V.pairwise_handle(key, "\x1cscope"), V.pairwise_handle(key, "scope"))
+
+
+class AnAgentProofsTextFieldsTests(unittest.TestCase):
+    """The agent proof's grant id, nonce and action are strings or integers, compared as text, as
+    in both SDKs: `str(x or "")` read nonce 0 as missing (2026-10-01). Signatures are stubbed, so
+    only the comparisons decide."""
+
+    GRANT = {"format": "polaris-agent-grant/1", "grant_id": "g-1", "public_key_hex": "cd" * 32,
+             "algorithm": "ML-DSA-65", "agent_public_key_hex": "ab" * 32, "agent_algorithm": "ML-DSA-65",
+             "actions": ["read"], "limits": {}}
+
+    def setUp(self):
+        self._real = V._signed_by
+        V._signed_by = lambda obj, msg, pk, alg: (True, ["stub"], None)
+
+    def tearDown(self):
+        V._signed_by = self._real
+
+    def _proved(self, grant=None, **proof):
+        p = dict({"format": "polaris-agent-proof/1", "grant_id": "g-1", "public_key_hex": "ab" * 32,
+                  "action": "read", "service_nonce": 0, "algorithm": "ML-DSA-65", "signature_hex": "00" * 8}, **proof)
+        return V.verify_agent_grant(grant or self.GRANT, agent_proof=p, requested_action="read",
+                                    expected_nonce=0)["agent_proved"]
+
+    def test_nonce_zero_is_a_nonce(self):
+        self.assertIs(self._proved(), True)
+
+    def test_a_fractional_nonce_is_not_text(self):
+        self.assertIs(self._proved(service_nonce=0.0), False)
+
+    def test_a_proof_that_names_no_grant_binds_none(self):
+        """A grant with no grant_id has no revocation handle (WIRE-SPEC 3.17), so it is not a grant
+        and nothing is proved for it."""
+        p = {"format": "polaris-agent-proof/1", "grant_id": None, "public_key_hex": "ab" * 32,
+             "action": "read", "service_nonce": 0, "algorithm": "ML-DSA-65", "signature_hex": "00" * 8}
+        v = V.verify_agent_grant(dict(self.GRANT, grant_id=None), agent_proof=p, requested_action="read",
+                                 expected_nonce=0)
+        self.assertIs(v["grant_authentic"], False)
+        self.assertIs(v["usable"], False)
+        self.assertIs(self._proved(grant_id=None), False, "and a proof naming none binds a real grant to nothing")
+
+    def test_a_value_with_no_wire_text_matches_nothing(self):
+        """Compared bare, None == None let a proof naming no nonce match an expected nonce of 1.5."""
+        p = {"format": "polaris-agent-proof/1", "grant_id": "g-1", "public_key_hex": "ab" * 32,
+             "action": "read", "algorithm": "ML-DSA-65", "signature_hex": "00" * 8}
+        for nonce in (1.5, True, [1]):
+            with self.subTest(nonce=nonce):
+                self.assertIs(V.verify_agent_grant(self.GRANT, agent_proof=p, requested_action="read",
+                                                   expected_nonce=nonce)["agent_proved"], False)
+
+    def test_an_integer_beyond_2_53_is_not_an_id(self):
+        big = 2 ** 53 + 1
+        self.assertIs(self._proved(grant=dict(self.GRANT, grant_id=str(big)), grant_id=big), False)
+
+
+class GrantLimitsAreWholeNumbersTests(unittest.TestCase):
+    """2026-10-01, the detached verifier's twin of the SDK test: `int()` read 2.5 uses as 2, where
+    the TypeScript SDK refuses a fraction, so one signed grant had two answers."""
+
+    def test_whole_numbers_are_read(self):
+        self.assertEqual(V.grant_within_limits({"limits": {"max_uses": 3}}, uses_so_far=2), (True, None))
+
+    def test_a_fractional_limit_or_count_is_refused(self):
+        for limits, uses in (({"max_uses": 2.5}, 2), ({"max_uses": 3}, 1.5)):
+            with self.subTest(limits=limits, uses=uses):
+                ok, note = V.grant_within_limits({"limits": limits}, uses_so_far=uses)
+                self.assertIs(ok, False)
+                self.assertIn("whole numbers", note)
+
+
+class AGrantWhoseLimitsAreNotUnderstoodIsNotUsableTests(unittest.TestCase):
+    """2026-10-01. `verify_agent_grant` called a grant usable without reading its limits, while
+    `grant_within_limits` in the same module refuses a limit it does not understand: a grant
+    signed with `max_transfers: 3` was a bounded grant read as an unbounded one.
+
+    Every other link is stubbed to hold (the signatures, the credential, the binding), so the
+    limits are the only thing that can make the verdict differ. The known limits are the
+    control: without it a verifier that called nothing usable would pass.
+    """
+
+    GRANT = {"format": "polaris-agent-grant/1", "grant_id": "g-1",
+             "public_key_hex": "cd" * 32, "algorithm": "ML-DSA-65",
+             "agent_public_key_hex": "ab" * 32, "agent_algorithm": "ML-DSA-65",
+             "actions": ["read"], "issued_at": "2026-05-01T00:00:00Z",
+             "expires_at": "2026-05-01T06:00:00Z"}
+    PROOF = {"format": "polaris-agent-proof/1", "grant_id": "g-1", "public_key_hex": "ab" * 32,
+             "action": "read", "service_nonce": "n-1", "algorithm": "ML-DSA-65",
+             "signature_hex": "00" * 8}
+
+    def setUp(self):
+        self._saved = (V._signed_by, V.verify_pack, V.verify_holder_binding)
+        V._signed_by = lambda obj, msg, pk, alg: (True, ["stub"], None)
+        V.verify_pack = lambda cred, anchor_keys=None: {"signature_valid": True,
+                                                        "issuer_trusted": True, "note": None}
+        V.verify_holder_binding = lambda b, credential=None, now=None, anchor_keys=None: {
+            "binding_authentic": True, "fresh": True, "holder_public_key_hex": "cd" * 32,
+            "bound_to_credential": True}
+
+    def tearDown(self):
+        V._signed_by, V.verify_pack, V.verify_holder_binding = self._saved
+
+    def _usable(self, **limits):
+        grant = dict(self.GRANT, **limits)
+        return V.verify_agent_grant(grant, binding={"status": "active"}, credential={},
+                                    now="2026-05-01T00:00:30Z", requested_action="read",
+                                    agent_proof=self.PROOF, expected_nonce="n-1",
+                                    anchor_keys=["cd" * 32])
+
+    def test_known_limits_and_none_at_all_are_usable(self):
+        for extra in ({}, {"limits": {}}, {"limits": {"max_uses": 3, "max_amount": 100}}):
+            with self.subTest(extra=extra):
+                v = self._usable(**extra)
+                self.assertIs(v["usable"], True, v["note"])
+
+    def test_a_limit_this_verifier_does_not_understand_is_not_usable(self):
+        for limits in ({"max_transfers": 3}, "3", [3], {"max_uses": "3"}, {"max_amount": float("nan")}):
+            with self.subTest(limits=limits):
+                v = self._usable(limits=limits)
+                self.assertIs(v["usable"], False)
+                self.assertTrue(v["note"])
+
+
 class TheGrantPinsTheAgentsAlgorithmTests(unittest.TestCase):
     """`agent_algorithm` is inside the statement the HOLDER signs, and was read by nothing.
 

@@ -835,6 +835,14 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         if not head or not re.search(r"SECURITY\s+DEFINER", head.group(0), re.I):
             return _fail("c1_aor_priv", routine + " must be SECURITY DEFINER: it is the federation "
                                         "trust graph's only door (C1)")
+    # 2026-10-01. The holder key route records events through uc_record_holder_key_event, which
+    # holds bound / rotated / revoked in order. The application role's INSERT on HolderKeyEvent is
+    # withdrawn by a contract migration in a later release (the previous release's route uses it).
+    hk = re.search(r"FUNCTION\s+uc_record_holder_key_event\b.*?AS\s+\$\$", proc, re.I | re.S)
+    if (not hk or not re.search(r"SECURITY\s+DEFINER", hk.group(0), re.I)
+            or not re.search(r"SET\s+search_path\s*=\s*public\s*,\s*pg_temp", hk.group(0), re.I)):
+        return _fail("c1_aor_priv", "uc_record_holder_key_event must be SECURITY DEFINER with search_path "
+                                    "pinned: the holder key route records every event through it (C1)")
     # 2026-09-25. The anchoring layer: written by close_anchor_batch and the sample data only.
     if not (re.search(r"REVOKE\s+INSERT\s+ON\s+AnchorBatch\s+FROM\s+polaris_app", grants, re.I)
             and re.search(r"REVOKE\s+INSERT\s*,\s*UPDATE\s*,\s*DELETE\s+ON\s+BlockchainAnchor\s+FROM\s+polaris_app",
@@ -906,7 +914,8 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
                "append-only tables revoke UPDATE/DELETE from polaris_app, and so does every "
                "partition of the four event tables; the lifecycle log and the ZK epoch tables refuse "
                "the application's INSERT, and so does the trust graph, revoked only from its "
-               "procedure; uc_archive_purge, uc11_close_epoch and uc10 are SECURITY DEFINER (C1)")
+               "procedure; uc_archive_purge, uc11_close_epoch, uc10 and uc_record_holder_key_event "
+               "are SECURITY DEFINER (C1)")
 
 
 # ---------------------------------------------------------------------------
@@ -15282,8 +15291,15 @@ def check_agent_grant(root: pathlib.Path) -> list[Finding]:
         return _fail(name,
                      "verify_agent_grant must treat a missing or malformed `actions` as the EMPTY "
                      "list, so a grant that names nothing authorises nothing")
-    if 'v["action_in_scope"] = str(requested_action) in actions' not in body:
-        return _fail(name, "the requested action must be checked against the grant's own list")
+    # Against the grant's own list, as text on both sides. Until 2026-10-01 this pinned the line
+    # `str(requested_action) in actions`, and that line was the defect: str() spells null "None"
+    # and true "True" where the TypeScript SDK's String() does not, so a signed `actions: [null]`
+    # covered "None" in Python only. The property is pinned now, and the old form is a FAIL case.
+    scope = re.search(r'v\["action_in_scope"\]\s*=\s*([^\n]+)', body)
+    if (not scope or "actions" not in scope.group(1) or "_wire_text(" not in scope.group(1)
+            or not re.search(r"_wire_text\(\s*requested_action\s*\)", body)):
+        return _fail(name, "the requested action must be checked against the grant's own list, as text on "
+                           "both sides (_wire_text), not through str()")
 
     # REVOCABLE BY THE HOLDER ALONE.
     if "the revocation is signed by a key other than the grant's holder" not in body:
@@ -23438,8 +23454,26 @@ def check_definer_routines_pin_search_path(root: pathlib.Path) -> list[Finding]:
                            "DEFINER routine (a loop over pg_proc.prosecdef): each one runs as its "
                            "owner, so PUBLIC's default EXECUTE lends the owner's rights to any "
                            "role that can connect")
-    return _ok(name, f"all {found} SECURITY DEFINER routines pin their own search_path, and "
-                     "09_grants.sql takes PUBLIC's EXECUTE off every one")
+    # 2026-10-01 (review F2): that loop lends every definer routine to polaris_app, and the
+    # retention routines take the acting admin as a parameter the role can name at will. They
+    # are taken back AFTER the loop (before it, the loop lends them again), by name, in code.
+    code = re.sub(r"--[^\n]*", "", grants)
+    lend = re.search(r"GRANT\s+EXECUTE\s+ON\s+ROUTINE\s+%s\s+TO\s+polaris_app", code, re.I)
+    take = re.search(r"REVOKE\s+EXECUTE\s+ON\s+ROUTINE\s+%s\s+FROM\s+polaris_app",
+                     code[lend.end():] if lend else "", re.I)
+    block = ""
+    if lend and take:
+        at = lend.end() + take.start()
+        block = code[code.rfind("DO $$", 0, at):at]
+    missing = [r for r in ("uc_archive_purge", "uc_set_retention_policy", "uc_apply_retention_template")
+               if f"'{r}'" not in block]
+    if missing:
+        return _fail(name, "09_grants.sql must take EXECUTE on the retention routines back from "
+                           "polaris_app after the loop that lends it every definer routine: they "
+                           "take the acting admin as a parameter (missing: " + ", ".join(missing) + ")")
+    return _ok(name, f"all {found} SECURITY DEFINER routines pin their own search_path, "
+                     "09_grants.sql takes PUBLIC's EXECUTE off every one, and the retention "
+                     "routines are the owner's alone")
 
 
 # 2026-09-25. Operator isolation is row-level security, and a view is evaluated with its OWNER's

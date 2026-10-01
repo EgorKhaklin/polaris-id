@@ -126,6 +126,28 @@ class HolderWalletTests(unittest.TestCase):
             self.assertIn(phrase, r.stderr,
                           "the refusal must name %r so the holder can act on it" % phrase)
 
+    @unittest.skipUnless(_HAVE_OQS, "holder-keygen needs liboqs before it reaches the rotation; "
+                                     "CI runs it under the real-PQC interpreter")
+    def test_a_rotation_needs_the_live_key_and_never_loses_it(self):
+        """2026-10-01 (review S1): a bound key is changed only by that key, so --rotate signs
+        with the key on disk. With none it is refused before the network; with one, an instance
+        that never answers leaves the live key where it was and the new one waiting beside it."""
+        self._enroll()
+        r = self._run("holder-keygen", "--rotate", "--instance", "http://127.0.0.1:1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no holder key in this wallet to rotate from", r.stderr)
+        self._run("holder-keygen", "--instance", "http://127.0.0.1:1")   # half-bound: the key is saved
+        live = os.path.join(self.wallet, "holder_key.json")
+        with open(live) as f:
+            before = f.read()
+        r = self._run("holder-keygen", "--rotate", "--instance", "http://127.0.0.1:1")
+        self.assertNotEqual(r.returncode, 0, "an unanswered rotation is not a success")
+        self.assertNotIn("Traceback", r.stderr)
+        with open(live) as f:
+            self.assertEqual(f.read(), before, "the live key must survive a rotation nobody answered")
+        self.assertTrue(os.path.exists(live + ".pending"), "the new key waits beside the live one")
+        self.assertIn(".pending", r.stderr, "and the message says where")
+
     def test_prove_membership_roundtrips_through_polaris_zk(self):
         binary = _zk_binary()
         if not os.path.exists(binary):
@@ -364,6 +386,39 @@ class WalletAgainstAnIssuerTests(unittest.TestCase):
         decoded = decoded[0] if isinstance(decoded, tuple) else decoded
         self.assertEqual(decoded, json.loads(plain.stdout))
 
+
+
+class GrantLimitsAreSignedAsVerifiersReadThem(unittest.TestCase):
+    """2026-10-01: --max-amount 100 was signed as 100.0, which the TypeScript SDK reads as 100, so its
+    canonical bytes differed and a genuine grant failed there. A whole amount is now an integer."""
+
+    def _grant(self, amount):
+        import argparse
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("polaris_wallet", _WALLET)
+        w = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(w)
+        w._sign_with_holder_key = lambda wallet, digest, algorithm=None: ("00", "ab" * 32, "ML-DSA-65")
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "grant.json")
+            args = argparse.Namespace(wallet=d, action=["pay"], max_uses=None, max_amount=amount,
+                                      grant_id="g-1", agent_key="cd" * 32, agent_algorithm="ML-DSA-65",
+                                      context=1, hours=1, out=out)
+            w.cmd_grant(args)
+            with open(out) as f:
+                return json.load(f)
+
+    def test_a_whole_amount_is_an_integer(self):
+        g = self._grant(100.0)
+        self.assertEqual(g["limits"]["max_amount"], 100)
+        self.assertIs(type(g["limits"]["max_amount"]), int)
+
+    def test_a_fraction_stays_a_fraction(self):
+        self.assertEqual(self._grant(12.5)["limits"]["max_amount"], 12.5)
+
+    def test_a_limit_that_is_not_finite_is_refused(self):
+        with self.assertRaises(SystemExit):
+            self._grant(float("nan"))
 
 if __name__ == "__main__":
     unittest.main()
