@@ -1446,6 +1446,22 @@ class TokenTests(PolarisTestCase):
         self.assertEqual(r.status_code, 200)
         self.assertHTML(r, 'Illegal token state transition')
 
+    def test_a_malformed_acting_agency_is_refused_not_a_500(self):
+        """2026-09-30. The gate read a non-numeric actor_agency_id's ValueError as "not
+        denied", and the GUC write then raised it: a 500 for an operator's typo."""
+        for value in ('abc', '1e5'):
+            r = self._post('/tokens/2/transition', csrf_from='/tokens/2',
+                           data={'new_status': 'DORMANT', 'actor_agency_id': value},
+                           follow_redirects=True)
+            self.assertEqual(r.status_code, 200, value)
+            self.assertHTML(r, 'The acting agency must be an agency number')
+        with psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG) as conn, conn.cursor() as cur:
+            cur.execute("SELECT status FROM IdentityToken WHERE token_id = 2")
+            self.assertEqual(cur.fetchone()['status'], 'ACTIVE', 'a refused transition moved the token')
+        r = self._post('/tokens/2/transition', csrf_from='/tokens/2',
+                       data={'new_status': 'DORMANT', 'actor_agency_id': ' 3 '}, follow_redirects=True)
+        self.assertHTML(r, 'Token #2 is now DORMANT')
+
     def test_state_change_writes_audit_row_automatically(self):
         """The AFTER UPDATE auto-audit trigger guarantees that every status
         change produces a TokenLifecycleEvent row, independent of whether the
@@ -14277,8 +14293,8 @@ class VerifyWitnessSamplingTests(PolarisTestCase):
 # --- End-to-end holder<->verifier flow (v9.287) -----------------------------
 # The full path with a REAL database status service: issue -> authenticity pack
 # -> the holder wallet presents -> a relying party decides ACCEPT/REJECT by
-# combining offline authenticity (the detached verifier) with the ONLINE status
-# from GET /api/tokens/<id>/verify. Gated on real ML-DSA (so authenticity is the
+# combining offline authenticity (the detached verifier) with the ONLINE status,
+# a signed assertion asked for by possession of the credential. Gated on real ML-DSA (so authenticity is the
 # genuine article); it runs wherever liboqs + cryptography are present and is
 # skipped in the placeholder CI suite. The stubbed-status form of the same
 # decision matrix runs every release in scripts/polaris-e2e-drill.py, and the
@@ -14311,6 +14327,26 @@ class EndToEndFlowTests(PolarisTestCase):
     """The holder presents; the relying party accepts a live credential, rejects a
     revoked one, and cannot tell a duress presentation from a normal accept —
     against the REAL DB status service, with real signatures."""
+
+    def setUp(self):
+        super().setUp()
+        # The issuer's long-lived key, as production configures one (custody's file driver).
+        # Without it pqc_signing signs every call under a fresh throwaway key, so the credential
+        # and the status assertion the issuer later signs for it come from two keys, and the
+        # relying party rightly refuses an assertion its credential's key did not sign.
+        fd, path = _e2e_tmp.mkstemp(suffix=".key.json")
+        with os.fdopen(fd, "w") as f:
+            _e2e_json.dump(flask_app.pqc_signing.generate_keypair(), f)
+        before = os.environ.get("POLARIS_PQC_SIGNING_KEY_FILE")
+        os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = path
+
+        def restore():
+            if before is None:
+                os.environ.pop("POLARIS_PQC_SIGNING_KEY_FILE", None)
+            else:
+                os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = before
+            os.remove(path)
+        self.addCleanup(restore)
 
     def _new_conn(self):
         return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
@@ -14361,8 +14397,21 @@ class EndToEndFlowTests(PolarisTestCase):
         return rp
 
     def _status_checker(self):
-        # The relying party's ONLINE status call, made against the real endpoint.
-        return lambda tid: self.client.get('/api/tokens/%s/verify' % tid).get_json()
+        # The relying party's ONLINE status call against the real issuer, made as
+        # scripts/polaris-relying-party.py makes it: asked by the credential's own signed serial
+        # (POST /api/v1/status-assertion, possession-authenticated) and believed only once the
+        # issuer's signed assertion verifies for THIS credential. It was asked by the
+        # presentation's token_id, which nothing signs, so an edited id read another credential's
+        # status (2026-09-30).
+        verify = _e2e_load("polaris_verify_e2e_status", "polaris-verify.py")
+
+        def check(credential):
+            r = self.client.post('/api/v1/status-assertion', json={
+                'token_value': credential.get('token_value'),
+                'signature_hex': credential.get('signature_hex')})
+            d = verify.verify_stapled(credential, r.get_json())
+            return {'currently_authoritative': d['decision'] == 'accept', 'status': d['status']}
+        return check
 
     def test_active_credential_is_accepted_then_rejected_after_revocation(self):
         rp = self._relying_party()

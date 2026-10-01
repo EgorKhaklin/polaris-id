@@ -12,8 +12,11 @@ the two questions Polaris keeps deliberately separate:
      trusted issuer? Checked with the detached verifier (scripts/polaris-verify.py),
      no server, no database. Optionally against an issuer anchor set.
   2. AUTHORIZATION (online, freshness-critical): is the token authoritative RIGHT
-     NOW (ACTIVE, not revoked)? A tiny online call to the issuer's
-     GET /api/tokens/<id>/verify.
+     NOW (ACTIVE, not revoked)? Asked by the credential's own signed serial, never
+     by an id the presentation states about itself: the issuer's signed status
+     assertion (POST /api/v1/status-assertion), believed only once it verifies
+     offline and is bound to this credential; or, as a relying-party organization,
+     the issuer's POST /api/v1/verify.
 
 ACCEPT iff the credential is authentic, from a trusted issuer (when an anchor is
 given), and currently authoritative. Without a reachable issuer the verdict is
@@ -50,9 +53,13 @@ def _load_verifier():
 def verify_presentation(presentation, anchor_keys=None, status_checker=None):
     """Decide ACCEPT/REJECT/PROVISIONAL for a holder's presentation.
 
-    status_checker: a callable token_id -> the issuer's /verify JSON (dict), or None
-    to skip the online status check (offline / provisional). Injectable so this is
-    testable without a live server; the CLI supplies an HTTP one."""
+    status_checker: a callable credential -> the issuer's verdict about THAT credential
+    ({"currently_authoritative": bool, "status": str}), or None to skip the online status
+    check (offline / provisional). It is handed the credential, whose token_value the issuer
+    signed, and not the presentation's `token_id`, which nothing signs: until 2026-09-30 the
+    status was asked by that id, so a holder who edited it to another credential's read that
+    credential's ACTIVE and a revoked credential was accepted. Injectable so this is testable
+    without a live server; the CLI supplies an HTTP one."""
     # A presentation and its credential are the holder's; either can be any JSON at all.
     presentation = presentation if isinstance(presentation, dict) else {}
     cred = presentation.get("credential")
@@ -70,7 +77,7 @@ def verify_presentation(presentation, anchor_keys=None, status_checker=None):
     status, current = None, None
     if authentic and issuer_ok and status_checker is not None:
         try:
-            status = status_checker(cred.get("token_id"))
+            status = status_checker(cred)
         except Exception as e:
             status = {"error": str(e)}
         if isinstance(status, dict) and "currently_authoritative" in status:
@@ -104,13 +111,27 @@ def verify_presentation(presentation, anchor_keys=None, status_checker=None):
     }
 
 
-def _http_status_checker(issuer_url):
+def _http_status_checker(issuer_url, anchor_keys=None):
+    """Ask the issuer for a signed status assertion by POSSESSION, as the holder's wallet does:
+    the credential's own token_value and signature, with no session and no id of the holder's
+    choosing. The answer is believed only once it verifies offline (verify_stapled): signed by
+    the credential's own key, naming this token_value, fresh, and ACTIVE. An answer that does not
+    verify is a status that could not be read, not a revocation."""
     base = issuer_url.rstrip("/")
 
-    def check(token_id):
-        url = "%s/api/tokens/%s/verify" % (base, token_id)
-        with urllib.request.urlopen(url, timeout=30) as r:
-            return json.loads(r.read())
+    def check(credential):
+        body = json.dumps({"token_value": credential.get("token_value"),
+                           "signature_hex": credential.get("signature_hex")}).encode()
+        req = urllib.request.Request("%s/api/v1/status-assertion" % base, data=body,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            assertion = json.loads(r.read())
+        d = _load_verifier().verify_stapled(credential, assertion, anchor_keys=anchor_keys)
+        sa = d.get("status_assertion") or {}
+        if not (d.get("bound") and sa.get("status_authentic")) or sa.get("issuer_trusted") is False:
+            return {"error": "the issuer's status assertion did not verify for this credential: %s"
+                             % "; ".join(d.get("reasons") or ["invalid"])}
+        return {"currently_authoritative": d.get("decision") == "accept", "status": d.get("status")}
     return check
 
 
@@ -132,7 +153,7 @@ def _oauth_status_checker(issuer_url, client_id, client_secret, credential):
     body = json.dumps({"token_value": credential.get("token_value"),
                        "signature_hex": credential.get("signature_hex")}).encode()
 
-    def check(_token_id):
+    def check(_credential):
         token_req = urllib.request.Request(
             "%s/api/v1/oauth/token" % base, data=b"grant_type=client_credentials",
             headers={"Authorization": "Basic " + creds,
@@ -191,7 +212,7 @@ def main(argv=None):
             status_checker = _oauth_status_checker(
                 args.issuer_url, args.oauth_client_id, args.oauth_client_secret, cred)
         else:
-            status_checker = _http_status_checker(args.issuer_url)
+            status_checker = _http_status_checker(args.issuer_url, anchor)
 
     verdict = verify_presentation(presentation, anchor_keys=anchor, status_checker=status_checker)
     if args.json:

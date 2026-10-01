@@ -54,10 +54,14 @@ assertion signed by another trusted key than the credential's**, and ignores `--
 `--trusted-anchor` on a presentation. All three verifiers, polaris-verify 1.0.0rc5 and both
 SDKs below, also **trust a federation manifest that merely lists a trusted anchor**, count any
 key's signature on a trust edge as the attesting authority's, accept a holder proof made for
-another credential, and accept a timestamp over a SHA-1 or uppercase digest; the SDKs also accept
-a revocation feed whose count differs from its leaves; `polaris-sdk-python`
-1.0.0rc5 and `polaris-sdk-ts` 1.0.0-rc.6 bind a grant to a credential whose signature does not
-verify and accept a status bundle whose `member_count` differs from its members. `polaris-oid4vp`
+another credential, name a receipt's responder that nothing confirmed, and accept a timestamp
+over a SHA-1 or uppercase digest. The SDKs also **read any artifact the timestamp log's key signed
+as the log's tree head**, **trust a federation manifest when no trust anchor is named**, **prove a
+holder chain checked against no nonce or with a credential whose signature does not verify**,
+count a holder binding with no window as fresh, and accept a revocation feed whose count differs
+from its leaves; `polaris-sdk-python` 1.0.0rc5 and `polaris-sdk-ts` 1.0.0-rc.6 bind a grant
+to a credential whose signature does not verify and accept a status bundle whose `member_count`
+differs from its members. `polaris-oid4vp`
 1.0.0rc11 **answers a wallet 200 for a credential its configured status resolver found revoked**,
 accepts a presentation that withholds a requested claim, an orphan disclosure with key binding
 waived, an `x5c` leaf expired at the verdict's `now` and a JWE marked `crit`, and serves an expired

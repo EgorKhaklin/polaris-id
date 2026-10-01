@@ -171,7 +171,9 @@ Signed fields: format, requester, responder, context_id, request_hash, response_
 
 `request_hash` and `response_hash` MUST each be the lowercase `SHA3-256` hex of the
 respective body; the body itself MUST NOT appear in the receipt. The receipt is signed by
-the responder. A verifier MUST confirm the signature; with the requester's trusted manifests,
+the responder. A verifier MUST confirm the signature. A verifier MUST NOT report the responder a
+receipt names until it has confirmed that the signing key is that responder's. With the
+requester's trusted manifests,
 it MUST confirm the requester's key is attested in the receipt's context (the section 4 trust
 decision applied to the requester). A verifier that holds a body MAY confirm the commitment
 binds (`request_hash == SHA3-256(request)`); a verifier that does not still obtains proof that
