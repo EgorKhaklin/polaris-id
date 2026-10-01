@@ -301,6 +301,13 @@ binding names its grant or credential as text (`agent-grant-use-revocation-*`,
 actions covers nothing (`agent-grant-use-action-*`). Before these cases the Python verifiers failed
 ten and the TypeScript SDK eight.
 
+Hex text (1.0.0-rc.70). Six cases pin that a key or a digest is a hex string and nothing else.
+JavaScript's String() reads a one-element list as its element where Python's str() writes the
+brackets, so a manifest anchor, an agent key, a holder key, an attested key or a feed root signed
+as [K] matched K in the TypeScript SDK alone (`*-a-list`). Before these cases the TypeScript SDK
+failed five; both Python verifiers passed them, and a missing key on either side of their
+comparisons no longer matches a missing key on the other.
+
 WIRE-SPEC rules (1.0.0-rc.69). Eleven cases pin three rules a read of every verifier requirement
 found split or unenforced. A revoked leaf and an epoch leaf are 64 hex digits (3.3, 3.16): a feed
 with a `null` leaf, rooted as Python spells it or as JavaScript does, was accepted by one language's

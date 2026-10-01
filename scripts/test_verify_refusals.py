@@ -1064,11 +1064,12 @@ class StapledDecisionNeedsEveryFact(unittest.TestCase):
     GOOD_PACK = {"signature_valid": True, "issuer_trusted": True}
     GOOD_SA = {"status_authentic": True, "issuer_trusted": True, "fresh": True, "status": "ACTIVE"}
 
-    def decide(self, pack=None, sa=None, token=("T", "T")):
+    def decide(self, pack=None, sa=None, token=("T", "T"), key=("ab" * 32, "AB" * 32)):
         from unittest import mock
         with mock.patch.object(V, "verify_pack", return_value=dict(self.GOOD_PACK, **(pack or {}))), \
                 mock.patch.object(V, "verify_status_assertion", return_value=dict(self.GOOD_SA, **(sa or {}))):
-            return V.verify_stapled({"token_value": token[0]}, {"token_value": token[1]})["decision"]
+            return V.verify_stapled({"token_value": token[0], "public_key_hex": key[0]},
+                                    {"token_value": token[1], "public_key_hex": key[1]})["decision"]
 
     def test_all_seven_facts_accept(self):
         self.assertEqual(self.decide(), "accept")
@@ -1091,6 +1092,9 @@ class StapledDecisionNeedsEveryFact(unittest.TestCase):
         self.assertEqual(self.decide(token=("", "")), "reject",
                          "two missing token values are not a binding")
         self.assertEqual(self.decide(token=(None, None)), "reject")
+        self.assertEqual(self.decide(key=(None, None)), "reject",
+                         "two missing keys are not the same issuer (they compared as \"\" until 2026-10-01)")
+        self.assertEqual(self.decide(key=(["ab" * 32], "ab" * 32)), "reject", "a list is not a key")
 
 
 @unittest.skipUnless(any(V._provider_available(p) for p in V.REAL_PROVIDERS),

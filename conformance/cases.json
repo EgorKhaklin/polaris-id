@@ -3572,6 +3572,90 @@
       },
       "since": "1.0.0-rc.70",
       "note": "The same binding beside the credential \"True\". Python's str() spelled true \"True\" and bound the grant; the TypeScript SDK did not. true is not text and names no credential."
+    },
+    {
+      "name": "manifest-anchor-key-control",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/hex-text-manifest-anchor-control.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "1.0.0-rc.70",
+      "note": "The positive control: a manifest signed by the one anchor it lists."
+    },
+    {
+      "name": "manifest-anchor-key-a-list",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/hex-text-manifest-anchor-a-list.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A manifest signed by K whose one anchor lists its key as [K]. A key or a digest is a hex string; JavaScript's String() read the one-element list as its element, so the TypeScript SDK accepted this and both Python verifiers did not."
+    },
+    {
+      "name": "agent-grant-use-agent-key-a-list",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/hex-text-agent-grant-key-a-list.json",
+      "now": "2026-05-01T00:00:30Z",
+      "proof_file": "conformance/vectors/hex-text-agent-proof.json",
+      "requested_action": "read:status",
+      "expected_nonce": "svc-hex-text-1",
+      "expect": {
+        "authentic": true,
+        "action_in_scope": true,
+        "agent_proved": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A grant naming its agent key as [AK], and a proof signed by AK. A key or a digest is a hex string; JavaScript's String() read the one-element list as its element, so the TypeScript SDK accepted this and both Python verifiers did not."
+    },
+    {
+      "name": "holder-chain-binding-key-a-list",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/hex-text-holder-credential.json",
+      "binding_file": "conformance/vectors/hex-text-holder-binding-key-a-list.json",
+      "proof_file": "conformance/vectors/hex-text-holder-proof.json",
+      "expected_nonce": "hex-text-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A binding the issuer signed naming the holder key as [HK], and a proof signed by HK. A key or a digest is a hex string; JavaScript's String() read the one-element list as its element, so the TypeScript SDK accepted this and both Python verifiers did not."
+    },
+    {
+      "name": "cross-authority-attested-key-a-list",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/hex-text-edge-pack.json",
+      "manifest_files": [
+        "conformance/vectors/hex-text-edge-manifest-key-a-list.json"
+      ],
+      "trusted_anchors": [
+        "2b71322a04edff2d8e9f0bef9d728289788baee0d44e4519375aac3661a1a7b2cbf28efbf1fe786b1ae2a0db1299c1c695d3580ff43c19f1133557f63bd2d47b7a5c6331f67dba93f0bdccdfb5dccce28056df31e81dcc3050d91d74e2d96f308f5ab797058e51ce8cb847bed008415a33c1eef74bb0549d937b04964b75916334abfc7815a410bfbfc3686bc4dc12187794d48a021d35032d174549c66e1b47240613de9d6c4d93502fbe209c3674e0aa89950c868b6c54b059b487f6b144167f2d596dd0173e5bccf5290c94820e50baa59881a8e2ddeb3874791ad09f92c28e29a91aa653bf920fe4994599923d952e61ecd20c97ceb78e1a1056eb16e5b64b5c11357f2e41d16cd5a202bb6aed3c9190f3f85c6b11658b07f299f69c4033d60f915931280e0e60ae3499b6f1cdba34b2b84cd7443a4627af9bb550f1d5d83d0f33015afbd7e1d71059c285b4185c891b5e10d5e04889a41d356a22f237ed197a4a9874e968789351b45a60bb144b4939892f4c7c72a0e506a794b8f102bcdfb941cb16a4b6beb70cd35261155d34411d3f9835e2009a3ad45ccf89b81a0830f6287bcc0c6bbdf5ecae0fcbb778f814fda6c6392d84711ec9ac51746ee4b3d070e82886b2b8762b16bb6b4b77abaebcce14426a18d889598b2f887dd7116886d70eb035756a2e937e3db32223e95879c7d068d4a79236a1d7d80d65506c3368da20dbc087dc459c5bdb4210ed141dc6ca728e642b5a6ffa3460d60e13a49398afe539ac9f2735e9c257c1e164ea5dbd602dc98ce3f21e8c94068573890333b8934b31bc30f954edf739ce5ed9f7616df7ed47b415ebdc865334ee3c43ffb14856a409f1f1ec8d5eb42c897ebf907e58e18ed693913b3ba2caf6fd6468d8a89e990fb14375b11404568258ab6b31cac735e8bdf81a14d52b7d8137850da662d556917cb4a83044f37de115651dc01a474713991db11daa81baead3b5e4e59487636310f9e449b8c79f7eb9262f4e9e1bd8c085a6d13752d3e8913403937f6f4de9a9fdd9b40f90a95ccd260bbd2130bac4039bf545375c3eea778b303bde9cdf5dd892d25770d18736a103440365ad5f4ccfcda53bb24272daf61490560029ce44e6bf47816663498810e41e5b1025b41bdf6616514d99c0465b74710fe06d129cc23b7d284e31df56c2c74d7980e4c88133675f1d359ad9cb56b3259356257ac60d227c95e033deb0a014ded02574275fc29afbc3dd319f60ff2eb25f4a126f6eaf0d2cce39d763218835fc65043f876ddf0f614a3d6adebcc1bee4fd8336c50f4316cdf4b699931fa3013f9057de917fe25c84a74a0f6a5faa24b3e6533559967ed2bc695fb5f1e0207b7e3aae1261e3540af3789272bb8e1364bde25bb152c96b722a21d4dcc16d56ebba8f164e1b7b7a1eccfb574218fcde6483971fe93755cf4f71a63a1b2e1f5db65e4b9f1a4d0691a0d92a438bc1a42fd758680e2c38f289d572d8c4a833bead30b74d949ce29fec2b7b19b2f81ded40f8dd198464213011d39b60351966123aa432641077b13ab942a7e4efb553eea55ba8a1dab1953415d203d2df348c611dab2ec63e5c1cc3ce84ff79c33ed2b9b60628d4534003944459db787ce0bb874f97f346a864a2dc3509b2a748d281639423f6bb3ea89cc1e910580639a84f93efd3c5eb90a2ddb3c3334a14e895ff809a88b3c087d7623252132491d9399686ab979a39aa0d571e3866393eaa8e740adbf45047ac4582fbb99bc82287b3c8624c5c7148aadb838b19aef6911668974b1613d6e94e1310cdb9433476389cd782ddb4b0c5ee9d3c2e3fab83ab905e4f02dd3a0fa9a22b45f70e95dd2a8381f832666c2aa04e4d4efc41f1c9ea965a21aced1bb18a4f481067d9e422650ae496379f2b2855d620194d685de938b46d78d170b420a90c4fe11cc0857b0d1be94bc3b314c6dfa6e0c765af92b01cada27c3c2fc394f665135b703a5ee826db0db2e23dae87b22ed812a651b8c541c4c3c6e12a67e013e29bcc127bed794999d6ff14b081716d1b227c8d87fbbb16768478ff429587e2adaa17cf90be01bdea943d9264e1ff30d7909c0b78b2f1adc591bce870fced8cbf744cbbc64b6e73a84904e34b350702af809c81875dc941e6963adc6750eff1ef12a37a67abd9654a2966d4fdf12520a0347878c105f20007456e01770e604f300d94f11bc809d88414e372076b2dd0896be165a11332bdb24f336571d4de342de05e24cb5b7ba96d68e112a909d0e0e2dd5adb6e23eb24dbed1cac6de40a5566ea7328312343fdd0b2853acb658f7b35b97d9c08f22a70ceefe35528f3b5f5fa55fe5618a13684743892682432ff2817a9a303c82ee4ec52ec0d4d795e5733baf12b5ddfd45968fecca0553716d30367bcac06566565c8a267854c884b9cc82d920aaf069b014b5959852abe1bee26f76ddb09e3d908eb6723c3317a4adf4273705bf975e5a81665aed21fee09a88428fa364113d98c4e1e7b71bed4dd94c8f2aecf22d1ec0ed68330e895f813e81393270a40975eb69d9b3bac2c83c3b18f1e1185a726cfa692a343020e0fc633673d0d546957d4f9e1e6edafe09735b7d9dfdf07846653e49dca2620b7d0c92acaa1af2999412095ced546e48198e2ec02b27ac74c10ba10b09f02e3be4e6a329cd8604aca5b776012e7eef6dc0a66902357ebc90a5e001b6d7eaeca6a49a195049af44d75d290c867d63c6398ff6d6d718425"
+      ],
+      "context_id": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "require_signed_attestation": true,
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A signed edge naming the attested key as [K], presented by a credential signed by K. A key or a digest is a hex string; JavaScript's String() read the one-element list as its element, so the TypeScript SDK accepted this and both Python verifiers did not."
+    },
+    {
+      "name": "revocation-feed-root-a-list",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/hex-text-revocation-feed-root-a-list.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.70",
+      "note": "A feed whose signed revoked_root_hex is [R], R being the root of its one leaf. A key or a digest is a hex string; JavaScript's String() read the one-element list as its element, so the TypeScript SDK accepted this and both Python verifiers did not."
     }
   ]
 }

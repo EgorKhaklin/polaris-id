@@ -596,7 +596,7 @@ export function verifySignedArtifact(obj: any, now?: string | null,
     // P9.2: the leaves ride outside the signed statement, committed to by leaves_root_hex.
     const leaves = Array.isArray(o.all_leaves_hex) ? o.all_leaves_hex : [];
     ok = leavesAreHex(o.all_leaves_hex)
-      && revokedRoot(leaves) === String(o.leaves_root_hex ?? "").toLowerCase() && leaves.length === o.leaf_count;
+      && revokedRoot(leaves) === hexText(o.leaves_root_hex) && leaves.length === o.leaf_count;
     // NOT an early return. This is one of five commitment checks in this function and the
     // other four fall through to the tail, so returning here reported `fresh: null` where
     // its four siblings report the window's answer: the same class of failure, two
@@ -610,7 +610,7 @@ export function verifySignedArtifact(obj: any, now?: string | null,
     // compared until 2026-09-30, where the detached verifier compared both.
     const leaves = Array.isArray(o.revoked_leaves) ? o.revoked_leaves : [];
     ok = leavesAreHex(o.revoked_leaves)
-      && revokedRoot(leaves) === String(o.revoked_root_hex ?? "").toLowerCase()
+      && revokedRoot(leaves) === hexText(o.revoked_root_hex)
       && typeof o.revoked_count === "number"
       && o.revoked_count === new Set(leaves.map((x: any) => String(x).toLowerCase())).size;
   } else if (ok && o.format === "polaris-agent-grant/1") {
@@ -634,31 +634,31 @@ export function verifySignedArtifact(obj: any, now?: string | null,
     // the detached verifier checked it: a bundle whose signed count and listed members
     // disagreed was authentic here and in the Python SDK.
     const members = Array.isArray(o.members) ? o.members : [];
-    ok = membersRoot(members) === String(o.members_root_hex ?? "").toLowerCase()
+    ok = membersRoot(members) === hexText(o.members_root_hex)
       && typeof o.member_count === "number" && o.member_count === members.length;
   } else if (ok && o.format === "polaris-federation-manifest/1") {
-    const active = new Set(
+    const active = new Set<string | null>(
       (Array.isArray(o.anchors) ? o.anchors : [])
         .filter((a: any) => a && (a.status ?? "active") === "active")
-        .map((a: any) => String(a.public_key_hex ?? "").toLowerCase()),
+        .map((a: any) => hexText(a.public_key_hex)),
     );
-    ok = active.has(String(o.public_key_hex ?? "").toLowerCase());
+    ok = hexIn(o.public_key_hex, active);
   } else if (ok && o.format === "polaris-registry/1") {
     const pub = o.publisher && typeof o.publisher === "object" ? o.publisher : {};
     const listed = new Set<string>(
       (Array.isArray(o.authorities) ? o.authorities : [])
         .filter((a: any) => a && sameId(a.agency_id, pub.agency_id) && (a.status ?? "active") === "active")
-        .map((a: any) => String(a.public_key_hex ?? "").toLowerCase()),
+        .map((a: any) => hexText(a.public_key_hex)),
     );
-    ok = listed.has(String(o.public_key_hex ?? "").toLowerCase());
+    ok = hexIn(o.public_key_hex, listed);
   } else if (ok && o.format === "polaris-trust-list/1") {
     const pub = o.publisher && typeof o.publisher === "object" ? o.publisher : {};
     const active = new Set<string>(
       (Array.isArray(o.keys) ? o.keys : [])
         .filter((k: any) => k && sameId(k.agency_id, pub.agency_id) && k.status === "active")
-        .map((k: any) => String(k.public_key_hex ?? "").toLowerCase()),
+        .map((k: any) => hexText(k.public_key_hex)),
     );
-    ok = active.has(String(o.public_key_hex ?? "").toLowerCase());
+    ok = hexIn(o.public_key_hex, active);
   }
   // A replay-windowed format answers freshness the other way round; withinWindow needs
   // both ends of an interval and such an artifact has only its issuance.
@@ -667,8 +667,7 @@ export function verifySignedArtifact(obj: any, now?: string | null,
   // lowercased, is in the anchor set. Null when the caller supplied none.
   const issuerTrusted = anchors == null
     ? null
-    : anchors.map((a) => String(a).toLowerCase())
-             .includes(String(o.public_key_hex ?? "").toLowerCase());
+    : hexIn(o.public_key_hex, anchors.map((a) => hexText(a)));
   return { authentic: ok, fresh: replay !== null ? replay : withinWindow(o, now),
            issuerTrusted, ...(commitmentNote ? { note: commitmentNote } : {}) };
 }
@@ -770,7 +769,7 @@ export function verifyCosignature(cosig: any, witnessKey?: string | null): Artif
   } catch (e) {
     return { authentic: false, fresh: null, note: "verification error: " + (e as Error).message };
   }
-  if (ok && witnessKey != null && String(c.public_key_hex).toLowerCase() !== String(witnessKey).toLowerCase()) {
+  if (ok && witnessKey != null && !sameHex(c.public_key_hex, witnessKey)) {
     return { authentic: false, fresh: null, note: "the cosignature is not from the expected witness" };
   }
   return { authentic: ok, fresh: null, note: ok ? undefined : "cosignature signature is invalid" };
@@ -810,7 +809,7 @@ export function verifyTimestampAnchor(ts: any, logKey?: string | null, trustedWi
     return v;
   }
   v.timestampHash = timestampHash(ts);
-  if (String(proof.entry_hex ?? "").toLowerCase() !== v.timestampHash) {
+  if (hexText(proof.entry_hex) !== v.timestampHash) {
     v.note = "the proof is not for this timestamp";
     return v;
   }
@@ -846,26 +845,26 @@ export function verifyTimestampAnchor(ts: any, logKey?: string | null, trustedWi
   v.index = idx;
   v.treeSize = size;
   if (size !== sth.tree_size ||
-      String(proof.root_hash_hex ?? "").toLowerCase() !== String(sth.root_hash_hex ?? "").toLowerCase()) {
+      !sameHex(proof.root_hash_hex, sth.root_hash_hex)) {
     v.note = "the proof and the head describe different trees";
     return v;
   }
   if (!v.sthAuthentic) { v.note = sv.note ?? "the head is not authentic"; return v; }
-  if (logKey != null && String(sth.public_key_hex ?? "").toLowerCase() !== String(logKey).toLowerCase()) {
+  if (logKey != null && !sameHex(sth.public_key_hex, logKey)) {
     v.note = "the head is not signed by the expected log key";
     return v;
   }
   v.anchored = verifyInclusion(idx, size, leafHash(v.timestampHash), root, path);
   if (!v.anchored) { v.note = "the inclusion proof does not reconstruct the head"; return v; }
   if (trustedWitnesses != null) {
-    const trusted = new Set(trustedWitnesses.map((t) => String(t).toLowerCase()));
+    const trusted = new Set(trustedWitnesses.map((t) => hexText(t)));
     const seen = new Set<string>();
     for (const c of (Array.isArray(anchor.cosignatures) ? anchor.cosignatures : [])) {
       if (c === null || typeof c !== "object" || !verifyCosignature(c).authentic) continue;
       if (c.log_id === sth.log_id && c.tree_size === sth.tree_size &&
-          String(c.root_hash_hex ?? "").toLowerCase() === String(sth.root_hash_hex ?? "").toLowerCase()) {
-        const w = String(c.public_key_hex ?? "").toLowerCase();
-        if (trusted.has(w)) seen.add(w);
+          sameHex(c.root_hash_hex, sth.root_hash_hex)) {
+        const w = hexText(c.public_key_hex);
+        if (w !== null && trusted.has(w)) seen.add(w);
       }
     }
     v.cosignerCount = seen.size;
@@ -944,7 +943,7 @@ export function verifyHolder(credential: any, binding: any, proof: any, expected
   v.credentialAuthentic = av.authentic;
   v.issuerTrusted = av.issuerTrusted;
   v.boundToCredential = wireTextEqual(b.token_value, cred.token_value)
-    && String(b.public_key_hex ?? "").toLowerCase() === String(cred.public_key_hex ?? "").toLowerCase();
+    && sameHex(b.public_key_hex, cred.public_key_hex);
   const impl = verifierFor(pr.algorithm);
   if (!impl) {
     v.note = "unknown or unaccepted signature algorithm: " + String(pr.algorithm);
@@ -960,8 +959,7 @@ export function verifyHolder(credential: any, binding: any, proof: any, expected
   // The proof names the credential it is about (token_value, which the holder signed); it must
   // be this one. Until 2026-09-30 only the key was compared, so a proof made for one credential
   // passed with another bound to the same holder key.
-  v.keyMatchesBinding = String(pr.public_key_hex ?? "").toLowerCase()
-    === String(b.holder_public_key_hex ?? "").toLowerCase()
+  v.keyMatchesBinding = sameHex(pr.public_key_hex, b.holder_public_key_hex)
     && wireTextEqual(pr.token_value, b.token_value) && (b.status ?? "active") === "active";
   // A nonce and a context read as the Python verifiers read them: String() spelled true "true"
   // and 1e-05 "0.00001" where str() spells them "True" and "1e-05", and Python's == read true as
@@ -1017,7 +1015,7 @@ export function verifyAttestation(att: any, attestingAgencyId?: number | null,
     return { authentic: false, fresh: null, note: "the attestation names a different attesting agency than the manifest that published it" };
   }
   if (ok && expectedKey != null &&
-      String(a.attested_public_key_hex ?? "").toLowerCase() !== String(expectedKey).toLowerCase()) {
+      !sameHex(a.attested_public_key_hex, expectedKey)) {
     return { authentic: false, fresh: null, note: "the attestation is signed over a different attested key" };
   }
   return { authentic: ok, fresh: null, note: ok ? undefined : "the attestation signature is invalid" };
@@ -1038,7 +1036,7 @@ export function verifyCrossAuthority(
   if (!verifyAuthenticity(p).authentic) {
     return { decision: "reject", authentic: false, issuerTrusted: false, reason: "credential is not authentic" };
   }
-  const tokenKey = String(p.public_key_hex ?? "").toLowerCase();
+  const tokenKey = hexText(p.public_key_hex);
   if (trustedAnchors == null) {
     // No root, no trusted authority. Every manifest is signed by a key it lists itself, so with no
     // anchor the relying party chose, an attacker's own manifest attesting the attacker's own
@@ -1048,7 +1046,7 @@ export function verifyCrossAuthority(
     return { decision: "reject", authentic: true, issuerTrusted: null,
              reason: "no trust anchors were given: a manifest vouches for nothing by itself" };
   }
-  const trusted = new Set(trustedAnchors.map((t) => String(t).toLowerCase()));
+  const trusted = new Set(trustedAnchors.map((t) => hexText(t)));
   let via: unknown = null;
   let signedEdge: boolean | null = null;
   // A manifest set that is not an array is no manifests, as in the detached verifier:
@@ -1060,9 +1058,9 @@ export function verifyCrossAuthority(
     // verifySignedArtifact requires) is one the relying party trusts. Until 2026-09-30 it was
     // any key the manifest merely LISTED, so an attacker's manifest that listed the relying
     // party's anchor beside the attacker's own root was trusted (WIRE-SPEC section 4).
-    if (!trusted.has(String(mm.public_key_hex ?? "").toLowerCase())) continue;
+    if (!hexIn(mm.public_key_hex, trusted)) continue;
     for (const att of Array.isArray(mm.attestations) ? mm.attestations : []) {
-      if (att && String(att.attested_public_key_hex ?? "").toLowerCase() === tokenKey
+      if (att && tokenKey !== null && hexText(att.attested_public_key_hex) === tokenKey
           && sameId(att.context_id, contextId)) {
         // In-context means a context was presented (WIRE-SPEC section 4); before 2026-09-27
         // a missing one matched an edge from ANY context.
@@ -1075,8 +1073,8 @@ export function verifyCrossAuthority(
         // signature counted, so a stranger met requireSignedAttestation).
         const roots = new Set<string>((Array.isArray(mm.anchors) ? mm.anchors : [])
           .filter((x: any) => x && (x.status ?? "active") === "active")
-          .map((x: any) => String(x.public_key_hex ?? "").toLowerCase()));
-        if (!unsigned && (!av.authentic || !roots.has(String(att.public_key_hex ?? "").toLowerCase()))) continue;
+          .map((x: any) => hexText(x.public_key_hex)));
+        if (!unsigned && (!av.authentic || !hexIn(att.public_key_hex, roots))) continue;
         // An edge whose own window has closed is not an edge, however fresh the manifest
         // carrying it (WIRE-SPEC section 4). Until 2026-09-27 this decision never read
         // `valid_until`, and until 2026-09-28 it read it only for a SIGNED edge. A legacy edge
@@ -1097,14 +1095,14 @@ export function verifyCrossAuthority(
   if (revocationFeed != null) {
     const rf = revocationFeed ?? {};
     const rv = verifySignedArtifact(rf, now);
-    const bound = String(rf.public_key_hex ?? "").toLowerCase() === tokenKey;
+    const bound = tokenKey !== null && hexText(rf.public_key_hex) === tokenKey;
     if (!(rv.authentic && rv.fresh && bound)) {
       return { decision: "reject", authentic: true, issuerTrusted: true, via,
                reason: "the revocation feed is not authentic, fresh, and bound to the issuer key",
                attestationSigned: signedEdge };
     }
     const leaf = bytesToHex(sha3_256(new TextEncoder().encode(String(p.token_value ?? ""))));
-    const leaves = new Set((Array.isArray(rf.revoked_leaves) ? rf.revoked_leaves : []).map((x: any) => String(x).toLowerCase()));
+    const leaves = new Set((Array.isArray(rf.revoked_leaves) ? rf.revoked_leaves : []).map((x: any) => hexText(x)));
     if (leaves.has(leaf)) {
       return { decision: "reject", authentic: true, issuerTrusted: true, via, reason: "credential is revoked",
                attestationSigned: signedEdge };
@@ -1406,7 +1404,7 @@ export function revocationEndsGrant(revocation: any, grant: any): boolean {
   // As text, as the Python verifiers read it: String(x ?? "") and str(x or "") disagreed on 0, true
   // and integers beyond 2**53 (2026-10-01).
   if (!wireTextEqual(revocation.grant_id, grant.grant_id)) return false;
-  return String(revocation.public_key_hex ?? "").toLowerCase() === String(grant.public_key_hex ?? "").toLowerCase();
+  return sameHex(revocation.public_key_hex, grant.public_key_hex);
 }
 
 /**
@@ -1433,9 +1431,29 @@ export function grantPrincipalBound(grant: any, binding: any, credential: any, n
   // `fresh` null and `!== false` read it as fresh, so a binding that expired in 2024 was bound
   // (2026-09-30).
   return !!(bv.authentic && bv.fresh === true && (binding.status ?? "active") === "active"
-    && String(binding.holder_public_key_hex ?? "").toLowerCase() === String(grant.public_key_hex ?? "").toLowerCase()
+    && sameHex(binding.holder_public_key_hex, grant.public_key_hex)
     && wireTextEqual(binding.token_value, credential.token_value)
-    && String(binding.public_key_hex ?? "").toLowerCase() === String(credential.public_key_hex ?? "").toLowerCase());
+    && sameHex(binding.public_key_hex, credential.public_key_hex));
+}
+
+/** A hex field (a key or a digest) as all three verifiers compare it: a non-empty string, in lower
+ * case; anything else null. String() reads a one-element list as its element where Python's str()
+ * writes the brackets, so a signed `public_key_hex: [K]` matched K here alone (2026-10-01). */
+function hexText(x: unknown): string | null {
+  return typeof x === "string" && x !== "" ? x.toLowerCase() : null;
+}
+
+/** Both are hex text and the same in any case; a value with none matches nothing. */
+function sameHex(a: unknown, b: unknown): boolean {
+  const t = hexText(a);
+  return t !== null && t === hexText(b);
+}
+
+/** `x` is hex text and one of `texts`; a value with none is in no collection, even one holding null. */
+function hexIn(x: unknown, texts: Set<string | null> | readonly (string | null)[]): boolean {
+  const t = hexText(x);
+  if (t === null) return false;
+  return texts instanceof Set ? texts.has(t) : texts.includes(t);
 }
 
 /** Two agency or context ids name the same one only when both are strings, or both integers
@@ -1467,7 +1485,7 @@ export function agentProofProves(proof: any, grant: any, action?: unknown, nonce
   if (!proof || typeof proof !== "object" || !grant || typeof grant !== "object") return false;
   if (proof.format !== "polaris-agent-proof/1") return false;
   if (!wireTextEqual(proof.grant_id, grant.grant_id)) return false;
-  if (String(proof.public_key_hex ?? "").toLowerCase() !== String(grant.agent_public_key_hex ?? "").toLowerCase()) return false;
+  if (!sameHex(proof.public_key_hex, grant.agent_public_key_hex)) return false;
   if (grant.agent_algorithm !== undefined && grant.agent_algorithm !== null
       && proof.algorithm !== grant.agent_algorithm) return false;
   if (nonce !== undefined && nonce !== null && !wireTextEqual(proof.service_nonce, nonce)) return false;
@@ -1501,7 +1519,7 @@ function attestationOpen(att: any, now?: string | null): boolean {
 /** The authority of every manifest the caller trusts that is genuine and fresh at `now` and
  * attests `keyHex` in EXACTLY `contextId`, inside the attestation's own window, in order. */
 function exchangeAuthorities(keyHex: unknown, contextId: unknown, manifests: unknown, now?: string | null): any[] {
-  const want = String(keyHex ?? "").toLowerCase();
+  const want = hexText(keyHex);
   const found: any[] = [];
   if (!want) return found;
   for (const raw of Array.isArray(manifests) ? manifests : []) {
@@ -1510,7 +1528,7 @@ function exchangeAuthorities(keyHex: unknown, contextId: unknown, manifests: unk
     if (!(mv.authentic && mv.fresh === true)) continue;
     const atts = Array.isArray(m.attestations) ? m.attestations : [];
     if (atts.some((att: any) => att && typeof att === "object"
-        && String(att.attested_public_key_hex ?? "").toLowerCase() === want
+        && hexText(att.attested_public_key_hex) === want
         && sameId(att.context_id, contextId)
         && attestationOpen(att, now))) {
       found.push(m.authority ?? null);
@@ -1563,7 +1581,7 @@ export function verifyExchangeRequest(envelope: any, requesterKey?: string | nul
     v.requesterAuthorized = exchangeAuthorities(e.public_key_hex, e.context_id, trustedManifests, now).length > 0;
   }
   if (body !== undefined && body !== null) {
-    v.bodyBound = sha3Hex(canonicalJson(body)) === String(e.request_hash ?? "").toLowerCase();
+    v.bodyBound = sha3Hex(canonicalJson(body)) === hexText(e.request_hash);
   }
   return v;
 }
@@ -1591,10 +1609,10 @@ export function verifyExchangeReceipt(receipt: any, now?: string | null, trusted
   // signed by a stranger reported the victim agency it named as its responder.
   if (v.responderMatches === true) v.responder = r.responder ?? null;
   if (requestBody !== undefined && requestBody !== null) {
-    v.requestBound = sha3Hex(requestBody) === String(r.request_hash ?? "").toLowerCase();
+    v.requestBound = sha3Hex(requestBody) === hexText(r.request_hash);
   }
   if (responseBody !== undefined && responseBody !== null) {
-    v.responseBound = sha3Hex(responseBody) === String(r.response_hash ?? "").toLowerCase();
+    v.responseBound = sha3Hex(responseBody) === hexText(r.response_hash);
   }
   if (trustedManifests !== undefined && trustedManifests !== null) {
     const req = r.requester && typeof r.requester === "object" ? r.requester : {};

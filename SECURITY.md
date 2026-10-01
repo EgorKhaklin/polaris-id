@@ -66,8 +66,9 @@ grant `"True"`, and a `null` action as the action "None"; both SDKs read a statu
 millisecond, reads an offset of 24 hours, refuses a genuine artifact signed with a number like 1.5e-05
 or a key outside the Basic Multilingual Plane, decides a presentation naming `credential: null` as the
 object itself, proves a holder chain whose signed nonce is `true` against the nonce "true", binds a
-grant through a binding naming `true` to the credential "true", and reads a grant action of `true` or
-`["x"]` as "true" or "x". The tree carries the fixes; releases follow the maintainer's approval.
+grant through a binding naming `true` to the credential "true", reads a grant action of `true` or
+`["x"]` as "true" or "x", and reads a signed key or digest held in a one-element list as that key or
+digest. The tree carries the fixes; releases follow the maintainer's approval.
 
 If you installed or pinned an older version, upgrade. The Current column is checked against
 [docs/RELEASING.md](docs/RELEASING.md) on every run. The packages are for evaluation and

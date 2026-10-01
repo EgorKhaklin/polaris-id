@@ -34,6 +34,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - An agency or context id matches only the same string or integer in all three verifiers; Python's `==` read `true` as 1 and a missing id as a null one.
 - Both SDKs read only the JSON `true` as currently authoritative; both read a status answer of `"false"` as current.
 - All three verifiers refuse an agent grant whose `grant_id` is not text; it is the grant's only revocation handle (WIRE-SPEC 3.17).
+- All three verifiers read a key or a digest only as a hex string; the TypeScript SDK read a signed `[K]` as K, and two missing keys matched in Python.
 
 - The application's database role can no longer run the retention and archive-purge routines; naming any admin, it could set retention or purge audit rows past the floor.
 ### Fixed
@@ -54,7 +55,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Thirteen conformance cases pin the status rule for manifests, registries, holder chains, grants in use and trust edges.
 - Eleven conformance cases pin WIRE-SPEC 3.3, 3.16, 3.12 and 2.2 for leaves, signed documents and instants.
 - Ten conformance cases pin where the two SDKs disagreed on signed bytes.
-- Twenty-two more pin nonces, contexts, agencies, grant ids, actions and ids beyond 2**53, from three reviews of that fix; the suite has 275 cases.
+- Twenty-two more pin nonces, contexts, agencies, grant ids, actions and ids beyond 2**53, from three reviews of that fix.
+- Six conformance cases pin keys and digests as hex text; the suite has 281 cases.
 
 ### Changed
 

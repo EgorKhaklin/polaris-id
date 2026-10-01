@@ -105,6 +105,16 @@ test("a value with no wire text matches nothing, and nor does an integer beyond 
                "the largest integer both hold is one");
 });
 
+test("a key is hex text: a key held in a list is not the key", () => {
+  const grant = { grant_id: "g-1", agent_public_key_hex: "ab" };
+  const proof = { format: "polaris-agent-proof/1", grant_id: "g-1", public_key_hex: "ab", action: "read" };
+  assert.equal(agentProofProves(proof, { ...grant, agent_public_key_hex: ["ab"] }, "read"), false);
+  assert.equal(agentProofProves(proof, { ...grant, agent_public_key_hex: "AB" }, "read"), true, "case is not a key");
+  const rev = { format: "polaris-grant-revocation/1", grant_id: "g-1" };
+  assert.equal(revocationEndsGrant({ ...rev, public_key_hex: ["cd"] }, { grant_id: "g-1", public_key_hex: "cd" }), false);
+  assert.equal(revocationEndsGrant({ ...rev }, { grant_id: "g-1" }), false, "two missing keys are not one holder");
+});
+
 test("a revocation names its grant as text", () => {
   const rev = { format: "polaris-grant-revocation/1", public_key_hex: "cd" };
   const grant = { public_key_hex: "cd" };

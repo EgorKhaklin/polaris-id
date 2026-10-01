@@ -604,7 +604,7 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         # was compared until 2026-09-30, where the detached verifier compared both.
         leaves = obj.get("revoked_leaves") if isinstance(obj.get("revoked_leaves"), list) else []
         ok = (_leaves_are_hex(obj.get("revoked_leaves"))
-              and _revoked_root(leaves) == str(obj.get("revoked_root_hex") or "").lower()
+              and _revoked_root(leaves) == _hex_text(obj.get("revoked_root_hex"))
               and _count_is(obj.get("revoked_count"), len({str(x).lower() for x in leaves})))
         note = None if ok else "the revocation feed's commitment or count does not match its leaves"
     elif ok and fmt == "polaris-agent-grant/1":
@@ -638,7 +638,7 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         # so a verifier checks the set with SHA3-256 alone and never needs the proving library.
         leaves = obj.get("all_leaves_hex") if isinstance(obj.get("all_leaves_hex"), list) else []
         ok = (_leaves_are_hex(obj.get("all_leaves_hex"))
-              and _revoked_root(leaves) == str(obj.get("leaves_root_hex") or "").lower()
+              and _revoked_root(leaves) == _hex_text(obj.get("leaves_root_hex"))
               and _count_is(obj.get("leaf_count"), len(leaves)))
         note = None if ok else "the published leaves do not match the committed set"
     elif ok and fmt == "polaris-federation-status-bundle/1":
@@ -646,26 +646,26 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         # only the detached verifier checked it: a bundle whose signed count and listed
         # members disagreed was authentic here and in the TypeScript SDK.
         members = obj.get("members") if isinstance(obj.get("members"), list) else []
-        ok = (_members_root(members) == str(obj.get("members_root_hex") or "").lower()
+        ok = (_members_root(members) == _hex_text(obj.get("members_root_hex"))
               and _count_is(obj.get("member_count"), len(members)))
         note = None if ok else "the status bundle's members_root or member_count does not match its members"
     elif ok and fmt == "polaris-federation-manifest/1":
-        active = {str(a.get("public_key_hex", "")).lower() for a in (obj.get("anchors") or [])
+        active = {_hex_text(a.get("public_key_hex", "")) for a in (obj.get("anchors") or [])
                   if isinstance(a, dict) and _status_of(a) == "active"}
-        ok = str(obj.get("public_key_hex") or "").lower() in active
+        ok = _hex_in(obj.get("public_key_hex"), active)
         note = None if ok else "the manifest is not signed by one of its own active anchors"
     elif ok and fmt == "polaris-registry/1":
         pub = obj.get("publisher") if isinstance(obj.get("publisher"), dict) else {}
-        listed = [str(a.get("public_key_hex") or "").lower() for a in (obj.get("authorities") or [])
+        listed = [_hex_text(a.get("public_key_hex")) for a in (obj.get("authorities") or [])
                   if isinstance(a, dict) and _same_id(a.get("agency_id"), pub.get("agency_id"))
                   and _status_of(a) == "active"]
-        ok = str(obj.get("public_key_hex") or "").lower() in listed
+        ok = _hex_in(obj.get("public_key_hex"), listed)
         note = None if ok else "the registry is not signed by the key it lists for its own publisher"
     elif ok and fmt == "polaris-trust-list/1":
         pub = obj.get("publisher") if isinstance(obj.get("publisher"), dict) else {}
-        active = [str(k.get("public_key_hex") or "").lower() for k in (obj.get("keys") or [])
+        active = [_hex_text(k.get("public_key_hex")) for k in (obj.get("keys") or [])
                   if isinstance(k, dict) and _same_id(k.get("agency_id"), pub.get("agency_id")) and k.get("status") == "active"]
-        ok = str(obj.get("public_key_hex") or "").lower() in active
+        ok = _hex_in(obj.get("public_key_hex"), active)
         note = None if ok else "the trust list is not signed by a key it lists as active for its own publisher"
     # A replay-windowed format answers freshness the other way round; _within_window
     # needs both ends of an interval and such an artifact has only its issuance.
@@ -677,8 +677,7 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
     trusted = None
     if anchors is not None:
         try:
-            trusted = str(obj.get("public_key_hex", "")).lower() in {
-                str(a).lower() for a in anchors}
+            trusted = _hex_in(obj.get("public_key_hex", ""), {_hex_text(a) for a in anchors})
         except TypeError:
             trusted = False
     return ArtifactVerdict(ok, fresh, note, ran, trusted)
@@ -754,7 +753,7 @@ def verify_cosignature(cosig: dict, witness_key=None) -> ArtifactVerdict:
                                         c.get("signature_hex"), c.get("public_key_hex"), c.get("algorithm"))
     if ok is None:
         return ArtifactVerdict(False, None, note, ran)
-    if ok and witness_key is not None and str(c.get("public_key_hex") or "").lower() != str(witness_key).lower():
+    if ok and witness_key is not None and not _same_hex(c.get("public_key_hex"), witness_key):
         return ArtifactVerdict(False, None, "the cosignature is not from the expected witness", ran)
     return ArtifactVerdict(bool(ok), None, None if ok else "cosignature signature is invalid", ran)
 
@@ -792,7 +791,7 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
         v.note = "anchor.proof and anchor.sth must be objects"
         return v
     v.timestamp_hash = timestamp_hash(ts)
-    if str(proof.get("entry_hex") or "").lower() != v.timestamp_hash:
+    if _hex_text(proof.get("entry_hex")) != v.timestamp_hash:
         v.note = "the proof is not for this timestamp"
         return v
     # A head is a signed tree head: its log_id, tree_size and root are what its signature covers.
@@ -816,13 +815,13 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
         return v
     v.index, v.tree_size = idx, size
     if size != sth.get("tree_size") or \
-            str(proof.get("root_hash_hex") or "").lower() != str(sth.get("root_hash_hex") or "").lower():
+            not _same_hex(proof.get("root_hash_hex"), sth.get("root_hash_hex")):
         v.note = "the proof and the head describe different trees"
         return v
     if not v.sth_authentic:
         v.note = sv.note or "the head is not authentic"
         return v
-    if log_key is not None and str(sth.get("public_key_hex") or "").lower() != str(log_key).lower():
+    if log_key is not None and not _same_hex(sth.get("public_key_hex"), log_key):
         v.note = "the head is not signed by the expected log key"
         return v
     v.anchored = verify_inclusion(idx, size, _leaf_hash(v.timestamp_hash), root, path)
@@ -830,7 +829,7 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
         v.note = "the inclusion proof does not reconstruct the head"
         return v
     if trusted_witnesses is not None:
-        trusted = {str(t).lower() for t in trusted_witnesses}
+        trusted = {_hex_text(t) for t in trusted_witnesses}
         seen = set()
         cosignatures = anchor.get("cosignatures")
         # A list, or nothing witnessed: `True` raised TypeError out of a check that says it
@@ -839,9 +838,9 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
             if not isinstance(c, dict) or not verify_cosignature(c).authentic:
                 continue
             if (c.get("log_id") == sth.get("log_id") and c.get("tree_size") == sth.get("tree_size")
-                    and str(c.get("root_hash_hex") or "").lower() == str(sth.get("root_hash_hex") or "").lower()):
-                w = str(c.get("public_key_hex") or "").lower()
-                if w in trusted:
+                    and _same_hex(c.get("root_hash_hex"), sth.get("root_hash_hex"))):
+                w = _hex_text(c.get("public_key_hex"))
+                if w is not None and w in trusted:
                     seen.add(w)
         v.cosigner_count = len(seen)
         # A threshold is a whole number of witnesses, at least one: 0.5 and -1 were met by no
@@ -916,8 +915,7 @@ def verify_holder(credential: dict, binding: dict, proof: dict, expected_nonce=N
     av = verify_authenticity(cred, anchors)
     v.credential_authentic, v.issuer_trusted = av.authentic, av.issuer_trusted
     v.bound_to_credential = (_wire_text_equal(b.get("token_value"), cred.get("token_value"))
-                             and str(b.get("public_key_hex") or "").lower()
-                             == str(cred.get("public_key_hex") or "").lower())
+                             and _same_hex(b.get("public_key_hex"), cred.get("public_key_hex")))
     keys = _ARTIFACT_KEYS["polaris-holder-proof/1"]
     ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(pr, keys)).digest(),
                                         pr.get("signature_hex"), pr.get("public_key_hex"), pr.get("algorithm"))
@@ -931,8 +929,7 @@ def verify_holder(credential: dict, binding: dict, proof: dict, expected_nonce=N
     # The proof names the credential it is about (`token_value`, which the holder signed); it
     # must be this one. Until 2026-09-30 only the key was compared, so a proof made for one
     # credential passed with another bound to the same holder key.
-    v.key_matches_binding = (str(pr.get("public_key_hex") or "").lower()
-                             == str(b.get("holder_public_key_hex") or "").lower()
+    v.key_matches_binding = (_same_hex(pr.get("public_key_hex"), b.get("holder_public_key_hex"))
                              and _wire_text_equal(pr.get("token_value"), b.get("token_value"))
                              and _status_of(b) == "active")
     # A nonce and a context read as the TypeScript SDK reads them: str() spelled true "True" and
@@ -986,7 +983,7 @@ def verify_attestation(att: dict, attesting_agency_id=None, expected_key=None) -
         return ArtifactVerdict(False, None, "the attestation names a different attesting agency "
                                             "than the manifest that published it", ran)
     if ok and expected_key is not None and \
-            str(a.get("attested_public_key_hex") or "").lower() != str(expected_key).lower():
+            not _same_hex(a.get("attested_public_key_hex"), expected_key):
         return ArtifactVerdict(False, None, "the attestation is signed over a different attested key", ran)
     return ArtifactVerdict(bool(ok), None, None if ok else "the attestation signature is invalid", ran)
 
@@ -1005,7 +1002,7 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
     a = verify_authenticity(pack)
     if not a.authentic:
         return CrossAuthorityVerdict("reject", False, False, reason="credential is not authentic")
-    token_key = str(pack.get("public_key_hex") or "").lower()
+    token_key = _hex_text(pack.get("public_key_hex"))
     if trusted_anchors is None:
         # No root, no trusted authority. Every manifest is signed by a key it lists itself, so
         # with no anchor the relying party chose, an attacker's own manifest attesting the
@@ -1014,7 +1011,7 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
         # manifests a presentation brought, so it trusts none of them unaided.
         return CrossAuthorityVerdict("reject", True, None,
                                      reason="no trust anchors were given: a manifest vouches for nothing by itself")
-    trusted = {str(t).lower() for t in trusted_anchors}
+    trusted = {_hex_text(t) for t in trusted_anchors}
     via = None
     signed_edge = None
     # A manifest set that is not a list is no manifests, as in the detached verifier: `or []`
@@ -1028,12 +1025,12 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
         # verify_signed_artifact requires) is one the relying party trusts. Until 2026-09-30 it
         # was any key the manifest merely LISTED, so an attacker's manifest that listed the
         # relying party's anchor beside the attacker's own root was trusted (WIRE-SPEC section 4).
-        if str(m.get("public_key_hex") or "").lower() not in trusted:
+        if not _hex_in(m.get("public_key_hex"), trusted):
             continue   # the relying party does not trust this manifest's signer
         for att in (m.get("attestations") or []):
             if not isinstance(att, dict):
                 continue
-            if (str(att.get("attested_public_key_hex") or "").lower() == token_key
+            if (token_key is not None and _hex_text(att.get("attested_public_key_hex")) == token_key
                     and _same_id(att.get("context_id"), context_id)):
                 # In-context means a context was presented (WIRE-SPEC section 4); before
                 # 2026-09-27 a missing one matched an edge from ANY context.
@@ -1045,10 +1042,10 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
                 # A signed edge is the attesting agency's only if one of ITS roots signed it: the
                 # key must be among the carrying manifest's active anchors (2026-09-30; until then
                 # any key's valid signature counted, so a stranger met require_signed_attestation).
-                roots = {str(x.get("public_key_hex") or "").lower() for x in (m.get("anchors") or [])
+                roots = {_hex_text(x.get("public_key_hex")) for x in (m.get("anchors") or [])
                          if isinstance(x, dict) and _status_of(x) == "active"}
                 if not unsigned and (not av.authentic
-                                     or str(att.get("public_key_hex") or "").lower() not in roots):
+                                     or not _hex_in(att.get("public_key_hex"), roots)):
                     continue    # a present-but-bad signature is worse than none: refuse the edge
                 # An edge whose own window has closed is not an edge, however fresh the manifest
                 # carrying it (WIRE-SPEC section 4). Until 2026-09-27 this decision never read
@@ -1075,7 +1072,7 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
         # binding below read `.get` off it and raised AttributeError (2026-09-28).
         feed = revocation_feed if isinstance(revocation_feed, dict) else {}
         rv = verify_signed_artifact(feed, now=now)
-        bound = str(feed.get("public_key_hex") or "").lower() == token_key
+        bound = token_key is not None and _hex_text(feed.get("public_key_hex")) == token_key
         if not (rv.authentic and rv.fresh and bound):
             return CrossAuthorityVerdict("reject", True, True, via_str,
                                          "the issuer's revocation feed is not authentic, fresh, and bound to the issuer key",
@@ -1354,8 +1351,7 @@ def revocation_ends_grant(revocation, grant) -> bool:
     # grant naming none, and "True" to true (2026-10-01).
     if not _wire_text_equal(revocation.get("grant_id"), grant.get("grant_id")):
         return False
-    return str(revocation.get("public_key_hex") or "").lower() == \
-        str(grant.get("public_key_hex") or "").lower()
+    return _same_hex(revocation.get("public_key_hex"), grant.get("public_key_hex"))
 
 
 def grant_principal_bound(grant, binding, credential, now=None) -> bool:
@@ -1384,11 +1380,9 @@ def grant_principal_bound(grant, binding, credential, now=None) -> bool:
     # bound (2026-09-30).
     return bool(bv.authentic and bv.fresh is True
                 and _status_of(binding) == "active"
-                and str(binding.get("holder_public_key_hex") or "").lower()
-                == str(grant.get("public_key_hex") or "").lower()
+                and _same_hex(binding.get("holder_public_key_hex"), grant.get("public_key_hex"))
                 and _wire_text_equal(binding.get("token_value"), credential.get("token_value"))
-                and str(binding.get("public_key_hex") or "").lower()
-                == str(credential.get("public_key_hex") or "").lower())
+                and _same_hex(binding.get("public_key_hex"), credential.get("public_key_hex")))
 
 
 #: The largest integer both languages hold exactly. JavaScript reads a larger one as the nearest
@@ -1399,6 +1393,26 @@ _MAX_SAFE_INTEGER = 2 ** 53 - 1
 def _safe_int(x):
     """An integer, not a boolean, that JavaScript holds exactly."""
     return isinstance(x, int) and not isinstance(x, bool) and abs(x) <= _MAX_SAFE_INTEGER
+
+
+def _hex_text(x):
+    """A hex field (a key or a digest) as both languages compare it: a non-empty string, in lower
+    case; anything else None. JavaScript's String() reads a one-element list as its element where
+    Python's str() writes the brackets, so a signed `public_key_hex: [K]` matched K in the
+    TypeScript SDK alone; and `str(x or "")` read null, 0 and false as one empty key (2026-10-01)."""
+    return x.lower() if isinstance(x, str) and x else None
+
+
+def _same_hex(a, b):
+    """Both are hex text and the same in any case; a value with none matches nothing."""
+    t = _hex_text(a)
+    return t is not None and t == _hex_text(b)
+
+
+def _hex_in(x, texts):
+    """`x` is hex text and one of `texts`; a value with none is in no list, even one holding None."""
+    t = _hex_text(x)
+    return t is not None and t in texts
 
 
 def _same_id(a, b):
@@ -1446,7 +1460,7 @@ def agent_proof_proves(proof, grant, action=None, nonce=None) -> bool:
         return False
     if not _wire_text_equal(proof.get("grant_id"), grant.get("grant_id")):
         return False
-    if str(proof.get("public_key_hex") or "").lower() != str(grant.get("agent_public_key_hex") or "").lower():
+    if not _same_hex(proof.get("public_key_hex"), grant.get("agent_public_key_hex")):
         return False
     if grant.get("agent_algorithm") is not None and proof.get("algorithm") != grant.get("agent_algorithm"):
         return False
@@ -1508,7 +1522,7 @@ def _exchange_authorities(key_hex, context_id, manifests, now=None):
     """The authority of every manifest the caller trusts that is genuine and fresh at `now` and
     attests `key_hex` in EXACTLY `context_id`, inside the attestation's own window, in order.
     The section 4 rule, applied to an institution rather than a credential."""
-    want = str(key_hex or "").lower()
+    want = _hex_text(key_hex)
     found = []
     if not want:
         return found
@@ -1518,7 +1532,7 @@ def _exchange_authorities(key_hex, context_id, manifests, now=None):
         if not (mv.authentic and mv.fresh is True):
             continue
         if any(isinstance(att, dict)
-               and str(att.get("attested_public_key_hex") or "").lower() == want
+               and _hex_text(att.get("attested_public_key_hex")) == want
                and _same_id(att.get("context_id"), context_id)
                and _attestation_open(att, now)
                for att in (m.get("attestations") if isinstance(m.get("attestations"), list) else [])):
@@ -1561,7 +1575,7 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
                                                             trusted_manifests, now))
     if body is not None:
         canon = json.dumps(body, sort_keys=True, separators=(",", ":"))
-        v.body_bound = _sha3_hex(canon) == str(e.get("request_hash") or "").lower()
+        v.body_bound = _sha3_hex(canon) == _hex_text(e.get("request_hash"))
     return v
 
 
@@ -1590,9 +1604,9 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
     if v.responder_matches is True:
         v.responder = r.get("responder")
     if request_body is not None:
-        v.request_bound = _sha3_hex(request_body) == str(r.get("request_hash") or "").lower()
+        v.request_bound = _sha3_hex(request_body) == _hex_text(r.get("request_hash"))
     if response_body is not None:
-        v.response_bound = _sha3_hex(response_body) == str(r.get("response_hash") or "").lower()
+        v.response_bound = _sha3_hex(response_body) == _hex_text(r.get("response_hash"))
     if trusted_manifests is not None:
         req = r.get("requester") if isinstance(r.get("requester"), dict) else {}
         # `via` names the authority, so an attestation in a manifest that names none is no
