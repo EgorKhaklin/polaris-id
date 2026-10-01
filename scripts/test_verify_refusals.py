@@ -1037,7 +1037,10 @@ class CommandLineExitCodes(unittest.TestCase):
             self.assertEqual(vp.call_args.kwargs.get("verifier_scope"), "bank.example")
 
     def test_a_zero_knowledge_nonce_must_be_an_integer(self):
-        self.assertEqual(self.main("--pqc-provider", "auto", "--zk-proof", str(self.blob), "--nonce", "abc"), 3)
+        """Row 4, before any file is read: the proof named here does not exist, and the run that
+        read it first exited 3 (2026-10-01)."""
+        self.assertEqual(self.main("--pqc-provider", "auto", "--zk-proof", str(self.tmp / "absent.json"),
+                                   "--nonce", "abc"), 4)
 
     def test_frames_that_do_not_decode_exit_1(self):
         """Row 1, the documented inconsistency: kept, because a script may depend on it."""
@@ -1045,13 +1048,138 @@ class CommandLineExitCodes(unittest.TestCase):
         frames.write_text("not a polaris-qr/1 frame\n")
         self.assertEqual(self.main("--pqc-provider", "auto", "--qr-frames", str(frames)), 1)
 
-    def test_a_zero_knowledge_decision_that_is_not_accept_exits_2(self):
+    def test_a_zero_knowledge_decision_takes_the_rules_of_every_other_path(self):
+        """2026-10-01. Abstain, the decision a missing polaris-zk binary makes, is a check that
+        could not run (3); it exited 2. An accept with no trust root, or with no nonce, abstains
+        (2) as a pack and a presentation do; both exited 0. And --issuer-anchor reaches the
+        verdict as --trusted-anchor does: the path read only --trusted-anchor."""
         from unittest import mock
-        for decision, code in (("abstain", 2), ("reject", 2), ("accept", 0)):
-            with self.subTest(decision=decision), \
+        key = json.loads(self.pack.read_text())["public_key_hex"]
+        zk = ("--pqc-provider", "auto", "--zk-proof", str(self.blob))
+        for decision, flags, code in (
+                ("abstain", ("--signature-only", "--nonce", "7"), 3),
+                ("reject", ("--signature-only", "--nonce", "7"), 2),
+                ("accept", (), 2),
+                ("accept", ("--nonce", "7"), 2),
+                ("accept", ("--signature-only",), 2),
+                ("accept", ("--signature-only", "--nonce", "7"), 0),
+                ("accept", ("--trusted-anchor", key, "--nonce", "7"), 0),
+                ("accept", ("--issuer-anchor", str(self.good_anchor), "--nonce", "7"), 0)):
+            with self.subTest(decision=decision, flags=flags), \
                     mock.patch.object(V, "verify_cross_authority_zk",
-                                      return_value={"decision": decision, "reasons": []}):
-                self.assertEqual(self.main("--pqc-provider", "auto", "--zk-proof", str(self.blob)), code)
+                                      return_value={"decision": decision, "reasons": []}) as vz:
+                self.assertEqual(self.main(*zk, *flags), code)
+                if "--issuer-anchor" in flags:
+                    self.assertEqual(vz.call_args.kwargs["trusted_anchors"], [key])
+                    self.assertEqual(vz.call_args.kwargs["expected_nonce"], 7)
+
+    def test_a_json_decision_says_what_the_exit_code_says(self):
+        """2026-10-01. A zero-knowledge accept held for a trust root or a nonce, and a stapled accept
+        held for trust, printed `"decision": "accept"` and exited 2; a script reading the verdict
+        read an acceptance the run did not make."""
+        import contextlib
+        import io
+        from unittest import mock
+        stapled = {"decision": "accept", "authentic": True, "status": "ACTIVE", "fresh": True,
+                   "bound": True, "reasons": [], "credential": {"trust_evaluated": False},
+                   "status_assertion": {"trust_evaluated": False}}
+        runs = (("verify_cross_authority_zk", {"decision": "accept", "reasons": []},
+                 ("--zk-proof", str(self.blob), "--nonce", "7"), "abstain", 2),
+                ("verify_cross_authority_zk", {"decision": "accept", "reasons": []},
+                 ("--zk-proof", str(self.blob), "--signature-only"), "abstain", 2),
+                ("verify_cross_authority_zk", {"decision": "accept", "reasons": []},
+                 ("--zk-proof", str(self.blob), "--signature-only", "--nonce", "7"), "accept", 0),
+                ("verify_stapled", stapled,
+                 ("--pack", str(self.pack), "--status-assertion", str(self.blob)), "abstain", 2),
+                ("verify_stapled", stapled,
+                 ("--pack", str(self.pack), "--status-assertion", str(self.blob), "--signature-only"),
+                 "accept", 0),
+                ("verify_stapled", dict(stapled, decision="reject"),
+                 ("--pack", str(self.pack), "--status-assertion", str(self.blob)), "reject", 2),
+                ("verify_cross_authority_zk", {"decision": "abstain", "reasons": ["no polaris-zk binary"]},
+                 ("--zk-proof", str(self.blob), "--signature-only", "--nonce", "7"), "abstain", 3),
+                ("verify_cross_authority_zk", {"decision": "reject", "reasons": ["tampered"]},
+                 ("--zk-proof", str(self.blob), "--nonce", "7"), "reject", 2))
+        for fn, verdict, argv, decision, code in runs:
+            out, err = io.StringIO(), io.StringIO()
+            with self.subTest(argv=argv), mock.patch.object(V, fn, return_value=verdict), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                self.assertEqual(V.main(["--pqc-provider", "auto", "--json", *argv]), code)
+                self.assertEqual(json.loads(out.getvalue())["decision"], decision)
+                self.assertEqual("abstain:" in err.getvalue(), decision == "abstain",
+                                 "an abstention says why on stderr, and only an abstention does")
+
+    def test_a_flag_the_mode_does_not_read_refuses_to_start(self):
+        """Row 4, 2026-10-01. --presentation took --status-assertion and never read it, so a
+        revoked assertion named there left exit 0 standing; --zk-proof took --issuer-anchor, and a
+        pack --max-window, and read neither. The inputs named here do not exist: a run that read
+        them would exit 3, so 4 is the refusal before any file is read."""
+        import contextlib
+        import io
+        absent = str(self.tmp / "absent.json")
+        for argv, flag in ((("--presentation", absent, "--status-assertion", absent), "--status-assertion"),
+                           (("--qr-frames", absent, "--presentation", absent), "--presentation"),
+                           (("--pack", absent, "--max-window", "60"), "--max-window"),
+                           (("--pack", absent, "--min-anonymity-set", str(V.DEFAULT_MIN_ANONYMITY_SET)),
+                            "--min-anonymity-set"),
+                           (("--zk-proof", absent, "--verifier-scope", "bank.example"), "--verifier-scope"),
+                           (("--agent-grant", absent, "--nonce", "n-1"), "--nonce"),
+                           (("--zk-proof", absent, "--pack", absent), "--pack"),
+                           (("--selftest", "--json"), "--json"),
+                           (("--verify-dir", absent, "--signature-only"), "--signature-only")):
+            err = io.StringIO()
+            with self.subTest(argv=argv), contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(err):
+                self.assertEqual(V.main(["--pqc-provider", "auto", *argv]), 4)
+                self.assertIn("does not read %s;" % flag, err.getvalue())
+
+    def test_a_value_flag_given_twice_refuses_to_start(self):
+        """Row 4, 2026-10-01: argparse keeps the last of a repeated flag, so `--issuer-anchor A
+        --issuer-anchor B` trusted B alone and `--pack X --pack Y` decided Y. The files named here
+        do not exist, so 4 is the refusal before any is read; a flag that collects every value
+        (--trusted-manifest) and one that takes no value lose nothing by repeating."""
+        import contextlib
+        import io
+        a, b = str(self.tmp / "absent-a.json"), str(self.tmp / "absent-b.json")
+        for argv, flag in ((("--pack", a, "--issuer-anchor", a, "--issuer-anchor", b), "--issuer-anchor"),
+                           (("--pack", a, "--pack", b), "--pack"),
+                           (("--pack", a, "--issuer-anc", a, "--issuer-anchor", b), "--issuer-anchor"),
+                           (("--presentation", a, "--nonce", "n-1", "--nonce", "n-2"), "--nonce")):
+            err = io.StringIO()
+            with self.subTest(argv=argv), contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(err):
+                self.assertEqual(V.main(["--pqc-provider", "auto", *argv]), 4)
+                self.assertIn("%s given more than once" % flag, err.getvalue())
+        self.assertEqual(self.main("--pqc-provider", "auto", "--zk-proof", a, "--trusted-manifest", a,
+                                   "--trusted-manifest", b), 3, "every manifest is read, so the run reads")
+        self.assertEqual(self.main("--pqc-provider", "auto", "--signature-only", "--signature-only",
+                                   "--pack", str(self.pack)), 0)
+
+    def test_an_argument_it_does_not_take_exits_4(self):
+        """Row 4: argparse's own exit was 2, this table's "not accepted", so a mistyped flag read
+        to a script as a credential that did not verify (2026-10-01)."""
+        for argv in (("--registry", str(self.blob)), ("--max-window", "soon", "--pack", str(self.pack)),
+                     ("--pqc-provider", "none", "--pack", str(self.pack))):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit) as raised:
+                self.main(*argv)
+            self.assertEqual(raised.exception.code, 4)
+
+    def test_a_pack_path_handed_another_artifact_says_so(self):
+        """Row 2 names it: a JSON file that is not an authenticity pack. A signed grant handed to
+        --pack read as a signature that did not verify (2026-10-01)."""
+        import contextlib
+        import io
+        grant = ROOT / "conformance" / "vectors" / "agent-grant-valid.json"
+        for flags in ((), ("--json",), ("--json", "--status-assertion", str(self.blob))):
+            out, err = io.StringIO(), io.StringIO()
+            with self.subTest(flags=flags), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = V.main(["--pqc-provider", "auto", "--signature-only", "--pack", str(grant), *flags])
+            self.assertEqual(code, 2)
+            self.assertIn("not an authenticity pack: this is a polaris-agent-grant/1", err.getvalue())
+            if "--json" in flags:
+                verdict = json.loads(out.getvalue())
+                self.assertEqual((verdict["decision"], verdict["signature_valid"]), ("reject", False),
+                                 "a --json reader gets a verdict that agrees with the exit code")
 
 
 class CallerKeysThatAreNotTextTests(unittest.TestCase):
