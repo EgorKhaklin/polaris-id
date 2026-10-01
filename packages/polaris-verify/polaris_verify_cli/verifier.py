@@ -17,9 +17,8 @@ different questions with two different freshness needs (see
 docs/design/verification-scaling.md). Authorization is a tiny online call to
 `GET /api/tokens/<id>/verify`; authenticity is this, and it needs no network.
 
-    python3 polaris-verify.py --issuer-anchor trusted-keys.json --pack credential.json
-    python3 polaris-verify.py --pack credential.json --issuer-anchor issuer.json
-    cat credential.json | python3 polaris-verify.py --json
+    python3 polaris-verify.py --pqc-provider auto --pack credential.json --issuer-anchor issuer.json
+    cat credential.json | python3 polaris-verify.py --pqc-provider auto --issuer-anchor issuer.json --json
 
 Verifies the SAME thing the server does: the signature over SHA3-256(token_value)
 under ML-DSA-65, checked against the public key IN the pack (a self-contained
@@ -32,8 +31,9 @@ cryptography/OpenSSL (a second, independent implementation). They must AGREE.
 Exit code 0 iff the signature is valid AND either the key is in the --issuer-anchor
 trust root or the caller passed --signature-only; 2 when it is invalid, untrusted, or no
 trust root was given (an abstention: a genuine signature is not a trusted issuer, since
-2026-09-17); 3 on a usage/dependency error; 4 when no cryptography was declared. The
-README's exit-code table is the full list.
+2026-09-17); 3 when the check could not run (an unreadable input, a missing dependency or
+polaris-zk binary); 4 when it refused to start (no cryptography declared, or an argument it
+does not take). The README's exit-code table is the full list.
 
 Dependencies: `pip install liboqs-python` (primary). Optionally
 `cryptography>=48` on OpenSSL 3.5+ for the independent second witness.
@@ -1612,6 +1612,16 @@ def _zk_verify_proof(proof_bundle, zk_binary=None):
         return False
 
 
+def _zk_input(value):
+    """A public input as the polaris-zk binary reads it: a JSON integer from 0 below 2**64, never
+    a bool, a float or text. `int()` read "7", 7.9 and `true` as 7, 7 and 1, which the binary
+    refuses, so such a proof was reported bound, and with no binary here it abstained (exit 3)
+    where the binary refuses it (2026-10-01)."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < 2 ** 64:
+        return None
+    return value
+
+
 def verify_zk_against_root(proof_bundle, expected_root_hex, expected_epoch_id,
                            expected_context_id, expected_nonce=None, zk_binary=None,
                            expected_scope=None, seen_nullifiers=None):
@@ -1637,35 +1647,37 @@ def verify_zk_against_root(proof_bundle, expected_root_hex, expected_epoch_id,
     if not _same_hex(pi.get("epoch_root_hex"), expected_root_hex):
         v["note"] = "proof is not bound to the trusted epoch root"
         return v
-    try:
-        if int(pi.get("epoch_id", -1)) != int(expected_epoch_id):
-            v["note"] = "proof epoch number does not match the checkpoint"
-            return v
-        if int(pi.get("context_id", -1)) != int(expected_context_id):
-            v["note"] = "proof context does not match the presented context"
-            return v
-        if expected_nonce is not None and int(pi.get("nonce", -1)) != int(expected_nonce):
-            v["note"] = "proof nonce does not match the verifier challenge"
-            return v
-        if expected_scope is not None and int(pi.get("scope", -1)) != int(expected_scope):
-            v["note"] = "proof scope is not this verifier's; a proof made elsewhere is not valid here"
-            return v
-    except (TypeError, ValueError, OverflowError):
-        # OverflowError, 2026-09-17: `json.loads` accepts the bare literal `Infinity`, and
-        # `int(float('inf'))` raises OverflowError, which `(TypeError, ValueError)` does not
-        # catch. A proof bundle with `"epoch_id": Infinity` crashed a function whose
-        # docstring promises a verdict on hostile input.
+    # Every one of the four is one the binary requires; a bundle missing one never verifies.
+    inputs = {k: _zk_input(pi.get(k)) for k in ("epoch_id", "context_id", "nonce", "scope")}
+    if None in inputs.values():
+        v["note"] = "proof public inputs are malformed"
+        return v
+    if inputs["epoch_id"] != _zk_input(expected_epoch_id):
+        v["note"] = "proof epoch number does not match the checkpoint"
+        return v
+    if inputs["context_id"] != _zk_input(expected_context_id):
+        v["note"] = "proof context does not match the presented context"
+        return v
+    if expected_nonce is not None and inputs["nonce"] != _zk_input(expected_nonce):
+        v["note"] = "proof nonce does not match the verifier challenge"
+        return v
+    if expected_scope is not None and inputs["scope"] != _zk_input(expected_scope):
+        v["note"] = "proof scope is not this verifier's; a proof made elsewhere is not valid here"
+        return v
+    # The nullifier as the binary reads it too: 64 hex digits, always present. A bundle without one,
+    # or with a number there, was reported bound and abstained with no binary (2026-10-01).
+    raw = pi.get("nullifier_hex")
+    if raw is None:
+        v["note"] = ("the proof carries no nullifier, so one person cannot be held to one proof; a "
+                     "pre-P9.3 proof is not one the polaris-zk binary reads")
+        return v
+    if not (isinstance(raw, str) and len(raw) == 64 and all(c in _HEX_DIGITS for c in raw)):
         v["note"] = "proof public inputs are malformed"
         return v
     v["bound"] = True
-    nullifier = str(pi.get("nullifier_hex") or "").lower() or None
+    nullifier = raw.lower()
     v["nullifier"] = nullifier
     if seen_nullifiers is not None:
-        if nullifier is None:
-            v["fresh_nullifier"] = False
-            v["note"] = ("the proof carries no nullifier, so one person cannot be held to one "
-                         "proof; a pre-P9.3 proof cannot satisfy a scoped verifier")
-            return v
         v["fresh_nullifier"] = nullifier not in {str(x).lower() for x in seen_nullifiers}
         if not v["fresh_nullifier"]:
             v["note"] = "this nullifier has already been accepted in this scope and epoch"
@@ -5035,8 +5047,84 @@ def _tri(value):
     return "True" if value is True else "False" if value is False else "None"
 
 
+class _Parser(argparse.ArgumentParser):
+    """Arguments this tool does not understand are a refusal to start (exit 4), as the README's
+    exit-code table reads. argparse's own exit 2 is this tool's "not accepted", so a mistyped flag
+    read, to a script, as a credential that did not verify (2026-10-01)."""
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(4, "%s: error: %s\n" % (self.prog, message))
+
+
+#: The flags each mode reads, beyond the crypto mode. A flag the chosen mode would ignore is
+#: refused before any file is read: --presentation took --status-assertion and did not read it, so
+#: a revoked assertion named there left exit 0 standing; --zk-proof took --issuer-anchor, and a
+#: pack --max-window, and read neither (2026-10-01).
+_MODE_FLAGS = {
+    "--selftest": {"selftest"},
+    "--verify-dir": {"verify_dir"},
+    "--agent-grant": {"agent_grant", "holder_binding", "credential", "grant_revocation", "agent_proof",
+                      "action", "service_nonce", "verifier_scope", "issuer_anchor", "trusted_anchor",
+                      "signature_only", "json"},
+    "--qr-frames": {"qr_frames", "issuer_anchor", "trusted_anchor", "max_window", "context", "nonce",
+                    "verifier_scope", "signature_only", "json"},
+    "--presentation": {"presentation", "issuer_anchor", "trusted_anchor", "max_window", "context",
+                       "nonce", "verifier_scope", "signature_only", "json"},
+    "--zk-proof": {"zk_proof", "epoch_checkpoint", "trusted_manifest", "trusted_anchor", "issuer_anchor",
+                   "context", "nonce", "max_window", "min_anonymity_set", "signature_only", "json"},
+    "--pack with --status-assertion": {"pack", "status_assertion", "max_window", "issuer_anchor",
+                                       "trusted_anchor", "signature_only", "json"},
+    "--pack without --status-assertion": {"pack", "issuer_anchor", "trusted_anchor", "signature_only",
+                                          "json"},
+}
+_ALWAYS = {"pqc_provider", "dev_placeholder"}
+
+
+def _mode_of(args):
+    """The mode a run takes, in the order main dispatches."""
+    if args.selftest:
+        return "--selftest"
+    if args.verify_dir:
+        return "--verify-dir"
+    if args.agent_grant:
+        return "--agent-grant"
+    if args.qr_frames:
+        return "--qr-frames"
+    if args.presentation:
+        return "--presentation"
+    if args.zk_proof:
+        return "--zk-proof"
+    if args.status_assertion:
+        return "--pack with --status-assertion"
+    return "--pack without --status-assertion"
+
+
+class _Counted(argparse.Namespace):
+    """A namespace that counts how often each flag was set, which is once per time it was given
+    when no defaults are applied."""
+
+    def __setattr__(self, name, value):
+        counts = self.__dict__.setdefault("_counts", {})
+        counts[name] = counts.get(name, 0) + 1
+        super().__setattr__(name, value)
+
+
+def _given(ap, argv):
+    """(given, repeated): the flags the command line names, whatever their values, since a flag
+    given its default value is still one the caller expects read; and those given more than once
+    whose second value replaced the first. `--issuer-anchor A --issuer-anchor B` trusted B alone,
+    and `--pack X --pack Y` decided Y (2026-10-01). Parses again with no defaults, so call it last."""
+    for a in ap._actions:
+        a.default = argparse.SUPPRESS
+    ns = ap.parse_args(argv, namespace=_Counted())
+    counts = ns.__dict__.pop("_counts", {})
+    replacing = {a.dest for a in ap._actions if isinstance(a, argparse._StoreAction)}
+    return set(vars(ns)), {d for d, n in counts.items() if n > 1 and d in replacing}
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Detached authenticity verifier for a Polaris credential.")
+    ap = _Parser(description="Detached authenticity verifier for a Polaris credential.")
     ap.add_argument("--pack", help="authenticity pack JSON file (default: stdin)")
     ap.add_argument("--presentation", help="a polaris-presentation/1 JSON file (P8.6): the credential with a stapled status "
                                            "assertion, decided offline")
@@ -5094,6 +5182,18 @@ def main(argv=None):
     ap.add_argument("--verifier-scope", help="this verifier's own scope (P9.4): reports the pairwise "
                                              "handle to key records by instead of the token value")
     args = ap.parse_args(argv)
+
+    mode = _mode_of(args)
+    given, repeated = _given(ap, argv)
+    if repeated:
+        print("polaris-verify: %s given more than once; refusing to start rather than read only the "
+              "last" % ", ".join(sorted("--" + d.replace("_", "-") for d in repeated)), file=sys.stderr)
+        return 4
+    ignored = sorted("--" + d.replace("_", "-") for d in given - _ALWAYS - _MODE_FLAGS[mode])
+    if ignored:
+        print("polaris-verify: %s does not read %s; refusing to start rather than ignore %s"
+              % (mode, ", ".join(ignored), "them" if len(ignored) > 1 else "it"), file=sys.stderr)
+        return 4
 
     # Refuse to start before doing anything else, including reading the caller's files.
     _mode, _err = resolve_crypto_mode(args.pqc_provider, args.dev_placeholder)
@@ -5200,30 +5300,55 @@ def main(argv=None):
             return 2
         return 0 if verdict["usable_offline"] else 2
     if args.zk_proof:
-        try:
-            proof = json.loads(open(args.zk_proof).read())
-            checkpoint = json.loads(open(args.epoch_checkpoint).read()) if args.epoch_checkpoint else {}
-            manifests = [json.loads(open(m).read()) for m in (args.trusted_manifest or [])]
-        except Exception as e:
-            print("could not read the ZK proof / checkpoint / manifest: %s" % e, file=sys.stderr)
-            return 3
+        # A value of the wrong type is an argument this run does not take: 4 before any file is
+        # read, as argparse's own type errors are. It exited 3 after reading them (2026-10-01).
         try:
             zk_nonce = None if args.nonce is None else int(args.nonce)
         except ValueError:
             print("--nonce must be an integer for --zk-proof: the proof's public input is one",
                   file=sys.stderr)
+            return 4
+        try:
+            proof = json.loads(open(args.zk_proof).read())
+            checkpoint = json.loads(open(args.epoch_checkpoint).read()) if args.epoch_checkpoint else {}
+            manifests = [json.loads(open(m).read()) for m in (args.trusted_manifest or [])]
+            anchor = _anchor_keys(args)
+        except Exception as e:
+            print("could not read the ZK proof / checkpoint / manifest / anchor: %s" % e, file=sys.stderr)
             return 3
         verdict = verify_cross_authority_zk(
             proof, checkpoint, args.context, manifests, max_window_seconds=args.max_window,
-            trusted_anchors=([args.trusted_anchor] if args.trusted_anchor else None),
-            expected_nonce=zk_nonce, min_anonymity_set=args.min_anonymity_set)
+            trusted_anchors=anchor, expected_nonce=zk_nonce, min_anonymity_set=args.min_anonymity_set)
+        # The rules of every other path. --trusted-anchor alone reached this path, and with no
+        # trust root every manifest named was trusted: a manifest is its authority's word about
+        # itself (WIRE-SPEC 3.1). And a proof checked against no challenge is replayable, as a
+        # holder proof is on the presentation path (2026-10-01).
+        held = None
+        if verdict["decision"] == "accept" and anchor is None and not args.signature_only:
+            held = ("abstain: no --trusted-anchor or --issuer-anchor, so nothing here establishes that "
+                    "the authority attesting the checkpoint's issuer is one you trust. Pass a trust "
+                    "root, or --signature-only to say that the proof and its binding are the question.")
+        elif verdict["decision"] == "accept" and zk_nonce is None:
+            held = ("abstain: no --nonce, so nothing here shows the proof was made for this service "
+                    "rather than replayed. Pass the nonce this service issued with --nonce.")
+        if held:
+            # The printed verdict says what the exit code says; an accept that exits 2 read as one.
+            verdict = dict(verdict, decision="abstain", reasons=list(verdict.get("reasons") or []) + [held])
         if args.json:
             print(json.dumps(stamp_crypto(verdict, _mode), indent=2))
         else:
             print("decision: %s" % verdict["decision"])
             for r in verdict.get("reasons", []):
                 print("  - %s" % r)
-        # Reject and abstain are both "not accepted" (2); a reject exited 1 until 2026-09-28.
+        if held:
+            print(held, file=sys.stderr)
+            return 2
+        # The verifier's own abstain is the one decision a missing polaris-zk binary makes: the
+        # check could not run (3), not a proof that failed (2), which it exited until 2026-10-01.
+        if verdict["decision"] == "abstain":
+            print("abstain: %s" % "; ".join(verdict.get("reasons") or ["the proof could not be checked"]),
+                  file=sys.stderr)
+            return 3
         return 0 if verdict["decision"] == "accept" else 2
 
     try:
@@ -5232,6 +5357,20 @@ def main(argv=None):
     except Exception as e:
         print("could not read the authenticity pack: %s" % e, file=sys.stderr)
         return 3
+    # Another signed artifact handed to --pack was reported as a signature that did not verify. It
+    # is not a pack, which the README's exit 2 names; the library verifies it (2026-10-01). The
+    # --json verdict carries the refusal in the keys a pack verdict and a stapled one are read by.
+    fmt = pack.get("format") if isinstance(pack, dict) else None
+    if isinstance(fmt, str) and fmt != "polaris-authenticity-pack/1":
+        note = ("not an authenticity pack: this is a %s. From the command line polaris-verify decides "
+                "packs, presentations and QR frames, agent grants and zero-knowledge proofs; the "
+                "library verifies every artifact (see the README)." % fmt)
+        if args.json:
+            print(json.dumps(stamp_crypto({"decision": "reject", "signature_valid": False,
+                                           "issuer_trusted": None, "reasons": [note], "note": note},
+                                          _mode), indent=2))
+        print(note, file=sys.stderr)
+        return 2
     try:
         anchor = _anchor_keys(args)
     except Exception as e:
@@ -5246,6 +5385,14 @@ def main(argv=None):
             print("could not read the status assertion: %s" % e, file=sys.stderr)
             return 3
         verdict = verify_stapled(pack, assertion, max_window_seconds=args.max_window, anchor_keys=anchor)
+        held = verdict["decision"] == "accept" and not args.signature_only and not (
+            verdict.get("credential", {}).get("trust_evaluated")
+            and verdict.get("status_assertion", {}).get("trust_evaluated"))
+        if held:
+            # The printed verdict says what the exit code says: it read "accept" with exit 2
+            # whenever the trust abstention below decided the run (2026-10-01).
+            verdict = dict(verdict, decision="abstain", reasons=list(verdict.get("reasons") or []) + [
+                "no --issuer-anchor: issuer trust was not evaluated"])
         if args.json:
             print(json.dumps(stamp_crypto(verdict, _mode), indent=2))
         else:
@@ -5256,14 +5403,11 @@ def main(argv=None):
             print("bound:            %s" % verdict["bound"])
             for r in verdict["reasons"]:
                 print("  - %s" % r)
-        if not args.signature_only and not (
-                verdict.get("credential", {}).get("trust_evaluated")
-                and verdict.get("status_assertion", {}).get("trust_evaluated")):
+        if held:
             print("abstain: no --issuer-anchor, so issuer trust was NOT evaluated for the "
                   "credential, the status assertion, or both. A genuine signature is not a "
                   "trusted issuer. Pass --issuer-anchor to decide it, or --signature-only to "
                   "say that cryptographic validity alone is the question.", file=sys.stderr)
-            return 2
         return 0 if verdict["decision"] == "accept" else 2
 
     verdict = verify_pack(pack, anchor)

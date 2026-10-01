@@ -108,8 +108,8 @@ python3 ../../conformance/run_conformance.py --verifier "node src/conformance.ts
 npm install polaris-sdk-ts@next
 ```
 
-A release candidate (1.0.0-rc.8) under the `next` dist-tag; a plain `npm install polaris-sdk-ts`
-resolves 0.1.0 until 1.0.0.
+This is release candidate 1.0.0-rc.8. Candidates are published under the `next` dist-tag; a plain
+`npm install polaris-sdk-ts` resolves 0.1.0 until 1.0.0.
 
 From a clone, if you are working on the SDK itself (`npm install github:...` does not work, because
 the repository root is not a package):
