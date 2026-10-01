@@ -46,6 +46,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `publish.yml` can publish `polaris-id-cli`, gated on its wheel installing and behaving alone; every publish now waits for the maintainer to approve the run.
 - Published: `polaris-sdk-ts` 1.0.0-rc.6 on npm under `next`, approved by the maintainer with a second factor.
 - `polaris-id-cli` is packaged as 1.0.0rc1 for PyPI: metadata, README and links for a package page, built with setuptools alone.
+- The project report and evidence record, in both editions, record the corrections of 2026-09-28 to 2026-09-30.
 
 ### Fixed
 
