@@ -448,6 +448,91 @@ class StructuralRefusalsTests(unittest.TestCase):
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "issuer_typ")
 
+    def test_a_w3c_vc_typed_credential_is_refused(self):
+        # `vc+sd-jwt` is the typ of a W3C VC Data Model 2.0 credential secured with SD-JWT
+        # (W3C VC-JOSE-COSE, Recommendation 2025-05-15); SD-JWT VC took `dc+sd-jwt` so the two
+        # would not collide (draft-ietf-oauth-sd-jwt-vc-19: the typ MUST be `dc+sd-jwt`). That
+        # model ends a credential with `validUntil` and revokes it through `credentialStatus`,
+        # neither of which this verifier reads, so one its issuer had ended was accepted.
+        w = Wallet()
+        ended = {"validUntil": "2020-01-01T00:00:00Z",
+                 "credentialStatus": {"type": "BitstringStatusListEntry",
+                                      "statusPurpose": "revocation", "statusListIndex": "7",
+                                      "statusListCredential": "https://issuer.example/status/1"}}
+        v = w.verify(w.present(issuer_typ="vc+sd-jwt", payload_extra=ended))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_typ")
+        # Positive control: typed as an SD-JWT VC, the same signed payload verifies (those two
+        # members mean nothing there), so `typ` alone is what refuses the W3C credential.
+        self.assertTrue(w.verify(w.present(payload_extra=ended)).authentic)
+
+    def test_a_crit_on_the_issuer_jwt_is_refused(self):
+        # RFC 7515 4.1.11: a JWS whose crit names an extension the recipient does not
+        # implement is invalid. The response JWE was held to it in 1.0.0rc12 and this JWS
+        # was not, so the extension the issuer marked as binding was ignored.
+        w = Wallet()
+        v = w.verify(w.present(issuer_header={"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1",
+                                              "crit": ["urn:x:must-understand"],
+                                              "urn:x:must-understand": True}))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "crit")
+
+    def _with_kb(self, w, header_extra=None, payload_extra=None):
+        """A presentation whose key binding JWT carries what the test says, and is otherwise
+        exactly the wallet's: right nonce, audience, iat and sd_hash, signed by the holder."""
+        presented = w.present(drop_key_binding=True)
+        sd_hash = b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())
+        header = dict({"alg": "ES256", "typ": "kb+jwt"}, **(header_extra or {}))
+        body = dict({"iat": int(time.time()), "aud": AUDIENCE, "nonce": NONCE,
+                     "sd_hash": sd_hash}, **(payload_extra or {}))
+        return presented + _jws(w.holder_key, header, body)
+
+    def test_a_crit_on_the_key_binding_jwt_is_refused(self):
+        w = Wallet()
+        self.assertTrue(w.verify(self._with_kb(w)).authentic, "positive control")
+        v = w.verify(self._with_kb(w, header_extra={"crit": ["urn:x:must-understand"],
+                                                   "urn:x:must-understand": True}))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "crit")
+
+    def test_a_key_binding_jwt_past_its_exp_or_before_its_nbf_is_refused(self):
+        # RFC 9901 7.3: the key binding JWT must be "a valid JWT in all other respects, per
+        # RFC 7519". Both claims were ignored, so a proof that said it expired an hour ago
+        # verified. One in the future is the positive control for exp.
+        w = Wallet()
+        now = int(time.time())
+        self.assertTrue(w.verify(self._with_kb(w, payload_extra={"exp": now + 3600})).authentic)
+        for extra in ({"exp": now - 3600}, {"nbf": now + 3600}, {"exp": "soon"},
+                      {"nbf": True}):
+            with self.subTest(extra=extra):
+                v = w.verify(self._with_kb(w, payload_extra=extra))
+                self.assertFalse(v.authentic)
+                self.assertEqual(v.code, "kb_freshness")
+
+    def test_a_digest_committed_twice_is_refused(self):
+        # RFC 9901 7.1: "If any digest value is encountered more than once in the
+        # Issuer-signed JWT payload (directly or recursively via other Disclosures), the
+        # SD-JWT MUST be rejected." The resolver memoized a repeated digest and went on, so
+        # one disclosure stood in two places and repeated decoys passed.
+        w = Wallet()
+        claims = (("given_name", "Jean"),)
+        digest = b64u_encode(hashlib.sha256(
+            _disclosure("salt0", "given_name", "Jean").encode("ascii")).digest())
+        decoy = b64u_encode(hashlib.sha256(b"a decoy nobody discloses").digest())
+        self.assertTrue(w.verify(w.present(claims=claims,
+                                           payload_extra={"_sd": [digest, decoy]})).authentic,
+                        "positive control: the same credential with each digest once")
+        for label, extra in (("a decoy twice", {"_sd": [digest, decoy, decoy]}),
+                             ("top level and nested", {"_sd": [digest],
+                                                       "nested": {"_sd": [digest]}}),
+                             ("_sd and an array element", {"_sd": [digest],
+                                                           "arr": [{"...": digest}]})):
+            with self.subTest(label):
+                v = w.verify(w.present(claims=claims, payload_extra=extra))
+                self.assertFalse(v.authentic)
+                self.assertEqual(v.code, "disclosure")
+                self.assertIn("more than once", v.reason)
+
     def test_an_unknown_kb_typ_is_refused(self):
         w = Wallet()
         v = w.verify(w.present(kb_typ="JWT"))
@@ -1363,17 +1448,19 @@ class IssuerCertificateTests(unittest.TestCase):
     """
 
     @staticmethod
-    def _ca():
+    def _ca(names_issuer=False):
         now = datetime.datetime.now(datetime.timezone.utc)
         key = ec.generate_private_key(ec.SECP256R1())
         name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test anchor")])
-        cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
-                .public_key(key.public_key()).serial_number(x509.random_serial_number())
-                .not_valid_before(now - datetime.timedelta(days=1))
-                .not_valid_after(now + datetime.timedelta(days=365))
-                .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
-                .sign(key, hashes.SHA256()))
-        return key, name, cert
+        builder = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+                   .public_key(key.public_key()).serial_number(x509.random_serial_number())
+                   .not_valid_before(now - datetime.timedelta(days=1))
+                   .not_valid_after(now + datetime.timedelta(days=365))
+                   .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True))
+        if names_issuer:
+            builder = builder.add_extension(x509.SubjectAlternativeName(
+                [x509.UniformResourceIdentifier("https://issuer.example")]), critical=False)
+        return key, name, builder.sign(key, hashes.SHA256())
 
     @staticmethod
     def _leaf(ca_key, ca_name, *, not_before=None, not_after=None, extensions=(), key=None):
@@ -1404,6 +1491,42 @@ class IssuerCertificateTests(unittest.TestCase):
         leaf, leaf_key = self._leaf(ca_key, ca_name)
         v = self._verify(leaf, leaf_key, ca)
         self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
+    def test_the_anchor_itself_sent_as_the_leaf_is_refused(self):
+        """HAIP 1.0 6.1.1: the trust anchor's certificate MUST NOT be in the credential's
+        x5c, and the signing certificate MUST NOT be self-signed. Sent as the leaf, an anchor
+        that names the issuer verified (1.0.0rc11, measured): it is signed by the anchor and
+        names the anchor as its issuer.
+
+        This anchor names the credential's `iss`. Until 2026-10-01 the test's did not, so the
+        name check refused it first, the old code failed this test only on the reason, and the
+        verdict proved nothing about the anchor rule."""
+        ca_key, ca_name, ca = self._ca(names_issuer=True)
+        v = self._verify(ca, ca_key, ca)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key")
+        # The anchor is self-signed AND a CA, so either rule refuses it; each is isolated by
+        # one of the two tests below.
+        self.assertRegex(v.reason, "self-signed|CA certificate")
+
+    def test_a_leaf_carrying_the_anchors_own_key_is_refused(self):
+        ca_key, ca_name, ca = self._ca()
+        leaf, leaf_key = self._leaf(ca_key, ca_name, key=ca_key)
+        v = self._verify(leaf, leaf_key, ca)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key")
+        self.assertIn("self-signed", v.reason)
+
+    def test_a_ca_certificate_from_the_anchor_is_not_an_issuer(self):
+        """A sub-CA the anchor certified, with no KeyUsage or EKU to stop it, verified as an
+        issuer: every CA under a registered anchor could sign credentials directly."""
+        ca_key, ca_name, ca = self._ca()
+        leaf, leaf_key = self._leaf(ca_key, ca_name, extensions=(
+            (x509.BasicConstraints(ca=True, path_length=0), True),))
+        v = self._verify(leaf, leaf_key, ca)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key")
+        self.assertIn("CA certificate", v.reason)
 
     def test_an_expired_leaf_is_refused(self):
         now = datetime.datetime.now(datetime.timezone.utc)

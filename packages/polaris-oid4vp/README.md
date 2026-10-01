@@ -77,13 +77,15 @@ make every presentation replayable. `sdjwt.py` touches no socket and reads no co
 | `sd_hash` | a key-binding JWT not bound to this presentation |
 | `kb_signature` | a key-binding signature that does not verify |
 | `nonce`, `audience` | a key-binding JWT for another request or verifier |
-| `kb_freshness` | a key-binding `iat` outside the window |
+| `kb_freshness` | a key-binding `iat` outside the window, or an `exp` or `nbf` it carries that has passed or not arrived |
 | `claims` | (`Verifier`) a presentation that withholds a claim the request asked for |
 | `revoked` | (`Verifier`) a credential whose checked status value is not VALID (0) |
 | `credential_validity` | a credential past its `exp` or before its `nbf` |
 | `vct` | a credential of a type the query did not ask for |
-| `disclosure` | a disclosure of a claim that must be signed (`iss`, `exp`, `cnf`, ...), a colliding claim, or nesting past the depth cap |
-| `issuer_key` | an untrusted key, an x5c leaf outside its validity or not marked for signing, or one that does not name the credential's `iss` |
+| `issuer_typ` | an issuer JWT not typed `dc+sd-jwt`, a W3C VC Data Model `vc+sd-jwt` credential among them |
+| `disclosure` | a disclosure of a claim that must be signed (`iss`, `exp`, `cnf`, ...), a colliding claim, a digest the credential commits to twice, or nesting past the depth cap |
+| `issuer_key` | an untrusted key, an x5c leaf outside its validity, not marked for signing, self-signed or a CA, or one that does not name the credential's `iss` |
+| `crit` | an issuer JWT, key-binding JWT or status list token whose `crit` names an extension; none is implemented |
 | `malformed` | over 256 KiB, JSON over 64 KiB or 64 levels, or non-finite numbers |
 
 Recursive disclosures (SD-JWT 4.2.4.1) are supported.
@@ -146,7 +148,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 347 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 356 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 108 refusals accept and requires a
