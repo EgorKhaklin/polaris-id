@@ -28,6 +28,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The Python SDK reports no nonce match for a holder proof it cannot check, as the TypeScript SDK does.
 - A trusted anchor, witness or log key that is not text matches nothing in all three verifiers; each raised on it.
 - `polaris-wallet grant --max-amount 100` signs 100, not 100.0, which the TypeScript SDK could not verify.
+- `polaris-oid4vp serve` refuses an `--issuer-jwks` file it cannot read or use; one raised, and one with no usable key started silently.
 
 ### Added
 
