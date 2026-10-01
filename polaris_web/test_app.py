@@ -14312,6 +14312,26 @@ class EndToEndFlowTests(PolarisTestCase):
     revoked one, and cannot tell a duress presentation from a normal accept —
     against the REAL DB status service, with real signatures."""
 
+    def setUp(self):
+        super().setUp()
+        # The issuer's long-lived key, as production configures one (custody's file driver).
+        # Without it pqc_signing signs every call under a fresh throwaway key, so the credential
+        # and the status assertion the issuer later signs for it come from two keys, and the
+        # relying party rightly refuses an assertion its credential's key did not sign.
+        fd, path = _e2e_tmp.mkstemp(suffix=".key.json")
+        with os.fdopen(fd, "w") as f:
+            _e2e_json.dump(flask_app.pqc_signing.generate_keypair(), f)
+        before = os.environ.get("POLARIS_PQC_SIGNING_KEY_FILE")
+        os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = path
+
+        def restore():
+            if before is None:
+                os.environ.pop("POLARIS_PQC_SIGNING_KEY_FILE", None)
+            else:
+                os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = before
+            os.remove(path)
+        self.addCleanup(restore)
+
     def _new_conn(self):
         return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
 
