@@ -30,7 +30,11 @@ Three properties this drill exists to hold:
   NOT A BEARER  A copied grant is useless without the agent's key. Case 12 steals the grant
   TOKEN         and fails; case 13 replays a genuine proof at a second service and fails.
 
-And the bound, asserted rather than glossed (case 14): under a plain binding the service
+The chain is the issuer's (case 14b): a credential whose signature does not verify, a binding
+with no credential, or an issuer outside the service's anchors binds nobody, and a grant with
+any link missing is not usable.
+
+And the bound, asserted rather than glossed (case 17): under a plain binding the service
 still sees the credential's token value, so the verdict says `correlation: "exposed"`. A
 grant hides the human from the agent's ACTIONS, not the credential from the service.
 
@@ -192,6 +196,23 @@ def main():
     # 14. A grant signed by a key no issuer bound speaks for nobody.
     v = V.verify_agent_grant(grant(sk=imp_sk, pk=imp_pk), requested_action="read:status", **common)
     ok &= _row("a grant signed by an unbound key is refused", v["principal_bound"], False)
+
+    # 14b. 2026-09-30: the chain is the ISSUER's. The credential's own signature, and the trust
+    # root, were never checked: a chain signed end to end under an attacker's key was usable
+    # against the real issuer's anchor.
+    whole = dict(requested_action="read:status", agent_proof=agent_proof(), expected_nonce="svc-nonce-1",
+                 binding=binding)
+    v = V.verify_agent_grant(good, credential=cred, anchor_keys=[imp_pk.hex()], **whole)
+    ok &= _row("a whole chain under an issuer the service does not trust is REFUSED", v["usable"], False)
+    sig = bytearray(bytes.fromhex(cred["signature_hex"]))
+    sig[0] ^= 0x01
+    v = V.verify_agent_grant(good, credential=dict(cred, signature_hex=sig.hex()),
+                             anchor_keys=[iss_pk.hex()], **whole)
+    ok &= _row("a credential whose signature does not verify binds nobody", v["principal_bound"], False)
+    v = V.verify_agent_grant(good, anchor_keys=[iss_pk.hex()], **whole)
+    ok &= _row("a binding with no credential beside it binds nobody", v["principal_bound"], False)
+    ok &= _row("a bare grant, with no chain behind it, is not usable",
+               V.verify_agent_grant(good)["usable"], False)
 
     # 15. An empty action list grants nothing, rather than everything.
     v = V.verify_agent_grant(grant(actions=()), requested_action="read:status", **common)

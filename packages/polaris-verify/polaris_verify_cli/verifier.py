@@ -114,6 +114,30 @@ def _finite(x):
             and _math.isfinite(x))
 
 
+def _wire_int(x):
+    """A JSON integer off the wire, for an inclusion proof's index and tree size: a finite
+    number with no fractional part, never a boolean or a string. Raises ValueError otherwise.
+
+    `int()` alone read `1.5` as 1, and `"1"` and `true` as 1, where the TypeScript SDK's
+    `Number()` read `null` and `false` as 0, so on 2026-09-30 the same inclusion proof was
+    anchored under one Polaris verifier and refused under another. Every verifier now reads
+    these fields by this one rule."""
+    if not _finite(x) or (isinstance(x, float) and not x.is_integer()):
+        raise ValueError("not a JSON integer: %r" % (x,))
+    return int(x)
+
+
+def _wire_path(p):
+    """An inclusion proof's audit path: absent or null is the empty path, a list is read
+    element by element, and anything else is malformed rather than read as empty (`0`, `""`
+    and `{}` were, through `or []`) or iterated character by character."""
+    if p is None:
+        return []
+    if not isinstance(p, list):
+        raise ValueError("an inclusion proof's path must be a list")
+    return [_unhex(str(x)) for x in p]
+
+
 def _accepted_alg(alg):
     """True iff `alg` names an accepted parameter set. Total: a hostile non-string is simply
     not accepted (never a TypeError from an unhashable value)."""
@@ -631,14 +655,20 @@ def verify_stapled(pack, assertion, now=None, max_window_seconds=None, anchor_ke
     a = verify_pack(pack, anchor_keys)
     s = verify_status_assertion(assertion, now=now, max_window_seconds=max_window_seconds,
                                 anchor_keys=anchor_keys)
-    bound = bool(pack.get("token_value")) and pack.get("token_value") == assertion.get("token_value")
+    # Bound = the same token AND the credential's own key. The token alone let any key the relying
+    # party trusts answer for any credential: with two authorities trusted, the second one's
+    # ACTIVE assertion overrode the first one's revocation (2026-09-30). verify_presentation has
+    # always required both, as WIRE-SPEC's presentation section does.
+    bound = (bool(pack.get("token_value")) and pack.get("token_value") == assertion.get("token_value")
+             and str(pack.get("public_key_hex") or "").lower() == str(assertion.get("public_key_hex") or "").lower())
     reasons = []
     if not a["signature_valid"]:
         reasons.append("credential is not authentic")
     if a.get("issuer_trusted") is False:
         reasons.append("credential issuer is not trusted")
     if not bound:
-        reasons.append("the status assertion is not bound to this credential")
+        reasons.append("the status assertion is not bound to this credential (another token, or "
+                       "signed by a key other than the credential's)")
     if not s["status_authentic"]:
         reasons.append("status assertion not authentic: %s" % (s.get("note") or "invalid"))
     elif not s["fresh"]:
@@ -1389,8 +1419,11 @@ def verify_status_bundle(bundle, now=None, max_window_seconds=None, publisher_ke
     if not isinstance(members, list):
         members = []
     v["members"] = members  # a coerced list, so a downstream member iteration is total
+    # member_count is a number, not a boolean, and not absent: `(x or 0)` read an absent
+    # count as 0 and Python's `True == 1` read `true` as one member (WIRE-SPEC 3.4).
+    member_count = bundle.get("member_count")
     v["commitment_ok"] = (bundle_members_root(members) == str(bundle.get("members_root_hex") or "").lower()
-                          and len(members) == (bundle.get("member_count") or 0))
+                          and _finite(member_count) and member_count == len(members))
     try:
         sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
@@ -1862,9 +1895,9 @@ def verify_timestamp_anchor(ts, log_key=None, trusted_witnesses=None, threshold=
         v["note"] = "the head is not a %s head" % _TIMESTAMP_LOG_ID
         return v
     try:
-        idx, size = int(proof.get("index")), int(proof.get("tree_size"))
+        idx, size = _wire_int(proof.get("index")), _wire_int(proof.get("tree_size"))
         root = _unhex(str(sth.get("root_hash_hex")))
-        path = [_unhex(str(p)) for p in (proof.get("proof_hex") or [])]
+        path = _wire_path(proof.get("proof_hex"))
     except (TypeError, ValueError, OverflowError):
         # OverflowError: `"index": Infinity` survives `json.loads` and `int(float('inf'))`
         # raises it. See the note on the public-inputs handler above.
@@ -1921,9 +1954,9 @@ def verify_receipt_inclusion(receipt, proof, sth, log_key=None):
         v["note"] = "the head is not a %s head" % _RECEIPT_LOG_ID
         return v
     try:
-        idx, size = int(proof.get("index")), int(proof.get("tree_size"))
+        idx, size = _wire_int(proof.get("index")), _wire_int(proof.get("tree_size"))
         root = _unhex(str(sth.get("root_hash_hex")))
-        path = [_unhex(str(p)) for p in (proof.get("proof_hex") or [])]
+        path = _wire_path(proof.get("proof_hex"))
     except (TypeError, ValueError, OverflowError):
         # OverflowError: `"index": Infinity` survives `json.loads` and `int(float('inf'))`
         # raises it. See the note on the public-inputs handler above.
@@ -3235,9 +3268,9 @@ def verify_publication(log_sth, receipt, ledger_key):
     v["ledger_size"] = ledger_sth.get("tree_size")
     entry = _publication_entry(log_sth.get("log_id"), log_sth.get("tree_size"), log_sth.get("root_hash_hex"))
     try:
-        idx = int(receipt["leaf_index"])
+        idx = _wire_int(receipt["leaf_index"])
         root = _unhex(ledger_sth["root_hash_hex"])
-        proof = [_unhex(h) for h in (receipt.get("inclusion_proof_hex") or [])]
+        proof = _wire_path(receipt.get("inclusion_proof_hex"))
     except (ValueError, TypeError, KeyError, OverflowError):
         # OverflowError: a receipt whose `leaf_index` is the bare literal `Infinity`.
         v["note"] = "the receipt's leaf_index, proof, or ledger root is malformed"
@@ -3293,6 +3326,10 @@ def _load_anchor(path):
         data = json.load(f)
     if isinstance(data, list):
         return [str(x) for x in data]
+    if not isinstance(data, dict):
+        # `null` or a number reached `key in data` and raised TypeError, which the presentation
+        # and grant paths did not catch: a traceback and exit 1 where the table says 3.
+        raise ValueError("anchor file must be a list of hex keys or carry a 'public_keys_hex' list")
     for key in ("public_keys_hex", "public_key_hex", "anchors", "keys"):
         if key in data:
             v = data[key]
@@ -3535,7 +3572,9 @@ def verify_epoch_leaves(bundle, now=None, max_window_seconds=None, anchor_keys=N
     leaves = leaves if isinstance(leaves, list) else []
     v["leaf_count"] = len(leaves)
     v["commitment_matches"] = (_leaves_root(leaves) == str(bundle.get("leaves_root_hex") or "").lower())
-    v["count_matches"] = (len(leaves) == bundle.get("leaf_count"))
+    # A number, not a boolean: `True == 1` read `"leaf_count": true` as one leaf, which the
+    # TypeScript SDK's `===` refuses (2026-09-30).
+    v["count_matches"] = (_finite(bundle.get("leaf_count")) and len(leaves) == bundle.get("leaf_count"))
     if not v["commitment_matches"]:
         v["note"] = "the published leaves do not match the committed leaves_root_hex"
         return v
@@ -4251,9 +4290,14 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
 
     Every link is reported separately, because a service that only sees one boolean cannot
     tell "this grant was revoked" from "this agent does not hold the key it names", and
-    those call for different responses.
+    those call for different responses. `usable` is all five links of WIRE-SPEC 3.17, each
+    CHECKED: the credential's issuer signature (and, with `anchor_keys`, an issuer among
+    them), the issuer's binding of the holder key, the holder's grant covering the requested
+    action, no holder revocation, and the agent's proof naming this action and this
+    service's nonce.
     """
     v = {"grant_authentic": False, "fresh": None, "principal_bound": None,
+         "credential_authentic": None, "issuer_trusted": None,
          "action_in_scope": None, "limits": None, "revoked": None, "agent_proved": None,
          "pairwise_handle": None, "correlation": None, "usable": False,
          "witnesses": [], "note": None}
@@ -4273,9 +4317,20 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
 
     _verify_window(grant, v, now, None)
 
-    # Link 2: the holder key must be one an ISSUER bound to a real credential, or the grant
-    # is signed by a key that speaks for nobody.
+    # Links 1 and 2: the holder key must be one an ISSUER bound to a real credential, or the
+    # grant is signed by a key that speaks for nobody.
     if binding is not None:
+        # 2026-09-30: link 1 was never checked. The binding was compared with the credential
+        # (same token, same signing key), but the credential's own signature was not verified,
+        # a binding with no credential beside it counted as bound, and `anchor_keys` reached a
+        # field nothing read. So a chain an attacker signed end to end, under a key of their
+        # own, was bound and usable when checked against the real issuer's anchor, even with
+        # a credential signature that does not verify. WIRE-SPEC 3.17 names "the issuer's
+        # signature on the credential" as a link a verifier MUST check.
+        cv = verify_pack(credential, anchor_keys) if isinstance(credential, dict) else None
+        v["credential_authentic"] = bool(cv and cv.get("signature_valid"))
+        if anchor_keys is not None:
+            v["issuer_trusted"] = bool(cv and cv.get("issuer_trusted"))
         bv = verify_holder_binding(binding, credential=credential, now=now, anchor_keys=anchor_keys)
         # 2026-09-27: the binding must also be ACTIVE. A revoked binding is published so that
         # "a verifier sees that the holder has no usable key" (WIRE-SPEC, holder binding), and
@@ -4287,11 +4342,20 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
         v["principal_bound"] = bool(
             bv["binding_authentic"] and bv["fresh"] is not False and active
             and str(bv["holder_public_key_hex"] or "").lower() == str(holder_key or "").lower()
-            and (bv["bound_to_credential"] is not False))
+            and (bv["bound_to_credential"] is not False)
+            and v["credential_authentic"] and v["issuer_trusted"] is not False)
         if not v["principal_bound"]:
-            v["note"] = ("the grant's signing key is not one an issuer bound to a credential "
-                         "(%s)" % ("the issuer revoked the binding" if bv["binding_authentic"] and not active
-                                   else bv["note"] or "binding did not verify"))
+            if cv is None:
+                why = "no credential: a binding binds nothing until the credential it names is checked"
+            elif not v["credential_authentic"]:
+                why = "the credential's signature does not verify" + (": %s" % cv["note"] if cv.get("note") else "")
+            elif v["issuer_trusted"] is False:
+                why = "the credential's issuer key is not in the trusted anchors"
+            elif bv["binding_authentic"] and not active:
+                why = "the issuer revoked the binding"
+            else:
+                why = bv["note"] or "binding did not verify"
+            v["note"] = "the grant's signing key is not one an issuer bound to a credential (%s)" % why
         if verifier_scope is not None:
             v["pairwise_handle"] = pairwise_handle(bv["holder_public_key_hex"], verifier_scope)
             v["correlation"] = "exposed"
@@ -4368,11 +4432,24 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
             else:
                 v["agent_proved"] = True
 
+    # 2026-09-30: every link WIRE-SPEC 3.17 names must have been CHECKED, not merely not have
+    # failed. `is not False` read a link nobody supplied as a pass, so a bare grant signed by
+    # any key at all, with no binding, credential, proof or service nonce behind it, was
+    # usable. A revocation stays optional: a grant nobody revoked has none to show.
     v["usable"] = bool(v["grant_authentic"] and v["fresh"] is not False
-                       and v["principal_bound"] is not False
-                       and v["action_in_scope"] is not False
+                       and v["principal_bound"] is True
+                       and v["action_in_scope"] is True
                        and not v["revoked"]
-                       and v["agent_proved"] is not False)
+                       and v["agent_proved"] is True
+                       and expected_nonce is not None)
+    if not v["usable"] and v["note"] is None:
+        missing = [what for what, absent in (
+            ("holder binding", binding is None),
+            ("requested action", requested_action is None),
+            ("agent proof", agent_proof is None),
+            ("service nonce", expected_nonce is None)) if absent]
+        if missing:
+            v["note"] = "not usable: the chain is incomplete (no %s)" % ", no ".join(missing)
     return v
 
 
@@ -4769,6 +4846,11 @@ def stamp_crypto(verdict, mode):
     return verdict
 
 
+def _tri(value):
+    """A verdict link as the CLI prints it: the literal True, False or None."""
+    return "True" if value is True else "False" if value is False else "None"
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Detached authenticity verifier for a Polaris credential.")
     ap.add_argument("--pack", help="authenticity pack JSON file (default: stdin)")
@@ -4866,18 +4948,28 @@ def main(argv=None):
         if args.json:
             print(json.dumps(stamp_crypto(verdict, _mode), indent=2))
         else:
-            print("usable:           %s" % verdict["usable"])
-            print("grant authentic:  %s" % verdict["grant_authentic"])
-            print("fresh:            %s" % verdict["fresh"])
-            print("principal bound:  %s" % verdict["principal_bound"])
-            print("action in scope:  %s" % verdict["action_in_scope"])
-            print("revoked:          %s" % verdict["revoked"])
-            print("agent proved:     %s" % verdict["agent_proved"])
+            # Each link is True, False or None, printed as that literal. Code scanning reads any
+            # value named for a credential as a secret and flagged "credential valid"; it is a
+            # boolean, and printing the literal says so without changing a byte of the output.
+            for label, key in (("usable", "usable"), ("grant authentic", "grant_authentic"),
+                               ("fresh", "fresh"), ("credential valid", "credential_authentic"),
+                               ("issuer trusted", "issuer_trusted"), ("principal bound", "principal_bound"),
+                               ("action in scope", "action_in_scope"), ("revoked", "revoked"),
+                               ("agent proved", "agent_proved")):
+                print("%-18s%s" % (label + ":", _tri(verdict[key])))
             if verdict["pairwise_handle"]:
                 print("handle:           %s (correlation: %s)"
                       % (verdict["pairwise_handle"], verdict["correlation"]))
             if verdict["note"]:
                 print("note:             %s" % verdict["note"])
+        # The same rule as a pack (_pack_exit): a chain can be whole and still signed by an
+        # issuer nobody here trusts, so without a trust root the run abstains.
+        if verdict["usable"] and verdict["issuer_trusted"] is None and not args.signature_only:
+            print("abstain: no --issuer-anchor, so nothing here establishes that the credential "
+                  "behind this grant was issued by anyone you trust. Pass --issuer-anchor to "
+                  "decide it, or --signature-only to say that cryptographic validity alone is "
+                  "the question.", file=sys.stderr)
+            return 2
         return 0 if verdict["usable"] else 2
     if args.presentation or args.qr_frames:
         try:
@@ -4903,6 +4995,15 @@ def main(argv=None):
             print("usable offline: %s%s" % (verdict["usable_offline"], (" (%s)" % verdict["note"]) if verdict.get("note") else ""))
         # 2 is "not accepted" in the README's exit-code table; 1 is only for frames that do not
         # decode (above). Until 2026-09-28 an unusable presentation exited 1.
+        # 2026-09-30: and until then a presentation with no --issuer-anchor exited 0, the one
+        # path where a credential and status assertion signed by anybody's key were accepted
+        # without the abstention the pack and stapled paths make.
+        if verdict["usable_offline"] and verdict["issuer_trusted"] is None and not args.signature_only:
+            print("abstain: no --issuer-anchor, so issuer trust was NOT evaluated for this "
+                  "presentation. A genuine signature is not a trusted issuer. Pass "
+                  "--issuer-anchor to decide it, or --signature-only to say that cryptographic "
+                  "validity alone is the question.", file=sys.stderr)
+            return 2
         return 0 if verdict["usable_offline"] else 2
     if args.zk_proof:
         try:

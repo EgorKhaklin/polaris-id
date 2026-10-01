@@ -796,6 +796,19 @@ test("held-out: each federation variant is refused", () => {
 });
 
 
+// 2026-09-30: a manifest set that is not an array is no manifests, as in the detached
+// verifier. `manifests ?? []` let `false`, a number or a lone object through to `.map`, which
+// threw; the Python SDK threw on `true`. A verdict, never an exception.
+test("a manifest set that is not an array is refused, never thrown", () => {
+  for (const bad of [false, true, 5, "manifests", FED.manifests.base]) {
+    const v = verifyCrossAuthority(FED.pack, FED._fixture.context_id, bad as any, [FED.trusted_anchor],
+      FED.feeds.clean, FED._fixture.now);
+    assert.equal(v.decision, "reject", String(bad));
+  }
+  assert.equal(fedDecide(), "accept", "control: the same setup with its manifest in an array");
+});
+
+
 // 2026-09-27: verifyCrossAuthority never read a signed edge's `valid_until`, so an edge its
 // authority time-boxed kept granting acceptance after the box closed while the manifest carrying
 // it was fresh (WIRE-SPEC 3.14). One signed edge in three windows, each under a fresh manifest.

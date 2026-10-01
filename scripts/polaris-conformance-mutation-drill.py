@@ -96,6 +96,12 @@ NOT_A_DECISION = {
 #: false. The drill now asks that question instead of counting them, which is why this
 #: list fell by more than the two cases added.
 SURVIVORS_EXPECTED = (
+    # 2026-09-30: whether the grant's credential was issued by a key in `anchor_keys`. The
+    # published contract carries no trust anchors for a grant in use and neither SDK has the
+    # field (trust in a grant's credential is the caller's verify_authenticity(credential,
+    # anchors) there), so no case can constrain it. The detached verifier's refusal is pinned
+    # by its own suite (AgentGrantChainsToTheTrustedIssuer, the CLI exit rows).
+    "verify_agent_grant.issuer_trusted",
     "verify_agent_grant.limits",
     # 2026-09-17: `valid_until` was added to the attestation verdict when the trust edge's
     # own window started being enforced, and it is the window ECHOED BACK, not a decision.

@@ -11,6 +11,11 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- `polaris-verify` refuses an agent-grant chain whose credential does not verify or whose issuer is outside `--issuer-anchor`.
+- `polaris-verify` calls an agent grant usable only when all five links were supplied and checked; a bare grant was usable.
+- `polaris-verify` abstains on an agent grant or a presentation with no `--issuer-anchor`, as it already did for a pack.
+- `polaris-verify` binds a stapled status assertion to the credential's own key; another trusted authority's assertion was accepted.
+- Both SDKs verify a credential's own signature before binding an agent grant to it.
 - Every Python package the images install is hash-pinned, and liboqs builds from a checked commit; liboqs-python was unpinned and fetched it.
 - A login signs only a context the credential is permitted in; `/api/v1/auth/authorize` signed any `context_id`, even one that does not exist.
 
@@ -18,6 +23,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - A NUL character in a path, query, form field or JSON string is refused as bad input; it escaped as a 500.
 - Installed as a package, `polaris-id` refuses the four commands that need a clone and says which; `--version` printed `unknown`.
+- Both SDKs refuse a status bundle whose signed `member_count` differs from its members, as WIRE-SPEC 3.4 requires.
+- The three verifiers read an inclusion proof's index and size as JSON integers and its path as a list; each coerced differently.
+- Both SDKs return a verdict for a manifest set that is not a list; the Python SDK raised on `true`, the TypeScript SDK on any.
+- `polaris-verify` exits 3 on an anchor file that is not a key list; the presentation and grant paths raised.
 
 ### Changed
 
@@ -41,6 +50,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Added
 
 - `lab/interop/eudi-dev/run.sh` with `EUDI_ISSUER=1` has eudi-dev's own issuer sign the credential; the wallet canary runs it weekly.
+- Six conformance cases, each a published vector with one hostile field, pin these rules; the suite has 193 cases.
 
 ## v1.0.0-rc.67 — 2026-09-30 (one command to a verified result)
 
