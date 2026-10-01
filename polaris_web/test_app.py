@@ -17546,8 +17546,11 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
                                 'algorithm_id': '1', 'biometric_binding_type': 'NONE',
                                 'token_value': 'TKN-SCOPE-{A}', 'physical_serial': 'SN-SCOPE-{A}',
                                 'hardware_model': 'TitanQ-3', 'contexts': ['1']}),
+        # Both credentials authority 1's (T3, T4), so that only the binding is under test; the
+        # procedure refuses the pair itself (T4 is no reserve of T3's holder). Until 2026-10-01
+        # the reserve was T1, authority 2's, and this control asserted the binding admitted it.
         ('/uc4/activate-reserve', 'form', {'lost_token_id': '3', 'actor_agency_id': '{A}',
-                                           'reason_code': 'LOST', 'reserve_token_id': '1',
+                                           'reason_code': 'LOST', 'reserve_token_id': '4',
                                            'published_location': 'https://crl.test/x'}),
         ('/uc8/revoke', 'form', {'token_id': '3', 'actor_agency_id': '{A}',
                                  'reason_code': 'ADMINISTRATIVE',
@@ -17579,6 +17582,47 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
                              json={'attestation_id': 1, 'revocation_reason': 'withdrawn by owner'},
                              headers={'X-CSRFToken': csrf})
         self.assertEqual(r.status_code, 200, "control: the attesting authority withdraws its own")
+
+    def _holder_with_active_from(self, agency):
+        """Individual 1 holds T1, a live reserve authority 2 issued (seed). Give them an active
+        credential from `agency`, the one an operator will report lost."""
+        lost = _sql("""INSERT INTO IdentityToken (token_value, physical_serial, biometric_binding_type,
+                                                  individual_id, issuing_agency_id, algorithm_id, status,
+                                                  expiration_date)
+                       VALUES ('TKN-UC4-BIND-' || %s, 'SN-UC4-BIND-' || %s, 'NONE', 1, %s, 1, 'RESERVE',
+                               polaris_utc_date() + 3650) RETURNING token_id""",
+                    (agency, agency, agency), fetch='one')['token_id']
+        _sql("UPDATE IdentityToken SET status = 'ACTIVE', activated_date = now() WHERE token_id = %s",
+             (lost,), fetch='none')
+        return lost
+
+    def _report_lost(self, lost, actor):
+        return self._form('/uc4/activate-reserve', {
+            'lost_token_id': str(lost), 'actor_agency_id': str(actor), 'reason_code': 'LOST',
+            'reserve_token_id': '1', 'published_location': 'https://crl.test/uc4-binding'})
+
+    def test_a_bound_operator_cannot_activate_another_authoritys_reserve(self):
+        """2026-10-01 (THREAT-MODEL: a coerced operator). UC-4 names two credentials, the one
+        reported lost and the reserve that replaces it, and asked the binding about the first
+        alone. A person can hold credentials from more than one authority, so an operator bound to
+        authority 3 reported its own credential lost and activated a reserve authority 2 had
+        issued: authority 2's credential went live on authority 3's word."""
+        lost = self._holder_with_active_from(3)
+        self._bind(3)
+        r = self._report_lost(lost, 3)
+        self.assertEqual(r.status_code, 403, r.get_data(as_text=True)[:200])
+        after = _sql("SELECT token_id, status FROM IdentityToken WHERE token_id IN (1, %s) "
+                     "ORDER BY token_id", (lost,), fetch='all')
+        self.assertEqual([x['status'] for x in after], ['RESERVE', 'ACTIVE'], 'the refused activation happened')
+
+    def test_the_reserves_own_authority_still_activates_it(self):
+        """The control: the same report by an operator bound to the authority that issued both."""
+        lost = self._holder_with_active_from(2)
+        self._bind(2)
+        r = self._report_lost(lost, 2)
+        self.assertEqual(r.status_code, 302, r.get_data(as_text=True)[:200])
+        self.assertEqual(_sql("SELECT status FROM IdentityToken WHERE token_id = 1", fetch='one')['status'],
+                         'ACTIVE')
 
     def _post(self, path, kind, data, agency):
         def fill(v):

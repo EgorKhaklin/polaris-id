@@ -9,6 +9,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ## Unreleased
 
+### Security
+
+- An operator bound to one authority can no longer activate a reserve another authority issued (UC-4).
+
 ### Added
 
 - Exact credential and live-signature counts by authority, kept by triggers that only append (`PopulationCount`).

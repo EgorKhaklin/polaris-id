@@ -169,6 +169,15 @@ def uc4_activate_reserve():
             _denied = None
         if _denied:
             return _denied
+        # 2026-10-01: and the reserve's. The request names two credentials, and a person can
+        # hold credentials from more than one authority: asked about the lost one alone, an
+        # operator bound to one authority activated a reserve another authority had issued.
+        try:
+            _denied = _token_authority_denied(int(request.form['reserve_token_id']))
+        except (KeyError, ValueError):
+            _denied = None
+        if _denied:
+            return _denied
         try:
             _denied = _operator_authority_permits(int(request.form['actor_agency_id']))
             if _denied:

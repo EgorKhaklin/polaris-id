@@ -19964,6 +19964,18 @@ def test_state_changing_routes_ask_the_binding_check_discriminates(tmp_path):
           "    _denied = _operator_authority_permits(int(request.form['actor_agency_id']))\n")
     assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "FAIL", \
         "must FAIL when a form names a token and only the actor is asked"
+    # 2026-10-01: UC-4 names two credentials and asked about the lost one alone; a bound operator
+    # activated a reserve another authority issued.
+    UC4 = ("@app.route('/uc4/activate-reserve', methods=['POST'])\n"
+           "@security.require_role('admin', 'operator')\ndef uc4_activate_reserve():\n"
+           "    _denied = _token_authority_denied(int(request.form['lost_token_id']))\n"
+           "    reserve = int(request.form['reserve_token_id'])\n")
+    write(GOOD + "\n" + OTHERS + UC4)
+    assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a request names two credentials and one issuer is asked"
+    write(GOOD + "\n" + OTHERS + UC4 + "    _denied = _token_authority_denied(reserve)\n")
+    assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "OK", \
+        "both asked, the second through the variable it was read into, must PASS"
     # A declaration with no route behind it is refused, so the list cannot rot.
     write(GOOD)
     assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "FAIL", \
