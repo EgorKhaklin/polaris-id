@@ -74,7 +74,12 @@ demand is now REGISTERED on its row (`require_zk`, `required_enrollment`,
 `required_context_id`; `polaris rp-register --require-zk --required-enrollment ENROLLED
 --required-context 1`, or `rp-policy` later), and the route applies the registered policy
 first: a request may add a requirement (a stricter ask), never remove one, and a context
-other than the registered one is `403 policy_violation`. The token still reports the
+other than the registered one is `403 policy_violation`. Enrollment statuses are exclusive
+populations, not a ladder, so a registered status and a different requested one both apply
+and the login is refused. Until 2026-09-30 the registered status replaced the requested one,
+and a malformed request value was ignored rather than refused. The credential must also be
+permitted in the context (a `TokenPermission` row), since the token names it; before that
+date any context was signed. The token still reports the
 assurance actually reached (`acr`, `enrollment`), so a relying party can also inspect it.
 A relying-party-signed authorization request (the other way to bind the demand, without a
 stored policy) is not built.

@@ -8,12 +8,13 @@
 # author certified with against the OpenID Foundation's wallet test plan. It is built here, at a
 # pinned version, inside the official Go image, and run in a container given no trust for the
 # verifier's TLS listener: keygen's listener certificate is self-signed, and the wallet presents
-# without it (measured 2026-09-30), so it does not validate it. It issues its own fixture
-# credential with an x5c chain under a CA this script generates, and polaris-oid4vp is told to
-# trust that CA (--issuer-trust-anchor).
+# without it (measured 2026-09-30), so it does not validate it; from v0.22.0 it says so when it
+# starts. It issues its own fixture credential with an x5c chain under a CA this script
+# generates, and polaris-oid4vp is told to trust that CA (--issuer-trust-anchor).
 #
 #   lab/interop/oid4vcgo/run.sh                                  # OID4VCgo v0.12.0
 #   OID4VCGO_VERSION=v0.19.0 lab/interop/oid4vcgo/run.sh
+#   OID4VCGO_VERSION=v0.22.0 lab/interop/oid4vcgo/run.sh         # also checks the verifier's chain
 #
 # Exits 0 only if the genuine presentation is accepted AND every control is refused.
 set -euo pipefail
@@ -58,6 +59,22 @@ mv "$WORK/conformance-wallet-vp" "$WORK/wallet"
 venv/bin/python "$HERE/setup_pki.py" "$WORK" >/dev/null
 venv/bin/polaris-oid4vp keygen --out pki --host host.docker.internal --port "$PORT" >/dev/null
 
+# From v0.22.0 the wallet checks the request object's x5c leaf against `verifier_trust_anchors_pem`
+# (OpenID4VP 5.9.3, HAIP 5), added after our report (idfoundry/oid4vcgo#312, #314). From that
+# version on it is told to trust keygen's CA, the anchor HAIP keeps out of the chain, and control
+# (d) tells it an unrelated one instead.
+CHECKS_VERIFIER=$(venv/bin/python -c 'import sys; v = tuple(int(x) for x in sys.argv[1].lstrip("v").split(".")); print(int(v >= (0, 22, 0)))' "$VERSION")
+set_verifier_anchor() {  # $1 the CA the wallet trusts for the verifier's request object
+  venv/bin/python - "$1" <<'EOF'
+import json, pathlib, sys
+cfg = pathlib.Path("config.json")
+c = json.loads(cfg.read_text())
+c["verifier_trust_anchors_pem"] = pathlib.Path(sys.argv[1]).read_text()
+cfg.write_text(json.dumps(c, indent=2))
+EOF
+}
+[ "$CHECKS_VERIFIER" = 1 ] && set_verifier_anchor pki/anchor.pem
+
 VERIFIER_PID=""
 stop_verifier() {
   if [ -n "$VERIFIER_PID" ]; then
@@ -78,9 +95,14 @@ start_verifier() {  # $1 issuer trust anchor, $2 log file
   exit 2
 }
 
-docker run -d --name polaris-oid4vcgo-wallet ${ADD_HOST[@]+"${ADD_HOST[@]}"} -p "$WALLET_PORT:8443" \
-  -v "$WORK:/w" alpine:3.20 /w/wallet -config /w/config.json >/dev/null
-for _ in $(seq 1 40); do docker logs polaris-oid4vcgo-wallet 2>&1 | grep -q "listening" && break; sleep 0.25; done
+start_wallet() {
+  docker rm -f polaris-oid4vcgo-wallet >/dev/null 2>&1 || true
+  docker run -d --name polaris-oid4vcgo-wallet ${ADD_HOST[@]+"${ADD_HOST[@]}"} -p "$WALLET_PORT:8443" \
+    -v "$WORK:/w" alpine:3.20 /w/wallet -config /w/config.json >/dev/null
+  for _ in $(seq 1 40); do docker logs polaris-oid4vcgo-wallet 2>&1 | grep -q "listening" && break; sleep 0.25; done
+}
+start_wallet
+docker logs polaris-oid4vcgo-wallet 2>&1 | grep -i "warning" | sed 's/^/wallet says  /' || true
 
 authorize() {  # $1 log to read the request from, $2 optional client_id, $3 output file
   local q
@@ -122,5 +144,17 @@ authorize verifier-other.log "" other.html >/dev/null
 expect "the wallet was told only that it was not accepted" other.html 'not accepted'
 expect "the verifier refused the issuer's chain" verifier-other.log '<- 400 refused: issuer_key'
 
-[ "$fail" -eq 0 ] && echo "RESULT: accepted, and all three controls refused" || echo "RESULT: FAILED"
+if [ "$CHECKS_VERIFIER" = 1 ]; then
+  echo "== control (d): the wallet trusts an unrelated CA for the verifier"
+  stop_verifier
+  set_verifier_anchor other-ca.pem
+  start_wallet
+  start_verifier issuer-ca.pem verifier-untrusted.log
+  authorize verifier-untrusted.log "" untrusted.html >/dev/null
+  echo "        wallet answered: $(head -c 300 untrusted.html | tr -s '\n' ' ')"
+  if grep -q '<- 200' verifier-untrusted.log; then echo "  FAIL  the verifier received a presentation"; fail=1
+  else echo "  ok    the wallet presented nothing to a verifier outside its anchors"; fi
+fi
+
+[ "$fail" -eq 0 ] && echo "RESULT: accepted, and every control refused" || echo "RESULT: FAILED"
 exit "$fail"

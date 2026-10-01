@@ -34,6 +34,7 @@ accepts everything prints the same success line.
 | 2026-09-28 | eudi-dev v2.3.7 and v2.4.3 (Go), HAIP 1.0 enforced in strict mode | PyPI 1.0.0rc7 | accepted | wrong issuer key; the answered request again; a mismatched `client_id` (the wallet refused) | [lab/interop/eudi-dev](interop/eudi-dev/README.md) |
 | 2026-09-30 | eudi-dev v2.3.7 (Go), HAIP strict, presenting a PID credential its own issuer signed (`x5c`, ISO 18013-5 document signer) | PyPI 1.0.0rc11 (c8014978); 1.0.0rc10 refused it | accepted | an unrelated CA; the answered request again | [lab/interop/eudi-dev](interop/eudi-dev/README.md#an-issuer-nobody-here-wrote-2026-09-30) |
 | 2026-09-28 | OID4VCgo 0.12.0 and 0.19.0 (Go), presenting a credential it issued under an x5c chain | this repository, 1156db81 | accepted; the wallet followed the `redirect_uri` into a 404, fixed | an unrelated CA; the answered request again; a mismatched `client_id` (the wallet refused) | [lab/interop/oid4vcgo](interop/oid4vcgo/README.md) |
+| 2026-09-30 | OID4VCgo 0.22.0 (Go), checking the verifier's request-object chain against its CA | this repository, c655b1ea | accepted; the wallet logged that it does not verify TLS | the three above, and the wallet trusting an unrelated CA for the verifier (the wallet refused) | [lab/interop/oid4vcgo](interop/oid4vcgo/README.md#v0220-the-wallet-checks-the-verifiers-chain-2026-09-30) |
 | weekly since 2026-09-28 | eudi-dev v2.3.7 (by digest) and latest | the newest PyPI release | accepted (rc7, then rc8) | all three | `.github/workflows/wallet-canary.yml` |
 
 eudi-dev v2.3.7 and OID4VCgo 0.12.0 are listed by the OpenID Foundation as certified OID4VP 1.0
@@ -55,6 +56,13 @@ status list on receipt; walt.id did not. Evidence: [lab/strategy/005/STEP5.md](s
 release after wallet copies shipped, an outside party had issued into or presented from a
 wallet with one. None had. The paragraph above stays what it is, the author's own
 interoperability run, and the criterion's blank is recorded here.
+
+**OID4VCgo changed after a report from here, 2026-09-30.** Its harness accepted any verifier TLS
+certificate without saying so; reported as [issue 312](https://github.com/IDFoundry/OID4VCgo/issues/312),
+its author shipped v0.22.0 the same day ([PR 314](https://github.com/IDFoundry/OID4VCgo/pull/314)):
+a startup warning, an optional check of the verifier's request-object chain against configured
+anchors, and a README section on what a passing run shows. The row above is that version, checked
+here on request. It is an outside project acting on a report, not an outside party using Polaris.
 
 **walt.id refused Polaris first, and was right.** `polaris-oid4vp keygen` issued a
 request-signing leaf with no `digitalSignature` key usage; eleven conformance modules, 142

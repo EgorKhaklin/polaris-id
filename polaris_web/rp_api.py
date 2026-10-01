@@ -2206,16 +2206,22 @@ def _pkce_challenge(verifier):
     return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode('utf-8')).digest()).rstrip(b'=').decode('ascii')
 
 
+#: The statuses a relying party can register as its required_enrollment
+#: (chk_rp_required_enrollment), so the only ones a request may add.
+_REQUIRABLE_ENROLLMENT = ('PENDING_ENROLLMENT', 'ENROLLED', 'EXEMPT')
+
+
 @app.route('/api/v1/auth/authorize', methods=['POST'])
 def api_v1_auth_authorize():
     """P8.4, the HOLDER side. Body: {client_id, nonce, code_challenge, code_challenge_method
     'S256', context_id, disclosure_level, token_value, signature_hex, presented_code?,
     require_zk?, zk? {epoch_id, nonce, proof_bundle}, required_enrollment?}. Possession-
     authenticated, no session. Refuses a relying party without the 'authenticate' scope
-    (uniform invalid_client), a credential that is not ACTIVE, an enrollment below the RP's
-    requirement, and a step-up the holder cannot meet; a duress code is served identically and
-    recorded silently. The relying party's REGISTERED policy (require_zk, required_enrollment,
-    required_context_id) binds; the request may only add to it. Returns an encrypted, opaque,
+    (uniform invalid_client), a credential that is not ACTIVE or not permitted in the context,
+    an enrollment status other than a required one, and a step-up the holder cannot meet; a
+    duress code is served identically and recorded silently. The relying party's REGISTERED
+    policy (require_zk, required_enrollment, required_context_id) binds; the request may only
+    add to it, and a malformed addition is refused. Returns an encrypted, opaque,
     stateless authorization code bound to the PKCE challenge. Nothing is written."""
     body = _json_object()
     client_id = body.get('client_id')
@@ -2246,6 +2252,16 @@ def api_v1_auth_authorize():
     disclosure_level = str(body.get('disclosure_level') or 'ZERO_KNOWLEDGE').upper()
     if disclosure_level not in ('ZERO_KNOWLEDGE', 'SELECTIVE', 'FULL'):
         return jsonify(error='invalid_request', error_description='disclosure_level must be ZERO_KNOWLEDGE, SELECTIVE or FULL'), 400
+    # What a request adds must be a requirement: a status a relying party could register, and a
+    # boolean step-up. Until 2026-09-30 a status that was not a string was skipped and require_zk
+    # was read for truth, so a malformed ask was served as none, or as a different one.
+    asked_enrollment, asked_zk = body.get('required_enrollment'), body.get('require_zk')
+    if asked_enrollment is not None and not (isinstance(asked_enrollment, str)
+                                             and asked_enrollment.upper() in _REQUIRABLE_ENROLLMENT):
+        return jsonify(error='invalid_request', error_description='required_enrollment must be one of '
+                       + ', '.join(_REQUIRABLE_ENROLLMENT)), 400
+    if asked_zk is not None and not isinstance(asked_zk, bool):
+        return jsonify(error='invalid_request', error_description='require_zk must be true or false'), 400
     token_value, presented = body.get('token_value'), body.get('signature_hex')
     if not isinstance(token_value, str) or not isinstance(presented, str):
         return jsonify(error='invalid_request', error_description='token_value and signature_hex (the presented credential) are required'), 400
@@ -2263,14 +2279,25 @@ def api_v1_auth_authorize():
     presented_code = body.get('presented_code')
     if isinstance(presented_code, str) and presented_code:
         _check_and_record_duress(row['token_id'], context_id, row['issuing_agency_id'], presented_code)
+    # The ID token minted from this code is the issuing agency's signed statement and names this
+    # context, so the credential must be permitted in it: every other statement this instance
+    # signs takes its context from TokenPermission, and a ZK step-up proves membership in an
+    # epoch built from it. Until 2026-09-30 any context_id was signed, even one that does not exist.
+    if not query("SELECT 1 FROM TokenPermission WHERE token_id = %s AND context_id = %s",
+                 (row['token_id'], context_id), fetch='one', primary=True):
+        return jsonify(error='forbidden', error_description='the presented credential is not permitted '
+                                                            'in context %d' % context_id), 403
     enr = query("SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = %s",
                 (row['individual_id'],), fetch='one', primary=True)
     enrollment = enr['current_status'] if enr else 'NOT_ENROLLED'
-    required = rp['required_enrollment'] or body.get('required_enrollment')
-    if isinstance(required, str) and required and enrollment != required.upper():
-        return jsonify(error='insufficient_enrollment', error_description='the holder is not %s' % required.upper()), 403
+    # Registered and requested both apply: a request adds a requirement and never replaces one.
+    # The statuses are exclusive populations, not a ladder, so a registered status and a different
+    # requested one cannot both be met. Until 2026-09-30 the registered status shadowed the request's.
+    for required in (rp['required_enrollment'], asked_enrollment):
+        if required and enrollment != required.upper():
+            return jsonify(error='insufficient_enrollment', error_description='the holder is not %s' % required.upper()), 403
     acr = _AUTH_ACR_POSSESSION
-    if rp['require_zk'] or body.get('require_zk'):
+    if rp['require_zk'] or asked_zk:
         zk_req = body.get('zk') if isinstance(body.get('zk'), dict) else None
         try:
             ok, reason, _status = _zk_verify_and_consume(int(zk_req['epoch_id']), context_id, int(zk_req['nonce']), zk_req['proof_bundle']) \

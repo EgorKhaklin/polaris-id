@@ -22,6 +22,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-verify` binds a stapled status assertion to the credential's own key; another trusted authority's assertion was accepted.
 - Both SDKs verify a credential's own signature before binding an agent grant to it.
 - Every Python package the images install is hash-pinned, and liboqs builds from a checked commit; liboqs-python was unpinned and fetched it.
+- A login signs only a context the credential is permitted in; `/api/v1/auth/authorize` signed any `context_id`, even one that does not exist.
 - Both SDKs take a timestamp anchor's head only as a signed tree head; any artifact the log key signed was read as one.
 - Both SDKs trust no federation manifest when the relying party names no trust anchor; a manifest's own signature decided.
 - Both SDKs prove a holder chain only with the verifier's nonce and a credential whose signature verifies.
@@ -45,12 +46,15 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- **Breaking**: `polaris-verify` abstains (exit 2) on a presentation carrying a holder proof when no `--nonce` is given.
+- **Breaking**: a manifest that lists a trusted anchor but is signed by another key is no longer trusted, in all three verifiers.
 - **Breaking**: both SDKs' cross-authority decision trusts no manifest without `trusted_anchors`; pass the anchors you trust.
 - **Breaking**: both SDKs' holder chain proves only with `expected_nonce` and a credential whose signature verifies.
 - **Breaking**: an exchange receipt's `responder` is null until `responder_key` confirms the signer, in all three verifiers.
 - **Breaking**: the agent-grant-use verdict carries `fresh`; a verifier implementing the contract must report it.
 - **Breaking**: both SDKs bind a grant only under a holder binding checked fresh; one with no window binds nothing.
 - **Breaking**: the relying-party script hands its status checker the credential, not `token_id`, and asks by possession.
+- CI installs every Python dependency with `--require-hashes` from a lock; `pip-audit` and `bandit` have one of their own.
 - Published: `polaris-oid4vp` 1.0.0rc11 (not certified; 1.0.0rc7 is) and the first `polaris-id-cli`, 1.0.0rc1, on PyPI, each approved at the environment gate.
 - `publish.yml` can publish `polaris-id-cli`, gated on its wheel installing and behaving alone; every publish now waits for the maintainer to approve the run.
 - Published: `polaris-sdk-ts` 1.0.0-rc.6 on npm under `next`, approved by the maintainer with a second factor.
@@ -59,10 +63,17 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Fixed
 
 - `polaris-ship.py triage` names a job GitHub never gave a runner, from its annotation, instead of calling the finished run unknown.
+- Two image checks read each Dockerfile's instructions, not its comments, and require a hash-checked install in every image; a comment could pass for one.
+- A login's requested enrollment status applies alongside the registered one, and a malformed requirement is refused; the registered status replaced the request's.
+- An operator cannot record a SUCCESS in a context the credential is not permitted in; UNAUTHORIZED records that presentation.
+- An operator's SELECTIVE success names its credential; one naming none passed every success rule unchecked.
+- The sample data's trust graph explains every sample verification; two cross-agency successes had no attestation.
+- SECURITY-CONTROLS and the threat model say what the definer routines bound: their rules, not their caller. The threat model said none existed.
 - `polaris-oid4vp` accepts an issuer certificate whose extended key usage is ISO 18013-5's document signer, as EUDI issuers' are; it refused eudi-dev's PID Provider.
 
 ### Added
 
+- `lab/interop/oid4vcgo` runs OID4VCgo v0.22.0, which checks the verifier's request-object chain after our report, with a fourth control.
 - `lab/interop/eudi-dev/run.sh` with `EUDI_ISSUER=1` has eudi-dev's own issuer sign the credential; the wallet canary runs it weekly.
 - Six conformance cases, each a published vector with one hostile field, pin these rules.
 - Six more, three attacks and their controls, pin who signed a manifest or a trust edge and which credential a holder proof names.
