@@ -26,6 +26,11 @@ driver signed, and checks every signature before it is stored.
 | pkcs11 | `pkcs11` | inside a PKCS#11 v3.2 token, non-extractable; signing is `CKM_ML_DSA` in the token | an HSM (or a software token such as Kryoptic); on-premises authorities |
 | awskms | `awskms` | inside AWS KMS (`KeySpec ML_DSA_65`); signing is `Sign` with `ML_DSA_SHAKE_256` | AWS-hosted authorities |
 
+With no driver configured, real ML-DSA signing falls back to a fresh key for every signature, for
+development only. Nothing such an instance signs verifies against an anchor, and every verifier
+refuses its stapled status assertions, because each is signed by a different key from the
+credential's. That is the fallback working, not a fault: configure a driver to sign under one key.
+
 Secrets never travel through environment: the PKCS#11 PIN is read from
 `POLARIS_CUSTODY_PKCS11_PIN_FILE` and the app refuses to start if
 `POLARIS_CUSTODY_PKCS11_PIN` is set; KMS credentials come from the instance
