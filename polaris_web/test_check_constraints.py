@@ -1562,13 +1562,13 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             # Since rc.40 the lifecycle log, and since 2026-09-25 the epoch leaves and the anchor
             # batches, are written only by SECURITY DEFINER routines; since 2026-09-27 the key
             # register, card personalization and retention policy only by the owner; since
-            # 2026-09-28 the wallet copy record only by uc_issue_credential_copy; since
-            # 2026-10-01 the holder key register only by uc_record_holder_key_event.
+            # 2026-09-28 the wallet copy record only by uc_issue_credential_copy. The holder key
+            # register keeps INSERT until its contract migration: the previous release's route uses it.
             self.assertEqual(bool(row["ins"]),
                              tbl.lower() not in ("tokenlifecycleevent", "tokenstateepochleaf",
                                                  "anchorbatch", "duressevent", "authoritykeyevent",
                                                  "cardpersonalization", "retentionpolicy",
-                                                 "credentialcopy", "holderkeyevent"),
+                                                 "credentialcopy"),
                              f"append-only is insert-allowed except the lifecycle log, the epoch "
                              f"leaves, the anchor batches and the owner's registers: {tbl}")
             conn.rollback()
@@ -2127,10 +2127,10 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                     cur.execute(sql, params)
             conn.rollback()
 
-    def test_holder_key_events_are_written_only_by_their_routine(self):
-        """2026-10-01 (review S2). As polaris_app, a direct INSERT recorded any key for any
-        credential at any instant. Now uc_record_holder_key_event is the register's only writer:
-        it sets the instant and holds bound / rotated / revoked in order for a live credential."""
+    def test_the_holder_key_routine_keeps_events_in_order(self):
+        """2026-10-01 (review S2). The holder key route records events through
+        uc_record_holder_key_event, run here as polaris_app: it sets the instant and holds bound /
+        rotated / revoked in order for a live credential."""
         owner = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
         self.addCleanup(owner.close)
         with owner.cursor() as cur:
@@ -2142,11 +2142,6 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         k1, k2 = "a1" * 40, "b2" * 40
         conn = self._app_conn()
         try:
-            with conn.cursor() as cur:
-                with self.assertRaises(pg_errors.InsufficientPrivilege):
-                    cur.execute("INSERT INTO HolderKeyEvent (token_id, public_key_hex, event, effective_at) "
-                                "VALUES (%s, %s, 'bound', now() + INTERVAL '1 day')", (tid, k2))
-            conn.rollback()
             with conn.cursor() as cur:
                 for label, args in (("rotate a key never bound", (tid, k2, 'ML-DSA-65', 'rotated')),
                                     ("revoke a key never bound", (tid, k1, 'ML-DSA-65', 'revoked')),

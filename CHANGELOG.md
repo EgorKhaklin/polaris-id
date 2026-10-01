@@ -34,7 +34,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - The application's database role can no longer run the retention and archive-purge routines; naming any admin, it could set retention or purge audit rows past the floor.
 - A holder key changes only with the live key's signature; presenting the credential, which any relying party that took a full presentation can do, could rebind, rotate or revoke it.
-- The application's database role writes holder key events only through a routine that sets their instant and keeps them in order; it could insert any event, at any instant, for any credential.
+- The holder key route records events through a routine that sets their instant and keeps them in order; the application role's own INSERT goes in a later release, under the expand-contract policy.
 
 ### Fixed
 
