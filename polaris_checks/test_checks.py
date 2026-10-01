@@ -19938,13 +19938,32 @@ def test_definer_routines_pin_search_path_check_discriminates(tmp_path):
     good = ("CREATE OR REPLACE FUNCTION f(a INTEGER) RETURNS INTEGER\nLANGUAGE plpgsql\n"
             "SECURITY DEFINER\nSET search_path = public, pg_temp\nAS $$ BEGIN RETURN a; END; $$;\n"
             "CREATE OR REPLACE FUNCTION g() RETURNS INTEGER LANGUAGE sql AS $$ SELECT 1 $$;\n")
-    loop = ("DO $$ BEGIN FOR v IN SELECT p.oid FROM pg_proc p WHERE p.prosecdef LOOP\n"
-            "  EXECUTE format('REVOKE EXECUTE ON ROUTINE %s FROM PUBLIC', v);\nEND LOOP; END$$;\n")
+    lend = ("DO $$ BEGIN FOR v IN SELECT p.oid FROM pg_proc p WHERE p.prosecdef LOOP\n"
+            "  EXECUTE format('REVOKE EXECUTE ON ROUTINE %s FROM PUBLIC', v);\n"
+            "  EXECUTE format('GRANT EXECUTE ON ROUTINE %s TO polaris_app', v);\nEND LOOP; END$$;\n")
+    take = ("DO $$ BEGIN FOR v IN SELECT p.oid FROM pg_proc p WHERE p.proname IN\n"
+            "  ('uc_archive_purge', 'uc_set_retention_policy', 'uc_apply_retention_template') LOOP\n"
+            "  EXECUTE format('REVOKE EXECUTE ON ROUTINE %s FROM polaris_app', v);\nEND LOOP; END$$;\n")
+    loop = lend + take
+    grants = tmp_path / "polaris_sql" / "09_grants.sql"
     f.write_text(good)
     assert checks.check_definer_routines_pin_search_path(tmp_path)[0].level == "FAIL", \
         "no PUBLIC revoke must FAIL"
-    (tmp_path / "polaris_sql" / "09_grants.sql").write_text(loop)
+    grants.write_text(loop)
     assert checks.check_definer_routines_pin_search_path(tmp_path)[0].level == "OK", "pinned must PASS"
+    # 2026-10-01 (review F2): the retention routines are taken back from polaris_app after the loop.
+    grants.write_text(lend)
+    assert checks.check_definer_routines_pin_search_path(tmp_path)[0].level == "FAIL", "no take-back must FAIL"
+    grants.write_text(take + lend)
+    assert checks.check_definer_routines_pin_search_path(tmp_path)[0].level == "FAIL", \
+        "a take-back before the loop lends them again and must FAIL"
+    grants.write_text(lend + take.replace("'uc_archive_purge', ", ""))
+    r = checks.check_definer_routines_pin_search_path(tmp_path)[0]
+    assert r.level == "FAIL" and "uc_archive_purge" in r.message, "a routine left lent must FAIL"
+    grants.write_text(lend + "".join("-- " + ln + "\n" for ln in take.splitlines()))
+    assert checks.check_definer_routines_pin_search_path(tmp_path)[0].level == "FAIL", \
+        "a commented-out take-back must FAIL"
+    grants.write_text(loop)
     f.write_text(good.replace("SET search_path = public, pg_temp\n", ""))
     r = checks.check_definer_routines_pin_search_path(tmp_path)[0]
     assert r.level == "FAIL" and "05_procedures.sql:f" in r.message, "an unpinned definer must FAIL"
