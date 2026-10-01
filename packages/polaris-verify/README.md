@@ -37,7 +37,7 @@ to judge against, so the run abstains (exit 2) instead of exiting 0 on a credent
 have been signed by anyone; `--signature-only` is how a caller says that is the question they
 meant to ask.
 
-Release candidate: PyPI serves 1.0.0rc7 (`pip install --pre`).
+This is release candidate 1.0.0rc7; `pip install --pre` installs the newest candidate on PyPI.
 
 ## It refuses to start until you say what cryptography it is doing
 
