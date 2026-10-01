@@ -242,7 +242,7 @@ def _verdict_for(case):
         anchors = case.get("trusted_anchors")
         if anchors == "manifest":
             anchors = sorted({a["public_key_hex"] for m in manifests for a in m.get("anchors", [])
-                              if (a.get("status") or "active") == "active" and a.get("public_key_hex")})
+                              if a.get("status") in (None, "active") and a.get("public_key_hex")})
         v = V.verify_cross_authority(
             pack, case.get("context_id"), manifests, trusted_anchors=anchors,
             revocation_feed=_load(case["feed_file"]) if "feed_file" in case else None,

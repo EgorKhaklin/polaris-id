@@ -38,6 +38,18 @@ test("anchor trust", () => {
   assert.equal(verifyAuthenticity(valid, ["00"]).issuerTrusted, false);
 });
 
+test("a presentation that names a credential and supplies none is not read as a bare pack", async () => {
+  // 2026-10-01: `{credential: null, ...pack}` was decided as the pack itself (provisional) here
+  // and rejected by the Python SDK. A `credential` key that is present decides; a bare pack,
+  // with no such key, is still the credential itself.
+  const v = new PolarisVerifier();
+  const pack = vec("ml-dsa-65-valid.json");
+  assert.equal((await v.verifyPresentation(pack)).decision, "provisional");
+  for (const credential of [null, "", 0, false]) {
+    assert.equal((await v.verifyPresentation({ ...pack, credential })).decision, "reject", String(credential));
+  }
+});
+
 test("offline presentation is provisional", async () => {
   const v = new PolarisVerifier();
   const out = await v.verifyPresentation({ credential: vec("ml-dsa-65-valid.json") });

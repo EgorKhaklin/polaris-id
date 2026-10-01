@@ -550,6 +550,16 @@ def verify_id_token(tok: dict, audience=None, nonce=None, now=None,
                           tok.get("sub"), tok.get("acr"), None, base.issuer_trusted)
 
 
+def _status_of(entry):
+    """The status an anchor, key or binding states: "active" when it states none (absent or
+    null), otherwise exactly what it states. A status of false or "" is a value that names no
+    state, so it is not "active". Until 2026-10-01 this read `entry.get("status") or
+    "active"`, which made those two active here while the TypeScript SDK refused them: three
+    verifiers, two answers, on the same signed bytes."""
+    status = entry.get("status")
+    return "active" if status is None else status
+
+
 def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict:
     """Verify a Polaris signed artifact's AUTHENTICITY offline (P8.1, wire spec section 3): for
     the epoch checkpoint, revocation feed, federation manifest, status bundle, or transparency
@@ -608,14 +618,14 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         note = None if ok else "the status bundle's members_root or member_count does not match its members"
     elif ok and fmt == "polaris-federation-manifest/1":
         active = {str(a.get("public_key_hex", "")).lower() for a in (obj.get("anchors") or [])
-                  if isinstance(a, dict) and (a.get("status") or "active") == "active"}
+                  if isinstance(a, dict) and _status_of(a) == "active"}
         ok = str(obj.get("public_key_hex") or "").lower() in active
         note = None if ok else "the manifest is not signed by one of its own active anchors"
     elif ok and fmt == "polaris-registry/1":
         pub = obj.get("publisher") if isinstance(obj.get("publisher"), dict) else {}
         listed = [str(a.get("public_key_hex") or "").lower() for a in (obj.get("authorities") or [])
                   if isinstance(a, dict) and a.get("agency_id") == pub.get("agency_id")
-                  and (a.get("status") or "active") == "active"]
+                  and _status_of(a) == "active"]
         ok = str(obj.get("public_key_hex") or "").lower() in listed
         note = None if ok else "the registry is not signed by the key it lists for its own publisher"
     elif ok and fmt == "polaris-trust-list/1":
@@ -885,7 +895,7 @@ def verify_holder(credential: dict, binding: dict, proof: dict, expected_nonce=N
     v.key_matches_binding = (str(pr.get("public_key_hex") or "").lower()
                              == str(b.get("holder_public_key_hex") or "").lower()
                              and str(pr.get("token_value")) == str(b.get("token_value"))
-                             and (b.get("status") or "active") == "active")
+                             and _status_of(b) == "active")
     if expected_nonce is not None:
         v.nonce_matches = (str(pr.get("verifier_nonce")) == str(expected_nonce))
     ctx_ok = expected_context is None or pr.get("context_id") == expected_context
@@ -994,7 +1004,7 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
                 # key must be among the carrying manifest's active anchors (2026-09-30; until then
                 # any key's valid signature counted, so a stranger met require_signed_attestation).
                 roots = {str(x.get("public_key_hex") or "").lower() for x in (m.get("anchors") or [])
-                         if isinstance(x, dict) and (x.get("status") or "active") == "active"}
+                         if isinstance(x, dict) and _status_of(x) == "active"}
                 if not unsigned and (not av.authentic
                                      or str(att.get("public_key_hex") or "").lower() not in roots):
                     continue    # a present-but-bad signature is worse than none: refuse the edge
@@ -1314,7 +1324,7 @@ def grant_principal_bound(grant, binding, credential, now=None) -> bool:
     # `fresh` None and `is not False` read it as fresh, so a binding that expired in 2024 was
     # bound (2026-09-30).
     return bool(bv.authentic and bv.fresh is True
-                and (binding.get("status") or "active") == "active"
+                and _status_of(binding) == "active"
                 and str(binding.get("holder_public_key_hex") or "").lower()
                 == str(grant.get("public_key_hex") or "").lower()
                 and str(binding.get("token_value")) == str(credential.get("token_value"))

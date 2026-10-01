@@ -26,11 +26,18 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-oid4vp` refuses a key binding JWT past its `exp` or before its `nbf` (RFC 9901 7.3); both were ignored.
 - `polaris-oid4vp` refuses a credential that commits to a digest twice (RFC 9901 7.1); one disclosure could stand in two places.
 - `polaris-oid4vp` refuses an `x5c` leaf that is self-signed or a CA (HAIP 1.0 6.1.1); the trust anchor itself verified as an issuer.
+- All three verifiers read a signed `status` that is present and not `active` as not active; the Python SDK and `polaris-verify` read `false` and `""` as active.
+- `polaris-verify` calls an agent grant usable only when it understands its limits; one signed with an unknown limit or a non-finite `max_amount` was usable.
 
 - The application's database role can no longer run the retention and archive-purge routines; naming any admin, it could set retention or purge audit rows past the floor.
 ### Fixed
 
+- The TypeScript SDK reads a presentation that names a credential and supplies none as having none; it decided the object itself.
 - The rc.68 notes list only what rc.68 released; a merge after the cut had filed the `polaris-oid4vp` 1.0.0rc12 lines there.
+
+### Added
+
+- Thirteen conformance cases pin the status rule for manifests, registries, holder chains, grants in use and trust edges; the suite has 232 cases.
 
 ### Changed
 

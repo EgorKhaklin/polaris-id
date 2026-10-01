@@ -845,6 +845,58 @@ class TheInclusionProofSitesRefuseANonFiniteIndexTests(unittest.TestCase):
         self.assertEqual(out["index"], 0)
 
 
+class AGrantWhoseLimitsAreNotUnderstoodIsNotUsableTests(unittest.TestCase):
+    """2026-10-01. `verify_agent_grant` called a grant usable without reading its limits, while
+    `grant_within_limits` in the same module refuses a limit it does not understand: a grant
+    signed with `max_transfers: 3` was a bounded grant read as an unbounded one.
+
+    Every other link is stubbed to hold (the signatures, the credential, the binding), so the
+    limits are the only thing that can make the verdict differ. The known limits are the
+    control: without it a verifier that called nothing usable would pass.
+    """
+
+    GRANT = {"format": "polaris-agent-grant/1", "grant_id": "g-1",
+             "public_key_hex": "cd" * 32, "algorithm": "ML-DSA-65",
+             "agent_public_key_hex": "ab" * 32, "agent_algorithm": "ML-DSA-65",
+             "actions": ["read"], "issued_at": "2026-05-01T00:00:00Z",
+             "expires_at": "2026-05-01T06:00:00Z"}
+    PROOF = {"format": "polaris-agent-proof/1", "grant_id": "g-1", "public_key_hex": "ab" * 32,
+             "action": "read", "service_nonce": "n-1", "algorithm": "ML-DSA-65",
+             "signature_hex": "00" * 8}
+
+    def setUp(self):
+        self._saved = (V._signed_by, V.verify_pack, V.verify_holder_binding)
+        V._signed_by = lambda obj, msg, pk, alg: (True, ["stub"], None)
+        V.verify_pack = lambda cred, anchor_keys=None: {"signature_valid": True,
+                                                        "issuer_trusted": True, "note": None}
+        V.verify_holder_binding = lambda b, credential=None, now=None, anchor_keys=None: {
+            "binding_authentic": True, "fresh": True, "holder_public_key_hex": "cd" * 32,
+            "bound_to_credential": True}
+
+    def tearDown(self):
+        V._signed_by, V.verify_pack, V.verify_holder_binding = self._saved
+
+    def _usable(self, **limits):
+        grant = dict(self.GRANT, **limits)
+        return V.verify_agent_grant(grant, binding={"status": "active"}, credential={},
+                                    now="2026-05-01T00:00:30Z", requested_action="read",
+                                    agent_proof=self.PROOF, expected_nonce="n-1",
+                                    anchor_keys=["cd" * 32])
+
+    def test_known_limits_and_none_at_all_are_usable(self):
+        for extra in ({}, {"limits": {}}, {"limits": {"max_uses": 3, "max_amount": 100}}):
+            with self.subTest(extra=extra):
+                v = self._usable(**extra)
+                self.assertIs(v["usable"], True, v["note"])
+
+    def test_a_limit_this_verifier_does_not_understand_is_not_usable(self):
+        for limits in ({"max_transfers": 3}, "3", [3], {"max_uses": "3"}, {"max_amount": float("nan")}):
+            with self.subTest(limits=limits):
+                v = self._usable(limits=limits)
+                self.assertIs(v["usable"], False)
+                self.assertTrue(v["note"])
+
+
 class TheGrantPinsTheAgentsAlgorithmTests(unittest.TestCase):
     """`agent_algorithm` is inside the statement the HOLDER signs, and was read by nothing.
 

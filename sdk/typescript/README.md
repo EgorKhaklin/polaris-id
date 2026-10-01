@@ -70,7 +70,7 @@ refused (wire spec section 6).
   attested in its context at a stated instant (and by whom, for a receipt), and whether the
   bodies held match the commitments.
 
-The SDK passes every case of the conformance suite (219 cases, measured against the repository on 2026-09-30) and every case of the frozen
+The SDK passes every case of the conformance suite (232 cases, measured against the repository on 2026-10-01) and every case of the frozen
 version-1 set under `scripts/polaris-compat-suite.py --typescript-only`, which runs on every CI push.
 
 ## Running and building
