@@ -1,7 +1,8 @@
 # 007: a gate that admits people and agents by credential
 
 **Opened 2026-10-01.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md).
-State: OPEN. Nothing built yet; the falsifiers below were written first.
+State: OPEN. The falsifiers below were written first (632b01b4). Step 2, the gate and its tests
+([`007/`](007/README.md)), followed the same day.
 
 ---
 
