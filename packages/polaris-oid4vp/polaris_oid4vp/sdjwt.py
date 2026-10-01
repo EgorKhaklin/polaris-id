@@ -419,6 +419,19 @@ def _verify_es256(public_key, signing_input, signature):
     return True
 
 
+def _not_an_es256_verification_key(jwk):
+    """True when a JWK says it is for something other than verifying ES256 signatures (RFC 7517
+    4.2 to 4.4): a `use` other than "sig", `key_ops` without "verify", or an `alg` other than
+    ES256. An issuer's JWK Set often lists its encryption key beside its signing key, and until
+    2026-10-01 every configured P-256 key was a candidate, so an issuer signature verified under
+    the key the issuer publishes for encryption."""
+    if "use" in jwk and jwk["use"] != "sig":
+        return True
+    if "key_ops" in jwk and not (isinstance(jwk["key_ops"], list) and "verify" in jwk["key_ops"]):
+        return True
+    return "alg" in jwk and jwk["alg"] != "ES256"
+
+
 def _issuer_public_keys(header, issuer_jwks, trust_anchors, now=None):
     """(keys, reason, leaf): the keys the issuer JWS may be checked under, or why there are
     none, and the x5c leaf they came from (None for configured JWKs).
@@ -456,7 +469,7 @@ def _issuer_public_keys(header, issuer_jwks, trust_anchors, now=None):
         # as an `x5c` that is present but empty is.
         if "kid" in header and (not isinstance(kid, str) or not kid):
             return [], "kid is present but is not a non-empty string", None
-        keys = []
+        keys, other_use = [], False
         for jwk in issuer_jwks:
             # A configured JWK list is operator input and can hold anything. Reading `kid`
             # off a string raised AttributeError straight out of a function whose contract
@@ -466,12 +479,18 @@ def _issuer_public_keys(header, issuer_jwks, trust_anchors, now=None):
                 continue
             if kid and jwk.get("kid") and jwk["kid"] != kid:
                 continue
+            if _not_an_es256_verification_key(jwk):
+                other_use = True
+                continue
             try:
                 keys.append(_es256_public_key(jwk))
             except ValueError:
                 continue
         if keys:
             return keys, "", None
+        if other_use:
+            return [], ("no configured issuer JWK that matches this credential's kid is for "
+                        "verifying ES256 signatures; its use, key_ops or alg says otherwise"), None
         return [], "no configured issuer JWK matches this credential's kid", None
     return [], ("the credential carries no x5c and no issuer JWK is configured, so there "
                 "is no key to check the issuer signature against"), None

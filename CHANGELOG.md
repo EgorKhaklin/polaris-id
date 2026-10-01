@@ -16,6 +16,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Both SDKs read only the JSON `true` as currently authoritative; both read a status answer of `"false"` as current.
 - All three verifiers refuse an agent grant whose `grant_id` is not text; it is the grant's only revocation handle (WIRE-SPEC 3.17).
 - All three verifiers read a key or a digest only as a hex string; the TypeScript SDK read a signed `[K]` as K, and two missing keys matched in Python.
+- `polaris-oid4vp` verifies an issuer signature only under a configured JWK meant for ES256 signatures; an encryption key verified it.
 
 ### Fixed
 

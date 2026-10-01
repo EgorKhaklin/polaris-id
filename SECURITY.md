@@ -47,13 +47,14 @@ lists what older versions still carry.
 | `polaris-id-cli` | `1.0.0rc1` | None: the first release. |
 | `polaris-sdk-ts` (npm) | `1.0.0-rc.7` under `next` | `1.0.0-rc.6` and earlier: `grantPrincipalBound` **binds a grant to a credential whose signature does not verify**; **read any artifact the timestamp log's key signed as its tree head**; **trust a federation manifest when no trust anchor is named, or one that merely lists a trusted anchor**; **prove a holder chain checked against no nonce, or with a credential whose signature does not verify**; count any key's signature on a trust edge as the attesting authority's; accept a holder proof made for another credential; count a holder binding with no window as fresh; name a receipt's responder that nothing confirmed; accept a timestamp over a SHA-1 or uppercase digest, or whose `issued_at` is not an instant; accept a revocation feed or status bundle whose signed count differs from its members; coerce an inclusion proof's index, size and path; accept a witness threshold of 0.5 or -1 as met by no cosignature; read a holder proof's instant with no offset in the machine's time zone; `verifyCrossAuthority` **raises** on any manifest set that is not a list. `1.0.0-rc.5` and earlier: accept a signature or key whose hex has a character that is not hex, which the other verifiers refuse; read a signed grant whose `limits` is a string or a number as unlimited. `1.0.0-rc.4` and earlier: read an artifact `format` that is a list as the string it coerces to. `1.0.0-rc.3` and earlier: `verifyAuthenticity` **accepts any authority-signed artifact re-wrapped as a pack**; `verifyCrossAuthority` accepts a signed or **unsigned** trust edge past, or without a readable, `valid_until`, and with **no context presented** an edge from any context. `0.1.0` (what `latest` resolves): canonicalisation and parsing divergences from the wire specification. |
 
-Exception until the next publish: `polaris-oid4vp` 1.0.0rc11 **answers a wallet 200 for a credential
-its configured status resolver found revoked**, accepts a presentation that withholds a requested claim,
-an orphan disclosure with key binding waived, an `x5c` leaf expired at the verdict's `now` and a JWE
-marked `crit`, and a W3C VC Data Model credential typed `vc+sd-jwt` as an SD-JWT VC, ignoring its
-`validUntil` and `credentialStatus`; it also ignores a `crit` on the credential, its key binding JWT
-and a status list token, and the key binding JWT's `exp` and `nbf`, accepts a digest committed twice
-and the trust anchor or a CA certificate as the issuer's `x5c` leaf; and it serves an expired request
+Exception until the next publish: `polaris-oid4vp` 1.0.0rc11 **answers a wallet 200 for a credential its
+configured status resolver found revoked**, accepts a presentation that withholds a requested claim, an
+orphan disclosure with key binding waived, an `x5c` leaf expired at the verdict's `now` and a JWE marked
+`crit`, and a W3C VC Data Model credential typed `vc+sd-jwt` as an SD-JWT VC, ignoring its `validUntil`
+and `credentialStatus`; it also ignores a `crit` on the credential, its key binding JWT and a status
+list token, and the key binding JWT's `exp` and `nbf`, accepts a digest committed twice and the trust
+anchor or a CA certificate as the issuer's `x5c` leaf, verifies an issuer signature under a configured
+JWK whose `use`, `key_ops` or `alg` says it is not an ES256 signing key, and serves an expired request
 object. `polaris-verify` 1.0.0rc6 and `polaris-sdk-python` 1.0.0rc6 read a signed anchor, registry
 authority or holder binding whose `status` is `false` or `""` as active; `polaris-verify` 1.0.0rc6 calls a
 grant usable whose limits it does not understand; all three read a revocation feed's non-hex leaf by

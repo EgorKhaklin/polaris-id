@@ -372,6 +372,28 @@ class IssuerKeyChoiceTests(unittest.TestCase):
                           issuer_jwks=[dict(self.bare_issuer, kid="issuer-1")])
         self.assertTrue(v.authentic, "control: no kid at all still meets the listed keys")
 
+    def test_a_key_published_for_another_use_verifies_nothing(self):
+        """2026-10-01. RFC 7517 4.2 to 4.4: a JWK whose `use`, `key_ops` or `alg` says it is for
+        something else is not a signature key. Every configured P-256 key was a candidate, so a
+        credential verified under the key an issuer's JWK Set lists for encryption."""
+        for marks in ({"use": "enc"}, {"key_ops": ["encrypt", "deriveKey"]}, {"key_ops": "verify"},
+                      {"alg": "ECDH-ES"}, {"alg": "ES384"}, {"use": None}):
+            with self.subTest(marks=marks):
+                v = self.w.verify(self.w.present(issuer_header=dict(self.HEADER)),
+                                  issuer_jwks=[dict(self.bare_issuer, **marks)])
+                self.assertFalse(v.authentic)
+                self.assertEqual(v.code, "issuer_key")
+                self.assertIn("use, key_ops or alg says otherwise", v.reason)
+        for marks in ({"use": "sig"}, {"key_ops": ["verify"]}, {"alg": "ES256"},
+                      {"use": "sig", "key_ops": ["verify"], "alg": "ES256"}):
+            with self.subTest(marks=marks):
+                v = self.w.verify(self.w.present(issuer_header=dict(self.HEADER)),
+                                  issuer_jwks=[dict(self.bare_issuer, **marks)])
+                self.assertTrue(v.authentic, v.reason)
+        v = self.w.verify(self.w.present(issuer_header=dict(self.HEADER)),
+                          issuer_jwks=[dict(self.bare_issuer, use="enc"), dict(self.bare_issuer, use="sig")])
+        self.assertTrue(v.authentic, "the same key listed for signing still verifies beside its encryption entry")
+
     def test_an_x5c_that_is_present_but_falsy_is_refused_not_ignored(self):
         for value in ([], "", {}, 0, False):
             with self.subTest(x5c=value):
