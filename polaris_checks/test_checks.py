@@ -1658,7 +1658,8 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                    "anchorbatch tokenstateepochleaf duressevent authauditlog "
                    "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed", "authoritykeyevent", "timestamplog", "holderkeyevent")
 
-    def write(grants, mig_revoke, proc_definer, uc11_definer=True, uc10_definer=True, uc9r_definer=True):
+    def write(grants, mig_revoke, proc_definer, uc11_definer=True, uc10_definer=True, uc9r_definer=True,
+              hk_definer=True, hk_path=True):
         (sql / "09_grants.sql").write_text(grants)
         (mig / "2026-05-15-003-audit-access-log.up.sql").write_text(
             "REVOKE UPDATE, DELETE ON AuditAccessLog FROM polaris_app;\n"
@@ -1677,7 +1678,11 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                       for r in ("uc10_attest_trust", "uc10_revoke_attestation", "uc_pseudonymize_individual"))
             + "CREATE OR REPLACE PROCEDURE uc9_record_recovery_channel(p INTEGER)\nLANGUAGE plpgsql\n"
             + ("SECURITY DEFINER\nSET search_path = public, pg_temp\n" if uc9r_definer else "")
-            + "AS $$ BEGIN NULL; END; $$;\n")
+            + "AS $$ BEGIN NULL; END; $$;\n"
+            + "CREATE OR REPLACE FUNCTION uc_record_holder_key_event(p INTEGER) RETURNS BIGINT\n"
+            + "LANGUAGE plpgsql\n" + ("SECURITY DEFINER\n" if hk_definer else "")
+            + ("SET search_path = public, pg_temp\n" if hk_path else "")
+            + "AS $$ BEGIN RETURN 1; END; $$;\n")
 
     # A real REVOKE naming the tables, not a comment listing them: the check reads
     # 09_grants.sql for the statement, and a comment is not one (v9.399).
@@ -1715,6 +1720,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     epochs = ("REVOKE INSERT, UPDATE, DELETE ON TokenStateEpoch FROM polaris_app;\n"
               "REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;\n"
               "REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;\n"
+              "REVOKE INSERT ON HolderKeyEvent FROM polaris_app;\n"
               "REVOKE INSERT ON AnchorBatch FROM polaris_app;\n"
               "REVOKE INSERT, UPDATE, DELETE ON BlockchainAnchor FROM polaris_app;\n"
               "REVOKE INSERT ON DuressEvent FROM polaris_app;\n"
@@ -1846,6 +1852,19 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
         write(full.replace("REVOKE INSERT, UPDATE, DELETE ON %s FROM polaris_app;\n" % table, ""), True, True)
         assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", table
     write(full, True, True)
+
+    # 11. 2026-10-01: the holder key register and its one writer.
+    write(full.replace("REVOKE INSERT ON HolderKeyEvent FROM polaris_app;\n", ""), True, True)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the application keeps INSERT on the holder key register"
+    write(full, True, True, hk_definer=False)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when uc_record_holder_key_event runs with the caller's rights"
+    write(full, True, True, hk_path=False)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when uc_record_holder_key_event leaves search_path to the caller"
+    write(full, True, True)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "OK"
 
 
 def test_prod_app_password_synced_check_discriminates(tmp_path):

@@ -158,6 +158,11 @@ them.
 - **N-3. The holder-key register is writable for any credential.** INSERT on HolderKeyEvent
   (a section-1 write) is not bound to possession in the database: step 5 bound an attacker's key
   to token 1 directly. With N-2 the application-level possession check does not bind it either.
+  Since 2026-10-01 the register is written only through `uc_record_holder_key_event`, which
+  sets each event's instant and keeps events in order on a live credential, and a rerun grants
+  EXECUTE on it in place of the INSERT. The finding stands in substance: the routine cannot read
+  the live key's signature, so a process holding EXECUTE still binds a key to a credential
+  with none and rotates a live one.
 - The other own-table powers are nuisance-grade: burn a zero-knowledge nonce a holder has not
   used (measured), consume auth codes or exchange nonces, append junk hashes to the receipt and
   timestamp logs. None can be updated or deleted (measured, 42501).

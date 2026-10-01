@@ -11,6 +11,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - **Breaking**: `polaris-oid4vp`'s `Verifier` answers 400 to a credential its resolver checked as not VALID, and to one missing a requested claim.
 - **Breaking**: `polaris_oid4vp.status.decide` requires `expected_uri`.
+- **Breaking**: `POST /api/v1/holder-key` answers 409 to a binding over a live key, and 401 to a rotation or revocation without `change_proof` signed by the live key.
 
 ### Security
 
@@ -23,12 +24,16 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-oid4vp serve` stops serving a request object past its lifetime; a wallet nonce re-signed an expired one.
 
 - The application's database role can no longer run the retention and archive-purge routines; naming any admin, it could set retention or purge audit rows past the floor.
+- A holder key changes only with the live key's signature; presenting the credential, which any relying party that verified it can do, could rebind, rotate or revoke it.
+- The application's database role writes holder key events only through a routine that sets their instant and keeps them in order; it could insert any event, at any instant, for any credential.
+
 ### Fixed
 
 - The rc.68 notes list only what rc.68 released; a merge after the cut had filed the `polaris-oid4vp` 1.0.0rc12 lines there.
 
 ### Changed
 
+- `polaris-wallet holder-keygen --rotate` signs the change with the live key and keeps that key until the issuer accepts the new one.
 - Published: `polaris-verify` and `polaris-sdk-python` 1.0.0rc6 on PyPI, each approved at the environment gate, and `polaris-sdk-ts` 1.0.0-rc.7 on npm under `next`, approved by the maintainer with a second factor.
 
 ## v1.0.0-rc.68 — 2026-10-01 (trust enters only where the relying party puts it)

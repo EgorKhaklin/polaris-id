@@ -11,14 +11,25 @@ them makes the issuer blind; all of them are about what happens *after* issuance
 
 ## The key (P9.1)
 
-A credential may carry an optional holder public key, bound by the issuer at issuance or by
-a possession-proved rotation, recorded in an append-only register under the same lifecycle
-discipline as an authority key. A presentation may carry a holder signature over the
-context, the verifier's nonce and the instant.
+A credential may carry an optional holder public key, recorded in an append-only register
+under the same lifecycle discipline as an authority key. Presenting the credential binds the
+first key; after that, only the live key changes it: a rotation or a revocation carries the
+live key's signature over `polaris-holder-key-change/1` (WIRE-SPEC 3.15). A presentation
+may carry a holder signature over the context, the verifier's nonce and the instant.
 
 The point: possession of the file stops being possession of the credential. A verifier that
 requires the proof (`require_holder_proof`) is asking the presenter to hold a key, not a
 copy.
+
+**The bound on continuity.** The first binding is trust on first use: every relying party
+that took a full presentation has seen what binding needs, so whoever binds first holds the
+key. A revocation reopens that window, because after it no key is live. The answer to a lost
+or taken key is the issuer's recovery path, which issues a new credential, not a rebinding of
+the old one. The database cannot read an ML-DSA signature, so the live key's consent is
+checked by the application. `uc_record_holder_key_event`, the register's only writer, sets
+each event's instant and refuses one out of order or on a credential that is not live; a
+compromised application can still rotate a live key, as it can sign any binding with the
+authority's key.
 
 **The bound, and the constitutional note.** A key the holder controls is also a key the
 holder can be compelled to use. The holder proof's signed statement therefore does *not*
