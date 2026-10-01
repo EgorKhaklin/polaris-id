@@ -1562,7 +1562,8 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             # Since rc.40 the lifecycle log, and since 2026-09-25 the epoch leaves and the anchor
             # batches, are written only by SECURITY DEFINER routines; since 2026-09-27 the key
             # register, card personalization and retention policy only by the owner; since
-            # 2026-09-28 the wallet copy record only by uc_issue_credential_copy.
+            # 2026-09-28 the wallet copy record only by uc_issue_credential_copy. The holder key
+            # register keeps INSERT until its contract migration: the previous release's route uses it.
             self.assertEqual(bool(row["ins"]),
                              tbl.lower() not in ("tokenlifecycleevent", "tokenstateepochleaf",
                                                  "anchorbatch", "duressevent", "authoritykeyevent",
@@ -2124,6 +2125,49 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             with self.subTest(label), conn.cursor() as cur:
                 with self.assertRaises(pg_errors.InsufficientPrivilege):
                     cur.execute(sql, params)
+            conn.rollback()
+
+    def test_the_holder_key_routine_keeps_events_in_order(self):
+        """2026-10-01 (review S2). The holder key route records events through
+        uc_record_holder_key_event, run here as polaris_app: it sets the instant and holds bound /
+        rotated / revoked in order for a live credential."""
+        owner = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        self.addCleanup(owner.close)
+        with owner.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken t WHERE status = 'ACTIVE' AND NOT EXISTS "
+                        "(SELECT 1 FROM HolderKeyEvent h WHERE h.token_id = t.token_id) ORDER BY token_id LIMIT 1")
+            tid = cur.fetchone()["token_id"]
+            cur.execute("SELECT token_id FROM IdentityToken WHERE status <> 'ACTIVE' ORDER BY token_id LIMIT 1")
+            dead = cur.fetchone()["token_id"]
+        k1, k2 = "a1" * 40, "b2" * 40
+        conn = self._app_conn()
+        try:
+            with conn.cursor() as cur:
+                for label, args in (("rotate a key never bound", (tid, k2, 'ML-DSA-65', 'rotated')),
+                                    ("revoke a key never bound", (tid, k1, 'ML-DSA-65', 'revoked')),
+                                    ("bind to a credential that is not live", (dead, k1, 'ML-DSA-65', 'bound')),
+                                    ("an event the register does not know", (tid, k1, 'ML-DSA-65', 'transferred'))):
+                    with self.subTest(label):
+                        cur.execute("SAVEPOINT s")
+                        with self.assertRaises(pg_errors.CheckViolation):
+                            cur.execute("SELECT uc_record_holder_key_event(%s, %s, %s, %s)", args)
+                        cur.execute("ROLLBACK TO SAVEPOINT s")
+                cur.execute("SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'bound')", (tid, k1))
+                cur.execute("SELECT effective_at <= CURRENT_TIMESTAMP AS now FROM HolderKeyEvent "
+                            "WHERE token_id = %s AND public_key_hex = %s", (tid, k1))
+                self.assertTrue(cur.fetchone()["now"], "the routine records the first binding, in force now")
+                for label, args in (("bind over the live key", (tid, k2, 'ML-DSA-65', 'bound')),
+                                    ("revoke a key that is not the live one", (tid, k2, 'ML-DSA-65', 'revoked'))):
+                    with self.subTest(label):
+                        cur.execute("SAVEPOINT s")
+                        with self.assertRaises(pg_errors.CheckViolation):
+                            cur.execute("SELECT uc_record_holder_key_event(%s, %s, %s, %s)", args)
+                        cur.execute("ROLLBACK TO SAVEPOINT s")
+                cur.execute("SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'rotated')", (tid, k2))
+                cur.execute("SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'revoked')", (tid, k2))
+                cur.execute("SELECT event FROM HolderKeyCurrent WHERE token_id = %s", (tid,))
+                self.assertEqual(cur.fetchone()["event"], "revoked", "rotate then revoke, in order")
+        finally:
             conn.rollback()
 
     def test_app_role_cannot_rewrite_a_relying_party(self):

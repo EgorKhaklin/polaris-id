@@ -684,17 +684,24 @@ Bounded at ten thousand members (C8); `413` above that, `404` for an unknown epo
 
 ### `POST /api/v1/holder-key`
 
-P9.1. Bind, rotate or revoke the HOLDER's own key for a credential. Possession-authenticated:
-present the genuine credential (`token_value` + `signature_hex`), exactly as the status
-assertion does. No session, no bearer, no operator, and the holder's PRIVATE key is never sent
-or asked for.
+P9.1. Bind, rotate or revoke the HOLDER's own key for a credential. Every call presents the
+genuine credential (`token_value` + `signature_hex`), exactly as the status assertion does. No
+session, no bearer, no operator, and the holder's PRIVATE key is never sent or asked for.
 
-Request: `{ token_value, signature_hex, holder_public_key_hex, holder_algorithm?, event? }`
-where `event` is `bound` (default), `rotated` or `revoked`.
+Possession makes only the first binding, and the first after a revocation: it is what every
+relying party that took a full presentation has seen. Once a key is bound, `rotated` and
+`revoked` also carry `change_proof`, the live key's signature over
+`polaris-holder-key-change/1` (WIRE-SPEC 3.15), made within 300 seconds.
+
+Request: `{ token_value, signature_hex, holder_public_key_hex, holder_algorithm?, event?,
+change_proof? { issued_at, signature_hex } }` where `event` is `bound` (default), `rotated` or
+`revoked`.
 Response: the issuer-signed `polaris-holder-binding/1` now in force.
 
 Refusals: `400 not_verifiable` when the presented credential is not genuine, `409 not_active`
-when the credential is not ACTIVE, `409 no_holder_key` when revoking with nothing bound,
+when the credential is not ACTIVE, `409 holder_key_bound` when binding over a live key,
+`409 no_holder_key` when rotating or revoking with nothing bound, `401 change_proof_required`,
+`401 stale` and `401 invalid_change_proof` for a missing, old or unverifiable change proof,
 `429 rate_limited`. The register behind it is append-only, so a binding is never rewritten;
 a rotation is a new event and the previous key stops being current.
 

@@ -14824,7 +14824,50 @@ class HolderKeyBindingTests(PolarisTestCase):
 
     The register behind these routes is append-only and the binding is proved by POSSESSION
     of the credential, so an operator cannot bind a key to a credential they do not hold and
-    a recorded binding is never rewritten."""
+    a recorded binding is never rewritten.
+
+    2026-10-01 (review S1): possession is also what every relying party sees, so it makes only
+    the first binding (and the first after a revocation). A bound key is rotated or revoked
+    only with change_proof, the live key's signature over polaris-holder-key-change/1."""
+
+    def _real_keypair(self, skip=True):
+        """A real ML-DSA-65 holder key pair, or a skip naming why there is none here: the
+        change proof is verified two-witness (liboqs and OpenSSL), and a sign-and-verify of a
+        known-good message is the probe, never the verdict under test."""
+        import pqc_signing
+        try:
+            import oqs
+            with oqs.Signature('ML-DSA-65') as s:
+                pk = s.generate_keypair()
+                sk = s.export_secret_key()
+                sig = s.sign(__import__('hashlib').sha3_256(b'probe').digest())
+            ok = pqc_signing.verify_both(b'probe', sig.hex(), pk.hex(), require_witness=True,
+                                         algorithm='ML-DSA-65')
+        except Exception as e:  # noqa: BLE001 -- any failure here is the environment's
+            ok, why = False, ': %s' % e
+        else:
+            why = ''
+        if not ok:
+            if not skip:
+                return None
+            self.skipTest('real ML-DSA-65 with its second witness is not available here' + why)
+        return pk.hex(), sk
+
+    def _change_proof(self, sk, token_value, event, new_key, issued_at=None):
+        """The live key's signature over polaris-holder-key-change/1, built by the route's own
+        canonicalization, so this tests the route's decision and not a second encoder."""
+        import oqs
+        import rp_api
+        from datetime import datetime, timezone
+        issued_at = issued_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+        statement = rp_api._holder_key_change_statement({
+            'format': 'polaris-holder-key-change/1', 'token_value': token_value, 'event': event,
+            'holder_public_key_hex': new_key, 'holder_algorithm': 'ML-DSA-65',
+            'issued_at': issued_at, 'algorithm': 'ML-DSA-65'})
+        with oqs.Signature('ML-DSA-65', sk) as s:
+            # Polaris signs the SHA3-256 digest of a statement, as pqc_signing.verify checks.
+            digest = __import__('hashlib').sha3_256(statement).digest()
+            return {'issued_at': issued_at, 'signature_hex': s.sign(digest).hex()}
 
     def _new_conn(self):
         return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
@@ -14942,19 +14985,30 @@ class HolderKeyBindingTests(PolarisTestCase):
         self.assertEqual(r.get_json()['error'], 'no_holder_key')
 
         # The control: bind one, and the same revocation now succeeds. Without this leg a
-        # route that refused every revocation would pass the assertion above.
+        # route that refused every revocation would pass the assertion above. Since 2026-10-01 a
+        # revocation takes the live key's signature, so the success needs real ML-DSA-65; where
+        # there is none, the refusal must at least stop being the "no key" one.
+        real = self._real_keypair(skip=False)
+        key = real[0] if real else self.KEY
         self.assertEqual(self.client.post(
             '/api/v1/holder-key',
-            json=dict(body, event='bound', holder_public_key_hex=self.KEY)).status_code, 200)
-        self.assertEqual(self.client.post('/api/v1/holder-key', json=body).status_code, 200)
+            json=dict(body, event='bound', holder_public_key_hex=key)).status_code, 200)
+        if real:
+            proof = self._change_proof(real[1], body['token_value'], 'revoked', key)
+            self.assertEqual(self.client.post('/api/v1/holder-key', json=dict(body, change_proof=proof)).status_code, 200)
+        else:
+            r = self.client.post('/api/v1/holder-key', json=body)
+            self.assertEqual((r.status_code, r.get_json()['error']), (401, 'change_proof_required'))
 
     def test_rotation_replaces_the_current_key_without_rewriting_history(self):
         tid, pack = self._issue_pack('HOLDER-KEY-ROTATE-1')
         body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
-        self.client.post('/api/v1/holder-key', json=dict(body, holder_public_key_hex=self.KEY))
+        first, sk = self._real_keypair()
+        self.client.post('/api/v1/holder-key', json=dict(body, holder_public_key_hex=first))
         second = 'cd' * 40
-        b2 = self.client.post('/api/v1/holder-key',
-                              json=dict(body, holder_public_key_hex=second, event='rotated')).get_json()
+        b2 = self.client.post('/api/v1/holder-key', json=dict(
+            body, holder_public_key_hex=second, event='rotated',
+            change_proof=self._change_proof(sk, body['token_value'], 'rotated', second))).get_json()
         self.assertEqual(b2['holder_public_key_hex'], second)
         with self._new_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT count(*) AS n FROM HolderKeyEvent WHERE token_id=%s", (tid,))
@@ -14976,10 +15030,101 @@ class HolderKeyBindingTests(PolarisTestCase):
     def test_revocation_publishes_rather_than_hides(self):
         _tid, pack = self._issue_pack('HOLDER-KEY-REVOKE-1')
         body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
-        self.client.post('/api/v1/holder-key', json=dict(body, holder_public_key_hex=self.KEY))
-        r = self.client.post('/api/v1/holder-key', json=dict(body, event='revoked')).get_json()
+        key, sk = self._real_keypair()
+        self.client.post('/api/v1/holder-key', json=dict(body, holder_public_key_hex=key))
+        r = self.client.post('/api/v1/holder-key', json=dict(
+            body, event='revoked',
+            change_proof=self._change_proof(sk, body['token_value'], 'revoked', key))).get_json()
         self.assertEqual(r['status'], 'revoked',
                          "a revoked binding is published, so a verifier sees the holder has no usable key")
+
+    def test_a_party_that_saw_a_presentation_cannot_take_over_or_unbind_the_holder_key(self):
+        """2026-10-01, review S1, reproduced before the fix: with only the presented pair, a
+        relying party bound over the holder's key, rotated it to its own (the issuer then signed
+        an active binding naming it) and revoked it. Each is refused now; needs no liboqs."""
+        _tid, pack = self._issue_pack('HOLDER-KEY-S1-1')
+        body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
+        theirs = 'ee' * 40
+        self.assertEqual(self.client.post('/api/v1/holder-key', json=dict(
+            body, holder_public_key_hex=self.KEY)).status_code, 200, 'the first binding is possession')
+        for label, extra, status, error in (
+                ('bind over the live key', {'holder_public_key_hex': theirs}, 409, 'holder_key_bound'),
+                ('rotate to its own key', {'holder_public_key_hex': theirs, 'event': 'rotated'},
+                 401, 'change_proof_required'),
+                ('unbind the holder', {'event': 'revoked'}, 401, 'change_proof_required'),
+                ('rotate with a proof no key made', {
+                    'holder_public_key_hex': theirs, 'event': 'rotated',
+                    'change_proof': {'issued_at': __import__('datetime').datetime.now(
+                        __import__('datetime').timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                        'signature_hex': '00' * 3309}}, 401, None)):
+            with self.subTest(label):
+                flask_app.security.rate_limiter.reset()
+                r = self.client.post('/api/v1/holder-key', json=dict(body, **extra))
+                self.assertEqual(r.status_code, status, r.get_data(as_text=True))
+                if error:
+                    self.assertEqual(r.get_json()['error'], error)
+        flask_app.security.rate_limiter.reset()
+        got = self.client.post('/api/v1/holder-binding', json=body).get_json()
+        self.assertEqual((got['holder_public_key_hex'], got['status']), (self.KEY, 'active'),
+                         'the holder keeps the key it bound')
+
+    def test_the_live_key_rotates_and_revokes_itself_and_a_replay_is_refused(self):
+        """Key continuity, end to end with real ML-DSA-65: the live key signs its rotation; the
+        same proof replayed is refused because its signer is no longer live; the new key signs
+        its own revocation; and a revocation reopens trust on first use, as documented."""
+        _tid, pack = self._issue_pack('HOLDER-KEY-S1-2')
+        tv = pack['token_value']
+        body = {'token_value': tv, 'signature_hex': pack['signature_hex']}
+        k1, sk1 = self._real_keypair()
+        k2, sk2 = self._real_keypair()
+        self.assertEqual(self.client.post('/api/v1/holder-key', json=dict(
+            body, holder_public_key_hex=k1)).status_code, 200)
+        proof = self._change_proof(sk1, tv, 'rotated', k2)
+        r = self.client.post('/api/v1/holder-key', json=dict(
+            body, holder_public_key_hex=k2, event='rotated', change_proof=proof))
+        self.assertEqual((r.status_code, r.get_json()['holder_public_key_hex']), (200, k2))
+        r = self.client.post('/api/v1/holder-key', json=dict(
+            body, holder_public_key_hex=k2, event='rotated', change_proof=proof))
+        self.assertEqual((r.status_code, r.get_json()['error']), (401, 'invalid_change_proof'),
+                         'a replayed rotation was signed by a key that is no longer live')
+        flask_app.security.rate_limiter.reset()
+        stray = self._change_proof(sk2, tv, 'rotated', k1)
+        r = self.client.post('/api/v1/holder-key', json=dict(
+            body, holder_public_key_hex='cd' * 40, event='rotated', change_proof=stray))
+        self.assertEqual(r.status_code, 401, 'a proof for another change does not cover this one')
+        r = self.client.post('/api/v1/holder-key', json=dict(
+            body, event='revoked', change_proof=self._change_proof(sk2, tv, 'revoked', k2)))
+        self.assertEqual((r.status_code, r.get_json()['status']), (200, 'revoked'))
+        flask_app.security.rate_limiter.reset()
+        r = self.client.post('/api/v1/holder-key', json=dict(body, holder_public_key_hex=self.KEY))
+        self.assertEqual(r.status_code, 200, 'after a revocation the next binding is possession again')
+
+    def test_the_wallet_and_the_issuer_build_the_same_change_statement(self):
+        """The holder's wallet and the issuer each build polaris-holder-key-change/1, and a byte
+        of difference refuses every rotation. Pinned on a body whose keys arrive unsorted and
+        that carries a field neither may sign: the presented code stays out, as in every holder
+        statement, so a coerced change is no different from a consenting one."""
+        import importlib.util
+        import rp_api
+        spec = importlib.util.spec_from_file_location(
+            "polaris_wallet_for_pin",
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts", "polaris-wallet.py"))
+        wallet = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(wallet)
+        body = {'algorithm': 'ML-DSA-65', 'issued_at': '2026-10-01T05:00:00Z', 'event': 'rotated',
+                'token_value': 'T-PIN', 'holder_public_key_hex': 'ab' * 32, 'holder_algorithm': 'ML-DSA-87',
+                'format': 'polaris-holder-key-change/1', 'presented_code': 'never-signed'}
+        self.assertEqual(wallet._holder_key_change_canonical(body), rp_api._holder_key_change_statement(body))
+        self.assertNotIn(b'presented_code', rp_api._holder_key_change_statement(body))
+
+    def test_a_stale_change_proof_is_refused_before_its_signature_is_read(self):
+        _tid, pack = self._issue_pack('HOLDER-KEY-S1-3')
+        body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
+        self.client.post('/api/v1/holder-key', json=dict(body, holder_public_key_hex=self.KEY))
+        r = self.client.post('/api/v1/holder-key', json=dict(
+            body, event='revoked', change_proof={'issued_at': '2026-01-01T00:00:00Z',
+                                                 'signature_hex': '00' * 3309}))
+        self.assertEqual((r.status_code, r.get_json()['error']), (401, 'stale'))
 
     def test_binding_endpoint_returns_the_current_binding(self):
         _tid, pack = self._issue_pack('HOLDER-KEY-FETCH-1')

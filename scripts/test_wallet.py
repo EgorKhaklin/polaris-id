@@ -126,6 +126,28 @@ class HolderWalletTests(unittest.TestCase):
             self.assertIn(phrase, r.stderr,
                           "the refusal must name %r so the holder can act on it" % phrase)
 
+    @unittest.skipUnless(_HAVE_OQS, "holder-keygen needs liboqs before it reaches the rotation; "
+                                     "CI runs it under the real-PQC interpreter")
+    def test_a_rotation_needs_the_live_key_and_never_loses_it(self):
+        """2026-10-01 (review S1): a bound key is changed only by that key, so --rotate signs
+        with the key on disk. With none it is refused before the network; with one, an instance
+        that never answers leaves the live key where it was and the new one waiting beside it."""
+        self._enroll()
+        r = self._run("holder-keygen", "--rotate", "--instance", "http://127.0.0.1:1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no holder key in this wallet to rotate from", r.stderr)
+        self._run("holder-keygen", "--instance", "http://127.0.0.1:1")   # half-bound: the key is saved
+        live = os.path.join(self.wallet, "holder_key.json")
+        with open(live) as f:
+            before = f.read()
+        r = self._run("holder-keygen", "--rotate", "--instance", "http://127.0.0.1:1")
+        self.assertNotEqual(r.returncode, 0, "an unanswered rotation is not a success")
+        self.assertNotIn("Traceback", r.stderr)
+        with open(live) as f:
+            self.assertEqual(f.read(), before, "the live key must survive a rotation nobody answered")
+        self.assertTrue(os.path.exists(live + ".pending"), "the new key waits beside the live one")
+        self.assertIn(".pending", r.stderr, "and the message says where")
+
     def test_prove_membership_roundtrips_through_polaris_zk(self):
         binary = _zk_binary()
         if not os.path.exists(binary):

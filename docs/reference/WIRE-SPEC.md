@@ -378,9 +378,24 @@ Signed fields: format, token_value, holder_public_key_hex, holder_algorithm, bou
 It says which holder public key belongs to which credential, from which instant, and whether
 that binding is `active` or `revoked`. A revoked binding is published rather than withdrawn,
 so a verifier sees that the holder has no usable key instead of inferring it from an absence.
-It is short-lived and window-bounded like a status assertion. The binding is obtained by
-POSSESSION of the credential, so an operator cannot bind a key to a credential they do not
-hold, and the holder's private key never reaches the issuer.
+It is short-lived and window-bounded like a status assertion. The holder's private key never
+reaches the issuer.
+
+The FIRST binding, and the first after a revocation, is obtained by POSSESSION of the
+credential: trust on first use. Possession is also what every relying party that took a
+full presentation of it has seen, so it binds a key only while none is live, and a credential
+presented before its holder binds a key can be bound by whoever saw it. From then on the
+binding changes only by the bound key.
+
+`polaris-holder-key-change/1` is signed by the live HOLDER key and sent only to the issuer.
+Signed fields: format, token_value, event, holder_public_key_hex, holder_algorithm, issued_at, algorithm
+
+`event` is `rotated`, with `holder_public_key_hex` and `holder_algorithm` naming the new key,
+or `revoked`, naming the live one; `algorithm` is the live key's. The issuer MUST verify it
+under the live key, MUST refuse one whose `issued_at` is more than 300 seconds from its
+clock, and records the change only while that key is live, so a replayed change, signed by a
+key no longer live, changes nothing. Like the proof it does not cover the presented code. No
+relying party sees one; the binding it results in is what they verify.
 
 `polaris-holder-proof/1` is signed by the HOLDER.
 Signed fields: format, token_value, context_id, verifier_nonce, issued_at, algorithm
