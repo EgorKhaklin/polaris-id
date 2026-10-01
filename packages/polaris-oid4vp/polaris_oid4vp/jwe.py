@@ -177,6 +177,13 @@ def decrypt_compact(token, private_key):
     # TypeError, which escaped `verifier.py`'s `except JweError` (2026-09-28).
     if not isinstance(enc, str) or enc not in ACCEPTED_ENC:
         raise JweError("enc=%r; the accepted set is %s" % (enc, sorted(ACCEPTED_ENC)))
+    # RFC 7516 4.1.13, by way of RFC 7515 4.1.11: a recipient MUST refuse a JWE whose `crit`
+    # names an extension it does not understand, and this one understands none. `crit` was never
+    # read, so a header saying "do not process this unless you implement X" was decrypted by a
+    # verifier that implements nothing of the kind (2026-10-01).
+    if "crit" in header:
+        raise JweError("the protected header carries crit=%r; this verifier understands no JWE "
+                       "extension, so it refuses one marked critical" % (header.get("crit"),))
     if encrypted_key:
         raise JweError("ECDH-ES is direct key agreement, so the encrypted key must be "
                        "empty; this token carries one, which is a different algorithm "

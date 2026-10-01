@@ -322,10 +322,31 @@ class RevocationReachesTheOperatorTests(unittest.TestCase):
         _, jar = v.new_request()
         status, _, verdict = v.handle_direct_post(
             self.wallet.respond(jar, status=self.STATUS))
-        self.assertEqual(status, 200)
+        # A checked INVALID is refused on the wire (2026-10-01); it was answered 200.
+        self.assertEqual((status, verdict.code), (400, "revoked"))
         self.assertEqual(asked, [("https://issuer.example/sl/1", 5, "https://issuer.example")])
         self.assertTrue(verdict.revocation["checked"])
         self.assertEqual(verdict.revocation["meaning"], "INVALID")
+
+    def test_a_checked_status_decides_the_answer(self):
+        """The review of 2026-09-30: the resolver's answer reached the verdict and changed
+        nothing on the wire, so a credential the issuer had revoked was answered 200. A value
+        that is not VALID is a fact and is refused; a status nobody could read stays a reported
+        state for the relying party's policy, as before."""
+        for value, meaning, answer in ((0, "VALID", 200), (1, "INVALID", 400), (2, "SUSPENDED", 400)):
+            with self.subTest(meaning=meaning):
+                v = self._verifier(status_resolver=lambda *, uri, idx, issuer, value=value, meaning=meaning:
+                                   {"checked": True, "status": value, "meaning": meaning})
+                _, jar = v.new_request()
+                status, _, verdict = v.handle_direct_post(self.wallet.respond(jar, status=self.STATUS))
+                self.assertEqual(status, answer)
+
+        def unreachable(*, uri, idx, issuer):
+            raise OSError("the status host did not answer")
+        v = self._verifier(status_resolver=unreachable)
+        _, jar = v.new_request()
+        status, _, verdict = v.handle_direct_post(self.wallet.respond(jar, status=self.STATUS))
+        self.assertEqual((status, verdict.revocation["state"]), (200, sdjwt.UNREACHABLE))
 
     def test_without_a_resolver_a_named_list_is_not_evaluated(self):
         """The same credential, no resolver: nobody looked, and the verdict says so."""
@@ -336,6 +357,39 @@ class RevocationReachesTheOperatorTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(verdict.revocation["checked"])
         self.assertEqual(verdict.revocation["state"], sdjwt.NOT_EVALUATED)
+
+
+class TheRequestIsWhatIsAnsweredTests(unittest.TestCase):
+    """The review of 2026-09-30: a presentation withholding a claim the DCQL query asked for was
+    answered 200, and a request past its lifetime was still served, even re-signed with a new
+    `exp` for a wallet nonce."""
+
+    def _verifier(self, **kw):
+        cert_pem, key_pem = _client_chain()
+        self.wallet = Wallet()
+        return Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                        request_uri="https://verifier.test/request.jwt",
+                        response_uri="https://verifier.test/response",
+                        issuer_jwks=[self.wallet.issuer_jwk], **kw)
+
+    def test_a_presentation_missing_a_requested_claim_is_refused(self):
+        v = self._verifier()
+        _, jar = v.new_request()
+        self.assertEqual(v.handle_direct_post(self.wallet.respond(jar))[0], 200, "control")
+        v = self._verifier(claims=("given_name", "family_name", "birthdate"))
+        _, jar = v.new_request()
+        status, _, verdict = v.handle_direct_post(self.wallet.respond(jar))
+        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertIn("birthdate", verdict.reason)
+
+    def test_a_request_past_its_lifetime_is_not_served(self):
+        v = self._verifier(request_ttl_seconds=60)
+        session, jar = v.new_request()
+        self.assertEqual(v.request_object(session.state), jar, "control: served while outstanding")
+        self.assertIsNotNone(v.request_object(session.state, wallet_nonce="n-1"))
+        session.created -= 61
+        self.assertIsNone(v.request_object(session.state))
+        self.assertIsNone(v.request_object(session.state, wallet_nonce="n-2"))
 
 
 class TheSevenRefusalsReachTheWireTests(VerifierTestCase):

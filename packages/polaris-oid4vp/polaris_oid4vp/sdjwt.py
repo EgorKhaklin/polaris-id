@@ -416,7 +416,7 @@ def _verify_es256(public_key, signing_input, signature):
     return True
 
 
-def _issuer_public_keys(header, issuer_jwks, trust_anchors):
+def _issuer_public_keys(header, issuer_jwks, trust_anchors, now=None):
     """(keys, reason, leaf): the keys the issuer JWS may be checked under, or why there are
     none, and the x5c leaf they came from (None for configured JWKs).
 
@@ -440,7 +440,7 @@ def _issuer_public_keys(header, issuer_jwks, trust_anchors):
             return [], ("the credential presents an x5c chain and no trust anchor is "
                         "configured, so nothing can be said about who signed it"), None
         for anchor in trust_anchors:
-            if _chains_to(leaf, anchor):
+            if _chains_to(leaf, anchor, now):
                 return [leaf.public_key()], "", leaf
         return [], "the x5c leaf does not chain to any configured trust anchor", None
     if issuer_jwks:
@@ -471,8 +471,9 @@ def _issuer_public_keys(header, issuer_jwks, trust_anchors):
                 "is no key to check the issuer signature against"), None
 
 
-def _chains_to(leaf, anchor):
-    """Is `leaf` signed by `anchor`? One link, deliberately.
+def _chains_to(leaf, anchor, now=None):
+    """Is `leaf` signed by `anchor`, and valid at `now` (POSIX seconds; None for the clock)? One
+    link, deliberately.
 
     A full path builder is a different piece of software with its own failure modes. The
     conformance profile registers the anchor out of band and sends the leaf alone, which is
@@ -501,7 +502,10 @@ def _chains_to(leaf, anchor):
     # identity-credential issuer. This package's own cli.py already documents walt.id
     # refusing a leaf for a missing digitalSignature KeyUsage, so the field was known about
     # and simply not read here.
-    now = _utcnow()
+    # At the instant the verdict is reached for: `verify_presentation(now=)` governed the key
+    # binding's iat and the credential's exp and nbf, and this window alone read the wall clock,
+    # so a leaf that had expired by `now` still chained (2026-10-01).
+    now = _utcnow() if now is None else datetime.datetime.fromtimestamp(now, datetime.timezone.utc)
     try:
         not_before = leaf.not_valid_before_utc
         not_after = leaf.not_valid_after_utc
@@ -755,7 +759,7 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
     if header.get("alg") not in ACCEPTED_ALGS:
         return _refuse("issuer_alg", "the issuer JWT declares alg=%r, which is not in the "
                                      "accepted set %r" % (header.get("alg"), ACCEPTED_ALGS))
-    keys, why, leaf = _issuer_public_keys(header, issuer_jwks, trust_anchors)
+    keys, why, leaf = _issuer_public_keys(header, issuer_jwks, trust_anchors, now)
     if not keys:
         return _refuse("issuer_key", why)
     if not any(_verify_es256(key, signing_input, signature) for key in keys):
@@ -876,6 +880,12 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         if require_key_binding:
             return _refuse("kb_missing", "the presentation carries no key binding JWT, so "
                                          "nothing ties it to the holder who presented it")
+        # The same rule as the key-binding path below. It ran only there, so with key binding
+        # not required a disclosure the credential never committed to was accepted (2026-10-01).
+        orphans = set(by_digest) - used
+        if orphans:
+            return _refuse("disclosure", "%d disclosure(s) were presented that resolve to nothing "
+                                         "in the credential" % len(orphans))
         return Verdict(True, claims=claims,
                        revocation=_revocation_state(payload, status_resolver))
 

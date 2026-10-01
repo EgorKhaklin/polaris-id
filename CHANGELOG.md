@@ -44,6 +44,13 @@ The verifiers and SDKs trust a manifest, a tree head or a receipt's responder on
 - Both SDKs count a holder binding only when it is checked fresh; one with no window counted as fresh.
 - The conformance contract asks whether a grant in use is inside its window; an expired grant came back in scope.
 - The relying-party script asks about a credential by its signed serial and verifies the answer; it asked by an id the holder could edit.
+- `polaris-oid4vp` refuses a credential its configured status resolver checked as revoked or suspended; it answered the wallet 200.
+- `polaris-oid4vp` refuses a presentation that withholds a claim the request asked for.
+- `polaris-oid4vp` refuses an orphan disclosure with key binding waived; only the key-binding path refused it.
+- `polaris-oid4vp` judges an `x5c` leaf's validity at the verdict's `now`, not at the wall clock.
+- `polaris-oid4vp` refuses a JWE response whose `crit` names any extension, as RFC 7516 requires.
+- `polaris-oid4vp`'s `status.decide` binds a list to the credential's own `uri` always; with none it skipped the check.
+- `polaris-oid4vp serve` stops serving a request object past its lifetime; a wallet nonce re-signed an expired one.
 
 ### Fixed
 
@@ -60,6 +67,8 @@ The verifiers and SDKs trust a manifest, a tree head or a receipt's responder on
 
 ### Changed
 
+- **Breaking**: `polaris-oid4vp`'s `Verifier` answers 400 to a credential its resolver checked as not VALID, and to one missing a requested claim.
+- **Breaking**: `polaris_oid4vp.status.decide` requires `expected_uri`.
 - **Breaking**: `polaris-verify` abstains (exit 2) on a presentation carrying a holder proof when no `--nonce` is given.
 - **Breaking**: a manifest that lists a trusted anchor but is signed by another key is no longer trusted, in all three verifiers.
 - **Breaking**: both SDKs' cross-authority decision trusts no manifest without `trusted_anchors`; pass the anchors you trust.
