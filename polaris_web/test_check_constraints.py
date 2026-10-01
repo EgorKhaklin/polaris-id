@@ -1562,13 +1562,13 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             # Since rc.40 the lifecycle log, and since 2026-09-25 the epoch leaves and the anchor
             # batches, are written only by SECURITY DEFINER routines; since 2026-09-27 the key
             # register, card personalization and retention policy only by the owner; since
-            # 2026-09-28 the wallet copy record only by uc_issue_credential_copy. The holder key
-            # register keeps INSERT until its contract migration: the previous release's route uses it.
+            # 2026-09-28 the wallet copy record only by uc_issue_credential_copy; and, since the contract
+            # migration 2026-10-01-003, the holder key register only by uc_record_holder_key_event.
             self.assertEqual(bool(row["ins"]),
                              tbl.lower() not in ("tokenlifecycleevent", "tokenstateepochleaf",
                                                  "anchorbatch", "duressevent", "authoritykeyevent",
                                                  "cardpersonalization", "retentionpolicy",
-                                                 "credentialcopy"),
+                                                 "credentialcopy", "holderkeyevent"),
                              f"append-only is insert-allowed except the lifecycle log, the epoch "
                              f"leaves, the anchor batches and the owner's registers: {tbl}")
             conn.rollback()
@@ -2125,6 +2125,22 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             with self.subTest(label), conn.cursor() as cur:
                 with self.assertRaises(pg_errors.InsufficientPrivilege):
                     cur.execute(sql, params)
+            conn.rollback()
+
+    def test_the_app_role_writes_holder_key_events_only_through_the_routine(self):
+        """2026-10-01, contract migration 2026-10-01-003: a direct INSERT is refused."""
+        owner = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        self.addCleanup(owner.close)
+        with owner.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1")
+            tid = cur.fetchone()["token_id"]
+        conn = self._app_conn()
+        try:
+            with conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute("INSERT INTO HolderKeyEvent (token_id, public_key_hex, event) "
+                                "VALUES (%s, %s, 'bound')", (tid, "c3" * 40))
+        finally:
             conn.rollback()
 
     def test_the_holder_key_routine_keeps_events_in_order(self):

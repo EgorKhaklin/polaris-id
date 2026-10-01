@@ -835,14 +835,15 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         if not head or not re.search(r"SECURITY\s+DEFINER", head.group(0), re.I):
             return _fail("c1_aor_priv", routine + " must be SECURITY DEFINER: it is the federation "
                                         "trust graph's only door (C1)")
-    # 2026-10-01. The holder key route records events through uc_record_holder_key_event, which
-    # holds bound / rotated / revoked in order. The application role's INSERT on HolderKeyEvent is
-    # withdrawn by a contract migration in a later release (the previous release's route uses it).
+    # 2026-10-01. The holder key register is written only by uc_record_holder_key_event, which holds
+    # bound / rotated / revoked in order (the INSERT was withdrawn in contract migration 2026-10-01-003).
     hk = re.search(r"FUNCTION\s+uc_record_holder_key_event\b.*?AS\s+\$\$", proc, re.I | re.S)
-    if (not hk or not re.search(r"SECURITY\s+DEFINER", hk.group(0), re.I)
+    if (not re.search(r"REVOKE\s+INSERT\s+ON\s+HolderKeyEvent\s+FROM\s+polaris_app", grants, re.I)
+            or not hk or not re.search(r"SECURITY\s+DEFINER", hk.group(0), re.I)
             or not re.search(r"SET\s+search_path\s*=\s*public\s*,\s*pg_temp", hk.group(0), re.I)):
-        return _fail("c1_aor_priv", "uc_record_holder_key_event must be SECURITY DEFINER with search_path "
-                                    "pinned: the holder key route records every event through it (C1)")
+        return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT ON HolderKeyEvent, and "
+                                    "uc_record_holder_key_event must be SECURITY DEFINER with search_path "
+                                    "pinned: it is the holder key register's only writer (C1)")
     # 2026-09-25. The anchoring layer: written by close_anchor_batch and the sample data only.
     if not (re.search(r"REVOKE\s+INSERT\s+ON\s+AnchorBatch\s+FROM\s+polaris_app", grants, re.I)
             and re.search(r"REVOKE\s+INSERT\s*,\s*UPDATE\s*,\s*DELETE\s+ON\s+BlockchainAnchor\s+FROM\s+polaris_app",
@@ -913,9 +914,9 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
     return _ok("c1_aor_priv",
                "append-only tables revoke UPDATE/DELETE from polaris_app, and so does every "
                "partition of the four event tables; the lifecycle log and the ZK epoch tables refuse "
-               "the application's INSERT, and so does the trust graph, revoked only from its "
-               "procedure; uc_archive_purge, uc11_close_epoch, uc10 and uc_record_holder_key_event "
-               "are SECURITY DEFINER (C1)")
+               "the application's INSERT, and so do the trust graph, revoked only from its "
+               "procedure, and the holder key register; uc_archive_purge, uc11_close_epoch, uc10 "
+               "and uc_record_holder_key_event are SECURITY DEFINER (C1)")
 
 
 # ---------------------------------------------------------------------------
