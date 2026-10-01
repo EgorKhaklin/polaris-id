@@ -7,7 +7,11 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
-## Unreleased
+## v1.0.0-rc.68 — 2026-10-01 (trust enters only where the relying party puts it)
+
+The verifiers and SDKs trust a manifest, a tree head or a receipt's responder only through keys the relying party trusts; a login signs only a context the credential is permitted in; a verification record claims a success only when its rules allow it; every Python package the images install is hash-pinned. 19 security changes, 19 fixes.
+
+- **Breaking**: `/api/v1/auth/authorize` answers 400 to a `required_enrollment` outside `PENDING_ENROLLMENT`, `ENROLLED` and `EXEMPT` or a `require_zk` that is not a boolean, and 403 to a `context_id` the credential is not permitted in; each was accepted before.
 
 ### Security
 
