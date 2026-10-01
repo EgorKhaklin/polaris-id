@@ -60,15 +60,14 @@ goes to stderr. Development crypto is never mistaken for production crypto.
 
 ## Exit codes
 
-What a script built on this command can rely on, measured on 2026-09-23 against the package on
-PyPI:
+What a script built on this command can rely on:
 
 | exit | meaning |
 |---|---|
 | 0 | accepted: the signature is genuine, and with `--issuer-anchor` the key is one you trust |
 | 2 | not accepted: a signature that does not verify, a JSON file that is not an authenticity pack, or an abstention because no trust anchor was given |
-| 3 | the check could not run: the input could not be read or is not JSON, or `--selftest` without liboqs |
-| 4 | refused to start: no cryptography declared, or the declared backend is not usable here; your files are not read |
+| 3 | the check could not run: the input could not be read or is not JSON, `--selftest` without liboqs, or `--zk-proof` without the `polaris-zk` binary |
+| 4 | refused to start: no cryptography declared, the declared backend is not usable here, or an argument it does not take (an unknown flag, a value of the wrong type, or a flag the chosen mode would not read); your files are not read |
 | 1 | `--qr-frames` that do not decode into a presentation |
 
 The last row is the one inconsistency: every other unreadable input exits 3. It is recorded
@@ -85,14 +84,18 @@ party, both of which are allowed `urllib` on purpose.
 
 ## What it verifies
 
-Authenticity packs, presentations and QR frames, status assertions (offline, with a
-freshness window), ID tokens, epoch checkpoints and leaves, revocation feeds, federation
-manifests and status bundles, trust lists and attestations, registries, timestamps and
-their transparency anchors, signed documents, exchange requests, receipts and mints, holder
-bindings and proofs, agent grants with their revocations and proofs, and cross-authority
-decisions. `--verify-dir` re-verifies a directory of published vectors. `--selftest` signs its own material,
-so it needs liboqs and exits 3 without it; with the `cryptography` extra alone, verify the published
-vectors instead.
+The command decides authenticity packs (`--pack`, or stdin), with `--status-assertion` offline
+and within a freshness window; presentations (`--presentation`) and QR frames (`--qr-frames`);
+agent grants with their revocations and proofs (`--agent-grant`); and zero-knowledge inclusion
+proofs across authorities (`--zk-proof`). `--verify-dir` re-verifies a directory of published
+vectors. `--selftest` signs its own material, so it needs liboqs and exits 3 without it; with the
+`cryptography` extra alone, verify the published vectors instead. A mode refuses a flag it would
+not read (exit 4), and `--pack` names any other signed artifact it is given (exit 2).
+
+The module `polaris_verify_cli.verifier` verifies the rest, as functions: ID tokens, epoch
+checkpoints and leaves, revocation feeds, federation manifests and status bundles, trust lists
+and attestations, registries, timestamps and their transparency anchors, signed documents,
+exchange requests, receipts and mints, holder bindings and proofs, and cross-authority decisions.
 
 ## Trust
 

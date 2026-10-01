@@ -17,9 +17,8 @@ different questions with two different freshness needs (see
 docs/design/verification-scaling.md). Authorization is a tiny online call to
 `GET /api/tokens/<id>/verify`; authenticity is this, and it needs no network.
 
-    python3 polaris-verify.py --issuer-anchor trusted-keys.json --pack credential.json
-    python3 polaris-verify.py --pack credential.json --issuer-anchor issuer.json
-    cat credential.json | python3 polaris-verify.py --json
+    python3 polaris-verify.py --pqc-provider auto --pack credential.json --issuer-anchor issuer.json
+    cat credential.json | python3 polaris-verify.py --pqc-provider auto --issuer-anchor issuer.json --json
 
 Verifies the SAME thing the server does: the signature over SHA3-256(token_value)
 under ML-DSA-65, checked against the public key IN the pack (a self-contained
@@ -5035,8 +5034,69 @@ def _tri(value):
     return "True" if value is True else "False" if value is False else "None"
 
 
+class _Parser(argparse.ArgumentParser):
+    """Arguments this tool does not understand are a refusal to start (exit 4), as the README's
+    exit-code table reads. argparse's own exit 2 is this tool's "not accepted", so a mistyped flag
+    read, to a script, as a credential that did not verify (2026-10-01)."""
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(4, "%s: error: %s\n" % (self.prog, message))
+
+
+#: The flags each mode reads, beyond the crypto mode. A flag the chosen mode would ignore is
+#: refused before any file is read: --presentation took --status-assertion and did not read it, so
+#: a revoked assertion named there left exit 0 standing; --zk-proof took --issuer-anchor, and a
+#: pack --max-window, and read neither (2026-10-01).
+_MODE_FLAGS = {
+    "--selftest": {"selftest"},
+    "--verify-dir": {"verify_dir"},
+    "--agent-grant": {"agent_grant", "holder_binding", "credential", "grant_revocation", "agent_proof",
+                      "action", "service_nonce", "verifier_scope", "issuer_anchor", "trusted_anchor",
+                      "signature_only", "json"},
+    "--qr-frames": {"qr_frames", "issuer_anchor", "trusted_anchor", "max_window", "context", "nonce",
+                    "verifier_scope", "signature_only", "json"},
+    "--presentation": {"presentation", "issuer_anchor", "trusted_anchor", "max_window", "context",
+                       "nonce", "verifier_scope", "signature_only", "json"},
+    "--zk-proof": {"zk_proof", "epoch_checkpoint", "trusted_manifest", "trusted_anchor", "issuer_anchor",
+                   "context", "nonce", "max_window", "min_anonymity_set", "signature_only", "json"},
+    "--pack with --status-assertion": {"pack", "status_assertion", "max_window", "issuer_anchor",
+                                       "trusted_anchor", "signature_only", "json"},
+    "--pack without --status-assertion": {"pack", "issuer_anchor", "trusted_anchor", "signature_only",
+                                          "json"},
+}
+_ALWAYS = {"pqc_provider", "dev_placeholder"}
+
+
+def _mode_of(args):
+    """The mode a run takes, in the order main dispatches."""
+    if args.selftest:
+        return "--selftest"
+    if args.verify_dir:
+        return "--verify-dir"
+    if args.agent_grant:
+        return "--agent-grant"
+    if args.qr_frames:
+        return "--qr-frames"
+    if args.presentation:
+        return "--presentation"
+    if args.zk_proof:
+        return "--zk-proof"
+    if args.status_assertion:
+        return "--pack with --status-assertion"
+    return "--pack without --status-assertion"
+
+
+def _given(ap, argv):
+    """The flags the command line names, whatever their values: a flag given its default value is
+    still one the caller expects read. Parses again with no defaults, so call it last."""
+    for a in ap._actions:
+        a.default = argparse.SUPPRESS
+    return set(vars(ap.parse_args(argv)))
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Detached authenticity verifier for a Polaris credential.")
+    ap = _Parser(description="Detached authenticity verifier for a Polaris credential.")
     ap.add_argument("--pack", help="authenticity pack JSON file (default: stdin)")
     ap.add_argument("--presentation", help="a polaris-presentation/1 JSON file (P8.6): the credential with a stapled status "
                                            "assertion, decided offline")
@@ -5094,6 +5154,13 @@ def main(argv=None):
     ap.add_argument("--verifier-scope", help="this verifier's own scope (P9.4): reports the pairwise "
                                              "handle to key records by instead of the token value")
     args = ap.parse_args(argv)
+
+    mode = _mode_of(args)
+    ignored = sorted("--" + d.replace("_", "-") for d in _given(ap, argv) - _ALWAYS - _MODE_FLAGS[mode])
+    if ignored:
+        print("polaris-verify: %s does not read %s; refusing to start rather than ignore %s"
+              % (mode, ", ".join(ignored), "them" if len(ignored) > 1 else "it"), file=sys.stderr)
+        return 4
 
     # Refuse to start before doing anything else, including reading the caller's files.
     _mode, _err = resolve_crypto_mode(args.pqc_provider, args.dev_placeholder)
@@ -5200,31 +5267,53 @@ def main(argv=None):
             return 2
         return 0 if verdict["usable_offline"] else 2
     if args.zk_proof:
-        try:
-            proof = json.loads(open(args.zk_proof).read())
-            checkpoint = json.loads(open(args.epoch_checkpoint).read()) if args.epoch_checkpoint else {}
-            manifests = [json.loads(open(m).read()) for m in (args.trusted_manifest or [])]
-        except Exception as e:
-            print("could not read the ZK proof / checkpoint / manifest: %s" % e, file=sys.stderr)
-            return 3
+        # A value of the wrong type is an argument this run does not take: 4 before any file is
+        # read, as argparse's own type errors are. It exited 3 after reading them (2026-10-01).
         try:
             zk_nonce = None if args.nonce is None else int(args.nonce)
         except ValueError:
             print("--nonce must be an integer for --zk-proof: the proof's public input is one",
                   file=sys.stderr)
+            return 4
+        try:
+            proof = json.loads(open(args.zk_proof).read())
+            checkpoint = json.loads(open(args.epoch_checkpoint).read()) if args.epoch_checkpoint else {}
+            manifests = [json.loads(open(m).read()) for m in (args.trusted_manifest or [])]
+            anchor = _anchor_keys(args)
+        except Exception as e:
+            print("could not read the ZK proof / checkpoint / manifest / anchor: %s" % e, file=sys.stderr)
             return 3
         verdict = verify_cross_authority_zk(
             proof, checkpoint, args.context, manifests, max_window_seconds=args.max_window,
-            trusted_anchors=([args.trusted_anchor] if args.trusted_anchor else None),
-            expected_nonce=zk_nonce, min_anonymity_set=args.min_anonymity_set)
+            trusted_anchors=anchor, expected_nonce=zk_nonce, min_anonymity_set=args.min_anonymity_set)
         if args.json:
             print(json.dumps(stamp_crypto(verdict, _mode), indent=2))
         else:
             print("decision: %s" % verdict["decision"])
             for r in verdict.get("reasons", []):
                 print("  - %s" % r)
-        # Reject and abstain are both "not accepted" (2); a reject exited 1 until 2026-09-28.
-        return 0 if verdict["decision"] == "accept" else 2
+        # Abstain is the one decision a missing polaris-zk binary makes: the check could not run
+        # (3), not a proof that failed (2), which it exited until 2026-10-01.
+        if verdict["decision"] == "abstain":
+            return 3
+        if verdict["decision"] != "accept":
+            return 2
+        # The rules of every other path. --trusted-anchor alone reached this path, and with no
+        # trust root every manifest named was trusted: a manifest is its authority's word about
+        # itself (WIRE-SPEC 3.1). And a proof checked against no challenge is replayable, as a
+        # holder proof is on the presentation path (2026-10-01).
+        if anchor is None and not args.signature_only:
+            print("abstain: no --trusted-anchor or --issuer-anchor, so nothing here establishes that "
+                  "the authority attesting the checkpoint's issuer is one you trust. Pass a trust "
+                  "root, or --signature-only to say that the proof and its binding are the question.",
+                  file=sys.stderr)
+            return 2
+        if zk_nonce is None:
+            print("abstain: no --nonce, so nothing here shows the proof was made for this service "
+                  "rather than replayed. Pass the nonce this service issued with --nonce.",
+                  file=sys.stderr)
+            return 2
+        return 0
 
     try:
         raw = open(args.pack).read() if args.pack else sys.stdin.read()
@@ -5232,6 +5321,14 @@ def main(argv=None):
     except Exception as e:
         print("could not read the authenticity pack: %s" % e, file=sys.stderr)
         return 3
+    # Another signed artifact handed to --pack was reported as a signature that did not verify. It
+    # is not a pack, which the README's exit 2 names; the library verifies it (2026-10-01).
+    fmt = pack.get("format") if isinstance(pack, dict) else None
+    if isinstance(fmt, str) and fmt != "polaris-authenticity-pack/1":
+        print("not an authenticity pack: this is a %s. From the command line polaris-verify decides "
+              "packs, presentations and QR frames, agent grants and zero-knowledge proofs; the "
+              "library verifies every artifact (see the README)." % fmt, file=sys.stderr)
+        return 2
     try:
         anchor = _anchor_keys(args)
     except Exception as e:

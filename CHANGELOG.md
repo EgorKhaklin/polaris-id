@@ -16,6 +16,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Both SDKs read only the JSON `true` as currently authoritative; both read a status answer of `"false"` as current.
 - All three verifiers refuse an agent grant whose `grant_id` is not text; it is the grant's only revocation handle (WIRE-SPEC 3.17).
 - All three verifiers read a key or a digest only as a hex string; the TypeScript SDK read a signed `[K]` as K, and two missing keys matched in Python.
+- `polaris-verify --zk-proof` reads `--issuer-anchor` and abstains without a trust root or a `--nonce`; it accepted with neither.
+- `polaris-verify` refuses a flag the chosen mode would not read; `--presentation` ignored `--status-assertion`.
 
 ### Fixed
 
@@ -33,6 +35,11 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Ten conformance cases pin where the two SDKs disagreed on signed bytes.
 - Twenty-two more pin nonces, contexts, agencies, grant ids, actions and ids beyond 2**53, from three reviews of that fix.
 - Six conformance cases pin keys and digests as hex text; the suite has 281 cases.
+
+### Changed
+
+- `polaris-verify` exits 4 on an unknown flag or a mistyped value, and 3 without `polaris-zk`; each exited 2.
+- `polaris-verify --pack` names another signed artifact as such, and its README separates the command from the library.
 
 ## v1.0.0-rc.69 — 2026-10-01 (a holder's key changes only by its own signature)
 
