@@ -91,7 +91,7 @@ The fee was waived on 2026-09-23 under the Foundation's open-source policy.
 
 It is a self-certification the Foundation reviewed and published, not an endorsement and not an
 independent verification (Certification Terms 3(e)). It covers that version in the verifier role
-on that profile. It does not cover the rest of Polaris, other versions (1.0.0rc8 to 1.0.0rc11 are
+on that profile. It does not cover the rest of Polaris, other versions (1.0.0rc8 to 1.0.0rc12 are
 not certified), the wallet role, other formats, or anything the suite does not test.
 Measured after it, on 2026-09-30: 1.0.0rc7 refuses an issuer certificate whose extended key
 usage is ISO 18013-5's document signer, as EUDI issuers' are (eudi-dev's PID Provider: its chain
@@ -123,7 +123,7 @@ become installable only when a maintainer approves them with a second factor.
 | Package | First | Release candidate | Current |
 |---|---|---|---|
 | `polaris-verify` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc6, 2026-10-01 |
-| `polaris-oid4vp` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc11, 2026-09-30 (1.0.0rc7 is the certified one) |
+| `polaris-oid4vp` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc12, 2026-10-01 (1.0.0rc7 is the certified one) |
 | `polaris-sdk-python` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc6, 2026-10-01 |
 | `polaris-id-cli` (PyPI) | 1.0.0rc1, 2026-09-30 | 1.0.0rc1, 2026-09-30 | 1.0.0rc1, 2026-09-30 |
 | `polaris-sdk-ts` (npm) | 0.1.0, 2026-09-15 | 1.0.0-rc.1, 2026-09-16, under `next` | 1.0.0-rc.7, 2026-10-01, under `next` |
