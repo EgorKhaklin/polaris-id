@@ -24,6 +24,14 @@ An inclusion proof's index (`index`, `leaf_index`) and `tree_size`, and a signed
 refuse a boolean, a string or null in their place rather than coerce it: languages coerce
 differently, so a coerced field gives one artifact two verdicts.
 
+The values a verifier compares are read one way in every language. A key or a digest is a
+non-empty string of hex digits, compared without regard to case. An agency id or a context id
+is a string, or an integer of magnitude at most 2^53 - 1, and equals only the same string or the
+same integer; a boolean is never a number. A grant id, a nonce, an action or a token value is a
+string, or such an integer read as its decimal text. Any other value (null, a boolean, a
+fraction, a list, an object, a larger integer) matches nothing on either side of a comparison,
+so two absent values are never equal.
+
 ## 2. The signature envelope
 
 Every signed artifact except the authenticity pack is a JSON object that carries a
@@ -46,8 +54,14 @@ The bytes that are signed are `SHA3-256(canonical)`, where `canonical` is the
 **canonical JSON** of the signed statement: the JSON object containing exactly the
 signed fields listed for that artifact, serialized with
 
-- keys sorted lexicographically (`sort_keys`), and
+- keys sorted lexicographically by Unicode code point (`sort_keys`; a key outside the Basic
+  Multilingual Plane sorts after `\uffff`, not by its UTF-16 units),
+- numbers written as `json.dumps` writes them (a non-integral number below 1e-4 in exponent
+  form with at least two exponent digits, `1.5e-05`), and
 - the compact separators `,` and `:` (no whitespace).
+
+A JavaScript verifier cannot tell an integral value written with a fraction (`1.0`) from the
+integer, nor hold an integer beyond 2^53 exactly, so a signer SHOULD NOT sign either.
 
 Concretely, `canonical = json.dumps(statement, sort_keys=True,
 separators=(",", ":")).encode("utf-8")` and `digest = SHA3-256(canonical)`. The
@@ -60,8 +74,10 @@ and every independent verifier disagree.
 
 ### 2.2 Freshness
 
-Windowed artifacts carry `issued_at` and `expires_at` as RFC 3339 timestamps. A
-verifier MUST reject an artifact unless `issued_at <= now < expires_at`. A verifier
+Windowed artifacts carry `issued_at` and `expires_at` as RFC 3339 timestamps. An instant is
+read in one grammar: ASCII digits only, the whole string with no surrounding whitespace, a
+fraction of at most six digits, and an offset, when present, of at most 23:59; it is compared at
+the precision written. A verifier MUST reject an artifact unless `issued_at <= now < expires_at`. A verifier
 MAY additionally reject an artifact whose window `expires_at - issued_at` exceeds a
 locally configured maximum, to bound replay.
 
