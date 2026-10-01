@@ -175,6 +175,11 @@ of the roll (migrations apply before the app colours are recreated). So every
   with destructive DDL that lacks these two lines, or whose `expands` target
   does not exist. `.down.sql` files are reverts and are exempt.
 
+  Withdrawing a privilege the previous release's code uses is a contract step
+  too, and so is a line in `09_grants.sql`, which `--sync-objects` applies
+  before the roll. The check cannot see it: whether the old code used the
+  privilege is not written in the migration.
+
 ### Widening a column is an expand, not a contract
 
 `ALTER COLUMN ... TYPE` is destructive DDL in general, because reshaping a column

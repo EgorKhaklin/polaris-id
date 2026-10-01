@@ -1351,8 +1351,9 @@ CREATE TABLE HolderKeyEvent (
 COMMENT ON TABLE HolderKeyEvent IS
   'P9.1 append-only register of holder key events (bound / rotated / revoked, effective from '
   'an instant). The holder''s PUBLIC key only; the private key never leaves their device. '
-  'Binding is proved by possession of the credential, so an operator cannot bind a key to a '
-  'credential they do not hold. Append-only by trigger and by privilege.';
+  'The first binding is proved by possession of the credential; a rotation or revocation by '
+  'the live key''s signature. The route records events through uc_record_holder_key_event, '
+  'which keeps them in order. Append-only by trigger and by privilege.';
 
 -- 2026-09-28 (lab/strategy/005, docs/design/oid4vci-issuer.md): the WALLET COPY RECORD. A
 -- wallet copy is an SD-JWT VC of a credential, issued over OpenID4VCI into a wallet Polaris

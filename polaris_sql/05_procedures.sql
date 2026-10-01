@@ -2686,3 +2686,65 @@ AS $$
 $$;
 COMMENT ON FUNCTION credential_copy_valid_indexes(INTEGER, DATE, INTEGER) IS
   'The indexes of one status list that read VALID now; every other index is published as 1.';
+
+-- ============================================================================
+-- uc_record_holder_key_event (2026-10-01, review S2): the holder key register's only writer.
+--
+-- polaris_app held INSERT on HolderKeyEvent, so it could record any key for any credential:
+-- bind over a live key, rotate or revoke a key that was never bound, and date an event to
+-- any instant, effective_at being the inserter's to set. This routine sets the instant and
+-- holds the register's order: 'bound' only while no key is live (the first binding, or the
+-- first after a revocation), 'rotated' and 'revoked' only while one is, a revocation names
+-- the live key, and the credential is live (ACTIVE, not past its UTC expiry date, the test
+-- the application's _not_expired applies). Whether the HOLDER agreed to a rotation or a
+-- revocation, a signature by the live key, is checked by the caller, which can verify
+-- ML-DSA; a database routine cannot, and says so here rather than imply it.
+-- ============================================================================
+CREATE OR REPLACE FUNCTION uc_record_holder_key_event(
+    p_token_id        INTEGER,
+    p_public_key_hex  TEXT,
+    p_algorithm       VARCHAR(40),
+    p_event           VARCHAR(20)
+) RETURNS BIGINT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_live  RECORD;
+    v_id    BIGINT;
+BEGIN
+    -- One change at a time per credential: two concurrent rotations must not both read the
+    -- same live key and both append.
+    PERFORM pg_advisory_xact_lock(hashtext('polaris.holder_key'), p_token_id);
+    IF NOT EXISTS (SELECT 1 FROM IdentityToken
+                    WHERE token_id = p_token_id AND status = 'ACTIVE'
+                      AND (expiration_date IS NULL OR expiration_date >= polaris_utc_date())) THEN
+        RAISE EXCEPTION 'a holder key binds only to a live credential' USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT public_key_hex, algorithm, event INTO v_live
+      FROM HolderKeyCurrent WHERE token_id = p_token_id;
+    -- Any other event, or none, is refused at the INSERT by the column's CHECK and NOT NULL.
+    IF p_event = 'bound' THEN
+        IF FOUND AND v_live.event <> 'revoked' THEN
+            RAISE EXCEPTION 'a holder key is already bound to this credential; rotate it'
+                USING ERRCODE = 'check_violation';
+        END IF;
+    ELSIF p_event IN ('rotated', 'revoked') THEN
+        IF NOT FOUND OR v_live.event = 'revoked' THEN
+            RAISE EXCEPTION 'no holder key is bound to this credential' USING ERRCODE = 'check_violation';
+        END IF;
+        IF p_event = 'revoked' AND (p_public_key_hex IS DISTINCT FROM v_live.public_key_hex
+                                    OR p_algorithm IS DISTINCT FROM v_live.algorithm) THEN
+            RAISE EXCEPTION 'a revocation names the live holder key' USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    INSERT INTO HolderKeyEvent (token_id, public_key_hex, algorithm, event)
+    VALUES (p_token_id, p_public_key_hex, p_algorithm, p_event)
+    RETURNING event_id INTO v_id;
+    RETURN v_id;
+END$$;
+COMMENT ON FUNCTION uc_record_holder_key_event(INTEGER, TEXT, VARCHAR, VARCHAR) IS
+  'The holder key route''s writer of HolderKeyEvent: sets the instant and holds bound / rotated / revoked in order '
+  'for a live credential. The holder''s consent to a change (a signature by the live key) is the '
+  'caller''s to verify.';

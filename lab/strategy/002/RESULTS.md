@@ -158,6 +158,10 @@ them.
 - **N-3. The holder-key register is writable for any credential.** INSERT on HolderKeyEvent
   (a section-1 write) is not bound to possession in the database: step 5 bound an attacker's key
   to token 1 directly. With N-2 the application-level possession check does not bind it either.
+  Since 2026-10-01 the route records events through `uc_record_holder_key_event`, which sets
+  each event's instant and keeps events in order on a live credential; a rerun also grants
+  EXECUTE on it. The finding stands: the INSERT remains until a contract migration withdraws
+  it, and the routine cannot read the live key's signature.
 - The other own-table powers are nuisance-grade: burn a zero-knowledge nonce a holder has not
   used (measured), consume auth codes or exchange nonces, append junk hashes to the receipt and
   timestamp logs. None can be updated or deleted (measured, 42501).
