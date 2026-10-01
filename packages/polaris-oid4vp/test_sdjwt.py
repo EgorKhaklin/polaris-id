@@ -1448,17 +1448,19 @@ class IssuerCertificateTests(unittest.TestCase):
     """
 
     @staticmethod
-    def _ca():
+    def _ca(names_issuer=False):
         now = datetime.datetime.now(datetime.timezone.utc)
         key = ec.generate_private_key(ec.SECP256R1())
         name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test anchor")])
-        cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
-                .public_key(key.public_key()).serial_number(x509.random_serial_number())
-                .not_valid_before(now - datetime.timedelta(days=1))
-                .not_valid_after(now + datetime.timedelta(days=365))
-                .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
-                .sign(key, hashes.SHA256()))
-        return key, name, cert
+        builder = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+                   .public_key(key.public_key()).serial_number(x509.random_serial_number())
+                   .not_valid_before(now - datetime.timedelta(days=1))
+                   .not_valid_after(now + datetime.timedelta(days=365))
+                   .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True))
+        if names_issuer:
+            builder = builder.add_extension(x509.SubjectAlternativeName(
+                [x509.UniformResourceIdentifier("https://issuer.example")]), critical=False)
+        return key, name, builder.sign(key, hashes.SHA256())
 
     @staticmethod
     def _leaf(ca_key, ca_name, *, not_before=None, not_after=None, extensions=(), key=None):
@@ -1492,9 +1494,14 @@ class IssuerCertificateTests(unittest.TestCase):
 
     def test_the_anchor_itself_sent_as_the_leaf_is_refused(self):
         """HAIP 1.0 6.1.1: the trust anchor's certificate MUST NOT be in the credential's
-        x5c, and the signing certificate MUST NOT be self-signed. Sent as the leaf, the anchor
-        verified: it is signed by the anchor and names the anchor as its issuer."""
-        ca_key, ca_name, ca = self._ca()
+        x5c, and the signing certificate MUST NOT be self-signed. Sent as the leaf, an anchor
+        that names the issuer verified (1.0.0rc11, measured): it is signed by the anchor and
+        names the anchor as its issuer.
+
+        This anchor names the credential's `iss`. Until 2026-10-01 the test's did not, so the
+        name check refused it first, the old code failed this test only on the reason, and the
+        verdict proved nothing about the anchor rule."""
+        ca_key, ca_name, ca = self._ca(names_issuer=True)
         v = self._verify(ca, ca_key, ca)
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "issuer_key")
