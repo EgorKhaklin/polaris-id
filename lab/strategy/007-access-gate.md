@@ -4,7 +4,9 @@
 State: OPEN. The falsifiers below were written first (632b01b4). The same day came step 2, the gate and
 its tests, and step 3: unmodified Pomerium 0.33.3 admitted a person whose walt.id wallet presented to
 the gate, and refused the same wallet once the gate stopped trusting the issuer
-([`007/`](007/README.md)).
+([`007/`](007/README.md)). Step 4 the same day: the same Pomerium admitted an agent on each
+action's own route, on tokens the gate issued against the holder's ML-DSA-65 grant, and refused
+every control, with no change on its side.
 
 ---
 
@@ -106,6 +108,11 @@ Written before the work:
 - **Pomerium cannot enforce the agent path unmodified.** If Pomerium cannot enforce the
   agent-grant path without code changes on its side, the agent half is not interoperation. It closes,
   and the human half stands alone.
+  *Tested 2026-10-01, did not fire.* Two documented route settings did it:
+  `bearer_token_format: idp_identity_token` and a `claim/action` policy. Two limits came out of it.
+  First, the token is good for its minute, not for one request: Pomerium keeps a verified token as
+  a session until it expires. Second, no proxy counts uses, so the gate refuses a grant with use or
+  amount limits rather than widening it.
 - **Keycloak gets there first.** If Keycloak's OID4VP path becomes stable and certified before the gate
   has an outside user, the gate's value is the verifier and the grants, not the OIDC face. The record
   pivots to a Keycloak integration.
