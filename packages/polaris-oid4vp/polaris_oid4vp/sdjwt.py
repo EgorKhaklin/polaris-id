@@ -442,6 +442,9 @@ def _issuer_public_keys(header, issuer_jwks, trust_anchors, now=None):
         if not trust_anchors:
             return [], ("the credential presents an x5c chain and no trust anchor is "
                         "configured, so nothing can be said about who signed it"), None
+        why = _not_an_issuer_leaf(leaf)
+        if why:
+            return [], why, None
         for anchor in trust_anchors:
             if _chains_to(leaf, anchor, now):
                 return [leaf.public_key()], "", leaf
@@ -472,6 +475,32 @@ def _issuer_public_keys(header, issuer_jwks, trust_anchors, now=None):
         return [], "no configured issuer JWK matches this credential's kid", None
     return [], ("the credential carries no x5c and no issuer JWK is configured, so there "
                 "is no key to check the issuer signature against"), None
+
+
+def _not_an_issuer_leaf(leaf):
+    """"" when an x5c leaf can be an issuer's signing certificate, else why it cannot.
+
+    HAIP 1.0 section 6.1.1: the trust anchor's certificate MUST NOT be in the credential's
+    `x5c`, and the certificate that signs it MUST NOT be self-signed. A self-signed leaf is
+    an anchor however it is presented, and a leaf that carries its anchor's own key verifies
+    under that key too, so the one test covers both. A CA certificate is not an issuer's
+    signing certificate either: accepted as a leaf, it lets every sub-CA a registered anchor
+    ever certified sign credentials directly. All three verified until 2026-10-01.
+    """
+    try:
+        if leaf.extensions.get_extension_for_class(x509.BasicConstraints).value.ca:
+            return "the x5c leaf is a CA certificate, not an issuer's signing certificate"
+    except x509.ExtensionNotFound:
+        pass
+    except Exception:  # noqa: BLE001  a malformed extension is not a usable statement
+        return "the x5c leaf's basic constraints do not parse"
+    try:
+        leaf.public_key().verify(leaf.signature, leaf.tbs_certificate_bytes,
+                                 ec.ECDSA(leaf.signature_hash_algorithm))
+    except Exception:  # noqa: BLE001  not signed by its own key, which is what a leaf is
+        return ""
+    return ("the x5c leaf is self-signed, so it is a trust anchor and not an issuer's "
+            "certificate (HAIP 1.0 6.1.1)")
 
 
 def _chains_to(leaf, anchor, now=None):
@@ -639,6 +668,46 @@ def _collect_digests(node, out):
                 _collect_digests(item, out)
 
 
+def _repeated_digest(payload, by_digest):
+    """A digest the issuer-signed payload commits to more than once, directly or through the
+    value of a disclosure it commits to, else None.
+
+    RFC 9901 section 7.1: "If any digest value is encountered more than once in the
+    Issuer-signed JWT payload (directly or recursively via other Disclosures), the SD-JWT
+    MUST be rejected." `_resolve` memoizes a repeated digest so that it cannot blow up, and
+    until 2026-10-01 that was all that happened to one: a disclosure stood in two places in
+    the claims, and a repeated digest among the undisclosed ones passed unremarked.
+
+    Each disclosure is followed at most once, because its digest's second appearance ends the
+    walk, so the work is bounded by the size of what was presented.
+    """
+    seen = set()
+    stack = [payload]
+    while stack:
+        node = stack.pop()
+        found = []
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "_sd" and isinstance(value, list):
+                    found.extend(d for d in value if isinstance(d, str))
+                else:
+                    stack.append(value)
+        elif isinstance(node, list):
+            for item in node:
+                if isinstance(item, dict) and set(item) == {"..."} and isinstance(item["..."], str):
+                    found.append(item["..."])
+                else:
+                    stack.append(item)
+        for digest in found:
+            if digest in seen:
+                return digest
+            seen.add(digest)
+            disclosure = by_digest.get(digest)
+            if disclosure:
+                stack.append(disclosure[-1])
+    return None
+
+
 class _TooDeep(ValueError):
     """The resolver hit its depth cap. A ValueError so existing handlers see it."""
 
@@ -775,6 +844,13 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         why = _leaf_names(leaf, payload["iss"])
         if why:
             return _refuse("issuer_key", why)
+    # RFC 7515 4.1.11: a JWS whose `crit` names an extension the recipient does not
+    # implement is invalid, and this verifier implements none. The response JWE was held to
+    # that in 1.0.0rc12; the credential and its key binding JWT were not, so an extension
+    # the issuer marked as binding was ignored and the credential verified.
+    if "crit" in header:
+        return _refuse("crit", "the issuer JWT's crit names %r, and this verifier implements "
+                               "no JWS extension (RFC 7515 4.1.11)" % (header.get("crit"),))
 
     if expected_vct is not None:
         wanted = ({expected_vct} if isinstance(expected_vct, str)
@@ -858,6 +934,11 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
     # through the outer disclosure's decoded value, so the committed set cannot be computed
     # until the disclosures are in hand. The fixpoint only ever follows digests that are
     # ALREADY committed, so a disclosure the issuer never vouched for cannot widen it.
+    repeated = _repeated_digest(payload, by_digest)
+    if repeated is not None:
+        return _refuse("disclosure", "the credential commits to the digest %s... more than once, "
+                                     "which RFC 9901 (7.1) requires a verifier to reject"
+                                     % repeated[:12])
     committed = _committed_digests(payload, by_digest)
     for digest in by_digest:
         if digest not in committed:
@@ -914,6 +995,10 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
     if kb_header.get("alg") not in ACCEPTED_ALGS:
         return _refuse("kb_alg", "the key binding JWT declares alg=%r, which is not in the "
                                  "accepted set %r" % (kb_header.get("alg"), ACCEPTED_ALGS))
+    if "crit" in kb_header:
+        return _refuse("crit", "the key binding JWT's crit names %r, and this verifier "
+                               "implements no JWS extension (RFC 7515 4.1.11)"
+                               % (kb_header.get("crit"),))
     if not _verify_es256(holder_key, kb_signing_input, kb_signature):
         return _refuse("kb_signature", "the key binding JWT signature does not verify under "
                                        "the credential's cnf.jwk, so the holder did not "
@@ -946,6 +1031,26 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         return _refuse("kb_freshness", "the key binding JWT was minted %.0f seconds from "
                                        "now, outside the %d second window"
                                        % (now - iat, max_skew_seconds))
+    # RFC 9901 7.3: the key binding JWT must also be "a valid JWT in all other respects, per
+    # RFC 7519", so an `exp` it carries must not have passed and an `nbf` must have. Both were
+    # ignored: a holder's proof that declared itself expired an hour ago verified. The same
+    # rule, and the same allowance, as the credential's own exp and nbf.
+    for claim, human in (("exp", "expired"), ("nbf", "not yet valid")):
+        if claim not in kb_payload:
+            continue
+        value = kb_payload[claim]
+        if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                or not math.isfinite(value)):
+            return _refuse("kb_freshness", "the key binding JWT's %s is %r, which is not a "
+                                           "finite number" % (claim, value))
+        if claim == "exp" and now > value + max_skew_seconds:
+            return _refuse("kb_freshness", "the key binding JWT %s %.0f seconds ago (exp), "
+                                           "outside the %d second allowance"
+                                           % (human, now - value, max_skew_seconds))
+        if claim == "nbf" and now < value - max_skew_seconds:
+            return _refuse("kb_freshness", "the key binding JWT is %s for another %.0f "
+                                           "seconds (nbf), outside the %d second allowance"
+                                           % (human, value - now, max_skew_seconds))
 
     # sd_hash covers the issuer JWT AND every disclosure presented with it, up to and
     # including the final tilde. It is what stops a presentation being re-cut with a

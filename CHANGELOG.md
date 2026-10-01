@@ -22,6 +22,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-oid4vp`'s `status.decide` binds a list to the credential's own `uri` always; with none it skipped the check.
 - `polaris-oid4vp serve` stops serving a request object past its lifetime; a wallet nonce re-signed an expired one.
 - `polaris-oid4vp` refuses an issuer JWT typed `vc+sd-jwt`, a W3C VC Data Model credential whose `validUntil` and `credentialStatus` it does not read; it accepted one.
+- `polaris-oid4vp` refuses a credential, key binding JWT or status list token whose `crit` names an extension, as RFC 7515 requires.
+- `polaris-oid4vp` refuses a key binding JWT past its `exp` or before its `nbf` (RFC 9901 7.3); both were ignored.
+- `polaris-oid4vp` refuses a credential that commits to a digest twice (RFC 9901 7.1); one disclosure could stand in two places.
+- `polaris-oid4vp` refuses an `x5c` leaf that is self-signed or a CA (HAIP 1.0 6.1.1); the trust anchor itself verified as an issuer.
 
 ### Fixed
 
