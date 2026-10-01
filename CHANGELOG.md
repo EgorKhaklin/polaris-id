@@ -7,7 +7,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
-## Unreleased
+## v1.0.0-rc.70 — 2026-10-01 (the three verifiers read every input alike)
+
+The three verifiers read instants, ids, keys, grant actions and status answers alike, and `polaris-verify` refuses a flag its mode would not read; `polaris-oid4vp` verifies only under keys meant for ES256 signatures; the application's database role no longer writes the holder key register directly. 10 security changes, 12 fixes.
 
 ### Security
 
