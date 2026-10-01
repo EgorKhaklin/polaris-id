@@ -498,6 +498,8 @@ def api_v1_epoch_leaves(epoch_id):
 _HOLDER_BINDING_FORMAT = 'polaris-holder-binding/1'
 _HOLDER_PROOF_FORMAT = 'polaris-holder-proof/1'
 _HOLDER_BINDING_TTL = int(os.environ.get('POLARIS_HOLDER_BINDING_TTL', '86400'))
+_HOLDER_KEY_CHANGE_FORMAT = 'polaris-holder-key-change/1'
+_HOLDER_KEY_CHANGE_WINDOW = 300      # seconds a holder-signed key change stays fresh
 
 
 def _agent_grant_statement(body):
@@ -560,6 +562,56 @@ def _holder_proof_statement(body):
     return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
+def _holder_key_change_statement(body):
+    """Canonical bytes the LIVE holder key signs to rotate or revoke itself (2026-10-01, review
+    S1). The pair a credential is presented with reaches every relying party that verifies it,
+    so possession alone may make only the first binding; changing a bound key takes that key.
+    Its own format, so a presentation's holder proof can never stand in for one. Names the new
+    key for a rotation and the live key for a revocation; `algorithm` is the signer's."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'token_value', 'event', 'holder_public_key_hex', 'holder_algorithm',
+                  'issued_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _holder_key_change_refused(proof, token_value, event, holder_key, holder_alg, live):
+    """None when `proof` is the live holder key's signature, made inside the window, over
+    polaris-holder-key-change/1 for exactly this change; otherwise the refusal to return. A
+    replayed proof was signed by a key that is no longer live once its change is recorded."""
+    from datetime import datetime, timezone
+    if not (isinstance(proof, dict) and isinstance(proof.get('issued_at'), str)
+            and isinstance(proof.get('signature_hex'), str)):
+        return jsonify(error='change_proof_required',
+                       error_description='rotating or revoking a bound holder key takes change_proof '
+                                         '{issued_at, signature_hex}, signed by that key'), 401
+    if not re.fullmatch(r'[0-9a-f]+', proof['signature_hex']):
+        return jsonify(error='invalid_request',
+                       error_description='change_proof.signature_hex must be lowercase hex'), 400
+    try:
+        when = datetime.fromisoformat(proof['issued_at'].replace('Z', '+00:00'))
+        if when.tzinfo is None:
+            raise ValueError('naive')
+    except ValueError:
+        return jsonify(error='invalid_request',
+                       error_description='change_proof.issued_at must be an ISO-8601 UTC timestamp'), 400
+    if abs((datetime.now(timezone.utc) - when).total_seconds()) > _HOLDER_KEY_CHANGE_WINDOW:
+        return jsonify(error='stale', error_description='change_proof.issued_at is outside the '
+                                                        '%d-second window' % _HOLDER_KEY_CHANGE_WINDOW), 401
+    statement = _holder_key_change_statement({
+        'format': _HOLDER_KEY_CHANGE_FORMAT, 'token_value': token_value, 'event': event,
+        'holder_public_key_hex': holder_key, 'holder_algorithm': holder_alg,
+        'issued_at': proof['issued_at'], 'algorithm': live['algorithm']})
+    try:
+        ok = pqc_signing.verify_both(statement, proof['signature_hex'], live['public_key_hex'],
+                                     require_witness=True, algorithm=live['algorithm'])
+    except pqc_signing.PQCUnavailableError:
+        ok = False
+    if not ok:
+        return jsonify(error='invalid_change_proof',
+                       error_description='change_proof does not verify under the bound holder key'), 401
+    return None
+
+
 def _holder_binding_for(token_value, row):
     """Build and sign the current holder key binding for a credential, or None when no key
     is bound. The binding is short-lived like a status assertion: a revoked holder key stops
@@ -596,15 +648,18 @@ def _holder_binding_for(token_value, row):
 
 @app.route('/api/v1/holder-key', methods=['POST'])
 def api_v1_holder_key_bind():
-    """P9.1: bind, rotate or revoke a HOLDER key, proved by possession of the credential.
+    """P9.1: bind, rotate or revoke a HOLDER key.
 
     Request: { token_value, signature_hex, holder_public_key_hex, holder_algorithm?,
-               event? ('bound' | 'rotated' | 'revoked') }
+               event? ('bound' | 'rotated' | 'revoked'), change_proof? {issued_at, signature_hex} }
     Response: the issuer-signed polaris-holder-binding/1 for the credential.
 
-    Possession-authenticated, exactly like the status assertion: no bearer, no operator, no
-    session. The private key never reaches this endpoint and is never asked for. Nothing
-    about who bound a key is recorded beyond the append-only register itself."""
+    The first binding, and the first after a revocation, is proved by possession of the
+    credential, like the status assertion: no bearer, no operator, no session. Possession is
+    what every relying party sees, so from then on a rotation or revocation also carries
+    change_proof, the live key's signature over polaris-holder-key-change/1 (2026-10-01, review
+    S1). No private key reaches this endpoint. Nothing about who bound a key is recorded beyond
+    the append-only register, which uc_record_holder_key_event alone writes."""
     body = _json_object()
     token_value = body.get('token_value')
     presented_sig_hex = body.get('signature_hex')
@@ -635,21 +690,36 @@ def api_v1_holder_key_bind():
         return jsonify(error='not_active',
                        error_description='a holder key binds only to an ACTIVE credential'), 409
 
+    # 2026-10-01 (review S1). The pair a credential is presented with reaches every relying party
+    # that verifies it, so it may make only the FIRST binding: trust on first use, and the first
+    # after a revocation. A bound key changes only by that key: 'rotated' and 'revoked' carry
+    # change_proof, the live key's signature over polaris-holder-key-change/1. Before this, anyone
+    # who had seen a presentation could bind over the holder's key, rotate it to their own, or
+    # revoke it.
+    live = query("SELECT public_key_hex, algorithm, event FROM HolderKeyCurrent WHERE token_id = %s",
+                 (row['token_id'],), fetch='one', primary=True)
+    live = live if live and live['event'] != 'revoked' else None
+    if event == 'bound' and live:
+        return jsonify(error='holder_key_bound',
+                       error_description='a holder key is already bound; rotate it with a change_proof '
+                                         'signed by that key'), 409
+    if event != 'bound':
+        if not live:
+            return jsonify(error='no_holder_key',
+                           error_description='no holder key is bound to this credential'), 409
+        if event == 'revoked':
+            holder_key, holder_alg = live['public_key_hex'], live['algorithm']
+        refused = _holder_key_change_refused(body.get('change_proof'), token_value, event,
+                                             holder_key, holder_alg, live)
+        if refused:
+            return refused
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            if event == 'revoked':
-                cur.execute("SELECT public_key_hex, algorithm FROM HolderKeyCurrent WHERE token_id = %s",
-                            (row['token_id'],))
-                cur_row = cur.fetchone()
-                if not cur_row:
-                    return jsonify(error='no_holder_key',
-                                   error_description='no holder key is bound to this credential'), 409
-                holder_key, holder_alg = cur_row['public_key_hex'], cur_row['algorithm']
-            cur.execute("""
-                INSERT INTO HolderKeyEvent (token_id, public_key_hex, algorithm, event)
-                VALUES (%s, %s, %s, %s)
-            """, (row['token_id'], holder_key, holder_alg, event))
+            # The register's only writer (review S2): it sets the instant and holds the order.
+            cur.execute("SELECT uc_record_holder_key_event(%s, %s, %s, %s)",
+                        (row['token_id'], holder_key, holder_alg, event))
         conn.commit()
     except psycopg2.Error as e:
         conn.rollback()
