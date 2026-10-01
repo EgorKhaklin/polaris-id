@@ -1043,7 +1043,14 @@ def tokens_transition(tok_id):
     GUCs so the trigger can write attribution into the audit row.
     """
     new_status = request.form['new_status']
-    actor_id = request.form.get('actor_agency_id')  # optional
+    # 2026-09-30: parsed once, here. The gate below read a non-numeric actor_agency_id's
+    # ValueError as "not denied", and the GUC write then raised it: a 500 for a typo.
+    actor_raw = (request.form.get('actor_agency_id') or '').strip()  # optional
+    try:
+        actor_id = int(actor_raw) if actor_raw else None
+    except ValueError:
+        flash('The acting agency must be an agency number.', 'error')
+        return redirect(url_for('tokens_detail', tok_id=tok_id))
     reason = request.form.get('reason') or 'WEB_INTERFACE_TRANSITION'
     # 1.0.0-rc.32: the binding is asked about the TOKEN'S issuer, always. It used to be asked
     # only about the optional actor_agency_id, so a bound operator who left that field out moved
@@ -1061,11 +1068,8 @@ def tokens_transition(tok_id):
         # authority's credential through.
         return jsonify(error='forbidden', error_description='an operator bound to one '
                        'authority cannot act on a credential it cannot see'), 403
-    if actor_id:
-        try:
-            denied = _operator_authority_permits(int(actor_id))
-        except ValueError:
-            denied = None
+    if actor_id is not None:
+        denied = _operator_authority_permits(actor_id)
         if denied:
             return denied
 
@@ -1074,9 +1078,9 @@ def tokens_transition(tok_id):
         with conn.cursor() as cur:
             # SET LOCAL keeps the GUC scoped to this transaction. The audit
             # trigger reads them when it fires AFTER UPDATE.
-            if actor_id:
+            if actor_id is not None:
                 cur.execute("SELECT set_config('polaris.actor_agency_id', %s, true)",
-                            (str(int(actor_id)),))
+                            (str(actor_id),))
             cur.execute("SELECT set_config('polaris.reason_code', %s, true)",
                         (reason,))
 
