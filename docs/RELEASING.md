@@ -13,12 +13,19 @@ externally observable changes.
 
 | Artifact | Registry | Name | On the registry | Before it |
 |---|---|---|---|---|
-| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc5, 2026-09-30 | 1.0.0rc4, 2026-09-28 |
+| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc6, 2026-10-01 | 1.0.0rc5, 2026-09-30 |
 | `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc11, 2026-09-30 | 1.0.0rc10, 2026-09-30 |
-| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc5, 2026-09-30 | 1.0.0rc4, 2026-09-28 |
+| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc6, 2026-10-01 | 1.0.0rc5, 2026-09-30 |
 | `polaris_cli/` | PyPI | `polaris-id-cli` | 1.0.0rc1, 2026-09-30 | none, the first |
-| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.6, 2026-09-30 | 1.0.0-rc.5, 2026-09-28 |
+| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.7, 2026-10-01 | 1.0.0-rc.6, 2026-09-30 |
 
+> **2026-10-01:** `polaris-verify` and `polaris-sdk-python` 1.0.0rc6, each approved at the environment
+> gate, and `polaris-sdk-ts` 1.0.0-rc.7, staged under `next` and approved by the maintainer with a
+> second factor (shasum `e86011abae989848bcaa6ecc7041804ae50ab605`), each read back from the live
+> registry. Installed from the registries, both SDKs pass all 219 conformance cases (1.0.0rc5 and
+> 1.0.0-rc.6 fail 20 each), and the `polaris-verify` wheel's verifier is byte-identical to the
+> tree's and passes its contract run.
+>
 > **2026-09-30, evening:** `polaris-oid4vp` 1.0.0rc11, which takes ISO 18013-5's document
 > signer as an issuer certificate usage (not certified; 1.0.0rc7 is), and the first
 > `polaris-id-cli`, 1.0.0rc1, each held at the environment gate until the maintainer approved
@@ -288,6 +295,11 @@ worse state to be in than three runs.
 | 36743032972 | 2026-09-30 | `polaris-id-cli` 1.0.0rc1 | the first: approved at the gate, published the same way; read back, installed alone, `--version` and the clone-only refusals checked |
 | 36712332414 | 2026-09-30 | `polaris-sdk-ts` 1.0.0-rc.6 | staged (id d1d7abd7-f1ed-47ab-adb6-5f62497f3f0c); not published by the job; npm requires a maintainer's second factor |
 | (by hand) | 2026-09-30 | `polaris-sdk-ts` 1.0.0-rc.6 | approved by the maintainer with a second factor and read back from the live registry under `next`; shasum e57ef6929e7bf809efccd51c325a0592ca53b88d |
+| 36807822852 | 2026-10-01 | dry run | built and gated the four Python packages and the npm tarball at the new versions; nothing published |
+| 36807850646 | 2026-10-01 | `polaris-verify` 1.0.0rc6 | approved by the maintainer at the environment gate, published by trusted publishing; read back: the wheel's verifier is byte-identical to the tree's, passes its contract run, and refuses the forged agent-grant chain 1.0.0rc5 accepts |
+| 36807880510 | 2026-10-01 | `polaris-sdk-python` 1.0.0rc6 | approved at the gate, published the same way; read back, and the installed package passes all 219 conformance cases (1.0.0rc5 fails 20) |
+| 36807922993 | 2026-10-01 | `polaris-sdk-ts` 1.0.0-rc.7 | staged (id 86ef20ea-2998-42c0-aaa6-681207109235); not published by the job; npm requires a maintainer's second factor |
+| (by hand) | 2026-10-01 | `polaris-sdk-ts` 1.0.0-rc.7 | approved by the maintainer with a second factor and read back from the live registry under `next`; shasum e86011abae989848bcaa6ecc7041804ae50ab605; the installed package passes all 219 conformance cases (1.0.0-rc.6 fails 20) |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different
