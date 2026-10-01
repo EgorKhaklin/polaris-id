@@ -123,6 +123,33 @@ any OIDC provider. Agents use two of its documented route settings: `bearer_toke
 `claim/` policy. Pomerium listens on 8443 inside its container too, because it verifies a bearer
 token through its own authenticate URL.
 
+## The agent half with only Docker
+
+`pomerium-demo.sh` needs a host Python with Playwright for the person's browser. The agent half
+needs no browser, so it also runs with **only Docker**, through `compose.yaml`:
+
+    docker compose -f lab/strategy/007/compose.yaml up --build --exit-code-from driver
+    docker compose -f lab/strategy/007/compose.yaml down -v        # afterwards
+
+Four containers: the gate (built from [`Dockerfile`](Dockerfile), carrying only `cryptography`),
+unmodified Pomerium and `traefik/whoami` (both pinned), and the agent. The gate writes its own
+certificates and a fresh ML-DSA-65 grant on start; the agent then gets a per-action token and
+calls the two protected routes, with the same controls as above. The run exits 0 only if the
+agent is admitted on each action's route and every control is refused. Measured 2026-10-01 on
+macOS with Docker Desktop, 9 seconds once the image was built:
+
+    ok    the gate issued a token for read:status (200)
+    ok    Pomerium admitted it to the read:status route (200, action=read:status)
+    ok    and refused it on the write:config route (403)
+    ok    a write:config token was admitted to its route (200, action=write:config)
+    ok    the read:status token is still refused there afterwards (403)
+    ok    the gate refused the same proof again, a replay (400 invalid_grant)
+    ok    the gate refused an action outside the grant (403 access_denied)
+    ok    Pomerium refused a request with no token (302)
+    ok    Pomerium refused the same claims signed by a key the gate never held (403)
+    ok    the holder revoked the grant at the gate (200)
+    ok    the gate refused the agent from then on (403: the holder revoked this grant)
+
 ## Status
 
 - Step 2, the gate and its tests: done.

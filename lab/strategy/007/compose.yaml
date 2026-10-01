@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
+#
+# lab/strategy/007/compose.yaml -- the agent half of the access gate, container-only. An outsider
+# needs ONLY Docker: no Python, no wallet install, no browser.
+#
+#   docker compose -f lab/strategy/007/compose.yaml up --build --exit-code-from driver
+#   docker compose -f lab/strategy/007/compose.yaml down -v        # clean up afterwards
+#
+# It brings up the gate, unmodified Pomerium (pinned), traefik/whoami (pinned), and an agent that
+# holds an ML-DSA-65 grant its holder signed. The agent gets a per-action token from the gate and
+# calls two Pomerium-protected API routes; Pomerium admits each only on its route's action and
+# refuses every control (agent_drive.py lists them). The run exits 0 only if all of that holds.
+#
+# The person half (a wallet presenting through a browser) stays in pomerium-demo.sh, which needs a
+# host Python with Playwright. Lab code under record 007: not a product.
+name: polaris-gate-007
+
+services:
+  gate:                       # writes the shared volume (certs, grant, configs), then serves:
+    build:                    # the OIDC provider + agent endpoints, over the certified verifier
+      context: ../../..
+      dockerfile: lab/strategy/007/Dockerfile
+    image: polaris-gate-007
+    command:
+      - sh
+      - -c
+      - "sh /app/lab/strategy/007/compose-init.sh && exec python /app/lab/strategy/007/gate.py
+         --pki /work/pki --clients /work/clients.json --host gate --bind 0.0.0.0
+         --grant-issuer-keys /work/agent/issuer.pub"
+    volumes: ["work:/work"]
+    healthcheck:              # healthy only once init has run and discovery answers
+      test: ["CMD", "python", "-c",
+             "import ssl,urllib.request; urllib.request.urlopen('https://localhost:9444/.well-known/openid-configuration', context=ssl._create_unverified_context(), timeout=3)"]
+      interval: 2s
+      timeout: 4s
+      retries: 30
+      start_period: 15s
+
+  whoami:                     # the protected upstream; echoes what Pomerium passes it
+    image: traefik/whoami@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44
+
+  pomerium:                   # unmodified, pinned; the gate is its OIDC provider
+    image: pomerium/pomerium@sha256:164ee284218491d61a5ed9610122f73c99de9b17b1ce4d263773e5f3711ca123
+    depends_on:
+      gate: {condition: service_healthy}
+    command: ["--config", "/work/pomerium.yaml"]
+    environment:
+      SSL_CERT_FILE: /work/pki/tls.pem
+    volumes: ["work:/work:ro"]
+    networks:
+      default:
+        aliases:
+          - authenticate.localhost.pomerium.io
+          - status.localhost.pomerium.io
+          - config.localhost.pomerium.io
+
+  driver:                     # the agent: a per-action token per route, and every control refused
+    image: polaris-gate-007
+    depends_on:
+      gate: {condition: service_healthy}
+      pomerium: {condition: service_started}
+      whoami: {condition: service_started}
+    command: ["sh", "/app/lab/strategy/007/compose-driver.sh"]
+    volumes: ["work:/work:ro"]
+
+volumes:
+  work:
