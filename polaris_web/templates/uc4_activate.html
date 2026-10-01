@@ -1,88 +1,101 @@
+{# UC-4, reserve activation after a loss. The page starts from the credential reported lost, found by
+   what the operator holds (lookup.py), and offers only that holder's live reserves: it never lists
+   the population (lab/strategy/008). uc4_activate_reserve holds the rule. CSP C5: no inline script. #}
 {% extends "base.html" %}
-{% block title %}UC-4: Activate Reserve{% endblock %}
+{% block title %}Activate a reserve{% endblock %}
 {% block content %}
-<div class="uc-banner">
-    <div class="uc-id">Use Case 4</div>
-    <h1>Reserve Token Activation After Loss</h1>
-    <div class="uc-desc">
-        Atomic operation wrapping <code>uc4_activate_reserve</code>. Transitions a lost token to its
-        terminal status (LOST or REVOKED depending on reason), publishes the revocation, and promotes
-        the holder's RESERVE token to ACTIVE with <code>predecessor_token_id</code> pointing to the lost
-        token. The order (terminal first, then promote) keeps the partial unique index satisfied without
-        deferred-constraint semantics.
+{% import "_ui.html" as ui with context %}
+{{ ui.page_head('Activate a reserve', eyebrow='Operations · UC-4',
+                lede='The credential reported lost or stolen ends, and one of the same holder’s reserve credentials becomes active in its place, in one transaction.') }}
+
+<div class="op">
+<div class="op-main">
+    <section class="panel" aria-labelledby="op-record-h">
+        <div class="panel-head"><h2 id="op-record-h">The credential that was lost</h2></div>
+        {% if credential %}
+            {{ ui.credential_card(credential, change=url_for('uc4_activate_reserve')) }}
+        {% else %}
+            {% if missing %}{{ ui.not_found('credential', missing) }}{% endif %}
+            {{ ui.find_credential('uc4_activate_reserve', autofocus=not missing) }}
+        {% endif %}
+    </section>
+
+    {% if credential and credential.status != 'ACTIVE' %}
+    <div class="callout callout-warn" role="note">
+        {{ ui.icon('info') }}
+        <p>Only the holder’s active credential is replaced this way, and this one is {{ ui.state_words(credential.status) }}.
+           {% if credential.status in ('LOST', 'REVOKED', 'EXPIRED') %}A holder who has lost every credential is recovered instead: <a href="{{ url_for('uc9_initiate', individual_id=credential.individual_id) }}">open a recovery</a>.{% endif %}</p>
     </div>
+    {% elif credential and not reserves %}
+    <div class="callout callout-warn" role="note">
+        {{ ui.icon('info') }}
+        <p>{{ credential.legal_name }} holds no live reserve credential to activate{% if bound %} that your authority issued{% endif %}.</p>
+    </div>
+    {% elif credential %}
+    <form method="post" class="panel op-form" aria-labelledby="op-act-h">
+        <div class="panel-head"><h2 id="op-act-h">Replacement</h2></div>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="lost_token_id" value="{{ credential.token_id }}">
+        <fieldset>
+            <legend>Reserve to activate</legend>
+            <ul class="choice-list">
+                {% for r in reserves %}
+                <li>
+                    <input type="radio" id="reserve-{{ r.token_id }}" name="reserve_token_id" value="{{ r.token_id }}" required{% if loop.first and reserves|length == 1 %} checked{% endif %}>
+                    <label for="reserve-{{ r.token_id }}">
+                        <span class="mono">#{{ r.token_id }}</span>
+                        <span>{{ r.issuer_name }} · <span class="mono">{{ r.algorithm_name }}</span></span>
+                        <span class="muted">{{ 'Expires ' ~ r.expiration_date.strftime('%Y-%m-%d') if r.expiration_date else 'No expiry' }}</span>
+                    </label>
+                </li>
+                {% endfor %}
+            </ul>
+            {% if reserves_more %}<p class="help">The first {{ reserves|length }} live reserves are shown.</p>{% endif %}
+        </fieldset>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="reason_code">What happened</label>
+                <select id="reason_code" name="reason_code" required aria-describedby="reason-help">
+                    <option value="LOST" selected>Lost</option>
+                    <option value="STOLEN">Stolen</option>
+                    <option value="COMPROMISED">Compromised</option>
+                    <option value="SUPERSEDED">Superseded</option>
+                    <option value="ADMINISTRATIVE">Administrative</option>
+                </select>
+                <p class="help" id="reason-help">Lost or stolen ends the credential as lost; anything else revokes it.</p>
+            </div>
+            <div class="form-group">
+                <label for="actor_agency_id">Acting authority</label>
+                <select id="actor_agency_id" name="actor_agency_id" required>
+                    {% for ag in agencies %}
+                    <option value="{{ ag.agency_id }}"{% if ag.agency_id == actor_default %} selected{% endif %}>{{ ag.name }} (#{{ ag.agency_id }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="published_location">Where the revocation is published</label>
+            <input type="text" id="published_location" name="published_location" required maxlength="300"
+                   class="mono" placeholder="https://crl.example.org/authority/2026/0001.crl"
+                   aria-describedby="loc-help">
+            <p class="help" id="loc-help">The address at which verifiers reach the lost credential’s revocation entry.</p>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">{{ ui.icon('power') }}End #{{ credential.token_id }} and activate the reserve</button>
+            <a href="{{ url_for('tokens_detail', tok_id=credential.token_id) }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+    {% endif %}
 </div>
 
-{% if not active_tokens or not reserve_tokens %}
-    <div class="flash flash-error">
-        <span class="flash-icon">⚠</span>
-        <span class="flash-text">
-            UC-4 requires both an ACTIVE token to lose AND a RESERVE token to promote. Currently:
-            {{ active_tokens|length }} ACTIVE, {{ reserve_tokens|length }} RESERVE.
-            {% if reserve_tokens|length == 0 %}You will need to issue a RESERVE token first via UC-1 (or directly).{% endif %}
-        </span>
-    </div>
-{% endif %}
-
-<form method="post" class="standard wide">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <h3>Lost Token</h3>
-    <div class="form-row">
-        <div class="form-group">
-            <label for="lost_token_id">Active Token Being Lost</label>
-            <select id="lost_token_id" name="lost_token_id" required>
-                <option value="">Select&hellip;</option>
-                {% for t in active_tokens %}
-                    <option value="{{ t.token_id }}">#{{ t.token_id }}, {{ t.legal_name }} ({{ t.token_value }})</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="form-group">
-            <label for="reason_code">Reason</label>
-            <select id="reason_code" name="reason_code" required>
-                <option value="LOST">LOST</option>
-                <option value="STOLEN">STOLEN</option>
-                <option value="COMPROMISED">COMPROMISED</option>
-                <option value="SUPERSEDED">SUPERSEDED</option>
-                <option value="ADMINISTRATIVE">ADMINISTRATIVE</option>
-            </select>
-            <span class="help">LOST/STOLEN → terminal status LOST. Others → REVOKED.</span>
-        </div>
-    </div>
-
-    <h3>Replacement</h3>
-    <div class="form-row">
-        <div class="form-group">
-            <label for="reserve_token_id">Reserve Token to Promote</label>
-            <select id="reserve_token_id" name="reserve_token_id" required>
-                <option value="">Select&hellip;</option>
-                {% for t in reserve_tokens %}
-                    <option value="{{ t.token_id }}">#{{ t.token_id }}, {{ t.legal_name }} ({{ t.token_value }})</option>
-                {% endfor %}
-            </select>
-            <span class="help">Procedure validates the reserve belongs to the same individual as the lost token.</span>
-        </div>
-        <div class="form-group">
-            <label for="actor_agency_id">Actor Agency</label>
-            <select id="actor_agency_id" name="actor_agency_id" required>
-                {% for ag in agencies %}
-                    <option value="{{ ag.agency_id }}">#{{ ag.agency_id }} {{ ag.name }}</option>
-                {% endfor %}
-            </select>
-        </div>
-    </div>
-
-    <div class="form-row">
-        <div class="form-group full">
-            <label for="published_location">Published Revocation Location (CRL URL)</label>
-            <input type="text" id="published_location" name="published_location" required maxlength="300"
-                   placeholder="https://crl.idtoken.gov/2026/05/T2-LOST.crl">
-        </div>
-    </div>
-
-    <div class="form-actions">
-        <button type="submit" class="btn btn-gold">Execute Reserve Activation</button>
-        <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Cancel</a>
-    </div>
-</form>
+<aside class="panel op-rule" aria-labelledby="op-rule-h">
+    <div class="panel-head"><h2 id="op-rule-h">The rule</h2></div>
+    <p>A person holds one active credential at a time. The lost credential ends first, its
+       revocation is published, and only then does the reserve become active, naming the lost
+       one as its predecessor; a failure at any step changes nothing.</p>
+    <p>The reserve belongs to the same holder, is still a reserve when the change is made, and has
+       not passed its expiry.</p>
+    <p class="muted">Enforced in the database by <span class="mono">uc4_activate_reserve</span>.</p>
+</aside>
+</div>
 {% endblock %}

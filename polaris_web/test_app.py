@@ -46,6 +46,7 @@ import app as flask_app
 import atlas_routes
 import rp_api          # and the relying-party API v1, the same day
 import population      # lab/strategy/008: figures that cost the same at any population
+import lookup          # lab/strategy/008: a form finds one record, never lists them all
 
 
 # ----------------------------------------------------------------------------
@@ -1612,6 +1613,210 @@ class PopulationScaleTests(PolarisTestCase):
                                   budget=6_000, sample_rows=2_000)
 
 
+def _statements_of_post(client, path, data):
+    """As _statements_of, for a POST."""
+    seen = []
+    real = flask_app._run_query
+
+    def recording(conn, sql, params, fetch):
+        seen.append((sql, params))
+        return real(conn, sql, params, fetch)
+    with patch.object(flask_app, '_run_query', recording):
+        r = client.post(path, data=data)
+    return r, seen
+
+
+#: The pages that act on one record and, before lab/strategy/008 step 2, listed a population to
+#: choose it from: (path, what a lookup there finds).
+OPERATION_FORMS = (
+    ('/uc4/activate-reserve', 'credential'), ('/uc5/bind-device', 'credential'),
+    ('/uc6/migrate', 'credential'), ('/uc8/revoke', 'credential'),
+    ('/verifications/new', 'credential'), ('/uc7/warrant-audit', 'person'),
+    ('/uc9/initiate-recovery', 'person'),
+)
+
+
+class PopulationLookupTests(PolarisTestCase):
+    """lab/strategy/008, step 2: an operation starts from one record, found through a unique
+    index by what the operator holds (lookup.py), and no form lists a population. What the
+    operator typed travels in a POST body and never reaches a URL; another authority's record
+    reads exactly as a record that does not exist; and every lookup has a bounded plan."""
+
+    def _find(self, kind, nxt, **fields):
+        csrf = self._csrf_token_from('/uc8/revoke')
+        return self.client.post('/find/' + kind, data=dict(fields, next=nxt, csrf_token=csrf))
+
+    def _bind(self, agency_id):
+        with self.client.session_transaction() as sess:
+            sess['operator_agency_id'] = agency_id
+            _bind_account(sess, agency_id)
+
+    def test_no_operation_form_lists_a_population(self):
+        """The forms that listed every active credential or every person name nobody until a
+        record is chosen: the seed's holders appear on none of them, and each offers a lookup."""
+        holders = [r['legal_name'] for r in _sql("SELECT legal_name FROM Individual", fetch='all')]
+        self.assertGreater(len(holders), 3, 'control: the seed has holders')
+        for path, kind in OPERATION_FORMS:
+            with self.subTest(form=path):
+                body = self.client.get(path).get_data(as_text=True)
+                self.assertIn('action="/find/%s"' % kind, body)
+                for name in holders:
+                    self.assertNotIn(name, body)
+
+    def test_a_credential_is_found_by_its_number_value_or_serial(self):
+        row = _sql("SELECT token_id, token_value, physical_serial FROM IdentityToken "
+                   "WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1", fetch='one')
+        for typed in (str(row['token_id']), '#%d' % row['token_id'], ' %s ' % row['token_value'],
+                      row['physical_serial']):
+            with self.subTest(typed=typed):
+                r = self._find('credential', 'uc8_revoke', credential=typed)
+                self.assertEqual(r.status_code, 302, r.get_data(as_text=True)[:300])
+                self.assertTrue(r.headers['Location'].endswith('/uc8/revoke?token_id=%d' % row['token_id']),
+                                r.headers['Location'])
+
+    def test_what_the_operator_typed_never_reaches_a_url(self):
+        """The search text is a POST field: the redirect names the record by its number only, and
+        a miss answers in place, the text back in its field and in no address."""
+        row = _sql("SELECT token_id, token_value FROM IdentityToken ORDER BY token_id LIMIT 1", fetch='one')
+        r = self._find('credential', 'tokens_detail', credential=row['token_value'])
+        self.assertEqual(r.status_code, 302)
+        self.assertNotIn(row['token_value'], r.headers['Location'])
+        self.assertTrue(r.headers['Location'].endswith('/tokens/%d' % row['token_id']))
+        miss = self._find('credential', 'tokens_detail', credential='TKN-NOBODY-HAS-THIS')
+        self.assertEqual(miss.status_code, 404)
+        self.assertNotIn('Location', miss.headers)
+        body = miss.get_data(as_text=True)
+        self.assertIn('value="TKN-NOBODY-HAS-THIS"', body)
+        self.assertNotIn('?credential=', body)
+
+    def test_a_number_that_is_also_a_serial_is_a_choice(self):
+        """A number, a value and a serial written the same way can be three credentials: the
+        lookup shows each and picks none."""
+        target = _sql("SELECT token_id FROM IdentityToken ORDER BY token_id LIMIT 1", fetch='one')['token_id']
+        _sql("""INSERT INTO IdentityToken (token_value, physical_serial, biometric_binding_type,
+                                           individual_id, issuing_agency_id, algorithm_id, status)
+                VALUES ('TKN-LOOKUP-TWIN', %s, 'NONE', 2, 2, 1, 'RESERVE')""", (str(target),), fetch='none')
+        r = self._find('credential', 'uc6_migrate', credential=str(target))
+        self.assertEqual(r.status_code, 200)
+        body = r.get_data(as_text=True)
+        self.assertIn('/uc6/migrate?token_id=%d"' % target, body)
+        self.assertIn('TKN-LOOKUP-TWIN', body)
+
+    def test_a_lookup_leads_only_to_its_own_pages(self):
+        for nxt in ('https://example.org/', 'sql_query', 'logout', ''):
+            with self.subTest(next=nxt):
+                r = self._find('credential', nxt, credential='1')
+                self.assertEqual(r.status_code, 302 if nxt == '' else 400)
+        self.assertEqual(self._find('person', 'uc8_revoke', person='1').status_code, 400,
+                         'a person lookup does not lead to a credential page')
+
+    def test_a_person_is_found_by_number_or_by_name_and_birth_date(self):
+        p = _sql("SELECT individual_id, legal_name, date_of_birth FROM Individual "
+                 "ORDER BY individual_id LIMIT 1", fetch='one')
+        by_number = self._find('person', 'uc9_initiate', person='#%d' % p['individual_id'])
+        self.assertTrue(by_number.headers['Location'].endswith('/uc9/initiate-recovery?individual_id=%d' % p['individual_id']))
+        prefix = p['legal_name'][:3].upper()
+        by_name = self._find('person', 'uc7_warrant_audit', person=prefix,
+                             born=p['date_of_birth'].isoformat())
+        self.assertEqual(by_name.status_code, 302, by_name.get_data(as_text=True)[:300])
+        self.assertNotIn(prefix, by_name.headers['Location'])
+        self.assertTrue(by_name.headers['Location'].endswith('/uc7/warrant-audit?individual_id=%d' % p['individual_id']))
+
+    def test_a_name_is_searched_only_with_the_birth_date_and_only_as_a_prefix(self):
+        p = _sql("SELECT legal_name, date_of_birth FROM Individual ORDER BY individual_id LIMIT 1", fetch='one')
+        no_date = self._find('person', 'uc9_initiate', person=p['legal_name'])
+        self.assertEqual(no_date.status_code, 400)
+        self.assertIn('together with the date of birth', no_date.get_data(as_text=True))
+        for pattern in ('%', '_', p['legal_name'][1:4]):
+            with self.subTest(pattern=pattern):
+                r = self._find('person', 'uc9_initiate', person=pattern, born=p['date_of_birth'].isoformat())
+                self.assertEqual(r.status_code, 404, 'a wildcard or a middle of a name matched')
+        bad = self._find('person', 'uc9_initiate', person=p['legal_name'], born='21/04/1990')
+        self.assertEqual(bad.status_code, 400)
+
+    def test_more_matches_than_the_limit_say_so(self):
+        _sql("""INSERT INTO Individual (legal_name, date_of_birth, jurisdiction)
+                SELECT 'Lookup Crowd ' || g, date '1977-07-07', 'US-PA'
+                  FROM generate_series(1, %s) g""", (lookup.LOOKUP_LIMIT + 1,), fetch='none')
+        r = self._find('person', 'investigate_individual', person='lookup crowd', born='1977-07-07')
+        self.assertEqual(r.status_code, 200)
+        body = r.get_data(as_text=True)
+        self.assertEqual(body.count('class="match"'), lookup.LOOKUP_LIMIT)
+        self.assertIn('The first %d are shown' % lookup.LOOKUP_LIMIT, body)
+
+    def test_a_form_opened_on_a_credential_shows_it_and_acts_on_it_alone(self):
+        tok = _sql("SELECT t.token_id, i.legal_name FROM IdentityToken t JOIN Individual i USING (individual_id) "
+                   "WHERE t.status = 'ACTIVE' ORDER BY t.token_id LIMIT 1", fetch='one')
+        body = self.client.get('/uc8/revoke?token_id=%d' % tok['token_id']).get_data(as_text=True)
+        self.assertIn(tok['legal_name'], body)
+        self.assertIn('name="token_id" value="%d"' % tok['token_id'], body)
+        self.assertEqual(body.count('name="token_id"'), 1, 'the form acts on the credential shown, and no other')
+
+    def test_a_lost_credential_offers_only_its_holders_live_reserves(self):
+        """UC-4 starts from the credential reported lost and offers that holder's reserves: the
+        seed's reserve T1 belongs to individual 1, who is given an active credential to lose."""
+        lost = _sql("""INSERT INTO IdentityToken (token_value, physical_serial, biometric_binding_type,
+                                                  individual_id, issuing_agency_id, algorithm_id, status,
+                                                  expiration_date)
+                       VALUES ('TKN-UC4-LOOKUP', 'SN-UC4-LOOKUP', 'NONE', 1, 2, 1, 'RESERVE',
+                               polaris_utc_date() + 3650) RETURNING token_id""", fetch='one')['token_id']
+        _sql("UPDATE IdentityToken SET status = 'ACTIVE', activated_date = now() WHERE token_id = %s",
+             (lost,), fetch='none')
+        other_reserves = _sql("SELECT token_id FROM IdentityToken WHERE status = 'RESERVE' "
+                              "AND individual_id <> 1", fetch='all')
+        body = self.client.get('/uc4/activate-reserve?token_id=%d' % lost).get_data(as_text=True)
+        self.assertIn('name="reserve_token_id" value="1"', body)
+        for r in other_reserves:
+            self.assertNotIn('name="reserve_token_id" value="%d"' % r['token_id'], body)
+
+    def test_every_lookup_has_a_bounded_plan(self):
+        """Falsifier 2 of record 008 for step 2: each lookup, and each form opened on the record it
+        found, reads the population only through a key, a unique index, or a limited index range.
+        Planned and run over a synthetic population, as the Overview's test is."""
+        _synthetic_population()
+        csrf = self._csrf_token_from('/uc8/revoke')
+        some = _sql("SELECT t.token_id, t.token_value, t.physical_serial, t.individual_id, i.date_of_birth "
+                    "FROM IdentityToken t JOIN Individual i USING (individual_id) "
+                    "WHERE t.status = 'ACTIVE' ORDER BY t.token_id DESC LIMIT 1", fetch='one')
+        statements = []
+        for typed in (str(some['token_id']), some['token_value'], some['physical_serial']):
+            r, seen = _statements_of_post(self.client, '/find/credential',
+                                          {'credential': typed, 'next': 'uc8_revoke', 'csrf_token': csrf})
+            self.assertEqual(r.status_code, 302)
+            statements += seen
+        r, seen = _statements_of_post(self.client, '/find/person',
+                                      {'person': 'synthetic', 'born': some['date_of_birth'].isoformat(),
+                                       'next': 'uc9_initiate', 'csrf_token': csrf})
+        self.assertIn(r.status_code, (200, 302))
+        statements += seen
+        for path in ('/uc4/activate-reserve?token_id=%d', '/uc5/bind-device?token_id=%d',
+                     '/uc6/migrate?token_id=%d', '/uc8/revoke?token_id=%d', '/verifications/new?token_id=%d'):
+            r, seen = _statements_of(self.client, path % some['token_id'])
+            self.assertEqual(r.status_code, 200, path)
+            statements += seen
+        for path in ('/uc7/warrant-audit?individual_id=%d', '/uc9/initiate-recovery?individual_id=%d'):
+            r, seen = _statements_of(self.client, path % some['individual_id'])
+            self.assertEqual(r.status_code, 200, path)
+            statements += seen
+        _assert_bounded_plans(self, statements, budget=lookup.LOOKUP_LIMIT * 4, sample_rows=0)
+
+    def test_the_person_lookup_needs_its_index(self):
+        """The control for the plan above: without idx_individual_birth_name a name search reads
+        everyone born that day, and the guard fails it."""
+        _synthetic_population()
+        _sql("DROP INDEX idx_individual_birth_name", fetch='none')
+        try:
+            some = _sql("SELECT date_of_birth FROM Individual ORDER BY individual_id DESC LIMIT 1", fetch='one')
+            stmt = []
+            lookup.people(lambda sql, params=None, **kw: stmt.append((sql, params)) or [],
+                          'synthetic', some['date_of_birth'])
+            with self.assertRaises(AssertionError):
+                _assert_bounded_plans(self, stmt, budget=lookup.LOOKUP_LIMIT * 4, sample_rows=0)
+        finally:
+            _sql("CREATE INDEX idx_individual_birth_name ON Individual "
+                 "(date_of_birth, (lower(legal_name)) COLLATE \"C\", individual_id)", fetch='none')
+
+
 class HeartbeatTests(PolarisTestCase):
     """Browser-presence beacons used by the launcher's watch mode. They
     exist only under POLARIS_LAUNCHER_WATCH (v9.206); when on, they work
@@ -2099,17 +2304,20 @@ class UC4Tests(PolarisTestCase):
     def test_form_renders(self):
         r = self.client.get('/uc4/activate-reserve')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'UC-4', 'Reserve Token Activation')
+        self.assertHTML(r, 'UC-4', 'Activate a reserve', 'action="/find/credential"')
 
-    def test_form_lists_active_and_reserve_tokens(self):
-        """Pristine state: T1 (Egor, individual 1) is RESERVE; T2/T3/T4 are
-        ACTIVE for individuals 2/3/4. The form should list both buckets."""
-        r = self.client.get('/uc4/activate-reserve')
-        body = r.get_data(as_text=True)
-        # Active tokens dropdown should show holders of active tokens
-        self.assertIn('Maria Santos', body)  # T2 is ACTIVE
-        # Reserve dropdown should show Egor's RESERVE token
-        self.assertIn('Adrian Vasquez', body)
+    def test_form_starts_from_the_lost_credential_and_offers_its_holders_reserve(self):
+        """Pristine state: T1 (individual 1) is RESERVE; T2/T3/T4 are ACTIVE for individuals
+        2/3/4. The bare form lists nobody (lab/strategy/008); opened on an active credential it
+        shows that holder, and the reserves offered are that holder's alone: T2's holder has
+        none, so T1 is not offered."""
+        bare = self.client.get('/uc4/activate-reserve').get_data(as_text=True)
+        self.assertNotIn('Maria Santos', bare)
+        self.assertNotIn('Adrian Vasquez', bare)
+        body = self.client.get('/uc4/activate-reserve?token_id=2').get_data(as_text=True)
+        self.assertIn('Maria Santos', body)
+        self.assertNotIn('name="reserve_token_id" value="1"', body)
+        self.assertIn('holds no live reserve credential', body)
 
     def test_uc4_activates_reserve_end_to_end(self):
         """Full UC-4 happy path. Sets up the precondition (Egor needs to have
@@ -2212,7 +2420,7 @@ class UC5Tests(PolarisTestCase):
     def test_form_renders(self):
         r = self.client.get('/uc5/bind-device')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'UC-5', 'Device Binding')
+        self.assertHTML(r, 'UC-5', 'Bind a device', 'action="/find/credential"')
 
     def test_bind_device_to_active_token(self):
         r = self._post('/uc5/bind-device', data={
@@ -2248,7 +2456,7 @@ class UC7Tests(PolarisTestCase):
     def test_form_renders(self):
         r = self.client.get('/uc7/warrant-audit')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'UC-7', 'Warrant-Authorized')
+        self.assertHTML(r, 'UC-7', 'Warrant audit', 'action="/find/person"')
 
     def test_warrant_returns_events_for_james(self):
         """James Chen (id=3) has 3 verification events: 1 ZK + 1 FULL + 1 SELECTIVE.
@@ -2261,8 +2469,8 @@ class UC7Tests(PolarisTestCase):
         self.assertEqual(r.status_code, 200)
         body = r.get_data(as_text=True)
         # Slice to just the results table to avoid form options matching
-        results_section = body[body.index('Warrant Results'):body.index('</table>') + 8] \
-            if 'Warrant Results' in body and '</table>' in body[body.index('Warrant Results'):] else ''
+        results_section = body[body.index('id="op-res-h"'):body.index('</table>', body.index('id="op-res-h"')) + 8] \
+            if 'id="op-res-h"' in body and '</table>' in body[body.index('id="op-res-h"'):] else ''
         # SELECTIVE and FULL events appear with full data
         self.assertIn('TRAVEL', results_section)
         self.assertIn('BANKING', results_section)
@@ -2270,7 +2478,7 @@ class UC7Tests(PolarisTestCase):
         # ZK event for James (HEALTHCARE) does NOT appear in results
         self.assertNotIn('HEALTHCARE', results_section)
         # Result count is 2, not 3
-        self.assertIn('Warrant Results (2 events)', body)
+        self.assertIn('>2 events<', results_section)
 
     def test_warrant_excludes_zero_knowledge_events(self):
         """The warrant query for any individual cannot return ZK events for that
@@ -2280,8 +2488,8 @@ class UC7Tests(PolarisTestCase):
             'individual_id': '3',  # James Chen
         })
         body = r.get_data(as_text=True)
-        results_section = body[body.index('Warrant Results'):body.index('</table>') + 8] \
-            if 'Warrant Results' in body and '</table>' in body[body.index('Warrant Results'):] else ''
+        results_section = body[body.index('id="op-res-h"'):body.index('</table>', body.index('id="op-res-h"')) + 8] \
+            if 'id="op-res-h"' in body and '</table>' in body[body.index('id="op-res-h"'):] else ''
         # ZERO_KNOWLEDGE pill should not appear in the results table
         self.assertNotIn('ZERO_KNOWLEDGE', results_section)
         # Confirm we DO see SELECTIVE and FULL pills (sanity: results are populated)
@@ -2419,7 +2627,7 @@ class IssuerDiscretionBoundsTests(PolarisTestCase):
     def test_form_renders(self):
         r = self.client.get('/uc8/revoke')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'UC-8', 'Bounded Revocation')
+        self.assertHTML(r, 'UC-8', 'Revoke a credential', 'action="/find/credential"')
 
     # -- held-out, 2026-09-24 -------------------------------------------------
     # Twelve semantic mutations of uc8_revoke_token (the procedure drill inverts refusals;
@@ -3135,7 +3343,7 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
     def test_initiate_page_renders(self):
         r = self.client.get('/uc9/initiate-recovery')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'Initiate Catastrophic-Loss Recovery')
+        self.assertHTML(r, 'UC-9', 'Open a recovery', 'action="/find/person"')
 
     # ------------------------------------------------------------------
     # uc9_initiate_recovery behavior
@@ -3503,7 +3711,7 @@ class MultiSignatureTests(PolarisTestCase):
     def test_migrate_page_renders(self):
         r = self.client.get('/uc6/migrate')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'Algorithm Migration', 'TokenSignature')
+        self.assertHTML(r, 'UC-6', 'Migrate an algorithm', 'uc6_migrate_algorithm')
 
     # ------------------------------------------------------------------
     # Backfill + invariants
@@ -6798,10 +7006,13 @@ class Uc4ReserveExpiryTests(PolarisTestCase):
                          'control: a credential live through today still activates')
 
     def test_the_form_offers_no_expired_reserve(self):
+        lost_id = self._holder_with_active()
+        page = '/uc4/activate-reserve?token_id=%d' % lost_id
+        self.assertIn('name="reserve_token_id" value="1"', self.client.get(page).get_data(as_text=True),
+                      'control: the holder\'s live reserve is offered')
         _sql("UPDATE IdentityToken SET expiration_date = polaris_utc_date() - 1 WHERE token_id = 1",
              fetch='none')
-        body = self.client.get('/uc4/activate-reserve').get_data(as_text=True)
-        self.assertNotIn('Adrian Vasquez', body)
+        self.assertNotIn('name="reserve_token_id" value="1"', self.client.get(page).get_data(as_text=True))
 
 
 class TransparencyProofBoundsTests(UnauthenticatedTestCase):
@@ -6848,6 +7059,38 @@ class BoundOperatorRouteIsolationTests(PolarisTestCase):
         patcher = mock.patch.dict(flask_app.DB_CONFIG, app_cfg)
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    def test_a_lookup_answers_another_authoritys_credential_as_one_that_does_not_exist(self):
+        """lab/strategy/008 step 2: the lookup reads through the same policies, so another
+        authority's credential, asked for by its value, gets exactly the answer a value nobody
+        holds gets: the lookup is not an oracle for another authority's records."""
+        csrf = self._csrf_token_from('/uc8/revoke')
+
+        def find(text):
+            return self.client.post('/find/credential', data={'credential': text, 'next': 'uc8_revoke',
+                                                              'csrf_token': csrf})
+        hidden, absent = find(self.foreign_value), find('TKN-NOBODY-HAS-THIS')
+        self.assertEqual((hidden.status_code, absent.status_code), (404, 404),
+                         hidden.get_data(as_text=True)[:300])
+
+        def page(r, typed):
+            return re.sub(r'name="csrf_token" value="[^"]*"', '', r.get_data(as_text=True)).replace(typed, 'X')
+        self.assertEqual(page(hidden, self.foreign_value), page(absent, 'TKN-NOBODY-HAS-THIS'))
+        self.assertEqual(find(self.own_value).status_code, 302,
+                         'control: the operator finds its own authority\'s credential')
+
+    def test_no_form_opens_on_another_authoritys_credential(self):
+        for path in ('/uc4/activate-reserve', '/uc5/bind-device', '/uc6/migrate', '/uc8/revoke',
+                     '/verifications/new'):
+            with self.subTest(form=path):
+                r = self.client.get(path + '?token_id=2')
+                self.assertEqual(r.status_code, 404)
+                body = r.get_data(as_text=True)
+                self.assertNotIn(self.foreign_value, body)
+                self.assertIn('No credential matches #2', body)
+                own = self.client.get(path + '?token_id=3')
+                self.assertEqual(own.status_code, 200, 'control: its own credential opens')
+                self.assertIn(self.own_value, own.get_data(as_text=True))
 
     def test_no_wallet_offer_for_a_credential_the_operator_cannot_see(self):
         # Row-level security hides token 2 from an operator bound to authority 1, and hidden is
@@ -12981,7 +13224,7 @@ class RouteGuardMatrixTests(PolarisTestCase):
     #: by hand, which is what the two lists they replace were. Changing a guard is
     #: meant to fail here: updating the line is the moment somebody confirms the
     #: new exposure is intended.
-    EXPECTED_LOGIN_ONLY = 45
+    EXPECTED_LOGIN_ONLY = 47
     ROLE_GATES = {
         '/agencies/<int:ag_id>/delete': ('admin',),
         '/agencies/<int:ag_id>/edit': ('admin',),

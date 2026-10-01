@@ -23,6 +23,7 @@ rp_api.py, and a helper with callers on both sides does not belong inside one of
 Routes register by import: app.py imports this module at the END, after every name below
 exists, and aliases itself into sys.modules first so `python3 app.py` does not load it twice.
 """
+import datetime
 import json
 
 import psycopg2
@@ -31,6 +32,7 @@ from flask import (
 )
 
 import app as _app          # for _METRICS_VERIFY_DISAGREEMENT only; see the note at its use
+import lookup
 import observability
 import pqc_signing
 import security
@@ -47,6 +49,92 @@ from app import (
     query,
     replica_reads,
 )
+
+
+#: Where a lookup may lead, by the kind of record it finds, with the name each page gives the
+#: record's number. A lookup answers with a redirect to one of these and never to an address the
+#: request supplied (no open redirect), and what the operator typed never reaches a URL.
+_FIND_LEADS_TO = {
+    'credential': {'tokens_detail': 'tok_id', 'uc4_activate_reserve': 'token_id',
+                   'uc5_bind_device': 'token_id', 'uc6_migrate': 'token_id',
+                   'uc8_revoke': 'token_id', 'verifications_new': 'token_id'},
+    'person': {'investigate_individual': 'ind_id', 'uc7_warrant_audit': 'individual_id',
+               'uc9_initiate': 'individual_id'},
+}
+
+#: What the page a lookup serves is for, as its eyebrow says it.
+_FIND_PURPOSE = {
+    'tokens_detail': 'Registry', 'uc4_activate_reserve': 'Activate a reserve',
+    'uc5_bind_device': 'Bind a device', 'uc6_migrate': 'Migrate an algorithm',
+    'uc8_revoke': 'Revoke', 'verifications_new': 'Record a verification',
+    'investigate_individual': 'Registry', 'uc7_warrant_audit': 'Warrant audit',
+    'uc9_initiate': 'Open a recovery',
+}
+
+
+def _find_next(kind):
+    """The page a lookup of `kind` leads to, from the form's `next`, or 400."""
+    nxt = request.form.get('next') or ('tokens_detail' if kind == 'credential'
+                                        else 'investigate_individual')
+    if nxt not in _FIND_LEADS_TO[kind]:
+        abort(400, description='next is not a page a %s lookup leads to' % kind)
+    return nxt
+
+
+@app.route('/find/credential', methods=['POST'])
+@security.login_required
+@security.csrf_protect
+def find_credential():
+    """Find a credential by its number, token value or card serial, and open the page `next`
+    names on it (lab/strategy/008: a form looks a record up and never lists a population).
+
+    One match goes straight there. None, or several (a number, a value and a serial written the
+    same way can belong to different credentials), answer with the search again and the matches,
+    the text the operator typed kept in the field and nowhere else: it travels in this POST body
+    and never in a URL. Row-level security applies, so another authority's credential is not
+    found by an operator bound to one, and reads as one that does not exist."""
+    nxt = _find_next('credential')
+    text = request.form.get('credential', '')
+    rows = lookup.credentials(query, text)
+    param = _FIND_LEADS_TO['credential'][nxt]
+    if len(rows) == 1:
+        return redirect(url_for(nxt, **{param: rows[0]['token_id']}))
+    return render_template('find.html', kind='credential', text=text.strip()[:lookup.MAX_CREDENTIAL_TEXT],
+                           rows=rows, more=False, next=nxt, param=param,
+                           purpose=_FIND_PURPOSE[nxt], note=None,
+                           crumb_endpoint=nxt), (200 if rows else 404)
+
+
+@app.route('/find/person', methods=['POST'])
+@security.login_required
+@security.csrf_protect
+def find_person():
+    """Find a person by number, or by the beginning of the name as recorded with the date of
+    birth, and open the page `next` names on them. Everything else as /find/credential; a name
+    without a date is not searched, because it would page through everyone who shares it."""
+    nxt = _find_next('person')
+    text = ' '.join(request.form.get('person', '').split())[:lookup.MAX_NAME_TEXT]
+    born_raw = (request.form.get('born') or '').strip()
+    born, note = None, None
+    if born_raw:
+        try:
+            born = datetime.date.fromisoformat(born_raw)
+        except ValueError:
+            note = 'Write the date of birth as year, month and day (1990-04-21).'
+    rows, more = [], False
+    if note is None:
+        if lookup.number(text) is None and born is None and text:
+            note = 'A name is searched together with the date of birth. Add it, or use the number.'
+        else:
+            rows, more = lookup.people(query, text, born)
+    param = _FIND_LEADS_TO['person'][nxt]
+    if len(rows) == 1 and not more:
+        return redirect(url_for(nxt, **{param: rows[0]['individual_id']}))
+    return render_template('find.html', kind='person', text=text, born=born_raw[:10],
+                           rows=rows, more=more, next=nxt, param=param,
+                           purpose=_FIND_PURPOSE[nxt], note=note,
+                           crumb_endpoint=nxt), \
+        (200 if rows else (400 if note else 404))
 
 
 @app.route('/individuals')

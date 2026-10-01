@@ -1,79 +1,83 @@
+{# UC-6, algorithm migration. The page starts from one credential, found by what the operator holds
+   (lookup.py), and never lists the population (lab/strategy/008). uc6_migrate_algorithm holds the
+   rule; the signature comes from the signing module in force. CSP C5: no inline
+   script. #}
 {% extends "base.html" %}
-{% block title %}UC-6: Migrate Algorithm{% endblock %}
+{% block title %}Migrate an algorithm{% endblock %}
 {% block content %}
-<div class="uc-banner">
-    <div class="uc-id">Use Case 6</div>
-    <h1>Algorithm Migration</h1>
-    <div class="uc-desc">
-        Multi-signature transitional state. Adds a new <code>TokenSignature</code> row under a new
-        algorithm, optionally deprecating the old. The old signature continues to verify until its <code>deprecation_date</code>
-        passes: this is the migration window. <strong>The TokenSignature row is the audit of record for migrations</strong>
-        (no separate event table). Cryptographic diversity, bounded revocation and federation together keep any one
-        issuer from concentrating trust.
+{% import "_ui.html" as ui with context %}
+{{ ui.page_head('Migrate an algorithm', eyebrow='Operations · UC-6',
+                lede='Adds a signature under another algorithm to a credential. Its existing signatures keep verifying until they are deprecated: that interval is the migration window.') }}
+
+<div class="op">
+<div class="op-main">
+    <section class="panel" aria-labelledby="op-record-h">
+        <div class="panel-head"><h2 id="op-record-h">Credential</h2></div>
+        {% if credential %}
+            {{ ui.credential_card(credential, change=url_for('uc6_migrate')) }}
+            <div class="record-sub">
+                <h3 class="panel-sub">Signatures</h3>
+                {% if signatures %}
+                <ul class="chip-list">
+                    {% for s in signatures %}
+                    <li{% if not s.live %} class="muted"{% endif %}><span class="mono">{{ s.algorithm_name }}</span>
+                        {% if s.quantum_resistant %}<span class="type-tag type-tag-pq">PQ</span>{% else %}<span class="type-tag">Classical</span>{% endif %}
+                        {% if not s.live %}<span class="type-tag">Deprecated</span>{% endif %}</li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="muted">None.</p>
+                {% endif %}
+            </div>
+        {% else %}
+            {% if missing %}{{ ui.not_found('credential', missing) }}{% endif %}
+            {{ ui.find_credential('uc6_migrate', autofocus=not missing) }}
+        {% endif %}
+    </section>
+
+    {% if credential and credential.status not in ('ACTIVE', 'RESERVE') %}
+    <div class="callout callout-warn" role="note">
+        {{ ui.icon('info') }}
+        <p>Only a live credential, active or reserve, is migrated, and this one is {{ ui.state_words(credential.status) }}.</p>
     </div>
+    {% elif credential %}
+    <form method="post" class="panel op-form" aria-labelledby="op-act-h">
+        <div class="panel-head"><h2 id="op-act-h">Migration</h2></div>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="token_id" value="{{ credential.token_id }}">
+        <div class="form-group">
+            <label for="new_algorithm">New algorithm</label>
+            <select id="new_algorithm" name="new_algorithm" required aria-describedby="alg-help">
+                <option value="">Choose&hellip;</option>
+                {% for alg in algorithms %}
+                <option value="{{ alg.algorithm_id }}"{% if alg.name in signed_names %} disabled{% endif %}>{{ alg.name }}{% if alg.quantum_resistant %} (PQ){% endif %}{% if alg.name in signed_names %}, already signed{% endif %}</option>
+                {% endfor %}
+            </select>
+            <p class="help" id="alg-help">The algorithm the new signature row records. Only algorithms that are not deprecated; a credential carries one signature per algorithm, a deprecated one included.</p>
+        </div>
+        <div class="form-group">
+            <div class="checkbox-row">
+                <input type="checkbox" id="deprecate_old" name="deprecate_old" value="1" aria-describedby="dep-help">
+                <label for="deprecate_old">Deprecate the existing signatures now</label>
+            </div>
+            <p class="help" id="dep-help">Ends the migration window at once. Left clear, the old and new signatures both verify until the old ones are deprecated.</p>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">{{ ui.icon('arrow-right-left') }}Add the signature to #{{ credential.token_id }}</button>
+            <a href="{{ url_for('tokens_detail', tok_id=credential.token_id) }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+    {% endif %}
 </div>
 
-{% if not tokens %}
-    <div class="flash flash-error">
-        <span class="flash-icon">⚠</span>
-        <span class="flash-text">No RESERVE or ACTIVE tokens available to migrate.</span>
-    </div>
-{% endif %}
-
-<form method="post" class="standard">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="form-row">
-        <div class="form-group full">
-            <label for="token_id">Token</label>
-            <select id="token_id" name="token_id" required>
-                <option value="">Select&hellip;</option>
-                {% for t in tokens %}
-                    <option value="{{ t.token_id }}">
-                        #{{ t.token_id }}: {{ t.legal_name }} ({{ t.token_value }})
-                        · {{ t.status }} · current: {{ t.active_algorithms|join(', ') }}
-                    </option>
-                {% endfor %}
-            </select>
-            <span class="help">Lists RESERVE and ACTIVE tokens with their current active-signature algorithms.</span>
-        </div>
-    </div>
-
-    <div class="form-row">
-        <div class="form-group">
-            <label for="new_algorithm">New Algorithm</label>
-            <select id="new_algorithm" name="new_algorithm" required>
-                <option value="">Select&hellip;</option>
-                {% for alg in algorithms %}
-                    <option value="{{ alg.algorithm_id }}">
-                        #{{ alg.algorithm_id }}: {{ alg.name }}
-                        {% if alg.quantum_resistant %} · PQ{% endif %}
-                    </option>
-                {% endfor %}
-            </select>
-            <span class="help">The signature for this algorithm will be added. UNIQUE(token, alg) prevents duplicates.</span>
-        </div>
-        <div class="form-group">
-            <label>
-                <input type="checkbox" name="deprecate_old" value="1">
-                Deprecate old signature(s)
-            </label>
-            <span class="help">If checked, every other active signature on this token gets <code>deprecation_date</code>
-            set to NOW. Otherwise both old and new coexist (migration window).</span>
-        </div>
-    </div>
-
-    <div class="info-panel">
-        <p><strong>What this UC does NOT do:</strong></p>
-        <ul>
-            <li>Does not generate a real cryptographic signature, placeholder bytes are inserted (the development signing path).</li>
-            <li>Does not auto-deprecate based on <code>CryptographicAlgorithm.deprecation_date</code>: operator policy is the only path.</li>
-            <li>Does not remove the old <code>TokenSignature</code> row, the append-only invariant forbids DELETE.</li>
-        </ul>
-    </div>
-
-    <div class="form-actions">
-        <button type="submit" class="btn btn-gold">Migrate</button>
-        <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Cancel</a>
-    </div>
-</form>
+<aside class="panel op-rule" aria-labelledby="op-rule-h">
+    <div class="panel-head"><h2 id="op-rule-h">The rule</h2></div>
+    <p>The new signature is made over the credential’s value by the signing module in force:
+       {{ signing.algorithm }} when real signing is configured, and otherwise the named development
+       placeholder, which is not a signature.</p>
+    <p>A signature row is never deleted: deprecating one dates it. The rows are the audit of record
+       for the migration.</p>
+    <p class="muted">Enforced in the database by <span class="mono">uc6_migrate_algorithm</span>.</p>
+</aside>
+</div>
 {% endblock %}

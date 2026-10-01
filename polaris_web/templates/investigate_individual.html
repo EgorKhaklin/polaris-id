@@ -1,7 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Investigate Individual #{{ individual.individual_id }}{% endblock %}
 {% block content %}
+{% import "_ui.html" as ui with context %}
 <h1>Investigate · Individual #{{ individual.individual_id }}</h1>
+
+{# The operations that start from a person open on this one (lab/strategy/008). #}
+{% if current_user.role in ('admin', 'operator', 'auditor') %}
+<nav class="record-actions" aria-label="Act on this person">
+    {% if current_user.role in ('admin', 'operator') %}
+    <a class="btn btn-sm" href="{{ url_for('uc9_initiate', individual_id=individual.individual_id) }}">{{ ui.icon('life-buoy') }}Open a recovery</a>
+    {% endif %}
+    {% if current_user.role in ('admin', 'auditor') %}
+    <a class="btn btn-sm" href="{{ url_for('uc7_warrant_audit', individual_id=individual.individual_id) }}">{{ ui.icon('gavel') }}Warrant audit</a>
+    {% endif %}
+</nav>
+{% endif %}
 
 <p class="help" style="max-width: 720px;">
     Investigation surface: single-individual view of holding history +
@@ -53,7 +66,7 @@
         <tr>
             <td><a href="{{ url_for('investigate_token', tok_id=t.token_id) }}">
                 #{{ t.token_id }}
-                <span class="mono" style="font-size: 11px; color: #889;">{{ t.token_value|truncate(20) }}</span>
+                <span class="mono muted">{{ t.token_value|truncate(20) }}</span>
             </a></td>
             <td><span class="pill pill-{{ t.status|lower }}">{{ t.status }}</span></td>
             <td>{{ t.activation_sequence }}</td>
@@ -103,9 +116,9 @@
             <td><span class="pill pill-{{ v.outcome|lower }}">{{ v.outcome }}</span></td>
             <td>
                 {% if v.is_zero_knowledge %}
-                    <span class="pill" style="background: #2a4a5a; color: #d8d8c4;">ZK</span>
+                    {{ ui.pill('ZERO_KNOWLEDGE', 'ZK') }}
                 {% else %}
-                    <span class="pill" style="background: #2a3550; color: #d8d8c4;">{{ v.disclosure_level }}</span>
+                    {{ ui.pill(v.disclosure_level) }}
                 {% endif %}
             </td>
             <td>{{ v.context_type or absent }}</td>

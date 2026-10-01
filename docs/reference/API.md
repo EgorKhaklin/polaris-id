@@ -1455,9 +1455,10 @@ triad. Implements PDF §9.4.
 | `deprecate_old` | bool | optional | when checked, sets `deprecation_date` on every other active signature for this token |
 | `csrf_token` | string | yes | |
 
-The signature bytes are inserted as a deterministic placeholder
-(the development signing path). Production deployments would derive
-`signature_bytes` from a hardware-attested signing ceremony.
+The signature bytes come from the signing module in force, over the
+token's value: an ML-DSA-65 signature when real signing is configured
+(`POLARIS_USE_REAL_PQC=1` with liboqs), otherwise the named development
+placeholder, which is not a signature.
 
 Errors:
 

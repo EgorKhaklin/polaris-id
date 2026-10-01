@@ -32,6 +32,10 @@ q = polaris.query
 max_tok = q("SELECT max(token_id) AS m FROM IdentityToken", fetch="one")["m"]
 max_ind = q("SELECT max(individual_id) AS m FROM Individual", fetch="one")["m"]
 rec = q("SELECT max(recovery_id) AS m FROM RecoveryRequest", fetch="one")["m"]
+# Step 2: the forms open on one record. The newest active credential and its holder.
+act = q("SELECT t.token_id, t.token_value, t.physical_serial, t.individual_id, i.legal_name, "
+        "i.date_of_birth FROM IdentityToken t JOIN Individual i USING (individual_id) "
+        "WHERE t.status = 'ACTIVE' ORDER BY t.token_id DESC LIMIT 1", fetch="one")
 
 PAGES = [
     "/dashboard",
@@ -51,6 +55,24 @@ PAGES = [
 ]
 if rec:
     PAGES.append("/uc9/decide/%d" % rec)
+PAGES += ["/uc4/activate-reserve?token_id=%d" % act["token_id"],
+          "/uc5/bind-device?token_id=%d" % act["token_id"],
+          "/uc6/migrate?token_id=%d" % act["token_id"],
+          "/uc8/revoke?token_id=%d" % act["token_id"],
+          "/verifications/new?token_id=%d" % act["token_id"],
+          "/uc7/warrant-audit?individual_id=%d" % act["individual_id"],
+          "/uc9/initiate-recovery?individual_id=%d" % act["individual_id"]]
+
+# The lookups are POSTs: (label, path, form). The search text travels in the body.
+csrf_page = client.get("/uc8/revoke").get_data(as_text=True)
+csrf = csrf_page.split('name="csrf_token" value="', 1)[1].split('"', 1)[0] if 'name="csrf_token"' in csrf_page else ""
+POSTS = [
+    ("find credential by number", "/find/credential", {"credential": str(act["token_id"]), "next": "uc8_revoke"}),
+    ("find credential by value", "/find/credential", {"credential": act["token_value"], "next": "uc8_revoke"}),
+    ("find credential by serial", "/find/credential", {"credential": act["physical_serial"], "next": "uc8_revoke"}),
+    ("find person by name and birth date", "/find/person",
+     {"person": act["legal_name"][:6], "born": act["date_of_birth"].isoformat(), "next": "uc9_initiate"}),
+]
 
 print("%-44s %6s %10s %10s" % ("page", "status", "median ms", "KB"))
 for path in PAGES:
@@ -67,3 +89,16 @@ for path in PAGES:
         if dt > 120000:
             break
     print("%-44s %6s %10.1f %10.1f" % (path, status, statistics.median(times) if times else dt, size / 1024), flush=True)
+
+for label, path, form in POSTS:
+    if only and only not in path and only not in label:
+        continue
+    times, status, size = [], None, 0
+    for i in range(runs + 1):
+        t0 = time.perf_counter()
+        resp = client.post(path, data=dict(form, csrf_token=csrf))
+        dt = (time.perf_counter() - t0) * 1000
+        status, size = resp.status_code, len(resp.data)
+        if i:
+            times.append(dt)
+    print("%-44s %6s %10.1f %10.1f" % ("POST " + label, status, statistics.median(times) if times else dt, size / 1024), flush=True)

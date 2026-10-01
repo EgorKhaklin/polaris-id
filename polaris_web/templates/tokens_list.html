@@ -2,8 +2,12 @@
 {% from "_pager.html" import render_pager %}
 {% block title %}Tokens{% endblock %}
 {% block content %}
+{% import "_ui.html" as ui with context %}
 <h1>Identity Tokens</h1>
 <p class="subtitle">The schema's central artifact. Every other relationship originates from or terminates at IdentityToken.</p>
+
+{# At any population the way to one credential is to look it up (lab/strategy/008). #}
+<div class="panel find-panel">{{ ui.find_credential('tokens_detail', label='Find a credential') }}</div>
 
 <form method="get" class="filter-row">
     <div class="form-group">

@@ -1,74 +1,79 @@
+{# UC-5, device binding. The page starts from one credential, found by what the operator holds
+   (lookup.py), and never lists the population (lab/strategy/008). uc5_bind_device holds the rule.
+   CSP C5: no inline script. #}
 {% extends "base.html" %}
-{% block title %}UC-5: Bind Device{% endblock %}
+{% block title %}Bind a device{% endblock %}
 {% block content %}
-<div class="uc-banner">
-    <div class="uc-id">Use Case 5</div>
-    <h1>Device Binding</h1>
-    <div class="uc-desc">
-        Atomic operation wrapping <code>uc5_bind_device</code>. Validates the token is in ACTIVE status,
-        creates a DeviceBinding record, and appends a <code>DEVICE_BOUND</code> lifecycle event with NULL
-        agency actor (the holder, not an agency, initiates device binding). The fingerprint is stored as
-        secure-enclave-attested metadata; no credential material is stored on a server.
+{% import "_ui.html" as ui with context %}
+{{ ui.page_head('Bind a device', eyebrow='Operations · UC-5',
+                lede='Records that the holder’s device carries this credential, attested by the device’s secure hardware. No credential material is stored on a server.') }}
+
+<div class="op">
+<div class="op-main">
+    <section class="panel" aria-labelledby="op-record-h">
+        <div class="panel-head"><h2 id="op-record-h">Credential</h2></div>
+        {% if credential %}
+            {{ ui.credential_card(credential, change=url_for('uc5_bind_device')) }}
+        {% else %}
+            {% if missing %}{{ ui.not_found('credential', missing) }}{% endif %}
+            {{ ui.find_credential('uc5_bind_device', autofocus=not missing) }}
+        {% endif %}
+    </section>
+
+    {% if credential and (credential.status != 'ACTIVE' or credential.past_expiry) %}
+    <div class="callout callout-warn" role="note">
+        {{ ui.icon('info') }}
+        <p>A device is bound only to an active credential within its validity, and this one is
+           {{ 'past its expiry' if credential.status == 'ACTIVE' else ui.state_words(credential.status) }}.</p>
     </div>
+    {% elif credential %}
+    <form method="post" class="panel op-form" aria-labelledby="op-act-h">
+        <div class="panel-head"><h2 id="op-act-h">Device</h2></div>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="token_id" value="{{ credential.token_id }}">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="device_type">Kind of device</label>
+                <select id="device_type" name="device_type" required>
+                    <option value="PHONE" selected>Phone</option>
+                    <option value="TABLET">Tablet</option>
+                    <option value="WATCH">Watch</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="binding_method">Attested by</label>
+                <select id="binding_method" name="binding_method" required>
+                    <option value="SECURE_ENCLAVE" selected>Secure enclave</option>
+                    <option value="TITAN_SECURITY">Titan security chip</option>
+                    <option value="TRUSTED_PLATFORM_MODULE">Trusted platform module</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="validity_months">Valid for (months)</label>
+                <input type="number" id="validity_months" name="validity_months" required min="1" max="60" value="12" inputmode="numeric">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="device_fingerprint">Device fingerprint</label>
+            <input type="text" id="device_fingerprint" name="device_fingerprint" required maxlength="128"
+                   class="mono" autocomplete="off" spellcheck="false" placeholder="SE-AAPL-A18-…"
+                   aria-describedby="fp-help">
+            <p class="help" id="fp-help">The fingerprint the device’s secure hardware attests. Two bindings cannot share one.</p>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">{{ ui.icon('smartphone') }}Bind the device to #{{ credential.token_id }}</button>
+            <a href="{{ url_for('tokens_detail', tok_id=credential.token_id) }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+    {% endif %}
 </div>
 
-{% if not active_tokens %}
-    <div class="flash flash-error">
-        <span class="flash-icon">⚠</span>
-        <span class="flash-text">UC-5 requires an ACTIVE token. There are currently no ACTIVE tokens to bind to.</span>
-    </div>
-{% endif %}
-
-<form method="post" class="standard">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="form-row">
-        <div class="form-group full">
-            <label for="token_id">Active Token</label>
-            <select id="token_id" name="token_id" required>
-                <option value="">Select&hellip;</option>
-                {% for t in active_tokens %}
-                    <option value="{{ t.token_id }}">#{{ t.token_id }}, {{ t.legal_name }} ({{ t.token_value }})</option>
-                {% endfor %}
-            </select>
-            <span class="help">Procedure rejects bindings to non-ACTIVE tokens.</span>
-        </div>
-    </div>
-
-    <div class="form-row">
-        <div class="form-group">
-            <label for="device_type">Device Type</label>
-            <select id="device_type" name="device_type" required>
-                <option value="PHONE" selected>PHONE</option>
-                <option value="TABLET">TABLET</option>
-                <option value="WATCH">WATCH</option>
-            </select>
-        </div>
-        <div class="form-group">
-            <label for="binding_method">Binding Method</label>
-            <select id="binding_method" name="binding_method" required>
-                <option value="SECURE_ENCLAVE" selected>SECURE_ENCLAVE</option>
-                <option value="TITAN_SECURITY">TITAN_SECURITY</option>
-                <option value="TRUSTED_PLATFORM_MODULE">TRUSTED_PLATFORM_MODULE</option>
-            </select>
-        </div>
-        <div class="form-group">
-            <label for="validity_months">Validity (months)</label>
-            <input type="number" id="validity_months" name="validity_months" required min="1" max="60" value="12">
-        </div>
-    </div>
-
-    <div class="form-row">
-        <div class="form-group full">
-            <label for="device_fingerprint">Device Fingerprint</label>
-            <input type="text" id="device_fingerprint" name="device_fingerprint" required maxlength="128"
-                   placeholder="SE-AAPL-A18-..." class="mono">
-            <span class="help">Unique secure-enclave-attested fingerprint. Must not collide with an existing binding.</span>
-        </div>
-    </div>
-
-    <div class="form-actions">
-        <button type="submit" class="btn btn-gold">Create Device Binding</button>
-        <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Cancel</a>
-    </div>
-</form>
+<aside class="panel op-rule" aria-labelledby="op-rule-h">
+    <div class="panel-head"><h2 id="op-rule-h">The rule</h2></div>
+    <p>A device is bound to an active credential that has not passed its expiry. The holder, not
+       an authority, binds a device, so the lifecycle records the binding with no acting
+       authority.</p>
+    <p class="muted">Enforced in the database by <span class="mono">uc5_bind_device</span>.</p>
+</aside>
+</div>
 {% endblock %}

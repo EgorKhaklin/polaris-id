@@ -1,119 +1,126 @@
+{# Record a verification. A full or selective disclosure names the credential it checked, found by
+   what the operator holds (lookup.py); the page never lists the population (lab/strategy/008). A
+   zero-knowledge verification names none, and the C2 CHECK refuses one that does. The holder-code
+   field keeps its neutral wording: this page is the surface a coercer can watch.
+   CSP C5: behaviour in static/verifications-form.js. #}
 {% extends "base.html" %}
-{% block title %}Record Verification{% endblock %}
+{% block title %}Record a verification{% endblock %}
 {% block content %}
-<h1>Record Verification Event</h1>
-<p class="subtitle">
-    Append a new VerificationEvent. The disclosure-consistency CHECK constraint enforces:
-    ZERO_KNOWLEDGE → token_id NULL; FULL → token_id NOT NULL; SELECTIVE → either.
-</p>
+{% import "_ui.html" as ui with context %}
+{{ ui.page_head('Record a verification', eyebrow='Verification',
+                lede='Appends what happened when a credential was presented to a verifier. The log is append-only: a recorded event is never changed.') }}
 
-<form method="post" class="standard wide">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="form-row">
-        <div class="form-group">
-            <label for="disclosure_level">Disclosure Level</label>
-            <select id="disclosure_level" name="disclosure_level" required>
-                <option value="SELECTIVE" selected>SELECTIVE (token optional)</option>
-                <option value="FULL">FULL (token required)</option>
-                <option value="ZERO_KNOWLEDGE">ZERO_KNOWLEDGE (token forbidden)</option>
-            </select>
-        </div>
-        <div class="form-group">
-            <label for="outcome">Outcome</label>
-            <select id="outcome" name="outcome" required>
-                <option value="SUCCESS" selected>SUCCESS</option>
-                <option value="FAILURE">FAILURE</option>
-                <option value="EXPIRED">EXPIRED</option>
-                <option value="UNAUTHORIZED">UNAUTHORIZED</option>
-            </select>
-        </div>
+<div class="op">
+<div class="op-main">
+    <section class="panel" aria-labelledby="op-record-h">
+        <div class="panel-head"><h2 id="op-record-h">Credential presented</h2></div>
+        {% if credential %}
+            {{ ui.credential_card(credential, change=url_for('verifications_new')) }}
+        {% else %}
+            {% if missing %}{{ ui.not_found('credential', missing) }}{% endif %}
+            {{ ui.find_credential('verifications_new', label='Credential (none for zero-knowledge)') }}
+        {% endif %}
+    </section>
+
+    {% set dead = credential and (credential.status != 'ACTIVE' or credential.past_expiry) %}
+    {% set ran_out = credential and (credential.status == 'EXPIRED' or (credential.status == 'ACTIVE' and credential.past_expiry)) %}
+    {% if dead %}
+    <div class="callout callout-warn" role="note">
+        {{ ui.icon('info') }}
+        <p>This credential is {{ 'past its expiry' if credential.status == 'ACTIVE' else ui.state_words(credential.status) }},
+           so a verification of it cannot have succeeded. Record the outcome it had.</p>
     </div>
-
-    <div class="form-row">
+    {% endif %}
+    <form method="post" class="panel op-form" aria-labelledby="op-act-h">
+        <div class="panel-head"><h2 id="op-act-h">Event</h2></div>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if credential %}<input type="hidden" id="token_id" name="token_id" value="{{ credential.token_id }}">{% endif %}
+        <div class="form-row">
+            <div class="form-group">
+                <label for="disclosure_level">Disclosure</label>
+                <select id="disclosure_level" name="disclosure_level" required aria-describedby="token-hint">
+                    <option value="SELECTIVE"{% if credential %} selected{% endif %}>Selective</option>
+                    <option value="FULL">Full</option>
+                    <option value="ZERO_KNOWLEDGE"{% if not credential %} selected{% endif %}>Zero-knowledge</option>
+                </select>
+                <p class="help" id="token-hint">{% if credential %}Full and selective disclosures name the credential above; a zero-knowledge one never does.{% else %}A zero-knowledge verification names no credential; full and selective ones name the credential found above.{% endif %}</p>
+            </div>
+            <div class="form-group">
+                <label for="outcome">Outcome</label>
+                <select id="outcome" name="outcome" required>
+                    <option value="SUCCESS"{% if not dead %} selected{% endif %}>Success</option>
+                    <option value="FAILURE"{% if dead and not ran_out %} selected{% endif %}>Failure</option>
+                    <option value="EXPIRED"{% if ran_out %} selected{% endif %}>Expired</option>
+                    <option value="UNAUTHORIZED">Unauthorized</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="requesting_agency_id">Verifier</label>
+                <select id="requesting_agency_id" name="requesting_agency_id" required>
+                    {% for ag in agencies %}
+                    <option value="{{ ag.agency_id }}"{% if ag.agency_id == verifier_default %} selected{% endif %}>{{ ag.name }} (#{{ ag.agency_id }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="context_id">Context</label>
+                <select id="context_id" name="context_id" required>
+                    {% for c in contexts %}
+                    <option value="{{ c.context_id }}">{{ c.context_type|replace('_', ' ')|title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="proof_commitment">Proof commitment</label>
+                <input type="text" id="proof_commitment" name="proof_commitment" maxlength="128"
+                       class="mono" autocomplete="off" spellcheck="false" placeholder="0x…" aria-describedby="proof-help">
+                <p class="help" id="proof-help">For a zero-knowledge verification: the hash of the proof that was checked.</p>
+            </div>
+            <div class="form-group">
+                <label for="requestor_location">Location</label>
+                <input type="text" id="requestor_location" name="requestor_location" maxlength="200"
+                       placeholder="City, region" aria-describedby="loc-help">
+                <p class="help" id="loc-help">Optional. Not stored for a zero-knowledge verification.</p>
+            </div>
+        </div>
+        {# Purpose lineage: the stated reason is kept permanently, so a coerced verification leaves
+           the coercer's stated context in the audit chain. 280 characters, a database CHECK. #}
         <div class="form-group">
-            <label for="token_id">Token (per disclosure rules)</label>
-            <select id="token_id" name="token_id">
-                <option value="">None (zero-knowledge)</option>
-                {% for t in tokens %}
-                    <option value="{{ t.token_id }}">#{{ t.token_id }}, {{ t.legal_name }} ({{ t.status }})</option>
-                {% endfor %}
-            </select>
-            <span class="help" id="token-hint">For SELECTIVE, optional. The disclosure-consistency check will reject inconsistent combinations.</span>
+            <label for="requesting_purpose_text">Stated purpose</label>
+            <input type="text" id="requesting_purpose_text" name="requesting_purpose_text" maxlength="280"
+                   autocomplete="off" placeholder="Border crossing, terminal 4, random check" aria-describedby="purpose-help">
+            <p class="help" id="purpose-help">Optional, and kept permanently with the event.</p>
         </div>
-        <div class="form-group">
-            <label for="context_id">Context</label>
-            <select id="context_id" name="context_id" required>
-                {% for c in contexts %}
-                    <option value="{{ c.context_id }}">{{ c.context_type }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="form-group">
-            <label for="requesting_agency_id">Requesting Agency</label>
-            <select id="requesting_agency_id" name="requesting_agency_id" required>
-                {% for ag in agencies %}
-                    <option value="{{ ag.agency_id }}">#{{ ag.agency_id }} {{ ag.name }}</option>
-                {% endfor %}
-            </select>
-        </div>
-    </div>
-
-    <div class="form-row">
-        <div class="form-group">
-            <label for="proof_commitment">Proof Commitment (for ZK)</label>
-            <input type="text" id="proof_commitment" name="proof_commitment" maxlength="128"
-                   placeholder="0x..." class="mono">
-            <span class="help">Hash of ZK proof for ZERO_KNOWLEDGE events.</span>
-        </div>
-        <div class="form-group">
-            <label for="requestor_location">Requestor Location (optional)</label>
-            <input type="text" id="requestor_location" name="requestor_location" maxlength="200"
-                   placeholder="City, State">
-        </div>
-    </div>
-
-    {# Verification-purpose lineage: an operator-supplied free-text reason for
-       this verification, kept permanently, so a coerced verification leaves
-       the coercer's stated context in the audit chain. Max 280 chars,
-       enforced by a DB CHECK. #}
-    <div class="form-row">
-        <div class="form-group" style="flex: 1 1 100%;">
-            <label for="requesting_purpose_text">Stated Purpose (optional)</label>
-            <input type="text" id="requesting_purpose_text"
-                   name="requesting_purpose_text" maxlength="280"
-                   placeholder="e.g., border crossing at JFK Terminal 4, random check"
-                   autocomplete="off">
-            <span class="help">
-                Free-text reason for this specific verification. Stored
-                permanently as audit-of-record (append-only). Leaving blank
-                is acceptable; including a reason creates an evidentiary
-                chain that makes coerced verifications traceable.
-            </span>
-        </div>
-    </div>
-
-    {# Optional holder code input. Anti-revealing posture: the label and
-       hint are deliberately neutral so a coercer
-       glancing at the operator's screen sees "secondary code", not "duress".
-       The backend in app.py reads request.form.get('duress_code'); on match
-       against IdentityToken.duress_code_hash (Werkzeug constant-time
-       comparison), a silent DuressEvent is written and the user-visible
-       verification flow proceeds identically. #}
-    <div class="form-row">
+        {# The holder code: neutral wording, deliberately (docs/design/duress-codes.md). The handler
+           compares it in constant time with the credential's enrolled code and proceeds the same
+           either way. It needs a credential: a zero-knowledge flow names none. #}
         <div class="form-group">
             <label for="duress_code">Holder verification code (optional)</label>
-            <input type="text" id="duress_code" name="duress_code"
-                   maxlength="64" autocomplete="off">
-            <span class="help">Secondary input per token-holder policy; applies only with the token reference above. Leave blank if not applicable.</span>
+            <input type="text" id="duress_code" name="duress_code" maxlength="64" autocomplete="off"
+                   spellcheck="false" aria-describedby="code-help">
+            <p class="help" id="code-help">Secondary input per token-holder policy; applies only with the token reference above. Leave blank if not applicable.</p>
         </div>
-    </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">{{ ui.icon('shield-check') }}Record the event</button>
+            <a href="{{ url_for('verifications_list') }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
 
-    <div class="form-actions">
-        <button type="submit" class="btn">Record Event</button>
-        <a href="{{ url_for('verifications_list') }}" class="btn btn-secondary">Cancel</a>
-    </div>
-</form>
-
+<aside class="panel op-rule" aria-labelledby="op-rule-h">
+    <div class="panel-head"><h2 id="op-rule-h">The rule</h2></div>
+    <p>A zero-knowledge verification stores no credential, and a full one always names its
+       credential; the database refuses any other combination.</p>
+    <p>A success is recorded only when it could have happened: the credential is active and within
+       its validity, permitted in the context, and its issuer is trusted by the verifier for that
+       context. Anything else is recorded as the outcome it had.</p>
+    <p class="muted">The disclosure rule is the <span class="mono">chk_disclosure_token_consistency</span> CHECK.</p>
+</aside>
+</div>
 {% endblock %}
 
 {% block scripts %}

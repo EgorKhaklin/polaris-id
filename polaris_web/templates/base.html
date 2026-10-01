@@ -63,7 +63,7 @@
         <div class="main-col">
             <header class="topbar">
                 <button type="button" class="icon-btn sidebar-toggle" data-nav-toggle aria-controls="sidebar" aria-expanded="false" aria-label="Open navigation">{{ ui.icon('menu') }}</button>
-                <nav class="topbar-context" aria-label="Breadcrumb">{{ ui.crumbs(request.endpoint, self.title()) }}</nav>
+                <nav class="topbar-context" aria-label="Breadcrumb">{{ ui.crumbs(crumb_endpoint or request.endpoint, self.title()) }}</nav>
                 <div class="topbar-spacer"></div>
                 <button type="button" class="icon-btn theme-toggle" data-theme-toggle aria-label="Change theme (system, light, dark)" title="Theme">
                     <span class="icon-theme icon-theme-system">{{ ui.icon('monitor') }}</span>

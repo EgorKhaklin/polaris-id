@@ -3,8 +3,8 @@
 **Opened 2026-10-01.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md),
 on the owner's direction of 2026-10-01: Polaris is to hold eight billion credentials and more, for
 as long as it runs. State: OPEN. The falsifiers in section 10 were written before the changes they
-judge; section 11 records what they found. Step 1, the Overview, is done; the operation forms,
-the lists, the detail pages and the 64-bit keys are next.
+judge; sections 11 and 12 record what they found. Step 1, the Overview, and step 2, the
+operation forms, are done; the lists, the detail pages and the 64-bit keys are next.
 
 ---
 
@@ -48,10 +48,11 @@ Two things in the tree stop holding against that:
   their sequences, the routines that take or return them, and the views that read them.
 - **Console:** figures that are exact at any size or bounded and labelled (`polaris_web/population.py`);
   lists paged by key instead of by offset; record lookup by identifier instead of dropdowns of the
-  population; counts formatted for thirteen digits.
+  population (`polaris_web/lookup.py`); counts formatted for thirteen digits.
 - **Exact counts at any population:** `PopulationCount`, kept by statement triggers that only append
   signed changes, so a writer never waits on a counter row (migration 2026-10-01-005).
-- **Indexes** the bounded queries need, added as expand-only migrations (2026-10-01-004).
+- **Indexes** the bounded queries need, added as expand-only migrations (2026-10-01-004, and
+  -006 for the person lookup).
 
 ## 2. What problem would it solve?
 
@@ -138,3 +139,33 @@ persons, 3,640,007 credentials and 10,000,010 verifications ([008/gen.sql](008/g
   s on the seed (1.3 times). The forms, the lists and the detail pages still fail it.
 - **Falsifier 5** holds: on the seed every Overview figure is exact (a test).
 - **Falsifier 3** is untested: the keys are still 32-bit.
+
+## 12. What the falsifiers found (step 2, the operation forms)
+
+Seven forms (UC-4, UC-5, UC-6, UC-7, UC-8, UC-9's first phase, and recording a verification)
+rendered a dropdown of every active credential, every credential or every person. Each now starts
+from one record, opened from that record's own page or found by what the operator holds:
+a credential by its number, token value or card serial (three unique indexes, read one at a time),
+a person by number or by the beginning of the name with the date of birth
+(`idx_individual_birth_name`, migration 2026-10-01-006, at most 20 rows and a "more" mark).
+
+- **Falsifier 2** is `test_every_lookup_has_a_bounded_plan`: every lookup and every form opened on
+  the record it found, run with EXPLAIN ANALYZE over the synthetic population, reads no scan
+  beyond 80 rows. Its control, `test_the_person_lookup_needs_its_index`, drops the index and must
+  fail: a name search then reads everyone born that day. The first draft looked a credential up
+  with one `token_value = $1 OR physical_serial = $1 OR token_id = $2`; with bitmap scans priced
+  out, as they are at scale, that plan reads the whole table, so it is three lookups.
+- **Falsifier 1** holds for all seven. Opened on a record, at two million persons each costs
+  7.5 to 16 ms, within 1.2 times its time on the seed; listing a population, they took 1.7 s to
+  39 s and up to 629 MB of HTML. A lookup costs 6 to 12 ms at either size
+  ([008/BENCH.md](008/BENCH.md), step 2).
+- **What the operator typed never reaches a URL.** The lookup is a POST; the page it leads to
+  names the record by its number (the relying-party API keeps identifiers out of URLs the same
+  way). A credential another authority issued reads exactly as one that does not exist, to an
+  operator bound to one authority (a test compares the two answers).
+- **Found on the way, recorded rather than folded in:** UC-4 asked the operator's binding about the
+  lost credential and not the reserve it activates (closed in its own commit); the warrant audit's
+  own comment says zero-knowledge events come back redacted, while its query returns none of them
+  (the page now says what the query does; the comment is corrected with the next migration that
+  replaces the function); and `uc8_revoke_token` counts an authority's every credential, and every
+  revocation in the window, on each revocation (open: the engine half of the next step).

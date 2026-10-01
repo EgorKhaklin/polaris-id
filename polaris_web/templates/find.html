@@ -1,0 +1,51 @@
+{# The answer to a lookup that did not lead straight to one record (lookup.py): nothing matched, or
+   several did. What the operator typed comes back in the field and nowhere else: it never reaches a
+   URL (lab/strategy/008). Each match leads to the page that asked, by its number. #}
+{% extends "base.html" %}
+{% block title %}{{ 'Find a credential' if kind == 'credential' else 'Find a person' }}{% endblock %}
+{% block content %}
+{% import "_ui.html" as ui with context %}
+{{ ui.page_head('Find a credential' if kind == 'credential' else 'Find a person', eyebrow=purpose) }}
+
+<section class="panel find-page" aria-labelledby="find-h">
+    <div class="panel-head"><h2 id="find-h">{{ 'Search again' if not rows else 'Matches' }}</h2></div>
+    {% if kind == 'credential' %}
+        {{ ui.find_credential(next, text=text, autofocus=not rows) }}
+    {% else %}
+        {{ ui.find_person(next, text=text, born=born, autofocus=not rows) }}
+    {% endif %}
+
+    {% if note %}
+    <div class="callout callout-warn" role="alert">{{ ui.icon('info') }}<p>{{ note }}</p></div>
+    {% elif not rows %}
+    <div class="callout callout-warn" role="alert">{{ ui.icon('triangle-alert') }}<p>
+        {%- if kind == 'credential' %}No credential has that number, token value or card serial.
+        {%- else %}No one matches. A name is matched from its beginning, as recorded, with the date of birth.{% endif -%}
+    </p></div>
+    {% endif %}
+
+    {% if rows %}
+    <ul class="match-list" aria-label="Matches">
+        {% for r in rows %}
+        <li>
+            {% if kind == 'credential' %}
+            <a class="match" href="{{ url_for(next, **{param: r.token_id}) }}">
+                <span class="mono match-id">#{{ r.token_id }}</span>
+                <span class="match-main">{{ r.legal_name }}</span>
+                {{ ui.pill(r.status) }}
+                <span class="match-meta">{{ r.issuer_name }} · <span class="mono">{{ r.token_value }}</span> · <span class="mono">{{ r.physical_serial }}</span></span>
+            </a>
+            {% else %}
+            <a class="match" href="{{ url_for(next, **{param: r.individual_id}) }}">
+                <span class="mono match-id">#{{ r.individual_id }}</span>
+                <span class="match-main">{{ r.legal_name }}</span>
+                <span class="match-meta">Born {{ r.date_of_birth.strftime('%Y-%m-%d') }} · <span class="mono">{{ r.jurisdiction }}</span></span>
+            </a>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% if more %}<p class="help">The first {{ rows|length }} are shown. Type more of the name to narrow them.</p>{% endif %}
+    {% endif %}
+</section>
+{% endblock %}

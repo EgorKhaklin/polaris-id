@@ -28,9 +28,10 @@ check_route_modules_register_under_both_entry_points pins that ordering.
 """
 import psycopg2
 
-from flask import flash, redirect, render_template, request, url_for
+from flask import flash, redirect, render_template, request, session, url_for
 
 import app as _app          # for _METRICS_VERIFICATIONS only; see the note above
+import lookup
 import security
 from app import (
     _not_expired,
@@ -260,6 +261,14 @@ def _federation_trust_holds(verifier_agency_id, token_id, context_id):
     return match is not None
 
 
+def _back_to_the_form(token_id):
+    """The form again after a refusal, on the credential the refused event named (lookup.py),
+    so the operator corrects the event instead of finding the credential a second time."""
+    if token_id is None:
+        return url_for('verifications_new')
+    return url_for('verifications_new', token_id=token_id)
+
+
 @app.route('/verifications/new', methods=['GET', 'POST'])
 @security.login_required
 @security.require_role('admin', 'operator')
@@ -298,7 +307,7 @@ def verifications_new():
             if outcome == 'SUCCESS' and disclosure == 'SELECTIVE' and token_id_val is None:
                 flash('A SELECTIVE success names the credential it verified, so its issuer, status '
                       'and context can be checked. Enter its token.', 'error')
-                return redirect(url_for('verifications_new'))
+                return redirect(_back_to_the_form(token_id_val))
 
             # R11-3 federation check: only gates SUCCESS outcomes. FAILURE,
             # UNAUTHORIZED, EXPIRED already represent denied verifications;
@@ -311,7 +320,7 @@ def verifications_new():
                     'the outcome as UNAUTHORIZED, or create the attestation '
                     'first.',
                     'error')
-                return redirect(url_for('verifications_new'))
+                return redirect(_back_to_the_form(token_id_val))
 
             # 1.0.0-rc.22: nor on a credential that is no longer live. The federation gate above
             # refuses a SUCCESS the trust graph does not support because the audit-of-record
@@ -337,7 +346,7 @@ def verifications_new():
                     flash('Token %s is %s, so a verification of it cannot have succeeded. '
                           'Record the outcome it actually had (FAILURE, or EXPIRED for an '
                           'expired credential).' % (token_id_val, state), 'error')
-                    return redirect(url_for('verifications_new'))
+                    return redirect(_back_to_the_form(token_id_val))
 
             # 2026-09-30: nor in a context the credential is not permitted in. TokenPermission
             # controls which contexts a token is permitted in, and a presentation outside them is
@@ -347,7 +356,7 @@ def verifications_new():
                     (token_id_val, context_id), fetch='one'):
                 flash('Token %s is not permitted in this context, so a verification of it there '
                       'cannot have succeeded. Record the outcome as UNAUTHORIZED.' % token_id_val, 'error')
-                return redirect(url_for('verifications_new'))
+                return redirect(_back_to_the_form(token_id_val))
 
             # R11-5 / M2-10 duress-code check (compulsion resistance, PDF §9.5).
             # If a duress_code is supplied AND the token has an enrolled
@@ -411,14 +420,17 @@ def verifications_new():
             if _quota_refused(e, 'verify', request.form.get('requesting_agency_id')):
                 status = 429
 
-    tokens = query("""
-        SELECT t.token_id, i.legal_name, t.token_value, t.status
-        FROM   IdentityToken t JOIN Individual i ON t.individual_id = i.individual_id
-        ORDER BY t.token_id
-    """)
+    # The credential presented, by number (lookup.py): a lookup led here with it, or a refused
+    # POST named it. A zero-knowledge record names none. The page never lists the population.
+    raw = request.form.get('token_id') if request.method == 'POST' else request.args.get('token_id')
+    credential, missing = lookup.chosen_credential(query, raw)
     agencies = query('SELECT * FROM Agency ORDER BY agency_id')
     contexts = query('SELECT * FROM VerificationContext ORDER BY context_id')
+    bound = session.get('operator_agency_id')
+    if missing and request.method == 'GET' and status == 200:
+        status = 404
     return render_template('verifications_form.html',
-                           tokens=tokens,
+                           credential=credential, missing=missing,
+                           verifier_default=int(bound) if bound is not None else None,
                            agencies=agencies,
                            contexts=contexts), status

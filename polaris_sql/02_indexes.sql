@@ -349,3 +349,11 @@ DROP INDEX IF EXISTS idx_verificationevent_token_time;
 CREATE INDEX idx_verificationevent_token_time
     ON VerificationEvent (token_id, event_timestamp DESC)
     WHERE token_id IS NOT NULL;
+
+-- A person found by date of birth and the beginning of the name as recorded (lookup.py): the
+-- operation forms look a person up instead of listing everyone. The C collation makes a LIKE
+-- prefix an index range and gives the order, so the lookup stops after its limit however many
+-- people share a birthday.
+DROP INDEX IF EXISTS idx_individual_birth_name;
+CREATE INDEX idx_individual_birth_name
+    ON Individual (date_of_birth, (lower(legal_name)) COLLATE "C", individual_id);

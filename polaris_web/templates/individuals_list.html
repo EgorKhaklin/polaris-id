@@ -2,8 +2,12 @@
 {% from "_pager.html" import render_pager %}
 {% block title %}Individuals{% endblock %}
 {% block content %}
+{% import "_ui.html" as ui with context %}
 <h1>Individuals</h1>
 <p class="subtitle">Natural persons enrolled in the system. Each individual may hold one ACTIVE token plus any number of RESERVE/DORMANT/terminal tokens.</p>
+
+{# At any population the way to one person is to look them up (lab/strategy/008). #}
+<div class="panel find-panel">{{ ui.find_person('investigate_individual') }}</div>
 
 <div class="actions-bar">
     {# individuals_new is admin-only; hide it from roles that would 403 #}

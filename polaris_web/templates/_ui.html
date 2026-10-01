@@ -106,3 +106,101 @@
 {%- endif -%}
 </ol>
 {%- endmacro %}
+
+{# Where an operation starts at any population (lab/strategy/008): the operator types what they
+   hold, it travels in a POST body to /find/credential (never in a URL), and the page `next`
+   names comes back with the credential's number. #}
+{% macro find_credential(next, text='', label='Find the credential', autofocus=False) -%}
+<form method="post" action="{{ url_for('find_credential') }}" class="find" role="search" aria-label="Find a credential">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label for="find-credential">{{ label }}</label>
+    <div class="find-row">
+        <input type="search" id="find-credential" name="credential" value="{{ text }}" required
+               maxlength="128" class="mono" autocomplete="off" spellcheck="false"
+               aria-describedby="find-credential-help"{% if autofocus %} autofocus{% endif %}>
+        <button type="submit" class="btn btn-primary">{{ icon('search') }}Find</button>
+    </div>
+    <p class="help" id="find-credential-help">Its number (#1234), its token value or its card serial.</p>
+</form>
+{%- endmacro %}
+
+{# The same for a person: a number, or a name with the date of birth. #}
+{% macro find_person(next, text='', born='', autofocus=False) -%}
+<form method="post" action="{{ url_for('find_person') }}" class="find" role="search" aria-label="Find a person">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <div class="find-fields">
+        <div class="form-group">
+            <label for="find-person">Name or person number</label>
+            <input type="search" id="find-person" name="person" value="{{ text }}" required
+                   maxlength="200" autocomplete="off" spellcheck="false"
+                   aria-describedby="find-person-help"{% if autofocus %} autofocus{% endif %}>
+        </div>
+        <div class="form-group">
+            <label for="find-born">Date of birth</label>
+            <input type="date" id="find-born" name="born" value="{{ born }}"
+                   aria-describedby="find-person-help">
+        </div>
+        <button type="submit" class="btn btn-primary">{{ icon('search') }}Find</button>
+    </div>
+    <p class="help" id="find-person-help">A number (#1234) alone, or the beginning of the name as recorded with the date of birth.</p>
+</form>
+{%- endmacro %}
+
+{# A credential's state as a sentence reads it: "this one is a reserve", "is revoked". #}
+{% macro state_words(status) -%}
+{{ {'RESERVE': 'a reserve', 'DORMANT': 'dormant'}.get(status, status|lower) }}
+{%- endmacro %}
+
+{# One credential, as an operation shows it before acting on it. #}
+{% macro credential_card(c, change=None) -%}
+<div class="record">
+    <div class="record-head">
+        <a class="record-id mono" href="{{ url_for('tokens_detail', tok_id=c.token_id) }}">#{{ c.token_id }}</a>
+        {{ pill(c.status) }}
+        {% if c.past_expiry %}<span class="pill pill-EXPIRED">Past its expiry</span>{% endif %}
+        {% if change %}<a class="record-change" href="{{ change }}">Choose another</a>{% endif %}
+    </div>
+    <dl class="kv">
+        <dt>Holder</dt>
+        <dd><a href="{{ url_for('investigate_individual', ind_id=c.individual_id) }}">{{ c.legal_name }}</a> <span class="muted mono">#{{ c.individual_id }}</span></dd>
+        <dt>Issuer</dt>
+        <dd>{{ c.issuer_name }}</dd>
+        <dt>Algorithm</dt>
+        <dd><span class="mono">{{ c.algorithm_name }}</span>
+            {% if c.quantum_resistant %}<span class="type-tag type-tag-pq">PQ</span>{% else %}<span class="type-tag">Classical</span>{% endif %}</dd>
+        <dt>Token value</dt>
+        <dd class="mono">{{ c.token_value }}</dd>
+        <dt>Card serial</dt>
+        <dd class="mono">{{ c.physical_serial }}</dd>
+        <dt>Expires</dt>
+        <dd>{{ c.expiration_date.strftime('%Y-%m-%d') if c.expiration_date else 'No expiry' }}</dd>
+    </dl>
+</div>
+{%- endmacro %}
+
+{# One person, as an operation shows them before acting. #}
+{% macro person_card(p, change=None) -%}
+<div class="record">
+    <div class="record-head">
+        <a class="record-id mono" href="{{ url_for('investigate_individual', ind_id=p.individual_id) }}">#{{ p.individual_id }}</a>
+        <strong class="record-name">{{ p.legal_name }}</strong>
+        {% if change %}<a class="record-change" href="{{ change }}">Choose another</a>{% endif %}
+    </div>
+    <dl class="kv">
+        <dt>Date of birth</dt>
+        <dd>{{ p.date_of_birth.strftime('%Y-%m-%d') }}</dd>
+        <dt>Jurisdiction</dt>
+        <dd class="mono">{{ p.jurisdiction }}</dd>
+        <dt>Enrolled</dt>
+        <dd>{{ p.enrollment_date.strftime('%Y-%m-%d') }}</dd>
+    </dl>
+</div>
+{%- endmacro %}
+
+{# What a page says when the record it was asked to act on is not there, or not visible to this
+   operator: the two read the same (lookup.py). `missing` is the number asked for, or '?'. #}
+{% macro not_found(kind, missing) -%}
+<div class="callout callout-warn" role="alert">{{ icon('triangle-alert') }}<p>No {{ kind }} matches {% if missing is number %}#{{ missing }}{% else %}that number{% endif %}.</p></div>
+{%- endmacro %}

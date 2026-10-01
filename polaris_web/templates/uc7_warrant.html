@@ -1,104 +1,105 @@
+{# UC-7, warrant-authorized verification history. The page starts from one person, found by number,
+   or by name with the date of birth (lookup.py), and never lists the population
+   (lab/strategy/008). uc7_warrant_audit holds the redaction; the route records the query, never its
+   results, in the audit of record. CSP C5: no inline script. #}
 {% extends "base.html" %}
-{% block title %}UC-7: Warrant Audit{% endblock %}
+{% block title %}Warrant audit{% endblock %}
 {% block content %}
-<div class="uc-banner">
-    <div class="uc-id">Use Case 7</div>
-    <h1>Warrant-Authorized Verification History Review</h1>
-    <div class="uc-desc">
-        Wraps <code>uc7_warrant_audit</code>. Reconstructs an individual's verification history under
-        legal authority, returning identifying data only for SELECTIVE and FULL events. ZERO_KNOWLEDGE
-        events are returned with <code>token_id</code> and <code>legal_name</code> redacted to NULL:
-        the schema never stored those fields, so no warrant can recover them.
-    </div>
+{% import "_ui.html" as ui with context %}
+{{ ui.page_head('Warrant audit', eyebrow='Audit · UC-7',
+                lede='One person’s verification history, read under legal authority. Every query is recorded in the audit of record; its results are not.') }}
+
+<div class="op">
+<div class="op-main">
+    <section class="panel" aria-labelledby="op-record-h">
+        <div class="panel-head"><h2 id="op-record-h">Subject</h2></div>
+        {% if person %}
+            {{ ui.person_card(person, change=url_for('uc7_warrant_audit')) }}
+        {% else %}
+            {% if missing %}{{ ui.not_found('person', missing) }}{% endif %}
+            {{ ui.find_person('uc7_warrant_audit', autofocus=not missing) }}
+        {% endif %}
+    </section>
+
+    {% if person %}
+    <form method="post" class="panel op-form" aria-labelledby="op-act-h">
+        <div class="panel-head"><h2 id="op-act-h">Warrant scope</h2></div>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="individual_id" value="{{ person.individual_id }}">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="window_start">From</label>
+                <input type="datetime-local" id="window_start" name="window_start" value="{{ scope.window_start or '' }}" aria-describedby="window-help">
+            </div>
+            <div class="form-group">
+                <label for="window_end">Until</label>
+                <input type="datetime-local" id="window_end" name="window_end" value="{{ scope.window_end or '' }}" aria-describedby="window-help">
+            </div>
+            <div class="form-group">
+                <label for="context_filter">Context</label>
+                <select id="context_filter" name="context_filter">
+                    <option value="">Every context</option>
+                    {% for c in contexts %}
+                    <option value="{{ c.context_type }}"{% if scope.context_filter == c.context_type %} selected{% endif %}>{{ c.context_type|replace('_', ' ')|title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <p class="help" id="window-help">Leave the window open at either end to read from the first record or to the latest. Times are UTC.</p>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">{{ ui.icon('gavel') }}Read the history</button>
+            <a href="{{ url_for('investigate_individual', ind_id=person.individual_id) }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+    {% endif %}
+
 </div>
 
-<form method="post" class="standard wide">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="form-row">
-        <div class="form-group">
-            <label for="individual_id">Subject (Individual ID)</label>
-            <select id="individual_id" name="individual_id" required>
-                <option value="">Select&hellip;</option>
-                {% for i in individuals %}
-                    <option value="{{ i.individual_id }}" {% if individual_id == i.individual_id %}selected{% endif %}>
-                        #{{ i.individual_id }}: {{ i.legal_name }} ({{ i.jurisdiction }})
-                    </option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="form-group">
-            <label for="context_filter">Context Filter (optional)</label>
-            <select id="context_filter" name="context_filter">
-                <option value="">All contexts</option>
-                {% for c in ['BANKING', 'EMPLOYMENT', 'HEALTHCARE', 'TRAVEL', 'VOTING', 'MOTOR_VEHICLE', 'GOVERNMENT_BENEFITS'] %}
-                    <option value="{{ c }}">{{ c }}</option>
-                {% endfor %}
-            </select>
-        </div>
-    </div>
-
-    <div class="form-row">
-        <div class="form-group">
-            <label for="window_start">Window Start (optional)</label>
-            <input type="datetime-local" id="window_start" name="window_start">
-        </div>
-        <div class="form-group">
-            <label for="window_end">Window End (optional)</label>
-            <input type="datetime-local" id="window_end" name="window_end">
-        </div>
-    </div>
-
-    <div class="form-actions">
-        <button type="submit" class="btn btn-gold">Execute Warrant Query</button>
-        <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Cancel</a>
-    </div>
-</form>
+<aside class="panel op-rule" aria-labelledby="op-rule-h">
+    <div class="panel-head"><h2 id="op-rule-h">What a warrant can read</h2></div>
+    <p>Only verifications that named one of the person’s credentials: every full disclosure, and a
+       selective disclosure that named its credential. Each is returned with the credential, the
+       verifier and the place it was recorded.</p>
+    <p>A zero-knowledge verification never stored which credential it checked, so it cannot be
+       attributed to this person, and no warrant returns it.</p>
+    <p class="muted">Read in the database by <span class="mono">uc7_warrant_audit</span>; the query is
+       recorded in <span class="mono">AuditAccessLog</span>.</p>
+</aside>
+</div>
 
 {% if results is not none %}
-<h2>Warrant Results ({{ results|length }} event{{ '' if results|length == 1 else 's' }})</h2>
-{% if results %}
-<table class="data">
-    <thead>
-        <tr>
-            <th>Event</th><th>Timestamp</th><th>Context</th><th>Verifier</th>
-            <th>Outcome</th><th>Disclosure</th><th>Holder</th><th>Token</th><th>Location</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for r in results %}
-        <tr>
-            <td>#{{ r.event_id }}</td>
-            <td>{{ r.event_timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
-            <td>{{ r.context_type }}</td>
-            <td>{{ r.requesting_agency }}</td>
-            <td><span class="pill pill-{{ r.outcome|lower }}">{{ r.outcome }}</span></td>
-            <td><span class="pill pill-{{ r.disclosure_level|lower }}">{{ r.disclosure_level }}</span></td>
-            <td>
-                {%- if r.legal_name %}{{ r.legal_name }}
-                {%- else %}<em style="color: var(--steel-light);">[redacted: ZK]</em>{% endif %}
-            </td>
-            <td>
-                {%- if r.token_id %}#{{ r.token_id }}
-                {%- else %}<em style="color: var(--steel-light);">[redacted: ZK]</em>{% endif %}
-            </td>
-            <td>
-                {%- if r.requestor_location %}{{ r.requestor_location }}
-                {%- else %}<em style="color: var(--steel-light);">none</em>{% endif %}
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
-<p style="font-size: 12px; color: var(--steel); margin-top: 8px;">
-    The warrant query returns events for this individual. ZERO_KNOWLEDGE events show with token-identifying
-    fields redacted; the schema never stored those values for ZK verifications.
-</p>
-{% else %}
-<table class="data">
-    <tbody>
-        <tr><td class="empty">No verification events match the warrant parameters.</td></tr>
-    </tbody>
-</table>
-{% endif %}
+<section class="panel op-results" aria-labelledby="op-res-h">
+    <div class="panel-head">
+        <h2 id="op-res-h">History</h2>
+        <span class="muted">{{ results|length|num }} event{{ '' if results|length == 1 else 's' }}</span>
+    </div>
+    {% if results %}
+    <div class="table-wrap">
+    <table class="data">
+        <thead>
+            <tr><th scope="col">Event</th><th scope="col">When (UTC)</th><th scope="col">Context</th><th scope="col">Verifier</th>
+                <th scope="col">Outcome</th><th scope="col">Disclosure</th><th scope="col">Holder</th><th scope="col">Credential</th><th scope="col">Location</th></tr>
+        </thead>
+        <tbody>
+            {% for r in results %}
+            <tr>
+                <td class="mono">#{{ r.event_id }}</td>
+                <td class="mono">{{ r.event_timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td class="mono">{{ r.context_type }}</td>
+                <td>{{ r.requesting_agency }}</td>
+                <td>{{ ui.pill(r.outcome) }}</td>
+                <td>{{ ui.pill(r.disclosure_level) }}</td>
+                <td>{% if r.legal_name %}{{ r.legal_name }}{% else %}<span class="redacted">Not stored</span>{% endif %}</td>
+                <td>{% if r.token_id %}<span class="mono">#{{ r.token_id }}</span>{% else %}<span class="redacted">Not stored</span>{% endif %}</td>
+                <td>{% if r.requestor_location %}{{ r.requestor_location }}{% else %}<span class="muted">None</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="empty">No verification of this person’s credentials falls within the warrant’s scope.</p>
+    {% endif %}
+</section>
 {% endif %}
 {% endblock %}

@@ -1,10 +1,30 @@
 {% extends "base.html" %}
 {% block title %}Token #{{ token.token_id }}{% endblock %}
 {% block content %}
+{% import "_ui.html" as ui with context %}
 <h1>
     Token #{{ token.token_id }}
     <span class="pill pill-{{ token.status|lower }}" style="font-size: 13px; vertical-align: middle;">{{ token.status }}</span>
 </h1>
+
+{# The operations act on this credential from here (docs/design/console-design.md: actions live on
+   the thing they act on); each opens on this credential and lists nothing (lab/strategy/008). Only
+   the actions its state admits are offered; the procedures refuse the rest regardless. #}
+{% if current_user.role in ('admin', 'operator') %}
+<nav class="record-actions" aria-label="Act on this credential">
+    {% if token.status == 'ACTIVE' %}
+    <a class="btn btn-sm" href="{{ url_for('uc4_activate_reserve', token_id=token.token_id) }}">{{ ui.icon('power') }}Report lost, activate a reserve</a>
+    <a class="btn btn-sm" href="{{ url_for('uc5_bind_device', token_id=token.token_id) }}">{{ ui.icon('smartphone') }}Bind a device</a>
+    {% endif %}
+    {% if token.status in ('ACTIVE', 'RESERVE') %}
+    <a class="btn btn-sm" href="{{ url_for('uc6_migrate', token_id=token.token_id) }}">{{ ui.icon('arrow-right-left') }}Migrate the algorithm</a>
+    {% endif %}
+    <a class="btn btn-sm" href="{{ url_for('verifications_new', token_id=token.token_id) }}">{{ ui.icon('shield-check') }}Record a verification</a>
+    {% if token.status not in ('REVOKED', 'LOST', 'EXPIRED') %}
+    <a class="btn btn-sm btn-danger" href="{{ url_for('uc8_revoke', token_id=token.token_id) }}">{{ ui.icon('octagon-x') }}Revoke</a>
+    {% endif %}
+</nav>
+{% endif %}
 
 <dl class="detail-grid">
     <div><dt>Token Value</dt><dd class="mono">{{ token.token_value }}</dd></div>

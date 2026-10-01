@@ -72,6 +72,33 @@ over three runs at scale, after a first pass that read 877 ms and 29.5 s from a 
   eight billion), the lists' offset paging, the enrollment summary (a `DISTINCT ON` over every
   enrollment event), `/duress` (two full counts), the recovery form and the Atlas.
 
+## Step 2: the operation forms (2026-10-01)
+
+Each form now opens on one record, found by lookup (`polaris_web/lookup.py`), and the lookups are
+POSTs, timed here with the same harness ([bench.py](bench.py), five runs after a warm-up). The
+seed is the seed load with three more credentials, so that a holder has an active credential and
+two reserves; the scale database is the one above, with migration 2026-10-01-006's index (built
+in 1.8 s over the two million persons; 77 MB). "Before" is the scale time after step 1, which did
+not change these pages.
+
+| Page | Seed (ms) | Scale before (ms, page size) | Scale after (ms) | After / seed | Falsifier 1 |
+|---|---|---|---|---|---|
+| `/uc4/activate-reserve`, opened on the lost credential | 11.8 | 20192 (328,958 kB) | 13.8 | 1.2 | holds |
+| `/uc5/bind-device`, opened on a credential | 6.5 | 12437 (219,310 kB) | 7.5 | 1.2 | holds |
+| `/uc6/migrate`, opened on a credential | 12.2 | 39284 (628,802 kB) | 13.4 | 1.1 | holds |
+| `/uc7/warrant-audit`, opened on a person | 8.7 | 13478 (289,731 kB) | 9.1 | 1.0 | holds |
+| `/uc8/revoke`, opened on a credential | 9.6 | 19674 (458,264 kB) | 10.1 | 1.1 | holds |
+| `/uc9/initiate-recovery`, opened on a person | 14.2 | 1726 (18 kB) | 16.0 | 1.1 | holds |
+| `/verifications/new`, opened on a credential | 12.1 | 24304 (367,046 kB) | 12.5 | 1.0 | holds |
+| POST `/find/credential`, by number | 12.2 | | 12.4 | 1.0 | holds |
+| POST `/find/credential`, by token value | 10.4 | | 10.1 | 1.0 | holds |
+| POST `/find/credential`, by card serial | 9.7 | | 9.8 | 1.0 | holds |
+| POST `/find/person`, name and date of birth | 5.8 | | 6.9 | 1.2 | holds |
+
+Every page opened on a record is 16 to 21 kB. At scale the person lookup listed the first 20 of the
+people born that day whose names begin as typed, and said there were more (22.5 kB); on the seed
+it found one person and went straight to the page.
+
 ## Estimates checked against exact counts (falsifier 4)
 
 Both estimators the step first tried were measured here and dropped (record 008, section 11): a

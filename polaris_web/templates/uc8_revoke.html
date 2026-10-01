@@ -1,95 +1,92 @@
+{# UC-8, bounded revocation. The page starts from one credential, found by what the operator holds
+   (lookup.py), and never lists the population (lab/strategy/008). uc8_revoke_token holds the rule;
+   this page states it before the irreversible step. CSP C5: no inline script. #}
 {% extends "base.html" %}
-{% block title %}UC-8: Bounded Revocation{% endblock %}
+{% block title %}Revoke a credential{% endblock %}
 {% block content %}
-<div class="uc-banner">
-    <div class="uc-id">Use Case 8</div>
-    <h1>Bounded Revocation</h1>
-    <div class="uc-desc">
-        Atomic operation wrapping <code>uc8_revoke_token</code>. Transitions the token to <code>REVOKED</code> and publishes
-        a <code>RevocationList</code> row in the same transaction. Enforces a per-agency rolling-window rate bound
-        (system default <strong>5%</strong> of an agency's outstanding tokens per <strong>30 days</strong>). Above the bound a
-        co-signer is required: the co-signer must hold <code>BOTH</code> on the token's algorithm and must differ from the actor.
-        This is the constitutional limit on issuer discretion: no single agency can revoke faster than its declared bound without a second signature.
-    </div>
-</div>
+{% import "_ui.html" as ui with context %}
+{{ ui.page_head('Revoke a credential', eyebrow='Operations · UC-8',
+                lede='The credential becomes revoked, and its revocation is published in the same transaction. It cannot be undone.') }}
 
-{% if not active_tokens %}
-    <div class="flash flash-error">
-        <span class="flash-icon">⚠</span>
-        <span class="flash-text">UC-8 requires an ACTIVE token. There are currently no ACTIVE tokens to revoke.</span>
-    </div>
-{% endif %}
+<div class="op">
+<div class="op-main">
+    <section class="panel" aria-labelledby="op-record-h">
+        <div class="panel-head"><h2 id="op-record-h">Credential</h2></div>
+        {% if credential %}
+            {{ ui.credential_card(credential, change=url_for('uc8_revoke')) }}
+        {% else %}
+            {% if missing %}{{ ui.not_found('credential', missing) }}{% endif %}
+            {{ ui.find_credential('uc8_revoke', autofocus=not missing) }}
+        {% endif %}
+    </section>
 
-<form method="post" class="standard">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="form-row">
-        <div class="form-group full">
-            <label for="token_id">Active Token</label>
-            <select id="token_id" name="token_id" required>
-                <option value="">Select&hellip;</option>
-                {% for t in active_tokens %}
-                    <option value="{{ t.token_id }}">
-                        #{{ t.token_id }}: {{ t.legal_name }} ({{ t.token_value }})
-                        · issuer: {{ t.issuing_agency_name }} · {{ t.algorithm_name }}
-                    </option>
-                {% endfor %}
-            </select>
-            <span class="help">Procedure rejects already-terminal tokens (REVOKED / LOST / EXPIRED).</span>
+    {% if credential and credential.status in ('REVOKED', 'LOST', 'EXPIRED') %}
+    <div class="callout callout-warn" role="note">
+        {{ ui.icon('info') }}
+        <p>This credential is already {{ ui.state_words(credential.status) }}, so there is nothing to revoke.</p>
+    </div>
+    {% elif credential %}
+    <form method="post" class="panel op-form" aria-labelledby="op-act-h">
+        <div class="panel-head"><h2 id="op-act-h">Revocation</h2></div>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="token_id" value="{{ credential.token_id }}">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="actor_agency_id">Acting authority</label>
+                <select id="actor_agency_id" name="actor_agency_id" required>
+                    <option value="">Choose&hellip;</option>
+                    {% for ag in agencies %}
+                    <option value="{{ ag.agency_id }}"{% if ag.agency_id == actor_default %} selected{% endif %}>{{ ag.name }} (#{{ ag.agency_id }}, {{ ag.agency_type|lower }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="reason_code">Reason</label>
+                <select id="reason_code" name="reason_code" required aria-describedby="reason-help">
+                    <option value="ADMINISTRATIVE" selected>Administrative</option>
+                    <option value="COMPROMISED">Compromised</option>
+                    <option value="LOST">Lost</option>
+                    <option value="STOLEN">Stolen</option>
+                    <option value="SUPERSEDED">Superseded</option>
+                    <option value="DEATH">Death of the holder</option>
+                </select>
+                <p class="help" id="reason-help">Recorded with the published revocation.</p>
+            </div>
         </div>
-    </div>
-
-    <div class="form-row">
         <div class="form-group">
-            <label for="actor_agency_id">Acting Agency</label>
-            <select id="actor_agency_id" name="actor_agency_id" required>
-                <option value="">Select&hellip;</option>
-                {% for ag in agencies %}
-                    <option value="{{ ag.agency_id }}">#{{ ag.agency_id }}, {{ ag.name }} ({{ ag.agency_type }})</option>
-                {% endfor %}
-            </select>
-            <span class="help">The agency performing the revocation.</span>
+            <label for="published_location">Where the revocation is published</label>
+            <input type="text" id="published_location" name="published_location" required maxlength="300"
+                   class="mono" placeholder="https://crl.example.org/authority/2026/0001.crl"
+                   aria-describedby="loc-help">
+            <p class="help" id="loc-help">The address at which verifiers reach the revocation entry.</p>
         </div>
         <div class="form-group">
-            <label for="reason_code">Reason Code</label>
-            <select id="reason_code" name="reason_code" required>
-                <option value="ADMINISTRATIVE" selected>ADMINISTRATIVE</option>
-                <option value="COMPROMISED">COMPROMISED</option>
-                <option value="LOST">LOST</option>
-                <option value="STOLEN">STOLEN</option>
-                <option value="SUPERSEDED">SUPERSEDED</option>
-                <option value="DEATH">DEATH</option>
-            </select>
-            <span class="help">Vocabulary constrained by RevocationList CHECK.</span>
-        </div>
-    </div>
-
-    <div class="form-row">
-        <div class="form-group full">
-            <label for="published_location">Published CRL Location</label>
-            <input type="text" id="published_location" name="published_location"
-                   required maxlength="300" class="mono"
-                   placeholder="https://crl.polaris.local/&lt;agency&gt;/2026/...">
-            <span class="help">Where the verifier-facing CRL entry will be reachable.</span>
-        </div>
-    </div>
-
-    <div class="form-row">
-        <div class="form-group full">
-            <label for="cosigner_agency_id">Co-Signer Agency (optional, required over bound)</label>
-            <select id="cosigner_agency_id" name="cosigner_agency_id">
+            <label for="cosigner_agency_id">Co-signing authority</label>
+            <select id="cosigner_agency_id" name="cosigner_agency_id" aria-describedby="cosign-help">
                 <option value="">None</option>
                 {% for ag in agencies %}
-                    <option value="{{ ag.agency_id }}">#{{ ag.agency_id }}, {{ ag.name }} ({{ ag.agency_type }})</option>
+                <option value="{{ ag.agency_id }}">{{ ag.name }} (#{{ ag.agency_id }}, {{ ag.agency_type|lower }})</option>
                 {% endfor %}
             </select>
-            <span class="help">Required if this revocation would push the actor agency's rolling-window rate
-            above its configured bound. Must hold <code>BOTH</code> on the token's algorithm and differ from the actor.</span>
+            <p class="help" id="cosign-help">Needed only when this revocation would take the acting authority past its bound.</p>
         </div>
-    </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-danger">{{ ui.icon('octagon-x') }}Revoke #{{ credential.token_id }}</button>
+            <a href="{{ url_for('tokens_detail', tok_id=credential.token_id) }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+    {% endif %}
+</div>
 
-    <div class="form-actions">
-        <button type="submit" class="btn btn-gold">Revoke Token</button>
-        <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Cancel</a>
-    </div>
-</form>
+<aside class="panel op-rule" aria-labelledby="op-rule-h">
+    <div class="panel-head"><h2 id="op-rule-h">The rule</h2></div>
+    <p>An authority may revoke only so much of its own population in a rolling window: by default
+       5% of its outstanding credentials in 30 days. Past that bound a second authority must
+       co-sign: an authority other than the actor, authorized both to issue and to verify under the
+       credential's algorithm.</p>
+    <p>An active, reserve or dormant credential can be revoked; a revoked, lost or expired one
+       cannot.</p>
+    <p class="muted">Enforced in the database by <span class="mono">uc8_revoke_token</span>.</p>
+</aside>
+</div>
 {% endblock %}

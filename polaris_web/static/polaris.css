@@ -1528,6 +1528,109 @@ a.kpi-link:hover .kpi-label { color: var(--ink-2); }
 .demo-effect-list { margin: 0; padding-left: var(--s-5); color: var(--ink-2); }
 .demo-stepnav-link { color: var(--ink-2); }
 
+/* Operations (UC-4 to UC-9, the verification form): the record acted on, then the action, with
+   the rule the database enforces beside them. Each starts from one record found by what the
+   operator holds (lookup.py); none lists a population (lab/strategy/008). */
+.op {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+    gap: var(--s-5);
+    align-items: start;
+}
+.op-main { display: flex; flex-direction: column; gap: var(--s-4); min-width: 0; }
+.op-main > .panel + .panel { margin-top: 0; }
+.op-rule { position: sticky; top: var(--s-5); color: var(--ink-2); font-size: 13px; }
+.op-rule p { margin: 0 0 var(--s-3); }
+.op-rule p:last-child { margin-bottom: 0; }
+.op-rule .steps { margin: 0 0 var(--s-3); padding-left: 1.2em; display: grid; gap: var(--s-2); }
+.op-form .form-actions { margin-top: var(--s-2); }
+.op-main > .callout p { margin: 0; }
+
+.op-results { margin-top: var(--s-5); }
+
+/* The lookup that starts an operation: one field and its button on a row. */
+.find { display: flex; flex-direction: column; gap: 6px; }
+.find > label { font-size: 12.5px; font-weight: 550; color: var(--ink); }
+.find-row { display: flex; gap: var(--s-2); }
+.find-row input { flex: 1 1 auto; min-width: 0; }
+.find-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 190px) auto;
+    gap: var(--s-2) var(--s-3);
+    align-items: end;
+}
+.find-fields .form-group { margin-bottom: 0; }
+.find + .callout, .find-page .callout { margin-top: var(--s-4); }
+
+/* One record as an operation shows it: its number and state, then its facts. */
+.record { display: flex; flex-direction: column; gap: var(--s-4); }
+.record-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-2) var(--s-3); }
+.record-id { font-size: 15px; font-weight: 600; color: var(--ink); }
+.record-name { font-size: 15px; }
+.record-change { margin-left: auto; font-size: 12.5px; }
+.record-sub { margin-top: var(--s-4); padding-top: var(--s-4); border-top: 1px solid var(--line); }
+.record-sub .panel-sub { margin: 0 0 var(--s-2); }
+
+/* A choice among a few records (a holder's reserves): the whole row is the target. */
+.choice-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+.choice-list li {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-3);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+}
+.choice-list li:has(input:checked) { border-color: var(--ink-3); background: var(--surface-2); }
+.choice-list label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s-1) var(--s-3);
+    flex: 1;
+    min-width: 0;
+    font-weight: 400;
+    cursor: pointer;
+}
+
+/* Matches of a lookup that found more than one record. */
+/* One grid for the whole list (each match a subgrid), so numbers of any width align the names. */
+.match-list {
+    list-style: none;
+    margin: var(--s-4) 0 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr) auto;
+    gap: var(--s-2) var(--s-3);
+}
+.match-list > li { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; }
+.match {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: subgrid;
+    align-items: center;
+    row-gap: var(--s-1);
+    padding: var(--s-3) var(--s-4);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    color: var(--ink);
+    text-decoration: none;
+}
+.match:hover { background: var(--surface-2); border-color: var(--ink-3); text-decoration: none; }
+.match-id { color: var(--ink-2); }
+.match-main { font-weight: 550; min-width: 0; overflow-wrap: anywhere; }
+.match-meta { grid-column: 2 / -1; color: var(--ink-3); font-size: 12.5px; overflow-wrap: anywhere; }
+
+/* The operations a record admits, on the record's own page. */
+.record-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); margin: 0 0 var(--s-5); }
+.find-panel { margin-bottom: var(--s-5); max-width: 760px; }
+
+/* An identifier is read whole: never broken at its hyphens. */
+.choice-list .mono, .match .mono, .record .mono { white-space: nowrap; }
+
+.chip-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); }
+.redacted { color: var(--ink-3); font-style: italic; }
+
 /* ----- 08 Utilities ---------------------------------------------------------- */
 
 .mono { font-family: var(--font-mono); font-size: 0.92em; font-variant-ligatures: none; }
@@ -1560,6 +1663,8 @@ a.kpi-link:hover .kpi-label { color: var(--ink-2); }
 }
 
 @media (max-width: 1100px) {
+    .op { grid-template-columns: minmax(0, 1fr); }
+    .op-rule { position: static; }
     .hero { grid-template-columns: 1fr; padding-top: 56px; }
     .hero-mark { display: none; }
 }
@@ -1598,6 +1703,9 @@ a.kpi-link:hover .kpi-label { color: var(--ink-2); }
 }
 
 @media (max-width: 600px) {
+    .find-fields { grid-template-columns: minmax(0, 1fr); }
+    .match-list { grid-template-columns: max-content minmax(0, 1fr); }
+    .match .pill { grid-column: 2; justify-self: start; }
     .kv, .facts { grid-template-columns: 1fr; gap: 2px var(--s-4); }
     .kpi { padding: var(--s-3) var(--s-4); }
     .kpi-value { font-size: 22px; }
