@@ -2745,6 +2745,6 @@ BEGIN
     RETURN v_id;
 END$$;
 COMMENT ON FUNCTION uc_record_holder_key_event(INTEGER, TEXT, VARCHAR, VARCHAR) IS
-  'The only writer of HolderKeyEvent: sets the instant and holds bound / rotated / revoked in order '
+  'The holder key route''s writer of HolderKeyEvent: sets the instant and holds bound / rotated / revoked in order '
   'for a live credential. The holder''s consent to a change (a signature by the live key) is the '
   'caller''s to verify.';

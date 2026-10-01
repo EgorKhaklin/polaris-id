@@ -26,10 +26,11 @@ that took a full presentation has seen what binding needs, so whoever binds firs
 key. A revocation reopens that window, because after it no key is live. The answer to a lost
 or taken key is the issuer's recovery path, which issues a new credential, not a rebinding of
 the old one. The database cannot read an ML-DSA signature, so the live key's consent is
-checked by the application. `uc_record_holder_key_event`, the register's only writer, sets
-each event's instant and refuses one out of order or on a credential that is not live; a
-compromised application can still rotate a live key, as it can sign any binding with the
-authority's key.
+checked by the application. The route records events through `uc_record_holder_key_event`,
+which sets each event's instant and refuses one out of order or on a credential that is not
+live. The application role keeps INSERT on the register until a contract migration in a later
+release withdraws it, and a compromised application can rotate a live key either way, as it
+can sign any binding with the authority's key.
 
 **The bound, and the constitutional note.** A key the holder controls is also a key the
 holder can be compelled to use. The holder proof's signed statement therefore does *not*

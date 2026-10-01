@@ -1,11 +1,5 @@
--- 2026-10-01-002 down: the application role writes HolderKeyEvent directly again.
+-- 2026-10-01-002 down: the route's routine goes; the table comment returns to its earlier text.
 
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'polaris_app') THEN
-        GRANT INSERT ON HolderKeyEvent TO polaris_app;
-    END IF;
-END$$;
 DROP FUNCTION IF EXISTS uc_record_holder_key_event(INTEGER, TEXT, VARCHAR, VARCHAR);
 
 COMMENT ON TABLE HolderKeyEvent IS

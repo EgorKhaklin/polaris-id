@@ -1,14 +1,12 @@
--- 2026-10-01-002: the holder key register is written only by uc_record_holder_key_event.
+-- 2026-10-01-002: holder key events are recorded through uc_record_holder_key_event.
 --
--- polaris_app held INSERT on HolderKeyEvent, so it could bind over a live key, rotate or revoke a
--- key never bound, and date an event to any instant (review S2). The routine sets the instant and
--- holds bound / rotated / revoked in order for a live credential; the application role keeps
--- EXECUTE on it and loses INSERT on the table.
+-- The routine sets the instant and holds bound / rotated / revoked in order for a live credential
+-- (review S2); the application from this release records every event through it.
 --
--- phase: contract. The application from this release records events through the routine; an
--- older one INSERTs directly and is refused, so roll the application first. The canonical copies
--- live in 05_procedures.sql and 09_grants.sql. REVERSIBLE: the .down.sql gives INSERT back and
--- drops the routine. Idempotent: CREATE OR REPLACE, and a REVOKE of a privilege not held is a no-op.
+-- phase: expand. The previous release's route inserts into HolderKeyEvent directly and keeps
+-- working during the roll; the application role's INSERT is withdrawn by a contract migration in a
+-- later release. The canonical copies live in 05_procedures.sql and 09_grants.sql. REVERSIBLE:
+-- the .down.sql drops the routine. Idempotent: CREATE OR REPLACE.
 
 CREATE OR REPLACE FUNCTION uc_record_holder_key_event(
     p_token_id        INTEGER,
@@ -55,7 +53,7 @@ BEGIN
     RETURN v_id;
 END$$;
 COMMENT ON FUNCTION uc_record_holder_key_event(INTEGER, TEXT, VARCHAR, VARCHAR) IS
-  'The only writer of HolderKeyEvent: sets the instant and holds bound / rotated / revoked in order '
+  'The holder key route''s writer of HolderKeyEvent: sets the instant and holds bound / rotated / revoked in order '
   'for a live credential. The holder''s consent to a change (a signature by the live key) is the '
   'caller''s to verify.';
 
@@ -64,7 +62,6 @@ DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'polaris_app') THEN
         GRANT EXECUTE ON FUNCTION uc_record_holder_key_event(INTEGER, TEXT, VARCHAR, VARCHAR) TO polaris_app;
-        REVOKE INSERT ON HolderKeyEvent FROM polaris_app;
     END IF;
 END$$;
 
@@ -72,5 +69,5 @@ COMMENT ON TABLE HolderKeyEvent IS
   'P9.1 append-only register of holder key events (bound / rotated / revoked, effective from '
   'an instant). The holder''s PUBLIC key only; the private key never leaves their device. '
   'The first binding is proved by possession of the credential; a rotation or revocation by '
-  'the live key''s signature. Written only through uc_record_holder_key_event, which refuses '
-  'events out of order. Append-only by trigger and by privilege.';
+  'the live key''s signature. The route records events through uc_record_holder_key_event, '
+  'which keeps them in order. Append-only by trigger and by privilege.';
