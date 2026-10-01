@@ -7,7 +7,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
-## Unreleased
+## v1.0.0-rc.69 — 2026-10-01 (a holder's key changes only by its own signature)
+
+A holder key changes only with the live key's signature, and the route records its events through a routine that keeps them in order; the application's database role no longer runs the retention routines; the three verifiers read a signed status, a leaf and a document digest alike; `polaris-oid4vp` in this tree holds to RFC 7515, RFC 7516, RFC 9901 and HAIP 1.0 where it did not. 19 security changes, 4 fixes.
 
 - **Breaking**: `polaris-oid4vp`'s `Verifier` answers 400 to a credential its resolver checked as not VALID, and to one missing a requested claim.
 - **Breaking**: `polaris_oid4vp.status.decide` requires `expected_uri`.
@@ -31,7 +33,6 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-verify` calls an agent grant usable only when it understands its limits; one signed with an unknown limit or a non-finite `max_amount` was usable.
 - All three verifiers refuse a revocation feed or epoch leaf set whose leaves are not 64 hex digits; a `null` leaf split Python from TypeScript.
 - All three verifiers refuse a signed document whose digest is not lowercase SHA3-256, as WIRE-SPEC 3.12 requires.
-
 - The application's database role can no longer run the retention and archive-purge routines; naming any admin, it could set retention or purge audit rows past the floor.
 - A holder key changes only with the live key's signature; presenting the credential, which any relying party that took a full presentation can do, could rebind, rotate or revoke it.
 - The holder key route records events through a routine that sets their instant and keeps them in order; the application role's own INSERT goes in a later release, under the expand-contract policy.
