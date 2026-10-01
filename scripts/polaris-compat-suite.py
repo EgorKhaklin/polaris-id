@@ -120,6 +120,9 @@ PINNED_KNOWN_DEFECTS = {
         "leaf into the string \"none\" and accepts a root computed over it",
     "revocation-feed-leaf-a-number":
         "2026-10-01: the same rule; the pinned verifier turns the leaf 1.0 into \"1.0\" and accepts it",
+    "cross-authority-edge-context-boolean":
+        "2026-10-01: a context is an id, so true is not context 1; the pinned verifier compares "
+        "with Python's ==, which reads true as 1, and accepts the edge",
 }
 
 

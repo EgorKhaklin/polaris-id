@@ -10677,8 +10677,9 @@ def test_agent_grant_check_discriminates(tmp_path):
         '    return {k: p.get(k) for k in ("format", "grant_id", "action", "service_nonce")}\n'
         "\ndef verify_agent_grant(g, revocation=None, agent_proof=None, requested_action=None):\n"
         "    actions = g.get('actions')\n"
-        "    actions = [str(a) for a in actions] if isinstance(actions, (list, tuple)) else []\n"
-        '    v["action_in_scope"] = str(requested_action) in actions\n'
+        "    actions = list(actions) if isinstance(actions, (list, tuple)) else []\n"
+        "    want = _wire_text(requested_action)\n"
+        '    v["action_in_scope"] = want is not None and any(_wire_text(a) == want for a in actions)\n'
         '    note = "the revocation names a different grant"\n'
         '    note = "the revocation is signed by a key other than the grant\'s holder"\n'
         '    note = "the agent proof is signed by a key the grant does not name"\n'
@@ -10733,10 +10734,18 @@ def test_agent_grant_check_discriminates(tmp_path):
     # A malformed action list stops collapsing to empty, so a grant naming nothing could be
     # read as naming everything.
     write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace(
-        "    actions = [str(a) for a in actions] if isinstance(actions, (list, tuple)) else []\n",
+        "    actions = list(actions) if isinstance(actions, (list, tuple)) else []\n",
         "    actions = actions or ['*']\n")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when a grant with no actions is not treated as granting nothing"
+
+    # The action is compared through str(), which spells null "None" and true "True" where the
+    # TypeScript SDK's String() does not (2026-10-01): the form this check pinned, and the defect.
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace(
+        '    v["action_in_scope"] = want is not None and any(_wire_text(a) == want for a in actions)\n',
+        '    v["action_in_scope"] = str(requested_action) in [str(a) for a in actions]\n')})
+    assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the requested action is compared through str() rather than as wire text"
 
     # Anyone who can publish bytes can end someone else's delegation.
     write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace(

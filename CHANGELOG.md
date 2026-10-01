@@ -7,6 +7,29 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
+## Unreleased
+
+### Security
+
+- All three verifiers read one instant grammar: ASCII digits, no surrounding whitespace, offsets below 24 hours, years 1 to 99 as written.
+- An agency or context id matches only the same string or integer in all three verifiers; Python's `==` read `true` as 1 and a missing id as a null one.
+- Both SDKs read only the JSON `true` as currently authoritative; both read a status answer of `"false"` as current.
+- All three verifiers refuse an agent grant whose `grant_id` is not text; it is the grant's only revocation handle (WIRE-SPEC 3.17).
+
+### Fixed
+
+- The TypeScript SDK writes a small number and orders keys as the signer does, so a genuine artifact with `1.5e-05` or an emoji key verifies.
+- All three verifiers read the ids, nonces, actions and credentials that grants, proofs, bindings and revocations name as text; a value with none matches nothing.
+- An id, nonce or action beyond 2**53 is not one any verifier reads; JavaScript reads the nearest double there.
+- All three verifiers trim only ASCII whitespace from a pairwise handle or nullifier; other Unicode spaces split the SDKs.
+- The TypeScript SDK refuses a credential that is not an object instead of throwing, and checks each grant limit and the use count alone.
+- The Python SDK reports no nonce match for a holder proof it cannot check, as the TypeScript SDK does.
+
+### Added
+
+- Ten conformance cases pin where the two SDKs disagreed on signed bytes.
+- Twenty-two more pin nonces, contexts, agencies, grant ids, actions and ids beyond 2**53, from three reviews of that fix; the suite has 275 cases.
+
 ## v1.0.0-rc.69 — 2026-10-01 (a holder's key changes only by its own signature)
 
 A holder key changes only with the live key's signature, and the route records its events through a routine that keeps them in order; the application's database role no longer runs the retention routines; the three verifiers read a signed status, a leaf and a document digest alike; `polaris-oid4vp` in this tree holds to RFC 7515, RFC 7516, RFC 9901 and HAIP 1.0 where it did not. 19 security changes, 4 fixes.
