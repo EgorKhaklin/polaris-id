@@ -32,6 +32,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-ship.py triage` names a job GitHub never gave a runner, from its annotation, instead of calling the finished run unknown.
 - Two image checks read each Dockerfile's instructions, not its comments, and require a hash-checked install in every image; a comment could pass for one.
 - A login's requested enrollment status applies alongside the registered one, and a malformed requirement is refused; the registered status replaced the request's.
+- An operator cannot record a SUCCESS in a context the credential is not permitted in; UNAUTHORIZED records that presentation.
+- An operator's SELECTIVE success names its credential; one naming none passed every success rule unchecked.
+- The sample data's trust graph explains every sample verification; two cross-agency successes had no attestation.
+- SECURITY-CONTROLS and the threat model say what the definer routines bound: their rules, not their caller. The threat model said none existed.
 - `polaris-oid4vp` accepts an issuer certificate whose extended key usage is ISO 18013-5's document signer, as EUDI issuers' are; it refused eudi-dev's PID Provider.
 
 ### Added

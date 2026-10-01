@@ -825,7 +825,11 @@ CryptographicAlgorithm. Composite PK (`agency_id`, `algorithm_id`).
 
 Resolves the M:N relationship between IdentityToken and
 VerificationContext. Composite PK (`token_id`, `context_id`).
-Controls which contexts a token is permitted in.
+Controls which contexts a token is permitted in: a context's ZK epoch
+snapshots only its permitted tokens, `/api/v1/auth/authorize` signs only a
+permitted context, and the operator's verification form records a
+`SUCCESS` only in one (a presentation outside them is `UNAUTHORIZED`).
+`permission_level` is recorded and shown; no rule reads it.
 
 ---
 
