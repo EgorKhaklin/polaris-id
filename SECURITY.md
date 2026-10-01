@@ -54,8 +54,9 @@ orphan disclosure with key binding waived, an `x5c` leaf expired at the verdict'
 and `credentialStatus`; it also ignores a `crit` on the credential, its key binding JWT and a status
 list token, and the key binding JWT's `exp` and `nbf`, accepts a digest committed twice and the trust
 anchor or a CA certificate as the issuer's `x5c` leaf, verifies an issuer signature under a configured
-JWK whose `use`, `key_ops` or `alg` says it is not an ES256 signing key, and serves an expired request
-object. `polaris-verify` 1.0.0rc6 and `polaris-sdk-python` 1.0.0rc6 read a signed anchor, registry
+JWK, and a key binding JWT under a `cnf.jwk`, whose `use`, `key_ops` or `alg` says it is not an ES256
+signing key, and serves an expired request object. `polaris-verify` 1.0.0rc6 and `polaris-sdk-python`
+1.0.0rc6 read a signed anchor, registry
 authority or holder binding whose `status` is `false` or `""` as active; `polaris-verify` 1.0.0rc6 calls a
 grant usable whose limits it does not understand; all three read a revocation feed's non-hex leaf by
 its spelling, so a `null` leaf passes one language and not the other, accept an agent grant with no

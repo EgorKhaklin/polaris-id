@@ -377,14 +377,14 @@ class IssuerKeyChoiceTests(unittest.TestCase):
         something else is not a signature key. Every configured P-256 key was a candidate, so a
         credential verified under the key an issuer's JWK Set lists for encryption."""
         for marks in ({"use": "enc"}, {"key_ops": ["encrypt", "deriveKey"]}, {"key_ops": "verify"},
-                      {"alg": "ECDH-ES"}, {"alg": "ES384"}, {"use": None}):
+                      {"key_ops": ["verify", "encrypt"]}, {"alg": "ECDH-ES"}, {"alg": "ES384"}, {"use": None}):
             with self.subTest(marks=marks):
                 v = self.w.verify(self.w.present(issuer_header=dict(self.HEADER)),
                                   issuer_jwks=[dict(self.bare_issuer, **marks)])
                 self.assertFalse(v.authentic)
                 self.assertEqual(v.code, "issuer_key")
-                self.assertIn("use, key_ops or alg says otherwise", v.reason)
-        for marks in ({"use": "sig"}, {"key_ops": ["verify"]}, {"alg": "ES256"},
+                self.assertIn("1 marked for another use by use, key_ops or alg", v.reason)
+        for marks in ({"use": "sig"}, {"key_ops": ["verify"]}, {"key_ops": ["sign", "verify"]}, {"alg": "ES256"},
                       {"use": "sig", "key_ops": ["verify"], "alg": "ES256"}):
             with self.subTest(marks=marks):
                 v = self.w.verify(self.w.present(issuer_header=dict(self.HEADER)),
@@ -393,6 +393,24 @@ class IssuerKeyChoiceTests(unittest.TestCase):
         v = self.w.verify(self.w.present(issuer_header=dict(self.HEADER)),
                           issuer_jwks=[dict(self.bare_issuer, use="enc"), dict(self.bare_issuer, use="sig")])
         self.assertTrue(v.authentic, "the same key listed for signing still verifies beside its encryption entry")
+        v = self.w.verify(self.w.present(issuer_header=dict(self.HEADER)),
+                          issuer_jwks=[dict(self.bare_issuer, use="enc"), {"kty": "RSA", "n": "AQAB", "e": "AQAB"}])
+        self.assertEqual(v.code, "issuer_key")
+        self.assertIn("1 marked for another use by use, key_ops or alg, 1 not a P-256 key", v.reason,
+                      "the refusal names every reason a matching key was passed over")
+
+    def test_a_holder_key_bound_for_another_use_verifies_no_key_binding(self):
+        """The same rule for the holder's `cnf.jwk` (2026-10-01): a key the issuer bound as one for
+        encryption does not verify the key binding JWT."""
+        for marks, ok in (({"use": "enc"}, False), ({"key_ops": ["deriveKey"]}, False),
+                          ({"alg": "ECDH-ES"}, False), ({"use": "sig", "alg": "ES256"}, True), ({}, True)):
+            cnf = {"jwk": dict(_public_jwk(self.w.holder_key), **marks)}
+            with self.subTest(marks=marks):
+                v = self.w.verify(self.w.present(issuer_header=dict(self.HEADER), payload_extra={"cnf": cnf}),
+                                  issuer_jwks=[self.bare_issuer])
+                self.assertIs(v.authentic, ok, v.reason)
+                if not ok:
+                    self.assertEqual(v.code, "kb_cnf")
 
     def test_an_x5c_that_is_present_but_falsy_is_refused_not_ignored(self):
         for value in ([], "", {}, 0, False):
