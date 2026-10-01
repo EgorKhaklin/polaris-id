@@ -12,7 +12,7 @@ import { verifyAuthenticity, PolarisVerifier, pairwiseHandle, handlesLink,
          verifyInclusion, verifyStatusAssertion, verifyIdToken, verifyHolder, verifyTimestampAnchor,
          verifySignedArtifact, verifyCosignature,
          verifyAttestation, verifyCrossAuthority,
-         __canonicalJsonForTest, __isoToEpochForTest, expiresIn, tokenValueSerialProblem } from "../src/index.ts";
+         __canonicalJsonForTest, __isoToEpochForTest, __hexInForTest, expiresIn, tokenValueSerialProblem } from "../src/index.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const vec = (n: string) => JSON.parse(readFileSync(join(ROOT, "vectors", n), "utf8"));
@@ -103,6 +103,14 @@ test("a value with no wire text matches nothing, and nor does an integer beyond 
   const top = Number.MAX_SAFE_INTEGER;
   assert.equal(agentProofProves({ ...proof, grant_id: top }, { ...grant, grant_id: String(top) }, "read"), true,
                "the largest integer both hold is one");
+});
+
+test("a value with no hex text is in no collection, even one holding null", () => {
+  for (const x of [null, undefined, "", ["ab"], 0]) {
+    assert.equal(__hexInForTest(x, [null, "ab", ""]), false, JSON.stringify(x));
+    assert.equal(__hexInForTest(x, new Set<string | null>([null, "ab"])), false, JSON.stringify(x));
+  }
+  assert.equal(__hexInForTest("AB", ["ab"]), true, "case is not a key");
 });
 
 test("a key is hex text: a key held in a list is not the key", () => {

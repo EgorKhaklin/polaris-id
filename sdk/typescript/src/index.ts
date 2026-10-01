@@ -1455,6 +1455,13 @@ function hexIn(x: unknown, texts: Set<string | null> | readonly (string | null)[
   return texts instanceof Set ? texts.has(t) : texts.includes(t);
 }
 
+/** @internal Exported for the hex-text test; not public surface. Every caller reaches hexIn after a
+ * signature check that a value with no hex text has already failed, so only a direct test can
+ * hold its first refusal (the SDK mutation drill, 2026-10-01). */
+export function __hexInForTest(x: unknown, texts: Set<string | null> | readonly (string | null)[]): boolean {
+  return hexIn(x, texts);
+}
+
 /** Two agency or context ids name the same one only when both are strings, or both integers
  * held exactly, and equal: `===` let two missing ids match, where the Python SDK read a null
  * against a missing one as equal, and true as 1 (2026-10-01). */
