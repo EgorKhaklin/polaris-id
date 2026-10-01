@@ -13373,7 +13373,7 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
     """Every state-changing route, classified by which cross-site defence applies (v9.418).
 
     CSRF protection only bites where a browser will attach ambient authority. The
-    route table has 54 state-changing routes: 33 carry @csrf_protect, 2 are the
+    route table has 56 state-changing routes: 35 carry @csrf_protect, 2 are the
     launcher's anonymous local-control endpoints and carry @reject_cross_site, and
     19 are the machine API and the pre-session auth endpoints, where there is no
     cookie authority to abuse.
@@ -13446,8 +13446,8 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
             "Either add @csrf_protect, or add an entry to CSRF_EXEMPT saying why a browser "
             "cannot be made to call this with someone else's authority.")
         self.assertEqual(
-            len(csrf), 33,
-            f"{len(csrf)} routes carry @csrf_protect and 33 are recorded. A guard that was "
+            len(csrf), 35,
+            f"{len(csrf)} routes carry @csrf_protect and 35 are recorded. A guard that was "
             "removed shows up here, because a route without one simply stops appearing in the "
             "protected set.")
         self.assertEqual(len(cross_site), 2, f"{len(cross_site)} routes reject cross-site "
@@ -13478,7 +13478,7 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
                     f"{method} {url} without a CSRF token returned {r.status_code}; the token "
                     "is not being required")
             checked += 1
-        self.assertEqual(checked, 33,
+        self.assertEqual(checked, 35,
                          f"only {checked} CSRF-protected routes were exercised; the route table "
                          "is no longer being read and this test is passing by finding nothing")
 
