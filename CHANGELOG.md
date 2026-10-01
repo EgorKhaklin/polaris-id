@@ -47,6 +47,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- Published: `polaris-oid4vp` 1.0.0rc12 on PyPI (not certified; 1.0.0rc7 is), built before #157 and #168; 1.0.0rc13 carries them.
 - `polaris-verify` exits 4 on an unknown flag or a mistyped value, and 3 without `polaris-zk`; each exited 2.
 - `polaris-verify --pack` names another signed artifact as such, and its README separates the command from the library.
 ## v1.0.0-rc.69 — 2026-10-01 (a holder's key changes only by its own signature)
