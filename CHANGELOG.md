@@ -42,7 +42,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The TypeScript SDK reads an instant to the microsecond, as both Python verifiers do; it rounded to the millisecond.
 - Both Python verifiers refuse a fractional use limit or use count, as the TypeScript SDK does; `int()` truncated it.
 - The TypeScript SDK writes a small number and orders keys as the signer does, so a genuine artifact with `1.5e-05` or an emoji key verifies.
-- All three verifiers read the ids, nonces and credentials that proofs, bindings and revocations name as text; a value with none matches nothing.
+- All three verifiers read the ids, nonces, actions and credentials that grants, proofs, bindings and revocations name as text; a value with none matches nothing.
 - An id, nonce or action beyond 2**53 is not one any verifier reads; JavaScript reads the nearest double there.
 - All three verifiers trim only ASCII whitespace from a pairwise handle or nullifier; other Unicode spaces split the SDKs.
 - The TypeScript SDK refuses a credential that is not an object instead of throwing, and checks each grant limit and the use count alone.
@@ -54,7 +54,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Thirteen conformance cases pin the status rule for manifests, registries, holder chains, grants in use and trust edges.
 - Eleven conformance cases pin WIRE-SPEC 3.3, 3.16, 3.12 and 2.2 for leaves, signed documents and instants.
 - Ten conformance cases pin where the two SDKs disagreed on signed bytes.
-- Nineteen more pin nonces, contexts, agencies, grant ids and ids beyond 2**53, from two reviews of that fix; the suite has 272 cases.
+- Twenty-two more pin nonces, contexts, agencies, grant ids, actions and ids beyond 2**53, from three reviews of that fix; the suite has 275 cases.
 
 ### Changed
 

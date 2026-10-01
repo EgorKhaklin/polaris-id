@@ -4490,9 +4490,12 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
     # Scope. An absent or empty action list grants NOTHING: a grant that named no actions
     # and was read as unrestricted would be the credential hand-over this exists to replace.
     actions = grant.get("actions")
-    actions = [str(a) for a in actions] if isinstance(actions, (list, tuple)) else []
+    actions = list(actions) if isinstance(actions, (list, tuple)) else []
     if requested_action is not None:
-        v["action_in_scope"] = str(requested_action) in actions
+        # As text on both sides, as both SDKs read them: str() spelled true "True" where the
+        # TypeScript SDK's String() spells it "true" (2026-10-01).
+        want = _wire_text(requested_action)
+        v["action_in_scope"] = want is not None and any(_wire_text(a) == want for a in actions)
         if not v["action_in_scope"]:
             v["note"] = "the action %r is not in the grant's scope %r" % (requested_action, actions)
     v["limits"] = grant.get("limits") if isinstance(grant.get("limits"), dict) else {}

@@ -1326,7 +1326,10 @@ export function grantCovers(grant: any, action: unknown): boolean {
   if (!grant || typeof grant !== "object") return false;
   const actions = (grant as any).actions;
   if (!Array.isArray(actions) || actions.length === 0) return false;
-  return actions.map((a: unknown) => String(a)).includes(String(action));
+  // As text on both sides, as the Python verifiers read them: String() spelled true "true" where
+  // str() spells it "True", so a signed `actions: [true]` covered "true" here only (2026-10-01).
+  const want = wireText(action);
+  return want !== null && actions.some((a: unknown) => wireText(a) === want);
 }
 
 /**

@@ -61,12 +61,13 @@ its spelling, so a `null` leaf passes one language and not the other, accept an 
 `grant_id`, which no revocation can name, and accept a signed document whose digest is not lowercase
 SHA3-256; both Python packages read a use limit of 2.5 as 2, an instant in non-ASCII digits as valid, a
 missing agency id as matching a null one, and `true` as context or agency 1 and as the credential or
-grant `"True"`; both SDKs read a status answer of `currently_authoritative: "false"` as current; and
-`polaris-sdk-ts` 1.0.0-rc.7 rounds instants to the millisecond, reads an offset of 24 hours, refuses a
-genuine artifact signed with a number like 1.5e-05 or a key outside the Basic Multilingual Plane,
-decides a presentation naming `credential: null` as the object itself, proves a holder chain whose
-signed nonce is `true` against the nonce "true", and binds a grant through a binding naming `true` to
-the credential "true". The tree carries the fixes; releases follow the maintainer's approval.
+grant `"True"`, and a `null` action as the action "None"; both SDKs read a status answer of
+`currently_authoritative: "false"` as current; and `polaris-sdk-ts` 1.0.0-rc.7 rounds instants to the
+millisecond, reads an offset of 24 hours, refuses a genuine artifact signed with a number like 1.5e-05
+or a key outside the Basic Multilingual Plane, decides a presentation naming `credential: null` as the
+object itself, proves a holder chain whose signed nonce is `true` against the nonce "true", binds a
+grant through a binding naming `true` to the credential "true", and reads a grant action of `true` or
+`["x"]` as "true" or "x". The tree carries the fixes; releases follow the maintainer's approval.
 
 If you installed or pinned an older version, upgrade. The Current column is checked against
 [docs/RELEASING.md](docs/RELEASING.md) on every run. The packages are for evaluation and

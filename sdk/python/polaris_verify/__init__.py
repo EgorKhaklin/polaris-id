@@ -1273,7 +1273,11 @@ def grant_covers(grant, action) -> bool:
     actions = grant.get("actions")
     if not isinstance(actions, (list, tuple)) or not actions:
         return False
-    return str(action) in [str(a) for a in actions]
+    # As text on both sides, as the TypeScript SDK reads them: str() spelled true "True" where
+    # String() spells it "true", so a signed `actions: [true]` covered "true" in one SDK only
+    # (2026-10-01).
+    want = _wire_text(action)
+    return want is not None and any(_wire_text(a) == want for a in actions)
 
 
 def grant_within_limits(grant, uses_so_far: int = 0, amount=None):

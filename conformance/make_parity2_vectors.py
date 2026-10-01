@@ -221,6 +221,28 @@ def main():
         case("agent-grant-use-" + label, "agent-grant-use", {"authentic": True, "revoked": revoked}, note,
              grant_file=VEC + "parity2-agent-grant-named-true.json", now=NOW, revocation_file=VEC + fname)
 
+    # --- a grant's actions are text --------------------------------------------------------------
+    for label, actions, action, note in (
+            ("action-nested-list", [["read:status"]], "read:status",
+             "A grant whose signed actions list holds the list [\"read:status\"]. The TypeScript SDK's "
+             "String() read it as \"read:status\" and found the action in scope; Python's str() did "
+             "not. An action is text, and a list is not."),
+            ("action-boolean", [True], "true",
+             "A grant whose signed actions list holds the boolean true, asked for the action \"true\". "
+             "The TypeScript SDK's String() spelled it \"true\" and found it in scope; Python's str() "
+             "spelled it \"True\"."),
+            ("action-null", [None], "None",
+             "A grant whose signed actions list holds null, asked for the action \"None\". Python's "
+             "str() spelled null \"None\" and found it in scope; the TypeScript SDK's String() spelled "
+             "it \"null\".")):
+        g = dict(grant, actions=actions, grant_id="conformance-parity-2-grant-" + label)
+        for k in ("signature_hex", "public_key_hex"):
+            g.pop(k, None)
+        fname = "parity2-agent-grant-%s.json" % label
+        files[fname] = sign(g, hol2_sk, hol2_pk, V._agent_grant_canonical)
+        case("agent-grant-use-" + label, "agent-grant-use", {"authentic": True, "action_in_scope": False}, note,
+             grant_file=VEC + fname, now=NOW, requested_action=action)
+
     # --- a principal binding names the credential as text -------------------------------------
     iss3_sk, iss3_pk = key()
     for label, cred_token, bind_token, bound, note in (
@@ -288,6 +310,11 @@ def main():
             dv = V.verify_agent_grant(g, now=c["now"], revocation=rev)
             s = bool(P.verify_signed_artifact(rev, now=c["now"]).authentic and P.revocation_ends_grant(rev, g))
             got, want = (dv["revoked"] is True, s), (e["revoked"],) * 2
+        elif "proof_file" not in c and "requested_action" in c:
+            g = obj(c["grant_file"])
+            dv = V.verify_agent_grant(g, now=c["now"], requested_action=c["requested_action"])
+            s = bool(P.verify_signed_artifact(g, now=c["now"]).authentic and P.grant_covers(g, c["requested_action"]))
+            got, want = (dv["action_in_scope"] is True, s), (e["action_in_scope"],) * 2
         elif "binding_file" in c:
             g, b, cr = obj(c["grant_file"]), obj(c["binding_file"]), obj(c["credential_file"])
             dv = V.verify_agent_grant(g, binding=b, credential=cr, now=c["now"])

@@ -15282,8 +15282,15 @@ def check_agent_grant(root: pathlib.Path) -> list[Finding]:
         return _fail(name,
                      "verify_agent_grant must treat a missing or malformed `actions` as the EMPTY "
                      "list, so a grant that names nothing authorises nothing")
-    if 'v["action_in_scope"] = str(requested_action) in actions' not in body:
-        return _fail(name, "the requested action must be checked against the grant's own list")
+    # Against the grant's own list, as text on both sides. Until 2026-10-01 this pinned the line
+    # `str(requested_action) in actions`, and that line was the defect: str() spells null "None"
+    # and true "True" where the TypeScript SDK's String() does not, so a signed `actions: [null]`
+    # covered "None" in Python only. The property is pinned now, and the old form is a FAIL case.
+    scope = re.search(r'v\["action_in_scope"\]\s*=\s*([^\n]+)', body)
+    if (not scope or "actions" not in scope.group(1) or "_wire_text(" not in scope.group(1)
+            or not re.search(r"_wire_text\(\s*requested_action\s*\)", body)):
+        return _fail(name, "the requested action must be checked against the grant's own list, as text on "
+                           "both sides (_wire_text), not through str()")
 
     # REVOCABLE BY THE HOLDER ALONE.
     if "the revocation is signed by a key other than the grant's holder" not in body:
