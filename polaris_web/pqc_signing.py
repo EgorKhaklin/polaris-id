@@ -722,7 +722,7 @@ def trust_anchor_public_key_hex() -> Optional[str]:
 
     This is the key a verifier checks token signatures against. Returns None when
     no custody is configured (no persistent key), since there is then no stable,
-    publishable anchor, only per-process ephemeral keys, so a real signature
+    publishable anchor, only a fresh key per signature, so a real signature
     cannot be verified at use.
     """
     cust = custody.get_custody()

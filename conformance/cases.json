@@ -2505,6 +2505,354 @@
         "principal_bound": false
       },
       "note": "A binding with no credential beside it binds the holder key to nothing a verifier has checked; before this case the detached verifier bound it."
+    },
+    {
+      "name": "holder-chain-proof-for-another-credential",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/holder-token-credential.json",
+      "binding_file": "conformance/vectors/holder-token-binding.json",
+      "proof_file": "conformance/vectors/holder-token-proof-other.json",
+      "expected_nonce": "rp-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The holder's genuine signature over a proof naming ANOTHER credential, presented with this one. `token_value` is inside what the holder signs (WIRE-SPEC 3.15), so the proof is about the other credential. Before this case every verifier here compared only the proof's key with the binding's."
+    },
+    {
+      "name": "holder-chain-proof-for-this-credential",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/holder-token-credential.json",
+      "binding_file": "conformance/vectors/holder-token-binding.json",
+      "proof_file": "conformance/vectors/holder-token-proof-this.json",
+      "expected_nonce": "rp-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": true
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The positive control: the same chain and holder key, with the proof naming this credential."
+    },
+    {
+      "name": "cross-authority-manifest-lists-trusted-anchor",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/federation-signer-pack.json",
+      "manifest_files": [
+        "conformance/vectors/federation-signer-manifest.json"
+      ],
+      "trusted_anchors": [
+        "8fa80a3e81ee5f96bcd352082aee357076b0e098772f4f3e3b34936c27615f8786df0d3cd0dfc46f60ad60faaece85de68eff8c5cd6f0467ccafdc80b08914b9127634aba8cd1a5940a9b1d5d91940d9f197d9291f406cfbd0aae8cdba56b357bc7eb6bf448f7b881fa2fe2ba7c3c3c179660f65b99e2699be55133356344978930f5c5f6a06758235810fe9577d46e535abbf426442b2f09f91b899bb97267fb8fe7f37a76aa0877083266654d0f0b6b08a813630f6a156eed2e391f46c0ee8a091a9e019c7d55d6df119785564e4aaac7d64f1912d79e1bbcbd02bab86a01307174e988c9a18471f9c4c3429313ec958c6765e0db693c9340bc15c70000aef704beec24e80e52dde758c98023b5e93354adb93459375d7aa9a9e6d11dc9fcf1c4732dda6a969e9dfcf934bfcacc3dcad1fbb2af9bd368874a9d05aac62b9b6591f6a8ea94a9fb479896c2b439dbb19a6112111d7d0818bad90ff2e97efaf1b6127f286ba7f7129987d6c88e6fc356f408b4349879edbfa67a36f4de24c67378424ca4f4a1d4c08e077338f58df160e6d1524c93ebdfbe4fa802b9e9756197be49337b7017cc83b685e6c96032dd69e8062b739d23ecc62d6077cf93473af4c56ed2fa2c5ecfd0040a27b15900d6d7861c9567abc425f2ea15e1a44f12206adeb376eae4ccfdfa75b786978c90f349b26a4eec8cdf3ab96701f59a6f43cea389276c9d2b901a8a2e3c323d28dfd0b629b223941f24049f380561254a521e8aa1fe436ae32b1d5c5fed26af9630763849455c3dbb149d2157704a1f7dc1d0aabbbb0ce8e35f1eab937825aa9b55c5ee7e140ae96ebeb42501ffea1a6ada87b3e953c6ad6887fc225d09204e3c77f11d648b21adb4f9976a93e482f9e6ccf283d6b03a195954da2524adfccfd36f144d4ac134a9096dc6c838c7726b7f6d8f7e38129488b6e899d4f4359b08282bf6bd8396dc13b76f8307a5ad07f15c0cef76459641c9c814131e2e193fad3227fa0d4cbec224e83523dbbc5842bc5cb3be41fb14be0231ee5ff099d6ce4d89c76167346c5a7f74914ed96dfc9ce76ea40402f8768cbf8b005a82de0dc4c21c5a258809bf552a3e62a2d594ae496d55e92b6bfc7548859c47758d2fcb0645a24d8dc918a1591881a70204d1c4f94b8112f97dee34983b9119baa083fd424319013ba4d7d37fdce6ee17154aee608e8dfd8a8eafa178728a297e90100f66ede4bf9a7335b7fce72259c7368e287ae09c4e3d56d9e066ae1f1774a9fa82d873ca17d356115dc08a75c03fb9e49145e53c39af65aa7c0213198f5a5c21b99838cb9df081988ae5cbc92804439e63c3a72a86956f4c393733592ff304aeafbee7e70d7761b6551bcc2027e028de7cb6d1145770ba6d675c6513dbf054b592eb73d7ecb3afdfc67e9e4ce364219623ad6de04ba006a87f990385df0fa4710a68164d551a2c06d5176f7a90503b5b197922e8362b7dfb8dc6945acb3bc535a803ab8faa7bff2d4c28148dc1518320a2a24c8069b9253cd7de7895eb852148f6c44c09efea98b1186dbbde473df0dc88118a8859993d6c19df255514b1cb3be16971d18df639c3915d90daf2a1a15e06500d092e5a9c9d888bdf3a327a2d2c32f9cb63de036b9aa09a6af5b27e82f1386fa1a2ed247d8175d94186061f1acf5494e4c06d40cf2b495b0c0b00358df4e8029c29559439481a28a38dde5f9d9a8d24d4e70dfc0b2ff8517650388a57a4f538c0b02c316a19094d583b6cee207c040a6ed3353450aa1170875e900f823cdb7b3ab62355f76dfc5953a92f8979986794faac041d04037ca9fc6dc66a2babe5810e2d01c11d7ff4c779eaf572f4321e1a2e85e77035b301e267f2a100664c7036b564e686b6c55c2abbf94e4f871fa58482075b7013158d249d9517deae674c95c96983537ab1743269f80b24ce0697553b1945dae4dc5e0aa975dec6c06b81f8dd40c7ceb1d7d35c71919e3ccf895cfa5ffe590d9382a7174d940152e7d3d728bef2a581200147a40dc01693fb3ef8ac49d49b7988dd2ca0bb2ac70a9c509241263e861ebb796f732857e3bbf6df530a937ce6f5d1ff3186cc39a522838f58defc70aecc6f9d20727db4620448635bcf7387f2b7184e24d40e4624264270339a339ede4b45551ab196f667610f8a563244784853df29ff529512bfcdf58107213b6a77ccedd31631511c7a82bef468bff255c7cf54420d7189aae0dc357b8064d70adff952a66eb915fea24ca17e95b6354d546ab420267b22a9a227fea604cfd8b1839daecda1125df9614864351174aad5dca3d4396614a923f2eafebeb1c4214bbad63134590684d40ad11c51bedfa99fe699fcd4f058d9ee4f27c0149ae4cce401ee9a735220c48593c7d99eed35d07c2191927cc5c7fe73c82071fa1eb0944ab3faceedcac3f39322c9ccc1337e6561074d2aad3da73a6e519186e24d153b36cd62a79761eb1f7d9919f1cc1dde45682b90eee80dbef12031a23b709c422ec2aed97d78d5fde4e96147aa3efcea31336692f0e46982c10fb6e3f9f7d4d5e8150d70848649973f8ccedadaf8d5d27d7b01bc34ba4a2c178861d2e86a9804c0d168f763438aaa3ecd0e9929165f34f3d1be560b5cd5a449e73242c58fa71bb8fe3f140590ffb97e38d5627197c83a60cbe08425a20c96f209ac9dae70ba8494f5500f2b85ccd05bfe7eb5ba03eeba8a2592cc8b59a08e7cda1a37947c802fd613912ead9"
+      ],
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The manifest is signed by the attacker's root and LISTS the published anchor, whose private key signed nothing here, beside it. WIRE-SPEC section 4: a manifest the relying party trusts is \"signed by a trusted anchor\". Before this case all three verifiers here trusted a manifest when any key it listed was trusted, and accepted the attacker's credential."
+    },
+    {
+      "name": "cross-authority-manifest-signer-trusted",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/federation-signer-pack.json",
+      "manifest_files": [
+        "conformance/vectors/federation-signer-manifest.json"
+      ],
+      "trusted_anchors": [
+        "0f6dee488c10b5332e0516b986375695928ca51624c95cc4ef6b0c4e66c5978b3adfa4e09a292ab6a03c9658bb82507ba65f784907e533167ff747b25878c83cb98b6bd293b5a950c0d621dc38ee71197bd61d5aad6c23a7ae14028ab5d1e49473d12b7a738fabbd29b3d26f2eb5369d5f3b661d1eade9ffb9e68f9f6568c23ac47139c5c9dfda088a2df3777b518140fffe19375ba77e1effc15484167a42a073fec032e713eb8d4063d70719f81082eb8fc8b3964c633c6ac85f6a0d661fd7bf650d578e9500f2d5fe745f84f188dfb12cb17ba6982e25d53b9e59d5ab7aeac828e456c9fbfae70e302592825ec0ff4c8a1e26cc7470220a664cd36c73f4a242e8214a045f49b34d7e0f02a9c2918dd9228aec3bd0449c5ef4084c20549e92f10057410c396f9b11f54211d229d2f1507c478a78d79bf9d36acc47d7ee3a6aa216996e3abadddc8c92b14b4ee8b08861a8210262843b073bd521b0b54f90158ba207b0eaae6f0fea434bc66e825b40be0b31226192788394f92b02c5700c2b3a7b552d60a0c28a44f10ddae17b1910bb9f45e0942470e30c93f672e074763e66e7ccd16770ce9ebe06edc4e64587f3755776904649447836befe413a230f3c4540bc57aa2cb5f6fa27f7da258a193fbb668a83eba2bd83743ede71fd878a5c61cfa419a42563bc2865277b2dccf149514a7d0e0828e8a4fb09111e77df15041b22599974674cb91d6e94aa0d307ad77cace6d8de8d547033d10dc4b21767a9db03027347ec1720b3c319c4dc6574788481f939df1e1b09867ebfc44e5f2d08ae559cb24eed9b8e7a94b36c1885b0b983bb5d77e78e9c2fb4ccde3f3d77e0fff9a21ef2b2eeed6f84df462e94fb9474b4c0a88de629a6347bc9bce412aabb51d3189c81ca9f03e50628a6e5e5dc2cf7e86f4e3243b74a8649db9f9ad663472b02823b6b6f9dabf2f16bfce062eaa6b83c90ad47df21705fa7aa24b190acd75d7501d542aebc525ed1f636fabc9e129dc5a2d8deba50d28f268ec779d047e705c8330ab3738b74d3f31f8ddcc2714f4f9cbbc76ead043d89b34e7e179325dcdda5c70017414098b154ca96d89bf3077705522605126f7fb2f636e02f09424fa9d1d9c2a2f59b6b02f158f044bf4be872091aab03cada8423f44ec90923171f3e15c95a480b5103ca482635f53fad6ab4366ebcfceed331e9f886194c59f268d6ffc41d1a010703c5c954d7d3eec3686deddb87bc0daa81b61d655dd7d62834ef55b1b4b716f9df674d643f1ed10b536c25e0a29705443112e28c76193ecaae9b2da5f8527fb4b1029535b095c2be05e38b12aac08d7b496d480b7ac7c0ebdd008ef1cc64ee2ee7ff5a2b1228e60a4b32c52bb039ac01b2ff6ad7f5edf2c129aaa1648ed745d8a3d77063d3b2bccf884b5177c9071fddc1235f03f3e0b5d175babf992f576c8426c8d8dc4ca7c8ef6c6f8021f877f60c2c8d2a69af01c34659fe91a6c3fe47a9b98c50952c3844732afd01d88b30dbe6c2ff7e7bf8030653f0a7ced39a5cb9c18b9414d1c6d9c71a491c494d5456ed6ebb04f35f315f058c486f222f689e794af2c6d56a39dcc4e51f6cb3eb1d73cf4280bbb873a982c827c98b078bfd54a15cbfc805836065d810b497dd44b64a7fab2c42a92bbd66e2264b0b9a377c77c71f4958e862f8b7fd03c55635be47446169c4280cd184de73f75ec05ff46bebb26b2bc0ce017dae79fd886f47d0f8f7fad123ce2e29636d2533dc09c6a22e722cbd389fd0d671e03014e97763ca6dbdd5173c95768abae27aef43b0d56b96c56844f3f45659f524cc8bac60ea165a9cb3f2891f58091655d1656934e4e536dd3f4a2e7ad9a4086f89961f9bf9ba676017052e94a3a6cf3b133f002e83bf81604f62ca520d1ad2be3f73accbcec297c1d4a2c658a5f2cafb7a7e63d3b6e0090ec5cdb3d3bf10ab01385e3d1b89815e3a3a7027776156bf4e4209c79d5e2975283cf4af36a8bef46c4265d518fe8eee34e964cf86e7e8c02d6969d4e0a3260891ce9ffd51beb59114b574a3c38747c8d6f25bed6a06bec93466ea8c66f12ba44650cfa2268e151a0cd259651f43022d1eb6e9605ee8496916a30bdc7f5c503dcaf3cf182cc5f0dfe36da68a45fa524217e70ab36f9e94b2b10ed2319f2845434edffdf02e3e23ba8e4680dfce356cd7b0fde73697e5d2ae8db2750e308c368dfd172880e7a2887731900d0b0585a7a811400d6544eb564719df6f0c26850d0ccff6698f74d40dd9ea2adf6ac8631b720a9e59ea43b6f2f3a4af532b0f0ab3f75537bbd99564e8a032b56503e887755b49e9a14f2176d77f539e80e1bc71e2dc84b752d2696a372fe61097a89de0095c578c1ff19a514e54a01478e895e75d89b27f349ac409a6e023f81c588b20aee94adbe49a2d599f3a2a6af2ba8cda3f4f0b8c91089f2f009633e242a852800093a2b9dc948241ccea686c392af39be105c27cfd1fe8c5ab78977d38bee35f8955b44a3060ddcbab5f707fb479e3e808d574c100a5139bee319fa084c02517b9e40241d159adac2ef72c18efc87fff7203102a2a390226819404da80608790ae29eef6eb3ddae966e69284086cf206f69f7daf32e6a9d8031cec0b43f86c0f0a98cfc0b70865b194916655768f02991f7113d18c02929b4e9d62e27dcbd3a8e55a85177e89cc7fb1ff359870a75e883ff8b4f38d467d44f94e00bab896ce3f30be647490a1350586994abe75eb14"
+      ],
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "accept"
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The positive control: the same pack and manifest, with the relying party trusting the key that signed the manifest. The refusal in cross-authority-manifest-lists-trusted-anchor is the trust rule's, not a broken vector's."
+    },
+    {
+      "name": "cross-authority-edge-signed-by-a-stranger",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/federation-edge-pack.json",
+      "manifest_files": [
+        "conformance/vectors/federation-edge-manifest-stranger.json"
+      ],
+      "trusted_anchors": [
+        "9c9a4c4a723a63ff9711a72308120ecef66d2c9c095eb73fb9a678fac87d89b943005865f572fc8805ee94a6c16df1740bb30decad8bfb931e82748f96c6cafa800d55e3727c2be227234797e51c864f91f091517936fbd2d84ce9493b9595aced30b1a4989c9e83adfafdcde4caeba143a46eb1c20363255e6fb1945624daa7e4a85f14e7adf8c58d15ae554df4450505e490b53b083a3492e971e87012b1d1d135ed53a348001021967a9038f08ac7429ed0d8ee2fd744e42f89daa2b8a412d63d99b3d50e915ab290af9e8cb6b3ae5e875e8f9658d987efc91bc1cf5c183e7d05fe0f0f8372fc6679dccf030f987388fdf0c126fe58e8035601203867abe7a37945ef75d4d3099fe85845f2f1bb15f0809ac8b060bc9607f5e28911ed8037e3867ff4643b0b4db8e5ad08cee13598b0eacf7ab20112047967933521303ce25cd58cbf38d33561bb4ace693e1f0e5235369c18513a8dbf43175216d50b046d10e5fcc9735694adf0a35d4c386ddd211dc801516cab3f1e38e0b8166aaaebc5a82a19f9c81e2502f3d71f5f36aa9724200e0c2e15128cbc4a13e639bd3800f5c9a8bb69b1b4a5692c431e74653b27d1693fc688f57589a4e980a43cd35898ba18d21a7e6e2f0ee9049b5512e290d23262b4c4145c92ccb75bf2baa78a8b8a58c0800843a5e832a5399d8dda363da56ab6d3ee5241b7dcec742332b22a6df7c8a18f4d0132ce79012a94e2e38d479e183d8f10dc0b5741bb899002c72e2ee556160e63c50cd0bbd295d47ebda0d579a24d04a5e98851c893784653805d485485d4596f008e73ea40205d74a35a3eaa51956145a3a7c1d1650421f58fdda5db8fe9f137e83a4d12b50ddb103dc381c83f4d67b62259c45427d17701f1c748e8fc909cccb01f02518d3c490f97be95af71e39a43a10d3db2e746adca4136475c653be84091add2f0097d305167d99399bf87e0191bd82b3ce84e68974fd2ad1cb7268e97badd77a4b343220af73cdb5f6eda3dea4077a2302c14d2ea7335e46c4bf851e7b5a0aac105674eb6eea4a3bee0c461937824c59745e4cd254facb745230c059417b7c791aeaab0a4773019f22d81e0108b512299fb77e727329c325725d29bab8208e77215d3ec90270d03b9db9854ee7dec463286ae4b106ed3dad02d3123ef8bdf56af59f24b3203660acd7c552c9e57be21cda5aa3cbf8e63e5e7e761aa8d0b390db1519f0061a4aa3f4be29ae19f53244a57ebbe665d450fe9d2f67be699764002cf12c831fe69a32df9aab7cce0bd1666aed1f3e9610d3320dba6959758cd383c95e1d770d50e958f3349a7d0ecdbaea2f834bbc75aab3f8578152ae29dd5aaed517e66b4330c9383016b47a5ac15237e3cc6c2138208e50e07200fdfc0d6d96a76c8c27911f3bca47cf06c365d3feace2832c3556adeb5692f4b105fe127a248c73f793e888a0846ebcb7ceb30cc02a3b12dcae15c274b0e244fc888a9717a7fbd3f88b53939e46a5aaee99042c336db96f050dd2fedc8087c7536facdf6a240ef96f9aa371080c7d3602e0c23f293e1469f127e30920fee4bb682745fcefbecaa2c410dfccea0ed77970db209854e81df006f1b11e8033a03cba586e2728042f85096f6c7651a0f565db434124deaede6285bafb666750d1cd131d429b5042705ae949d0fb8d00bb32d6120d09af12d273309e73f705dcfd8c7193d4cb0c52eece4c8f0b57d8874b900d3881061a3e9406cad842b301f3cfcd125df69ca8c62999be12f10b7df94c42fca96e68bb02bb5935b78e5b6e8608e75f1a037e0067951f519a9823642e264579dfb3467439b3742d64b142008f0ecc9e3ab059c1dedc691d03ef7d7fabb8c3c14cab5fb49f30eeb9724378223bddb79ba7ca7061dc84bb412af28570d8a43680250c87b86020345f8fa2cfc45ac02d37f9488886bd19b605bbf08acefcf130aaf576765e51099bdd9a7a27ba12ec3f42643a1b5cc95cf8c197bda4942ae6d0e37cdf6ed1b0ec1999356c96f5fddfef3023215f0a9a3f315e5820626acb88ac692a37afb804b3fcac14f10fd58d42d1ae34bb8af1026f251d09ff170b91d09511ca22945081794ebf085f4fc0e19ed8c12eccfa288cf5d605d347a00a1dc454914ae51fbe57c79be6f32a5c3d5f7e518278528f699d4046aec0ffa3a5ae8a819dbde72586c446b6e6633ae596fbeb741a9fc3aa14d5fc7bf08341c85b9bc58ba4c746ac9d3d03d5c24cf5676a034013e1ff89038b7d0fa69fe62d4df153ccd0e3acfc8e417b6765d2c791028bb51640edbe0c634e002bbc8019d58de6e9cdb6a1b4843b7780de9c05ec88fa89d818e12e11a87969bab538e724a9951aa9b95c40577b4449c4d29c73a8c43146a1f9962d3ab4d722ba195a3fa562634741227ea957c3c09653ca31cff93185f29b2f034b2eba09b07cac1a98924915ae158509b864e509d489db01540810fe6e043c119f40462b922f094efc19f0f53d098af92d0b84137a6ab1be0b19095675382161c91836480f5c177ec8597c855c84c31299adcc8d1448b646909e4bb9a72f33159965e339741a5edc9a30d03a798d79584191d6179cd4252fea042691d92f65ad06d7511ca28b87097826cd2fd12b769c69dae202f60e2afd84da16440907a82fcfa9bc261b515ba5607e9f2dd641a08552f60696afdbc003257cfcf68b0f46b5a5f1af96fe34e1a74b7cfc61ba695d26dcf78780a2077be01ca2e5088b235f46a"
+      ],
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "require_signed_attestation": true,
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "1.0.0-rc.68",
+      "note": "A trusted authority's manifest whose one edge carries a valid signature by a key that is none of the authority's anchors, with a signed edge required. WIRE-SPEC 3.14: an edge is \"signed by the agency that made it\". Before this case every verifier here counted any key's signature."
+    },
+    {
+      "name": "cross-authority-edge-signed-by-its-authority",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/federation-edge-pack.json",
+      "manifest_files": [
+        "conformance/vectors/federation-edge-manifest-authority.json"
+      ],
+      "trusted_anchors": [
+        "9c9a4c4a723a63ff9711a72308120ecef66d2c9c095eb73fb9a678fac87d89b943005865f572fc8805ee94a6c16df1740bb30decad8bfb931e82748f96c6cafa800d55e3727c2be227234797e51c864f91f091517936fbd2d84ce9493b9595aced30b1a4989c9e83adfafdcde4caeba143a46eb1c20363255e6fb1945624daa7e4a85f14e7adf8c58d15ae554df4450505e490b53b083a3492e971e87012b1d1d135ed53a348001021967a9038f08ac7429ed0d8ee2fd744e42f89daa2b8a412d63d99b3d50e915ab290af9e8cb6b3ae5e875e8f9658d987efc91bc1cf5c183e7d05fe0f0f8372fc6679dccf030f987388fdf0c126fe58e8035601203867abe7a37945ef75d4d3099fe85845f2f1bb15f0809ac8b060bc9607f5e28911ed8037e3867ff4643b0b4db8e5ad08cee13598b0eacf7ab20112047967933521303ce25cd58cbf38d33561bb4ace693e1f0e5235369c18513a8dbf43175216d50b046d10e5fcc9735694adf0a35d4c386ddd211dc801516cab3f1e38e0b8166aaaebc5a82a19f9c81e2502f3d71f5f36aa9724200e0c2e15128cbc4a13e639bd3800f5c9a8bb69b1b4a5692c431e74653b27d1693fc688f57589a4e980a43cd35898ba18d21a7e6e2f0ee9049b5512e290d23262b4c4145c92ccb75bf2baa78a8b8a58c0800843a5e832a5399d8dda363da56ab6d3ee5241b7dcec742332b22a6df7c8a18f4d0132ce79012a94e2e38d479e183d8f10dc0b5741bb899002c72e2ee556160e63c50cd0bbd295d47ebda0d579a24d04a5e98851c893784653805d485485d4596f008e73ea40205d74a35a3eaa51956145a3a7c1d1650421f58fdda5db8fe9f137e83a4d12b50ddb103dc381c83f4d67b62259c45427d17701f1c748e8fc909cccb01f02518d3c490f97be95af71e39a43a10d3db2e746adca4136475c653be84091add2f0097d305167d99399bf87e0191bd82b3ce84e68974fd2ad1cb7268e97badd77a4b343220af73cdb5f6eda3dea4077a2302c14d2ea7335e46c4bf851e7b5a0aac105674eb6eea4a3bee0c461937824c59745e4cd254facb745230c059417b7c791aeaab0a4773019f22d81e0108b512299fb77e727329c325725d29bab8208e77215d3ec90270d03b9db9854ee7dec463286ae4b106ed3dad02d3123ef8bdf56af59f24b3203660acd7c552c9e57be21cda5aa3cbf8e63e5e7e761aa8d0b390db1519f0061a4aa3f4be29ae19f53244a57ebbe665d450fe9d2f67be699764002cf12c831fe69a32df9aab7cce0bd1666aed1f3e9610d3320dba6959758cd383c95e1d770d50e958f3349a7d0ecdbaea2f834bbc75aab3f8578152ae29dd5aaed517e66b4330c9383016b47a5ac15237e3cc6c2138208e50e07200fdfc0d6d96a76c8c27911f3bca47cf06c365d3feace2832c3556adeb5692f4b105fe127a248c73f793e888a0846ebcb7ceb30cc02a3b12dcae15c274b0e244fc888a9717a7fbd3f88b53939e46a5aaee99042c336db96f050dd2fedc8087c7536facdf6a240ef96f9aa371080c7d3602e0c23f293e1469f127e30920fee4bb682745fcefbecaa2c410dfccea0ed77970db209854e81df006f1b11e8033a03cba586e2728042f85096f6c7651a0f565db434124deaede6285bafb666750d1cd131d429b5042705ae949d0fb8d00bb32d6120d09af12d273309e73f705dcfd8c7193d4cb0c52eece4c8f0b57d8874b900d3881061a3e9406cad842b301f3cfcd125df69ca8c62999be12f10b7df94c42fca96e68bb02bb5935b78e5b6e8608e75f1a037e0067951f519a9823642e264579dfb3467439b3742d64b142008f0ecc9e3ab059c1dedc691d03ef7d7fabb8c3c14cab5fb49f30eeb9724378223bddb79ba7ca7061dc84bb412af28570d8a43680250c87b86020345f8fa2cfc45ac02d37f9488886bd19b605bbf08acefcf130aaf576765e51099bdd9a7a27ba12ec3f42643a1b5cc95cf8c197bda4942ae6d0e37cdf6ed1b0ec1999356c96f5fddfef3023215f0a9a3f315e5820626acb88ac692a37afb804b3fcac14f10fd58d42d1ae34bb8af1026f251d09ff170b91d09511ca22945081794ebf085f4fc0e19ed8c12eccfa288cf5d605d347a00a1dc454914ae51fbe57c79be6f32a5c3d5f7e518278528f699d4046aec0ffa3a5ae8a819dbde72586c446b6e6633ae596fbeb741a9fc3aa14d5fc7bf08341c85b9bc58ba4c746ac9d3d03d5c24cf5676a034013e1ff89038b7d0fa69fe62d4df153ccd0e3acfc8e417b6765d2c791028bb51640edbe0c634e002bbc8019d58de6e9cdb6a1b4843b7780de9c05ec88fa89d818e12e11a87969bab538e724a9951aa9b95c40577b4449c4d29c73a8c43146a1f9962d3ab4d722ba195a3fa562634741227ea957c3c09653ca31cff93185f29b2f034b2eba09b07cac1a98924915ae158509b864e509d489db01540810fe6e043c119f40462b922f094efc19f0f53d098af92d0b84137a6ab1be0b19095675382161c91836480f5c177ec8597c855c84c31299adcc8d1448b646909e4bb9a72f33159965e339741a5edc9a30d03a798d79584191d6179cd4252fea042691d92f65ad06d7511ca28b87097826cd2fd12b769c69dae202f60e2afd84da16440907a82fcfa9bc261b515ba5607e9f2dd641a08552f60696afdbc003257cfcf68b0f46b5a5f1af96fe34e1a74b7cfc61ba695d26dcf78780a2077be01ca2e5088b235f46a"
+      ],
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "require_signed_attestation": true,
+      "expect": {
+        "decision": "accept"
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The positive control: the same edge signed by the authority's own root, with a signed edge required."
+    },
+    {
+      "name": "timestamp-rules-control",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-rules-control.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The positive control for the timestamp-rule cases: the same key, a lowercase SHA3-256 digest."
+    },
+    {
+      "name": "timestamp-digest-algorithm-not-sha3",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-digest-algorithm-not-sha3.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "WIRE-SPEC 3.9: digest_algorithm MUST be SHA3-256. Signed and otherwise well formed; before this case all three verifiers here accepted it."
+    },
+    {
+      "name": "timestamp-digest-hex-uppercase",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-digest-hex-uppercase.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "WIRE-SPEC 3.9: digest_hex MUST be the LOWERCASE SHA3-256 hex. Before this case all three verifiers here accepted the uppercase spelling."
+    },
+    {
+      "name": "timestamp-issued-at-not-an-instant",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-issued-at-not-an-instant.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "A timestamp binds a digest to an instant, and 31 February is none. Before this case both SDKs accepted it; the detached verifier refused it."
+    },
+    {
+      "name": "revocation-feed-rules-control",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-rules-control.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The positive control for the feed-count cases: two leaves, counted as two.",
+      "now": "2026-06-01T00:00:00Z"
+    },
+    {
+      "name": "revocation-feed-count-mismatch",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-count-mismatch.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "WIRE-SPEC 3.3: revoked_count MUST equal the number of distinct leaves. The root matches the two leaves and the signed count says one; before this case both SDKs accepted it.",
+      "now": "2026-06-01T00:00:00Z"
+    },
+    {
+      "name": "revocation-feed-count-not-a-number",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-count-not-a-number.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "A count of true is not one leaf (WIRE-SPEC section 1): before this case the detached verifier read it as 1.",
+      "now": "2026-06-01T00:00:00Z"
+    },
+    {
+      "name": "federation-manifest-rules-control",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/federation-manifest-rules-control.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The positive control: the manifest is signed by its own declared active anchor.",
+      "now": "2026-06-01T00:00:00Z"
+    },
+    {
+      "name": "federation-manifest-signed-by-a-stranger",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/federation-manifest-signed-by-a-stranger.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "WIRE-SPEC 3.1: a manifest MUST be signed by one of its own active anchors, so a stranger key cannot mint one. Every verifier here enforced it and nothing pinned it: with the rule removed from all three, every suite still passed.",
+      "now": "2026-06-01T00:00:00Z"
+    },
+    {
+      "name": "timestamp-anchor-head-is-an-sth",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/trust-root-anchor-by-sth.json",
+      "log_key": "0320ce0c8dafb6241131173e3d7ea213ba3fe805c75bef9c8f1f3a01fb6431ae140da682041dc72388ddd3af0018b024a24d141f5670116d627e66878bafcbadafc6d8bc3d6791eea38a199ef42f53a709814527e07becc0f1d9025e06f65a8fab6dae0433b77c7bc2695f0c6b06c3bb8f710a8748db664c1ce348b71497bf3e11daa6d765d57a774f965e3eecc64504420a92782bf15e2c24476a9819b3dc5274ccebc3e999049f7d641534a64a884b12e3799542cabfdcd40495af50e55be6592ccef497545bd6483bf926bfb0305832088d503509f835494c9293581e3020bcec1cf42e90796adbbf370412b200162c5d98d72ddafee7a5ab175653b5903c142a62800b3ff0ec9cf3023a0477e370548196cad98a2d5c4bd92eb5f62a2c3a603f2e54f7b0f2796b38a1eb5817d9aa5a2dd2f29a5b0d2a8b56290c66dd508eb914f19992bee89c427b7ebcdda3efcf03c8f711092a98e08913ab18e57a4a763ce7825c7a104d9803258ee6cff89533a75d997c9d79d6f3281ca24394afc7d505dcd921b87a7d62afa931022df29b2e48c9f9acbc05ead1c5beb84d266e218cfd567c4504dff2dfe4896612637a25a43eb70a82d1a95a499998d9b3f41a007a06cfbcd6456391e89a0b180c0d93dc4d5d25b18282ad5797d50a79230708aad47b04b437505d81515e09f53bbdd97582fdd9ed85083b7907c7e687143ae783170899137dac2a7b5019a7e60ddda22eaf74af1fc1d74d03eec5c5f3a1a9babe29832374e856a8e4b15611e2399eeb0c1a6ec04a3fbc9fa476e65336556a85bf510fb0f3170ad62cd1421526ebb62bab86d0f4ebf9a8c54641b3f96a21e355601150349fb98e9c54e4de3177d99ddec275fdf8de5670c9d473ff4c84bcebdb47258ff24395eeed7cb7302731ba3d1756a8f4ba1e400eb5e6425420eb31e7fdab7a86c52486d7d0c7ed0ae5d4bbb073f420a6ade55fa363c8ad95009d0d51d5d9c66e11bfab751ce0bff16e13011b70728b3f549203db24fe0ba249db9561c286915c9a50dc3f909ff2438e4a2e23e3b4e4e0726daba156f0d3cafbe72b3e9280021c45d2b56676b40992a3b4455a2d0ebd38a9f93ddff902e59db81d82b0939320c5d222bd2e1b27c85210d90f913df1a3d5664b07f1391e527262ba926e76a7c72e7a6e2801d6e87dec3ed9d75c585ab6cb3ed94efb681ac12cdc4c445140b67b72ddb9de606e770c4e614cee26c9734829d769da8f5044ac82612c45f42012c8632238af96d0f125dd12d473f166ff932b63db12554c707b641ef2c05a8b04b40bc7bf2085c14d8055509d3066f46e941ad8fe7f3002de2671e5b499a2d8876595c8cedb908e1345e854da69beb31b5ede2a32361551e8b8b467bb9279b2e82c56d59a1903b87830843b6e2307323e9e4d9444791ff2e1ab7e0d565a8d29fb9bc58fdd29c584e035365685e6436f784c8e3e3689eaa3bfa1fc9ec28821cfcd43e11e66f0813a8486890dde0e2ef1c35c6510807cae0810261f1e081d35e73b59dbc0a4c10ff87ef4802b433c1c5e6b85dfcb9f8054e1b1ea03c52930dc83ff45b2bfd44bf00c67bd87e40e88a1c9cc80df21cba6f5dd1adb3d292996b36469999789760dbba10a62f201eccda0504d2f3efd32ea0889c38e83be833f4ea3f24cf7c3a08f2f0e6c78d6ffe14170597eaa5f8867d277f1e0298e9c99ad3efc3dfd6b0d7359858c02e0fce81fd2be7e7a45f0200c656e026a4bf9a7efba2b6fe2f3a344cde24e070ad5701a59b6fd7aa091380e8380a5dbf0a9a1c1b5ec36d4618eb8c8c430e7e1f159c0f3f45fa9529087d2fb4213bf773efe373420b619968f14f4435341c8d2011c0d85d002fd2e461ba7c060942b86dc0bde751429817328a106ac490837dbe9cf89a89e4d96251666d0d34312b979b95243340cc9a75c4a19714acfbd00e910851321e3065ab6247ca913b54ac8d990d1534ee052cc144013b72f6ba223c5c1808b0a31e35144926efc7c7cec7be3ab29e62a86dc78094752d060f277b194b2617600c47f5cae549319b6418c21b73f8a7f53a80288f405e9f3cddfe4507059eafbebf62c7636e3b0a72529f1eb8bdc4cb78b805d0fef4969fd547af72cacb7b644f7ef78ff4c029955bd2715772ba01cdd1602c0f710dff1f0545c929b2a69d062301a633a4bd7ab7b86e08cb039e2f6084b6effb0f18d4224f3b9dd3034e118efa364ac01214c8b9402cef26a119700276163a8f203219fe49a79c850e08b0c6493ad00adc19cc8c91dfcad91e85bfd8d78510c839836835d161e8377dc86fd479eccd5f3e1f330a76c5ee5947207983d6548731693bedc328559a047c179236af2e8c7cb0ef6f7f69c29ed22470f7c53f299ef0905e0ac74bbc2c6ab9d38afcbb1aca6fb401b759da77b8d6b56b5e1abec10143b74aba66abb246b2cf5bcb85885f07e86c72492af595c5bb03062a7d1ad813130246bb4b52d9c6b7bc7017fbd71ba4e52c29fda1663a57a153e52b503a455c004efddf236a804b99bcec094d01327ab294d809d640c9f17f7c27bd1a0f841a28f971083f02d7e1e2047f06e0775e313cf4907d05c3de48f163b40ee298e816bfb4da805ed1d8c7efcddcb1424e4b30a0903a85b5692f1ef7d1c5beb38e84bf1d1b2171056f6d69767f5ccc00170976e001e927816aca77c99d47acac66bd5ac254a3a84602b74d0d9b41b8a81aed8a26a72b5b5808bb7a6a4d55acaa16cf87af531e398",
+      "expect": {
+        "anchored": true,
+        "witnessed": null
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The positive control: a one-leaf log, its signed tree head by the log key, and the inclusion proof of this timestamp in it."
+    },
+    {
+      "name": "timestamp-anchor-head-is-not-an-sth",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/trust-root-anchor-by-non-sth.json",
+      "log_key": "0320ce0c8dafb6241131173e3d7ea213ba3fe805c75bef9c8f1f3a01fb6431ae140da682041dc72388ddd3af0018b024a24d141f5670116d627e66878bafcbadafc6d8bc3d6791eea38a199ef42f53a709814527e07becc0f1d9025e06f65a8fab6dae0433b77c7bc2695f0c6b06c3bb8f710a8748db664c1ce348b71497bf3e11daa6d765d57a774f965e3eecc64504420a92782bf15e2c24476a9819b3dc5274ccebc3e999049f7d641534a64a884b12e3799542cabfdcd40495af50e55be6592ccef497545bd6483bf926bfb0305832088d503509f835494c9293581e3020bcec1cf42e90796adbbf370412b200162c5d98d72ddafee7a5ab175653b5903c142a62800b3ff0ec9cf3023a0477e370548196cad98a2d5c4bd92eb5f62a2c3a603f2e54f7b0f2796b38a1eb5817d9aa5a2dd2f29a5b0d2a8b56290c66dd508eb914f19992bee89c427b7ebcdda3efcf03c8f711092a98e08913ab18e57a4a763ce7825c7a104d9803258ee6cff89533a75d997c9d79d6f3281ca24394afc7d505dcd921b87a7d62afa931022df29b2e48c9f9acbc05ead1c5beb84d266e218cfd567c4504dff2dfe4896612637a25a43eb70a82d1a95a499998d9b3f41a007a06cfbcd6456391e89a0b180c0d93dc4d5d25b18282ad5797d50a79230708aad47b04b437505d81515e09f53bbdd97582fdd9ed85083b7907c7e687143ae783170899137dac2a7b5019a7e60ddda22eaf74af1fc1d74d03eec5c5f3a1a9babe29832374e856a8e4b15611e2399eeb0c1a6ec04a3fbc9fa476e65336556a85bf510fb0f3170ad62cd1421526ebb62bab86d0f4ebf9a8c54641b3f96a21e355601150349fb98e9c54e4de3177d99ddec275fdf8de5670c9d473ff4c84bcebdb47258ff24395eeed7cb7302731ba3d1756a8f4ba1e400eb5e6425420eb31e7fdab7a86c52486d7d0c7ed0ae5d4bbb073f420a6ade55fa363c8ad95009d0d51d5d9c66e11bfab751ce0bff16e13011b70728b3f549203db24fe0ba249db9561c286915c9a50dc3f909ff2438e4a2e23e3b4e4e0726daba156f0d3cafbe72b3e9280021c45d2b56676b40992a3b4455a2d0ebd38a9f93ddff902e59db81d82b0939320c5d222bd2e1b27c85210d90f913df1a3d5664b07f1391e527262ba926e76a7c72e7a6e2801d6e87dec3ed9d75c585ab6cb3ed94efb681ac12cdc4c445140b67b72ddb9de606e770c4e614cee26c9734829d769da8f5044ac82612c45f42012c8632238af96d0f125dd12d473f166ff932b63db12554c707b641ef2c05a8b04b40bc7bf2085c14d8055509d3066f46e941ad8fe7f3002de2671e5b499a2d8876595c8cedb908e1345e854da69beb31b5ede2a32361551e8b8b467bb9279b2e82c56d59a1903b87830843b6e2307323e9e4d9444791ff2e1ab7e0d565a8d29fb9bc58fdd29c584e035365685e6436f784c8e3e3689eaa3bfa1fc9ec28821cfcd43e11e66f0813a8486890dde0e2ef1c35c6510807cae0810261f1e081d35e73b59dbc0a4c10ff87ef4802b433c1c5e6b85dfcb9f8054e1b1ea03c52930dc83ff45b2bfd44bf00c67bd87e40e88a1c9cc80df21cba6f5dd1adb3d292996b36469999789760dbba10a62f201eccda0504d2f3efd32ea0889c38e83be833f4ea3f24cf7c3a08f2f0e6c78d6ffe14170597eaa5f8867d277f1e0298e9c99ad3efc3dfd6b0d7359858c02e0fce81fd2be7e7a45f0200c656e026a4bf9a7efba2b6fe2f3a344cde24e070ad5701a59b6fd7aa091380e8380a5dbf0a9a1c1b5ec36d4618eb8c8c430e7e1f159c0f3f45fa9529087d2fb4213bf773efe373420b619968f14f4435341c8d2011c0d85d002fd2e461ba7c060942b86dc0bde751429817328a106ac490837dbe9cf89a89e4d96251666d0d34312b979b95243340cc9a75c4a19714acfbd00e910851321e3065ab6247ca913b54ac8d990d1534ee052cc144013b72f6ba223c5c1808b0a31e35144926efc7c7cec7be3ab29e62a86dc78094752d060f277b194b2617600c47f5cae549319b6418c21b73f8a7f53a80288f405e9f3cddfe4507059eafbebf62c7636e3b0a72529f1eb8bdc4cb78b805d0fef4969fd547af72cacb7b644f7ef78ff4c029955bd2715772ba01cdd1602c0f710dff1f0545c929b2a69d062301a633a4bd7ab7b86e08cb039e2f6084b6effb0f18d4224f3b9dd3034e118efa364ac01214c8b9402cef26a119700276163a8f203219fe49a79c850e08b0c6493ad00adc19cc8c91dfcad91e85bfd8d78510c839836835d161e8377dc86fd479eccd5f3e1f330a76c5ee5947207983d6548731693bedc328559a047c179236af2e8c7cb0ef6f7f69c29ed22470f7c53f299ef0905e0ac74bbc2c6ab9d38afcbb1aca6fb401b759da77b8d6b56b5e1abec10143b74aba66abb246b2cf5bcb85885f07e86c72492af595c5bb03062a7d1ad813130246bb4b52d9c6b7bc7017fbd71ba4e52c29fda1663a57a153e52b503a455c004efddf236a804b99bcec094d01327ab294d809d640c9f17f7c27bd1a0f841a28f971083f02d7e1e2047f06e0775e313cf4907d05c3de48f163b40ee298e816bfb4da805ed1d8c7efcddcb1424e4b30a0903a85b5692f1ef7d1c5beb38e84bf1d1b2171056f6d69767f5ccc00170976e001e927816aca77c99d47acac66bd5ac254a3a84602b74d0d9b41b8a81aed8a26a72b5b5808bb7a6a4d55acaa16cf87af531e398",
+      "expect": {
+        "anchored": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The same proof under a head that is a genuine timestamp the log key signed, with the tree fields attached outside what a timestamp signs. Signed by the log key is not a head of the log; before this case both SDKs here anchored it."
+    },
+    {
+      "artifact": "holder-chain",
+      "binding_file": "conformance/vectors/holder-token-binding.json",
+      "proof_file": "conformance/vectors/holder-token-proof-this.json",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "since": "1.0.0-rc.68",
+      "name": "holder-chain-no-nonce",
+      "credential_file": "conformance/vectors/holder-token-credential.json",
+      "expect": {
+        "proved": false
+      },
+      "note": "The genuine chain of holder-chain-proof-for-this-credential, checked against no verifier nonce. A proof checked against no challenge is replayable (WIRE-SPEC 3.15: MUST require verifier_nonce to equal the one it issued); before this case both SDKs here proved it."
+    },
+    {
+      "artifact": "holder-chain",
+      "binding_file": "conformance/vectors/holder-token-binding.json",
+      "proof_file": "conformance/vectors/holder-token-proof-this.json",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "since": "1.0.0-rc.68",
+      "name": "holder-chain-credential-signature-forged",
+      "credential_file": "conformance/vectors/holder-token-credential-forged-signature.json",
+      "expected_nonce": "rp-nonce-1",
+      "expect": {
+        "proved": false
+      },
+      "note": "The same chain and nonce, with one byte of the credential's own signature flipped. A binding to a credential that does not verify binds a key to nothing; before this case both SDKs here proved it."
+    },
+    {
+      "name": "holder-chain-binding-current",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/trust-root-holder-credential.json",
+      "binding_file": "conformance/vectors/trust-root-holder-binding-current.json",
+      "proof_file": "conformance/vectors/trust-root-holder-proof.json",
+      "expected_nonce": "rp-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": true
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The positive control: a fresh proof under a binding inside its window."
+    },
+    {
+      "name": "holder-chain-binding-expired",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/trust-root-holder-credential.json",
+      "binding_file": "conformance/vectors/trust-root-holder-binding-expired.json",
+      "proof_file": "conformance/vectors/trust-root-holder-proof.json",
+      "expected_nonce": "rp-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The same chain, issuer and proof under a binding whose window closed a month earlier: the issuer vouches for the holder key only inside it. Both SDKs refused it; the detached verifier's contract adapter never read the binding's window."
+    },
+    {
+      "name": "exchange-use-receipt-responder-unconfirmed",
+      "artifact": "exchange-use",
+      "object_file": "conformance/vectors/exchange-use-receipt.json",
+      "expect": {
+        "authentic": true,
+        "responder_matches": null,
+        "responder": null
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The receipt of exchange-use-receipt-authorized, checked with no responder key. It names its responder in the statement its signer wrote, so the name is a claim until the key is confirmed; before this case every verifier here reported it."
+    },
+    {
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-grant-valid.json",
+      "requested_action": "read:status",
+      "since": "1.0.0-rc.68",
+      "name": "agent-grant-use-grant-fresh",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true,
+        "action_in_scope": true
+      },
+      "note": "The positive control: the grant of agent-grant-use-action-in-scope, inside its window."
+    },
+    {
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-grant-valid.json",
+      "requested_action": "read:status",
+      "since": "1.0.0-rc.68",
+      "name": "agent-grant-use-grant-expired",
+      "now": "2026-05-01T06:00:30Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      },
+      "note": "The same grant thirty seconds after its expires_at. WIRE-SPEC 2.2: a verifier MUST reject an artifact outside its window. Before this case the contract asked only whether the grant was genuine, and an expired grant came back in scope."
+    },
+    {
+      "name": "agent-grant-use-binding-windowed",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/trust-root-grant.json",
+      "binding_file": "conformance/vectors/trust-root-binding-windowed.json",
+      "credential_file": "conformance/vectors/trust-root-grant-credential.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "principal_bound": true
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The positive control: the issuer bound the holder's key under a binding with a window, and the grant is signed by that key."
+    },
+    {
+      "name": "agent-grant-use-binding-without-window",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/trust-root-grant.json",
+      "binding_file": "conformance/vectors/trust-root-binding-no-window.json",
+      "credential_file": "conformance/vectors/trust-root-grant-credential.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "principal_bound": false
+      },
+      "since": "1.0.0-rc.68",
+      "note": "The same chain and issuer key with the binding's window left out, which WIRE-SPEC 2.2 makes unacceptable. Before this case both SDKs here read it as fresh; the detached verifier refused it."
     }
   ]
 }

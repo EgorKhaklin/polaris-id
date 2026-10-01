@@ -997,6 +997,70 @@ class InclusionProofShapeTests(unittest.TestCase):
                 self.assertEqual(v.note, "malformed proof")
 
 
+class WitnessThresholdTests(unittest.TestCase):
+    """A witness threshold is a whole number of at least one (2026-09-30): 0.5 and -1 were met by
+    no cosignature at all, and the two SDKs disagreed at 0.5."""
+
+    def test_the_threshold_is_a_whole_number_of_at_least_one(self):
+        ts = _conformance_vector("timestamp-anchor-witnessed.json")
+        both = [c["public_key_hex"] for c in ts["anchor"]["cosignatures"]]
+        self.assertTrue(pv.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=2).witnessed, "control")
+        for bad in (0.5, -1, 0, "2", True, float("nan")):
+            with self.subTest(threshold=bad):
+                v = pv.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=bad)
+                self.assertIs(v.witnessed, False)
+                self.assertIn("whole number", v.note)
+
+
+class CrossAuthorityViaTests(unittest.TestCase):
+    def test_via_names_the_authority_the_edge_was_found_under(self):
+        """2026-09-30: `via` kept only a string, and every manifest's authority is an object, so
+        it was always None; the TypeScript SDK reports the object."""
+        f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json")))
+        v = pv.verify_cross_authority(f["pack"], f["_fixture"]["context_id"], [f["manifests"]["base"]],
+                                      [f["trusted_anchor"]], None, now=f["_fixture"]["now"])
+        self.assertEqual(v.decision, "accept")
+        self.assertEqual(v.via, f["manifests"]["base"]["authority"])
+
+
+class TrustComesFromTheRelyingPartyTests(unittest.TestCase):
+    """The review of 2026-09-30 asked, of every decision, what it trusts that the relying party
+    never gave it. Two answers no published case can pin, because the detached verifier's
+    equivalents take their trust by name (`trusted_manifests`) or report it separately."""
+
+    def test_a_cross_authority_decision_with_no_anchors_trusts_nothing(self):
+        f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json")))
+        args = (f["pack"], f["_fixture"]["context_id"], [f["manifests"]["base"]])
+        ok = pv.verify_cross_authority(*args, [f["trusted_anchor"]], None, now=f["_fixture"]["now"])
+        self.assertEqual((ok.decision, ok.issuer_trusted), ("accept", True), "control: the relying party's anchor")
+        v = pv.verify_cross_authority(*args, None, None, now=f["_fixture"]["now"])
+        self.assertEqual((v.decision, v.authentic, v.issuer_trusted), ("reject", True, None))
+        self.assertIn("no trust anchors", v.reason)
+
+    def test_a_holder_chain_is_held_to_the_anchors_it_is_given(self):
+        cred, b, p = (_conformance_vector("holder-token-%s.json" % n) for n in ("credential", "binding", "proof-this"))
+        kw = dict(expected_nonce="rp-nonce-1", expected_context=1, now="2026-05-01T00:00:30Z")
+        self.assertIs(pv.verify_holder(cred, b, p, **kw).issuer_trusted, None, "no anchors, not evaluated")
+        v = pv.verify_holder(cred, b, p, anchors=[cred["public_key_hex"]], **kw)
+        self.assertEqual((v.proved, v.issuer_trusted), (True, True), "control: the issuer is trusted")
+        v = pv.verify_holder(cred, b, p, anchors=["ab" * 1952], **kw)
+        self.assertEqual((v.proved, v.issuer_trusted), (False, False))
+        self.assertIn("not in the anchors", v.note)
+
+
+class TheVersionIsTheDistributionsTests(unittest.TestCase):
+    def test_the_module_says_the_installed_version_or_that_it_is_not_installed(self):
+        """`__version__` said "0.1.0" through every 1.0.0 release candidate (2026-09-30), whatever
+        pip had installed. It is the distribution's own version now, and from a source tree that
+        is not installed it says so rather than guess."""
+        import importlib.metadata as m
+        try:
+            installed = m.version("polaris-sdk-python")
+        except m.PackageNotFoundError:
+            installed = "0+unknown"
+        self.assertEqual(pv.__version__, installed)
+
+
 class GrantCoverageTests(unittest.TestCase):
     """2026-09-23: a held-out mutation made grant_covers answer yes to ANY action of a grant
     with a non-empty list, and this suite stayed green: every test here asked about empty or
@@ -1126,12 +1190,13 @@ class HeldOutSemanticMutationsTests(unittest.TestCase):
             fx = json.load(f)
         meta = fx["_fixture"]
         self.assertTrue(pv.verify_signed_artifact(fx["feed"], meta["now"]).authentic)
+        anchors = [fx["manifest"]["public_key_hex"]]   # the relying party trusts the manifest's signer
         v = pv.verify_cross_authority(fx["pack"], meta["context_id"], [fx["manifest"]],
-                                      None, fx["feed"], now=meta["now"])
+                                      anchors, fx["feed"], now=meta["now"])
         self.assertEqual(v.decision, "reject", v.reason)
         self.assertIn("revoked", v.reason)
         v = pv.verify_cross_authority(fx["pack"], meta["context_id"], [fx["manifest"]],
-                                      None, None, now=meta["now"])
+                                      anchors, None, now=meta["now"])
         self.assertEqual(v.decision, "accept", "without the feed the same inputs are accepted")
 
     def test_a_cosignature_from_another_witness_is_refused(self):
@@ -1276,7 +1341,8 @@ class RefusalsNoTestTookTests(unittest.TestCase):
         body = {"format": "polaris-timestamp/1", "digest_hex": "ab" * 32}
         entry = pv.timestamp_hash(body)
         bad_index = dict(body, anchor={"proof": {"entry_hex": entry, "index": "x", "tree_size": 1},
-                                       "sth": {"log_id": "polaris-timestamp-log", "root_hash_hex": "00"}})
+                                       "sth": {"format": "polaris-transparency-sth/1",
+                                               "log_id": "polaris-timestamp-log", "root_hash_hex": "00"}})
         for ts, words in (("x", "must be an object"),
                           ({}, "unanchored"),
                           ({"anchor": {"proof": [], "sth": {}}}, "must be objects"),

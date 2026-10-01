@@ -100,8 +100,9 @@ key the case's expected verdict names; the verifier may report additional keys.
   "credential": { "...": "the credential's polaris-authenticity-pack/1" },
   "verifier_scope": "<this relying party's scope>",
   "now": "2026-05-01T00:00:30Z" }
-   -> { "authentic": true, "action_in_scope": true, "revoked": false, "agent_proved": true,
-        "principal_bound": true, "pairwise_handle": "<hex>", "correlation": "exposed" }
+   -> { "authentic": true, "fresh": true, "action_in_scope": true, "revoked": false,
+        "agent_proved": true, "principal_bound": true, "pairwise_handle": "<hex>",
+        "correlation": "exposed" }
 
 { "artifact": "exchange-use",
   "object": { "...": "a polaris-exchange-request/1, polaris-exchange-receipt/1 or polaris-exchange-mint/1" },
@@ -116,7 +117,8 @@ key the case's expected verdict names; the verifier may report additional keys.
                   "body_bound": true }
    -> receipt:  { "authentic": true, "responder_matches": true, "requester_authorized": true,
                   "via": { "...": "the attesting manifest's authority" }, "request_bound": true,
-                  "response_bound": true, "responder": { "...": "the receipt's signed responder" } }
+                  "response_bound": true,
+                  "responder": { "...": "the receipt's signed responder, once responder_key confirms the signer" } }
    -> mint:     { "authentic": true, "responder_matches": true }
 ```
 
@@ -242,6 +244,39 @@ credential's signature does not verify, or whose binding arrives with no credent
 (`agent-grant-use-principal-credential-forged`, `agent-grant-use-principal-no-credential`).
 Each was accepted by at least one of the three verifiers in this repository, and each MUST be
 refused.
+
+Who signed (1.0.0-rc.68). Three cases, each beside its positive control, ask who put a key's
+weight behind a statement. `cross-authority-manifest-lists-trusted-anchor` is a manifest signed by
+an attacker's root that LISTS the relying party's anchor: it is not trusted, because a manifest is
+trusted when a trusted key signed it (WIRE-SPEC 3.1, section 4). `cross-authority-edge-signed-by-a-stranger`
+carries a trust edge validly signed by a key that is none of the authority's anchors: it is not
+the authority's edge (WIRE-SPEC 3.14). `holder-chain-proof-for-another-credential` is the holder's
+genuine proof naming another credential: it proves nothing about this one (WIRE-SPEC 3.15). Every
+verifier in this repository accepted all three before these cases.
+
+Statement rules (1.0.0-rc.68). Three rules a correctly signed statement can still break, each
+beside a control signed by the same key: a timestamp's digest is lowercase SHA3-256
+(`timestamp-digest-algorithm-not-sha3`, `timestamp-digest-hex-uppercase`) at a real instant
+(`timestamp-issued-at-not-an-instant`), WIRE-SPEC 3.9; a revocation feed's `revoked_count` is the
+number of its distinct leaves (`revocation-feed-count-mismatch`, `revocation-feed-count-not-a-number`),
+3.3; and a manifest is signed by one of its own active anchors
+(`federation-manifest-signed-by-a-stranger`), 3.1. Every verifier here enforced the last and
+nothing pinned it: an audit removed it from all three and every suite still passed.
+
+Trust roots (1.0.0-rc.68). Eleven cases ask, of four decisions, what they trust that the relying
+party never gave them, each refusal beside a control that differs in the one thing the rule
+reads. A timestamp anchor's head is a signed tree head, not any artifact the log key signed
+(`timestamp-anchor-head-is-not-an-sth`). A holder chain proves only against the verifier's own
+nonce, with a credential whose signature verifies and a binding inside its window
+(`holder-chain-no-nonce`, `holder-chain-credential-signature-forged`, `holder-chain-binding-expired`). A receipt's `responder` is the name its signer wrote,
+reported only once `responder_key` confirms the signer (`exchange-use-receipt-responder-unconfirmed`).
+A grant in use reports its own window as `fresh` (`agent-grant-use-grant-expired`), and a binding
+with no window binds nothing (`agent-grant-use-binding-without-window`). Before these cases both
+SDKs failed five of the six attacks (all but the expired binding) and the detached verifier four:
+its receipt named the unconfirmed responder, and its contract adapter composed the holder chain
+without the nonce, the credential or the binding's window. No verifier reported a grant's window. A cross-authority case always names its trusted anchors:
+without them the SDKs trust no manifest, while the detached verifier's function takes the
+manifests it is handed as the relying party's own (its parameter is `trusted_manifests`).
 
 Holder-proof window (`artifact: holder-chain`, 1.0.0-rc.66). A holder proof is fresh from one
 minute before its `issued_at` (clock skew) until five minutes after it, both ends inclusive.

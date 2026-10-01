@@ -626,10 +626,11 @@ test("held-out: an upper-case leaf in a genuine feed still revokes", () => {
   const fx = JSON.parse(readFileSync(join(ROOT, "sdk", "testdata", "revocation-uppercase-leaf.json"), "utf8"));
   const { now, context_id } = fx._fixture;
   assert.equal(verifySignedArtifact(fx.feed, now).authentic, true);
-  const v = verifyCrossAuthority(fx.pack, context_id, [fx.manifest], null, fx.feed, now);
+  const anchors = [fx.manifest.public_key_hex];   // the relying party trusts the manifest's signer
+  const v = verifyCrossAuthority(fx.pack, context_id, [fx.manifest], anchors, fx.feed, now);
   assert.equal(v.decision, "reject", String(v.reason));
   assert.match(String(v.reason), /revoked/);
-  assert.equal(verifyCrossAuthority(fx.pack, context_id, [fx.manifest], null, null, now).decision,
+  assert.equal(verifyCrossAuthority(fx.pack, context_id, [fx.manifest], anchors, null, now).decision,
     "accept", "without the feed the same inputs are accepted");
 });
 
@@ -795,6 +796,85 @@ test("held-out: each federation variant is refused", () => {
   }
 });
 
+
+// 2026-09-30: verifyHolder read a proof's age with Date.parse, which reads an issued_at with no
+// offset as LOCAL time, so the replay window moved with the machine's time zone: a proof seven
+// hours old was stale under UTC and fresh in Los Angeles. The shared ISO grammar reads such an
+// instant as UTC, as the Python SDK does. The zone is pinned away from UTC to show it.
+test("a holder proof's age is read in UTC whatever the machine's time zone", async () => {
+  const zone = process.env.TZ;
+  process.env.TZ = "America/Los_Angeles";
+  try {
+    const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
+    const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
+    const enc = (x: string) => new TextEncoder().encode(x);
+    const canon = (o: any, keys: string[]) =>
+      enc(JSON.stringify(Object.fromEntries([...keys].sort().map((k) => [k, o[k] ?? null]))));
+    const iss = ml_dsa65.keygen(new Uint8Array(32).fill(1));
+    const hol = ml_dsa65.keygen(new Uint8Array(32).fill(2));
+    const tv = "TS-HOLDER-OFFSET-0001";
+    const cred = { format: "polaris-authenticity-pack/1", token_value: tv, algorithm: "ML-DSA-65",
+      public_key_hex: hex(iss.publicKey), signature_hex: hex(ml_dsa65.sign(sha3_256(enc(tv)), iss.secretKey)) };
+    const b: any = { format: "polaris-holder-binding/1", token_value: tv, holder_public_key_hex: hex(hol.publicKey),
+      holder_algorithm: "ML-DSA-65", bound_at: "2026-04-30T00:00:00Z", status: "active",
+      issued_at: "2026-05-01T00:00:00Z", expires_at: "2026-05-02T00:00:00Z", algorithm: "ML-DSA-65" };
+    b.signature_hex = hex(ml_dsa65.sign(sha3_256(canon(b, ["format", "token_value", "holder_public_key_hex",
+      "holder_algorithm", "bound_at", "status", "issued_at", "expires_at", "algorithm"])), iss.secretKey));
+    b.public_key_hex = hex(iss.publicKey);
+    const proof = (issuedAt: string) => {
+      const p: any = { format: "polaris-holder-proof/1", token_value: tv, context_id: 1, verifier_nonce: "n-1",
+        issued_at: issuedAt, algorithm: "ML-DSA-65" };
+      p.signature_hex = hex(ml_dsa65.sign(sha3_256(canon(p, ["format", "token_value", "context_id",
+        "verifier_nonce", "issued_at", "algorithm"])), hol.secretKey));
+      p.public_key_hex = hex(hol.publicKey);
+      return p;
+    };
+    const offsetless = proof("2026-05-01T00:00:00");
+    assert.equal(verifyHolder(cred, b, offsetless, "n-1", 1, "2026-05-01T00:00:30Z").proved, true,
+      "thirty seconds old, read in UTC");
+    assert.equal(verifyHolder(cred, b, offsetless, "n-1", 1, "2026-05-01T07:00:00Z").proved, false,
+      "seven hours old, read in UTC: stale, as the Python SDK decides it");
+  } finally {
+    if (zone === undefined) delete process.env.TZ; else process.env.TZ = zone;
+  }
+});
+
+// 2026-09-30: a witness threshold is a whole number of at least one. -1 was met by no
+// cosignature at all, and the two SDKs disagreed at 0.5.
+test("a witness threshold is a whole number of at least one", () => {
+  const ts = JSON.parse(readFileSync(join(ROOT, "conformance", "vectors", "timestamp-anchor-witnessed.json"), "utf8"));
+  const both = ts.anchor.cosignatures.map((c: any) => c.public_key_hex);
+  assert.equal(verifyTimestampAnchor(ts, null, both, 2).witnessed, true, "control");
+  for (const bad of [0.5, -1, 0, "2" as any, true as any, NaN]) {
+    const v = verifyTimestampAnchor(ts, null, both, bad);
+    assert.equal(v.witnessed, false, String(bad));
+    assert.match(v.note ?? "", /whole number/);
+  }
+});
+
+// 2026-09-30: trust comes from the relying party. With no anchors a cross-authority decision
+// trusts nothing (the detached verifier takes its manifests by name, `trusted_manifests`), and
+// a holder chain is held to the anchors it is given.
+test("a cross-authority decision with no anchors trusts nothing", () => {
+  const decide = (anchors: string[] | null) =>
+    verifyCrossAuthority(FED.pack, FED._fixture.context_id, [FED.manifests.base], anchors, null, FED._fixture.now);
+  assert.equal(decide([FED.trusted_anchor]).decision, "accept", "control: the relying party's anchor");
+  const v = decide(null);
+  assert.deepEqual([v.decision, v.authentic, v.issuerTrusted], ["reject", true, null]);
+  assert.match(v.reason ?? "", /no trust anchors/);
+});
+
+test("a holder chain is held to the anchors it is given", () => {
+  const [cred, b, p] = ["credential", "binding", "proof-this"].map((n) => conf("holder-token-" + n + ".json"));
+  const now = "2026-05-01T00:00:30Z";
+  assert.equal(verifyHolder(cred, b, p, "rp-nonce-1", 1, now).issuerTrusted, null, "no anchors, not evaluated");
+  const ok = verifyHolder(cred, b, p, "rp-nonce-1", 1, now, 300, [cred.public_key_hex]);
+  assert.deepEqual([ok.proved, ok.issuerTrusted], [true, true], "control: the issuer is trusted");
+  const v = verifyHolder(cred, b, p, "rp-nonce-1", 1, now, 300, ["ab".repeat(1952)]);
+  assert.deepEqual([v.proved, v.issuerTrusted], [false, false]);
+  assert.match(v.note ?? "", /not in the anchors/);
+  assert.equal(verifyHolder(cred, b, p, null, 1, now).proved, false, "no nonce, not proved");
+});
 
 // 2026-09-30: a manifest set that is not an array is no manifests, as in the detached
 // verifier. `manifests ?? []` let `false`, a number or a lone object through to `.map`, which

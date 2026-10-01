@@ -45,7 +45,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install the app's runtime requirements (the RTO includes the application coming up)
-        run: pip install -r polaris_web/requirements.txt
+        run: pip install --require-hashes -r polaris_web/requirements.txt
 
       - name: DR drill, recorded
         id: drill

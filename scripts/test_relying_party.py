@@ -52,8 +52,24 @@ class RelyingPartyDecisionTests(unittest.TestCase):
 
     @staticmethod
     def _status(active):
-        return lambda token_id: {"currently_authoritative": active,
-                                 "status": "ACTIVE" if active else "REVOKED"}
+        return lambda credential: {"currently_authoritative": active,
+                                   "status": "ACTIVE" if active else "REVOKED"}
+
+    def test_status_is_asked_by_the_signed_serial_not_the_presentations_token_id(self):
+        """The review of 2026-09-30: the status was asked by the presentation's `token_id`,
+        which nothing signs, so a holder who edited it to another credential's id read that
+        credential's ACTIVE and a revoked credential was accepted. The checker is handed the
+        credential itself, whose token_value the issuer signed."""
+        asked = []
+
+        def issuer(credential):
+            asked.append(credential)
+            active = credential.get("token_value") != "REVOKED-T"
+            return {"currently_authoritative": active, "status": "ACTIVE" if active else "REVOKED"}
+        edited = {"format": "polaris-presentation/1",
+                  "credential": {"token_id": 8, "token_value": "REVOKED-T"}}
+        v = self.rp.verify_presentation(edited, status_checker=issuer)
+        self.assertEqual((v["decision"], asked), ("reject", [edited["credential"]]))
 
     def test_accept_when_authentic_and_active(self):
         v = self.rp.verify_presentation(self._present(), status_checker=self._status(True))
@@ -135,6 +151,18 @@ class RelyingPartyCommandLineTests(unittest.TestCase):
             def verify_pack(self, pack, anchor_keys=None):
                 return {"signature_valid": True, "issuer_trusted": None, "note": None}
 
+            def verify_stapled(self, credential, assertion, now=None, max_window_seconds=None,
+                               anchor_keys=None):
+                # The detached verifier's stapled decision, stubbed: "issuer-signed" stands for a
+                # genuine signature by the credential's own key.
+                a = assertion if isinstance(assertion, dict) else {}
+                bound = a.get("token_value") == credential.get("token_value")
+                authentic = a.get("signature_hex") == "issuer-signed"
+                ok = bound and authentic and a.get("status") == "ACTIVE"
+                return {"decision": "accept" if ok else "reject", "status": a.get("status"),
+                        "bound": bound, "reasons": [] if ok else ["stub refusal"],
+                        "status_assertion": {"status_authentic": authentic, "issuer_trusted": None}}
+
             def _load_anchor(self, path):
                 return []
         self.rp._load_verifier = lambda: _StubVerifier()
@@ -166,16 +194,25 @@ class RelyingPartyCommandLineTests(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertIn("PROVISIONAL", out)
 
+    @staticmethod
+    def _assertion(status, token_value="T", signature_hex="issuer-signed"):
+        """The issuer's answer to a possession-authenticated status request."""
+        def route(headers, body):
+            if json.loads(body) != {"token_value": "T", "signature_hex": "ab"}:
+                return 400, {"error": "not_verifiable"}
+            return 200, {"format": "polaris-status-assertion/1", "token_value": token_value,
+                         "status": status, "signature_hex": signature_hex}
+        return route
+
     def test_an_active_status_from_the_issuer_accepts_with_exit_0(self):
-        issuer = self._issuer({("GET", "/api/tokens/42/verify"):
-                               (200, {"currently_authoritative": True, "status": "ACTIVE"})})
+        issuer = self._issuer({("POST", "/api/v1/status-assertion"): self._assertion("ACTIVE")})
         code, out = self._run("--issuer-url", issuer.url + "/")
         self.assertEqual((code, "ACCEPT" in out), (0, True), out)
-        self.assertEqual([(m, p) for m, p, _, _ in issuer.seen], [("GET", "/api/tokens/42/verify")])
+        # Asked by POSSESSION of the credential: its signed serial and signature, no token_id.
+        self.assertEqual([(m, p) for m, p, _, _ in issuer.seen], [("POST", "/api/v1/status-assertion")])
 
     def test_a_revoked_status_rejects_with_exit_2(self):
-        issuer = self._issuer({("GET", "/api/tokens/42/verify"):
-                               (200, {"currently_authoritative": False, "status": "REVOKED"})})
+        issuer = self._issuer({("POST", "/api/v1/status-assertion"): self._assertion("REVOKED")})
         code, out = self._run("--issuer-url", issuer.url, "--json")
         verdict = json.loads(out)
         self.assertEqual((code, verdict["decision"], verdict["currently_authoritative"]),
@@ -183,16 +220,24 @@ class RelyingPartyCommandLineTests(unittest.TestCase):
         self.assertIn("status=REVOKED", " ".join(verdict["reasons"]))
 
     def test_an_issuer_that_errors_is_a_reject_not_an_accept(self):
-        issuer = self._issuer({("GET", "/api/tokens/42/verify"): (500, {"error": "down"})})
+        issuer = self._issuer({("POST", "/api/v1/status-assertion"): (500, {"error": "down"})})
         code, out = self._run("--issuer-url", issuer.url, "--json")
         verdict = json.loads(out)
         self.assertEqual((code, verdict["decision"]), (2, "reject"))
         self.assertIn("status could not be read from the issuer", verdict["reasons"])
 
-    def test_a_status_without_the_verdict_field_is_a_reject(self):
-        issuer = self._issuer({("GET", "/api/tokens/42/verify"): (200, {"status": "ACTIVE"})})
-        code, out = self._run("--issuer-url", issuer.url, "--json")
-        self.assertEqual((code, json.loads(out)["currently_authoritative"]), (2, None))
+    def test_an_assertion_that_does_not_verify_is_not_believed(self):
+        """An ACTIVE the issuer's key did not sign, or one naming another credential, is a status
+        that could not be read: it says nothing about THIS credential."""
+        for label, route in (("unsigned", self._assertion("ACTIVE", signature_hex="forged")),
+                             ("another credential", self._assertion("ACTIVE", token_value="OTHER"))):
+            with self.subTest(label):
+                issuer = self._issuer({("POST", "/api/v1/status-assertion"): route})
+                code, out = self._run("--issuer-url", issuer.url, "--json")
+                verdict = json.loads(out)
+                self.assertEqual((code, verdict["decision"], verdict["currently_authoritative"]),
+                                 (2, "reject", None))
+                self.assertIn("status could not be read from the issuer", verdict["reasons"])
 
     def test_as_an_oauth_client_it_authenticates_then_presents_the_credential(self):
         expected = "Basic " + base64.b64encode(b"rp-client:rp-secret").decode()
@@ -289,6 +334,68 @@ class RelyingPartyCommandLineTests(unittest.TestCase):
         fresh = _load_rp()
         verifier = fresh._load_verifier()
         self.assertTrue(callable(verifier.verify_pack) and callable(verifier._load_anchor))
+
+
+def _cryptography_mldsa():
+    try:
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+    except Exception:  # noqa: BLE001  absent or too old: the same answer
+        return False
+    return hasattr(mldsa, "MLDSA65PublicKey")
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class RelyingPartyStatusBindingTests(unittest.TestCase):
+    """The review of 2026-09-30, end to end with real ML-DSA-65 and the real detached verifier:
+    a revoked credential whose presentation names another credential's `token_id` is still
+    rejected, because the status is asked by the signed serial and the answer is verified."""
+
+    def setUp(self):
+        import hashlib
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        self.rp = _load_rp()
+        self.V = self.rp._load_verifier()
+        self.key = mldsa.MLDSA65PrivateKey.generate()
+        self.pk = self.key.public_key().public_bytes_raw().hex()
+        self.hashlib = hashlib
+
+    def _credential(self, token_value):
+        sig = self.key.sign(self.hashlib.sha3_256(token_value.encode()).digest()).hex()
+        return {"format": "polaris-authenticity-pack/1", "token_value": token_value,
+                "algorithm": "ML-DSA-65", "public_key_hex": self.pk, "signature_hex": sig}
+
+    def _assertion(self, token_value, status):
+        a = {"format": "polaris-status-assertion/1", "token_value": token_value, "status": status,
+             "issued_at": "2026-01-01T00:00:00Z", "expires_at": "2099-01-01T00:00:00Z",
+             "algorithm": "ML-DSA-65", "public_key_hex": self.pk}
+        a["signature_hex"] = self.key.sign(
+            self.hashlib.sha3_256(self.V._status_assertion_canonical(a)).digest()).hex()
+        return a
+
+    def _decide(self, token_value, status, token_id):
+        issuer = _Issuer({
+            ("POST", "/api/v1/status-assertion"):
+                lambda h, b: (200, self._assertion(json.loads(b)["token_value"], status)),
+            # The route the status used to be asked at, by the holder's unsigned token_id,
+            # answering ACTIVE for the credential the edited id points at. Nothing may ask it.
+            ("GET", "/api/tokens/%d/verify" % token_id): (200, {"currently_authoritative": True,
+                                                                 "status": "ACTIVE"})})
+        self.addCleanup(issuer.server_close)
+        self.addCleanup(issuer.shutdown)
+        presentation = {"format": "polaris-presentation/1", "token_id": token_id,
+                        "credential": dict(self._credential(token_value), token_id=token_id)}
+        checker = self.rp._http_status_checker(issuer.url, [self.pk])
+        return self.rp.verify_presentation(presentation, anchor_keys=[self.pk],
+                                           status_checker=checker), issuer
+
+    def test_a_revoked_credential_with_an_edited_token_id_is_rejected(self):
+        v, issuer = self._decide("RP-REVOKED-0007", "REVOKED", token_id=8)
+        self.assertEqual((v["decision"], v["currently_authoritative"]), ("reject", False), v)
+        self.assertEqual([(m, p) for m, p, _, _ in issuer.seen], [("POST", "/api/v1/status-assertion")])
+
+    def test_an_active_credential_is_accepted(self):
+        v, _ = self._decide("RP-ACTIVE-0008", "ACTIVE", token_id=8)
+        self.assertEqual((v["decision"], v["currently_authoritative"]), ("accept", True), v)
 
 
 if __name__ == "__main__":

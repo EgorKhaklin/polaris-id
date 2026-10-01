@@ -66,9 +66,8 @@ jobs:
 
       - name: Install the app stack
         run: |
-          python -m pip install --upgrade pip
           # -dev: the property suite the drills run imports hypothesis.
-          pip install -r polaris_web/requirements-dev.txt
+          pip install --require-hashes -r polaris_web/requirements-dev.txt
 
       - name: Read the pinned Rust toolchain
         id: rust_pin

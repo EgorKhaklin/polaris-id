@@ -185,11 +185,17 @@ def _check_install(py, cli, cwd, env, label):
             bad.append("%s: the installed environment carries %s; the verifier must run with "
                        "none of the tree present" % (label, ", ".join(present)))
 
-    # and the verifier must import with the repository nowhere in sight
-    r = _run([str(py), "-c", "import polaris_verify_cli as v; print(v.__version__)"], cwd=cwd, env=env)
+    # and the verifier must import with the repository nowhere in sight, saying the version pip
+    # installed: it said "0.1.0" through every 1.0.0 release candidate (2026-09-30)
+    r = _run([str(py), "-c", "import importlib.metadata as m, polaris_verify_cli as v; "
+                             "print(v.__version__); print(m.version('polaris-verify'))"], cwd=cwd, env=env)
     if r.returncode != 0:
         bad.append("%s: the installed package does not import outside the repository: %s"
                    % (label, r.stderr.strip()[-300:]))
+    else:
+        said, installed = (r.stdout.split() + ["", ""])[:2]
+        if said != installed:
+            bad.append("%s: the package says it is %s and pip installed %s" % (label, said, installed))
 
     # 3. refuses to start with no declared crypto mode, before reading anything
     r = _run([str(cli), "--pack", str(GENUINE)], cwd=cwd, env=env)

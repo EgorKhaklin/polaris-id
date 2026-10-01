@@ -100,19 +100,21 @@ VALUES
      CURRENT_TIMESTAMP - INTERVAL '2 hours');            -- cool-down past
 
 -- ----------------------------------------------------------------------------
--- v8.22 / R11-3 / M2-8 — Federation trust graph seed (6 attestations).
+-- v8.22 / R11-3 / M2-8 — Federation trust graph seed (8 attestations).
 -- Seeded here (not in 04_data.sql) for the same reason RecoveryRequest
 -- is: signed_by → AppUser(user_id) needs AppUser to exist first.
 --
--- The graph makes the existing 8 demo verification events explicable
--- through federation rather than implicit hard-coded trust:
+-- The graph makes the 8 demo verification events explicable through
+-- federation rather than implicit hard-coded trust:
 --   TSA (Agency 4) accepts TRAVEL tokens issued by federal (1), PA (2),
 --     and CA (3) issuers.
 --   Bank (Agency 5) accepts BANKING tokens from the same three issuers.
--- No HEALTHCARE attestations: T2 (Maria, CA-issued) is the only token
--- with HEALTHCARE permissions, and HEALTHCARE verifications happen at
--- same-agency (CA) checkpoints in the demo data — same-agency trust
--- is implicit, no attestation row needed.
+--   Federal (1) accepts CA's (3) EMPLOYMENT tokens (demo event 2).
+--   Allegheny County Health (6) accepts federal (1) GOVERNMENT_BENEFITS
+--     tokens (demo event 6).
+-- Until 2026-09-30 the last two were missing, so events 2 and 6 were
+-- SUCCESS rows /verifications/new refuses. No HEALTHCARE attestations;
+-- the demo holds no HEALTHCARE verification.
 -- ----------------------------------------------------------------------------
 WITH admin_user AS (SELECT user_id FROM AppUser WHERE username='admin')
 INSERT INTO AgencyTrustAttestation
@@ -141,6 +143,14 @@ VALUES
      (SELECT user_id FROM admin_user)),
     -- Bank (5) → CA (3), BANKING
     (5, 3, (SELECT context_id FROM VerificationContext WHERE context_type='BANKING'),
+     '2026-01-15 09:00:00', '2027-01-15',
+     (SELECT user_id FROM admin_user)),
+    -- federal NY (1) → CA (3), EMPLOYMENT
+    (1, 3, (SELECT context_id FROM VerificationContext WHERE context_type='EMPLOYMENT'),
+     '2026-01-15 09:00:00', '2027-01-15',
+     (SELECT user_id FROM admin_user)),
+    -- Allegheny County Health (6) → federal NY (1), GOVERNMENT_BENEFITS
+    (6, 1, (SELECT context_id FROM VerificationContext WHERE context_type='GOVERNMENT_BENEFITS'),
      '2026-01-15 09:00:00', '2027-01-15',
      (SELECT user_id FROM admin_user));
 

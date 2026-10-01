@@ -49,11 +49,19 @@ lists what older versions still carry.
 
 Exception until the next publish: `polaris-verify` 1.0.0rc5 **accepts an agent-grant chain whose
 credential does not verify, or whose issuer is outside `--issuer-anchor`**, calls a grant with a link
-missing usable, exits 0 on a presentation with no `--issuer-anchor`, and **accepts a stapled status
-assertion signed by another trusted key than the credential's**; `polaris-sdk-python`
-1.0.0rc5 and `polaris-sdk-ts` 1.0.0-rc.6 bind a grant to a credential whose signature does not
-verify and accept a status bundle whose `member_count` differs from its members. The tree carries
-the fixes; releases follow the maintainer's approval.
+missing usable, exits 0 on a presentation with no `--issuer-anchor`, **accepts a stapled status
+assertion signed by another trusted key than the credential's**, and ignores `--nonce` and
+`--trusted-anchor` on a presentation. All three verifiers, polaris-verify 1.0.0rc5 and both
+SDKs below, also **trust a federation manifest that merely lists a trusted anchor**, count any
+key's signature on a trust edge as the attesting authority's, accept a holder proof made for
+another credential, name a receipt's responder that nothing confirmed, and accept a timestamp
+over a SHA-1 or uppercase digest. The SDKs also **read any artifact the timestamp log's key signed
+as the log's tree head**, **trust a federation manifest when no trust anchor is named**, **prove a
+holder chain checked against no nonce or with a credential whose signature does not verify**,
+count a holder binding with no window as fresh, and accept a revocation feed whose count differs
+from its leaves; `polaris-sdk-python` 1.0.0rc5 and `polaris-sdk-ts` 1.0.0-rc.6 bind a grant
+to a credential whose signature does not verify and accept a status bundle whose `member_count`
+differs from its members. The tree carries the fixes; releases follow the maintainer's approval.
 
 If you installed or pinned an older version, upgrade. The Current column is checked against
 [docs/RELEASING.md](docs/RELEASING.md) on every run. The packages are for evaluation and
@@ -191,5 +199,5 @@ bounty: Polaris is pre-pilot software, not a deployed service.
 ---
 
 *Maintainer: Egor Khaklin (VANTA)*
-*Last updated: 2026-09-30 (v1.0.0-rc.67)*
+*Last updated: 2026-10-01 (v1.0.0-rc.68)*
 *Machine-readable: the live `/.well-known/security.txt` route (RFC 9116)*

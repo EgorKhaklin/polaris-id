@@ -9,18 +9,48 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ## Unreleased
 
+### Fixed
+
+- Both SDKs' conformance adapters report no pairwise handle for an object that is not a holder binding, as the detached verifier and the contract do.
+
+### Added
+
+- `scripts/polaris-hostile-agreement-drill.py` has all three verifiers decide 130,068 hostile variants of the published cases; CI runs a third.
+
+## v1.0.0-rc.68 — 2026-10-01 (trust enters only where the relying party puts it)
+
+The verifiers and SDKs trust a manifest, a tree head or a receipt's responder only through keys the relying party trusts; a login signs only a context the credential is permitted in; a verification record claims a success only when its rules allow it; every Python package the images install is hash-pinned. 19 security changes, 19 fixes.
+
+- **Breaking**: `/api/v1/auth/authorize` answers 400 to a `required_enrollment` outside `PENDING_ENROLLMENT`, `ENROLLED` and `EXEMPT` or a `require_zk` that is not a boolean, and 403 to a `context_id` the credential is not permitted in; each was accepted before.
+
 ### Security
 
+- All three verifiers trust a federation manifest only when a trusted key signed it; one that merely listed a trusted anchor was trusted.
+- All three verifiers require a signed trust edge's key to be one of the attesting authority's anchors; any key's signature counted.
+- All three verifiers require a holder proof to name the credential presented; a proof made for another credential passed.
+- `polaris-verify` holds a presentation's holder proof to `--nonce` and abstains without one; `--trusted-anchor` is a trust root on every path.
+- The TypeScript SDK reads a holder proof's age in UTC; an instant with no offset was read in the machine's time zone.
 - `polaris-verify` refuses an agent-grant chain whose credential does not verify or whose issuer is outside `--issuer-anchor`.
 - `polaris-verify` calls an agent grant usable only when all five links were supplied and checked; a bare grant was usable.
 - `polaris-verify` abstains on an agent grant or a presentation with no `--issuer-anchor`, as it already did for a pack.
 - `polaris-verify` binds a stapled status assertion to the credential's own key; another trusted authority's assertion was accepted.
 - Both SDKs verify a credential's own signature before binding an agent grant to it.
 - Every Python package the images install is hash-pinned, and liboqs builds from a checked commit; liboqs-python was unpinned and fetched it.
+- A login signs only a context the credential is permitted in; `/api/v1/auth/authorize` signed any `context_id`, even one that does not exist.
+- Both SDKs take a timestamp anchor's head only as a signed tree head; any artifact the log key signed was read as one.
+- Both SDKs trust no federation manifest when the relying party names no trust anchor; a manifest's own signature decided.
+- Both SDKs prove a holder chain only with the verifier's nonce and a credential whose signature verifies.
+- All three verifiers name a receipt's responder only once `responder_key` confirms the signer; a stranger's receipt named its victim.
+- Both SDKs count a holder binding only when it is checked fresh; one with no window counted as fresh.
+- The conformance contract asks whether a grant in use is inside its window; an expired grant came back in scope.
+- The relying-party script asks about a credential by its signed serial and verifies the answer; it asked by an id the holder could edit.
 
 ### Fixed
 
-- Both SDKs' conformance adapters report no pairwise handle for an object that is not a holder binding, as the detached verifier and the contract do.
+- All three verifiers require a timestamp's digest to be lowercase SHA3-256, as WIRE-SPEC 3.9 says; SHA-1 and uppercase were accepted.
+- Both SDKs refuse a timestamp whose `issued_at` is not an instant, and a revocation feed whose `revoked_count` differs from its leaves.
+- A witness threshold is a whole number of at least 1 in all three verifiers; 0.5 and -1 were met by no cosignature.
+- The Python SDK reports the authority a cross-authority decision was made under; `via` was always empty.
 - A NUL character in a path, query, form field or JSON string is refused as bad input; it escaped as a 500.
 - Installed as a package, `polaris-id` refuses the four commands that need a clone and says which; `--version` printed `unknown`.
 - Both SDKs refuse a status bundle whose signed `member_count` differs from its members, as WIRE-SPEC 3.4 requires.
@@ -30,21 +60,41 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- **Breaking**: `polaris-verify` abstains (exit 2) on a presentation carrying a holder proof when no `--nonce` is given.
+- **Breaking**: a manifest that lists a trusted anchor but is signed by another key is no longer trusted, in all three verifiers.
+- **Breaking**: both SDKs' cross-authority decision trusts no manifest without `trusted_anchors`; pass the anchors you trust.
+- **Breaking**: both SDKs' holder chain proves only with `expected_nonce` and a credential whose signature verifies.
+- **Breaking**: an exchange receipt's `responder` is null until `responder_key` confirms the signer, in all three verifiers.
+- **Breaking**: the agent-grant-use verdict carries `fresh`; a verifier implementing the contract must report it.
+- **Breaking**: both SDKs bind a grant only under a holder binding checked fresh; one with no window binds nothing.
+- **Breaking**: the relying-party script hands its status checker the credential, not `token_id`, and asks by possession.
+- CI installs every Python dependency with `--require-hashes` from a lock; `pip-audit` and `bandit` have one of their own.
 - Published: `polaris-oid4vp` 1.0.0rc11 (not certified; 1.0.0rc7 is) and the first `polaris-id-cli`, 1.0.0rc1, on PyPI, each approved at the environment gate.
 - `publish.yml` can publish `polaris-id-cli`, gated on its wheel installing and behaving alone; every publish now waits for the maintainer to approve the run.
 - Published: `polaris-sdk-ts` 1.0.0-rc.6 on npm under `next`, approved by the maintainer with a second factor.
 - `polaris-id-cli` is packaged as 1.0.0rc1 for PyPI: metadata, README and links for a package page, built with setuptools alone.
+- The project report and evidence record, in both editions, record the corrections of 2026-09-28 to 2026-09-30.
 
 ### Fixed
 
 - `polaris-ship.py triage` names a job GitHub never gave a runner, from its annotation, instead of calling the finished run unknown.
+- Two image checks read each Dockerfile's instructions, not its comments, and require a hash-checked install in every image; a comment could pass for one.
+- A login's requested enrollment status applies alongside the registered one, and a malformed requirement is refused; the registered status replaced the request's.
+- An operator cannot record a SUCCESS in a context the credential is not permitted in; UNAUTHORIZED records that presentation.
+- An operator's SELECTIVE success names its credential; one naming none passed every success rule unchecked.
+- The sample data's trust graph explains every sample verification; two cross-agency successes had no attestation.
+- SECURITY-CONTROLS and the threat model say what the definer routines bound: their rules, not their caller. The threat model said none existed.
+- A non-numeric acting agency on a token's status change is refused; it escaped as a 500.
 - `polaris-oid4vp` accepts an issuer certificate whose extended key usage is ISO 18013-5's document signer, as EUDI issuers' are; it refused eudi-dev's PID Provider.
 
 ### Added
 
-- `scripts/polaris-hostile-agreement-drill.py` has all three verifiers decide 130,068 hostile variants of the published cases; CI runs a third.
+- `lab/interop/oid4vcgo` runs OID4VCgo v0.22.0, which checks the verifier's request-object chain after our report, with a fourth control.
 - `lab/interop/eudi-dev/run.sh` with `EUDI_ISSUER=1` has eudi-dev's own issuer sign the credential; the wallet canary runs it weekly.
-- Six conformance cases, each a published vector with one hostile field, pin these rules; the suite has 193 cases.
+- Six conformance cases, each a published vector with one hostile field, pin these rules.
+- Six more, three attacks and their controls, pin who signed a manifest or a trust edge and which credential a holder proof names.
+- Nine more pin the timestamp, revocation-feed and manifest-signer rules of WIRE-SPEC 3.9, 3.3 and 3.1.
+- Eleven more pin what a tree head, a holder chain, a receipt and a grant in use are trusted on; the suite has 219 cases.
 
 ## v1.0.0-rc.67 — 2026-09-30 (one command to a verified result)
 

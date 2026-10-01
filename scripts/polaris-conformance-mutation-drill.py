@@ -133,7 +133,6 @@ SURVIVORS_EXPECTED = (
     "verify_status_bundle.publisher_matches",
     "verify_sth.issuer_matches",
     "verify_timestamp_anchor.log_matches",
-    "verify_timestamp_anchor.sth_authentic",
 )
 
 def _load(name: str, path: pathlib.Path):

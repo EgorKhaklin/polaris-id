@@ -408,10 +408,16 @@ function-owner's privileges.
 **Affected:** trigger functions in `06_triggers.sql`
 
 **Controls:**
-- Triggers in Polaris are `SECURITY INVOKER` by default; no
-  `SECURITY DEFINER` functions exist
-- If `SECURITY DEFINER` is ever needed, it MUST be reviewed against
-  this threat
+- Four trigger functions run as `SECURITY DEFINER` (the lifecycle
+  audit and the quota, revocation-status and predecessor guards), so
+  they read and write with the owner's rights whatever the caller holds;
+  so do the use-case procedures. Every definer pins `search_path`
+  and is executable by `polaris_app` alone
+  (`check_definer_routines_pin_search_path`)
+- The residual is the actor, not the context: the governance
+  procedures take the acting user as a parameter, so a compromised
+  application can act as any admin through them, within their rules
+  (see SECURITY-CONTROLS.md, Database and runtime boundary)
 
 **Residual risk:** LOW.
 
