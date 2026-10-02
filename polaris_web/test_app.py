@@ -19615,6 +19615,72 @@ class WalletCopyIssuanceTests(PolarisTestCase):
             self.assertEqual((r.status_code, r.get_json()['error']), (429, 'slow_down'), path)
 
 
+
+class AtlasCacheScopeTests(PolarisTestCase):
+    """THREAT-MODEL (2026-10-02). Row-level security scopes an operator bound to one authority to
+    that authority's rows: each request tells the database who is asking. The Atlas caches its
+    answers for thirty seconds, keyed by the question and not by whom it was answered for, so the
+    first answer to a question was served to the next person who asked it. Measured on main as
+    polaris_app: an unbound administrator's breakdown by authority, four authorities, served
+    from the cache to an operator bound to one of them. Run as polaris_app, as production runs:
+    the schema owner is not bound by the policies, so as the owner there is nothing to leak."""
+
+    URL = '/api/atlas/breakdown?kind=verification&dimension=agency&window=all'
+
+    def setUp(self):
+        super().setUp()
+        from unittest import mock
+        app_cfg = dict(user='polaris_app',
+                       password=os.environ.get('POLARIS_APP_TEST_PASSWORD', 'polaris_dev_password'))
+        try:
+            psycopg2.connect(**dict(flask_app.DB_CONFIG, **app_cfg)).close()
+        except psycopg2.OperationalError as exc:
+            if os.environ.get('CI'):
+                self.fail('polaris_app unreachable in CI: %s' % exc)
+            self.skipTest('polaris_app unreachable: %s' % exc)
+        self.agency = _sql("SELECT requesting_agency_id AS a, count(*) AS n FROM VerificationEvent "
+                           "GROUP BY 1 ORDER BY n DESC, a LIMIT 1", fetch='one')['a']
+        self.own = _sql("SELECT name FROM Agency WHERE agency_id = %s", (self.agency,),
+                        fetch='one')['name']
+        patcher = mock.patch.dict(flask_app.DB_CONFIG, app_cfg)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        from atlas_routes import _atlas_cache_clear
+        _atlas_cache_clear()
+        self.addCleanup(_atlas_cache_clear)
+
+    def _labels(self):
+        r = self.client.get(self.URL)
+        self.assertEqual(r.status_code, 200)
+        return {c['label'] for c in r.get_json()['categories']}
+
+    def _as_bound_operator(self):
+        """An operator bound to the authority, as an administrator binds one (as the owner)."""
+        self._login('operator')
+        with self.client.session_transaction() as sess:
+            sess['operator_agency_id'] = self.agency
+            _bind_account(sess, self.agency)
+        self.addCleanup(self._unbind)
+
+    def _unbind(self):
+        with self.client.session_transaction() as sess:
+            sess['operator_agency_id'] = None
+            _bind_account(sess, None)
+
+    def test_a_bound_operator_is_not_served_an_unbound_answer(self):
+        self._login('admin')
+        everyone = self._labels()
+        self.assertGreater(len(everyone), 1, 'fixture: more than one authority verified')
+        self._as_bound_operator()
+        self.assertEqual(self._labels(), {self.own}, "a bound operator read other authorities' counts")
+
+    def test_an_unbound_administrator_is_not_served_a_bound_answer(self):
+        self._as_bound_operator()
+        self.assertEqual(self._labels(), {self.own}, 'fixture: the binding scopes the answer')
+        self._unbind()
+        self._login('admin')
+        self.assertGreater(len(self._labels()), 1, "an administrator was served a bound operator's answer")
+
 if __name__ == '__main__':
     # Pull in property-based invariant tests (C1, C2, C3) so they run as
     # part of the main suite. The import is at the bottom so test_app.py
