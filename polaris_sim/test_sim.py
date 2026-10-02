@@ -99,10 +99,11 @@ class EventStreamTests(unittest.TestCase):
                 self.assertIsNone(e.longitude)
                 self.assertIsNone(e.requestor_location)
             else:
-                # A disclosing event names a token and is located.
+                # A disclosing event names a token, and no event carries a coordinate
+                # (lab/strategy/009, step 4c: nothing reads one).
                 self.assertIsNotNone(e.token_id)
-                self.assertIsNotNone(e.latitude)
-                self.assertIsNotNone(e.longitude)
+                self.assertIsNone(e.latitude)
+                self.assertIsNone(e.longitude)
         # Zero-knowledge is the plurality (the privacy default).
         zk = sum(1 for e in a if e.disclosure_level == "ZERO_KNOWLEDGE")
         self.assertGreater(zk, len(a) * 0.4)
@@ -341,12 +342,12 @@ class SubstrateLoadTests(unittest.TestCase):
             "AND requesting_purpose_text = ANY(%s)", (purposes,))
         self.assertEqual(zk_leak, 0, "a ZK verification must carry no token and no location (C6)")
 
-        # Disclosing verifications are located.
+        # No simulated verification carries a coordinate (lab/strategy/009, step 4c).
         located = self._count(
             "SELECT count(*) n FROM VerificationEvent "
-            "WHERE disclosure_level IN ('SELECTIVE','FULL') AND latitude IS NOT NULL "
+            "WHERE (latitude IS NOT NULL OR longitude IS NOT NULL) "
             "AND requesting_purpose_text = ANY(%s)", (purposes,))
-        self.assertGreater(located, 0, "disclosing verifications must be placed on the map")
+        self.assertEqual(located, 0, "no simulated verification carries a coordinate")
 
         # Lifecycle went through the real procedure: REVOKED rows appeared and
         # the tokens are actually revoked.

@@ -4830,11 +4830,12 @@ class TestEveryUniqueRuleRefusesADuplicate(_CheckBase):
 # Activity rollups (lab/strategy/009, step 4)
 # ============================================================================
 
-class TestEventTablesKeepNoLocationIndex(_CheckBase):
+class TestEventsCarryNoLocation(_CheckBase):
     """lab/strategy/009, step 4c. Nothing reads a verification's or a transition's coordinates
-    since the Atlas moved to the activity rollups, so no index on either event table covers one:
-    each cost every located insert a B-tree update and served no query. Read from the catalogue,
-    so an index rebuilt by hand, or by a later load file, fails here as well as one in 02."""
+    since the Atlas moved to the activity rollups, so no index on either event table covers one
+    (each cost every located insert a B-tree update and served no query), and nothing in the
+    database writes one. The index check reads the catalogue, so an index rebuilt by hand, or by
+    a later load file, fails here as well as one in 02_indexes.sql."""
 
     def test_no_index_on_an_event_table_covers_a_coordinate(self):
         with self.conn.cursor() as cur:
@@ -4849,6 +4850,23 @@ class TestEventTablesKeepNoLocationIndex(_CheckBase):
         located = [(r['tbl'], r['idx']) for r in rows
                    if 'latitude' in r['def'] or 'longitude' in r['def']]
         self.assertEqual(located, [])
+
+    def test_a_status_change_writes_no_coordinate_whatever_the_session_sets(self):
+        """The audit trigger copied polaris.event_lat and event_lon into each lifecycle row it
+        appended. Nothing set them, so every row carried NULL, and a session that did set them
+        could start a location trail with no change to the schema. Step 4c removed the read."""
+        with self.conn.cursor() as cur:
+            cur.execute("SET LOCAL polaris.event_lat = '40.5'")
+            cur.execute("SET LOCAL polaris.event_lon = '-80.1'")
+            cur.execute("SELECT min(token_id) AS t FROM IdentityToken WHERE status = 'ACTIVE'")
+            tok = cur.fetchone()['t']
+            cur.execute("UPDATE IdentityToken SET status = 'LOST' WHERE token_id = %s", (tok,))
+            cur.execute("SELECT latitude, longitude FROM TokenLifecycleEvent "
+                        " WHERE token_id = %s AND reason_code = 'AUTO_AUDIT_TRIGGER' "
+                        " ORDER BY event_id DESC LIMIT 1", (tok,))
+            row = cur.fetchone()
+        self.assertIsNotNone(row, 'the status change was audited by the trigger')
+        self.assertEqual((row['latitude'], row['longitude']), (None, None))
 
 
 class TestActivityRollups(_CheckBase):

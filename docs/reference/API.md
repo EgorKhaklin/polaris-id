@@ -1184,9 +1184,9 @@ server-side regardless.
 | `uc_pseudonymize_individual` | Right-to-erasure pseudonymization, logged in `IndividualErasureEvent` |
 
 All procedures use `SECURITY INVOKER`. The audit trigger on
-`IdentityToken` reads `polaris.actor_agency_id`,
-`polaris.reason_code`, `polaris.event_lat`, `polaris.event_lon` GUCs;
-procedures set them via `SET LOCAL`.
+`IdentityToken` reads the `polaris.actor_agency_id` and
+`polaris.reason_code` GUCs; procedures set them via `SET LOCAL`. The
+lifecycle rows it writes carry no location (lab/strategy/009, step 4c).
 
 ### `POST /uc8/revoke` (UC-8)
 

@@ -97,9 +97,10 @@ def iter_verifications(pool: list[TokenRef], agency_ids: list[int], count: int,
                        window_hours: float, seed: int, now: datetime.datetime,
                        profile: EventProfile = DEFAULT_PROFILE) -> Iterator[Verification]:
     """Yield `count` synthetic verifications spread over the window ending at
-    `now`. Pure: no database, no global RNG. A zero-knowledge event is anonymous
-    and unplaceable; a disclosing event names a token from the pool and is placed
-    near that holder's state (C6 by construction)."""
+    `now`. Pure: no database, no global RNG. A zero-knowledge event is anonymous;
+    a disclosing event names a token from the pool. Neither carries a coordinate: nothing
+    reads one since the Atlas moved to the activity rollups (lab/strategy/009, step 4c), and
+    no production path writes one, so the simulator does not either."""
     if not agency_ids:
         raise ValueError("no agencies to act as verifiers")
     rng = random.Random(_derive(seed, "verifications", count, window_hours))
@@ -126,12 +127,13 @@ def iter_verifications(pool: list[TokenRef], agency_ids: list[int], count: int,
                     and (context not in ref.contexts
                          or (agency != ref.issuer and (agency, context) not in ref.trusted))):
                 outcome = "UNAUTHORIZED"
-            lat0, lon0 = reference.STATE_CENTROIDS.get(ref.jurisdiction, (39.0, -98.0))
-            lat = round(lat0 + rng.uniform(-1.4, 1.4), 5)
-            lon = round(lon0 + rng.uniform(-1.4, 1.4), 5)
+            # The two draws that placed the event are made and discarded, so every stream
+            # stays the one a seed has always given; only the coordinates are gone.
+            rng.uniform(-1.4, 1.4)
+            rng.uniform(-1.4, 1.4)
             yield Verification(ref.token_id, agency, context, ts, outcome, disclosure,
                                None, reference.STATE_NAMES.get(ref.jurisdiction, "United States"),
-                               lat, lon, _PURPOSES[i % len(_PURPOSES)])
+                               None, None, _PURPOSES[i % len(_PURPOSES)])
 
 
 def _derive(*parts: object) -> int:

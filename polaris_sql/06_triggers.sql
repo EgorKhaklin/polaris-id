@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: Apache-2.0
 -- Copyright 2026 Egor Khaklin and the Polaris contributors
--- AI-context: append-only enforcement, audit trigger, lifecycle event auto-emission. Audit trigger reads polaris.{actor_agency_id, reason_code, event_lat, event_lon} GUCs. See docs/design/concurrency.md.
+-- AI-context: append-only enforcement, audit trigger, lifecycle event auto-emission. Audit trigger reads polaris.{actor_agency_id, reason_code} GUCs. See docs/design/concurrency.md.
 -- ============================================================================
 -- POLARIS — IDENTITY TOKEN SYSTEM
 -- 06_triggers.sql : State-machine enforcement triggers
@@ -492,8 +492,6 @@ DECLARE
     v_event_type    VARCHAR(40);
     v_actor         INTEGER;
     v_reason        VARCHAR(60);
-    v_lat           DOUBLE PRECISION;
-    v_lon           DOUBLE PRECISION;
 BEGIN
     -- No status change: nothing to audit.
     IF OLD.status = NEW.status THEN
@@ -510,12 +508,12 @@ BEGIN
         ELSE 'STATUS_CHANGED'
     END;
 
-    -- Optional session-level actor, reason, and location. current_setting
-    -- returns '' when the GUC is unset (with missing_ok = true).
+    -- Optional session-level actor and reason. current_setting returns '' when the GUC is
+    -- unset (with missing_ok = true). The row carries no location: the polaris.event_lat and
+    -- event_lon settings it once read were set by nothing, and nothing reads a coordinate
+    -- since lab/strategy/009 step 4c, so a session can no longer start a location trail here.
     v_actor  := NULLIF(current_setting('polaris.actor_agency_id', true), '')::INTEGER;
     v_reason := NULLIF(current_setting('polaris.reason_code',     true), '');
-    v_lat    := NULLIF(current_setting('polaris.event_lat',       true), '')::DOUBLE PRECISION;
-    v_lon    := NULLIF(current_setting('polaris.event_lon',       true), '')::DOUBLE PRECISION;
 
     -- If the application has ALREADY inserted a matching event in this
     -- transaction (the legacy pattern from before this trigger existed,
@@ -534,14 +532,12 @@ BEGIN
     -- Append the audit row. The append-only trigger will not block this
     -- because it only fires on UPDATE or DELETE.
     INSERT INTO TokenLifecycleEvent (
-        token_id, actor_agency_id, event_type, reason_code, event_timestamp,
-        latitude, longitude
+        token_id, actor_agency_id, event_type, reason_code, event_timestamp
     )
     VALUES (
         NEW.token_id, v_actor, v_event_type,
         COALESCE(v_reason, 'AUTO_AUDIT_TRIGGER'),
-        CURRENT_TIMESTAMP,
-        v_lat, v_lon
+        CURRENT_TIMESTAMP
     );
 
     RETURN NEW;
