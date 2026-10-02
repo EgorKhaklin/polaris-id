@@ -21201,6 +21201,10 @@ _GLOBAL_LOCK_DOMAINS = {
         "one fold of the enrolment counts at a time, by design (lab/strategy/008, step 4): the "
         "triggers take it only with pg_try_advisory_xact_lock and skip the fold when it is held, "
         "so no writer waits on it; only the owner's rebuild waits",
+    "polaris.activity.fold":
+        "one fold of the activity rollups at a time, by design (lab/strategy/009, step 4): the "
+        "triggers take it only with pg_try_advisory_xact_lock and skip the fold when it is held, "
+        "so no writer waits on it; only the owner's recount and purge wait",
 }
 
 
@@ -21224,6 +21228,7 @@ _GLOBAL_LOCK_DOMAINS = {
 _TRY_LOCKS = {
     "uc_fold_population_counts": "test_a_fold_skips_while_a_recount_holds_the_lock",
     "uc_fold_enrollment_counts": "test_an_enrolment_fold_skips_while_a_rebuild_holds_the_lock",
+    "uc_fold_activity_rollups": "test_an_activity_fold_skips_while_a_recount_holds_the_lock",
 }
 
 

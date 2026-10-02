@@ -298,3 +298,40 @@ widened AuthAuditLog event type. Two notes taken: the masking covers numbers onl
 mask any text column a later probe writes; and each rule card now carries its probe's result
 beside the catalogue's, so a reader sees "in force" corroborated by "refused when tried", or
 the card marked when the two disagree (`test_a_hollow_trigger_marks_its_card`).
+
+### Step 4, part one (2026-10-02): the activity rollups
+
+What the Atlas will read instead of the event tables. `VerificationRollup` counts verifications
+by hour, requesting authority, context, outcome, disclosure level and the verified credential's
+algorithm; `LifecycleRollup` counts transitions by hour, acting authority and type; each has a
+daily twin for windows longer than a week and a delta table its statement trigger appends to.
+They are kept the way `PopulationCount` is (writers only append, one fold at a time, a reader
+sums totals and deltas, the owner alone recounts) and carry the row-level security of the table
+they count. No column names a person, a credential or a place, and none holds a coordinate. No
+reader moves in this part: the Atlas still reads the events, and falsifier 3 is measured in the
+next.
+
+Two decisions this part makes. **The hour is the finest grain.** Today the series route cuts
+the 1-hour window into as many as 240 buckets of 15 seconds (the console asks for 48, of 75
+seconds), which with an authority and an outcome selected comes close to placing one
+verification in time; the rollups cannot. **Hourly cells live as long
+as the events they count.** `uc_archive_purge` folds and then deletes the hours wholly before
+its cutoff; the daily rows stay, as statistics that say nothing finer than a day. The load's own
+purge test shows it: a verification 1,100 days old is purged, its hour goes, and its day still
+counts it. The recount keeps the hours and days a recorded purge cut through, since their events
+are partly gone and a recount would undercount them.
+
+Measured on a fresh load: every hour's cells equal a recount of the events. Sixteen mutants,
+each killed by the fast suite (`TestActivityRollups`): each of the four triggers dropped, the
+fold emptied, the purge without its rollup step, the recount ignoring the purge or recounting
+nothing, each of the six row-level policies opened, the lifecycle policy hiding transitions no
+authority made, and a write grant to the application role. The purge and the recount are shown
+waiting for a fold that holds the lock and no row, since only then does a wait prove the lock.
+Measuring that found the population recount's own lock test passing with its lock deleted: two
+recounts contend on the rows each deletes, lock or no lock. It holds a fold now, and the deleted
+lock turns it red.
+
+Not decided here: small cells. A cell for a rare authority and context in one hour can count one
+event, and someone who knows that one person was there learns its outcome. The hour floor
+narrows this without closing it. Whether the readers suppress or coarsen cells under a minimum
+size is a question for the next part, where the readers are built.

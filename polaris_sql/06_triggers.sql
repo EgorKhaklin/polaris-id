@@ -2487,3 +2487,105 @@ CREATE TRIGGER trg_enrollment_count_truncate
 
 -- As with the population counts: the seed is loaded before these triggers exist.
 SELECT uc_rebuild_enrollment_counts();
+
+-- ----------------------------------------------------------------------------
+-- Activity rollups (lab/strategy/009, step 4). A statement trigger on each event table appends
+-- the statement's counts to its rollup's delta table, one row per hour and cell: recording one
+-- verification appends one row, a bulk load one pass. The event tables are append-only (C1), so
+-- a new row is the only change to count; the one path that deletes from them, uc_archive_purge,
+-- takes the hourly rollup rows of the hours it empties (05_procedures.sql). Writers only append,
+-- and now and then one folds the changes in.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION activity_rollup_verifications()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    -- The credential's algorithm as the verification is recorded; one that named no credential
+    -- (zero-knowledge) counts under 0. No other property of the credential is read.
+    INSERT INTO VerificationRollupDelta
+           (bucket, requesting_agency_id, context_id, outcome, disclosure_level, algorithm_id, n)
+    SELECT date_trunc('hour', e.event_timestamp), e.requesting_agency_id, e.context_id,
+           e.outcome, e.disclosure_level, COALESCE(t.algorithm_id, 0), count(*)
+      FROM new_rows e
+      LEFT JOIN IdentityToken t ON t.token_id = e.token_id
+     GROUP BY date_trunc('hour', e.event_timestamp), e.requesting_agency_id, e.context_id,
+              e.outcome, e.disclosure_level, COALESCE(t.algorithm_id, 0);
+    -- Now and then fold, so the changes stay few when nobody reads. A count must never stop a
+    -- verification from being recorded: should the fold fail, the changes stay unfolded (a
+    -- reader still sums them) and the insert goes on.
+    IF random() < 0.002 THEN
+        BEGIN
+            PERFORM uc_fold_activity_rollups();
+        EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING 'activity rollups not folded: %', SQLERRM;
+        END;
+    END IF;
+    RETURN NULL;
+END$$;
+
+CREATE OR REPLACE FUNCTION activity_rollup_lifecycles()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    -- A transition no authority made (NULL actor: the system's, or the holder's device) counts
+    -- under 0, which no authority is.
+    INSERT INTO LifecycleRollupDelta (bucket, actor_agency_id, event_type, n)
+    SELECT date_trunc('hour', e.event_timestamp), COALESCE(e.actor_agency_id, 0), e.event_type,
+           count(*)
+      FROM new_rows e
+     GROUP BY date_trunc('hour', e.event_timestamp), COALESCE(e.actor_agency_id, 0), e.event_type;
+    IF random() < 0.002 THEN
+        BEGIN
+            PERFORM uc_fold_activity_rollups();
+        EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING 'activity rollups not folded: %', SQLERRM;
+        END;
+    END IF;
+    RETURN NULL;
+END$$;
+
+-- TRUNCATE fires no row events, so it clears the rollups of the table it empties.
+CREATE OR REPLACE FUNCTION activity_rollup_truncated()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    IF TG_TABLE_NAME = 'verificationevent' THEN
+        DELETE FROM VerificationRollupDelta;
+        DELETE FROM VerificationRollup;
+        DELETE FROM VerificationRollupDaily;
+    ELSE
+        DELETE FROM LifecycleRollupDelta;
+        DELETE FROM LifecycleRollup;
+        DELETE FROM LifecycleRollupDaily;
+    END IF;
+    RETURN NULL;
+END$$;
+
+DROP TRIGGER IF EXISTS trg_activity_rollup_verification_insert ON VerificationEvent;
+CREATE TRIGGER trg_activity_rollup_verification_insert
+    AFTER INSERT ON VerificationEvent REFERENCING NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION activity_rollup_verifications();
+DROP TRIGGER IF EXISTS trg_activity_rollup_verification_truncate ON VerificationEvent;
+CREATE TRIGGER trg_activity_rollup_verification_truncate
+    AFTER TRUNCATE ON VerificationEvent
+    FOR EACH STATEMENT EXECUTE FUNCTION activity_rollup_truncated();
+DROP TRIGGER IF EXISTS trg_activity_rollup_lifecycle_insert ON TokenLifecycleEvent;
+CREATE TRIGGER trg_activity_rollup_lifecycle_insert
+    AFTER INSERT ON TokenLifecycleEvent REFERENCING NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION activity_rollup_lifecycles();
+DROP TRIGGER IF EXISTS trg_activity_rollup_lifecycle_truncate ON TokenLifecycleEvent;
+CREATE TRIGGER trg_activity_rollup_lifecycle_truncate
+    AFTER TRUNCATE ON TokenLifecycleEvent
+    FOR EACH STATEMENT EXECUTE FUNCTION activity_rollup_truncated();
+
+-- As with the counts above: the seed is loaded before these triggers exist.
+SELECT uc_rebuild_activity_rollups();

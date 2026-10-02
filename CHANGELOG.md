@@ -26,6 +26,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - An index on every foreign key between tables that grow with the population, and a test that reads the catalogue for one missing.
 - Exact enrolment counts by jurisdiction and status (`EnrollmentCount`), kept by triggers; the application role cannot read the per-person row.
 - An index for counting the active credentials that carry a duress code.
+- Hourly and daily activity counts by authority, context and outcome, kept by triggers; no person, place or minute.
 
 ### Changed
 
@@ -63,6 +64,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Delete buttons for a person, a credential and an authority, which the database always refuses, are gone.
 - A status change to a number that is no credential reported success.
 - A refused deep page number now says what to do instead and offers the list back.
+- The population recount's lock test passed with the lock deleted; it now holds a fold that touches no row.
 
 ## v1.0.0-rc.70 — 2026-10-01 (the three verifiers read every input alike)
 

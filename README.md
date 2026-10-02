@@ -34,7 +34,7 @@ Polaris issues, holds, presents and verifies one credential per person, and answ
 
 Around the credential:
 
-- **The schema is the security boundary.** A 51-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client: **the guarantees live in the database, not in application code.**
+- **The schema is the security boundary.** A 57-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client: **the guarantees live in the database, not in application code.**
 - **Verifiers anyone can hold to a contract.** Python and TypeScript SDKs and a conformance suite of 281 published cases; version 1 of the signed-statement protocol is frozen and re-verified on every push.
 - **Explicit federation.** Trust between agencies is explicit and non-transitive.
 - **Zero-knowledge by default.** A zero-knowledge verification stores no token identifier; a Plonky2 SNARK, re-checked by an independent second witness, proves ledger membership and nothing else.

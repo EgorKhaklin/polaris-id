@@ -7,10 +7,11 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **51 tables** in `01_schema.sql` (v9.443; the 46th, CredentialCopy, 2026-09-28; the 47th
+The Polaris schema is **57 tables** in `01_schema.sql` (v9.443; the 46th, CredentialCopy, 2026-09-28; the 47th
 and 48th, PopulationCount and PopulationCountDelta, 2026-10-01; the 49th to 51st, EnrollmentCurrent,
-EnrollmentCount and EnrollmentCountDelta, 2026-10-02), organized
-into six functional groups. A migrated deployment holds **58 tables**: those,
+EnrollmentCount and EnrollmentCountDelta, 2026-10-02; the 52nd to 57th, the activity rollups,
+2026-10-02), organized
+into six functional groups. A migrated deployment holds **64 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -464,6 +465,38 @@ Persons belong to no authority, so it carries no row-level security.
 The signed changes to `EnrollmentCount` not yet folded in, appended by a row trigger on
 `EnrollmentCurrent`: one for a person's first row, two for a change of status or
 jurisdiction.
+
+### `VerificationRollup` (lab/strategy/009, step 4)
+
+Verifications by hour, requesting authority, context, outcome, disclosure level and the
+verified credential's algorithm (`algorithm_id`, read when the verification is recorded; 0 when
+it named none), with a count. What the Atlas reads, at a cost that follows the hours a window
+spans and the authorities and contexts active in them, never the population. No column names a
+person, a credential or a place, and none holds a coordinate: a cell counting one event, with
+the sum of its latitudes, would give back where it happened. The finest time it records is the
+hour. Folded from `VerificationRollupDelta` by `uc_fold_activity_rollups()`; a reader sums both.
+`uc_archive_purge` folds and then deletes the hours wholly before its verification cutoff.
+`uc_rebuild_activity_rollups()` recounts from the events under a SHARE lock, owner-only, keeping
+the hours and days a recorded purge cut through. Row-level security scopes it by requesting
+authority like `VerificationEvent`; the application role reads it and writes none of the six.
+
+### `VerificationRollupDaily` (lab/strategy/009, step 4)
+
+`VerificationRollup` by day, for windows longer than a week. Kept after a purge, as the
+system's statistics: they say nothing finer than a day.
+
+### `VerificationRollupDelta` (lab/strategy/009, step 4)
+
+The verification counts not yet folded in. A statement trigger on `VerificationEvent` appends
+one row per hour and cell each statement touches, so recording a verification appends one row
+and a writer never waits on a counter row. A fold deletes what it moves into both totals.
+
+### `LifecycleRollup`, `LifecycleRollupDaily`, `LifecycleRollupDelta` (lab/strategy/009, step 4)
+
+The same for `TokenLifecycleEvent`: transitions by hour (and by day), acting authority and
+event type. `actor_agency_id` 0 is a transition no authority made (the system's or the holder's
+device), which the event table records as NULL and a primary key cannot hold; row-level
+security leaves those visible to every operator, as the event table's policy does.
 
 ### `BulkEnrollmentBatch` (roadmap P2.4)
 

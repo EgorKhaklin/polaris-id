@@ -10007,8 +10007,15 @@ class ConcurrencyTests(PolarisTestCase):
         self.assertContends(bind('ab'), bind('cd'), 'Two holder key changes to one credential')
 
     def test_a_population_recount_takes_its_lock(self):
-        recount = lambda cur: cur.execute("SELECT uc_rebuild_population_counts()")  # noqa: E731
-        self.assertContends(recount, recount, 'Two population recounts')
+        """The holder is a fold with nothing pending, which holds the lock and no row. Two
+        recounts contend on the rows each deletes, lock or no lock: measured on 2026-10-02, the
+        recount-against-recount version of this test passed with the recount's lock deleted."""
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT uc_fold_population_counts()")
+            conn.commit()
+        self.assertContends(lambda cur: cur.execute("SELECT uc_fold_population_counts()"),
+                            lambda cur: cur.execute("SELECT uc_rebuild_population_counts()"),
+                            'A population recount while a fold holds the lock')
 
     def test_an_enrolment_fold_skips_while_a_rebuild_holds_the_lock(self):
         """uc_fold_enrollment_counts takes its lock with pg_try_advisory_xact_lock, and the rebuild
@@ -10097,6 +10104,85 @@ class ConcurrencyTests(PolarisTestCase):
                    FROM TokenSignature s JOIN IdentityToken t ON t.token_id = s.token_id
                   WHERE s.deprecation_date IS NULL AND t.status = 'ACTIVE' GROUP BY 2, 3)""")
             self.assertEqual(cur.fetchall(), [], 'a folded total disagrees with a full count')
+
+    def _a_fold_holding_only_its_lock(self):
+        """A holder for the activity lock and nothing else: a fold, once nothing is pending, takes
+        the lock and touches no row, so a probe that waits on it waits on the lock alone. (Two
+        recounts would contend on the rows each deletes, lock or no lock: measured, that test
+        stayed green with the recount's lock deleted.)"""
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT uc_fold_activity_rollups()")
+            conn.commit()
+        return lambda cur: cur.execute("SELECT uc_fold_activity_rollups()")
+
+    def test_a_recount_waits_for_the_activity_fold(self):
+        """uc_rebuild_activity_rollups takes the fold's lock outright before anything else: its
+        own fold only tries the lock, and a recount that went ahead while another fold ran would
+        delete totals under it (lab/strategy/009, step 4)."""
+        self.assertContends(self._a_fold_holding_only_its_lock(),
+                            lambda cur: cur.execute("SELECT uc_rebuild_activity_rollups()"),
+                            'A recount while a fold holds the activity lock')
+
+    def test_a_purge_waits_for_the_activity_fold(self):
+        """uc_archive_purge folds the activity rollups and then deletes the hourly rows before its
+        cutoff under the fold's lock, so it never deletes an hour a fold is writing."""
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' AND is_active "
+                        "ORDER BY user_id LIMIT 1")
+            admin = cur.fetchone()['user_id']
+        purge = lambda cur: cur.execute(  # noqa: E731
+            "CALL uc_archive_purge(now() - INTERVAL '3650 days', 'file:///x', repeat('a', 64), %s)",
+            (admin,))
+        self.assertContends(self._a_fold_holding_only_its_lock(), purge,
+                            'A purge while a fold holds the activity lock')
+
+    def test_an_activity_fold_skips_while_a_recount_holds_the_lock(self):
+        """uc_fold_activity_rollups takes its lock with pg_try_advisory_xact_lock: while a recount
+        holds it, a fold returns at once having folded nothing, and leaves the counts for the next
+        fold. The control folds every pending count once nobody holds the lock, and the hours it
+        leaves equal a recount of the events."""
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO VerificationEvent (token_id, requesting_agency_id, context_id, "
+                        "outcome, disclosure_level) SELECT NULL, min(agency_id), "
+                        "(SELECT min(context_id) FROM VerificationContext), 'FAILURE', 'ZERO_KNOWLEDGE' "
+                        "FROM Agency")
+            conn.commit()
+            cur.execute("SELECT count(*) AS n FROM VerificationRollupDelta")
+            self.assertGreater(cur.fetchone()['n'], 0, 'control: there are counts to fold')
+        holder = self._new_conn()
+        try:
+            with holder.cursor() as cur:
+                cur.execute("SELECT uc_rebuild_activity_rollups()")   # holds the lock, left open
+            probe = self._new_conn()
+            try:
+                with probe.cursor() as cur:
+                    cur.execute("SET lock_timeout = '2s'")
+                    cur.execute("SELECT uc_fold_activity_rollups() AS folded")
+                    self.assertEqual(cur.fetchone()['folded'], 0,
+                                     'a fold ran while a recount held the lock')
+                probe.commit()
+            finally:
+                probe.close()
+        finally:
+            holder.rollback()
+            holder.close()
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM VerificationRollupDelta")
+            pending = cur.fetchone()['n']
+            cur.execute("SELECT uc_fold_activity_rollups() AS folded")
+            self.assertGreaterEqual(cur.fetchone()['folded'], pending)
+            conn.commit()
+            cur.execute("""
+                SELECT bucket, requesting_agency_id, context_id, outcome, disclosure_level, n
+                  FROM VerificationRollup
+                 WHERE bucket >= date_trunc('hour', now()) - INTERVAL '1 hour'
+                EXCEPT
+                SELECT date_trunc('hour', event_timestamp), requesting_agency_id, context_id,
+                       outcome, disclosure_level, count(*)
+                  FROM VerificationEvent
+                 WHERE event_timestamp >= date_trunc('hour', now()) - INTERVAL '1 hour'
+                 GROUP BY 1, 2, 3, 4, 5""")
+            self.assertEqual(cur.fetchall(), [], 'a folded hour disagrees with a recount')
 
     # uc9_complete_recovery's advisory lock is NOT independently observable, and
     # this is where a test proving it takes one would go. The key is
