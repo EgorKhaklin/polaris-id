@@ -36,19 +36,12 @@
             <label for="issuing_agency_id">Issuing Agency</label>
             <select id="issuing_agency_id" name="issuing_agency_id" required>
                 {% for ag in agencies %}
-                    <option value="{{ ag.agency_id }}">#{{ ag.agency_id }} {{ ag.name }} ({{ ag.jurisdiction }})</option>
+                    <option value="{{ ag.agency_id }}">#{{ ag.agency_id }} {{ ag.name }} ({{ ag.jurisdiction }}), signs with {{ signer_algorithms[ag.agency_id] }}</option>
                 {% endfor %}
             </select>
-            <span class="help">Authorization-level 4+ agencies only.</span>
-        </div>
-        <div class="form-group">
-            <label for="algorithm_id">Signing Algorithm</label>
-            <select id="algorithm_id" name="algorithm_id" required>
-                {% for alg in algorithms %}
-                    <option value="{{ alg.algorithm_id }}">{{ alg.name }} ({{ alg.security_level_bits }}-bit)</option>
-                {% endfor %}
-            </select>
-            <span class="help">Post-quantum algorithms only. Issuance under an unauthorized algorithm is refused.</span>
+            {# No algorithm field: the credential is under the algorithm its authority's key signs
+               with, derived where the signature is made. #}
+            <span class="help">Authorization-level 4+ agencies only. The credential and its signature are under the algorithm the authority's key signs with, shown beside it, and the authority must hold a grant for it.</span>
         </div>
     </div>
 

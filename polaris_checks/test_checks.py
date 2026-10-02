@@ -1406,6 +1406,70 @@ def test_event_locations_unindexed_sees_an_index_on_a_generated_coordinate(tmp_p
         "must FAIL when the parse cannot find the index it anchors on"
 
 
+def test_signature_rows_name_their_signer_holds_every_writer(tmp_path):
+    """CORE-BUG 2026-10-02: every product writer of a signature row gets the bytes and the
+    algorithm from credential_signature, and a migration from migration_signature; none calls
+    the label-returning functions beneath them; the recovery procedure stores its caller's
+    signature, not a placeholder string."""
+    PQC = ("def credential_signature(token_value, agency_id=None):\n"
+           "    sig, label, pk = signature_with_key_for_token(token_value, agency_id=agency_id)\n"
+           "    configured = algorithm_name(agency_id)\n"
+           "    keyed = algorithm_for_public_key_hex(pk)\n"
+           "    if label != configured or keyed != label:\n"
+           "        raise SigningError('disagree')\n"
+           "    return sig\n\n\n"
+           "def migration_signature(token_value, algorithm, agency_id=None):\n"
+           "    if algorithm not in ACCEPTED_ALGORITHMS:\n"
+           "        raise SigningError('nothing signs with it')\n"
+           "    sig, label, pk = signature_for_migration(token_value, algorithm)\n"
+           "    if algorithm_for_public_key_hex(pk) != algorithm:\n"
+           "        raise SigningError('disagree')\n"
+           "    return sig\n\n\ndef other():\n    pass\n")
+    WRITER = "s = pqc_signing.credential_signature(tv, agency_id=a)  # not signature_with_key_for_token(\n"
+    MIGRATOR = WRITER + "m = pqc_signing.migration_signature(tv, target, agency_id=a)\n"
+    PROC = ("CREATE OR REPLACE PROCEDURE uc9_complete_recovery(p_signature_bytes BYTEA) AS $$\n"
+            "BEGIN\n  -- once wrote 'UC9_RECOVERY_PLACEHOLDER_' here\n"
+            "  INSERT INTO TokenSignature VALUES (p_signature_bytes);\nEND$$;\n")
+    files = {"polaris_web/pqc_signing.py": PQC, "polaris_sql/05_procedures.sql": PROC,
+             **{rel: WRITER for rel in checks._SIGNATURE_ROW_WRITERS},
+             **{rel: MIGRATOR for rel in checks._SIGNATURE_ROW_MIGRATORS}}
+
+    def write(**over):
+        for rel, body in dict(files, **over).items():
+            f = tmp_path / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            if body is None:
+                f.unlink(missing_ok=True)
+            else:
+                f.write_text(body)
+
+    def level():
+        return checks.check_signature_rows_name_their_signer(tmp_path)[0].level
+
+    write()
+    assert level() == "OK", "must PASS: every writer through credential_signature (a comment naming the old call does not count)"
+    write(**{"polaris_cli/polaris.py": "sig, _label, pk = signer.signature_with_key_for_token(tv, agency_id=a)\n"
+                                       "s = signer.credential_signature(tv)\n"})
+    assert level() == "FAIL", "must FAIL when a writer calls the label-returning function directly"
+    write(**{"polaris_sim/load.py": "sig = _pqc.signature_bytes_for_token(tv)\n"})
+    assert level() == "FAIL", "must FAIL when a writer never calls credential_signature"
+    write(**{"polaris_web/pqc_signing.py": PQC.replace("algorithm_for_public_key_hex(pk)\n    if label", "None\n    if label")})
+    assert level() == "FAIL", "must FAIL when credential_signature does not compare the key's set"
+    write(**{"polaris_web/pqc_signing.py": PQC.replace("not in ACCEPTED_ALGORITHMS", "is None")})
+    assert level() == "FAIL", "must FAIL when migration_signature signs a set nothing here produces"
+    write(**{"polaris_web/pqc_signing.py": PQC.replace("algorithm_for_public_key_hex(pk) != algorithm", "False")})
+    assert level() == "FAIL", "must FAIL when migration_signature does not compare the key's set"
+    write(**{"polaris_cli/polaris.py": WRITER})
+    assert level() == "FAIL", "must FAIL when a migrating writer never calls migration_signature"
+    write(**{"polaris_web/use_case_routes.py": MIGRATOR + "x = pqc_signing.signature_for_migration(tv, alg)\n"})
+    assert level() == "FAIL", "must FAIL when a writer calls the migration signer beneath it directly"
+    write(**{"polaris_sql/05_procedures.sql": PROC.replace(
+        "VALUES (p_signature_bytes)", "VALUES (('UC9_RECOVERY_PLACEHOLDER_' || 1)::BYTEA)")})
+    assert level() == "FAIL", "must FAIL when the recovery procedure stores a placeholder string"
+    write(**{"polaris_web/use_case_routes.py": None})
+    assert level() == "FAIL", "must FAIL when a writer is missing"
+
+
 def test_c6_atlas_zk_check_fails_when_zk_location_not_redacted(tmp_path):
     """C6 at the Atlas since lab/strategy/009 step 4: no function returns a location, no rollup
     has a column for one, and the series and the regions still count zero-knowledge."""
@@ -2436,11 +2500,42 @@ def test_sbom_workflow_check_discriminates(tmp_path):
     assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
         "must FAIL when the workflow never publishes the draft"
 
-    sbom.write_text(head + "      - run: |\n"
-                    "          gh release upload \"$TAG\" sbom/*.spdx.json sbom/sbom-provenance.intoto.jsonl\n"
-                    "          gh release edit \"$TAG\" --draft=false\n")
+    publish = ("      - run: |\n"
+               "          gh release upload \"$TAG\" sbom/*.spdx.json sbom/sbom-provenance.intoto.jsonl\n"
+               "          gh release edit \"$TAG\" --draft=false\n")
+    install = "          pip install --require-hashes -r .github/sbom/requirements.txt\n"
+    fill = "          python3 scripts/polaris-sbom-enrich.py --version \"$V\" sbom/*.spdx.json\n"
+    judge = ("          ntia-checker -r json \"$f\" > v.json\n"
+             "          jq -e '.isConformant == true' v.json\n")
+    attest = "      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8\n"
+
+    # Attached and published, but no SBOM is brought to the NTIA minimum elements or checked.
+    sbom.write_text(head + attest + publish)
+    assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the SBOMs are attested without the NTIA minimum elements filled and checked"
+
+    # Judged by the exit status alone: the criteria are unstated, and the step stops at the first
+    # failure without naming the element that failed.
+    sbom.write_text(head + "      - run: |\n" + install + fill
+                    + "          ntia-checker \"$f\"\n" + attest + publish)
+    assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the gate reads the checker's exit status instead of its JSON verdict"
+
+    # The checker installed from whatever PyPI serves that day.
+    sbom.write_text(head + "      - run: |\n          pip install ntia-conformance-checker\n"
+                    + fill + judge + attest + publish)
+    assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the checker is installed without its hash lock"
+
+    # Filled and checked after the attestation: the provenance covers a document that then changed.
+    sbom.write_text(head + attest + "      - run: |\n" + install + fill + judge + publish)
+    assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the SBOMs are filled and checked after they are attested"
+
+    sbom.write_text(head + "      - run: |\n" + install + fill + judge + attest + publish)
     assert checks.check_sbom_workflow(tmp_path)[0].level == "OK", \
-        "must PASS with release trigger, SPDX, all five images, python, and upload before publishing"
+        "must PASS with release trigger, SPDX, all five images, python, the NTIA minimum " \
+        "elements filled and checked before attesting, and upload before publishing"
 
 
 def test_sbom_trivy_match_check_discriminates(tmp_path):
@@ -5587,7 +5682,7 @@ def test_national_simulation_check_discriminates(tmp_path):
            "def plan_nation(scale_divisor, seed):\n"
            "    rng = random.Random(seed)\n    return rng\n")
     LOAD = ("def build_nation(conn, plan):\n"
-            "    sig = pqc.signature_with_key_for_token(tv)\n"
+            "    sig = pqc.credential_signature(tv, agency_id=aid)\n"
             "    cur.execute('CALL uc_bulk_issue(%s)', (b,))\n")
     EVENTS = ("def write_verifications(conn, events):\n"
               "    cur.copy_expert('COPY VerificationEvent (...) FROM STDIN', buf)\n"
@@ -5653,7 +5748,7 @@ def test_national_simulation_check_discriminates(tmp_path):
     write({"docs/reference/BENCHMARK.md": ""})
     assert checks.check_national_simulation(tmp_path)[0].level == "FAIL", "must FAIL when the committed report is missing"
     # v9.257: the loader does not sign (mass-issued tokens would be unsigned/placeholder)
-    write({"polaris_sim/load.py": LOAD.replace("signature_with_key_for_token", "something_else")})
+    write({"polaris_sim/load.py": LOAD.replace("credential_signature", "something_else")})
     assert checks.check_national_simulation(tmp_path)[0].level == "FAIL", "must FAIL when the loader does not sign through pqc_signing"
     # the benchmark does not measure real cryptographic verification
     write({"polaris_sim/benchmark.py": BENCH.replace("measure_crypto_verification", "measure_event_ingestion_only")})

@@ -899,6 +899,12 @@ BEGIN
 END;
 $$;
 
+-- 2026-10-02: the recovered credential's signature comes from the caller, made by the signing
+-- module over p_new_token_value. The signature without it goes first: left beside the new one, a
+-- call without the two trailing arguments would match both.
+DROP PROCEDURE IF EXISTS uc9_complete_recovery(INTEGER, INTEGER, VARCHAR, TEXT,
+    VARCHAR, VARCHAR, INTEGER, VARCHAR, VARCHAR, VARCHAR);
+
 CREATE OR REPLACE PROCEDURE uc9_complete_recovery(
     p_recovery_id        INTEGER,
     p_deciding_user      INTEGER,
@@ -909,7 +915,9 @@ CREATE OR REPLACE PROCEDURE uc9_complete_recovery(
     p_algorithm_id       INTEGER DEFAULT NULL,
     p_biometric_binding  VARCHAR DEFAULT NULL,
     p_liveness_check     VARCHAR DEFAULT NULL,
-    p_published_location VARCHAR DEFAULT NULL
+    p_published_location VARCHAR DEFAULT NULL,
+    p_signature_bytes    BYTEA DEFAULT NULL,
+    p_signing_public_key_hex VARCHAR DEFAULT NULL
 )
 LANGUAGE plpgsql
 -- SECURITY DEFINER (1.0.0-rc.19): this procedure moves a token into REVOKED, and
@@ -1040,6 +1048,16 @@ BEGIN
                 '(p_new_token_value, p_new_serial, p_algorithm_id, '
                 'p_biometric_binding, p_liveness_check, p_published_location)';
         END IF;
+        -- The recovered credential is signed like any other: by the signing module, over its
+        -- token value, by the requesting authority's key. Until 2026-10-02 this procedure wrote
+        -- 'UC9_RECOVERY_PLACEHOLDER_...' as the signature, bytes no algorithm made, so the
+        -- credential a recovery handed back verified under nothing.
+        IF p_signature_bytes IS NULL THEN
+            RAISE EXCEPTION
+                'APPROVED recovery requires the new credential''s signature (p_signature_bytes), '
+                'made by the signing module over p_new_token_value'
+                USING ERRCODE = 'check_violation';
+        END IF;
 
         -- Step 1: invalidate all of the holder's existing non-terminal tokens
         -- and publish each to RevocationList. ACTIVE tokens go to LOST (lost by
@@ -1104,14 +1122,11 @@ BEGIN
              p_liveness_check)
         RETURNING token_id INTO v_new_token_id;
 
-        -- R11-1 / M2-6: issue a TokenSignature row alongside the new
-        -- IdentityToken so the M:N invariant is satisfied. Tagged with
-        -- the recovery context in the placeholder so audit replay can
-        -- identify recovery-issued signatures.
-        INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes)
-        VALUES (v_new_token_id, p_algorithm_id,
-                ('UC9_RECOVERY_PLACEHOLDER_' || p_recovery_id::TEXT
-                 || '_TOKEN_' || v_new_token_id::TEXT)::BYTEA);
+        -- R11-1 / M2-6: the new credential's TokenSignature row, as issuance stores one: the
+        -- caller's signature and the key it was made by (NULL for the placeholder, which has
+        -- none). The lifecycle row this procedure writes below tags the recovery.
+        INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex)
+        VALUES (v_new_token_id, p_algorithm_id, p_signature_bytes, p_signing_public_key_hex);
 
         -- Step 3: promote the new token to ACTIVE with the recovery tag.
         PERFORM set_config('polaris.reason_code',
@@ -1148,10 +1163,11 @@ BEGIN
 END$$;
 
 COMMENT ON PROCEDURE uc9_complete_recovery(INTEGER, INTEGER, VARCHAR, TEXT,
-    VARCHAR, VARCHAR, INTEGER, VARCHAR, VARCHAR, VARCHAR) IS
+    VARCHAR, VARCHAR, INTEGER, VARCHAR, VARCHAR, VARCHAR, BYTEA, VARCHAR) IS
   'UC-9 phase 2: transition a PENDING RecoveryRequest to APPROVED or '
   'REJECTED. APPROVED requires admin role, expired cool-down, three OOB '
-  'channels, and full new-token parameters. Old non-terminal tokens '
+  'channels, full new-token parameters and the new credential''s signature, '
+  'made by the signing module. Old non-terminal tokens '
   'transition to LOST and publish to RevocationList (UC-4 pattern). '
   'Serializes per-individual via pg_advisory_xact_lock (C9 correctness).';
 

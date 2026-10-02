@@ -8,7 +8,8 @@
 // anyone was verified. The server reads the activity rollups, which hold no event and no
 // coordinate, so a zero-knowledge verification is counted in its jurisdiction and located
 // nowhere (C6). A jurisdiction with fewer than the minimum cell size is not drawn; its count
-// joins "elsewhere". A withheld count reads "fewer than 5", never a number.
+// joins "elsewhere". A withheld count reads "withheld", never a number: not "fewer than 5", as a
+// count is also withheld when the rest of its whole is small.
 //
 // Read before editing:
 //   ../../lab/strategy/009-atlas-athena-rework.md   (what the Atlas may and may not show)
@@ -210,7 +211,7 @@
     }
 
     function shown(n, suffix) {
-        return (n === null || n === undefined) ? 'fewer than ' + MIN_CELL : fmtCount(n) + (suffix || '');
+        return (n === null || n === undefined) ? 'withheld' : fmtCount(n) + (suffix || '');
     }
 
     function regionFeature(r) {
