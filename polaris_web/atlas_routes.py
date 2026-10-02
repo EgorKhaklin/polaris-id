@@ -179,7 +179,7 @@ def _part(part, whole):
 def _share(part, whole):
     """A whole-number percentage of a whole, withheld as its part would be."""
     shown = _part(part, whole)
-    return None if shown is None else round(100 * shown / int(whole))
+    return None if shown is None or not int(whole or 0) else round(100 * shown / int(whole))
 
 
 #: The row that holds an open list's small categories (an authority, a context, a jurisdiction,

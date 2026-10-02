@@ -29,12 +29,13 @@ Output: one line per test (PASS/FAIL with description), final summary.
 """
 
 import html
+import json
 import os
 import re
 import sys
 import unittest
 from unittest.mock import patch
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -1099,13 +1100,13 @@ class AtlasTests(PolarisTestCase):
                         'data-atlas-view-tab="map"', 'atlas-globe-data')
 
     def test_atlas_hud_shows_operational_signals(self):
-        """The HUD surfaces Active Tokens, Anomalies, Post-Quantum %, and
-        Zero-Knowledge % — these are the four operational ratios that
-        matter at a glance."""
-        r = self.client.get('/atlas')
-        self.assertHTML(r,
-            'Active Tokens', 'Anomalies',
-            'Post-Quantum', 'Zero-Knowledge')
+        """The map's corners: active credentials, the window's anomalies, the post-quantum share
+        of live signatures and the zero-knowledge share of the window's verifications."""
+        body = self.client.get('/atlas').get_data(as_text=True)
+        for label in ('Active Credentials', 'Anomalies (window)', 'not successful',
+                      'Post-Quantum', 'of live signatures', 'Zero-Knowledge',
+                      "of the window's verifications"):
+            self.assertIn(label, body)
 
     def test_atlas_classification_banner_reframed(self):
         """v9.248: the console opens on the analytical Overview (the globe is a
@@ -1130,16 +1131,18 @@ class AtlasTests(PolarisTestCase):
         self.assertNotIn('Token Succession Lineage', body)
 
     def test_atlas_state_populations_match_database(self):
-        """The Active Tokens count in the HUD should match a direct COUNT."""
-        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) AS n FROM IdentityToken WHERE status='ACTIVE'")
-            active = cur.fetchone()['n']
-        conn.close()
+        """The HUD's active credentials are the population count, withheld below the minimum:
+        the sample's three read as fewer than five, and as 3 with the minimum off."""
+        active = _sql("SELECT count(*) AS n FROM IdentityToken WHERE status = 'ACTIVE'",
+                      fetch='one')['n']
+        self.assertLess(active, atlas_routes._ATLAS_MIN_CELL, 'fixture: a small population')
 
-        r = self.client.get('/atlas')
-        body = r.get_data(as_text=True)
-        self.assertIn(str(active), body)
+        def hud():
+            body = self.client.get('/atlas').get_data(as_text=True)
+            return re.search(r'data-atlas-active-tokens>(.*?)</span>', body).group(1)
+        self.assertIn('&lt;5', hud())
+        with patch.object(atlas_routes, '_ATLAS_MIN_CELL', 0):
+            self.assertEqual(hud(), str(active))
 
 
 class DashboardAnalyticsTests(PolarisTestCase):
@@ -10299,524 +10302,553 @@ class ConcurrencyTests(PolarisTestCase):
 
 
 # ============================================================================
-# V6 — ATLAS API ENDPOINT TESTS
+# THE ATLAS ON THE ACTIVITY ROLLUPS (lab/strategy/009, step 4)
 # ============================================================================
 
-class AtlasAPITests(PolarisTestCase):
-    """Tests for the /api/atlas/* endpoints added in v6."""
+def _atlas_events(n, agency=3, context=1, outcome='SUCCESS', disclosure='ZERO_KNOWLEDGE',
+                  minutes_ago=30):
+    """n verifications, counted into the activity rollups by their trigger like any other. The
+    sample has none by authority 3, so a question filtered to it answers for these alone. Only a
+    FULL disclosure names a credential (token 2), and never with SUCCESS, which the database
+    would hold to that credential's rules."""
+    assert not (disclosure == 'FULL' and outcome == 'SUCCESS')
+    _sql("INSERT INTO VerificationEvent (token_id, requesting_agency_id, context_id, "
+         "                               event_timestamp, outcome, disclosure_level) "
+         "SELECT %s, %s, %s, CURRENT_TIMESTAMP - make_interval(mins => %s), %s, %s "
+         "  FROM generate_series(1, %s)",
+         (2 if disclosure == 'FULL' else None, agency, context, minutes_ago, outcome, disclosure,
+          n), fetch='none')
 
-    def test_clusters_endpoint_returns_aggregated_bins(self):
-        r = self.client.get('/api/atlas/clusters?bbox=20,-130,50,-65&grid=5&kind=verification&window=all')
-        self.assertEqual(r.status_code, 200)
-        data = r.get_json()
-        self.assertEqual(data['kind'], 'verification')
-        self.assertEqual(data['bbox'], [20, -130, 50, -65])
-        self.assertGreaterEqual(data['count'], 1, "Continental US should have clusters")
-        # Each cluster has the contracted shape
-        for c in data['clusters']:
-            self.assertIn('lat', c)
-            self.assertIn('lon', c)
-            self.assertIn('n_total', c)
-            self.assertIn('n_failure', c)
-            self.assertGreaterEqual(c['n_total'], 1)
-            # Failure subset can't exceed total
-            self.assertLessEqual(c['n_failure'], c['n_total'])
 
-    def test_clusters_endpoint_lifecycle_kind(self):
-        r = self.client.get('/api/atlas/clusters?bbox=20,-130,50,-65&grid=5&kind=lifecycle&window=all')
-        self.assertEqual(r.status_code, 200)
-        data = r.get_json()
-        self.assertEqual(data['kind'], 'lifecycle')
-        # Each cluster has the lifecycle-specific fields
-        for c in data['clusters']:
-            self.assertIn('n_revoked', c)
-            self.assertIn('n_lost', c)
-            self.assertIn('n_issued', c)
-            # Subset counts can't exceed total
-            self.assertLessEqual(c['n_revoked'], c['n_total'])
+class _AtlasCase(PolarisTestCase):
+    """The Atlas suites' base (lab/strategy/009, step 4): a cold cache for each test, a way to ask,
+    and a way to switch withholding off so a test can hold every figure to the event tables."""
 
-    def test_clusters_endpoint_rejects_bad_bbox(self):
-        for bad in ['', 'invalid', '1,2', '1,2,3', '99,1,2,3', '1,2,3,abc']:
-            r = self.client.get(f'/api/atlas/clusters?bbox={bad}&grid=5&kind=verification&window=all')
-            self.assertEqual(r.status_code, 400,
-                f"Bad bbox {bad!r} should be 400, got {r.status_code}")
+    def setUp(self):
+        super().setUp()
+        atlas_routes._atlas_cache_clear()
+        self.addCleanup(atlas_routes._atlas_cache_clear)
 
-    def test_a_grid_or_hex_size_that_is_not_a_number_in_range_is_400(self):
-        """2026-09-24, a sibling of the coexistence NaN finding: `grid <= 0 or grid > 90` is
-        False for NaN, so ?grid=nan passed validation, reached the aggregate query, and went into
-        the cache key. NaN is never equal to itself, so every such request missed the cache and
-        added an entry that evicted a real one. Same for ?size= on the hex grid."""
-        for value in ("nan", "NaN", "inf", "-inf", "0", "91", "-1"):
-            with self.subTest(grid=value):
-                r = self.client.get('/api/atlas/clusters?bbox=20,-130,50,-65&grid=%s'
-                                    '&kind=verification&window=all' % value)
+    def _ask(self, path, status=200):
+        r = self.client.get(path)
+        self.assertEqual(r.status_code, status, (path, r.get_data(as_text=True)[:300]))
+        return r.get_json()
+
+    def _raw(self, where='TRUE', params=()):
+        return _sql("SELECT count(*) AS n FROM VerificationEvent WHERE " + where, params,
+                    fetch='one')['n']
+
+    @contextmanager
+    def _unwithheld(self):
+        """Every count shown: the minimum cell size at zero, the cache cleared either side."""
+        atlas_routes._atlas_cache_clear()
+        with patch.object(atlas_routes, '_ATLAS_MIN_CELL', 0):
+            yield
+        atlas_routes._atlas_cache_clear()
+
+    def _db_now(self):
+        return _sql("SELECT LOCALTIMESTAMP AS t", fetch='one')['t']
+
+
+class AtlasArithmeticTests(_AtlasCase):
+    """With withholding off, every Atlas figure is the event tables' figure: the rollups the
+    readers sum are kept by triggers on the events, and a reader that dropped a row, counted one
+    twice or read the wrong grain would show here as a difference from a plain count."""
+
+    def test_every_reader_counts_every_verification_in_the_window(self):
+        """window=all: the series, every breakdown, the cross-tab, the heatmap, the stacked bands,
+        the regions and the headline all come to the events recorded, zero-knowledge ones
+        included (C6: counted, never located)."""
+        _atlas_events(3, outcome='FAILURE', disclosure='SELECTIVE')
+        _atlas_events(4)
+        raw, zk = self._raw(), self._raw("disclosure_level = 'ZERO_KNOWLEDGE'")
+        self.assertGreater(zk, 0)
+        with self._unwithheld():
+            series = self._ask('/api/atlas/series?window=all&buckets=60')
+            self.assertEqual((series['totals']['n_total'], series['totals']['n_zk']), (raw, zk))
+            self.assertEqual(sum(p['n_total'] for p in series['points']), raw)
+            for dim in ('agency', 'context', 'outcome', 'disclosure', 'algorithm', 'jurisdiction'):
+                d = self._ask('/api/atlas/breakdown?window=all&dimension=' + dim)
+                self.assertEqual(sum(c['n_total'] for c in d['categories']), raw, dim)
+            for col in ('outcome', 'disclosure'):
+                x = self._ask('/api/atlas/crosstab?window=all&row=context&col=' + col)
+                self.assertEqual(sum(c['n'] for c in x['cells']), raw, col)
+                self.assertEqual(sum(r['total'] for r in x['rows']), raw, col)
+            heat = self._ask('/api/atlas/heatmap?window=all')
+            self.assertEqual(sum(c['n'] for c in heat['cells']), raw)
+            stacked = self._ask('/api/atlas/stacked?window=all&dimension=agency&buckets=60')
+            self.assertEqual(sum(sum(p['values'].values()) for p in stacked['points']), raw)
+            geo = self._ask('/api/atlas/geo/jurisdictions?window=all')
+            self.assertEqual(sum(r['n_total'] for r in geo['regions'] + geo['unplaced'])
+                             + geo['elsewhere'], raw)
+            stats = self._ask('/api/atlas/stats?window=all')
+            self.assertEqual((stats['n_verifs'], stats['n_full']),
+                             (raw, self._raw("disclosure_level = 'FULL'")))
+
+    def test_a_failure_is_every_outcome_but_success_in_every_reader(self):
+        """One meaning across the page. Until 2026-10-02 the headline and the map counted FAILURE
+        alone and the series, the heatmap and the breakdowns every outcome but SUCCESS, so the
+        map's 'failures' and the overview's 'non-success' were two numbers under one word."""
+        _atlas_events(6, outcome='UNAUTHORIZED', disclosure='SELECTIVE')
+        _atlas_events(5, outcome='EXPIRED', disclosure='SELECTIVE')
+        _atlas_events(7, outcome='FAILURE', disclosure='SELECTIVE')
+        raw = self._raw("outcome <> 'SUCCESS'")
+        with self._unwithheld():
+            self.assertEqual(self._ask('/api/atlas/stats?window=all')['n_failures'], raw)
+            self.assertEqual(self._ask('/api/atlas/series?window=all')['totals']['n_failure'], raw)
+            heat = self._ask('/api/atlas/heatmap?window=all')
+            self.assertEqual(sum(c['n_failure'] for c in heat['cells']), raw)
+            geo = self._ask('/api/atlas/geo/jurisdictions?window=all')
+            self.assertEqual(sum(r['n_failure'] for r in geo['regions'] + geo['unplaced']), raw)
+            bd = self._ask('/api/atlas/breakdown?window=all&dimension=context')
+            self.assertEqual(sum(c['n_failure'] for c in bd['categories']), raw)
+
+    def test_the_lifecycle_stream_counts_every_transition(self):
+        """A transition no authority made is counted as 'System / device', not dropped."""
+        raw = _sql("SELECT count(*) AS n FROM TokenLifecycleEvent", fetch='one')['n']
+        lost = _sql("SELECT count(*) AS n FROM TokenLifecycleEvent "
+                    " WHERE event_type IN ('REVOKED', 'LOST')", fetch='one')['n']
+        with self._unwithheld():
+            for dim in ('agency', 'event_type'):
+                d = self._ask('/api/atlas/breakdown?window=all&kind=lifecycle&dimension=' + dim)
+                self.assertEqual(sum(c['n_total'] for c in d['categories']), raw, dim)
+            agencies = self._ask('/api/atlas/breakdown?window=all&kind=lifecycle&dimension=agency')
+            self.assertIn('System / device', [c['label'] for c in agencies['categories']])
+            series = self._ask('/api/atlas/series?window=all&kind=lifecycle')
+            self.assertEqual((series['totals']['n_total'], series['totals']['n_failure']),
+                             (raw, lost))
+            self.assertEqual(self._ask('/api/atlas/stats?window=all')['n_lifecycles'], raw)
+            x = self._ask('/api/atlas/crosstab?window=all&kind=lifecycle&row=agency&col=event_type')
+            self.assertEqual(sum(c['n'] for c in x['cells']), raw)
+
+    def test_a_filter_narrows_every_reader_to_its_slice(self):
+        """outcomes, disclosure, context and authority reach every reader's SQL, and an
+        authority written with leading zeros is that authority."""
+        _atlas_events(6, context=4, outcome='FAILURE', disclosure='SELECTIVE')
+        _atlas_events(5, context=1)
+        cases = (('outcomes=FAILURE', "outcome = 'FAILURE'"),
+                 ('outcomes=anomalies', "outcome <> 'SUCCESS'"),
+                 ('outcomes=FAILURE,UNAUTHORIZED,EXPIRED', "outcome <> 'SUCCESS'"),
+                 ('disclosure=ZERO_KNOWLEDGE', "disclosure_level = 'ZERO_KNOWLEDGE'"),
+                 ('disclosure=SELECTIVE,FULL', "disclosure_level <> 'ZERO_KNOWLEDGE'"),
+                 ('contexts=TRAVEL', "context_id = 4"),
+                 ('agencies=3', "requesting_agency_id = 3"),
+                 ('agencies=0003', "requesting_agency_id = 3"))
+        with self._unwithheld():
+            for q, where in cases:
+                with self.subTest(q):
+                    raw = self._raw(where)
+                    self.assertGreater(raw, 0)
+                    self.assertLess(raw, self._raw())
+                    series = self._ask('/api/atlas/series?window=all&' + q)
+                    self.assertEqual(series['totals']['n_total'], raw)
+                    bd = self._ask('/api/atlas/breakdown?window=all&dimension=agency&' + q)
+                    self.assertEqual(sum(c['n_total'] for c in bd['categories']), raw)
+                    heat = self._ask('/api/atlas/heatmap?window=all&' + q)
+                    self.assertEqual(sum(c['n'] for c in heat['cells']), raw)
+                    geo = self._ask('/api/atlas/geo/jurisdictions?window=all&' + q)
+                    self.assertEqual(sum(r['n_total'] for r in geo['regions'] + geo['unplaced']),
+                                     raw)
+            stats = self._ask('/api/atlas/stats?window=all&agencies=3')
+            self.assertEqual(stats['n_verifs'], self._raw('requesting_agency_id = 3'))
+
+    def test_the_facet_counts_each_authority_without_its_own_selection(self):
+        _atlas_events(6)
+        with self._unwithheld():
+            d = self._ask('/api/atlas/facet/agencies?window=all&limit=50&agencies=1')
+            got = {a['agency_id']: a['n_total'] for a in d['results']}
+            for a in _sql("SELECT agency_id FROM Agency"):
+                self.assertEqual(got[a['agency_id']],
+                                 self._raw('requesting_agency_id = %s', (a['agency_id'],)))
+
+
+class AtlasWithholdingTests(_AtlasCase):
+    """Small cells are withheld (lab/strategy/009, step 4): a count of one at a known authority,
+    context and hour tells someone who knows who was there what happened to them, and the Atlas,
+    unlike the verification log, records no read. k is atlas_routes._ATLAS_MIN_CELL, five."""
+
+    CAL = 'California Identity Office'      # authority 3: no verification in the sample
+
+    def test_the_minimum_is_five(self):
+        self.assertEqual((atlas_routes._ATLAS_MIN_CELL, atlas_routes._ATLAS_NARROW_SCOPE), (5, 50))
+        self.assertEqual(self._ask('/api/atlas/stats?window=all')['min_cell'], 5)
+
+    def test_a_fixed_dimension_lists_every_value_and_withholds_the_small_and_the_empty(self):
+        """Four FAILUREs and nothing else: a listed 4 is the small cell itself, and a listed 0
+        says 'none' where a withheld one says 'fewer than five'."""
+        _atlas_events(4, outcome='FAILURE', disclosure='SELECTIVE')
+        for dim, values in (('outcome', atlas_routes._ATLAS_OUTCOMES),
+                            ('disclosure', atlas_routes._ATLAS_DISCLOSURES),
+                            ('context', atlas_routes._ATLAS_CONTEXTS)):
+            d = self._ask('/api/atlas/breakdown?window=all&agencies=3&dimension=' + dim)
+            self.assertEqual([c['label'] for c in d['categories']], list(values), dim)
+            self.assertEqual({c['n_total'] for c in d['categories']}, {None}, dim)
+
+    def test_a_count_is_withheld_when_the_rest_of_its_whole_is_small(self):
+        """SUCCESS 10 of 12 gives FAILURE 2 back: a part is shown only when it and the rest of
+        its scope both reach the minimum."""
+        _atlas_events(10)
+        _atlas_events(2, outcome='FAILURE', disclosure='SELECTIVE')
+        url = '/api/atlas/breakdown?window=all&dimension=outcome&agencies=3'
+        got = {c['label']: c['n_total'] for c in self._ask(url)['categories']}
+        self.assertEqual(got, dict.fromkeys(atlas_routes._ATLAS_OUTCOMES))
+        _atlas_events(4, outcome='FAILURE', disclosure='SELECTIVE')
+        atlas_routes._atlas_cache_clear()
+        got = {c['label']: c['n_total'] for c in self._ask(url)['categories']}
+        self.assertEqual(got, {'SUCCESS': 10, 'FAILURE': 6, 'EXPIRED': None, 'UNAUTHORIZED': None})
+
+    def test_a_share_is_withheld_as_its_count_is(self):
+        _atlas_events(9)                                       # zero-knowledge
+        _atlas_events(3, outcome='FAILURE', disclosure='SELECTIVE')
+        stats = self._ask('/api/atlas/stats?window=all&agencies=3')
+        self.assertEqual((stats['n_verifs'], stats['zk_pct'], stats['n_failures']),
+                         (12, None, None))
+        _atlas_events(2, outcome='FAILURE', disclosure='SELECTIVE')
+        atlas_routes._atlas_cache_clear()
+        stats = self._ask('/api/atlas/stats?window=all&agencies=3')
+        self.assertEqual((stats['n_verifs'], stats['zk_pct'], stats['n_failures']), (14, 64, 5))
+
+    def test_an_open_list_folds_its_small_categories_into_one_row(self):
+        """An authority with three verifications is not named: listed with its count withheld,
+        it would still say that it had activity."""
+        _atlas_events(3)
+        _atlas_events(9, agency=2)
+        d = self._ask('/api/atlas/breakdown?window=all&dimension=agency')
+        labels = [c['label'] for c in d['categories']]
+        self.assertIn('Pennsylvania Identity Bureau', labels)
+        self.assertNotIn(self.CAL, labels)
+        self.assertEqual(labels[-1], atlas_routes._ATLAS_FOLDED)
+        self.assertTrue(d['categories'][-1]['folded'])
+        self.assertEqual(d['count'], len(d['categories']))
+        # The stacked bands fold the same way: a small authority is in 'Other', never a band.
+        st = self._ask('/api/atlas/stacked?window=all&dimension=agency&buckets=12')
+        self.assertNotIn(self.CAL, st['labels'])
+        self.assertIn('Pennsylvania Identity Bureau', st['labels'])
+
+    def test_the_facet_lists_every_authority_in_name_order(self):
+        """Ranked by volume, or listing only the active, the facet would say which small
+        authorities had activity even with their counts withheld."""
+        _atlas_events(3)
+        d = self._ask('/api/atlas/facet/agencies?window=all&limit=50')
+        self.assertEqual([a['name'] for a in d['results']],
+                         [r['name'] for r in _sql("SELECT name FROM Agency ORDER BY name, agency_id")])
+        self.assertIsNone({a['name']: a['n_total'] for a in d['results']}[self.CAL])
+
+    def test_a_cross_tab_total_is_withheld_when_it_would_give_a_small_cell_back(self):
+        """SUCCESS 20, FAILURE 6 and EXPIRED 2: shown, the total less the shown cells is the 2
+        the cell withholds. With the withheld cells summing to five or more it can be shown."""
+        _atlas_events(20)
+        _atlas_events(6, outcome='FAILURE', disclosure='SELECTIVE')
+        _atlas_events(2, outcome='EXPIRED', disclosure='SELECTIVE')
+
+        def row():
+            atlas_routes._atlas_cache_clear()
+            x = self._ask('/api/atlas/crosstab?window=all&row=agency&col=outcome')
+            cells = {c['col']: c['n'] for c in x['cells'] if c['row'] == self.CAL}
+            return cells, [r['total'] for r in x['rows'] if r['label'] == self.CAL][0]
+        cells, total = row()
+        self.assertEqual(cells, {'SUCCESS': 20, 'FAILURE': 6, 'EXPIRED': None,
+                                 'UNAUTHORIZED': None})
+        self.assertIsNone(total)
+        _atlas_events(3, outcome='UNAUTHORIZED', disclosure='SELECTIVE')    # withheld: 2 + 3
+        cells, total = row()
+        self.assertEqual((cells['UNAUTHORIZED'], total), (None, 31))
+
+    def test_every_bucket_and_cell_is_listed_and_a_quiet_one_withheld(self):
+        """A series and the heatmap are filled: a missing bucket would read as none where a
+        withheld one reads as fewer than five."""
+        _atlas_events(6, minutes_ago=30)
+        _atlas_events(6, minutes_ago=200)
+        heat = self._ask('/api/atlas/heatmap?window=24h&agencies=3')
+        self.assertEqual(sorted((c['dow'], c['hour']) for c in heat['cells']),
+                         [(d, h) for d in range(1, 8) for h in range(24)])
+        self.assertEqual(sorted(c['n'] for c in heat['cells'] if c['n'] is not None), [6, 6])
+        series = self._ask('/api/atlas/series?window=24h&buckets=24&agencies=3')
+        width = timedelta(seconds=series['bucket_seconds'])
+        since = datetime.fromisoformat(series['since'])
+        self.assertEqual([p['ts'] for p in series['points']],
+                         [(since + i * width).strftime('%Y-%m-%dT%H:%M:%S')
+                          for i in range(len(series['points']))])
+        self.assertEqual(sorted(p['n_total'] for p in series['points'] if p['n_total'] is not None),
+                         [6, 6])
+        self.assertEqual(series['totals']['n_total'], 12)
+
+    def test_a_region_with_fewer_than_five_is_not_drawn(self):
+        """A mark on the map would say the jurisdiction had activity; it joins 'elsewhere'."""
+        _atlas_events(3)                          # US-CA
+        _atlas_events(9, agency=2)                # US-PA
+        geo = self._ask('/api/atlas/geo/jurisdictions?window=24h')
+        drawn = {r['jurisdiction'] for r in geo['regions'] + geo['unplaced']}
+        self.assertIn('US-PA', drawn)
+        self.assertNotIn('US-CA', drawn)
+        self.assertFalse(geo['truncated'])
+
+    def test_a_region_is_placed_from_reference_data_never_from_an_event(self):
+        """The rollups hold no coordinate: a region's point is the jurisdiction's, from the
+        reference file beside the page, wherever its verifications said they were."""
+        _sql("INSERT INTO VerificationEvent (requesting_agency_id, context_id, outcome, "
+             "       disclosure_level, latitude, longitude) "
+             "SELECT 3, 1, 'SUCCESS', 'SELECTIVE', -33.9, 18.4 FROM generate_series(1, 6)",
+             fetch='none')
+        with open(os.path.join(os.path.dirname(os.path.abspath(atlas_routes.__file__)), 'static',
+                               'atlas-regions.json'), encoding='utf-8') as fh:
+            ref = json.load(fh)['regions']['US-CA']
+        (region,) = self._ask('/api/atlas/geo/jurisdictions?window=all&agencies=3')['regions']
+        self.assertEqual((region['jurisdiction'], region['lat'], region['lon']),
+                         ('US-CA', ref['lat'], ref['lon']))
+
+
+class AtlasNarrowQuestionTests(_AtlasCase):
+    """A question whose filtered window holds fewer than fifty events is answered, withheld as
+    any, and written to the application log: who asked and what, never a count or a person
+    (lab/strategy/009, step 4). A narrowing question leaves a trace, as a read of the
+    verification log does, including when the cache answers it."""
+
+    def _narrow_lines(self, url):
+        with self.assertLogs(flask_app.app.logger, level='INFO') as logs:
+            flask_app.app.logger.info('control')
+            self._ask(url)
+        return [m for m in logs.output if 'atlas narrow question' in m]
+
+    def test_a_narrow_question_is_logged_each_time_it_is_asked(self):
+        _atlas_events(7)
+        url = '/api/atlas/breakdown?window=all&dimension=outcome&agencies=3'
+        for attempt in ('computed', 'from the cache'):
+            lines = self._narrow_lines(url)
+            self.assertEqual(len(lines), 1, attempt)
+            self.assertIn('asked breakdown', lines[0])
+            self.assertIn('authority=3', lines[0])
+            self.assertNotIn(' 7 ', lines[0], 'the log names no count')
+        self.assertEqual(atlas_routes._atlas_cache_stats['hits'], 1)
+
+    def test_a_broad_question_is_not_logged(self):
+        _atlas_events(50)
+        self.assertEqual(
+            self._narrow_lines('/api/atlas/breakdown?window=all&dimension=outcome&agencies=3'), [])
+
+
+class AtlasWindowTests(_AtlasCase):
+    """The windows are the rollups': a window starts at the top of the hour (the day, past a
+    week) that holds its nominal start, measured on the database's clock (rc.29), and says so."""
+
+    ALIGN = {'1h': (timedelta(hours=1), 'hour'), '24h': (timedelta(hours=24), 'hour'),
+             '7d': (timedelta(days=7), 'hour'), '30d': (timedelta(days=30), 'day')}
+
+    def test_a_window_starts_at_the_top_of_its_hour_or_day(self):
+        for window, (span, grain) in self.ALIGN.items():
+            with self.subTest(window):
+                before = self._db_now()
+                d = self._ask('/api/atlas/stats?window=' + window)
+                after = self._db_now()
+                cut = {'hour': dict(minute=0, second=0, microsecond=0),
+                       'day': dict(hour=0, minute=0, second=0, microsecond=0)}[grain]
+                self.assertEqual(d['grain'], grain)
+                self.assertIn(datetime.fromisoformat(d['since']),
+                              {(before - span).replace(**cut), (after - span).replace(**cut)})
+        d = self._ask('/api/atlas/stats?window=all')
+        self.assertEqual((d['since'], d['grain']), (None, 'day'))
+
+    def test_an_event_before_the_window_is_not_counted(self):
+        """'1h' starts at most two hours back and '24h' at most twenty-five."""
+        _atlas_events(5, outcome='UNAUTHORIZED', disclosure='SELECTIVE', minutes_ago=180)
+        _atlas_events(6, outcome='UNAUTHORIZED', disclosure='SELECTIVE', minutes_ago=26 * 60)
+        with self._unwithheld():
+            def n(window):
+                return self._ask('/api/atlas/series?agencies=3&window=' + window)['totals']['n_total']
+            self.assertEqual((n('1h'), n('24h'), n('7d'), n('all')), (0, 5, 11, 11))
+
+    def test_the_heatmap_says_where_its_hours_begin(self):
+        """The heatmap reads the hourly rollup, which a purge shortens while the daily rollup
+        keeps its days: for 'all' it says where its hours begin rather than claiming them all."""
+        first = _sql("SELECT least((SELECT min(bucket) FROM VerificationRollup), "
+                     "             (SELECT min(bucket) FROM VerificationRollupDelta)) AS h",
+                     fetch='one')['h']
+        d = self._ask('/api/atlas/heatmap?window=all')
+        self.assertEqual((d['since'], d['grain']), (first.isoformat(), 'hour'))
+
+    def test_a_series_never_has_more_buckets_than_asked(self):
+        """The width was the window over the buckets rounded up, and at an exact multiple that
+        cuts one bucket more than asked, the last starting at the window's end (C8)."""
+        t0 = datetime(2026, 10, 1, 10, 0, 0)
+        for hours in (1, 2, 23, 24, 25, 48, 167, 168, 169, 240, 241, 720, 721):
+            for buckets in (1, 2, 7, 24, 48, 60, 240):
+                for grain, unit in (('hour', 3600), ('day', 86400)):
+                    until = t0 + timedelta(hours=hours)
+                    width = atlas_routes._bucket_width(t0, until, buckets, grain)
+                    with self.subTest(hours=hours, buckets=buckets, grain=grain):
+                        self.assertLessEqual(len(atlas_routes._buckets(t0, until, width)), buckets)
+                        self.assertEqual(width.total_seconds() % unit, 0)
+        for n in (1, 13, 24, 60, 240):
+            for window in ('1h', '24h', '7d', '30d', 'all'):
+                d = self._ask('/api/atlas/series?window=%s&buckets=%d' % (window, n))
+                self.assertLessEqual(len(d['points']), n, (window, n))
+                self.assertEqual(d['buckets'], len(d['points']))
+
+
+class AtlasParameterTests(_AtlasCase):
+    """Every caller-chosen value is whitelisted or clamped before the SQL sees it (C8), and a
+    malformed one is a 400 that says what was wrong."""
+
+    def test_a_malformed_question_is_400(self):
+        for path in ('/api/atlas/series?window=always', '/api/atlas/series?window=15min',
+                     '/api/atlas/series?window=24', '/api/atlas/series?outcomes=NOT_AN_OUTCOME',
+                     '/api/atlas/series?contexts=NOT_A_CONTEXT', '/api/atlas/series?disclosure=PARTIAL',
+                     '/api/atlas/series?kind=banana', '/api/atlas/series?buckets=0',
+                     '/api/atlas/series?buckets=241', '/api/atlas/series?buckets=nan',
+                     '/api/atlas/stacked?dimension=evil',
+                     '/api/atlas/stacked?dimension=context&buckets=9999',
+                     '/api/atlas/stacked?kind=lifecycle&dimension=context',
+                     '/api/atlas/breakdown?dimension=gender',
+                     '/api/atlas/breakdown?kind=verification&dimension=event_type',
+                     '/api/atlas/breakdown?dimension=agency&limit=0',
+                     '/api/atlas/breakdown?dimension=agency&limit=many',
+                     '/api/atlas/crosstab?row=gender&col=outcome',
+                     '/api/atlas/crosstab?row=agency&col=religion',
+                     '/api/atlas/crosstab?kind=verification&row=agency&col=event_type',
+                     '/api/atlas/crosstab?row=agency&col=outcome&limit=-3',
+                     '/api/atlas/facet/agencies?limit=-1', '/api/atlas/heatmap?kind=banana',
+                     '/api/atlas/geo/jurisdictions?kind=banana', '/api/atlas/stats?window=1y'):
+            with self.subTest(path):
+                r = self.client.get(path)
                 self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
-            with self.subTest(size=value):
-                r = self.client.get('/api/atlas/hexbin?bbox=20,-130,50,-65&size=%s'
-                                    '&kind=verification&window=all' % value)
-                self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
-        for bbox in ("nan,0,1,1", "0,nan,1,1", "0,0,inf,1"):
-            with self.subTest(bbox=bbox):
-                r = self.client.get('/api/atlas/clusters?bbox=%s&grid=5' % bbox)
-                self.assertEqual(r.status_code, 400)
-
-    def test_clusters_endpoint_rejects_bad_kind(self):
-        r = self.client.get('/api/atlas/clusters?bbox=0,0,1,1&grid=1&kind=banana')
-        self.assertEqual(r.status_code, 400)
-
-    # ----- v7: antimeridian-spanning bbox support -----
-    # Pre-v7 _parse_bbox rejected min_lon > max_lon. v7 supports it as a
-    # wrap-around: bbox=(min_lat, 170, max_lat, -170) covers the 20° strip
-    # spanning the date line.
-
-    def test_antimeridian_bbox_accepted_at_parse(self):
-        """A bbox with min_lon > max_lon is parsed (no longer 400)."""
-        # Wide antimeridian bbox covering Tokyo + Sydney + LA via wrap
-        r = self.client.get('/api/atlas/clusters?bbox=-50,120,50,-100&grid=10&kind=verification')
-        self.assertEqual(r.status_code, 200,
-            "antimeridian bboxes should now parse successfully")
-
-    def test_antimeridian_bbox_correctness(self):
-        """Cluster sum across an antimeridian bbox equals the count of rows
-        whose longitude is in either half of the wrap."""
-        import psycopg2
-        from psycopg2.extras import RealDictCursor
-        with psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG) as conn, conn.cursor() as cur:
-            # bbox: min_lon=170, max_lon=-170 → covers [170,180] ∪ [-180,-170]
-            cur.execute("""
-                SELECT COALESCE(SUM(n_total), 0) AS s
-                FROM atlas_clusters_verifications(-50, 170, 50, -170, 5)
-            """)
-            cluster_sum = cur.fetchone()['s']
-            cur.execute("""
-                SELECT count(*) AS s FROM VerificationEvent
-                WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-                  AND latitude  BETWEEN -50 AND 50
-                  AND (longitude BETWEEN 170 AND 180 OR longitude BETWEEN -180 AND -170)
-            """)
-            raw = cur.fetchone()['s']
-            self.assertEqual(cluster_sum, raw,
-                f"antimeridian cluster sum {cluster_sum} != raw split-range count {raw}")
-
-    def test_antimeridian_bbox_excludes_other_hemisphere(self):
-        """An antimeridian bbox must NOT include rows in the OTHER half of the world."""
-        import psycopg2
-        from psycopg2.extras import RealDictCursor
-        with psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG) as conn, conn.cursor() as cur:
-            # Antimeridian bbox 170 → -170 should NOT include London (lon=-0.1)
-            cur.execute("""
-                SELECT COALESCE(SUM(n_total), 0) AS s
-                FROM atlas_clusters_verifications(-89, 170, 89, -170, 5)
-            """)
-            antimeridian_sum = cur.fetchone()['s']
-            # Row count for London bbox alone (centered around 0)
-            cur.execute("""
-                SELECT count(*) AS s FROM VerificationEvent
-                WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-                  AND longitude BETWEEN -10 AND 10
-            """)
-            london_zone = cur.fetchone()['s']
-            # Antimeridian sum must be LESS than total rows minus london
-            cur.execute("SELECT count(*) AS s FROM VerificationEvent WHERE latitude IS NOT NULL")
-            total = cur.fetchone()['s']
-            self.assertLess(antimeridian_sum, total,
-                "antimeridian bbox should exclude longitudes outside [170,180]∪[-180,-170]")
-            # Specifically: should not include london_zone events (lon ~0)
-            self.assertLess(antimeridian_sum + london_zone, total + 1,
-                "antimeridian bbox must not double-count or include the other hemisphere")
-
-    # ----- v7: atlas cache (R8-5) -----
-
-    def test_cache_stats_endpoint_reports_counters(self):
-        """/api/atlas/cache-stats reports cache observability counters."""
-        # Clear cache first so we get clean numbers
-        from atlas_routes import _atlas_cache_clear   # moved out of app.py 2026-09-18
-        _atlas_cache_clear()
-        # Miss: cold cache
-        self.client.get('/api/atlas/clusters?bbox=10,20,30,40&grid=5&kind=verification&window=all')
-        # Hit: same query
-        self.client.get('/api/atlas/clusters?bbox=10,20,30,40&grid=5&kind=verification&window=all')
-        r = self.client.get('/api/atlas/cache-stats')
-        self.assertEqual(r.status_code, 200)
-        data = r.get_json()
-        self.assertGreaterEqual(data['hits'], 1, "second identical query should hit the cache")
-        self.assertGreaterEqual(data['misses'], 1, "first query should miss the cold cache")
-        self.assertIn('hit_ratio', data)
-        self.assertIn('ttl_seconds', data)
-
-
-class AtlasConsoleAPITests(PolarisTestCase):
-    """v9.248 (roadmap P2.3): the analytical console's two non-geographic,
-    bounded aggregates. These lock in:
-    - /api/atlas/series returns a total-volume time series counting EVERY
-      event (unlike the located-only timeline), so zero-knowledge events are
-      counted in n_total and n_zk without a location (C6)
-    - /api/atlas/breakdown returns a top-K categorical roll-up, capped at
-      _ATLAS_MAX_CATEGORIES (C8), sorted by volume
-    - the dimension is whitelisted per stream (a bad one is 400)
-    - zero-knowledge is counted in the disclosure breakdown, never dropped
-    """
-
-    def test_series_returns_volume_shape_and_counts_zk(self):
-        r = self.client.get('/api/atlas/series?window=all&kind=verification&buckets=24')
-        self.assertEqual(r.status_code, 200)
-        data = r.get_json()
-        self.assertIn('points', data)
-        total = sum(p['n_total'] for p in data['points'])
-        zk = sum(p['n_zk'] for p in data['points'])
-        self.assertGreater(total, 0, "the seed verifications should appear in the series")
-        self.assertGreater(zk, 0, "zero-knowledge verifications must be COUNTED in the series (C6: counted, never located)")
-        # the series must never carry a location
-        for p in data['points']:
-            self.assertNotIn('lat', p)
-            self.assertNotIn('lon', p)
-
-    def test_series_rejects_too_many_buckets(self):
-        r = self.client.get('/api/atlas/series?window=all&buckets=1000')
-        self.assertEqual(r.status_code, 400)
-
-    def test_breakdown_by_context_sorted_and_capped(self):
-        r = self.client.get('/api/atlas/breakdown?window=all&kind=verification&dimension=context&limit=5')
-        self.assertEqual(r.status_code, 200)
-        data = r.get_json()
-        cats = data['categories']
-        self.assertGreater(len(cats), 0)
-        self.assertLessEqual(len(cats), 5, "limit must cap the categories")
-        totals = [c['n_total'] for c in cats]
-        self.assertEqual(totals, sorted(totals, reverse=True), "categories must be ordered by volume")
-
-    def test_breakdown_limit_capped_at_max_categories(self):
-        # request far above the cap; the response must not exceed it
-        r = self.client.get('/api/atlas/breakdown?window=all&dimension=agency&limit=100000')
-        self.assertEqual(r.status_code, 200)
-        self.assertLessEqual(r.get_json()['limit'], atlas_routes._ATLAS_MAX_CATEGORIES)
-
-    def test_breakdown_disclosure_counts_zero_knowledge(self):
-        r = self.client.get('/api/atlas/breakdown?window=all&dimension=disclosure')
-        self.assertEqual(r.status_code, 200)
-        labels = {c['label'] for c in r.get_json()['categories']}
-        self.assertIn('ZERO_KNOWLEDGE', labels,
-            "zero-knowledge must be counted in the disclosure breakdown (C6: counted, never located)")
-
-    def test_breakdown_rejects_unknown_dimension(self):
-        r = self.client.get('/api/atlas/breakdown?window=all&dimension=gender')
-        self.assertEqual(r.status_code, 400)
-
-    def test_breakdown_lifecycle_dimensions_differ(self):
-        # lifecycle allows event_type; verification does not
-        r = self.client.get('/api/atlas/breakdown?window=all&kind=lifecycle&dimension=event_type')
-        self.assertEqual(r.status_code, 200)
-        r2 = self.client.get('/api/atlas/breakdown?window=all&kind=verification&dimension=event_type')
-        self.assertEqual(r2.status_code, 400, "event_type is not a verification dimension")
-
-    def test_crosstab_shape_and_canonical_columns(self):
-        r = self.client.get('/api/atlas/crosstab?window=all&kind=verification&row=agency&col=outcome')
-        self.assertEqual(r.status_code, 200)
-        data = r.get_json()
-        self.assertIn('rows', data); self.assertIn('cols', data); self.assertIn('cells', data)
-        self.assertGreater(len(data['rows']), 0)
-        # rows are ordered by total desc
-        totals = [row['total'] for row in data['rows']]
-        self.assertEqual(totals, sorted(totals, reverse=True))
-        # SUCCESS precedes FAILURE in the canonical outcome order
-        if 'SUCCESS' in data['cols'] and 'FAILURE' in data['cols']:
-            self.assertLess(data['cols'].index('SUCCESS'), data['cols'].index('FAILURE'))
-        # cells never carry a location (C6)
-        for c in data['cells']:
-            self.assertNotIn('lat', c); self.assertNotIn('lon', c)
-
-    def test_crosstab_rows_capped_at_max_categories(self):
-        r = self.client.get('/api/atlas/crosstab?window=all&row=agency&col=outcome&limit=100000')
-        self.assertEqual(r.status_code, 200)
-        self.assertLessEqual(len(r.get_json()['rows']), atlas_routes._ATLAS_MAX_CATEGORIES)
-        self.assertLessEqual(r.get_json()['limit'], atlas_routes._ATLAS_MAX_CATEGORIES)
-
-    def test_crosstab_rejects_unknown_dimensions(self):
-        self.assertEqual(self.client.get('/api/atlas/crosstab?window=all&row=gender&col=outcome').status_code, 400)
-        self.assertEqual(self.client.get('/api/atlas/crosstab?window=all&row=agency&col=religion').status_code, 400)
-        # a column that is valid for lifecycle but not verification is rejected
-        self.assertEqual(self.client.get('/api/atlas/crosstab?window=all&kind=verification&row=agency&col=event_type').status_code, 400)
-
-    def test_crosstab_counts_zero_knowledge_in_disclosure(self):
-        r = self.client.get('/api/atlas/crosstab?window=all&row=context&col=disclosure')
-        self.assertEqual(r.status_code, 200)
-        self.assertIn('ZERO_KNOWLEDGE', r.get_json()['cols'],
-            "zero-knowledge must be counted in a disclosure cross-tab (C6: counted, never located)")
-
-    def test_breakdown_search_filters_labels(self):
-        # v9.250: a label search finds a slice among many. 'national' matches the
-        # seed's federal and bank agencies but not the county/state ones.
-        r = self.client.get('/api/atlas/breakdown?window=all&dimension=agency&search=national')
-        self.assertEqual(r.status_code, 200)
-        labels = [c['label'] for c in r.get_json()['categories']]
-        self.assertTrue(labels, "search should return the matching agencies")
-        self.assertTrue(all('national' in l.lower() for l in labels),
-            "every returned label must match the search term")
-        # a non-matching search returns nothing, not everything
-        r2 = self.client.get('/api/atlas/breakdown?window=all&dimension=agency&search=zznomatchzz')
-        self.assertEqual(r2.get_json()['categories'], [])
-
-    def test_breakdown_truncated_flag(self):
-        # limit=1 forces truncation on the seed's several contexts
-        r = self.client.get('/api/atlas/breakdown?window=all&dimension=context&limit=1')
-        self.assertEqual(r.status_code, 200)
-        self.assertTrue(r.get_json()['truncated'], "truncated must be true when the cap is hit")
-
-    def test_agency_facet_shape_and_search(self):
-        # v9.251: the agency facet returns (agency_id, name, n_total) with a search.
-        r = self.client.get('/api/atlas/facet/agencies?window=all&q=national')
-        self.assertEqual(r.status_code, 200)
-        results = r.get_json()['results']
-        self.assertTrue(results, "the search should match seed agencies")
-        for a in results:
-            self.assertIn('agency_id', a); self.assertIn('name', a); self.assertIn('n_total', a)
-            self.assertIn('national', a['name'].lower())
-            self.assertNotIn('lat', a); self.assertNotIn('lon', a)   # C6: never a location
-
-    def test_agency_facet_capped(self):
-        r = self.client.get('/api/atlas/facet/agencies?window=all&limit=100000')
-        self.assertEqual(r.status_code, 200)
-        self.assertLessEqual(len(r.get_json()['results']), atlas_routes._ATLAS_MAX_CATEGORIES)
-
-    def test_agency_facet_refuses_a_negative_limit(self):
-        # API.md: 400 is bad input. The cap bounded the limit from above only, so -1
-        # reached SQL's LIMIT and was a 500.
+                self.assertTrue(r.get_json()['error'])
+        r = self.client.get('/api/atlas/series?outcomes=NOT_AN_OUTCOME')
+        self.assertIn('NOT_AN_OUTCOME', r.get_json()['error'])
         r = self.client.get('/api/atlas/facet/agencies?window=all&limit=-1')
-        self.assertEqual((r.status_code, r.get_json()['error']), (400, 'limit must not be negative'))
+        self.assertEqual(r.get_json()['error'], 'limit must not be negative')
 
-    def test_global_filter_narrows_every_aggregate(self):
-        # A facet filter must flow through the aggregates (coordinated views):
-        # filtering to FAILURE returns fewer than the unfiltered total.
-        alln = sum(p['n_total'] for p in
-                   self.client.get('/api/atlas/series?window=all&buckets=24').get_json()['points'])
-        failn = sum(p['n_total'] for p in
-                    self.client.get('/api/atlas/series?window=all&buckets=24&outcomes=FAILURE').get_json()['points'])
-        self.assertLess(failn, alln, "an outcome filter must narrow the series")
-        # and the breakdown honours it too
-        bd = self.client.get('/api/atlas/breakdown?window=all&dimension=agency&outcomes=FAILURE')
-        self.assertEqual(bd.status_code, 200)
+    def test_one_context_and_one_authority_at_a_time(self):
+        """With a set, the answer for all but one would subtract from the answer for all."""
+        for q, message in (('contexts=BANKING,TRAVEL', 'one context at a time'),
+                           ('agencies=1,2', 'one authority at a time'),
+                           ('agencies=1,', 'one authority at a time')):
+            r = self.client.get('/api/atlas/breakdown?window=all&dimension=outcome&' + q)
+            self.assertEqual((r.status_code, r.get_json()['error']), (400, message))
 
-    # -- v9.253: Map v2 — the Density (hexbin) + Regions (jurisdiction) layers --
+    def test_an_authority_is_written_in_ascii_digits(self):
+        """str.isdigit() takes a superscript two and an Arabic-Indic three, which the SQL would
+        then match as text against nothing."""
+        for bad in ('%C2%B2', '%D9%A3', '1e3', '-1', '+1', '0x10', '12345678901'):
+            with self.subTest(bad):
+                r = self.client.get('/api/atlas/stats?window=all&agencies=' + bad)
+                self.assertEqual(r.status_code, 400)
+                self.assertIn('authority id must be an integer', r.get_json()['error'])
 
-    def test_hexbin_shape_and_bbox_and_no_zk_leak(self):
-        r = self.client.get('/api/atlas/hexbin?bbox=-89,-179,89,179&size=5&window=all&kind=verification')
-        self.assertEqual(r.status_code, 200)
-        d = r.get_json()
-        self.assertEqual(d['count'], len(d['hexes']))
-        self.assertLessEqual(len(d['hexes']), atlas_routes._ATLAS_MAX_CLUSTERS)  # C8
-        for h in d['hexes']:
-            for k in ('lat', 'lon', 'n_total', 'n_failure'):
-                self.assertIn(k, h)
-            self.assertGreater(h['n_total'], 0)
-        # a tiny empty-ocean bbox yields no hexes (the bbox actually filters)
-        empty = self.client.get('/api/atlas/hexbin?bbox=-5,-5,5,5&size=5&window=all&kind=verification')
-        self.assertEqual(empty.get_json()['count'], 0)
+    def test_every_cap_holds_whatever_is_asked(self):
+        cap = atlas_routes._ATLAS_MAX_CATEGORIES
+        self.assertEqual(
+            self._ask('/api/atlas/breakdown?window=all&dimension=agency&limit=100000')['limit'], cap)
+        self.assertEqual(
+            self._ask('/api/atlas/crosstab?window=all&row=agency&col=outcome&limit=100000')['limit'],
+            cap)
+        self.assertLessEqual(
+            len(self._ask('/api/atlas/facet/agencies?window=all&limit=100000')['results']), cap)
 
-    def test_hexbin_excludes_zero_knowledge(self):
-        # C6: the density surface is located, non-ZK activity. Bin the whole
-        # world; the total binned must equal the located non-ZK verifications,
-        # never the ZK ones.
-        r = self.client.get('/api/atlas/hexbin?bbox=-89,-179,89,179&size=90&window=all&kind=verification')
-        binned = sum(h['n_total'] for h in r.get_json()['hexes'])
-        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
-        with conn.cursor() as cur:
-            cur.execute("""SELECT count(*) AS n FROM VerificationEvent
-                           WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-                             AND disclosure_level <> 'ZERO_KNOWLEDGE'""")
-            located_non_zk = cur.fetchone()['n']
-        conn.close()
-        self.assertEqual(binned, located_non_zk,
-            "the hexbin must bin exactly the located non-ZK verifications (C6)")
+    def test_a_cut_list_says_it_was_cut(self):
+        """At the cap the quietest rows are in no row at all, and the answer says so rather than
+        reading as every row there is."""
+        _atlas_events(6, agency=1)
+        _atlas_events(7, agency=2)
+        d = self._ask('/api/atlas/breakdown?window=all&dimension=agency&limit=1')
+        self.assertTrue(d['truncated'])
+        x = self._ask('/api/atlas/crosstab?window=all&row=agency&col=outcome&limit=1')
+        self.assertTrue(x['truncated'])
+        self.assertFalse(self._ask('/api/atlas/crosstab?window=all&row=agency&col=outcome')['truncated'])
+        with patch.object(atlas_routes, '_ATLAS_MAX_REGIONS', 1):
+            self.assertTrue(self._ask('/api/atlas/geo/jurisdictions?window=all')['truncated'])
 
-    def test_hexbin_rejects_bad_params(self):
-        self.assertEqual(self.client.get('/api/atlas/hexbin?bbox=-89,-179,89,179&size=0').status_code, 400)
-        self.assertEqual(self.client.get('/api/atlas/hexbin?bbox=-89,-179,89,179&size=5&kind=gender').status_code, 400)
-
-    def test_geo_jurisdictions_counts_zk_but_never_locates(self):
-        r = self.client.get('/api/atlas/geo/jurisdictions?window=all&kind=verification')
-        self.assertEqual(r.status_code, 200)
-        d = r.get_json()
-        self.assertLessEqual(d['count'], atlas_routes._ATLAS_MAX_REGIONS)  # C8
-        # every PLACEABLE region has a centroid; the count includes ZK, but the
-        # located count (which the centroid is built from) never exceeds total.
-        saw_zk = False
-        for reg in d['regions']:
-            for k in ('jurisdiction', 'n_total', 'n_failure', 'n_zk', 'n_located',
-                      'centroid_lat', 'centroid_lon'):
-                self.assertIn(k, reg)
-            self.assertIsNotNone(reg['centroid_lat'], "a placed region must have a centroid")
-            self.assertLessEqual(reg['n_located'], reg['n_total'])
-            # C6: the centroid is derived only from located events; ZK adds to
-            # the total but not to n_located.
-            self.assertLessEqual(reg['n_located'] + reg['n_zk'], reg['n_total'])
-            if reg['n_zk'] > 0:
-                saw_zk = True
-                self.assertLess(reg['n_located'], reg['n_total'],
-                    "a jurisdiction with ZK activity must count more than it locates (C6)")
-        self.assertTrue(saw_zk, "the seed has zero-knowledge verifications counted by jurisdiction")
-
-    def test_geo_jurisdictions_zk_only_region_is_counted_not_placed(self):
-        # A jurisdiction whose located events are all removed (only ZK remain)
-        # must appear as UNPLACEABLE: counted, no centroid, never on the map.
-        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
-        with conn.cursor() as cur:
-            # find an agency in a jurisdiction with no other agencies, give it a
-            # single ZK verification and no located ones in a private window.
-            cur.execute("SELECT agency_id, jurisdiction FROM Agency ORDER BY agency_id LIMIT 1")
-            ag = cur.fetchone()
-            cur.execute("""INSERT INTO VerificationEvent
-                (token_id, requesting_agency_id, context_id, event_timestamp, outcome,
-                 disclosure_level, latitude, longitude)
-                VALUES (NULL, %s, 1, CURRENT_TIMESTAMP - INTERVAL '10 minutes',
-                        'SUCCESS', 'ZERO_KNOWLEDGE', NULL, NULL)""", (ag['agency_id'],))
-        conn.commit(); conn.close()
-        # 1h window: only our ZK row is in range for this agency's jurisdiction
-        r = self.client.get('/api/atlas/geo/jurisdictions?window=1h&kind=verification'
-                            '&agencies=' + str(ag['agency_id']))
-        d = r.get_json()
-        self.assertEqual(d['regions'], [], "a ZK-only jurisdiction must not be placed on the map (C6)")
-        self.assertGreaterEqual(d['n_unplaceable'], 1)
-        self.assertGreaterEqual(d['n_unplaceable_events'], 1)
-
-    def test_geo_and_hexbin_honour_global_filter(self):
-        allr = self.client.get('/api/atlas/geo/jurisdictions?window=all&kind=verification').get_json()
-        failr = self.client.get('/api/atlas/geo/jurisdictions?window=all&kind=verification&outcomes=FAILURE').get_json()
-        alltot = sum(x['n_total'] for x in allr['regions'] + allr['unplaceable'])
-        failtot = sum(x['n_total'] for x in failr['regions'] + failr['unplaceable'])
-        self.assertLess(failtot, alltot, "an outcome filter must narrow the Regions layer")
+    def test_the_withdrawn_location_layers_are_gone(self):
+        """The cluster and hexagon layers binned events by coordinate, and at street zoom a bin of
+        one is a point; the timeline counted located events in a box (lab/strategy/009, step 4)."""
+        for path in ('/api/atlas/clusters?bbox=-89,-179,89,179&grid=5',
+                     '/api/atlas/hexbin?bbox=-89,-179,89,179&size=5',
+                     '/api/atlas/timeline?bbox=-89,-179,89,179&buckets=24'):
+            self.assertEqual(self.client.get(path).status_code, 404, path)
 
 
-class AtlasTrendsAPITests(PolarisTestCase):
-    """v9.265 (roadmap P2.3 ship 7 — Trends): two bounded, non-geographic
-    aggregates behind the Trends tab.
-    - /api/atlas/heatmap: events by ISO weekday x hour of day, at most 7x24=168
-      cells (C8), counting zero-knowledge events in their cell without a
-      location (C6).
-    - /api/atlas/stacked: volume over time broken out by one whitelisted
-      dimension (top-K + 'Other'), for a stacked-area chart; ZK counted, never
-      located (C6). A bad dimension or bucket count is 400.
-    """
+class AtlasCacheTests(_AtlasCase):
+    """The cache answers a repeated question, keyed by the question, its window's start and whom
+    it was answered for (AtlasCacheScopeTests)."""
 
-    def test_heatmap_shape_bounds_and_counts_zk(self):
-        r = self.client.get('/api/atlas/heatmap?window=all&kind=verification')
-        self.assertEqual(r.status_code, 200)
-        cells = r.get_json()['cells']
-        self.assertLessEqual(len(cells), 168, "bounded to 7x24 cells (C8)")
-        total = 0
-        for c in cells:
-            self.assertIn(c['dow'], range(1, 8))
-            self.assertIn(c['hour'], range(0, 24))
-            self.assertGreaterEqual(c['n'], c['n_failure'])
-            self.assertNotIn('lat', c)          # C6: no location
-            self.assertNotIn('lon', c)
-            total += c['n']
-        # C6: every event is counted (ZK included). The heatmap total must equal
-        # the series total, which the console test already proves counts ZK.
-        series = self.client.get('/api/atlas/series?window=all&kind=verification&buckets=24').get_json()
-        self.assertEqual(total, sum(p['n_total'] for p in series['points']),
-                         "the heatmap must count every event, ZK included (C6)")
+    def test_a_repeated_question_is_answered_from_the_cache(self):
+        self._ask('/api/atlas/breakdown?window=all&dimension=context')
+        self._ask('/api/atlas/breakdown?window=all&dimension=context')
+        d = self._ask('/api/atlas/cache-stats')
+        self.assertEqual((d['misses'], d['hits'], d['current_entries']), (1, 1, 1))
 
-    def test_stacked_shape_and_other_folding(self):
-        r = self.client.get('/api/atlas/stacked?window=all&kind=verification&dimension=context&buckets=24')
-        self.assertEqual(r.status_code, 200)
-        data = r.get_json()
-        self.assertIn('labels', data)
-        self.assertIn('points', data)
-        # top-K (6) + at most one 'Other' band => bounded label set (C8)
-        self.assertLessEqual(len(data['labels']), 7)
-        if 'Other' in data['labels']:
-            self.assertEqual(data['labels'][-1], 'Other', "'Other' is always the last band")
-        for p in data['points']:
-            self.assertIn('ts', p)
-            self.assertIsInstance(p['values'], dict)
-
-    def test_stacked_counts_zk_in_disclosure(self):
-        data = self.client.get('/api/atlas/stacked?window=all&kind=verification&dimension=disclosure&buckets=24').get_json()
-        self.assertIn('ZERO_KNOWLEDGE', data['labels'],
-                      "zero-knowledge must appear in the disclosure composition (C6: counted, never located)")
-
-    def test_stacked_rejects_bad_dimension_and_buckets(self):
-        self.assertEqual(self.client.get('/api/atlas/stacked?dimension=evil').status_code, 400)
-        self.assertEqual(self.client.get('/api/atlas/stacked?dimension=context&buckets=9999').status_code, 400)
+    def test_two_windows_do_not_share_an_answer(self):
+        _atlas_events(6, minutes_ago=20)
+        with self._unwithheld():
+            everything = self._ask('/api/atlas/series?window=all&agencies=3&buckets=10')
+            _atlas_events(6, minutes_ago=26 * 60)
+            hour = self._ask('/api/atlas/series?window=1h&agencies=3&buckets=10')
+            self.assertEqual((everything['totals']['n_total'], hour['totals']['n_total']), (6, 6))
+            again = self._ask('/api/atlas/series?window=all&agencies=3&buckets=10')
+            self.assertEqual(again['totals']['n_total'], 6, 'the cached answer, not a recount')
 
 
-class AtlasPartitionPruningTests(PolarisTestCase):
-    """v9.260 (roadmap P2.14 S5, benchmark-driven): the Atlas roll-ups filter the
-    monthly-partitioned event table by event_timestamp, so a windowed query must
-    PRUNE to the relevant partitions instead of scanning every month of history.
+class AtlasReadsNoEventTableTests(PolarisTestCase):
+    """The Atlas costs the same at any population because no reader reads an event table
+    (lab/strategy/009, step 4): each sums the activity rollups, whose rows number the hours times
+    the authorities and contexts active in them. Proved by privilege, not by reading the source:
+    the application role loses SELECT on both event tables inside a transaction that is rolled
+    back, and every reader still answers. A reader that joined an event table back in, for a
+    column the rollups lack, fails here with 'permission denied'."""
 
-    The pre-v9.260 predicate `p_since IS NULL OR event_timestamp >= p_since` (and
-    the params-CTE indirection in the time-series functions) defeated pruning
-    under the GENERIC plan a prepared/parameterized statement gets after a few
-    executions — the app's real execution path — so a 'last 24h' query scanned
-    all N monthly partitions. The fix is `event_timestamp >= COALESCE(p_since,
-    '-infinity')`, which prunes on a concrete since and still scans everything for
-    an all-time (NULL) query. This test pins that under a forced generic plan."""
+    READERS = (
+        "atlas_stats(NULL, TRUE)",
+        "atlas_stats(LOCALTIMESTAMP - INTERVAL '1 day', FALSE, '3')",
+        "atlas_volume_series(LOCALTIMESTAMP - INTERVAL '7 days', FALSE, INTERVAL '4 hours')",
+        "atlas_volume_series(LOCALTIMESTAMP - INTERVAL '30 days', TRUE, INTERVAL '1 day', 'lifecycle')",
+        "atlas_breakdown('agency', NULL, TRUE, 50)",
+        "atlas_breakdown('algorithm', NULL, TRUE, 50)",
+        "atlas_breakdown('event_type', NULL, TRUE, 50, 'lifecycle')",
+        "atlas_crosstab('agency', 'outcome', NULL, TRUE, 50)",
+        "atlas_crosstab('agency', 'event_type', NULL, TRUE, 50, 'lifecycle')",
+        "atlas_heatmap(NULL)",
+        "atlas_heatmap(NULL, 'lifecycle')",
+        "atlas_series_stacked(LOCALTIMESTAMP - INTERVAL '7 days', FALSE, INTERVAL '4 hours', 'context')",
+        "atlas_series_stacked(LOCALTIMESTAMP - INTERVAL '7 days', FALSE, INTERVAL '4 hours', 'agency', 'lifecycle')",
+        "atlas_agency_facet(NULL, TRUE, 50)",
+        "atlas_geo_jurisdictions(NULL, TRUE, 500)",
+        "atlas_geo_jurisdictions(NULL, TRUE, 500, 'lifecycle')",
+    )
 
-    def _generic_plan(self, prepare_sql, execute_sql):
-        """Return the EXPLAIN text of `execute_sql` under a FORCED generic plan
-        (the worst case the app hits), so the assertion is about the plan a
-        parameterized call actually gets, not a one-off custom plan."""
+    def test_every_reader_answers_without_the_event_tables(self):
         conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
         try:
             with conn.cursor() as cur:
-                cur.execute("SET plan_cache_mode = force_generic_plan")
-                cur.execute(prepare_sql)
-                cur.execute("EXPLAIN (COSTS OFF) " + execute_sql)
-                return "\n".join(r['QUERY PLAN'] for r in cur.fetchall())
+                for reader in self.READERS:
+                    with self.subTest(reader):
+                        cur.execute("BEGIN")
+                        cur.execute("REVOKE SELECT ON VerificationEvent, TokenLifecycleEvent "
+                                    "  FROM polaris_app")
+                        cur.execute("SET LOCAL ROLE polaris_app")
+                        try:
+                            cur.execute("SELECT * FROM " + reader)
+                            cur.fetchall()
+                        finally:
+                            cur.execute("ROLLBACK")
+                # The control: as the role without SELECT, an event table itself is refused, so
+                # the readers' answers above were not a missing grant going unnoticed.
+                cur.execute("BEGIN")
+                cur.execute("REVOKE SELECT ON VerificationEvent FROM polaris_app")
+                cur.execute("SET LOCAL ROLE polaris_app")
+                with self.assertRaises(psycopg2.errors.InsufficientPrivilege):
+                    cur.execute("SELECT count(*) FROM VerificationEvent")
+                cur.execute("ROLLBACK")
         finally:
             conn.close()
 
-    def _month_partitions(self):
-        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT inhrelid::regclass::text AS name FROM pg_inherits "
-                    " WHERE inhparent='verificationevent'::regclass "
-                    "   AND inhrelid::regclass::text ~ 'verificationevent_[0-9]'")
-                return [r['name'] for r in cur.fetchall()]
-        finally:
-            conn.close()
-
-    def test_breakdown_prunes_partitions_under_generic_plan(self):
-        months = self._month_partitions()
-        self.assertTrue(months, "the test needs at least one monthly partition to prove pruning")
-        # A far-future window cannot match any month partition (only the DEFAULT,
-        # which is unprunable). Under the generic plan the fixed predicate must
-        # therefore drop every month partition from the plan.
-        future = self._generic_plan(
-            "PREPARE bd_future(timestamp) AS SELECT * FROM atlas_breakdown('agency', $1, 50)",
-            "EXECUTE bd_future((CURRENT_TIMESTAMP + INTERVAL '100 years')::timestamp)")
-        for m in months:
-            self.assertNotIn(m, future,
-                f"a far-future window must PRUNE {m}; the generic plan still scans it "
-                "(the p_since IS NULL OR ... pruning-defeat has regressed)")
-
-    def test_all_time_query_still_scans_every_partition(self):
-        # The other half of correctness: a NULL (all-time) window must NOT prune —
-        # it has to count every event, so every month partition stays in the plan.
-        months = self._month_partitions()
-        self.assertTrue(months)
-        alltime = self._generic_plan(
-            "PREPARE bd_all(timestamp) AS SELECT * FROM atlas_breakdown('agency', $1, 50)",
-            "EXECUTE bd_all(NULL)")
-        for m in months:
-            self.assertIn(m, alltime,
-                f"an all-time query must still scan {m}; COALESCE(NULL,'-infinity') "
-                "must match every partition")
-
-    def test_volume_series_prunes_under_generic_plan(self):
-        # The time-series function reached the window through a params CTE, which
-        # also blocked pruning; the fix references the parameter directly.
-        months = self._month_partitions()
-        self.assertTrue(months)
-        future = self._generic_plan(
-            "PREPARE vs_future(timestamp) AS SELECT * FROM atlas_volume_series($1, 60)",
-            "EXECUTE vs_future((CURRENT_TIMESTAMP + INTERVAL '100 years')::timestamp)")
-        for m in months:
-            self.assertNotIn(m, future,
-                f"a far-future window must PRUNE {m} from atlas_volume_series")
+    def test_every_reader_is_exercised_here(self):
+        """A reader added to 11_atlas.sql without a line above would be the one unproven."""
+        defined = {r['proname'] for r in _sql(
+            "SELECT DISTINCT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+            " WHERE n.nspname = 'public' AND p.proname LIKE %s AND p.proretset", ('atlas\\_%',))}
+        called = {r.split('(')[0] for r in self.READERS}
+        helpers = {'atlas_verification_cells', 'atlas_lifecycle_cells', 'atlas_verification_matching',
+                   'atlas_lifecycle_matching', 'atlas_verification_combos', 'atlas_lifecycle_combos'}
+        self.assertEqual(defined - helpers, called)
 
 
 class AtlasSimulationModeTests(PolarisTestCase):
@@ -10883,190 +10915,6 @@ class AtlasSimulationModeTests(PolarisTestCase):
         self._logout()
         r = self.client.post('/api/sim/tick', data={'count': '5'})
         self.assertIn(r.status_code, (302, 401))
-
-
-class AtlasFilterAPITests(PolarisTestCase):
-    """v8.3 (A+C): the temporal-lens + operational-filter primitives must
-    survive the lifetime of the schema. These tests lock in:
-    - default window is 24h (a hidden default change would silently make
-      every existing dashboard return fewer rows)
-    - 'all' window restores the pre-v8.3 unfiltered behavior
-    - outcomes / disclosure / contexts filters reach the SQL layer
-    - 'anomalies' alias expands to FAILURE/UNAUTHORIZED/EXPIRED
-    - bad filter values are rejected with 400
-    - the new /api/atlas/timeline endpoint returns the contracted shape
-    """
-
-    def setUp(self):
-        super().setUp()
-        # Insert one anomaly within the 1h window so window-narrowing tests
-        # have something to find. Reload-sample-data wipes DBs between tests
-        # so this is per-test fresh.
-        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO VerificationEvent
-                    (token_id, requesting_agency_id, context_id,
-                     event_timestamp, outcome, disclosure_level,
-                     latitude, longitude)
-                VALUES (NULL, 5, 1, CURRENT_TIMESTAMP - INTERVAL '20 minutes',
-                        'SUCCESS', 'ZERO_KNOWLEDGE', 37.78, -122.42),
-                       (2, 1, 2, CURRENT_TIMESTAMP - INTERVAL '12 hours',
-                        'FAILURE', 'SELECTIVE', 40.71, -74.01)
-            """)
-        conn.commit()
-        conn.close()
-
-    def test_window_24h_excludes_old_seed_events(self):
-        """Default window=24h must filter out the March-2026 seed events
-        (which are well over 24 hours old by NOW)."""
-        r = self.client.get('/api/atlas/clusters?bbox=-89,-179,89,179'
-                            '&grid=5&kind=verification&window=24h')
-        self.assertEqual(r.status_code, 200)
-        data = r.get_json()
-        # Only the synthetic events inserted in setUp() should survive
-        # the 24h window — at most 2 clusters, since the synthetic
-        # events are in SF and NYC.
-        self.assertLessEqual(data['count'], 2,
-            "window=24h should exclude pre-24h seed data")
-
-    def test_window_all_includes_seed_events(self):
-        """window=all must include the historical seed."""
-        r = self.client.get('/api/atlas/clusters?bbox=-89,-179,89,179'
-                            '&grid=5&kind=verification&window=all')
-        self.assertEqual(r.status_code, 200)
-        self.assertGreater(r.get_json()['count'], 2,
-            "window=all should yield at least the seed clusters")
-
-    def test_window_1h_excludes_12h_old_event(self):
-        """window=1h must exclude the FAILURE event inserted 12h ago in setUp."""
-        r = self.client.get('/api/atlas/clusters?bbox=-89,-179,89,179'
-                            '&grid=5&kind=verification&window=1h&outcomes=FAILURE')
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.get_json()['count'], 0,
-            "window=1h with outcomes=FAILURE should not see the 12h-old event")
-
-    def test_the_window_is_measured_on_the_clock_that_wrote_the_events(self):
-        """1.0.0-rc.29. event_timestamp is the database's wall clock; the window was measured
-        from the app's. With the database on UTC (rc.28) and the app on a local zone, a
-        one-hour window stretched by the zone's offset and took in an event three hours old."""
-        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO VerificationEvent
-                    (token_id, requesting_agency_id, context_id, event_timestamp, outcome,
-                     disclosure_level, latitude, longitude)
-                VALUES (2, 1, 2, CURRENT_TIMESTAMP - INTERVAL '3 hours',
-                        'UNAUTHORIZED', 'SELECTIVE', 51.50, -0.12)
-            """)
-        conn.commit()
-        conn.close()
-        def count(window):
-            r = self.client.get('/api/atlas/clusters?bbox=-89,-179,89,179&grid=5'
-                                '&kind=verification&window=%s&outcomes=UNAUTHORIZED' % window)
-            self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-            return r.get_json()['count']
-        self.assertGreaterEqual(count('24h'), 1, 'control: the event is there')
-        self.assertEqual(count('1h'), 0, 'a one-hour window took in an event three hours old')
-
-    def test_anomalies_alias_expands_to_outcome_set(self):
-        """The 'anomalies' alias is a server-side expansion to
-        FAILURE/UNAUTHORIZED/EXPIRED — this is the chip the operator
-        clicks to surface incidents."""
-        r1 = self.client.get('/api/atlas/clusters?bbox=-89,-179,89,179'
-                             '&grid=5&window=all&outcomes=anomalies')
-        r2 = self.client.get('/api/atlas/clusters?bbox=-89,-179,89,179'
-                             '&grid=5&window=all'
-                             '&outcomes=FAILURE,UNAUTHORIZED,EXPIRED')
-        self.assertEqual(r1.status_code, 200)
-        self.assertEqual(r2.status_code, 200)
-        # Same set of clusters either way
-        self.assertEqual(r1.get_json()['count'], r2.get_json()['count'])
-
-    def test_disclosure_full_filter(self):
-        """disclosure=FULL narrows to the FULL-disclosure events only."""
-        r = self.client.get('/api/atlas/clusters?bbox=-89,-179,89,179'
-                            '&grid=5&window=all&disclosure=FULL')
-        self.assertEqual(r.status_code, 200)
-        data = r.get_json()
-        # Every cluster's n_full > 0 (since disclosure=FULL) and n_total == n_full
-        for c in data['clusters']:
-            self.assertGreater(c['n_full'], 0)
-            self.assertEqual(c['n_total'], c['n_full'],
-                "disclosure=FULL clusters must contain only FULL events")
-
-    def test_context_filter_narrows_to_named_contexts(self):
-        """contexts=BANKING returns only banking events."""
-        r = self.client.get('/api/atlas/clusters?bbox=-89,-179,89,179'
-                            '&grid=5&window=all&contexts=BANKING')
-        self.assertEqual(r.status_code, 200)
-        # Should still have rows (sample data has BANKING events)
-        # BANKING-only count must be ≤ unfiltered count
-        r_all = self.client.get('/api/atlas/clusters?bbox=-89,-179,89,179'
-                                '&grid=5&window=all')
-        self.assertLessEqual(r.get_json()['count'], r_all.get_json()['count'])
-
-    def test_bad_window_rejected(self):
-        for bad in ['always', '15min', '1y', 'next-week', '24']:
-            r = self.client.get(f'/api/atlas/clusters?bbox=-89,-179,89,179'
-                                f'&grid=5&window={bad}')
-            self.assertEqual(r.status_code, 400,
-                f"window={bad!r} should be 400")
-
-    def test_bad_outcome_rejected(self):
-        r = self.client.get('/api/atlas/clusters?bbox=-89,-179,89,179'
-                            '&grid=5&window=all&outcomes=NOT_A_REAL_OUTCOME')
-        self.assertEqual(r.status_code, 400)
-        self.assertIn('NOT_A_REAL_OUTCOME', r.get_json()['error'])
-
-    def test_bad_context_rejected(self):
-        r = self.client.get('/api/atlas/clusters?bbox=-89,-179,89,179'
-                            '&grid=5&window=all&contexts=NOT_A_CONTEXT')
-        self.assertEqual(r.status_code, 400)
-        self.assertIn('NOT_A_CONTEXT', r.get_json()['error'])
-
-    def test_timeline_endpoint_shape(self):
-        """The timeline endpoint returns the documented shape."""
-        r = self.client.get('/api/atlas/timeline?bbox=-89,-179,89,179'
-                            '&buckets=24&window=24h&kind=verification')
-        self.assertEqual(r.status_code, 200)
-        data = r.get_json()
-        self.assertIn('points', data)
-        self.assertIn('since', data)
-        self.assertIn('until', data)
-        self.assertEqual(data['buckets'], 24)
-        self.assertEqual(data['kind'], 'verification')
-        self.assertEqual(data['window'], '24h')
-        for pt in data['points']:
-            self.assertIn('ts', pt)
-            self.assertIn('n_total', pt)
-            self.assertIn('n_anomaly', pt)
-            self.assertGreaterEqual(pt['n_anomaly'], 0)
-            self.assertLessEqual(pt['n_anomaly'], pt['n_total'])
-
-    def test_timeline_caps_buckets(self):
-        """buckets must be in (0, 240]."""
-        r = self.client.get('/api/atlas/timeline?bbox=-89,-179,89,179'
-                            '&buckets=99999&window=24h')
-        self.assertEqual(r.status_code, 400)
-
-    def test_filter_state_separated_in_cache(self):
-        """Two clusters calls with different windows must NOT collide in
-        the cache. Pre-v8.3 the cache key did not include the filter set
-        and a call with window=1h would receive the cached payload from
-        a prior window=all call."""
-        from atlas_routes import _atlas_cache_clear   # moved out of app.py 2026-09-18
-        _atlas_cache_clear()
-        r1 = self.client.get('/api/atlas/clusters?bbox=-89,-179,89,179'
-                             '&grid=5&window=all')
-        r2 = self.client.get('/api/atlas/clusters?bbox=-89,-179,89,179'
-                             '&grid=5&window=1h')
-        # Different windows must produce different counts (24h is between
-        # them, but 'all' includes seed data while '1h' includes only the
-        # 20-minute-old synthetic event)
-        self.assertNotEqual(
-            r1.get_json()['count'], r2.get_json()['count'],
-            "window=all and window=1h must NOT share a cache slot")
 
 
 class HealthEndpointTests(PolarisTestCase):
@@ -11157,101 +11005,32 @@ class HealthEndpointTests(PolarisTestCase):
         self.assertNotIn('mount_probe', json.dumps(data))
 
     def test_stats_endpoint_returns_hud_signals(self):
-        r = self.client.get('/api/atlas/stats?bbox=-89,-179,89,179')
-        self.assertEqual(r.status_code, 200)
-        data = r.get_json()
-        for k in ('n_active_tokens', 'n_anomalies', 'n_failures', 'n_full',
-                  'pq_pct', 'zk_pct', 'n_verifs', 'n_lifecycles'):
+        """The headline the map's corners show: the window's counts and the population's active
+        credentials, each withheld below the minimum and exact with it off."""
+        data = self.client.get('/api/atlas/stats?window=all').get_json()
+        for k in ('n_active_tokens', 'n_failures', 'n_full', 'pq_pct', 'zk_pct', 'n_verifs',
+                  'n_lifecycles', 'window', 'since', 'grain', 'min_cell'):
             self.assertIn(k, data)
-        self.assertIsInstance(data['n_active_tokens'], int)
-        self.assertGreaterEqual(data['pq_pct'], 0)
-        self.assertLessEqual(data['pq_pct'], 100)
+        active = _sql("SELECT count(*) AS n FROM IdentityToken WHERE status = 'ACTIVE'",
+                      fetch='one')['n']
+        atlas_routes._atlas_cache_clear()
+        with patch.object(atlas_routes, '_ATLAS_MIN_CELL', 0):
+            data = self.client.get('/api/atlas/stats?window=all').get_json()
+        atlas_routes._atlas_cache_clear()
+        self.assertEqual(data['n_active_tokens'], active)
+        self.assertTrue(0 <= data['pq_pct'] <= 100, data['pq_pct'])
 
     def test_atlas_endpoints_require_login(self):
-        # Drop the session
+        """Every Atlas route, read from the route table so a new one cannot be left out."""
         with self.client.session_transaction() as sess:
             sess.clear()
-        for path in ('/api/atlas/clusters?bbox=0,0,1,1&grid=1',
-                     '/api/atlas/hexbin?bbox=0,0,1,1&size=1',
-                     '/api/atlas/stats?bbox=0,0,1,1',
-                     '/api/atlas/series?window=all'):
+        rules = sorted(r.rule for r in flask_app.app.url_map.iter_rules()
+                       if r.rule == '/atlas' or r.rule.startswith('/api/atlas/'))
+        self.assertGreaterEqual(len(rules), 10)
+        for path in rules:
             r = self.client.get(path)
             self.assertIn(r.status_code, (302, 401, 403),
                 f"Anonymous access to {path} should be denied, got {r.status_code}")
-
-
-# ============================================================================
-# V6 — CLUSTER CORRECTNESS TESTS (the SQL aggregation must match raw counts)
-# ============================================================================
-
-class ClusterCorrectnessTests(PolarisTestCase):
-    """Verify atlas_clusters_verifications produces aggregations consistent
-    with what a hand-written GROUP BY query returns."""
-
-    def _connect(self):
-        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
-
-    def test_cluster_total_matches_raw_count(self):
-        """The sum of n_total across all clusters in a bbox should equal the
-        raw count of geo-tagged events in that bbox — EXCLUDING ZERO_KNOWLEDGE,
-        which C6 keeps off the spatial map entirely (v9.77)."""
-        with self._connect() as conn, conn.cursor() as cur:
-            # Cluster aggregate
-            cur.execute("""
-                SELECT COALESCE(SUM(n_total), 0) AS s
-                FROM atlas_clusters_verifications(20, -130, 50, -65, 5)
-            """)
-            cluster_sum = cur.fetchone()['s']
-            # Raw count of NON-ZK geo-tagged events (ZK is excluded from the
-            # spatial layers for C6, so it must be excluded here to match).
-            cur.execute("""
-                SELECT count(*) AS s FROM VerificationEvent
-                WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-                  AND disclosure_level <> 'ZERO_KNOWLEDGE'
-                  AND latitude  BETWEEN 20 AND 50
-                  AND longitude BETWEEN -130 AND -65
-            """)
-            raw = cur.fetchone()['s']
-            self.assertEqual(cluster_sum, raw,
-                f"Cluster sum {cluster_sum} != raw non-ZK bbox count {raw}")
-
-    def test_cluster_failure_subset_consistent(self):
-        """n_failure in each cluster must equal the raw count of FAILURE
-        events in that cluster's bin."""
-        with self._connect() as conn, conn.cursor() as cur:
-            cur.execute("""
-                SELECT COALESCE(SUM(n_failure), 0) AS s
-                FROM atlas_clusters_verifications(-89, -179, 89, 179, 10)
-            """)
-            cluster_failures = cur.fetchone()['s']
-            cur.execute("""
-                SELECT count(*) AS s FROM VerificationEvent
-                WHERE outcome = 'FAILURE'
-                  AND disclosure_level <> 'ZERO_KNOWLEDGE'
-                  AND latitude  IS NOT NULL AND longitude IS NOT NULL
-                  AND latitude  BETWEEN -89 AND 89
-                  AND longitude BETWEEN -179 AND 179
-            """)
-            raw_failures = cur.fetchone()['s']
-            self.assertEqual(cluster_failures, raw_failures,
-                f"Cluster n_failure sum {cluster_failures} != raw {raw_failures}")
-
-    def test_cluster_centroid_within_bin(self):
-        """Each cluster's centroid (lat, lon) must lie within the grid
-        cell it represents — i.e. floor(lat/grid)*grid <= centroid_lat
-        < floor(lat/grid)*grid + grid."""
-        with self._connect() as conn, conn.cursor() as cur:
-            grid = 5
-            cur.execute(
-                "SELECT lat, lon FROM atlas_clusters_verifications(20, -130, 50, -65, %s)",
-                (grid,))
-            for c in cur.fetchall():
-                bin_lat = math.floor(c['lat'] / grid) * grid
-                bin_lon = math.floor(c['lon'] / grid) * grid
-                self.assertGreaterEqual(c['lat'], bin_lat)
-                self.assertLess        (c['lat'], bin_lat + grid + 1e-9)
-                self.assertGreaterEqual(c['lon'], bin_lon)
-                self.assertLess        (c['lon'], bin_lon + grid + 1e-9)
 
 
 # ============================================================================
@@ -12201,8 +11980,8 @@ class WebAuthnCredentialLookupTests(unittest.TestCase):
 class ZKLocationRedactionTests(unittest.TestCase):
     """C6: a ZERO_KNOWLEDGE verification must never reveal its location on ANY
     read path. uc7_warrant_audit redacts requestor_location for ZK rows; the
-    atlas points/clusters/events layers and the /verifications list (all
-    reachable by any authenticated user, no role gate) must do the same — the
+    /verifications list (reachable by any authenticated user, no role gate) must
+    do the same, and the Atlas returns no location at all — the
     precise location is the spatial side-channel that de-anonymizes a ZK holder.
     The seeded ZK event is left UNCOMMITTED (VerificationEvent is append-only, so
     it cannot be deleted) and rolled back, so it pollutes nothing."""
@@ -12236,12 +12015,19 @@ class ZKLocationRedactionTests(unittest.TestCase):
                 and round(float(lat), 3) == round(self.ZK_LAT, 3)
                 and round(float(lon), 3) == round(self.ZK_LON, 3))
 
-    def test_atlas_clusters_excludes_zk(self):
-        rows = self._rows(
-            "SELECT * FROM atlas_clusters_verifications(-90,90,-180,180,5,"
-            "NULL,NULL,NULL,NULL)")
-        for r in rows:
-            self.assertFalse(self._at_zk_point(r['lat'], r['lon']))
+    def test_no_atlas_function_returns_a_location(self):
+        """lab/strategy/009, step 4: the Atlas reads the activity rollups, which hold no
+        coordinate, and no atlas_* function returns one, so a zero-knowledge verification's place
+        is not reachable through the Atlas at all rather than filtered out of a layer that has it.
+        The seeded row above is located, and no reader can say where."""
+        columns = self._rows(
+            "SELECT p.proname, a.name FROM pg_proc p "
+            "  CROSS JOIN LATERAL unnest(p.proargnames, p.proargmodes) AS a(name, mode) "
+            " WHERE p.proname LIKE %s AND a.mode IN ('o', 't', 'b')", ('atlas\\_%',))
+        self.assertGreater(len({r['proname'] for r in columns}), 8, 'the readers were found')
+        located = [(r['proname'], r['name']) for r in columns
+                   if re.search(r'lat|lon|centroid|geom|location|point', r['name'], re.I)]
+        self.assertEqual(located, [])
 
     def test_verifications_list_projection_redacts_zk(self):
         # The /verifications base_select projects requestor_location through a
@@ -12597,14 +12383,12 @@ class AtlasShowsNoPersonTests(PolarisTestCase):
     DEFAULT_ROLE = 'operator'
 
     WITHDRAWN = ('/api/atlas/points', '/api/atlas/events', '/api/atlas/records',
-                 '/api/atlas/subjects/search', '/api/atlas/subject')
-    ROUTES = ('/api/atlas/clusters?bbox=-89,-179,89,179&grid=5&kind=verification&window=all',
-              '/api/atlas/clusters?bbox=-89,-179,89,179&grid=5&kind=lifecycle&window=all',
-              '/api/atlas/hexbin?bbox=-89,-179,89,179&size=5&kind=verification&window=all',
-              '/api/atlas/geo/jurisdictions?window=all&kind=verification',
+                 '/api/atlas/subjects/search', '/api/atlas/subject',
+                 # and with step 4 the location layers: at street zoom a bin of one is a point
+                 '/api/atlas/clusters', '/api/atlas/hexbin', '/api/atlas/timeline')
+    ROUTES = ('/api/atlas/geo/jurisdictions?window=all&kind=verification',
               '/api/atlas/geo/jurisdictions?window=all&kind=lifecycle',
-              '/api/atlas/stats?bbox=-89,-179,89,179',
-              '/api/atlas/timeline?bbox=-89,-179,89,179&kind=verification',
+              '/api/atlas/stats?window=all',
               '/api/atlas/series?window=all&kind=verification&buckets=24',
               '/api/atlas/series?window=all&kind=lifecycle&buckets=24',
               '/api/atlas/heatmap?window=all&kind=verification',
@@ -12616,6 +12400,10 @@ class AtlasShowsNoPersonTests(PolarisTestCase):
               '/api/atlas/cache-stats')
     PERSON_KEY = re.compile(r"(token_id|token_value|individual_id|legal_name|holder|subject|event_id"
                             r"|date_of_birth)", re.I)
+    #: A coordinate is allowed in one place: a region of the regions layer, placed from reference
+    #: data about its jurisdiction (atlas-regions.json), never from an event.
+    COORDINATE_KEY = re.compile(r"^(lat|lon|lng|latitude|longitude|centroid\w*|bbox|geom\w*|location\w*)$",
+                                re.I)
 
     def _names(self):
         conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
@@ -12654,12 +12442,18 @@ class AtlasShowsNoPersonTests(PolarisTestCase):
             if isinstance(node, dict):
                 for k, v in node.items():
                     self.assertIsNone(self.PERSON_KEY.search(str(k)), (url, k))
+                    if self.COORDINATE_KEY.match(str(k)):
+                        self.assertTrue('/geo/' in url and 'jurisdiction' in node, (url, k))
                     walk(v, url)
             elif isinstance(node, list):
                 for v in node:
                     walk(v, url)
             elif isinstance(node, str):
                 self.assertNotIn(node, names, (url, 'a holder\'s name'))
+        answering = {r.rule for r in flask_app.app.url_map.iter_rules()
+                     if r.rule.startswith('/api/atlas/')}
+        self.assertEqual({u.split('?')[0] for u in self.ROUTES}, answering,
+                         'every Atlas route that answers is walked here')
         for url in self.ROUTES:
             r = self.client.get(url)
             self.assertEqual(r.status_code, 200, (url, r.get_data(as_text=True)[:200]))
@@ -12670,12 +12464,13 @@ class AtlasShowsNoPersonTests(PolarisTestCase):
         for role in ('operator', 'admin'):
             self._login(role)
             body = self.client.get('/atlas').get_data(as_text=True)
+            # The map's modes went with the points and density layers: regions are all it draws.
             for hook in ('data-atlas-subject-search', 'data-atlas-subject-banner', 'data-rec-grid',
-                         'data-atlas-view-tab="records"', 'data-atlas-mapmode="points"',
+                         'data-atlas-view-tab="records"', 'data-atlas-mapmode',
                          'data-atlas-event-feed', 'atlas-globe-detail', 'data-atlas-modifier="pq"'):
                 self.assertNotIn(hook, body, (role, hook))
-            for kept in ('data-atlas-view-tab="overview"', 'data-atlas-mapmode="regions"',
-                         'data-atlas-mapmode="density"'):
+            for kept in ('data-atlas-view-tab="overview"', 'data-atlas-view-tab="map"',
+                         'What the Atlas will not show'):
                 self.assertIn(kept, body, (role, kept))
 
 
@@ -20057,6 +19852,9 @@ class AtlasCacheScopeTests(PolarisTestCase):
             if os.environ.get('CI'):
                 self.fail('polaris_app unreachable in CI: %s' % exc)
             self.skipTest('polaris_app unreachable: %s' % exc)
+        # Two authorities with at least the minimum cell each, so each is named rather than
+        # folded: the sample's bank has six, and authority 1 is given six more.
+        _atlas_events(6, agency=1)
         self.agency = _sql("SELECT requesting_agency_id AS a, count(*) AS n FROM VerificationEvent "
                            "GROUP BY 1 ORDER BY n DESC, a LIMIT 1", fetch='one')['a']
         self.own = _sql("SELECT name FROM Agency WHERE agency_id = %s", (self.agency,),
@@ -20069,9 +19867,10 @@ class AtlasCacheScopeTests(PolarisTestCase):
         self.addCleanup(_atlas_cache_clear)
 
     def _labels(self):
+        """The authorities named; the folded row of small ones is a remainder, not one of them."""
         r = self.client.get(self.URL)
         self.assertEqual(r.status_code, 200)
-        return {c['label'] for c in r.get_json()['categories']}
+        return {c['label'] for c in r.get_json()['categories'] if not c.get('folded')}
 
     def _as_bound_operator(self):
         """An operator bound to the authority, as an administrator binds one (as the owner)."""
