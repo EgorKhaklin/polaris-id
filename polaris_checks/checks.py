@@ -4665,14 +4665,17 @@ def check_c6_app_read_paths_redact(root: pathlib.Path) -> list[Finding]:
     first half thoroughly and nothing pinned the second, so a fifth query selecting a
     verification location without a ZERO_KNOWLEDGE clause would have shipped green.
 
-    Measured 2026-09-17 before writing this: four SELECTs in app.py touch a location column
-    and all four are correct. Two redact inline, one reads from `atlas_points_verifications`
-    where the redaction lives and is pinned by the sibling check, and one reads
-    TokenLifecycleEvent, which has no disclosure level for C6 to govern. So this pins a
-    property that holds rather than reporting one that does not.
+    Measured 2026-09-17 before writing this: four SELECTs in app.py touched a location column
+    and all four were correct. Two redacted inline, one read from `atlas_points_verifications`,
+    where the redaction lived and the sibling check pinned it, and one read TokenLifecycleEvent,
+    which has no disclosure level for C6 to govern. Since lab/strategy/009 (2026-10-02) the
+    Atlas returns no event rows, and the one location-reading query left is the verification
+    log's, which redacts inline; the check anchors on it (below) rather than counting.
 
-    A query qualifies if ANY of those three is true. The third is the one to be careful with:
-    it is not "mentions a lifecycle table", it is "touches no verification table at all".
+    A query qualifies if ANY of three is true: it redacts inline, it reads from an atlas_*
+    function (none does today; the shape stays allowed because the sibling check pins those
+    functions), or it touches no verification table at all. The third is the one to be careful
+    with: it is not "mentions a lifecycle table", it is "touches no verification table at all".
     """
     name = "c6_app_read_paths"
     app = _read_app(root)
