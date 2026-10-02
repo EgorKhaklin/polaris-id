@@ -3,24 +3,58 @@
 **Reader:** the operator or reviewer asking whether the Atlas and the
 verification log stay interactive at national volumes. **Job:** the
 measurements, the indexes and caps behind them, and the concurrency
-hardening that ships alongside. The headline measurement below was taken
-at 10 million verification events (v9.150); the later sections describe
-the architecture that was first proven at 2 million and still holds.
+hardening that ships alongside. The headline measurement is the Atlas on its
+activity rollups at ten million verifications (step 4 of lab/strategy/009); the
+event-table measurements of v9.150 and the 2-million-event era follow it, kept as
+taken.
 Production deployments with tuned Postgres, connection pooling and edge
 caching are faster than these developer-laptop numbers.
 
+**Since 2026-10-02** the Atlas returns counts only
+([lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md), step A0):
+the map's single-event points, the event feed, the records grid and the person
+focus were withdrawn, with `atlas_points_*`, `atlas_recent_events` and
+`atlas_records`. Measurements of those paths below are kept as taken and say
+they were withdrawn.
+
+**Since step 4 of the same record** the Atlas reads no event table at all. Every figure is a sum
+over the activity rollups (hourly and daily totals kept as events are recorded), so a reader costs
+the hours a window spans and not the rows loaded; the cluster, hexagon and timeline layers were
+withdrawn with `atlas_clusters_*`, `atlas_hexbin` and `atlas_timeline`, and every count below five
+is withheld. The design is [atlas-scaling.md](../design/atlas-scaling.md); the event-table
+measurements below are kept as taken.
+
 ---
 
-## Measured at 10 million events (v9.150)
+## Measured at 10 million verifications, on the rollups (lab/strategy/009, step 4)
+
+Two million people and 10,000,010 verifications in one PostgreSQL 16 on a developer laptop (Apple
+M3, 8 cores), warm, in process through the Flask test client:
+
+| Route | On the event tables | On the rollups |
+|---|---:|---:|
+| `/atlas` (the page and its headline figures) | 6,728 ms | **31 ms** |
+| `/api/atlas/series?window=all` | 5,738 ms | **26 ms** |
+| `/api/atlas/geo/jurisdictions?window=all` | 5,649 ms | **17 ms** |
+
+Every other Atlas route runs at 1.0 to 2.4 times its cost on the ten-verification seed database,
+except `/api/atlas/heatmap?window=30d` at 3.4 times (43.1 ms against 12.6 ms): it reads hours,
+and at this load nearly every combination is active in nearly every hour, so its rows saturate
+at hours x combinations. The deferred fix is in
+[atlas-scaling.md](../design/atlas-scaling.md#measured).
+[`scripts/polaris-atlas-benchmark.sh`](../../scripts/polaris-atlas-benchmark.sh) reproduces the
+reader timings (`scripts/polaris-atlas-benchmark.sh 10000000`).
+
+---
+
+## Measured at 10 million events on the event tables (v9.150, superseded)
 
 Re-run on a developer laptop against a single PostgreSQL 16 with
-**10,000,009 verification events** (a 2.75 GB table), reproducible with
-[`scripts/polaris-atlas-benchmark.sh`](../../scripts/polaris-atlas-benchmark.sh)
-(`scripts/polaris-atlas-benchmark.sh 10000000`):
+**10,000,009 verification events** (a 2.75 GB table), with the benchmark script of the time:
 
 | Atlas query (per viewport) | Latency @ 10M | What it is |
 |---|---:|---|
-| Street-block points (`atlas_points_*`, tight bbox, limit 500) | **2.6 ms** (warm) | The operator zoomed in to a block. The common case. |
+| Street-block points (`atlas_points_*`, tight bbox, limit 500) | **2.6 ms** (warm) | The operator zoomed in to a block. Withdrawn 2026-10-02. |
 | Regional clusters (CONUS bbox, 1° grid) | 2.7 s | Full aggregation of the ~9M rows inside the bbox. |
 | Whole-world clusters (10° grid) | 2.9 s | The heaviest path: aggregate the entire table. |
 | Whole-world from a materialized rollup | **0.04 ms** | Pre-computed grid cells, refreshed on a schedule. |
@@ -43,11 +77,8 @@ Two facts decide whether this scales, and both are measured above:
    API also caches cluster results (`_atlas_cache`), so even without the rollup
    the cold overview is computed once per viewport and then served from cache.
 
-The architecture below already delivers (1). Wiring the atlas overview onto a
-materialized rollup (and, where PostGIS is available, the GiST geography index
-from [`13_postgis.sql`](../../polaris_sql/13_postgis.sql)) is the standing
-upgrade for instant whole-world rendering at hundreds of millions of rows; the
-benchmark above is the acceptance harness for it.
+The rollups of step 4 are that remedy, made general: every Atlas view, not only the overview,
+reads pre-computed totals, and they are kept as events arrive rather than refreshed on a schedule.
 
 ---
 
@@ -77,57 +108,41 @@ JSON payload arriving over the wire.
 ## Architecture
 
 ```
-                            ┌────────────────────────────┐
-                            │  PostgreSQL 16             │
-                            │                            │
-                            │  VerificationEvent         │
-                            │   ─ latitude               │
-                            │   ─ longitude              │
-                            │   ─ idx_..._geo            │
-                            │   ─ idx_..._geo_time       │
-                            │   ─ idx_..._time_id        │
-                            │                            │
-                            │  Functions:                │
-                            │   ─ atlas_clusters_*()     │
-                            │   ─ atlas_points_*()       │
-                            │   ─ atlas_stats()          │
-                            │   ─ atlas_recent_events()  │
-                            └────────────┬───────────────┘
-                                         │ ≤ a few KB JSON per call
-                                         │ regardless of table size
-                                         ▼
-                            ┌────────────────────────────┐
-                            │  Flask app.py              │
-                            │   /api/atlas/clusters      │
-                            │   /api/atlas/points        │
-                            │   /api/atlas/stats         │
-                            │   /api/atlas/events        │
-                            │  + bbox validation         │
-                            │  + hard caps               │
-                            └────────────┬───────────────┘
-                                         ▼
-                            ┌────────────────────────────┐
-                            │  atlas-map.js              │
-                            │   ─ currentBbox()          │
-                            │   ─ chooseGrid(zoom)       │
-                            │   ─ debounced fetcher      │
-                            │   ─ cluster→point switch   │
-                            │   ─ HUD signal updater     │
-                            │   ─ event-feed paginator   │
-                            └────────────────────────────┘
+                            +------------------------------------+
+                            |  PostgreSQL 16                     |
+                            |                                    |
+                            |  VerificationEvent ---- statement  |
+                            |  TokenLifecycleEvent    triggers   |
+                            |        | append counts per insert  |
+                            |        v                           |
+                            |  *RollupDelta --fold--> *Rollup    |
+                            |                        (hourly)    |
+                            |                    --> *RollupDaily|
+                            |                                    |
+                            |  Functions (11_atlas.sql), each a  |
+                            |  sum over the rollups, never an    |
+                            |  event table                       |
+                            +-----------------+------------------+
+                                              | a few KB of counts per call,
+                                              | whatever the population
+                                              v
+                            +------------------------------------+
+                            |  atlas_routes.py  /api/atlas/*     |
+                            |   whitelist + clamp (C8)           |
+                            |   withhold counts below 5          |
+                            |   log a narrow question            |
+                            |   30 s cache, keyed by scope       |
+                            +-----------------+------------------+
+                                              v
+                            +------------------------------------+
+                            |  atlas-console.js, atlas-map.js    |
+                            |   SVG charts; regions placed from  |
+                            |   reference data, never an event   |
+                            +------------------------------------+
 ```
 
-The browser never sees more than a few hundred markers at a time.
-Server-side aggregation collapses a million events in a 5° grid cell
-into a single cluster row carrying only the centroid + summary counts:
-
-```json
-{ "lat": 40.71, "lon": -74.01, "n_total": 66693,
-  "n_failure": 5311, "n_pq": 39958, "n_zk": 26677, "n_full": 16678 }
-```
-
-That's ~120 bytes regardless of whether the cluster represents 100
-events or 10 million.
+The browser never receives an event. A breakdown of ten million verifications is a few dozen
+rows of counts.
 
 ---
 
@@ -141,131 +156,77 @@ latitude   DOUBLE PRECISION CHECK (latitude  IS NULL OR (latitude  BETWEEN  -90 
 longitude  DOUBLE PRECISION CHECK (longitude IS NULL OR (longitude BETWEEN -180 AND 180))
 ```
 
-Nullable so legacy rows without recorded location remain valid; cluster
-aggregation excludes NULL coordinates so stats stay accurate.
+Nullable so legacy rows without recorded location remain valid. Since step 4 of
+lab/strategy/009 the Atlas reads no location; the columns serve the verification log and an
+investigation under warrant.
 
 Indexes (`02_indexes.sql`):
 
 | Index                                | Purpose                                  |
 |--------------------------------------|------------------------------------------|
-| `idx_verificationevent_geo`          | Bbox queries from `atlas_clusters_*()`   |
-| `idx_verificationevent_geo_time`     | Time-bounded bbox queries (rare path)    |
-| `idx_verificationevent_time_id`      | Cursor pagination on the event feed      |
-| `idx_tokenlifecycleevent_geo`        | Bbox queries on lifecycle events         |
-| `idx_tokenlifecycleevent_time`       | Top-N for `atlas_recent_events()`        |
+| `idx_verificationevent_time_id`      | Keyset pages of the verification log     |
+| `idx_tokenlifecycleevent_time`       | Time-ordered reads of lifecycle events   |
 
-All geo indexes are partial (`WHERE latitude IS NOT NULL`) so they
-don't include legacy data points and stay small.
-
-PostGIS would give us proper spatial indexes (GiST on a `geography`
-type, R-tree on `geometry`) and allow polygon queries, but plain B-tree
-composite indexes on (lat, lon) are sufficient for bbox queries: the
-only spatial primitive Atlas needs.
+The v6 location indexes (`idx_verificationevent_geo`, `idx_verificationevent_geo_time`,
+`idx_tokenlifecycleevent_geo`) served the Atlas's bounding-box layers, and the optional
+`13_postgis.sql` built GiST indexes on a generated `geo` column beside them. No query filters or
+sorts by a coordinate since step 4 of lab/strategy/009, so step 4c withdrew all five (migration
+2026-10-02-005): each cost every located insert an update and served no query.
 
 ---
 
 ## Server-side aggregation (`11_atlas.sql`)
 
-### `atlas_clusters_verifications(min_lat, min_lon, max_lat, max_lon, grid)`
-
-Bins events by `floor(lat / grid), floor(lon / grid)` and returns one
-row per cell with the centroid + diagnostic counts. STABLE function so
-PostgreSQL caches the plan.
-
-```sql
-SELECT avg(ve.latitude), avg(ve.longitude),
-       count(*),
-       count(*) FILTER (WHERE ve.outcome = 'FAILURE'),
-       count(*) FILTER (WHERE ca.quantum_resistant),
-       ...
-FROM VerificationEvent ve
-LEFT JOIN IdentityToken t  ON ve.token_id = t.token_id
-LEFT JOIN CryptographicAlgorithm ca ON ...
-WHERE ve.latitude  BETWEEN p_min_lat AND p_max_lat
-  AND ve.longitude BETWEEN p_min_lon AND p_max_lon
-GROUP BY floor(ve.latitude / p_grid), floor(ve.longitude / p_grid)
-```
-
-### `atlas_points_*()`
-
-Used at high zoom (cluster count ≤ 30, zoom ≥ 2). Returns up to
-`p_limit` individual events with full metadata, ordered by recency.
-Hard-capped at `_ATLAS_MAX_POINTS = 2000` at the API layer.
-
-### `atlas_stats(bbox)`
-
-Computes the four HUD signals in a **single pass** with FILTER
-aggregates. The first iteration referenced a CTE 8 times and ran in
-1428 ms; the rewrite is 511 ms.
-
-### `atlas_recent_events(cursor_ts, cursor_id, limit)`
-
-Two-stage top-N with late metadata join. The first iteration unioned
-2M rows then top-N sorted; rewrite uses the time-id indexes to fetch
-top 50 from each table in O(log n), unions to ~100 rows, then joins
-metadata. Result: 5919 ms → 2 ms (3000× faster).
+Every reader sums the activity rollups through three shared helpers: the cells of a window (the
+hourly or daily rows and the delta not yet folded), the cells under the filters, and the window's
+combinations summed over its hours with names joined last. The readers and their bounds are in
+[atlas-scaling.md](../design/atlas-scaling.md#the-readers-11_atlassql). Until step 4 the map's
+`atlas_clusters_verifications` binned located events by grid cell and `atlas_stats` aggregated a
+bounding box in a single pass (511 ms at 2M events, from 1428 ms); both read the event table.
 
 ---
 
 ## API endpoints
 
-All four endpoints are auth-required. Bbox parameter format:
-`min_lat,min_lon,max_lat,max_lon` decimal degrees. Antimeridian-spanning bboxes are supported as of v7 via a wrap-aware
-longitude predicate (see Antimeridian section below).
+The Atlas endpoints are login-gated and replica-routed, and take no bounding box: they count by
+window, category and jurisdiction. The reference is [API.md](API.md), Atlas API.
 
-| Endpoint                    | Hard cap          | Purpose |
-|-----------------------------|-------------------|---------|
-| `GET /api/atlas/clusters`   | 5000 clusters     | Aggregated bins for low-zoom |
-| `GET /api/atlas/points`     | 2000 points       | Individual markers for high-zoom |
-| `GET /api/atlas/stats`      | one row           | HUD signals scoped to bbox |
-| `GET /api/atlas/events`     | 500 events        | Paginated unified feed |
+| Endpoint | Hard cap | Purpose |
+|---|---|---|
+| `GET /api/atlas/stats` | one row | the headline figures |
+| `GET /api/atlas/series` | 240 buckets | volume over the window |
+| `GET /api/atlas/breakdown` | 50 categories | counts by one dimension |
+| `GET /api/atlas/crosstab` | 50 rows | a dimension by a fixed one |
+| `GET /api/atlas/heatmap` | 168 cells | weekday by hour |
+| `GET /api/atlas/stacked` | 240 x 7 | volume by the top six categories |
+| `GET /api/atlas/facet/agencies` | 50 | the authority typeahead |
+| `GET /api/atlas/geo/jurisdictions` | 500 regions | counts per jurisdiction, the map's only layer |
 
 ---
 
 ## Frontend (atlas-map.js)
 
-The map is a MapLibre GL canvas with two data layers over one GeoJSON
-source. Clusters are circles whose radius interpolates on the event count,
-with the count drawn inside; individual events are smaller circles coloured
-by disclosure level, or red for a failure or revocation. Nothing is drawn
-in the DOM, so a viewport holding a few hundred markers costs a few hundred
-GPU primitives rather than a few hundred SVG nodes.
-
-`scheduleFetch()` is debounced at 220 ms: pan and zoom trigger one batched
-API call rather than one per frame, and an AbortController cancels the
-previous fetch when a new one starts.
-
-The switch from clusters to individual events happens when the viewport
-holds few enough of them:
-
-```javascript
-if (data.count <= 30 && zoom >= 2) {
-    // few enough events to draw individually: fetch /api/atlas/points
-}
-```
-
-The event feed has infinite scroll: when the rail scrolls within 80px
-of the bottom and a `next_cursor` exists, the next page is fetched.
+The map is a MapLibre GL canvas with one layer: counts per jurisdiction, each region placed at a
+reference point for the jurisdiction. It fetches on a change of window or filter, not on a pan:
+the regions are not bound to the viewport. Nothing drawn is a single event.
 
 ---
 
-## Performance at 2M scale
+## Performance at 2M scale (the event-table Atlas, superseded)
 
 Measured against the live API (Flask + Postgres) with 2,000,009
-synthetic verification events distributed across 30 cities globally:
+synthetic verification events distributed across 30 cities globally, before step 4:
 
 | Endpoint                          | Latency  | Notes |
 |-----------------------------------|---------:|-------|
 | `/api/atlas/clusters` whole world | 1176 ms  | Worst case; one-time init |
 | `/api/atlas/clusters` continent   |  645 ms  | 5° grid, 700K events scanned |
 | `/api/atlas/clusters` metro       |  282 ms  | 0.1° grid, 60K events |
-| `/api/atlas/points` metro top-100 |   35 ms  | Index-driven |
+| `/api/atlas/points` metro top-100 |   35 ms  | Withdrawn 2026-10-02 |
 | `/api/atlas/stats` continent      |  537 ms  | Single-pass aggregation |
-| `/api/atlas/events` first page    |   31 ms  | Top-N + late join |
+| `/api/atlas/events` first page    |   31 ms  | Withdrawn 2026-10-02 |
 
-User-perceptible latency at 1M+ scale would benefit from caching at the
-API layer (Redis) keyed by `(bbox, grid, kind)` with a short TTL: a
-typical operator's pan/zoom oscillates over a small set of common views.
+The cluster and stats paths were withdrawn with step 4; the measurements stay as taken.
 
 ---
 

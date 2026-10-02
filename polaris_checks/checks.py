@@ -3529,23 +3529,27 @@ def check_c4_atomic_failed_login(root: pathlib.Path) -> list[Finding]:
 _ATLAS_COUNT_PARAMS = ("buckets", "limit", "n", "top", "max", "count", "size", "per_page",
                        "grid")
 
+#: The cap constants C8 requires, one per kind of row an Atlas route can return in number.
+_ATLAS_CAP_CONSTANTS = ("_ATLAS_MAX_CATEGORIES", "_ATLAS_MAX_REGIONS", "_ATLAS_MAX_BUCKETS")
+
 #: Atlas SQL functions called with no row cap because their SHAPE bounds them, each with the
 #: reason. Held both ways by check_c8_atlas_caps: a new uncapped call fails until declared here,
 #: and an entry whose calls all carry a cap fails as stale.
 _ATLAS_FIXED_SHAPE = {
     "atlas_stats": "one summary row",
     "atlas_heatmap": "a 7 x 24 grid, 168 cells at most",
-    "atlas_timeline": "one row per bucket, and the route refuses more than 240 buckets",
-    "atlas_volume_series": "one row per bucket, and the route refuses more than 240 buckets",
-    "atlas_series_stacked": "buckets (240 at most) by the top 6 categories plus Other; the route passes no limit, so the function default of 6 holds",
+    "atlas_volume_series": "one row per bucket, and the route refuses more than _ATLAS_MAX_BUCKETS",
+    "atlas_series_stacked": "buckets (_ATLAS_MAX_BUCKETS at most) by the top 6 categories plus Other; the route passes 6",
 }
 
 #: Numeric atlas parameters that do NOT size a response, each with the reason. An entry here
 #: is a claim that a caller cannot grow a result set with it, and it has to be defensible:
 #: the list above is the safe default and this one is the exception.
 _ATLAS_NOT_COUNTS = {
-    "individual_id": "an identifier. It selects the rows belonging to one person, and "
-                     "choosing a different value cannot make that set larger",
+    # Empty since lab/strategy/009 (step A0). Its one entry was `individual_id`, read by the
+    # subject focus, which selected one person's events; that route is gone, and an Atlas
+    # route that reads a person's identifier is refused by check_atlas_console, not
+    # classified here.
 }
 
 
@@ -3577,11 +3581,11 @@ def _route_decorators(src: str) -> list[tuple[int, str, str]]:
 
 def check_c8_atlas_caps(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
-    # v9.248: the analytical console added a bounded categorical roll-up; its
-    # top-K cap joins the map's cluster/point/event caps under C8.
-    missing = [c for c in ("_ATLAS_MAX_CLUSTERS", "_ATLAS_MAX_POINTS",
-                           "_ATLAS_MAX_EVENTS", "_ATLAS_MAX_CATEGORIES",
-                           "_ATLAS_MAX_REGIONS") if c not in app]
+    # v9.248: the analytical console added a bounded categorical roll-up; its top-K cap joined
+    # the map's cluster cap under C8. The point and event caps went with the routes they
+    # bounded (lab/strategy/009, step A0: the Atlas returns no event rows), and the cluster cap
+    # with the location layers (step 4), when the series' bucket cap became a named constant.
+    missing = [c for c in _ATLAS_CAP_CONSTANTS if c not in app]
     if missing:
         return _fail("c8_atlas_caps", "missing atlas hard-cap constant(s): " + ", ".join(missing) + " (C8)")
 
@@ -3722,8 +3726,8 @@ def check_c8_atlas_caps(root: pathlib.Path) -> list[Finding]:
         return _fail("c8_atlas_caps", "no atlas route reads a caller-controlled count, which "
                                       "means this check measured nothing about C8")
     return _ok("c8_atlas_caps", "/api/atlas/* endpoints have hard result-set caps (C8): the "
-               "five cap constants exist AND all %d caller-controlled counts across %d atlas "
-               "routes are clamped" % (checked, len(starts)))
+               "%d cap constants exist AND all %d caller-controlled counts across %d atlas "
+               "routes are clamped" % (len(_ATLAS_CAP_CONSTANTS), checked, len(starts)))
 
 
 # ---------------------------------------------------------------------------
@@ -4603,49 +4607,104 @@ def check_local_clock_convention(root: pathlib.Path) -> list[Finding]:
 # spatial layers and the /verifications list would otherwise expose the precise
 # location that de-anonymizes a ZK holder (spatial side-channel).
 # ---------------------------------------------------------------------------
-def _atlas_zk_location_leaks(atlas: str) -> tuple[list, int]:
-    """Atlas functions that expose a VERIFICATION location without redacting ZK.
+#: The activity rollups: the only tables the Atlas reads (lab/strategy/009, step 4). None has a
+#: column for a person, a credential, an event or a place, which makes C6 hold for the Atlas by
+#: construction rather than by a filter each function has to remember.
+_ATLAS_ROLLUPS = ("VerificationRollup", "VerificationRollupDaily", "VerificationRollupDelta",
+                  "LifecycleRollup", "LifecycleRollupDaily", "LifecycleRollupDelta")
 
-    C6 is that the Atlas redacts zero-knowledge locations server-side. The count-based
-    check below cannot see a NEW surface: four exclusion clauses still satisfy "at least
-    three", so a fifth spatial function added without one passes. That is the same blind
-    spot C8 had with its cap constants.
+#: A column name that says where something happened.
+_LOCATION_COLUMN = re.compile(r"\b(?:lat|lon|lng|latitude|longitude|centroid\w*|geom\w*|"
+                              r"location\w*|coordinates?)\b", re.I)
 
-    Redaction has TWO legitimate forms in this schema and the property is what matters,
-    not which one is used:
 
-      exclusion  WHERE ... disclosure_level <> 'ZERO_KNOWLEDGE'   (the row never appears)
-      nulling    CASE WHEN disclosure_level = 'ZERO_KNOWLEDGE'
-                      THEN NULL ELSE latitude END                 (the row appears, blind)
+def _atlas_functions(sql: str) -> list[tuple[str, str]]:
+    """Every `CREATE OR REPLACE FUNCTION atlas_*` statement in `sql`, as (name, statement)."""
+    return [(m.group(1), m.group(0)) for m in
+            re.finditer(r"CREATE OR REPLACE FUNCTION (atlas_\w+)\((.*?)\$\$;", sql, re.S)]
 
-    `atlas_recent_events` uses the second, which is right for an event feed: the event is
-    still visible and its location is not. A check that knew only the first would have
-    called it a leak.
 
-    Functions over TokenLifecycleEvent are not in scope: that table has no disclosure_level
-    and C6 is about verification events.
-    """
-    leaks = []
-    scanned = 0
-    for m in re.finditer(r"CREATE OR REPLACE FUNCTION (\w+)\((.*?)\$\$;", atlas, re.S):
-        name, body = m.group(1), m.group(0)
-        if not re.search(r"\bVerificationEvent\b", body, re.I):
-            continue
-        # What the function RETURNS, not what it mentions. atlas_stats and atlas_timeline
-        # name latitude and longitude only in bbox WHERE clauses and return counts and time
-        # buckets; an earlier version of this walk read the whole body and called both of
-        # them leaks. The question is whether a LOCATION LEAVES the function.
+def _atlas_location_columns(sql: str) -> tuple[list, int]:
+    """(atlas functions that RETURN a location column, functions read).
+
+    Until lab/strategy/009 step 4 the Atlas had located layers (points, clusters, hexagons, a
+    jurisdiction centroid), and C6 was that each excluded its zero-knowledge rows or returned
+    NULL coordinates for them, so this walk accepted either form of redaction. The Atlas now
+    reads the activity rollups, which hold no coordinate, and the map places a region from
+    reference data about its jurisdiction beside the page: no function returns a location, so
+    one that does is the defect, whatever it filters, and for lifecycle events as much as for
+    verifications. What a function RETURNS, not what it mentions: a filter on a column is not a
+    column handed back."""
+    located, fns = [], _atlas_functions(sql)
+    for name, body in fns:
         rt = re.search(r"RETURNS TABLE\s*\((.*?)\)\s*(?:AS|LANGUAGE)", body, re.S | re.I)
-        returned = rt.group(1) if rt else ""
-        if not re.search(r"\b(?:lat|lon|latitude|longitude|centroid|geom)\b", returned, re.I):
-            continue          # returns no location; C6 has nothing to redact here
-        scanned += 1
-        excluded = "disclosure_level <> 'ZERO_KNOWLEDGE'" in body
-        nulled = bool(re.search(r"CASE\s+WHEN[^;]{0,120}?disclosure_level\s*=\s*'ZERO_KNOWLEDGE'"
-                                r"[^;]{0,80}?THEN\s+NULL", body, re.S | re.I))
-        if not (excluded or nulled):
-            leaks.append(name)
-    return leaks, scanned
+        if rt and _LOCATION_COLUMN.search(rt.group(1)):
+            located.append(name)
+    return located, len(fns)
+
+
+#: An index the event tables keep, in 02_indexes.sql: check_event_locations_unindexed anchors on
+#: it, so a parse that finds no index on an event table fails rather than passing by reading none.
+_EVENT_INDEX_ANCHOR = "idx_verificationevent_token_time"
+
+
+def check_event_locations_unindexed(root: pathlib.Path) -> list[Finding]:
+    """No load file indexes where an event happened (lab/strategy/009, step 4c).
+
+    TestEventsCarryNoLocation reads the catalogue of a database built from the load files, the
+    strong form. But no test database has PostGIS, and the optional 13_postgis.sql GiST-indexed a
+    generated `geo` column on both event tables wherever the extension could be created. That
+    path was invisible to every test and to step 4c's first trace, which searched for the words
+    latitude and longitude, and a GiST index on `geo` names neither. So this reads every load
+    file, EXECUTE strings in a DO block included, for an index on VerificationEvent or
+    TokenLifecycleEvent over a coordinate or over a column generated from one. A migration that
+    built one would differ from the load files, which the schema-drift stage of the gate refuses.
+    """
+    name = "event_locations_unindexed"
+    indexes = _read(root, "polaris_sql/02_indexes.sql")
+    if not indexes:
+        return _fail(name, "polaris_sql/02_indexes.sql could not be read")
+    sql = _strip_sql_comments("\n".join(
+        _read_path(p) for p in sorted((root / "polaris_sql").glob("*.sql"))))
+    located = {"latitude", "longitude"}
+    # A column generated from a coordinate, as 13_postgis.sql's `geo geography(Point, 4326)
+    # GENERATED ALWAYS AS (CASE WHEN latitude ...) STORED` was. The type is one word, with
+    # PRECISION or a parenthesised modifier, so the name captured is the column's and not a word
+    # of the ALTER TABLE ... ADD COLUMN in front of it.
+    for m in re.finditer(r"(\w+)\s+\w+(?:\s+PRECISION)?(?:\s*\([^)]*\))?\s+GENERATED\s+ALWAYS\s+"
+                         r"AS\s*\((.*?)\)\s*STORED", sql, re.I | re.S):
+        if re.search(r"\b(latitude|longitude)\b", m.group(2), re.I):
+            located.add(m.group(1).lower())
+    # Every index on an event table or one of its partitions, to the end of its statement or of
+    # the dollar-quoted string an EXECUTE runs it from.
+    found, hits = [], []
+    for m in re.finditer(r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"
+                         r"(?:(\w+)\s+)?ON\s+(?:ONLY\s+)?(?:public\.)?"
+                         r"((?:VerificationEvent|TokenLifecycleEvent)\w*)\b([^;$]*)", sql, re.I):
+        found.append((m.group(1) or "(unnamed)").lower())
+        cols = {c.lower() for c in re.findall(r"\w+", m.group(3))} & located
+        if cols:
+            hits.append("%s on %s (%s)" % (m.group(1) or "an unnamed index", m.group(2),
+                                           ", ".join(sorted(cols))))
+    if _EVENT_INDEX_ANCHOR not in found:
+        return _fail(name, "found %d index(es) on the event tables in polaris_sql/ and not %s; "
+                           "the parse and the load files have drifted, so 'no index covers a "
+                           "coordinate' would pass by reading nothing" % (len(found),
+                                                                          _EVENT_INDEX_ANCHOR))
+    if hits:
+        return _fail(name, "%d index(es) on an event table cover a coordinate or a column "
+                           "generated from one: %s. Nothing filters or sorts an event by where "
+                           "it happened (lab/strategy/009 step 4c), and each index made every "
+                           "located insert pay for one" % (len(hits), "; ".join(hits)))
+    return _ok(name, "none of the %d index(es) the load files build on VerificationEvent and "
+                     "TokenLifecycleEvent, a DO block's EXECUTE strings included, covers a "
+                     "coordinate or a column generated from one (%s)"
+               % (len(found), ", ".join(sorted(located))))
+
+
+#: The redaction the verification log's list query carries (verification_routes.py). It anchors
+#: check_c6_app_read_paths_redact: a parse that cannot find this query is measuring nothing.
+_C6_LOG_ANCHOR = "THEN NULL ELSE ve.requestor_location"
 
 
 def check_c6_app_read_paths_redact(root: pathlib.Path) -> list[Finding]:
@@ -4656,14 +4715,17 @@ def check_c6_app_read_paths_redact(root: pathlib.Path) -> list[Finding]:
     first half thoroughly and nothing pinned the second, so a fifth query selecting a
     verification location without a ZERO_KNOWLEDGE clause would have shipped green.
 
-    Measured 2026-09-17 before writing this: four SELECTs in app.py touch a location column
-    and all four are correct. Two redact inline, one reads from `atlas_points_verifications`
-    where the redaction lives and is pinned by the sibling check, and one reads
-    TokenLifecycleEvent, which has no disclosure level for C6 to govern. So this pins a
-    property that holds rather than reporting one that does not.
+    Measured 2026-09-17 before writing this: four SELECTs in app.py touched a location column
+    and all four were correct. Two redacted inline, one read from `atlas_points_verifications`,
+    where the redaction lived and the sibling check pinned it, and one read TokenLifecycleEvent,
+    which has no disclosure level for C6 to govern. Since lab/strategy/009 (2026-10-02) the
+    Atlas returns no event rows, and the one location-reading query left is the verification
+    log's, which redacts inline; the check anchors on it (below) rather than counting.
 
-    A query qualifies if ANY of those three is true. The third is the one to be careful with:
-    it is not "mentions a lifecycle table", it is "touches no verification table at all".
+    A query qualifies if ANY of three is true: it redacts inline, it reads from an atlas_*
+    function (none does today; the shape stays allowed because the sibling check pins those
+    functions), or it touches no verification table at all. The third is the one to be careful
+    with: it is not "mentions a lifecycle table", it is "touches no verification table at all".
     """
     name = "c6_app_read_paths"
     app = _read_app(root)
@@ -4698,74 +4760,79 @@ def check_c6_app_read_paths_redact(root: pathlib.Path) -> list[Finding]:
             continue                       # no verification table: C6 does not govern it
         offenders.append("%s:%d" % (_mod, _lineno))
 
-    if scanned < 3:
-        return _fail(name, "only %d location-reading SELECT(s) found in polaris_web/; the parser and "
-                           "the application have drifted, so this check is measuring nothing"
-                           % scanned)
+    # Vacuity, by a query that must be there rather than by a count. Until lab/strategy/009 the
+    # floor was three SELECTs; the Atlas's per-event reads were two of the four it found, and
+    # their removal left one. A count floor measures how much the console reads, which is not
+    # what this check is for. The verification log's list query is: it is the read path C6
+    # names, and a parser that cannot find it can find nothing.
+    anchored = any(_C6_LOG_ANCHOR in q for _m, _l, q in queries if loc.search(q))
+    if not scanned or not anchored:
+        return _fail(name, "found %d location-reading SELECT(s) in polaris_web/ and not the "
+                           "verification log's, which nulls requestor_location for "
+                           "ZERO_KNOWLEDGE rows; the parser and the application have drifted, so "
+                           "this check is measuring nothing" % scanned)
     if offenders:
         return _fail(name, "%d verification-location query(ies) in app.py with no "
                            "ZERO_KNOWLEDGE clause and no atlas_* function to redact for them, "
                            "at %s. C6 is redaction at EVERY read path, not only the "
                            "Atlas SQL." % (len(offenders), ", ".join(offenders)))
-    return _ok(name, "all %d location-reading queries in app.py satisfy C6: each redacts "
-                     "zero-knowledge rows inline, reads from an atlas_* function that does, or "
-                     "touches no verification table at all" % scanned)
+    return _ok(name, "%d location-reading %s in polaris_web/ satisf%s C6, the verification "
+                     "log's among them: each redacts zero-knowledge rows inline, reads from an "
+                     "atlas_* function that does, or touches no verification table at all"
+               % (scanned, "query" if scanned == 1 else "queries", "ies" if scanned == 1 else "y"))
 
 
 def check_c6_atlas_redacts_zk_location(root: pathlib.Path) -> list[Finding]:
+    """C6 at the Atlas: a zero-knowledge verification is counted and never located.
+
+    Since lab/strategy/009 step 4 that holds by construction rather than by a filter in each
+    function. The Atlas reads the activity rollups, whose columns are an hour, an authority, a
+    context, an outcome, a disclosure level, an algorithm and a count, so this pins three
+    things: no rollup has a location column; no atlas_* function, in the load files or a
+    migration, returns one; and the series and the regions still COUNT zero-knowledge
+    verifications, so the property is "counted, never located" and not "left out". The other
+    read path, the verification log, redacts requestor_location for ZERO_KNOWLEDGE rows
+    (check_c6_app_read_paths_redact holds every app query to it; its anchor is asserted here)."""
     atlas = _read(root, "polaris_sql/11_atlas.sql")
-    leaks, scanned = _atlas_zk_location_leaks(atlas)
-    if leaks:
+    if not atlas:
+        return _fail("c6_atlas_zk", "polaris_sql/11_atlas.sql is missing")
+    fns = dict(_atlas_functions(atlas))
+    if len(fns) < 8:
+        return _fail("c6_atlas_zk", "found %d atlas_* function(s) in 11_atlas.sql; the parse has "
+                                    "broken, so 'none returns a location' would pass by reading "
+                                    "nothing" % len(fns))
+    located, _ = _atlas_location_columns(_all_sql(root))
+    if located:
         return _fail("c6_atlas_zk",
-                     "atlas function(s) return a verification LOCATION without redacting "
-                     "zero-knowledge events: " + ", ".join(sorted(leaks)[:4]) + ". C6 requires "
-                     "either excluding the ZK rows or nulling their coordinates; a count of "
-                     "exclusion clauses elsewhere does not cover a surface that has neither")
-    if atlas and not scanned:
-        return _fail("c6_atlas_zk", "no atlas function returns a verification location, so this "
-                                    "measured nothing about C6")
-    excludes = atlas.count("disclosure_level <> 'ZERO_KNOWLEDGE'")
-    if excludes < 3:
-        return _fail("c6_atlas_zk",
-                     "atlas verification points + clusters + hexbin must exclude ZERO_KNOWLEDGE "
-                     f"(found {excludes} exclusion clause(s), need >=3) (C6)")
-    # v9.253: the Density (hexbin) surface is a spatial aggregate; like the
-    # cluster/point layers it must exclude ZK entirely (a hex holding a single
-    # ZK event would pin it).
-    hexbin = re.search(r"CREATE OR REPLACE FUNCTION atlas_hexbin\(.*?\$\$;", atlas, re.S)
-    if not hexbin or "disclosure_level <> 'ZERO_KNOWLEDGE'" not in hexbin.group(0):
-        return _fail("c6_atlas_zk",
-                     "atlas_hexbin (the Map v2 Density layer) must exclude ZERO_KNOWLEDGE events "
-                     "so a hex never pins a zero-knowledge verification (C6)")
-    # The Regions layer (atlas_geo_jurisdictions) is the exception that proves
-    # the rule: it COUNTS ZK (n_zk) but its centroid must be built only from
-    # located, non-ZK events, so ZK is counted yet never located.
-    geojur = re.search(r"CREATE OR REPLACE FUNCTION atlas_geo_jurisdictions\(.*?\$\$;", atlas, re.S)
-    if geojur:
-        body = geojur.group(0)
-        if "n_zk" not in body:
-            return _fail("c6_atlas_zk", "atlas_geo_jurisdictions must count ZK (n_zk)")
-        # BOTH coordinates. Until 2026-09-23 only the latitude average was read, and dropping
-        # the ZK filter from avg(ve.longitude) alone, half a location, passed.
-        if not all(re.search(r"avg\(ve\.%s\)\s+FILTER[^)]*<>\s*'ZERO_KNOWLEDGE'" % axis, body, re.S)
-                   for axis in ("latitude", "longitude")):
+                     "atlas function(s) return a location: " + ", ".join(sorted(set(located))[:4]) +
+                     ". The Atlas counts zero-knowledge verifications and never locates them (C6); "
+                     "a region is placed from reference data about its jurisdiction, never from "
+                     "an event")
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    for table in _ATLAS_ROLLUPS:
+        m = re.search(r"CREATE TABLE %s \((.*?)\n\);" % table, schema, re.S)
+        if not m:
+            return _fail("c6_atlas_zk", "01_schema.sql must define %s, a table the Atlas reads" % table)
+        if _LOCATION_COLUMN.search(_strip_sql_comments(m.group(1))):
             return _fail("c6_atlas_zk",
-                         "atlas_geo_jurisdictions centroid must be built from located, non-ZK events "
-                         "only (a ZK-only jurisdiction is counted but unplaceable) (C6)")
-    if "THEN NULL ELSE tv.latitude" not in atlas:
-        return _fail("c6_atlas_zk",
-                     "atlas_recent_events must NULL lat/lon for ZERO_KNOWLEDGE rows (C6)")
-    # v9.142: the /atlas HTML route no longer reads requestor_location at all
-    # (its inline globe-node query was dead code, removed; the globe fetches
-    # via /api/atlas/*, whose SQL functions exclude ZK rows entirely, asserted
-    # above). The one remaining app.py HTML read path is /verifications.
+                         "%s has a location column: the Atlas reads it, so a zero-knowledge "
+                         "verification counted there could be located (C6)" % table)
+    for fn in ("atlas_volume_series", "atlas_geo_jurisdictions"):
+        body = fns.get(fn, "")
+        if "n_zk" not in body or not re.search(r"disclosure_level\s*=\s*'ZERO_KNOWLEDGE'", body):
+            return _fail("c6_atlas_zk",
+                         "%s must COUNT zero-knowledge verifications (n_zk): C6 is counted and "
+                         "never located, not left out" % fn)
     app = _read_app(root)
     if app.count("THEN NULL ELSE ve.requestor_location") < 1:
         return _fail("c6_atlas_zk",
                      "the application's /verifications must redact requestor_location "
                      "for ZERO_KNOWLEDGE (C6)")
     return _ok("c6_atlas_zk",
-               "ZK verification location is excluded/redacted at the atlas + list read paths (C6)")
+               "no Atlas function returns a location (%d in 11_atlas.sql, and none in a "
+               "migration) and no rollup it reads has a location column, while the series and the "
+               "regions count zero-knowledge verifications: counted, never located (C6); the "
+               "verification log redacts ZERO_KNOWLEDGE requestor_location" % len(fns))
 
 
 # ---------------------------------------------------------------------------
@@ -7020,15 +7087,17 @@ def check_performance_baseline(root: pathlib.Path) -> list[Finding]:
     if "<!-- baseline:begin -->" not in doc or "<!-- baseline:end -->" not in doc:
         return _fail("perf_baseline", "the baseline doc must keep its measured-block markers (the script rewrites it)")
     block = doc.split("<!-- baseline:begin -->", 1)[1].split("<!-- baseline:end -->", 1)[0]
-    if not re.search(r"\*\*Measured v9\.\d+ @ [0-9a-f]{7,}(?:\+dirty)?, \d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z", block):
+    # v9.N until the 1.0.0 release line, then 1.0.0-rc.N and the like.
+    if not re.search(r"\*\*Measured v(?:9\.\d+|\d+\.\d+\.\d+(?:-[a-z]+\.\d+)?) @ [0-9a-f]{7,}(?:\+dirty)?, "
+                     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z", block):
         return _fail("perf_baseline", "the measured block carries no stamp (version, commit, date): numbers carry stamps")
-    for needle in ("Issuance", "Verification", "Atlas zoomed bbox, warm", "Atlas zoomed bbox, cold", "Atlas whole-world"):
+    for needle in ("Issuance", "Verification", "Atlas breakdown, warm", "Atlas breakdown, cold", "Atlas all-time"):
         if needle not in block:
             return _fail("perf_baseline", f"the measured block lacks the {needle!r} row")
     if "cores" not in block or "gunicorn x" not in block or "signing:" not in block:
         return _fail("perf_baseline", "the stamp must name the hardware, the worker count, and the signing mode")
     script = _read(root, "scripts/polaris-perf-baseline.sh")
-    for needle in ("--smoke", "--update-doc", "/uc1/issue", "/verifications/new", "/api/atlas/clusters", "/api/atlas/stats",
+    for needle in ("--smoke", "--update-doc", "/uc1/issue", "/verifications/new", "/api/atlas/breakdown", "/api/atlas/stats",
                    "gunicorn", "POLARIS_RATE_LIMIT_WRITE_MAX=", "FLOOR VIOLATIONS", "check_stage(\"issue\", 2)",
                    "check_stage(\"verify\", 5)", "> 2000"):
         if needle not in script:
@@ -7450,6 +7519,67 @@ def check_bulk_enrollment(root: pathlib.Path) -> list[Finding]:
                "issue/auth/empty refusals")
 
 
+#: A column, parameter or name that identifies a person, a credential or one event. The Atlas
+#: returns none of them (lab/strategy/009, step A0); check_atlas_console holds every atlas_*
+#: function and every Atlas route to that.
+_ATLAS_PERSON_OR_EVENT = re.compile(
+    r"\b(token_id|token_value|predecessor_token_id|individual_id|legal_name|date_of_birth|"
+    r"duress_code_hash|holder\w*|subject\w*|event_id)\b", re.I)
+
+
+def _atlas_person_surfaces(root: pathlib.Path) -> tuple[list, int, int]:
+    """Where the Atlas returns or selects a person, a credential or a single event.
+
+    Two places, each read in full: every `atlas_*` function in every SQL source a database is
+    built from (its returned columns, and whether it reads Individual, where names are), and
+    every /atlas or /api/atlas route in any module of the package (its code, docstring
+    excluded, so prose about this rule cannot trip it). Returns (findings, functions read,
+    routes read)."""
+    found, nfn, nroute = [], 0, 0
+    sql = _all_sql(root)
+    for m in re.finditer(r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(atlas_\w+)\s*\((.*?)\$(\w*)\$(.*?)\$\3\$",
+                         sql, re.S | re.I):
+        name, head, body = m.group(1), m.group(2), m.group(4)
+        nfn += 1
+        rt = re.search(r"RETURNS\s+TABLE\s*\((.*?)\)\s*(?:AS|LANGUAGE)", head, re.S | re.I)
+        cols = sorted({c.lower() for c in _ATLAS_PERSON_OR_EVENT.findall(rt.group(1) if rt else head)})
+        if cols:
+            found.append("%s() returns %s" % (name, ", ".join(cols)))
+        if re.search(r"\b(?:FROM|JOIN)\s+Individual\b", body, re.I):
+            found.append("%s() reads Individual" % name)
+    for mod, code in _app_modules(root):
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            paths = [d.args[0].value for d in node.decorator_list
+                     if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
+                     and d.func.attr == "route" and d.args and isinstance(d.args[0], ast.Constant)
+                     and isinstance(d.args[0].value, str)]
+            paths = [x for x in paths if x == "/atlas" or x.startswith("/api/atlas")]
+            if not paths:
+                continue
+            nroute += 1
+            doc = (node.body[0].value if node.body and isinstance(node.body[0], ast.Expr)
+                   and isinstance(node.body[0].value, ast.Constant) else None)
+            hits = set()
+            for sub in ast.walk(node):
+                if sub is doc:
+                    continue
+                text = (sub.value if isinstance(sub, ast.Constant) and isinstance(sub.value, str)
+                        else sub.id if isinstance(sub, ast.Name)
+                        else sub.attr if isinstance(sub, ast.Attribute)
+                        else sub.arg if isinstance(sub, ast.keyword) and sub.arg else None)
+                if text:
+                    hits.update(h.lower() for h in _ATLAS_PERSON_OR_EVENT.findall(text))
+            if hits:
+                found.append("%s %s (%s) names %s" % (mod, paths[0], node.name, ", ".join(sorted(hits))))
+    return found, nfn, nroute
+
+
 def check_atlas_console(root: pathlib.Path) -> list[Finding]:
     """Roadmap P2.3 (v9.248): the Atlas is an analytical console. The Overview
     is the default view (bounded, non-geographic charts), the globe is a tab,
@@ -7460,8 +7590,9 @@ def check_atlas_console(root: pathlib.Path) -> list[Finding]:
     if not atlas:
         return _fail("atlas_console", "polaris_web/templates/atlas.html is missing")
     # Overview is the DEFAULT view (its tab is selected on first paint); the
-    # Breakdown (v9.249), Records (v9.252) and Map tabs are the other views.
-    for tab in ('overview', 'breakdown', 'records', 'trends', 'map'):
+    # Breakdown (v9.249), Trends and Map tabs are the other views. The Records tab, a list of
+    # events naming their holders, went with lab/strategy/009 (step A0).
+    for tab in ('overview', 'breakdown', 'trends', 'map'):
         if f'data-atlas-view-tab="{tab}"' not in atlas:
             return _fail("atlas_console", f"atlas.html must have the {tab} view tab")
     m = re.search(r'data-atlas-view-tab="overview"[^>]*aria-selected="true"'
@@ -7490,19 +7621,19 @@ def check_atlas_console(root: pathlib.Path) -> list[Finding]:
         return _fail("atlas_console", "the agency facet must be a server typeahead (data-gf-agency-search), "
                      "not a flat chip flyout, so it survives thousands of agencies")
 
-    # v9.252: the Records view is a keyset-paginated data grid (a "load more"
-    # cursor, not an offset, so page N is O(page) not O(N*page) at scale).
-    if "data-rec-grid" not in atlas or "data-rec-more" not in atlas:
-        return _fail("atlas_console", "the Records view must be a data grid (data-rec-grid) with a "
-                     "keyset 'load more' control (data-rec-more) so it survives millions of events")
-
-    # v9.253 (Map v2): the map is aggregation-first — a layer-mode control
-    # (Regions by jurisdiction is the DEFAULT | Density hexbin | Points drill)
-    # with the globe demoted to an opt-in projection toggle, not the always-on
-    # view that made thousands of raw points a clutter nightmare at scale.
-    for mode in ('regions', 'density', 'points'):
-        if f'data-atlas-mapmode="{mode}"' not in atlas:
-            return _fail("atlas_console", f"the Map must offer the {mode} layer mode (data-atlas-mapmode)")
+    # v9.253 (Map v2) made the map aggregation-first, with the globe an opt-in projection
+    # toggle. The Points drill to single events went with lab/strategy/009 (A0), and the Density
+    # hexagons with step 4: at street zoom a bin of one is a point. Regions by jurisdiction are
+    # all the map draws, so it offers no layer mode to switch back to.
+    if "data-atlas-mapmode" in atlas:
+        return _fail("atlas_console", "the Map draws regions only: a layer-mode control "
+                     "(data-atlas-mapmode) offers a layer the Atlas withdrew")
+    # Step 4 (A5): the page says what it will not show, the minimum cell size among it, and
+    # links each limit to the constitutional rule that holds it on the Athena board.
+    if ("What the Atlas will not show" not in atlas
+            or not all(f"#rule-{r}" in atlas for r in ("c6", "c8"))):
+        return _fail("atlas_console", "the Atlas must say what it will not show, each limit linked "
+                     "to its rule on the Athena board (#rule-c6, #rule-c8)")
     if "data-atlas-projection" not in atlas:
         return _fail("atlas_console", "the globe must be an opt-in projection toggle "
                      "(data-atlas-projection), not the default map view")
@@ -7521,32 +7652,32 @@ def check_atlas_console(root: pathlib.Path) -> list[Finding]:
             return _fail("atlas_console", f"{fn_name} must not return a location column (C6): the "
                          "analytical console counts zero-knowledge events but never locates them")
 
-    # v9.252: the row-level records function is keyset-paginated (a cursor pair,
-    # not an OFFSET) and redacts zero-knowledge rows — the subject and location
-    # are withheld exactly as the map never plots a ZK event (C6).
-    recs = re.search(r"CREATE OR REPLACE FUNCTION atlas_records\(.*?\$\$;", sql, re.S)
-    if not recs:
-        return _fail("atlas_console", "11_atlas.sql must define atlas_records (the records data grid)")
-    recs_body = recs.group(0)
-    if "p_cursor_ts" not in recs_body or "p_cursor_id" not in recs_body:
-        return _fail("atlas_console", "atlas_records must be keyset-paginated (a p_cursor_ts/p_cursor_id "
-                     "cursor, not an OFFSET) so deep pages stay O(page) at millions of events")
-    if "(zero-knowledge)" not in recs_body:
-        return _fail("atlas_console", "atlas_records must redact zero-knowledge rows (C6): the subject "
-                     "is withheld as '(zero-knowledge)' and the location is not shown")
+    # lab/strategy/009, step A0: THE ATLAS SHOWS NO PERSON AND NO EVENT. Until 2026-10-02 four
+    # atlas functions returned one row per event, naming the holder and the credential (the
+    # points with coordinates too), to every signed-in role, and their routes wrote no
+    # AuditAccessLog row; a fifth route focused the map on one person's located history. A
+    # single event is read on the verification log, which records the read, and one person's
+    # history only through the warrant audit.
+    surfaces, nfn, nroute = _atlas_person_surfaces(root)
+    if nfn < 5 or nroute < 5:
+        return _fail("atlas_console", "found %d atlas_* function(s) and %d Atlas route(s); the parse "
+                     "has broken, so the no-person rule below would pass by reading nothing"
+                     % (nfn, nroute))
+    if surfaces:
+        return _fail("atlas_console", "the Atlas returns or selects a person, a credential or a single "
+                     "event: " + "; ".join(surfaces[:4]) + ". It shows counts only (lab/strategy/009): "
+                     "an event is read on the verification log, which records the read, and one "
+                     "person's history only through the warrant audit")
 
-    # v9.253: the Map v2 aggregates — a hexbin density surface and a
-    # jurisdiction rollup. Their C6 posture (hexbin excludes ZK; the rollup
-    # counts ZK but never locates it) is pinned by check_c6_atlas_redacts_zk_location.
-    for fn_name in ("atlas_hexbin", "atlas_geo_jurisdictions"):
-        if f"CREATE OR REPLACE FUNCTION {fn_name}(" not in sql:
-            return _fail("atlas_console", f"11_atlas.sql must define {fn_name} (Map v2)")
+    # The map's one aggregate, the jurisdiction rollup. Its C6 posture (it counts zero-knowledge
+    # verifications and returns no location) is pinned by check_c6_atlas_redacts_zk_location.
+    if "CREATE OR REPLACE FUNCTION atlas_geo_jurisdictions(" not in sql:
+        return _fail("atlas_console", "11_atlas.sql must define atlas_geo_jurisdictions (the map's regions)")
 
     # The analytical endpoints, replica-routed and capped.
     app = _read_app(root)
     for route in ("/api/atlas/series", "/api/atlas/breakdown", "/api/atlas/crosstab",
-                  "/api/atlas/facet/agencies", "/api/atlas/records",
-                  "/api/atlas/hexbin", "/api/atlas/geo/jurisdictions"):
+                  "/api/atlas/facet/agencies", "/api/atlas/geo/jurisdictions"):
         if f"@app.route('{route}')" not in app:
             return _fail("atlas_console", f"the application must expose {route}")
     # both must be replica-read routes (analytical reads, no read-your-writes need)
@@ -7561,28 +7692,22 @@ def check_atlas_console(root: pathlib.Path) -> list[Finding]:
     if "_ATLAS_CROSSTAB_ROWS" not in app or "_ATLAS_CROSSTAB_COLS" not in app:
         return _fail("atlas_console", "the cross-tab row/column dimensions must be whitelisted "
                      "server-side (_ATLAS_CROSSTAB_ROWS / _ATLAS_CROSSTAB_COLS)")
-    # The records grid is a replica read like the aggregates (analytical, no
-    # read-your-writes need) and is bounded by the event cap (C8).
-    rec_head = app.rsplit("@app.route('/api/atlas/records')", 1)[-1].split("def api_atlas_records", 1)[0]
-    if "@replica_reads" not in rec_head:
-        return _fail("atlas_console", "api_atlas_records must be @replica_reads")
-    # The Map v2 endpoints are replica reads too (analytical, no read-your-writes).
-    for route, fn in (("/api/atlas/hexbin", "def api_atlas_hexbin"),
-                      ("/api/atlas/geo/jurisdictions", "def api_atlas_geo_jurisdictions")):
+    # The regions endpoint is a replica read too (analytical, no read-your-writes).
+    for route, fn in (("/api/atlas/geo/jurisdictions", "def api_atlas_geo_jurisdictions"),):
         head = app.rsplit(f"@app.route('{route}')", 1)[-1].split(fn, 1)[0]
         if "@replica_reads" not in head:
             return _fail("atlas_console", f"{fn[4:]} must be @replica_reads")
 
-    # v9.265 (ship 7 — Trends): the temporal-rhythm heatmap and the
-    # composition-over-time stack. Both are bounded (168 cells / top-K + Other),
-    # partition-pruned (COALESCE(p_since, '-infinity')), and replica-read.
+    # v9.265 (ship 7, Trends): the temporal-rhythm heatmap and the composition-over-time stack.
+    # Both are bounded (168 cells / top-K + Other), windowed on COALESCE(p_since, '-infinity')
+    # (check_atlas_rollups_prune pins where), and replica-read.
     for fn_name in ("atlas_heatmap", "atlas_series_stacked"):
         if f"FUNCTION {fn_name}(" not in sql:
             return _fail("atlas_console", f"11_atlas.sql must define {fn_name} (a Trends aggregate)")
-        # windowed on the parameter so the generic plan prunes (v9.260 discipline)
+        # windowed on the parameter, so a generic plan reaches the rollups' key (v9.260 discipline)
         if f"{fn_name}(" in sql and "COALESCE(p_since" not in sql:
-            return _fail("atlas_console", f"{fn_name} must window on event_timestamp >= COALESCE(p_since, "
-                         "'-infinity') so it prunes the monthly partitions")
+            return _fail("atlas_console", f"{fn_name} must window on COALESCE(p_since, '-infinity') "
+                         "so a generic plan can use the window")
     for route, fn in (("/api/atlas/heatmap", "def api_atlas_heatmap"),
                       ("/api/atlas/stacked", "def api_atlas_stacked")):
         if f"@app.route('{route}')" not in app:
@@ -7597,54 +7722,65 @@ def check_atlas_console(root: pathlib.Path) -> list[Finding]:
         return _fail("atlas_console", "the Trends tab must mount a heatmap (data-trends-heatmap), a stacked "
                      "series (data-trends-stacked), and a dimension selector (data-trends-dim)")
     return _ok("atlas_console",
-               "the Atlas is a coordinated analytical console: a global faceted filter bar (with an "
-               "agency typeahead) drives a bounded Overview, a searchable Breakdown of cross-tabs, a "
-               "keyset-paginated Records grid, and an aggregation-first Map (Regions by jurisdiction "
-               "default | Density hexbin | Points drill, globe opt-in); the non-geographic rollups plus "
-               "atlas_records, atlas_hexbin and atlas_geo_jurisdictions feed it, all capped (C8) so "
-               "zero-knowledge events are counted but never located (C6)")
+               "the Atlas is a coordinated analytical console that shows counts only: a global "
+               "faceted filter bar (with an agency typeahead) drives a bounded Overview, a searchable "
+               "Breakdown of cross-tabs, Trends, and a Map of regions by jurisdiction (globe opt-in), "
+               "all capped (C8), zero-knowledge events counted and never located (C6), and a panel "
+               "saying what it will not show; none of its %d functions or %d routes returns or "
+               "selects a person, a credential or a single event (lab/strategy/009)" % (nfn, nroute))
 
 
 def check_atlas_rollups_prune(root: pathlib.Path) -> list[Finding]:
-    """Roadmap P2.14 S5 (v9.260, benchmark-driven): the Atlas roll-ups filter the
-    monthly-partitioned event tables by event_timestamp, so a windowed query must
-    PRUNE to the relevant partitions. Two SQL shapes silently defeat partition
-    pruning under the GENERIC plan a parameterized statement gets (the app's real
-    path), turning a 'last 24h' query into a scan of every month of history:
+    """The Atlas costs the same at any population (lab/strategy/009, step 4).
 
-      1. `p_since IS NULL OR event_timestamp >= p_since` — the OR-NULL guard.
-      2. `event_timestamp >= params.t_start` — the window reached through a CTE
-         column instead of the parameter, so the planner can't prune on it.
+    Until step 4 the Atlas aggregated the monthly-partitioned event tables, and this check
+    (v9.260) pinned the window that let a generic plan prune them, `event_timestamp >=
+    COALESCE(p_since, '-infinity'::timestamp)`, against the two shapes that silently defeated
+    it. Pruning bounded a window to its months, and a year's window still read a year of
+    events. The Atlas now reads the activity rollups, which number the hours times the
+    authorities and contexts active in them, so this pins what replaced the pruning:
 
-    The fix is `event_timestamp >= COALESCE(p_since, '-infinity'::timestamp)`,
-    which prunes on a concrete since and still scans everything for an all-time
-    (NULL) query. Pin that neither pruning-defeat can return, and that the fix is
-    present. The behaviour itself is proved under a forced generic plan by
-    test_app.AtlasPartitionPruningTests."""
+      1. no atlas_* function reads an event table (VerificationEvent, TokenLifecycleEvent);
+      2. the two cell readers window the rollups on `bucket >= COALESCE(p_since,
+         '-infinity'::TIMESTAMP)`, the same generic-plan-safe shape on the rollups' leading key,
+         in each of their three branches (hourly or daily, and the counts not yet folded);
+      3. the OR-NULL guard, `p_since IS NULL OR ...`, is nowhere in the file.
+
+    The behaviour is proved by privilege in test_app.AtlasReadsNoEventTableTests: the
+    application role loses SELECT on both event tables and every reader still answers."""
     atlas = _read(root, "polaris_sql/11_atlas.sql")
     if not atlas:
         return _fail("atlas_prune", "polaris_sql/11_atlas.sql is missing")
-    bad_ornull = re.findall(r"p_since\s+IS NULL OR[^)\n]*event_timestamp", atlas)
-    if bad_ornull:
+    fns = _atlas_functions(atlas)
+    if len(fns) < 8:
+        return _fail("atlas_prune", "found %d atlas_* function(s) in 11_atlas.sql; the parse has "
+                                    "broken, so 'none reads an event table' would pass by reading "
+                                    "nothing" % len(fns))
+    events = sorted(name for name, body in fns
+                    if re.search(r"\b(?:VerificationEvent|TokenLifecycleEvent)\b",
+                                 _strip_sql_comments(body), re.I))
+    if events:
         return _fail("atlas_prune",
-                     f"{len(bad_ornull)} Atlas roll-up predicate(s) still gate the event_timestamp window "
-                     "with `p_since IS NULL OR ...`, which defeats partition pruning under the generic "
-                     "plan; use `event_timestamp >= COALESCE(p_since, '-infinity'::timestamp)`")
-    if re.search(r"event_timestamp\s*>=\s*params\.t_start", atlas):
+                     "atlas function(s) read an event table: %s. The Atlas reads the activity "
+                     "rollups, so what it costs follows the hours a window spans and not the "
+                     "population (lab/strategy/009, step 4)" % ", ".join(events[:4]))
+    if re.search(r"p_since\s+IS\s+NULL\s+OR", _strip_sql_comments(atlas), re.I):
         return _fail("atlas_prune",
-                     "an Atlas time-series roll-up reaches the window through `params.t_start` (a CTE "
-                     "column), which the planner cannot prune on; reference COALESCE(p_since, "
-                     "'-infinity'::timestamp) directly in the WHERE")
-    if "event_timestamp >= COALESCE(p_since" not in atlas:
-        return _fail("atlas_prune",
-                     "the Atlas roll-ups must window on `event_timestamp >= COALESCE(p_since, "
-                     "'-infinity'::timestamp)` so a concrete since prunes partitions and a NULL since "
-                     "still scans all of history")
+                     "a window is gated with `p_since IS NULL OR ...`, which a generic plan cannot "
+                     "use an index through; window on `bucket >= COALESCE(p_since, "
+                     "'-infinity'::TIMESTAMP)`")
+    cells = dict(fns)
+    for name in ("atlas_verification_cells", "atlas_lifecycle_cells"):
+        if cells.get(name, "").count("bucket >= COALESCE(p_since, '-infinity'::TIMESTAMP)") != 3:
+            return _fail("atlas_prune",
+                         "%s must window each of its three branches on `bucket >= "
+                         "COALESCE(p_since, '-infinity'::TIMESTAMP)`, so a concrete window "
+                         "reaches the rollups' leading key under a generic plan" % name)
     return _ok("atlas_prune",
-               "the Atlas roll-ups window on event_timestamp >= COALESCE(p_since, '-infinity') so a "
-               "concrete window prunes to the relevant monthly partitions under the generic plan the app "
-               "runs, while an all-time (NULL) query still scans every partition (proved under a forced "
-               "generic plan in test_app.AtlasPartitionPruningTests)")
+               "no Atlas function reads an event table (%d read): each sums the activity rollups, "
+               "windowed on bucket >= COALESCE(p_since, '-infinity') in every branch of the two "
+               "cell readers, so a window costs the hours it spans at any population (proved by "
+               "privilege in test_app.AtlasReadsNoEventTableTests)" % len(fns))
 
 
 def check_sim_mode_gated(root: pathlib.Path) -> list[Finding]:
@@ -10310,6 +10446,22 @@ def check_athena_rule_enforcement_resolves(root: pathlib.Path) -> list[Finding]:
             return _fail("athena_rule_enf",
                          f"{rule_code} claims enforcement by {kind} `{name}`, which does not exist in the "
                          "tree; the constitution-to-mechanism map has drifted from the code")
+    # C1 IS LISTED TABLE BY TABLE (lab/strategy/009, step B1), so the board can name a table that
+    # lost its guard. The C1 rows that name a trigger must guard exactly the audit of record:
+    # one missing is a table the board would never look at, one extra is a claim about a table
+    # the constitution does not cover.
+    code = _strip_sql_comments(_all_sql(root))
+    guarded = {trg: tbl for trg, tbl in re.findall(
+        r"CREATE\s+TRIGGER\s+(\w+)\s+BEFORE\s+UPDATE\s+OR\s+DELETE\s+ON\s+(\w+)", code, re.I)}
+    c1 = [name for code_, kind, name in rows if code_ == "C1" and kind == "TRIGGER" and name in guarded]
+    covered = {guarded[n].lower() for n in c1}
+    aor = {t.lower() for t in _AOR_TABLES}
+    if covered != aor:
+        missing, extra = sorted(aor - covered), sorted(covered - aor)
+        return _fail("athena_rule_enf",
+                     "the C1 trigger rows in athena_rule_enforcement do not cover the audit of record table "
+                     "by table" + (": no row for " + ", ".join(missing) if missing else "")
+                     + ("; rows for tables outside it: " + ", ".join(extra) if extra else ""))
     enforced = {r[0] for r in rows}
     declared = set(re.findall(r"\(\s*'([^']*)'\s*,", rule_block))
     unenforced = declared - enforced
@@ -10391,9 +10543,86 @@ def check_athena_console(root: pathlib.Path) -> list[Finding]:
     if "athena-console.js" not in tpl:
         return _fail("athena_console", "athena.html does not include the external athena-console.js")
 
+    # lab/strategy/009, step B1: THE CONSTITUTION TAB READS THE LIVE CATALOGUE. Until 2026-10-02
+    # it rendered the curated rows and called them live; the check behind them reads the
+    # repository, so a database with a trigger switched off showed the same page. The board
+    # module must look each kind of mechanism up in the catalogue, the route must build the page
+    # from it, and the page must say when it read it. Falsifier 6 of the record, as a check.
+    board = _read(root, "polaris_web/athena_board.py")
+    if not board:
+        return _fail("athena_console", "polaris_web/athena_board.py is missing: the Constitution tab would "
+                     "have nothing live to show")
+    for catalogue in ("pg_trigger", "pg_constraint", "pg_index", "pg_proc", "tgenabled", "convalidated",
+                      "indisvalid"):
+        if catalogue not in board:
+            return _fail("athena_console", f"athena_board.py no longer reads `{catalogue}`; the board would "
+                         "report a mechanism as in force without asking the database")
+    page = (_fn_body(app, "athena_console") or "") + (_fn_body(app, "_athena_page") or "")
+    if not re.search(r"athena_board\.read_board\(", page):
+        return _fail("athena_console", "athena_console() does not build the page from athena_board.read_board(); "
+                     "the Constitution tab would show curated rows as if they were live")
+    if "verified_at" not in tpl:
+        return _fail("athena_console", "athena.html does not say when the board read the database (verified_at)")
+    try:
+        tree = ast.parse(board)
+    except SyntaxError as exc:
+        return _fail("athena_console", "athena_board.py does not parse (%s)" % exc)
+    docs = {id(n.body[0].value) for n in ast.walk(tree)
+            if isinstance(n, (ast.Module, ast.FunctionDef, ast.ClassDef)) and n.body
+            and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant)}
+    for node in ast.walk(tree):
+        text = (node.value if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                and id(node) not in docs else node.id if isinstance(node, ast.Name) else None)
+        for bad in person:
+            if text and re.search(r"\b" + re.escape(bad) + r"\b", text):
+                return _fail("athena_console", f"athena_board.py references the person surface `{bad}`; the "
+                             "board reads the catalogue and the curated rows only")
+
+    # lab/strategy/009, step B2: THE SELF-TEST CANNOT WRITE. It attempts forbidden writes on the
+    # application's own connection; what makes that safe is that nothing it does is kept. So the
+    # module never commits and never switches to autocommit, rolls the transaction back in a
+    # finally, and rolls every probe's savepoint back in a finally whether the probe was refused or
+    # accepted; and the route that runs it is POST, CSRF-protected, admin and auditor only.
+    # Falsifier 7 of the record, as a check.
+    selftest = _read(root, "polaris_web/athena_selftest.py")
+    if not selftest:
+        return _fail("athena_console", "polaris_web/athena_selftest.py is missing: the board's self-test is gone")
+    try:
+        st_tree = ast.parse(selftest)
+    except SyntaxError as exc:
+        return _fail("athena_console", "athena_selftest.py does not parse (%s)" % exc)
+    for node in ast.walk(st_tree):
+        if isinstance(node, ast.Attribute) and node.attr in ("commit", "autocommit"):
+            return _fail("athena_console", f"athena_selftest.py touches `.{node.attr}`: the self-test's transaction "
+                         "must only ever be rolled back")
+
+    def _finally_calls(fn_name, needle):
+        fn = next((n for n in ast.walk(st_tree) if isinstance(n, ast.FunctionDef) and n.name == fn_name), None)
+        if fn is None:
+            return None
+        return any(isinstance(t, ast.Try) and needle in ast.unparse(ast.Module(body=t.finalbody, type_ignores=[]))
+                   for t in ast.walk(fn))
+    for fn_name, needle, what in (("run", "rollback()", "rolls the whole transaction back"),
+                                  ("_run_probe", "ROLLBACK TO SAVEPOINT", "rolls each probe's savepoint back")):
+        found = _finally_calls(fn_name, needle)
+        if not found:
+            return _fail("athena_console", f"athena_selftest.{fn_name}() no longer {what} in a finally; a probe "
+                         "the database accepted would be kept")
+    deco = re.search(r"@app\.route\('/athena/self-test',\s*methods=\[\s*'POST'\s*\]\)(.*?)\ndef athena_self_test",
+                     app, re.S)
+    if not deco:
+        return _fail("athena_console", "the self-test route must be @app.route('/athena/self-test', methods=['POST'])")
+    for needed in ("login_required", "require_role('admin', 'auditor')", "csrf_protect"):
+        if needed not in deco.group(1):
+            return _fail("athena_console", f"the self-test route is not {needed}: it attempts forbidden writes and "
+                         "is for an administrator or an auditor, on a request they meant")
+
     return _ok("athena_console",
                "the Athena console (4 tabs, 1 page + 3 drill-down routes) is login-gated, reads only the "
-               "person-free Athena layer, and renders CSP-safe via createElement")
+               "person-free Athena layer, renders CSP-safe via createElement, and builds its Constitution "
+               "tab from the live catalogue (athena_board), saying when it read it; its self-test never "
+               "commits, rolls every probe back in a finally, and runs only on an administrator's or "
+               "auditor's POST")
 
 
 # ---------------------------------------------------------------------------
@@ -17876,31 +18105,47 @@ def check_capacity_model(root: pathlib.Path) -> list[Finding]:
                "never reported met" + tail)
 
 
-def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
-    """A read of an audited table must leave a row even when it hides behind a procedure (P7.7).
+#: What makes a row-returning function's rows somebody's history: a column that is one event's own
+#: key or that identifies a person or a credential. A function returning only counts per bucket,
+#: area or category hands the caller no one's history, which is the exemption the transparency
+#: program states ("procedures that merely count ... are not caught").
+_AUDITED_ROW_COLUMNS = re.compile(
+    r"\b(event_id|token_id|token_value|predecessor_token_id|individual_id|legal_name|"
+    r"date_of_birth|duress_code_hash|holder\w*|subject\w*)\b", re.I)
 
-    AuditAccessLog records who read the four tables that hold people's histories. Eight routes
+
+def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
+    """A read of an audited table must leave a row even when it hides behind a function (P7.7).
+
+    AuditAccessLog records who read the tables that hold people's histories. Eight routes
     called the helper. The warrant-audit route did not, and it is the single most invasive read
     the system offers: one named person's entire verification history, on an authority's say-so.
 
-    IT ESCAPED BECAUSE THE READ WAS BEHIND A FUNCTION NAME. Every other read of VerificationEvent
-    is a SELECT in app.py, so anybody auditing the file by eye or by grep finds it. UC-7 selects
-    from uc7_warrant_audit(), the table appears only in 05_procedures.sql, and the route reads as
-    if it touched nothing. A review looking for unlogged reads of a table would have had to know
-    which procedures return that table's rows.
+    IT ESCAPED BECAUSE THE READ WAS BEHIND A FUNCTION NAME. UC-7 selects from
+    uc7_warrant_audit(), the table appears only in 05_procedures.sql, and the route reads as if
+    it touched nothing. So the rule is stated where the evasion lives: a function that RETURNS
+    ROWS OF a tracked table's history is an audited read, and every route calling it must log.
 
-    So the rule is stated where the evasion lives: a stored procedure that RETURNS ROWS SOURCED
-    FROM a tracked audit table is an audited read, and every route calling it must log. Procedures
-    that merely count or purge internally are not caught, because they hand the caller nothing.
+    AND THE SAME ESCAPE, ONE FILE OVER (2026-10-02, lab/strategy/009). Until then this check
+    parsed 05_procedures.sql alone. Four Atlas functions in 11_atlas.sql (the map's points, the
+    event feed, the records grid) returned one row per verification or lifecycle event naming
+    the holder and the credential, to every signed-in role, and their routes wrote no row. A
+    check whose source set is narrower than the surface it claims is the defect it was written
+    to catch. It now reads every SQL source a database is built from, the load files and the
+    forward migrations, one function at a time (its body bounded by its own dollar quotes, so a
+    function cannot absorb the next file).
 
-    The check refuses to pass vacuously. If it finds no such procedure at all it fails, since that
-    means the parse broke rather than that the system stopped exposing audit data."""
+    Which rows are a history is now said rather than implied: a returned column that is an
+    event's own key or identifies a person or a credential (_AUDITED_ROW_COLUMNS), a SETOF a
+    table, or an argument that selects one person's or one credential's rows. A function that
+    returns only counts hands the caller nothing, as before. The check refuses to pass
+    vacuously: finding no such function means the parse broke."""
     name = "audited_reads_are_logged"
     sec = _read(root, "polaris_web/security.py")
-    proc = _read(root, "polaris_sql/05_procedures.sql")
     app = _read_app(root)
-    if not sec or not proc or not app:
-        return _fail(name, "security.py, 05_procedures.sql and the application must all be present")
+    sql = _all_sql(root)
+    if not sec or not sql or not app:
+        return _fail(name, "security.py, the SQL sources and the application must all be present")
 
     m = re.search(r"AUDIT_TABLES_TRACKED\s*=\s*\(([^)]*)\)", sec)
     if not m:
@@ -17912,40 +18157,45 @@ def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
     if not tracked:
         return _fail(name, "AUDIT_TABLES_TRACKED parsed empty")
 
-    # Procedures that hand a tracked table's rows to their caller.
-    exposing = []
-    parts = re.split(r"(?im)^CREATE OR REPLACE (?:FUNCTION|PROCEDURE)\s+(\w+)", proc)
-    for k in range(1, len(parts), 2):
-        pname, body = parts[k], parts[k + 1]
-        if not re.search(r"(?i)RETURNS\s+(?:TABLE|SETOF)\b", body):
+    # Functions that hand a tracked table's history to their caller, from every SQL source.
+    exposing = set()
+    for fm in re.finditer(r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\s+(\w+)\s*\((.*?)"
+                          r"\$(\w*)\$(.*?)\$\3\$", sql, re.S | re.I):
+        pname, head, body = fm.group(1), fm.group(2), fm.group(4)
+        rt = re.search(r"RETURNS\s+(?:TABLE\s*\((.*?)\)\s*(?:AS|LANGUAGE)|(SETOF)\b)", head, re.S | re.I)
+        if not rt:
             continue
-        if any(re.search(r"(?i)\b(?:FROM|JOIN)\s+" + t + r"\b", body) for t in tracked):
-            exposing.append(pname)
+        if not any(re.search(r"(?i)\b(?:FROM|JOIN)\s+" + t + r"\b", body) for t in tracked):
+            continue
+        params = head[:rt.start()]
+        if (rt.group(2) or _AUDITED_ROW_COLUMNS.search(rt.group(1) or "")
+                or re.search(r"(?i)\b\w*(?:individual_id|token_id|token_value)\b", params)):
+            exposing.add(pname)
     if not exposing:
         return _fail(name,
-                     "found no stored procedure returning rows from an audited table. The parse "
+                     "found no function returning rows of an audited table's history. The parse "
                      "has broken; this check must not pass by finding nothing to check")
 
-    # Top-level route bodies in app.py, comments stripped so a mention of the
-    # helper in prose cannot satisfy the requirement to call it.
+    # Top-level route bodies across the package, comments stripped so a mention of the helper
+    # in prose cannot satisfy the requirement to call it.
     blocks = re.split(r"(?m)^def\s+(\w+)\s*\(", app)
     for k in range(1, len(blocks), 2):
         fname, body = blocks[k], blocks[k + 1]
         code = "\n".join(ln for ln in body.splitlines()
                           if not ln.lstrip().startswith("#"))
-        for pname in exposing:
+        for pname in sorted(exposing):
             if not re.search(r"(?i)(?:FROM|CALL)\s+" + pname + r"\s*\(", code):
                 continue
             if "record_audit_access(" not in code:
                 return _fail(name,
                              f"{fname}() reads audited rows through {pname}() and records no "
-                             "AuditAccessLog row. A read that hides behind a procedure name is "
+                             "AuditAccessLog row. A read that hides behind a function name is "
                              "still a read of somebody's history, and the most invasive one in "
                              "the system is exactly where the omission is least visible")
     return _ok(name,
-               f"every route reading audited rows through {len(exposing)} row-returning "
-               "procedure(s) leaves an AuditAccessLog row; the tracked list is read from "
-               "security.py rather than restated here")
+               f"every route reading audited rows through the {len(exposing)} function(s) that "
+               "return a history, from any SQL source, leaves an AuditAccessLog row; the tracked "
+               "list is read from security.py rather than restated here")
 
 
 def check_transparency_program(root: pathlib.Path) -> list[Finding]:
@@ -21017,6 +21267,10 @@ _GLOBAL_LOCK_DOMAINS = {
         "one fold of the enrolment counts at a time, by design (lab/strategy/008, step 4): the "
         "triggers take it only with pg_try_advisory_xact_lock and skip the fold when it is held, "
         "so no writer waits on it; only the owner's rebuild waits",
+    "polaris.activity.fold":
+        "one fold of the activity rollups at a time, by design (lab/strategy/009, step 4): the "
+        "triggers take it only with pg_try_advisory_xact_lock and skip the fold when it is held, "
+        "so no writer waits on it; only the owner's recount and purge wait",
 }
 
 
@@ -21040,6 +21294,7 @@ _GLOBAL_LOCK_DOMAINS = {
 _TRY_LOCKS = {
     "uc_fold_population_counts": "test_a_fold_skips_while_a_recount_holds_the_lock",
     "uc_fold_enrollment_counts": "test_an_enrolment_fold_skips_while_a_rebuild_holds_the_lock",
+    "uc_fold_activity_rollups": "test_an_activity_fold_skips_while_a_recount_holds_the_lock",
 }
 
 
@@ -23785,6 +24040,74 @@ def check_unread_signed_fields_tool_is_green(root: pathlib.Path) -> list[Finding
                      "canonicalisers)" % (m.group(1), m.group(2)))
 
 
+# ---------------------------------------------------------------------------
+# docs/reference/openapi.yaml is the machine-readable twin of the /api/v1 and
+# OpenID4VCI surface documented in API.md: a client generator reads it instead
+# of the prose. It must not drift from the routes, so it is pinned to API.md's
+# own /api/v1 headings, which check_api_routes_documented already pins to the
+# @app.route decorators. Parameter names and converters do not matter.
+# ---------------------------------------------------------------------------
+def _openapi_api_v1_routes(spec_text: str) -> set[tuple[str, str]]:
+    # Parsed with the standard library, not PyYAML: the invariant layer (polaris_checks.run) runs
+    # in CI with no pip install, so a check may import only the standard library. The spec is
+    # emitted with 2-space path keys and 4-space method keys under `paths:`, and this reads that
+    # shape; a path key is normalised so parameter names and converters do not matter.
+    out: set[tuple[str, str]] = set()
+    in_paths = False
+    current = None
+    for line in spec_text.splitlines():
+        if re.match(r"^paths:\s*$", line):
+            in_paths, current = True, None
+            continue
+        if re.match(r"^\S", line):            # any other top-level key ends the paths block
+            in_paths, current = False, None
+            continue
+        if not in_paths:
+            continue
+        path_key = re.match(r"^  (/[^:\s]+):\s*$", line)          # a path at 2-space indent
+        if path_key:
+            current = path_key.group(1)
+            continue
+        method = re.match(r"^    (get|post|put|patch|delete):\s*$", line)   # a method at 4-space
+        if method and current and current.startswith("/api/v1"):
+            out.add((method.group(1).upper(),
+                     _norm_api_path(current.replace("{", "<").replace("}", ">"))))
+    return out
+
+
+def _api_md_v1_routes(doc: str) -> set[tuple[str, str]]:
+    out: set[tuple[str, str]] = set()
+    for heading in re.findall(r"^#{2,4} (.+)$", doc, re.M):
+        for method, path in re.findall(r"`(GET|POST|PUT|PATCH|DELETE) (/api/v1[^`]*)`", heading):
+            out.add((method, _norm_api_path(path)))
+    return out
+
+
+def check_openapi_covers_api_v1(root: pathlib.Path) -> list[Finding]:
+    doc = _read(root, "docs/reference/API.md")
+    spec = _read(root, "docs/reference/openapi.yaml")
+    if not doc or not spec:
+        return _fail("openapi_covers_api_v1",
+                     "docs/reference/API.md or docs/reference/openapi.yaml is missing")
+    try:
+        documented = _api_md_v1_routes(doc)
+        specified = _openapi_api_v1_routes(spec)
+    except Exception as exc:  # a spec that does not parse is the worst drift
+        return _fail("openapi_covers_api_v1", f"docs/reference/openapi.yaml did not parse: {exc}")
+    if not documented:
+        return _fail("openapi_covers_api_v1", "no /api/v1 route headings found in docs/reference/API.md")
+    missing = sorted("%s %s" % r for r in documented - specified)
+    phantom = sorted("%s %s" % r for r in specified - documented)
+    if missing:
+        return _fail("openapi_covers_api_v1",
+                     f"{len(missing)} /api/v1 route(s) in API.md are absent from openapi.yaml: {', '.join(missing)}")
+    if phantom:
+        return _fail("openapi_covers_api_v1",
+                     f"openapi.yaml describes /api/v1 route(s) not in API.md: {', '.join(phantom)}")
+    return _ok("openapi_covers_api_v1",
+               f"openapi.yaml covers all {len(documented)} /api/v1 routes in API.md, with no phantom")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_pooler_keeps_the_operator_scope,
     check_publishable_packages_keep_their_dependency_budget,
@@ -24053,6 +24376,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_local_clock_convention,
     check_c6_atlas_redacts_zk_location,
     check_c6_app_read_paths_redact,
+    check_event_locations_unindexed,
     check_coercion_evidence_retained,
     check_zk_verify_anti_replay,
     check_no_migration_column_drift,
@@ -24125,6 +24449,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_security_suite_refuses_skips_in_ci,
     check_no_session_date_in_sql,
     check_product_sessions_pin_utc,
+    check_openapi_covers_api_v1,
 ]
 
 

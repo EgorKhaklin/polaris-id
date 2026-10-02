@@ -175,6 +175,21 @@ GROWTH = {
         "why": "one row per person created and two per change of enrolment status or "
                "jurisdiction, at about three rows per enrollment",
     },
+    "VerificationRollupDelta": {
+        # lab/strategy/009, step 4. Folded rows are deleted, but the id keeps counting: every
+        # statement that records verifications appends one row per hour and cell it touches.
+        "rate": lambda t: t["verification_sustained"],
+        "basis": DERIVED,
+        "why": "at most one row per verification: a statement recording one appends one, and a "
+               "bulk statement one per hour and cell",
+    },
+    "LifecycleRollupDelta": {
+        # lab/strategy/009, step 4. As above, for each statement recording lifecycle events.
+        "rate": lambda t: 5 * t["enrollment_surge"] / 86400.0,
+        "basis": ASSUMED,
+        "why": "at most one row per lifecycle event, so TokenLifecycleEvent's rate and its "
+               "assumption of about five per credential",
+    },
     "DuressEvent": {
         "rate": lambda t: 1.0 / 86400.0,
         "basis": ASSUMED,

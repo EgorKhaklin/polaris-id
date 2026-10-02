@@ -443,6 +443,26 @@ BEGIN
     END IF;
 END$$;
 
+-- 2026-10-02 (lab/strategy/009, step 4). The activity rollups the Atlas reads, likewise: written only
+-- by the owner's triggers and routines; the application role reads them and may fold. Recounting
+-- them SHARE-locks both event tables, and is the owner's.
+REVOKE INSERT, UPDATE, DELETE ON VerificationRollup, VerificationRollupDaily, VerificationRollupDelta,
+    LifecycleRollup, LifecycleRollupDaily, LifecycleRollupDelta FROM polaris_app;
+DO $$
+DECLARE
+    v_sig TEXT;
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'polaris_app') THEN
+        FOR v_sig IN
+            SELECT p.oid::regprocedure::text
+              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = 'public' AND p.proname = 'uc_rebuild_activity_rollups'
+        LOOP
+            EXECUTE format('REVOKE EXECUTE ON ROUTINE %s FROM polaris_app', v_sig);
+        END LOOP;
+    END IF;
+END$$;
+
 -- 2026-09-25: the minimum anonymity set for a zero-knowledge epoch, 20 unless something already
 -- set it (the notional sample data sets 1, and says why). uc11_close_epoch refuses to close an
 -- epoch below it and the verifier refuses a proof against one.

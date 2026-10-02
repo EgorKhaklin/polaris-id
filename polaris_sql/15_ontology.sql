@@ -162,10 +162,9 @@ SELECT
     NULL::VARCHAR(20)      AS verification_outcome,
     NULL::VARCHAR(20)      AS disclosure_level,
     le.reason_code         AS reason_code,
-    jsonb_build_object(
-        'latitude',  le.latitude,
-        'longitude', le.longitude
-    )                      AS detail_jsonb
+    -- A transition's detail was its coordinates. Nothing shows where an event happened, so the
+    -- view no longer reads them (lab/strategy/009 step 4c), and a transition has no detail left.
+    '{}'::jsonb            AS detail_jsonb
 FROM TokenLifecycleEvent le
 UNION ALL
 SELECT

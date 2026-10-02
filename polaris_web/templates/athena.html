@@ -1,30 +1,55 @@
-{# Athena — the authority-and-constitution console (v9.266, roadmap P6.8).
-   Read-only operator surface for polaris_sql/16_athena.sql. The Constitution
-   and Trust tabs are server-rendered from the Athena views; the Authority and
-   Proof tabs drive the four Athena functions via /api/athena/* fetches in
-   athena-console.js. Inline <script> is blocked by CSP (C5); all logic is
-   external. No person data reaches this page. #}
+{# Athena: the constitution as this database holds it (lab/strategy/009, step B1), then the
+   authority, proof and trust views. The Constitution tab is the board athena_board.read_board()
+   builds from the live catalogue at request time; the Authority and Proof tabs drive the Athena
+   functions through /api/athena/* in athena-console.js. Inline <script> is blocked by CSP (C5).
+   No person data reaches this page. #}
 {% extends "base.html" %}
 {% block title %}Athena{% endblock %}
 {% block body_class %} body-athena{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='atlas.css') }}?v={{ polaris_version }}">{% endblock %}
 {% block content %}
-<div class="athena-shell">
-  <header class="athena-head">
-    <div class="athena-head-titles">
-      <h1>Athena</h1>
-      <p class="athena-sub">The authority-and-constitution layer. Read-only:
-        why authority exists, what enforces each constitutional rule, and what
-        breaks if a key or algorithm is retired.</p>
+{% import "_ui.html" as ui with context %}
+{% set s = board.summary %}
+{# The self-test is instance-wide: an account bound to one authority is refused it (app.py). #}
+{% set can_selftest = current_user.role in ('admin', 'auditor') and session.get('operator_agency_id') is none %}
+{% macro probe_pill(status) -%}
+{% if status == 'refused' %}{{ ui.pill('success', 'Refused') }}
+{%- elif status == 'refused_otherwise' %}{{ ui.pill('warn', 'Refused, by something else') }}
+{%- elif status == 'owner_exempt' %}{{ ui.pill('warn', 'Accepted: owner exempt') }}
+{%- elif status == 'inconclusive' %}{{ ui.pill('plain', 'Not run') }}
+{%- else %}{{ ui.pill('danger', 'Accepted: not enforced') }}{% endif %}
+{%- endmacro %}
+<header class="page-head">
+    <div class="page-head-text">
+        <p class="eyebrow">Governance</p>
+        <h1>Athena</h1>
+        <p class="lede">The constitution as this database holds it: every mechanism a rule names,
+           looked up in the database's catalogue when this page was opened.</p>
     </div>
-    <div class="athena-stats">
-      <div class="athena-stat"><span class="athena-stat-n">{{ rules|length }}</span><span class="athena-stat-l">rules</span></div>
-      <div class="athena-stat"><span class="athena-stat-n">{{ agencies|length }}</span><span class="athena-stat-l">agencies</span></div>
-      <div class="athena-stat"><span class="athena-stat-n">{{ algorithms|length }}</span><span class="athena-stat-l">algorithms</span></div>
-      <div class="athena-stat"><span class="athena-stat-n">{{ trust|length }}</span><span class="athena-stat-l">trust edges</span></div>
-    </div>
-  </header>
+</header>
 
+<section class="board-summary" aria-label="The constitution at a glance">
+    <div class="board-stat{% if s.not_in_force %} board-stat-danger{% endif %}">
+        <span class="board-n">{{ s.not_in_force }}</span><span class="board-l">not in force</span>
+    </div>
+    <div class="board-stat board-stat-ok">
+        <span class="board-n">{{ s.in_force }}</span><span class="board-l">in force in this database</span>
+    </div>
+    <div class="board-stat">
+        <span class="board-n">{{ s.application }}</span><span class="board-l">held by this application</span>
+    </div>
+    <div class="board-stat">
+        <span class="board-n">{{ s.repository }}</span><span class="board-l">checked in the repository</span>
+    </div>
+</section>
+<p class="board-when">Read from <span class="mono">{{ board.database }}</span> at
+   <time class="mono" datetime="{{ board.verified_at.isoformat() }}">{{ board.verified_at.strftime('%Y-%m-%d %H:%M:%S %Z') }}</time>.
+   Present and switched on is not the same as refusing: a trigger whose function had been rewritten
+   to let writes through would still read as in force here.{% if can_selftest %} The self-test
+   attempts the forbidden writes, and each rule it covers shows on its card what happened.{% endif %}
+   The repository's mutation drills remove these mechanisms one at a time and require a test to fail.</p>
+
+<div class="athena-shell">
   <nav class="athena-tabs" role="tablist" aria-label="Athena views">
     <button data-athena-tab="constitution" class="athena-tab athena-tab-active" role="tab" aria-selected="true" type="button">Constitution</button>
     <button data-athena-tab="authority" class="athena-tab" role="tab" aria-selected="false" type="button">Authority</button>
@@ -32,29 +57,135 @@
     <button data-athena-tab="trust" class="athena-tab" role="tab" aria-selected="false" type="button">Trust graph</button>
   </nav>
 
-  {# ---- Constitution: C1-C10 + the Vocation, each with its live mechanisms ---- #}
-  <section data-athena-panel="constitution" class="athena-panel" role="tabpanel">
-    <p class="athena-help">Each rule below is a queryable row, linked to the exact live mechanism that enforces it. If a named mechanism ever disappears from the tree, the build fails (<code>check_athena_rule_enforcement_resolves</code>). Rules sit at two tiers beneath the vocation: <span class="athena-layer athena-layer-constitutional">constitutional</span> rights guarantees, and <span class="athena-layer athena-layer-engineering">engineering</span> invariants that keep them honest.</p>
-    <div class="athena-rules">
-      {% for r in rules %}
-      <article class="athena-rule athena-rule-{{ r.layer|lower }}">
-        <div class="athena-rule-head">
-          <span class="athena-rule-code">{{ r.rule_code }}</span>
-          <h3 class="athena-rule-title">{{ r.title }}</h3>
-          <span class="athena-layer athena-layer-{{ r.layer|lower }}">{{ r.layer|lower }}</span>
+  {# ---- Constitution: C1-C10 and the Vocation, each mechanism as this database holds it ---- #}
+  <section data-athena-panel="constitution" class="athena-panel board" role="tabpanel">
+    {% if can_selftest %}
+    <section class="selftest panel" id="selftest" aria-labelledby="selftest-h">
+      <div class="panel-head">
+        <h2 id="selftest-h">Self-test</h2>
+        <form method="post" action="{{ url_for('athena_self_test') }}#selftest">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-sm">{{ ui.icon('shield-check') }}{% if selftest %}Run it again{% else %}Run the self-test{% endif %}</button>
+        </form>
+      </div>
+      <p class="help">Attempts each forbidden write below on this application's own database
+         connection, each inside a savepoint, in a transaction that is always rolled back. Nothing a
+         probe does is kept. A refused insert can still advance a sequence, and the database logs
+         each refusal under <code>application_name</code> <code>polaris-athena-selftest</code>; expect
+         those lines when you run it.</p>
+      {% if selftest %}
+      <p class="selftest-who">Ran as <span class="mono">{{ selftest.role }}</span> at
+         <time class="mono" datetime="{{ selftest.at.isoformat() }}">{{ selftest.at.strftime('%Y-%m-%d %H:%M:%S %Z') }}</time>:
+         {{ selftest.held }} of {{ selftest.probes|length }} refused as expected{% if selftest.otherwise %},
+         {{ selftest.otherwise }} refused by something else{% endif %}{% if selftest.exempt %},
+         {{ selftest.exempt }} accepted because the owner is exempt{% endif %}{% if selftest.not_run %},
+         {{ selftest.not_run }} not run{% endif %}{% if selftest.failed %},
+         <strong class="mech-reason">{{ selftest.failed }} accepted: not enforced</strong>{% endif %}.
+         {% if selftest.is_owner %}This application connects as the schema owner. Some rules
+         deliberately do not bind the owner, which runs the issuance and recovery procedures; in
+         production the application connects as <span class="mono">polaris_app</span>.{% endif %}</p>
+      <div class="table-wrap">
+        <table class="data selftest-table">
+          <thead><tr><th scope="col">Rule</th><th scope="col">The write attempted</th><th scope="col">Result</th>
+                     <th scope="col">Refused by</th></tr></thead>
+          <tbody>
+            {% for p in selftest.probes %}
+            <tr>
+              <td class="mono">{{ p.rule }}</td>
+              <td>{{ p.attempt }}<p class="mech-detail">Should be refused by <code>{{ p.expected }}</code></p></td>
+              <td>{{ probe_pill(p.status) }}</td>
+              <td>{% if p.refused_by %}<code>{{ p.refused_by }}</code>{% if p.sqlstate %} <span class="muted mono">{{ p.sqlstate }}</span>{% endif %}
+                  {% if p.message %}<p class="mech-detail">{{ p.message }}</p>{% endif %}
+                  {% elif p.message %}<span class="muted">{{ p.message|capitalize }}</span>{% else %}&mdash;{% endif %}</td>
+            </tr>
+            {% endfor %}
+            {% set c = selftest.clamp %}
+            <tr>
+              <td class="mono">C8</td>
+              <td>Ask the Atlas breakdown for {{ '{:,}'.format(c.asked) }} rows<p class="mech-detail">Should be clamped to <code>_ATLAS_MAX_CATEGORIES = {{ c.cap }}</code></p></td>
+              <td>{% if c.held %}{{ ui.pill('info', 'Clamped by the application') }}{% else %}{{ ui.pill('danger', 'Not clamped') }}{% endif %}</td>
+              <td>HTTP {{ c.status }}: the route allowed {{ c.limit if c.limit is not none else '?' }} and returned {{ c.count if c.count is not none else '?' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </section>
+    {% endif %}
+    {% for r in board.rules %}
+    {% set p = tested.get(r.rule_code) %}
+    {# The catalogue says in force and the write went through: the two findings disagree. #}
+    <article class="rule-card rule-{{ r.state }}{% if p and p.status == 'accepted' %} rule-contradicted{% endif %}" id="rule-{{ r.rule_code|lower }}">
+      <header class="rule-head">
+        <span class="rule-code mono">{{ r.rule_code }}</span>
+        <h2 class="rule-title">{{ r.title }}</h2>
+        <span class="type-tag">{{ r.layer|lower }}</span>
+        {% if r.state == 'in_force' %}{{ ui.pill('success', 'In force') }}
+        {% elif r.state == 'not_in_force' %}{{ ui.pill('danger', 'Not in force') }}
+        {% else %}{{ ui.pill('plain', 'Checked in the repository') }}{% endif %}
+      </header>
+      <p class="rule-statement">{{ r.statement }}</p>
+      {% if p %}
+      <p class="rule-tested"><span class="rule-tested-label">Self-test</span>{{ probe_pill(p.status) }}
+         <span>{{ p.attempt }}:
+         {%- if p.refused_by %} refused by <code>{{ p.refused_by }}</code>{% if p.status == 'refused' %}, as expected{% else %}, where <code>{{ p.expected }}</code> was expected{% endif %}
+         {%- elif p.status == 'inconclusive' %} not run; {{ p.message }}
+         {%- elif p.status == 'owner_exempt' %} accepted, because this application connects as the schema owner
+         {%- else %} the database let it through{% endif %}. <a href="#selftest">The run</a></span></p>
+      {% elif r.rule_code == 'C8' and selftest %}
+      {% set c = selftest.clamp %}
+      <p class="rule-tested"><span class="rule-tested-label">Self-test</span>{% if c.held %}{{ ui.pill('info', 'Clamped by the application') }}{% else %}{{ ui.pill('danger', 'Not clamped') }}{% endif %}
+         <span>Asked the Atlas breakdown for {{ '{:,}'.format(c.asked) }} rows: the route allowed
+         {{ c.limit if c.limit is not none else '?' }} and returned {{ c.count if c.count is not none else '?' }}. <a href="#selftest">The run</a></span></p>
+      {% elif can_selftest and r.rule_code in probed %}
+      <p class="rule-tested rule-untested"><span class="rule-tested-label">Self-test</span>{{ ui.pill('plain', 'Not run yet') }}
+         <span>The catalogue shows what holds this rule; <a href="#selftest">the self-test</a> attempts the write it forbids.</span></p>
+      {% endif %}
+      {% if r.guards %}
+      <details class="rule-guards"{% if r.guards_held < r.guards|length %} open{% endif %}>
+        <summary>
+          {% if r.guards_held == r.guards|length %}{{ ui.pill('success', 'In force') }}{% else %}{{ ui.pill('danger', 'Not in force') }}{% endif %}
+          <span>{{ r.guards_held }} of {{ r.guards|length }} tables carry a switched-on trigger that every
+                UPDATE and DELETE passes through</span>
+          <span class="guards-toggle" aria-hidden="true">{{ ui.icon('chevron-down') }}</span>
+        </summary>
+        <div class="table-wrap">
+          <table class="data guard-table">
+            <thead><tr><th scope="col">Table</th><th scope="col">Trigger</th><th scope="col">In this database</th></tr></thead>
+            <tbody>
+              {% for g in r.guards %}
+              <tr>
+                <td>{{ g.note.split(':')[0] }}</td>
+                <td class="mono">{{ g.name }}</td>
+                <td>{% if g.status == 'in_force' %}{{ g.detail }}{% else %}<span class="mech-reason">{{ g.reason|capitalize }}</span>{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
-        <p class="athena-rule-statement">{{ r.statement }}</p>
-        <div class="athena-mechs">
-          {% for m in r.mechanisms %}
-          <span class="athena-mech athena-mech-{{ m.mechanism_kind|lower }}" title="{{ m.note }}">
-            <span class="athena-mech-kind">{{ m.mechanism_kind|replace('_', ' ')|lower }}</span>
-            <code class="athena-mech-name">{{ m.mechanism_name }}</code>
-          </span>
-          {% endfor %}
-        </div>
-      </article>
-      {% endfor %}
-    </div>
+      </details>
+      {% endif %}
+      <ul class="mech-list">
+        {% for m in r.mechanisms %}
+        <li class="mech mech-{{ m.status }}">
+          <div class="mech-line">
+            {% if m.status == 'in_force' and m.source == 'application' %}{{ ui.pill('info', 'Holds here') }}
+            {% elif m.status == 'in_force' %}{{ ui.pill('success', 'In force') }}
+            {% elif m.status == 'not_in_force' %}{{ ui.pill('danger', 'Not in force') }}
+            {% else %}{{ ui.pill('plain', 'In the repository') }}{% endif %}
+            <span class="mech-kind">{{ m.label }}</span>
+            <code class="mech-name">{{ m.name }}</code>
+          </div>
+          {% if m.reason %}<p class="mech-reason">{{ m.reason|capitalize }}.</p>{% endif %}
+          {% if m.detail %}<p class="mech-detail">{{ m.detail }}</p>{% elif m.note %}<p class="mech-detail">{{ m.note }}</p>{% endif %}
+          {% if m.definition %}
+          <details class="mech-def"><summary>Definition in this database</summary><pre>{{ m.definition }}</pre></details>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </article>
+    {% endfor %}
   </section>
 
   {# ---- Authority: the authority chain + the deprecation blast radius ---- #}

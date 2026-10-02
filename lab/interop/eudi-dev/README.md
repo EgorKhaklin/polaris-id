@@ -26,7 +26,7 @@ Verifier. The run below used exactly those two releases, and then the wallet's c
 
 | | |
 |---|---|
-| Wallet | `ghcr.io/dominikschlosser/eudi-dev:v2.3.7` (`sha256:2df7ac5c79206a29c66eb8c49acdcc07d0ec76c7d6d260056edccaac9257e081`) and `:v2.4.3` (`sha256:d544031950e9b5e911fe2212e5e57e109459d53e294e1b6feb243036e5dac3fc`), Apache-2.0, [source](https://github.com/dominikschlosser/eudi-dev) |
+| Wallet | `ghcr.io/dominikschlosser/eudi-dev:v2.3.7` (`sha256:2df7ac5c79206a29c66eb8c49acdcc07d0ec76c7d6d260056edccaac9257e081`), `:v2.4.3` (`sha256:d544031950e9b5e911fe2212e5e57e109459d53e294e1b6feb243036e5dac3fc`) and `:v2.5.0` (`sha256:c6d28d171f12db5410cd5b4670572b13c350aa9fd54e7c4389a7544fe404b6bc`), Apache-2.0, [source](https://github.com/dominikschlosser/eudi-dev) |
 | Verifier | `polaris-oid4vp` 1.0.0rc7 from PyPI, with `cryptography` 50.0.1, in a fresh venv |
 | Runtime | Python 3.12.13, Docker 29.4.3, macOS 26.3 (Darwin 25.3.0) |
 
@@ -41,7 +41,10 @@ Verifier. The run below used exactly those two releases, and then the wallet's c
 One command, about a minute once the image is local. It installs the verifier from PyPI into a
 fresh venv in a scratch directory (`WORK`, default a new temporary one), the newest release as
 `pip install --pre` gives a stranger unless `POLARIS_OID4VP` pins one, with its dependencies by hash
-from [`../requirements.txt`](../requirements.txt), and prints the version it got. [`wallet-canary.yml`](../../../.github/workflows/wallet-canary.yml) runs it weekly on a
+from [`../requirements.txt`](../requirements.txt), and prints the version it got. A release arrives as
+its published wheel and builds nothing, so this runs on Python 3.9 or newer; with `POLARIS_OID4VP`
+set to a path in the tree, the walk builds it, with the build backend by hash from
+[`../requirements-build.txt`](../requirements-build.txt), which needs Python 3.10 or newer. [`wallet-canary.yml`](../../../.github/workflows/wallet-canary.yml) runs it weekly on a
 machine nobody here set up, against v2.3.7 and the wallet's latest release. It makes the verifier's
 test PKI with `polaris-oid4vp keygen`, lets the wallet generate its holder key, mints one SD-JWT
 VC bound to it with [`../waltid/issue_sdjwt_vc.py`](../waltid/issue_sdjwt_vc.py), imports it,
@@ -53,8 +56,8 @@ the wallet's own release binary for the machine (macOS or Linux, x86-64 or arm64
 instead of the image. The v2.3.7 binaries' SHA-256 are pinned in `run.sh`, so a download is
 checked against this repository, not only against the checksums published beside it; a
 mismatch stops the run before the binary is executed. Walked 2026-09-30 on macOS (arm64) with
-the system Python 3.9.6 and no Docker: accepted, all three controls refused, 15 s from an empty
-directory. [`wallet-canary.yml`](../../../.github/workflows/wallet-canary.yml) runs this mode too.
+the system Python 3.9.6 and no Docker, the verifier installed as PyPI's wheel: accepted, all three
+controls refused, 15 s from an empty directory. [`wallet-canary.yml`](../../../.github/workflows/wallet-canary.yml) runs this mode too.
 
 **Nothing is configured for the verifier's TLS listener, and nothing needs to be.** `keygen`'s
 listener certificate is self-signed; its test anchor signs the request object's certificate,
@@ -112,6 +115,33 @@ reference points at eudi-dev's own status list, which nothing here fetched, so r
     polaris-oid4vp serve --pki pki --host localhost --bind 127.0.0.1 --port 9443 \
       --issuer-trust-anchor eudi-ca.pem --once
     eudi wallet accept "<the launch URI serve prints>" --auto-accept --haip --mode strict --no-open --wallet-dir W
+
+## The verifier's TLS checked in strict mode (2026-10-02)
+
+[eudi-dev issue 21](https://github.com/dominikschlosser/eudi-dev/issues/21) reported that the wallet
+did not validate the verifier's TLS certificate, even in `--mode strict`. The maintainer fixed it in
+[v2.5.0](https://github.com/dominikschlosser/eudi-dev/releases/tag/v2.5.0) and asked for a re-test.
+
+- Wallet: `ghcr.io/dominikschlosser/eudi-dev:v2.5.0`
+  (`sha256:c6d28d171f12db5410cd5b4670572b13c350aa9fd54e7c4389a7544fe404b6bc`).
+- Verifier: `polaris-oid4vp` 1.0.0rc13 from PyPI, its self-signed listener on `host.docker.internal:9443`.
+
+Run with the image overridden, the walk otherwise unchanged:
+
+    EUDI_IMAGE=ghcr.io/dominikschlosser/eudi-dev:v2.5.0 lab/interop/eudi-dev/run.sh
+
+In strict mode (the walk's own `wallet accept ... --mode strict`), the wallet now refuses the
+listener's self-signed certificate at the request fetch, so the genuine presentation does not
+complete:
+
+    fetching request_uri: ... tls: failed to verify certificate: x509: certificate signed by unknown authority
+
+Adding `--tls-verify=false` to that same `wallet accept` restores the previous behaviour: the wallet
+presents and the verifier answers `<- 200 authentic`, with all three controls still refused. So
+v2.5.0 strict mode validates the verifier's TLS certificate (the issue 21 fix), and the documented
+override remains for local development. v2.3.7 and v2.4.3 presented regardless (the Versions above);
+v2.5.0 does not. The one destination checked here is that listener; every-destination is the release
+notes' wording, not this run's.
 
 ## What this does not establish
 

@@ -1892,11 +1892,6 @@ def _dashboard_model():
 # (check_athena_console pins that).
 # ============================================================================
 
-# C1..C10 in numeric order, then the Vocation last.
-_ATHENA_RULE_ORDER = ("CASE WHEN rule_code = 'VOCATION' THEN 999 "
-                      "ELSE CAST(substring(rule_code FROM 2) AS INTEGER) END")
-
-
 @app.route('/athena')
 @security.login_required
 @replica_reads
@@ -1907,17 +1902,16 @@ def athena_console():
     trust graph, and drives the four Athena functions from the interactive tabs.
     It reads only the person-free Athena layer (16_athena.sql) and the authority
     tables it sits over; no Individual, token, or event table is touched."""
-    rules = query(
-        "SELECT rule_code, title, statement, kind, layer FROM athena_constitutional_rule "
-        "ORDER BY CASE layer WHEN 'CONSTITUTIONAL' THEN 1 WHEN 'ENGINEERING' THEN 2 ELSE 3 END, "
-        + _ATHENA_RULE_ORDER)
-    enf = query(
-        "SELECT rule_code, mechanism_kind, mechanism_name, note "
-        "FROM athena_rule_enforcement ORDER BY rule_code, mechanism_kind, mechanism_name")
-    by_rule = {}
-    for e in enf:
-        by_rule.setdefault(e['rule_code'], []).append(e)
-    rules = [dict(r, mechanisms=by_rule.get(r['rule_code'], [])) for r in rules]
+    return _athena_page()
+
+
+def _athena_page(selftest=None):
+    """The Athena page, with the self-test's results when it has just run (the C8 clamp is
+    `selftest['clamp']`, an application check rather than a probe)."""
+    # The constitution as this database and this application hold it now (lab/strategy/009,
+    # step B1): every mechanism looked up in the live catalogue, not read from the curated rows.
+    import athena_board   # the board's catalogue reads; it imports nothing from app.py
+    board = athena_board.read_board(query)
 
     agencies = query("SELECT agency_id, name, agency_type, jurisdiction "
                      "FROM v_athena_agency ORDER BY name")
@@ -1930,8 +1924,67 @@ def athena_console():
                   "FROM v_athena_relies_on ORDER BY from_agency_name, to_agency_name "
                   "LIMIT 500")
 
-    return render_template('athena.html', rules=rules, agencies=agencies,
-                           algorithms=algorithms, contexts=contexts, trust=trust)
+    # Each rule a probe covers shows the probe's result on its card, beside what the catalogue
+    # says: present and switched on, and refused when tried, are two different findings.
+    import athena_selftest
+    tested = {p['rule']: p for p in selftest['probes']} if selftest else {}
+    return render_template('athena.html', board=board, agencies=agencies,
+                           algorithms=algorithms, contexts=contexts, trust=trust, selftest=selftest,
+                           tested=tested, probed=athena_selftest.PROBED_RULES | {'C8'})
+
+
+#: One self-test per account per ten seconds: each run takes locks for milliseconds and writes the
+#: database's log; there is no reason to run it faster than a person reads the result.
+_ATHENA_SELFTEST_PER_MINUTE = 6
+
+
+@app.route('/athena/self-test', methods=['POST'])
+@security.login_required
+@security.require_role('admin', 'auditor')
+@security.csrf_protect
+def athena_self_test():
+    """Attempt each forbidden write on this application's own connection and show what refused it
+    (lab/strategy/009, step B2). Everything a probe does is rolled back (athena_selftest.run); the
+    C8 probe asks an Atlas route for far more rows than its cap and reads what came back."""
+    # An instance-wide check, for an instance-wide account: the probes run under the caller's
+    # scope and aim at rows of every authority, so an account bound to one authority is refused,
+    # as the SQL console refuses it.
+    if session.get('operator_agency_id') is not None:
+        return render_template(
+            'error.html', code=403,
+            message='The self-test is not available to an account bound to one authority.',
+            hint='It checks the whole database, as an instance-wide administrator or auditor.'), 403
+    if not security.rate_limiter.allow('athena-selftest:%s' % session.get('user_id'),
+                                       _ATHENA_SELFTEST_PER_MINUTE, 60):
+        abort(429)
+    import athena_selftest
+    result = athena_selftest.run(get_db())
+    result['clamp'] = _athena_clamp_probe()
+    # The run is the application log's to record, with who ran it; the refusals it provoked are in
+    # the database's log under application_name polaris-athena-selftest. (An AuthAuditLog row would
+    # need a new event type, and widening that CHECK revalidates the whole partitioned table.)
+    app.logger.info('athena self-test by user %s as role %s: %d refused as expected, %d accepted, '
+                    'C8 clamp %s', session.get('user_id'), result['role'], result['held'],
+                    result['failed'], 'held' if result['clamp']['held'] else 'NOT held')
+    return _athena_page(selftest=result)
+
+
+def _athena_clamp_probe():
+    """C8, an application clamp rather than a database rule: ask the breakdown for a thousand times
+    its cap, through the route itself, as the signed-in user, and read how many rows came back."""
+    cap = atlas_routes._ATLAS_MAX_CATEGORIES   # bound at the end of this module, read at use
+    asked = cap * 1000
+    # use_cookies=False: a client with its own (empty) cookie jar drops the Cookie header below,
+    # and the route would answer an anonymous request with a redirect to sign in.
+    response = app.test_client(use_cookies=False).get(
+        '/api/atlas/breakdown?window=all&kind=verification&dimension=agency&limit=%d' % asked,
+        headers={'Cookie': request.headers.get('Cookie', '')})
+    body = response.get_json(silent=True)
+    if not isinstance(body, dict):
+        body = {}
+    held = response.status_code == 200 and body.get('limit') == cap and body.get('count', cap + 1) <= cap
+    return {'asked': asked, 'cap': cap, 'status': response.status_code,
+            'limit': body.get('limit'), 'count': body.get('count'), 'held': held}
 
 
 # The three Athena functions take INTEGER ids. An integer outside that type's range is not an
@@ -2565,7 +2618,7 @@ sys.modules.setdefault('app', sys.modules[__name__])
 
 import sql_console  # noqa: E402,F401  -- /sql, the read-only console
 import verification_routes  # noqa: E402,F401  -- /verifications, /verifications/new
-import atlas_routes         # noqa: E402,F401  -- /atlas and the 17 /api/atlas endpoints
+import atlas_routes         # noqa: E402,F401  -- /atlas and the 12 /api/atlas endpoints
 import rp_api               # noqa: E402,F401  -- the 36 /api/v1 relying-party routes
 import use_case_routes      # noqa: E402,F401  -- UC-1, 4, 5, 6, 7, 8, 9
 import operator_routes      # noqa: E402,F401  -- tokens, individuals, agencies, investigate

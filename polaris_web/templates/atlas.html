@@ -4,14 +4,16 @@
    hand-rolled SVG / CSS bars by atlas-console.js). MAP is the former globe,
    wrapped as a tab (atlas-map.js, booted lazily when the tab is first shown).
    Inline <script> is blocked by CSP (C5); all logic is in external .js. HUD/KPI
-   slots use data-* attributes. See docs/design/atlas-scaling.md. #}
+   slots use data-* attributes. See docs/design/atlas-scaling.md. Every view shows
+   counts; none shows an event or a person (lab/strategy/009, step A0). #}
 {% extends "base.html" %}
 {% block title %}Atlas{% endblock %}
 {% block body_class %} body-atlas{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='atlas.css') }}?v={{ polaris_version }}">{% endblock %}
 {% block content %}
+{% import "_ui.html" as ui with context %}
 
-<section class="atlas-shell atlas-fullbleed" aria-label="Atlas analytical console">
+<section class="atlas-shell atlas-fullbleed" aria-label="Atlas analytical console" data-min-cell="{{ min_cell }}">
 
     {# ---- Tab bar: view switch + provenance + live ---- #}
     <div class="atlas-tabbar">
@@ -22,9 +24,6 @@
             <button class="atlas-tab" type="button" role="tab"
                     id="atlas-tab-breakdown" aria-selected="false"
                     data-atlas-view-tab="breakdown" aria-controls="atlas-panel-breakdown">Breakdown</button>
-            <button class="atlas-tab" type="button" role="tab"
-                    id="atlas-tab-records" aria-selected="false"
-                    data-atlas-view-tab="records" aria-controls="atlas-panel-records">Records</button>
             <button class="atlas-tab" type="button" role="tab"
                     id="atlas-tab-trends" aria-selected="false"
                     data-atlas-view-tab="trends" aria-controls="atlas-panel-trends">Trends</button>
@@ -114,7 +113,7 @@
             <div class="ov-kpis" aria-label="Headline figures">
                 <div class="ov-kpi">
                     <span class="ov-kpi-label">Verifications</span>
-                    <span class="ov-kpi-value" data-ov-kpi="volume">{{ health.verifications_total }}</span>
+                    <span class="ov-kpi-value" data-ov-kpi="volume">{{ ui.cell(health.verifications_total, min_cell) }}</span>
                     <span class="ov-kpi-spark" data-ov-spark="volume"></span>
                     <span class="ov-kpi-sub" data-ov-kpi-sub="volume">in window</span>
                 </div>
@@ -126,21 +125,49 @@
                 </div>
                 <div class="ov-kpi">
                     <span class="ov-kpi-label">Zero-knowledge</span>
-                    <span class="ov-kpi-value" data-ov-kpi="zk">{{ health.zk_pct }}%</span>
+                    <span class="ov-kpi-value" data-ov-kpi="zk">{{ ui.share(health.zk_pct) }}</span>
                     <span class="ov-kpi-spark" data-ov-spark="zk"></span>
                     <span class="ov-kpi-sub">counted, never located</span>
                 </div>
                 <div class="ov-kpi">
-                    <span class="ov-kpi-label">Active tokens</span>
-                    <span class="ov-kpi-value" data-ov-kpi="active">{{ health.tokens_active }}</span>
-                    <span class="ov-kpi-sub">{{ health.tokens_reserve }} reserve · {{ health.tokens_terminal }} terminal</span>
+                    <span class="ov-kpi-label">Active credentials</span>
+                    <span class="ov-kpi-value" data-ov-kpi="active">{{ ui.cell(health.tokens_active, min_cell) }}</span>
+                    <span class="ov-kpi-sub">{{ ui.cell(health.tokens_reserve, min_cell) }} reserve · {{ ui.cell(health.tokens_terminal, min_cell) }} terminal</span>
                 </div>
                 <div class="ov-kpi">
                     <span class="ov-kpi-label">Post-quantum</span>
-                    <span class="ov-kpi-value" data-ov-kpi="pq">{{ health.pq_pct }}%</span>
-                    <span class="ov-kpi-sub">active signing coverage</span>
+                    <span class="ov-kpi-value" data-ov-kpi="pq">{{ ui.share(health.pq_pct) }}</span>
+                    <span class="ov-kpi-sub">of live signatures on active credentials</span>
                 </div>
             </div>
+
+            {# Integrity (lab/strategy/009 A2): the system's state beside its activity. The latest
+               state epoch and anchor batch, read by their keys, and the Athena board's verdict
+               on this database. Not windowed: atlas-console.js fills it from
+               /api/atlas/integrity, and it reads no person, credential or operator. #}
+            <section class="ov-card ov-integrity" data-ov-integrity aria-labelledby="ov-integrity-h">
+                <div class="ov-card-head">
+                    <h2 class="ov-card-title" id="ov-integrity-h">Integrity</h2>
+                    <a class="ov-card-link" href="{{ url_for('athena_console') }}">Open the Athena board</a>
+                </div>
+                <div class="ov-int-grid">
+                    <div class="ov-int-item" data-ov-int="board">
+                        <span class="ov-int-label">Constitution</span>
+                        <span class="ov-int-value" data-ov-int-value="board">…</span>
+                        <span class="ov-int-sub" data-ov-int-sub="board">reading this database's catalogue</span>
+                    </div>
+                    <div class="ov-int-item" data-ov-int="epoch">
+                        <span class="ov-int-label">State epoch</span>
+                        <span class="ov-int-value" data-ov-int-value="epoch">…</span>
+                        <span class="ov-int-sub" data-ov-int-sub="epoch"></span>
+                    </div>
+                    <div class="ov-int-item" data-ov-int="anchor">
+                        <span class="ov-int-label">Anchor batch</span>
+                        <span class="ov-int-value" data-ov-int-value="anchor">…</span>
+                        <span class="ov-int-sub" data-ov-int-sub="anchor"></span>
+                    </div>
+                </div>
+            </section>
 
             {# Hero: the volume time-series, success vs failure. #}
             <div class="ov-card ov-hero">
@@ -179,7 +206,27 @@
             <span data-ov-error-detail>Could not load analytics.</span>
             <button type="button" class="toolbar-chip" data-ov-retry>Retry</button>
         </div>
-        <p class="ov-foot">Every figure is a bounded server-side aggregate ({{ health.verifications_total }} events in the sample). Zero-knowledge verifications are counted in volume and disclosure but never located or attributed (C6).</p>
+        <p class="ov-foot">Every figure is a count from the activity rollups, by the hour or the day, never a read of an event. A count under {{ min_cell }} reads &lt;{{ min_cell }}, and so does any figure that would give one back. Zero-knowledge verifications are counted and never located (C6).</p>
+
+        {# A5, the limits panel (lab/strategy/009): what the Atlas will not show, each beside the
+           rule that withholds it, linked to that rule as the connected database holds it. #}
+        <section class="atlas-limits" aria-labelledby="atlas-limits-h">
+            <h2 id="atlas-limits-h" class="atlas-limits-title">What the Atlas will not show</h2>
+            <ul class="atlas-limits-list">
+                <li><strong>A person or a credential.</strong> No answer names one and no question selects one. One person's history is reached only through the warrant audit, which records each access.
+                    <span class="atlas-limits-rule">lab/strategy/009</span></li>
+                <li><strong>A single event.</strong> The Atlas counts; it never reads an event. One is read on the <a href="{{ url_for('verifications_list') }}">verification log</a>, which records the read.
+                    <span class="atlas-limits-rule">lab/strategy/009</span></li>
+                <li><strong>A place.</strong> Nothing is located: a region is drawn at a reference point for the jurisdiction, and a zero-knowledge verification is counted and placed nowhere.
+                    <a class="atlas-limits-rule" href="{{ url_for('athena_console') }}#rule-c6">C6</a> <a class="atlas-limits-rule" href="{{ url_for('athena_console') }}#rule-c2">C2</a></li>
+                <li><strong>A minute.</strong> The finest time the Atlas holds is the hour; a window starts at the top of an hour, or of a day past a week.
+                    <span class="atlas-limits-rule">lab/strategy/009</span></li>
+                <li><strong>A cell about too few people.</strong> A count under {{ min_cell }} is withheld, and so is any figure that would give one back. A question narrowed to fewer than {{ narrow_scope }} events is answered and recorded with who asked it. At low volume most cells read &lt;{{ min_cell }}: that is the rule working, not data missing.
+                    <span class="atlas-limits-rule">lab/strategy/009</span></li>
+                <li><strong>An unbounded answer.</strong> Every list, series and map is capped.
+                    <a class="atlas-limits-rule" href="{{ url_for('athena_console') }}#rule-c8">C8</a></li>
+            </ul>
+        </section>
     </div>
 
     {# ================= BREAKDOWN ================= #}
@@ -192,11 +239,24 @@
             <span class="cmd-label">SLICE BY</span>
             <div class="chip-group" role="radiogroup" aria-label="Slice dimension" data-bd-dim-group></div>
             <span class="toolbar-spacer"></span>
-            <span class="cmd-label">SORT</span>
-            <div class="chip-group" role="radiogroup" aria-label="Sort metric">
-                <button class="toolbar-chip toolbar-chip-active" type="button" role="radio" aria-checked="true" data-bd-metric="volume">Volume</button>
-                <button class="toolbar-chip" type="button" role="radio" aria-checked="false" data-bd-metric="failure">Failure rate</button>
-            </div>
+            {# Each label wraps with its chips, never apart from them. #}
+            <span class="ov-control-pair">
+                <span class="cmd-label">SORT</span>
+                <span class="chip-group" role="radiogroup" aria-label="Sort metric">
+                    <button class="toolbar-chip toolbar-chip-active" type="button" role="radio" aria-checked="true" data-bd-metric="volume">Volume</button>
+                    <button class="toolbar-chip" type="button" role="radio" aria-checked="false" data-bd-metric="failure">Failure rate</button>
+                    <button class="toolbar-chip" type="button" role="radio" aria-checked="false" data-bd-metric="change" hidden>Change</button>
+                </span>
+            </span>
+            {# lab/strategy/009 A4: each count beside the window before. A change is shown only
+               when both counts are, each withheld against its own window. #}
+            <span class="ov-control-pair">
+                <span class="cmd-label">COMPARE</span>
+                <span class="chip-group" role="radiogroup" aria-label="Compare with" data-bd-compare-group>
+                    <button class="toolbar-chip toolbar-chip-active" type="button" role="radio" aria-checked="true" data-bd-compare="off">Off</button>
+                    <button class="toolbar-chip" type="button" role="radio" aria-checked="false" data-bd-compare="previous">Window before</button>
+                </span>
+            </span>
         </div>
 
         <div class="bd-layout">
@@ -233,28 +293,7 @@
             <span data-bd-error-detail>Could not load the breakdown.</span>
             <button type="button" class="toolbar-chip" data-bd-retry>Retry</button>
         </div>
-        <p class="ov-foot">Every figure is a bounded server-side aggregate (top-K rows, low-cardinality columns). A cross-tab cell is shaded by its share of the row, so an anomalous slice (a high failure or full-disclosure share for one agency or context) stands out. Zero-knowledge is counted in every tally but never located (C6).</p>
-    </div>
-
-    {# ================= RECORDS (paginated grid, filter-aware) ================= #}
-    <div class="atlas-view atlas-view-records" id="atlas-panel-records"
-         role="tabpanel" aria-labelledby="atlas-tab-records" data-atlas-view-panel="records" hidden>
-        <div class="rec-head">
-            <span class="ov-card-title">Records</span>
-            <span class="rec-count" data-rec-count aria-live="polite"></span>
-        </div>
-        <div class="rec-grid-wrap">
-            <div data-rec-grid></div>
-        </div>
-        <div class="rec-foot">
-            <button type="button" class="toolbar-chip" data-rec-more hidden>Load more</button>
-            <span class="rec-status" data-rec-status aria-live="polite"></span>
-        </div>
-        <div class="ov-error" data-rec-error hidden>
-            <span data-rec-error-detail>Could not load records.</span>
-            <button type="button" class="toolbar-chip" data-rec-retry>Retry</button>
-        </div>
-        <p class="ov-foot">Records match the global filter and are keyset-paginated newest-first, so the grid scales to millions of events without ever loading them all. Zero-knowledge verifications appear as activity but their subject and location are withheld (C6).</p>
+        <p class="ov-foot">Every figure is a bounded server-side aggregate (top-K rows, low-cardinality columns). A cross-tab cell is shaded by its share of the row, so an anomalous slice (a high failure or full-disclosure share for one agency or context) stands out. Compared with the window before, a change is shown only where both counts are, and a category is marked when its failure share at least doubled with ten or more extra failures; the row of small categories is not compared, since its members change. Zero-knowledge is counted in every tally but never located (C6).</p>
     </div>
 
     {# ================= TRENDS (ship 7): temporal rhythm + composition ============= #}
@@ -321,50 +360,30 @@
                 <button class="toolbar-chip toolbar-chip-modifier" type="button"
                         data-atlas-modifier="full" aria-pressed="false"
                         title="Show only FULL-disclosure events">+FULL</button>
-                <button class="toolbar-chip toolbar-chip-modifier" type="button"
-                        data-atlas-modifier="pq" aria-pressed="false"
-                        title="Show only events signed under post-quantum algorithms">+PQ</button>
             </div>
 
             <details class="chip-context-picker">
                 <summary class="toolbar-chip toolbar-chip-context-summary" aria-label="Context filter">Context ▾</summary>
-                <div class="chip-context-menu" role="group" aria-label="Verification contexts">
+                <div class="chip-context-menu" role="radiogroup" aria-label="Verification context (one at a time)">
                     {% for ctx in ['BANKING', 'EMPLOYMENT', 'HEALTHCARE', 'TRAVEL',
                                    'VOTING', 'MOTOR_VEHICLE', 'GOVERNMENT_BENEFITS'] %}
-                    <button class="toolbar-chip toolbar-chip-context" type="button"
-                            data-atlas-context="{{ ctx }}" aria-pressed="false">{{ ctx.replace('_', ' ') }}</button>
+                    <button class="toolbar-chip toolbar-chip-context" type="button" role="radio"
+                            data-atlas-context="{{ ctx }}" aria-checked="false">{{ ctx.replace('_', ' ') }}</button>
                     {% endfor %}
                 </div>
             </details>
 
             <details class="chip-context-picker">
                 <summary class="toolbar-chip toolbar-chip-context-summary" aria-label="Agency filter">Agency ▾</summary>
-                <div class="chip-context-menu" role="group" aria-label="Issuing or acting agencies">
+                <div class="chip-context-menu" role="radiogroup" aria-label="Requesting or acting authority (one at a time)">
                     {% for ag in agencies %}
-                    <button class="toolbar-chip toolbar-chip-context" type="button"
-                            data-atlas-agency="{{ ag.agency_id }}" aria-pressed="false"
+                    <button class="toolbar-chip toolbar-chip-context" type="button" role="radio"
+                            data-atlas-agency="{{ ag.agency_id }}" aria-checked="false"
                             title="{{ ag.agency_type }}">{{ ag.name }}</button>
                     {% endfor %}
                 </div>
             </details>
 
-            {% if current_user.role in ('admin', 'auditor') %}
-            <div class="atlas-subject-search">
-                <input type="search" id="atlas-subject-search" class="subject-search-input" data-atlas-subject-search
-                       placeholder="🔎 Focus subject…" maxlength="100" autocomplete="off"
-                       aria-label="Search a subject to investigate on the map">
-                <div class="subject-search-results" data-atlas-subject-results role="listbox" hidden></div>
-            </div>
-            {% endif %}
-
-            <div class="chip-group atlas-mapmode" role="group" aria-label="Map layer">
-                <button class="toolbar-chip" type="button" data-atlas-mapmode="regions"
-                        aria-pressed="true" title="Volume by jurisdiction">Regions</button>
-                <button class="toolbar-chip" type="button" data-atlas-mapmode="density"
-                        aria-pressed="false" title="Hexbin density of located activity">Density</button>
-                <button class="toolbar-chip" type="button" data-atlas-mapmode="points"
-                        aria-pressed="false" title="Individual located events">Points</button>
-            </div>
             <button class="toolbar-chip toolbar-chip-modifier" type="button"
                     data-atlas-projection aria-pressed="false" title="Toggle globe projection">◐ Globe</button>
 
@@ -379,72 +398,54 @@
                     data-atlas-fullscreen aria-pressed="false" title="Fullscreen console (F)">⛶ Full</button>
         </div>
 
-        {# ---- Main: stage (map) + dock (feed / detail) ---- #}
+        {# ---- Main: the map stage. No event feed and no event detail: the Atlas shows
+             counts, and a single event is read on the verification log (lab/strategy/009). ---- #}
         <div class="atlas-main">
             <div class="globe-stage">
                 <div class="globe-hud globe-hud-tl">
                     <div class="hud-stack">
-                        <span class="hud-label">Active Tokens</span>
-                        <span class="hud-value" data-atlas-active-tokens>{{ health.tokens_active }}</span>
-                        <span class="hud-label hud-label-tight">{{ health.tokens_reserve }} reserve · {{ health.tokens_terminal }} terminal</span>
+                        <span class="hud-label">Active Credentials</span>
+                        <span class="hud-value" data-atlas-active-tokens>{{ ui.cell(health.tokens_active, min_cell) }}</span>
+                        <span class="hud-label hud-label-tight">{{ ui.cell(health.tokens_reserve, min_cell) }} reserve · {{ ui.cell(health.tokens_terminal, min_cell) }} terminal</span>
                     </div>
                     <div class="hud-stack hud-stack-gap">
-                        <span class="hud-label">Anomalies (in view)</span>
+                        <span class="hud-label">Anomalies (window)</span>
                         <span class="hud-value-small">
-                            <span class="hud-anomaly-fail" data-atlas-failures>{{ health.failures }}</span>
+                            <span class="hud-anomaly-fail" data-atlas-failures>{{ ui.cell(health.failures, min_cell) }}</span>
                             <span class="hud-anomaly-sep">·</span>
-                            <span class="hud-anomaly-full" data-atlas-full-disclosures>{{ health.full_disclosures }}</span>
+                            <span class="hud-anomaly-full" data-atlas-full-disclosures>{{ ui.cell(health.full_disclosures, min_cell) }}</span>
                         </span>
-                        <span class="hud-label hud-label-tight">failed verifs · full disclosures</span>
+                        <span class="hud-label hud-label-tight">not successful · full disclosures</span>
                     </div>
                 </div>
 
                 <div class="globe-hud globe-hud-br">
                     <div class="hud-stack">
                         <span class="hud-label">Post-Quantum</span>
-                        <span class="hud-value" data-atlas-pq-pct>{{ health.pq_pct }}%</span>
-                        <span class="hud-label hud-label-tight">active signing coverage</span>
+                        <span class="hud-value" data-atlas-pq-pct>{{ ui.share(health.pq_pct) }}</span>
+                        <span class="hud-label hud-label-tight">of live signatures</span>
                     </div>
                     <div class="hud-stack hud-stack-gap">
                         <span class="hud-label">Zero-Knowledge</span>
-                        <span class="hud-value-small" data-atlas-zk-pct>{{ health.zk_pct }}%</span>
-                        <span class="hud-label hud-label-tight">verification disclosure</span>
+                        <span class="hud-value-small" data-atlas-zk-pct>{{ ui.share(health.zk_pct) }}</span>
+                        <span class="hud-label hud-label-tight">of the window's verifications</span>
                     </div>
                 </div>
 
                 <div class="atlas-globe">
                     <div id="atlas-map" class="atlas-map"
-                         data-basemap-style="{{ atlas_basemap_style }}" role="application"
-                         aria-label="Interactive map of Polaris token and verification activity. Drag to pan, scroll to zoom from globe to street level."></div>
-                </div>
-
-                <div class="atlas-subject-banner" data-atlas-subject-banner role="status" hidden>
-                    <span class="subject-banner-label">INVESTIGATING</span>
-                    <span class="subject-banner-name" data-atlas-subject-name></span>
-                    <span class="subject-banner-stats" data-atlas-subject-stats></span>
-                    <button type="button" class="subject-banner-clear" data-atlas-subject-clear>✕ Clear focus</button>
+                         data-basemap-style="{{ atlas_basemap_style }}" data-min-cell="{{ min_cell }}" role="application"
+                         aria-label="Map of the window's verification and lifecycle counts by jurisdiction. Drag to pan, scroll to zoom; a region is the finest thing drawn."></div>
                 </div>
 
                 <div class="globe-legend" aria-label="Map legend">
-                    {# Regions (default): proportional symbols by jurisdiction #}
-                    <div class="legend-mode" data-legend-mode="regions">
-                        <span class="legend-item"><span class="legend-dot legend-cluster"></span>jurisdiction volume · size = count · click to drill</span>
+                    {# The one layer: proportional symbols by jurisdiction, at reference points #}
+                    <div class="legend-mode">
+                        <span class="legend-item"><span class="legend-dot legend-cluster"></span>jurisdiction volume · size = count · click for its counts</span>
                         <span class="legend-item"><span class="legend-dot legend-alert"></span>elevated failure rate</span>
+                        <span class="legend-item"><span class="legend-dot legend-withheld"></span>count withheld</span>
                         <span class="legend-item legend-note" data-atlas-unplaceable hidden></span>
-                        <span class="legend-item legend-note">zero-knowledge events are counted, never located</span>
-                    </div>
-                    {# Density: hexbin surface #}
-                    <div class="legend-mode" data-legend-mode="density" hidden>
-                        <span class="legend-item"><span class="legend-ramp"></span>fewer → more located events</span>
-                        <span class="legend-item legend-note">zero-knowledge verifications are never plotted</span>
-                    </div>
-                    {# Points: the individual-event drill #}
-                    <div class="legend-mode" data-legend-mode="points" hidden>
-                        <span class="legend-item"><span class="legend-dot legend-cluster"></span>cluster of events · click to zoom</span>
-                        <span class="legend-item"><span class="legend-dot legend-selective"></span>selective disclosure</span>
-                        <span class="legend-item"><span class="legend-dot legend-full"></span>full disclosure</span>
-                        <span class="legend-item"><span class="legend-dot legend-alert"></span>failure / revocation</span>
-                        <span class="legend-item legend-note">zero-knowledge verifications are never plotted</span>
+                        <span class="legend-item legend-note">placed at a reference point for the jurisdiction; zero-knowledge events are counted, never located</span>
                     </div>
                 </div>
 
@@ -457,30 +458,10 @@
                 </div>
 
                 <div class="atlas-empty-chip" data-atlas-empty hidden>
-                    <span>NO EVENTS IN THIS VIEW: widen the time window, clear filters, or rotate to another region</span>
+                    <span>NO JURISDICTION WITH {{ min_cell }} OR MORE IN THIS WINDOW: widen the time window or clear filters</span>
                 </div>
             </div>
 
-            <aside class="atlas-dock" aria-label="Event feed and event detail">
-                <div class="dock-tabs">
-                    <button class="dock-tab dock-tab-active" type="button" data-dock-tab="feed">
-                        Event Feed <span class="dock-tab-count" data-atlas-feed-count></span>
-                    </button>
-                    <button class="dock-tab" type="button" data-dock-tab="console">Event detail</button>
-                </div>
-                <div class="dock-panel dock-panel-active" data-dock-panel="feed">
-                    <div class="atlas-feed" data-atlas-event-feed-scroll>
-                        <ul class="atlas-feed-list" data-atlas-event-feed></ul>
-                    </div>
-                </div>
-                <div class="dock-panel" data-dock-panel="console">
-                    <div class="globe-detail" id="atlas-globe-detail" aria-live="polite">
-                        <span class="detail-kicker">Event detail</span>
-                        <strong>Drag to pan. Scroll to zoom from globe to street level.</strong>
-                        <span>Click any marker or feed entry to inspect token, lifecycle, and verification context. Clusters zoom in on click; zoom to street level for individual events.</span>
-                    </div>
-                </div>
-            </aside>
         </div>
 
         {# Slim status strip: classification + activity histogram + live cursor. #}

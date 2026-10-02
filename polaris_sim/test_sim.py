@@ -99,10 +99,11 @@ class EventStreamTests(unittest.TestCase):
                 self.assertIsNone(e.longitude)
                 self.assertIsNone(e.requestor_location)
             else:
-                # A disclosing event names a token and is located.
+                # A disclosing event names a token, and no event carries a coordinate
+                # (lab/strategy/009, step 4c: nothing reads one).
                 self.assertIsNotNone(e.token_id)
-                self.assertIsNotNone(e.latitude)
-                self.assertIsNotNone(e.longitude)
+                self.assertIsNone(e.latitude)
+                self.assertIsNone(e.longitude)
         # Zero-knowledge is the plurality (the privacy default).
         zk = sum(1 for e in a if e.disclosure_level == "ZERO_KNOWLEDGE")
         self.assertGreater(zk, len(a) * 0.4)
@@ -286,6 +287,35 @@ class SubstrateLoadTests(unittest.TestCase):
               AND EXISTS (SELECT 1 FROM TokenLifecycleEvent e WHERE e.token_id=it.token_id AND e.event_type='ACTIVATED')""")
         self.assertEqual(lifecycle_ok, plan.total_people)
 
+    def test_a_stream_is_stamped_on_the_database_clock(self):
+        """A simulated event takes its time from the database, which writes and windows
+        event_timestamp, not from the host's local clock. With the host fourteen hours from UTC,
+        the stream was written fourteen hours from the database's now, and the Atlas's one-hour
+        window showed a live simulation as nothing (2026-10-02)."""
+        import time as _time
+        plan = nation.plan_nation(scale_divisor=2_000_000, seed=3)
+        load.build_nation(self.conn, plan, batch_size=500, commit=False)
+        old_tz = os.environ.get("TZ")
+        os.environ["TZ"] = "Pacific/Kiritimati"          # UTC+14, as far from the database as a host gets
+        _time.tzset()
+        try:
+            events.run_stream(self.conn, verifications=200, lifecycle=0, window_hours=1.0, seed=9,
+                              sample=500, batch_size=200, commit=False)
+        finally:
+            if old_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old_tz
+            _time.tzset()
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT LOCALTIMESTAMP - max(event_timestamp) AS lag, "
+                        "       min(event_timestamp) >= LOCALTIMESTAMP - INTERVAL '2 hours' AS recent "
+                        "  FROM VerificationEvent WHERE requesting_purpose_text = ANY(%s)",
+                        (list(events._PURPOSES),))
+            row = cur.fetchone()
+        self.assertTrue(row["recent"], "the stream was stamped hours from the database's now")
+        self.assertGreaterEqual(row["lag"].total_seconds(), 0, "a stream must not be stamped in the future")
+
     def test_event_stream_runs_through_the_real_paths(self):
         # Build a small nation, then drive a life-event stream over it, all in
         # one rolled-back transaction.
@@ -312,12 +342,12 @@ class SubstrateLoadTests(unittest.TestCase):
             "AND requesting_purpose_text = ANY(%s)", (purposes,))
         self.assertEqual(zk_leak, 0, "a ZK verification must carry no token and no location (C6)")
 
-        # Disclosing verifications are located.
+        # No simulated verification carries a coordinate (lab/strategy/009, step 4c).
         located = self._count(
             "SELECT count(*) n FROM VerificationEvent "
-            "WHERE disclosure_level IN ('SELECTIVE','FULL') AND latitude IS NOT NULL "
+            "WHERE (latitude IS NOT NULL OR longitude IS NOT NULL) "
             "AND requesting_purpose_text = ANY(%s)", (purposes,))
-        self.assertGreater(located, 0, "disclosing verifications must be placed on the map")
+        self.assertEqual(located, 0, "no simulated verification carries a coordinate")
 
         # Lifecycle went through the real procedure: REVOKED rows appeared and
         # the tokens are actually revoked.
@@ -340,8 +370,8 @@ class SubstrateLoadTests(unittest.TestCase):
         self.assertEqual(rep.write_latency_ms.n, 50)
         self.assertGreater(rep.write_latency_ms.p95, 0)
         # every bounded Atlas aggregate was timed over the loaded data
-        for fn in ("atlas_volume_series", "atlas_breakdown", "atlas_crosstab",
-                   "atlas_geo_jurisdictions", "atlas_hexbin", "atlas_records"):
+        for fn in ("atlas_stats", "atlas_volume_series", "atlas_breakdown", "atlas_crosstab",
+                   "atlas_heatmap", "atlas_series_stacked", "atlas_geo_jurisdictions"):
             self.assertIn(fn, rep.atlas_query_ms)
         # the REAL cryptographic verification path ran and every mass-issued
         # token verified (the distinction the benchmark must make honestly).
@@ -382,14 +412,12 @@ class SubstrateLoadTests(unittest.TestCase):
         self.assertTrue(rep.invariants["C6_zero_knowledge_never_located"])
         self.assertTrue(rep.invariants["C1_verification_events_append_only"])
         self.assertTrue(rep.invariants["signatures_cryptographically_verify"])
-        # v9.260 (S5): the Atlas roll-ups prune the partitioned event table under
-        # the generic plan; the benchmark measures it and fails if it regresses.
-        pp = rep.partition_pruning
-        self.assertGreaterEqual(pp["month_partitions"], 1, "the benchmark needs a monthly partition to test pruning")
-        self.assertLess(pp["recent_window_scanned"], pp["all_time_scanned"],
-                        "a recent window must scan fewer partitions than an all-time query")
-        self.assertTrue(pp["prunes"])
-        self.assertTrue(rep.invariants["atlas_windowed_query_prunes"])
+        # lab/strategy/009, step 4: the Atlas reads the rollups and no event table; the
+        # benchmark proves it by privilege and fails if a reader reads one again.
+        ar = rep.atlas_reads
+        self.assertEqual(len(ar["readers"]), 7)
+        self.assertEqual(ar["refused"], [])
+        self.assertTrue(rep.invariants["atlas_reads_no_event_table"])
         self.assertTrue(rep.all_invariants_hold)
         self.assertGreaterEqual(rep.scale_counts["jurisdictions"], 20)
 

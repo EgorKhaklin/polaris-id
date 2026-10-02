@@ -240,7 +240,8 @@ def _cmd_serve(args) -> int:
               file=sys.stderr)
 
     httpd = serve(verifier, host=args.bind, port=args.port,
-                  certfile=str(pki / FILES["tls_cert"]), keyfile=str(pki / FILES["tls_key"]),
+                  certfile=None if args.no_local_tls else str(pki / FILES["tls_cert"]),
+                  keyfile=None if args.no_local_tls else str(pki / FILES["tls_key"]),
                   verbose=args.verbose,
                   # The operator sees the reason; the wallet never does. body carries the
                   # same constant refusal whatever went wrong.
@@ -252,6 +253,8 @@ def _cmd_serve(args) -> int:
                                       if verdict else "refused")))
     print("polaris-oid4vp serving on %s (listening on %s:%d)"
           % (verifier.request_uri[:-len(REQUEST_PATH)], args.bind, args.port))
+    if args.no_local_tls:
+        print("  the local listener is plain HTTP; a proxy or tunnel must provide the public HTTPS")
     print("  client_id     %s" % verifier.client_id)
     print("  request_uri   %s%s" % (verifier.request_uri, ""))
     print("  response_uri  %s" % verifier.response_uri)
@@ -314,6 +317,10 @@ def main(argv=None) -> int:
                    help="the HTTPS origin a wallet reaches this verifier by when it is behind a "
                         "reverse proxy or tunnel (e.g. https://verifier.example); used for the "
                         "request_uri and response_uri in place of https://host:port")
+    s.add_argument("--no-local-tls", action="store_true",
+                   help="serve the local listener over plain HTTP, for when a reverse proxy or "
+                        "tunnel terminates TLS and provides the public HTTPS (pair with "
+                        "--public-base-url); the listener still binds --bind")
     s.add_argument("--issuer-jwks", default=None,
                    help="a JSON file of issuer public JWKs to trust")
     s.add_argument("--issuer-trust-anchor", action="append", default=[], metavar="PEM",

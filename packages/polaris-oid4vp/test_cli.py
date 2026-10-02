@@ -293,6 +293,15 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         self.assertEqual(len(seen["verifier"].issuer_trust_anchors), 3)
         self.assertNotIn("no --issuer-jwks", err, "anchors alone are a configured issuer")
 
+    def test_no_local_tls_serves_plain_http(self):
+        """Behind a terminating proxy or tunnel the listener is HTTP; the proxy provides HTTPS."""
+        _, seen, out, _ = self._serve("--no-local-tls")
+        self.assertIsNone(seen["kwargs"]["certfile"], "--no-local-tls must not load a listener cert")
+        self.assertIsNone(seen["kwargs"]["keyfile"])
+        self.assertIn("plain HTTP", out)
+        _, seen2, _, _ = self._serve()
+        self.assertIsNotNone(seen2["kwargs"]["certfile"], "by default the listener still serves TLS")
+
     def test_an_unreadable_trust_anchor_file_is_refused(self):
         bad = self.tmp / "not-a-cert.pem"
         bad.write_text("hello")

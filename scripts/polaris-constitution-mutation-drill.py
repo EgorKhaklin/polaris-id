@@ -131,16 +131,22 @@ MUTATIONS = [
     ("C5", _in_app_package("script-src 'self'"),
      lambda t: t.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'", 1),
      "csp", "the response policy starts admitting inline script"),
+    # Until lab/strategy/009 step 4 an Atlas layer excluded its zero-knowledge rows, and the
+    # mutation dropped one exclusion. The Atlas now returns no location at all, so the mutation
+    # is the regions handing one back.
     ("C6", "polaris_sql/11_atlas.sql",
-     lambda t: t.replace("disclosure_level <> 'ZERO_KNOWLEDGE'", "TRUE", 1),
-     "c6_atlas_zk", "one Atlas function stops excluding zero-knowledge rows"),
+     lambda t: t.replace("    jurisdiction TEXT,\n    n_total      BIGINT,",
+                         "    jurisdiction TEXT,\n    latitude     DOUBLE PRECISION,\n    n_total      BIGINT,", 1),
+     "c6_atlas_zk", "one Atlas function returns a location"),
     ("C7", "polaris_web/pqc_signing.py",
      lambda t: t.replace('ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")',
                          'ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87", "ECDSA-P256")', 1),
      "algorithm_agility", "a classical algorithm joins the accepted-signer allowlist"),
-    ("C8", _in_app_package("limit = min(int(request.args.get('limit', '500')), _ATLAS_MAX_POINTS)"),
-     lambda t: t.replace("limit = min(int(request.args.get('limit', '500')), _ATLAS_MAX_POINTS)",
-                         "limit = int(request.args.get('limit', '500'))", 1),
+    # The points route's clamp until lab/strategy/009 withdrew the route (step A0); the agency
+    # facet's is the one caller-controlled count left that a single line clamps.
+    ("C8", _in_app_package("limit = min(int(request.args.get('limit', '20')), _ATLAS_MAX_CATEGORIES)"),
+     lambda t: t.replace("limit = min(int(request.args.get('limit', '20')), _ATLAS_MAX_CATEGORIES)",
+                         "limit = int(request.args.get('limit', '20'))", 1),
      "c8_atlas_caps", "one Atlas route stops clamping a caller-controlled count"),
     ("C9", "polaris_web/test_app.py",
      None,      # handled specially: the mutation is scoped to one class body

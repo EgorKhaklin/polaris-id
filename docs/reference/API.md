@@ -157,296 +157,197 @@ this route exists for an operator at a shell.
 
 ## Atlas API
 
-The atlas API (`/api/atlas/*`) supports the operational situational-
-awareness page. All endpoints take a `bbox` query parameter:
-`min_lat,min_lon,max_lat,max_lon` (decimal degrees).
+The Atlas API (`/api/atlas/*`) feeds the `/atlas` console: what the system is doing, never
+who. Every endpoint returns counts per window, bucket, category or jurisdiction, read from the
+activity rollups (hourly and daily totals kept by triggers on the event tables), so it costs
+the same at any population. None returns an event row, names a person or a credential, or
+carries a coordinate ([lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md)). A
+single event is read on the verification log, which writes an `AuditAccessLog` row, and one
+person's history only through the warrant audit.
 
-Antimeridian-spanning bboxes (where `min_lon > max_lon`) are
-supported; they cover `[min_lon, 180] ∪ [-180, max_lon]`.
+Withdrawn, answering 404: the point, event-feed, records and subject endpoints (step A0), and
+the cluster, hexagon and timeline layers (step 4: at street zoom a bin of one is a point).
 
-Result sets are bounded (constraint C8): the list endpoints (clusters,
-points, events) carry `_ATLAS_MAX_*` LIMITs, the timeline is capped at
-240 buckets, subject search at 20 rows; the remaining endpoints return
-aggregates. Responses past a cap are truncated; the caller cannot raise it.
+**Login required; replica-routed** for every endpoint below.
 
-### `GET /api/atlas/clusters`
+### The common parameters
 
-Spatial aggregation over a grid.
-
-| param | type | default | notes |
+| param | values | default | notes |
 |---|---|---|---|
-| `bbox` | csv-floats | required | min_lat,min_lon,max_lat,max_lon |
-| `grid` | float | `5` | grid size in decimal degrees, ∈ (0, 90] |
-| `kind` | enum | `verification` | `verification` \| `lifecycle` |
+| `window` | `1h` \| `24h` \| `7d` \| `30d` \| `all` | `24h` | see Windows |
+| `kind` | `verification` \| `lifecycle` | `verification` | the stream counted |
+| `outcomes` | CSV of `SUCCESS`, `FAILURE`, `EXPIRED`, `UNAUTHORIZED`, or `anomalies` | all | `anomalies` is every outcome but `SUCCESS` |
+| `disclosure` | CSV of `ZERO_KNOWLEDGE`, `SELECTIVE`, `FULL` | all | |
+| `contexts` | ONE of `BANKING`, `EMPLOYMENT`, `HEALTHCARE`, `TRAVEL`, `VOTING`, `MOTOR_VEHICLE`, `GOVERNMENT_BENEFITS` | all | a list is `400 one context at a time` |
+| `agencies` | ONE authority id, ASCII digits | all | a list is `400 one authority at a time` |
 
-Response (verification kind):
+One context and one authority at a time: with a set, the answer for all but one would
+subtract from the answer for all. Anything malformed is `400` with an `error` saying what.
 
-```json
-{
-  "kind": "verification",
-  "bbox": [10, 20, 30, 40],
-  "grid": 5.0,
-  "count": 12,
-  "clusters": [
-    {"lat": 12.5, "lon": 22.5, "n_total": 145, "n_failure": 3,
-     "n_pq": 142, "n_zk": 21, "n_full": 18}
-  ]
-}
-```
+### Windows
 
-Cap: `_ATLAS_MAX_CLUSTERS = 5000`. Cached for `_ATLAS_CACHE_TTL_SECONDS`
-(default 30s); R8-5.
+A window starts at the top of the hour (`1h`, `24h`, `7d`) or the day (`30d`, `all`) that
+holds its nominal start, measured on the database's clock, so `24h` read at 10:20 starts at
+10:00 yesterday. Every response says where: `window`, `grain` (`hour` or `day`), `since` (an
+ISO timestamp, or `null` for `all`) and `min_cell`.
 
-### `GET /api/atlas/points`
+### Small cells are withheld
 
-Individual events in the bbox. Used at high zoom when cluster count
-falls below the cluster→point threshold.
+A count below `min_cell` (5) is `null`, and the page shows it as "fewer than 5". Every count
+is a part of its scope (the window under the request's filters), and a part is withheld when it
+or the rest of its scope is below the minimum, so a category of 98 in a scope of 100 does not
+give the other 2 back. A share is withheld when its count is. A dimension with fixed values
+(an outcome, a disclosure level, an event type, a context, an hour of the week, a bucket of a
+series) lists every value, a zero withheld like a small count. An open list (authorities,
+jurisdictions, algorithms) folds its categories below the minimum into one row,
+`Fewer than 5 each` with `"folded": true`, so it does not say which of them had activity.
 
-| param | type | default | notes |
-|---|---|---|---|
-| `bbox` | csv-floats | required | as above |
-| `limit` | int | `500` | clamped to `_ATLAS_MAX_POINTS = 2000` |
-| `kind` | enum | `verification` | as above |
+A question whose scope holds fewer than 50 events is answered, withheld as any, and written to
+the application log with the user, the route, the window and the filters, never a count or a
+person; a cached answer is logged too. Subtraction across responses can still recover a small
+cell: the record says so and names complementary suppression as the stronger fix it defers.
 
-Response shape mirrors clusters but with `points` array instead.
-
-### `GET /api/atlas/hexbin`
-
-Map v2 Density layer (roadmap P2.3, v9.253): located verification events binned
-into a **pointy-top hexagonal** grid within the bbox, the top-K densest hex
-centres by count (`≤ _ATLAS_MAX_CLUSTERS`, C8). The binning is the standard
-pixel→axial→cube-round done in lon/lat space; the client renders each hex with
-the same `size` it sends, so the lattice tiles. C6: `ZERO_KNOWLEDGE` events are
-excluded entirely, exactly like the cluster/point layers. `@replica_reads`.
-
-| param | type | default | notes |
-|---|---|---|---|
-| `bbox` | csv-floats | required | `S,W,N,E` |
-| `size` | float | `5` | hex circumradius in degrees, `(0, 90]` |
-| `kind` | enum | `verification` | lifecycle yields an empty surface |
-| filters | | | `window`/`outcomes`/`disclosure`/`contexts`/`agencies` |
-
-```json
-{ "kind": "verification", "size": 1.6, "count": 3,
-  "hexes": [ {"lat": 36.0, "lon": -93.53, "n_total": 42, "n_failure": 3} ] }
-```
-
-### `GET /api/atlas/geo/jurisdictions`
-
-Map v2 Regions layer (roadmap P2.3, v9.253) — the **default** map view.
-Verification volume rolled up by the requesting agency's jurisdiction
-(ISO 3166-2), top-K by volume (`≤ _ATLAS_MAX_REGIONS = 500`, C8). **Not
-viewport-bound**: it shows every jurisdiction. C6: a jurisdiction is a
-regulatory grouping, not a coordinate, so a zero-knowledge verification is
-**counted** in `n_zk` yet **never located** — the `centroid` derives from
-located, non-ZK events only. A jurisdiction whose activity is entirely
-zero-knowledge has no centroid and is returned under `unplaceable` (counted, but
-never on the map), summarized by `n_unplaceable` / `n_unplaceable_events`.
-`@replica_reads`.
-
-| param | type | default | notes |
-|---|---|---|---|
-| `kind` | enum | `verification` | or `lifecycle` (actor-agency jurisdiction) |
-| filters | | | `window`/`outcomes`/`disclosure`/`contexts`/`agencies` |
-
-```json
-{ "kind": "verification", "count": 2, "n_unplaceable": 0, "n_unplaceable_events": 0,
-  "regions": [ {"jurisdiction": "US", "n_total": 4210, "n_failure": 51, "n_zk": 1380,
-                "n_located": 2830, "centroid_lat": 37.2, "centroid_lon": -95.4} ],
-  "unplaceable": [] }
-```
+Answers are cached for `POLARIS_ATLAS_CACHE_TTL` seconds (30), keyed by the question, its
+window's start and the authority the signed-in operator is bound to.
 
 ### `GET /api/atlas/stats`
 
-Four HUD signals scoped to the visible bbox.
+The headline figures: the window's verifications, those not successful, full disclosures, the
+zero-knowledge share, the share made with a credential under a quantum-resistant algorithm,
+and lifecycle events, with the population's active credentials. Honours `window` and
+`agencies` only.
 
 ```json
-{
-  "bbox": [-90, -180, 90, 180],
-  "n_active_tokens": 1932451,
-  "n_anomalies": 12,
-  "n_failures": 1453,
-  "n_full": 7,
-  "pq_pct": 99,
-  "zk_pct": 11,
-  "n_verifs": 1942000,
-  "n_lifecycles": 17234
-}
+{"window": "all", "grain": "day", "since": null, "min_cell": 5,
+ "n_active_tokens": 1932451, "n_verifs": 1942000, "n_failures": 1453, "n_full": 7,
+ "zk_pct": 11, "pq_pct": 99, "n_lifecycles": 17234}
 ```
-
-Cached; R8-5.
-
-### `GET /api/atlas/events`
-
-Paginated event feed for the right rail. Cursor pagination supported
-via `?cursor=…`.
-
-### `GET /api/atlas/timeline`
-
-Histogram-strip bucket counts below the toolbar. Returns
-`{ts, n_total, n_anomaly}` points over a `?window=` range with
-`?buckets=N` slices (hard-capped at 240). Honors the same
-outcome/disclosure/context/event_types filters as
-`/api/atlas/clusters`. Added v8.50.
 
 ### `GET /api/atlas/series`
 
-The Overview's total-volume time series (roadmap P2.3, v9.248). Unlike
-`/api/atlas/timeline` (located events only, for the map strip), this counts
-**every** event, so the volume is honest and zero-knowledge verifications are
-included in `n_total`/`n_zk` without a location (C6). Returns
-`{ts, n_total, n_failure, n_zk}` points over a `?window=` range with
-`?buckets=N` slices (hard-capped at 240). `?kind=verification|lifecycle`.
-Non-geographic; `@replica_reads`.
+Volume over the window: `{ts, n_total, n_failure, n_zk}` for every bucket from the window's
+start to now, at most `?buckets=` (default 60, `(0, 240]`) of them, each whole hours or days
+wide. `totals` are the window's own counts, withheld as its parts are, never a sum of the
+points. A failure is every outcome but `SUCCESS` (for the lifecycle, `REVOKED` or `LOST`), in
+every Atlas figure.
 
 ```json
-{
-  "window": "7d", "kind": "verification", "buckets": 48,
-  "since": "2026-08-30T00:00:00", "until": "2026-09-06T00:00:00",
-  "points": [ {"ts": "2026-08-30T00:00:00", "n_total": 41230, "n_failure": 3310, "n_zk": 16400} ]
-}
+{"window": "7d", "grain": "hour", "since": "2026-09-25T10:00:00", "min_cell": 5,
+ "kind": "verification", "buckets": 43, "bucket_seconds": 14400, "until": "2026-10-02T10:20:31",
+ "totals": {"n_total": 288611, "n_failure": 23110, "n_zk": 114800},
+ "points": [{"ts": "2026-09-25T10:00:00", "n_total": 6912, "n_failure": 551, "n_zk": 2761}]}
 ```
 
 ### `GET /api/atlas/breakdown`
 
-The Overview/Breakdown top-K categorical roll-up (roadmap P2.3, v9.248).
-`?dimension=` groups the window's events by one whitelisted dimension
-(verification: `agency|context|outcome|disclosure|algorithm|jurisdiction`;
-lifecycle: `agency|event_type`) and returns `{label, n_total, n_failure}`
-ordered by volume, capped at `_ATLAS_MAX_CATEGORIES` (50). Non-geographic;
-zero-knowledge events are counted like any other (C6). `@replica_reads`.
+The window's counts by one dimension, `{label, n_total, n_failure}` ordered by volume and
+capped at `_ATLAS_MAX_CATEGORIES` (50; `?limit=` lowers it). Verification:
+`agency|context|outcome|disclosure|algorithm|jurisdiction`; lifecycle: `agency|event_type`.
+`?search=` filters labels (case-insensitive, 60 characters); `truncated` is true when the cap
+was reached.
 
-`?search=` (v9.250) applies a case-insensitive label filter so a single slice
-is findable among thousands; `truncated` is true when the cap was reached (more
-match — narrow the search).
+`?compare=previous` adds the window of the same nominal length immediately before
+(`previous: {since, until, incomplete}`, refused for `all`, which has nothing before it). Each
+listed category also carries `prev_total` and `prev_failure`, withheld against that window's
+own scope; `change`, only when both counts are shown, since a change computed from a withheld
+count would give it back; and `failure_rose`, true when the failure share at least doubled with
+ten or more extra failures, `null` unless all four counts are shown. The `Fewer than 5 each`
+row is not compared: its members change from one window to the next. When a purge has taken
+the hourly rollup the window before would read, `incomplete` says so and nothing is compared.
+A question is logged as narrow when either window is.
 
 ```json
-{
-  "kind": "verification", "dimension": "agency", "window": "7d", "limit": 40,
-  "search": "national", "truncated": false, "count": 2,
-  "categories": [ {"label": "US National Identity Service", "n_total": 18420, "n_failure": 210} ]
-}
+{"kind": "verification", "dimension": "agency", "limit": 40, "search": null,
+ "truncated": false, "count": 3, "window": "7d", "grain": "hour", "since": "...", "min_cell": 5,
+ "categories": [{"label": "US National Identity Service", "n_total": 18420, "n_failure": 210},
+                {"label": "First National Bank", "n_total": 9310, "n_failure": null},
+                {"label": "Fewer than 5 each", "n_total": null, "n_failure": null, "folded": true}]}
 ```
 
 ### `GET /api/atlas/crosstab`
 
-The Breakdown view's 2-D pivot (roadmap P2.3, v9.249): `?row=` by `?col=`. Returns
-the top-K rows of the row dimension (by volume, capped at `_ATLAS_MAX_CATEGORIES`)
-crossed with the column dimension. Both are whitelisted per stream (verification
-row: `agency|context|jurisdiction|algorithm`, col: `outcome|disclosure`;
-lifecycle row: `agency|event_type`, col: `event_type`). Non-geographic;
-zero-knowledge events are counted (C6). `@replica_reads`.
+`?row=` by `?col=`: the top rows by volume (capped at `_ATLAS_MAX_CATEGORIES`), every column
+value for each. Verification rows `agency|context|jurisdiction|algorithm`, columns
+`outcome|disclosure`; lifecycle rows `agency|event_type`, column `event_type`. A row's total is
+withheld when the cells withheld beneath it sum to less than the minimum, so it cannot be
+subtracted back into them; `truncated` as for the breakdown. `?compare=previous` adds the
+window before as for the breakdown: each listed row's `prev_total` and each of its cells'
+`prev`, withheld by the same rules against that window's scope, and `change` where both are
+shown.
 
 ```json
-{
-  "kind": "verification", "row": "agency", "col": "outcome", "window": "7d", "limit": 20,
-  "rows": [ {"label": "First National Bank", "total": 18420} ],
-  "cols": ["SUCCESS", "FAILURE"],
-  "cells": [ {"row": "First National Bank", "col": "SUCCESS", "n": 18210} ]
-}
+{"kind": "verification", "row": "agency", "col": "outcome", "limit": 20, "truncated": false,
+ "rows": [{"label": "First National Bank", "total": 18420, "folded": false}],
+ "cols": ["SUCCESS", "FAILURE", "EXPIRED", "UNAUTHORIZED"],
+ "cells": [{"row": "First National Bank", "col": "SUCCESS", "n": 18210},
+           {"row": "First National Bank", "col": "EXPIRED", "n": null}]}
 ```
 
 ### `GET /api/atlas/facet/agencies`
 
-The agency facet for the global filter bar (roadmap P2.3, v9.251). Agencies
-with `(agency_id, name, n_total)` matching an optional `?q=` name/jurisdiction
-search, honouring the other active facets (outcome/disclosure/context via the
-standard filter params) but not the agency selection. A chip flyout of every
-agency does not survive thousands of them, so this is a server typeahead;
-capped at `_ATLAS_MAX_CATEGORIES`. Non-geographic (C6). `@replica_reads`.
+The authority typeahead for the filter bar: every authority matching `?q=` (name or
+jurisdiction), in name order, with `(agency_id, name, n_total)` under the other filters but
+not the authority selection, at most `?limit=` (default 20, capped at 50). Every match is
+listed, active or not, and in name order rather than by volume, so the list does not say which
+small authorities had activity.
+
+### `GET /api/atlas/geo/jurisdictions`
+
+The map's one layer: the window's counts by the requesting authority's jurisdiction (the
+acting authority's for the lifecycle, `(system)` when none acted), top-K by volume
+(`_ATLAS_MAX_REGIONS`, 500). A region is placed from reference data about its jurisdiction
+(`static/atlas-regions.json`), never from where anyone was verified; a zero-knowledge
+verification is counted in `n_zk` and located nowhere. A jurisdiction with fewer than 5 is not
+drawn and joins `elsewhere`; one the reference data cannot place is listed under `unplaced`.
+`truncated` is true at the cap.
 
 ```json
-{
-  "kind": "verification", "count": 2,
-  "results": [ {"agency_id": 5, "name": "First National Bank", "n_total": 18420} ]
-}
+{"kind": "verification", "count": 2, "elsewhere": null, "truncated": false, "unplaced": [],
+ "regions": [{"jurisdiction": "US-PA", "name": "Pennsylvania", "lat": 40.9, "lon": -77.8,
+              "n_total": 4210, "n_failure": 51, "n_zk": 1380}]}
 ```
 
-### `GET /api/atlas/records`
+### `GET /api/atlas/heatmap`
 
-The records data grid (roadmap P2.3, v9.252): the raw event rows behind the
-charts, matching the global filter. One row per event with `event_id`, `ts`,
-`agency`, `category`, `outcome`, `disclosure`, `subject`, `location`, and
-`tone`. Paging is **keyset, not offset**: pass `?cursor=TIMESTAMP|EVENT_ID` from
-the previous response's `next_cursor` to fetch the next (older) page, so a deep
-page costs the same as the first. `kind` is `verification` (default) or
-`lifecycle`; `limit` is capped at `_ATLAS_MAX_EVENTS` (C8); the usual
-`window`/`outcomes`/`disclosure`/`contexts`/`agencies` filter params apply.
-`next_cursor` is `null` on the last page. C6: a zero-knowledge verification is a
-row, but its `subject` reads `(zero-knowledge)` and its `location` is `null`, so
-the grid counts it without ever locating or identifying it. `@replica_reads`.
+The window's counts by ISO weekday (1 Monday to 7 Sunday) and hour of day: all 168 cells,
+`{dow, hour, n, n_failure}`. Always the hourly rollup; for `all` that is every hour still kept,
+and `since` says where those hours begin, since a purge takes old hours while the daily
+rollup keeps its days.
+
+### `GET /api/atlas/stacked`
+
+Volume over the window broken out by one dimension (verification
+`context|outcome|disclosure|agency|jurisdiction`; lifecycle `agency|event_type`): ordered
+`labels`, the top six by volume with `Other` last, and `points: [{ts, values: {label: n}}]` for
+every bucket (`?buckets=`, default 48, `(0, 240]`). A category below the minimum over the whole
+window joins `Other`, so the bands do not name small categories.
+
+### `GET /api/atlas/integrity`
+
+The system's integrity beside its activity, not windowed: the latest state epoch and anchor
+batch, read by their keys, and the Athena board's verdict on the database the application is
+connected to (rules in force, not in force, and held by repository checks only). Header rows
+only: an epoch's leaves name credentials and are not read, nor is the operator who closed it.
+`committed` and `size` are counts, withheld below 5. `null` when there is none yet; `chain` and
+`tx` are `null` until a batch is committed to one.
 
 ```json
-{
-  "kind": "verification", "count": 50,
-  "next_cursor": "2026-09-06T10:41:21|8123",
-  "records": [
-    {"event_id": 8172, "ts": "2026-09-06T10:44:02", "agency": "First National Bank",
-     "category": "Banking", "outcome": "SUCCESS", "disclosure": "SELECTIVE",
-     "subject": "Ada Lovelace", "location": "New York, NY", "tone": "ok"},
-    {"event_id": 8171, "ts": "2026-09-06T10:43:55", "agency": "Transit Authority",
-     "category": "Transit", "outcome": "SUCCESS", "disclosure": "ZERO_KNOWLEDGE",
-     "subject": "(zero-knowledge)", "location": null, "tone": "ok"}
-  ]
-}
+{"min_cell": 5,
+ "epoch": {"id": 41, "closed_at": "2026-10-02T14:00:00", "valid_from": "2026-10-02T14:00:00",
+           "valid_until": "2026-10-03T14:00:00", "committed": 2210},
+ "anchor": {"id": 17, "created_at": "2026-10-02T13:00:00", "size": null, "chain": null, "tx": null},
+ "board": {"rules": 11, "in_force": 10, "not_in_force": 0, "repository": 1,
+           "verified_at": "2026-10-02T16:04:11"}}
 ```
 
 ### `GET /api/atlas/cache-stats`
 
-Cache observability for R8-5. Returns hit/miss/expired/evicted
-counters and current cache size.
+Cache observability: hit, miss, expired and evicted counters and the current size.
 
 ```json
-{
-  "ttl_seconds": 30.0,
-  "max_entries": 256,
-  "current_entries": 12,
-  "hits": 142,
-  "misses": 23,
-  "expired": 4,
-  "evicted": 0,
-  "hit_ratio": 0.860
-}
+{"ttl_seconds": 30.0, "max_entries": 256, "current_entries": 12, "hits": 142,
+ "misses": 23, "expired": 4, "evicted": 0, "hit_ratio": 0.860}
 ```
-
----
-
-### `GET /api/atlas/subjects/search`
-
-**Roles:** admin, auditor. Typeahead for the subject-focus picker.
-`q` (string, at least two characters) matches legal names with `ILIKE`;
-returns `{"results": [...]}` with at most 20 rows.
-
-### `GET /api/atlas/subject`
-
-**Roles:** admin, auditor; audit-logged. `individual_id` (int) selects
-one subject; the response carries that subject's located verification
-events for the focused map view. ZERO_KNOWLEDGE verifications are never
-plotted: they are returned only as a withheld count, so even the
-investigator cannot place them (constraint C6).
-
----
-
-## Trends
-
-### `GET /api/atlas/heatmap`
-
-**Login required; replica-routed.** Events by ISO weekday (1=Mon..7=Sun) x hour
-of day (0..23) — the temporal-rhythm view behind the Trends tab. Returns
-`{cells: [{dow, hour, n, n_failure}]}`, at most **7 x 24 = 168 cells** (C8),
-honouring the same `window`/`kind`/facet filters as the rest of the Atlas.
-Non-geographic: a zero-knowledge verification is counted in its weekday/hour cell
-but never located (C6).
-
-### `GET /api/atlas/stacked`
-
-**Login required; replica-routed.** Volume over time broken out by one
-dimension, for a stacked-area chart. Params: `dimension` (whitelisted per stream:
-verification = `context|outcome|disclosure|agency|jurisdiction`; lifecycle =
-`agency|event_type`), `buckets` (<=240), plus the shared filters. Returns ordered
-`labels` (top-K by volume, `Other` last) and `points: [{ts, values: {label: n}}]`,
-bounded to `buckets x (K+1)` (C8). A bad `dimension` or `buckets` is `400`. ZK is
-counted, never located (C6).
 
 ---
 
@@ -517,9 +418,9 @@ against an expendable database.
 already see on the token-detail page as one JSON file: the token, its
 holder, its lifecycle events, its verification events and its signature
 rows. It is an export of an existing view, not new access: the duress
-hash is reduced to a boolean and signature and key bytes are dropped.
-ZERO_KNOWLEDGE verifications carry no `token_id`, so a token's export
-never contains one.
+hash is reduced to a boolean, signature and key bytes are dropped, and the
+events carry no coordinate, which no page shows. ZERO_KNOWLEDGE
+verifications carry no `token_id`, so a token's export never contains one.
 
 ---
 
@@ -1314,9 +1215,9 @@ server-side regardless.
 | `uc_pseudonymize_individual` | Right-to-erasure pseudonymization, logged in `IndividualErasureEvent` |
 
 All procedures use `SECURITY INVOKER`. The audit trigger on
-`IdentityToken` reads `polaris.actor_agency_id`,
-`polaris.reason_code`, `polaris.event_lat`, `polaris.event_lon` GUCs;
-procedures set them via `SET LOCAL`.
+`IdentityToken` reads the `polaris.actor_agency_id` and
+`polaris.reason_code` GUCs; procedures set them via `SET LOCAL`. The
+lifecycle rows it writes carry no location (lab/strategy/009, step 4c).
 
 ### `POST /uc8/revoke` (UC-8)
 

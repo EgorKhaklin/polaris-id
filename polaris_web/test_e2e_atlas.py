@@ -3,9 +3,9 @@
 """polaris_web/test_e2e_atlas.py — Atlas end-to-end smoke tests.
 
 **Why end-to-end for the Atlas.** The Atlas (`/atlas`) is the operational
-investigation surface: a MapLibre map rendered by `atlas-map.js`, with
-server-side clustering, individual event markers at high zoom, and
-click-through into token records. None of that is exercised by the
+analytics console: an Overview, a Breakdown, Trends and a MapLibre map of
+counts per jurisdiction rendered by `atlas-map.js`, every figure a count and
+none an event (lab/strategy/009). None of that is exercised by the
 structural-invariant suite, which reads source, or by the route tests, which
 only confirm the page returns 200. The defects that reach this surface are
 CSS-class drift, script load failures, JSON data-island parse errors and CSP
@@ -184,30 +184,26 @@ class TestAtlasGlobeE2E(unittest.TestCase):
         finally:
             page.close()
 
-    def test_map_v2_modes_and_globe_toggle(self):
-        """v9.253 (Map v2): the map is aggregation-first. It must open on the
-        Regions layer (jurisdiction rollup) with a FLAT projection, switch
-        between Regions/Density/Points, and toggle the globe on. Catches: the
-        mode wiring, the default-mode/default-projection flip, the layer
-        sources failing to build, and the projection toggle."""
+    def test_the_map_draws_regions_and_toggles_the_globe(self):
+        """The map draws counts per jurisdiction and nothing else (lab/strategy/009, step 4: the
+        density and point layers are withdrawn), so it offers no layer mode; it opens FLAT, and
+        the globe is an opt-in toggle. Catches: the regions source failing to build, a withdrawn
+        layer's control coming back, the default projection flipping, and the toggle."""
         page = self._context.new_page()
         try:
             self._login_and_goto(page)
             page.click('[data-atlas-view-tab="map"]')
             page.wait_for_selector("#atlas-map", state="visible", timeout=3000)
             page.wait_for_timeout(2800)  # lazy boot + first aggregate fetch
-            # Regions is the default active mode; the projection starts flat.
-            self.assertEqual(page.get_attribute('[data-atlas-mapmode="regions"]', 'aria-pressed'), 'true',
-                "the map must open on the Regions layer (aggregation-first)")
+            self.assertEqual(page.query_selector_all('[data-atlas-mapmode]'), [],
+                "the map draws regions only, so it offers no layer to switch to")
+            regions = page.evaluate(
+                "() => { try { return !!window.atlasMap.getSource('atlas-regions') } catch(e){ return false } }")
+            self.assertTrue(regions, "the regions source must be built")
             proj0 = page.evaluate("() => { try { return window.atlasMap.getProjection().type } catch(e){ return 'n/a' } }")
             self.assertEqual(proj0, 'mercator', "the map must open FLAT, not on the globe")
             self.assertFalse(page.is_visible('[data-atlas-error]'),
-                "the Map error banner must stay hidden when the aggregate loads")
-            # Density then Points activate their modes.
-            page.click('[data-atlas-mapmode="density"]'); page.wait_for_timeout(1200)
-            self.assertEqual(page.get_attribute('[data-atlas-mapmode="density"]', 'aria-pressed'), 'true')
-            page.click('[data-atlas-mapmode="points"]'); page.wait_for_timeout(1200)
-            self.assertEqual(page.get_attribute('[data-atlas-mapmode="points"]', 'aria-pressed'), 'true')
+                "the Map error banner must stay hidden when the regions load")
             # The globe is an opt-in toggle.
             page.click('[data-atlas-projection]'); page.wait_for_timeout(1500)
             proj1 = page.evaluate("() => { try { return window.atlasMap.getProjection().type } catch(e){ return 'n/a' } }")
@@ -240,6 +236,50 @@ class TestAtlasGlobeE2E(unittest.TestCase):
         finally:
             page.close()
 
+    def test_the_integrity_card_fills_from_the_database(self):
+        """lab/strategy/009 A2: the Overview's integrity card reads the latest epoch and batch and
+        the Athena board's verdict, and links to the board. Catches the fetch, the fill and a
+        card left on its placeholder."""
+        page = self._context.new_page()
+        try:
+            self._login_and_goto(page)
+            page.wait_for_selector('[data-ov-integrity]', state="visible", timeout=3000)
+            page.wait_for_function(
+                "() => !document.querySelector('[data-ov-int-value=\"board\"]')"
+                ".textContent.includes('\u2026')", timeout=4000)
+            board = page.text_content('[data-ov-int-value="board"]') or ''
+            self.assertRegex(board, r'\d+ of \d+ (in force|not in force)')
+            for key in ('epoch', 'anchor'):
+                value = (page.text_content(f'[data-ov-int-value="{key}"]') or '').strip()
+                self.assertNotIn(value, ('', '\u2026', 'Unavailable'), key)
+            self.assertIsNotNone(page.query_selector('[data-ov-integrity] a[href="/athena"]'))
+        finally:
+            page.close()
+
+    def test_the_breakdown_compares_with_the_window_before(self):
+        """lab/strategy/009 A4: the comparison adds the Before and Change columns and says what
+        it compared with; under 'all' it is switched off, since nothing comes before."""
+        page = self._context.new_page()
+        try:
+            self._login_and_goto(page)
+            page.click('[data-atlas-view-tab="breakdown"]')
+            page.wait_for_selector('[data-bd-ranked] .bd-row', timeout=4000)
+            page.click('[data-gf-window="7d"]')
+            page.click('[data-bd-compare="previous"]')
+            page.wait_for_selector('[data-bd-ranked].bd-table-compare .bd-row-change', timeout=4000)
+            page.wait_for_function(
+                "() => document.querySelector('[data-bd-count]').textContent.includes('Compared with')",
+                timeout=4000)
+            self.assertTrue(page.is_visible('[data-bd-metric="change"]'))
+            self.assertFalse(page.is_visible('[data-bd-error]'))
+            page.click('[data-gf-window="all"]')
+            page.wait_for_timeout(800)
+            self.assertTrue(page.is_disabled('[data-bd-compare="previous"]'))
+            self.assertEqual(page.get_attribute('[data-bd-compare="off"]', 'aria-checked'), 'true')
+            self.assertFalse(page.is_visible('[data-bd-error]'), 'all-time asks for no comparison')
+        finally:
+            page.close()
+
     def test_global_filter_coordinates_the_overview(self):
         """v9.251: the global filter bar drives the views. Selecting an outcome
         facet must add a filter chip and re-fetch the Overview (coordinated,
@@ -261,31 +301,6 @@ class TestAtlasGlobeE2E(unittest.TestCase):
                 "selecting a facet value must add an active filter chip")
             self.assertFalse(page.is_hidden('[data-gf-clear]'),
                 "the Clear all control must appear once a filter is active")
-        finally:
-            page.close()
-
-    def test_records_tab_renders_grid_and_keyset_pages(self):
-        """v9.252: the Records tab must reveal a data grid, populate it, and
-        page it with the keyset 'load more' control (not an OFFSET). Catches:
-        the tab wiring, the /api/atlas/records fetch, the row render, and the
-        cursor-append pagination."""
-        page = self._context.new_page()
-        try:
-            self._login_and_goto(page)
-            page.click('[data-atlas-view-tab="records"]')
-            page.wait_for_selector('[data-atlas-view-panel="records"]', state="visible", timeout=3000)
-            page.wait_for_selector('[data-rec-body] .rec-row', timeout=4000)
-            self.assertFalse(page.is_visible('[data-rec-error]'),
-                "the Records error banner must stay hidden when the fetch succeeds")
-            before = len(page.query_selector_all('[data-rec-body] .rec-row'))
-            self.assertGreater(before, 0, "the grid must render at least one record row")
-            # keyset 'load more' appends the next page without dropping page one
-            if page.is_visible('[data-rec-more]'):
-                page.click('[data-rec-more]')
-                page.wait_for_timeout(1000)
-                after = len(page.query_selector_all('[data-rec-body] .rec-row'))
-                self.assertGreater(after, before,
-                    "the keyset 'load more' must append the next page of rows")
         finally:
             page.close()
 

@@ -189,6 +189,13 @@ stdout: the edge runs as an unprivileged user with no writable host directory
 stdout is capped by the json-file driver (`max-size` x `max-file`), so logs
 cannot fill the disk.
 
+**The Athena self-test leaves expected errors in the Postgres log.** An administrator or auditor
+who presses "Run the self-test" on `/athena` makes the database refuse six forbidden writes on
+purpose, each rolled back. Each refusal is a normal Postgres ERROR line (a permission denied, a
+check or unique violation, a trigger's message), tagged `application_name=polaris-athena-selftest`
+when the log line prefix includes `%a`, and the app log records who ran it and the result. A run
+is a check of the database, not an incident; a refusal from any other application name is.
+
 ### Operator authentication (WebAuthn-MFA)
 
 Operator login for admin accounts is two-factor: password + WebAuthn
@@ -981,44 +988,15 @@ discovers Redis via `POLARIS_REDIS_URL`; a Sentinel or Cluster endpoint can be
 pointed at the same way. The shipped single instance runs with
 `maxmemory 256mb` and `allkeys-lru`.
 
-### PostGIS: for atlas spatial queries at very high cardinality
+### PostGIS: withdrawn
 
-**Inflection:** atlas API p95 above 500ms at 5M+ events with the default
-B-tree spatial indexes; B-tree breaks down past ~10M events because it does
-not model 2D proximity natively.
-
-**Recipe:** the `polaris_sql/13_postgis.sql` script is optional by design; the
-schema works with and without the extension.
-
-```bash
-# 1. As a Postgres superuser, install the extension once:
-docker compose -f polaris_web/docker-compose.prod.yml exec postgres \
-    psql -U postgres -d polaris -c "CREATE EXTENSION postgis;"
-
-# 2. Re-run the load script so 13_postgis.sql picks up the change:
-docker compose -f polaris_web/docker-compose.prod.yml exec postgres \
-    psql -U postgres -d polaris -f /docker-entrypoint-initdb.d/sql/13_postgis.sql
-
-# 3. Confirm:
-docker compose -f polaris_web/docker-compose.prod.yml exec postgres \
-    psql -U postgres -d polaris -c "
-        SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname='postgis') AS postgis_loaded,
-               EXISTS (SELECT 1 FROM information_schema.columns
-                       WHERE table_name='verificationevent' AND column_name='geo')
-                       AS geo_column_present"
-```
-
-After step 3 both should return `t`. The schema gains:
-- `VerificationEvent.geo` (generated, stored) + `gix_verification_geo` (GiST)
-- `TokenLifecycleEvent.geo` (generated, stored) + `gix_lifecycle_geo` (GiST)
-
-The atlas functions still use the B-tree path; operators with PostGIS active
-can query the GiST index directly (a sample `ST_DWithin` query is in
-[docs/design/atlas-scaling.md](../design/atlas-scaling.md), section
-"PostGIS-optional scaling path").
-
-**When NOT to enable PostGIS:** managed Postgres tiers that gate it behind
-paid plans. The B-tree fallback is operationally complete below ~5M events.
+The optional PostGIS path (`polaris_sql/13_postgis.sql`: a generated `geo` column on each event
+table, GiST-indexed) served the Atlas's bounding-box layers. The Atlas reads no location since
+step 4 of lab/strategy/009, and step 4c withdrew the path: migration 2026-10-02-005 drops the two
+GiST indexes, and the file now creates nothing. There is nothing to enable. A database that had
+it keeps the `geo` columns, unindexed, until the contract step drops them with `latitude` and
+`longitude`; leave the extension installed until then, since the columns depend on it
+([atlas-scaling.md](../design/atlas-scaling.md), "The PostGIS path, withdrawn").
 
 ### Vertical alternative
 
