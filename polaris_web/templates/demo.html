@@ -211,10 +211,10 @@ UPDATE IdentityToken
                <code>token_id</code>, whoever writes it. It bounds what the log stores; a verifier
                shown a full credential still sees its stable token value, so correlation across
                verifiers is bounded, not eliminated.</p>
-            <p><strong>The federation gate.</strong><span class="rule-where">Application</span>
-               The console refuses to record a <code>SUCCESS</code> unless the verifying
-               authority holds an active trust attestation toward the issuing authority for this
-               context. Trust is one recorded hop, never transitive.</p>
+            <p><strong>A success has to be true.</strong><span class="rule-where">Schema</span>
+               The database refuses to record a <code>SUCCESS</code> for a credential that is not
+               live, not permitted in the context, or issued by an authority the verifying one does
+               not trust: an active trust attestation, one recorded hop, never transitive.</p>
             <p><strong>The meta-audit.</strong><span class="rule-where">Application</span>
                The stated purpose records why a verification happened; the access log records who
                read the trail afterwards.</p>
@@ -271,9 +271,9 @@ UPDATE IdentityToken
     <h2 id="final-title">What you just saw</h2>
     <p>Four procedures and the rows they append. The rules marked <em>Schema</em> hold whoever
        connects: the append-only triggers (C1), the zero-knowledge CHECK (C2), the one-active
-       index (C3), the algorithm as a row (C7), the binding trigger and the issuer-discretion
-       bound. The rules marked <em>Application</em> hold while the application is honest: the
-       federation gate, the duress comparison and the meta-audit.</p>
+       index (C3), the algorithm as a row (C7), the binding trigger, the rules a success has to
+       keep, and the issuer-discretion bound. The rules marked <em>Application</em> hold while the
+       application is honest: the duress comparison and the meta-audit.</p>
     <p>The data here is synthetic. The procedures live in <code>polaris_sql/05_procedures.sql</code>,
        the triggers in <code>06_triggers.sql</code> and the schema in <code>01_schema.sql</code>,
        and the test suites exercise them on every change. The tables are described in

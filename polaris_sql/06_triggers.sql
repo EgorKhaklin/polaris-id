@@ -1039,6 +1039,80 @@ COMMENT ON FUNCTION enforce_agency_quota IS
   'the audit-of-record tables, and refuses the (cap + 1)th write with '
   '"quota exceeded: ..." (check_violation), which the app maps to HTTP 429.';
 
+-- ----------------------------------------------------------------------------
+-- 2026-10-02 (THREAT-MODEL). A SUCCESS that names a credential says three things held when it
+-- was recorded: the credential was live (ACTIVE, not past its expiration date), it was permitted
+-- in the context, and the verifying authority was its issuer or held a live attestation toward
+-- the issuer for the context (one hop, never transitive). The console's verification form
+-- refuses each of the three otherwise (1.0.0-rc.22, rc.23, 2026-09-30, the federation gate), but
+-- polaris_app holds INSERT on VerificationEvent. Measured on 2026-10-02 as polaris_app: a SUCCESS
+-- for a REVOKED credential and a SUCCESS in a context the credential is not permitted in were
+-- both accepted, and C1 keeps such a row for good. The database now refuses all three, for every
+-- session but the table owner's (the seed and the SQL self-tests write as the owner, who could
+-- drop this trigger anyway; the defence against the owner is evidence held outside the database).
+-- It reads as the owner, so an operator bound to one authority is held to the rules about a
+-- credential that row-level security hides from it; being a trigger, it is no callable oracle
+-- for what that security hides. ZERO_KNOWLEDGE rows name no credential and are not its concern.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION enforce_verification_success_rules()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_status   VARCHAR(20);
+    v_expires  DATE;
+    v_issuer   INTEGER;
+BEGIN
+    IF NEW.outcome IS DISTINCT FROM 'SUCCESS' OR NEW.token_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF session_user::name = (SELECT pg_get_userbyid(relowner) FROM pg_class
+                              WHERE oid = 'VerificationEvent'::regclass) THEN
+        RETURN NEW;
+    END IF;
+    SELECT status, expiration_date, issuing_agency_id INTO v_status, v_expires, v_issuer
+      FROM IdentityToken WHERE token_id = NEW.token_id;
+    IF NOT FOUND THEN
+        RETURN NEW;   -- the foreign key refuses it, with its own message
+    END IF;
+    IF v_status <> 'ACTIVE' OR (v_expires IS NOT NULL AND v_expires < polaris_utc_date()) THEN
+        RAISE EXCEPTION 'credential %: a verification of it cannot have succeeded, it is %',
+            NEW.token_id,
+            CASE WHEN v_status <> 'ACTIVE' THEN v_status ELSE 'past its expiration date' END
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM TokenPermission
+                    WHERE token_id = NEW.token_id AND context_id = NEW.context_id) THEN
+        RAISE EXCEPTION 'credential %: not permitted in context %, so a verification there cannot have succeeded',
+            NEW.token_id, NEW.context_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.requesting_agency_id <> v_issuer AND NOT EXISTS (
+           SELECT 1 FROM AgencyTrustAttestation
+            WHERE attesting_agency_id = NEW.requesting_agency_id
+              AND attested_agency_id  = v_issuer
+              AND context_id          = NEW.context_id
+              AND revocation_date IS NULL
+              AND valid_until >= polaris_utc_date()) THEN
+        RAISE EXCEPTION 'authority % holds no live attestation toward authority % for context %, so its verification cannot have succeeded',
+            NEW.requesting_agency_id, v_issuer, NEW.context_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END$$;
+
+DROP TRIGGER IF EXISTS trg_verification_success_rules ON VerificationEvent;
+CREATE TRIGGER trg_verification_success_rules
+    BEFORE INSERT ON VerificationEvent
+    FOR EACH ROW EXECUTE FUNCTION enforce_verification_success_rules();
+
+COMMENT ON FUNCTION enforce_verification_success_rules IS
+  '2026-10-02 (THREAT-MODEL). Refuses a SUCCESS naming a credential that is not live, not '
+  'permitted in the context, or not trusted by the verifying authority (one hop), for every '
+  'session but the table owner''s. The verification form checks the same three first.';
+
 -- ============================================================================
 -- END OF 06_triggers.sql
 -- 17 triggers, 10 trigger functions:

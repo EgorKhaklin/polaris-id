@@ -235,6 +235,11 @@ Every verification attempt.
 **Trigger:** `trg_verification_append_only` (BEFORE UPDATE OR DELETE)
 raises `insufficient_privilege`. Constraint C1.
 
+**Trigger:** `trg_verification_success_rules` (BEFORE INSERT, 2026-10-02) refuses a `SUCCESS`
+naming a credential unless the credential is `ACTIVE` and not past its expiration date, is
+permitted in the context (`TokenPermission`), and the requesting agency is its issuer or holds
+a live attestation toward the issuer for the context. Every session but the table owner's.
+
 ---
 
 ### `ExchangeReceiptLog` (constraint C1: append-only; roadmap P8.2c)

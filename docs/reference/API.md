@@ -1679,7 +1679,10 @@ given context is rejected with a flash message; the operator must
 either record outcome=UNAUTHORIZED (which proceeds normally) or create
 the missing attestation. See the federation check helper
 `_federation_trust_holds()` in `verification_routes.py`. NO transitive trust: the
-helper inspects exactly one row in `AgencyTrustAttestation`.
+helper inspects exactly one row in `AgencyTrustAttestation`. Since 2026-10-02 the database
+refuses the same rows whoever writes them (`trg_verification_success_rules`): a SUCCESS naming
+a credential that is not live, not permitted in the context, or not trusted by the verifying
+agency, from every session but the table owner's.
 
 ---
 

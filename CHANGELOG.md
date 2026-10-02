@@ -11,6 +11,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- The database refuses a successful verification of a dead credential, outside its permitted contexts, or across an untrusted edge.
 - An operator bound to one authority can no longer activate a reserve another authority issued (UC-4).
 
 ### Added
