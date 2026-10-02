@@ -34,7 +34,7 @@ psycopg2-binary==2.9.13
 # malformed client payloads in InvalidRegistrationResponse /
 # InvalidAuthenticationResponse instead of raw parser errors, rejects
 # duplicate CBOR keys, and refreshes the Android/TPM attestation roots) ----
-webauthn==3.0.0
+webauthn==3.0.1
 cbor2==6.1.4
 cryptography==50.0.1
 pyOpenSSL==26.4.0
