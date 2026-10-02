@@ -17,6 +17,7 @@ root.
 |---|---|
 | [PRODUCTION-READINESS.md](PRODUCTION-READINESS.md) | The bound on every claim in this repository: what an operator must still decide before real identity data, and the check behind every closed engineering item. Read this first if you are deciding whether to deploy. |
 | [ARCHITECTURE-OVERVIEW.md](ARCHITECTURE-OVERVIEW.md) | An engineer or auditor evaluating the system: what it is and is not, the layers, the identity flow, the cryptography, the deployment paths, and a walkthrough of the constraints refusing bad writes. |
+| [INTEGRATION.md](INTEGRATION.md) | Someone connecting a system to Polaris (a relying party, a wallet, an issuing authority, or a peer authority): the four doors, the tools for each, and the self-test that proves an integration before touching a live instance. |
 | [REVIEW-PACKET.md](REVIEW-PACKET.md) | What each subsystem guarantees, what holds it, what does not, and the attacks the maintainers would most like attempted; every limitation carries a witness that fails the build when the limitation is fixed |
 | [ASSURANCE-CASE.md](ASSURANCE-CASE.md) | Anyone judging the security argument: the requirements, the threat model, the trust boundaries, the design principles applied and the common weaknesses countered, each pointing at its evidence, and the limits of an argument the author made. |
 | [RED-TEAM-SCOPE.md](RED-TEAM-SCOPE.md) | The security firm to be commissioned: engagement type, threat actors, in-scope surfaces, deliverables, disclosure timeline. |
