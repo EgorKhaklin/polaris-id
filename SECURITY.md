@@ -99,6 +99,20 @@ the immutable release holds them:
 gh attestation verify sbom-python.spdx.json --repo EgorKhaklin/polaris-id
 ```
 
+Each SBOM is valid SPDX 2.3 and meets the 2021 NTIA minimum elements (supplier, name, version,
+unique identifier, dependency relationships, author, timestamp): the release judges every one with
+the SPDX project's [NTIA conformance checker](https://github.com/spdx/ntia-conformance-checker) and
+stays a draft unless each passes. Trivy, which generates them, records a supplier only for Debian
+packages; the others come from each component's package URL, its distribution or the module a
+binary contains ([scripts/polaris-sbom-enrich.py](scripts/polaris-sbom-enrich.py)), and a license
+name the SPDX License List does not carry becomes a `LicenseRef-` that keeps the name the package
+gave it. To check one yourself:
+
+```bash
+pip install ntia-conformance-checker
+ntia-checker -r json sbom-image-app.spdx.json | jq '.isConformant'
+```
+
 The provenance bundle is attached beside the SBOMs, so the same check also runs without
 GitHub's attestation store:
 

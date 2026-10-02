@@ -5640,10 +5640,31 @@ def check_sbom_workflow(root: pathlib.Path) -> list[Finding]:
     if not publish or publish.start() < upload.start():
         return _fail("sbom", "sbom.yml must attach the SBOMs to the draft release and only then "
                      "publish it; a published release is immutable and refuses them")
+    # 2026-10-02: every SBOM meets the 2021 NTIA minimum elements and is valid SPDX 2.3 before it
+    # is attested. Measured on v1.0.0-rc.70, none of the six met them: Trivy leaves suppliers, the
+    # subject's version and the author short, and four carried license names off the SPDX list.
+    # scripts/polaris-sbom-enrich.py fills them; the SPDX project's checker decides, from its JSON
+    # report, because since 5.0 it exits 0 on a non-conformant SBOM.
+    attest = re.search(r"^\s*(?:-\s*)?uses:\s*actions/attest-build-provenance@", wf, re.M)
+    enrich = re.search(r"^[^#\n]*scripts/polaris-sbom-enrich\.py --version", wf, re.M)
+    checker = re.search(r"^[^#\n]*\bntia-checker\b[^\n]*-r json", wf, re.M)
+    verdict = re.search(r"^[^#\n]*\.isConformant == true", wf, re.M)
+    if not (enrich and checker and verdict):
+        return _fail("sbom", "sbom.yml does not fill the NTIA minimum elements "
+                     "(scripts/polaris-sbom-enrich.py) and judge each SBOM by the checker's JSON "
+                     "verdict (ntia-checker -r json, .isConformant == true); the checker's exit "
+                     "status passes a non-conformant SBOM")
+    if "--require-hashes -r .github/sbom/requirements.txt" not in wf:
+        return _fail("sbom", "sbom.yml installs the SBOM checker without its hash lock "
+                     "(pip install --require-hashes -r .github/sbom/requirements.txt)")
+    if attest and max(enrich.start(), checker.start(), verdict.start()) > attest.start():
+        return _fail("sbom", "sbom.yml attests the SBOMs before filling and checking the NTIA "
+                     "minimum elements; the provenance would cover a document that then changes")
     return _ok("sbom",
                "every release generates SPDX SBOMs for the Python surface + all five "
-               "self-built images and attaches them, with their provenance bundle, to the "
-               "draft before publishing it")
+               "self-built images, brings each to the NTIA minimum elements and checks it with "
+               "the SPDX project's checker before attesting, and attaches them, with their "
+               "provenance bundle, to the draft before publishing it")
 
 
 # P0.5 — the SBOM generator and the CVE scanner must be the SAME Trivy version.

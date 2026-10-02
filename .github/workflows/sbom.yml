@@ -132,6 +132,40 @@ jobs:
           done
           [ "$fail" = 0 ] || exit 1
 
+      # The 2021 NTIA minimum elements, and valid SPDX 2.3, before anything is attested. Trivy
+      # leaves suppliers, the subject's version and the author short and copies license names
+      # that are not on the SPDX list; scripts/polaris-sbom-enrich.py fills each from facts the
+      # SBOM and the release hold (and fails, naming the component, where it holds none). The
+      # SPDX project's checker then decides from its JSON report: since 5.0 it exits 0 on a
+      # non-conformant SBOM, so its exit status proves nothing. A failure leaves the draft.
+      - name: Meet the NTIA minimum elements, judged by the SPDX project's checker
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/sbom-check"
+          "$RUNNER_TEMP/sbom-check/bin/pip" install --quiet --require-hashes -r .github/sbom/requirements.txt
+          PY="$RUNNER_TEMP/sbom-check/bin/python"
+          V="${TAG#v}"
+          # The Caddy main module and the lockfile are built here; everything else names its own.
+          "$PY" scripts/polaris-sbom-enrich.py --version "$V" --ours requirements.txt sbom/sbom-python.spdx.json
+          "$PY" scripts/polaris-sbom-enrich.py --version "$V" --ours caddy sbom/sbom-image-caddy.spdx.json
+          "$PY" scripts/polaris-sbom-enrich.py --version "$V" \
+            sbom/sbom-image-app.spdx.json sbom/sbom-image-pgbouncer.spdx.json \
+            sbom/sbom-image-postgres.spdx.json sbom/sbom-image-etcd.spdx.json
+          fail=0
+          for f in sbom/*.spdx.json; do
+            "$RUNNER_TEMP/sbom-check/bin/ntia-checker" -r json "$f" > "$RUNNER_TEMP/verdict.json"
+            if jq -e '.isConformant == true and (.validationMessages | length) == 0' \
+                "$RUNNER_TEMP/verdict.json" > /dev/null; then
+              echo "$f: NTIA minimum elements met, valid SPDX 2.3"
+            else
+              echo "::error::$f does not meet the NTIA minimum elements or is not valid SPDX 2.3"
+              "$RUNNER_TEMP/sbom-check/bin/ntia-checker" "$f" || true
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ] || exit 1
+
       # P0.6 — SLSA build-provenance over every SBOM, signed keyless through
       # GitHub OIDC + Sigstore (Fulcio cert, Rekor transparency log). Each SBOM
       # gets a provenance attestation binding its sha256 to this repo + this

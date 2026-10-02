@@ -2436,11 +2436,41 @@ def test_sbom_workflow_check_discriminates(tmp_path):
     assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
         "must FAIL when the workflow never publishes the draft"
 
-    sbom.write_text(head + "      - run: |\n"
-                    "          gh release upload \"$TAG\" sbom/*.spdx.json sbom/sbom-provenance.intoto.jsonl\n"
-                    "          gh release edit \"$TAG\" --draft=false\n")
+    publish = ("      - run: |\n"
+               "          gh release upload \"$TAG\" sbom/*.spdx.json sbom/sbom-provenance.intoto.jsonl\n"
+               "          gh release edit \"$TAG\" --draft=false\n")
+    install = "          pip install --require-hashes -r .github/sbom/requirements.txt\n"
+    fill = "          python3 scripts/polaris-sbom-enrich.py --version \"$V\" sbom/*.spdx.json\n"
+    judge = ("          ntia-checker -r json \"$f\" > v.json\n"
+             "          jq -e '.isConformant == true' v.json\n")
+    attest = "      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8\n"
+
+    # Attached and published, but no SBOM is brought to the NTIA minimum elements or checked.
+    sbom.write_text(head + attest + publish)
+    assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the SBOMs are attested without the NTIA minimum elements filled and checked"
+
+    # Checked by the checker's exit status, which is 0 on a non-conformant SBOM since 5.0.
+    sbom.write_text(head + "      - run: |\n" + install + fill
+                    + "          ntia-checker \"$f\"\n" + attest + publish)
+    assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the gate reads the checker's exit status instead of its JSON verdict"
+
+    # The checker installed from whatever PyPI serves that day.
+    sbom.write_text(head + "      - run: |\n          pip install ntia-conformance-checker\n"
+                    + fill + judge + attest + publish)
+    assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the checker is installed without its hash lock"
+
+    # Filled and checked after the attestation: the provenance covers a document that then changed.
+    sbom.write_text(head + attest + "      - run: |\n" + install + fill + judge + publish)
+    assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the SBOMs are filled and checked after they are attested"
+
+    sbom.write_text(head + "      - run: |\n" + install + fill + judge + attest + publish)
     assert checks.check_sbom_workflow(tmp_path)[0].level == "OK", \
-        "must PASS with release trigger, SPDX, all five images, python, and upload before publishing"
+        "must PASS with release trigger, SPDX, all five images, python, the NTIA minimum " \
+        "elements filled and checked before attesting, and upload before publishing"
 
 
 def test_sbom_trivy_match_check_discriminates(tmp_path):

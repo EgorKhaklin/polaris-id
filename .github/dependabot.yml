@@ -127,6 +127,20 @@ updates:
     commit-message:
       prefix: deps
 
+  # The SPDX project's NTIA checker sbom.yml judges every release SBOM with, and the license
+  # list polaris-sbom-enrich.py reads from it, hash-pinned by pip-compile in .github/sbom.
+  - package-ecosystem: pip
+    directory: /.github/sbom
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+
   # Docker base images and the prod compose's digest-pinned images: a PR
   # bumps a pinned digest when the upstream tag moves, so a frozen digest
   # still receives security updates.
