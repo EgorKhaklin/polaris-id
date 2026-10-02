@@ -4,9 +4,9 @@
 on the owner's direction of 2026-10-01: the Atlas is to be reworked completely, as the best version
 of what it should be rather than a restyle, and Athena, which has no real use today, is to be
 remade with one. State: OPEN. The falsifiers in section 10 were written before the changes they
-judge; section 12 records what they found. Step A0 is done: the Atlas names no person. This is the
-console work [008](008-population-scale.md) left for last ("the Atlas"), and it inherits 008's rule
-that a page costs the same at any population.
+judge; section 12 records what they found. Steps A0 (the Atlas names no person) and B1 (the
+live constraint board) are done. This is the console work [008](008-population-scale.md) left for
+last ("the Atlas"), and it inherits 008's rule that a page costs the same at any population.
 
 ---
 
@@ -244,3 +244,25 @@ event key or a holder's name, nor writes an access row it would owe.
 
 Not answered yet: falsifier 3. The remaining aggregates still read raw events (the page took
 5.1 s at two million persons, `008/BENCH.md`); step 4 moves them onto rollups.
+
+### Step B1 (2026-10-02): the constraint board
+
+`athena_board.read_board()` builds the Constitution tab from the connected database's
+catalogue at request time: a trigger present and switched on, on its table and on every
+partition it was cloned to; a constraint present and validated on every copy; an index valid,
+ready, live and unique; a routine present; each with the definition the database holds. C1 is
+listed table by table (32 rows, one per audit-of-record table, held to exactly that set by
+`check_athena_rule_enforcement_resolves`). The curated C1 note had said an "AFTER trigger"
+refuses changes; every audit trigger is BEFORE, and the note says so now. C5 and C8 are read
+from the running application and drawn apart from the database's refusals.
+
+**Falsifier 6 (Athena that only looks live)** is now a check: `check_athena_console` requires the
+board to ask the catalogue (`pg_trigger.tgenabled`, `pg_constraint.convalidated`,
+`pg_index.indisvalid`, `pg_proc`), the route to build the page from it, and the page to say when
+it read the database. **Falsifier 8 (a board that cannot fail)** is tested on a real database:
+a C1 trigger switched off on its table, the same trigger switched off on one partition only, a
+constraint dropped, and the C3 unique index replaced by a plain index of the same name each turn
+their rule red on the board and on the page (`AthenaConstraintBoardTests`).
+
+What the board still cannot see: a mechanism that is present, switched on and hollow. That is
+B2's self-test.

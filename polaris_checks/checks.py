@@ -10377,6 +10377,22 @@ def check_athena_rule_enforcement_resolves(root: pathlib.Path) -> list[Finding]:
             return _fail("athena_rule_enf",
                          f"{rule_code} claims enforcement by {kind} `{name}`, which does not exist in the "
                          "tree; the constitution-to-mechanism map has drifted from the code")
+    # C1 IS LISTED TABLE BY TABLE (lab/strategy/009, step B1), so the board can name a table that
+    # lost its guard. The C1 rows that name a trigger must guard exactly the audit of record:
+    # one missing is a table the board would never look at, one extra is a claim about a table
+    # the constitution does not cover.
+    code = _strip_sql_comments(_all_sql(root))
+    guarded = {trg: tbl for trg, tbl in re.findall(
+        r"CREATE\s+TRIGGER\s+(\w+)\s+BEFORE\s+UPDATE\s+OR\s+DELETE\s+ON\s+(\w+)", code, re.I)}
+    c1 = [name for code_, kind, name in rows if code_ == "C1" and kind == "TRIGGER" and name in guarded]
+    covered = {guarded[n].lower() for n in c1}
+    aor = {t.lower() for t in _AOR_TABLES}
+    if covered != aor:
+        missing, extra = sorted(aor - covered), sorted(covered - aor)
+        return _fail("athena_rule_enf",
+                     "the C1 trigger rows in athena_rule_enforcement do not cover the audit of record table "
+                     "by table" + (": no row for " + ", ".join(missing) if missing else "")
+                     + ("; rows for tables outside it: " + ", ".join(extra) if extra else ""))
     enforced = {r[0] for r in rows}
     declared = set(re.findall(r"\(\s*'([^']*)'\s*,", rule_block))
     unenforced = declared - enforced
@@ -10458,9 +10474,44 @@ def check_athena_console(root: pathlib.Path) -> list[Finding]:
     if "athena-console.js" not in tpl:
         return _fail("athena_console", "athena.html does not include the external athena-console.js")
 
+    # lab/strategy/009, step B1: THE CONSTITUTION TAB READS THE LIVE CATALOGUE. Until 2026-10-02
+    # it rendered the curated rows and called them live; the check behind them reads the
+    # repository, so a database with a trigger switched off showed the same page. The board
+    # module must look each kind of mechanism up in the catalogue, the route must build the page
+    # from it, and the page must say when it read it. Falsifier 6 of the record, as a check.
+    board = _read(root, "polaris_web/athena_board.py")
+    if not board:
+        return _fail("athena_console", "polaris_web/athena_board.py is missing: the Constitution tab would "
+                     "have nothing live to show")
+    for catalogue in ("pg_trigger", "pg_constraint", "pg_index", "pg_proc", "tgenabled", "convalidated",
+                      "indisvalid"):
+        if catalogue not in board:
+            return _fail("athena_console", f"athena_board.py no longer reads `{catalogue}`; the board would "
+                         "report a mechanism as in force without asking the database")
+    if not re.search(r"athena_board\.read_board\(", _fn_body(app, "athena_console") or ""):
+        return _fail("athena_console", "athena_console() does not build the page from athena_board.read_board(); "
+                     "the Constitution tab would show curated rows as if they were live")
+    if "verified_at" not in tpl:
+        return _fail("athena_console", "athena.html does not say when the board read the database (verified_at)")
+    try:
+        tree = ast.parse(board)
+    except SyntaxError as exc:
+        return _fail("athena_console", "athena_board.py does not parse (%s)" % exc)
+    docs = {id(n.body[0].value) for n in ast.walk(tree)
+            if isinstance(n, (ast.Module, ast.FunctionDef, ast.ClassDef)) and n.body
+            and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant)}
+    for node in ast.walk(tree):
+        text = (node.value if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                and id(node) not in docs else node.id if isinstance(node, ast.Name) else None)
+        for bad in person:
+            if text and re.search(r"\b" + re.escape(bad) + r"\b", text):
+                return _fail("athena_console", f"athena_board.py references the person surface `{bad}`; the "
+                             "board reads the catalogue and the curated rows only")
+
     return _ok("athena_console",
                "the Athena console (4 tabs, 1 page + 3 drill-down routes) is login-gated, reads only the "
-               "person-free Athena layer, and renders CSP-safe via createElement")
+               "person-free Athena layer, renders CSP-safe via createElement, and builds its Constitution "
+               "tab from the live catalogue (athena_board), saying when it read it")
 
 
 # ---------------------------------------------------------------------------

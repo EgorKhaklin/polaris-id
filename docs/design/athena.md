@@ -74,9 +74,21 @@ without making people easier to control.**
 ## The operator console (v9.267)
 
 `/athena` is the read-only operator surface, a four-tab console (`athena.html`,
-`athena-console.js`; nav between Atlas and Individuals). **Constitution**
-(server-rendered) shows C1-C10 and the Vocation, each with its live enforcement
-mechanisms as kind-badged chips. **Authority** resolves the authority chain for
+`athena-console.js`). **Constitution** is the constraint board
+([lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md), step B1):
+`athena_board.read_board()` looks every mechanism `athena_rule_enforcement` names up in the
+catalogue of the connected database when the page is read: a trigger present, switched on
+(`tgenabled`) and its timing and events, on the table and on every partition it was cloned to;
+a CHECK constraint present and validated (`convalidated`), on the table and every partition; an
+index valid, ready, live and unique; a routine present. Each line shows the definition the
+database holds. C1 is listed table by table, one trigger per audit-of-record table
+(`check_athena_rule_enforcement_resolves` requires the rows to cover exactly that set), so a
+table that lost its guard is named. C5's script policy and C8's caps are read from the running
+application and labelled as such; repository checks are named and claim nothing about the
+database. The page leads with the count of mechanisms not in force and says when and from which
+database it read. It cannot say that a mechanism refuses: a trigger whose function had been
+rewritten to let writes through still reads as present; the mutation drills are the evidence
+for that, and the self-test is the step after this one. **Authority** resolves the authority chain for
 an agency + algorithm ("Not authorized to issue" when no grant exists) and the
 deprecation blast radius for an algorithm. **Proof policy** explains a context's
 requirements and its three disclosure levels. **Trust graph** lists the current

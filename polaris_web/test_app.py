@@ -15228,6 +15228,153 @@ class AthenaOntologyTests(PolarisTestCase):
             conn.close()
 
 
+class AthenaConstraintBoardTests(PolarisTestCase):
+    """lab/strategy/009, step B1. The Constitution tab is the board athena_board.read_board()
+    builds from the live catalogue when the page is read. Each test below changes the database,
+    as its owner, and reads the board and the page again: a board that cannot fail is the
+    record's falsifier 8. Every change is undone in a finally."""
+
+    def _owner(self):
+        """The schema owner, each statement its own transaction. Not `with conn:`, which in
+        psycopg2 2.9 opens a transaction even in autocommit, and a DDL left uncommitted would hold
+        its lock while the board, on another connection, waits for it."""
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        conn.autocommit = True
+        self.addCleanup(conn.close)
+        return conn
+
+    def _board(self):
+        import athena_board
+        with flask_app.app.test_request_context('/'):
+            return athena_board.read_board(flask_app.query)
+
+    @staticmethod
+    def _rule(board, code):
+        return next(r for r in board['rules'] if r['rule_code'] == code)
+
+    def test_a_loaded_database_holds_every_mechanism(self):
+        board = self._board()
+        failing = [(r['rule_code'], m['name'], m['reason']) for r in board['rules']
+                   for m in r['mechanisms'] + r['guards'] if m['status'] == 'not_in_force']
+        self.assertEqual(failing, [], 'a freshly loaded database holds every mechanism it names')
+        self.assertEqual(board['summary']['not_in_force'], 0)
+        c1 = self._rule(board, 'C1')
+        self.assertEqual(len(c1['guards']), 32, 'C1 lists the audit of record table by table')
+        self.assertEqual(c1['guards_held'], 32)
+        self.assertEqual(c1['state'], 'in_force')
+        for g in c1['guards']:
+            self.assertIn('BEFORE UPDATE OR DELETE, each row on ', g['detail'], g['name'])
+        c5 = [m for m in self._rule(board, 'C5')['mechanisms'] if m['source'] == 'application']
+        self.assertEqual([(m['status'], m['detail']) for m in c5], [('in_force', "script-src 'self'")])
+        c8 = [m for m in self._rule(board, 'C8')['mechanisms'] if m['source'] == 'application']
+        self.assertEqual(c8[0]['status'], 'in_force')
+        self.assertIn('clusters 5,000', c8[0]['detail'])
+        c2 = next(m for m in self._rule(board, 'C2')['mechanisms'] if m['kind'] == 'CHECK_CONSTRAINT')
+        self.assertRegex(c2['detail'], r'^on verificationevent and its \d+ partitions$',
+                         'a constraint names the table it was declared on, its partitions counted')
+        self.assertEqual(self._rule(board, 'C9')['state'], 'repository',
+                         'a rule pinned only by repository checks claims nothing about this database')
+        with self._owner().cursor() as cur:
+            cur.execute("SELECT current_database() AS db")
+            self.assertEqual(board['database'], cur.fetchone()['db'])
+
+    def test_the_page_is_the_board(self):
+        body = self.client.get('/athena').get_data(as_text=True)
+        for text in ('not in force', 'in force in this database', '32 of 32 tables',
+                     'Definition in this database', 'Read from', "script-src &#39;self&#39;"):
+            self.assertIn(text, body)
+
+    def test_a_trigger_switched_off_turns_its_rule_red(self):
+        with self._owner().cursor() as cur:
+            cur.execute("ALTER TABLE AnchorBatch DISABLE TRIGGER trg_anchor_batch_append_only")
+            try:
+                board = self._board()
+                c1 = self._rule(board, 'C1')
+                self.assertEqual(c1['state'], 'not_in_force')
+                self.assertEqual(c1['guards_held'], 31)
+                off = c1['guards'][0]
+                self.assertEqual((off['name'], off['status']), ('trg_anchor_batch_append_only', 'not_in_force'))
+                self.assertIn('switched off on anchorbatch', off['reason'])
+                self.assertGreaterEqual(board['summary']['not_in_force'], 1)
+                body = self.client.get('/athena').get_data(as_text=True)
+                self.assertIn('31 of 32 tables', body)
+                self.assertIn('Switched off on anchorbatch', body)
+            finally:
+                cur.execute("ALTER TABLE AnchorBatch ENABLE TRIGGER trg_anchor_batch_append_only")
+
+    def test_a_trigger_switched_off_on_one_partition_turns_its_rule_red(self):
+        """A partitioned table's trigger is cloned onto each partition and each clone can be
+        switched off alone; the board's one line per table must still see it."""
+        with self._owner().cursor() as cur:
+            cur.execute("ALTER TABLE VerificationEvent_default DISABLE TRIGGER trg_verification_append_only")
+            try:
+                c1 = self._rule(self._board(), 'C1')
+                g = next(g for g in c1['guards'] if g['name'] == 'trg_verification_append_only')
+                self.assertEqual(g['status'], 'not_in_force')
+                self.assertIn('verificationevent_default', g['reason'])
+                self.assertEqual(c1['state'], 'not_in_force')
+            finally:
+                cur.execute("ALTER TABLE VerificationEvent_default ENABLE TRIGGER trg_verification_append_only")
+
+    def test_a_constraint_dropped_turns_its_rule_red(self):
+        with self._owner().cursor() as cur:
+            cur.execute("SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint "
+                        "WHERE conname = 'chk_appuser_failed_count_nonneg'")
+            definition = cur.fetchone()['d']
+            cur.execute("ALTER TABLE AppUser DROP CONSTRAINT chk_appuser_failed_count_nonneg")
+            try:
+                c4 = self._rule(self._board(), 'C4')
+                m = next(m for m in c4['mechanisms'] if m['name'] == 'chk_appuser_failed_count_nonneg')
+                self.assertEqual((m['status'], m['reason']), ('not_in_force', 'absent from this database'))
+                self.assertEqual(c4['state'], 'not_in_force')
+            finally:
+                cur.execute("ALTER TABLE AppUser ADD CONSTRAINT chk_appuser_failed_count_nonneg " + definition)
+
+    def test_a_unique_index_made_plain_turns_its_rule_red(self):
+        """C3 is a partial UNIQUE index. Replaced by a plain index of the same name, it is present
+        and enforces nothing; the board reads indisunique, not the name."""
+        conn = self._owner()
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_get_indexdef(i.indexrelid) AS d FROM pg_index i "
+                        "JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = 'uq_one_active_per_person'")
+            definition = cur.fetchone()['d']
+            plain = definition.replace('CREATE UNIQUE INDEX', 'CREATE INDEX', 1)
+            self.assertNotEqual(plain, definition)
+            cur.execute("BEGIN")
+            try:
+                cur.execute("DROP INDEX uq_one_active_per_person")
+                cur.execute(plain)
+                c3 = self._rule(self._board_in(conn), 'C3')
+                m = next(m for m in c3['mechanisms'] if m['name'] == 'uq_one_active_per_person')
+                self.assertEqual((m['status'], m['reason']), ('not_in_force', 'not unique'))
+                self.assertEqual(c3['state'], 'not_in_force')
+            finally:
+                cur.execute("ROLLBACK")
+
+    def _board_in(self, conn):
+        """The board read through one connection, inside its open transaction: an index swap is
+        made and undone in a transaction no other session sees."""
+        import athena_board
+
+        def query(sql, params=None, fetch='all'):
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                return cur.fetchone() if fetch == 'one' else cur.fetchall()
+        with flask_app.app.test_request_context('/'):
+            return athena_board.read_board(query)
+
+    def test_the_board_reads_no_person(self):
+        """The board's code names no person surface (check_athena_console reads it too), and the
+        page carries no name of a person."""
+        with self._owner().cursor() as cur:
+            cur.execute("SELECT legal_name FROM Individual")
+            names = {r['legal_name'] for r in cur.fetchall()}
+        body = self.client.get('/athena').get_data(as_text=True)
+        self.assertTrue(names)
+        for n in names:
+            self.assertNotIn(n, body)
+
+
 class AthenaConsoleAPITests(PolarisTestCase):
     """v9.267 (roadmap P6.8): the operator-facing Athena console and its three
     read-only drill-down endpoints. Login-gated, person-free, bounded, and 400 on
@@ -15253,7 +15400,7 @@ class AthenaConsoleAPITests(PolarisTestCase):
         r = self.client.get('/athena')
         self.assertEqual(r.status_code, 200)
         body = r.get_data(as_text=True)
-        self.assertIn('athena-rule', body)          # constitution cards
+        self.assertIn('rule-card', body)            # constitution cards, one per rule
         self.assertIn('C1', body)                    # a rule code
         self.assertIn('athena-console.js', body)     # external JS (C5)
 

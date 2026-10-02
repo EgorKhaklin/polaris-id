@@ -1863,11 +1863,6 @@ def _dashboard_model():
 # (check_athena_console pins that).
 # ============================================================================
 
-# C1..C10 in numeric order, then the Vocation last.
-_ATHENA_RULE_ORDER = ("CASE WHEN rule_code = 'VOCATION' THEN 999 "
-                      "ELSE CAST(substring(rule_code FROM 2) AS INTEGER) END")
-
-
 @app.route('/athena')
 @security.login_required
 @replica_reads
@@ -1878,17 +1873,10 @@ def athena_console():
     trust graph, and drives the four Athena functions from the interactive tabs.
     It reads only the person-free Athena layer (16_athena.sql) and the authority
     tables it sits over; no Individual, token, or event table is touched."""
-    rules = query(
-        "SELECT rule_code, title, statement, kind, layer FROM athena_constitutional_rule "
-        "ORDER BY CASE layer WHEN 'CONSTITUTIONAL' THEN 1 WHEN 'ENGINEERING' THEN 2 ELSE 3 END, "
-        + _ATHENA_RULE_ORDER)
-    enf = query(
-        "SELECT rule_code, mechanism_kind, mechanism_name, note "
-        "FROM athena_rule_enforcement ORDER BY rule_code, mechanism_kind, mechanism_name")
-    by_rule = {}
-    for e in enf:
-        by_rule.setdefault(e['rule_code'], []).append(e)
-    rules = [dict(r, mechanisms=by_rule.get(r['rule_code'], [])) for r in rules]
+    # The constitution as this database and this application hold it now (lab/strategy/009,
+    # step B1): every mechanism looked up in the live catalogue, not read from the curated rows.
+    import athena_board   # the board's catalogue reads; it imports nothing from app.py
+    board = athena_board.read_board(query)
 
     agencies = query("SELECT agency_id, name, agency_type, jurisdiction "
                      "FROM v_athena_agency ORDER BY name")
@@ -1901,7 +1889,7 @@ def athena_console():
                   "FROM v_athena_relies_on ORDER BY from_agency_name, to_agency_name "
                   "LIMIT 500")
 
-    return render_template('athena.html', rules=rules, agencies=agencies,
+    return render_template('athena.html', board=board, agencies=agencies,
                            algorithms=algorithms, contexts=contexts, trust=trust)
 
 
@@ -2536,7 +2524,7 @@ sys.modules.setdefault('app', sys.modules[__name__])
 
 import sql_console  # noqa: E402,F401  -- /sql, the read-only console
 import verification_routes  # noqa: E402,F401  -- /verifications, /verifications/new
-import atlas_routes         # noqa: E402,F401  -- /atlas and the 17 /api/atlas endpoints
+import atlas_routes         # noqa: E402,F401  -- /atlas and the 12 /api/atlas endpoints
 import rp_api               # noqa: E402,F401  -- the 36 /api/v1 relying-party routes
 import use_case_routes      # noqa: E402,F401  -- UC-1, 4, 5, 6, 7, 8, 9
 import operator_routes      # noqa: E402,F401  -- tokens, individuals, agencies, investigate
