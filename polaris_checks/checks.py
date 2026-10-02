@@ -23785,6 +23785,74 @@ def check_unread_signed_fields_tool_is_green(root: pathlib.Path) -> list[Finding
                      "canonicalisers)" % (m.group(1), m.group(2)))
 
 
+# ---------------------------------------------------------------------------
+# docs/reference/openapi.yaml is the machine-readable twin of the /api/v1 and
+# OpenID4VCI surface documented in API.md: a client generator reads it instead
+# of the prose. It must not drift from the routes, so it is pinned to API.md's
+# own /api/v1 headings, which check_api_routes_documented already pins to the
+# @app.route decorators. Parameter names and converters do not matter.
+# ---------------------------------------------------------------------------
+def _openapi_api_v1_routes(spec_text: str) -> set[tuple[str, str]]:
+    # Parsed with the standard library, not PyYAML: the invariant layer (polaris_checks.run) runs
+    # in CI with no pip install, so a check may import only the standard library. The spec is
+    # emitted with 2-space path keys and 4-space method keys under `paths:`, and this reads that
+    # shape; a path key is normalised so parameter names and converters do not matter.
+    out: set[tuple[str, str]] = set()
+    in_paths = False
+    current = None
+    for line in spec_text.splitlines():
+        if re.match(r"^paths:\s*$", line):
+            in_paths, current = True, None
+            continue
+        if re.match(r"^\S", line):            # any other top-level key ends the paths block
+            in_paths, current = False, None
+            continue
+        if not in_paths:
+            continue
+        path_key = re.match(r"^  (/[^:\s]+):\s*$", line)          # a path at 2-space indent
+        if path_key:
+            current = path_key.group(1)
+            continue
+        method = re.match(r"^    (get|post|put|patch|delete):\s*$", line)   # a method at 4-space
+        if method and current and current.startswith("/api/v1"):
+            out.add((method.group(1).upper(),
+                     _norm_api_path(current.replace("{", "<").replace("}", ">"))))
+    return out
+
+
+def _api_md_v1_routes(doc: str) -> set[tuple[str, str]]:
+    out: set[tuple[str, str]] = set()
+    for heading in re.findall(r"^#{2,4} (.+)$", doc, re.M):
+        for method, path in re.findall(r"`(GET|POST|PUT|PATCH|DELETE) (/api/v1[^`]*)`", heading):
+            out.add((method, _norm_api_path(path)))
+    return out
+
+
+def check_openapi_covers_api_v1(root: pathlib.Path) -> list[Finding]:
+    doc = _read(root, "docs/reference/API.md")
+    spec = _read(root, "docs/reference/openapi.yaml")
+    if not doc or not spec:
+        return _fail("openapi_covers_api_v1",
+                     "docs/reference/API.md or docs/reference/openapi.yaml is missing")
+    try:
+        documented = _api_md_v1_routes(doc)
+        specified = _openapi_api_v1_routes(spec)
+    except Exception as exc:  # a spec that does not parse is the worst drift
+        return _fail("openapi_covers_api_v1", f"docs/reference/openapi.yaml did not parse: {exc}")
+    if not documented:
+        return _fail("openapi_covers_api_v1", "no /api/v1 route headings found in docs/reference/API.md")
+    missing = sorted("%s %s" % r for r in documented - specified)
+    phantom = sorted("%s %s" % r for r in specified - documented)
+    if missing:
+        return _fail("openapi_covers_api_v1",
+                     f"{len(missing)} /api/v1 route(s) in API.md are absent from openapi.yaml: {', '.join(missing)}")
+    if phantom:
+        return _fail("openapi_covers_api_v1",
+                     f"openapi.yaml describes /api/v1 route(s) not in API.md: {', '.join(phantom)}")
+    return _ok("openapi_covers_api_v1",
+               f"openapi.yaml covers all {len(documented)} /api/v1 routes in API.md, with no phantom")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_pooler_keeps_the_operator_scope,
     check_publishable_packages_keep_their_dependency_budget,
@@ -24125,6 +24193,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_security_suite_refuses_skips_in_ci,
     check_no_session_date_in_sql,
     check_product_sessions_pin_utc,
+    check_openapi_covers_api_v1,
 ]
 
 
