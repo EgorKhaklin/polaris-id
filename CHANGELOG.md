@@ -39,9 +39,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The credential page is rebuilt: facts beside proofs, one table per kind of row, empty kinds in one line.
 - On a phone, each list keeps a row's identifier, state and holder; the rest is on the record's page.
 - A status change is offered only where the database makes it; revocation keeps its own operation.
+- The SQL console shows at most 500 rows of a query, read from a server-side cursor, and says when there are more.
+- A web request's statements end two seconds before its worker's timeout, so no query outlives its request.
+- The landing emblem has no ring; a soft gold halo sits behind it.
 
 ### Fixed
 
+- The SQL console runs one statement per query; a second statement could lift its five-second limit.
 - A credential's page and both investigation pages read its verifications through an index, not a full scan.
 - The advisory-lock check reads locks taken in functions; the holder key register's lock gains contention tests.
 - The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
