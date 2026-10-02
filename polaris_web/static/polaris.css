@@ -1702,7 +1702,7 @@ a.kpi-link:hover .kpi-label { color: var(--ink-2); }
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
     gap: var(--s-4);
-    align-items: stretch;
+    align-items: start;
     margin-bottom: var(--s-5);
 }
 /* An identifier or a date is read whole in a table: it never breaks at its hyphens; the table's
@@ -1731,6 +1731,28 @@ table.data td.mono, table.data td > .mono { white-space: nowrap; }
 .chip.is-current { border-color: var(--ink-3); background: var(--surface-2); color: var(--ink); font-weight: 550; }
 .chip-count { color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .row-actions { display: flex; align-items: center; gap: var(--s-3); white-space: nowrap; }
+
+/* A record's page (the credential page first): its facts beside its proofs and the status change,
+   then one section per kind of row, and one closing line naming the kinds that have none. */
+.record-title { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-2) var(--s-3); }
+.record-title h1 { margin: 0; }
+.record-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr);
+    gap: var(--s-4);
+    align-items: start;
+    margin-bottom: var(--s-6);
+}
+.record-side { display: grid; gap: var(--s-4); min-width: 0; }
+.record-side .panel + .panel { margin-top: 0; }
+.record-layout .panel { min-width: 0; }
+.status-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--s-3); }
+.status-form .form-group { margin: 0; flex: 1 1 160px; }
+.record-section { margin-top: var(--s-6); }
+.record-section h2 { display: flex; align-items: baseline; gap: var(--s-2); margin: 0 0 var(--s-3); font-size: 15px; }
+.record-section h2 .count { color: var(--ink-3); font-size: 12.5px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.section-note { margin: var(--s-2) 0 0; color: var(--ink-3); font-size: 12.5px; }
+.record-none { margin: var(--s-6) 0 0; color: var(--ink-3); font-size: 13px; }
 
 /* The operations a record admits, on the record's own page. */
 .record-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); margin: 0 0 var(--s-5); }
@@ -1778,6 +1800,7 @@ table.data td.mono, table.data td > .mono { white-space: nowrap; }
     .list-tools { grid-template-columns: minmax(0, 1fr); }
     .op { grid-template-columns: minmax(0, 1fr); }
     .op-rule { position: static; }
+    .record-layout { grid-template-columns: minmax(0, 1fr); }
     .hero { grid-template-columns: 1fr; padding-top: 56px; }
     .hero-mark { display: none; }
     .demo-step-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
@@ -1839,6 +1862,8 @@ table.data td.mono, table.data td > .mono { white-space: nowrap; }
     .kv dd, .facts dd { margin-bottom: var(--s-2); }
     .topbar-context { display: none; }
     .hero, .section, .demo { padding-left: var(--s-4); padding-right: var(--s-4); }
+    /* A list row keeps what identifies it and its state; the rest is on the record's page. */
+    table.data .col-wide { display: none; }
     .demo-hero { padding-top: var(--s-6); }
     .demo-step-head { gap: var(--s-3); }
     .demo-pane { padding: var(--s-4); }

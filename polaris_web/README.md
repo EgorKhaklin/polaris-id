@@ -142,7 +142,7 @@ about 100×). See `docs/reference/SCALING.md`.
 ## Design
 
 - **Server-side rendering.** Complete HTML responses, minimal client JavaScript.
-- **CRUD scope.** The schema has 48 tables (see
+- **CRUD scope.** The schema has 51 tables (see
   [DATA-MODEL.md](../docs/reference/DATA-MODEL.md)). Direct CRUD covers
   `Individual`, `Agency`, `IdentityToken` and `VerificationEvent`; the rest are
   reached through token detail, the SQL console, Atlas and the use-case forms.

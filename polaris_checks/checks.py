@@ -21013,6 +21013,10 @@ _GLOBAL_LOCK_DOMAINS = {
         "one fold of the population counts at a time, by design (lab/strategy/008): writers "
         "take it only with pg_try_advisory_xact_lock and skip the fold when it is held, so no "
         "writer waits on it; only the owner's recount waits",
+    "polaris.enrollment.fold":
+        "one fold of the enrolment counts at a time, by design (lab/strategy/008, step 4): the "
+        "triggers take it only with pg_try_advisory_xact_lock and skip the fold when it is held, "
+        "so no writer waits on it; only the owner's rebuild waits",
 }
 
 
@@ -21035,10 +21039,17 @@ _GLOBAL_LOCK_DOMAINS = {
 #: the lock, and the check requires that test to exist, so the declaration cannot outlive it.
 _TRY_LOCKS = {
     "uc_fold_population_counts": "test_a_fold_skips_while_a_recount_holds_the_lock",
+    "uc_fold_enrollment_counts": "test_an_enrolment_fold_skips_while_a_rebuild_holds_the_lock",
 }
 
 
 _UNOBSERVABLE_LOCKS = {
+    "uc_rebuild_enrollment_counts":
+        "two rebuilds also queue on the lock ALTER TABLE ... DISABLE TRIGGER takes on "
+        "EnrollmentCurrent, so contention cannot tell the advisory lock apart; what that lock "
+        "adds is that a fold skips while a rebuild runs, and "
+        "test_an_enrolment_fold_skips_while_a_rebuild_holds_the_lock shows it (a fold that "
+        "got past the lock would wait on the changes the rebuild is deleting, and time out)",
     "uc9_complete_recovery":
         "keyed on claimed_individual_id, and uq_one_pending_recovery_per_individual "
         "allows one PENDING recovery per individual, so two calls sharing the key "

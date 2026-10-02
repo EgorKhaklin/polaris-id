@@ -167,6 +167,14 @@ GROWTH = {
         "why": "two rows per status change (the status left, the status entered) and one per "
                "signature added or deprecated, at about four changes per enrollment",
     },
+    "EnrollmentCountDelta": {
+        # lab/strategy/008, step 4. Folded rows are deleted, but the id keeps counting: a person
+        # created appends one row, a change of status or jurisdiction two.
+        "rate": lambda t: 3 * t["enrollment_surge"] / 86400.0,
+        "basis": ASSUMED,
+        "why": "one row per person created and two per change of enrolment status or "
+               "jurisdiction, at about three rows per enrollment",
+    },
     "DuressEvent": {
         "rate": lambda t: 1.0 / 86400.0,
         "basis": ASSUMED,

@@ -27,6 +27,7 @@
 </div>
 
 {% if pivot %}
+    <div class="table-wrap">
     <table class="data">
         <thead>
             <tr>
@@ -50,6 +51,7 @@
             {% endfor %}
         </tbody>
     </table>
+    </div>
 {% else %}
     <p class="empty-state">No enrollment data for this jurisdiction.</p>
 {% endif %}

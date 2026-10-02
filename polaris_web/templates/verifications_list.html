@@ -68,22 +68,23 @@
 <table class="data">
     <thead>
         <tr>
-            <th scope="col">When (UTC)</th><th scope="col">Event</th><th scope="col">Holder</th>
-            <th scope="col">Context</th><th scope="col">Verifier</th><th scope="col">Outcome</th>
-            <th scope="col">Disclosure</th><th scope="col">Location</th>
+            <th scope="col">When (UTC)</th><th scope="col">Outcome</th><th scope="col">Holder</th>
+            <th scope="col" class="col-wide">Event</th><th scope="col" class="col-wide">Context</th>
+            <th scope="col" class="col-wide">Verifier</th><th scope="col" class="col-wide">Disclosure</th>
+            <th scope="col" class="col-wide">Location</th>
         </tr>
     </thead>
     <tbody>
         {% for r in rows %}
         <tr data-key="{{ r.event_id }}">
             <td class="mono">{{ r.event_timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
-            <td class="mono">#{{ r.event_id }}</td>
-            <td>{% if r.holder_name %}{{ r.holder_name }}{% else %}<span class="redacted">None (zero-knowledge)</span>{% endif %}</td>
-            <td>{{ r.context_type|replace('_', ' ')|title }}</td>
-            <td>{{ r.verifier_name }}</td>
             <td>{{ ui.pill(r.outcome) }}</td>
-            <td>{{ ui.pill(r.disclosure_level) }}</td>
-            <td>{{ r.requestor_location or absent }}</td>
+            <td>{% if r.holder_name %}{{ r.holder_name }}{% else %}<span class="redacted">None (zero-knowledge)</span>{% endif %}</td>
+            <td class="mono col-wide">#{{ r.event_id }}</td>
+            <td class="col-wide">{{ r.context_type|replace('_', ' ')|title }}</td>
+            <td class="col-wide">{{ r.verifier_name }}</td>
+            <td class="col-wide">{{ ui.pill(r.disclosure_level) }}</td>
+            <td class="col-wide">{{ r.requestor_location or absent }}</td>
         </tr>
         {% else %}
         <tr><td colspan="8" class="empty">No verification matches.</td></tr>

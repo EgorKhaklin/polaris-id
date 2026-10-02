@@ -180,8 +180,10 @@ def individuals_list():
     page      = max(1, _int_arg('page', '1'))
     offset    = (page - 1) * page_size
     if offset > population.MAX_OFFSET_ROWS:
-        abort(400, description='page numbers reach %d people deep; page with Next'
-                               % population.MAX_OFFSET_ROWS)
+        abort(400, description='Page numbers reach only the first %s people. To go further, open '
+                               'the list and use Next: it pages by person number, so it reaches '
+                               'any depth at the same cost.'
+                               % format(population.MAX_OFFSET_ROWS, ','))
     rows = query(
         'SELECT * FROM Individual ORDER BY individual_id LIMIT %s OFFSET %s',
         (page_size + 1, offset)
@@ -275,15 +277,17 @@ def enrollment_summary():
     Implements the PDF §9 'civic queries can answer "is this person known"
     without requiring an active token' requirement at the aggregate level."""
     jurisdiction_filter = (request.args.get('jurisdiction') or '').strip() or None
+    # The counts are maintained (lab/strategy/008, step 4): the summary sums the folded totals and
+    # the changes not yet folded, so it is exact and costs the same at any population, and reads
+    # nothing it could not read on a replica. The jurisdictions the filter offers are the ones
+    # with people in them, from the same counts rather than from every person.
     rows = query(
         "SELECT * FROM civic_enrollment_summary(%s)",
-        (jurisdiction_filter,)
+        (jurisdiction_filter,), readonly=True
     )
-
-    # Jurisdiction list for the filter dropdown, sourced from Individual
-    # so empty jurisdictions don't appear (they wouldn't in the rollup anyway).
     jurisdictions = query(
-        "SELECT DISTINCT jurisdiction FROM Individual ORDER BY jurisdiction"
+        "SELECT DISTINCT jurisdiction FROM civic_enrollment_summary(NULL) ORDER BY jurisdiction",
+        readonly=True
     )
 
     # Pivot for display: status across the top, jurisdiction down the side.
@@ -521,8 +525,10 @@ def tokens_list():
     page   = max(1, _int_arg('page', '1'))
     offset = (page - 1) * page_size
     if offset > population.MAX_OFFSET_ROWS:
-        abort(400, description='page numbers reach %d credentials deep; page with Next'
-                               % population.MAX_OFFSET_ROWS)
+        abort(400, description='Page numbers reach only the first %s credentials. To go further, open '
+                               'the list and use Next: it pages by credential number, so it reaches '
+                               'any depth at the same cost.'
+                               % format(population.MAX_OFFSET_ROWS, ','))
     sql = base_select + where_sql + " ORDER BY t.token_id ASC LIMIT %s OFFSET %s"
     rows = query(sql, params + [page_size + 1, offset])
     has_next = len(rows) > page_size
@@ -542,6 +548,14 @@ def tokens_list():
 #: The most rows a credential's page shows of anything that grows while the credential lives
 #: (lab/strategy/008 step 3); the verification log pages through the rest.
 DETAIL_ROWS = 50
+
+#: The status changes a credential's page offers, by its status: exactly the moves the state
+#: machine admits (enforce_token_state_machine, 06_triggers.sql) that a plain status change can
+#: make. It also admits REVOKED, which trg_enforce_revocation_velocity refuses outside
+#: uc8_revoke_token, so revocation is offered as its own operation, held to the authority's bound.
+#: A status with no entry offers none: DORMANT and the terminal states have no move out.
+#: test_the_status_form_offers_exactly_the_moves_the_database_admits holds this to the database.
+STATUS_MOVES = {'RESERVE': ('ACTIVE',), 'ACTIVE': ('DORMANT', 'LOST', 'EXPIRED')}
 
 
 @app.route('/tokens/<int:tok_id>')
@@ -597,7 +611,20 @@ def tokens_detail(tok_id):
                     (tok_id, DETAIL_ROWS + 1))
     devices_more = len(devices) > DETAIL_ROWS
     devices = devices[:DETAIL_ROWS]
-    anchors = query('SELECT * FROM BlockchainAnchor WHERE token_id=%s', (tok_id,))
+    # A credential's anchors and the batch each sits in, in one table (it was two tables reading
+    # the same rows).
+    anchors = query("""
+        SELECT a.anchor_id, a.did, a.ledger_network, a.anchored_date, a.status, a.batch_id,
+               b.committed_to_chain, b.external_chain, alg.name AS algorithm_name
+          FROM BlockchainAnchor a
+          LEFT JOIN AnchorBatch b ON a.batch_id = b.batch_id
+          LEFT JOIN CryptographicAlgorithm alg ON b.algorithm_id = alg.algorithm_id
+         WHERE a.token_id = %s
+         ORDER BY a.anchored_date DESC, a.anchor_id DESC
+         LIMIT %s
+    """, (tok_id, DETAIL_ROWS + 1))
+    anchors_more = len(anchors) > DETAIL_ROWS
+    anchors = anchors[:DETAIL_ROWS]
     revocations = query("""
         SELECT rl.*, ag.name AS revoker_name
         FROM   RevocationList rl
@@ -643,18 +670,6 @@ def tokens_detail(tok_id):
         # Strip the raw bytes — they must not reach the template / response.
         _s.pop('signature_bytes', None)
         _s.pop('signing_public_key_hex', None)
-    v2_anchor_batches = query("""
-        SELECT a.anchor_id, a.commitment_hash AS leaf_hash,
-               a.anchored_date AS anchor_timestamp,
-               b.batch_id, b.merkle_root AS batch_root,
-               b.committed_to_chain, b.external_chain,
-               alg.name AS algorithm_name
-          FROM BlockchainAnchor a
-          LEFT JOIN AnchorBatch b ON a.batch_id = b.batch_id
-          LEFT JOIN CryptographicAlgorithm alg ON b.algorithm_id = alg.algorithm_id
-         WHERE a.token_id = %s
-         ORDER BY a.anchored_date DESC
-    """, (tok_id,))
     v2_epoch_leaves = query("""
         SELECT l.leaf_id, l.leaf_hash,
                e.epoch_id, e.valid_from, e.valid_until, e.closed_at,
@@ -676,13 +691,13 @@ def tokens_detail(tok_id):
                            verifications=verifications, verifications_more=verifications_more,
                            devices=devices, devices_more=devices_more,
                            epoch_leaves_more=epoch_leaves_more, detail_rows=DETAIL_ROWS,
-                           anchors=anchors,
+                           anchors=anchors, anchors_more=anchors_more,
                            revocations=revocations,
                            permissions=permissions,
                            v2_signatures=v2_signatures,
-                           v2_anchor_batches=v2_anchor_batches,
                            v2_epoch_leaves=v2_epoch_leaves,
-                           duress_enrolled=duress_enrolled)
+                           duress_enrolled=duress_enrolled,
+                           moves=STATUS_MOVES.get(token['status'], ()))
 
 
 
@@ -1282,9 +1297,14 @@ def tokens_transition(tok_id):
             else:
                 cur.execute('UPDATE IdentityToken SET status=%s WHERE token_id=%s',
                             (new_status, tok_id))
+            moved = cur.rowcount
 
             conn.commit()
-        flash(f'Token #{tok_id} is now {new_status}.', 'success')
+        # It said "is now" for a number that is no credential: an UPDATE of no row succeeds.
+        if moved:
+            flash(f'Credential #{tok_id} is now {new_status}.', 'success')
+        else:
+            flash(f'Credential #{tok_id} does not exist.', 'error')
     except psycopg2.Error as e:
         conn.rollback()
         flash(db_error_to_message(e), 'error')

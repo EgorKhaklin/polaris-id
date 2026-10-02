@@ -226,31 +226,36 @@ ORDER BY alg.deprecation_date NULLS LAST, it.token_id;
 -- deliberate.
 -- ============================================================================
 
-CREATE OR REPLACE FUNCTION civic_enrollment_summary(
+-- 2026-10-02 (lab/strategy/008, step 4): read from the maintained counts. Grouping
+-- IndividualCurrentEnrollment found every person's latest event on each call (6.4 s at two
+-- million people), and its INTEGER count would overflow in a jurisdiction past 2^31 people.
+-- The counts are exact (EnrollmentCount plus the changes not yet folded), so the answer is the
+-- same as the view's at any population; test_app's EnrollmentCountTests compare the two.
+DROP FUNCTION IF EXISTS civic_enrollment_summary(VARCHAR);
+CREATE FUNCTION civic_enrollment_summary(
     p_jurisdiction VARCHAR(10) DEFAULT NULL  -- NULL = all jurisdictions
 )
 RETURNS TABLE (
     jurisdiction  VARCHAR(10),
     status        VARCHAR(20),
-    n_individuals INTEGER
+    n_individuals BIGINT
 )
-LANGUAGE plpgsql AS $$
-BEGIN
-    RETURN QUERY
-    SELECT  ice.jurisdiction,
-            ice.current_status,
-            count(*)::INTEGER
-    FROM    IndividualCurrentEnrollment ice
-    WHERE   (p_jurisdiction IS NULL OR ice.jurisdiction = p_jurisdiction)
-    GROUP BY ice.jurisdiction, ice.current_status
-    ORDER BY ice.jurisdiction, ice.current_status;
-END$$;
+LANGUAGE sql STABLE AS $$
+    SELECT c.jurisdiction, c.status, sum(c.n)::BIGINT
+      FROM (SELECT jurisdiction, status, n FROM EnrollmentCount
+            UNION ALL
+            SELECT jurisdiction, status, n FROM EnrollmentCountDelta) c
+     WHERE p_jurisdiction IS NULL OR c.jurisdiction = p_jurisdiction
+     GROUP BY c.jurisdiction, c.status
+    HAVING sum(c.n) <> 0
+     ORDER BY c.jurisdiction, c.status;
+$$;
 
 COMMENT ON FUNCTION civic_enrollment_summary IS
   'Per-jurisdiction counts of individuals in each enrollment status '
-  '(R11-4 / M2-9). Counts only — per-individual enumeration is not a '
-  'first-class query. Implements PDF §9 population-coverage civic-query '
-  'requirement.';
+  '(R11-4 / M2-9), from the maintained EnrollmentCount (lab/strategy/008). Counts only: '
+  'per-individual enumeration is not a first-class query. Implements PDF §9 '
+  'population-coverage civic-query requirement.';
 
 -- ============================================================================
 -- END OF 07_queries.sql

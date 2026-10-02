@@ -53,7 +53,10 @@ is one row, it is a positive recognition, and the audit trail reads as one.
 
 Enumerating the not-enrolled is possible and deliberately unhelped.
 `civic_enrollment_summary(jurisdiction)` returns counts by jurisdiction and
-status, and nothing else. An admin can join `IndividualCurrentEnrollment`
+status, and nothing else. Since 2026-10-02 it reads them from maintained totals
+(`EnrollmentCount`, lab/strategy/008), so it costs the same at any population; the
+per-person status behind them (`EnrollmentCurrent`) is closed to the application
+role, so it does not make the list below any cheaper to build. An admin can join `IndividualCurrentEnrollment`
 directly and get names, but no function offers it, and the access appears in
 `AuthAuditLog` when they do.
 

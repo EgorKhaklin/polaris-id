@@ -2835,3 +2835,96 @@ END$$;
 COMMENT ON FUNCTION uc_rebuild_population_counts() IS
   'Recounts PopulationCount from IdentityToken and TokenSignature under a SHARE lock '
   '(lab/strategy/008). Owner-only: a full count of the population is a maintenance act.';
+
+-- ----------------------------------------------------------------------------
+-- Enrolment counts (lab/strategy/008, step 4). EnrollmentCount holds folded totals and
+-- EnrollmentCountDelta the signed changes the triggers on EnrollmentCurrent append; a reader sums
+-- both. The same shape as the population counts above, keyed by jurisdiction and status.
+-- ----------------------------------------------------------------------------
+
+-- Move every visible change into the totals; one fold at a time, and a caller that finds one
+-- running returns at once. The triggers call it now and then, so the changes stay few; a reader
+-- sums the totals and the changes, so it need not.
+CREATE OR REPLACE FUNCTION uc_fold_enrollment_counts()
+RETURNS BIGINT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_folded BIGINT := 0;
+BEGIN
+    IF NOT pg_try_advisory_xact_lock(hashtext('polaris.enrollment.fold')) THEN
+        RETURN 0;
+    END IF;
+    -- Update, then insert, as uc_fold_population_counts does: an upsert would check a decrement
+    -- of an existing total against CHECK (n >= 0) as if it were a new row.
+    WITH moved AS (
+        DELETE FROM EnrollmentCountDelta
+        RETURNING jurisdiction, status, n
+    ), summed AS (
+        SELECT jurisdiction, status, sum(n) AS n, count(*) AS deltas
+          FROM moved
+         GROUP BY jurisdiction, status
+    ), updated AS (
+        UPDATE EnrollmentCount c SET n = c.n + s.n
+          FROM summed s
+         WHERE c.jurisdiction = s.jurisdiction AND c.status = s.status AND s.n <> 0
+        RETURNING 1
+    ), inserted AS (
+        INSERT INTO EnrollmentCount (jurisdiction, status, n)
+        SELECT s.jurisdiction, s.status, s.n
+          FROM summed s
+         WHERE s.n <> 0
+           AND NOT EXISTS (SELECT 1 FROM EnrollmentCount c
+                            WHERE c.jurisdiction = s.jurisdiction AND c.status = s.status)
+        RETURNING 1
+    )
+    SELECT COALESCE(sum(deltas), 0) INTO v_folded FROM summed;
+    RETURN v_folded;
+END$$;
+
+COMMENT ON FUNCTION uc_fold_enrollment_counts() IS
+  'Folds EnrollmentCountDelta into EnrollmentCount (lab/strategy/008). Idempotent and '
+  'non-blocking: one fold at a time, and a caller that finds one running returns 0.';
+
+-- Rebuild every person's latest status and the totals from Individual and EnrollmentStatusEvent:
+-- the load scripts call it after the seed, the migration that adds the tables to fill them, and an
+-- operator to reconcile. It SHARE-locks both tables, so writers wait until it commits; on a large
+-- population that is a maintenance window, so the application role may not run it (09_grants.sql).
+-- The per-row count trigger is off while EnrollmentCurrent is refilled, since the totals are
+-- recounted from it in one pass; the ALTER TABLE is transactional, so a failed rebuild leaves the
+-- trigger as it was.
+CREATE OR REPLACE FUNCTION uc_rebuild_enrollment_counts()
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtext('polaris.enrollment.fold'));
+    LOCK TABLE Individual, EnrollmentStatusEvent IN SHARE MODE;
+    ALTER TABLE EnrollmentCurrent DISABLE TRIGGER trg_enrollment_count_follow_current;
+    DELETE FROM EnrollmentCurrent;
+    INSERT INTO EnrollmentCurrent (individual_id, jurisdiction, status, event_timestamp, event_id)
+    SELECT i.individual_id, i.jurisdiction,
+           COALESCE(l.status, 'NOT_ENROLLED'),
+           COALESCE(l.event_timestamp, '-infinity'::TIMESTAMP),
+           COALESCE(l.event_id, 0)
+      FROM Individual i
+      LEFT JOIN (SELECT DISTINCT ON (individual_id) individual_id, status, event_timestamp, event_id
+                   FROM EnrollmentStatusEvent
+                  ORDER BY individual_id, event_timestamp DESC, event_id DESC) l
+             USING (individual_id);
+    ALTER TABLE EnrollmentCurrent ENABLE TRIGGER trg_enrollment_count_follow_current;
+    DELETE FROM EnrollmentCountDelta;
+    DELETE FROM EnrollmentCount;
+    INSERT INTO EnrollmentCount (jurisdiction, status, n)
+    SELECT jurisdiction, status, count(*)
+      FROM EnrollmentCurrent
+     GROUP BY jurisdiction, status;
+END$$;
+
+COMMENT ON FUNCTION uc_rebuild_enrollment_counts() IS
+  'Rebuilds EnrollmentCurrent and EnrollmentCount from Individual and EnrollmentStatusEvent under '
+  'a SHARE lock (lab/strategy/008). Owner-only: a full pass over the population is a maintenance act.';
