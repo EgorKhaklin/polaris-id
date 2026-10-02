@@ -1132,7 +1132,7 @@ class AtlasTests(PolarisTestCase):
 
     def test_atlas_state_populations_match_database(self):
         """The HUD's active credentials are the population count, withheld below the minimum:
-        the sample's three read as fewer than five, and as 3 with the minimum off."""
+        the sample's three read as withheld, never as "<5", and as 3 with the minimum off."""
         active = _sql("SELECT count(*) AS n FROM IdentityToken WHERE status = 'ACTIVE'",
                       fetch='one')['n']
         self.assertLess(active, atlas_routes._ATLAS_MIN_CELL, 'fixture: a small population')
@@ -1140,7 +1140,8 @@ class AtlasTests(PolarisTestCase):
         def hud():
             body = self.client.get('/atlas').get_data(as_text=True)
             return re.search(r'data-atlas-active-tokens>(.*?)</span>', body).group(1)
-        self.assertIn('&lt;5', hud())
+        self.assertIn('class="withheld"', hud())
+        self.assertNotIn('&lt;5', hud())
         with patch.object(atlas_routes, '_ATLAS_MIN_CELL', 0):
             self.assertEqual(hud(), str(active))
 

@@ -19,9 +19,10 @@
  * needed. Zero-knowledge events are counted in every figure but never located
  * (C6): the server aggregates enforce that; the console only ever shows counts.
  *
- * A count below the minimum cell size arrives as null (lab/strategy/009, step 4) and
- * is shown as "<5", drawn as a gap or a neutral mark, and never as a number or as
- * zero. The console never sums the points it was given into a figure of its own: a
+ * A count below the minimum cell size, or one that would give such a count back, arrives as
+ * null (lab/strategy/009, step 4) and is shown as the withheld mark, drawn as a gap or a
+ * neutral mark, and never as a number or as zero. Not as "<5": a part withheld because the
+ * rest of its whole is small can hold 98, and "<5" would say otherwise. The console never sums the points it was given into a figure of its own: a
  * withheld point would read as none. Headline figures come from the server's totals.
  * ======================================================================== */
 (function () {
@@ -61,7 +62,17 @@
 
   var MIN_CELL = parseInt(shell.getAttribute('data-min-cell') || '5', 10);
   function withheld(n) { return n === null || n === undefined; }
-  function fmtCount(n) { return withheld(n) ? '<' + MIN_CELL : fmtInt(n); }
+  var WITHHELD_MARK = '\u2022\u2022\u2022';
+  var WITHHELD_TITLE = 'Withheld: fewer than ' + MIN_CELL + ', or a figure that would give such a count back';
+  function fmtCount(n) { return withheld(n) ? WITHHELD_MARK : fmtInt(n); }
+  // A count as an element: the number, or the mark with its reason as a title and the word for
+  // a screen reader, which would otherwise read three bullets.
+  function countEl(cls, n, title) {
+    if (!withheld(n)) return el('span', { class: cls, text: fmtInt(n), title: title || '' });
+    return el('span', { class: cls + ' withheld', title: title || WITHHELD_TITLE }, [
+      el('span', { 'aria-hidden': 'true', text: WITHHELD_MARK }),
+      el('span', { class: 'visually-hidden', text: 'withheld' })]);
+  }
   function fmtShare(part, whole) {
     return (withheld(part) || withheld(whole) || !whole) ? 'withheld' : fmtPct(100 * part / whole);
   }
@@ -196,7 +207,7 @@
     var shownN = (points || []).filter(function (p) { return !withheld(p.n_total); }).length;
     if (!points || !points.length || !shownN) {
       mount.appendChild(el('div', { class: 'ov-empty', text: points && points.length
-        ? 'Every interval in this window holds fewer than ' + MIN_CELL + ' events, so none is shown.'
+        ? 'Every interval in this window is withheld, so none is drawn.'
         : 'No events in this window.' }));
       return;
     }
@@ -215,7 +226,7 @@
       preserveAspectRatio: 'none', role: 'img',
       'aria-label': 'Volume over time: ' + n + ' interval'
         + (n === 1 ? '' : 's') + ', peak ' + fmtInt(maxV) + ' per interval, '
-        + (n - shownN) + ' withheld as fewer than ' + MIN_CELL });
+        + (n - shownN) + ' withheld' });
 
     // horizontal gridlines at 0/50/100% of max
     [0, 0.5, 1].forEach(function (f) {
@@ -328,7 +339,7 @@
         }
       }
       row.appendChild(track);
-      row.appendChild(el('span', { class: 'ov-bar-val', text: fmtCount(c.n_total) }));
+      row.appendChild(countEl('ov-bar-val', c.n_total));
       mount.appendChild(row);
     });
   }
@@ -340,7 +351,7 @@
     // Shares only when every level is shown: a share of a withheld level would give it back.
     if (cats.some(function (c) { return withheld(c.n_total); })) {
       mount.appendChild(el('div', { class: 'ov-mix-withheld',
-        text: 'Shares withheld: a level holds fewer than ' + MIN_CELL + ' in this window.' }));
+        text: 'Shares withheld: a level\'s count is withheld in this window.' }));
       return;
     }
     var total = 0;
@@ -375,6 +386,12 @@
   function setKpi(key, text) {
     var n = $('[data-ov-kpi="' + key + '"]', overview);
     if (n) n.textContent = text;
+  }
+  function setKpiCount(key, count) {
+    var n = $('[data-ov-kpi="' + key + '"]', overview);
+    if (!n) return;
+    n.textContent = '';
+    n.appendChild(countEl('', count));
   }
   function setSub(key, text) {
     var n = $('[data-ov-kpi-sub="' + key + '"]', overview);
@@ -423,13 +440,15 @@
       var e = d.epoch;
       if (!e) setInt('epoch', 'None closed', 'no state epoch has been closed yet', 'warn');
       else setInt('epoch', '#' + fmtInt(e.id),
-                  'closed ' + utc(e.closed_at) + '; ' + fmtCount(e.committed)
-                  + ' credentials committed; ' + (e.expired ? 'expired ' : 'valid until ')
+                  'closed ' + utc(e.closed_at) + '; '
+                  + (withheld(e.committed) ? 'credentials committed: withheld'
+                                           : fmtInt(e.committed) + ' credentials committed')
+                  + '; ' + (e.expired ? 'expired ' : 'valid until ')
                   + e.valid_until.slice(0, 10), e.expired ? 'danger' : 'ok');
       var a = d.anchor;
       if (!a) setInt('anchor', 'None yet', 'no anchor batch has been made yet', 'warn');
       else setInt('anchor', '#' + fmtInt(a.id),
-                  utc(a.created_at) + '; ' + fmtCount(a.size) + ' anchors; '
+                  utc(a.created_at) + '; ' + (withheld(a.size) ? 'anchors: withheld' : fmtInt(a.size) + ' anchors') + '; '
                   + (a.chain ? 'committed to ' + (CHAINS[a.chain] || prettyLabel(a.chain)) : 'not yet committed to a chain'),
                   a.chain ? 'ok' : 'warn', a.tx ? 'transaction ' + a.tx : null);
     }).catch(function (err) {
@@ -454,7 +473,7 @@
       var pts = data.points || [];
       var t = data.totals || {};
       renderHero($('[data-ov-hero]', overview), pts);
-      setKpi('volume', fmtCount(t.n_total));
+      setKpiCount('volume', t.n_total);
       setSub('volume', windowLabel(data));
       setKpi('failure-rate', fmtShare(t.n_failure, t.n_total));
       setSub('failure-rate', withheld(t.n_failure) ? 'non-success withheld' : fmtInt(t.n_failure) + ' non-success');
@@ -688,10 +707,10 @@
         if (failShown && c.n_failure > 0) { var bad = el('span', { class: 'ov-bar-fill ov-bar-fill-fail' }); bad.style.width = (100 * c.n_failure / maxV) + '%'; track.appendChild(bad); }
       }
       row.appendChild(track);
-      row.appendChild(el('span', { class: 'bd-row-vol', text: fmtCount(c.n_total) }));
+      row.appendChild(countEl('bd-row-vol', c.n_total));
       if (compared) {
-        row.appendChild(el('span', { class: 'bd-row-vol bd-row-before',
-          text: c.folded ? '' : fmtCount(c.prev_total) }));
+        row.appendChild(c.folded ? el('span', { class: 'bd-row-vol bd-row-before', text: '' })
+                                 : countEl('bd-row-vol bd-row-before', c.prev_total));
         row.appendChild(el('span', { class: 'bd-row-change' + (c.change > 0 ? ' bd-change-up' : c.change < 0 ? ' bd-change-down' : ''),
           text: c.folded ? '' : fmtChange(c.change),
           title: c.folded ? 'Not compared: the small categories differ from one window to the next'
@@ -736,9 +755,9 @@
       data.cols.forEach(function (col) {
         var n = lut[r.label + '\u0000' + col];
         if (withheld(n)) {
-          grid.appendChild(el('span', { class: 'bd-mx-cell bd-mx-withheld', text: '<' + MIN_CELL,
-            title: r.label + ' · ' + prettyLabel(col) + ': withheld (fewer than ' + MIN_CELL
-              + ', or all but that many of the row)' }));
+          grid.appendChild(countEl('bd-mx-cell bd-mx-withheld', n,
+            r.label + ' · ' + prettyLabel(col) + ': withheld (fewer than ' + MIN_CELL
+              + ', or all but that many of the row)'));
           return;
         }
         var share = withheld(r.total) || !r.total ? null : n / r.total;
@@ -751,8 +770,8 @@
         delta(cell, bc && bc.change, bc && bc.prev);
         grid.appendChild(cell);
       });
-      var tot = el('span', { class: 'bd-mx-cell bd-mx-total', text: fmtCount(r.total),
-                             title: r.label + ': ' + fmtCount(r.total) });
+      var tot = countEl('bd-mx-cell bd-mx-total', r.total,
+                        r.label + ': ' + (withheld(r.total) ? 'withheld' : fmtInt(r.total)));
       delta(tot, r.change, r.prev_total);
       grid.appendChild(tot);
     });
@@ -935,7 +954,7 @@
     var row = el('button', { class: 'gf-facet-opt' + (on ? ' gf-facet-opt-on' : ''), type: 'button' });
     row.appendChild(el('span', { class: 'gf-facet-check', text: on ? '☑' : '☐' }));
     row.appendChild(el('span', { class: 'gf-facet-optlabel', title: label, text: label }));
-    row.appendChild(el('span', { class: 'gf-facet-optcount', text: fmtCount(count) }));
+    row.appendChild(countEl('gf-facet-optcount', count));
     row.addEventListener('click', onClick);
     return row;
   }
@@ -1052,8 +1071,7 @@
     if (!mount) return;
     mount.textContent = '';
     if (!cells.some(function (c) { return !withheld(c.n); })) {
-      mount.appendChild(el('div', { class: 'ov-empty', text: 'Every hour of the week holds fewer than '
-        + MIN_CELL + ' events in this window, so none is shown.' }));
+      mount.appendChild(el('div', { class: 'ov-empty', text: 'Every hour of the week is withheld in this window, so none is drawn.' }));
       return;
     }
     var grid = {}, maxN = 1;
@@ -1073,7 +1091,7 @@
           'fill-opacity': hidden ? 1 : (0.12 + 0.88 * (n / maxN)).toFixed(3)
         });
         var tt = svg('title'); tt.textContent = DOW[d - 1] + ' ' + (hr < 10 ? '0' + hr : hr) + ':00 — '
-          + (hidden ? 'fewer than ' + MIN_CELL + ' events (withheld)'
+          + (hidden ? 'withheld'
                     : fmtInt(n) + ' events' + (cell && !withheld(cell.n_failure) ? ' (' + fmtInt(cell.n_failure) + ' failed)' : ''));
         r.appendChild(tt); s.appendChild(r);
       }
@@ -1131,7 +1149,7 @@
     mount.appendChild(range);
     if (anyWithheld) {
       mount.appendChild(el('div', { class: 'ov-withheld-note',
-        text: 'A band draws nothing in an interval where it holds fewer than ' + MIN_CELL + '.' }));
+        text: 'A band draws nothing in an interval where its count is withheld.' }));
     }
   }
 

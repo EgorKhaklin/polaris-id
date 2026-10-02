@@ -206,7 +206,7 @@
             <span data-ov-error-detail>Could not load analytics.</span>
             <button type="button" class="toolbar-chip" data-ov-retry>Retry</button>
         </div>
-        <p class="ov-foot">Every figure is a count from the activity rollups, by the hour or the day, never a read of an event. A count under {{ min_cell }} reads &lt;{{ min_cell }}, and so does any figure that would give one back. Zero-knowledge verifications are counted and never located (C6).</p>
+        <p class="ov-foot">Every figure is a count from the activity rollups, by the hour or the day, never a read of an event. A count under {{ min_cell }} is withheld, shown as &bull;&bull;&bull;, and so is any figure that would give one back. Zero-knowledge verifications are counted and never located (C6).</p>
 
         {# A5, the limits panel (lab/strategy/009): what the Atlas will not show, each beside the
            rule that withholds it, linked to that rule as the connected database holds it. #}
@@ -221,7 +221,7 @@
                     <a class="atlas-limits-rule" href="{{ url_for('athena_console') }}#rule-c6">C6</a> <a class="atlas-limits-rule" href="{{ url_for('athena_console') }}#rule-c2">C2</a></li>
                 <li><strong>A minute.</strong> The finest time the Atlas holds is the hour; a window starts at the top of an hour, or of a day past a week.
                     <span class="atlas-limits-rule">lab/strategy/009</span></li>
-                <li><strong>A cell about too few people.</strong> A count under {{ min_cell }} is withheld, and so is any figure that would give one back. A question narrowed to fewer than {{ narrow_scope }} events is answered and recorded with who asked it. At low volume most cells read &lt;{{ min_cell }}: that is the rule working, not data missing.
+                <li><strong>A cell about too few people.</strong> A count under {{ min_cell }} is withheld, and so is any figure that would give one back. A question narrowed to fewer than {{ narrow_scope }} events is answered and recorded with who asked it. At low volume most cells read &bull;&bull;&bull; (withheld): that is the rule working, not data missing.
                     <span class="atlas-limits-rule">lab/strategy/009</span></li>
                 <li><strong>An unbounded answer.</strong> Every list, series and map is capped.
                     <a class="atlas-limits-rule" href="{{ url_for('athena_console') }}#rule-c8">C8</a></li>
