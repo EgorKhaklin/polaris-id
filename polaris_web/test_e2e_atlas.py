@@ -236,6 +236,50 @@ class TestAtlasGlobeE2E(unittest.TestCase):
         finally:
             page.close()
 
+    def test_the_integrity_card_fills_from_the_database(self):
+        """lab/strategy/009 A2: the Overview's integrity card reads the latest epoch and batch and
+        the Athena board's verdict, and links to the board. Catches the fetch, the fill and a
+        card left on its placeholder."""
+        page = self._context.new_page()
+        try:
+            self._login_and_goto(page)
+            page.wait_for_selector('[data-ov-integrity]', state="visible", timeout=3000)
+            page.wait_for_function(
+                "() => !document.querySelector('[data-ov-int-value=\"board\"]')"
+                ".textContent.includes('\u2026')", timeout=4000)
+            board = page.text_content('[data-ov-int-value="board"]') or ''
+            self.assertRegex(board, r'\d+ of \d+ (in force|not in force)')
+            for key in ('epoch', 'anchor'):
+                value = (page.text_content(f'[data-ov-int-value="{key}"]') or '').strip()
+                self.assertNotIn(value, ('', '\u2026', 'Unavailable'), key)
+            self.assertIsNotNone(page.query_selector('[data-ov-integrity] a[href="/athena"]'))
+        finally:
+            page.close()
+
+    def test_the_breakdown_compares_with_the_window_before(self):
+        """lab/strategy/009 A4: the comparison adds the Before and Change columns and says what
+        it compared with; under 'all' it is switched off, since nothing comes before."""
+        page = self._context.new_page()
+        try:
+            self._login_and_goto(page)
+            page.click('[data-atlas-view-tab="breakdown"]')
+            page.wait_for_selector('[data-bd-ranked] .bd-row', timeout=4000)
+            page.click('[data-gf-window="7d"]')
+            page.click('[data-bd-compare="previous"]')
+            page.wait_for_selector('[data-bd-ranked].bd-table-compare .bd-row-change', timeout=4000)
+            page.wait_for_function(
+                "() => document.querySelector('[data-bd-count]').textContent.includes('Compared with')",
+                timeout=4000)
+            self.assertTrue(page.is_visible('[data-bd-metric="change"]'))
+            self.assertFalse(page.is_visible('[data-bd-error]'))
+            page.click('[data-gf-window="all"]')
+            page.wait_for_timeout(800)
+            self.assertTrue(page.is_disabled('[data-bd-compare="previous"]'))
+            self.assertEqual(page.get_attribute('[data-bd-compare="off"]', 'aria-checked'), 'true')
+            self.assertFalse(page.is_visible('[data-bd-error]'), 'all-time asks for no comparison')
+        finally:
+            page.close()
+
     def test_global_filter_coordinates_the_overview(self):
         """v9.251: the global filter bar drives the views. Selecting an outcome
         facet must add a filter chip and re-fetch the Overview (coordinated,

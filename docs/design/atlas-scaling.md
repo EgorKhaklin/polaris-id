@@ -77,6 +77,20 @@ Windows are the rollups': a window starts at the top of the hour (or, past a wee
 that holds its nominal start, and a series bucket is whole hours or days, since the rollups hold
 nothing finer.
 
+**The window before** (lab/strategy/009 A4). `compare=previous` on the breakdown and the
+cross-tab reads `[since - span, since)` through the same readers, which take the window's end
+(`p_until`) as well as its start, both COALESCEd so a generic plan serves them as one range on
+the rollups' leading key: the comparison costs a second read of the same shape, not a scan. Each
+window's counts are withheld against its own scope, and a change or a failure mark is computed
+from shown counts alone. The open window has nothing before it. A retention purge deletes hours
+and keeps days, so an hourly window before that reaches past the first hour still held, where
+the daily rollup holds an earlier day, is reported incomplete and compared nowhere rather than
+read as a fall.
+
+**Integrity** (009 A2). `GET /api/atlas/integrity` reads the latest `TokenStateEpoch` and
+`AnchorBatch` by their primary keys, one row each at any population, and the Athena board, which
+reads the catalogue; cached like every Atlas answer.
+
 ## Data path
 
 ```

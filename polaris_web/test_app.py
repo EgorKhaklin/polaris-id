@@ -10789,6 +10789,243 @@ class AtlasCacheTests(_AtlasCase):
             self.assertEqual(again['totals']['n_total'], 6, 'the cached answer, not a recount')
 
 
+class AtlasCompareTests(_AtlasCase):
+    """compare=previous (lab/strategy/009 A4): each count beside the same count in the window of
+    the same nominal length immediately before, withheld against that window's own scope, a
+    change only where both counts are shown, and a mark where the failure share at least doubled
+    with ten or more extra failures. Authorities 4, 5 and 6 are this class's: no other suite
+    records a verification there, so each test's slice holds its own events alone."""
+
+    def _count(self, agency, where, params):
+        return self._raw('requesting_agency_id = %s AND ' + where, (agency,) + tuple(params))
+
+    def test_the_window_before_is_counted_as_the_window_is(self):
+        """Every compared figure is the event table's own count, on the hourly grain and on the
+        daily, and the window before ends where this one starts."""
+        _atlas_events(6, agency=6, context=5, outcome='FAILURE', disclosure='SELECTIVE')
+        _atlas_events(11, agency=6, context=5, outcome='FAILURE', disclosure='SELECTIVE',
+                      minutes_ago=26 * 60)
+        _atlas_events(8, agency=6, context=5, minutes_ago=30 * 60)
+        _atlas_events(9, agency=6, context=5, minutes_ago=31 * 24 * 60)
+        # First as the triggers left them, in the delta; then folded into the hourly and daily
+        # rollups, so each of the three branches a window reads is bounded at its end.
+        for folded, (window, span) in ((f, w) for f in (False, True)
+                                       for w in (('24h', timedelta(hours=24)),
+                                                 ('30d', timedelta(days=30)))):
+            if folded and window == '24h':
+                _sql("SELECT uc_fold_activity_rollups() AS folded", fetch='one')
+            with self.subTest(window=window, folded=folded), self._unwithheld():
+                d = self._ask('/api/atlas/breakdown?window=%s&dimension=outcome&agencies=6'
+                              '&contexts=VOTING&compare=previous' % window)
+                prev = d['previous']
+                self.assertEqual((prev['until'], prev['incomplete']), (d['since'], None))
+                since = datetime.fromisoformat(d['since'])
+                before = datetime.fromisoformat(prev['since'])
+                self.assertEqual(since - before, span)
+                for c in d['categories']:
+                    now_n = self._count(6, "context_id = 5 AND outcome = %s AND event_timestamp >= %s",
+                                        (c['label'], since))
+                    then_n = self._count(6, "context_id = 5 AND outcome = %s AND event_timestamp >= %s "
+                                            "AND event_timestamp < %s", (c['label'], before, since))
+                    self.assertEqual((c['n_total'], c['prev_total'], c['change']),
+                                     (now_n, then_n, now_n - then_n), c['label'])
+                by = {c['label']: c for c in d['categories']}
+                self.assertGreater(by['FAILURE']['prev_total'] + by['SUCCESS']['prev_total'], 0)
+
+    def test_a_change_is_shown_only_where_both_counts_are(self):
+        """Now 6 failures and 8 successes; before 3 failures, 10 successes and 7 expiries. The 3
+        is withheld, so the failures' change is too: 6 and a change of 3 would give it back."""
+        _atlas_events(6, agency=6, context=6, outcome='FAILURE', disclosure='SELECTIVE')
+        _atlas_events(8, agency=6, context=6)
+        _atlas_events(3, agency=6, context=6, outcome='FAILURE', disclosure='SELECTIVE',
+                      minutes_ago=26 * 60)
+        _atlas_events(10, agency=6, context=6, minutes_ago=26 * 60)
+        _atlas_events(7, agency=6, context=6, outcome='EXPIRED', disclosure='SELECTIVE',
+                      minutes_ago=26 * 60)
+        d = self._ask('/api/atlas/breakdown?window=24h&dimension=outcome&agencies=6'
+                      '&contexts=MOTOR_VEHICLE&compare=previous')
+        got = {c['label']: (c['n_total'], c['prev_total'], c['change']) for c in d['categories']}
+        self.assertEqual(got, {'FAILURE': (6, None, None), 'SUCCESS': (8, 10, -2),
+                               'EXPIRED': (None, 7, None), 'UNAUTHORIZED': (None, None, None)})
+
+    def test_a_rising_failure_share_is_marked_from_shown_counts_alone(self):
+        """Doubled with fifteen more failures is marked; doubled with six more is not, nor is
+        eleven more short of double, nor anything beside a withheld count."""
+        for context, (s_before, f_before, s_now, f_now) in ((2, (40, 5, 25, 20)),
+                                                            (3, (40, 5, 34, 11)),
+                                                            (7, (30, 10, 25, 21)),
+                                                            (1, (40, 2, 25, 20))):
+            _atlas_events(s_before, agency=5, context=context, minutes_ago=26 * 60)
+            _atlas_events(f_before, agency=5, context=context, outcome='FAILURE',
+                          disclosure='SELECTIVE', minutes_ago=26 * 60)
+            _atlas_events(s_now, agency=5, context=context)
+            _atlas_events(f_now, agency=5, context=context, outcome='FAILURE', disclosure='SELECTIVE')
+        d = self._ask('/api/atlas/breakdown?window=24h&dimension=context&agencies=5&compare=previous')
+        rose = {c['label']: c['failure_rose'] for c in d['categories'] if not c.get('folded')}
+        self.assertEqual({k: rose[k] for k in ('EMPLOYMENT', 'HEALTHCARE', 'GOVERNMENT_BENEFITS')},
+                         {'EMPLOYMENT': True, 'HEALTHCARE': False, 'GOVERNMENT_BENEFITS': False})
+        self.assertIsNone(rose['VOTING'], 'no count, no mark')
+        # 2 failures before is withheld: 20 now would mark it from a count nobody may see.
+        self.assertIsNone(rose['BANKING'], 'a withheld count marks nothing')
+
+    def test_the_cross_tab_compares_each_cell_and_row(self):
+        _atlas_events(5, agency=4, context=4)
+        _atlas_events(6, agency=4, context=4, outcome='FAILURE', disclosure='SELECTIVE')
+        _atlas_events(7, agency=4, context=4, minutes_ago=26 * 60)
+        _atlas_events(2, agency=4, context=4, outcome='FAILURE', disclosure='SELECTIVE',
+                      minutes_ago=26 * 60)
+        with self._unwithheld():
+            d = self._ask('/api/atlas/crosstab?window=24h&row=agency&col=outcome&agencies=4'
+                          '&compare=previous')
+        since = datetime.fromisoformat(d['since'])
+        before = datetime.fromisoformat(d['previous']['since'])
+        rows = {r['label']: r for r in d['rows']}
+        tsa = rows['Transportation Security Admin']
+        then_total = self._count(4, "event_timestamp >= %s AND event_timestamp < %s", (before, since))
+        self.assertEqual((tsa['prev_total'], tsa['change']),
+                         (then_total, tsa['total'] - then_total))
+        for c in d['cells']:
+            if c['row'] != 'Transportation Security Admin':
+                self.assertEqual((c['prev'], c['change']), (None, None), 'the folded row')
+                continue
+            then_n = self._count(4, "outcome = %s AND event_timestamp >= %s AND event_timestamp < %s",
+                                 (c['col'], before, since))
+            self.assertEqual((c['prev'], c['change']), (then_n, c['n'] - then_n), c['col'])
+        self.assertEqual(rows[atlas_routes._ATLAS_FOLDED]['prev_total'], None)
+
+    def test_nothing_comes_before_all_time(self):
+        for path in ('/api/atlas/breakdown?window=all&dimension=outcome&compare=previous',
+                     '/api/atlas/crosstab?window=all&row=agency&col=outcome&compare=previous',
+                     '/api/atlas/breakdown?window=24h&dimension=outcome&compare=next'):
+            with self.subTest(path):
+                self.assertIn('error', self._ask(path, status=400))
+
+    def test_purged_hours_are_not_compared(self):
+        """A purge deletes the hourly rollup before its cutoff and keeps the daily one. A window
+        before reaching past the first hour still held would count less than happened, so when
+        the daily rollup holds a day before that hour's, nothing in it is compared."""
+        now = self._db_now().replace(minute=0, second=0, microsecond=0)
+        url = '/api/atlas/breakdown?window=24h&dimension=outcome&compare=previous'
+        with patch.object(atlas_routes, '_first_hour', return_value=now - timedelta(hours=2)), \
+                patch.object(atlas_routes, '_first_day', return_value=now - timedelta(days=90)):
+            d = self._ask(url)
+        self.assertIn('no longer held', d['previous']['incomplete'])
+        self.assertTrue(all(c['prev_total'] is None and c['change'] is None
+                            for c in d['categories']))
+        atlas_routes._atlas_cache_clear()
+        # A system that began two hours ago purged nothing: its days start the day its hours do.
+        with patch.object(atlas_routes, '_first_hour', return_value=now - timedelta(hours=2)), \
+                patch.object(atlas_routes, '_first_day',
+                             return_value=(now - timedelta(hours=2)).replace(hour=0)):
+            self.assertIsNone(self._ask(url)['previous']['incomplete'])
+
+    def test_a_narrow_window_before_is_noted_and_a_comparison_is_its_own_question(self):
+        _atlas_events(60, agency=4, context=2)
+        url = '/api/atlas/breakdown?window=24h&dimension=outcome&agencies=4&contexts=EMPLOYMENT'
+        self.assertNotIn('previous', self._ask(url), 'not asked, not answered')
+        with self.assertLogs(flask_app.app.logger, level='INFO') as logs:
+            flask_app.app.logger.info('control')
+            d = self._ask(url + '&compare=previous')
+        self.assertIn('previous', d, 'the comparison is not the cached answer without it')
+        lines = [m for m in logs.output if 'atlas narrow question' in m]
+        self.assertEqual(len(lines), 1, 'the window before holds fewer than fifty')
+        self.assertIn('compare=previous', lines[0])
+
+
+class AtlasIntegrityTests(_AtlasCase):
+    """The integrity card (lab/strategy/009 A2): the latest state epoch and anchor batch, read
+    by their keys, and the Athena board's verdict on this database. Header rows only: no leaf,
+    no person, not the operator who closed the epoch; a count in them withheld below five."""
+
+    def test_the_latest_epoch_and_batch_are_read_by_their_keys(self):
+        """A new epoch over the sample's credentials, five or more, beside the sample's own: the
+        card shows the newer, its count shown."""
+        from psycopg2.extras import Json
+        admin = _sql("SELECT user_id FROM AppUser WHERE role = 'admin' AND is_active "
+                     "ORDER BY user_id LIMIT 1", fetch='one')['user_id']
+        tokens = [r['token_id'] for r in _sql("SELECT token_id FROM IdentityToken "
+                                              "ORDER BY token_id LIMIT 6")]
+        _sql("CALL uc11_close_epoch(%s, %s, %s, %s)",
+             ('f' * 64, datetime.now() + timedelta(days=30), admin,
+              Json([{'token_id': t, 'leaf_hash': '%02x' % t * 32} for t in tokens])), fetch='none')
+        self.assertGreater(_sql("SELECT count(*) AS n FROM TokenStateEpoch", fetch='one')['n'], 1)
+        e = _sql("SELECT * FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 1", fetch='one')
+        self.assertEqual(e['committed_count'], len(tokens))
+        self.assertGreaterEqual(len(tokens), 5, 'enough credentials for a count that is shown')
+        b = _sql("SELECT * FROM AnchorBatch ORDER BY batch_id DESC LIMIT 1", fetch='one')
+        self.assertTrue(e and b, 'the sample has an epoch and a batch')
+        with self._unwithheld():
+            d = self._ask('/api/atlas/integrity')
+        self.assertEqual(d['epoch'], {
+            'id': e['epoch_id'], 'closed_at': e['closed_at'].isoformat(timespec='seconds'),
+            'valid_from': e['valid_from'].isoformat(timespec='seconds'),
+            'valid_until': e['valid_until'].isoformat(timespec='seconds'),
+            'expired': False, 'committed': e['committed_count']})
+        self.assertEqual(d['anchor'], {
+            'id': b['batch_id'], 'created_at': b['created_at'].isoformat(timespec='seconds'),
+            'size': b['batch_size'],
+            'chain': b['external_chain'] if b['committed_to_chain'] else None,
+            'tx': b['external_chain_tx'] if b['committed_to_chain'] else None})
+
+    def test_an_epoch_past_its_validity_reads_expired(self):
+        """On the database's clock: the browser's may be wrong, and the verifier's is the
+        database's."""
+        until = _sql("SELECT valid_until FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 1",
+                     fetch='one')['valid_until']
+        for now, expired in ((until - timedelta(seconds=1), False), (until, True),
+                             (until + timedelta(days=1), True)):
+            atlas_routes._atlas_cache_clear()
+            with patch.object(atlas_routes, '_db_now', return_value=now):
+                self.assertEqual(self._ask('/api/atlas/integrity')['epoch']['expired'], expired, now)
+
+    def test_a_count_below_five_is_withheld(self):
+        """The sample's epoch commits 3 credentials and its batches hold 1 anchor each."""
+        e = _sql("SELECT committed_count FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 1",
+                 fetch='one')['committed_count']
+        b = _sql("SELECT batch_size FROM AnchorBatch ORDER BY batch_id DESC LIMIT 1",
+                 fetch='one')['batch_size']
+        d = self._ask('/api/atlas/integrity')
+        self.assertEqual((d['epoch']['committed'], d['anchor']['size']),
+                         (e if e >= 5 else None, b if b >= 5 else None))
+        self.assertLess(min(e, b), 5, 'the sample exercises the withholding')
+
+    def test_the_verdict_is_the_boards(self):
+        import athena_board
+        with flask_app.app.test_request_context('/'):
+            states = [r['state'] for r in athena_board.read_board(flask_app.query)['rules']]
+        board = self._ask('/api/atlas/integrity')['board']
+        self.assertEqual((board['rules'], board['in_force'], board['not_in_force'], board['repository']),
+                         (len(states), states.count('in_force'), states.count('not_in_force'),
+                          states.count('repository')))
+        self.assertGreater(board['in_force'], 0)
+
+    def test_a_rule_not_in_force_reads_so(self):
+        import athena_board
+        with flask_app.app.test_request_context('/'):
+            real = athena_board.read_board(flask_app.query)
+        broken = dict(real, rules=[dict(real['rules'][0], state='not_in_force')] + real['rules'][1:])
+        with patch.object(athena_board, 'read_board', return_value=broken):
+            board = self._ask('/api/atlas/integrity')['board']
+        self.assertEqual(board['not_in_force'],
+                         [r['state'] for r in broken['rules']].count('not_in_force'))
+        self.assertGreaterEqual(board['not_in_force'], 1)
+
+    def test_the_closer_is_not_named(self):
+        closer = _sql("SELECT u.username FROM TokenStateEpoch e JOIN AppUser u "
+                      "  ON u.user_id = e.closed_by_user_id ORDER BY e.epoch_id DESC LIMIT 1",
+                      fetch='one')['username']
+        body = self.client.get('/api/atlas/integrity').get_data(as_text=True)
+        self.assertNotIn('closed_by', body)
+        self.assertNotIn('"%s"' % closer, body)
+
+    def test_the_page_carries_the_card_and_the_control(self):
+        body = self.client.get('/atlas').get_data(as_text=True)
+        for hook in ('data-ov-integrity', 'href="/athena"', 'data-ov-int-value="board"',
+                     'data-ov-int-value="epoch"', 'data-ov-int-value="anchor"',
+                     'data-bd-compare="previous"', 'data-bd-metric="change"'):
+            self.assertIn(hook, body, hook)
+
+
 class AtlasReadsNoEventTableTests(PolarisTestCase):
     """The Atlas costs the same at any population because no reader reads an event table
     (lab/strategy/009, step 4): each sums the activity rollups, whose rows number the hours times
@@ -12398,6 +12635,10 @@ class AtlasShowsNoPersonTests(PolarisTestCase):
               '/api/atlas/breakdown?window=all&kind=lifecycle&dimension=agency&limit=50',
               '/api/atlas/crosstab?window=all&kind=verification&row=agency&col=outcome',
               '/api/atlas/facet/agencies?window=all',
+              '/api/atlas/breakdown?window=7d&kind=verification&dimension=agency&compare=previous',
+              '/api/atlas/crosstab?window=7d&kind=verification&row=agency&col=outcome'
+              '&compare=previous',
+              '/api/atlas/integrity',
               '/api/atlas/cache-stats')
     PERSON_KEY = re.compile(r"(token_id|token_value|individual_id|legal_name|holder|subject|event_id"
                             r"|date_of_birth)", re.I)
