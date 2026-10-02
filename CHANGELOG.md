@@ -32,6 +32,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The operator console is rethought around what Polaris is now: grouped, role-gated navigation; new sign-in, landing and Overview.
 - The Atlas shows counts only: its map points, event feed, records grid and person focus are withdrawn.
 - Athena's Constitution tab reads each mechanism from the connected database's catalogue when opened.
+- Athena's self-test attempts six forbidden writes, rolled back, and shows what refused each one.
 - The Overview costs the same at any population: 10.4 s to 0.12 s at two million persons.
 - Console counts read to thirteen digits and beyond; a capped count says "or more".
 - The seven operation forms start from one record found by lookup instead of listing every credential or person.

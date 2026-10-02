@@ -7266,7 +7266,11 @@ def test_athena_console_check_discriminates(tmp_path):
         "    return jsonify(impacts=query(\"SELECT impact_kind FROM athena_affected_by_algorithm(%s)\", (1,)))\n\n"
         "@app.route('/api/athena/explain-proof')\n@security.login_required\n"
         "def api_athena_explain_proof():\n"
-        "    return jsonify(rows=query(\"SELECT disclosure_level FROM athena_explain_proof(%s)\", (1,)))\n"
+        "    return jsonify(rows=query(\"SELECT disclosure_level FROM athena_explain_proof(%s)\", (1,)))\n\n"
+        "@app.route('/athena/self-test', methods=['POST'])\n@security.login_required\n"
+        "@security.require_role('admin', 'auditor')\n@security.csrf_protect\n"
+        "def athena_self_test():\n"
+        "    return athena_selftest.run(get_db())\n"
     )
     JS = "function el(){ var n = document.createElement('div'); n.textContent = 'x'; return n; }\n"
     TPL = "".join(
@@ -7284,11 +7288,29 @@ def test_athena_console_check_discriminates(tmp_path):
         "    return dict(t=t, c=c, i=i, p=p)\n"
     )
 
-    def write(app=APP, js=JS, tpl=TPL, board=BOARD):
+    # The self-test: every probe's savepoint and the whole transaction rolled back in a finally.
+    SELFTEST = (
+        "def _run_probe(cur, probe):\n"
+        "    cur.execute('SAVEPOINT p')\n"
+        "    try:\n"
+        "        cur.execute(probe)\n"
+        "    finally:\n"
+        "        cur.execute('ROLLBACK TO SAVEPOINT p')\n\n"
+        "def run(conn):\n"
+        "    try:\n"
+        "        with conn.cursor() as cur:\n"
+        "            return [_run_probe(cur, p) for p in PROBES]\n"
+        "    finally:\n"
+        "        conn.rollback()\n"
+        "        conn.close()\n"
+    )
+
+    def write(app=APP, js=JS, tpl=TPL, board=BOARD, selftest=SELFTEST):
         _athena_write(tmp_path, "polaris_web/app.py", app)
         _athena_write(tmp_path, "polaris_web/static/athena-console.js", js)
         _athena_write(tmp_path, "polaris_web/templates/athena.html", tpl)
         _athena_write(tmp_path, "polaris_web/athena_board.py", board)
+        _athena_write(tmp_path, "polaris_web/athena_selftest.py", selftest)
 
     write()
     assert checks.check_athena_console(tmp_path)[0].level == "OK", "must PASS the good console"
@@ -7326,6 +7348,30 @@ def test_athena_console_check_discriminates(tmp_path):
     import os
     os.remove(tmp_path / "polaris_web" / "athena_board.py")
     assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL without the board"
+
+    # lab/strategy/009, step B2: the self-test cannot write (falsifier 7).
+    write()
+    assert checks.check_athena_console(tmp_path)[0].level == "OK", "control: the self-test as written passes"
+    write(selftest=SELFTEST.replace("        conn.rollback()\n", "        conn.commit()\n"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL when the self-test commits"
+    write(selftest=SELFTEST.replace("    try:\n        with conn.cursor() as cur:\n",
+                                    "    conn.autocommit = True\n    try:\n        with conn.cursor() as cur:\n"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL when the self-test autocommits"
+    write(selftest=SELFTEST.replace("    finally:\n        cur.execute('ROLLBACK TO SAVEPOINT p')\n",
+                                    "    except Exception:\n        cur.execute('ROLLBACK TO SAVEPOINT p')\n"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a probe the database accepted would keep its savepoint"
+    write(selftest=SELFTEST.replace("    finally:\n        conn.rollback()\n        conn.close()\n",
+                                    "    finally:\n        conn.close()\n"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the transaction is not rolled back in a finally"
+    write(app=APP.replace("@security.require_role('admin', 'auditor')\n@security.csrf_protect\n"
+                          "def athena_self_test", "@security.csrf_protect\ndef athena_self_test"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL when any role may run the self-test"
+    write(app=APP.replace("@security.csrf_protect\ndef athena_self_test", "def athena_self_test"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL without CSRF protection"
+    write(app=APP.replace("@app.route('/athena/self-test', methods=['POST'])", "@app.route('/athena/self-test')"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL when a GET could run it"
 
 
 def test_zk_claim_precise_check_discriminates(tmp_path):

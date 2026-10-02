@@ -49,6 +49,63 @@
 
   {# ---- Constitution: C1-C10 and the Vocation, each mechanism as this database holds it ---- #}
   <section data-athena-panel="constitution" class="athena-panel board" role="tabpanel">
+    {% if current_user.role in ('admin', 'auditor') %}
+    <section class="selftest panel" id="selftest" aria-labelledby="selftest-h">
+      <div class="panel-head">
+        <h2 id="selftest-h">Self-test</h2>
+        <form method="post" action="{{ url_for('athena_self_test') }}#selftest">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-sm">{{ ui.icon('shield-check') }}{% if selftest %}Run it again{% else %}Run the self-test{% endif %}</button>
+        </form>
+      </div>
+      <p class="help">Attempts each forbidden write below on this application's own database
+         connection, each inside a savepoint, in a transaction that is always rolled back. Nothing a
+         probe does is kept. A refused insert can still advance a sequence, and the database logs
+         each refusal under <code>application_name</code> <code>polaris-athena-selftest</code>; expect
+         those lines when you run it.</p>
+      {% if selftest %}
+      <p class="selftest-who">Ran as <span class="mono">{{ selftest.role }}</span> at
+         <time class="mono" datetime="{{ selftest.at.isoformat() }}">{{ selftest.at.strftime('%Y-%m-%d %H:%M:%S %Z') }}</time>:
+         {{ selftest.held }} of {{ selftest.probes|length }} refused as expected{% if selftest.otherwise %},
+         {{ selftest.otherwise }} refused by something else{% endif %}{% if selftest.exempt %},
+         {{ selftest.exempt }} accepted because the owner is exempt{% endif %}{% if selftest.not_run %},
+         {{ selftest.not_run }} not run{% endif %}{% if selftest.failed %},
+         <strong class="mech-reason">{{ selftest.failed }} accepted: not enforced</strong>{% endif %}.
+         {% if selftest.is_owner %}This application connects as the schema owner. Some rules
+         deliberately do not bind the owner, which runs the issuance and recovery procedures; in
+         production the application connects as <span class="mono">polaris_app</span>.{% endif %}</p>
+      <div class="table-wrap">
+        <table class="data selftest-table">
+          <thead><tr><th scope="col">Rule</th><th scope="col">The write attempted</th><th scope="col">Result</th>
+                     <th scope="col">Refused by</th></tr></thead>
+          <tbody>
+            {% for p in selftest.probes %}
+            <tr>
+              <td class="mono">{{ p.rule }}</td>
+              <td>{{ p.attempt }}<p class="mech-detail">Should be refused by <code>{{ p.expected }}</code></p></td>
+              <td>{% if p.status == 'refused' %}{{ ui.pill('success', 'Refused') }}
+                  {% elif p.status == 'refused_otherwise' %}{{ ui.pill('warn', 'Refused, by something else') }}
+                  {% elif p.status == 'owner_exempt' %}{{ ui.pill('warn', 'Accepted: owner exempt') }}
+                  {% elif p.status == 'inconclusive' %}{{ ui.pill('plain', 'Not run') }}
+                  {% else %}{{ ui.pill('danger', 'Accepted: not enforced') }}{% endif %}</td>
+              <td>{% if p.refused_by %}<code>{{ p.refused_by }}</code>{% if p.sqlstate %} <span class="muted mono">{{ p.sqlstate }}</span>{% endif %}
+                  {% if p.message %}<p class="mech-detail">{{ p.message }}</p>{% endif %}
+                  {% elif p.message %}<span class="muted">{{ p.message|capitalize }}</span>{% else %}&mdash;{% endif %}</td>
+            </tr>
+            {% endfor %}
+            {% set c = selftest.clamp %}
+            <tr>
+              <td class="mono">C8</td>
+              <td>Ask the Atlas breakdown for {{ '{:,}'.format(c.asked) }} rows<p class="mech-detail">Should be clamped to <code>_ATLAS_MAX_CATEGORIES = {{ c.cap }}</code></p></td>
+              <td>{% if c.held %}{{ ui.pill('info', 'Clamped by the application') }}{% else %}{{ ui.pill('danger', 'Not clamped') }}{% endif %}</td>
+              <td>HTTP {{ c.status }}: the route allowed {{ c.limit if c.limit is not none else '?' }} and returned {{ c.count if c.count is not none else '?' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </section>
+    {% endif %}
     {% for r in board.rules %}
     <article class="rule-card rule-{{ r.state }}" id="rule-{{ r.rule_code|lower }}">
       <header class="rule-head">

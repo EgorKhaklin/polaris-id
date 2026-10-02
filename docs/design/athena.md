@@ -87,8 +87,24 @@ table that lost its guard is named. C5's script policy and C8's caps are read fr
 application and labelled as such; repository checks are named and claim nothing about the
 database. The page leads with the count of mechanisms not in force and says when and from which
 database it read. It cannot say that a mechanism refuses: a trigger whose function had been
-rewritten to let writes through still reads as present; the mutation drills are the evidence
-for that, and the self-test is the step after this one. **Authority** resolves the authority chain for
+rewritten to let writes through still reads as present.
+
+The **self-test** (step B2, `athena_selftest.py`, `POST /athena/self-test`, administrator or
+auditor, refused to an account bound to one authority) says it. On the application's own
+connection, in one transaction that is always rolled back and with each probe inside a savepoint
+rolled back too, it attempts six forbidden writes: change a recorded verification (C1), record a
+zero-knowledge verification that names a credential (C2), make a second credential ACTIVE for one
+person (C3), record a SUCCESS for a revoked credential (the success rules), move a credential to
+another holder (the binding) and write a duress record directly (the privilege boundary). Each
+result names what refused it, read from the database's error, beside what was expected; a write
+the database accepts reads as not enforced. Three of those rules deliberately do not bind the
+schema owner, so when the application connects as the owner the page says so, which is itself a
+finding: in production it connects as `polaris_app`. C8 is an application clamp, so its probe
+asks the Atlas breakdown, through the route and as the signed-in user, for a thousand times its
+cap and shows what came back, drawn apart from the database's refusals. Nothing a probe does is
+kept; a refused insert can advance a sequence, and the refusals are in the database's log under
+`application_name` `polaris-athena-selftest` (see OPERATIONS.md). `check_athena_console` holds the
+module to its rollbacks. **Authority** resolves the authority chain for
 an agency + algorithm ("Not authorized to issue" when no grant exists) and the
 deprecation blast radius for an algorithm. **Proof policy** explains a context's
 requirements and its three disclosure levels. **Trust graph** lists the current

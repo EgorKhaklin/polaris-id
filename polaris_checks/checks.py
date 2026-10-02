@@ -10491,7 +10491,8 @@ def check_athena_console(root: pathlib.Path) -> list[Finding]:
         if catalogue not in board:
             return _fail("athena_console", f"athena_board.py no longer reads `{catalogue}`; the board would "
                          "report a mechanism as in force without asking the database")
-    if not re.search(r"athena_board\.read_board\(", _fn_body(app, "athena_console") or ""):
+    page = (_fn_body(app, "athena_console") or "") + (_fn_body(app, "_athena_page") or "")
+    if not re.search(r"athena_board\.read_board\(", page):
         return _fail("athena_console", "athena_console() does not build the page from athena_board.read_board(); "
                      "the Constitution tab would show curated rows as if they were live")
     if "verified_at" not in tpl:
@@ -10511,10 +10512,51 @@ def check_athena_console(root: pathlib.Path) -> list[Finding]:
                 return _fail("athena_console", f"athena_board.py references the person surface `{bad}`; the "
                              "board reads the catalogue and the curated rows only")
 
+    # lab/strategy/009, step B2: THE SELF-TEST CANNOT WRITE. It attempts forbidden writes on the
+    # application's own connection; what makes that safe is that nothing it does is kept. So the
+    # module never commits and never switches to autocommit, rolls the transaction back in a
+    # finally, and rolls every probe's savepoint back in a finally whether the probe was refused or
+    # accepted; and the route that runs it is POST, CSRF-protected, admin and auditor only.
+    # Falsifier 7 of the record, as a check.
+    selftest = _read(root, "polaris_web/athena_selftest.py")
+    if not selftest:
+        return _fail("athena_console", "polaris_web/athena_selftest.py is missing: the board's self-test is gone")
+    try:
+        st_tree = ast.parse(selftest)
+    except SyntaxError as exc:
+        return _fail("athena_console", "athena_selftest.py does not parse (%s)" % exc)
+    for node in ast.walk(st_tree):
+        if isinstance(node, ast.Attribute) and node.attr in ("commit", "autocommit"):
+            return _fail("athena_console", f"athena_selftest.py touches `.{node.attr}`: the self-test's transaction "
+                         "must only ever be rolled back")
+
+    def _finally_calls(fn_name, needle):
+        fn = next((n for n in ast.walk(st_tree) if isinstance(n, ast.FunctionDef) and n.name == fn_name), None)
+        if fn is None:
+            return None
+        return any(isinstance(t, ast.Try) and needle in ast.unparse(ast.Module(body=t.finalbody, type_ignores=[]))
+                   for t in ast.walk(fn))
+    for fn_name, needle, what in (("run", "rollback()", "rolls the whole transaction back"),
+                                  ("_run_probe", "ROLLBACK TO SAVEPOINT", "rolls each probe's savepoint back")):
+        found = _finally_calls(fn_name, needle)
+        if not found:
+            return _fail("athena_console", f"athena_selftest.{fn_name}() no longer {what} in a finally; a probe "
+                         "the database accepted would be kept")
+    deco = re.search(r"@app\.route\('/athena/self-test',\s*methods=\[\s*'POST'\s*\]\)(.*?)\ndef athena_self_test",
+                     app, re.S)
+    if not deco:
+        return _fail("athena_console", "the self-test route must be @app.route('/athena/self-test', methods=['POST'])")
+    for needed in ("login_required", "require_role('admin', 'auditor')", "csrf_protect"):
+        if needed not in deco.group(1):
+            return _fail("athena_console", f"the self-test route is not {needed}: it attempts forbidden writes and "
+                         "is for an administrator or an auditor, on a request they meant")
+
     return _ok("athena_console",
                "the Athena console (4 tabs, 1 page + 3 drill-down routes) is login-gated, reads only the "
                "person-free Athena layer, renders CSP-safe via createElement, and builds its Constitution "
-               "tab from the live catalogue (athena_board), saying when it read it")
+               "tab from the live catalogue (athena_board), saying when it read it; its self-test never "
+               "commits, rolls every probe back in a finally, and runs only on an administrator's or "
+               "auditor's POST")
 
 
 # ---------------------------------------------------------------------------
