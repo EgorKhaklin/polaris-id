@@ -104,7 +104,10 @@ asks the Atlas breakdown, through the route and as the signed-in user, for a tho
 cap and shows what came back, drawn apart from the database's refusals. Nothing a probe does is
 kept; a refused insert can advance a sequence, and the refusals are in the database's log under
 `application_name` `polaris-athena-selftest` (see OPERATIONS.md). `check_athena_console` holds the
-module to its rollbacks. **Authority** resolves the authority chain for
+module to its rollbacks. Each rule a probe covers shows the result on its own card, beside what the
+catalogue says, because present and switched on is one finding and refused when tried is
+another; a card whose catalogue says in force while its write went through is marked as the two
+disagreeing. **Authority** resolves the authority chain for
 an agency + algorithm ("Not authorized to issue" when no grant exists) and the
 deprecation blast radius for an algorithm. **Proof policy** explains a context's
 requirements and its three disclosure levels. **Trust graph** lists the current

@@ -15482,6 +15482,59 @@ class AthenaSelfTestTests(PolarisTestCase):
         self.assertIn('Clamped by the application', body)
         self.assertIn('polaris-athena-selftest', body)
 
+    @staticmethod
+    def _card(body, rule):
+        """One rule's card on the board, as rendered."""
+        match = re.search(r'<article class="rule-card([^"]*)" id="rule-%s">(.*?)</article>' % rule.lower(),
+                          body, re.S)
+        if match is None:
+            raise AssertionError('no card for %s' % rule)
+        return match.group(1), match.group(2)
+
+    def test_each_card_shows_its_probe_beside_the_catalogue(self):
+        """Present and switched on (the catalogue) and refused when tried (the probe) are two
+        findings; a card the self-test speaks for shows both, and a card it does not shows none."""
+        body = self._post_selftest().get_data(as_text=True)
+        for rule in ('C1', 'C2'):
+            _, card = self._card(body, rule)
+            self.assertIn('rule-tested-label', card, rule)
+            self.assertIn('Refused</span>', card, rule)
+            self.assertIn(', as expected', card, rule)
+        _, c8 = self._card(body, 'C8')
+        self.assertIn('Clamped by the application', c8)
+        _, c4 = self._card(body, 'C4')
+        self.assertNotIn('rule-tested', c4, 'no probe covers C4, and its card does not pretend one does')
+
+    def test_a_card_says_when_its_write_was_not_tried(self):
+        _, card = self._card(self.client.get('/athena').get_data(as_text=True), 'C1')
+        self.assertIn('Not run yet', card, 'an administrator sees the self-test has not run')
+        self._login('operator')
+        body = self.client.get('/athena').get_data(as_text=True)
+        self.assertNotIn('rule-tested', body, 'a role that may not run it is not offered it')
+        self.assertNotIn('id="selftest"', body)
+
+    def test_a_hollow_trigger_marks_its_card(self):
+        """The catalogue still says in force; the card says the write went through, and is marked
+        as the two disagreeing. Under polaris_app the privilege boundary refuses first."""
+        with self._owner().cursor() as cur:
+            cur.execute("SELECT pg_get_functiondef('reject_audit_modification'::regproc) AS d")
+            original = cur.fetchone()['d']
+            cur.execute("CREATE OR REPLACE FUNCTION reject_audit_modification() RETURNS TRIGGER "
+                        "LANGUAGE plpgsql AS $hollow$ BEGIN RETURN COALESCE(NEW, OLD); END; $hollow$")
+            try:
+                body = self._post_selftest().get_data(as_text=True)
+            finally:
+                cur.execute(original)
+        classes, card = self._card(body, 'C1')
+        self.assertIn('In force', card, 'the catalogue cannot see a hollow function')
+        if 'connects as the schema owner' in body:
+            self.assertIn('rule-contradicted', classes)
+            self.assertIn('Accepted: not enforced', card)
+            self.assertIn('the database let it through', card)
+        else:
+            self.assertNotIn('rule-contradicted', classes)
+            self.assertIn('the privilege boundary', card)
+
     def test_it_is_for_administrators_and_auditors_on_purpose(self):
         self._login('operator')
         self.assertEqual(self._post_selftest().status_code, 403)

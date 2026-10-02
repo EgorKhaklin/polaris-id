@@ -102,6 +102,9 @@ PROBES = (
     },
 )
 
+#: The rules a probe covers, for the board to say which of its cards the self-test speaks for.
+PROBED_RULES = frozenset(p['rule'] for p in PROBES)
+
 #: How long one probe may take, and how long it may wait for a lock another session holds: a probe
 #: that would wait gives up rather than queue behind real work.
 _STATEMENT_TIMEOUT_MS = 3000
@@ -112,6 +115,8 @@ def _mask(text):
     """The database's message with every standalone number masked: a credential number in a
     trigger's message is a value a probe read, and the page shows no value. A number inside a name
     (a partition's verificationevent_2026_10, "Phase 2b") is not a value and is kept."""
+    # Numbers only, because every probe aims at a key or a status. A probe that writes a column
+    # holding text about a person (a name, a document number with letters) must mask that too.
     return re.sub(r'\b\d+\b', '#', (text or '').strip())[:220]
 
 

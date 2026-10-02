@@ -292,3 +292,9 @@ on, hollow: what the board cannot see), the C1 probe is accepted and reads as no
 the owner; as `polaris_app` the privilege boundary still refuses it, and the probe says that is
 what refused it. On the seed no person holds both an ACTIVE credential and a live reserve, so
 the C3 probe reports "not run"; given such a person, it is refused by `uq_one_active_per_person`.
+
+Review (2026-10-02): approved, with the run recorded in the application log rather than a
+widened AuthAuditLog event type. Two notes taken: the masking covers numbers only, and says to
+mask any text column a later probe writes; and each rule card now carries its probe's result
+beside the catalogue's, so a reader sees "in force" corroborated by "refused when tried", or
+the card marked when the two disagree (`test_a_hollow_trigger_marks_its_card`).

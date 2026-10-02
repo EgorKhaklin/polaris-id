@@ -1877,7 +1877,8 @@ def athena_console():
 
 
 def _athena_page(selftest=None):
-    """The Athena page, with the self-test's results when it has just run."""
+    """The Athena page, with the self-test's results when it has just run (the C8 clamp is
+    `selftest['clamp']`, an application check rather than a probe)."""
     # The constitution as this database and this application hold it now (lab/strategy/009,
     # step B1): every mechanism looked up in the live catalogue, not read from the curated rows.
     import athena_board   # the board's catalogue reads; it imports nothing from app.py
@@ -1894,8 +1895,13 @@ def _athena_page(selftest=None):
                   "FROM v_athena_relies_on ORDER BY from_agency_name, to_agency_name "
                   "LIMIT 500")
 
+    # Each rule a probe covers shows the probe's result on its card, beside what the catalogue
+    # says: present and switched on, and refused when tried, are two different findings.
+    import athena_selftest
+    tested = {p['rule']: p for p in selftest['probes']} if selftest else {}
     return render_template('athena.html', board=board, agencies=agencies,
-                           algorithms=algorithms, contexts=contexts, trust=trust, selftest=selftest)
+                           algorithms=algorithms, contexts=contexts, trust=trust, selftest=selftest,
+                           tested=tested, probed=athena_selftest.PROBED_RULES | {'C8'})
 
 
 #: One self-test per account per ten seconds: each run takes locks for milliseconds and writes the

@@ -10,6 +10,15 @@
 {% block content %}
 {% import "_ui.html" as ui with context %}
 {% set s = board.summary %}
+{# The self-test is instance-wide: an account bound to one authority is refused it (app.py). #}
+{% set can_selftest = current_user.role in ('admin', 'auditor') and session.get('operator_agency_id') is none %}
+{% macro probe_pill(status) -%}
+{% if status == 'refused' %}{{ ui.pill('success', 'Refused') }}
+{%- elif status == 'refused_otherwise' %}{{ ui.pill('warn', 'Refused, by something else') }}
+{%- elif status == 'owner_exempt' %}{{ ui.pill('warn', 'Accepted: owner exempt') }}
+{%- elif status == 'inconclusive' %}{{ ui.pill('plain', 'Not run') }}
+{%- else %}{{ ui.pill('danger', 'Accepted: not enforced') }}{% endif %}
+{%- endmacro %}
 <header class="page-head">
     <div class="page-head-text">
         <p class="eyebrow">Governance</p>
@@ -36,8 +45,9 @@
 <p class="board-when">Read from <span class="mono">{{ board.database }}</span> at
    <time class="mono" datetime="{{ board.verified_at.isoformat() }}">{{ board.verified_at.strftime('%Y-%m-%d %H:%M:%S %Z') }}</time>.
    Present and switched on is not the same as refusing: a trigger whose function had been rewritten
-   to let writes through would still read as in force here. The repository's mutation drills remove
-   these mechanisms one at a time and require a test to fail.</p>
+   to let writes through would still read as in force here.{% if can_selftest %} The self-test
+   attempts the forbidden writes, and each rule it covers shows on its card what happened.{% endif %}
+   The repository's mutation drills remove these mechanisms one at a time and require a test to fail.</p>
 
 <div class="athena-shell">
   <nav class="athena-tabs" role="tablist" aria-label="Athena views">
@@ -49,7 +59,7 @@
 
   {# ---- Constitution: C1-C10 and the Vocation, each mechanism as this database holds it ---- #}
   <section data-athena-panel="constitution" class="athena-panel board" role="tabpanel">
-    {% if current_user.role in ('admin', 'auditor') %}
+    {% if can_selftest %}
     <section class="selftest panel" id="selftest" aria-labelledby="selftest-h">
       <div class="panel-head">
         <h2 id="selftest-h">Self-test</h2>
@@ -83,11 +93,7 @@
             <tr>
               <td class="mono">{{ p.rule }}</td>
               <td>{{ p.attempt }}<p class="mech-detail">Should be refused by <code>{{ p.expected }}</code></p></td>
-              <td>{% if p.status == 'refused' %}{{ ui.pill('success', 'Refused') }}
-                  {% elif p.status == 'refused_otherwise' %}{{ ui.pill('warn', 'Refused, by something else') }}
-                  {% elif p.status == 'owner_exempt' %}{{ ui.pill('warn', 'Accepted: owner exempt') }}
-                  {% elif p.status == 'inconclusive' %}{{ ui.pill('plain', 'Not run') }}
-                  {% else %}{{ ui.pill('danger', 'Accepted: not enforced') }}{% endif %}</td>
+              <td>{{ probe_pill(p.status) }}</td>
               <td>{% if p.refused_by %}<code>{{ p.refused_by }}</code>{% if p.sqlstate %} <span class="muted mono">{{ p.sqlstate }}</span>{% endif %}
                   {% if p.message %}<p class="mech-detail">{{ p.message }}</p>{% endif %}
                   {% elif p.message %}<span class="muted">{{ p.message|capitalize }}</span>{% else %}&mdash;{% endif %}</td>
@@ -107,7 +113,9 @@
     </section>
     {% endif %}
     {% for r in board.rules %}
-    <article class="rule-card rule-{{ r.state }}" id="rule-{{ r.rule_code|lower }}">
+    {% set p = tested.get(r.rule_code) %}
+    {# The catalogue says in force and the write went through: the two findings disagree. #}
+    <article class="rule-card rule-{{ r.state }}{% if p and p.status == 'accepted' %} rule-contradicted{% endif %}" id="rule-{{ r.rule_code|lower }}">
       <header class="rule-head">
         <span class="rule-code mono">{{ r.rule_code }}</span>
         <h2 class="rule-title">{{ r.title }}</h2>
@@ -117,6 +125,22 @@
         {% else %}{{ ui.pill('plain', 'Checked in the repository') }}{% endif %}
       </header>
       <p class="rule-statement">{{ r.statement }}</p>
+      {% if p %}
+      <p class="rule-tested"><span class="rule-tested-label">Self-test</span>{{ probe_pill(p.status) }}
+         <span>{{ p.attempt }}:
+         {%- if p.refused_by %} refused by <code>{{ p.refused_by }}</code>{% if p.status == 'refused' %}, as expected{% else %}, where <code>{{ p.expected }}</code> was expected{% endif %}
+         {%- elif p.status == 'inconclusive' %} not run; {{ p.message }}
+         {%- elif p.status == 'owner_exempt' %} accepted, because this application connects as the schema owner
+         {%- else %} the database let it through{% endif %}. <a href="#selftest">The run</a></span></p>
+      {% elif r.rule_code == 'C8' and selftest %}
+      {% set c = selftest.clamp %}
+      <p class="rule-tested"><span class="rule-tested-label">Self-test</span>{% if c.held %}{{ ui.pill('info', 'Clamped by the application') }}{% else %}{{ ui.pill('danger', 'Not clamped') }}{% endif %}
+         <span>Asked the Atlas breakdown for {{ '{:,}'.format(c.asked) }} rows: the route allowed
+         {{ c.limit if c.limit is not none else '?' }} and returned {{ c.count if c.count is not none else '?' }}. <a href="#selftest">The run</a></span></p>
+      {% elif can_selftest and r.rule_code in probed %}
+      <p class="rule-tested rule-untested"><span class="rule-tested-label">Self-test</span>{{ ui.pill('plain', 'Not run yet') }}
+         <span>The catalogue shows what holds this rule; <a href="#selftest">the self-test</a> attempts the write it forbids.</span></p>
+      {% endif %}
       {% if r.guards %}
       <details class="rule-guards"{% if r.guards_held < r.guards|length %} open{% endif %}>
         <summary>
