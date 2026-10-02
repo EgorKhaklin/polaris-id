@@ -1728,9 +1728,11 @@ class EnrollmentCountTests(PolarisTestCase):
         self.assertEqual(summary, truth, 'the enrolment summary drifted after: %s' % step)
 
     def _assert_exact(self, step):
-        """The summary is exact, and every person's kept row equals the view's."""
+        """The summary is exact, and every person's kept row equals the view's. The kept rows are
+        read as the owner: the application role may not read EnrollmentCurrent at all, which is
+        what the app-role run of this suite holds it to."""
         self._assert_summary_exact(step)
-        self.assertEqual(self._rows(self._PERSON_DRIFT), [],
+        self.assertEqual([tuple(r) for r in self._owner(self._PERSON_DRIFT, fetch=True)], [],
                          "a person's kept status drifted from the view after: %s" % step)
 
     def _event(self, person, status, at=None):
@@ -1790,8 +1792,8 @@ class EnrollmentCountTests(PolarisTestCase):
         # A person is never deleted: their kept row refers to them, as their first event does. A
         # kept row removed by the owner's hand is counted out, and the rebuild puts it back.
         self._owner("DELETE FROM EnrollmentCurrent WHERE individual_id = %s", (bare,))
-        kept = {(j, s): n for j, s, n in self._rows(
-            "SELECT jurisdiction, status, count(*) FROM EnrollmentCurrent GROUP BY 1, 2")}
+        kept = {(j, s): n for j, s, n in self._owner(
+            "SELECT jurisdiction, status, count(*) FROM EnrollmentCurrent GROUP BY 1, 2", fetch=True)}
         summary = {(j, s): n for j, s, n in self._rows("SELECT * FROM civic_enrollment_summary(NULL)")}
         self.assertEqual(summary, kept, 'a kept row removed by hand was not counted out')
         self._owner("SELECT uc_rebuild_enrollment_counts()")
