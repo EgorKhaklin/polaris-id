@@ -115,7 +115,22 @@ polaris-verify --pqc-provider auto --issuer-anchor ml-dsa-65-issuer.json --pack 
 # signature_valid: True, issuer_trusted: True, exit 0
 ```
 
-`ml-dsa-65-tampered-signature.json` beside it exits 2, and so does the genuine sample under any other issuer's key. The sample issuer is a demo: in real use an issuer's key comes from the issuer or a trust list you already trust, never from beside the credential.
+The same two files verify from npm — same bytes, same verdict, which is why there are two independent SDKs (Node 20.19+; also Deno, Bun, browsers and workers):
+
+```bash
+npm install polaris-sdk-ts@next   # candidates ship under `next`; a plain install is 0.1.0 until 1.0.0
+node --input-type=module -e '
+import { readFileSync } from "node:fs";
+import { verifyAuthenticity } from "polaris-sdk-ts";
+const pack = JSON.parse(readFileSync("ml-dsa-65-valid.json", "utf8"));
+const anchors = JSON.parse(readFileSync("ml-dsa-65-issuer.json", "utf8")).public_keys_hex;
+const { authentic, issuerTrusted, algorithm } = await verifyAuthenticity(pack, anchors);
+console.log({ authentic, issuerTrusted, algorithm });
+'
+# { authentic: true, issuerTrusted: true, algorithm: 'ML-DSA-65' }
+```
+
+`ml-dsa-65-tampered-signature.json` beside it is rejected by both — the verifier exits 2, the SDK returns `authentic: false` — as is the genuine sample under any other issuer's key. The sample issuer is a demo: in real use an issuer's key comes from the issuer or a trust list you already trust, never from beside the credential.
 
 Authenticity is permanent; authorization can change. The same credential after revocation:
 
