@@ -6,12 +6,14 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/EgorKhaklin/polaris-id?include_prereleases&label=release&color=c9a352&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/releases/latest)
+[![Status: pre-pilot, notional data](https://img.shields.io/badge/status-pre--pilot_%C2%B7_notional_data-9a6b2f?labelColor=0a1421&style=flat-square)](#status)
 [![License](https://img.shields.io/badge/license-Apache--2.0-2b5797?labelColor=0a1421&style=flat-square)](LICENSE)
 [![OpenSSF Best Practices](https://img.shields.io/cii/level/15004?label=OpenSSF%20best%20practices&labelColor=0a1421&style=flat-square)](https://www.bestpractices.dev/projects/15004)
 [![OpenSSF Baseline](https://www.bestpractices.dev/projects/15004/baseline)](https://www.bestpractices.dev/projects/15004)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/EgorKhaklin/polaris-id/badge)](https://scorecard.dev/viewer/?uri=github.com/EgorKhaklin/polaris-id)
 
-[![OpenID Certified](https://img.shields.io/badge/OpenID-Certified-c9a352?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid-certified)
+[![OpenID Certified: polaris-oid4vp verifier](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_verifier-c9a352?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid-certified)
+[![Wallet interop: walt.id, Credo, eudi-dev, OID4VCgo](https://img.shields.io/badge/wallet_interop-walt.id_%C2%B7_Credo_%C2%B7_eudi--dev_%C2%B7_OID4VCgo-2b5797?labelColor=0a1421&style=flat-square)](lab/EXTERNAL-NOUNS.md#wallets)
 [![OpenID4VP 1.0](https://img.shields.io/badge/OpenID4VP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid4vp-10)
 [![HAIP 1.0](https://img.shields.io/badge/HAIP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#haip-10)
 [![SD-JWT VC](https://img.shields.io/badge/SD--JWT_VC-supported-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#sd-jwt-vc)
