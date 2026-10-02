@@ -403,3 +403,37 @@ check-mutation drill leaves none of 134 checks standing.
 
 Next: whether the event tables keep the location indexes the Atlas no longer reads, since every
 insert pays for them, and the optional PostGIS layer with them. Then B3 and B4.
+
+### Step 4, part three (2026-10-02): no coordinate written, none indexed
+
+With the Atlas on the rollups, nothing reads a verification's or a transition's coordinates. The
+verification log projects its columns explicitly and filters by none, and the one select left,
+the lifecycle half of `v_ontology_token_timeline`, reaches the investigation page, which never
+displays it. Tracing the writers found none in production either: no route, API path or
+procedure writes a coordinate, and the auto-audit trigger copied `polaris.event_lat` and
+`event_lon` into each lifecycle row from session settings nothing set. Only the simulator and the
+seed files filled the columns.
+
+So the columns are a capability rather than a trail: empty in production, and one session setting
+away from becoming a location history per credential with no change to the schema. This part
+closes the writers and the indexes, and leaves the columns for a later release:
+
+- The three B-tree location indexes are dropped (migration 2026-10-02-005). Per million located
+  verifications the two on `VerificationEvent` held 177 MB (73 and 104) beside a 208 MB heap,
+  maintained on every located insert for no query. Inserting a million located verifications
+  took 38.7 and 53.4 s with them and 34.8 and 33.2 s without, on a machine loaded by other work;
+  the size is the stable figure.
+- The audit trigger no longer reads the settings (the same migration carries its body, so a
+  database built by load-then-migrate runs it too), and a session that sets them gets a lifecycle
+  row with no coordinate. The simulator no longer generates them, so demonstration data looks
+  like production's.
+
+`TestEventsCarryNoLocation` reads the catalogue for an index on either event table that covers a
+coordinate, and sets both settings before a status change to show the row carries none; both
+fail against the down migration's state.
+
+Next, a release later: drop the columns themselves, with the timeline view's select, the
+optional PostGIS generated columns, the seed files and the checks and tests that name them, once
+the retention, export, backup and legal-hold paths are checked for a reader this trace did not
+find. `requestor_location`, the place a verifier states, is a separate question: it has a reader,
+the warrant audit.
