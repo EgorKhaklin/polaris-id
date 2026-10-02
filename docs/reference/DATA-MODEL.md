@@ -7,9 +7,10 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **48 tables** in `01_schema.sql` (v9.443; the 46th, CredentialCopy, 2026-09-28; the 47th
-and 48th, PopulationCount and PopulationCountDelta, 2026-10-01), organized
-into six functional groups. A migrated deployment holds **55 tables**: those,
+The Polaris schema is **51 tables** in `01_schema.sql` (v9.443; the 46th, CredentialCopy, 2026-09-28; the 47th
+and 48th, PopulationCount and PopulationCountDelta, 2026-10-01; the 49th to 51st, EnrollmentCurrent,
+EnrollmentCount and EnrollmentCountDelta, 2026-10-02), organized
+into six functional groups. A migrated deployment holds **58 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -437,6 +438,32 @@ The signed changes to `PopulationCount` not yet folded in. Statement triggers on
 rows it removed counted negative, the rows it left positive), so writers only
 append and never wait on, or deadlock over, a counter row. A fold deletes what
 it moves into the totals.
+
+### `EnrollmentCurrent` (lab/strategy/008, step 4)
+
+Each person's latest enrolment status beside their jurisdiction: the row
+`IndividualCurrentEnrollment` derives from every event, kept instead of derived. A trigger
+on `EnrollmentStatusEvent` applies each event that is newer, in the view's order
+`(event_timestamp, event_id)`, so an event recorded late with an earlier stamp does not
+displace a later one; a trigger on `Individual` follows a change of jurisdiction. A person's
+row is made by their first event, in the transaction that creates them. Written only by the
+owner's triggers and `uc_rebuild_enrollment_counts()`. The application role cannot read it: the
+summary needs only the totals, and the per-person status stays behind the view, as
+[tiered enrollment](../design/tiered-enrollment.md) means it to.
+
+### `EnrollmentCount` (lab/strategy/008, step 4)
+
+People by jurisdiction and enrolment status, exact at any population, for the enrolment
+summary (`civic_enrollment_summary`). Folded from `EnrollmentCountDelta` by
+`uc_fold_enrollment_counts()`; a reader sums both. `uc_rebuild_enrollment_counts()` rebuilds
+it and `EnrollmentCurrent` from `Individual` and the events under a SHARE lock, owner-only.
+Persons belong to no authority, so it carries no row-level security.
+
+### `EnrollmentCountDelta` (lab/strategy/008, step 4)
+
+The signed changes to `EnrollmentCount` not yet folded in, appended by a row trigger on
+`EnrollmentCurrent`: one for a person's first row, two for a change of status or
+jurisdiction.
 
 ### `BulkEnrollmentBatch` (roadmap P2.4)
 

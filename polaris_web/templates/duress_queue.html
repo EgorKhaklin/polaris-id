@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Duress Signals{% endblock %}
 {% block content %}
+{% import "_ui.html" as ui with context %}
 <h1>Duress Signals</h1>
 <p class="subtitle">
     Detected compulsion signals. When a holder enters their duress code
@@ -14,13 +15,14 @@
 <div class="actions-bar">
     <span class="record-count">{{ rows|length }} signal(s) recorded</span>
     <span class="record-count" style="margin-left: 1em;">
-        {{ enrolled_count }} of {{ active_token_count }} active token(s) have duress code enrolled
+        {{ ui.figure(enrolled_count) }} of {{ ui.figure(active_token_count) }} active credential(s) carry a duress code
     </span>
 </div>
 
 {% if not rows %}
     <div class="empty-state">No duress signals recorded.</div>
 {% else %}
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr>
@@ -55,6 +57,7 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 {% endif %}
 
 <div class="info-panel">

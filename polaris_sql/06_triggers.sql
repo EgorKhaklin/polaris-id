@@ -2376,3 +2376,114 @@ CREATE TRIGGER trg_population_count_signature_truncate
 -- The seed (04_data.sql) is loaded before these triggers exist, and a reload runs this file
 -- again: recount from the tables, so the counts start exact.
 SELECT uc_rebuild_population_counts();
+
+-- ----------------------------------------------------------------------------
+-- Enrolment counts (lab/strategy/008, step 4). EnrollmentCurrent follows each person's latest
+-- EnrollmentStatusEvent and their jurisdiction; its own row triggers append the signed change to
+-- EnrollmentCountDelta. A person's row is made by their first event, in the transaction that
+-- creates them (seed_default_enrollment_status), which no other transaction can see; every later
+-- write is an UPDATE of that row under its row lock, which re-reads the committed row it waited
+-- for. So a status change and a jurisdiction change racing for one person queue on that row and
+-- are counted in one order or the other, never both from a stale read.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION enrollment_current_follow_event()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    -- The latest event wins, in the view's order: a late arrival with an earlier stamp is history,
+    -- not the person's status. The jurisdiction is read only for a person's first row; after that
+    -- the jurisdiction trigger keeps it.
+    INSERT INTO EnrollmentCurrent AS c (individual_id, jurisdiction, status, event_timestamp, event_id)
+    SELECT NEW.individual_id, i.jurisdiction, NEW.status, NEW.event_timestamp, NEW.event_id
+      FROM Individual i WHERE i.individual_id = NEW.individual_id
+    ON CONFLICT (individual_id) DO UPDATE
+       SET status = EXCLUDED.status,
+           event_timestamp = EXCLUDED.event_timestamp,
+           event_id = EXCLUDED.event_id
+     WHERE (c.event_timestamp, c.event_id) < (EXCLUDED.event_timestamp, EXCLUDED.event_id);
+    RETURN NULL;
+END$$;
+
+DROP TRIGGER IF EXISTS trg_enrollment_current_follow_event ON EnrollmentStatusEvent;
+CREATE TRIGGER trg_enrollment_current_follow_event
+    AFTER INSERT ON EnrollmentStatusEvent
+    FOR EACH ROW EXECUTE FUNCTION enrollment_current_follow_event();
+
+CREATE OR REPLACE FUNCTION enrollment_current_follow_jurisdiction()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    UPDATE EnrollmentCurrent SET jurisdiction = NEW.jurisdiction
+     WHERE individual_id = NEW.individual_id;
+    RETURN NULL;
+END$$;
+
+DROP TRIGGER IF EXISTS trg_enrollment_current_follow_jurisdiction ON Individual;
+CREATE TRIGGER trg_enrollment_current_follow_jurisdiction
+    AFTER UPDATE OF jurisdiction ON Individual
+    FOR EACH ROW WHEN (OLD.jurisdiction IS DISTINCT FROM NEW.jurisdiction)
+    EXECUTE FUNCTION enrollment_current_follow_jurisdiction();
+
+-- Each change to a person's (jurisdiction, status) as a signed change to the totals. A person is
+-- never deleted (their first event refers to them), so a row leaves EnrollmentCurrent only by the
+-- owner's hand; the rebuild does it with this trigger off, and any other delete is counted here.
+CREATE OR REPLACE FUNCTION enrollment_count_follow_current()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO EnrollmentCountDelta (jurisdiction, status, n)
+        VALUES (NEW.jurisdiction, NEW.status, 1);
+    ELSIF TG_OP = 'DELETE' THEN
+        INSERT INTO EnrollmentCountDelta (jurisdiction, status, n)
+        VALUES (OLD.jurisdiction, OLD.status, -1);
+    ELSIF (OLD.jurisdiction, OLD.status) IS DISTINCT FROM (NEW.jurisdiction, NEW.status) THEN
+        INSERT INTO EnrollmentCountDelta (jurisdiction, status, n)
+        VALUES (OLD.jurisdiction, OLD.status, -1), (NEW.jurisdiction, NEW.status, 1);
+    END IF;
+    -- Now and then fold, so the changes stay few when nobody reads. A count must never stop a
+    -- person's write: should the fold fail, the changes stay unfolded and the write goes on.
+    IF random() < 0.002 THEN
+        BEGIN
+            PERFORM uc_fold_enrollment_counts();
+        EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING 'enrolment counts not folded: %', SQLERRM;
+        END;
+    END IF;
+    RETURN NULL;
+END$$;
+
+DROP TRIGGER IF EXISTS trg_enrollment_count_follow_current ON EnrollmentCurrent;
+CREATE TRIGGER trg_enrollment_count_follow_current
+    AFTER INSERT OR UPDATE OR DELETE ON EnrollmentCurrent
+    FOR EACH ROW EXECUTE FUNCTION enrollment_count_follow_current();
+
+-- TRUNCATE fires no row events, so it clears the totals it invalidates.
+CREATE OR REPLACE FUNCTION enrollment_count_truncated()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    DELETE FROM EnrollmentCountDelta;
+    DELETE FROM EnrollmentCount;
+    RETURN NULL;
+END$$;
+
+DROP TRIGGER IF EXISTS trg_enrollment_count_truncate ON EnrollmentCurrent;
+CREATE TRIGGER trg_enrollment_count_truncate
+    AFTER TRUNCATE ON EnrollmentCurrent
+    FOR EACH STATEMENT EXECUTE FUNCTION enrollment_count_truncated();
+
+-- As with the population counts: the seed is loaded before these triggers exist.
+SELECT uc_rebuild_enrollment_counts();

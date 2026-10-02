@@ -12,6 +12,7 @@
     <span class="record-count">{{ rows|length }} agencies</span>
 </div>
 
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr><th>ID</th><th>Name</th><th>Type</th><th>Jurisdiction</th><th>Auth Level</th><th>Actions</th></tr>
@@ -27,11 +28,6 @@
             <td class="actions">
                 {% if current_user.role == 'admin' %}
                 <a href="{{ url_for('agencies_edit', ag_id=r.agency_id) }}" class="btn btn-sm btn-secondary">Edit</a>
-                <form method="post" action="{{ url_for('agencies_delete', ag_id=r.agency_id) }}" class="inline-form"
-                      data-confirm="Delete agency #{{ r.agency_id }}? This will fail if any tokens, lifecycle events, verifications, or revocations reference it.">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-                </form>
                 {% else %}
                 <span class="muted">admin only</span>
                 {% endif %}
@@ -42,4 +38,7 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
+<p class="footnote">An authority is never deleted: one that existed stays part of the record, and the
+   database refuses the delete.</p>
 {% endblock %}

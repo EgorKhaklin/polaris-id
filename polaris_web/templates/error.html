@@ -47,8 +47,15 @@
         </dl>
     </div>
 
+    {# A refusal on a list (a page number past the bound) offers that list back, from its start,
+       where Next reaches any depth; everything else goes back to the overview. #}
+    {% set list_back = {'tokens_list': 'the credentials', 'individuals_list': 'the people',
+                        'verifications_list': 'the verification log'}.get(request.endpoint) %}
     <div class="footer-actions">
-        {% if current_user %}
+        {% if current_user and list_back %}
+            <a href="{{ url_for(request.endpoint) }}" class="btn btn-primary">{{ ui.icon('list') }}Back to {{ list_back }}</a>
+            <a href="{{ url_for('dashboard') }}" class="btn btn-ghost">Overview</a>
+        {% elif current_user %}
             <a href="{{ url_for('dashboard') }}" class="btn btn-primary">{{ ui.icon('layout-dashboard') }}Back to the overview</a>
         {% else %}
             <a href="{{ url_for('home') }}" class="btn btn-primary">Back to the home page</a>

@@ -1658,10 +1658,16 @@ class PopulationScaleTests(PolarisTestCase):
             _assert_bounded_plans(self, [("SELECT status, COUNT(*) AS n FROM IdentityToken GROUP BY status", None)],
                                   budget=6_000, sample_rows=2_000)
         with self.assertRaises(AssertionError):
-            # A capped count of a rare condition through a filter rather than an index.
+            # A capped count of a rare condition no index serves: a filter finds it by reading.
             _assert_bounded_plans(self, [("SELECT count(*) FROM (SELECT 1 FROM IdentityToken "
-                                          "WHERE status = 'ACTIVE' AND duress_code_hash IS NOT NULL LIMIT 501) c", None)],
+                                          "WHERE status = 'ACTIVE' AND hardware_model = 'no such model' "
+                                          "LIMIT 501) c", None)],
                                   budget=6_000, sample_rows=2_000)
+        # Until step 4 this control was the signals queue's own count of active credentials with a
+        # duress code; idx_identitytoken_duress_enrolled now serves it, and it is bounded.
+        _assert_bounded_plans(self, [("SELECT count(*) FROM (SELECT 1 FROM IdentityToken "
+                                      "WHERE duress_code_hash IS NOT NULL AND status = 'ACTIVE' LIMIT 501) c", None)],
+                              budget=6_000, sample_rows=2_000)
 
 
 def _statements_of_post(client, path, data):
@@ -1685,6 +1691,182 @@ OPERATION_FORMS = (
     ('/verifications/new', 'credential'), ('/uc7/warrant-audit', 'person'),
     ('/uc9/initiate-recovery', 'person'),
 )
+
+
+class EnrollmentCountTests(PolarisTestCase):
+    """lab/strategy/008, step 4: the enrolment summary costs the same at any population. Each
+    person's latest status is kept beside their jurisdiction (EnrollmentCurrent), the totals by
+    jurisdiction and status the way the population counts are kept, and the summary reads the
+    totals. These hold both to the view the summary used to group, IndividualCurrentEnrollment:
+    person by person, and in total."""
+
+    _owner = PopulationScaleTests._owner
+
+    #: Every person's (id, jurisdiction, status), kept and derived, compared both ways.
+    _PERSON_DRIFT = """
+        (SELECT individual_id, jurisdiction, status FROM EnrollmentCurrent
+         EXCEPT SELECT individual_id, jurisdiction, current_status FROM IndividualCurrentEnrollment)
+        UNION ALL
+        (SELECT individual_id, jurisdiction, current_status FROM IndividualCurrentEnrollment
+         EXCEPT SELECT individual_id, jurisdiction, status FROM EnrollmentCurrent)"""
+
+    @staticmethod
+    def _rows(sql, cur=None):
+        if cur is None:
+            return [tuple(r.values()) for r in flask_app.query(sql)]
+        cur.execute(sql)
+        return [tuple(r) for r in cur.fetchall()]
+
+    def _assert_summary_exact(self, step, cur=None):
+        """The summary equals a full grouping of the view. Through `cur` when given, so a test can
+        look inside its own transaction."""
+        summary = {(j, s): n for j, s, n in self._rows("SELECT * FROM civic_enrollment_summary(NULL)", cur)}
+        truth = {(j, s): n for j, s, n in self._rows(
+            "SELECT jurisdiction, current_status, count(*) FROM IndividualCurrentEnrollment "
+            "GROUP BY jurisdiction, current_status", cur)}
+        self.assertTrue(truth, 'control: there are people to count')
+        self.assertEqual(summary, truth, 'the enrolment summary drifted after: %s' % step)
+
+    def _assert_exact(self, step):
+        """The summary is exact, and every person's kept row equals the view's. The kept rows are
+        read as the owner: the application role may not read EnrollmentCurrent at all, which is
+        what the app-role run of this suite holds it to."""
+        self._assert_summary_exact(step)
+        self.assertEqual([tuple(r) for r in self._owner(self._PERSON_DRIFT, fetch=True)], [],
+                         "a person's kept status drifted from the view after: %s" % step)
+
+    def _event(self, person, status, at=None):
+        self._owner("INSERT INTO EnrollmentStatusEvent (individual_id, status, transition_reason, "
+                    "event_timestamp) VALUES (%s, %s, 'COUNT_CHECK', COALESCE(%s, now()))",
+                    (person, status, at))
+
+    def test_the_summary_equals_the_view_after_every_kind_of_change(self):
+        """Every write that can move a person's count: a person created (NOT_ENROLLED by their
+        own first event), each status move, an event recorded late with an earlier stamp, a tie
+        on the stamp, a change of jurisdiction, an update that moves nothing counted, a
+        rolled-back change, a fold, a person with no event at all found by the rebuild, and a
+        kept row removed by the owner's hand."""
+        self._assert_exact('the seed')
+        person = self._owner("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                             "VALUES ('Enrolment Check', '1990-01-01', 'US-PA') RETURNING individual_id",
+                             fetch=True)[0][0]
+        self._assert_exact('a person created')
+        self._event(person, 'PENDING_ENROLLMENT')
+        self._assert_exact('NOT_ENROLLED to PENDING_ENROLLMENT')
+        self._event(person, 'ENROLLED')
+        self._assert_exact('PENDING_ENROLLMENT to ENROLLED')
+        self._event(person, 'LAPSED', at='2001-01-01')
+        self._assert_exact('an event recorded late with an earlier stamp')
+        stamp = self._owner("SELECT event_timestamp FROM EnrollmentCurrent WHERE individual_id = %s",
+                            (person,), fetch=True)[0][0]
+        self._event(person, 'EXEMPT', at=stamp)
+        self._assert_exact('a tie on the stamp, which the later event wins')
+        self._owner("UPDATE Individual SET jurisdiction = 'US-CA' WHERE individual_id = %s", (person,))
+        self._assert_exact('a change of jurisdiction')
+        self._owner("UPDATE Individual SET jurisdiction = 'US-CA', legal_name = 'Enrolment Check II' "
+                    "WHERE individual_id = %s", (person,))
+        self._assert_exact('an update that moves nothing counted')
+        conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO EnrollmentStatusEvent (individual_id, status, transition_reason) "
+                            "VALUES (%s, 'LAPSED', 'COUNT_CHECK')", (person,))
+                cur.execute("UPDATE Individual SET jurisdiction = 'US-NY' WHERE individual_id = %s", (person,))
+            conn.rollback()
+        finally:
+            conn.close()
+        self._assert_exact('a change rolled back')
+        folded = self._owner("SELECT uc_fold_enrollment_counts()", fetch=True)[0][0]
+        self.assertGreater(folded, 0, 'control: there were changes to fold')
+        self.assertEqual(self._owner("SELECT count(*) FROM EnrollmentCountDelta", fetch=True)[0][0], 0)
+        self._assert_exact('a fold')
+        # A person with no event at all comes only from a load with the triggers off; the view says
+        # NOT_ENROLLED, and the rebuild that such a load ends with finds them.
+        bare = self._owner("ALTER TABLE Individual DISABLE TRIGGER trg_seed_default_enrollment_status; "
+                           "INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                           "VALUES ('No Events', '1985-05-05', 'US-NY') RETURNING individual_id",
+                           fetch=True)[0][0]
+        self._owner("ALTER TABLE Individual ENABLE TRIGGER trg_seed_default_enrollment_status")
+        self._owner("SELECT uc_rebuild_enrollment_counts()")
+        self._assert_exact('a person with no event, after the rebuild')
+        # A person is never deleted: their kept row refers to them, as their first event does. A
+        # kept row removed by the owner's hand is counted out, and the rebuild puts it back.
+        self._owner("DELETE FROM EnrollmentCurrent WHERE individual_id = %s", (bare,))
+        kept = {(j, s): n for j, s, n in self._owner(
+            "SELECT jurisdiction, status, count(*) FROM EnrollmentCurrent GROUP BY 1, 2", fetch=True)}
+        summary = {(j, s): n for j, s, n in self._rows("SELECT * FROM civic_enrollment_summary(NULL)")}
+        self.assertEqual(summary, kept, 'a kept row removed by hand was not counted out')
+        self._owner("SELECT uc_rebuild_enrollment_counts()")
+        self._assert_exact('the rebuild after a kept row was removed')
+
+    def test_a_fresh_load_starts_with_exact_counts(self):
+        """The seed (04_data.sql) is loaded before these triggers exist (06_triggers.sql), so it is
+        counted only by the rebuild that file ends with. Reproduced: the event trigger dropped,
+        the seed reloaded uncounted, the file run."""
+        self._owner("DROP TRIGGER trg_enrollment_current_follow_event ON EnrollmentStatusEvent")
+        reload_sample_data()
+        self._assert_exact('a load whose seed ran before the triggers')
+
+    def test_a_truncated_current_table_leaves_no_stale_totals(self):
+        """TRUNCATE fires no row trigger, so it clears the totals it invalidates; the rebuild
+        restores both."""
+        self._owner("TRUNCATE EnrollmentCurrent")
+        self.assertEqual(self._owner("SELECT (SELECT count(*) FROM EnrollmentCount) + "
+                                     "(SELECT count(*) FROM EnrollmentCountDelta)", fetch=True)[0][0], 0)
+        self._owner("SELECT uc_rebuild_enrollment_counts()")
+        self._assert_exact('a truncate and a rebuild')
+
+    def test_the_application_role_moves_counts_through_its_writes_and_writes_none_itself(self):
+        """The console creates and edits people as polaris_app: those writes move the counts,
+        through the owner's triggers. A count, or a person's kept status, the role could write
+        itself is one a compromised application could forge; every such write and the full
+        rebuild are refused by privilege. It reads the counts and may fold; it cannot read a
+        person's kept status at all, which would make the list of the not-enrolled cheaper to
+        pull than docs/design/tiered-enrollment.md means it to be."""
+        conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET ROLE polaris_app")
+                cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                            "VALUES ('Made By The App', '1991-02-03', 'US-PA') RETURNING individual_id")
+                made = cur.fetchone()[0]
+                self._assert_summary_exact('a person created by the application role', cur)
+                cur.execute("UPDATE Individual SET jurisdiction = 'US-CA' WHERE individual_id = %s", (made,))
+                self._assert_summary_exact("a person's jurisdiction edited by the application role", cur)
+                cur.execute("SELECT uc_fold_enrollment_counts()")
+                for stmt in ("SELECT count(*) FROM EnrollmentCurrent",
+                             "INSERT INTO EnrollmentCurrent VALUES (%d, 'US-PA', 'ENROLLED', now(), 1)" % made,
+                             "UPDATE EnrollmentCurrent SET status = 'ENROLLED'",
+                             "DELETE FROM EnrollmentCurrent",
+                             "INSERT INTO EnrollmentCount VALUES ('US-PA', 'ENROLLED', 1)",
+                             "UPDATE EnrollmentCount SET n = n + 1",
+                             "DELETE FROM EnrollmentCount",
+                             "INSERT INTO EnrollmentCountDelta (jurisdiction, status, n) "
+                             "VALUES ('US-PA', 'ENROLLED', 1)",
+                             "UPDATE EnrollmentCountDelta SET n = 2",
+                             "DELETE FROM EnrollmentCountDelta",
+                             "SELECT uc_rebuild_enrollment_counts()"):
+                    cur.execute("SAVEPOINT attempt")
+                    with self.assertRaises(psycopg2.errors.InsufficientPrivilege, msg=stmt):
+                        cur.execute(stmt)
+                    cur.execute("ROLLBACK TO SAVEPOINT attempt")
+        finally:
+            conn.rollback()
+            conn.close()
+
+    def test_the_summary_page_reads_the_counts(self):
+        """The page shows the summary's figures and offers the jurisdictions that have people,
+        both read from the counts."""
+        body = self.client.get('/individuals/enrollment').get_data(as_text=True)
+        for r in flask_app.query("SELECT * FROM civic_enrollment_summary(NULL)"):
+            self.assertIn('value="%s"' % r['jurisdiction'], body)
+        before = {r['status']: r['n_individuals'] for r in
+                  flask_app.query("SELECT * FROM civic_enrollment_summary('US-PA')")}
+        self._owner("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                    "VALUES ('Page Check', '1992-02-02', 'US-PA')")
+        after = {r['status']: r['n_individuals'] for r in
+                 flask_app.query("SELECT * FROM civic_enrollment_summary('US-PA')")}
+        self.assertEqual(after.get('NOT_ENROLLED', 0), before.get('NOT_ENROLLED', 0) + 1)
 
 
 class PopulationLookupTests(PolarisTestCase):
@@ -1965,9 +2147,10 @@ class ListsAndRecordsAtScaleTests(PolarisTestCase):
         self.assertIn('or more', body)
 
     def test_every_list_and_record_page_has_a_bounded_plan(self):
-        """Falsifier 2 of record 008 for step 3, over the synthetic population with every bound
-        shrunk: the lists by key, a rare filter through its window, a credential's page, both
-        investigation pages and the verification log filtered by one credential."""
+        """Falsifier 2 of record 008 for steps 3 and 4, over the synthetic population with every
+        bound shrunk: the lists by key, a rare filter through its window, a credential's page, both
+        investigation pages, the verification log filtered by one credential, the enrolment
+        summary and the signals queue."""
         _synthetic_population()
         tok = _sql("SELECT token_id, individual_id FROM IdentityToken WHERE status = 'ACTIVE' "
                    "ORDER BY token_id DESC LIMIT 1", fetch='one')
@@ -1979,7 +2162,8 @@ class ListsAndRecordsAtScaleTests(PolarisTestCase):
                          '/verifications', '/verifications?outcome=UNAUTHORIZED',
                          '/verifications?token_id=%d' % tok['token_id'],
                          '/tokens/%d' % tok['token_id'], '/investigate/token/%d' % tok['token_id'],
-                         '/investigate/individual/%d' % tok['individual_id']):
+                         '/investigate/individual/%d' % tok['individual_id'],
+                         '/individuals/enrollment', '/duress'):
                 r, seen = _statements_of(self.client, path)
                 self.assertEqual(r.status_code, 200, path)
                 statements += seen
@@ -2200,8 +2384,12 @@ class TokenTests(PolarisTestCase):
         self.assertHTML(r,
             'TKN-CA-2026-000002', 'Maria Santos',
             'California Identity Office', 'ML-DSA-65',
-            'Lifecycle History', 'Verification Events',
-            'Device Bindings', 'Blockchain Anchors')
+            'id="life-h"', 'id="ver-h"', 'id="proof-h"')
+        # A kind of row the credential has none of is named in one closing line, not drawn as an
+        # empty table (lane 2's console review, C4); either way the page accounts for it.
+        body = r.get_data(as_text=True).lower()
+        for kind in ('device bindings', 'anchors', 'revocations'):
+            self.assertIn(kind, body)
 
     def test_token_detail_404_for_unknown(self):
         r = self.client.get('/tokens/9999')
@@ -2213,7 +2401,7 @@ class TokenTests(PolarisTestCase):
                              data={'new_status': 'DORMANT'},
                              follow_redirects=True)
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'Token #2 is now DORMANT')
+        self.assertHTML(r, 'Credential #2 is now DORMANT')
 
     def test_token_state_transition_illegal_blocked_by_trigger(self):
         """REVOKED → ACTIVE is illegal (T5 is REVOKED)."""
@@ -2222,6 +2410,62 @@ class TokenTests(PolarisTestCase):
                              follow_redirects=True)
         self.assertEqual(r.status_code, 200)
         self.assertHTML(r, 'Illegal token state transition')
+
+    def test_a_status_change_to_no_credential_says_so(self):
+        """An UPDATE of no row succeeds, so the page said "is now DORMANT" for a number that is
+        no credential."""
+        r = self._post('/tokens/99999/transition', csrf_from='/tokens/2',
+                       data={'new_status': 'DORMANT'}, follow_redirects=False)
+        self.assertEqual(r.status_code, 302)
+        r = self.client.get('/tokens/2')
+        self.assertHTML(r, 'Credential #99999 does not exist')
+
+    def test_the_status_form_offers_exactly_the_moves_the_database_admits(self):
+        """A credential's page offers a status change only where the database will make it
+        (operator_routes.STATUS_MOVES): each move offered goes through, and each move not offered
+        is refused, by the state machine or, for REVOKED, by the revocation bound's trigger, which
+        leaves revocation to its own operation. Measured for every status in the sample data with
+        the route's own UPDATE, each attempt rolled back; and the page offers exactly that set."""
+        statuses = ('RESERVE', 'ACTIVE', 'DORMANT', 'REVOKED', 'LOST', 'EXPIRED')
+        conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                # A credential per status whose holder has no other ACTIVE one, so a move to ACTIVE
+                # meets the state machine and not C3's index.
+                cur.execute("""
+                    SELECT DISTINCT ON (t.status) t.status, t.token_id FROM IdentityToken t
+                     WHERE NOT EXISTS (SELECT 1 FROM IdentityToken a
+                                        WHERE a.individual_id = t.individual_id
+                                          AND a.status = 'ACTIVE' AND a.token_id <> t.token_id)
+                     ORDER BY t.status, t.token_id""")
+                sample = dict(cur.fetchall())
+                for status in ('RESERVE', 'ACTIVE'):
+                    self.assertIn(status, sample, 'fixture: a %s credential to move' % status)
+                for status, tok in sorted(sample.items()):
+                    admitted = set()
+                    for target in statuses:
+                        if target == status:
+                            continue
+                        cur.execute("SAVEPOINT move")
+                        try:
+                            if target == 'ACTIVE':
+                                cur.execute("UPDATE IdentityToken SET status = %s, activated_date = "
+                                            "CURRENT_TIMESTAMP WHERE token_id = %s", (target, tok))
+                            else:
+                                cur.execute("UPDATE IdentityToken SET status = %s WHERE token_id = %s",
+                                            (target, tok))
+                            admitted.add(target)
+                        except psycopg2.Error:
+                            pass
+                        cur.execute("ROLLBACK TO SAVEPOINT move")
+                    offered = set(operator_routes.STATUS_MOVES.get(status, ()))
+                    self.assertEqual(admitted, offered, 'from %s the database admits %s' % (status, sorted(admitted)))
+                    body = self.client.get('/tokens/%d' % tok).get_data(as_text=True)
+                    shown = set(re.findall(r'<option value="([A-Z]+)">', body))
+                    self.assertEqual(shown, offered, 'the page for a %s credential offers %s' % (status, sorted(shown)))
+        finally:
+            conn.rollback()
+            conn.close()
 
     def test_a_malformed_acting_agency_is_refused_not_a_500(self):
         """2026-09-30. The gate read a non-numeric actor_agency_id's ValueError as "not
@@ -2237,7 +2481,7 @@ class TokenTests(PolarisTestCase):
             self.assertEqual(cur.fetchone()['status'], 'ACTIVE', 'a refused transition moved the token')
         r = self._post('/tokens/2/transition', csrf_from='/tokens/2',
                        data={'new_status': 'DORMANT', 'actor_agency_id': ' 3 '}, follow_redirects=True)
-        self.assertHTML(r, 'Token #2 is now DORMANT')
+        self.assertHTML(r, 'Credential #2 is now DORMANT')
 
     def test_state_change_writes_audit_row_automatically(self):
         """The AFTER UPDATE auto-audit trigger guarantees that every status
@@ -2406,7 +2650,7 @@ class UC1Tests(PolarisTestCase):
             # 2026-09-25: under real ML-DSA-65 the stored signature carries its key and the
             # page must show it authenticated, not a placeholder.
             self.assertIn('&#10003; verified', body, "a real signature must verify at use")
-            self.assertNotIn('placeholder', body.split('<h3>Token Signatures</h3>')[1].split('</table>')[0])
+            self.assertNotIn('placeholder', body.split('id="sig-h"')[1].split('</table>')[0])
         else:
             self.assertIn('placeholder', body, "a freshly-issued placeholder signature must verify as 'placeholder'")
         # The stored signature must not equal a value that would render as INVALID
@@ -6658,8 +6902,17 @@ class DuressCodeTests(PolarisTestCase):
         self.assertEqual(r.status_code, 200)
         body = r.get_data(as_text=True)
         self.assertIn('Duress Signals', body)
-        self.assertIn('duress code enrolled', body,
+        self.assertIn('carry a duress code', body,
             'Dashboard should show the enrolled-count summary')
+        # lab/strategy/008, step 4: the summary counts ACTIVE credentials with a code, out of the
+        # active credentials. The seed enrols one (T2), and a code on a credential that is no
+        # longer active is not counted.
+        enrolled = flask_app.query("SELECT count(*) AS n FROM IdentityToken "
+                                   "WHERE duress_code_hash IS NOT NULL AND status = 'ACTIVE'",
+                                   fetch='one')['n']
+        active = flask_app.query("SELECT count(*) AS n FROM IdentityToken WHERE status = 'ACTIVE'",
+                                 fetch='one')['n']
+        self.assertIn('%d of %d active credential(s) carry a duress code' % (enrolled, active), body)
 
     def test_duress_dashboard_renders_for_auditor(self):
         """Auditor (read-only) role also has access (R6 — responders
@@ -9763,6 +10016,47 @@ class ConcurrencyTests(PolarisTestCase):
         recount = lambda cur: cur.execute("SELECT uc_rebuild_population_counts()")  # noqa: E731
         self.assertContends(recount, recount, 'Two population recounts')
 
+    def test_an_enrolment_fold_skips_while_a_rebuild_holds_the_lock(self):
+        """uc_fold_enrollment_counts takes its lock with pg_try_advisory_xact_lock, and the rebuild
+        takes the same lock outright: while a rebuild is open, a fold returns at once having
+        folded nothing. Without the rebuild's lock the fold would reach the changes the rebuild
+        is deleting and wait on them, which the short lock_timeout turns into a failure; without
+        the fold's, the same. The control folds every change once nobody holds the lock."""
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE Individual SET jurisdiction = 'US-CA' "
+                        "WHERE individual_id = (SELECT min(individual_id) FROM Individual)")
+            cur.execute("SELECT count(*) AS n FROM EnrollmentCountDelta")
+            self.assertGreater(cur.fetchone()['n'], 0, 'control: there are changes to fold')
+            conn.commit()
+        holder = self._new_conn()
+        try:
+            with holder.cursor() as cur:
+                cur.execute("SELECT uc_rebuild_enrollment_counts()")   # holds the lock, left open
+            probe = self._new_conn()
+            try:
+                with probe.cursor() as cur:
+                    cur.execute("SET lock_timeout = '2s'")
+                    cur.execute("SELECT uc_fold_enrollment_counts() AS folded")
+                    self.assertEqual(cur.fetchone()['folded'], 0,
+                                     'a fold ran while a rebuild held the lock')
+                probe.commit()
+            finally:
+                probe.close()
+        finally:
+            holder.rollback()
+            holder.close()
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM EnrollmentCountDelta")
+            pending = cur.fetchone()['n']
+            cur.execute("SELECT uc_fold_enrollment_counts() AS folded")
+            self.assertEqual(cur.fetchone()['folded'], pending)
+            conn.commit()
+            cur.execute("""
+                SELECT jurisdiction, status, n FROM EnrollmentCount WHERE n <> 0
+                EXCEPT
+                SELECT jurisdiction, current_status, count(*) FROM IndividualCurrentEnrollment GROUP BY 1, 2""")
+            self.assertEqual(cur.fetchall(), [], 'the folded totals differ from a full count')
+
     def test_a_fold_skips_while_a_recount_holds_the_lock(self):
         """uc_fold_population_counts takes its lock with pg_try_advisory_xact_lock: while a
         recount holds it, a fold returns at once having folded nothing, and leaves the changes
@@ -11754,16 +12048,16 @@ class V2SubstrateUITests(PolarisTestCase):
         self.assertEqual(r.status_code, 200)
         body = r.data.decode()
         self.assertIn('Signatures, anchors and proofs', body)
-        self.assertIn('ENROLLED', body)
-        self.assertIn('Token Signatures', body)
-        self.assertIn('Anchor Batch Membership', body)
-        self.assertIn('Epoch Leaves', body)
+        self.assertIn('>Enrolled<', body)
+        self.assertIn('id="sig-h"', body)
+        self.assertIn('<dt>Anchors</dt>', body)
+        self.assertIn('<dt>Epoch leaves</dt>', body)
 
     def test_token_detail_v2_substrate_state_not_enrolled(self):
         """T1 (Egor) has no duress code."""
         r = self.client.get('/tokens/1')
         self.assertEqual(r.status_code, 200)
-        self.assertIn('NOT ENROLLED', r.data.decode())
+        self.assertIn('>Not enrolled<', r.data.decode())
 
     def test_token_detail_never_exposes_duress_hash(self):
         """R6 anti-revealing: the scrypt hash itself MUST NOT appear in
@@ -13148,7 +13442,7 @@ class UiLinkIntegrityTests(PolarisTestCase):
         self.assertNotIn('class="btn btn-primary" href="/uc1/issue"', r.get_data(as_text=True))
         r = self.client.get('/tokens/2')
         body = r.get_data(as_text=True)
-        self.assertNotIn('Apply Transition', body)
+        self.assertNotIn('Change status', body)
         self.assertNotIn('Delete Token', body)
 
         self._login('operator')
@@ -13173,7 +13467,7 @@ class UiLinkIntegrityTests(PolarisTestCase):
         self.assertIn('Enrol a person', body)
         self.assertIn('/individuals/1/edit', body)
         r = self.client.get('/tokens/2')
-        self.assertIn('Apply Transition', r.get_data(as_text=True))
+        self.assertIn('Change status', r.get_data(as_text=True))
 
 
 

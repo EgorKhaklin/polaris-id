@@ -411,3 +411,11 @@ CREATE INDEX idx_blockchainanchor_token
 DROP INDEX IF EXISTS idx_recoveryrequest_claimed;
 CREATE INDEX idx_recoveryrequest_claimed
     ON RecoveryRequest (claimed_individual_id);
+
+-- 2026-10-02 (lab/strategy/008, step 4). The duress page counts the active credentials that carry
+-- a duress code. Few do, so the count read every credential to find them; through this index a
+-- capped count reads at most its cap.
+DROP INDEX IF EXISTS idx_identitytoken_duress_enrolled;
+CREATE INDEX idx_identitytoken_duress_enrolled
+    ON IdentityToken (status)
+    WHERE duress_code_hash IS NOT NULL;

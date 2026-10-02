@@ -64,6 +64,9 @@ DROP TABLE IF EXISTS CardPersonalization   CASCADE;
 DROP TABLE IF EXISTS ZkVerificationNonce    CASCADE;
 DROP TABLE IF EXISTS PopulationCountDelta   CASCADE;
 DROP TABLE IF EXISTS PopulationCount        CASCADE;
+DROP TABLE IF EXISTS EnrollmentCountDelta   CASCADE;
+DROP TABLE IF EXISTS EnrollmentCount        CASCADE;
+DROP TABLE IF EXISTS EnrollmentCurrent      CASCADE;
 DROP TABLE IF EXISTS BulkEnrollmentStaging   CASCADE;
 DROP TABLE IF EXISTS BulkEnrollmentBatch     CASCADE;
 -- v9.189: AuditAccessLog (migration-added 2026-05-15-003, plain CREATE TABLE)
@@ -2185,6 +2188,59 @@ COMMENT ON TABLE PopulationCount IS
 COMMENT ON TABLE PopulationCountDelta IS
   'Signed changes to PopulationCount not yet folded in, appended by the statement triggers on '
   'IdentityToken and TokenSignature. Append-only for writers, so counting never serialises them.';
+
+-- ============================================================================
+-- Enrolment counts (lab/strategy/008, step 4)
+--
+-- A person's enrolment status is their latest EnrollmentStatusEvent (IndividualCurrentEnrollment),
+-- and counting people by jurisdiction and status found that latest event for everyone: 6.4
+-- seconds at two million people, in proportion to the events beyond. EnrollmentCurrent keeps each
+-- person's latest status beside their jurisdiction, and the triggers that keep it append signed
+-- changes to EnrollmentCountDelta, folded into EnrollmentCount as PopulationCount's are. A reader
+-- sums both, so a count is exact whether or not the last changes have been folded.
+--
+-- "Latest" is the view's order, (event_timestamp, event_id), so an event recorded late with an
+-- earlier timestamp does not displace a later one. A person with no event at all is NOT_ENROLLED,
+-- as the view says, kept with the earliest possible stamp so any event displaces it.
+--
+-- Written only by the owner's triggers and routines. The application role reads the counts and
+-- not EnrollmentCurrent (09_grants.sql). Persons belong to no authority, so none carries
+-- row-level security.
+-- ============================================================================
+CREATE TABLE EnrollmentCurrent (
+    individual_id   INTEGER     PRIMARY KEY REFERENCES Individual(individual_id),
+    jurisdiction    VARCHAR(10) NOT NULL,
+    status          VARCHAR(20) NOT NULL
+        CHECK (status IN ('NOT_ENROLLED', 'PENDING_ENROLLMENT', 'ENROLLED', 'EXEMPT', 'LAPSED')),
+    event_timestamp TIMESTAMP   NOT NULL,
+    event_id        BIGINT      NOT NULL
+);
+
+CREATE TABLE EnrollmentCount (
+    jurisdiction VARCHAR(10) NOT NULL,
+    status       VARCHAR(20) NOT NULL,
+    n            BIGINT      NOT NULL CHECK (n >= 0),
+    PRIMARY KEY (jurisdiction, status)
+);
+
+CREATE TABLE EnrollmentCountDelta (
+    delta_id     BIGSERIAL   PRIMARY KEY,
+    jurisdiction VARCHAR(10) NOT NULL,
+    status       VARCHAR(20) NOT NULL,
+    n            BIGINT      NOT NULL CHECK (n <> 0)
+);
+
+COMMENT ON TABLE EnrollmentCurrent IS
+  'Each person''s latest enrolment status and jurisdiction (lab/strategy/008): the row '
+  'IndividualCurrentEnrollment derives from every event, kept by triggers on EnrollmentStatusEvent '
+  'and Individual. Written only by the owner''s triggers and routines; the application role '
+  'cannot read it (the summary needs only the totals).';
+COMMENT ON TABLE EnrollmentCount IS
+  'People by jurisdiction and enrolment status, exact at any population. Folded from '
+  'EnrollmentCountDelta by uc_fold_enrollment_counts(); a reader sums both.';
+COMMENT ON TABLE EnrollmentCountDelta IS
+  'Signed changes to EnrollmentCount not yet folded in, appended by the triggers on '
+  'EnrollmentCurrent. Append-only for writers.';
 
 -- ============================================================================
 -- Event-table partition manager + bootstrap (roadmap P2.1, v9.245)
