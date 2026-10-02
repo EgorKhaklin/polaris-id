@@ -2696,6 +2696,42 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             conn.rollback()
             conn.close()
 
+    def test_a_bound_operator_sees_only_its_authoritys_population_counts(self):
+        """2026-10-02. The population counts (lab/strategy/008) are isolated by authority like the
+        credentials they count. The constraint mutation drill weakened both policies to USING
+        (true) and every suite stayed green. As polaris_app bound to one authority, no other
+        authority's figure is visible, folded or pending; unbound, they exist, so the zero is
+        the policy's. A status change on another authority's credential, rolled back with the
+        rest, makes the pending figure: a folded table has none."""
+        conn = self._app_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT min(agency_id) AS a FROM Agency")
+                agency = cur.fetchone()["a"]
+                cur.execute("SELECT token_id FROM IdentityToken WHERE status = 'ACTIVE' "
+                            "AND issuing_agency_id <> %s ORDER BY token_id LIMIT 1", (agency,))
+                tok = cur.fetchone()
+                self.assertIsNotNone(tok, "fixture: another authority's ACTIVE credential")
+                cur.execute("SELECT set_config('polaris.justification', 'population isolation probe', true)")
+                cur.execute("UPDATE IdentityToken SET status = 'DORMANT' WHERE token_id = %s",
+                            (tok["token_id"],))
+                for table in ("PopulationCount", "PopulationCountDelta"):
+                    sql = "SELECT count(*) AS n FROM %s WHERE agency_id <> %%s" % table
+                    cur.execute("SELECT set_config('polaris.operator_agency_id', '', false)")
+                    cur.execute(sql, (agency,))
+                    self.assertGreater(cur.fetchone()["n"], 0,
+                                       "fixture: another authority's rows in %s" % table)
+                    cur.execute("SELECT set_config('polaris.operator_agency_id', %s, false)", (str(agency),))
+                    cur.execute(sql, (agency,))
+                    self.assertEqual(cur.fetchone()["n"], 0,
+                                     "a bound operator reads another authority's %s" % table)
+                cur.execute("SELECT count(*) AS n FROM PopulationCount WHERE agency_id = %s", (agency,))
+                self.assertGreater(cur.fetchone()["n"], 0,
+                                   "the binding hides other authorities, not the operator's own")
+        finally:
+            conn.rollback()
+            conn.close()
+
     def test_a_rule_the_database_enforces_holds_for_a_bound_operator(self):
         """1.0.0-rc.42. Row-level security hides another authority's credentials from an
         operator bound to one, and routines that enforce a rule by READING those credentials
