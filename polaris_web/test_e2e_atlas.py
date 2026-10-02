@@ -187,7 +187,7 @@ class TestAtlasGlobeE2E(unittest.TestCase):
     def test_map_v2_modes_and_globe_toggle(self):
         """v9.253 (Map v2): the map is aggregation-first. It must open on the
         Regions layer (jurisdiction rollup) with a FLAT projection, switch
-        between Regions/Density/Points, and toggle the globe on. Catches: the
+        between Regions and Density, offer no single-event layer, and toggle the globe on. Catches: the
         mode wiring, the default-mode/default-projection flip, the layer
         sources failing to build, and the projection toggle."""
         page = self._context.new_page()
@@ -203,11 +203,12 @@ class TestAtlasGlobeE2E(unittest.TestCase):
             self.assertEqual(proj0, 'mercator', "the map must open FLAT, not on the globe")
             self.assertFalse(page.is_visible('[data-atlas-error]'),
                 "the Map error banner must stay hidden when the aggregate loads")
-            # Density then Points activate their modes.
+            # Density activates its mode. There is no Points mode: the map draws counts and
+            # never a single event (lab/strategy/009).
             page.click('[data-atlas-mapmode="density"]'); page.wait_for_timeout(1200)
             self.assertEqual(page.get_attribute('[data-atlas-mapmode="density"]', 'aria-pressed'), 'true')
-            page.click('[data-atlas-mapmode="points"]'); page.wait_for_timeout(1200)
-            self.assertEqual(page.get_attribute('[data-atlas-mapmode="points"]', 'aria-pressed'), 'true')
+            self.assertEqual(page.query_selector_all('[data-atlas-mapmode="points"]'), [],
+                "the map must offer no single-event layer")
             # The globe is an opt-in toggle.
             page.click('[data-atlas-projection]'); page.wait_for_timeout(1500)
             proj1 = page.evaluate("() => { try { return window.atlasMap.getProjection().type } catch(e){ return 'n/a' } }")
@@ -261,31 +262,6 @@ class TestAtlasGlobeE2E(unittest.TestCase):
                 "selecting a facet value must add an active filter chip")
             self.assertFalse(page.is_hidden('[data-gf-clear]'),
                 "the Clear all control must appear once a filter is active")
-        finally:
-            page.close()
-
-    def test_records_tab_renders_grid_and_keyset_pages(self):
-        """v9.252: the Records tab must reveal a data grid, populate it, and
-        page it with the keyset 'load more' control (not an OFFSET). Catches:
-        the tab wiring, the /api/atlas/records fetch, the row render, and the
-        cursor-append pagination."""
-        page = self._context.new_page()
-        try:
-            self._login_and_goto(page)
-            page.click('[data-atlas-view-tab="records"]')
-            page.wait_for_selector('[data-atlas-view-panel="records"]', state="visible", timeout=3000)
-            page.wait_for_selector('[data-rec-body] .rec-row', timeout=4000)
-            self.assertFalse(page.is_visible('[data-rec-error]'),
-                "the Records error banner must stay hidden when the fetch succeeds")
-            before = len(page.query_selector_all('[data-rec-body] .rec-row'))
-            self.assertGreater(before, 0, "the grid must render at least one record row")
-            # keyset 'load more' appends the next page without dropping page one
-            if page.is_visible('[data-rec-more]'):
-                page.click('[data-rec-more]')
-                page.wait_for_timeout(1000)
-                after = len(page.query_selector_all('[data-rec-body] .rec-row'))
-                self.assertGreater(after, before,
-                    "the keyset 'load more' must append the next page of rows")
         finally:
             page.close()
 

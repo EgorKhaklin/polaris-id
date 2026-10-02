@@ -59,8 +59,8 @@ echo
 echo "── query latency ──"
 psql -d "$DB" <<'SQL'
 \timing on
-\echo '[1] street bbox points (limit 500) — operator zoomed in'
-SELECT count(*) FROM atlas_points_verifications(29.7,-95.4,29.8,-95.3, 500, NULL,NULL,NULL,NULL,NULL);
+\echo '[1] street bbox density (hexes of 0.03 degrees, limit 5000), operator zoomed in'
+SELECT count(*) FROM atlas_hexbin(29.7,-95.4,29.8,-95.3, 0.03, 5000);
 \echo '[2] regional clusters (CONUS bbox, grid 1)'
 SELECT count(*) FROM atlas_clusters_verifications(25,-125,49,-67, 1, NULL,NULL,NULL,NULL,NULL);
 \echo '[3] whole-world clusters (grid 10) — heaviest, full aggregation'

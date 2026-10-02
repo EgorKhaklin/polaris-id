@@ -22,9 +22,9 @@
 --
 -- The fix is server-side spatial aggregation. The browser sends the visible
 -- bounding box and a target grid resolution; the server returns at most a
--- few hundred CLUSTERS (centroid + summary stats) at low zoom, and switches
--- to individual reticles only when the user has zoomed close enough that
--- the cluster count drops below the cluster threshold.
+-- few hundred CLUSTERS (centroid + summary stats). Every function here
+-- returns counts per cell, area, bucket or category: none returns an event
+-- row, and none names a person or a credential (lab/strategy/009).
 --
 -- CONTRACT
 --   atlas_clusters_verifications(min_lat, min_lon, max_lat, max_lon, grid)
@@ -190,153 +190,31 @@ COMMENT ON FUNCTION atlas_clusters_lifecycles IS
 
 
 -- ----------------------------------------------------------------------------
--- atlas_points_verifications
+-- Per-event reads, withdrawn (lab/strategy/009, step A0)
 --
--- Returns INDIVIDUAL verification events in a bbox, hard-capped at p_limit.
--- Used at high zoom (city / neighborhood) where the user wants every
--- reticle. The cap protects the wire and the renderer.
+-- atlas_points_verifications, atlas_points_lifecycles, atlas_recent_events and
+-- atlas_records returned one row per event with the holder's name and the
+-- credential number (the points with coordinates too), to any signed-in role,
+-- and the routes calling them wrote no AuditAccessLog row. The Atlas shows
+-- counts and never a person; a single event is read on the verification log,
+-- which records the read. This file is object-synced, so the functions are
+-- dropped here, not only deleted from it.
 -- ----------------------------------------------------------------------------
-
+DROP FUNCTION IF EXISTS atlas_points_verifications(
+    DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION,
+    INTEGER, TIMESTAMP, TEXT, TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS atlas_points_verifications(
     DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION,
     INTEGER, TIMESTAMP, TEXT, TEXT, TEXT);
-
-CREATE OR REPLACE FUNCTION atlas_points_verifications(
-    p_min_lat   DOUBLE PRECISION,
-    p_min_lon   DOUBLE PRECISION,
-    p_max_lat   DOUBLE PRECISION,
-    p_max_lon   DOUBLE PRECISION,
-    p_limit     INTEGER,
-    p_since     TIMESTAMP DEFAULT NULL,
-    p_outcomes  TEXT      DEFAULT NULL,
-    p_disclosure TEXT     DEFAULT NULL,
-    p_contexts  TEXT      DEFAULT NULL,
-    p_agencies  TEXT      DEFAULT NULL          -- CSV of agency_id, e.g. '1,4'
-) RETURNS TABLE (
-    event_id         BIGINT,
-    lat               DOUBLE PRECISION,
-    lon               DOUBLE PRECISION,
-    event_timestamp   TIMESTAMP,
-    token_id          INTEGER,
-    holder_name       TEXT,
-    agency_name       TEXT,
-    context_type      TEXT,
-    outcome           TEXT,
-    disclosure_level  TEXT,
-    algorithm_name    TEXT,
-    pq                BOOLEAN,
-    requestor_location TEXT
-)
-LANGUAGE sql
-STABLE
-AS $$
-    SELECT
-        ve.event_id,
-        ve.latitude,
-        ve.longitude,
-        ve.event_timestamp,
-        ve.token_id,
-        i.legal_name::TEXT             AS holder_name,
-        ag.name::TEXT                  AS agency_name,
-        vc.context_type::TEXT          AS context_type,
-        ve.outcome::TEXT               AS outcome,
-        ve.disclosure_level::TEXT      AS disclosure_level,
-        ca.name::TEXT        AS algorithm_name,
-        COALESCE(ca.quantum_resistant, FALSE) AS pq,
-        ve.requestor_location::TEXT    AS requestor_location
-    FROM      VerificationEvent ve
-    JOIN      Agency               ag ON ve.requesting_agency_id = ag.agency_id
-    JOIN      VerificationContext  vc ON ve.context_id           = vc.context_id
-    LEFT JOIN IdentityToken         t ON ve.token_id             = t.token_id
-    LEFT JOIN Individual            i ON t.individual_id         = i.individual_id
-    LEFT JOIN CryptographicAlgorithm ca ON t.algorithm_id        = ca.algorithm_id
-    WHERE ve.latitude  IS NOT NULL
-      AND ve.longitude IS NOT NULL
-      -- C6: a ZERO_KNOWLEDGE verification proves validity without revealing the
-      -- holder; its precise location is exactly the spatial side-channel that
-      -- would de-anonymize it (especially co-located with a SELECTIVE/FULL
-      -- event). uc7_warrant_audit redacts requestor_location for ZK rows; the
-      -- precise-points layer must not plot them at all. Aggregate/count layers
-      -- may still include ZK without a precise location.
-      AND ve.disclosure_level <> 'ZERO_KNOWLEDGE'
-      AND ve.latitude  BETWEEN p_min_lat AND p_max_lat
-      AND (
-            (p_min_lon <= p_max_lon AND ve.longitude BETWEEN p_min_lon AND p_max_lon)
-         OR (p_min_lon  > p_max_lon AND (ve.longitude >= p_min_lon OR ve.longitude <= p_max_lon))
-      )
-      AND (ve.event_timestamp >= COALESCE(p_since, '-infinity'::timestamp))
-      AND (p_outcomes   IS NULL OR ve.outcome         = ANY(string_to_array(p_outcomes, ',')))
-      AND (p_disclosure IS NULL OR ve.disclosure_level = ANY(string_to_array(p_disclosure, ',')))
-      AND (p_contexts   IS NULL OR vc.context_type     = ANY(string_to_array(p_contexts, ',')))
-      AND (p_agencies   IS NULL OR ve.requesting_agency_id::text = ANY(string_to_array(p_agencies, ',')))
-    ORDER BY ve.event_timestamp DESC
-    LIMIT p_limit;
-$$;
-
-
--- ----------------------------------------------------------------------------
--- atlas_points_lifecycles
--- ----------------------------------------------------------------------------
-
+DROP FUNCTION IF EXISTS atlas_points_lifecycles(
+    DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION,
+    INTEGER, TIMESTAMP, TEXT, TEXT);
 DROP FUNCTION IF EXISTS atlas_points_lifecycles(
     DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION,
     INTEGER, TIMESTAMP, TEXT);
-
-CREATE OR REPLACE FUNCTION atlas_points_lifecycles(
-    p_min_lat     DOUBLE PRECISION,
-    p_min_lon     DOUBLE PRECISION,
-    p_max_lat     DOUBLE PRECISION,
-    p_max_lon     DOUBLE PRECISION,
-    p_limit       INTEGER,
-    p_since       TIMESTAMP DEFAULT NULL,
-    p_event_types TEXT      DEFAULT NULL,
-    p_agencies    TEXT      DEFAULT NULL          -- CSV of agency_id (actor agency)
-) RETURNS TABLE (
-    event_id       BIGINT,
-    lat             DOUBLE PRECISION,
-    lon             DOUBLE PRECISION,
-    event_timestamp TIMESTAMP,
-    token_id        INTEGER,
-    event_type      TEXT,
-    reason_code     TEXT,
-    holder_name     TEXT,
-    agency_name     TEXT,
-    algorithm_name  TEXT,
-    pq              BOOLEAN
-)
-LANGUAGE sql
-STABLE
-AS $$
-    SELECT
-        le.event_id,
-        le.latitude,
-        le.longitude,
-        le.event_timestamp,
-        le.token_id,
-        le.event_type::TEXT,
-        le.reason_code::TEXT,
-        i.legal_name::TEXT,
-        ag.name::TEXT,
-        ca.name::TEXT,
-        COALESCE(ca.quantum_resistant, FALSE) AS pq
-    FROM      TokenLifecycleEvent le
-    LEFT JOIN Agency               ag ON le.actor_agency_id = ag.agency_id
-    JOIN      IdentityToken         t ON le.token_id        = t.token_id
-    JOIN      Individual            i ON t.individual_id    = i.individual_id
-    JOIN      CryptographicAlgorithm ca ON t.algorithm_id    = ca.algorithm_id
-    WHERE le.latitude  IS NOT NULL
-      AND le.longitude IS NOT NULL
-      AND le.latitude  BETWEEN p_min_lat AND p_max_lat
-      AND (
-            (p_min_lon <= p_max_lon AND le.longitude BETWEEN p_min_lon AND p_max_lon)
-         OR (p_min_lon  > p_max_lon AND (le.longitude >= p_min_lon OR le.longitude <= p_max_lon))
-      )
-      AND (le.event_timestamp >= COALESCE(p_since, '-infinity'::timestamp))
-      AND (p_event_types IS NULL OR le.event_type      = ANY(string_to_array(p_event_types, ',')))
-      AND (p_agencies    IS NULL OR le.actor_agency_id::text = ANY(string_to_array(p_agencies, ',')))
-    ORDER BY le.event_timestamp DESC
-    LIMIT p_limit;
-$$;
+DROP FUNCTION IF EXISTS atlas_recent_events(TIMESTAMP, INTEGER, INTEGER);
+DROP FUNCTION IF EXISTS atlas_records(
+    TIMESTAMP, TIMESTAMP, INTEGER, INTEGER, TEXT, TEXT, TEXT, TEXT, TEXT);
 
 
 -- ----------------------------------------------------------------------------
@@ -432,132 +310,6 @@ COMMENT ON FUNCTION atlas_stats IS
   'currently visible bounding box. Active Tokens is global (system-wide '
   'authoritative count); Anomalies, PQ %, ZK % are bbox-scoped so they '
   'change as the user pans and zooms.';
-
-
--- ----------------------------------------------------------------------------
--- atlas_recent_events — paginated event feed for the Atlas right rail
---
--- Cursor pagination by (event_timestamp DESC, event_id DESC). The cursor
--- format is ISO-8601 timestamp + event_id, both ascending or both
--- descending. Passing NULL for the cursor returns the first page.
---
--- Returns up to p_limit events, mixing verifications and lifecycle events
--- in time order with a discriminator column so the client can render each
--- with the appropriate visual treatment.
--- ----------------------------------------------------------------------------
-
-CREATE OR REPLACE FUNCTION atlas_recent_events(
-    p_cursor_ts TIMESTAMP DEFAULT NULL,
-    p_cursor_id INTEGER   DEFAULT NULL,
-    p_limit     INTEGER   DEFAULT 50
-) RETURNS TABLE (
-    kind            TEXT,    -- 'verification' or 'lifecycle'
-    event_id       BIGINT,
-    event_timestamp TIMESTAMP,
-    token_id        INTEGER,
-    holder_name     TEXT,
-    agency_name     TEXT,
-    label           TEXT,    -- e.g. "BANKING verification" or "REVOKED"
-    detail          TEXT,    -- subtitle: location or reason
-    tone            TEXT,    -- 'alert' | 'full' | 'zk' | 'selective' | etc.
-    lat             DOUBLE PRECISION,
-    lon             DOUBLE PRECISION
-)
-LANGUAGE sql
-STABLE
-AS $$
-    -- Two-stage top-N + late join. The previous version did UNION ALL of
-    -- both tables INCLUDING JOINs to Agency/Context/Token/Individual, then
-    -- top-N sorted the result. At 2M rows this materialized 2M joined rows
-    -- (~2.4 seconds) just to take 50.
-    --
-    -- The rewrite: first pull top-N IDs from each table using the
-    -- (event_timestamp DESC, event_id DESC) indexes — that's O(N log N)
-    -- with N being the limit, not the table size. Each side returns ≤
-    -- p_limit rows. Then UNION ALL gives at most 2*p_limit rows; JOIN
-    -- metadata only for THOSE rows. At 2M rows this drops to <30ms.
-    WITH
-    top_v AS (
-        SELECT event_id, event_timestamp, token_id, requesting_agency_id,
-               context_id, outcome, disclosure_level, requestor_location,
-               latitude, longitude
-        FROM VerificationEvent
-        WHERE p_cursor_ts IS NULL
-           OR (event_timestamp, event_id) < (p_cursor_ts, COALESCE(p_cursor_id, 2147483647))
-        ORDER BY event_timestamp DESC, event_id DESC
-        LIMIT p_limit
-    ),
-    top_l AS (
-        SELECT event_id, event_timestamp, token_id, actor_agency_id,
-               event_type, reason_code, latitude, longitude
-        FROM TokenLifecycleEvent
-        WHERE p_cursor_ts IS NULL
-           OR (event_timestamp, event_id) < (p_cursor_ts, COALESCE(p_cursor_id, 2147483647))
-        ORDER BY event_timestamp DESC, event_id DESC
-        LIMIT p_limit
-    ),
-    merged AS (
-        SELECT
-            'verification'::TEXT AS kind,
-            tv.event_id,
-            tv.event_timestamp,
-            tv.token_id,
-            COALESCE(i.legal_name::TEXT, '(zero-knowledge)') AS holder_name,
-            ag.name::TEXT                                    AS agency_name,
-            (vc.context_type || ' verification')::TEXT       AS label,
-            -- C6: redact the location of ZERO_KNOWLEDGE verifications in the
-            -- feed — no subtitle location and no map coordinates — so a ZK
-            -- event appears as activity but never reveals where it happened.
-            CASE WHEN tv.disclosure_level = 'ZERO_KNOWLEDGE'
-                 THEN NULL ELSE tv.requestor_location::TEXT END AS detail,
-            CASE
-                WHEN tv.outcome = 'FAILURE'                 THEN 'alert'
-                WHEN tv.disclosure_level = 'FULL'           THEN 'full'
-                WHEN tv.disclosure_level = 'ZERO_KNOWLEDGE' THEN 'zk'
-                                                            ELSE 'selective'
-            END::TEXT                                        AS tone,
-            CASE WHEN tv.disclosure_level = 'ZERO_KNOWLEDGE'
-                 THEN NULL ELSE tv.latitude END              AS lat,
-            CASE WHEN tv.disclosure_level = 'ZERO_KNOWLEDGE'
-                 THEN NULL ELSE tv.longitude END             AS lon
-        FROM      top_v tv
-        JOIN      Agency             ag ON tv.requesting_agency_id = ag.agency_id
-        JOIN      VerificationContext vc ON tv.context_id          = vc.context_id
-        LEFT JOIN IdentityToken      t  ON tv.token_id             = t.token_id
-        LEFT JOIN Individual         i  ON t.individual_id         = i.individual_id
-
-        UNION ALL
-
-        SELECT
-            'lifecycle'::TEXT AS kind,
-            tl.event_id,
-            tl.event_timestamp,
-            tl.token_id,
-            i.legal_name::TEXT                              AS holder_name,
-            COALESCE(ag.name::TEXT, '—')                    AS agency_name,
-            tl.event_type::TEXT                             AS label,
-            COALESCE(tl.reason_code::TEXT, '')              AS detail,
-            CASE
-                WHEN tl.event_type IN ('REVOKED', 'LOST') THEN 'alert'
-                WHEN tl.event_type = 'ACTIVATED'          THEN 'zk'
-                                                          ELSE 'full'
-            END::TEXT                                        AS tone,
-            tl.latitude                                      AS lat,
-            tl.longitude                                     AS lon
-        FROM      top_l tl
-        LEFT JOIN Agency        ag ON tl.actor_agency_id = ag.agency_id
-        JOIN      IdentityToken  t ON tl.token_id        = t.token_id
-        JOIN      Individual     i ON t.individual_id    = i.individual_id
-    )
-    SELECT *
-    FROM merged
-    ORDER BY event_timestamp DESC, event_id DESC
-    LIMIT p_limit;
-$$;
-
-COMMENT ON FUNCTION atlas_recent_events IS
-  'Paginated unified feed of verifications + lifecycle events. Cursor is '
-  '(event_timestamp, event_id) descending. Pass NULL cursor for first page.';
 
 
 -- ----------------------------------------------------------------------------
@@ -1181,117 +933,6 @@ COMMENT ON FUNCTION atlas_agency_facet IS
   'facet/typeahead, honouring the other active facets but not the agency '
   'selection, searchable by name/jurisdiction, top-K by volume. Non-geographic '
   '(C6). Capped at the API (_ATLAS_MAX_CATEGORIES).';
-
-
--- ----------------------------------------------------------------------------
--- atlas_records  (roadmap P2.3, v9.252 — the records grid)
---
--- The drill from the aggregates into the actual events, one stream at a time,
--- honouring the global filter and keyset-paginated so it survives millions of
--- rows (never an offset scan, never all-at-once). The two-stage top-N + late
--- join keeps it in the millisecond range: filter + top-N off the
--- (event_timestamp DESC, event_id DESC) index first, join metadata only for
--- the <=p_limit rows returned. The context filter resolves its names to ids in
--- a tiny subquery so the scan stays index-friendly without a metadata join.
---
--- C6: a zero-knowledge verification appears as a row (activity is real) but its
--- subject and its location are withheld — the grid shows '(zero-knowledge)' and
--- no location, exactly as the map never plots it.
--- ----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION atlas_records(
-    p_since      TIMESTAMP,
-    p_cursor_ts  TIMESTAMP,
-    p_cursor_id  INTEGER,
-    p_limit      INTEGER,
-    p_kind       TEXT      DEFAULT 'verification',
-    p_outcomes   TEXT      DEFAULT NULL,
-    p_disclosure TEXT      DEFAULT NULL,
-    p_contexts   TEXT      DEFAULT NULL,
-    p_agencies   TEXT      DEFAULT NULL
-) RETURNS TABLE (
-    event_id       BIGINT,
-    event_timestamp TIMESTAMP,
-    agency_name     TEXT,
-    category        TEXT,     -- verification: context; lifecycle: event_type
-    outcome         TEXT,     -- verification: outcome; lifecycle: reason_code
-    disclosure      TEXT,     -- verification: disclosure_level; lifecycle: NULL
-    subject         TEXT,     -- holder name, or '(zero-knowledge)'
-    location        TEXT,     -- requestor_location, or NULL for ZK (C6)
-    tone            TEXT
-)
-LANGUAGE sql
-STABLE
-AS $$
-    WITH top_v AS (
-        SELECT ve.event_id, ve.event_timestamp, ve.token_id, ve.requesting_agency_id,
-               ve.context_id, ve.outcome, ve.disclosure_level, ve.requestor_location
-        FROM VerificationEvent ve
-        WHERE p_kind = 'verification'
-          AND (ve.event_timestamp >= COALESCE(p_since, '-infinity'::timestamp))
-          AND (p_cursor_ts IS NULL OR (ve.event_timestamp, ve.event_id) < (p_cursor_ts, COALESCE(p_cursor_id, 2147483647)))
-          AND (p_outcomes   IS NULL OR ve.outcome          = ANY(string_to_array(p_outcomes, ',')))
-          AND (p_disclosure IS NULL OR ve.disclosure_level  = ANY(string_to_array(p_disclosure, ',')))
-          AND (p_contexts   IS NULL OR ve.context_id IN (
-                 SELECT context_id FROM VerificationContext WHERE context_type = ANY(string_to_array(p_contexts, ','))))
-          AND (p_agencies   IS NULL OR ve.requesting_agency_id::text = ANY(string_to_array(p_agencies, ',')))
-        ORDER BY ve.event_timestamp DESC, ve.event_id DESC
-        LIMIT p_limit
-    ),
-    top_l AS (
-        SELECT le.event_id, le.event_timestamp, le.token_id, le.actor_agency_id,
-               le.event_type, le.reason_code
-        FROM TokenLifecycleEvent le
-        WHERE p_kind = 'lifecycle'
-          AND (le.event_timestamp >= COALESCE(p_since, '-infinity'::timestamp))
-          AND (p_cursor_ts IS NULL OR (le.event_timestamp, le.event_id) < (p_cursor_ts, COALESCE(p_cursor_id, 2147483647)))
-          AND (p_agencies IS NULL OR le.actor_agency_id::text = ANY(string_to_array(p_agencies, ',')))
-        ORDER BY le.event_timestamp DESC, le.event_id DESC
-        LIMIT p_limit
-    )
-    SELECT event_id, event_timestamp, agency_name, category, outcome, disclosure, subject, location, tone
-    FROM (
-        SELECT tv.event_id, tv.event_timestamp,
-               ag.name::TEXT                                   AS agency_name,
-               vc.context_type::TEXT                           AS category,
-               tv.outcome::TEXT                                AS outcome,
-               tv.disclosure_level::TEXT                       AS disclosure,
-               COALESCE(i.legal_name::TEXT, '(zero-knowledge)') AS subject,
-               CASE WHEN tv.disclosure_level = 'ZERO_KNOWLEDGE' THEN NULL
-                    ELSE tv.requestor_location::TEXT END        AS location,
-               CASE WHEN tv.outcome <> 'SUCCESS'                THEN 'alert'
-                    WHEN tv.disclosure_level = 'FULL'           THEN 'full'
-                    WHEN tv.disclosure_level = 'ZERO_KNOWLEDGE' THEN 'zk'
-                    ELSE 'selective' END::TEXT                  AS tone
-        FROM      top_v tv
-        JOIN      Agency               ag ON tv.requesting_agency_id = ag.agency_id
-        JOIN      VerificationContext  vc ON tv.context_id           = vc.context_id
-        LEFT JOIN IdentityToken         t ON tv.token_id             = t.token_id
-        LEFT JOIN Individual            i ON t.individual_id         = i.individual_id
-        UNION ALL
-        SELECT tl.event_id, tl.event_timestamp,
-               COALESCE(ag.name::TEXT, 'System / device')       AS agency_name,
-               tl.event_type::TEXT                              AS category,
-               COALESCE(tl.reason_code::TEXT, '')               AS outcome,
-               NULL::TEXT                                       AS disclosure,
-               i.legal_name::TEXT                               AS subject,
-               NULL::TEXT                                       AS location,
-               CASE WHEN tl.event_type IN ('REVOKED', 'LOST')   THEN 'alert'
-                    WHEN tl.event_type = 'ISSUED'               THEN 'selective'
-                    ELSE 'full' END::TEXT                       AS tone
-        FROM      top_l tl
-        LEFT JOIN Agency        ag ON tl.actor_agency_id = ag.agency_id
-        JOIN      IdentityToken  t ON tl.token_id        = t.token_id
-        JOIN      Individual     i ON t.individual_id    = i.individual_id
-    ) rows
-    ORDER BY event_timestamp DESC, event_id DESC
-    LIMIT p_limit;
-$$;
-
-COMMENT ON FUNCTION atlas_records IS
-  'Roadmap P2.3 (records grid): one stream of events matching the global '
-  'filter, keyset-paginated by (event_timestamp, event_id) DESC so it scales to '
-  'millions. C6: a zero-knowledge verification is a row but its subject and '
-  'location are withheld. Capped at the API (_ATLAS_MAX_EVENTS).';
 
 
 -- ----------------------------------------------------------------------------

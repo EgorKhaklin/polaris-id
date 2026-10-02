@@ -90,7 +90,6 @@
     if (gb) gb.hidden = (name === 'map');
     // Reload the shown analytical view so a filter set on another tab applies.
     if (name === 'breakdown') loadBreakdown();
-    else if (name === 'records') loadRecords(true);
     else if (name === 'trends') loadTrends();
     else if (name === 'overview' && typeof loadOverview === 'function') loadOverview();
     try { history.replaceState(null, '', '#' + name); } catch (e) { /* ignore */ }
@@ -616,94 +615,6 @@
   }
 
   // =========================================================================
-  // Records view (v9.252): the drill from aggregates into the actual events —
-  // a keyset-paginated, filter-aware grid that scales to millions of rows.
-  // =========================================================================
-  var rec = $('[data-atlas-view-panel="records"]');
-  var REC_COLS = {
-    verification: [
-      { key: 'ts', label: 'Time' }, { key: 'agency', label: 'Agency' },
-      { key: 'category', label: 'Context' }, { key: 'outcome', label: 'Outcome', tone: true },
-      { key: 'disclosure', label: 'Disclosure', tone: true }, { key: 'subject', label: 'Subject' },
-      { key: 'location', label: 'Location' }
-    ],
-    lifecycle: [
-      { key: 'ts', label: 'Time' }, { key: 'agency', label: 'Actor' },
-      { key: 'category', label: 'Event type', tone: true }, { key: 'outcome', label: 'Reason' },
-      { key: 'subject', label: 'Subject' }
-    ]
-  };
-  var REC_TONE = {
-    SUCCESS: '#5fd9a2', FAILURE: '#f87171', EXPIRED: '#fbbf24', UNAUTHORIZED: '#f87171',
-    ZERO_KNOWLEDGE: '#a78bfa', SELECTIVE: '#38bdf8', FULL: '#fbbf24',
-    REVOKED: '#f87171', LOST: '#f87171', ISSUED: '#38bdf8', ACTIVATED: '#5fd9a2'
-  };
-  var recCursor = null, recTotal = 0, recLoading = false;
-
-  function recEnsureTable() {
-    var wrap = $('[data-rec-grid]', rec);
-    var body = $('[data-rec-body]', rec);
-    if (body) return body;   // already built for this stream
-    wrap.textContent = '';
-    var cols = REC_COLS[gfilters.stream];
-    var table = el('table', { class: 'rec-grid' });
-    var thead = el('thead'); var htr = el('tr');
-    cols.forEach(function (c) { htr.appendChild(el('th', { text: c.label })); });
-    thead.appendChild(htr); table.appendChild(thead);
-    body = el('tbody', { 'data-rec-body': '' });
-    table.appendChild(body); wrap.appendChild(table);
-    return body;
-  }
-  function recRow(r, cols) {
-    var tr = el('tr', { class: 'rec-row rec-tone-' + (r.tone || '') });
-    cols.forEach(function (c) {
-      var v = r[c.key];
-      var td = el('td', { class: 'rec-td rec-td-' + c.key });
-      if (c.key === 'ts') td.textContent = (v || '').replace('T', '  ');
-      else if (c.tone && v) {
-        var dot = el('i', { class: 'rec-dot' }); dot.style.background = REC_TONE[v] || '#8da6c4';
-        td.appendChild(dot); td.appendChild(el('span', { text: prettyLabel(v) }));
-      } else td.textContent = (v == null || v === '') ? '·' : v;
-      if (c.key === 'subject' && v === '(zero-knowledge)') td.classList.add('rec-td-zk');
-      tr.appendChild(td);
-    });
-    return tr;
-  }
-
-  function loadRecords(reset) {
-    if (!rec || recLoading) return;
-    recLoading = true;
-    var recErr = $('[data-rec-error]', rec); if (recErr) recErr.hidden = true;
-    if (reset) {
-      recCursor = null; recTotal = 0;
-      $('[data-rec-grid]', rec).textContent = '';   // rebuild for the (possibly new) stream
-    }
-    var body = recEnsureTable();
-    var cols = REC_COLS[gfilters.stream];
-    var status = $('[data-rec-status]', rec); if (status) status.textContent = 'Loading…';
-    var url = '/api/atlas/records?' + gfilterQuery() + '&limit=60' + (recCursor ? '&cursor=' + encodeURIComponent(recCursor) : '');
-    apiCall(url).then(function (data) {
-      recLoading = false;
-      (data.records || []).forEach(function (r) { body.appendChild(recRow(r, cols)); });
-      recTotal += (data.records || []).length;
-      recCursor = data.next_cursor || null;
-      var more = $('[data-rec-more]', rec); if (more) more.hidden = !recCursor;
-      var cnt = $('[data-rec-count]', rec); if (cnt) cnt.textContent = recTotal + (recCursor ? '+ records' : ' records') + ' · newest first';
-      if (status) status.textContent = recTotal === 0 ? 'No records match the current filter.' : (recCursor ? '' : 'End of records.');
-    }).catch(function (e) {
-      recLoading = false;
-      if (recErr) { recErr.hidden = false; var d = $('[data-rec-error-detail]', rec); if (d) d.textContent = 'Records failed: ' + e.message; }
-      if (status) status.textContent = '';
-    });
-  }
-  if (rec) {
-    var recMore = $('[data-rec-more]', rec);
-    if (recMore) recMore.addEventListener('click', function () { loadRecords(false); });
-    var recRetry = $('[data-rec-retry]', rec);
-    if (recRetry) recRetry.addEventListener('click', function () { loadRecords(true); });
-  }
-
-  // =========================================================================
   // Global filter bar: stream + window + facets, applied to every view.
   // =========================================================================
   var gbar = $('[data-atlas-globalbar]');
@@ -722,7 +633,6 @@
     renderGfChips();
     if (overview && !overview.hidden) loadOverview();
     else if (bd && !bd.hidden) loadBreakdown();
-    else if (rec && !rec.hidden) loadRecords(true);
   }
 
   // The context/outcome/disclosure facets apply to verifications only; on the
@@ -1033,7 +943,6 @@
       if (!overview.hidden) loadOverview();
       else if (bd && !bd.hidden) loadBreakdown();
       else if (trends && !trends.hidden) loadTrends();
-      else if (rec && !rec.hidden) loadRecords(true);
       // Nudge the map to repaint if it is the active view and booted.
       window.dispatchEvent(new CustomEvent('polaris:atlas-refresh'));
     }
