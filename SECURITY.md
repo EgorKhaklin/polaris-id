@@ -108,8 +108,11 @@ gh attestation verify sbom-python.spdx.json --repo EgorKhaklin/polaris-id \
 ```
 
 The attestation names the repository and the workflow run that built the artifact, so a passing
-check also confirms who produced it. The packages on PyPI and npm carry the same kind of provenance
-from trusted publishing, shown on each registry page.
+check also confirms who produced it. The packages carry less: on PyPI, a publish attestation from
+trusted publishing, which binds each file to the workflow that uploaded it, not to the commit and
+build behind it; on npm, provenance made in the job that also packs the tarball. Both are shown on
+the registry pages. Build provenance for the packages themselves is
+[lab/strategy/011](lab/strategy/011-slsa-build-provenance.md).
 
 Container images are built and scanned in CI but not published to a registry, so there is no
 image digest to sign yet.
