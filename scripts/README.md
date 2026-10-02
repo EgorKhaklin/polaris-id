@@ -96,6 +96,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-atlas-benchmark.sh` | The Atlas endpoints against a multi-million-event log | A contributor, reproducing `SCALING.md` |
 | `polaris-credential-copy-test-pki.py` | A TEST certificate chain for one agency's wallet copies: the ES256 key (0600), the leaf alone as the chain, and the test CA to register with a wallet; never overwrites a key | A contributor or the lab; `test_credential_copy_keys.py` in CI |
 | `polaris-gen-api-clients.sh` | Generate typed API clients and the self-contained interactive explorer from `docs/reference/openapi.yaml` | A contributor or integrator, by hand |
+| `polaris-dev-tunnel.sh` | Make a local notional OID4VP verifier reachable by a wallet via your own cloudflared tunnel (dev/eval only; refuses production) | A contributor or evaluator, by hand |
 
 ## Python helpers
 
