@@ -1916,9 +1916,12 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         app.rollback()
 
         with app.cursor() as cur:
+            import pqc_signing
+            signature = pqc_signing.credential_signature("TKN-RC60-" + tag, agency_id=1)
             cur.execute("CALL uc9_complete_recovery(%s, %s, 'APPROVED', 'rc.60 product path', %s, %s, 1, "
-                        "'IRIS', 'MULTI_MODAL', %s)",
-                        (rid, admin, "TKN-RC60-" + tag, "SN-RC60-" + tag, "https://crl.example/" + tag))
+                        "'IRIS', 'MULTI_MODAL', %s, %s, %s)",
+                        (rid, admin, "TKN-RC60-" + tag, "SN-RC60-" + tag, "https://crl.example/" + tag,
+                         psycopg2.Binary(signature.signature_bytes), signature.public_key_hex))
             cur.execute("SELECT status, biometric_recorded_by, sworn_recorded_by, witness_agency_id, "
                         "witness_co_sign_user_id FROM RecoveryRequest WHERE recovery_id = %s", (rid,))
             row = cur.fetchone()

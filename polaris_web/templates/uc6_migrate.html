@@ -50,10 +50,10 @@
             <select id="new_algorithm" name="new_algorithm" required aria-describedby="alg-help">
                 <option value="">Choose&hellip;</option>
                 {% for alg in algorithms %}
-                <option value="{{ alg.algorithm_id }}"{% if alg.name in signed_names %} disabled{% endif %}>{{ alg.name }}{% if alg.quantum_resistant %} (PQ){% endif %}{% if alg.name in signed_names %}, already signed{% endif %}</option>
+                <option value="{{ alg.algorithm_id }}"{% if alg.name in signed_names %} disabled{% endif %}>{{ alg.name }}{% if alg.quantum_resistant %} (PQ){% endif %}{% if alg.name == signer_algorithm %}, the authority's key{% endif %}{% if alg.name in signed_names %}, already signed{% endif %}</option>
                 {% endfor %}
             </select>
-            <p class="help" id="alg-help">The algorithm the new signature row records. Only algorithms that are not deprecated; a credential carries one signature per algorithm, a deprecated one included.</p>
+            <p class="help" id="alg-help">The new signature is made by a key under the algorithm chosen, which the row records: the issuing authority's own key ({{ signer_algorithm }}), or for another algorithm the key provisioned for the migration. Without such a key nothing is recorded. Only algorithms a signer here produces are listed; a credential carries one signature per algorithm, a deprecated one included.</p>
         </div>
         <div class="form-group">
             <div class="checkbox-row">
@@ -72,9 +72,9 @@
 
 <aside class="panel op-rule" aria-labelledby="op-rule-h">
     <div class="panel-head"><h2 id="op-rule-h">The rule</h2></div>
-    <p>The new signature is made over the credential’s value by the signing module in force:
-       {{ signing.algorithm }} when real signing is configured, and otherwise the named development
-       placeholder, which is not a signature.</p>
+    <p>The new signature is made over the credential’s value by a key under the chosen algorithm
+       when real signing is configured, and otherwise by the named development placeholder, which
+       is not a signature. The row names the algorithm that made it.</p>
     <p>A signature row is never deleted: deprecating one dates it. The rows are the audit of record
        for the migration.</p>
     <p class="muted">Enforced in the database by <span class="mono">uc6_migrate_algorithm</span>.</p>

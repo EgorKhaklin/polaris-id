@@ -1183,10 +1183,24 @@ server-side regardless.
 | `uc_archive_purge` | The only DELETE path on audit tables, bounded by an archive checkpoint |
 | `uc_pseudonymize_individual` | Right-to-erasure pseudonymization, logged in `IndividualErasureEvent` |
 
-All procedures use `SECURITY INVOKER`. The audit trigger on
-`IdentityToken` reads the `polaris.actor_agency_id` and
-`polaris.reason_code` GUCs; procedures set them via `SET LOCAL`. The
-lifecycle rows it writes carry no location (lab/strategy/009, step 4c).
+Procedures run as the caller (`SECURITY INVOKER`), except the definer routines that must pass
+a gate the application role cannot; those pin their `search_path`, and `09_grants.sql` lends
+each to the application role alone. The audit trigger on `IdentityToken` reads the
+`polaris.actor_agency_id` and `polaris.reason_code` GUCs; procedures set them via `SET LOCAL`.
+The lifecycle rows it writes carry no location (lab/strategy/009, step 4c).
+
+**The algorithm a signature row records** is the one that made the signature, in the routes and
+the CLI alike. Issuance, an approved recovery and bulk enrolment sign through
+`pqc_signing.credential_signature`: the issuing authority's key, under the set it signs with (its
+custodied key's, else the configured default), and a request that names another is refused with
+400 before anything is signed; the authority must still hold a grant for it
+(`AgencyAlgorithmAuth`). A migration names its target and signs through
+`pqc_signing.migration_signature`: the authority's own key when that key is under the target,
+otherwise the key provisioned for the migration, as the population path signs
+([QUANTUM-EVENT.md](../operator/QUANTUM-EVENT.md)). A target nothing here signs with (SLH-DSA) is
+refused with 400, and one no key is provisioned for is refused, unsigned. The development
+placeholder stands in for the set and carries no key. Until 2026-10-02 each of these recorded the
+algorithm the request named, whatever made the bytes.
 
 ### `POST /uc8/revoke` (UC-8)
 
@@ -1299,7 +1313,8 @@ EXCEPTION on non-admin.
 |---|---|---|---|
 | `decision` | enum | yes | `APPROVED` \| `REJECTED` |
 | `reason` | text | optional | free-text justification |
-| `new_token_value`, `new_serial`, `algorithm_id`, `biometric_binding`, `liveness_check`, `published_location` | various | required if APPROVED | new-token specification |
+| `new_token_value`, `new_serial`, `biometric_binding`, `liveness_check`, `published_location` | various | required if APPROVED | new-token specification |
+| `algorithm_id` | int | optional | the requesting authority's signer's algorithm, derived when omitted; another is refused with 400 |
 | `csrf_token` | string | yes | |
 
 Errors:
@@ -1311,28 +1326,41 @@ Errors:
   decided), approver = requester, missing new-token parameters on
   APPROVED.
 
+An approval issues the new credential under the requesting authority, signed like any other:
+the route signs the new token value by that authority's key and passes the signature to
+`uc9_complete_recovery`, which refuses an approval without one. Until 2026-10-02 the procedure
+stored a placeholder string as the signature, and the recovered credential verified under
+nothing.
+
 See `docs/design/recovery-ceremony.md` for the full adversary walk and
 mechanism design.
 
 ### `POST /uc6/migrate`
 
 Algorithm migration via the multi-signature scheme. Adds a new
-`TokenSignature` row under a new algorithm; optionally deprecates
-existing active signatures on the same token. Closes the
-cryptographic-diversity leg of the PDF §9 issuer-trust-concentration
+`TokenSignature` row under the algorithm named, made by a key under it;
+optionally deprecates existing active signatures on the same token. Closes
+the cryptographic-diversity leg of the PDF §9 issuer-trust-concentration
 triad. Implements PDF §9.4.
 
 | field | type | required | notes |
 |---|---|---|---|
 | `token_id` | int | yes | must be RESERVE or ACTIVE |
-| `new_algorithm` | int | yes | must not already be present on this token (UNIQUE blocks dupes); must not itself be deprecated |
+| `new_algorithm` | int | optional | the target; the issuing authority's own algorithm when omitted; one nothing here signs with is refused with 400; must not already be present on this token (UNIQUE blocks dupes) or deprecated |
 | `deprecate_old` | bool | optional | when checked, sets `deprecation_date` on every other active signature for this token |
 | `csrf_token` | string | yes | |
 
-The signature bytes come from the signing module in force, over the
-token's value: an ML-DSA-65 signature when real signing is configured
-(`POLARIS_USE_REAL_PQC=1` with liboqs), otherwise the named development
-placeholder, which is not a signature.
+The signature is over the token's value: an ML-DSA signature when real
+signing is configured (`POLARIS_USE_REAL_PQC=1` with liboqs), otherwise the
+named development placeholder, which is not a signature. Under real signing
+the key is the issuing authority's own when that key signs under the target,
+and a signature by a key other than the one the authority registered is then
+refused (the PE.3b binding, as at issuance). For any other target it is the
+key provisioned for the migration (`POLARIS_MIGRATION_SIGNING_KEY_FILE`, see
+[QUANTUM-EVENT.md](../operator/QUANTUM-EVENT.md)), and with none the
+migration is refused and nothing is recorded; the page says what to
+provision. Until 2026-10-02 a migration signed with the instance's key,
+whatever its set, and recorded the algorithm the request named.
 
 Errors:
 
