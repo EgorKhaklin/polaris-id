@@ -23,6 +23,7 @@ import sys
 import subprocess
 import tempfile
 import unittest
+import types
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
@@ -315,9 +316,16 @@ class IssueCommandTests(CLIBaseTestCase):
                 pass
 
             @staticmethod
-            def signature_with_key_for_token(value, agency_id=None):
+            def algorithm_name(agency_id=None):
+                return 'ML-DSA-65'
+
+            @staticmethod
+            def credential_signature(value, agency_id=None):
+                # The entry point every writer signs through since the 2026-10-02 CORE-BUG fix:
+                # the bytes, the key and the algorithm the row records, together.
                 asked.append(agency_id)
-                return b'\x01' * 3309, 'ML-DSA-65', 'cd' * 1952
+                return types.SimpleNamespace(signature_bytes=b'\x01' * 3309,
+                                             public_key_hex='cd' * 1952, algorithm_name='ML-DSA-65')
 
         args = argparse.Namespace(
             legal_name='Other Key Holder', dob='1990-01-15', jurisdiction='US-OH', agency=1,
@@ -334,7 +342,8 @@ class IssueCommandTests(CLIBaseTestCase):
         self.assertEqual(self._stored_signatures('TKN-OH-CLI-OTHERKEY'), [])
 
     def test_issue_with_unauthorized_algorithm_fails(self):
-        # Agency 2 (PA) doesn't have a grant on algorithm 4 (SLH-DSA-256s)
+        # Agency 2 (PA) doesn't have a grant on algorithm 4 (SLH-DSA-256s), and nothing here
+        # signs with it: refused before anything is signed (CORE-BUG 2026-10-02).
         r = run_cli('issue',
             '--legal-name', 'Unauth Test',
             '--dob', '1990-01-15',
@@ -343,6 +352,24 @@ class IssueCommandTests(CLIBaseTestCase):
             '--algorithm', '4',
             '--token-value', 'TKN-PA-UNAUTH',
             '--serial', 'SN-PA-UNAUTH',
+            '--biometric', 'IRIS',
+            '--contexts', '1',
+            expect_success=False,
+        )
+        self.assertEqual(r.returncode, 3)
+        self.assertIn('nothing here signs with SLH-DSA-256s', r.stderr)
+
+    def test_issue_still_needs_a_grant_for_the_signers_algorithm(self):
+        """The signer's algorithm decides the label; the grant still decides whether the
+        authority may issue under it. Authority 4 holds VERIFY only, so --algorithm left out
+        (the signer's) is refused by the procedure."""
+        r = run_cli('issue',
+            '--legal-name', 'No Grant',
+            '--dob', '1990-01-15',
+            '--jurisdiction', 'US',
+            '--agency', '4',
+            '--token-value', 'TKN-US-NOGRANT',
+            '--serial', 'SN-US-NOGRANT',
             '--biometric', 'IRIS',
             '--contexts', '1',
             expect_success=False,
@@ -451,9 +478,16 @@ class BulkEnrollCommandTests(CLIBaseTestCase):
                 return None
 
             @staticmethod
-            def signature_with_key_for_token(value, agency_id=None):
+            def algorithm_name(agency_id=None):
+                return 'ML-DSA-65'
+
+            @staticmethod
+            def credential_signature(value, agency_id=None):
+                # The entry point every writer signs through since the 2026-10-02 CORE-BUG fix:
+                # the bytes, the key and the algorithm the row records, together.
                 asked.append(agency_id)
-                return b'\x01' * 3309, 'ML-DSA-65', 'cd' * 1952
+                return types.SimpleNamespace(signature_bytes=b'\x01' * 3309,
+                                             public_key_hex='cd' * 1952, algorithm_name='ML-DSA-65')
 
         csv = self._extract([
             ('Key One', '1990-01-01', 'US-PA', 'FACE', 'BULKKEY-TOK-1', 'BULKKEY-SER-1', '{1}'),
@@ -1639,19 +1673,82 @@ class MigrateAlgorithmCommandTests(CLIBaseTestCase):
 
     def test_migrate_algorithm_help_shows_required_args(self):
         r = run_cli('migrate-algorithm', '--help')
-        for arg in ('--token', '--new-algorithm',
-                    '--signature-hex', '--signature-file',
-                    '--deprecate-old'):
+        for arg in ('--token', '--new-algorithm', '--deprecate-old'):
             self.assertIn(arg, r.stdout,
                 f"migrate-algorithm --help must document '{arg}'")
 
-    def test_migrate_algorithm_requires_signature(self):
-        """The signature must be supplied via --signature-hex OR
-        --signature-file (mutually exclusive group, one required)."""
+    def test_migrate_algorithm_refuses_an_algorithm_nothing_here_signs_with(self):
+        """The signature is made here, by a key under the algorithm named; it took raw bytes
+        from --signature-hex and recorded them under the algorithm given, with no key.
+        SLH-DSA-256s is registered and nothing here signs with it, so nothing is written."""
+        before = self._signature_names(1)
         r = run_cli('migrate-algorithm',
-                    '--token', '1', '--new-algorithm', '2',
+                    '--token', '1', '--new-algorithm', '4',
                     expect_success=False)
-        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.returncode, 3)
+        self.assertIn('nothing here signs with SLH-DSA-256s', r.stderr)
+        self.assertEqual(self._signature_names(1), before)
+
+    def _signature_names(self, tid):
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT a.name FROM TokenSignature s JOIN CryptographicAlgorithm a "
+                            "  ON a.algorithm_id = s.algorithm_id WHERE s.token_id = %s ORDER BY 1",
+                            (tid,))
+                return [r['name'] for r in cur.fetchall()]
+        finally:
+            conn.close()
+
+    def test_migrate_algorithm_onto_another_accepted_set_records_it(self):
+        """The authority issues under ML-DSA-65 and token 1 moves to ML-DSA-87 (id 2): the row
+        is under 87, made by a key under 87 (or the placeholder standing in for it)."""
+        self.assertNotIn('ML-DSA-87', self._signature_names(1))
+        run_cli('migrate-algorithm', '--token', '1', '--new-algorithm', '2')
+        self.assertIn('ML-DSA-87', self._signature_names(1))
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT signing_public_key_hex AS pk FROM TokenSignature "
+                            " WHERE token_id = 1 AND algorithm_id = 2")
+                pk = cur.fetchone()['pk']
+        finally:
+            conn.close()
+        if pk:
+            self.assertEqual(len(bytes.fromhex(pk)), 2592, 'an ML-DSA-87 public key')
+
+    def test_migrate_algorithm_moves_a_legacy_credential_to_its_authoritys_signer(self):
+        """A credential signed only under ECDSA-P256 (registered for migration) gets the
+        issuing authority's signature, under the algorithm its signer makes, and the row says
+        so."""
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                            "VALUES ('Legacy Holder', '1980-02-02', 'US-PA') RETURNING individual_id")
+                iid = cur.fetchone()['individual_id']
+                cur.execute("INSERT INTO IdentityToken (token_value, physical_serial, hardware_model, "
+                            "  biometric_binding_type, individual_id, issuing_agency_id, algorithm_id, "
+                            "  status, issued_date, expiration_date) "
+                            "VALUES ('TKN-PA-LEGACY-CLI', 'SN-PA-LEGACY-CLI', 'TitanQ-3', 'IRIS', %s, 2, 5, "
+                            "  'RESERVE', CURRENT_TIMESTAMP, (polaris_utc_date() + INTERVAL '10 years')::date) "
+                            "RETURNING token_id", (iid,))
+                tid = cur.fetchone()['token_id']
+                cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes) "
+                            "VALUES (%s, 5, 'LEGACY-ECDSA')", (tid,))
+            conn.commit()
+        finally:
+            conn.close()
+        run_cli('migrate-algorithm', '--token', str(tid))
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT a.name FROM TokenSignature s JOIN CryptographicAlgorithm a "
+                            "  ON a.algorithm_id = s.algorithm_id WHERE s.token_id = %s ORDER BY 1", (tid,))
+                names = [r['name'] for r in cur.fetchall()]
+        finally:
+            conn.close()
+        self.assertEqual(names, ['ECDSA-P256', 'ML-DSA-65'])
 
 
 # ============================================================================

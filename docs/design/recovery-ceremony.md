@@ -88,7 +88,8 @@ An approval runs in this order:
    `LOST_BY_RECOVERY [RECOVERY:<id>]`, with a row written to the revocation
    list for each so verifier-side freshness checks see it; insert the
    replacement as `RESERVE` with no predecessor, because the prior chain is
-   gone rather than superseded; activate it, tagged
+   gone rather than superseded, with the signature the route made by the
+   requesting authority's key (an approval without one is refused); activate it, tagged
    `RECOVERY_ISSUED [RECOVERY:<id>]`; and record the decision, the deciding
    user and the resulting token on the request.
 6. On rejection: update the request and nothing else. No token, no revocation

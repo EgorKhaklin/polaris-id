@@ -56,6 +56,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The credential page is rebuilt: facts beside proofs, one table per kind of row, empty kinds in one line.
 - On a phone, each list keeps a row's identifier, state and holder; the rest is on the record's page.
 - A status change is offered only where the database makes it; revocation keeps its own operation.
+- `polaris-id migrate-algorithm` signs as the route does; `--signature-hex` and `--signature-file` are withdrawn.
 
 ### Fixed
 
@@ -78,6 +79,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - API.md pointed at `app.py` for the federation check; it is in `verification_routes.py`.
 - The signals queue said "N of M active" while counting every credential with a duress code, in 923 ms.
 - Delete buttons for a person, a credential and an authority, which the database always refuses, are gone.
+- A credential issued by recovery carried a placeholder for a signature and verified under nothing; approval now signs it.
+- Issuance and migration recorded the algorithm a request named, not the one that signed; now the signing key's set.
+- The readiness ledger said a Module-LWE break needs no verification code; the hash-based fallback has no signer or verifier.
 - A status change to a number that is no credential reported success.
 - A refused deep page number now says what to do instead and offers the list back.
 - The population recount's lock test passed with the lock deleted; it now holds a fold that touches no row.

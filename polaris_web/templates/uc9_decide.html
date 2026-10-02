@@ -96,16 +96,12 @@
 
     <div class="form-row">
         <div class="form-group">
-            <label for="algorithm_id">Signing algorithm</label>
-            <select id="algorithm_id" name="algorithm_id">
-                <option value="">Select&hellip;</option>
-                {% for alg in algorithms %}
-                    <option value="{{ alg.algorithm_id }}">
-                        #{{ alg.algorithm_id }}: {{ alg.name }}
-                        {% if alg.quantum_resistant %} · PQ{% endif %}
-                    </option>
-                {% endfor %}
-            </select>
+            <label for="signing_algorithm">Signing algorithm</label>
+            {# No name: the new credential is signed by the requesting authority's key, under
+               its algorithm, which the route derives where the signature is made. #}
+            <input type="text" id="signing_algorithm" value="{{ signer_algorithm }}" readonly
+                   aria-describedby="signing-algorithm-help">
+            <span class="help" id="signing-algorithm-help">The requesting authority's key signs the new credential, so it is under this algorithm, which the credential and its signature record.</span>
         </div>
         <div class="form-group">
             <label for="biometric_binding">Biometric binding</label>
