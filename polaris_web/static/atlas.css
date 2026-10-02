@@ -986,7 +986,9 @@
     padding: 12px 14px 10px;
     cursor: pointer;
 }
-.atlas-tab:hover { color: var(--ink); }
+/* The tab bar is a dark band in either theme, so its hover text is light; var(--ink) is the
+   page's ink, near-black in the light theme, and a hovered tab read as no tab at all. */
+.atlas-tab:hover { color: #f4f4f5; }
 .atlas-tab-active { color: var(--gold-bright); border-bottom-color: var(--gold); }
 .atlas-tabbar-spacer { flex: 1; }
 .atlas-tabbar-prov {
@@ -1098,6 +1100,8 @@
 .ov-area { fill: rgba(93, 214, 255, 0.16); stroke: none; }
 .ov-line { fill: none; stroke: var(--cyan); stroke-width: 1.6; }
 .ov-line-fail { fill: none; stroke: var(--red); stroke-width: 1.4; opacity: 0.9; }
+.ov-stem { stroke: var(--cyan); stroke-width: 3; }
+.ov-stem-fail { stroke: var(--red); stroke-width: 2; opacity: 0.9; }
 .ov-gridline { stroke: rgba(141, 166, 196, 0.14); stroke-width: 1; }
 .ov-axis { fill: var(--ink-faint); font-family: var(--font-mono); font-size: 9px; }
 .ov-hero-range {
@@ -1369,7 +1373,7 @@
     gap: 6px;
 }
 .gf-facet > summary::-webkit-details-marker { display: none; }
-.gf-facet[open] > summary { border-color: var(--cyan-deep); color: var(--ink); }
+.gf-facet[open] > summary { border-color: var(--cyan-deep); color: #f4f4f5; }   /* on the dark band, as the tabs */
 .gf-facet-badge {
     display: inline-flex;
     align-items: center;

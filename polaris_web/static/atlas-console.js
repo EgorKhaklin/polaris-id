@@ -226,8 +226,15 @@
     });
 
     // area and line for each run of shown intervals; a withheld one breaks the line and
-    // gets a neutral tick on the baseline instead of a zero.
+    // gets a neutral tick on the baseline instead of a zero. A run of one interval has no
+    // line to draw, so it stands as a stem from the baseline: drawn as a path it was
+    // invisible, and an interval holding the whole window's activity showed as nothing.
     shownRuns(points, 'n_total').forEach(function (run) {
+      if (run.length === 1) {
+        s.appendChild(svg('line', { x1: X(run[0]), y1: padT + iH, x2: X(run[0]),
+                                    y2: Y(points[run[0]].n_total), class: 'ov-stem' }));
+        return;
+      }
       var d = 'M ' + X(run[0]) + ' ' + Y(points[run[0]].n_total);
       run.slice(1).forEach(function (i) { d += ' L ' + X(i) + ' ' + Y(points[i].n_total); });
       var area = d + ' L ' + X(run[run.length - 1]) + ' ' + (padT + iH) + ' L ' + X(run[0]) + ' ' + (padT + iH) + ' Z';
@@ -240,8 +247,13 @@
       }
     });
 
-    // failure overlay, where shown
+    // failure overlay, where shown; a lone interval as a stem, as above
     shownRuns(points, 'n_failure').forEach(function (run) {
+      if (run.length === 1) {
+        s.appendChild(svg('line', { x1: X(run[0]), y1: padT + iH, x2: X(run[0]),
+                                    y2: Y(points[run[0]].n_failure), class: 'ov-stem ov-stem-fail' }));
+        return;
+      }
       var fd = 'M ' + X(run[0]) + ' ' + Y(points[run[0]].n_failure);
       run.slice(1).forEach(function (j) { fd += ' L ' + X(j) + ' ' + Y(points[j].n_failure); });
       s.appendChild(svg('path', { d: fd, class: 'ov-line-fail' }));
@@ -271,6 +283,11 @@
     function X(i) { return n === 1 ? W / 2 : (i / (n - 1)) * W; }
     function Y(v) { return H - 2 - (v / max) * (H - 4); }
     shownRuns(values.map(function (v) { return { v: v }; }), 'v').forEach(function (run) {
+      if (run.length === 1) {   // a lone interval stands as a stem; a one-point path draws nothing
+        s.appendChild(svg('line', { x1: X(run[0]), y1: H - 2, x2: X(run[0]), y2: Y(values[run[0]]),
+                                    stroke: tone || TONE.total, 'stroke-width': '2' }));
+        return;
+      }
       var d = 'M ' + X(run[0]) + ' ' + Y(values[run[0]]);
       run.slice(1).forEach(function (i) { d += ' L ' + X(i) + ' ' + Y(values[i]); });
       s.appendChild(svg('path', { d: d, fill: 'none', stroke: tone || TONE.total, 'stroke-width': '1.5' }));
@@ -937,7 +954,10 @@
     var totals = points.map(function (p) { var t = 0; labels.forEach(function (l) { t += (p.values[l] || 0); }); return t; });
     var maxT = Math.max(1, Math.max.apply(null, totals));
     var n = points.length;
-    function X(i) { return padL + (n === 1 ? iW / 2 : (i / (n - 1)) * iW); }
+    // One column per interval: an interval's count is a quantity, not a point on a curve, and
+    // an area drawn between intervals sloped down through a withheld value as if it were zero.
+    var slot = iW / n, colW = Math.max(1, slot * 0.82);
+    function XC(i) { return padL + (i + 0.5) * slot; }
     function Y(v) { return padT + iH - (v / maxT) * iH; }
     // Named from the data, for the same reason as the hero chart above. (P6.5)
     var s = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'ov-hero-svg',
@@ -950,16 +970,22 @@
       s.appendChild(svg('line', { x1: padL, y1: y, x2: W - padR, y2: y, class: 'ov-gridline' }));
       s.appendChild(svg('text', { x: padL + 2, y: y - 3, class: 'ov-axis' })).textContent = f === 0 ? '' : fmtInt(Math.round(maxT * f));
     });
-    // cumulative baselines, bottom band first, so each area sits on the last
-    var below = points.map(function () { return 0; });
-    labels.forEach(function (label, li) {
-      var top = points.map(function (p, i) { return below[i] + (p.values[label] || 0); });
-      var d = 'M ' + X(0) + ' ' + Y(top[0]);
-      for (var i = 1; i < n; i++) d += ' L ' + X(i) + ' ' + Y(top[i]);
-      for (var j = n - 1; j >= 0; j--) d += ' L ' + X(j) + ' ' + Y(below[j]);
-      d += ' Z';
-      s.appendChild(svg('path', { d: d, class: 'trends-band', fill: stackColor(label, li), 'fill-opacity': '0.82' }));
-      below = top;
+    // each interval's shown values stacked, bottom band first; a withheld value is left out,
+    // never drawn as a zero, and the interval gets the same neutral baseline tick as the hero
+    points.forEach(function (p, i) {
+      var base = 0;
+      labels.forEach(function (label, li) {
+        var v = p.values[label];
+        if (withheld(v) || !v) return;
+        s.appendChild(svg('rect', { x: XC(i) - colW / 2, y: Y(base + v), width: colW,
+                                    height: Y(base) - Y(base + v), class: 'trends-band',
+                                    fill: stackColor(label, li), 'fill-opacity': '0.82' }));
+        base += v;
+      });
+      if (labels.some(function (l) { return withheld(p.values[l]); })) {
+        s.appendChild(svg('line', { x1: XC(i), y1: padT + iH - 4, x2: XC(i), y2: padT + iH,
+                                    class: 'ov-withheld-tick' }));
+      }
     });
     mount.appendChild(s);
     var range = el('div', { class: 'ov-hero-range' });

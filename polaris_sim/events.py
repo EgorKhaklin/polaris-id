@@ -302,6 +302,18 @@ class StreamStats:
         return self.verifications / self.seconds if self.seconds > 0 else 0.0
 
 
+def db_now(conn) -> datetime.datetime:
+    """The database's wall clock, the one event_timestamp is written and windowed on (UTC since
+    rc.28). Until 2026-10-02 a stream took the host's local clock, datetime.now(): on a host not
+    on UTC it stamped simulated events hours away from the database's now, and the Atlas's hour
+    windows, measured on the database's clock as rc.29 requires, missed a live simulation
+    entirely."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT LOCALTIMESTAMP AS t")
+        row = cur.fetchone()
+    return row["t"] if isinstance(row, dict) else row[0]
+
+
 def run_stream(conn, *, verifications: int, lifecycle: int = 0, window_hours: float = 24.0,
                seed: int = 42, sample: int = 5000, batch_size: int = 10000,
                commit: bool = True, now: datetime.datetime | None = None) -> StreamStats:
@@ -309,7 +321,7 @@ def run_stream(conn, *, verifications: int, lifecycle: int = 0, window_hours: fl
     from . import assert_expendable
     assert_expendable()
     if now is None:
-        now = datetime.datetime.now()
+        now = db_now(conn)
     pool, agencies, _contexts = load_pools(conn, sample)
     if not pool:
         raise RuntimeError("no active tokens: build the substrate first (polaris_sim build)")
