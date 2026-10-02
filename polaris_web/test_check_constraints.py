@@ -4830,6 +4830,27 @@ class TestEveryUniqueRuleRefusesADuplicate(_CheckBase):
 # Activity rollups (lab/strategy/009, step 4)
 # ============================================================================
 
+class TestEventTablesKeepNoLocationIndex(_CheckBase):
+    """lab/strategy/009, step 4c. Nothing reads a verification's or a transition's coordinates
+    since the Atlas moved to the activity rollups, so no index on either event table covers one:
+    each cost every located insert a B-tree update and served no query. Read from the catalogue,
+    so an index rebuilt by hand, or by a later load file, fails here as well as one in 02."""
+
+    def test_no_index_on_an_event_table_covers_a_coordinate(self):
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT c.relname AS tbl, i.relname AS idx, pg_get_indexdef(x.indexrelid) AS def
+                  FROM pg_index x
+                  JOIN pg_class i ON i.oid = x.indexrelid
+                  JOIN pg_class c ON c.oid = x.indrelid
+                 WHERE c.relname IN ('verificationevent', 'tokenlifecycleevent')""")
+            rows = cur.fetchall()
+        self.assertGreaterEqual(len(rows), 4, 'the event tables keep their time and key indexes')
+        located = [(r['tbl'], r['idx']) for r in rows
+                   if 'latitude' in r['def'] or 'longitude' in r['def']]
+        self.assertEqual(located, [])
+
+
 class TestActivityRollups(_CheckBase):
     """The counts the Atlas reads, kept by statement triggers on the two event tables. Every test
     writes inside its own transaction and rolls it back, and every comparison is against a

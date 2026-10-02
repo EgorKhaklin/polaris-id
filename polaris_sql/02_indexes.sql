@@ -72,36 +72,14 @@ CREATE INDEX idx_tokenlifecycle_token
 -- ----------------------------------------------------------------------------
 
 -- ----------------------------------------------------------------------------
--- Spatial + temporal indexes added in v6 for the scaling of /atlas to
--- millions of events. Without PostGIS we use plain B-tree composites; the
--- bbox queries in atlas_clusters_*() can then range-scan latitude and use
--- longitude as a sub-key. These indexes are critical for clustering at scale:
--- without them, a 2M-row VerificationEvent table requires a sequential scan
--- per atlas pan/zoom — every interaction would take 5+ seconds.
+-- Temporal indexes for the event tables' time-ordered reads.
+--
+-- v6 also built B-trees on (latitude, longitude) for the Atlas's bounding-box layers:
+-- idx_verificationevent_geo, idx_verificationevent_geo_time and idx_tokenlifecycleevent_geo.
+-- Since lab/strategy/009 step 4 the Atlas reads the activity rollups and nothing reads a
+-- coordinate, so each cost every located insert a B-tree update and served no query. Step 4c
+-- withdrew them (migration 2026-10-02-005); a database upgraded from before it loses them there.
 -- ----------------------------------------------------------------------------
-
--- Verification events. The (lat, lon, timestamp DESC) order serves both
--- bbox-only queries and "latest events in this region" queries.
-DROP INDEX IF EXISTS idx_verificationevent_geo;
-CREATE INDEX idx_verificationevent_geo
-    ON VerificationEvent (latitude, longitude)
-    WHERE latitude IS NOT NULL;
-
-DROP INDEX IF EXISTS idx_verificationevent_geo_time;
-CREATE INDEX idx_verificationevent_geo_time
-    ON VerificationEvent (event_timestamp DESC, latitude, longitude)
-    WHERE latitude IS NOT NULL;
-
-COMMENT ON INDEX idx_verificationevent_geo IS
-  'Bbox queries from atlas_clusters_verifications(). Predicate excludes '
-  'NULL latitude rows (legacy / unrecorded location) so the index stays small.';
-
--- Lifecycle events. Volume is lower than verifications but the same access
--- pattern applies for the Atlas filter chip "Lifecycle".
-DROP INDEX IF EXISTS idx_tokenlifecycleevent_geo;
-CREATE INDEX idx_tokenlifecycleevent_geo
-    ON TokenLifecycleEvent (latitude, longitude)
-    WHERE latitude IS NOT NULL;
 
 DROP INDEX IF EXISTS idx_tokenlifecycleevent_time;
 CREATE INDEX idx_tokenlifecycleevent_time

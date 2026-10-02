@@ -164,14 +164,13 @@ Indexes (`02_indexes.sql`):
 
 | Index                                | Purpose                                  |
 |--------------------------------------|------------------------------------------|
-| `idx_verificationevent_geo`          | Bbox queries (the withdrawn `atlas_clusters_*()`) |
-| `idx_verificationevent_geo_time`     | Time-bounded bbox queries (rare path)    |
 | `idx_verificationevent_time_id`      | Keyset pages of the verification log     |
-| `idx_tokenlifecycleevent_geo`        | Bbox queries on lifecycle events         |
 | `idx_tokenlifecycleevent_time`       | Time-ordered reads of lifecycle events   |
 
-All geo indexes are partial (`WHERE latitude IS NOT NULL`) so they
-don't include legacy data points and stay small.
+The v6 location indexes (`idx_verificationevent_geo`, `idx_verificationevent_geo_time`,
+`idx_tokenlifecycleevent_geo`) served the Atlas's bounding-box layers. Nothing reads a coordinate
+since step 4 of lab/strategy/009, so step 4c withdrew them (migration 2026-10-02-005): each cost
+every located insert a B-tree update and served no query.
 
 PostGIS would give us proper spatial indexes (GiST on a `geography`
 type, R-tree on `geometry`) and allow polygon queries, but plain B-tree

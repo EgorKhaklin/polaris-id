@@ -135,9 +135,9 @@ deferred in lab/strategy/009 rather than built ahead of a need.
 `polaris_sql/13_postgis.sql` adds, when the `postgis` extension is available, a generated
 `geography(Point, 4326)` column to each event table with a GiST index, for operators who query
 locations directly (the verification log's own filters, an investigation under warrant). The
-Atlas no longer reads a location, so it gains nothing from the path; whether the event tables
-keep their location indexes at all, now that the Atlas does not read them, is the next step of
-lab/strategy/009 (each costs every insert something).
+Atlas no longer reads a location, so it gains nothing from the path, and the event tables'
+B-tree location indexes went in step 4c of lab/strategy/009: nothing read them, and each cost
+every located insert a B-tree update.
 
 An operator with PostGIS active can query the GiST index directly, for example every
 verification within 50 km of a point:
