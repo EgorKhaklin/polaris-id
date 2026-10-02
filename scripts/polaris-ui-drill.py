@@ -204,18 +204,32 @@ def main():
             print(f"  Trends tab: {cells} heatmap cells, {bands} stacked bands rendered")
             page.screenshot(path=str(OUT / "04-atlas-trends.png"))
 
-        # --- Athena console (v9.266): the constitution renders and an
-        # interactive drill-down resolves in a real browser. ---------------
+        # --- Athena: the constraint board reads the connected database's catalogue
+        # (lab/strategy/009, step B1), the self-test attempts the forbidden writes (step
+        # B2), and an interactive drill-down resolves, in a real browser. ----------------
         page.goto(URL + "/athena", wait_until="networkidle")
-        page.wait_for_selector('.athena-rule', timeout=5000)
-        rules = len(page.query_selector_all('.athena-rule'))
+        page.wait_for_selector('.rule-card', timeout=5000)
+        rules = len(page.query_selector_all('.rule-card'))
         if rules < 11:
-            fail(f"Athena constitution rendered {rules} rules, expected >= 11 (C1-C10 + Vocation)")
-        # every rule must show at least one enforcement mechanism (the map is live)
-        mechs = len(page.query_selector_all('.athena-mech'))
+            fail(f"Athena's board rendered {rules} rules, expected >= 11 (C1-C10 + Vocation)")
+        # every rule must show at least one mechanism, looked up in the catalogue
+        mechs = len(page.query_selector_all('.mech'))
         if mechs < rules:
-            fail(f"Athena rendered {mechs} enforcement mechanisms for {rules} rules; "
-                 "every rule must resolve to at least one live mechanism")
+            fail(f"Athena rendered {mechs} mechanisms for {rules} rules; "
+                 "every rule must resolve to at least one mechanism")
+        # a freshly loaded database holds every mechanism its rules name
+        missing = len(page.query_selector_all('.rule-not_in_force'))
+        if missing:
+            fail(f"{missing} rule(s) read 'not in force' on a freshly loaded database")
+        # the self-test: six probes and the C8 clamp, each with its result
+        page.query_selector('#selftest button[type=submit]').click()
+        page.wait_for_selector('.selftest-table', timeout=10000)
+        probes = len(page.query_selector_all('.selftest-table tbody tr'))
+        if probes != 7:
+            fail(f"the self-test rendered {probes} rows, expected 7 (six probes and the C8 clamp)")
+        if page.query_selector('.rule-contradicted'):
+            fail("a rule card reads in force while its self-test write went through")
+        page.screenshot(path=str(OUT / "05-athena-selftest.png"))
         # interactive: switch to Authority, run the chain, assert a verdict renders
         page.query_selector('[data-athena-tab="authority"]').click()
         page.wait_for_selector('[data-athena-chain-run]', timeout=5000)
@@ -223,14 +237,15 @@ def main():
         page.wait_for_selector('.athena-verdict', timeout=5000)
         if not page.query_selector('.athena-chain-step'):
             fail("the Athena authority chain resolved no steps")
-        print(f"  Athena console: {rules} constitution rules, {mechs} live mechanisms, "
-              "authority chain resolved")
-        page.screenshot(path=str(OUT / "05-athena-console.png"))
+        print(f"  Athena: {rules} rules on the board, {mechs} mechanisms, none missing; "
+              f"self-test ran {probes} probes; authority chain resolved")
+        page.screenshot(path=str(OUT / "06-athena-authority.png"))
 
         browser.close()
 
     print(f"UI drill PASSED. Evidence in {OUT}/ "
-          "(01-baseline, 02-simulating, 03-stopped, 04-trends, 05-athena).")
+          "(01-baseline, 02-simulating, 03-stopped, 04-trends, 05-athena-selftest, "
+          "06-athena-authority).")
     return 0
 
 
