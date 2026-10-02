@@ -61,6 +61,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Fixed
 
 - The README's OpenID Certified badge now names what it covers: the polaris-oid4vp verifier, not Polaris.
+- SECURITY.md called PyPI's publish attestation the same kind of provenance as build provenance; it says what each is.
 - A credential's page and both investigation pages read its verifications through an index, not a full scan.
 - The advisory-lock check reads locks taken in functions; the holder key register's lock gains contention tests.
 - The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
