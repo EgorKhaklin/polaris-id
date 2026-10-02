@@ -16980,6 +16980,67 @@ class PopulationMigrationTests(PolarisTestCase):
             self.assertEqual(m.pending_count(conn, target_id), 0)
             self.assertEqual(m.verifiability_report(conn)["unverifiable"], 0)
 
+    def _issue_signed(self, conn, token_value, status):
+        """A credential signed the way issuance signs it. The seed's signatures are labelled
+        literals that verify under nothing by design (docs/design/multi-sig-migration.md), so
+        a verdict about migration has to be asked of credentials the signing module made."""
+        import pqc_signing
+        sig, _label, key = pqc_signing.signature_with_key_for_token(token_value, agency_id=1)
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                        "VALUES (%s, '1980-03-03', 'US-OH') RETURNING individual_id",
+                        ('Migration ' + token_value,))
+            iid = cur.fetchone()["individual_id"]
+            cur.execute("INSERT INTO IdentityToken (token_value, physical_serial, hardware_model, "
+                        "  biometric_binding_type, individual_id, issuing_agency_id, algorithm_id, "
+                        "  status, issued_date, expiration_date) "
+                        "VALUES (%s, %s, 'TitanQ-3', 'IRIS', %s, 1, 1, %s, CURRENT_TIMESTAMP, "
+                        "        (polaris_utc_date() + INTERVAL '10 years')::date) RETURNING token_id",
+                        (token_value, 'SN-' + token_value, iid, status))
+            token_id = cur.fetchone()["token_id"]
+            cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+                        "  signing_public_key_hex) VALUES (%s, 1, %s, %s)",
+                        (token_id, psycopg2.Binary(sig), key))
+        conn.commit()
+        return token_id
+
+    def test_a_migrated_credential_verifies_during_the_window_and_after_it(self):
+        """CORE-BUG, 2026-10-02 (docs/operator/QUANTUM-EVENT.md: no holder "ever carrying a
+        credential that verifies under nothing"). The development placeholder for a migration
+        was SHA3-256 over "<algorithm>|<token value>", which the verify path, recomputing
+        SHA3-256 over the token value, never accepts. Under the placeholder profile every
+        migrated credential answered signature_valid false the moment the run wrote its row,
+        since every active signature must verify, while verifiability_report, which counts
+        rows, said nobody was dark. The verify route is the effect, asked twice."""
+        m = self._migration()
+        with self._new_conn() as conn:
+            mine = [self._issue_signed(conn, 'TKN-OH-QE-%d' % i, status)
+                    for i, status in enumerate(('ACTIVE', 'RESERVE'))]
+            target_id, target_name = m.resolve_target(conn, "ML-DSA-87")
+
+            def verdicts():
+                out = {}
+                for token_id in mine:
+                    v = self.client.get('/api/tokens/%d/verify' % token_id).get_json()
+                    out[token_id] = (v['signature_valid'],
+                                     sorted(x['algorithm'] for x in v['signatures']))
+                return out
+            before = verdicts()
+            self.assertTrue(all(valid for valid, _ in before.values()),
+                            "the control: each verifies before the migration: %r" % before)
+            m.migrate_population(conn, target_id, target_name, batch_size=50)
+            during = verdicts()
+            for token_id, (valid, algorithms) in during.items():
+                self.assertEqual(algorithms, ['ML-DSA-65', target_name], token_id)
+                self.assertTrue(valid, "credential %d does not verify during the window: %r"
+                                % (token_id, during))
+            m.deprecate_superseded(conn, target_id, grace_seconds=60)
+            after = verdicts()
+            for token_id, (valid, algorithms) in after.items():
+                self.assertEqual(algorithms, [target_name], token_id)
+                self.assertTrue(valid, "credential %d verifies under nothing once the window "
+                                       "closed: %r" % (token_id, after))
+
     def test_a_second_run_is_a_no_op(self):
         # Resume is the default: the work remaining is a query, so re-running converges
         # rather than double-writing.
@@ -17231,13 +17292,35 @@ class PopulationMigrationTests(PolarisTestCase):
                 os.environ["POLARIS_MIGRATION_SIGNING_KEY_FILE"] = old
             custody.reset()
 
-    def test_the_placeholder_signature_differs_per_algorithm(self):
-        # A migration whose output was identical for both parameter sets would let a drill
-        # report success while proving nothing changed.
+    def test_a_migration_signature_is_one_the_verify_path_accepts(self):
+        """CORE-BUG, 2026-10-02. This asserted that the placeholder differed per algorithm,
+        which it did by hashing "<algorithm>|<token value>": bytes no verify path accepts, so
+        under the placeholder profile every migrated credential verified false. The row's
+        algorithm, and under real signing the key, tells the sets apart; a migration signature
+        has to verify. A set no signer here produces is refused in every profile."""
         import pqc_signing
-        a, _, _ = pqc_signing.signature_for_migration("TOK-A", "ML-DSA-65")
-        b, _, _ = pqc_signing.signature_for_migration("TOK-A", "ML-DSA-87")
-        self.assertNotEqual(a, b)
+        for algorithm in ("ML-DSA-65", "ML-DSA-87"):
+            sig, label, key = pqc_signing.signature_for_migration("TKN-OH-QE-A", algorithm)
+            self.assertTrue(pqc_signing.verify_stored_signature("TKN-OH-QE-A", sig, key), algorithm)
+            if key:
+                self.assertEqual((label, pqc_signing.algorithm_for_public_key_hex(key)),
+                                 (algorithm, algorithm))
+            else:
+                self.assertEqual(label, pqc_signing.PLACEHOLDER_LABEL)
+        for unsigned in ("SLH-DSA-128s", "SLH-DSA-256s"):
+            with self.assertRaises(pqc_signing.SigningError):
+                pqc_signing.signature_for_migration("TKN-OH-QE-A", unsigned)
+
+    def test_a_target_nothing_here_signs_with_is_refused(self):
+        """Registered is not signable: both SLH-DSA sets are rows with no signer here. The run
+        is refused before anything is selected, in every profile; under the placeholder one it
+        used to re-sign the population under SLH-DSA-256s."""
+        m = self._migration()
+        with self._new_conn() as conn:
+            for unsigned in ("SLH-DSA-128s", "SLH-DSA-256s"):
+                with self.assertRaises(m.MigrationRefused) as refused:
+                    m.resolve_target(conn, unsigned)
+                self.assertIn("nothing here signs with %s" % unsigned, str(refused.exception))
 
 
 class CardPersonalizationTests(PolarisTestCase):

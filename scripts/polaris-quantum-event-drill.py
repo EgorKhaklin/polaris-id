@@ -329,6 +329,21 @@ def main():
         time.sleep(1.2)
         after = migration.verifiability_report(conn)
         _row("NOBODY IS DARK after the window closed", after["unverifiable"], 0)
+        # The count above reads rows. This reads bytes: a sample of credentials, each on its new
+        # signature alone. Until 2026-10-02 the placeholder profile's migration signature was one
+        # no verify path accepted, and the count still read zero.
+        import pqc_signing
+        with conn.cursor() as cur:
+            cur.execute("SELECT t.token_value, s.signature_bytes, s.signing_public_key_hex "
+                        "FROM IdentityToken t JOIN TokenSignature s ON s.token_id = t.token_id "
+                        "WHERE t.status = 'ACTIVE' AND s.algorithm_id = %s "
+                        "AND s.deprecation_date IS NULL ORDER BY t.token_id LIMIT 50",
+                        (target_id,))
+            sample = cur.fetchall()
+        _row("...and a sample of them verifies on the new signature alone",
+             (len(sample) > 0, sum(1 for r in sample if not pqc_signing.verify_stored_signature(
+                 r["token_value"], bytes(r["signature_bytes"]), r["signing_public_key_hex"]))),
+             (True, 0))
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) AS n FROM IdentityToken t WHERE t.status = 'ACTIVE' "
                         "AND NOT EXISTS (SELECT 1 FROM TokenSignature s "

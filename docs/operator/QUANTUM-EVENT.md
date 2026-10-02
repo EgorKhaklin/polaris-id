@@ -27,8 +27,10 @@ and after you close the window.
 polaris migrate-population --to ML-DSA-87 --dry-run
 ```
 
-The `unverifiable` count in that output is the number. If it is not zero before
-you begin, **stop**: a migration assumes it is adding an algorithm to a working
+The `unverifiable` count in that output is the number. It counts credentials with
+no signature in force; it does not re-verify bytes, which were verified as they were
+written (by both witnesses, under real signing), and the drill re-verifies a sample.
+If it is not zero before you begin, **stop**: a migration assumes it is adding an algorithm to a working
 population, not repairing a broken one, and the command refuses to run rather
 than burying the finding under a successful-looking migration.
 
@@ -71,7 +73,8 @@ polaris migrate-population --to ML-DSA-87 --batch 500
 ```
 
 Name the algorithm, not its id. An off-by-one in a numeric id re-signs a
-population under the wrong parameter set with no error anywhere.
+population under the wrong parameter set with no error anywhere. A registered set
+no signer here produces, such as SLH-DSA, is refused before anything is signed.
 
 **Interruption is expected and costs nothing.** The work remaining is a query
 ("ACTIVE or RESERVE credentials with no active signature under the target algorithm"), not a

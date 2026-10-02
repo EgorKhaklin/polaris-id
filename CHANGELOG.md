@@ -55,6 +55,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- Under the placeholder profile a population migration wrote a signature no verify path accepted; now issuance's.
+- A population migration onto a set nothing here signs with (SLH-DSA) is refused before it starts.
 - A credential's page and both investigation pages read its verifications through an index, not a full scan.
 - The advisory-lock check reads locks taken in functions; the holder key register's lock gains contention tests.
 - The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
