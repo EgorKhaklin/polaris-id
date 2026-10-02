@@ -387,9 +387,9 @@ against an expendable database.
 already see on the token-detail page as one JSON file: the token, its
 holder, its lifecycle events, its verification events and its signature
 rows. It is an export of an existing view, not new access: the duress
-hash is reduced to a boolean and signature and key bytes are dropped.
-ZERO_KNOWLEDGE verifications carry no `token_id`, so a token's export
-never contains one.
+hash is reduced to a boolean, signature and key bytes are dropped, and the
+events carry no coordinate, which no page shows. ZERO_KNOWLEDGE
+verifications carry no `token_id`, so a token's export never contains one.
 
 ---
 

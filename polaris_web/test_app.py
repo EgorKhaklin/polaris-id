@@ -12501,6 +12501,33 @@ class TokenExportTests(PolarisTestCase):
         for v in data['verification_events']:
             self.assertNotEqual(v['disclosure_level'], 'ZERO_KNOWLEDGE')
 
+    def test_export_carries_no_coordinate(self):
+        """lab/strategy/009 step 4c: no page shows where an event happened, so neither does the
+        export of the page. Token 2's seeded events are located, and a whole-row read put their
+        coordinates in the file; the export names its columns, and the values appear nowhere."""
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT latitude, longitude FROM TokenLifecycleEvent "
+                            " WHERE token_id = 2 AND latitude IS NOT NULL "
+                            "UNION ALL "
+                            "SELECT latitude, longitude FROM VerificationEvent "
+                            " WHERE token_id = 2 AND latitude IS NOT NULL")
+                located = cur.fetchall()
+        finally:
+            conn.close()
+        self.assertGreaterEqual(len(located), 2, 'token 2 has located events to leave out')
+        r = self.client.get('/api/tokens/2/export')
+        data, body = r.get_json(), r.get_data(as_text=True)
+        self.assertTrue(data['lifecycle_events'] and data['verification_events'])
+        for section in ('lifecycle_events', 'verification_events'):
+            for row in data[section]:
+                keys = [k for k in row if re.match(r'(lat|lon|lng|geo)', k, re.I)]
+                self.assertEqual(keys, [], (section, row['event_id']))
+        for point in located:
+            for value in (point['latitude'], point['longitude']):
+                self.assertNotIn(json.dumps(value), body)
+
     def _export_audit_count(self):
         # Fresh connection each call so it sees the request's committed write.
         conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)

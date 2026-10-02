@@ -168,14 +168,10 @@ Indexes (`02_indexes.sql`):
 | `idx_tokenlifecycleevent_time`       | Time-ordered reads of lifecycle events   |
 
 The v6 location indexes (`idx_verificationevent_geo`, `idx_verificationevent_geo_time`,
-`idx_tokenlifecycleevent_geo`) served the Atlas's bounding-box layers. Nothing reads a coordinate
-since step 4 of lab/strategy/009, so step 4c withdrew them (migration 2026-10-02-005): each cost
-every located insert a B-tree update and served no query.
-
-PostGIS would give us proper spatial indexes (GiST on a `geography`
-type, R-tree on `geometry`) and allow polygon queries, but plain B-tree
-composite indexes on (lat, lon) are sufficient for bbox queries: the
-only spatial primitive Atlas needs.
+`idx_tokenlifecycleevent_geo`) served the Atlas's bounding-box layers, and the optional
+`13_postgis.sql` built GiST indexes on a generated `geo` column beside them. No query filters or
+sorts by a coordinate since step 4 of lab/strategy/009, so step 4c withdrew all five (migration
+2026-10-02-005): each cost every located insert an update and served no query.
 
 ---
 

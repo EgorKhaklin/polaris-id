@@ -3,9 +3,11 @@
 --
 -- DROP: idx_verificationevent_geo, idx_verificationevent_geo_time and
 -- idx_tokenlifecycleevent_geo, B-trees on (latitude, longitude) built in v6 for the Atlas's
--- bounding-box layers. Since step 4 the Atlas sums the activity rollups and nothing reads a
--- coordinate: the verification log projects explicit columns and filters by none. Each index
--- cost every located insert a B-tree update and grew with the population.
+-- bounding-box layers, and gix_verification_geo and gix_lifecycle_geo, the GiST indexes the
+-- optional 13_postgis.sql built on its generated `geo` columns where PostGIS was installed (a
+-- database without PostGIS has neither, hence IF EXISTS). Since step 4 the Atlas sums the
+-- activity rollups, and no query filters or sorts by a coordinate, which is all an index serves.
+-- Each B-tree cost every located insert an update and grew with the population.
 --
 -- EXPAND: dropping an index changes no query's result; a previous release still serving during
 -- a rolling deploy reads the same answers, more slowly.
@@ -18,11 +20,13 @@
 -- location trail with no change to the schema. The body is 06_triggers.sql's, so a database
 -- built by load-then-migrate runs the same function as one synced from the load files.
 --
--- REVERSIBLE: yes; the down file rebuilds the three indexes, a full scan of each table, and
--- restores the function's previous body.
+-- REVERSIBLE: yes; the down file rebuilds the three B-trees, a full scan of each table, and the
+-- two GiST indexes wherever the `geo` columns exist, and restores the function's previous body.
 DROP INDEX IF EXISTS idx_verificationevent_geo;
 DROP INDEX IF EXISTS idx_verificationevent_geo_time;
 DROP INDEX IF EXISTS idx_tokenlifecycleevent_geo;
+DROP INDEX IF EXISTS gix_verification_geo;
+DROP INDEX IF EXISTS gix_lifecycle_geo;
 
 CREATE OR REPLACE FUNCTION audit_token_state_change()
 RETURNS TRIGGER
@@ -52,8 +56,8 @@ BEGIN
 
     -- Optional session-level actor and reason. current_setting returns '' when the GUC is
     -- unset (with missing_ok = true). The row carries no location: the polaris.event_lat and
-    -- event_lon settings it once read were set by nothing, and nothing reads a coordinate
-    -- since lab/strategy/009 step 4c, so a session can no longer start a location trail here.
+    -- event_lon settings it once read were set by nothing, and since lab/strategy/009 step 4c
+    -- nothing shows a coordinate, so a session can no longer start a location trail here.
     v_actor  := NULLIF(current_setting('polaris.actor_agency_id', true), '')::INTEGER;
     v_reason := NULLIF(current_setting('polaris.reason_code',     true), '');
 

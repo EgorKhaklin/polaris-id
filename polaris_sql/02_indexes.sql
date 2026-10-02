@@ -76,9 +76,10 @@ CREATE INDEX idx_tokenlifecycle_token
 --
 -- v6 also built B-trees on (latitude, longitude) for the Atlas's bounding-box layers:
 -- idx_verificationevent_geo, idx_verificationevent_geo_time and idx_tokenlifecycleevent_geo.
--- Since lab/strategy/009 step 4 the Atlas reads the activity rollups and nothing reads a
--- coordinate, so each cost every located insert a B-tree update and served no query. Step 4c
--- withdrew them (migration 2026-10-02-005); a database upgraded from before it loses them there.
+-- Since lab/strategy/009 step 4 the Atlas reads the activity rollups and no query filters or
+-- sorts by a coordinate, so each cost every located insert a B-tree update and served no query.
+-- Step 4c withdrew them, with the GiST indexes 13_postgis.sql built on its generated `geo`
+-- columns (migration 2026-10-02-005); a database upgraded from before it loses them there.
 -- ----------------------------------------------------------------------------
 
 DROP INDEX IF EXISTS idx_tokenlifecycleevent_time;

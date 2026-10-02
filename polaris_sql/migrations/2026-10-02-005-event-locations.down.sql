@@ -1,7 +1,8 @@
 -- 2026-10-02-005 down: rebuild the event tables' location indexes as 02_indexes.sql built them
--- before step 4c, and restore the audit trigger's previous body (2026-09-24-013), which copied
--- the polaris.event_lat and event_lon settings into each lifecycle row. A plain CREATE INDEX
--- blocks writes to each table while it scans it.
+-- before step 4c, and the GiST indexes as 13_postgis.sql did wherever its `geo` columns exist,
+-- and restore the audit trigger's previous body (2026-09-24-013), which copied the
+-- polaris.event_lat and event_lon settings into each lifecycle row. A plain CREATE INDEX blocks
+-- writes to each table while it scans it.
 CREATE INDEX IF NOT EXISTS idx_verificationevent_geo
     ON VerificationEvent (latitude, longitude)
     WHERE latitude IS NOT NULL;
@@ -14,6 +15,23 @@ COMMENT ON INDEX idx_verificationevent_geo IS
 CREATE INDEX IF NOT EXISTS idx_tokenlifecycleevent_geo
     ON TokenLifecycleEvent (latitude, longitude)
     WHERE latitude IS NOT NULL;
+
+-- The `geo` columns exist only where 13_postgis.sql added them, with the extension, before 4c.
+DO $postgis_geo$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'verificationevent'
+                  AND column_name = 'geo') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS gix_verification_geo
+                     ON VerificationEvent USING GIST (geo) WHERE geo IS NOT NULL';
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'tokenlifecycleevent'
+                  AND column_name = 'geo') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS gix_lifecycle_geo
+                     ON TokenLifecycleEvent USING GIST (geo) WHERE geo IS NOT NULL';
+    END IF;
+END $postgis_geo$;
 
 CREATE OR REPLACE FUNCTION audit_token_state_change()
 RETURNS TRIGGER

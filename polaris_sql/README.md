@@ -66,7 +66,7 @@ Dependencies when loading by hand:
 | `11_atlas.sql` | The Atlas readers: sums over the activity rollups, by window, category and jurisdiction, never an event table (lab/strategy/009) |
 | `12_v7_constraints.sql` | Schema-hardening tests |
 | `13_substrate.sql` | M2-3 `SystemDependency` view and manifest tests |
-| `13_postgis.sql` | Optional PostGIS spatial migration (R8-4); a no-op without PostGIS |
+| `13_postgis.sql` | The PostGIS path (R8-4), withdrawn in lab/strategy/009 step 4c: it creates nothing and reports any `geo` column an earlier release left |
 | `14_foresight_helpers.sql` | Three time-based signal functions |
 | `15_ontology.sql` | Read-only single-entity semantic views |
 | `16_athena.sql` | Athena: read-only authority-and-constitution layer |

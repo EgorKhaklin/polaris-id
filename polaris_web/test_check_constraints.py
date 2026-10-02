@@ -4831,25 +4831,68 @@ class TestEveryUniqueRuleRefusesADuplicate(_CheckBase):
 # ============================================================================
 
 class TestEventsCarryNoLocation(_CheckBase):
-    """lab/strategy/009, step 4c. Nothing reads a verification's or a transition's coordinates
-    since the Atlas moved to the activity rollups, so no index on either event table covers one
-    (each cost every located insert a B-tree update and served no query), and nothing in the
-    database writes one. The index check reads the catalogue, so an index rebuilt by hand, or by
-    a later load file, fails here as well as one in 02_indexes.sql."""
+    """lab/strategy/009, step 4c. No query filters or sorts a verification or a transition by its
+    coordinates since the Atlas moved to the activity rollups, so no index on either event table
+    covers one (each cost every located insert an update and served no query), and nothing in
+    the database writes one. The index check reads the catalogue, so an index rebuilt by hand, or
+    by a later load file, fails here as well as one in 02_indexes.sql. A column generated from a
+    coordinate counts as one: the `geo` column the optional 13_postgis.sql added, and indexed
+    with GiST, until step 4c. No test database has PostGIS, so polaris_checks reads the load
+    files for that path as well."""
+
+    #: Every index on the named tables or their partitions over a coordinate, or over a column
+    #: generated from one. A GiST index on `geo` names no latitude; the column's expression does.
+    LOCATED_INDEXES = r"""
+        WITH ev AS (
+            SELECT c.oid, c.relname AS tbl FROM pg_class c
+             WHERE c.relname = ANY(%(tables)s) AND c.relkind IN ('r', 'p')
+            UNION ALL
+            SELECT i.inhrelid, p.relname FROM pg_inherits i JOIN pg_class p ON p.oid = i.inhparent
+             WHERE p.relname = ANY(%(tables)s)
+        ), located AS (
+            SELECT a.attrelid, a.attname
+              FROM pg_attribute a
+              JOIN ev ON ev.oid = a.attrelid
+              LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+             WHERE a.attnum > 0 AND NOT a.attisdropped
+               AND (a.attname IN ('latitude', 'longitude')
+                    OR (a.attgenerated <> ''
+                        AND pg_get_expr(d.adbin, d.adrelid) ~* '\m(latitude|longitude)\M'))
+        )
+        SELECT ev.tbl, ix.relname AS idx
+          FROM pg_index x
+          JOIN ev ON ev.oid = x.indrelid
+          JOIN pg_class ix ON ix.oid = x.indexrelid
+         WHERE EXISTS (SELECT 1 FROM located l
+                        WHERE l.attrelid = x.indrelid
+                          AND pg_get_indexdef(x.indexrelid) ~* ('\m' || l.attname || '\M'))"""
+
+    def _located_indexes(self, cur, tables):
+        cur.execute(self.LOCATED_INDEXES, {'tables': list(tables)})
+        return sorted((r['tbl'], r['idx']) for r in cur.fetchall())
 
     def test_no_index_on_an_event_table_covers_a_coordinate(self):
         with self.conn.cursor() as cur:
             cur.execute("""
-                SELECT c.relname AS tbl, i.relname AS idx, pg_get_indexdef(x.indexrelid) AS def
-                  FROM pg_index x
-                  JOIN pg_class i ON i.oid = x.indexrelid
-                  JOIN pg_class c ON c.oid = x.indrelid
+                SELECT count(*) AS n FROM pg_index x JOIN pg_class c ON c.oid = x.indrelid
                  WHERE c.relname IN ('verificationevent', 'tokenlifecycleevent')""")
-            rows = cur.fetchall()
-        self.assertGreaterEqual(len(rows), 4, 'the event tables keep their time and key indexes')
-        located = [(r['tbl'], r['idx']) for r in rows
-                   if 'latitude' in r['def'] or 'longitude' in r['def']]
-        self.assertEqual(located, [])
+            self.assertGreaterEqual(cur.fetchone()['n'], 4,
+                                    'the event tables keep their time and key indexes')
+            self.assertEqual(
+                self._located_indexes(cur, ('verificationevent', 'tokenlifecycleevent')), [])
+
+    def test_the_index_check_sees_a_column_generated_from_a_coordinate(self):
+        """The shape 13_postgis.sql built before step 4c, on a temporary table. Without it the
+        generated-column half of the query above would never run, since no test has PostGIS."""
+        with self.conn.cursor() as cur:
+            cur.execute("CREATE TEMP TABLE located_probe (n INTEGER, latitude DOUBLE PRECISION, "
+                        "  longitude DOUBLE PRECISION, "
+                        "  geo DOUBLE PRECISION GENERATED ALWAYS AS (latitude + longitude) STORED)")
+            cur.execute("CREATE INDEX located_probe_n ON located_probe (n)")
+            cur.execute("CREATE INDEX located_probe_geo ON located_probe (geo) "
+                        " WHERE geo IS NOT NULL")
+            self.assertEqual(self._located_indexes(cur, ('located_probe',)),
+                             [('located_probe', 'located_probe_geo')])
 
     def test_a_status_change_writes_no_coordinate_whatever_the_session_sets(self):
         """The audit trigger copied polaris.event_lat and event_lon into each lifecycle row it

@@ -510,8 +510,8 @@ BEGIN
 
     -- Optional session-level actor and reason. current_setting returns '' when the GUC is
     -- unset (with missing_ok = true). The row carries no location: the polaris.event_lat and
-    -- event_lon settings it once read were set by nothing, and nothing reads a coordinate
-    -- since lab/strategy/009 step 4c, so a session can no longer start a location trail here.
+    -- event_lon settings it once read were set by nothing, and since lab/strategy/009 step 4c
+    -- nothing shows a coordinate, so a session can no longer start a location trail here.
     v_actor  := NULLIF(current_setting('polaris.actor_agency_id', true), '')::INTEGER;
     v_reason := NULLIF(current_setting('polaris.reason_code',     true), '');
 

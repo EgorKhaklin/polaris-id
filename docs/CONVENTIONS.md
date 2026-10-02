@@ -124,7 +124,7 @@ convention so `00_load_all.sql` can `\i` them in order:
 10_auth.sql                   # AppUser + auth seed
 11_atlas.sql                  # v6 atlas + filter functions
 12_v7_constraints.sql         # v7 schema-hardening
-13_postgis.sql                # optional-dependency PostGIS
+13_postgis.sql                # the withdrawn PostGIS path (reports only)
 13_substrate.sql              # SystemDependency view (M2-3)
 
 migrations/                   # paired up/down per v8.95 framework
