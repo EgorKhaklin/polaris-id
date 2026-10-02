@@ -1626,8 +1626,9 @@
 .athena-rule-engineering { border-left-color: var(--cyan-deep); }
 
 /* ---- Withheld counts (lab/strategy/009, step 4). A count under the minimum cell size, or a
-   figure that would give one back, reads "<5": muted and dotted-underlined, never a number,
-   never a zero. Bars draw nothing, a series breaks, a heatmap cell stays empty. ---- */
+   figure that would give one back, reads as the withheld mark: muted and dotted-underlined,
+   never a number, never a zero, and never "<5", which a part withheld for its whole's sake
+   would make false. Bars draw nothing, a series breaks, a heatmap cell stays empty. ---- */
 .withheld {
     color: var(--ink-faint);
     text-decoration: underline dotted;

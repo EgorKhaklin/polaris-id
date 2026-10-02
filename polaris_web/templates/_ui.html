@@ -44,7 +44,7 @@
 {# A count the Atlas may show, or the sign that it is withheld (lab/strategy/009, step 4): fewer than
    the minimum cell size, or a figure that would give such a count back. Never a number, never 0. #}
 {% macro cell(n, k=5) -%}
-{%- if n is none -%}<span class="withheld" title="Withheld: fewer than {{ k }}, or a figure that would give such a count back">&lt;{{ k }}</span>
+{%- if n is none -%}<span class="withheld" title="Withheld: fewer than {{ k }}, or a figure that would give such a count back"><span aria-hidden="true">&bull;&bull;&bull;</span><span class="visually-hidden">withheld</span></span>
 {%- else -%}{{ figure(n) }}{%- endif -%}
 {%- endmacro %}
 
