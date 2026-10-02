@@ -138,9 +138,11 @@ MUTATIONS = [
      lambda t: t.replace('ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")',
                          'ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87", "ECDSA-P256")', 1),
      "algorithm_agility", "a classical algorithm joins the accepted-signer allowlist"),
-    ("C8", _in_app_package("limit = min(int(request.args.get('limit', '500')), _ATLAS_MAX_POINTS)"),
-     lambda t: t.replace("limit = min(int(request.args.get('limit', '500')), _ATLAS_MAX_POINTS)",
-                         "limit = int(request.args.get('limit', '500'))", 1),
+    # The points route's clamp until lab/strategy/009 withdrew the route (step A0); the agency
+    # facet's is the one caller-controlled count left that a single line clamps.
+    ("C8", _in_app_package("limit = min(int(request.args.get('limit', '20')), _ATLAS_MAX_CATEGORIES)"),
+     lambda t: t.replace("limit = min(int(request.args.get('limit', '20')), _ATLAS_MAX_CATEGORIES)",
+                         "limit = int(request.args.get('limit', '20'))", 1),
      "c8_atlas_caps", "one Atlas route stops clamping a caller-controlled count"),
     ("C9", "polaris_web/test_app.py",
      None,      # handled specially: the mutation is scoped to one class body
