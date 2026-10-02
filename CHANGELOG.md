@@ -11,6 +11,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- The Atlas answered a refused parameter with the exception's text, which could carry the request back; it states a fixed sentence.
 - An operator bound to one authority could be served other authorities' Atlas counts from its response cache.
 - The database refuses a successful verification of a dead credential, outside its permitted contexts, or across an untrusted edge.
 - An operator bound to one authority can no longer activate a reserve another authority issued (UC-4).
