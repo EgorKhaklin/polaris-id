@@ -1702,6 +1702,17 @@ class PopulationLookupTests(PolarisTestCase):
             sess['operator_agency_id'] = agency_id
             _bind_account(sess, agency_id)
 
+    def test_a_record_number_is_read_strictly(self):
+        """'1234', '#1234' or '# 1234', ASCII digits only, within a key's range; anything longer than
+        a number can be is refused before it is scanned (a URL parameter can be any length)."""
+        cases = {'1234': 1234, '#1234': 1234, '# 1234': 1234, ' #12 ': 12, '##12': None,
+                 '12a': None, '': None, '\u0663': None, '0': None, '-5': None, '+5': None,
+                 str(lookup.MAX_KEY): lookup.MAX_KEY, str(lookup.MAX_KEY + 1): None,
+                 '#' + ' ' * 100_000 + '1': None, 1234: 1234, True: None, None: None}
+        for typed, expected in cases.items():
+            with self.subTest(typed=typed if len(str(typed)) < 40 else 'long'):
+                self.assertEqual(lookup.number(typed), expected)
+
     def test_no_operation_form_lists_a_population(self):
         """The forms that listed every active credential or every person name nobody until a
         record is chosen: the seed's holders appear on none of them, and each offers a lookup."""

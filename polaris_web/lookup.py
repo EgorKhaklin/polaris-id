@@ -40,7 +40,11 @@ MAX_CREDENTIAL_TEXT = 128
 #: The longest name prefix a person lookup compares (legal_name is VARCHAR(200)).
 MAX_NAME_TEXT = 200
 
-_NUMBER = re.compile(r'#?\s*([0-9]{1,19})', re.ASCII)
+_DIGITS = re.compile(r'[0-9]{1,19}', re.ASCII)
+
+#: The longest text read as a number: '#', a space and nineteen digits, with room to spare. Longer
+#: text is no number, and is not scanned (a URL parameter can be any length).
+MAX_NUMBER_TEXT = 32
 
 
 def number(text):
@@ -51,10 +55,15 @@ def number(text):
         return None
     if isinstance(text, int) and not isinstance(text, bool):
         return text if 0 < text <= MAX_KEY else None
-    m = _NUMBER.fullmatch(str(text).strip())
-    if not m:
+    s = str(text)
+    if len(s) > MAX_NUMBER_TEXT:
         return None
-    n = int(m.group(1))
+    s = s.strip()
+    if s.startswith('#'):
+        s = s[1:].lstrip()
+    if not _DIGITS.fullmatch(s):
+        return None
+    n = int(s)
     return n if 0 < n <= MAX_KEY else None
 
 
