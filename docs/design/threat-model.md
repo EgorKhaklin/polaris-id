@@ -291,17 +291,19 @@ app surfaces verbatim, leaking column names or query structure.
 
 ### D-D1: unbounded API result set OOMs server or browser
 
-**Scenario:** attacker calls `/api/atlas/clusters?bbox=-90,-180,90,180&grid=0.1`
-forcing 6.5M cluster bins.
+**Scenario:** attacker asks an Atlas route for an unbounded answer: a breakdown with
+`limit=100000`, a series with `buckets=100000`, or the cluster grid of 6.5M bins that the
+withdrawn `/api/atlas/clusters` could be asked for at `grid=0.1`.
 
 **Affected:** `/api/atlas/*`, browser memory
 
 **Controls:**
-- Hard caps: `_ATLAS_MAX_CLUSTERS=5000`, `_ATLAS_MAX_POINTS=2000`,
-  `_ATLAS_MAX_EVENTS=500` (constraint C8)
-- Test: `AtlasAPITests.test_points_endpoint_caps_at_max`
-- Server-side aggregation collapses millions of events into hundreds
-  of cluster summaries
+- Hard caps: `_ATLAS_MAX_CATEGORIES=50`, `_ATLAS_MAX_REGIONS=500`,
+  `_ATLAS_MAX_BUCKETS=240`, each applied before the SQL sees a caller's count
+  (constraint C8, `check_c8_atlas_caps`)
+- Test: `AtlasParameterTests.test_every_cap_holds_whatever_is_asked`
+- Every Atlas reader sums the activity rollups, so no question reads the event
+  tables at all (`AtlasReadsNoEventTableTests`)
 
 **Residual risk:** LOW.
 

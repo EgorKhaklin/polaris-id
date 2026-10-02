@@ -19,9 +19,9 @@ logged-in operator, each stage at an offered rate for a fixed duration:
 |---|---|---|
 | Issuance | `POST /uc1/issue` as admin | the full `uc1_issue_and_activate` procedure: an Individual, a token, its lifecycle event, its contexts, and the ML-DSA-65 signature (or the placeholder; the stamp says which), one unique serial per request |
 | Verification | `POST /verifications/new` as operator | one `VerificationEvent` row through the form route (the federation, duress, and quota checks included) |
-| Atlas, zoomed, warm | `GET /api/atlas/clusters?bbox=<street>&grid=0.01` as auditor | the operator's common case; the same bbox every request, so the app's atlas cache serves it after the first hit |
-| Atlas, zoomed, cold | the same, with a different bbox every request (`{seq}`) | every request aggregates: the uncached cost of a zoomed viewport |
-| Atlas, whole world, warm | `GET /api/atlas/stats?bbox=-90,-180,90,180` | the heaviest read, cached |
+| Atlas breakdown, warm | `GET /api/atlas/breakdown?window=7d&dimension=agency` as auditor | an operator's common question; the same one every request, so the app's atlas cache serves it after the first hit |
+| Atlas breakdown, cold | the same, with a different question every request (`search={seq}`) | every request sums the activity rollups: the uncached cost of a week's breakdown |
+| Atlas all-time stats, warm | `GET /api/atlas/stats?window=all` | the headline over every day recorded, cached |
 
 Reported per stage: offered and achieved requests per second, successful
 requests per second, latency p50 / p95 / p99, and the success ledger. The
@@ -55,7 +55,8 @@ Redis rate-limiter backend (each adds its own overhead; measure through
 Read the table with the topology line: one developer machine running both the
 application and PostgreSQL, so the two compete for the same cores. A
 dedicated database host moves the issuance and verification numbers up, and
-the atlas cold number is bounded by the bbox, not by the table size
+the atlas numbers are bounded by the hours a window spans, not by the table
+size: the Atlas sums the activity rollups and reads no event table
 ([`SCALING.md`](SCALING.md)).
 
 ## Floors, and the CI re-run

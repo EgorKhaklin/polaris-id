@@ -63,7 +63,7 @@ Dependencies when loading by hand:
 | `08_tests.sql` | Self-test suite: prints PASS or FAIL per check |
 | `09_grants.sql` | `polaris_app` role, application privileges, revocation-bound GUC defaults |
 | `10_auth.sql` | `AppUser` and `AuthAuditLog`, 3 seed accounts |
-| `11_atlas.sql` | Atlas functions (`atlas_clusters_zoomed`, `atlas_clusters_unfiltered`, `atlas_timeline`) and filter-aware variants |
+| `11_atlas.sql` | The Atlas readers: sums over the activity rollups, by window, category and jurisdiction, never an event table (lab/strategy/009) |
 | `12_v7_constraints.sql` | Schema-hardening tests |
 | `13_substrate.sql` | M2-3 `SystemDependency` view and manifest tests |
 | `13_postgis.sql` | Optional PostGIS spatial migration (R8-4); a no-op without PostGIS |

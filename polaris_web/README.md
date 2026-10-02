@@ -118,26 +118,21 @@ The full list, including the relying-party `/api/v1` surface, is in
 
 ## Atlas
 
-`/atlas` renders a live map (`atlas-map.js`, viewport-aware MapLibre over a
-dark basemap):
+`/atlas` is the analytics console (`atlas_routes.py`, `atlas-console.js`, `atlas-map.js`):
+what the system is doing as counts, never who
+([lab/strategy/009](../lab/strategy/009-atlas-athena-rework.md)).
 
-- **Two-band toolbar**: view, modifier and context pickers above a time-window
-  selector and histogram strip. Filter state `{view, window, modifiers,
-  contexts}` round-trips through the query string.
-- **Live globe**: a reticle per verification and lifecycle event in the window;
-  new events pulse (`.node-fresh`); filter chips set the server-side `kind`
-  parameter.
-- **HUD**: Active Tokens, Anomalies (failed verifications + full disclosures),
-  Post-Quantum %, Zero-Knowledge %.
-- **Filter API**: `_parse_atlas_filters` maps `view`, `window`, `outcomes`,
-  `disclosure`, `contexts`, `event_types`, `since` to parameters for 6 SQL
-  functions in `11_atlas.sql`.
-- **Histogram strip**: log-scale event density; click to scrub.
+- **Views**: Overview (volume, failure and zero-knowledge shares, top categories), Breakdown
+  (a searchable ranked list and cross-tabs), Trends (weekday-by-hour and composition over
+  time), and a Map of counts per jurisdiction, each region placed from reference data.
+- **Filters**: one bar drives every view: stream, window (`1h` to `all`, starting on the hour
+  or the day), outcomes, disclosure, one context and one authority.
+- **Counts only**: every figure is summed from the activity rollups; a count below five reads
+  `<5`, and so does any figure that would give one back. A narrow question is logged.
 - **Hard caps (C8)**: `_ATLAS_MAX_*` constants bound every result set.
 
-Scale: 2M+ events (viewport rendering plus the spatial index in
-`02_indexes.sql`) and 1M+ active tokens (the temporal lens cuts the visible set
-about 100×). See `docs/reference/SCALING.md`.
+Scale: each reader costs the hours a window spans, not the events recorded; measured at ten
+million verifications in `docs/reference/SCALING.md`.
 
 ## Design
 
@@ -242,7 +237,7 @@ Expected output: `876 passed, 3 skipped` (v1.0.0-rc.62), plus the property and c
 | `gunicorn.conf.py` | Production WSGI config |
 | `templates/` | Jinja2 templates (36 files, incl. atlas.html) |
 | `static/polaris.css` | Stylesheet (navy `#0a2540`, gold `#c9a352`) |
-| `static/atlas-map.js` | Viewport-aware MapLibre map |
+| `static/atlas-map.js` | The Atlas map: counts per jurisdiction on MapLibre |
 | `static/vendor/` | maplibre-gl, no CDN dependency |
 
 Responsive breakpoints: masthead at 720px, Atlas single column at 980px.

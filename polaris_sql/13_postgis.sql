@@ -29,14 +29,10 @@
 -- tiers) without forcing operators to choose between "PostGIS or
 -- nothing."
 --
--- v8.88 SCOPE: schema foundation only. The atlas SQL functions
--- (atlas_clusters_*, atlas_timeline, atlas_stats; atlas_points_* and
--- atlas_recent_events until lab/strategy/009 withdrew them) are NOT rewritten in v8.88 to use the
--- GiST index because the rewrite-and-verify cycle requires (a) a
--- PostGIS-enabled environment and (b) a 10M-event benchmark set. Both
--- are deferred to a v8.x follow-up where the ≥3× acceptance criterion
--- can be measured. v8.88 leaves the foundation in place so the
--- follow-up is a function-only ship.
+-- v8.88 SCOPE: schema foundation only. The Atlas's located layers were never rewritten to use
+-- the GiST index, and since lab/strategy/009 (steps A0 and 4) the Atlas reads no location at
+-- all: it sums the activity rollups, which hold none. The columns and the index serve an
+-- operator who queries locations directly, such as an investigation under warrant.
 -- ============================================================================
 
 DO $postgis_setup$

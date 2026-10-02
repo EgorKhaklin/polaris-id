@@ -6271,10 +6271,10 @@ def test_abuse_controls_check_discriminates(tmp_path):
 def test_performance_baseline_check_discriminates(tmp_path):
     BLOCK = ("**Measured v9.191 @ abc1234, 2026-09-01T20:00Z (full run, 60s per stage).** Apple M3, 8 cores, 16 GB, "
              "macOS 26.3; PostgreSQL 16.14; Python 3.12.13; gunicorn x4 sync workers; signing: ML-DSA-65 (liboqs).\n\n"
-             "| Stage |\n| Issuance (`POST /uc1/issue`) |\n| Verification |\n| Atlas zoomed bbox, warm |\n"
-             "| Atlas zoomed bbox, cold |\n| Atlas whole-world stats, warm |\n")
+             "| Stage |\n| Issuance (`POST /uc1/issue`) |\n| Verification |\n| Atlas breakdown, warm |\n"
+             "| Atlas breakdown, cold |\n| Atlas all-time stats, warm |\n")
     DOC = "# baseline\n<!-- baseline:begin -->\n" + BLOCK + "<!-- baseline:end -->\n"
-    SCRIPT = ("--smoke --update-doc\n/uc1/issue /verifications/new /api/atlas/clusters /api/atlas/stats\n"
+    SCRIPT = ("--smoke --update-doc\n/uc1/issue /verifications/new /api/atlas/breakdown /api/atlas/stats\n"
               "gunicorn POLARIS_RATE_LIMIT_WRITE_MAX=10000000\nFLOOR VIOLATIONS\n"
               'check_stage("issue", 2)\ncheck_stage("verify", 5)\nif lat.get("p95_ms", 1e9) > 2000:\n')
     SEC = ("RATE_LIMIT_LOGIN_MAX      = _env_int('POLARIS_RATE_LIMIT_LOGIN_MAX', 10)\n"
@@ -6301,6 +6301,14 @@ def test_performance_baseline_check_discriminates(tmp_path):
 
     write({"docs/reference/PERFORMANCE-BASELINE.md": DOC.replace("**Measured v9.191 @ abc1234, 2026-09-01T20:00Z", "**Measured")})
     assert checks.check_performance_baseline(tmp_path)[0].level == "FAIL", "must FAIL without the version/commit/date stamp"
+    # the 1.0.0 release line stamps its own versions
+    write({"docs/reference/PERFORMANCE-BASELINE.md": DOC.replace("v9.191 @", "v1.0.0-rc.70 @")})
+    assert checks.check_performance_baseline(tmp_path)[0].level == "OK", "must PASS on a 1.0.0-rc stamp"
+    write({"docs/reference/PERFORMANCE-BASELINE.md": DOC.replace("v9.191 @", "vNEXT @")})
+    assert checks.check_performance_baseline(tmp_path)[0].level == "FAIL", "must FAIL on a stamp that names no version"
+    # an Atlas row the script no longer measures
+    write({"docs/reference/PERFORMANCE-BASELINE.md": DOC.replace("| Atlas breakdown, cold |", "| Atlas zoomed bbox, cold |")})
+    assert checks.check_performance_baseline(tmp_path)[0].level == "FAIL", "must FAIL when a measured Atlas row is missing"
 
     write({"polaris_web/security.py": SEC.replace("'POLARIS_RATE_LIMIT_WRITE_MAX', 60", "'POLARIS_RATE_LIMIT_WRITE_MAX', 6000")})
     assert checks.check_performance_baseline(tmp_path)[0].level == "FAIL", "must FAIL when the F-03 default moves"

@@ -925,22 +925,29 @@ permitted context, and the operator's verification form records a
 
 ## Database functions (`11_atlas.sql`)
 
-These are STABLE functions (no side effects) that drive the
-operational atlas API. Constraint C8: each has a `LIMIT` cap that
-the caller cannot exceed.
+These are STABLE functions (no side effects) that drive the Atlas API. Each sums the
+activity rollups (`VerificationRollup`, `LifecycleRollup` and their daily and delta tables) and
+none reads an event table, so each costs the hours a window spans at any population
+([lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md), step 4). Constraint C8: the
+routes cap every caller-chosen count before it reaches them.
 
 | function | returns | purpose |
 |---|---|---|
-| `atlas_clusters_verifications(...)` | TABLE | spatial bins of VerificationEvent |
-| `atlas_clusters_lifecycles(...)` | TABLE | spatial bins of TokenLifecycleEvent |
-| `atlas_stats(...)` | row | HUD signals (active tokens, anomalies, PQ %, ZK %) |
-| `atlas_timeline(window, ...)` | TABLE | histogram-strip data for the temporal lens (v8.3) |
+| `atlas_verification_cells`, `atlas_lifecycle_cells` | TABLE | a window's rollup rows, hourly or daily, with the counts not yet folded |
+| `atlas_verification_matching`, `atlas_lifecycle_matching` | TABLE | those cells under the filters |
+| `atlas_verification_combos`, `atlas_lifecycle_combos` | TABLE | the window summed over its hours, names joined |
+| `atlas_stats(...)` | row | the headline counts |
+| `atlas_volume_series(...)` | TABLE | volume per bucket |
+| `atlas_breakdown(...)` | TABLE | counts by one dimension |
+| `atlas_crosstab(...)` | TABLE | a dimension by a fixed one |
+| `atlas_heatmap(...)` | TABLE | weekday by hour |
+| `atlas_series_stacked(...)` | TABLE | volume per bucket by the top six categories |
+| `atlas_agency_facet(...)` | TABLE | authorities by name, with counts |
+| `atlas_geo_jurisdictions(...)` | TABLE | counts per jurisdiction |
+| `atlas_bucket(...)` | timestamp | the start of a series bucket |
 
-All functions use the wrap-aware longitude predicate (v7) so they
-work for antimeridian-spanning bboxes. The cluster, points, stats,
-and recent-events functions accept optional filter parameters
-(`since`, `outcomes`, `disclosure`, `contexts`, `event_types`) added
-in v8.3 for server-side filter-chip support.
+The readers take the window's start, whether it reads days, and the filters (`outcomes`,
+`disclosure`, one context, one authority); the routes withhold every count below five.
 
 ---
 

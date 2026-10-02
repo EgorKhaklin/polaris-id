@@ -7028,15 +7028,17 @@ def check_performance_baseline(root: pathlib.Path) -> list[Finding]:
     if "<!-- baseline:begin -->" not in doc or "<!-- baseline:end -->" not in doc:
         return _fail("perf_baseline", "the baseline doc must keep its measured-block markers (the script rewrites it)")
     block = doc.split("<!-- baseline:begin -->", 1)[1].split("<!-- baseline:end -->", 1)[0]
-    if not re.search(r"\*\*Measured v9\.\d+ @ [0-9a-f]{7,}(?:\+dirty)?, \d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z", block):
+    # v9.N until the 1.0.0 release line, then 1.0.0-rc.N and the like.
+    if not re.search(r"\*\*Measured v(?:9\.\d+|\d+\.\d+\.\d+(?:-[a-z]+\.\d+)?) @ [0-9a-f]{7,}(?:\+dirty)?, "
+                     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z", block):
         return _fail("perf_baseline", "the measured block carries no stamp (version, commit, date): numbers carry stamps")
-    for needle in ("Issuance", "Verification", "Atlas zoomed bbox, warm", "Atlas zoomed bbox, cold", "Atlas whole-world"):
+    for needle in ("Issuance", "Verification", "Atlas breakdown, warm", "Atlas breakdown, cold", "Atlas all-time"):
         if needle not in block:
             return _fail("perf_baseline", f"the measured block lacks the {needle!r} row")
     if "cores" not in block or "gunicorn x" not in block or "signing:" not in block:
         return _fail("perf_baseline", "the stamp must name the hardware, the worker count, and the signing mode")
     script = _read(root, "scripts/polaris-perf-baseline.sh")
-    for needle in ("--smoke", "--update-doc", "/uc1/issue", "/verifications/new", "/api/atlas/clusters", "/api/atlas/stats",
+    for needle in ("--smoke", "--update-doc", "/uc1/issue", "/verifications/new", "/api/atlas/breakdown", "/api/atlas/stats",
                    "gunicorn", "POLARIS_RATE_LIMIT_WRITE_MAX=", "FLOOR VIOLATIONS", "check_stage(\"issue\", 2)",
                    "check_stage(\"verify\", 5)", "> 2000"):
         if needle not in script:
