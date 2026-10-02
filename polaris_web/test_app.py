@@ -13700,7 +13700,8 @@ class RouteGuardMatrixTests(PolarisTestCase):
     #: by hand, which is what the two lists they replace were. Changing a guard is
     #: meant to fail here: updating the line is the moment somebody confirms the
     #: new exposure is intended.
-    EXPECTED_LOGIN_ONLY = 41   # 44 until 009 step 4 withdrew the Atlas cluster, hexagon and timeline layers
+    EXPECTED_LOGIN_ONLY = 42   # 44 until 009 step 4 withdrew the Atlas cluster, hexagon and timeline layers;
+                               # 42 with 009 A2's /api/atlas/integrity, read by any signed-in role
     ROLE_GATES = {
         '/agencies/<int:ag_id>/delete': ('admin',),
         '/agencies/<int:ag_id>/edit': ('admin',),
