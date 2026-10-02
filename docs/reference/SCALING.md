@@ -9,6 +9,13 @@ the architecture that was first proven at 2 million and still holds.
 Production deployments with tuned Postgres, connection pooling and edge
 caching are faster than these developer-laptop numbers.
 
+**Since 2026-10-02** the Atlas returns counts only
+([lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md), step A0):
+the map's single-event points, the event feed, the records grid and the person
+focus were withdrawn, with `atlas_points_*`, `atlas_recent_events` and
+`atlas_records`. Measurements of those paths below are kept as taken and say
+they were withdrawn.
+
 ---
 
 ## Measured at 10 million events (v9.150)
@@ -20,7 +27,7 @@ Re-run on a developer laptop against a single PostgreSQL 16 with
 
 | Atlas query (per viewport) | Latency @ 10M | What it is |
 |---|---:|---|
-| Street-block points (`atlas_points_*`, tight bbox, limit 500) | **2.6 ms** (warm) | The operator zoomed in to a block. The common case. |
+| Street-block points (`atlas_points_*`, tight bbox, limit 500) | **2.6 ms** (warm) | The operator zoomed in to a block. Withdrawn 2026-10-02. |
 | Regional clusters (CONUS bbox, 1° grid) | 2.7 s | Full aggregation of the ~9M rows inside the bbox. |
 | Whole-world clusters (10° grid) | 2.9 s | The heaviest path: aggregate the entire table. |
 | Whole-world from a materialized rollup | **0.04 ms** | Pre-computed grid cells, refreshed on a schedule. |
@@ -89,9 +96,9 @@ JSON payload arriving over the wire.
                             │                            │
                             │  Functions:                │
                             │   ─ atlas_clusters_*()     │
-                            │   ─ atlas_points_*()       │
+                            │   ─ atlas_hexbin()         │
                             │   ─ atlas_stats()          │
-                            │   ─ atlas_recent_events()  │
+                            │   ─ atlas_geo_*()          │
                             └────────────┬───────────────┘
                                          │ ≤ a few KB JSON per call
                                          │ regardless of table size
@@ -99,9 +106,9 @@ JSON payload arriving over the wire.
                             ┌────────────────────────────┐
                             │  Flask app.py              │
                             │   /api/atlas/clusters      │
-                            │   /api/atlas/points        │
+                            │   /api/atlas/hexbin        │
                             │   /api/atlas/stats         │
-                            │   /api/atlas/events        │
+                            │   /api/atlas/geo/...       │
                             │  + bbox validation         │
                             │  + hard caps               │
                             └────────────┬───────────────┘
@@ -150,9 +157,9 @@ Indexes (`02_indexes.sql`):
 |--------------------------------------|------------------------------------------|
 | `idx_verificationevent_geo`          | Bbox queries from `atlas_clusters_*()`   |
 | `idx_verificationevent_geo_time`     | Time-bounded bbox queries (rare path)    |
-| `idx_verificationevent_time_id`      | Cursor pagination on the event feed      |
+| `idx_verificationevent_time_id`      | Keyset pages of the verification log     |
 | `idx_tokenlifecycleevent_geo`        | Bbox queries on lifecycle events         |
-| `idx_tokenlifecycleevent_time`       | Top-N for `atlas_recent_events()`        |
+| `idx_tokenlifecycleevent_time`       | Time-ordered reads of lifecycle events   |
 
 All geo indexes are partial (`WHERE latitude IS NOT NULL`) so they
 don't include legacy data points and stay small.
@@ -186,66 +193,39 @@ WHERE ve.latitude  BETWEEN p_min_lat AND p_max_lat
 GROUP BY floor(ve.latitude / p_grid), floor(ve.longitude / p_grid)
 ```
 
-### `atlas_points_*()`
-
-Used at high zoom (cluster count ≤ 30, zoom ≥ 2). Returns up to
-`p_limit` individual events with full metadata, ordered by recency.
-Hard-capped at `_ATLAS_MAX_POINTS = 2000` at the API layer.
-
 ### `atlas_stats(bbox)`
 
 Computes the four HUD signals in a **single pass** with FILTER
 aggregates. The first iteration referenced a CTE 8 times and ran in
 1428 ms; the rewrite is 511 ms.
 
-### `atlas_recent_events(cursor_ts, cursor_id, limit)`
-
-Two-stage top-N with late metadata join. The first iteration unioned
-2M rows then top-N sorted; rewrite uses the time-id indexes to fetch
-top 50 from each table in O(log n), unions to ~100 rows, then joins
-metadata. Result: 5919 ms → 2 ms (3000× faster).
-
 ---
 
 ## API endpoints
 
-All four endpoints are auth-required. Bbox parameter format:
+The map's endpoints are auth-required. Bbox parameter format:
 `min_lat,min_lon,max_lat,max_lon` decimal degrees. Antimeridian-spanning bboxes are supported as of v7 via a wrap-aware
 longitude predicate (see Antimeridian section below).
 
 | Endpoint                    | Hard cap          | Purpose |
 |-----------------------------|-------------------|---------|
 | `GET /api/atlas/clusters`   | 5000 clusters     | Aggregated bins for low-zoom |
-| `GET /api/atlas/points`     | 2000 points       | Individual markers for high-zoom |
 | `GET /api/atlas/stats`      | one row           | HUD signals scoped to bbox |
-| `GET /api/atlas/events`     | 500 events        | Paginated unified feed |
+| `GET /api/atlas/hexbin`     | 5000 hexagons     | Density surface |
+| `GET /api/atlas/geo/jurisdictions` | 500 regions | Counts per jurisdiction (the default layer) |
 
 ---
 
 ## Frontend (atlas-map.js)
 
-The map is a MapLibre GL canvas with two data layers over one GeoJSON
-source. Clusters are circles whose radius interpolates on the event count,
-with the count drawn inside; individual events are smaller circles coloured
-by disclosure level, or red for a failure or revocation. Nothing is drawn
-in the DOM, so a viewport holding a few hundred markers costs a few hundred
-GPU primitives rather than a few hundred SVG nodes.
+The map is a MapLibre GL canvas with two aggregate layers: counts per
+jurisdiction (the default) and a hexagon density surface. Nothing is drawn in
+the DOM, and nothing drawn is a single event: a click on a region or a hexagon
+zooms in.
 
-`scheduleFetch()` is debounced at 220 ms: pan and zoom trigger one batched
+`scheduleFetch()` is debounced at 200 ms: pan and zoom trigger one batched
 API call rather than one per frame, and an AbortController cancels the
 previous fetch when a new one starts.
-
-The switch from clusters to individual events happens when the viewport
-holds few enough of them:
-
-```javascript
-if (data.count <= 30 && zoom >= 2) {
-    // few enough events to draw individually: fetch /api/atlas/points
-}
-```
-
-The event feed has infinite scroll: when the rail scrolls within 80px
-of the bottom and a `next_cursor` exists, the next page is fetched.
 
 ---
 
@@ -259,9 +239,9 @@ synthetic verification events distributed across 30 cities globally:
 | `/api/atlas/clusters` whole world | 1176 ms  | Worst case; one-time init |
 | `/api/atlas/clusters` continent   |  645 ms  | 5° grid, 700K events scanned |
 | `/api/atlas/clusters` metro       |  282 ms  | 0.1° grid, 60K events |
-| `/api/atlas/points` metro top-100 |   35 ms  | Index-driven |
+| `/api/atlas/points` metro top-100 |   35 ms  | Withdrawn 2026-10-02 |
 | `/api/atlas/stats` continent      |  537 ms  | Single-pass aggregation |
-| `/api/atlas/events` first page    |   31 ms  | Top-N + late join |
+| `/api/atlas/events` first page    |   31 ms  | Withdrawn 2026-10-02 |
 
 User-perceptible latency at 1M+ scale would benefit from caching at the
 API layer (Redis) keyed by `(bbox, grid, kind)` with a short TTL: a

@@ -20,8 +20,9 @@ client fetches the individual events instead.
 As of v9.248 the Atlas opens on an **Overview**, not the globe. The Overview is
 a bounded, non-geographic analytics surface: a volume time-series with failures
 overlaid, KPI cards, and top-K breakdowns by context, agency, disclosure and
-outcome. The globe is a **Map** tab, kept for what a map is actually good at (a
-single subject's journey, a drill into one region) and booted lazily.
+outcome. The globe is a **Map** tab, kept for what a map is actually good at (where
+activity is, by region and by density) and booted lazily. It follows no one: the
+single-subject view was withdrawn with lab/strategy/009.
 
 The scaling principle is the same as the map's, applied to every view: the
 answer is a bounded server-side aggregate, never the raw events. Two functions
@@ -35,8 +36,7 @@ agency tallies) without ever carrying its location (C6):
 | `atlas_breakdown(dimension, since, limit, kind, …)` | top-K roll-up by one whitelisted dimension | `_ATLAS_MAX_CATEGORIES` (50) |
 | `atlas_crosstab(row_dim, col_dim, since, limit, kind, …)` | 2-D pivot (Breakdown view): top-K rows x a low-cardinality column dimension | `_ATLAS_MAX_CATEGORIES` rows |
 | `atlas_agency_facet(since, limit, kind, search, …)` | the global filter's agency facet: agencies with (id, name, count) for the typeahead, honouring the other active facets | `_ATLAS_MAX_CATEGORIES` |
-| `atlas_records(since, cursor_ts, cursor_id, limit, kind, …)` | the records grid: raw event rows behind the charts, keyset-paginated (a `(ts, id)` cursor, not an OFFSET, so a deep page stays O(page)); ZK rows are counted but their subject/location are withheld (C6) | `_ATLAS_MAX_EVENTS` |
-| `atlas_hexbin(minlat, minlon, maxlat, maxlon, size, limit, since, kind, …)` | Map v2 Density layer: located verification events binned into a pointy-top hex grid, top-K densest centres by count; excludes ZK entirely like the cluster/point layers (C6) | `_ATLAS_MAX_CLUSTERS` |
+| `atlas_hexbin(minlat, minlon, maxlat, maxlon, size, limit, since, kind, …)` | Map v2 Density layer: located verification events binned into a pointy-top hex grid, top-K densest centres by count; excludes ZK entirely like the cluster layer (C6) | `_ATLAS_MAX_CLUSTERS` |
 | `atlas_geo_jurisdictions(since, limit, kind, …)` | Map v2 Regions layer (default): volume by requesting-agency jurisdiction (ISO 3166-2); COUNTS ZK (n_zk) but the centroid derives from located non-ZK events only, so a ZK-only jurisdiction is counted yet unplaceable (C6) | `_ATLAS_MAX_REGIONS` |
 
 Their endpoints (`/api/atlas/series`, `/api/atlas/breakdown`) are
@@ -75,46 +75,46 @@ window scans versus an all-time query (see
 
 ## Data path (the Map view)
 
+The map draws counts only: counts per jurisdiction (the default) or a hexagon
+density surface. Since 2026-10-02 it draws no single event and names no one
+([lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md), step A0); the
+point layer, the event feed and the person focus were withdrawn.
+
 ```
 a pan or zoom in the browser
-  → atlas-map.js scheduleFetch(), debounced at 220 ms
+  → atlas-map.js scheduleFetch(), debounced at 200 ms
     → currentBbox() derives [min_lat, min_lon, max_lat, max_lon]
-    → chooseGrid(zoom) maps the zoom level to a grid cell size in degrees
-    → GET /api/atlas/clusters?bbox=…&grid=…&kind=…
-      → app.py validates the bbox and applies the cap
-        → atlas_clusters_verifications(...) in SQL
+    → chooseHexSize(zoom) maps the zoom level to a hexagon size in degrees
+    → GET /api/atlas/hexbin?bbox=…&size=…&kind=…  (or /api/atlas/geo/jurisdictions)
+      → the route validates the bbox and applies the cap
+        → atlas_hexbin(...) in SQL
           → the geo index serves the bbox filter
-          → GROUP BY floor(lat/grid), floor(lon/grid)
+          → counts per hexagon, zero-knowledge events excluded (C6)
           → at most 5000 rows
       → JSON
     → the GeoJSON source is replaced and MapLibre redraws its layers
-    → if the count is at most 30 and the zoom is at least 5:
-        → a second fetch of GET /api/atlas/points, drawn as individual markers
   → the corner readouts update from /api/atlas/stats, fetched in parallel
 ```
 
 ## What's in 11_atlas.sql
 
-Six STABLE functions. STABLE = same input + same data → same output, no
+The map's STABLE functions. STABLE = same input + same data → same output, no
 side effects. PostgreSQL caches plans for STABLE functions.
 
 | Function | Purpose | Worst-case at 2M |
 |---|---|---|
 | `atlas_clusters_verifications(bbox, grid)` | Aggregated bins, verification kind | 1.2 s whole world |
 | `atlas_clusters_lifecycles(bbox, grid)` | Aggregated bins, lifecycle kind | <100 ms (small table) |
-| `atlas_points_verifications(bbox, limit)` | Individual events, top-N by recency | 35 ms metro bbox |
-| `atlas_points_lifecycles(bbox, limit)` | Individual lifecycle, top-N | <50 ms |
 | `atlas_stats(bbox)` | HUD signals, single-pass aggregation | 511 ms |
-| `atlas_recent_events(cursor_ts, cursor_id, limit)` | Paginated unified feed | 2 ms (top-N + late join) |
 
 ## API contract
 
-All four `/api/atlas/*` endpoints:
+The map's `/api/atlas/*` endpoints:
 - Require `@security.login_required`
-- Accept `bbox=min_lat,min_lon,max_lat,max_lon` decimal degrees
-- Validate via `_parse_bbox()` (see app.py)
-- Return JSON: `{ kind, bbox, count, [clusters|points|events] }`
-- Hard-capped: clusters ≤ 5000, points ≤ 2000, events ≤ 500
+- Accept `bbox=min_lat,min_lon,max_lat,max_lon` decimal degrees where they are viewport-bound
+- Validate via `_parse_bbox()` (see atlas_routes.py)
+- Return counts, never an event row
+- Hard-capped: clusters and hexagons ≤ 5000, regions ≤ 500
 
 ## Crossing the antimeridian
 
@@ -130,21 +130,21 @@ PostgreSQL's planner uses bitmap OR over the partial geo indexes, so
 performance is comparable to non-wrapping bboxes.
 
 
-## Four constants that were tuned, not chosen
+## Constants that were tuned, not chosen
 
 Each of these was set against a real distribution, and changing one without
 measuring undoes that.
 
-1. **The grid scale in `chooseGrid(zoom)`.** A finer grid means more clusters
-   and more work per frame. Changing it needs a check on pan and zoom
+1. **The hexagon size in `chooseHexSize(zoom)`.** A finer lattice means more
+   hexagons and more work per frame. Changing it needs a check on pan and zoom
    responsiveness at a realistic event count.
-2. **The switch to individual events**, at a count of thirty or fewer and a
-   zoom of five or greater. Switching earlier puts hundreds of individual
-   markers on screen, which costs more than the clusters they replaced.
-3. **The 220 millisecond debounce.** Below about 150 the API takes a request
+2. **The 200 millisecond debounce.** Below about 150 the API takes a request
    per frame during a smooth pan; above about 400 the map feels late.
-4. **The caps: 5000 clusters, 2000 points, 500 events.** Past those, JSON
+3. **The caps: 5000 clusters or hexagons, 500 regions.** Past those, JSON
    serialisation and the redraw dominate the response.
+
+The switch from clusters to single events, tuned at a count of thirty, went with
+the point layer (lab/strategy/009).
 
 ## Performance regression checks
 
@@ -157,7 +157,6 @@ psql -d polaris_test <<'SQL'
 SELECT count(*) FROM atlas_clusters_verifications(-90,-180,90,180,10);
 SELECT count(*) FROM atlas_clusters_verifications(20,-130,50,-65,5);
 SELECT * FROM atlas_stats(20,-130,50,-65);
-SELECT count(*) FROM atlas_recent_events(NULL,NULL,50);
 SQL
 ```
 
@@ -165,7 +164,6 @@ Target latencies (warm cache, 2M events):
 - clusters whole-world: <1500 ms
 - clusters continent: <800 ms
 - stats: <600 ms
-- recent_events: <10 ms
 
 If any are 2× off, run `EXPLAIN ANALYZE` and check whether an index
 got dropped or whether the planner picked a seq scan when an index

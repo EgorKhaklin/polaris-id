@@ -113,6 +113,10 @@ grid and barely moves, which is what keyset pagination is for; it is reported an
 because a sub-5ms timing is noise rather than data and an instrument that cried wolf at a
 keyset page would be turned off.
 
+`atlas_records` was withdrawn on 2026-10-02 with the records grid, which named each event's
+holder ([lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md)); the benchmark now
+times `atlas_clusters_verifications` in its place. The figures above are kept as measured.
+
 The benchmark **exits non-zero** when an aggregate outruns the data it reads by more than 1.5x,
 because a finding printed green is how an instrument stops being one. `check_benchmark_measures_
 growth` exercises the grading function rather than reading it.

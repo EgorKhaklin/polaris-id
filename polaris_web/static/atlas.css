@@ -41,8 +41,6 @@
 
 /* ----- 18 Atlas: the operational map --------------------------------------- */
 
-/* --- Atlas event feed --- */
-
 /* v8.3 (A+C): chip groups inside a band visually cluster the chips that
    belong to the same control axis. The chip-divider thin vertical rule
    separates groups so the eye reads "view | modifiers | context" rather
@@ -413,71 +411,6 @@
 }
 
 /* ============================================================
-   Detail panel (kept; tighter colors)
-   ============================================================ */
-.globe-detail {
-    position: absolute;
-    z-index: 6;
-    left: 14px;
-    bottom: 60px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    width: 270px;
-    padding: 12px 14px;
-    border: 1px solid rgba(150, 180, 210, 0.28);
-    border-left: 2px solid rgba(126, 196, 232, 0.85);
-    background: rgba(4, 9, 17, 0.86);
-    backdrop-filter: blur(4px);
-    box-shadow: 0 16px 38px rgba(0, 0, 0, 0.5);
-    color: #dceaf6;
-}
-
-.globe-detail .detail-kicker {
-    color: rgba(126, 196, 232, 0.95);
-    font-family: 'SF Mono', 'Berkeley Mono', Monaco, Consolas, monospace;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 1.4px;
-    font-weight: 600;
-}
-
-.globe-detail strong {
-    color: #ffffff;
-    font-size: 13px;
-    line-height: 1.3;
-    font-weight: 600;
-}
-
-.globe-detail span {
-    color: #aebed1;
-    font-size: 11px;
-    line-height: 1.4;
-}
-
-.globe-detail .detail-meta {
-    color: #d5e2ef;
-    font-family: 'SF Mono', 'Berkeley Mono', Monaco, Consolas, monospace;
-    font-size: 10px;
-    letter-spacing: 0.4px;
-}
-
-.globe-detail a {
-    color: rgba(126, 196, 232, 1);
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    text-decoration: none;
-    margin-top: 4px;
-    align-self: flex-start;
-}
-
-.globe-detail a:hover {
-    color: #ffffff;
-}
-
-/* ============================================================
    Atlas v3: Gotham reframe additions
    ============================================================ */
 
@@ -587,185 +520,6 @@
     color: rgba(150, 180, 210, 0.45);
     font-size: 18px;
     margin: 0 6px;
-}
-
-/* Enriched node-console detail panel components */
-.globe-detail .detail-party {
-    color: #c8d4e3;
-    font-size: 11px;
-    line-height: 1.4;
-}
-
-.globe-detail .detail-algo {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 2px;
-}
-.globe-detail .detail-algo-name {
-    color: #ffffff;
-    font-family: 'SF Mono', 'Berkeley Mono', Monaco, Consolas, monospace;
-    font-size: 10px;
-    letter-spacing: 0.8px;
-}
-.globe-detail .detail-pill {
-    display: inline-block;
-    padding: 1px 6px;
-    border: 1px solid currentColor;
-    border-radius: 2px;
-    font-family: 'SF Mono', 'Berkeley Mono', Monaco, Consolas, monospace;
-    font-size: 9px;
-    letter-spacing: 1.2px;
-    line-height: 1.4;
-}
-.globe-detail .detail-pill-pq        { color: #79e6b3; }
-.globe-detail .detail-pill-classical { color: #d4a04c; }
-
-.globe-detail .detail-lineage {
-    color: rgba(180, 200, 220, 0.85);
-    font-family: 'SF Mono', 'Berkeley Mono', Monaco, Consolas, monospace;
-    font-size: 10px;
-    letter-spacing: 0.4px;
-    border-top: 1px solid rgba(150, 180, 210, 0.18);
-    padding-top: 6px;
-    margin-top: 2px;
-}
-.globe-detail .detail-lineage-status,
-.globe-detail .detail-lineage-seq {
-    color: rgba(126, 196, 232, 0.85);
-}
-
-/* Fullbleed Atlas: tighter outer rhythm and a slightly narrower right
-   rail so the globe stage gets the dominant share of the viewport. */
-.atlas-feed {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    max-height: 390px;
-    overflow-y: auto;
-}
-
-.atlas-feed-item {
-    display: grid;
-    grid-template-columns: 10px minmax(0, 1fr) auto;
-    gap: 9px;
-    align-items: center;
-    width: 100%;
-    min-height: 58px;
-    padding: 10px 12px;
-    color: #dce9f6;
-    text-decoration: none;
-    text-align: left;
-    background: rgba(8, 22, 39, 0.72);
-    border-left: 3px solid #82cfff;
-    border-top: 0;
-    border-right: 0;
-    border-bottom: 0;
-    cursor: pointer;
-    font: inherit;
-}
-
-.atlas-feed-item:hover,
-.atlas-feed-item:focus {
-    background: rgba(15, 37, 62, 0.88);
-    outline: 1px solid rgba(232, 190, 100, 0.38);
-    outline-offset: -1px;
-    text-decoration: none;
-}
-
-.atlas-feed-item.notice-issued { border-left-color: var(--gold); }
-.atlas-feed-item.notice-activated { border-left-color: #79f2a1; }
-.atlas-feed-item.notice-revoked,
-.atlas-feed-item.notice-lost,
-.atlas-feed-item.notice-expired { border-left-color: #ff7478; }
-
-
-/* The event feed, populated by atlas-map.js */
-
-.atlas-feed-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-}
-.atlas-feed-row {
-    /* Two rows: top has badge + stamp; bottom has holder + agency.
-       Avoids the cramped horizontal-collision the single-row version had. */
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: auto auto;
-    gap: 4px 10px;
-    align-items: center;
-    padding: 9px 12px;
-    border-left: 3px solid rgba(93, 214, 255, 0.45);
-    background: rgba(8, 22, 39, 0.72);
-    color: rgba(232, 240, 255, 0.85);
-    font-size: 11px;
-    line-height: 1.35;
-    cursor: pointer;
-    transition: background 90ms;
-}
-.atlas-feed-row:hover {
-    background: rgba(15, 37, 62, 0.88);
-    outline: 1px solid rgba(232, 190, 100, 0.30);
-    outline-offset: -1px;
-}
-.atlas-feed-row.tone-alert    { border-left-color: #ff7478; }
-.atlas-feed-row.tone-full     { border-left-color: #ffc861; }
-.atlas-feed-row.tone-zk       { border-left-color: #5dd6ff; }
-.atlas-feed-row.tone-selective{ border-left-color: rgba(160, 184, 210, 0.5); }
-
-.atlas-feed-badge {
-    grid-column: 1 / 2;
-    grid-row: 1 / 2;
-    justify-self: start;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 9.5px;
-    font-weight: 600;
-    letter-spacing: 1.0px;
-    text-transform: uppercase;
-    color: rgba(93, 214, 255, 0.95);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 100%;
-}
-.atlas-feed-row.tone-alert .atlas-feed-badge { color: #ff8e8e; }
-.atlas-feed-row.tone-full  .atlas-feed-badge { color: #ffc861; }
-.atlas-feed-row.tone-zk    .atlas-feed-badge { color: #5dd6ff; }
-
-.atlas-feed-stamp {
-    grid-column: 2 / 3;
-    grid-row: 1 / 2;
-    justify-self: end;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 10px;
-    color: rgba(160, 184, 210, 0.6);
-    white-space: nowrap;
-}
-
-.atlas-feed-body {
-    grid-column: 1 / 3;
-    grid-row: 2 / 3;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    min-width: 0;
-}
-.atlas-feed-body strong {
-    font-weight: 500;
-    color: rgba(232, 240, 255, 0.95);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.atlas-feed-body span {
-    font-size: 10px;
-    color: rgba(160, 184, 210, 0.78);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 /* ----------------------------------------------------------------- */
@@ -897,8 +651,6 @@
     display: inline-block;
 }
 .legend-cluster   { background: var(--cyan);  box-shadow: 0 0 6px rgba(93, 214, 255, 0.7); }
-.legend-selective { background: #b094eb;      box-shadow: 0 0 6px rgba(176, 148, 235, 0.7); }
-.legend-full      { background: var(--amber); box-shadow: 0 0 6px rgba(255, 200, 97, 0.7); }
 .legend-alert     { background: var(--red);   box-shadow: 0 0 6px rgba(255, 116, 120, 0.7); }
 .legend-note      { color: var(--ink-faint); }
 
@@ -982,9 +734,8 @@
 /* ============================================================================
    22 ATLAS CONSOLE SHELL (v9.144)
    Full-viewport rework: the atlas is a command surface, not a widget in the
-   content column. Layout: command bar / stage + dock / status bar. The page
-   does not scroll; the globe is sized by its stage box (no pixel cap); the
-   node console docks beside the feed instead of floating over the globe.
+   content column. Layout: command bar / stage / status bar. The page does
+   not scroll; the globe is sized by its stage box (no pixel cap).
    Rules below intentionally override the carried v8-era atlas layout.
    ============================================================================ */
 
@@ -1035,16 +786,20 @@
 
 .atlas-commandbar .toolbar-live { margin-left: 6px; }
 
-/* ----- Main: stage + dock ----- */
+/* ----- Main: the map stage ----- */
 .atlas-main {
     flex: 1;
     min-height: 0;
     display: flex;
     align-items: stretch;
 }
+/* The stage's children are absolutely positioned, so the row needs a height of its own: the
+   viewport below the console's chrome, within sensible bounds. It used to borrow one from the
+   event dock beside it, which went with lab/strategy/009. */
+.atlas-view-map .atlas-main { min-height: clamp(420px, calc(100vh - 260px), 1400px); }
 
-/* Stage fills everything the dock does not take; the globe container is the
-   whole stage box, so baseRadius = min(w, h)/2 grows with the display. */
+/* The stage fills the main row; the globe container is the whole stage box,
+   so baseRadius = min(w, h)/2 grows with the display. */
 .atlas-shell .globe-stage {
     position: relative;
     flex: 1;
@@ -1052,7 +807,6 @@
     min-height: 0;
     height: auto;
     border: 0;
-    border-right: 1px solid rgba(153, 184, 217, 0.18);
     overflow: hidden;
 }
 
@@ -1062,77 +816,6 @@
     width: auto;
     aspect-ratio: auto;
     z-index: 2;
-}
-
-/* ----- Dock: event feed / node console ----- */
-.atlas-dock {
-    flex: 0 0 clamp(320px, 24vw, 460px);
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    background: rgba(3, 10, 19, 0.55);
-}
-
-.dock-tabs {
-    display: flex;
-    border-bottom: 1px solid rgba(153, 184, 217, 0.18);
-}
-
-.dock-tab {
-    flex: 1;
-    padding: 11px 12px;
-    background: none;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    color: var(--ink-faint);
-    font-family: var(--font-ui);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.13em;
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
-}
-.dock-tab:hover { color: var(--ink); background: rgba(93, 214, 255, 0.05); }
-.dock-tab-active {
-    color: var(--gold-bright);
-    border-bottom-color: var(--gold);
-}
-
-.dock-tab-count {
-    color: var(--gold-bright);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    margin-left: 4px;
-}
-
-.dock-panel {
-    display: none;
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-}
-.dock-panel-active { display: flex; flex-direction: column; }
-
-/* Feed fills and scrolls inside the dock */
-.atlas-dock .atlas-feed {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-}
-
-/* Node console as a dock panel: a static block, not a floating overlay. */
-.atlas-dock .globe-detail {
-    position: static;
-    width: auto;
-    flex: 1;
-    overflow-y: auto;
-    border: 0;
-    border-left: 2px solid rgba(126, 196, 232, 0.85);
-    background: transparent;
-    backdrop-filter: none;
-    box-shadow: none;
-    padding: 14px 16px;
 }
 
 /* ----- Status bar ----- */
@@ -1180,16 +863,15 @@
 
 /* ----- Console responsive ----- */
 @media (max-width: 1100px) {
-    /* Stack: stage on top, dock below; restore page scroll. */
+    /* Restore page scroll and give the stage a fixed height. */
     .body-atlas { height: auto; overflow: auto; }
     .atlas-main { flex-direction: column; }
+    .atlas-view-map .atlas-main { min-height: 0; }
     .atlas-shell .globe-stage {
         flex: 0 0 auto;
         height: min(72vh, 560px);
-        border-right: 0;
         border-bottom: 1px solid rgba(153, 184, 217, 0.18);
     }
-    .atlas-dock { flex: 0 0 auto; max-height: 420px; }
     .atlas-statusbar { flex-wrap: wrap; min-height: 0; }
     .atlas-statusbar .atlas-timeline-strip { order: 3; flex-basis: 100%; }
 }
@@ -1273,123 +955,7 @@
     font-size: 9px !important;
 }
 .maplibregl-ctrl-attrib a { color: var(--ink-dim) !important; }
-.maplibregl-popup { display: none; }   /* selection drives the dock console, not popups */
-
-/* Node-console detail rows */
-.detail-row {
-    display: grid;
-    grid-template-columns: 92px 1fr;
-    gap: 4px 12px;
-    padding: 4px 0;
-    border-bottom: 1px solid rgba(141, 166, 196, 0.08);
-    font-size: 12.5px;
-}
-.detail-k {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
-    padding-top: 1px;
-}
-.detail-v { color: var(--ink); word-break: break-word; }
-.detail-link {
-    display: inline-block;
-    margin-top: 12px;
-    font-size: 12.5px;
-    font-weight: 650;
-}
-
-/* ----- 23 Atlas: subject-focus investigation ------------------------------- */
-
-.atlas-subject-search { position: relative; }
-
-.subject-search-input {
-    width: 168px;
-    padding: 6px 10px;
-    font-size: 11.5px;
-    color: var(--ink);
-    background: var(--navy-deep);
-    border: 1px solid rgba(232, 190, 100, 0.4);
-    border-radius: 3px;
-}
-.subject-search-input:focus {
-    border-color: var(--gold-bright);
-    box-shadow: 0 0 0 1px rgba(232, 190, 100, 0.4);
-    outline: none;
-}
-
-.subject-search-results {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    min-width: 240px;
-    max-height: 280px;
-    overflow-y: auto;
-    z-index: 60;
-    background: #0d1b2e;
-    border: 1px solid var(--line-strong);
-    border-top: 2px solid var(--gold);
-    border-radius: 4px;
-    box-shadow: 0 18px 44px rgba(2, 8, 18, 0.7);
-    padding: 4px;
-}
-.subject-result {
-    display: block;
-    width: 100%;
-    text-align: left;
-    padding: 8px 10px;
-    background: none;
-    border: 0;
-    border-radius: 3px;
-    color: var(--ink);
-    font-size: 12.5px;
-    cursor: pointer;
-}
-.subject-result:hover { background: var(--gold-tint); }
-.subject-result-none { color: var(--ink-faint); font-style: italic; cursor: default; }
-
-/* Investigation banner over the stage */
-.atlas-subject-banner {
-    position: absolute;
-    top: 14px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 12;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 10px 8px 16px;
-    background: linear-gradient(90deg, rgba(201, 163, 82, 0.22) 0%, rgba(8, 16, 28, 0.92) 60%);
-    border: 1px solid rgba(232, 190, 100, 0.5);
-    border-radius: 5px;
-    box-shadow: 0 12px 34px rgba(2, 8, 18, 0.65);
-    font-family: var(--font-mono);
-    max-width: 92%;
-}
-.atlas-subject-banner[hidden] { display: none; }
-.subject-banner-label {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.18em;
-    color: var(--gold-bright);
-}
-.subject-banner-name { font-size: 12.5px; font-weight: 700; color: #fff; }
-.subject-banner-stats { font-size: 11px; color: var(--ink-dim); }
-.subject-banner-clear {
-    margin-left: 4px;
-    padding: 4px 10px;
-    font-size: 10.5px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    color: var(--ink-dim);
-    background: rgba(141, 166, 196, 0.1);
-    border: 1px solid var(--line-strong);
-    border-radius: 3px;
-    cursor: pointer;
-    white-space: nowrap;
-}
-.subject-banner-clear:hover { color: #fff; border-color: var(--gold); background: var(--gold-tint); }
+.maplibregl-popup { display: none; }   /* the map opens no popups: a click zooms, it never opens an event */
 
 /* ===========================================================================
  * Atlas analytical console (roadmap P2.3, v9.248)
@@ -1902,67 +1468,6 @@
 }
 .gf-chip-x:hover { color: var(--red); }
 .gf-clear { margin-left: 4px; }
-
-/* ---- Records grid (roadmap P2.3, v9.252): a scale data grid, filter-aware,
-   keyset-paginated, sticky header, dense and legible ---- */
-.atlas-view-records { display: flex; flex-direction: column; min-height: 0; }
-.rec-head {
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
-    padding: 12px 14px 8px;
-    flex: 0 0 auto;
-}
-.rec-count { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); }
-.rec-grid-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 14px; }
-.rec-grid {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-}
-.rec-grid thead th {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    background: var(--bg1);
-    text-align: left;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
-    padding: 8px 10px;
-    border-bottom: 1px solid var(--line-strong);
-    white-space: nowrap;
-}
-.rec-row { color: var(--ink-dim); }
-.rec-row:nth-child(even) { background: rgba(255, 255, 255, 0.014); }
-.rec-row:hover { background: var(--bg2); color: var(--ink); }
-.rec-td {
-    padding: 6px 10px;
-    border-bottom: 1px solid var(--line);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 220px;
-}
-.rec-td-ts { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); }
-.rec-td-outcome, .rec-td-disclosure, .rec-td-category {
-    display: flex; align-items: center; gap: 6px;
-}
-.rec-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; display: inline-block; }
-.rec-td-zk { color: var(--ink-faint); font-style: italic; }
-.rec-foot {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 14px;
-    flex: 0 0 auto;
-    border-top: 1px solid var(--line);
-}
-.rec-status { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); }
-.atlas-view-records .ov-foot { flex: 0 0 auto; margin-top: 0; }
 
 /* Cross-filtering: Overview category bars filter the whole console on click */
 .ov-bar-row-click { cursor: pointer; border-radius: 4px; padding: 2px 4px; margin: 0 -4px; }

@@ -251,9 +251,10 @@ Possible cross-system flows:
   opaque integer), revocation reason, effective date. No holder
   PII.
 
-- **Aggregated atlas data**: `/api/atlas/*` endpoints return
-  spatially-aggregated counts. They do NOT return holder identifiers
-  for clusters; only for individual events at high zoom (`/api/atlas/points`).
+- **Aggregated atlas data**: `/api/atlas/*` endpoints return counts per
+  cell, area, bucket or category. None returns an event or a holder
+  identifier (lab/strategy/009); a single event is read on the verification
+  log, which records the read.
 
 There is no third-party tracking or telemetry. No data goes to any
 vendor by default.

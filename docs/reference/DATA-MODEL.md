@@ -895,10 +895,7 @@ the caller cannot exceed.
 |---|---|---|
 | `atlas_clusters_verifications(...)` | TABLE | spatial bins of VerificationEvent |
 | `atlas_clusters_lifecycles(...)` | TABLE | spatial bins of TokenLifecycleEvent |
-| `atlas_points_verifications(...)` | TABLE | individual verification rows |
-| `atlas_points_lifecycles(...)` | TABLE | individual lifecycle rows |
 | `atlas_stats(...)` | row | HUD signals (active tokens, anomalies, PQ %, ZK %) |
-| `atlas_recent_events(limit)` | TABLE | paginated recent feed |
 | `atlas_timeline(window, ...)` | TABLE | histogram-strip data for the temporal lens (v8.3) |
 
 All functions use the wrap-aware longitude predicate (v7) so they

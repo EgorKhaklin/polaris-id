@@ -323,7 +323,7 @@ class SubstrateLoadTests(unittest.TestCase):
         self.assertGreater(rep.write_latency_ms.p95, 0)
         # every bounded Atlas aggregate was timed over the loaded data
         for fn in ("atlas_volume_series", "atlas_breakdown", "atlas_crosstab",
-                   "atlas_geo_jurisdictions", "atlas_hexbin", "atlas_records"):
+                   "atlas_geo_jurisdictions", "atlas_hexbin", "atlas_clusters_verifications"):
             self.assertIn(fn, rep.atlas_query_ms)
         # the REAL cryptographic verification path ran and every mass-issued
         # token verified (the distinction the benchmark must make honestly).

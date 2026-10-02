@@ -95,7 +95,7 @@ def _atlas_probes(since):
         ("atlas_crosstab", "SELECT count(*) FROM atlas_crosstab('agency', 'outcome', %s, 50, 'verification')", (since,)),
         ("atlas_geo_jurisdictions", "SELECT count(*) FROM atlas_geo_jurisdictions(%s, 500, 'verification')", (since,)),
         ("atlas_hexbin", "SELECT count(*) FROM atlas_hexbin(-90, -180, 90, 180, 5.0, 5000, %s, 'verification')", (since,)),
-        ("atlas_records", "SELECT count(*) FROM atlas_records(%s, NULL, NULL, 60, 'verification')", (since,)),
+        ("atlas_clusters_verifications", "SELECT count(*) FROM atlas_clusters_verifications(-90, -180, 90, 180, 5.0, %s)", (since,)),
     ]
 
 

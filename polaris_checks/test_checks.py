@@ -90,8 +90,11 @@ def test_c6_app_read_paths_check_discriminates(tmp_path):
 
     INLINE = ("SELECT ve.event_id, ve.latitude AS lat FROM VerificationEvent ve "
               "WHERE ve.disclosure_level <> 'ZERO_KNOWLEDGE'")
-    FUNC = "SELECT event_id, lat, requestor_location FROM atlas_points_verifications(%s)"
+    FUNC = "SELECT lat, lon, n_total FROM atlas_hexbin(%s)"
     LIFECYCLE = "SELECT le.event_id, le.latitude AS lat FROM TokenLifecycleEvent le"
+    # The verification log's own shape, which the check anchors on to know it is seeing queries.
+    LOG = ("SELECT ve.event_id, CASE WHEN ve.disclosure_level = 'ZERO_KNOWLEDGE' THEN NULL "
+           "ELSE ve.requestor_location END AS requestor_location FROM VerificationEvent ve")
     LEAK = "SELECT ve.event_id, ve.latitude AS lat FROM VerificationEvent ve"
 
     def write(queries):
@@ -108,16 +111,16 @@ def test_c6_app_read_paths_check_discriminates(tmp_path):
     # The positive control, written in the direct form so `check_detection_controls` can
     # attribute it: routed through a helper, the meta-check cannot tell which check this
     # asserts OK for, and it correctly reported the FAIL below as uncontrolled.
-    write([INLINE, FUNC, LIFECYCLE])
+    write([LOG, INLINE, FUNC, LIFECYCLE])
     assert checks.check_c6_app_read_paths_redact(tmp_path)[0].level == "OK", \
         "must PASS: inline redaction, an atlas function, and a table C6 does not govern"
 
     # The defect: a verification location with neither a clause nor a function.
-    assert level([INLINE, FUNC, LIFECYCLE, LEAK], "ZERO_KNOWLEDGE") == "FAIL", \
+    assert level([LOG, INLINE, FUNC, LIFECYCLE, LEAK], "ZERO_KNOWLEDGE") == "FAIL", \
         "must FAIL on a verification-location query that redacts nothing"
 
-    # Vacuity: too few queries means the parser drifted, not that the tree is clean.
-    assert level([INLINE], "measuring nothing") == "FAIL", \
+    # Vacuity: without the verification log's query the parser drifted, whatever else it saw.
+    assert level([INLINE, FUNC, LIFECYCLE], "measuring nothing") == "FAIL", \
         "must FAIL rather than pass over a surface it can no longer see"
 
     app.write_text("")
@@ -5700,16 +5703,13 @@ def test_bulk_enrollment_check_discriminates(tmp_path):
 def test_atlas_console_check_discriminates(tmp_path):
     ATLAS = ('<button data-atlas-view-tab="overview" aria-selected="true" class="atlas-tab atlas-tab-active">Overview</button>\n'
              '<button data-atlas-view-tab="breakdown" aria-selected="false">Breakdown</button>\n'
-             '<button data-atlas-view-tab="records" aria-selected="false">Records</button>\n'
              '<button data-atlas-view-tab="trends" aria-selected="false">Trends</button>\n'
              '<div data-trends-heatmap></div><div data-trends-stacked></div>'
              '<button data-trends-dim="context">Context</button>\n'
              '<button data-atlas-view-tab="map" aria-selected="false">Map</button>\n'
              '<input data-bd-search><div class="bd-scroll"><div data-bd-ranked></div></div>\n'
-             '<table data-rec-grid><tbody data-rec-body></tbody></table><button data-rec-more>Load more</button>\n'
              '<button data-atlas-mapmode="regions" aria-pressed="true">Regions</button>\n'
              '<button data-atlas-mapmode="density">Density</button>\n'
-             '<button data-atlas-mapmode="points">Points</button>\n'
              '<button data-atlas-projection>Globe</button>\n'
              '<div data-atlas-globalbar><div data-gf-facet="context"></div>'
              '<input data-gf-agency-search></div>\n'
@@ -5717,12 +5717,11 @@ def test_atlas_console_check_discriminates(tmp_path):
     def sqlfn(name, ret, extra_args=""):
         return (f"CREATE OR REPLACE FUNCTION {name}(\n    p_x INTEGER{extra_args}\n) RETURNS TABLE (\n{ret}\n)\n"
                 f"LANGUAGE sql\nSTABLE\nAS $$ SELECT 1 $$;\n")
-    # atlas_records is keyset-paginated (a cursor pair, not an OFFSET) and
-    # redacts zero-knowledge rows — spelled out rather than via sqlfn().
-    RECORDS = ("CREATE OR REPLACE FUNCTION atlas_records(\n"
-               "    p_since TIMESTAMP, p_cursor_ts TIMESTAMP, p_cursor_id INTEGER, p_limit INTEGER\n"
-               ") RETURNS TABLE (\n    event_id INTEGER, subject TEXT, location TEXT\n)\n"
-               "LANGUAGE sql\nSTABLE\nAS $$ SELECT 1, '(zero-knowledge)', NULL $$;\n")
+    # An aggregate over events, the shape every Atlas function has (lab/strategy/009, A0).
+    CLUSTERS = ("CREATE OR REPLACE FUNCTION atlas_clusters_verifications(\n"
+                "    p_x DOUBLE PRECISION\n) RETURNS TABLE (\n"
+                "    lat DOUBLE PRECISION, lon DOUBLE PRECISION, n_total BIGINT\n)\n"
+                "LANGUAGE sql\nSTABLE\nAS $$ SELECT 1 FROM VerificationEvent ve $$;\n")
     # Map v2 (v9.253): the hexbin excludes ZK; the jurisdiction rollup counts
     # ZK (n_zk) but builds its centroid from located non-ZK events only.
     HEXBIN = ("CREATE OR REPLACE FUNCTION atlas_hexbin(\n    p_x DOUBLE PRECISION\n) RETURNS TABLE (\n"
@@ -5744,7 +5743,7 @@ def test_atlas_console_check_discriminates(tmp_path):
            + sqlfn("atlas_breakdown", "    label TEXT, n_total BIGINT, n_failure BIGINT", ",\n    p_search TEXT DEFAULT NULL")
            + sqlfn("atlas_crosstab", "    row_label TEXT, col_label TEXT, n_total BIGINT")
            + sqlfn("atlas_agency_facet", "    agency_id INTEGER, name TEXT, n_total BIGINT")
-           + RECORDS + HEXBIN + GEOJUR + HEATMAP + STACKED)
+           + CLUSTERS + HEXBIN + GEOJUR + HEATMAP + STACKED)
     APP = ("_ATLAS_MAX_CLUSTERS=5000\n_ATLAS_MAX_POINTS=2000\n_ATLAS_MAX_EVENTS=500\n_ATLAS_MAX_CATEGORIES=50\n"
            "_ATLAS_BREAKDOWN_DIMENSIONS={'verification': ('agency',)}\n"
            "_ATLAS_CROSSTAB_ROWS={'verification': ('agency',)}\n"
@@ -5753,7 +5752,6 @@ def test_atlas_console_check_discriminates(tmp_path):
            "@app.route('/api/atlas/breakdown')\n@replica_reads\ndef api_atlas_breakdown():\n    pass\n"
            "@app.route('/api/atlas/crosstab')\n@replica_reads\ndef api_atlas_crosstab():\n    pass\n"
            "@app.route('/api/atlas/facet/agencies')\n@replica_reads\ndef api_atlas_facet_agencies():\n    pass\n"
-           "@app.route('/api/atlas/records')\n@replica_reads\ndef api_atlas_records():\n    pass\n"
            "@app.route('/api/atlas/hexbin')\n@replica_reads\ndef api_atlas_hexbin():\n    pass\n"
            "@app.route('/api/atlas/geo/jurisdictions')\n@replica_reads\ndef api_atlas_geo_jurisdictions():\n    pass\n"
            "_ATLAS_STACK_DIMENSIONS={'verification': ('context',)}\n"
@@ -5818,31 +5816,36 @@ def test_atlas_console_check_discriminates(tmp_path):
     # the agency facet endpoint is absent
     write({"polaris_web/app.py": APP.replace("@app.route('/api/atlas/facet/agencies')", "@app.route('/api/atlas/facet/other')")})
     assert checks.check_atlas_console(tmp_path)[0].level == "FAIL", "must FAIL when the agency facet endpoint is absent"
-    # v9.252: the Records tab is absent
-    write({"polaris_web/templates/atlas.html": ATLAS.replace('data-atlas-view-tab="records"', 'data-atlas-view-tab="other"')})
-    assert checks.check_atlas_console(tmp_path)[0].level == "FAIL", "must FAIL when the Records tab is absent"
-    # the Records grid or its keyset 'load more' control is absent
-    write({"polaris_web/templates/atlas.html": ATLAS.replace("data-rec-grid", "data-rec-other")})
-    assert checks.check_atlas_console(tmp_path)[0].level == "FAIL", "must FAIL when the Records grid is absent"
-    write({"polaris_web/templates/atlas.html": ATLAS.replace("data-rec-more", "data-rec-other")})
-    assert checks.check_atlas_console(tmp_path)[0].level == "FAIL", "must FAIL when the keyset 'load more' control is absent"
-    # atlas_records is absent
-    write({"polaris_sql/11_atlas.sql": SQL.replace("CREATE OR REPLACE FUNCTION atlas_records(", "CREATE OR REPLACE FUNCTION atlas_other(")})
-    assert checks.check_atlas_console(tmp_path)[0].level == "FAIL", "must FAIL when atlas_records is absent"
-    # atlas_records is OFFSET-paginated, not keyset (a scale regression)
-    write({"polaris_sql/11_atlas.sql": SQL.replace("p_cursor_ts TIMESTAMP, p_cursor_id INTEGER, ", "")})
-    assert checks.check_atlas_console(tmp_path)[0].level == "FAIL", "must FAIL when atlas_records is not keyset-paginated"
-    # atlas_records does not redact zero-knowledge rows (C6)
-    write({"polaris_sql/11_atlas.sql": SQL.replace("'(zero-knowledge)'", "i.legal_name")})
-    assert checks.check_atlas_console(tmp_path)[0].level == "FAIL", "must FAIL when atlas_records does not redact ZK rows"
-    # the records endpoint is absent
-    write({"polaris_web/app.py": APP.replace("@app.route('/api/atlas/records')", "@app.route('/api/atlas/other')")})
-    assert checks.check_atlas_console(tmp_path)[0].level == "FAIL", "must FAIL when the records endpoint is absent"
-    # the records endpoint is not replica-routed
-    write({"polaris_web/app.py": APP.replace("@app.route('/api/atlas/records')\n@replica_reads", "@app.route('/api/atlas/records')")})
-    assert checks.check_atlas_console(tmp_path)[0].level == "FAIL", "must FAIL when api_atlas_records is not @replica_reads"
-    # v9.253: a Map layer mode is absent (Regions/Density/Points)
-    for mode in ('regions', 'density', 'points'):
+    # lab/strategy/009, A0: the Atlas returns or selects no person, credential or single event.
+    # An atlas function that returns the holder's name, a credential number or an event row:
+    for col in ("holder_name TEXT", "token_id INTEGER", "event_id BIGINT", "subject TEXT"):
+        write({"polaris_sql/11_atlas.sql": SQL.replace("lat DOUBLE PRECISION, lon DOUBLE PRECISION, n_total BIGINT\n)",
+                                                       "lat DOUBLE PRECISION, lon DOUBLE PRECISION, " + col + "\n)", 1)})
+        out = checks.check_atlas_console(tmp_path)
+        assert out[0].level == "FAIL" and "person" in out[0].message, f"must FAIL when an atlas function returns {col}"
+    # ...or reads Individual, where the names are
+    write({"polaris_sql/11_atlas.sql": SQL.replace("SELECT 1 FROM VerificationEvent ve",
+                                                   "SELECT 1 FROM VerificationEvent ve JOIN Individual i ON TRUE")})
+    assert checks.check_atlas_console(tmp_path)[0].level == "FAIL", "must FAIL when an atlas function reads Individual"
+    # A migration that brings the function back is a database built from the tree too.
+    write()
+    mig = tmp_path / "polaris_sql" / "migrations" / "2026-10-03-001-x.up.sql"
+    mig.parent.mkdir(parents=True, exist_ok=True)
+    mig.write_text("CREATE OR REPLACE FUNCTION atlas_records(p INT) RETURNS TABLE (event_id BIGINT, subject TEXT)\n"
+                   "LANGUAGE sql STABLE AS $$ SELECT 1, 'x' $$;\n")
+    assert checks.check_atlas_console(tmp_path)[0].level == "FAIL", "must FAIL on an atlas function in a migration"
+    mig.unlink()
+    # A route that reads a person's identifier, or selects a name, in any module of the package:
+    for body in ("    iid = int(request.args.get('individual_id'))\n",
+                 "    rows = query('SELECT legal_name FROM x')\n"):
+        write({"polaris_web/atlas_routes.py": "@app.route('/api/atlas/subject')\ndef api_atlas_subject():\n" + body})
+        assert checks.check_atlas_console(tmp_path)[0].level == "FAIL", f"must FAIL on an Atlas route that does {body.strip()}"
+    # ...but prose about the rule in a docstring is not a person surface.
+    write({"polaris_web/atlas_routes.py": "@app.route('/api/atlas/limits')\ndef api_atlas_limits():\n"
+                                          "    \"\"\"Returns no holder_name and no token_id.\"\"\"\n    return 1\n"})
+    assert checks.check_atlas_console(tmp_path)[0].level == "OK", "a docstring naming the rule is not a surface"
+    # v9.253: a Map layer mode is absent (Regions/Density)
+    for mode in ('regions', 'density'):
         write({"polaris_web/templates/atlas.html": ATLAS.replace('data-atlas-mapmode="' + mode + '"', 'data-atlas-mapmode="other"')})
         assert checks.check_atlas_console(tmp_path)[0].level == "FAIL", f"must FAIL when the {mode} map mode is absent"
     # the globe is not an opt-in projection toggle
@@ -11994,6 +11997,42 @@ def test_audited_reads_are_logged_check_discriminates(tmp_path):
         "\ndef purge():\n    execute('CALL uc_archive_purge()')\n")})
     assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "OK", \
         "a procedure that returns no rows to its caller is not an audited read"
+
+    # ONE FILE OVER (2026-10-02, lab/strategy/009). The Atlas's functions were in 11_atlas.sql,
+    # which this check did not read, and four of them returned named events to routes that
+    # logged nothing. Every SQL source is read now, the migrations included.
+    ATLAS = ("CREATE OR REPLACE FUNCTION atlas_records(p_since TIMESTAMP)\n"
+             "RETURNS TABLE (event_id BIGINT, subject TEXT)\nLANGUAGE sql\nSTABLE\nAS $$\n"
+             "    SELECT ve.event_id, i.legal_name FROM VerificationEvent ve JOIN Individual i ON TRUE;\n$$;\n")
+    FEED = "\ndef api_atlas_records():\n    return query('SELECT * FROM atlas_records(%s)', (since,))\n"
+    write({'polaris_sql/11_atlas.sql': ATLAS, 'polaris_web/app.py': APP + FEED})
+    assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "FAIL", \
+        "a named event stream in 11_atlas.sql, read by a route that logs nothing, must FAIL"
+    (tmp_path / 'polaris_sql' / '11_atlas.sql').unlink()
+    write({'polaris_sql/migrations/2026-10-03-001-feed.up.sql': ATLAS, 'polaris_web/app.py': APP + FEED})
+    assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "FAIL", \
+        "the same function brought back by a migration must FAIL too"
+    (tmp_path / 'polaris_sql' / 'migrations' / '2026-10-03-001-feed.up.sql').unlink()
+
+    # A function that selects one person's rows is a history whatever it returns.
+    ONE = ("CREATE OR REPLACE FUNCTION person_outcomes(p_individual_id INTEGER)\n"
+           "RETURNS TABLE (outcome TEXT, n BIGINT)\nLANGUAGE sql\nSTABLE\nAS $$\n"
+           "    SELECT ve.outcome, count(*) FROM VerificationEvent ve GROUP BY 1;\n$$;\n")
+    write({'polaris_sql/14_extra.sql': ONE, 'polaris_web/app.py': APP + (
+        "\ndef outcomes():\n    return query('SELECT * FROM person_outcomes(%s)', (iid,))\n")})
+    assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "FAIL", \
+        "a function taking a person's identifier, read by a route that logs nothing, must FAIL"
+    (tmp_path / 'polaris_sql' / '14_extra.sql').unlink()
+
+    # COUNTS ARE NOT A HISTORY. A function returning counts per bucket or category, the shape
+    # every Atlas function has now, hands the caller no one's rows and needs no row of its own.
+    COUNTS = ("CREATE OR REPLACE FUNCTION atlas_breakdown(p_since TIMESTAMP)\n"
+              "RETURNS TABLE (label TEXT, n_total BIGINT)\nLANGUAGE sql\nSTABLE\nAS $$\n"
+              "    SELECT vc.context_type, count(*) FROM VerificationEvent ve GROUP BY 1;\n$$;\n")
+    write({'polaris_sql/11_atlas.sql': COUNTS, 'polaris_web/app.py': APP + (
+        "\ndef api_atlas_breakdown():\n    return query('SELECT * FROM atlas_breakdown(%s)', (since,))\n")})
+    assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "OK", \
+        "a function that only counts is not an audited read"
 
 
 def test_transparency_program_check_discriminates(tmp_path):
@@ -19569,7 +19608,7 @@ def test_c8_bounds_the_rows_at_the_query_not_only_the_parameters(tmp_path):
         == "FAIL", "must FAIL when a declared fixed-shape function is now capped (a stale entry)"
 
 
-def test_c8_refuses_a_numeric_parameter_it_was_never_told_about(tmp_path):
+def test_c8_refuses_a_numeric_parameter_it_was_never_told_about(tmp_path, monkeypatch):
     """The parameter list is a heuristic; one that silently skips an unknown name reports
     coverage it does not have.
 
@@ -19611,10 +19650,19 @@ def test_c8_refuses_a_numeric_parameter_it_was_never_told_about(tmp_path):
     assert out.level == "FAIL" and "never clamp" in out.message, \
         "the original unclamped-count failure must still fire"
 
-    # An identifier is numeric and does not size a response; the declared exception holds.
-    write(CLAMPED + "    who = int(request.args.get('individual_id', ''))\n")
+    # A declared exception holds: a parameter in _ATLAS_NOT_COUNTS is not demanded a cap.
+    monkeypatch.setitem(checks._ATLAS_NOT_COUNTS, "zoom", "a map zoom level selects a view, not a count")
+    write(CLAMPED + "    zoom = int(request.args.get('zoom', '3'))\n")
     assert fn(tmp_path)[0].level == "OK", \
         "a parameter declared in _ATLAS_NOT_COUNTS must not be demanded a cap"
+    monkeypatch.delitem(checks._ATLAS_NOT_COUNTS, "zoom")
+
+    # `individual_id` was that exception until lab/strategy/009 removed the route that read it.
+    # Undeclared now, it fails here, and check_atlas_console refuses it as a person outright.
+    write(CLAMPED + "    who = int(request.args.get('individual_id', ''))\n")
+    out = fn(tmp_path)[0]
+    assert out.level == "FAIL" and "individual_id" in out.message, \
+        "a person's identifier on an Atlas route is no longer a declared exception"
 
 
 def _write_outward(tmp_path, extra_readme=""):

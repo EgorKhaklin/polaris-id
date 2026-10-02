@@ -30,8 +30,8 @@
 -- nothing."
 --
 -- v8.88 SCOPE: schema foundation only. The atlas SQL functions
--- (atlas_clusters_*, atlas_points_*, atlas_recent_events,
--- atlas_timeline, atlas_stats) are NOT rewritten in v8.88 to use the
+-- (atlas_clusters_*, atlas_timeline, atlas_stats; atlas_points_* and
+-- atlas_recent_events until lab/strategy/009 withdrew them) are NOT rewritten in v8.88 to use the
 -- GiST index because the rewrite-and-verify cycle requires (a) a
 -- PostGIS-enabled environment and (b) a 10M-event benchmark set. Both
 -- are deferred to a v8.x follow-up where the ≥3× acceptance criterion
