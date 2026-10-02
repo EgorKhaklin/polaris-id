@@ -560,7 +560,7 @@ def api_atlas_series():
     hours or days wide. Counts every event, zero-knowledge ones included, located nowhere (C6)."""
     try:
         buckets = int(request.args.get('buckets', '60'))
-        if not 0 < buckets <= _ATLAS_MAX_BUCKETS:
+        if not (0 < buckets <= _ATLAS_MAX_BUCKETS):
             raise ValueError(f"buckets must be in (0, {_ATLAS_MAX_BUCKETS}]")
         kind = _kind(request.args)
         f = _parse_atlas_filters(request.args)
@@ -651,7 +651,7 @@ def api_atlas_stacked():
     `points: [{ts, values: {label: n}}]` (C8). Each value is withheld below the minimum."""
     try:
         buckets = int(request.args.get('buckets', '48'))
-        if not 0 < buckets <= _ATLAS_MAX_BUCKETS:
+        if not (0 < buckets <= _ATLAS_MAX_BUCKETS):
             raise ValueError(f"buckets must be in (0, {_ATLAS_MAX_BUCKETS}]")
         kind = _kind(request.args)
         dimension = request.args.get('dimension', 'context')
