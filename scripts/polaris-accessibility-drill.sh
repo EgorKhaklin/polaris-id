@@ -57,8 +57,14 @@ if [[ -z "${POLARIS_UI_URL:-}" ]]; then
     APP_PY="${POLARIS_TEST_PYTHON:-$(command -v python3.12 || command -v python3)}"
     "$APP_PY" -c 'import flask, psycopg2' 2>/dev/null \
         || fail "the app python ($APP_PY) lacks flask/psycopg2; set POLARIS_TEST_PYTHON"
+    # The port must be free, and the app the drill boots must be the one it audits: a server
+    # already on the port answers in its place, as one did for scripts/polaris-ui-drill.sh on
+    # 2026-10-02. exec, so APP_PID is the app's own PID and the cleanup stops it.
+    if curl -s -o /dev/null --max-time 2 "$URL/"; then
+        fail "something already answers on :$PORT; stop it or set POLARIS_A11Y_PORT to a free port"
+    fi
     ( cd "$ROOT/polaris_web" && \
-      POLARIS_DEMO_MODE=1 \
+      exec env POLARIS_DEMO_MODE=1 \
       POLARIS_SECRET_KEY="$("$APP_PY" -c 'import secrets;print(secrets.token_hex(32))')" \
       POLARIS_DB_HOST="${POLARIS_DB_HOST:-localhost}" \
       POLARIS_DB_NAME="${POLARIS_DB_NAME:-polaris_test}" \
@@ -72,6 +78,7 @@ if [[ -z "${POLARIS_UI_URL:-}" ]]; then
         sleep 0.5
     done
     curl -fsS "$URL/login" >/dev/null 2>&1 || { sed -n '1,40p' "$WORK/app.log" >&2; fail "the app did not come up"; }
+    kill -0 "$APP_PID" 2>/dev/null || fail "the app the drill booted has exited; something else answers on :$PORT"
 fi
 
 POLARIS_UI_URL="$URL" \

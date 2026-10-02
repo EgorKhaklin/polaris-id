@@ -97,9 +97,10 @@ def iter_verifications(pool: list[TokenRef], agency_ids: list[int], count: int,
                        window_hours: float, seed: int, now: datetime.datetime,
                        profile: EventProfile = DEFAULT_PROFILE) -> Iterator[Verification]:
     """Yield `count` synthetic verifications spread over the window ending at
-    `now`. Pure: no database, no global RNG. A zero-knowledge event is anonymous
-    and unplaceable; a disclosing event names a token from the pool and is placed
-    near that holder's state (C6 by construction)."""
+    `now`. Pure: no database, no global RNG. A zero-knowledge event is anonymous;
+    a disclosing event names a token from the pool. Neither carries a coordinate: nothing
+    reads one since the Atlas moved to the activity rollups (lab/strategy/009, step 4c), and
+    no production path writes one, so the simulator does not either."""
     if not agency_ids:
         raise ValueError("no agencies to act as verifiers")
     rng = random.Random(_derive(seed, "verifications", count, window_hours))
@@ -126,12 +127,13 @@ def iter_verifications(pool: list[TokenRef], agency_ids: list[int], count: int,
                     and (context not in ref.contexts
                          or (agency != ref.issuer and (agency, context) not in ref.trusted))):
                 outcome = "UNAUTHORIZED"
-            lat0, lon0 = reference.STATE_CENTROIDS.get(ref.jurisdiction, (39.0, -98.0))
-            lat = round(lat0 + rng.uniform(-1.4, 1.4), 5)
-            lon = round(lon0 + rng.uniform(-1.4, 1.4), 5)
+            # The two draws that placed the event are made and discarded, so every stream
+            # stays the one a seed has always given; only the coordinates are gone.
+            rng.uniform(-1.4, 1.4)
+            rng.uniform(-1.4, 1.4)
             yield Verification(ref.token_id, agency, context, ts, outcome, disclosure,
                                None, reference.STATE_NAMES.get(ref.jurisdiction, "United States"),
-                               lat, lon, _PURPOSES[i % len(_PURPOSES)])
+                               None, None, _PURPOSES[i % len(_PURPOSES)])
 
 
 def _derive(*parts: object) -> int:
@@ -302,6 +304,18 @@ class StreamStats:
         return self.verifications / self.seconds if self.seconds > 0 else 0.0
 
 
+def db_now(conn) -> datetime.datetime:
+    """The database's wall clock, the one event_timestamp is written and windowed on (UTC since
+    rc.28). Until 2026-10-02 a stream took the host's local clock, datetime.now(): on a host not
+    on UTC it stamped simulated events hours away from the database's now, and the Atlas's hour
+    windows, measured on the database's clock as rc.29 requires, missed a live simulation
+    entirely."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT LOCALTIMESTAMP AS t")
+        row = cur.fetchone()
+    return row["t"] if isinstance(row, dict) else row[0]
+
+
 def run_stream(conn, *, verifications: int, lifecycle: int = 0, window_hours: float = 24.0,
                seed: int = 42, sample: int = 5000, batch_size: int = 10000,
                commit: bool = True, now: datetime.datetime | None = None) -> StreamStats:
@@ -309,7 +323,7 @@ def run_stream(conn, *, verifications: int, lifecycle: int = 0, window_hours: fl
     from . import assert_expendable
     assert_expendable()
     if now is None:
-        now = datetime.datetime.now()
+        now = db_now(conn)
     pool, agencies, _contexts = load_pools(conn, sample)
     if not pool:
         raise RuntimeError("no active tokens: build the substrate first (polaris_sim build)")

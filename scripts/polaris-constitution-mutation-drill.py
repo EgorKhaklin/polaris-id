@@ -131,9 +131,13 @@ MUTATIONS = [
     ("C5", _in_app_package("script-src 'self'"),
      lambda t: t.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'", 1),
      "csp", "the response policy starts admitting inline script"),
+    # Until lab/strategy/009 step 4 an Atlas layer excluded its zero-knowledge rows, and the
+    # mutation dropped one exclusion. The Atlas now returns no location at all, so the mutation
+    # is the regions handing one back.
     ("C6", "polaris_sql/11_atlas.sql",
-     lambda t: t.replace("disclosure_level <> 'ZERO_KNOWLEDGE'", "TRUE", 1),
-     "c6_atlas_zk", "one Atlas function stops excluding zero-knowledge rows"),
+     lambda t: t.replace("    jurisdiction TEXT,\n    n_total      BIGINT,",
+                         "    jurisdiction TEXT,\n    latitude     DOUBLE PRECISION,\n    n_total      BIGINT,", 1),
+     "c6_atlas_zk", "one Atlas function returns a location"),
     ("C7", "polaris_web/pqc_signing.py",
      lambda t: t.replace('ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")',
                          'ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87", "ECDSA-P256")', 1),

@@ -67,6 +67,12 @@ DROP TABLE IF EXISTS PopulationCount        CASCADE;
 DROP TABLE IF EXISTS EnrollmentCountDelta   CASCADE;
 DROP TABLE IF EXISTS EnrollmentCount        CASCADE;
 DROP TABLE IF EXISTS EnrollmentCurrent      CASCADE;
+DROP TABLE IF EXISTS VerificationRollupDelta CASCADE;
+DROP TABLE IF EXISTS VerificationRollup      CASCADE;
+DROP TABLE IF EXISTS VerificationRollupDaily CASCADE;
+DROP TABLE IF EXISTS LifecycleRollupDelta    CASCADE;
+DROP TABLE IF EXISTS LifecycleRollup         CASCADE;
+DROP TABLE IF EXISTS LifecycleRollupDaily    CASCADE;
 DROP TABLE IF EXISTS BulkEnrollmentStaging   CASCADE;
 DROP TABLE IF EXISTS BulkEnrollmentBatch     CASCADE;
 -- v9.189: AuditAccessLog (migration-added 2026-05-15-003, plain CREATE TABLE)
@@ -2243,6 +2249,109 @@ COMMENT ON TABLE EnrollmentCountDelta IS
   'EnrollmentCurrent. Append-only for writers.';
 
 -- ============================================================================
+-- Activity rollups (lab/strategy/009, step 4)
+--
+-- What the Atlas counts: verifications by hour, requesting authority, context, outcome,
+-- disclosure level and the verified credential's algorithm, and lifecycle events by hour, acting
+-- authority and type. A count over the event tables costs in proportion to the events; these cost
+-- in proportion to the hours a window spans and the authorities and contexts active in them,
+-- whatever the population. They are kept the way PopulationCount is: statement triggers on the two
+-- event tables (06_triggers.sql) APPEND each statement's counts to a delta table,
+-- uc_fold_activity_rollups() moves them into the hourly and the daily totals, and a reader sums
+-- totals and deltas, so a count is exact whether or not the last changes have been folded.
+--
+-- No rollup holds a person, a credential or a place. No column names one, and none holds a
+-- coordinate: a cell counting one event, with the sum of its latitudes, would give back where that
+-- event happened. The finest time a rollup records is the hour.
+--
+-- Rollups count what happened, not what is kept. uc_archive_purge folds them and then deletes the
+-- hourly rows of the hours wholly before its cutoff; the daily rows stay, as the system's
+-- statistics, and say nothing finer than a day. algorithm_id is the verified credential's
+-- algorithm when the verification was recorded, 0 when it named none; actor_agency_id 0 is a
+-- transition no authority made (the system's or the holder's device), which the event table
+-- records as NULL and a primary key cannot hold.
+--
+-- The application role reads them and writes none (09_grants.sql), and each carries the row-level
+-- security of the event table it counts.
+-- ============================================================================
+CREATE TABLE VerificationRollup (
+    bucket               TIMESTAMP   NOT NULL,
+    requesting_agency_id INTEGER     NOT NULL REFERENCES Agency(agency_id),
+    context_id           INTEGER     NOT NULL REFERENCES VerificationContext(context_id),
+    outcome              VARCHAR(20) NOT NULL,
+    disclosure_level     VARCHAR(20) NOT NULL,
+    algorithm_id         INTEGER     NOT NULL CHECK (algorithm_id >= 0),
+    n                    BIGINT      NOT NULL CHECK (n > 0),
+    PRIMARY KEY (bucket, requesting_agency_id, context_id, outcome, disclosure_level, algorithm_id)
+);
+
+CREATE TABLE VerificationRollupDaily (
+    bucket               TIMESTAMP   NOT NULL,
+    requesting_agency_id INTEGER     NOT NULL REFERENCES Agency(agency_id),
+    context_id           INTEGER     NOT NULL REFERENCES VerificationContext(context_id),
+    outcome              VARCHAR(20) NOT NULL,
+    disclosure_level     VARCHAR(20) NOT NULL,
+    algorithm_id         INTEGER     NOT NULL CHECK (algorithm_id >= 0),
+    n                    BIGINT      NOT NULL CHECK (n > 0),
+    PRIMARY KEY (bucket, requesting_agency_id, context_id, outcome, disclosure_level, algorithm_id)
+);
+
+CREATE TABLE VerificationRollupDelta (
+    delta_id             BIGSERIAL   PRIMARY KEY,
+    bucket               TIMESTAMP   NOT NULL,
+    requesting_agency_id INTEGER     NOT NULL,
+    context_id           INTEGER     NOT NULL,
+    outcome              VARCHAR(20) NOT NULL,
+    disclosure_level     VARCHAR(20) NOT NULL,
+    algorithm_id         INTEGER     NOT NULL CHECK (algorithm_id >= 0),
+    n                    BIGINT      NOT NULL CHECK (n > 0)
+);
+
+CREATE TABLE LifecycleRollup (
+    bucket          TIMESTAMP   NOT NULL,
+    actor_agency_id INTEGER     NOT NULL CHECK (actor_agency_id >= 0),
+    event_type      VARCHAR(20) NOT NULL,
+    n               BIGINT      NOT NULL CHECK (n > 0),
+    PRIMARY KEY (bucket, actor_agency_id, event_type)
+);
+
+CREATE TABLE LifecycleRollupDaily (
+    bucket          TIMESTAMP   NOT NULL,
+    actor_agency_id INTEGER     NOT NULL CHECK (actor_agency_id >= 0),
+    event_type      VARCHAR(20) NOT NULL,
+    n               BIGINT      NOT NULL CHECK (n > 0),
+    PRIMARY KEY (bucket, actor_agency_id, event_type)
+);
+
+CREATE TABLE LifecycleRollupDelta (
+    delta_id        BIGSERIAL   PRIMARY KEY,
+    bucket          TIMESTAMP   NOT NULL,
+    actor_agency_id INTEGER     NOT NULL,
+    event_type      VARCHAR(20) NOT NULL,
+    n               BIGINT      NOT NULL CHECK (n > 0)
+);
+
+COMMENT ON TABLE VerificationRollup IS
+  'Verifications by hour, requesting authority, context, outcome, disclosure level and the '
+  'verified credential''s algorithm (lab/strategy/009, step 4). No person, credential or place. '
+  'Folded from VerificationRollupDelta; a reader sums both. Hours wholly before a purge''s cutoff '
+  'go with the purge.';
+COMMENT ON TABLE VerificationRollupDaily IS
+  'VerificationRollup by day, for windows longer than a week. Kept after a purge, as statistics.';
+COMMENT ON TABLE VerificationRollupDelta IS
+  'Verification counts not yet folded in, one row per statement and cell, appended by the '
+  'statement trigger on VerificationEvent. Append-only for writers.';
+COMMENT ON TABLE LifecycleRollup IS
+  'Lifecycle events by hour, acting authority (0: none acted) and type (lab/strategy/009, '
+  'step 4). Folded from LifecycleRollupDelta; a reader sums both. Hours wholly before a purge''s '
+  'cutoff go with the purge.';
+COMMENT ON TABLE LifecycleRollupDaily IS
+  'LifecycleRollup by day, for windows longer than a week. Kept after a purge, as statistics.';
+COMMENT ON TABLE LifecycleRollupDelta IS
+  'Lifecycle counts not yet folded in, one row per statement and cell, appended by the '
+  'statement trigger on TokenLifecycleEvent. Append-only for writers.';
+
+-- ============================================================================
 -- Event-table partition manager + bootstrap (roadmap P2.1, v9.245)
 -- Defined here, at the end of the schema, so the initial monthly partitions
 -- exist before ANY row is inserted (04_data's seed and the enrollment trigger
@@ -2456,4 +2565,59 @@ CREATE POLICY population_count_delta_authority_isolation ON PopulationCountDelta
         agency_id = coalesce(
             NULLIF(current_setting('polaris.operator_agency_id', true), '')::INTEGER,
             agency_id)
+    );
+
+-- The activity rollups (lab/strategy/009, step 4) carry the scope of the event table each one
+-- counts: an operator bound to one authority reads its own verifications, and the lifecycle
+-- transitions it made or that no authority made (actor 0, the event table's NULL).
+ALTER TABLE VerificationRollup ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS verificationrollup_authority_isolation ON VerificationRollup;
+CREATE POLICY verificationrollup_authority_isolation ON VerificationRollup
+    USING (
+        requesting_agency_id = coalesce(
+            NULLIF(current_setting('polaris.operator_agency_id', true), '')::INTEGER,
+            requesting_agency_id)
+    );
+ALTER TABLE VerificationRollupDaily ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS verificationrollupdaily_authority_isolation ON VerificationRollupDaily;
+CREATE POLICY verificationrollupdaily_authority_isolation ON VerificationRollupDaily
+    USING (
+        requesting_agency_id = coalesce(
+            NULLIF(current_setting('polaris.operator_agency_id', true), '')::INTEGER,
+            requesting_agency_id)
+    );
+ALTER TABLE VerificationRollupDelta ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS verificationrollupdelta_authority_isolation ON VerificationRollupDelta;
+CREATE POLICY verificationrollupdelta_authority_isolation ON VerificationRollupDelta
+    USING (
+        requesting_agency_id = coalesce(
+            NULLIF(current_setting('polaris.operator_agency_id', true), '')::INTEGER,
+            requesting_agency_id)
+    );
+ALTER TABLE LifecycleRollup ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lifecyclerollup_authority_isolation ON LifecycleRollup;
+CREATE POLICY lifecyclerollup_authority_isolation ON LifecycleRollup
+    USING (
+        actor_agency_id = 0
+        OR actor_agency_id = coalesce(
+            NULLIF(current_setting('polaris.operator_agency_id', true), '')::INTEGER,
+            actor_agency_id)
+    );
+ALTER TABLE LifecycleRollupDaily ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lifecyclerollupdaily_authority_isolation ON LifecycleRollupDaily;
+CREATE POLICY lifecyclerollupdaily_authority_isolation ON LifecycleRollupDaily
+    USING (
+        actor_agency_id = 0
+        OR actor_agency_id = coalesce(
+            NULLIF(current_setting('polaris.operator_agency_id', true), '')::INTEGER,
+            actor_agency_id)
+    );
+ALTER TABLE LifecycleRollupDelta ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lifecyclerollupdelta_authority_isolation ON LifecycleRollupDelta;
+CREATE POLICY lifecyclerollupdelta_authority_isolation ON LifecycleRollupDelta
+    USING (
+        actor_agency_id = 0
+        OR actor_agency_id = coalesce(
+            NULLIF(current_setting('polaris.operator_agency_id', true), '')::INTEGER,
+            actor_agency_id)
     );

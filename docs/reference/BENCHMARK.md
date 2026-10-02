@@ -114,8 +114,9 @@ because a sub-5ms timing is noise rather than data and an instrument that cried 
 keyset page would be turned off.
 
 `atlas_records` was withdrawn on 2026-10-02 with the records grid, which named each event's
-holder ([lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md)); the benchmark now
-times `atlas_clusters_verifications` in its place. The figures above are kept as measured.
+holder ([lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md)), and with step 4 of
+the same record the Atlas left the event tables: the benchmark now times the seven readers that
+sum the activity rollups. The figures above are kept as measured.
 
 The benchmark **exits non-zero** when an aggregate outruns the data it reads by more than 1.5x,
 because a finding printed green is how an instrument stops being one. `check_benchmark_measures_
@@ -159,6 +160,14 @@ labeled as such.
    aggregate is still O(events) — a materialized roll-up is the next lever if
    all-time reports become hot — but the operational windowed queries now stay
    flat as history grows.
+5. **The Atlas reads no event table (lab/strategy/009, step 4).** The roll-up that
+   finding 4 named as the next lever, made general: every Atlas reader sums hourly
+   and daily totals kept by statement triggers as events are recorded, so an
+   all-time question costs the days recorded, not the events. The benchmark proves
+   it by privilege (`atlas_reads`: the application role loses SELECT on both event
+   tables and every reader still answers) and fails the run if one reads an event
+   table again; it replaces the partition-pruning measurement, which has no event
+   table left to prune.
 
 ## Relation to P2.9
 

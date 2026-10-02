@@ -11,6 +11,17 @@
 [![OpenSSF Baseline](https://www.bestpractices.dev/projects/15004/baseline)](https://www.bestpractices.dev/projects/15004)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/EgorKhaklin/polaris-id/badge)](https://scorecard.dev/viewer/?uri=github.com/EgorKhaklin/polaris-id)
 
+[![OpenID Certified](https://img.shields.io/badge/OpenID-Certified-c9a352?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid-certified)
+[![OpenID4VP 1.0](https://img.shields.io/badge/OpenID4VP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid4vp-10)
+[![HAIP 1.0](https://img.shields.io/badge/HAIP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#haip-10)
+[![SD-JWT VC](https://img.shields.io/badge/SD--JWT_VC-supported-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#sd-jwt-vc)
+[![OpenID4VCI 1.0](https://img.shields.io/badge/OpenID4VCI-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid4vci-10)
+[![Token Status List](https://img.shields.io/badge/Token_Status_List-IETF_draft-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#token-status-list)
+
+[![ML-DSA-65](https://img.shields.io/badge/ML--DSA--65-FIPS_204-5b4b8a?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#ml-dsa-65)
+[![PyPI](https://img.shields.io/badge/PyPI-polaris--verify-3775a9?labelColor=0a1421&style=flat-square)](https://pypi.org/project/polaris-verify/)
+[![npm](https://img.shields.io/badge/npm-polaris--sdk--ts-cb3837?labelColor=0a1421&style=flat-square)](https://www.npmjs.com/package/polaris-sdk-ts)
+
 <a href="https://polaris-id.e-khaklin.workers.dev/"><img src="docs/assets/nav/project-site.svg" alt="Project site"></a>
 <a href="#what-it-is"><img src="docs/assets/nav/what-it-is.svg" alt="What it is"></a>
 <a href="#status"><img src="docs/assets/nav/status.svg" alt="Status"></a>
@@ -34,11 +45,11 @@ Polaris issues, holds, presents and verifies one credential per person, and answ
 
 Around the credential:
 
-- **The schema is the security boundary.** A 51-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client: **the guarantees live in the database, not in application code.**
+- **The schema is the security boundary.** A 57-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client: **the guarantees live in the database, not in application code.**
 - **Verifiers anyone can hold to a contract.** Python and TypeScript SDKs and a conformance suite of 281 published cases; version 1 of the signed-statement protocol is frozen and re-verified on every push.
 - **Explicit federation.** Trust between agencies is explicit and non-transitive.
 - **Zero-knowledge by default.** A zero-knowledge verification stores no token identifier; a Plonky2 SNARK, re-checked by an independent second witness, proves ledger membership and nothing else.
-- **Gated by invariants.** 340 machine-checked invariants (v1.0.0-rc.70) gate every change in CI.
+- **Gated by invariants.** 341 machine-checked invariants (v1.0.0-rc.70) gate every change in CI.
 
 **The problem it models.** Americans carry six to eight credentials (driver's license, passport, Social Security card and more) with no shared revocation path or audit trail. Polaris models one active credential record per person, verified through context-scoped events (banking, voting, healthcare) at three disclosure levels.
 
@@ -146,7 +157,7 @@ The vocation above them: **no person can be compelled to renounce, transfer, or 
 | **C9** | Concurrency is tested with real threads. | Engineering | Threaded suites against a live database |
 | **C10** | Identity is not money. | Constitutional | Structural absence, pinned by a check |
 
-Each is machine-checked by [`polaris_checks`](polaris_checks/): 340 plain `check_*` functions (v1.0.0-rc.70), each with a detection test proving it fails on a broken fixture. Why these ten: [MISSION.md](MISSION.md).
+Each is machine-checked by [`polaris_checks`](polaris_checks/): 341 plain `check_*` functions (v1.0.0-rc.70), each with a detection test proving it fails on a broken fixture. Why these ten: [MISSION.md](MISSION.md).
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
@@ -175,7 +186,7 @@ and writes nothing; the signer is ML-DSA-65, the algorithm a registry row ([over
 | [`polaris_web/`](polaris_web/) | Flask application: use-case flows, the Atlas, WebAuthn operator MFA, health and metrics. |
 | [`polaris_zk/`](polaris_zk/) | Plonky2 prover (Rust) and [`witness2/`](polaris_zk/witness2/), an independent Python reimplementation. |
 | [`polaris_cli/`](polaris_cli/) | Operator CLI for issuance, revocation, recovery and audit. |
-| [`polaris_checks/`](polaris_checks/) | The invariant layer: 340 checks (v1.0.0-rc.70). |
+| [`polaris_checks/`](polaris_checks/) | The invariant layer: 341 checks (v1.0.0-rc.70). |
 | [`packages/`](packages/), [`sdk/`](sdk/), [`conformance/`](conformance/) | The detached verifier, the OpenID4VP verifier, the verify SDKs and the conformance suite. |
 | [`scripts/`](scripts/), [`deploy/`](deploy/) | Wallet and relying-party tools, operator tooling, observability config. |
 
@@ -210,7 +221,7 @@ Counts of checks, tables, routes and CI jobs are re-measured by `polaris_checks`
 |---|---|---|
 | Product tests (live database) | 1245 | Constraints, use cases, routes, redaction, real-thread concurrency, the secret store |
 | Crypto witnesses | 126 passing of 131 collected | ML-DSA across both witnesses and a software PKCS#11 module; Rust and Python epoch roots agree |
-| Invariant checks | 340 | C1-C10 plus production posture, each with a detection test |
+| Invariant checks | 341 | C1-C10 plus production posture, each with a detection test |
 | CI jobs | 23 | Below |
 
 Test counts: reference machine, v1.0.0-rc.62 (`pytest -q` per suite, 2026-09-26). The five skipped crypto tests need a PKCS#11 module or a real KMS key.

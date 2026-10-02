@@ -50,9 +50,18 @@ if [[ -z "${POLARIS_UI_URL:-}" ]]; then
     APP_PY="${POLARIS_TEST_PYTHON:-$(command -v python3.12 || command -v python3)}"
     "$APP_PY" -c "import flask, psycopg2" 2>/dev/null \
         || fail "the app venv ($APP_PY) lacks flask/psycopg2; set POLARIS_TEST_PYTHON"
+    # The port must be free. A server already listening there answers the drill in place of
+    # the one it boots, which then fails to bind and exits, and the drill reports on whatever
+    # code that server runs: on 2026-10-02 a drill of a changed Atlas passed against a server
+    # left on its port hours earlier, running the code before the change.
+    if curl -s -o /dev/null --max-time 2 "$URL/"; then
+        fail "something already answers on :$PORT; stop it or set POLARIS_UI_PORT to a free port"
+    fi
     echo "== booting the app on :$PORT with SIM_MODE on =="
+    # exec, so the PID taken below is the app's own: without it $! was the subshell's, the
+    # cleanup killed the subshell, and the app outlived the drill, holding the port for the next.
     ( cd "$ROOT/polaris_web" && \
-      POLARIS_SIM_MODE=1 POLARIS_DEMO_MODE=1 \
+      exec env POLARIS_SIM_MODE=1 POLARIS_DEMO_MODE=1 \
       POLARIS_SECRET_KEY="$("$APP_PY" -c 'import secrets;print(secrets.token_hex(32))')" \
       POLARIS_DB_HOST="${POLARIS_DB_HOST:-localhost}" \
       POLARIS_DB_NAME="${POLARIS_DB_NAME:-polaris_test}" \
@@ -65,6 +74,8 @@ if [[ -z "${POLARIS_UI_URL:-}" ]]; then
     done
     curl -sf -o /dev/null "$URL/api/health/live" \
         || { sed 's/^/    app: /' "$WORK/app.log" >&2; fail "the app did not come up on :$PORT"; }
+    kill -0 "$APP_PID" 2>/dev/null \
+        || { sed 's/^/    app: /' "$WORK/app.log" >&2; fail "the app the drill booted has exited; something else answers on :$PORT"; }
 fi
 
 # --- run the drill ----------------------------------------------------------

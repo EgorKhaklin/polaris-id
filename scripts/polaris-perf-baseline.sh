@@ -14,10 +14,12 @@
 #            POLARIS_USE_REAL_PQC=1 and liboqs are present, else the SHA3
 #            placeholder (the stamp says which).
 #   verify   POST /verifications/new as operator: a VerificationEvent per request.
-#   atlas    GET /api/atlas/clusters + /api/atlas/stats as auditor: the zoomed
-#            street bbox (warm: the same bbox, served from the app's atlas cache
-#            after the first hit; cold: a different bbox every request, so every
-#            hit aggregates), and the whole-world overview (warm).
+#   atlas    GET /api/atlas/breakdown + /api/atlas/stats as auditor: a week's
+#            breakdown by authority (warm: the same question, served from the
+#            app's atlas cache after the first hit; cold: a different question
+#            every request, so every hit sums the rollups), and the all-time
+#            headline (warm). The Atlas reads the activity rollups since
+#            lab/strategy/009 step 4, so neither number follows the table size.
 # Reported per stage: achieved req/s, success req/s, p50/p95/p99 ms, ledger.
 #
 # Modes:
@@ -117,6 +119,14 @@ echo "   $CPU, $CORES cores, ${MEM_GB} GB, $OS; $PG_VERSION; Python $PYV; gunico
 # The server (unless --url).
 # ----------------------------------------------------------------------------
 if [ -z "$URL" ]; then
+    # The port must be free: a server already listening there would be measured in place of
+    # the one started here, which then fails to bind (scripts/polaris-ui-drill.sh, 2026-10-02).
+    if "$PY" - "$PORT" <<'PYEOF' 2>/dev/null; then
+import socket, sys
+socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=1).close()
+PYEOF
+        fail "something already answers on :$PORT; stop it or set POLARIS_PERF_PORT to a free port"
+    fi
     echo "== reset the sample data, start gunicorn on :$PORT =="
     for f in 04_data.sql 06_triggers.sql 09_grants.sql 10_auth.sql; do
         "${PSQL[@]}" -f "$ROOT/polaris_sql/$f" >/dev/null 2>&1 || fail "reload of $f failed (run as the schema owner)"
@@ -162,11 +172,11 @@ stage issue --target "$URL/uc1/issue" --login "admin:Admin@123!" --csrf-from /uc
 stage verify --target "$URL/verifications/new" --login "operator:Operator@123!" --csrf-from /verifications/new --method POST \
     --form disclosure_level=ZERO_KNOWLEDGE --form requesting_agency_id=5 --form context_id=1 \
     --form outcome=UNAUTHORIZED --rps "$RPS_VERIFY"
-stage atlas_zoomed_warm --target "$URL/api/atlas/clusters?bbox=40.3,-80.2,40.6,-79.8&grid=0.01" \
+stage atlas_breakdown_warm --target "$URL/api/atlas/breakdown?window=7d&dimension=agency" \
     --login "auditor:Auditor@123!" --rps "$RPS_ATLAS"
-stage atlas_zoomed_cold --target "$URL/api/atlas/clusters?bbox=40.3,-80.2,40.6,-79.7{seq}&grid=0.01" \
+stage atlas_breakdown_cold --target "$URL/api/atlas/breakdown?window=7d&dimension=agency&search={seq}" \
     --login "auditor:Auditor@123!" --rps "$RPS_ATLAS"
-stage atlas_world_warm --target "$URL/api/atlas/stats?bbox=-90,-180,90,180" \
+stage atlas_stats_warm --target "$URL/api/atlas/stats?window=all" \
     --login "auditor:Auditor@123!" --rps "$RPS_ATLAS"
 
 # ----------------------------------------------------------------------------
@@ -176,7 +186,7 @@ stage atlas_world_warm --target "$URL/api/atlas/stats?bbox=-90,-180,90,180" \
 import json, sys, pathlib
 (work, out, mode, version, git, date, cpu, cores, mem, os_, pg, pyv, workers, signing, secs, doc, update_doc) = sys.argv[1:18]
 stages = {}
-for name in ("issue", "verify", "atlas_zoomed_warm", "atlas_zoomed_cold", "atlas_world_warm"):
+for name in ("issue", "verify", "atlas_breakdown_warm", "atlas_breakdown_cold", "atlas_stats_warm"):
     stages[name] = json.load(open(f"{work}/{name}.json"))
 topology = ("app (gunicorn, sync workers) + PostgreSQL on one host; no TLS edge, no pgbouncer; "
             "in-memory rate limiter with the write cap raised for the run")
@@ -201,9 +211,9 @@ table = "\n".join([
     "|---|---:|---:|---:|---:|---:|---:|---:|",
     row("Issuance (`POST /uc1/issue`, full uc1 procedure + signature)", stages["issue"]),
     row("Verification (`POST /verifications/new`)", stages["verify"]),
-    row("Atlas zoomed bbox, warm (`/api/atlas/clusters`, cached)", stages["atlas_zoomed_warm"]),
-    row("Atlas zoomed bbox, cold (a new bbox every request)", stages["atlas_zoomed_cold"]),
-    row("Atlas whole-world stats, warm (`/api/atlas/stats`)", stages["atlas_world_warm"]),
+    row("Atlas breakdown, warm (`/api/atlas/breakdown`, cached)", stages["atlas_breakdown_warm"]),
+    row("Atlas breakdown, cold (a new question every request)", stages["atlas_breakdown_cold"]),
+    row("Atlas all-time stats, warm (`/api/atlas/stats`)", stages["atlas_stats_warm"]),
 ])
 print()
 print(table)
@@ -218,7 +228,7 @@ def check_stage(name, min_success_rps):
         problems.append(f"{name}: {s['success_rps']} successful req/s is under the floor of {min_success_rps}")
 check_stage("issue", 2)
 check_stage("verify", 5)
-for name in ("atlas_zoomed_warm", "atlas_world_warm"):
+for name in ("atlas_breakdown_warm", "atlas_stats_warm"):
     lat = stages[name].get("latency_ms") or {}
     if lat.get("p95_ms", 1e9) > 2000:
         problems.append(f"{name}: p95 {lat.get('p95_ms')} ms is over the 2000 ms SLO boundary")

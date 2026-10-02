@@ -1,239 +1,141 @@
 # Atlas scaling
 
-**Reader:** an engineer or an assessor. **Job:** How the map stays bounded as the event log grows.
+**Reader:** an engineer or an assessor. **Job:** How the Atlas costs the same at any population.
 
-The short version. The measured numbers and the full treatment are in
-[../reference/SCALING.md](../reference/SCALING.md).
+The short version. The measured numbers and the wider treatment are in
+[../reference/SCALING.md](../reference/SCALING.md); what the Atlas may and may not show is
+[lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md).
 
 ## Why the architecture is what it is
 
-At a million events the map cannot be sent to the browser: the payload is
-gigabytes. So the aggregation happens in the database. The browser sends the
-visible bounding box and a grid size, the server returns one cluster summary
-per occupied grid cell, each a centroid and its counts, and never more than
-`_ATLAS_MAX_CLUSTERS` (5,000) however fine a grid the client asks for, and the browser draws those instead
-of the events. When a zoom brings the count in view down to a handful, the
-client fetches the individual events instead.
+At a national population the event tables hold billions of rows, and any view that reads them
+costs in proportion to them, however well it filters: partition pruning bounded a window to its
+months, and a year's window still read a year of events. So the Atlas reads none of them. Every
+figure it shows is a sum over the **activity rollups**, totals kept as events are recorded, and
+a rollup's rows number the hours a window spans times the authorities, contexts, outcomes,
+disclosure levels and algorithms active in them. A question about the last week costs about the
+same at five million events as at five billion (lab/strategy/009, step 4).
 
-## The analytical console (v9.248, roadmap P2.3)
+The rollups hold no person, no credential, no event and no coordinate, so the Atlas cannot show
+one: C6 holds for it by construction rather than by a filter each function has to remember.
 
-As of v9.248 the Atlas opens on an **Overview**, not the globe. The Overview is
-a bounded, non-geographic analytics surface: a volume time-series with failures
-overlaid, KPI cards, and top-K breakdowns by context, agency, disclosure and
-outcome. The globe is a **Map** tab, kept for what a map is actually good at (where
-activity is, by region and by density) and booted lazily. It follows no one: the
-single-subject view was withdrawn with lab/strategy/009.
+## The rollups
 
-The scaling principle is the same as the map's, applied to every view: the
-answer is a bounded server-side aggregate, never the raw events. Two functions
-back the Overview, both in `11_atlas.sql` and both deliberately **non-spatial**,
-so they count a zero-knowledge verification (in volume, in the disclosure and
-agency tallies) without ever carrying its location (C6):
+Six tables in `01_schema.sql`:
 
-| Function | Purpose | Bound |
+| Table | Holds | Kept by |
 |---|---|---|
-| `atlas_volume_series(since, buckets, kind, …)` | total-volume time series (counts EVERY event, unlike `atlas_timeline` which is located-only for the map strip) | ≤240 buckets |
-| `atlas_breakdown(dimension, since, limit, kind, …)` | top-K roll-up by one whitelisted dimension | `_ATLAS_MAX_CATEGORIES` (50) |
-| `atlas_crosstab(row_dim, col_dim, since, limit, kind, …)` | 2-D pivot (Breakdown view): top-K rows x a low-cardinality column dimension | `_ATLAS_MAX_CATEGORIES` rows |
-| `atlas_agency_facet(since, limit, kind, search, …)` | the global filter's agency facet: agencies with (id, name, count) for the typeahead, honouring the other active facets | `_ATLAS_MAX_CATEGORIES` |
-| `atlas_hexbin(minlat, minlon, maxlat, maxlon, size, limit, since, kind, …)` | Map v2 Density layer: located verification events binned into a pointy-top hex grid, top-K densest centres by count; excludes ZK entirely like the cluster layer (C6) | `_ATLAS_MAX_CLUSTERS` |
-| `atlas_geo_jurisdictions(since, limit, kind, …)` | Map v2 Regions layer (default): volume by requesting-agency jurisdiction (ISO 3166-2); COUNTS ZK (n_zk) but the centroid derives from located non-ZK events only, so a ZK-only jurisdiction is counted yet unplaceable (C6) | `_ATLAS_MAX_REGIONS` |
+| `VerificationRollup` | verifications per hour, requesting authority, context, outcome, disclosure level, algorithm | the fold |
+| `VerificationRollupDaily` | the same per day | the fold |
+| `VerificationRollupDelta` | counts appended per insert statement, not yet folded | a statement trigger on `VerificationEvent` |
+| `LifecycleRollup`, `LifecycleRollupDaily`, `LifecycleRollupDelta` | lifecycle events per hour (day), acting authority, event type | the same, on `TokenLifecycleEvent` |
 
-Their endpoints (`/api/atlas/series`, `/api/atlas/breakdown`) are
-`@replica_reads` and capped, and the charts are hand-rolled inline SVG / CSS
-bars in `atlas-console.js` (no charting library, so `script-src 'self'` stays
-strict).
+A statement trigger with a transition table appends one row per combination an `INSERT`
+touched, so a bulk load of a million events adds a handful of delta rows, and writers never
+contend on a counter. `uc_fold_activity_rollups()` moves the delta into the hourly and daily
+totals under a try-lock (a fold that finds another running skips rather than waits); the
+retention purge folds first, then deletes hourly rows before its cutoff and keeps the daily
+ones, so `all` reads days back to the first event while hours go as far as retention keeps
+them. `uc_rebuild_activity_rollups()` recounts everything from the event tables, owner-only.
+Row-level security scopes each table by authority, as the event tables are scoped.
 
-### Partition pruning under the generic plan (v9.260, benchmark-driven)
+## The readers (`11_atlas.sql`)
 
-The event tables are monthly-partitioned by `event_timestamp` (P2.1), so a
-windowed roll-up ("last 24h", "last 7d") should read only the relevant
-partitions, not every month of history. The national benchmark (P2.14) found
-that it didn't: the roll-ups reached the window through
-`p_since IS NULL OR event_timestamp >= p_since` (or, in the time-series
-functions, through a `params` CTE column). Both shapes read fine as SQL, but
-they **defeat partition pruning under the generic plan** a parameterized
-statement gets after a few executions — the path the app actually runs — so a
-recent-window query scanned all N monthly partitions instead of one or two. At a
-year of history that is a 12× read amplification; at the national retention
-horizon, far more.
+Every reader sums the rollups. Three helpers carry the shared work, and the readers sum their
+output:
 
-The fix is one predicate shape, applied across every windowed roll-up:
-
-```sql
-event_timestamp >= COALESCE(p_since, '-infinity'::timestamp)
-```
-
-A concrete `p_since` now prunes to the window's partitions under the generic
-plan; a `NULL` (all-time) query still resolves to `>= -infinity`, which
-correctly matches every partition. The results are identical to before — only
-the plan changed. `check_atlas_rollups_prune` forbids either pruning-defeating
-shape from returning, `test_app.AtlasPartitionPruningTests` proves the pruning
-under a *forced* generic plan, and the benchmark reports the partitions a recent
-window scans versus an all-time query (see
-[../reference/BENCHMARK.md](../reference/BENCHMARK.md)).
-
-## Data path (the Map view)
-
-The map draws counts only: counts per jurisdiction (the default) or a hexagon
-density surface. Since 2026-10-02 it draws no single event and names no one
-([lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md), step A0); the
-point layer, the event feed and the person focus were withdrawn.
-
-```
-a pan or zoom in the browser
-  → atlas-map.js scheduleFetch(), debounced at 200 ms
-    → currentBbox() derives [min_lat, min_lon, max_lat, max_lon]
-    → chooseHexSize(zoom) maps the zoom level to a hexagon size in degrees
-    → GET /api/atlas/hexbin?bbox=…&size=…&kind=…  (or /api/atlas/geo/jurisdictions)
-      → the route validates the bbox and applies the cap
-        → atlas_hexbin(...) in SQL
-          → the geo index serves the bbox filter
-          → counts per hexagon, zero-knowledge events excluded (C6)
-          → at most 5000 rows
-      → JSON
-    → the GeoJSON source is replaced and MapLibre redraws its layers
-  → the corner readouts update from /api/atlas/stats, fetched in parallel
-```
-
-## What's in 11_atlas.sql
-
-The map's STABLE functions. STABLE = same input + same data → same output, no
-side effects. PostgreSQL caches plans for STABLE functions.
-
-| Function | Purpose | Worst-case at 2M |
+| Function | Does | Bound |
 |---|---|---|
-| `atlas_clusters_verifications(bbox, grid)` | Aggregated bins, verification kind | 1.2 s whole world |
-| `atlas_clusters_lifecycles(bbox, grid)` | Aggregated bins, lifecycle kind | <100 ms (small table) |
-| `atlas_stats(bbox)` | HUD signals, single-pass aggregation | 511 ms |
+| `atlas_verification_cells`, `atlas_lifecycle_cells` | the hourly (or daily) rows and the unfolded delta from a window's start | hours x combinations |
+| `atlas_verification_matching`, `atlas_lifecycle_matching` | the cells under the filters, matched by id | the same |
+| `atlas_verification_combos`, `atlas_lifecycle_combos` | the window summed over its hours, names joined last | the combinations in use |
+| `atlas_stats` | the headline: verifications, not successful, full, zero-knowledge, quantum-resistant, lifecycle, active credentials | one row |
+| `atlas_volume_series` | volume per bucket | 240 buckets (`_ATLAS_MAX_BUCKETS`) |
+| `atlas_breakdown` | counts by one whitelisted dimension | `_ATLAS_MAX_CATEGORIES` (50) |
+| `atlas_crosstab` | a row dimension by a fixed column dimension | 50 rows |
+| `atlas_heatmap` | weekday by hour | 168 cells |
+| `atlas_series_stacked` | volume per bucket by the top six categories and Other | 240 x 7 |
+| `atlas_agency_facet` | every authority matching a search, in name order | 50 |
+| `atlas_geo_jurisdictions` | counts by jurisdiction | `_ATLAS_MAX_REGIONS` (500) |
 
-## API contract
+Each cell reader windows every branch on `bucket >= COALESCE(p_since, '-infinity'::TIMESTAMP)`,
+the shape a generic plan can serve from the rollups' leading key; `p_since IS NULL OR ...`
+would not be. `check_atlas_rollups_prune` pins that no `atlas_*` function reads an event table
+and that every branch is windowed so; `test_app.AtlasReadsNoEventTableTests` proves the first
+by privilege, revoking the application role's SELECT on both event tables in a rolled-back
+transaction and calling every reader; and the national benchmark does the same under load.
 
-The map's `/api/atlas/*` endpoints:
-- Require `@security.login_required`
-- Accept `bbox=min_lat,min_lon,max_lat,max_lon` decimal degrees where they are viewport-bound
-- Validate via `_parse_bbox()` (see atlas_routes.py)
-- Return counts, never an event row
-- Hard-capped: clusters and hexagons ≤ 5000, regions ≤ 500
+## What a response shows
 
-## Crossing the antimeridian
+The routes in `atlas_routes.py` withhold every count below `_ATLAS_MIN_CELL` (5), as a part of
+its window's scope: a part is withheld when it or the rest of its scope is below the minimum.
+Fixed dimensions are zero-filled, open lists fold their small categories into one row, and a
+question whose scope holds fewer than `_ATLAS_NARROW_SCOPE` (50) events is logged with who asked.
+The API reference has the rules in full ([../reference/API.md](../reference/API.md), Atlas API).
 
-`_parse_bbox()` accepts a bbox where `min_lon > max_lon`. The atlas SQL
-functions use a wrap-aware predicate of the form:
+Windows are the rollups': a window starts at the top of the hour (or, past a week, the day)
+that holds its nominal start, and a series bucket is whole hours or days, since the rollups hold
+nothing finer.
 
-```sql
-(p_min_lon <= p_max_lon AND longitude BETWEEN p_min_lon AND p_max_lon)
-OR (p_min_lon  > p_max_lon AND (longitude >= p_min_lon OR longitude <= p_max_lon))
+## Data path
+
+```
+a view opens or a filter changes in the browser
+  -> atlas-console.js (Overview, Breakdown, Trends) or atlas-map.js (Map)
+    -> GET /api/atlas/series | breakdown | crosstab | heatmap | stacked | facet/agencies
+           | geo/jurisdictions | stats
+      -> the route parses and whitelists the filters, clamps every count (C8)
+      -> the cache answers a repeated question for the same scope (30 s)
+      -> else atlas_*() in SQL, as the caller's role, under row-level security
+        -> the rollups from the window's start; the delta not yet folded
+        -> summed by the combinations in use, names joined last
+      -> the counts withheld below the minimum; a narrow question logged
+      -> JSON
+    -> inline SVG and CSS bars; a withheld count reads "<5", never zero
 ```
 
-PostgreSQL's planner uses bitmap OR over the partial geo indexes, so
-performance is comparable to non-wrapping bboxes.
+The map places a region from `static/atlas-regions.json`, reference data about the
+jurisdiction (a capital's coordinates, roughly), never from where anyone was verified.
 
+## Measured
 
-## Constants that were tuned, not chosen
+On one laptop (Apple M3, 8 cores), PostgreSQL 16, two million people and ten million
+verifications, warm, through the Flask test client (`polaris_scale`):
 
-Each of these was set against a real distribution, and changing one without
-measuring undoes that.
+| Route | Before (event tables) | After (rollups) |
+|---|---|---|
+| `/atlas` (the page, its headline figures) | 6,728 ms | 31 ms |
+| `/api/atlas/series?window=all` | 5,738 ms | 26 ms |
+| `/api/atlas/geo/jurisdictions?window=all` | 5,649 ms | 17 ms |
 
-1. **The hexagon size in `chooseHexSize(zoom)`.** A finer lattice means more
-   hexagons and more work per frame. Changing it needs a check on pan and zoom
-   responsiveness at a realistic event count.
-2. **The 200 millisecond debounce.** Below about 150 the API takes a request
-   per frame during a smooth pan; above about 400 the map feels late.
-3. **The caps: 5000 clusters or hexagons, 500 regions.** Past those, JSON
-   serialisation and the redraw dominate the response.
+Against the same routes on the seed database (ten verifications), the readers run at 1.0 to 2.4
+times their seed cost at ten million verifications, with one exception:
+`/api/atlas/heatmap?window=30d` runs at 3.4 times (43.1 ms against 12.6 ms). The heatmap reads
+hours, not days, so a thirty-day window reads up to 720 hours times the combinations active in
+each, and at this load nearly every combination is active in nearly every hour: the hourly
+rollup saturates at hours x authorities x contexts x outcomes x disclosure levels x algorithms.
+The fix, when a deployment needs it, is a per-authority hourly total without the other
+dimensions, which the heatmap's filters do not need when they are unset; it is recorded as
+deferred in lab/strategy/009 rather than built ahead of a need.
 
-The switch from clusters to single events, tuned at a count of thirty, went with
-the point layer (lab/strategy/009).
+`scripts/polaris-atlas-benchmark.sh N` reproduces the reader timings on a throwaway database.
 
-## Performance regression checks
+## Constants that were chosen
 
-Run these and compare to the table in docs/reference/SCALING.md:
+1. **The minimum cell, 5.** Lab/strategy/009 (option c). A count of one at a known authority,
+   context and hour tells someone who knows who was there what happened to them.
+2. **The narrow scope, 50.** Below it a question is logged: it is answered, withheld as any,
+   and leaves a trace, as a read of the verification log does.
+3. **The caps: 50 categories, 500 regions, 240 buckets.** Past those, serialisation and the
+   redraw dominate, and none of them is a question an operator needs answered at once.
+4. **The top six bands of the stacked series.** More than six colours stop reading as categories.
 
-```bash
-# After loading stress data:
-psql -d polaris_test <<'SQL'
-\timing on
-SELECT count(*) FROM atlas_clusters_verifications(-90,-180,90,180,10);
-SELECT count(*) FROM atlas_clusters_verifications(20,-130,50,-65,5);
-SELECT * FROM atlas_stats(20,-130,50,-65);
-SQL
-```
+## The PostGIS path, withdrawn
 
-Target latencies (warm cache, 2M events):
-- clusters whole-world: <1500 ms
-- clusters continent: <800 ms
-- stats: <600 ms
-
-If any are 2× off, run `EXPLAIN ANALYZE` and check whether an index
-got dropped or whether the planner picked a seq scan when an index
-scan was expected.
-
-## The optional PostGIS path
-
-The default schema uses composite B-tree indexes on
-`(latitude, longitude)` for atlas spatial queries. B-tree starts to
-break down past ~10M events because the index doesn't model
-2-dimensional proximity natively: a bbox query degrades toward a
-range scan over one dimension.
-
-An optional migration, `polaris_sql/13_postgis.sql`, adds, when the `postgis`
-extension is available, a generated
-`geography(Point, 4326)` column to `VerificationEvent` and
-`TokenLifecycleEvent` plus a GiST index on each. GiST models 2D
-proximity correctly; bbox + radius queries return a logarithmic
-fraction of the index instead of a linear scan.
-
-### When the PostGIS path is active
-
-```sql
--- Detect mode
-SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname='postgis') AS postgis_loaded;
-```
-
-When `postgis_loaded` is `t`, two new columns + indexes exist:
-
-| Table | Column | Index | Type |
-|---|---|---|---|
-| `VerificationEvent` | `geo geography(Point, 4326)` (generated, stored) | `gix_verification_geo` | GiST |
-| `TokenLifecycleEvent` | `geo geography(Point, 4326)` (generated, stored) | `gix_lifecycle_geo` | GiST |
-
-The columns are `GENERATED ALWAYS AS (... STORED)` from
-`(latitude, longitude)` so they stay in sync without app-code
-changes.
-
-### Sample GiST-aware query (operator-side)
-
-The atlas functions still take the B-tree path. Rewriting them to use the
-GiST index is gated on two things that do not exist yet: a PostGIS-enabled
-environment to develop against, and a ten-million-event dataset to measure the
-threefold improvement the rewrite would have to show. Until then an operator
-can query the GiST index directly:
-
-```sql
--- All verifications within 50km of Pittsburgh
-SELECT event_id, event_timestamp, latitude, longitude
-FROM VerificationEvent
-WHERE geo IS NOT NULL
-  AND ST_DWithin(
-          geo,
-          ST_SetSRID(ST_MakePoint(-79.9959, 40.4406), 4326)::geography,
-          50000   -- meters
-      );
-```
-
-### When to leave it off
-
-The extension is around fifty megabytes and sits behind a paid tier on some
-managed PostgreSQL providers. Below roughly five million events the B-tree
-path is operationally complete, so there is nothing to gain. A deployment
-whose role cannot run `CREATE EXTENSION postgis` once gets a notice from the
-migration and keeps the B-tree path.
-
-### What the rewrite would look like
-
-The atlas functions would branch on whether the extension is present and emit
-either the GiST or the B-tree query at call time. The acceptance criterion is
-a threefold improvement at ten million events or more, measured with
-`scripts/polaris-load-test.sh` against both modes. Until that is measured the
-branch is not worth its complexity.
+`polaris_sql/13_postgis.sql` added, where the `postgis` extension could be created, a generated
+`geography(Point, 4326)` column to each event table with a GiST index, for the Atlas's
+bounding-box layers. The Atlas reads no location since step 4 of lab/strategy/009, and step 4c
+withdrew the path: migration 2026-10-02-005 drops the GiST indexes with the B-tree ones, and the
+file now creates nothing, since a spatial extension and columns that are NULL on every row
+Polaris writes would add attack surface and serve no query. A database that had PostGIS keeps its
+`geo` columns, unindexed, until the contract step drops them with `latitude` and `longitude`.

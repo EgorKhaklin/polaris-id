@@ -27,11 +27,18 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - An index on every foreign key between tables that grow with the population, and a test that reads the catalogue for one missing.
 - Exact enrolment counts by jurisdiction and status (`EnrollmentCount`), kept by triggers; the application role cannot read the per-person row.
 - An index for counting the active credentials that carry a duress code.
+- Hourly and daily activity counts by authority, context and outcome, kept by triggers; no person, place or minute.
 
 ### Changed
 
 - The operator console is rethought around what Polaris is now: grouped, role-gated navigation; new sign-in, landing and Overview.
 - The Atlas shows counts only: its map points, event feed, records grid and person focus are withdrawn.
+- The Atlas reads hourly and daily totals, never an event: the page from 6.7 s to 31 ms at ten million verifications.
+- The Atlas withholds every count below five and any figure that would give one back; a narrow question is logged.
+- The Atlas map draws counts per jurisdiction only; its cluster, hexagon and timeline layers are withdrawn.
+- An Atlas filter takes one context and one authority at a time, and every Atlas figure counts any non-success as a failure.
+- No event coordinate is indexed or written: five indexes go, and the optional PostGIS path is withdrawn.
+- The token export carries no coordinate, as no page shows one; its events name their fields.
 - Athena's Constitution tab reads each mechanism from the connected database's catalogue when opened.
 - Athena's self-test attempts six forbidden writes, rolled back, and shows on each rule what refused it.
 - The Overview costs the same at any population: 10.4 s to 0.12 s at two million persons.
@@ -57,6 +64,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A credential's page read its device bindings and revocations by scanning those tables.
 - Record pages' tables scroll at phone width, and their hard-coded pill colours (3.49:1) take the theme.
 - The public walkthrough said post-quantum signing protects against coercion; it now marks where each rule is enforced.
+- An Atlas series could carry one bucket more than asked, and its authority filter took non-ASCII digits.
+- The simulator stamped events on the host's clock, so on a host off UTC the Atlas's hour windows missed them.
+- The UI drill and the performance baseline refuse a port another server holds; the drill's app no longer outlives it.
+- In the Atlas, a hovered tab keeps its label and a lone interval is drawn; a stacked chart no longer reads a withheld value as zero.
 - Public pages: no empty band above the first line, a visible secondary action, a four-column feature grid.
 - The duress wording check passed the noun "compulsion resistance"; API.md and DATA-MODEL.md named the mechanism with it.
 - API.md pointed at `app.py` for the federation check; it is in `verification_routes.py`.
@@ -64,6 +75,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Delete buttons for a person, a credential and an authority, which the database always refuses, are gone.
 - A status change to a number that is no credential reported success.
 - A refused deep page number now says what to do instead and offers the list back.
+- The population recount's lock test passed with the lock deleted; it now holds a fold that touches no row.
 
 ## v1.0.0-rc.70 — 2026-10-01 (the three verifiers read every input alike)
 
