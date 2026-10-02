@@ -357,3 +357,57 @@ CREATE INDEX idx_verificationevent_token_time
 DROP INDEX IF EXISTS idx_individual_birth_name;
 CREATE INDEX idx_individual_birth_name
     ON Individual (date_of_birth, (lower(legal_name)) COLLATE "C", individual_id);
+
+-- Every foreign key between tables that grow with the population has an index on its
+-- referencing columns (lab/strategy/008 step 3; a test reads the catalogue for any that does
+-- not). Without one, reading one record's rows scans the whole referencing table, and deleting
+-- a referenced row scans it to check the key.
+DROP INDEX IF EXISTS idx_identitytoken_predecessor;
+CREATE INDEX idx_identitytoken_predecessor
+    ON IdentityToken (predecessor_token_id)
+    WHERE predecessor_token_id IS NOT NULL;
+
+DROP INDEX IF EXISTS idx_devicebinding_token;
+CREATE INDEX idx_devicebinding_token
+    ON DeviceBinding (token_id, binding_id);
+
+DROP INDEX IF EXISTS idx_revocationlist_token;
+CREATE INDEX idx_revocationlist_token
+    ON RevocationList (token_id);
+
+DROP INDEX IF EXISTS idx_recoveryrequest_resulting_token;
+CREATE INDEX idx_recoveryrequest_resulting_token
+    ON RecoveryRequest (resulting_token_id)
+    WHERE resulting_token_id IS NOT NULL;
+
+DROP INDEX IF EXISTS idx_credentialcopy_token;
+CREATE INDEX idx_credentialcopy_token
+    ON CredentialCopy (token_id);
+
+DROP INDEX IF EXISTS idx_duressevent_token;
+CREATE INDEX idx_duressevent_token
+    ON DuressEvent (token_id);
+
+DROP INDEX IF EXISTS idx_refereevouching_applicant;
+CREATE INDEX idx_refereevouching_applicant
+    ON RefereeVouching (applicant_individual_id);
+
+DROP INDEX IF EXISTS idx_refereevouching_co_signer;
+CREATE INDEX idx_refereevouching_co_signer
+    ON RefereeVouching (co_signer_individual_id)
+    WHERE co_signer_individual_id IS NOT NULL;
+
+DROP INDEX IF EXISTS idx_enrollmentcode_proofing;
+CREATE INDEX idx_enrollmentcode_proofing
+    ON EnrollmentCode (proofing_id)
+    WHERE proofing_id IS NOT NULL;
+
+-- A key whose only index was partial on another condition (a pending anchor, a pending request):
+-- that index serves neither the key's check nor one record's own rows.
+DROP INDEX IF EXISTS idx_blockchainanchor_token;
+CREATE INDEX idx_blockchainanchor_token
+    ON BlockchainAnchor (token_id);
+
+DROP INDEX IF EXISTS idx_recoveryrequest_claimed;
+CREATE INDEX idx_recoveryrequest_claimed
+    ON RecoveryRequest (claimed_individual_id);

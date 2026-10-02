@@ -63,6 +63,12 @@ PAGES += ["/uc4/activate-reserve?token_id=%d" % act["token_id"],
           "/uc7/warrant-audit?individual_id=%d" % act["individual_id"],
           "/uc9/initiate-recovery?individual_id=%d" % act["individual_id"]]
 
+# Step 3: the lists by key and deep, a rare and a common filter, the log filtered by one
+# credential, and the record pages of the newest credential and its holder.
+PAGES += ["/tokens?cursor=%d" % (max_tok - 1000), "/individuals?cursor=%d" % (max_ind - 1000),
+          "/verifications?outcome=UNAUTHORIZED", "/verifications?outcome=FAILURE",
+          "/verifications?token_id=%d" % act["token_id"]]
+
 # The lookups are POSTs: (label, path, form). The search text travels in the body.
 csrf_page = client.get("/uc8/revoke").get_data(as_text=True)
 csrf = csrf_page.split('name="csrf_token" value="', 1)[1].split('"', 1)[0] if 'name="csrf_token"' in csrf_page else ""

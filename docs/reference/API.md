@@ -1678,14 +1678,14 @@ whose issuing agency is not trusted by the verifying agency for the
 given context is rejected with a flash message; the operator must
 either record outcome=UNAUTHORIZED (which proceeds normally) or create
 the missing attestation. See the federation check helper
-`_federation_trust_holds()` in `app.py`. NO transitive trust: the
+`_federation_trust_holds()` in `verification_routes.py`. NO transitive trust: the
 helper inspects exactly one row in `AgencyTrustAttestation`.
 
 ---
 
 ## Duress code API
 
-Compulsion-resistance per PDF §9.5. The `DuressEvent` table is the
+Duress-aware, per PDF §9.5. The `DuressEvent` table is the
 8th audit-of-record. See `docs/design/duress-codes.md` for the full
 write-up.
 

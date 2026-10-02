@@ -99,6 +99,31 @@ Every page opened on a record is 16 to 21 kB. At scale the person lookup listed 
 people born that day whose names begin as typed, and said there were more (22.5 kB); on the seed
 it found one person and went straight to the page.
 
+## Step 3: the lists and the record pages (2026-10-02)
+
+The same harness and scale database, with migration 2026-10-01-007's indexes (built in 0.3 s; the
+tables they index are small in this population). "Before" is step 2's code before the migration;
+three runs after a warm-up. A deep offset page is now refused (400) by design, and is shown as such.
+
+| Page | Seed (ms) | Scale before (ms) | Scale after (ms) | After / seed | Falsifier 1 |
+|---|---|---|---|---|---|
+| `/tokens` (key paging by default) | 15.3 | 18.0 | 20.6 | 1.3 | holds |
+| `/tokens?status=ACTIVE` | 15.3 | 14.9 | 19.3 | 1.3 | holds |
+| `/tokens?page=5000` | 10.2 (400) | 472.7 | 8.8 (400) | refused | holds |
+| `/tokens?cursor=<a thousand from the end>` | 25.3 | 20.0 | 26.4 | 1.0 | holds |
+| `/tokens/<newest>` | 61.0 | 60.3 | 62.3 | 1.0 | holds |
+| `/individuals` | 10.3 | 15.8 | 16.7 | 1.6 | holds |
+| `/individuals?page=5000` | 5.5 (400) | 53.7 | 7.2 (400) | refused | holds |
+| `/individuals?cursor=<a thousand from the end>` | 13.9 | 16.4 | 21.8 | 1.6 | holds |
+| `/verifications` | 23.0 | 24.6 | 26.0 | 1.1 | holds |
+| `/verifications?page=5000` | 9.2 (400) | 37144.9 | 9.1 (400) | refused | holds |
+| `/verifications?outcome=UNAUTHORIZED` (no match in the log) | 29.8 | 1368.2 | 49.3 | 1.7 | holds |
+| `/verifications?outcome=FAILURE` | 34.2 | 31.3 | 37.3 | 1.1 | holds |
+| `/verifications?token_id=<a credential>` (new) | 25.7 | | 25.9 | 1.0 | holds |
+| `/investigate/token/<newest>` | 48.8 | 200.5 | 50.9 | 1.0 | holds |
+| `/investigate/individual/<newest>` | 36.9 | 35.7 | 36.9 | 1.0 | holds |
+| `/individuals/enrollment` | 16.5 | 6838.0 | 6429.7 | 390 | fails (step 4) |
+
 ## Estimates checked against exact counts (falsifier 4)
 
 Both estimators the step first tried were measured here and dropped (record 008, section 11): a

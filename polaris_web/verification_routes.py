@@ -28,10 +28,11 @@ check_route_modules_register_under_both_entry_points pins that ordering.
 """
 import psycopg2
 
-from flask import flash, redirect, render_template, request, session, url_for
+from flask import abort, flash, redirect, render_template, request, session, url_for
 
 import app as _app          # for _METRICS_VERIFICATIONS only; see the note above
 import lookup
+import population
 import security
 from app import (
     _not_expired,
@@ -55,6 +56,26 @@ from app import (
 # VERIFICATION EVENT QUERY (read-only browser for the high-volume table)
 # ============================================================================
 
+#: The most verifications one page of a filtered log examines (lab/strategy/008 step 3).
+FILTER_WINDOW = 20_000
+
+
+def _window_edge(cursor, newer=False):
+    """The key of the FILTER_WINDOW-th verification beyond `cursor` in the direction asked
+    (older, or newer), counted from the newest when `cursor` is None: where a filtered page that
+    found too few matches goes on from. None when the window reached the end of the log. Reads at
+    most FILTER_WINDOW index entries."""
+    op, order = ('>', 'ASC') if newer else ('<', 'DESC')
+    key_sql, key_params = '', []
+    if cursor is not None:
+        key_sql = ' WHERE (event_timestamp, event_id) ' + op + ' (%s, %s)'
+        key_params = [cursor[0], cursor[1]]
+    row = query('SELECT event_timestamp, event_id FROM VerificationEvent' + key_sql +
+                ' ORDER BY event_timestamp ' + order + ', event_id ' + order +
+                ' OFFSET %s LIMIT 1', key_params + [FILTER_WINDOW - 1], fetch='one')
+    return (row['event_timestamp'], row['event_id']) if row else None
+
+
 @app.route('/verifications')
 @security.login_required
 @replica_reads
@@ -73,21 +94,38 @@ def verifications_list():
         directly, keeping per-page cost O(log n + page_size).
       - Page mode (legacy): ?page=N, OFFSET-bound. Slow at depth.
       Cursor params take precedence over page when both are supplied.
+
+    lab/strategy/008 step 3: cursor mode is the default, so no link the console renders pays for
+    depth, and page mode answers only while its offset stays within population.MAX_OFFSET_ROWS.
+    A filter is bounded as well: a filtered page examines at most FILTER_WINDOW events, the next
+    ones in its direction, so a filter matching one event in a million does not read a million
+    rows for a page. A page the window leaves short says how far it looked and goes on from there.
     """
     context    = request.args.get('context', '')
     outcome    = request.args.get('outcome', '')
     disclosure = request.args.get('disclosure', '')
+    # One credential's verifications (its page links here): idx_verificationevent_token_time
+    # serves the filter, so it needs no window. A zero-knowledge row names no credential (C2).
+    token_raw  = (request.args.get('token_id') or '').strip()
+    token_id   = lookup.number(token_raw) if token_raw else None
+    if token_raw and token_id is None:
+        abort(400, description='token_id must be a credential number')
     # See note on tokens_list: floor=1, cap=500.
     page_size  = min(500, max(1, _int_arg('page_size', '100')))
 
     cursor_raw      = request.args.get('cursor')
     prev_cursor_raw = request.args.get('prev_cursor')
-    cursor_mode = (cursor_raw is not None) or (prev_cursor_raw is not None)
+    cursor_mode = (cursor_raw is not None) or (prev_cursor_raw is not None) \
+        or not request.args.get('page')
     cursor      = _parse_cursor_composite(cursor_raw)
     prev_cursor = _parse_cursor_composite(prev_cursor_raw)
 
     where_sql = ''
     params = []
+    if token_id is not None:
+        where_sql += ' AND ve.token_id = %s'
+        params.append(token_id)
+    unindexed = bool(context or outcome or disclosure) and token_id is None
     if context:
         where_sql += ' AND vc.context_type = %s'
         params.append(context)
@@ -105,21 +143,89 @@ def verifications_list():
     # requestor_location, latitude, longitude). holder_name is already NULL for ZK
     # because token_id is NULL (C2), so the IdentityToken/Individual join yields
     # nothing identifying.
-    base_select = """
+    def select_from(source):
+        return """
         SELECT ve.event_id, ve.event_timestamp, ve.outcome, ve.disclosure_level,
                CASE WHEN ve.disclosure_level = 'ZERO_KNOWLEDGE'
                     THEN NULL ELSE ve.requestor_location END AS requestor_location,
                vc.context_type,
                ag.name AS verifier_name,
                i.legal_name AS holder_name
-        FROM   VerificationEvent ve
+        FROM   """ + source + """
         JOIN   VerificationContext vc ON ve.context_id = vc.context_id
         JOIN   Agency ag              ON ve.requesting_agency_id = ag.agency_id
         LEFT JOIN IdentityToken t     ON ve.token_id = t.token_id
         LEFT JOIN Individual i        ON t.individual_id = i.individual_id
         WHERE  TRUE """
+    base_select = select_from('VerificationEvent ve')
 
     contexts = query('SELECT * FROM VerificationContext ORDER BY context_type')
+
+    searched_to = None
+    if cursor_mode and unindexed:
+        # A filtered page reads the next FILTER_WINDOW events in its direction, then filters them.
+        if prev_cursor is not None:
+            ts, eid = prev_cursor
+            window = ('(SELECT * FROM VerificationEvent w'
+                      ' WHERE (w.event_timestamp, w.event_id) > (%s, %s)'
+                      ' ORDER BY w.event_timestamp ASC, w.event_id ASC LIMIT %s) ve')
+            rows = query(select_from(window) + where_sql +
+                         ' ORDER BY ve.event_timestamp ASC, ve.event_id ASC LIMIT %s',
+                         [ts, eid, FILTER_WINDOW] + params + [page_size + 1])
+            has_prev = len(rows) > page_size
+            rows = rows[:page_size]
+            rows.reverse()
+            has_next = True
+            if not has_prev:
+                # As below, toward the newest: a short page goes on from where it stopped looking.
+                edge = _window_edge(prev_cursor, newer=True)
+                if edge is not None:
+                    searched_to, has_prev = edge, True
+        else:
+            key_sql, key_params = '', []
+            if cursor is not None:
+                key_sql = ' WHERE (w.event_timestamp, w.event_id) < (%s, %s)'
+                key_params = [cursor[0], cursor[1]]
+            window = ('(SELECT * FROM VerificationEvent w' + key_sql +
+                      ' ORDER BY w.event_timestamp DESC, w.event_id DESC LIMIT %s) ve')
+            rows = query(select_from(window) + where_sql +
+                         ' ORDER BY ve.event_timestamp DESC, ve.event_id DESC LIMIT %s',
+                         key_params + [FILTER_WINDOW] + params + [page_size + 1])
+            has_next = len(rows) > page_size
+            rows = rows[:page_size]
+            if not has_next:
+                # A short page: the window may have ended before the log did. Then the next page
+                # starts where this one stopped looking, and the page says how far that was.
+                edge = _window_edge(cursor)
+                if edge is not None:
+                    searched_to = edge
+                    has_next = True
+            # Whether anything newer matches would be another unbounded search; a page reached
+            # by Next has a newer page by construction.
+            has_prev = cursor is not None
+        going_newer = prev_cursor is not None
+        first_cursor = (_format_cursor_composite(*searched_to) if searched_to and going_newer else
+                        _format_cursor_composite(rows[0]['event_timestamp'], rows[0]['event_id'])
+                        if rows else None)
+        last_cursor = (_format_cursor_composite(*searched_to) if searched_to and not going_newer else
+                       _format_cursor_composite(rows[-1]['event_timestamp'], rows[-1]['event_id'])
+                       if rows else None)
+        security.record_audit_access(
+            get_db, 'VerificationEvent',
+            filter_criteria={
+                'route': '/verifications', 'mode': 'cursor',
+                'context': context, 'outcome': outcome,
+                'disclosure': disclosure, 'token_id': token_id, 'page_size': page_size,
+            },
+            result_row_count=len(rows),
+        )
+        return render_template('verifications_list.html',
+                               rows=rows, contexts=contexts, context=context,
+                               outcome=outcome, disclosure=disclosure, token_id=token_id,
+                               page=None, page_size=page_size, cursor_mode=True,
+                               first_cursor=first_cursor, last_cursor=last_cursor,
+                               has_next=has_next, has_prev=has_prev,
+                               searched_to=searched_to, filter_window=FILTER_WINDOW)
 
     if cursor_mode:
         if prev_cursor is not None:
@@ -173,7 +279,7 @@ def verifications_list():
             filter_criteria={
                 'route': '/verifications', 'mode': 'cursor',
                 'context': context, 'outcome': outcome,
-                'disclosure': disclosure, 'page_size': page_size,
+                'disclosure': disclosure, 'token_id': token_id, 'page_size': page_size,
             },
             result_row_count=len(rows),
         )
@@ -183,6 +289,7 @@ def verifications_list():
                                context=context,
                                outcome=outcome,
                                disclosure=disclosure,
+                               token_id=token_id,
                                page=None,
                                page_size=page_size,
                                cursor_mode=True,
@@ -193,6 +300,9 @@ def verifications_list():
 
     page   = max(1, _int_arg('page', '1'))
     offset = (page - 1) * page_size
+    if offset > population.MAX_OFFSET_ROWS:
+        abort(400, description='page numbers reach %d verifications deep; page with Next'
+                               % population.MAX_OFFSET_ROWS)
     sql = base_select + where_sql + (
         " ORDER BY ve.event_timestamp DESC, ve.event_id DESC LIMIT %s OFFSET %s")
     rows = query(sql, params + [page_size + 1, offset])
@@ -205,7 +315,7 @@ def verifications_list():
         filter_criteria={
             'route': '/verifications', 'mode': 'page',
             'context': context, 'outcome': outcome,
-            'disclosure': disclosure, 'page': page,
+            'disclosure': disclosure, 'token_id': token_id, 'page': page,
             'page_size': page_size,
         },
         result_row_count=len(rows),
@@ -216,6 +326,7 @@ def verifications_list():
                            context=context,
                            outcome=outcome,
                            disclosure=disclosure,
+                           token_id=token_id,
                            page=page,
                            page_size=page_size,
                            cursor_mode=False,

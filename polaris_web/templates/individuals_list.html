@@ -1,46 +1,45 @@
+{# People (docs/design/console-design.md). Paged by key, so a page costs the same at any depth; a
+   person is found by number, or by name with the date of birth, never by paging to them
+   (lab/strategy/008). A person is not owned by an authority: every operator sees the same list.
+   CSP C5: the delete confirmation is static/confirm-submit.js reading data-confirm. #}
 {% extends "base.html" %}
 {% from "_pager.html" import render_pager %}
-{% block title %}Individuals{% endblock %}
+{% block title %}People{% endblock %}
 {% block content %}
 {% import "_ui.html" as ui with context %}
-<h1>Individuals</h1>
-<p class="subtitle">Natural persons enrolled in the system. Each individual may hold one ACTIVE token plus any number of RESERVE/DORMANT/terminal tokens.</p>
+{% call ui.page_head('People', eyebrow='Registry',
+                     lede='Everyone enrolled, by number. A person holds at most one active credential and any number of reserve and ended ones.') %}
+    <a class="btn btn-secondary" href="{{ url_for('enrollment_summary') }}">{{ ui.icon('list') }}Enrolment summary</a>
+    {% if current_user.role == 'admin' %}
+    <a class="btn btn-primary" href="{{ url_for('individuals_new') }}">{{ ui.icon('plus') }}Enrol a person</a>
+    {% endif %}
+{% endcall %}
 
-{# At any population the way to one person is to look them up (lab/strategy/008). #}
 <div class="panel find-panel">{{ ui.find_person('investigate_individual') }}</div>
 
-<div class="actions-bar">
-    {# individuals_new is admin-only; hide it from roles that would 403 #}
-    {% if current_user.role == 'admin' %}
-    <a href="{{ url_for('individuals_new') }}" class="btn btn-gold">+ New Individual</a>
-    {% endif %}
-    <a href="{{ url_for('enrollment_summary') }}" class="btn btn-secondary">Enrollment Summary</a>
-    <span class="record-count">{{ rows|length }} on this page</span>
-</div>
-
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr>
-            <th>ID</th><th>Legal Name</th><th>DOB</th>
-            <th>Jurisdiction</th><th>Enrolled</th><th>Actions</th>
+            <th scope="col">Person</th><th scope="col">Name</th><th scope="col">Born</th>
+            <th scope="col">Jurisdiction</th><th scope="col">Enrolled</th>
+            <th scope="col"><span class="visually-hidden">Actions</span></th>
         </tr>
     </thead>
     <tbody>
         {% for r in rows %}
-        <tr>
-            <td>#{{ r.individual_id }}</td>
-            <td><strong>{{ r.legal_name }}</strong></td>
-            <td>{{ r.date_of_birth }}</td>
+        <tr data-key="{{ r.individual_id }}">
+            <td><a class="mono" href="{{ url_for('investigate_individual', ind_id=r.individual_id) }}">#{{ r.individual_id }}</a></td>
+            <td><a href="{{ url_for('investigate_individual', ind_id=r.individual_id) }}">{{ r.legal_name }}</a></td>
+            <td class="mono">{{ r.date_of_birth.strftime('%Y-%m-%d') }}</td>
             <td class="mono">{{ r.jurisdiction }}</td>
-            <td>{{ r.enrollment_date.strftime('%Y-%m-%d') }}</td>
-            <td class="actions">
-                <a href="{{ url_for('tokens_list', individual_id=r.individual_id) }}" class="btn btn-sm btn-secondary">Tokens</a>
-                <a href="{{ url_for('investigate_individual', ind_id=r.individual_id) }}" class="btn btn-sm btn-secondary"
-                   title="Semantic record: every token held + verification history">Investigate</a>
+            <td class="mono">{{ r.enrollment_date.strftime('%Y-%m-%d') }}</td>
+            <td class="row-actions">
+                <a class="small" href="{{ url_for('tokens_list', individual_id=r.individual_id) }}">Credentials</a>
                 {% if current_user.role == 'admin' %}
-                <a href="{{ url_for('individuals_edit', ind_id=r.individual_id) }}" class="btn btn-sm btn-secondary">Edit</a>
+                <a class="small" href="{{ url_for('individuals_edit', ind_id=r.individual_id) }}">Edit</a>
                 <form method="post" action="{{ url_for('individuals_delete', ind_id=r.individual_id) }}" class="inline-form"
-                      data-confirm="Delete individual #{{ r.individual_id }}? This will fail if any tokens reference them.">
+                      data-confirm="Delete person #{{ r.individual_id }}? This fails while any credential names them.">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-sm btn-danger">Delete</button>
                 </form>
@@ -48,9 +47,13 @@
             </td>
         </tr>
         {% else %}
-        <tr><td colspan="6" class="empty">No individuals.</td></tr>
+        <tr><td colspan="6" class="empty">No one is enrolled.</td></tr>
         {% endfor %}
     </tbody>
 </table>
-{{ render_pager(page, has_prev, has_next, page_size) }}
+</div>
+{{ render_pager(page, has_prev, has_next, page_size,
+                cursor_mode=cursor_mode|default(false),
+                first_cursor=first_cursor|default(none),
+                last_cursor=last_cursor|default(none)) }}
 {% endblock %}

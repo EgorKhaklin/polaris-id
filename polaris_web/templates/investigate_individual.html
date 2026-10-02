@@ -36,7 +36,7 @@
     <div><dt>Enrolled</dt><dd>{{ individual.enrollment_date.strftime('%Y-%m-%d %H:%M') }}</dd></div>
     <div><dt>Tokens (lifetime)</dt><dd>{{ individual.lifetime_token_count }}</dd></div>
     <div><dt>Tokens (active)</dt><dd>{{ individual.active_token_count }}</dd></div>
-    <div><dt>Verifications (lifetime)</dt><dd>{{ individual.lifetime_verification_count }}</dd></div>
+    <div><dt>Verifications (lifetime)</dt><dd>{{ ui.figure(individual.lifetime_verification_count) }}</dd></div>
     <div><dt>Most recent token issued</dt><dd>
         {% if individual.most_recent_token_issued_at %}
             {{ individual.most_recent_token_issued_at.strftime('%Y-%m-%d %H:%M') }}
@@ -48,6 +48,7 @@
 
 <h2>Token holdings ({{ tokens|length }} token{{ '' if tokens|length == 1 else 's' }})</h2>
 {% if tokens %}
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr>
@@ -85,12 +86,14 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
 <p class="muted">No tokens have been issued for this individual.</p>
 {% endif %}
 
 <h2>Recent verifications ({{ verifications|length }}{% if verifications|length >= 100 %} · capped at 100{% endif %})</h2>
 {% if verifications %}
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr>
@@ -127,6 +130,7 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
 <p class="muted">No verifications recorded for this individual's tokens.</p>
 {% endif %}

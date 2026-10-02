@@ -25,6 +25,11 @@ templates treat it as its value) carrying `exact` and `at_least`.
 #: How many of the latest events a window figure is read from.
 RECENT_ROWS = 10_000
 
+#: The deepest an offset page reads, in rows. The lists page by key; an old ?page=N link still
+#: answers while its offset stays within this, and is refused beyond it, because OFFSET reads and
+#: discards every row before the page.
+MAX_OFFSET_ROWS = 10_000
+
 
 class Figure(int):
     """A count that knows whether it is exact. `at_least` marks a capped count."""
