@@ -286,8 +286,8 @@ This matches the latency SLO boundary in [`SLOS.md`](SLOS.md) §3.
 **Likely cause.**
 - Database latency bleeding into request latency (often firing alongside
   `PolarisHighDBLatency`).
-- A slow downstream call or an expensive route (large `/api/atlas` viewport,
-  ZK verification under load).
+- A slow downstream call or an expensive route (a long `/api/atlas/heatmap`
+  window, which reads hours; ZK verification under load).
 - Worker saturation: too few gunicorn workers for the offered load, so requests
   queue.
 - A garbage-collection or cold-cache effect right after a deploy/restart.

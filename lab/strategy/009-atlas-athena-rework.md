@@ -298,3 +298,108 @@ widened AuthAuditLog event type. Two notes taken: the masking covers numbers onl
 mask any text column a later probe writes; and each rule card now carries its probe's result
 beside the catalogue's, so a reader sees "in force" corroborated by "refused when tried", or
 the card marked when the two disagree (`test_a_hollow_trigger_marks_its_card`).
+
+### Step 4, part one (2026-10-02): the activity rollups
+
+What the Atlas will read instead of the event tables. `VerificationRollup` counts verifications
+by hour, requesting authority, context, outcome, disclosure level and the verified credential's
+algorithm; `LifecycleRollup` counts transitions by hour, acting authority and type; each has a
+daily twin for windows longer than a week and a delta table its statement trigger appends to.
+They are kept the way `PopulationCount` is (writers only append, one fold at a time, a reader
+sums totals and deltas, the owner alone recounts) and carry the row-level security of the table
+they count. No column names a person, a credential or a place, and none holds a coordinate. No
+reader moves in this part: the Atlas still reads the events, and falsifier 3 is measured in the
+next.
+
+Two decisions this part makes. **The hour is the finest grain.** Today the series route cuts
+the 1-hour window into as many as 240 buckets of 15 seconds (the console asks for 48, of 75
+seconds), which with an authority and an outcome selected comes close to placing one
+verification in time; the rollups cannot. **Hourly cells live as long
+as the events they count.** `uc_archive_purge` folds and then deletes the hours wholly before
+its cutoff; the daily rows stay, as statistics that say nothing finer than a day. The load's own
+purge test shows it: a verification 1,100 days old is purged, its hour goes, and its day still
+counts it. The recount keeps the hours and days a recorded purge cut through, since their events
+are partly gone and a recount would undercount them.
+
+Measured on a fresh load: every hour's cells equal a recount of the events. Sixteen mutants,
+each killed by the fast suite (`TestActivityRollups`): each of the four triggers dropped, the
+fold emptied, the purge without its rollup step, the recount ignoring the purge or recounting
+nothing, each of the six row-level policies opened, the lifecycle policy hiding transitions no
+authority made, and a write grant to the application role. The purge and the recount are shown
+waiting for a fold that holds the lock and no row, since only then does a wait prove the lock.
+Measuring that found the population recount's own lock test passing with its lock deleted: two
+recounts contend on the rows each deletes, lock or no lock. It holds a fold now, and the deleted
+lock turns it red.
+
+Not decided here: small cells. A cell for a rare authority and context in one hour can count one
+event, and someone who knows that one person was there learns its outcome. The hour floor
+narrows this without closing it. Whether the readers suppress or coarsen cells under a minimum
+size is a question for the next part, where the readers are built.
+
+### Step 4, part two (2026-10-02): the Atlas on the rollups
+
+Every Atlas reader now sums the rollups and none reads an event table: the headline, the series,
+the breakdowns and cross-tabs, the heatmap, the stacked series, the authority facet and the
+regions. The cluster, hexagon and timeline layers are withdrawn, since at street zoom a bin of
+one is a point, and the map draws counts per jurisdiction alone, each placed from reference data
+about the jurisdiction (`static/atlas-regions.json`), never from where anyone was verified. A
+window starts at the top of the hour, or past a week the day, that holds its nominal start, and
+says so. One context and one authority at a time: with a set, the answer for all but one would
+subtract from the answer for all.
+
+**Small cells are withheld.** Every count below five is `null` and reads "<5". Every count is a
+part of its window's scope, withheld when it or the rest of its scope is below five, so a
+category of 98 in a scope of 100 does not give the other 2 back; a share is withheld when its
+count is. A fixed dimension lists every value, a zero withheld like a small count; an open list
+folds its small categories into one row; the authority facet lists every authority in name
+order, active or not; a cross-tab row's total is withheld when the cells withheld beneath it sum
+to less than five. A question whose scope holds fewer than fifty events is answered, withheld as
+any, and logged with who asked and what, cache hits included. What this does not close:
+subtraction across responses can still recover a small cell, for example a breakdown with and
+without one outcome. Complementary suppression is the stronger fix, and it is deferred until a
+deployment's use shows which questions are asked together.
+
+**Falsifier 3, measured.** On 008's population (two million people, ten million verifications,
+one laptop, warm, in process): the page from 6,728 to 31 ms, the all-time series from 5,738 to
+26 ms, the regions from 5,649 to 17 ms. Against the seed database every route runs at 1.0 to 2.4
+times its seed cost, except one: `/api/atlas/heatmap?window=30d` at 3.4 times (43.1 against
+12.6 ms), over the line. It reads hours, and at this load nearly every combination of authority,
+context, outcome, disclosure level and algorithm is active in nearly every hour, so the hourly
+rollup saturates at hours times combinations. It is recorded as measured and not rounded away;
+the fix, an hourly total per authority for the heatmap's unfiltered case, is deferred until a
+deployment needs a thirty-day heatmap faster than 43 ms. No reader's plan scans a table that
+grows with the population: `AtlasReadsNoEventTableTests` revokes the application role's SELECT
+on both event tables inside a rolled-back transaction and calls every reader, and the national
+benchmark does the same under load.
+
+**Falsifiers 4 and 5.** No `atlas_*` function returns a location and no rollup has a column for
+one (`check_c6_atlas_redacts_zk_location`, its constitution mutation now the regions handing a
+latitude back). Every response carries its window, grain, start and minimum, and every count a
+caller chooses is clamped (`_ATLAS_MAX_CATEGORIES`, `_ATLAS_MAX_REGIONS`, `_ATLAS_MAX_BUCKETS`).
+
+What building it found, each fixed with a test that fails without the fix:
+
+- A series could carry one bucket more than its cap. The width was the window over the buckets
+  rounded up, and at an exact multiple that cuts one more, the last starting at the window's end.
+- The authority filter took any `str.isdigit()` string, a superscript two among them, which the
+  SQL then matched as text against nothing. It takes ASCII digits now, normalised.
+- "Failure" meant two things on one page: the headline and the map counted `FAILURE`, the series,
+  heatmap and breakdowns every outcome but `SUCCESS`. Every reader means the latter now.
+- A list or a map cut at its cap read as complete; each says when it was cut. The heatmap's `all`
+  claimed every hour while a purge shortens them; it says where its hours begin.
+- In the browser, an interval holding a window's whole activity drew nothing when the intervals
+  beside it were withheld, the stacked series sloped through a withheld interval as through a
+  zero, and a tab's label vanished under the pointer. The simulator stamped events on the host's
+  local clock while the windows are measured on the database's, so on a host off UTC a live
+  simulation landed hours in the past and the hour windows showed nothing.
+- The UI drill booted its app on a port without checking it was free, and took the PID of a
+  subshell, so its app outlived it; a later run on the same port drove the old server and
+  reported on old code. It refuses a busy port and owns its process now, and so does the
+  performance baseline.
+
+Ninety Atlas tests; twelve mutants of the withholding, windows, caps, logging, facet order and
+readers, each killed by the test that names it; the constitution drill catches all ten; the
+check-mutation drill leaves none of 134 checks standing.
+
+Next: whether the event tables keep the location indexes the Atlas no longer reads, since every
+insert pays for them, and the optional PostGIS layer with them. Then B3 and B4.

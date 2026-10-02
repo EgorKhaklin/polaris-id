@@ -986,7 +986,9 @@
     padding: 12px 14px 10px;
     cursor: pointer;
 }
-.atlas-tab:hover { color: var(--ink); }
+/* The tab bar is a dark band in either theme, so its hover text is light; var(--ink) is the
+   page's ink, near-black in the light theme, and a hovered tab read as no tab at all. */
+.atlas-tab:hover { color: #f4f4f5; }
 .atlas-tab-active { color: var(--gold-bright); border-bottom-color: var(--gold); }
 .atlas-tabbar-spacer { flex: 1; }
 .atlas-tabbar-prov {
@@ -1098,6 +1100,8 @@
 .ov-area { fill: rgba(93, 214, 255, 0.16); stroke: none; }
 .ov-line { fill: none; stroke: var(--cyan); stroke-width: 1.6; }
 .ov-line-fail { fill: none; stroke: var(--red); stroke-width: 1.4; opacity: 0.9; }
+.ov-stem { stroke: var(--cyan); stroke-width: 3; }
+.ov-stem-fail { stroke: var(--red); stroke-width: 2; opacity: 0.9; }
 .ov-gridline { stroke: rgba(141, 166, 196, 0.14); stroke-width: 1; }
 .ov-axis { fill: var(--ink-faint); font-family: var(--font-mono); font-size: 9px; }
 .ov-hero-range {
@@ -1369,7 +1373,7 @@
     gap: 6px;
 }
 .gf-facet > summary::-webkit-details-marker { display: none; }
-.gf-facet[open] > summary { border-color: var(--cyan-deep); color: var(--ink); }
+.gf-facet[open] > summary { border-color: var(--cyan-deep); color: #f4f4f5; }   /* on the dark band, as the tabs */
 .gf-facet-badge {
     display: inline-flex;
     align-items: center;
@@ -1620,3 +1624,73 @@
 .athena-layer-vocation { color: var(--void); background: var(--gold); border-color: var(--gold); }
 .athena-rule-constitutional { border-left-color: var(--gold); }
 .athena-rule-engineering { border-left-color: var(--cyan-deep); }
+
+/* ---- Withheld counts (lab/strategy/009, step 4). A count under the minimum cell size, or a
+   figure that would give one back, reads "<5": muted and dotted-underlined, never a number,
+   never a zero. Bars draw nothing, a series breaks, a heatmap cell stays empty. ---- */
+.withheld {
+    color: var(--ink-faint);
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+    cursor: help;
+}
+.ov-withheld-tick { stroke: var(--ink-faint); stroke-width: 2; opacity: 0.6; }
+.ov-bar-fill-neutral { background: var(--steel); }
+.ov-bar-row-folded .ov-bar-label,
+.bd-row-folded .bd-row-label,
+.bd-mx-folded { font-style: italic; color: var(--ink-dim); }
+.bd-mx-withheld { color: var(--ink-faint); background: transparent !important; }
+.trends-hm-withheld { stroke: var(--line); stroke-dasharray: 2 2; }
+.ov-withheld-note,
+.ov-mix-withheld {
+    font-size: 11px;
+    color: var(--ink-faint);
+    margin-top: 6px;
+    line-height: 1.45;
+}
+.legend-withheld { background: var(--steel); }
+
+/* ---- A5: what the Atlas will not show ---- */
+.atlas-limits {
+    margin: 0 14px 18px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--bg1);
+}
+.atlas-limits-title {
+    margin: 0 0 8px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+}
+.atlas-limits-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 10px 18px;
+}
+.atlas-limits-list li { font-size: 12px; line-height: 1.5; color: var(--ink-dim); }
+.atlas-limits-list strong { color: var(--ink); font-weight: 600; }
+.atlas-limits-rule {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 0 6px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    white-space: nowrap;
+}
+a.atlas-limits-rule { color: var(--cyan); text-decoration: none; }
+a.atlas-limits-rule:hover,
+a.atlas-limits-rule:focus-visible { border-color: var(--cyan); }
+
+/* ---- A region's counts, on click ---- */
+.atlas-region-pop { font-size: 12px; line-height: 1.5; color: #0b1520; }
+.atlas-region-pop strong { display: block; margin-bottom: 2px; }

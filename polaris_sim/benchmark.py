@@ -21,7 +21,6 @@ from __future__ import annotations
 import datetime
 import os
 import platform
-import re
 import socket
 import time
 from dataclasses import dataclass, field
@@ -64,7 +63,7 @@ class BenchmarkReport:
     write_latency_ms: Percentiles = field(default_factory=lambda: Percentiles(0, 0, 0, 0))
     atlas_query_ms: dict = field(default_factory=dict)
     atlas_growth: dict = field(default_factory=dict)
-    partition_pruning: dict = field(default_factory=dict)
+    atlas_reads: dict = field(default_factory=dict)
     invariants: dict = field(default_factory=dict)
     scale_counts: dict = field(default_factory=dict)
 
@@ -81,21 +80,26 @@ class BenchmarkReport:
             "write_latency_ms": vars(self.write_latency_ms),
             "atlas_query_ms": self.atlas_query_ms,
             "atlas_growth": self.atlas_growth,
-            "partition_pruning": self.partition_pruning, "invariants": self.invariants,
+            "atlas_reads": self.atlas_reads, "invariants": self.invariants,
             "scale_counts": self.scale_counts, "all_invariants_hold": self.all_invariants_hold,
         }
 
 
-# The bounded Atlas aggregates, timed over the loaded data. `%s` is the window
-# start; each is executed fully with SELECT count(*).
+# The Atlas readers, timed over the loaded data (lab/strategy/009, step 4: they sum the activity
+# rollups). `%s` is the window start; each is executed fully with SELECT count(*).
 def _atlas_probes(since):
     return [
-        ("atlas_volume_series", "SELECT count(*) FROM atlas_volume_series(%s, 24, 'verification')", (since,)),
-        ("atlas_breakdown", "SELECT count(*) FROM atlas_breakdown('agency', %s, 50, 'verification')", (since,)),
-        ("atlas_crosstab", "SELECT count(*) FROM atlas_crosstab('agency', 'outcome', %s, 50, 'verification')", (since,)),
-        ("atlas_geo_jurisdictions", "SELECT count(*) FROM atlas_geo_jurisdictions(%s, 500, 'verification')", (since,)),
-        ("atlas_hexbin", "SELECT count(*) FROM atlas_hexbin(-90, -180, 90, 180, 5.0, 5000, %s, 'verification')", (since,)),
-        ("atlas_clusters_verifications", "SELECT count(*) FROM atlas_clusters_verifications(-90, -180, 90, 180, 5.0, %s)", (since,)),
+        ("atlas_stats", "SELECT count(*) FROM atlas_stats(%s, FALSE)", (since,)),
+        ("atlas_volume_series",
+         "SELECT count(*) FROM atlas_volume_series(%s, FALSE, INTERVAL '1 hour', 'verification')", (since,)),
+        ("atlas_breakdown", "SELECT count(*) FROM atlas_breakdown('agency', %s, FALSE, 50, 'verification')", (since,)),
+        ("atlas_crosstab",
+         "SELECT count(*) FROM atlas_crosstab('agency', 'outcome', %s, FALSE, 50, 'verification')", (since,)),
+        ("atlas_heatmap", "SELECT count(*) FROM atlas_heatmap(%s, 'verification')", (since,)),
+        ("atlas_series_stacked",
+         "SELECT count(*) FROM atlas_series_stacked(%s, FALSE, INTERVAL '1 hour', 'context')", (since,)),
+        ("atlas_geo_jurisdictions",
+         "SELECT count(*) FROM atlas_geo_jurisdictions(%s, FALSE, 500, 'verification')", (since,)),
     ]
 
 
@@ -155,43 +159,28 @@ def measure_growth(small_ms: dict, large_ms: dict, rows_small: int, rows_large: 
     return out
 
 
-def measure_partition_pruning(conn) -> dict:
-    """P2.14 S5 (v9.260): prove the Atlas roll-ups PRUNE the monthly-partitioned
-    event table under the GENERIC plan a parameterized call actually gets (the
-    app's path). A far-future window matches no month partition, so a pruning
-    query drops every one of them; an all-time (NULL) query must keep them all.
-    The difference is the whole fix (event_timestamp >= COALESCE(p_since,
-    '-infinity')): before it, both scanned every partition."""
-    def _month_parts_in(plan: str) -> int:
-        return len(set(re.findall(r"verificationevent_\d{4}_\d{2}", plan)))
+def measure_atlas_reads(conn) -> dict:
+    """lab/strategy/009, step 4: the Atlas reads the activity rollups and never an event
+    table, which is why its cost follows the hours a window spans and not the rows loaded.
+    Until step 4 this phase proved that the readers PRUNED the monthly-partitioned event table
+    (P2.14 S5); there is no event table left in them to prune. Proved by privilege, inside a
+    savepoint that is rolled back: the application role loses SELECT on both event tables and
+    every reader, all-time and over the daily grain, must still answer."""
+    readers = [name for name, _sql, _p in _atlas_probes(None)]
+    refused = []
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT count(*) AS n FROM pg_inherits "
-            " WHERE inhparent='verificationevent'::regclass "
-            "   AND inhrelid::regclass::text ~ 'verificationevent_[0-9]'")
-        month_partitions = cur.fetchone()["n"]
-        cur.execute("SET plan_cache_mode = force_generic_plan")
-        cur.execute("DEALLOCATE ALL")
-        cur.execute("PREPARE _pp(timestamp) AS "
-                    "SELECT * FROM atlas_breakdown('agency', $1, 50)")
-
-        def scanned(arg_sql: str) -> int:
-            cur.execute("EXPLAIN (COSTS OFF) EXECUTE _pp(" + arg_sql + ")")
-            plan = "\n".join(next(iter(r.values())) for r in cur.fetchall())
-            return _month_parts_in(plan)
-
-        recent = scanned("(CURRENT_TIMESTAMP + INTERVAL '100 years')::timestamp")
-        alltime = scanned("NULL")
-        cur.execute("DEALLOCATE _pp")
-        cur.execute("SET plan_cache_mode = auto")
-    return {
-        "month_partitions": month_partitions,
-        "recent_window_scanned": recent,
-        "all_time_scanned": alltime,
-        # With ≥1 month partition, a recent window must scan strictly fewer than
-        # all-time (it prunes them); with none, pruning is trivially satisfied.
-        "prunes": bool(month_partitions == 0 or recent < alltime),
-    }
+        for name, sql, params in _atlas_probes(None):
+            cur.execute("SAVEPOINT atlas_reads")
+            try:
+                cur.execute("REVOKE SELECT ON VerificationEvent, TokenLifecycleEvent FROM polaris_app")
+                cur.execute("SET LOCAL ROLE polaris_app")
+                cur.execute(sql.replace("FALSE", "TRUE", 1), params)
+                cur.fetchall()
+            except Exception as exc:          # a permission refusal is the finding
+                refused.append("%s: %s" % (name, str(exc).splitlines()[0]))
+            finally:
+                cur.execute("ROLLBACK TO SAVEPOINT atlas_reads")
+    return {"readers": readers, "refused": refused, "reads_no_event_table": not refused}
 
 
 _LAT_SQL = ("INSERT INTO VerificationEvent "
@@ -343,7 +332,7 @@ def run_benchmark(conn, *, scale_divisor: int, verifications: int, lifecycle: in
     transaction (a test rolls it back); the committed report is produced with
     commit=True for honest, durable timings."""
     if now is None:
-        now = datetime.datetime.now()
+        now = _events.db_now(conn)      # the clock the events are written and windowed on
     report = BenchmarkReport(
         scale_divisor=scale_divisor, seed=seed, host=socket.gethostname(),
         python=platform.python_version(), timestamp=now.replace(microsecond=0).isoformat())
@@ -399,15 +388,15 @@ def run_benchmark(conn, *, scale_divisor: int, verifications: int, lifecycle: in
     report.atlas_growth = measure_growth(atlas_small, report.atlas_query_ms,
                                          rows_small, _event_rows(conn))
 
-    # Phase 5b: the Atlas roll-ups prune the partitioned event table (P2.14 S5).
-    report.partition_pruning = measure_partition_pruning(conn)
+    # Phase 5b: the Atlas reads the rollups and no event table (lab/strategy/009, step 4).
+    report.atlas_reads = measure_atlas_reads(conn)
 
     # Phase 6: invariants under load, including that mass-issued signatures
     # actually verify (not placeholders the schema merely accepts).
     report.invariants = check_invariants(conn, list(_events._PURPOSES))
     report.invariants["signatures_cryptographically_verify"] = \
         report.crypto_verification.get("all_verified", False)
-    report.invariants["atlas_windowed_query_prunes"] = \
-        report.partition_pruning.get("prunes", False)
+    report.invariants["atlas_reads_no_event_table"] = \
+        report.atlas_reads.get("reads_no_event_table", False)
     report.scale_counts = _scale_counts(conn)
     return report

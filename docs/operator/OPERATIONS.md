@@ -1019,10 +1019,10 @@ After step 3 both should return `t`. The schema gains:
 - `VerificationEvent.geo` (generated, stored) + `gix_verification_geo` (GiST)
 - `TokenLifecycleEvent.geo` (generated, stored) + `gix_lifecycle_geo` (GiST)
 
-The atlas functions still use the B-tree path; operators with PostGIS active
-can query the GiST index directly (a sample `ST_DWithin` query is in
-[docs/design/atlas-scaling.md](../design/atlas-scaling.md), section
-"PostGIS-optional scaling path").
+The Atlas reads no location since step 4 of lab/strategy/009, so it gains nothing from the
+path; operators with PostGIS active can query the GiST index directly (a sample `ST_DWithin`
+query is in [docs/design/atlas-scaling.md](../design/atlas-scaling.md), section
+"The optional PostGIS path").
 
 **When NOT to enable PostGIS:** managed Postgres tiers that gate it behind
 paid plans. The B-tree fallback is operationally complete below ~5M events.

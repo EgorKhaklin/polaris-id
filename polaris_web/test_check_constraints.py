@@ -2600,8 +2600,9 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         the body and was stopped only by the business rules. Now it is refused at the door, and
         the application role keeps its EXECUTE, except on the retention routines, which take
         the acting admin as a parameter and are the owner's alone (2026-10-01, review F2), the
-        population recount, which SHARE-locks the credential tables (lab/strategy/008), and the
-        enrolment rebuild, which SHARE-locks Individual and its enrolment events (step 4)."""
+        population recount, which SHARE-locks the credential tables (lab/strategy/008), the
+        enrolment rebuild, which SHARE-locks Individual and its enrolment events (step 4), and the
+        activity recount, which SHARE-locks both event tables (lab/strategy/009, step 4)."""
         owner = psycopg2.connect(**DB_CONFIG)
         try:
             with owner.cursor() as cur:
@@ -2610,7 +2611,8 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 routines = [r[0] for r in cur.fetchall()]
                 self.assertGreaterEqual(len(routines), 9)
                 owner_only = {"uc_archive_purge", "uc_set_retention_policy", "uc_apply_retention_template",
-                              "uc_rebuild_population_counts", "uc_rebuild_enrollment_counts"}
+                              "uc_rebuild_population_counts", "uc_rebuild_enrollment_counts",
+                              "uc_rebuild_activity_rollups"}
                 self.assertEqual({sig.split("(")[0] for sig in routines} & owner_only, owner_only,
                                  "the owner-only routines must exist for this to mean anything")
                 for sig in routines:
@@ -4822,6 +4824,248 @@ class TestEveryUniqueRuleRefusesADuplicate(_CheckBase):
             f"only {len(live)} unique indexes were found; the query has broken and these tests "
             "are passing by finding nothing")
 
+
+
+# ============================================================================
+# Activity rollups (lab/strategy/009, step 4)
+# ============================================================================
+
+class TestActivityRollups(_CheckBase):
+    """The counts the Atlas reads, kept by statement triggers on the two event tables. Every test
+    writes inside its own transaction and rolls it back, and every comparison is against a
+    recount of the event tables themselves, in hours no fixture event occupies."""
+
+    _HOURS = ("2025-12-31 03:00", "2025-12-31 04:00")
+    _V_KEY = ("bucket", "requesting_agency_id", "context_id", "outcome", "disclosure_level",
+              "algorithm_id")
+    _L_KEY = ("bucket", "actor_agency_id", "event_type")
+
+    def _fixture(self, cur):
+        cur.execute("SELECT agency_id FROM Agency ORDER BY agency_id LIMIT 2")
+        a1, a2 = [r["agency_id"] for r in cur.fetchall()]
+        cur.execute("SELECT min(context_id) AS c FROM VerificationContext")
+        ctx = cur.fetchone()["c"]
+        cur.execute("SELECT token_id, algorithm_id FROM IdentityToken ORDER BY token_id LIMIT 1")
+        tok = cur.fetchone()
+        return a1, a2, ctx, tok
+
+    def _record_events(self, cur, a1, a2, ctx, tok):
+        """One statement into each event table: two hours, two authorities, a zero-knowledge
+        verification, and a transition no authority made."""
+        cur.execute(
+            "INSERT INTO VerificationEvent (token_id, requesting_agency_id, context_id, "
+            "event_timestamp, outcome, disclosure_level) VALUES "
+            "(%(t)s, %(a1)s, %(c)s, '2025-12-31 03:15', 'FAILURE', 'FULL'), "
+            "(%(t)s, %(a1)s, %(c)s, '2025-12-31 03:40', 'FAILURE', 'FULL'), "
+            "(NULL, %(a2)s, %(c)s, '2025-12-31 03:50', 'FAILURE', 'ZERO_KNOWLEDGE'), "
+            "(%(t)s, %(a2)s, %(c)s, '2025-12-31 04:05', 'UNAUTHORIZED', 'SELECTIVE')",
+            {"t": tok["token_id"], "a1": a1, "a2": a2, "c": ctx})
+        cur.execute(
+            "INSERT INTO TokenLifecycleEvent (token_id, actor_agency_id, event_type, "
+            "event_timestamp, reason_code) VALUES "
+            "(%(t)s, %(a2)s, 'DEVICE_BOUND', '2025-12-31 03:20', 'rollup probe'), "
+            "(%(t)s, NULL, 'DEVICE_BOUND', '2025-12-31 03:25', 'rollup probe'), "
+            "(%(t)s, %(a2)s, 'DEVICE_REVOKED', '2025-12-31 04:10', 'rollup probe')",
+            {"t": tok["token_id"], "a2": a2})
+
+    def _cells(self, cur, sql, key):
+        cur.execute(sql, (list(self._HOURS),))
+        return {tuple(r[k] for k in key): r["n"] for r in cur.fetchall()}
+
+    def _verification_cells(self, cur):
+        """The rollup as a reader sums it (totals and pending changes), and a recount."""
+        rolled = self._cells(cur, """
+            SELECT bucket, requesting_agency_id, context_id, outcome, disclosure_level,
+                   algorithm_id, sum(n) AS n
+              FROM (SELECT bucket, requesting_agency_id, context_id, outcome, disclosure_level,
+                           algorithm_id, n FROM VerificationRollup
+                    UNION ALL
+                    SELECT bucket, requesting_agency_id, context_id, outcome, disclosure_level,
+                           algorithm_id, n FROM VerificationRollupDelta) r
+             WHERE bucket = ANY(%s::timestamp[])
+             GROUP BY 1, 2, 3, 4, 5, 6""", self._V_KEY)
+        recounted = self._cells(cur, """
+            SELECT date_trunc('hour', ve.event_timestamp) AS bucket, ve.requesting_agency_id,
+                   ve.context_id, ve.outcome, ve.disclosure_level,
+                   COALESCE(t.algorithm_id, 0) AS algorithm_id, count(*) AS n
+              FROM VerificationEvent ve LEFT JOIN IdentityToken t ON t.token_id = ve.token_id
+             WHERE date_trunc('hour', ve.event_timestamp) = ANY(%s::timestamp[])
+             GROUP BY 1, 2, 3, 4, 5, 6""", self._V_KEY)
+        return rolled, recounted
+
+    def _lifecycle_cells(self, cur):
+        rolled = self._cells(cur, """
+            SELECT bucket, actor_agency_id, event_type, sum(n) AS n
+              FROM (SELECT bucket, actor_agency_id, event_type, n FROM LifecycleRollup
+                    UNION ALL
+                    SELECT bucket, actor_agency_id, event_type, n FROM LifecycleRollupDelta) r
+             WHERE bucket = ANY(%s::timestamp[])
+             GROUP BY 1, 2, 3""", self._L_KEY)
+        recounted = self._cells(cur, """
+            SELECT date_trunc('hour', event_timestamp) AS bucket,
+                   COALESCE(actor_agency_id, 0) AS actor_agency_id, event_type, count(*) AS n
+              FROM TokenLifecycleEvent
+             WHERE date_trunc('hour', event_timestamp) = ANY(%s::timestamp[])
+             GROUP BY 1, 2, 3""", self._L_KEY)
+        return rolled, recounted
+
+    def test_every_recorded_event_is_counted_in_its_hour(self):
+        """Each hour's cells equal a recount of the events, pending and then folded, and the
+        fold leaves nothing pending and the day's totals equal to its hours'."""
+        with self.conn.cursor() as cur:
+            a1, a2, ctx, tok = self._fixture(cur)
+            self._record_events(cur, a1, a2, ctx, tok)
+            for stage in ("pending", "folded"):
+                rolled, recounted = self._verification_cells(cur)
+                self.assertEqual(sum(recounted.values()), 4, "fixture: the four verifications")
+                self.assertEqual(rolled, recounted, "verifications, " + stage)
+                rolled, recounted = self._lifecycle_cells(cur)
+                self.assertEqual(sum(recounted.values()), 3, "fixture: the three transitions")
+                self.assertEqual(rolled, recounted, "lifecycle events, " + stage)
+                if stage == "pending":
+                    cur.execute("SELECT uc_fold_activity_rollups() AS folded")
+                    self.assertGreater(cur.fetchone()["folded"], 0)
+            cur.execute("SELECT (SELECT count(*) FROM VerificationRollupDelta) "
+                        "     + (SELECT count(*) FROM LifecycleRollupDelta) AS n")
+            self.assertEqual(cur.fetchone()["n"], 0, "a fold leaves nothing pending")
+            # The credential's algorithm as recorded, and 0 for the verification that named none.
+            algorithms = {key[5] for key in self._verification_cells(cur)[0]}
+            self.assertEqual(algorithms, {tok["algorithm_id"], 0})
+            cur.execute("SELECT (SELECT sum(n) FROM VerificationRollupDaily "
+                        "         WHERE bucket = '2025-12-31') AS daily, "
+                        "       (SELECT sum(n) FROM VerificationRollup "
+                        "         WHERE bucket >= '2025-12-31' AND bucket < '2026-01-01') AS hourly")
+            row = cur.fetchone()
+            self.assertEqual(row["daily"], row["hourly"], "the day's total is its hours' sum")
+
+    def test_a_truncate_empties_the_rollups_of_its_table_alone(self):
+        with self.conn.cursor() as cur:
+            a1, a2, ctx, tok = self._fixture(cur)
+            self._record_events(cur, a1, a2, ctx, tok)
+            counts = ("SELECT (SELECT count(*) FROM VerificationRollup) "
+                      "     + (SELECT count(*) FROM VerificationRollupDaily) "
+                      "     + (SELECT count(*) FROM VerificationRollupDelta) AS v, "
+                      "       (SELECT count(*) FROM LifecycleRollup) "
+                      "     + (SELECT count(*) FROM LifecycleRollupDaily) "
+                      "     + (SELECT count(*) FROM LifecycleRollupDelta) AS l")
+            cur.execute(counts)
+            before = cur.fetchone()
+            self.assertGreater(before["v"], 0, "fixture")
+            self.assertGreater(before["l"], 0, "fixture")
+            cur.execute("TRUNCATE VerificationEvent")
+            cur.execute(counts)
+            self.assertEqual(dict(cur.fetchone()), {"v": 0, "l": before["l"]})
+            cur.execute("TRUNCATE TokenLifecycleEvent")
+            cur.execute(counts)
+            self.assertEqual(dict(cur.fetchone()), {"v": 0, "l": 0})
+
+    def test_a_bound_operator_sees_only_its_authoritys_activity(self):
+        """As polaris_app bound to one authority, no other authority's row is visible in any
+        rollup, totals, days or pending; unbound, they exist, so the zero is the policy's. A
+        transition no authority made (actor 0) stays visible, as its NULL is on the event table."""
+        with self.conn.cursor() as cur:
+            a1, a2, ctx, tok = self._fixture(cur)
+            self._record_events(cur, a1, a2, ctx, tok)
+            cur.execute("SET LOCAL ROLE polaris_app")
+            tables = (("VerificationRollup", "requesting_agency_id <> %s"),
+                      ("VerificationRollupDaily", "requesting_agency_id <> %s"),
+                      ("VerificationRollupDelta", "requesting_agency_id <> %s"),
+                      ("LifecycleRollup", "actor_agency_id NOT IN (0, %s)"),
+                      ("LifecycleRollupDaily", "actor_agency_id NOT IN (0, %s)"),
+                      ("LifecycleRollupDelta", "actor_agency_id NOT IN (0, %s)"))
+            for table, other in tables:
+                sql = "SELECT count(*) AS n FROM %s WHERE %s" % (table, other)
+                cur.execute("SELECT set_config('polaris.operator_agency_id', '', true)")
+                cur.execute(sql, (a1,))
+                self.assertGreater(cur.fetchone()["n"], 0, "fixture: another authority's rows in " + table)
+                cur.execute("SELECT set_config('polaris.operator_agency_id', %s, true)", (str(a1),))
+                cur.execute(sql, (a1,))
+                self.assertEqual(cur.fetchone()["n"], 0, "a bound operator reads another authority's " + table)
+            cur.execute("SELECT count(*) AS n FROM LifecycleRollupDelta WHERE actor_agency_id = 0")
+            self.assertGreater(cur.fetchone()["n"], 0, "a transition no authority made stays visible")
+            cur.execute("SELECT count(*) AS n FROM VerificationRollupDelta")
+            self.assertGreater(cur.fetchone()["n"], 0, "the binding hides other authorities, not the operator's own")
+
+    def test_the_application_role_writes_no_rollup(self):
+        """A count the application role could write is a count a compromised application could
+        forge; it records events, and the triggers count them."""
+        for table in ("VerificationRollup", "VerificationRollupDaily", "VerificationRollupDelta"):
+            with self.subTest(table=table), self.conn.cursor() as cur:
+                cur.execute("SAVEPOINT w")
+                cur.execute("SET LOCAL ROLE polaris_app")
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute("INSERT INTO %s (bucket, requesting_agency_id, context_id, outcome, "
+                                "disclosure_level, algorithm_id, n) SELECT date_trunc('hour', now()), "
+                                "min(agency_id), 1, 'SUCCESS', 'FULL', 0, 1 FROM Agency" % table)
+                cur.execute("ROLLBACK TO SAVEPOINT w")
+        for table in ("LifecycleRollup", "LifecycleRollupDaily", "LifecycleRollupDelta"):
+            with self.subTest(table=table), self.conn.cursor() as cur:
+                cur.execute("SAVEPOINT w")
+                cur.execute("SET LOCAL ROLE polaris_app")
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute("UPDATE %s SET n = n + 1" % table)
+                cur.execute("ROLLBACK TO SAVEPOINT w")
+
+    def _purge(self, cur):
+        """A policy-mode purge of verifications older than a thousand days, as 08_tests S.9."""
+        cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' AND is_active "
+                    "ORDER BY user_id LIMIT 1")
+        admin = cur.fetchone()["user_id"]
+        cur.execute("CALL uc_apply_retention_template('MINIMIZED', NULL, %s)", (admin,))
+        cur.execute(
+            "CALL uc_archive_purge(p_cutoff_timestamp := now() - interval '1825 days', "
+            "p_archive_uri := 'file:///tmp/rollup-probe.tar.gz', p_archive_sha256 := repeat('d', 64), "
+            "p_actor_user_id := %s, p_jurisdiction := NULL, p_class_cutoffs := ARRAY["
+            "now() - interval '1825 days', now() - interval '1000 days', "
+            "now() - interval '1825 days', now() - interval '1000 days']::timestamptz[], "
+            "checkpoint_id_out := NULL)", (admin,))
+
+    def _old_verification(self, cur, a1, ctx):
+        cur.execute("INSERT INTO VerificationEvent (token_id, requesting_agency_id, context_id, "
+                    "event_timestamp, outcome, disclosure_level) VALUES "
+                    "(NULL, %s, %s, now() - interval '1100 days', 'FAILURE', 'SELECTIVE') "
+                    "RETURNING date_trunc('hour', event_timestamp) AS hour, "
+                    "date_trunc('day', event_timestamp) AS day", (a1, ctx))
+        return cur.fetchone()
+
+    def test_a_purge_takes_the_hours_it_empties_and_keeps_the_days(self):
+        """Hourly cells live no longer than the events they count; the day stays, as statistics
+        that say nothing finer than a day."""
+        with self.conn.cursor() as cur:
+            a1, a2, ctx, tok = self._fixture(cur)
+            old = self._old_verification(cur, a1, ctx)
+            self._purge(cur)
+            cur.execute("SELECT count(*) AS n FROM VerificationEvent WHERE event_timestamp < now() - interval '1000 days'")
+            self.assertEqual(cur.fetchone()["n"], 0, "fixture: the purge deleted the old verification")
+            cur.execute("SELECT (SELECT count(*) FROM VerificationRollup WHERE bucket = %(h)s) "
+                        "     + (SELECT count(*) FROM VerificationRollupDelta WHERE bucket = %(h)s) AS hourly, "
+                        "       (SELECT count(*) FROM VerificationRollup "
+                        "         WHERE bucket < date_trunc('hour', now() - interval '1000 days')) AS before_cut, "
+                        "       (SELECT sum(n) FROM VerificationRollupDaily WHERE bucket = %(d)s "
+                        "           AND requesting_agency_id = %(a)s AND outcome = 'FAILURE') AS daily",
+                        {"h": old["hour"], "d": old["day"], "a": a1})
+            row = cur.fetchone()
+            self.assertEqual(row["hourly"], 0, "the purged hour's cells went with its events")
+            self.assertEqual(row["before_cut"], 0, "no hour wholly before the cutoff is left")
+            self.assertGreaterEqual(row["daily"], 1, "the day keeps the count")
+
+    def test_a_rebuild_recounts_what_a_purge_did_not_cut(self):
+        """A recount after a purge restores every hour after the cut from the events, and leaves
+        the days the purge cut through as the fold left them: a recount would undercount them."""
+        with self.conn.cursor() as cur:
+            a1, a2, ctx, tok = self._fixture(cur)
+            old = self._old_verification(cur, a1, ctx)
+            self._purge(cur)
+            self._record_events(cur, a1, a2, ctx, tok)
+            cur.execute("SELECT uc_fold_activity_rollups()")
+            cur.execute("UPDATE VerificationRollup SET n = n + 5 WHERE bucket = %s", (self._HOURS[0],))
+            self.assertGreater(cur.rowcount, 0, "fixture: a counted hour to spoil")
+            cur.execute("SELECT uc_rebuild_activity_rollups()")
+            rolled, recounted = self._verification_cells(cur)
+            self.assertEqual(rolled, recounted, "the spoiled hour is recounted")
+            cur.execute("SELECT sum(n) AS n FROM VerificationRollupDaily WHERE bucket = %s "
+                        "AND requesting_agency_id = %s AND outcome = 'FAILURE'", (old["day"], a1))
+            self.assertGreaterEqual(cur.fetchone()["n"], 1, "the purged day keeps its count")
 
 
 # 2026-09-25: a skipped security test is a pass nobody reads. TestC1PrivilegeBoundary skipped in

@@ -175,11 +175,11 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
         print(f"  Atlas at scale ({rep.scale_counts.get('verification_events', 0):,} events):")
         for name, ms in rep.atlas_query_ms.items():
             print(f"      {name:<26}: {ms:>8.1f} ms")
-        pp = rep.partition_pruning
-        if pp:
-            print(f"  Atlas partition pruning (generic plan, {pp.get('month_partitions', 0)} monthly partitions):")
-            print(f"      recent window scans {pp.get('recent_window_scanned', 0)} vs all-time "
-                  f"{pp.get('all_time_scanned', 0)}  ->  {'PRUNES' if pp.get('prunes') else 'NO PRUNING'}")
+        ar = rep.atlas_reads
+        if ar:
+            print(f"  Atlas reads ({len(ar.get('readers', []))} readers, the event tables' SELECT revoked):")
+            print("      " + ("no event table read" if ar.get("reads_no_event_table")
+                            else "REFUSED: " + "; ".join(ar.get("refused", []))))
         print("  invariants under load:")
         for name, ok in rep.invariants.items():
             print(f"      {name:<40}: {'HOLD' if ok else 'VIOLATED'}")

@@ -206,8 +206,8 @@ epoch's Merkle root" without revealing which token, bound to
 ## Schema invariants & enforcement
 
 **Antimeridian**: the 180° meridian (date line). Bboxes that span
-this line have `min_lon > max_lon`. Supported as of v7 via
-wrap-aware predicates in atlas SQL functions.
+this line have `min_lon > max_lon`. The Atlas's located layers supported them from v7 until
+they were withdrawn on 2026-10-02.
 
 **Append-only**: a table whose rows can be inserted but not
 modified or deleted. Enforced by trigger
@@ -246,13 +246,15 @@ status = 'ACTIVE'`. Enforces C3.
 
 ## Web app & operator concerns
 
-**Atlas**: the operational situational-awareness page. Renders
-verifications and lifecycle events on a globe with bbox-scoped
-spatial aggregation. Backed by `/api/atlas/*` endpoints.
+**Atlas**: the operational analytics console. Shows what the system is doing as counts by
+window, category and jurisdiction, read from the activity rollups, never an event, a person or a
+place, with every count below five withheld. Backed by `/api/atlas/*` endpoints.
 
-**Cluster**: in atlas terminology, a spatial bin (grid cell)
-aggregating multiple events into one displayable summary. Computed
-server-side by `atlas_clusters_*` functions.
+**Activity rollup**: the hourly and daily totals of verifications and lifecycle events the
+Atlas reads, kept by statement triggers on the event tables and folded on a schedule.
+
+**Cluster**: until 2026-10-02, a spatial bin (grid cell) of the Atlas map aggregating events
+into one summary, computed by the withdrawn `atlas_clusters_*` functions.
 
 **CSP**: Content-Security-Policy header. Polaris uses
 `script-src 'self'`. Constraint C5.

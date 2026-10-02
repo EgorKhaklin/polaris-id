@@ -2052,6 +2052,14 @@ BEGIN
         WHERE event_timestamp < v_cut_authaudit;
     GET DIAGNOSTICS v_authaudit_purged = ROW_COUNT;
 
+    -- The hourly activity rollups go with the hours they count (lab/strategy/009, step 4): what
+    -- is pending is folded first, then the hours wholly before each cutoff are deleted. The daily
+    -- rollups stay: they are the system's statistics, and say nothing finer than a day.
+    PERFORM pg_advisory_xact_lock(hashtext('polaris.activity.fold'));
+    PERFORM uc_fold_activity_rollups();
+    DELETE FROM VerificationRollup WHERE bucket < date_trunc('hour', v_cut_verification);
+    DELETE FROM LifecycleRollup    WHERE bucket < date_trunc('hour', v_cut_lifecycle);
+
     -- AnchorBatch is intentionally excluded from v8.87 Phase 2b
     -- because BlockchainAnchor.batch_id holds an FK reference;
     -- cleanly handling the cascade requires either NULLing the
@@ -2928,3 +2936,158 @@ END$$;
 COMMENT ON FUNCTION uc_rebuild_enrollment_counts() IS
   'Rebuilds EnrollmentCurrent and EnrollmentCount from Individual and EnrollmentStatusEvent under '
   'a SHARE lock (lab/strategy/008). Owner-only: a full pass over the population is a maintenance act.';
+
+-- ----------------------------------------------------------------------------
+-- Activity rollups (lab/strategy/009, step 4). VerificationRollup and LifecycleRollup hold folded
+-- hourly totals, their Daily twins the same by day, and the Delta tables the counts the statement
+-- triggers on the event tables append; a reader sums totals and deltas. An event is counted once,
+-- when it is recorded, so a change only ever adds.
+-- ----------------------------------------------------------------------------
+
+-- Move every visible change into the hourly and the daily totals; one fold at a time, and a caller
+-- that finds one running returns at once. The triggers call it now and then, so the changes stay
+-- few; a reader sums the totals and the changes, so it need not.
+CREATE OR REPLACE FUNCTION uc_fold_activity_rollups()
+RETURNS BIGINT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_verifications BIGINT := 0;
+    v_lifecycles    BIGINT := 0;
+BEGIN
+    IF NOT pg_try_advisory_xact_lock(hashtext('polaris.activity.fold')) THEN
+        RETURN 0;
+    END IF;
+    -- Additions only, so an upsert is safe here: the proposed row's CHECK (n > 0) holds for every
+    -- change, unlike the population fold's decrements. One fold runs at a time (the lock above).
+    WITH moved AS (
+        DELETE FROM VerificationRollupDelta
+        RETURNING bucket, requesting_agency_id, context_id, outcome, disclosure_level, algorithm_id, n
+    ), hourly AS (
+        INSERT INTO VerificationRollup AS r
+               (bucket, requesting_agency_id, context_id, outcome, disclosure_level, algorithm_id, n)
+        SELECT bucket, requesting_agency_id, context_id, outcome, disclosure_level, algorithm_id, sum(n)
+          FROM moved
+         GROUP BY bucket, requesting_agency_id, context_id, outcome, disclosure_level, algorithm_id
+        ON CONFLICT (bucket, requesting_agency_id, context_id, outcome, disclosure_level, algorithm_id)
+        DO UPDATE SET n = r.n + EXCLUDED.n
+        RETURNING 1
+    ), daily AS (
+        INSERT INTO VerificationRollupDaily AS r
+               (bucket, requesting_agency_id, context_id, outcome, disclosure_level, algorithm_id, n)
+        SELECT date_trunc('day', bucket), requesting_agency_id, context_id, outcome, disclosure_level,
+               algorithm_id, sum(n)
+          FROM moved
+         GROUP BY date_trunc('day', bucket), requesting_agency_id, context_id, outcome,
+                  disclosure_level, algorithm_id
+        ON CONFLICT (bucket, requesting_agency_id, context_id, outcome, disclosure_level, algorithm_id)
+        DO UPDATE SET n = r.n + EXCLUDED.n
+        RETURNING 1
+    )
+    SELECT count(*) INTO v_verifications FROM moved;
+
+    WITH moved AS (
+        DELETE FROM LifecycleRollupDelta
+        RETURNING bucket, actor_agency_id, event_type, n
+    ), hourly AS (
+        INSERT INTO LifecycleRollup AS r (bucket, actor_agency_id, event_type, n)
+        SELECT bucket, actor_agency_id, event_type, sum(n)
+          FROM moved
+         GROUP BY bucket, actor_agency_id, event_type
+        ON CONFLICT (bucket, actor_agency_id, event_type) DO UPDATE SET n = r.n + EXCLUDED.n
+        RETURNING 1
+    ), daily AS (
+        INSERT INTO LifecycleRollupDaily AS r (bucket, actor_agency_id, event_type, n)
+        SELECT date_trunc('day', bucket), actor_agency_id, event_type, sum(n)
+          FROM moved
+         GROUP BY date_trunc('day', bucket), actor_agency_id, event_type
+        ON CONFLICT (bucket, actor_agency_id, event_type) DO UPDATE SET n = r.n + EXCLUDED.n
+        RETURNING 1
+    )
+    SELECT count(*) INTO v_lifecycles FROM moved;
+    RETURN v_verifications + v_lifecycles;
+END$$;
+
+COMMENT ON FUNCTION uc_fold_activity_rollups() IS
+  'Folds the activity rollup deltas into the hourly and daily totals (lab/strategy/009, step 4). '
+  'Idempotent and non-blocking: one fold at a time, and a caller that finds one running returns 0.';
+
+-- Recount the rollups from the event tables: the load scripts call it after the seed, the bench
+-- after a bulk load with triggers off, and an operator to reconcile. It SHARE-locks both event
+-- tables, so every writer waits until it commits; on a large deployment that is a maintenance
+-- window, so the application role may not run it (09_grants.sql).
+--
+-- A recorded purge cut through the hour and the day of its cutoff, and deleted the hours before
+-- it. Those keep the counts the fold gave them: their events are partly or wholly gone, and a
+-- recount would undercount them. Everything after them is recounted; a database never purged is
+-- recounted whole.
+CREATE OR REPLACE FUNCTION uc_rebuild_activity_rollups()
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_cut_verification TIMESTAMPTZ;
+    v_cut_lifecycle    TIMESTAMPTZ;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtext('polaris.activity.fold'));
+    LOCK TABLE VerificationEvent, TokenLifecycleEvent IN SHARE MODE;
+    PERFORM uc_fold_activity_rollups();
+    SELECT max(COALESCE(cutoff_verification, cutoff_timestamp)),
+           max(COALESCE(cutoff_lifecycle, cutoff_timestamp))
+      INTO v_cut_verification, v_cut_lifecycle
+      FROM LifecycleArchiveCheckpoint;
+
+    DELETE FROM VerificationRollup
+     WHERE v_cut_verification IS NULL
+        OR bucket >= date_trunc('hour', v_cut_verification) + INTERVAL '1 hour';
+    INSERT INTO VerificationRollup
+           (bucket, requesting_agency_id, context_id, outcome, disclosure_level, algorithm_id, n)
+    SELECT date_trunc('hour', ve.event_timestamp), ve.requesting_agency_id, ve.context_id,
+           ve.outcome, ve.disclosure_level, COALESCE(t.algorithm_id, 0), count(*)
+      FROM VerificationEvent ve
+      LEFT JOIN IdentityToken t ON t.token_id = ve.token_id
+     WHERE v_cut_verification IS NULL
+        OR ve.event_timestamp >= date_trunc('hour', v_cut_verification) + INTERVAL '1 hour'
+     GROUP BY date_trunc('hour', ve.event_timestamp), ve.requesting_agency_id, ve.context_id,
+              ve.outcome, ve.disclosure_level, COALESCE(t.algorithm_id, 0);
+    DELETE FROM VerificationRollupDaily
+     WHERE v_cut_verification IS NULL
+        OR bucket >= date_trunc('day', v_cut_verification) + INTERVAL '1 day';
+    INSERT INTO VerificationRollupDaily
+           (bucket, requesting_agency_id, context_id, outcome, disclosure_level, algorithm_id, n)
+    SELECT date_trunc('day', bucket), requesting_agency_id, context_id, outcome, disclosure_level,
+           algorithm_id, sum(n)
+      FROM VerificationRollup
+     WHERE v_cut_verification IS NULL
+        OR bucket >= date_trunc('day', v_cut_verification) + INTERVAL '1 day'
+     GROUP BY date_trunc('day', bucket), requesting_agency_id, context_id, outcome,
+              disclosure_level, algorithm_id;
+
+    DELETE FROM LifecycleRollup
+     WHERE v_cut_lifecycle IS NULL
+        OR bucket >= date_trunc('hour', v_cut_lifecycle) + INTERVAL '1 hour';
+    INSERT INTO LifecycleRollup (bucket, actor_agency_id, event_type, n)
+    SELECT date_trunc('hour', event_timestamp), COALESCE(actor_agency_id, 0), event_type, count(*)
+      FROM TokenLifecycleEvent
+     WHERE v_cut_lifecycle IS NULL
+        OR event_timestamp >= date_trunc('hour', v_cut_lifecycle) + INTERVAL '1 hour'
+     GROUP BY date_trunc('hour', event_timestamp), COALESCE(actor_agency_id, 0), event_type;
+    DELETE FROM LifecycleRollupDaily
+     WHERE v_cut_lifecycle IS NULL
+        OR bucket >= date_trunc('day', v_cut_lifecycle) + INTERVAL '1 day';
+    INSERT INTO LifecycleRollupDaily (bucket, actor_agency_id, event_type, n)
+    SELECT date_trunc('day', bucket), actor_agency_id, event_type, sum(n)
+      FROM LifecycleRollup
+     WHERE v_cut_lifecycle IS NULL
+        OR bucket >= date_trunc('day', v_cut_lifecycle) + INTERVAL '1 day'
+     GROUP BY date_trunc('day', bucket), actor_agency_id, event_type;
+END$$;
+
+COMMENT ON FUNCTION uc_rebuild_activity_rollups() IS
+  'Recounts the activity rollups from VerificationEvent and TokenLifecycleEvent under a SHARE lock '
+  '(lab/strategy/009, step 4), keeping the hours and days a recorded purge cut through. '
+  'Owner-only: a full pass over the events is a maintenance act.';
