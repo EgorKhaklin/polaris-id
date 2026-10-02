@@ -41,15 +41,15 @@ Redis rate-limiter backend (each adds its own overhead; measure through
 ## Measured
 
 <!-- baseline:begin -->
-**Measured v9.191 @ 3b8c438+dirty, 2026-09-02T00:18Z (full run, 60s per stage).** Apple M3, 8 cores, 16 GB, macOS 26.3; PostgreSQL 16.14; Python 3.12.13; gunicorn x4 sync workers; signing: ML-DSA-65 (liboqs). Topology: app (gunicorn, sync workers) + PostgreSQL on one host; no TLS edge, no pgbouncer; in-memory rate limiter with the write cap raised for the run.
+**Measured v1.0.0-rc.70 @ 19e6bc6c, 2026-10-02T11:05Z (full run, 60s per stage).** Apple M3, 8 cores, 16 GB, macOS 26.3; PostgreSQL 16.14; Python 3.12.13; gunicorn x4 sync workers; signing: ML-DSA-65 (liboqs). Topology: app (gunicorn, sync workers) + PostgreSQL on one host; no TLS edge, no pgbouncer; in-memory rate limiter with the write cap raised for the run.
 
 | Stage | Offered req/s | Achieved req/s | Success req/s | p50 ms | p95 ms | p99 ms | Success/total |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Issuance (`POST /uc1/issue`, full uc1 procedure + signature) | 40 | 40.0 | 40.0 | 23.9 | 28.0 | 32.9 | 2400/2400 |
-| Verification (`POST /verifications/new`) | 80 | 80.0 | 80.0 | 15.2 | 18.5 | 22.4 | 4800/4800 |
-| Atlas zoomed bbox, warm (`/api/atlas/clusters`, cached) | 100 | 100.0 | 100.0 | 9.8 | 14.5 | 17.8 | 6000/6000 |
-| Atlas zoomed bbox, cold (a new bbox every request) | 100 | 100.0 | 100.0 | 13.4 | 17.8 | 31.0 | 6000/6000 |
-| Atlas whole-world stats, warm (`/api/atlas/stats`) | 100 | 100.0 | 100.0 | 9.2 | 13.8 | 17.6 | 6000/6000 |
+| Issuance (`POST /uc1/issue`, full uc1 procedure + signature) | 40 | 40.0 | 40.0 | 29.9 | 34.4 | 57.5 | 2400/2400 |
+| Verification (`POST /verifications/new`) | 80 | 80.0 | 80.0 | 15.0 | 18.3 | 41.1 | 4800/4800 |
+| Atlas breakdown, warm (`/api/atlas/breakdown`, cached) | 100 | 100.0 | 100.0 | 8.9 | 10.6 | 13.3 | 6000/6000 |
+| Atlas breakdown, cold (a new question every request) | 100 | 100.0 | 100.0 | 16.6 | 19.0 | 23.5 | 6000/6000 |
+| Atlas all-time stats, warm (`/api/atlas/stats`) | 100 | 100.0 | 100.0 | 9.0 | 11.9 | 16.2 | 6000/6000 |
 <!-- baseline:end -->
 
 Read the table with the topology line: one developer machine running both the
