@@ -53,7 +53,6 @@ Routes register by import: app.py imports this module at the END, after every na
 exists, and aliases itself into sys.modules first so `python3 app.py` does not load it twice.
 """
 import json
-import math
 import os
 import threading
 import time as _time
@@ -376,8 +375,12 @@ def _parse_atlas_filters(args):
     agencies = (args.get('agencies') or '').strip() or None
     if agencies and ',' in agencies:
         raise ValueError("one authority at a time")
-    if agencies and not agencies.isdigit():
+    # ASCII digits only: str.isdigit() takes '\u00b2' and '\u0663' too. Normalised, so '007' is
+    # authority 7, which the SQL matches as text.
+    if agencies and not (agencies.isascii() and agencies.isdigit() and len(agencies) <= 10):
         raise ValueError(f"authority id must be an integer: {agencies!r}")
+    if agencies:
+        agencies = str(int(agencies))
 
     return {
         'window': window,
@@ -425,12 +428,22 @@ def _series_since(f, kind):
     return _window_start(_db_now(), timedelta(days=30), 'day')
 
 
+def _first_hour(kind):
+    """The first hour the hourly rollup still holds, as the caller may see it, or None."""
+    table, delta = (('VerificationRollup', 'VerificationRollupDelta') if kind == 'verification'
+                    else ('LifecycleRollup', 'LifecycleRollupDelta'))
+    row = query(f"SELECT least((SELECT min(bucket) FROM {table}), "
+                f"(SELECT min(bucket) FROM {delta})) AS h", fetch='one')
+    return row['h'] if row else None
+
+
 def _bucket_width(since, until, buckets, grain):
-    """A series bucket: the window cut into at most `buckets`, rounded up to whole hours (or
-    days), since the rollups hold nothing finer."""
+    """A series bucket: whole hours (or days), since the rollups hold nothing finer, and wider
+    than the window over `buckets`, so the window cuts into at most `buckets` of them. A width of
+    exactly span / buckets cuts one more, the last starting at `until` itself (C8)."""
     unit = 3600 if grain == 'hour' else 86400
     span = max((until - since).total_seconds(), unit)
-    return timedelta(seconds=max(1, math.ceil(span / buckets / unit)) * unit)
+    return timedelta(seconds=(int(span // (buckets * unit)) + 1) * unit)
 
 
 def _buckets(since, until, width):
@@ -497,8 +510,12 @@ def api_atlas_geo_jurisdictions():
                 regions.append(region)
             else:
                 unplaced.append(region)
+        # At the cap, the quietest jurisdictions past it are in no row at all: counted in the
+        # window's totals and drawn nowhere, which the page says rather than implying the map is
+        # every jurisdiction.
         payload = dict(kind=kind, count=len(regions) + len(unplaced), regions=regions,
-                       unplaced=unplaced, elsewhere=_part(elsewhere, scope), **_window_fields(f))
+                       unplaced=unplaced, elsewhere=_part(elsewhere, scope),
+                       truncated=len(rows) == _ATLAS_MAX_REGIONS, **_window_fields(f))
         return payload, scope
 
     return _answer('regions', ('geojur', kind, _filter_cache_key(f)), f, compute, kind=kind)
@@ -607,6 +624,9 @@ def api_atlas_heatmap():
               FROM atlas_heatmap(%s, %s, %s, %s, %s, %s)
         """, (f['since'], kind, f['outcomes'], f['disclosure'], f['contexts'], f['agencies']))
         scope = int(rows[0]['scope_total']) if rows else 0
+        # 'all' here is every hour still kept, which a purge shortens while the daily rollup
+        # keeps its days: the response says where its hours begin, not that they are all.
+        since = f['since'] or _first_hour(kind)
         by_cell = {(int(r['dow']), int(r['hour'])): r for r in rows}
         cells = []
         for dow in range(1, 8):
@@ -615,7 +635,8 @@ def api_atlas_heatmap():
                 n = int(r['n']) if r else 0
                 cells.append({'dow': dow, 'hour': hour, 'n': _part(n, scope),
                               'n_failure': _part(r['n_failure'], n) if r else None})
-        payload = dict(kind=kind, cells=cells, **dict(_window_fields(f), grain='hour'))
+        payload = dict(kind=kind, cells=cells, **dict(
+            _window_fields(f), grain='hour', since=since.isoformat() if since else None))
         return payload, scope
 
     return _answer('heatmap', ('heatmap', kind, _filter_cache_key(f)), f, compute, kind=kind)
@@ -817,7 +838,8 @@ def api_atlas_crosstab():
                            else None)
             out_rows.append({'label': label, 'total': total_shown,
                              'folded': label == _ATLAS_FOLDED})
-        payload = dict(kind=kind, row=row_dim, col=col_dim, limit=limit, rows=out_rows, cols=cols,
+        payload = dict(kind=kind, row=row_dim, col=col_dim, limit=limit,
+                       truncated=len(row_totals) == limit, rows=out_rows, cols=cols,
                        cells=cells, **_window_fields(f))
         return payload, scope
 

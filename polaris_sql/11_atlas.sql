@@ -19,6 +19,10 @@
 -- coordinate: the rollups hold none, so a zero-knowledge verification is counted and cannot be
 -- located (C6).
 --
+-- A FAILURE COUNT IS EVERY OUTCOME BUT SUCCESS (FAILURE, EXPIRED, UNAUTHORIZED) for a
+-- verification, and REVOKED or LOST for a lifecycle event: one meaning in every reader, so two
+-- panels of one page cannot disagree about what failed.
+--
 -- WINDOWS. p_since is the start of the hour (or, with p_daily, the day) that holds the window's
 -- nominal start; the route computes it and the page says it. p_daily reads the daily rollup, for
 -- windows longer than a week. A series groups its rows into buckets of p_width from p_since.
@@ -317,7 +321,7 @@ STABLE
 AS $$
     WITH v AS (
         SELECT COALESCE(sum(n), 0)                                                    AS total,
-               COALESCE(sum(n) FILTER (WHERE outcome = 'FAILURE'), 0)                 AS failures,
+               COALESCE(sum(n) FILTER (WHERE outcome <> 'SUCCESS'), 0)                AS failures,
                COALESCE(sum(n) FILTER (WHERE disclosure_level = 'FULL'), 0)           AS fulls,
                COALESCE(sum(n) FILTER (WHERE disclosure_level = 'ZERO_KNOWLEDGE'), 0) AS zks,
                COALESCE(sum(n) FILTER (WHERE algorithm_id <> 0), 0)                   AS named,
@@ -715,7 +719,7 @@ AS $$
     WITH g AS (
         SELECT jurisdiction,
                sum(n) AS n_total,
-               COALESCE(sum(n) FILTER (WHERE outcome = 'FAILURE'), 0) AS n_failure,
+               COALESCE(sum(n) FILTER (WHERE outcome <> 'SUCCESS'), 0) AS n_failure,
                COALESCE(sum(n) FILTER (WHERE disclosure_level = 'ZERO_KNOWLEDGE'), 0) AS n_zk
           FROM atlas_verification_combos(p_since, p_daily, p_outcomes, p_disclosure,
                                          p_contexts, p_agencies)

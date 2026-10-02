@@ -619,6 +619,11 @@
       grid.appendChild(el('span', { class: 'bd-mx-cell bd-mx-total', text: fmtCount(r.total) }));
     });
     mount.appendChild(grid);
+    // At the row cap the quietest rows are in no row of the matrix, so it says so.
+    if (data.truncated) {
+      mount.appendChild(el('div', { class: 'bd-explorer-foot',
+        text: 'The ' + data.limit + ' busiest rows only; refine the filter to narrow' }));
+    }
   }
 
   function bdShowError(msg) {
@@ -647,9 +652,12 @@
       renderRankedTable($('[data-bd-ranked]', bd), bdLastCats, bdState.metric);
       var foot = $('[data-bd-count]', bd);
       if (foot) {
-        var n = bdLastCats.length, s = bdState.search;
+        // The folded row is a remainder, not one more of the dimension's values.
+        var n = bdLastCats.filter(function (c) { return !c.folded; }).length, s = bdState.search;
         var plural = n === 1 ? dim : dim.replace(/y$/, 'ie') + 's';
-        if (n === 0) foot.textContent = s ? 'No ' + dim + ' matches "' + s + '".' : 'No data in this window.';
+        // With every value folded, the window may still hold events: none reached the minimum.
+        if (n === 0) foot.textContent = 'No ' + dim + ' with ' + MIN_CELL + ' or more'
+                                        + (s ? ' matching "' + s + '".' : ' in this window.');
         else if (data.truncated) foot.textContent = 'Top ' + n + ' by volume' + (s ? ' matching "' + s + '"' : '') + ' — refine the filter to narrow';
         else foot.textContent = n + ' ' + plural + (s ? ' matching "' + s + '"' : '');
       }

@@ -149,7 +149,7 @@
         var h = document.createElement('strong');
         h.textContent = p.name + ' (' + p.juris + ')';
         box.appendChild(h);
-        [['Events', p.countText], ['Failures', p.failText], ['Zero-knowledge', p.zkText]].forEach(function (row) {
+        [['Events', p.countText], ['Not successful', p.failText], ['Zero-knowledge', p.zkText]].forEach(function (row) {
             var line = document.createElement('div');
             line.textContent = row[0] + ': ' + row[1];
             box.appendChild(line);
@@ -196,7 +196,7 @@
                 var feats = (data.regions || []).map(regionFeature);
                 var src = map.getSource('atlas-regions');
                 if (src) src.setData({ type: 'FeatureCollection', features: feats });
-                setElsewhere(data.elsewhere, (data.unplaced || []).length);
+                setElsewhere(data.elsewhere, (data.unplaced || []).length, data.truncated);
                 toggleEmptyHint(feats.length === 0 && !(data.unplaced || []).length);
                 hideAtlasError();
             })
@@ -238,8 +238,10 @@
     function setText(sel, val) { var el = document.querySelector(sel); if (el) el.textContent = String(val); }
     function updateStats(s) {
         if (!s) return;
+        // The post-quantum figure is the live signatures' share, a property of the population
+        // the server rendered; the window's own share of quantum-resistant verifications is a
+        // different number, so it does not replace it under the same label.
         setText('[data-atlas-active-tokens]', shown(s.n_active_tokens));
-        setText('[data-atlas-pq-pct]', s.pq_pct === null ? 'withheld' : s.pq_pct + '%');
         setText('[data-atlas-zk-pct]', s.zk_pct === null ? 'withheld' : s.zk_pct + '%');
         setText('[data-atlas-failures]', shown(s.n_failures));
         setText('[data-atlas-full-disclosures]', shown(s.n_full));
@@ -247,7 +249,7 @@
 
     // The legend line for what the map does not draw: the small jurisdictions, folded into one
     // count, and any the reference data cannot place.
-    function setElsewhere(elsewhere, nUnplaced) {
+    function setElsewhere(elsewhere, nUnplaced, truncated) {
         var el = document.querySelector('[data-atlas-unplaceable]');
         if (!el) return;
         var parts = [];
@@ -258,6 +260,8 @@
         if (nUnplaced > 0) {
             parts.push(nUnplaced + ' jurisdiction' + (nUnplaced === 1 ? '' : 's') + ' without a reference point');
         }
+        // At the regions cap the quietest jurisdictions are counted in the totals and drawn nowhere.
+        if (truncated) parts.push('only the busiest jurisdictions are drawn');
         el.hidden = parts.length === 0;
         el.textContent = parts.join(' · ');
     }
