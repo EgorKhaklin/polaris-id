@@ -10575,7 +10575,17 @@ _OVERCLAIM_PHRASES = (
 #: outside every honesty check, and it said the project was "maintained as a working
 #: system prepared for national deployment" while every checked surface said reference
 #: implementation on notional data.
-_OUTWARD_SURFACES = ("README.md", "site/index.html", "MISSION.md", "CITATION.cff", "NOTICE")
+#:
+#: 2026-10-02: and the three pages the application serves WITHOUT sign-in are read by the same
+#: stranger, so they joined it. The list said the console was excluded because its reader already
+#: has an account, which is true of the console and was never true of these: the landing page,
+#: the sign-in page and the public walkthrough. The walkthrough said "post-quantum crypto (C7)
+#: protects against future cryptanalytic coercion" and that ZK disclosure "prevents downstream
+#: surveillance", on a page any visitor reaches from the landing's first button, and no check
+#: read it.
+_OUTWARD_SURFACES = ("README.md", "site/index.html", "MISSION.md", "CITATION.cff", "NOTICE",
+                     "polaris_web/templates/landing.html", "polaris_web/templates/login.html",
+                     "polaris_web/templates/demo.html")
 
 
 #: The readiness ledger is where the limitation lives, so a claim must point at it.

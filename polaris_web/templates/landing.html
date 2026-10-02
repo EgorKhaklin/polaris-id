@@ -6,7 +6,7 @@
 
 <section class="hero" aria-labelledby="landing-title">
     <div>
-        <p class="eyebrow">Pre-pilot software · notional data · v{{ polaris_version }}</p>
+        <p class="eyebrow">Pre-pilot software · notional data · <span class="ver">v{{ polaris_version }}</span></p>
         <h1 id="landing-title">An identity authority anyone can check.</h1>
         <p class="lede">Polaris issues identity credentials signed with ML-DSA-65, keeps their status
            current, and publishes what a relying party needs to verify them offline, with no Polaris
@@ -14,11 +14,10 @@
         <div class="hero-actions">
             {% if demo_mode %}
             <a href="{{ url_for('demo') }}" class="btn btn-primary btn-lg" data-cta="demo">Try the walkthrough</a>
-            <a href="{{ url_for('login') }}" class="btn btn-lg" data-cta="signin">Sign in</a>
             {% else %}
             <a href="{{ url_for('login') }}" class="btn btn-primary btn-lg" data-cta="signin">Sign in</a>
             {% endif %}
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md" class="btn btn-ghost btn-lg" rel="noopener">Verify a credential yourself {{ ui.icon('arrow-right') }}</a>
+            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md" class="btn btn-secondary btn-lg" target="_blank" rel="noopener noreferrer">Verify a credential yourself {{ ui.icon('external-link') }}<span class="visually-hidden"> (opens in a new tab)</span></a>
         </div>
     </div>
     <div class="hero-mark" aria-hidden="true">
@@ -94,7 +93,7 @@
         <li>{{ ui.icon('circle-x') }}<span>Not piloted, not deployed, and not production-ready.</span></li>
         <li>{{ ui.icon('circle-x') }}<span>Never held real identity data; this instance runs on notional records.</span></li>
         <li>{{ ui.icon('circle-x') }}<span>No independent security review yet.</span></li>
-        <li>{{ ui.icon('circle-x') }}<span>Algorithm agility under an audited migration path, not a claim of quantum safety.</span></li>
+        <li>{{ ui.icon('circle-x') }}<span>Algorithm agility under an audited migration path, not settled security against a quantum adversary.</span></li>
     </ul>
     <p class="footnote"><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md" rel="noopener">The readiness ledger</a> is the bound on what Polaris may claim.</p>
 </section>

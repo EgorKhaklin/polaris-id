@@ -32,6 +32,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Lists page by key by default; an old page number answers while its offset stays within 10,000 rows.
 - A filtered verification log reads at most 20,000 events for a page and says how far it looked.
 - A credential's page and the investigation pages show the latest rows and cap their lifetime counts.
+- The wording checks read the three pages served without sign-in: landing, sign-in and walkthrough.
 
 ### Fixed
 
@@ -43,6 +44,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A credential's investigation page found its successor by scanning every credential: 904 ms at 3.6 million.
 - A credential's page read its device bindings and revocations by scanning those tables.
 - Record pages' tables scroll at phone width, and their hard-coded pill colours (3.49:1) take the theme.
+- The public walkthrough said post-quantum signing protects against coercion; it now marks where each rule is enforced.
+- Public pages: no empty band above the first line, a visible secondary action, a four-column feature grid.
 
 ## v1.0.0-rc.70 — 2026-10-01 (the three verifiers read every input alike)
 

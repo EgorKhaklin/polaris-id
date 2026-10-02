@@ -1,124 +1,106 @@
 {% extends "base.html" %}
-{% block title %}Demo: Token lifecycle{% endblock %}
+{% block title %}Walkthrough{% endblock %}
 {% block body_class %} body-demo{% endblock %}
 {% block content %}
+{# The public walkthrough (DEMO_MODE only): four procedures this repository ships, what each one
+   writes, and the rule that holds it, marked by where that rule lives. A rule in the schema holds
+   whoever connects; a rule in the application holds only while the application is honest, and
+   the page says which is which. It is served without sign-in, so it is an outward surface: the
+   wording checks read it (check_post_quantum_claims_are_agility, check_duress_claims_are_aware).
+   CSP C5: no inline script. #}
+<div class="demo">
 
 <section class="demo-hero" aria-labelledby="demo-title">
-    <p class="demo-eyebrow">DEMO · no sign-in needed · synthetic data only</p>
-    <h1 id="demo-title" class="demo-title">A token's life, four steps.</h1>
-    <p class="demo-subtitle">
-        Polaris is the anti-coercion identity substrate. The deepest
-        constraint, deeper than C1 to C10, is that no person be
-        compellable into renouncing, transferring, or surrendering
-        their identity against their will. The four steps below follow
-        one token through that lens. The procedures, triggers and
-        constraints named are the ones this repository ships and its
-        tests exercise; the data is synthetic. For a live operator
-        view, <a href="{{ url_for('login') }}">sign in</a>.
-    </p>
-
-    {# Plain in-page nav: these are fragment links, not tabs; tab/tablist
-       roles promise aria-selected + tabpanel semantics that don't exist. #}
-    <nav class="demo-stepnav" aria-label="Demo steps">
-        <a href="#step-issue" class="demo-stepnav-link" data-step="1">
-            <span class="step-num">1</span><span class="step-name">Issue</span>
-        </a>
-        <a href="#step-activate" class="demo-stepnav-link" data-step="2">
-            <span class="step-num">2</span><span class="step-name">Activate</span>
-        </a>
-        <a href="#step-verify" class="demo-stepnav-link" data-step="3">
-            <span class="step-num">3</span><span class="step-name">Verify</span>
-        </a>
-        <a href="#step-revoke" class="demo-stepnav-link" data-step="4">
-            <span class="step-num">4</span><span class="step-name">Revoke</span>
-        </a>
+    <p class="eyebrow">Walkthrough · no sign-in · synthetic data</p>
+    <h1 id="demo-title">A credential's life, in four steps.</h1>
+    <p class="lede">Each step is a procedure this repository ships, called the way the operator
+       console calls it, with what it writes and the rule that holds it. The data is synthetic;
+       the procedures, triggers and constraints are the real ones.</p>
+    {# Fragment links, not tabs: a tablist would promise selection and panels that do not exist. #}
+    <nav class="demo-stepnav" aria-label="Steps">
+        <ol>
+            <li><a class="chip" href="#step-issue"><span class="step-num" aria-hidden="true">1</span>Issue</a></li>
+            <li><a class="chip" href="#step-activate"><span class="step-num" aria-hidden="true">2</span>Activate a reserve</a></li>
+            <li><a class="chip" href="#step-verify"><span class="step-num" aria-hidden="true">3</span>Verify</a></li>
+            <li><a class="chip" href="#step-revoke"><span class="step-num" aria-hidden="true">4</span>Revoke</a></li>
+        </ol>
     </nav>
 </section>
 
-<!-- STEP 1: ISSUE -->
 <section id="step-issue" class="demo-step" aria-labelledby="step-issue-title">
-    <header class="demo-step-header">
-        <span class="demo-step-number">Step 1</span>
-        <h2 id="step-issue-title" class="demo-step-title">Issue</h2>
-        <p class="demo-step-lede">
-            An authorized agency issues an identity token for an
-            individual. <code>uc1_issue_and_activate</code> is the
-            single-shot path that creates the Individual + IdentityToken
-            + first TokenLifecycleEvent in one atomic transaction.
-            The post-quantum algorithm is bound by reference, not
-            hardcoded.
-        </p>
+    <header class="demo-step-head">
+        <span class="step-num" aria-hidden="true">1</span>
+        <div>
+            <h2 id="step-issue-title"><span class="visually-hidden">Step 1: </span>Issue</h2>
+            <p class="lede">An authority issues a credential to a person.
+               <code>uc1_issue_and_activate</code> checks that the authority may issue under the
+               chosen algorithm, then writes the person, the credential, its first signature and
+               its lifecycle events in one transaction.</p>
+        </div>
     </header>
-
     <div class="demo-step-grid">
         <div class="demo-pane demo-pane-procedure">
             <h3>Procedure</h3>
-            <pre><code>SELECT uc1_issue_and_activate(
+            <pre tabindex="0"><code>SELECT uc1_issue_and_activate(
     p_legal_name             := 'Maria Santos',
     p_dob                    := '1992-03-14',
     p_jurisdiction           := 'US-PA',
-    p_issuing_agency_id      := 1,    -- US National Identity Service
-    p_algorithm_id           := 1,    -- ML-DSA-65 (post-quantum)
+    p_issuing_agency_id      := 1,
+    p_algorithm_id           := 1,   -- ML-DSA-65
     p_biometric_binding_type := 'FINGERPRINT',
     p_witness_agency_id      := 2,
     p_liveness_check_type    := 'MULTI_MODAL',
     p_token_value            := 'PSV-2026-MS-0007',
     p_physical_serial        := 'NTS-AX44-019',
     p_hardware_model         := 'NeoSecure GX-2',
-    p_permitted_contexts     := ARRAY[1, 3, 5]
+    p_permitted_contexts     := ARRAY[1, 3, 5],
+    p_signature_bytes        := $1   -- signed by the app
 ) AS new_token_id;</code></pre>
         </div>
-
-        <div class="demo-pane demo-pane-effect">
-            <h3>Effect</h3>
-            <ul class="demo-effect-list">
-                <li>Inserts <code>Individual</code> + <code>IdentityToken</code> rows atomically</li>
-                <li>Token status: <code>ACTIVE</code> on first issuance, with its first signature row written in the same transaction</li>
-                <li>Trigger appends <code>TokenLifecycleEvent { event_type: 'ISSUED' }</code></li>
-                <li>A foreign key to <code>CryptographicAlgorithm</code>: the algorithm rotates by row update, not by redeploy</li>
-                <li>TokenPermission rows created for each permitted VerificationContext</li>
+        <div class="demo-pane">
+            <h3>What it writes</h3>
+            <ul class="demo-list">
+                <li>An <code>Individual</code> row and an <code>IdentityToken</code> row</li>
+                <li>A <code>TokenSignature</code> row in the same transaction: the signature the
+                    application's signing module made</li>
+                <li>Two lifecycle events, <code>ISSUED</code> and the activation, the second
+                    written by a trigger on the status change</li>
+                <li>A <code>TokenPermission</code> row for each context the credential may be
+                    verified in</li>
             </ul>
         </div>
-
-        <div class="demo-pane demo-pane-constraint">
-            <h3>What's enforced</h3>
-            <p>
-                <strong>C7</strong>, no hardcoded cryptography. The token
-                references <code>algorithm_id = 1</code>; the operator
-                chose post-quantum ML-DSA-65 at issuance. Rotating to
-                ML-DSA-87 or SLH-DSA is a row update in
-                <code>CryptographicAlgorithm</code>, not a redeploy.
-            </p>
-            <p>
-                <strong>C1</strong>, issuance is recorded permanently.
-                The lifecycle row cannot be updated or deleted after
-                commit; the append-only trigger refuses. The audit of
-                record is constitutional.
-            </p>
+        <div class="demo-pane demo-pane-rule">
+            <h3>What holds it</h3>
+            <p><strong>C7, the algorithm is data.</strong><span class="rule-where">Schema</span>
+               The credential names <code>algorithm_id = 1</code>, a row in
+               <code>CryptographicAlgorithm</code>, and the procedure refuses an algorithm the
+               authority is not authorized for or one already deprecated. Moving credentials to
+               another algorithm is <code>uc6_migrate_algorithm</code>, a path that runs; the
+               signers a verifier accepts are a short list in code, by design. The claim is
+               algorithm agility under an audited migration path, not settled security against
+               a quantum adversary; what a break would cost is in the
+               <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md">readiness ledger</a>.</p>
+            <p><strong>C1, issuance is recorded for good.</strong><span class="rule-where">Schema</span>
+               A trigger refuses any update or delete of a lifecycle event, whoever connects.</p>
         </div>
     </div>
 </section>
 
-<!-- STEP 2: ACTIVATE (the successor path) -->
-<section id="step-activate" class="demo-step demo-step-alt" aria-labelledby="step-activate-title">
-    <header class="demo-step-header">
-        <span class="demo-step-number">Step 2</span>
-        <h2 id="step-activate-title" class="demo-step-title">Activate (successor)</h2>
-        <p class="demo-step-lede">
-            A holder loses their token and a successor must take its
-            place. <code>uc4_activate_reserve</code> is the two-stage
-            path: a RESERVE successor token already exists, issued
-            ahead of time; this call atomically marks the lost token
-            <code>LOST</code> and flips the reserve to
-            <code>ACTIVE</code>. Optionally, enroll a duress code on
-            the new token.
-        </p>
+<section id="step-activate" class="demo-step" aria-labelledby="step-activate-title">
+    <header class="demo-step-head">
+        <span class="step-num" aria-hidden="true">2</span>
+        <div>
+            <h2 id="step-activate-title"><span class="visually-hidden">Step 2: </span>Activate a reserve</h2>
+            <p class="lede">The holder reports the credential lost, and a reserve credential issued
+               ahead of time takes its place. <code>uc4_activate_reserve</code> marks the lost one
+               <code>LOST</code> and moves the reserve to <code>ACTIVE</code> in one
+               transaction.</p>
+        </div>
     </header>
-
     <div class="demo-step-grid">
         <div class="demo-pane demo-pane-procedure">
             <h3>Procedure</h3>
-            <pre><code>SELECT uc4_activate_reserve(
+            <pre tabindex="0"><code>SELECT uc4_activate_reserve(
     p_lost_token_id      := 27,
     p_actor_agency_id    := 1,
     p_reason_code        := 'LOST_IN_TRANSIT',
@@ -126,66 +108,60 @@
     p_published_location := 'CRL/2026-05-15/CA-12'
 ) AS activated_token_id;
 
--- Optional: enroll a duress code on the new token.
+-- A duress code is enrolled by the database owner.
+-- The application role is refused this write.
 UPDATE IdentityToken
-   SET duress_code_hash = ('scrypt:32768:8:1$' || …)
+   SET duress_code_hash = 'scrypt:32768:8:1$…'
  WHERE token_id = 42;</code></pre>
         </div>
-
-        <div class="demo-pane demo-pane-effect">
-            <h3>Effect</h3>
-            <ul class="demo-effect-list">
-                <li>Lost token transitions <code>ACTIVE → LOST</code> (terminal; lifecycle event appended)</li>
-                <li>Reserve token transitions <code>RESERVE → ACTIVE</code> (lifecycle event appended)</li>
-                <li>Partial unique index <code>uq_one_active_per_person</code> attempts the insert atomically</li>
-                <li>RevocationList row appended for the lost token (CRL pointer)</li>
-                <li>If a duress code is enrolled: <code>duress_code_hash</code> is set, and verifications compare against it in constant time</li>
+        <div class="demo-pane">
+            <h3>What it writes</h3>
+            <ul class="demo-list">
+                <li>The lost credential moves <code>ACTIVE → LOST</code>, a terminal state, with
+                    its lifecycle event</li>
+                <li>The reserve moves <code>RESERVE → ACTIVE</code>, with its lifecycle event</li>
+                <li>A <code>RevocationList</code> row for the lost credential</li>
+                <li>If the holder wants a duress code, the owner enrols it: only its scrypt hash is
+                    stored, never the code</li>
             </ul>
         </div>
-
-        <div class="demo-pane demo-pane-constraint">
-            <h3>What's enforced</h3>
-            <p>
-                <strong>C3</strong>, one ACTIVE token per individual.
-                The partial unique index keys on <code>(individual_id)
-                WHERE status = 'ACTIVE'</code>. Two operators racing
-                successor activation: one commits, the other gets a
-                23505 unique-violation.
-            </p>
-            <p>
-                <strong>The duress code.</strong> When set, the
-                verification flow compares the holder's typed code
-                against this hash in constant time. A match silently
-                records a <code>DuressEvent</code> while the
-                user-visible verification proceeds exactly as it
-                otherwise would: the secret name that signals coercion
-                without revealing the signal.
-            </p>
+        <div class="demo-pane demo-pane-rule">
+            <h3>What holds it</h3>
+            <p><strong>C3, one active credential per person.</strong><span class="rule-where">Schema</span>
+               A partial unique index on <code>(individual_id) WHERE status = 'ACTIVE'</code>
+               refuses a second, whichever path tries to create it and however many operators race.
+               The index keys on the person record: two records for one person are a question
+               for enrolment, which this index does not answer.</p>
+            <p><strong>The duress code.</strong><span class="rule-where">Application</span>
+               A holder who gives their duress code at a verification sees it proceed exactly as it
+               otherwise would, while a <code>DuressEvent</code> is recorded off the request
+               thread, so the response time does not tell. It helps against a coercer who does not
+               know the mechanism exists, not against one who does, and the record it appends
+               cannot be removed (<a href="https://github.com/EgorKhaklin/polaris-id/blob/main/lab/duress/README.md">the duress assessment</a>).</p>
+            <p><strong>The holder's binding.</strong><span class="rule-where">Schema</span>
+               Outside the issuance and recovery procedures, a trigger lets the application change
+               a credential's status and nothing else: not its holder, issuer, value, expiry or
+               duress code.</p>
         </div>
     </div>
 </section>
 
-<!-- STEP 3: VERIFY (stated purpose and the meta-audit) -->
 <section id="step-verify" class="demo-step" aria-labelledby="step-verify-title">
-    <header class="demo-step-header">
-        <span class="demo-step-number">Step 3</span>
-        <h2 id="step-verify-title" class="demo-step-title">Verify</h2>
-        <p class="demo-step-lede">
-            A relying agency checks the token. Three disclosure levels
-            available: <code>FULL</code> (full identity reveal),
-            <code>SELECTIVE</code> (named attributes only),
-            <code>ZERO_KNOWLEDGE</code> (proves a valid token exists,
-            reveals nothing else). Two audit surfaces sit on this step:
-            an operator-supplied <code>requesting_purpose_text</code> on
-            each verification, and a meta-audit table recording who read
-            the audit trail afterwards.
-        </p>
+    <header class="demo-step-head">
+        <span class="step-num" aria-hidden="true">3</span>
+        <div>
+            <h2 id="step-verify-title"><span class="visually-hidden">Step 3: </span>Verify</h2>
+            <p class="lede">A relying authority checks the credential at one of three disclosure
+               levels: <code>FULL</code> (the credential and its holder), <code>SELECTIVE</code>
+               (named attributes only) or <code>ZERO_KNOWLEDGE</code> (a proof that a valid
+               credential exists, naming none). A verification can carry the requester's stated
+               purpose, and an operator's later read of the log is itself logged.</p>
+        </div>
     </header>
-
     <div class="demo-step-grid">
         <div class="demo-pane demo-pane-procedure">
-            <h3>Procedure (FULL, with purpose)</h3>
-            <pre><code>INSERT INTO VerificationEvent (
+            <h3>Procedure: full disclosure, with a purpose</h3>
+            <pre tabindex="0"><code>INSERT INTO VerificationEvent (
     token_id,
     requesting_agency_id,
     context_id,
@@ -195,16 +171,16 @@ UPDATE IdentityToken
     requesting_purpose_text
 ) VALUES (
     42,
-    4,    -- Transportation Security Admin
-    3,    -- TRAVEL context
+    4,   -- the verifying authority
+    3,   -- the TRAVEL context
     'SUCCESS',
     'FULL',
     'JFK Terminal 4, gate B22',
     'border crossing, random check'
 );</code></pre>
-            <h3>Procedure (ZERO_KNOWLEDGE)</h3>
-            <pre><code>INSERT INTO VerificationEvent (
-    token_id,            -- MUST be NULL for ZK (C2)
+            <h3>Procedure: zero knowledge</h3>
+            <pre tabindex="0"><code>INSERT INTO VerificationEvent (
+    token_id,   -- must be NULL (C2)
     requesting_agency_id,
     context_id,
     outcome,
@@ -213,143 +189,107 @@ UPDATE IdentityToken
 ) VALUES (
     NULL,
     4, 3, 'SUCCESS', 'ZERO_KNOWLEDGE',
-    '0x' || encode(sha256_zk_proof, 'hex')
+    '0x' || encode(proof_digest, 'hex')
 );</code></pre>
         </div>
-
-        <div class="demo-pane demo-pane-effect">
-            <h3>Effect</h3>
-            <ul class="demo-effect-list">
-                <li><code>VerificationEvent</code> row inserted (append-only by trigger)</li>
-                <li>FULL: <code>token_id</code> populated; full identity revealed via JOIN</li>
-                <li>SELECTIVE: <code>token_id</code> populated; permitted attributes only</li>
-                <li>ZK: <code>token_id IS NULL</code>; identity not derivable from the event</li>
-                <li>Federation gate: the verifier must hold an active <code>AgencyTrustAttestation</code> toward the issuing agency for this context</li>
-                <li>The <code>requesting_purpose_text</code> is recorded permanently, so a coerced verification leaves the coercer's stated context in the audit chain</li>
-                <li>Meta-audit: any later read of this row by an authorized operator is logged in <code>AuditAccessLog</code> with who read it, when, and under what filter</li>
+        <div class="demo-pane">
+            <h3>What it writes</h3>
+            <ul class="demo-list">
+                <li>A <code>VerificationEvent</code> row, append-only by trigger</li>
+                <li><code>FULL</code> and <code>SELECTIVE</code> name the credential
+                    (<code>token_id</code>); <code>ZERO_KNOWLEDGE</code> names none</li>
+                <li>The requester's stated purpose, when one is given, kept with the event for good:
+                    a coerced verification keeps the coercer's own account of it</li>
+                <li>Each later read of the log by an operator: an <code>AuditAccessLog</code> row
+                    saying who read it, when, and under which filter</li>
             </ul>
         </div>
-
-        <div class="demo-pane demo-pane-constraint">
-            <h3>What's enforced</h3>
-            <p>
-                <strong>C2</strong>, zero-knowledge events cannot
-                reveal identity. A CHECK constraint on the row refuses
-                any ZERO_KNOWLEDGE event that carries a
-                <code>token_id</code>, whoever writes it and through
-                whichever client.
-            </p>
-            <p>
-                <strong>The federation gate.</strong> A SUCCESS
-                outcome requires an active trust attestation from the
-                verifying agency toward the issuing agency for this
-                context. Cross-jurisdictional trust is recorded, never
-                assumed.
-            </p>
-            <p>
-                <strong>Purpose and meta-audit.</strong> The first
-                records why each verification happened, in the
-                requester's own words; the second records who read the
-                audit trail afterwards. The audit's audit.
-            </p>
+        <div class="demo-pane demo-pane-rule">
+            <h3>What holds it</h3>
+            <p><strong>C2, a zero-knowledge event names no credential.</strong><span class="rule-where">Schema</span>
+               A CHECK constraint refuses a <code>ZERO_KNOWLEDGE</code> row that carries a
+               <code>token_id</code>, whoever writes it. It bounds what the log stores; a verifier
+               shown a full credential still sees its stable token value, so correlation across
+               verifiers is bounded, not eliminated.</p>
+            <p><strong>The federation gate.</strong><span class="rule-where">Application</span>
+               The console refuses to record a <code>SUCCESS</code> unless the verifying
+               authority holds an active trust attestation toward the issuing authority for this
+               context. Trust is one recorded hop, never transitive.</p>
+            <p><strong>The meta-audit.</strong><span class="rule-where">Application</span>
+               The stated purpose records why a verification happened; the access log records who
+               read the trail afterwards.</p>
         </div>
     </div>
 </section>
 
-<!-- STEP 4: REVOKE -->
-<section id="step-revoke" class="demo-step demo-step-alt" aria-labelledby="step-revoke-title">
-    <header class="demo-step-header">
-        <span class="demo-step-number">Step 4</span>
-        <h2 id="step-revoke-title" class="demo-step-title">Revoke</h2>
-        <p class="demo-step-lede">
-            The token is revoked: compromised, lost, or superseded.
-            The row stays in the database with terminal status; the
-            data is never erased. <code>uc8_revoke_token</code> applies
-            the state transition + appends the lifecycle event + writes
-            a RevocationList pointer. The issuer-discretion policy
-            fires if the agency's recent revocation rate exceeds its
-            declared bound.
-        </p>
+<section id="step-revoke" class="demo-step" aria-labelledby="step-revoke-title">
+    <header class="demo-step-head">
+        <span class="step-num" aria-hidden="true">4</span>
+        <div>
+            <h2 id="step-revoke-title"><span class="visually-hidden">Step 4: </span>Revoke</h2>
+            <p class="lede">The credential is revoked: compromised, lost or superseded.
+               <code>uc8_revoke_token</code> moves it to <code>REVOKED</code>, appends the
+               lifecycle event and the revocation-list row, and holds the issuing authority to its
+               revocation bound. The row stays.</p>
+        </div>
     </header>
-
     <div class="demo-step-grid">
         <div class="demo-pane demo-pane-procedure">
             <h3>Procedure</h3>
-            <pre><code>CALL uc8_revoke_token(
+            <pre tabindex="0"><code>CALL uc8_revoke_token(
     p_token_id           := 42,
     p_actor_agency_id    := 1,
     p_reason_code        := 'COMPROMISED',
     p_published_location := 'CRL/2026-05-15/CA-12',
-    p_cosigner_agency_id := NULL    -- optional dual-sign
+    p_cosigner_agency_id := NULL   -- or a co-signer
 );</code></pre>
         </div>
-
-        <div class="demo-pane demo-pane-effect">
-            <h3>Effect</h3>
-            <ul class="demo-effect-list">
-                <li>Status transitions <code>ACTIVE → REVOKED</code> (legal edge per state-machine trigger)</li>
-                <li>Lifecycle row <code>REVOKED</code> appended with reason</li>
-                <li>RevocationList row appended (CRL pointer published)</li>
-                <li>The revocation-velocity trigger samples the agency's recent rate and refuses a burst above its policy bound without a co-signer</li>
-                <li>The row stays: non-repudiation requires the historical record</li>
+        <div class="demo-pane">
+            <h3>What it writes</h3>
+            <ul class="demo-list">
+                <li>The credential moves <code>ACTIVE → REVOKED</code>, an edge the state-machine
+                    trigger allows</li>
+                <li>A <code>REVOKED</code> lifecycle event with its reason</li>
+                <li>A <code>RevocationList</code> row pointing at the published list</li>
+                <li>Nothing is deleted: the credential row stays, with its terminal status</li>
             </ul>
         </div>
-
-        <div class="demo-pane demo-pane-constraint">
-            <h3>What's enforced</h3>
-            <p>
-                <strong>C1</strong>, revocation is recorded, not
-                erased. The lifecycle event is append-only; the
-                IdentityToken row survives with terminal status.
-                An operator cannot tidy up a holder's history.
-            </p>
-            <p>
-                <strong>Issuer discretion.</strong> A burst of
-                revocations from one agency is refused above its
-                declared bound unless a second agency co-signs. The
-                schema names the abuse vector so governance can catch
-                it.
-            </p>
+        <div class="demo-pane demo-pane-rule">
+            <h3>What holds it</h3>
+            <p><strong>C1, revocation is recorded, not erased.</strong><span class="rule-where">Schema</span>
+               The lifecycle event is append-only, and the credential row survives with its
+               terminal status. An operator cannot tidy up a holder's history.</p>
+            <p><strong>The issuer-discretion bound.</strong><span class="rule-where">Schema</span>
+               The procedure refuses a revocation that would take an authority above its declared
+               rate unless a second authority co-signs, and a trigger refuses any move to
+               <code>REVOKED</code> that does not come through the procedure.</p>
         </div>
     </div>
 </section>
 
 <section class="demo-final" aria-labelledby="final-title">
-    <h2 id="final-title" class="demo-section-title">What you just saw</h2>
-    <p>
-        Four procedures called. Four rows appended to audit tables.
-        Constraints enforced at the database layer: C1, C2, C3 and C7,
-        plus the federation gate, the duress code and the
-        issuer-discretion bound. The application code gets no
-        opportunity to violate them quietly.
-    </p>
-    <p>
-        The walkthrough is synthetic, but the procedures, triggers,
-        and constraints are not. They live in
-        <code>polaris_sql/05_procedures.sql</code> + <code>06_triggers.sql</code>;
-        the corresponding schema lives in <code>polaris_sql/01_schema.sql</code>;
-        the test suite (the DB-backed product suites, the SQL self-tests,
-        the Hypothesis property tests, and the polaris_checks invariant
-        layer) runs them every release. The data model is documented at
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/DATA-MODEL.md"><code>docs/reference/DATA-MODEL.md</code></a>
-        in the repository.
-    </p>
-    <p>
-        The <strong>anti-coercion vocation</strong> Polaris serves
-        runs through every step: post-quantum crypto (C7) protects
-        against future cryptanalytic coercion; append-only audit (C1)
-        prevents silent rewriting of history; one-ACTIVE-per-individual
-        (C3) prevents identity duplication attacks; ZK disclosure (C2)
-        prevents downstream surveillance; duress codes give holders a
-        silent signal under physical coercion; the stated purpose on
-        each verification records the coercer's own account of it; and
-        the meta-audit records who read the trail afterwards. Each is
-        necessary; none alone is sufficient.
-    </p>
-
+    <h2 id="final-title">What you just saw</h2>
+    <p>Four procedures and the rows they append. The rules marked <em>Schema</em> hold whoever
+       connects: the append-only triggers (C1), the zero-knowledge CHECK (C2), the one-active
+       index (C3), the algorithm as a row (C7), the binding trigger and the issuer-discretion
+       bound. The rules marked <em>Application</em> hold while the application is honest: the
+       federation gate, the duress comparison and the meta-audit.</p>
+    <p>The data here is synthetic. The procedures live in <code>polaris_sql/05_procedures.sql</code>,
+       the triggers in <code>06_triggers.sql</code> and the schema in <code>01_schema.sql</code>,
+       and the test suites exercise them on every change. The tables are described in
+       <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/DATA-MODEL.md">DATA-MODEL.md</a>,
+       and what is and is not ready in
+       <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md">PRODUCTION-READINESS.md</a>.</p>
+    <p>Each rule answers one abuse: a rewritten history, a zero-knowledge record that names its
+       credential, a second active credential, an algorithm that cannot be replaced, a burst of
+       revocations from one authority, a verifier trusting without a record. They serve the
+       vocation that no person be compellable into renouncing, transferring or surrendering
+       their identity; none of them prevents compulsion by itself.</p>
     <div class="demo-final-cta">
-        <a href="{{ url_for('login') }}" class="btn btn-gold">Sign in to operate</a>
+        <a href="{{ url_for('login') }}" class="btn btn-primary">Sign in to operate</a>
         <a href="{{ url_for('home') }}" class="btn btn-ghost">Back to overview</a>
     </div>
 </section>
+
+</div>
 {% endblock %}

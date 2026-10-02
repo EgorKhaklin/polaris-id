@@ -16985,7 +16985,7 @@ def test_post_quantum_claims_are_agility_check_discriminates(tmp_path):
     SURFACE = "Polaris signs with post-quantum ML-DSA-65. Limits: PRODUCTION-READINESS.md\n"
 
     def write(ledger=LEDGER, readme=SURFACE, site=SURFACE, mission=SURFACE, citation=SURFACE,
-              notice=SURFACE):
+              notice=SURFACE, pages=SURFACE):
         (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
         (tmp_path / "site").mkdir(parents=True, exist_ok=True)
         (tmp_path / "docs" / "PRODUCTION-READINESS.md").write_text(ledger)
@@ -16996,6 +16996,11 @@ def test_post_quantum_claims_are_agility_check_discriminates(tmp_path):
         # v9.458: NOTICE travels further than any of these, because Apache 2.0 section 4
         # requires a redistributor to carry it. It is held to the same rule.
         (tmp_path / "NOTICE").write_text(notice)
+        # 2026-10-02: so are the pages the application serves without sign-in.
+        for rel in checks._OUTWARD_SURFACES:
+            if rel.startswith("polaris_web/"):
+                (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+                (tmp_path / rel).write_text(pages)
 
     def level(msg_contains=None):
         out = checks.check_post_quantum_claims_are_agility(tmp_path)
@@ -19613,7 +19618,8 @@ def test_c8_refuses_a_numeric_parameter_it_was_never_told_about(tmp_path):
 
 
 def _write_outward(tmp_path, extra_readme=""):
-    """The five outward surfaces plus the four packaged ones, all clean."""
+    """Every outward surface plus the packaged ones, all clean. Written from the list itself, so
+    a surface added to it is in the fixture too."""
     LEDGER = ("The claim is algorithm agility under an audited migration path.\n"
               "ML-DSA-65 rests on Module-LWE hardness.\n"
               "Migration runs through uc6_migrate on every push.\n"
@@ -19629,9 +19635,9 @@ def _write_outward(tmp_path, extra_readme=""):
         "DuressEvent is append-only with no purge path, so lawful access is the case "
         "the mechanism makes worse.\n"
         "The word is duress-aware.\n")
-    for rel in ("README.md", "MISSION.md", "CITATION.cff", "NOTICE"):
+    for rel in checks._OUTWARD_SURFACES:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text(SURFACE)
-    (tmp_path / "site" / "index.html").write_text(SURFACE)
     for rel in checks._PUBLISHED_READMES:
         p = tmp_path / rel
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -19641,8 +19647,8 @@ def _write_outward(tmp_path, extra_readme=""):
 def test_overclaims_are_refused_on_the_pages_a_registry_renders(tmp_path):
     """PyPI and npm render the packaged READMEs as the project page.
 
-    _OUTWARD_SURFACES names five files and none of them is one a stranger reads after
-    `pip install`. The flat assertion bans reach those pages now; the CONTEXTUAL rules
+    _OUTWARD_SURFACES names the top-level documents and the pages served without sign-in, and
+    none of them is one a stranger reads after `pip install`. The flat assertion bans reach those pages now; the CONTEXTUAL rules
     deliberately do not, because sdk/typescript/README.md names its dependency
     `@noble/post-quantum` and would be asked for a readiness-ledger link for a package name.
     """
@@ -19666,6 +19672,36 @@ def test_overclaims_are_refused_on_the_pages_a_registry_renders(tmp_path):
     _write_outward(tmp_path, extra_readme="Runtime-agnostic: only `@noble/post-quantum`.\n")
     assert checks.check_post_quantum_claims_are_agility(tmp_path)[0].level == "OK", \
         "naming @noble/post-quantum must not demand a readiness-ledger link"
+
+
+def test_the_pages_served_without_sign_in_are_outward_surfaces(tmp_path):
+    """2026-10-02. The landing page, the sign-in page and the public walkthrough are read by the
+    same stranger as the README, and no wording check read them: the walkthrough said
+    "post-quantum crypto (C7) protects against future cryptanalytic coercion"."""
+    for rel in ("polaris_web/templates/landing.html", "polaris_web/templates/login.html",
+                "polaris_web/templates/demo.html"):
+        assert rel in checks._OUTWARD_SURFACES, "%s is served without sign-in" % rel
+    _write_outward(tmp_path)
+    assert checks.check_post_quantum_claims_are_agility(tmp_path)[0].level == "OK", \
+        "must PASS on the good fixture"
+    assert checks.check_duress_claims_are_aware(tmp_path)[0].level == "OK", \
+        "must PASS on the good fixture"
+
+    page = tmp_path / "polaris_web" / "templates" / "demo.html"
+    page.write_text("<p>The walkthrough's credentials are quantum-safe.</p>\n")
+    out = checks.check_post_quantum_claims_are_agility(tmp_path)
+    assert any(f.level == "FAIL" and "demo.html" in f.message for f in out), \
+        "a settled-security claim on the public walkthrough must be refused"
+
+    page.write_text("<p>Signed with post-quantum ML-DSA-65.</p>\n")
+    out = checks.check_post_quantum_claims_are_agility(tmp_path)
+    assert any(f.level == "FAIL" and "PRODUCTION-READINESS" in f.message for f in out), \
+        "a public page that says post-quantum must point at the readiness ledger"
+
+    page.write_text("<p>The duress code makes Polaris coercion-resistant.</p>\n")
+    out = checks.check_duress_claims_are_aware(tmp_path)
+    assert any(f.level == "FAIL" and "demo.html" in f.message for f in out), \
+        "a compulsion-resistance claim on the public walkthrough must be refused"
 
 
 def test_the_compulsion_ban_covers_all_three_nouns_and_all_three_shapes(tmp_path):
