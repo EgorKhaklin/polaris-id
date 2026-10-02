@@ -12,6 +12,8 @@ the system without reading its source. For runbooks see
 | [`SYSTEM-MAP.md`](SYSTEM-MAP.md) | The map: every directory, every package, every CI job, and who reads what |
 | [`SECURITY-DECISIONS.md`](SECURITY-DECISIONS.md) | Where each security decision is actually made: the file, the symbol, which layer is authoritative when one is split, and the check that pins it |
 | [`API.md`](API.md) | Every `/api/*` route, the health and metrics contracts, rate limits, error shape |
+| [`openapi.yaml`](openapi.yaml) | The machine-readable OpenAPI 3.1 contract for every `/api/v1` and OpenID4VCI route: the same surface as API.md, in the form a client generator reads |
+| [`API-CLIENTS.md`](API-CLIENTS.md) | Generate a typed client in any language from `openapi.yaml`, and the shape of a verification call |
 | [`WIRE-SPEC.md`](WIRE-SPEC.md) | The normative wire specification (P8.1): every signed artifact's format, signed-field list, canonical construction, and verification rules, and the federation trust decision, so an implementation importing no Polaris code can interoperate |
 | [`DATA-MODEL.md`](DATA-MODEL.md) | Every table in the schema and its migrations, grouped, with the invariant that guards it |
 | [`PQC-POSTURE.md`](PQC-POSTURE.md) | Which primitives are post-quantum and which are still classical, against the NIST 2030/2035 timeline |
@@ -24,7 +26,7 @@ the system without reading its source. For runbooks see
 | [`GLOSSARY.md`](GLOSSARY.md) | Defined terms |
 
 **Reading order.** [SYSTEM-MAP.md](SYSTEM-MAP.md) first. Building against
-the API: [API.md](API.md), then [DATA-MODEL.md](DATA-MODEL.md) for the
+the API: [API.md](API.md) and [API-CLIENTS.md](API-CLIENTS.md), then [DATA-MODEL.md](DATA-MODEL.md) for the
 schema behind it. Sizing a deployment: [PERFORMANCE-BASELINE.md](PERFORMANCE-BASELINE.md),
 then [SCALING.md](SCALING.md).
 

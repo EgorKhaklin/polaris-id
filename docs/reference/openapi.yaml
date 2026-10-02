@@ -1,0 +1,1503 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
+#
+# OpenAPI 3.1 description of the Polaris relying-party and verification HTTP API (/api/v1).
+# Source of truth: docs/reference/API.md (one "### METHOD /path" per route) and
+# docs/reference/WIRE-SPEC.md (the signed formats). This file is generated/maintained alongside
+# them and is pinned by a coverage check so it cannot silently fall out of step with the routes.
+# Scope of THIS revision: the verification persona (a relying party confirms a presented
+# credential, and the public signed artifacts a verifier fetches to decide authorization
+# offline). The auth-broker, inter-authority sign/exchange, timestamp, transparency-log and
+# OpenID4VCI families are listed in API.md and are added in a following revision.
+openapi: 3.1.0
+info:
+  title: Polaris Relying-Party & Verification API
+  version: "v1"
+  summary: Confirm that a presented credential is authentic and currently authoritative.
+  description: |
+    The stable, versioned surface a third-party organization (a bank, a border kiosk, an online
+    service) calls to confirm a credential a holder presented is authentic and currently
+    authoritative, plus the public, signed artifacts a verifier fetches to decide authorization
+    with no connectivity.
+
+    **Not a login product.** A relying party authenticates *as itself* with an OAuth2
+    client-credential; no endpoint returns a person's attributes, the verdict is authenticity
+    plus authorization (never identity), and no per-verification record is kept (a
+    who-verified-whom log would be a surveillance store).
+
+    **Two ways to check.** Authenticity can be checked offline against published keys with the
+    packaged `polaris-verify` and no network; this API is the online counterpart and the online
+    authorization source. Many routes authenticate by *possession* of the credential
+    (`token_value` + the genuine `signature_hex`) rather than by a bearer, so a holder can act on
+    their own credential without being a registered relying party.
+
+    Pre-pilot software on notional data. See docs/PRODUCTION-READINESS.md for the bound on claims.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+externalDocs:
+  description: Prose endpoint reference and signed wire formats.
+  url: https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/API.md
+servers:
+  - url: "{origin}"
+    description: A Polaris instance origin.
+    variables:
+      origin:
+        default: http://localhost:8000
+        description: Scheme and host of the Polaris instance (a real deployment is https).
+tags:
+  - name: Auth
+    description: Relying-party API-access authentication (OAuth2 client-credentials).
+  - name: Verification
+    description: The online verdict and the offline status assertion.
+  - name: Holder key
+    description: Bind, rotate, revoke, or fetch the holder's own device key for a credential.
+  - name: Credential formats
+    description: Render a verification result as a W3C Verifiable Credential or an ISO mdoc.
+  - name: Federation artifacts
+    description: Public, signed artifacts a verifier fetches to decide authorization offline.
+security: []
+paths:
+  /api/v1/oauth/token:
+    post:
+      tags: [Auth]
+      operationId: issueAccessToken
+      summary: OAuth2 client-credentials grant; returns a short-lived verify-scoped bearer.
+      description: |
+        RFC 6749 section 4.4. Present `client_id` and `client_secret` by HTTP Basic (preferred)
+        or in the form body, with `grant_type=client_credentials`. Credentials are checked in
+        constant time, so this endpoint is not a client-id oracle. The token is stateless, signed
+        with a salt distinct from the operator session cookie, grants the `verify` scope and
+        nothing else, and establishes no session.
+      security:
+        - rpBasic: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type]
+              properties:
+                grant_type:
+                  type: string
+                  const: client_credentials
+                client_id:
+                  type: string
+                  description: Omit when using HTTP Basic.
+                client_secret:
+                  type: string
+                  description: Omit when using HTTP Basic.
+      responses:
+        "200":
+          description: A short-lived bearer access token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+              example:
+                access_token: "eyJ…"
+                token_type: Bearer
+                expires_in: 300
+                scope: verify
+        "400":
+          description: "`unsupported_grant_type` for any grant other than client_credentials."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthError" }
+        "401":
+          description: "`invalid_client`: unknown client_id, wrong secret, or a disabled relying party."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthError" }
+  /api/v1/verify:
+    post:
+      tags: [Verification]
+      operationId: verifyPresentation
+      summary: Return the authenticity + authorization verdict for a presented credential.
+      description: |
+        The relying party submits the `token_value` and the issued `signature_hex` the holder
+        presented and receives the verdict. Never any personal data.
+
+        **No enumeration oracle.** A not-found `token_value` or a signature that does not match the
+        stored one returns the same uniform reject (`authentic: false`, `decision: reject`,
+        `reason: "not a verifiable presentation"`), so a caller cannot walk ids or values to
+        survey the population. `signature_hex` is hex digits only. The sequential `token_id` is
+        never accepted here. Rate limited per relying party; no per-verification record is kept.
+      security:
+        - bearerVerify: [verify]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PossessionProof" }
+      responses:
+        "200":
+          description: The verdict. A uniform reject is returned for any non-verifiable presentation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VerifyVerdict" }
+        "401":
+          description: Missing, expired, or non-verify-scoped bearer.
+        "429":
+          description: Per-relying-party rate limit exceeded.
+  /api/v1/status-assertion:
+    post:
+      tags: [Verification]
+      operationId: mintStatusAssertion
+      summary: Mint a short-lived, issuer-signed status assertion for offline authorization.
+      description: |
+        Possession-authenticated (no bearer): present the genuine credential, exactly as `/verify`
+        does, and receive a signed assertion a holder staples to a presentation so a relying party
+        can check authorization fully offline. Same uniform reject on a bad or unknown credential.
+        No record of who fetched it. Because offline verification touches no issuer, the issuer
+        never learns a verification happened.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PossessionProof" }
+      responses:
+        "200":
+          description: The signed status assertion (format `polaris-status-assertion/1`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusAssertion" }
+        "400":
+          description: The presented credential is not verifiable (uniform reject).
+  /api/v1/holder-key:
+    post:
+      tags: [Holder key]
+      operationId: changeHolderKey
+      summary: Bind, rotate, or revoke the holder's own device key for a credential.
+      description: |
+        Possession-authenticated. The holder's PRIVATE key is never sent. Possession alone makes
+        the first binding and the first binding after a revocation; `rotated` and `revoked`
+        additionally carry `change_proof`, the live key's signature over
+        `polaris-holder-key-change/1` (WIRE-SPEC 3.15) made within 300 seconds. The register is
+        append-only: a binding is never rewritten.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HolderKeyRequest" }
+      responses:
+        "200":
+          description: The issuer-signed `polaris-holder-binding/1` now in force.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HolderBinding" }
+        "400": { description: "`not_verifiable`: the presented credential is not genuine." }
+        "401": { description: "`change_proof_required`, `stale`, or `invalid_change_proof`." }
+        "409": { description: "`not_active`, `holder_key_bound`, or `no_holder_key`." }
+        "429": { description: Rate limited. }
+  /api/v1/holder-binding:
+    post:
+      tags: [Holder key]
+      operationId: fetchHolderBinding
+      summary: Fetch the current issuer-signed holder binding for a credential.
+      description: |
+        Possession-authenticated. A holder staples the returned `polaris-holder-binding/1` to a
+        presentation so a relying party can decide the holder proof offline without contacting the
+        issuer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PossessionProof" }
+      responses:
+        "200":
+          description: The current holder binding.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HolderBinding" }
+        "404": { description: "`no_holder_key`: nothing is bound." }
+  /api/v1/verifiable-credential:
+    post:
+      tags: [Credential formats]
+      operationId: renderVerifiableCredential
+      summary: Render the verification result as a W3C Verifiable Credential.
+      description: |
+        Possession-authenticated. Attests "at this instant, presented against this credential, the
+        authority's answer was this", not "this person is X". The subject vocabulary is closed and
+        refuses identity fields and `token_value`. The cryptosuite is `polaris-mldsa-jcs-2026`
+        (every registered Data Integrity suite is classical), canonicalised with JCS (RFC 8785).
+        With `verifier_scope` the subject `id` is the pairwise handle; without one there is no `id`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/PossessionProof" }
+                - type: object
+                  properties:
+                    verifier_scope:
+                      type: string
+                      description: Optional; yields a pairwise subject id.
+      responses:
+        "200":
+          description: A W3C Verifiable Credential document (a DataIntegrityProof it cannot classically verify).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                description: "VC 2.0 document. See docs/design/vc-format.md."
+        "400": { description: The presented credential is not verifiable. }
+  /api/v1/mdoc:
+    post:
+      tags: [Credential formats]
+      operationId: renderMdoc
+      summary: Render the credential in the ISO/IEC 18013-5 mdoc structure.
+      description: |
+        Possession-authenticated. A format bridge, not a trust bridge: an 18013-5 reader verifies
+        disclosed-element digests against the signed MSO but CANNOT verify the ML-DSA issuer
+        signature (`reader_interop` says so). Not an mDL: `docType` is `id.polaris.credential.1`,
+        namespace `id.polaris.1`. The element vocabulary is closed; `token_value` is never an element.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/PossessionProof" }
+                - type: object
+                  properties:
+                    elements:
+                      type: array
+                      items: { type: string }
+                      description: "Selective disclosure; closed vocabulary (issuing_authority, context, assurance_level, enrollment_status, credential_status)."
+      responses:
+        "200":
+          description: The CBOR mdoc document and reader-interop note.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  document_hex: { type: string }
+                  elements: { type: array, items: { type: string } }
+                  reader_interop: { type: object, additionalProperties: true }
+                additionalProperties: true
+        "400": { description: "The presented credential is not verifiable, or an unknown element was asked." }
+  /api/v1/epoch/{epoch_id}/leaves:
+    get:
+      tags: [Federation artifacts]
+      operationId: getEpochLeaves
+      summary: Publish an epoch's signed leaf set (the anonymity set).
+      description: |
+        Public and unauthenticated by design: a set a holder had to authenticate to fetch would
+        tell the issuer who was about to prove. Every requester receives identical bytes; each
+        entry is an opaque SHA3-256 only the matching holder recognises; nothing is recorded about
+        who asked. `all_leaves_hex` rides outside the signed statement, committed to by
+        `leaves_root_hex`. Bounded at ten thousand members (C8).
+      parameters:
+        - $ref: "#/components/parameters/EpochId"
+      responses:
+        "200":
+          description: The signed leaf set (`polaris-epoch-leaves/1`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignedArtifact" }
+        "404": { description: Unknown epoch. }
+        "413": { description: The epoch exceeds the ten-thousand-member bound. }
+  /api/v1/federation-manifest/{agency_id}:
+    get:
+      tags: [Federation artifacts]
+      operationId: getFederationManifest
+      summary: An authority's signed federation manifest (anchors + attestations).
+      description: |
+        Public; no auth. An authority's trust roots and the attestations it has made (who it
+        accepts, per context), so another authority or a relying party can decide cross-authority
+        trust offline. Short-lived; carries no personal data.
+      parameters:
+        - $ref: "#/components/parameters/AgencyId"
+      responses:
+        "200":
+          description: "`polaris-federation-manifest/1`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationManifest" }
+        "404": { description: The agency does not exist or is not federated. }
+  /api/v1/epoch-checkpoint/{agency_id}:
+    get:
+      tags: [Federation artifacts]
+      operationId: getEpochCheckpoint
+      summary: An authority's signed commitment to the latest point on its epoch chain.
+      description: |
+        Public; no auth. The epoch number and Merkle root, and the prior epoch it extends. Two
+        checkpoints let a consumer prove monotonicity and catch a fork (two roots at one epoch
+        number is proof of equivocation). Short-lived; no personal data.
+      parameters:
+        - $ref: "#/components/parameters/AgencyId"
+      responses:
+        "200":
+          description: "`polaris-epoch-checkpoint/1`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EpochCheckpoint" }
+        "404": { description: "The agency does not exist, is not federated, or has no closed epoch." }
+  /api/v1/revocation-feed/{agency_id}:
+    get:
+      tags: [Federation artifacts]
+      operationId: getRevocationFeed
+      summary: An authority's signed set of revoked-credential leaves (a CRL of leaves).
+      description: |
+        Public; no auth. The sorted set of `SHA3-256(token_value)` for the authority's revoked
+        credentials, plus a commitment. Not the active population: a leaf is derivable only by a
+        holder of the credential, and no `token_value` appears. Append-only, so the feed is
+        monotone and a rollback is detectable. Short-lived.
+      parameters:
+        - $ref: "#/components/parameters/AgencyId"
+      responses:
+        "200":
+          description: "`polaris-revocation-feed/1`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevocationFeed" }
+        "404": { description: The agency does not exist or is not federated. }
+  /api/v1/federation-status-bundle/{agency_id}:
+    get:
+      tags: [Federation artifacts]
+      operationId: getFederationStatusBundle
+      summary: One signed artifact mirroring the feeds and checkpoints of a federation.
+      description: |
+        Public; no auth. Mirrors the revocation feed and epoch checkpoint of the publisher and
+        every authority it federates with, so a relying party fetches once and checks any member's
+        credential offline. Short-lived.
+      parameters:
+        - $ref: "#/components/parameters/AgencyId"
+      responses:
+        "200":
+          description: "`polaris-federation-status-bundle/1`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationStatusBundle" }
+        "404": { description: The agency does not exist or is not federated. }
+  /api/v1/auth/authorize:
+    post:
+      tags: [Auth broker]
+      operationId: authBrokerAuthorize
+      summary: Holder authorizes a relying party; returns a PKCE authorization code.
+      description: |
+        Possession-authenticated; no session (P8.4). The relying party must hold the `authenticate`
+        scope. The credential must be ACTIVE and permitted in `context_id`; a wrong/unknown credential
+        is the uniform not_verifiable; a duress code is served identically and recorded silently. The
+        relying party's registered policy binds (require_zk, required_enrollment, required_context_id);
+        a request may only add a requirement. Nothing is written. The code is encrypted, opaque,
+        stateless, PKCE-bound, and lives 60 seconds.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuthAuthorizeRequest" }
+      responses:
+        "200":
+          description: The authorization code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthCodeResponse" }
+        "400":
+          description: "invalid_request, or the uniform not_verifiable."
+        "401":
+          description: "invalid_client (the relying party lacks the authenticate scope)."
+        "403":
+          description: "forbidden, insufficient_assurance, policy_violation, or insufficient_enrollment."
+  /api/v1/auth/token:
+    post:
+      tags: [Auth broker]
+      operationId: authBrokerToken
+      summary: Exchange a PKCE authorization code for a signed polaris-id-token.
+      description: |
+        Client credentials (HTTP Basic or form), grant_type=authorization_code (P8.4). The code must
+        be this instance's, unexpired, issued to this client, S256-bound to the verifier, and unused
+        (its hash is consumed in the append-only AuthCodeConsumed register; a replay is invalid_grant).
+        The id_token carries no PII beyond the context's disclosure. Verified offline with verify_id_token.
+      security:
+        - rpBasic: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type, code, code_verifier]
+              properties:
+                grant_type: { type: string, const: authorization_code }
+                code: { type: string }
+                code_verifier: { type: string }
+      responses:
+        "200":
+          description: The signed polaris-id-token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IdTokenResponse" }
+        "400":
+          description: "invalid_grant (replay, expired, wrong client, or bad verifier)."
+  /api/v1/sign/{agency_id}:
+    post:
+      tags: [Inter-authority]
+      operationId: signDocument
+      summary: An authority signs a document digest under its registered key.
+      description: |
+        Operator auth (session login + CSRF) (P8.5). The caller sends only the SHA3-256 of the
+        document, never the document. Returns a polaris-signed-document/1 with long-term-validation
+        evidence (a timestamp, the signer's manifest, epoch checkpoint and revocation feed at the
+        instant). Verified offline with verify_signed_document. WIRE-SPEC 3.12.
+      parameters: [ { $ref: "#/components/parameters/AgencyId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignDocumentRequest" }
+      responses:
+        "200":
+          description: A polaris-signed-document/1.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignedArtifact" }
+        "401":
+          description: Not authenticated as an operator.
+        "403":
+          description: The operator is bound to another authority.
+  /api/v1/sign/{agency_id}/holder:
+    post:
+      tags: [Inter-authority]
+      operationId: signDocumentForHolder
+      summary: An authority signs a document on behalf of a holder (possession-authenticated).
+      description: |
+        Possession-authenticated; no session (P8.5c). Body is the presented credential plus the
+        digest fields. The credential must have been issued by this authority and be ACTIVE. The
+        container records the holder as on_behalf_of.credential_hash, never the token.
+      parameters: [ { $ref: "#/components/parameters/AgencyId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/PossessionProof" }
+                - { $ref: "#/components/schemas/SignDocumentRequest" }
+      responses:
+        "200":
+          description: A polaris-signed-document/1 recording on_behalf_of.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignedArtifact" }
+        "400":
+          description: The presented credential is not verifiable.
+        "403":
+          description: The credential was not issued by this authority, or is not ACTIVE.
+  /api/v1/exchange/{target_agency_id}:
+    post:
+      tags: [Inter-authority]
+      operationId: exchangeGateway
+      summary: Service-to-service exchange gateway; forwards a signed request to a federated upstream.
+      description: |
+        Service-to-service; no session (P8.2d). Post a polaris-exchange-request/1 envelope (signed
+        under the requester's registered ML-DSA-65 key) plus the JSON body; receive a receipt and the
+        upstream response. No body is ever persisted. Requires real ML-DSA on the instance. WIRE-SPEC 3.11.
+      parameters:
+        - name: target_agency_id
+          in: path
+          required: true
+          schema: { type: integer, format: int64, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExchangeRequest" }
+      responses:
+        "200":
+          description: The exchange receipt and the upstream response body.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  receipt: { $ref: "#/components/schemas/ExchangeReceipt" }
+                  response_body: { type: object, additionalProperties: true }
+        "400":
+          description: "Malformed/mis-bound envelope, unbound request_hash, or unsupported_format_version."
+        "401":
+          description: "stale, invalid_signature, or unknown_requester."
+        "403":
+          description: The requester is not authorized in the context by the trust graph.
+        "404":
+          description: The target is not federated, or the service kind is not forwarded.
+        "409":
+          description: "replay (the nonce was already consumed)."
+        "429":
+          description: Rate limited.
+        "502":
+          description: The upstream did not answer or returned unparseable JSON.
+        "503":
+          description: Real ML-DSA-65 is not available on the instance.
+  /api/v1/exchange-receipt/{agency_id}:
+    post:
+      tags: [Inter-authority]
+      operationId: mintExchangeReceipt
+      summary: Mint signed evidence that an authorized exchange occurred (operator auth).
+      description: |
+        Operator auth (session login + CSRF); the service-to-service variant is /signed (P8.2).
+        The caller submits only hashes of the request and response, the requester's public key, and
+        the context; the body is never sent. Minted only if this authority has itself attested the
+        requester's key in the context (trust is explicit, directional, non-transitive). WIRE-SPEC 3.8.
+      parameters: [ { $ref: "#/components/parameters/AgencyId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExchangeReceiptRequest" }
+      responses:
+        "200":
+          description: A polaris-exchange-receipt/1.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExchangeReceipt" }
+        "403":
+          description: The requester is not attested by this authority in the context.
+  /api/v1/exchange-receipt/{agency_id}/signed:
+    post:
+      tags: [Inter-authority]
+      operationId: mintExchangeReceiptSigned
+      summary: Mint an exchange receipt authenticated by an ML-DSA-signed mint statement (no session).
+      description: |
+        Service-to-service; no session (P8.2b). The caller authenticates by signing a
+        polaris-exchange-mint/1 statement under the responder agency's registered ML-DSA-65 key. No
+        session, no shared secret, no server-side nonce store. occurred_at must be within a 300s
+        window. Requires real ML-DSA-65. WIRE-SPEC 3.8.1.
+      parameters: [ { $ref: "#/components/parameters/AgencyId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExchangeMintRequest" }
+      responses:
+        "200":
+          description: A polaris-exchange-receipt/1 whose occurred_at is the signed time.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExchangeReceipt" }
+        "400":
+          description: mint.responder_agency_id does not equal the URL agency.
+        "401":
+          description: "stale, or invalid_signature."
+        "403":
+          description: The requester is not attested in the context.
+        "429":
+          description: Rate limited.
+        "503":
+          description: Real ML-DSA-65 is not available on the instance.
+  /api/v1/exchange-receipt/inclusion/{receipt_hash}:
+    get:
+      tags: [Transparency]
+      operationId: getExchangeReceiptInclusion
+      summary: RFC-6962 inclusion evidence that a receipt is in the receipt transparency log.
+      description: |
+        Public; no auth (P8.2c). Returns {log_id, proof, sth} for the receipt's SHA3-256. The caller
+        already holds the receipt (it computes the hash), so nothing is disclosed to one who does not.
+      parameters:
+        - name: receipt_hash
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+      responses:
+        "200":
+          description: Inclusion evidence.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogInclusionEvidence" }
+        "404":
+          description: Unknown receipt hash.
+  /api/v1/trust-list/{agency_id}:
+    get:
+      tags: [Discovery]
+      operationId: getTrustList
+      summary: The signed trust list of every authority key this instance knows.
+      description: |
+        Public; no auth (P8.7b). Each key with status (active/retired/compromised) and the instants
+        each took effect, from the append-only key register; signed by the publishing authority, which
+        must list itself active. WIRE-SPEC 3.15.
+      parameters: [ { $ref: "#/components/parameters/AgencyId" } ]
+      responses:
+        "200":
+          description: A polaris-trust-list/1.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignedArtifact" }
+        "404":
+          description: The agency does not exist or is not federated.
+  /api/v1/registry/{agency_id}:
+    get:
+      tags: [Discovery]
+      operationId: getRegistry
+      summary: The signed, machine-readable description of what this instance offers and trusts.
+      description: |
+        Public; no auth (P8.3). One polaris-registry/1: protocol formats and versions, accepted
+        algorithms, services (kind, path template, method, auth), transparency logs, federated
+        authorities and keys, contexts and required proofs, the trust graph, and the relying parties
+        served (org and scope only). Institutional data only. WIRE-SPEC 3.10.
+      parameters: [ { $ref: "#/components/parameters/AgencyId" } ]
+      responses:
+        "200":
+          description: A polaris-registry/1.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Registry" }
+        "404":
+          description: The agency does not exist or is not federated.
+  /api/v1/timestamp/{agency_id}:
+    post:
+      tags: [Timestamping]
+      operationId: timestampDigest
+      summary: Bind an arbitrary SHA3-256 digest to an instant under an authority's key.
+      description: |
+        Public; no session (P8.7a). The caller sends only the digest; the content is never sent. No
+        per-request record is kept unless anchor=true, which joins the timestamp transparency log and
+        returns an unsigned anchor (log_id, timestamp_hash, inclusion proof, signed head). WIRE-SPEC 3.9.
+      parameters: [ { $ref: "#/components/parameters/AgencyId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TimestampRequest" }
+      responses:
+        "200":
+          description: A polaris-timestamp/1 (with an anchor when requested).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Timestamp" }
+        "429":
+          description: Rate limited.
+  /api/v1/timestamp/inclusion/{timestamp_hash}:
+    get:
+      tags: [Transparency]
+      operationId: getTimestampInclusion
+      summary: RFC-6962 inclusion evidence that an anchored timestamp is in the timestamp log.
+      description: "Public; no auth (P8.5b). Returns {log_id, proof, sth}. Unanchored timestamps are never in the log."
+      parameters:
+        - name: timestamp_hash
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+      responses:
+        "200":
+          description: Inclusion evidence.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogInclusionEvidence" }
+        "404":
+          description: Unknown timestamp hash.
+  /api/v1/transparency/sth:
+    get:
+      tags: [Transparency]
+      operationId: getAnchorSth
+      summary: The anchor transparency log's Signed Tree Head.
+      description: "Public; no auth (P3.3). The log's commitment to its entire history at a size, over the append-only AnchorBatch root sequence."
+      responses:
+        "200":
+          description: A polaris-transparency-sth/1.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignedTreeHead" }
+  /api/v1/transparency/consistency/{m}/{n}:
+    get:
+      tags: [Transparency]
+      operationId: getAnchorConsistency
+      summary: RFC-6962 consistency proof that the size-m tree is a prefix of the size-n tree.
+      description: "Public; no auth. Verified with verify_log_consistency."
+      parameters:
+        - { $ref: "#/components/parameters/TreeSizeM" }
+        - { $ref: "#/components/parameters/TreeSizeN" }
+      responses:
+        "200":
+          description: A consistency proof.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConsistencyProof" }
+        "400":
+          description: The range is invalid.
+  /api/v1/transparency/proof/{index}:
+    get:
+      tags: [Transparency]
+      operationId: getAnchorInclusion
+      summary: RFC-6962 inclusion proof for the anchor-log entry at index.
+      description: "Public; no auth. Verified with verify_inclusion."
+      parameters: [ { $ref: "#/components/parameters/LogIndex" } ]
+      responses:
+        "200":
+          description: An inclusion proof.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InclusionProof" }
+        "400":
+          description: The index is out of range.
+  /api/v1/transparency/entries:
+    get:
+      tags: [Transparency]
+      operationId: getAnchorEntries
+      summary: The anchor-log entries (anchor roots) in [start, end) for a monitor to replicate.
+      description: "Public; no auth. Bounded result set (C8): at most POLARIS_TRANSPARENCY_ENTRIES_CAP per call."
+      parameters:
+        - { $ref: "#/components/parameters/RangeStart" }
+        - { $ref: "#/components/parameters/RangeEnd" }
+      responses:
+        "200":
+          description: The log entries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogEntries" }
+  /api/v1/transparency/timestamps/sth:
+    get:
+      tags: [Transparency]
+      operationId: getTimestampLogSth
+      summary: The timestamp log's Signed Tree Head (log_id polaris-timestamp-log).
+      description: "Public; no auth (P8.5b). Entries are hashes; no timestamp is retained."
+      responses:
+        "200":
+          description: A signed tree head.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignedTreeHead" }
+  /api/v1/transparency/timestamps/consistency/{m}/{n}:
+    get:
+      tags: [Transparency]
+      operationId: getTimestampLogConsistency
+      summary: RFC-6962 consistency proof for the timestamp log.
+      description: "Public; no auth (P8.5b)."
+      parameters:
+        - { $ref: "#/components/parameters/TreeSizeM" }
+        - { $ref: "#/components/parameters/TreeSizeN" }
+      responses:
+        "200":
+          description: A consistency proof.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConsistencyProof" }
+        "400":
+          description: The range is invalid.
+  /api/v1/transparency/timestamps/proof/{index}:
+    get:
+      tags: [Transparency]
+      operationId: getTimestampLogInclusion
+      summary: RFC-6962 inclusion proof for the timestamp-log entry at index.
+      description: "Public; no auth (P8.5b)."
+      parameters: [ { $ref: "#/components/parameters/LogIndex" } ]
+      responses:
+        "200":
+          description: An inclusion proof.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InclusionProof" }
+        "400":
+          description: The index is out of range.
+  /api/v1/transparency/timestamps/entries:
+    get:
+      tags: [Transparency]
+      operationId: getTimestampLogEntries
+      summary: The timestamp-log entries (timestamp hashes) in [start, end).
+      description: "Public; no auth (P8.5b). C8-bounded."
+      parameters:
+        - { $ref: "#/components/parameters/RangeStart" }
+        - { $ref: "#/components/parameters/RangeEnd" }
+      responses:
+        "200":
+          description: The log entries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogEntries" }
+  /api/v1/transparency/receipts/sth:
+    get:
+      tags: [Transparency]
+      operationId: getReceiptLogSth
+      summary: The receipt log's Signed Tree Head (log_id polaris-exchange-receipt-log).
+      description: "Public; no auth (P8.2c). Entries are hashes; no receipt is retained."
+      responses:
+        "200":
+          description: A signed tree head.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignedTreeHead" }
+  /api/v1/transparency/receipts/consistency/{m}/{n}:
+    get:
+      tags: [Transparency]
+      operationId: getReceiptLogConsistency
+      summary: RFC-6962 consistency proof for the receipt log.
+      description: "Public; no auth (P8.2c)."
+      parameters:
+        - { $ref: "#/components/parameters/TreeSizeM" }
+        - { $ref: "#/components/parameters/TreeSizeN" }
+      responses:
+        "200":
+          description: A consistency proof.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConsistencyProof" }
+        "400":
+          description: The range is invalid.
+  /api/v1/transparency/receipts/proof/{index}:
+    get:
+      tags: [Transparency]
+      operationId: getReceiptLogInclusion
+      summary: RFC-6962 inclusion proof for the receipt-log entry at index.
+      description: "Public; no auth (P8.2c)."
+      parameters: [ { $ref: "#/components/parameters/LogIndex" } ]
+      responses:
+        "200":
+          description: An inclusion proof.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InclusionProof" }
+        "400":
+          description: The index is out of range.
+  /api/v1/transparency/receipts/entries:
+    get:
+      tags: [Transparency]
+      operationId: getReceiptLogEntries
+      summary: The receipt-log entries (receipt hashes) in [start, end).
+      description: "Public; no auth (P8.2c). C8-bounded."
+      parameters:
+        - { $ref: "#/components/parameters/RangeStart" }
+        - { $ref: "#/components/parameters/RangeEnd" }
+      responses:
+        "200":
+          description: The log entries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogEntries" }
+  /api/v1/oid4vci/{agency_id}/.well-known/openid-credential-issuer:
+    get:
+      tags: [OpenID4VCI]
+      operationId: vciIssuerMetadata
+      summary: OpenID4VCI credential issuer metadata.
+      description: |
+        Public (OpenID4VCI 1.0 section 12.2). Also served at the inserted path
+        /.well-known/openid-credential-issuer/api/v1/oid4vci/{agency_id}. One configuration,
+        polaris_wallet_copy: format dc+sd-jwt, vct urn:polaris:wallet-copy:1, ES256. Cache-Control no-store.
+      parameters: [ { $ref: "#/components/parameters/AgencyId" } ]
+      responses:
+        "200":
+          description: Credential issuer metadata.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "404":
+          description: The agency holds no wallet-copy key.
+        "503":
+          description: The key fails its checks, or the certificate names no issuer.
+  /api/v1/oid4vci/{agency_id}/.well-known/oauth-authorization-server:
+    get:
+      tags: [OpenID4VCI]
+      operationId: vciAuthServerMetadata
+      summary: OpenID4VCI authorization server metadata (RFC 8414).
+      description: "Public. token_endpoint only; grant urn:ietf:params:oauth:grant-type:pre-authorized_code. Cache-Control no-store."
+      parameters: [ { $ref: "#/components/parameters/AgencyId" } ]
+      responses:
+        "200":
+          description: Authorization server metadata.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "404":
+          description: The agency holds no wallet-copy key.
+  /api/v1/oid4vci/{agency_id}/token:
+    post:
+      tags: [OpenID4VCI]
+      operationId: vciToken
+      summary: Redeem a pre-authorized code for a VCI access token.
+      description: |
+        Public; the pre-authorized code is the credential. grant_type must be the pre-authorized_code
+        grant; a tx_code is invalid_request (none is offered); a code that is not this agency's,
+        expired, or used is invalid_grant.
+      parameters: [ { $ref: "#/components/parameters/AgencyId" } ]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type, pre-authorized_code]
+              properties:
+                grant_type: { type: string, const: "urn:ietf:params:oauth:grant-type:pre-authorized_code" }
+                pre-authorized_code: { type: string }
+      responses:
+        "200":
+          description: A bearer access token (expires_in 300).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+        "400":
+          description: "unsupported_grant_type, invalid_request, or invalid_grant."
+  /api/v1/oid4vci/{agency_id}/nonce:
+    post:
+      tags: [OpenID4VCI]
+      operationId: vciNonce
+      summary: Issue a c_nonce for a credential proof.
+      description: "Public. Returns {c_nonce}, valid five minutes, spent by the proof that carries it."
+      parameters: [ { $ref: "#/components/parameters/AgencyId" } ]
+      responses:
+        "200":
+          description: A fresh nonce.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  c_nonce: { type: string }
+  /api/v1/oid4vci/{agency_id}/credential:
+    post:
+      tags: [OpenID4VCI]
+      operationId: vciCredential
+      summary: Issue the wallet copy (an SD-JWT VC bound to the proof key).
+      description: |
+        Bearer access token. Exactly one openid4vci-proof+jwt signed ES256 by the P-256 key in its jwk
+        header, aud this issuer, iat within five minutes, nonce from the nonce endpoint. The copy is
+        recorded by uc_issue_credential_copy, which refuses unless the credential is ACTIVE. One access
+        token buys one copy.
+      security:
+        - vciBearer: []
+      parameters: [ { $ref: "#/components/parameters/AgencyId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential_configuration_id, proofs]
+              properties:
+                credential_configuration_id: { type: string, const: polaris_wallet_copy }
+                proofs:
+                  type: object
+                  properties:
+                    jwt: { type: array, items: { type: string }, minItems: 1, maxItems: 1 }
+      responses:
+        "200":
+          description: The issued credential(s).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  credentials:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "400":
+          description: "invalid_credential_request, invalid_proof, invalid_nonce, or credential_request_denied."
+        "401":
+          description: "invalid_token."
+  /api/v1/oid4vci/{agency_id}/status/{day}/{list_no}:
+    get:
+      tags: [OpenID4VCI]
+      operationId: vciStatusList
+      summary: A Token Status List for a day's wallet copies.
+      description: "Public. application/statuslist+jwt computed at the fetch: bit 0 only for a copy whose credential is ACTIVE now and whose window is open."
+      parameters:
+        - { $ref: "#/components/parameters/AgencyId" }
+        - name: day
+          in: path
+          required: true
+          schema: { type: string, format: date }
+        - name: list_no
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: A status list JWT.
+          content:
+            application/statuslist+jwt:
+              schema: { type: string }
+        "404":
+          description: The day does not match the copy's status_list.uri.
+
+components:
+  securitySchemes:
+    rpBasic:
+      type: http
+      scheme: basic
+      description: Relying-party client_id as username and client_secret as password; POST /api/v1/oauth/token only.
+    bearerVerify:
+      type: oauth2
+      description: The short-lived bearer from /api/v1/oauth/token, carrying the verify scope.
+      flows:
+        clientCredentials:
+          tokenUrl: /api/v1/oauth/token
+          scopes:
+            verify: Confirm a presented credential is authentic and authoritative.
+    vciBearer:
+      type: http
+      scheme: bearer
+      description: The OpenID4VCI access token from POST /api/v1/oid4vci/{agency_id}/token.
+
+  parameters:
+    AgencyId:
+      name: agency_id
+      in: path
+      required: true
+      description: The issuing authority's numeric id.
+      schema: { type: integer, format: int64, minimum: 1 }
+    EpochId:
+      name: epoch_id
+      in: path
+      required: true
+      description: The epoch's numeric id.
+      schema: { type: integer, format: int64, minimum: 1 }
+    TreeSizeM:
+      name: m
+      in: path
+      required: true
+      description: The smaller tree size.
+      schema: { type: integer, format: int64, minimum: 0 }
+    TreeSizeN:
+      name: n
+      in: path
+      required: true
+      description: The larger tree size.
+      schema: { type: integer, format: int64, minimum: 0 }
+    LogIndex:
+      name: index
+      in: path
+      required: true
+      description: The zero-based log entry index.
+      schema: { type: integer, format: int64, minimum: 0 }
+    RangeStart:
+      name: start
+      in: query
+      required: false
+      description: Inclusive start of the entry range.
+      schema: { type: integer, format: int64, minimum: 0 }
+    RangeEnd:
+      name: end
+      in: query
+      required: false
+      description: Exclusive end of the entry range (C8-bounded span).
+      schema: { type: integer, format: int64, minimum: 0 }
+
+  schemas:
+    PossessionProof:
+      type: object
+      description: Proof of possession of a credential; the genuine issued signature over SHA3-256(token_value).
+      required: [token_value, signature_hex]
+      properties:
+        token_value:
+          type: string
+          description: The credential's token value as presented by the holder.
+        signature_hex:
+          type: string
+          pattern: "^[0-9a-f]+$"
+          description: The genuine issued signature, hex digits only (no whitespace).
+      additionalProperties: false
+    TokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in, scope]
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, const: Bearer }
+        expires_in: { type: integer, example: 300 }
+        scope: { type: string, example: verify }
+    OAuthError:
+      type: object
+      description: RFC 6749 error.
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [unsupported_grant_type, invalid_client]
+        error_description: { type: [string, "null"] }
+    VerifyVerdict:
+      type: object
+      description: |
+        The authenticity + authorization verdict. On a non-verifiable presentation the response is
+        the uniform reject: `{authentic:false, decision:"reject", reason:"not a verifiable presentation"}`.
+      required: [authentic, decision]
+      properties:
+        api_version: { type: string, const: v1 }
+        authentic:
+          type: boolean
+          description: The presented signature is the genuine issued signature over SHA3-256(token_value).
+        issuer_authorized_at_signing:
+          type: [boolean, "null"]
+          description: The key was authorized for this authority when the credential was signed; survives rotation; null when undecidable.
+        issuer_key_current:
+          type: [boolean, "null"]
+          description: The key is still active for that authority today; false after a rotation; null when undecidable.
+        currently_authoritative:
+          type: boolean
+          description: ACTIVE and not past expiration_date, read fresh from the primary.
+        status:
+          type: [string, "null"]
+          description: The lifecycle status; null when not verifiable.
+        as_of:
+          type: [string, "null"]
+          format: date-time
+          description: ISO-8601 primary-clock time of the authorization read.
+        usable:
+          type: boolean
+          description: authentic AND currently_authoritative.
+        decision:
+          type: string
+          enum: [accept, reject]
+        reason:
+          type: [string, "null"]
+          description: Why, on a reject.
+    StatusAssertion:
+      type: object
+      description: Issuer's ML-DSA-65 signature over SHA3-256 of the canonical statement {format, token_value, status, issued_at, expires_at}.
+      required: [format, token_value, status, issued_at, expires_at, algorithm, signature_hex]
+      properties:
+        format: { type: string, const: polaris-status-assertion/1 }
+        token_value: { type: string }
+        status:
+          type: string
+          description: Current lifecycle status; a credential past expiration_date is asserted EXPIRED even while stored ACTIVE.
+        issued_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        algorithm: { type: string, example: ML-DSA-65 }
+        signature_hex: { type: string }
+        public_key_hex:
+          type: [string, "null"]
+          description: Null for the development placeholder.
+        max_window_seconds: { type: integer }
+        digest_construction: { type: string }
+    HolderKeyRequest:
+      type: object
+      required: [token_value, signature_hex, holder_public_key_hex]
+      properties:
+        token_value: { type: string }
+        signature_hex: { type: string, pattern: "^[0-9a-f]+$" }
+        holder_public_key_hex: { type: string }
+        holder_algorithm: { type: [string, "null"] }
+        event:
+          type: string
+          enum: [bound, rotated, revoked]
+          default: bound
+        change_proof:
+          type: [object, "null"]
+          description: Required for rotated/revoked; the live key's signature over polaris-holder-key-change/1 within 300s.
+          properties:
+            issued_at: { type: string, format: date-time }
+            signature_hex: { type: string }
+    HolderBinding:
+      type: object
+      description: The issuer-signed polaris-holder-binding/1. See WIRE-SPEC 3.15.
+      required: [format]
+      properties:
+        format: { type: string, const: polaris-holder-binding/1 }
+      additionalProperties: true
+    SignedArtifact:
+      type: object
+      description: A short-lived, issuer-signed artifact. Exact fields per its format in WIRE-SPEC.
+      required: [format, signature_hex]
+      properties:
+        format: { type: string }
+        issued_at: { type: [string, "null"], format: date-time }
+        expires_at: { type: [string, "null"], format: date-time }
+        algorithm: { type: string, example: ML-DSA-65 }
+        signature_hex: { type: string }
+        public_key_hex: { type: [string, "null"] }
+      additionalProperties: true
+    Authority:
+      type: object
+      properties:
+        agency_id: { type: integer, format: int64 }
+        name: { type: string }
+    FederationManifest:
+      type: object
+      required: [format, authority, anchors, attestations, issued_at, expires_at, algorithm, signature_hex]
+      properties:
+        format: { type: string, const: polaris-federation-manifest/1 }
+        authority: { $ref: "#/components/schemas/Authority" }
+        anchors:
+          type: array
+          items:
+            type: object
+            properties:
+              public_key_hex: { type: string }
+              algorithm: { type: string }
+              status: { type: string }
+        attestations:
+          type: array
+          items:
+            type: object
+            properties:
+              attested_agency_id: { type: integer, format: int64 }
+              attested_public_key_hex: { type: string }
+              context_id: { type: integer }
+              valid_until: { type: string, format: date-time }
+        epoch:
+          type: object
+          properties:
+            number: { type: integer }
+            root_hex: { type: string }
+        revocation:
+          type: object
+          properties:
+            as_of: { type: string, format: date-time }
+        issued_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        algorithm: { type: string, example: ML-DSA-65 }
+        signature_hex: { type: string }
+        public_key_hex: { type: [string, "null"] }
+    EpochCheckpoint:
+      type: object
+      required: [format, authority, epoch, issued_at, expires_at, algorithm, signature_hex]
+      properties:
+        format: { type: string, const: polaris-epoch-checkpoint/1 }
+        authority: { $ref: "#/components/schemas/Authority" }
+        epoch:
+          type: object
+          properties:
+            number: { type: integer }
+            root_hex: { type: string }
+            committed_count: { type: integer }
+            valid_until: { type: string, format: date-time }
+        prev:
+          type: object
+          properties:
+            number: { type: integer }
+            root_hex: { type: string }
+        as_of: { type: string, format: date-time }
+        issued_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        algorithm: { type: string, example: ML-DSA-65 }
+        signature_hex: { type: string }
+        public_key_hex: { type: [string, "null"] }
+    RevocationFeed:
+      type: object
+      required: [format, authority, revoked_root_hex, revoked_count, revoked_leaves, issued_at, expires_at, algorithm, signature_hex]
+      properties:
+        format: { type: string, const: polaris-revocation-feed/1 }
+        authority: { $ref: "#/components/schemas/Authority" }
+        epoch_number: { type: integer }
+        as_of: { type: string, format: date-time }
+        revoked_root_hex: { type: string }
+        revoked_count: { type: integer }
+        revoked_leaves:
+          type: array
+          items: { type: string, description: SHA3-256 hex of a revoked leaf. }
+        issued_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        algorithm: { type: string, example: ML-DSA-65 }
+        signature_hex: { type: string }
+        public_key_hex: { type: [string, "null"] }
+    FederationStatusBundle:
+      type: object
+      required: [format, publisher, members, members_root_hex, member_count, issued_at, expires_at, algorithm, signature_hex]
+      properties:
+        format: { type: string, const: polaris-federation-status-bundle/1 }
+        publisher: { $ref: "#/components/schemas/Authority" }
+        members:
+          type: array
+          items:
+            type: object
+            properties:
+              authority_id: { type: integer, format: int64 }
+              revocation_feed: { $ref: "#/components/schemas/RevocationFeed" }
+              epoch_checkpoint: { $ref: "#/components/schemas/EpochCheckpoint" }
+        members_root_hex: { type: string }
+        member_count: { type: integer }
+        issued_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        algorithm: { type: string, example: ML-DSA-65 }
+        signature_hex: { type: string }
+        public_key_hex: { type: [string, "null"] }
+    AuthAuthorizeRequest:
+      type: object
+      required: [client_id, nonce, code_challenge, code_challenge_method, context_id, disclosure_level, token_value, signature_hex]
+      properties:
+        client_id: { type: string }
+        nonce: { type: string }
+        code_challenge: { type: string }
+        code_challenge_method: { type: string, const: S256 }
+        context_id: { type: integer }
+        disclosure_level: { type: string }
+        token_value: { type: string }
+        signature_hex: { type: string, pattern: "^[0-9a-f]+$" }
+        presented_code: { type: [string, "null"] }
+        require_zk: { type: [boolean, "null"] }
+        required_enrollment: { type: [string, "null"], enum: [PENDING_ENROLLMENT, ENROLLED, EXEMPT, null] }
+        zk:
+          type: [object, "null"]
+          properties:
+            epoch_id: { type: integer }
+            nonce: { type: string }
+            proof_bundle: { type: object, additionalProperties: true }
+    AuthCodeResponse:
+      type: object
+      required: [code, expires_in, acr]
+      properties:
+        code: { type: string, description: Encrypted, opaque, stateless, PKCE-bound, 60s. }
+        expires_in: { type: integer, example: 60 }
+        acr: { type: string }
+    IdTokenResponse:
+      type: object
+      required: [id_token, token_type, expires_in]
+      properties:
+        id_token: { type: string, description: A polaris-id-token/1 signed by the issuing agency. }
+        token_type: { type: string, const: polaris-id-token }
+        expires_in: { type: integer }
+    SignDocumentRequest:
+      type: object
+      required: [digest_hex]
+      properties:
+        digest_hex: { type: string, pattern: "^[0-9a-f]{64}$", description: SHA3-256 of the document; never the document. }
+        digest_algorithm: { type: [string, "null"] }
+        media_type: { type: [string, "null"] }
+        name: { type: [string, "null"] }
+        purpose: { type: [string, "null"] }
+        timestamp_agency_id: { type: [integer, "null"] }
+        anchor_timestamp: { type: [boolean, "null"] }
+    ExchangeReceiptRequest:
+      type: object
+      required: [requester_public_key_hex, context_id, request_hash, response_hash]
+      properties:
+        requester_public_key_hex: { type: string }
+        context_id: { type: integer }
+        request_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        response_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+    ExchangeMintRequest:
+      type: object
+      required: [mint, signature_hex]
+      properties:
+        mint:
+          type: object
+          required: [format, requester_public_key_hex, context_id, request_hash, response_hash, responder_agency_id, occurred_at]
+          properties:
+            format: { type: string, const: polaris-exchange-mint/1 }
+            requester_public_key_hex: { type: string }
+            context_id: { type: integer }
+            request_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+            response_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+            responder_agency_id: { type: integer, format: int64 }
+            occurred_at: { type: string, format: date-time }
+        signature_hex: { type: string, description: ML-DSA-65 over SHA3-256(canonical(mint)). }
+    ExchangeReceipt:
+      type: object
+      description: polaris-exchange-receipt/1. Signed evidence an authorized exchange occurred; no payload retained.
+      required: [format, context_id, request_hash, response_hash, occurred_at, algorithm, signature_hex]
+      properties:
+        format: { type: string, const: polaris-exchange-receipt/1 }
+        requester: { type: object, additionalProperties: true }
+        responder: { type: object, additionalProperties: true }
+        context_id: { type: integer }
+        request_hash: { type: string }
+        response_hash: { type: string }
+        authorized_via: { type: object, additionalProperties: true }
+        occurred_at: { type: string, format: date-time }
+        algorithm: { type: string, example: ML-DSA-65 }
+        signature_hex: { type: string }
+        public_key_hex: { type: [string, "null"] }
+        log_id: { type: [string, "null"] }
+        log_index: { type: [integer, "null"] }
+    ExchangeRequest:
+      type: object
+      required: [envelope, body]
+      properties:
+        envelope:
+          type: object
+          description: A polaris-exchange-request/1 signed under the requester's registered ML-DSA-65 key.
+          additionalProperties: true
+        body:
+          type: object
+          additionalProperties: true
+    TimestampRequest:
+      type: object
+      required: [digest_hex]
+      properties:
+        digest_hex: { type: string, pattern: "^[0-9a-f]{64}$" }
+        nonce: { type: [string, "null"] }
+        anchor: { type: [boolean, "null"], description: When true, join the timestamp transparency log and return an anchor. }
+    Timestamp:
+      type: object
+      description: polaris-timestamp/1, with an unsigned anchor when anchoring was requested.
+      required: [format, digest_hex, issued_at, algorithm, signature_hex]
+      properties:
+        format: { type: string, const: polaris-timestamp/1 }
+        authority: { $ref: "#/components/schemas/Authority" }
+        digest_hex: { type: string }
+        digest_algorithm: { type: string, example: SHA3-256 }
+        nonce: { type: [string, "null"] }
+        issued_at: { type: string, format: date-time }
+        algorithm: { type: string, example: ML-DSA-65 }
+        signature_hex: { type: string }
+        public_key_hex: { type: [string, "null"] }
+        anchor:
+          type: [object, "null"]
+          properties:
+            log_id: { type: string }
+            timestamp_hash: { type: string }
+            proof: { $ref: "#/components/schemas/InclusionProof" }
+            sth: { $ref: "#/components/schemas/SignedTreeHead" }
+    Registry:
+      type: object
+      description: polaris-registry/1. Institutional data only.
+      required: [format, publisher, issued_at, expires_at, algorithm, signature_hex]
+      properties:
+        format: { type: string, const: polaris-registry/1 }
+        publisher: { $ref: "#/components/schemas/Authority" }
+        instance: { type: object, additionalProperties: true }
+        authorities: { type: array, items: { type: object, additionalProperties: true } }
+        contexts: { type: array, items: { type: object, additionalProperties: true } }
+        trust: { type: array, items: { type: object, additionalProperties: true } }
+        relying_parties:
+          type: array
+          items:
+            type: object
+            properties:
+              org_name: { type: string }
+              scope: { type: string }
+        issued_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        algorithm: { type: string, example: ML-DSA-65 }
+        signature_hex: { type: string }
+        public_key_hex: { type: [string, "null"] }
+    SignedTreeHead:
+      type: object
+      description: An RFC-6962 signed tree head over an append-only log.
+      required: [log_id, tree_size, root_hash_hex]
+      properties:
+        format: { type: [string, "null"], example: polaris-transparency-sth/1 }
+        log_id: { type: string }
+        tree_size: { type: integer, format: int64 }
+        root_hash_hex: { type: string }
+        timestamp: { type: [string, "null"], format: date-time }
+        algorithm: { type: [string, "null"], example: ML-DSA-65 }
+        signature_hex: { type: [string, "null"] }
+      additionalProperties: true
+    ConsistencyProof:
+      type: object
+      required: [first_size, second_size, proof_hex]
+      properties:
+        first_size: { type: integer, format: int64 }
+        second_size: { type: integer, format: int64 }
+        first_root_hex: { type: [string, "null"] }
+        second_root_hex: { type: [string, "null"] }
+        proof_hex: { type: string }
+    InclusionProof:
+      type: object
+      required: [index, tree_size, proof_hex]
+      properties:
+        index: { type: integer, format: int64 }
+        tree_size: { type: integer, format: int64 }
+        entry_hex: { type: [string, "null"] }
+        leaf_hash_hex: { type: [string, "null"] }
+        proof_hex: { type: string }
+        root_hash_hex: { type: [string, "null"] }
+    LogEntries:
+      type: object
+      required: [entries]
+      properties:
+        start: { type: [integer, "null"], format: int64 }
+        end: { type: [integer, "null"], format: int64 }
+        entries:
+          type: array
+          items: { type: string, description: An entry hash (anchor root, timestamp hash, or receipt hash). }
+    LogInclusionEvidence:
+      type: object
+      required: [log_id, proof, sth]
+      properties:
+        log_id: { type: string }
+        proof: { $ref: "#/components/schemas/InclusionProof" }
+        sth: { $ref: "#/components/schemas/SignedTreeHead" }

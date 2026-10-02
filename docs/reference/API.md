@@ -16,6 +16,8 @@ metrics surfaces (`/api/metrics`, `/metrics`), which are meant for
 probes and scrapers on an operator-internal network and must be
 restricted at the edge in production.
 
+**Machine-readable contract.** An OpenAPI 3.1 description of every `/api/v1` and OpenID4VCI route is at [`openapi.yaml`](openapi.yaml); [`API-CLIENTS.md`](API-CLIENTS.md) shows how to generate a typed client in any language from it.
+
 ---
 
 ## Authentication
