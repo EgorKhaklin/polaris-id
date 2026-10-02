@@ -338,8 +338,11 @@ WHERE name = 'ECDSA-P256';
 ```
 
 To move a holder onto a new algorithm, run UC-6 (`polaris-id migrate-algorithm`
-on the CLI, or `POST /uc6/migrate`; see [API.md](../reference/API.md)). The
-algorithm inventory and the post-quantum posture are in
+on the CLI, or `POST /uc6/migrate`; see [API.md](../reference/API.md)); to move a
+population, [QUANTUM-EVENT.md](QUANTUM-EVENT.md). The new signature is made by a key
+under the algorithm named, the authority's own or the one provisioned for the
+migration, and recorded under that algorithm; with no such key nothing is recorded.
+The algorithm inventory and the post-quantum posture are in
 [PQC-POSTURE.md](../reference/PQC-POSTURE.md).
 
 ### Schema migrations

@@ -106,13 +106,27 @@ DROP FUNCTION IF EXISTS atlas_agency_facet(TIMESTAMP, INTEGER, TEXT, TEXT, TEXT,
 DROP FUNCTION IF EXISTS atlas_geo_jurisdictions(TIMESTAMP, INTEGER, TEXT, TEXT, TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS atlas_verification_filtered(TIMESTAMP, BOOLEAN, TEXT, TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS atlas_lifecycle_filtered(TIMESTAMP, BOOLEAN, TEXT);
+-- lab/strategy/009 A4: a comparison reads the window before this one, so the readers it uses
+-- take the window's end as well as its start. The signatures without it go first: left beside
+-- the new ones, a call without the end would match both.
+DROP FUNCTION IF EXISTS atlas_breakdown(TEXT, TIMESTAMP, BOOLEAN, INTEGER, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT);
+DROP FUNCTION IF EXISTS atlas_crosstab(TEXT, TEXT, TIMESTAMP, BOOLEAN, INTEGER, TEXT, TEXT, TEXT, TEXT, TEXT);
+DROP FUNCTION IF EXISTS atlas_verification_combos(TIMESTAMP, BOOLEAN, TEXT, TEXT, TEXT, TEXT);
+DROP FUNCTION IF EXISTS atlas_lifecycle_combos(TIMESTAMP, BOOLEAN, TEXT);
+DROP FUNCTION IF EXISTS atlas_verification_matching(TIMESTAMP, BOOLEAN, TEXT, TEXT, TEXT, TEXT);
+DROP FUNCTION IF EXISTS atlas_lifecycle_matching(TIMESTAMP, BOOLEAN, TEXT);
+DROP FUNCTION IF EXISTS atlas_verification_cells(TIMESTAMP, BOOLEAN);
+DROP FUNCTION IF EXISTS atlas_lifecycle_cells(TIMESTAMP, BOOLEAN);
 
 
 -- ----------------------------------------------------------------------------
 -- The cells a window reads: the totals from p_since, hourly or daily, and the counts the
--- triggers appended that no fold has moved yet, at the same grain.
+-- triggers appended that no fold has moved yet, at the same grain, up to p_until when a
+-- comparison reads the window before (NULL: to now). Both bounds are COALESCEd, the shape a
+-- generic plan serves as one range on the rollups' leading key.
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION atlas_verification_cells(p_since TIMESTAMP, p_daily BOOLEAN)
+CREATE OR REPLACE FUNCTION atlas_verification_cells(p_since TIMESTAMP, p_daily BOOLEAN,
+                                                    p_until TIMESTAMP DEFAULT NULL)
 RETURNS TABLE (
     bucket               TIMESTAMP,
     requesting_agency_id INTEGER,
@@ -129,20 +143,24 @@ AS $$
            r.disclosure_level::TEXT, r.algorithm_id, r.n
       FROM VerificationRollup r
      WHERE NOT p_daily AND r.bucket >= COALESCE(p_since, '-infinity'::TIMESTAMP)
+       AND r.bucket < COALESCE(p_until, 'infinity'::TIMESTAMP)
     UNION ALL
     SELECT r.bucket, r.requesting_agency_id, r.context_id, r.outcome::TEXT,
            r.disclosure_level::TEXT, r.algorithm_id, r.n
       FROM VerificationRollupDaily r
      WHERE p_daily AND r.bucket >= COALESCE(p_since, '-infinity'::TIMESTAMP)
+       AND r.bucket < COALESCE(p_until, 'infinity'::TIMESTAMP)
     UNION ALL
     SELECT CASE WHEN p_daily THEN date_trunc('day', d.bucket) ELSE d.bucket END,
            d.requesting_agency_id, d.context_id, d.outcome::TEXT, d.disclosure_level::TEXT,
            d.algorithm_id, d.n
       FROM VerificationRollupDelta d
-     WHERE d.bucket >= COALESCE(p_since, '-infinity'::TIMESTAMP);
+     WHERE d.bucket >= COALESCE(p_since, '-infinity'::TIMESTAMP)
+       AND d.bucket < COALESCE(p_until, 'infinity'::TIMESTAMP);
 $$;
 
-CREATE OR REPLACE FUNCTION atlas_lifecycle_cells(p_since TIMESTAMP, p_daily BOOLEAN)
+CREATE OR REPLACE FUNCTION atlas_lifecycle_cells(p_since TIMESTAMP, p_daily BOOLEAN,
+                                                 p_until TIMESTAMP DEFAULT NULL)
 RETURNS TABLE (
     bucket          TIMESTAMP,
     actor_agency_id INTEGER,
@@ -155,15 +173,18 @@ AS $$
     SELECT r.bucket, r.actor_agency_id, r.event_type::TEXT, r.n
       FROM LifecycleRollup r
      WHERE NOT p_daily AND r.bucket >= COALESCE(p_since, '-infinity'::TIMESTAMP)
+       AND r.bucket < COALESCE(p_until, 'infinity'::TIMESTAMP)
     UNION ALL
     SELECT r.bucket, r.actor_agency_id, r.event_type::TEXT, r.n
       FROM LifecycleRollupDaily r
      WHERE p_daily AND r.bucket >= COALESCE(p_since, '-infinity'::TIMESTAMP)
+       AND r.bucket < COALESCE(p_until, 'infinity'::TIMESTAMP)
     UNION ALL
     SELECT CASE WHEN p_daily THEN date_trunc('day', d.bucket) ELSE d.bucket END,
            d.actor_agency_id, d.event_type::TEXT, d.n
       FROM LifecycleRollupDelta d
-     WHERE d.bucket >= COALESCE(p_since, '-infinity'::TIMESTAMP);
+     WHERE d.bucket >= COALESCE(p_since, '-infinity'::TIMESTAMP)
+       AND d.bucket < COALESCE(p_until, 'infinity'::TIMESTAMP);
 $$;
 
 -- The cells a question selects, filtered by id: no name is joined until the cells are few. A
@@ -176,7 +197,8 @@ CREATE OR REPLACE FUNCTION atlas_verification_matching(
     p_outcomes   TEXT DEFAULT NULL,
     p_disclosure TEXT DEFAULT NULL,
     p_contexts   TEXT DEFAULT NULL,
-    p_agencies   TEXT DEFAULT NULL
+    p_agencies   TEXT DEFAULT NULL,
+    p_until      TIMESTAMP DEFAULT NULL
 ) RETURNS TABLE (
     bucket               TIMESTAMP,
     requesting_agency_id INTEGER,
@@ -191,7 +213,7 @@ STABLE
 AS $$
     SELECT c.bucket, c.requesting_agency_id, c.context_id, c.outcome, c.disclosure_level,
            c.algorithm_id, c.n
-      FROM atlas_verification_cells(p_since, p_daily) c
+      FROM atlas_verification_cells(p_since, p_daily, p_until) c
      WHERE (p_outcomes   IS NULL OR c.outcome = ANY(string_to_array(p_outcomes, ',')))
        AND (p_disclosure IS NULL OR c.disclosure_level = ANY(string_to_array(p_disclosure, ',')))
        AND (p_contexts   IS NULL OR c.context_id IN (
@@ -203,7 +225,8 @@ $$;
 CREATE OR REPLACE FUNCTION atlas_lifecycle_matching(
     p_since    TIMESTAMP,
     p_daily    BOOLEAN,
-    p_agencies TEXT DEFAULT NULL
+    p_agencies TEXT DEFAULT NULL,
+    p_until    TIMESTAMP DEFAULT NULL
 ) RETURNS TABLE (
     bucket          TIMESTAMP,
     actor_agency_id INTEGER,
@@ -214,7 +237,7 @@ LANGUAGE sql
 STABLE
 AS $$
     SELECT c.bucket, c.actor_agency_id, c.event_type, c.n
-      FROM atlas_lifecycle_cells(p_since, p_daily) c
+      FROM atlas_lifecycle_cells(p_since, p_daily, p_until) c
      WHERE p_agencies IS NULL OR c.actor_agency_id::TEXT = ANY(string_to_array(p_agencies, ','));
 $$;
 
@@ -228,7 +251,8 @@ CREATE OR REPLACE FUNCTION atlas_verification_combos(
     p_outcomes   TEXT DEFAULT NULL,
     p_disclosure TEXT DEFAULT NULL,
     p_contexts   TEXT DEFAULT NULL,
-    p_agencies   TEXT DEFAULT NULL
+    p_agencies   TEXT DEFAULT NULL,
+    p_until      TIMESTAMP DEFAULT NULL
 ) RETURNS TABLE (
     agency_id         INTEGER,
     agency_name       TEXT,
@@ -248,7 +272,7 @@ AS $$
         SELECT requesting_agency_id, context_id, outcome, disclosure_level, algorithm_id,
                sum(n) AS n
           FROM atlas_verification_matching(p_since, p_daily, p_outcomes, p_disclosure,
-                                           p_contexts, p_agencies)
+                                           p_contexts, p_agencies, p_until)
          GROUP BY requesting_agency_id, context_id, outcome, disclosure_level, algorithm_id
     )
     SELECT c.requesting_agency_id, ag.name::TEXT, ag.jurisdiction::TEXT, vc.context_type::TEXT,
@@ -265,7 +289,8 @@ $$;
 CREATE OR REPLACE FUNCTION atlas_lifecycle_combos(
     p_since    TIMESTAMP,
     p_daily    BOOLEAN,
-    p_agencies TEXT DEFAULT NULL
+    p_agencies TEXT DEFAULT NULL,
+    p_until    TIMESTAMP DEFAULT NULL
 ) RETURNS TABLE (
     actor_agency_id INTEGER,
     agency_name     TEXT,
@@ -278,7 +303,7 @@ STABLE
 AS $$
     WITH c AS (
         SELECT actor_agency_id, event_type, sum(n) AS n
-          FROM atlas_lifecycle_matching(p_since, p_daily, p_agencies)
+          FROM atlas_lifecycle_matching(p_since, p_daily, p_agencies, p_until)
          GROUP BY actor_agency_id, event_type
     )
     SELECT c.actor_agency_id, ag.name::TEXT, ag.jurisdiction::TEXT, c.event_type, c.n::BIGINT
@@ -411,7 +436,8 @@ CREATE OR REPLACE FUNCTION atlas_breakdown(
     p_disclosure TEXT DEFAULT NULL,
     p_contexts   TEXT DEFAULT NULL,
     p_agencies   TEXT DEFAULT NULL,
-    p_search     TEXT DEFAULT NULL
+    p_search     TEXT DEFAULT NULL,
+    p_until      TIMESTAMP DEFAULT NULL
 ) RETURNS TABLE (
     label       TEXT,
     n_total     BIGINT,
@@ -434,7 +460,7 @@ AS $$
                sum(n) AS n_total,
                COALESCE(sum(n) FILTER (WHERE outcome <> 'SUCCESS'), 0) AS n_failure
           FROM atlas_verification_combos(p_since, p_daily, p_outcomes, p_disclosure,
-                                         p_contexts, p_agencies)
+                                         p_contexts, p_agencies, p_until)
          WHERE p_kind = 'verification'
          GROUP BY 1
         UNION ALL
@@ -444,7 +470,7 @@ AS $$
                END,
                sum(n),
                COALESCE(sum(n) FILTER (WHERE event_type IN ('REVOKED', 'LOST')), 0)
-          FROM atlas_lifecycle_combos(p_since, p_daily, p_agencies)
+          FROM atlas_lifecycle_combos(p_since, p_daily, p_agencies, p_until)
          WHERE p_kind = 'lifecycle'
          GROUP BY 1
     ), s AS (
@@ -474,7 +500,8 @@ CREATE OR REPLACE FUNCTION atlas_crosstab(
     p_outcomes   TEXT DEFAULT NULL,
     p_disclosure TEXT DEFAULT NULL,
     p_contexts   TEXT DEFAULT NULL,
-    p_agencies   TEXT DEFAULT NULL
+    p_agencies   TEXT DEFAULT NULL,
+    p_until      TIMESTAMP DEFAULT NULL
 ) RETURNS TABLE (
     row_label   TEXT,
     col_label   TEXT,
@@ -498,7 +525,7 @@ AS $$
                END AS cl,
                n
           FROM atlas_verification_combos(p_since, p_daily, p_outcomes, p_disclosure,
-                                         p_contexts, p_agencies)
+                                         p_contexts, p_agencies, p_until)
          WHERE p_kind = 'verification'
         UNION ALL
         SELECT CASE p_row_dim
@@ -507,7 +534,7 @@ AS $$
                END,
                event_type,
                n
-          FROM atlas_lifecycle_combos(p_since, p_daily, p_agencies)
+          FROM atlas_lifecycle_combos(p_since, p_daily, p_agencies, p_until)
          WHERE p_kind = 'lifecycle'
     ), top_rows AS (
         SELECT rl FROM base WHERE rl IS NOT NULL

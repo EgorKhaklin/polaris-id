@@ -87,6 +87,11 @@ _ATLAS_MIN_CELL = 5
 #: A request whose filtered window holds fewer events than this is written to the application
 #: log (lab/strategy/009, step 4).
 _ATLAS_NARROW_SCOPE = 50
+#: A compared category is marked when its failure share at least doubled against the window
+#: before and it failed at least this many more times (lab/strategy/009 A4), so that a few
+#: events in a small category cannot raise the mark alone.
+_ATLAS_ROSE_FACTOR = 2
+_ATLAS_ROSE_MIN = 10
 
 
 @app.route('/atlas')
@@ -342,6 +347,52 @@ def _window_start(now, delta, grain):
     return start.replace(minute=0, second=0, microsecond=0)
 
 
+class _AtlasRefusal(ValueError):
+    """A request parameter the Atlas refuses, named by a key. The route answers with the fixed
+    sentence for the key, never with an exception's text (CWE-209; code scanning #379-#388): a
+    sentence built from the request carries the request back, and a ValueError from library
+    parsing (an int() that failed) could carry anything."""
+
+    def __init__(self, key):
+        super().__init__(key)
+        self.key = key
+
+
+_ATLAS_REFUSED = 'a request parameter is not valid'
+
+
+def _refusal_sentence(key):
+    """What a refused request reads, built from the module's constants and nothing else."""
+    sentences = {
+        'window': 'window must be one of %s' % sorted(_ATLAS_TIME_WINDOWS),
+        'outcome': 'outcomes must be among %s' % list(_ATLAS_OUTCOMES),
+        'disclosure': 'disclosure must be among %s' % list(_ATLAS_DISCLOSURES),
+        'one_context': 'one context at a time',
+        'context': 'context must be one of %s' % list(_ATLAS_CONTEXTS),
+        'one_agency': 'one authority at a time',
+        'agency': 'authority id must be an integer',
+        'kind': "kind must be 'verification' or 'lifecycle'",
+        'compare': "compare must be 'previous'",
+        'compare_all': "compare=previous needs a bounded window: 'all' has nothing before it",
+        'buckets': 'buckets must be in (0, %d]' % _ATLAS_MAX_BUCKETS,
+        'stack_dimension': 'dimension is not valid for this stream',
+        'limit_positive': 'limit must be positive',
+        'limit_negative': 'limit must not be negative',
+    }
+    for kind in ('verification', 'lifecycle'):
+        sentences['breakdown_dimension:' + kind] = 'dimension must be one of %s for %s' % (
+            list(_ATLAS_BREAKDOWN_DIMENSIONS[kind]), kind)
+        sentences['row:' + kind] = 'row must be one of %s for %s' % (list(_ATLAS_CROSSTAB_ROWS[kind]), kind)
+        sentences['col:' + kind] = 'col must be one of %s for %s' % (list(_ATLAS_CROSSTAB_COLS[kind]), kind)
+    return sentences.get(key, _ATLAS_REFUSED)
+
+
+def _refused(e):
+    """The 400 for a refused request: its fixed sentence, or one plain sentence for any other
+    ValueError, whose text is not the response's to carry."""
+    return jsonify(error=_refusal_sentence(e.key) if isinstance(e, _AtlasRefusal) else _ATLAS_REFUSED), 400
+
+
 def _parse_atlas_filters(args):
     """The filters every Atlas route takes, as SQL-ready values: window, since (the start of the
     window, or None for 'all'), daily (whether it reads the daily rollup), grain, outcomes and
@@ -349,36 +400,35 @@ def _parse_atlas_filters(args):
     anything malformed, which the route turns into a 400."""
     window = (args.get('window') or '24h').strip().lower()
     if window not in _ATLAS_TIME_WINDOWS:
-        raise ValueError(
-            f"window must be one of {sorted(_ATLAS_TIME_WINDOWS.keys())}; got {window!r}")
+        raise _AtlasRefusal('window')
     delta, grain = _ATLAS_TIME_WINDOWS[window]
 
     outcomes = (args.get('outcomes') or '').strip()
     outcomes = _ATLAS_OUTCOME_ALIASES.get(outcomes, outcomes) or None
     for v in (outcomes or '').split(',') if outcomes else ():
         if v not in _ATLAS_OUTCOMES:
-            raise ValueError(f"unknown outcome: {v!r}")
+            raise _AtlasRefusal('outcome')
 
     disclosure = (args.get('disclosure') or '').strip() or None
     for v in (disclosure or '').split(',') if disclosure else ():
         if v not in _ATLAS_DISCLOSURES:
-            raise ValueError(f"unknown disclosure level: {v!r}")
+            raise _AtlasRefusal('disclosure')
 
     # One context and one authority at a time (lab/strategy/009, step 4): with a set, the
     # answer for all but one would subtract from the answer for all.
     contexts = (args.get('contexts') or '').strip() or None
     if contexts and ',' in contexts:
-        raise ValueError("one context at a time")
+        raise _AtlasRefusal('one_context')
     if contexts and contexts not in _ATLAS_CONTEXTS:
-        raise ValueError(f"unknown context: {contexts!r}")
+        raise _AtlasRefusal('context')
 
     agencies = (args.get('agencies') or '').strip() or None
     if agencies and ',' in agencies:
-        raise ValueError("one authority at a time")
+        raise _AtlasRefusal('one_agency')
     # ASCII digits only: str.isdigit() takes '\u00b2' and '\u0663' too. Normalised, so '007' is
     # authority 7, which the SQL matches as text.
     if agencies and not (agencies.isascii() and agencies.isdigit() and len(agencies) <= 10):
-        raise ValueError(f"authority id must be an integer: {agencies!r}")
+        raise _AtlasRefusal('agency')
     if agencies:
         agencies = str(int(agencies))
 
@@ -410,7 +460,7 @@ def _window_fields(f):
 def _kind(args):
     kind = args.get('kind', 'verification')
     if kind not in ('verification', 'lifecycle'):
-        raise ValueError("kind must be 'verification' or 'lifecycle'")
+        raise _AtlasRefusal('kind')
     return kind
 
 
@@ -461,6 +511,69 @@ def _ts(t):
 
 
 # ============================================================================
+# THE WINDOW BEFORE (lab/strategy/009 A4)
+# ============================================================================
+
+def _parse_compare(args, f):
+    """`compare=previous`: each count beside the same count for the window of the same nominal
+    length immediately before. None when not asked. 'all' has nothing before it."""
+    compare = (args.get('compare') or '').strip().lower() or None
+    if compare is None:
+        return None
+    if compare != 'previous':
+        raise _AtlasRefusal('compare')
+    if f['since'] is None:
+        raise _AtlasRefusal('compare_all')
+    return compare
+
+
+def _previous_window(f, kind):
+    """The window before f's: [since - span, since), on f's grain. Its hours may be gone: a
+    retention purge deletes the hourly rollup before its cutoff and keeps the daily one, and an
+    hourly window reaching back past the first hour still held would count less than happened
+    and read as a fall. When the daily rollup holds a day before that hour's, the hours were
+    purged, and the window is incomplete: nothing in it is compared."""
+    delta, grain = _ATLAS_TIME_WINDOWS[f['window']]
+    prev = {'since': f['since'] - delta, 'until': f['since'], 'incomplete': None}
+    if grain == 'hour':
+        first = _first_hour(kind)
+        if first is not None and prev['since'] < first:
+            day = _first_day(kind)
+            if day is not None and day < first.replace(hour=0):
+                prev['incomplete'] = 'the hours before %s are no longer held' % _ts(first)
+    return prev
+
+
+def _first_day(kind):
+    """The first day the daily rollup holds, or None. Only a fold writes it, and a purge folds
+    before it deletes hours, so a day here before the first hour still held means a purge."""
+    table = 'VerificationRollupDaily' if kind == 'verification' else 'LifecycleRollupDaily'
+    row = query(f"SELECT min(bucket) AS d FROM {table}", fetch='one')
+    return row['d'] if row else None
+
+
+def _previous_fields(prev):
+    return {'since': _ts(prev['since']), 'until': _ts(prev['until']),
+            'incomplete': prev['incomplete']}
+
+
+def _change(now, before):
+    """The difference of two shown counts, None when either is withheld: a change computed from
+    a withheld count would give it back."""
+    return None if now is None or before is None else now - before
+
+
+def _failure_rose(total, failure, prev_total, prev_failure):
+    """Whether a category's failure share at least doubled against the window before, with at
+    least _ATLAS_ROSE_MIN more failures. None unless all four counts are shown, for the reason a
+    change is."""
+    if None in (total, failure, prev_total, prev_failure):
+        return None
+    return (failure - prev_failure >= _ATLAS_ROSE_MIN
+            and failure * prev_total >= _ATLAS_ROSE_FACTOR * prev_failure * total)
+
+
+# ============================================================================
 # THE REGIONS LAYER
 # ============================================================================
 
@@ -485,7 +598,7 @@ def api_atlas_geo_jurisdictions():
         kind = _kind(request.args)
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
     def compute():
         rows = query("""
@@ -531,7 +644,7 @@ def api_atlas_stats():
     try:
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
     def compute():
         row = query("SELECT * FROM atlas_stats(%s, %s, %s)",
@@ -561,11 +674,11 @@ def api_atlas_series():
     try:
         buckets = int(request.args.get('buckets', '60'))
         if not (0 < buckets <= _ATLAS_MAX_BUCKETS):
-            raise ValueError(f"buckets must be in (0, {_ATLAS_MAX_BUCKETS}]")
+            raise _AtlasRefusal('buckets')
         kind = _kind(request.args)
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
     def compute():
         since, until = _series_since(f, kind), _db_now()
@@ -616,7 +729,7 @@ def api_atlas_heatmap():
         kind = _kind(request.args)
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
     def compute():
         rows = query("""
@@ -652,14 +765,14 @@ def api_atlas_stacked():
     try:
         buckets = int(request.args.get('buckets', '48'))
         if not (0 < buckets <= _ATLAS_MAX_BUCKETS):
-            raise ValueError(f"buckets must be in (0, {_ATLAS_MAX_BUCKETS}]")
+            raise _AtlasRefusal('buckets')
         kind = _kind(request.args)
         dimension = request.args.get('dimension', 'context')
         if dimension not in _ATLAS_STACK_DIMENSIONS[kind]:
-            raise ValueError("dimension is not valid for this stream")
+            raise _AtlasRefusal('stack_dimension')
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
     top_k = 6
 
@@ -719,32 +832,40 @@ _ATLAS_FIXED_VALUES = {
 def api_atlas_breakdown():
     """The window's counts by one whitelisted dimension, `{label, n_total, n_failure}` ordered
     by volume and capped at _ATLAS_MAX_CATEGORIES. An outcome, disclosure or event-type
-    breakdown lists every value; the others list what is there, top-K."""
+    breakdown lists every value; the others list what is there, top-K. With compare=previous
+    each listed category also carries its counts in the window before, each withheld against
+    that window's own scope, the change when both counts are shown, and whether its failure
+    share rose (lab/strategy/009 A4). The row of small categories is not compared: its members
+    differ from one window to the next."""
     try:
         kind = _kind(request.args)
         dimension = (request.args.get('dimension') or '').strip().lower()
         if dimension not in _ATLAS_BREAKDOWN_DIMENSIONS[kind]:
-            raise ValueError(
-                f"dimension must be one of {list(_ATLAS_BREAKDOWN_DIMENSIONS[kind])} for {kind}")
+            raise _AtlasRefusal('breakdown_dimension:' + kind)
         limit = min(int(request.args.get('limit', str(_ATLAS_MAX_CATEGORIES))),
                     _ATLAS_MAX_CATEGORIES)
         if limit <= 0:
-            raise ValueError("limit must be positive")
+            raise _AtlasRefusal('limit_positive')
         # A case-insensitive label search, so one slice is findable among thousands. Bounded
         # length (defence in depth; it is a bound parameter).
         search = (request.args.get('search') or '').strip()[:60] or None
         f = _parse_atlas_filters(request.args)
+        compare = _parse_compare(request.args, f)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
-    def compute():
+    def counts(since, until):
+        """{label: (n_total, n_failure)}, the scope, and whether the top-K was full."""
         rows = query("""
             SELECT label, n_total, n_failure, scope_total
-              FROM atlas_breakdown(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (dimension, f['since'], f['daily'], limit, kind, f['outcomes'],
-              f['disclosure'], f['contexts'], f['agencies'], search))
-        scope = int(rows[0]['scope_total']) if rows else 0
-        found = {r['label']: (int(r['n_total']), int(r['n_failure'])) for r in rows}
+              FROM atlas_breakdown(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (dimension, since, f['daily'], limit, kind, f['outcomes'],
+              f['disclosure'], f['contexts'], f['agencies'], search, until))
+        return ({r['label']: (int(r['n_total']), int(r['n_failure'])) for r in rows},
+                int(rows[0]['scope_total']) if rows else 0, len(rows) == limit)
+
+    def compute():
+        found, scope, full = counts(f['since'], None)
         fixed = _ATLAS_FIXED_VALUES.get(dimension)
         if fixed:
             # Every value listed, a zero withheld like a small count.
@@ -760,13 +881,40 @@ def api_atlas_breakdown():
             categories.append({'label': _ATLAS_FOLDED, 'n_total': _part(small, scope),
                                'n_failure': _part(small_failures, small), 'folded': True})
         payload = dict(kind=kind, dimension=dimension, limit=limit, search=search,
-                       truncated=(not fixed and len(rows) == limit), count=len(categories),
+                       truncated=(not fixed and full), count=len(categories),
                        categories=categories, **_window_fields(f))
+        if compare:
+            prev = _previous_window(f, kind)
+            payload['previous'] = _previous_fields(prev)
+            before, prev_scope, prev_full = ({}, 0, False) if prev['incomplete'] else \
+                counts(prev['since'], prev['until'])
+            for c in categories:
+                # A label missing from a full top-K is unknown there, not small.
+                known = not (c.get('folded') or prev['incomplete']) and \
+                    (c['label'] in before or not prev_full)
+                n, nf = before.get(c['label'], (0, 0))
+                pt, pf = (_part(n, prev_scope), _part(nf, n)) if known else (None, None)
+                c.update(prev_total=pt, prev_failure=pf, change=_change(c['n_total'], pt),
+                         failure_rose=_failure_rose(c['n_total'], c['n_failure'], pt, pf))
+            if not prev['incomplete']:
+                scope = min(scope, prev_scope)      # either window narrow: the question is noted
         return payload, scope
 
-    return _answer('breakdown', ('breakdown', kind, dimension, limit, search,
+    return _answer('breakdown', ('breakdown', kind, dimension, limit, search, compare,
                                  _filter_cache_key(f)), f, compute,
-                   kind=kind, dimension=dimension)
+                   kind=kind, dimension=dimension, **({'compare': compare} if compare else {}))
+
+
+def _crosstab_row(by_col, scope):
+    """A cross-tab row's cells and total as shown: a cell is withheld below the minimum or when
+    the rest of its row is, and the total only when it cannot be subtracted back into a small
+    count, so with no cell withheld or the withheld cells summing to the minimum or more. Zeros
+    count as withheld, so a total equal to its shown cells cannot say the rest were none."""
+    total = sum(by_col.values())
+    shown = {col: _part(n, total) for col, n in by_col.items()}
+    withheld = [n for col, n in by_col.items() if shown[col] is None]
+    return shown, (_part(total, scope) if not withheld or sum(withheld) >= _ATLAS_MIN_CELL
+                   else None)
 
 
 # The row and column dimensions each stream's cross-tab accepts (whitelisted so a malformed
@@ -790,34 +938,42 @@ def api_atlas_crosstab():
     _ATLAS_MAX_CATEGORIES), every column value for each, as `{rows: [{label, total}], cols,
     cells: [{row, col, n}]}`. A cell is withheld below the minimum or when the rest of its row
     is; a row's total is withheld when the cells withheld beneath it sum to less than the
-    minimum, so the row cannot be subtracted back into them."""
+    minimum, so the row cannot be subtracted back into them. With compare=previous each listed
+    row and its cells also carry the window before's, withheld by the same rules against that
+    window's scope, and the change where both are shown (lab/strategy/009 A4); the folded row
+    is not compared."""
     try:
         kind = _kind(request.args)
         row_dim = (request.args.get('row') or '').strip().lower()
         col_dim = (request.args.get('col') or '').strip().lower()
         if row_dim not in _ATLAS_CROSSTAB_ROWS[kind]:
-            raise ValueError(f"row must be one of {list(_ATLAS_CROSSTAB_ROWS[kind])} for {kind}")
+            raise _AtlasRefusal('row:' + kind)
         if col_dim not in _ATLAS_CROSSTAB_COLS[kind]:
-            raise ValueError(f"col must be one of {list(_ATLAS_CROSSTAB_COLS[kind])} for {kind}")
+            raise _AtlasRefusal('col:' + kind)
         limit = min(int(request.args.get('limit', str(_ATLAS_MAX_CATEGORIES))),
                     _ATLAS_MAX_CATEGORIES)
         if limit <= 0:
-            raise ValueError("limit must be positive")
+            raise _AtlasRefusal('limit_positive')
         f = _parse_atlas_filters(request.args)
+        compare = _parse_compare(request.args, f)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
-    def compute():
+    def counts(since, until):
+        """{(row, col): n}, {row: total}, the scope, and whether the top-K rows were full."""
         rows = query("""
             SELECT row_label, col_label, n_total, scope_total
-              FROM atlas_crosstab(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (row_dim, col_dim, f['since'], f['daily'], limit, kind, f['outcomes'],
-              f['disclosure'], f['contexts'], f['agencies']))
-        scope = int(rows[0]['scope_total']) if rows else 0
-        found, row_totals = {}, {}
+              FROM atlas_crosstab(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (row_dim, col_dim, since, f['daily'], limit, kind, f['outcomes'],
+              f['disclosure'], f['contexts'], f['agencies'], until))
+        found, totals = {}, {}
         for r in rows:
             found[(r['row_label'], r['col_label'])] = int(r['n_total'])
-            row_totals[r['row_label']] = row_totals.get(r['row_label'], 0) + int(r['n_total'])
+            totals[r['row_label']] = totals.get(r['row_label'], 0) + int(r['n_total'])
+        return found, totals, int(rows[0]['scope_total']) if rows else 0, len(totals) == limit
+
+    def compute():
+        found, row_totals, scope, full = counts(f['since'], None)
         cols = list(_ATLAS_FIXED_VALUES[col_dim])
         # Rows with fewer than the minimum fold into one, as an open list's categories do.
         labels, _ = _fold_small(row_totals)
@@ -825,27 +981,88 @@ def api_atlas_crosstab():
                   for col in cols}
         table = [(lbl, {col: found.get((lbl, col), 0) for col in cols}) for lbl in labels]
         table.append((_ATLAS_FOLDED, folded))
+        prev = _previous_window(f, kind) if compare else None
+        before, prev_totals, prev_scope, prev_full = ({}, {}, 0, False) \
+            if not prev or prev['incomplete'] else counts(prev['since'], prev['until'])
         out_rows, cells = [], []
         for label, by_col in table:
-            total = sum(by_col.values())
-            withheld = [n for n in by_col.values() if _part(n, total) is None]
+            shown, total_shown = _crosstab_row(by_col, scope)
+            row = {'label': label, 'total': total_shown, 'folded': label == _ATLAS_FOLDED}
+            prev_shown, prev_total = {}, None
+            # A label missing from a full top-K is unknown in the window before, not small.
+            if prev and not (row['folded'] or prev['incomplete']) and \
+                    (label in prev_totals or not prev_full):
+                prev_shown, prev_total = _crosstab_row(
+                    {col: before.get((label, col), 0) for col in cols}, prev_scope)
             for col in cols:
-                cells.append({'row': label, 'col': col, 'n': _part(by_col[col], total)})
-            # The total is shown only when it cannot be subtracted back into a small count: no
-            # cell withheld, or the withheld cells summing to the minimum or more. Zeros count as
-            # withheld, so a total equal to its shown cells cannot say the rest were none.
-            total_shown = (_part(total, scope) if not withheld or sum(withheld) >= _ATLAS_MIN_CELL
-                           else None)
-            out_rows.append({'label': label, 'total': total_shown,
-                             'folded': label == _ATLAS_FOLDED})
+                cell = {'row': label, 'col': col, 'n': shown[col]}
+                if prev:
+                    cell.update(prev=prev_shown.get(col), change=_change(shown[col],
+                                                                         prev_shown.get(col)))
+                cells.append(cell)
+            if prev:
+                row.update(prev_total=prev_total, change=_change(total_shown, prev_total))
+            out_rows.append(row)
         payload = dict(kind=kind, row=row_dim, col=col_dim, limit=limit,
-                       truncated=len(row_totals) == limit, rows=out_rows, cols=cols,
+                       truncated=full, rows=out_rows, cols=cols,
                        cells=cells, **_window_fields(f))
+        if prev:
+            payload['previous'] = _previous_fields(prev)
+            if not prev['incomplete']:
+                scope = min(scope, prev_scope)      # either window narrow: the question is noted
         return payload, scope
 
-    return _answer('crosstab', ('crosstab', kind, row_dim, col_dim, limit,
+    return _answer('crosstab', ('crosstab', kind, row_dim, col_dim, limit, compare,
                                 _filter_cache_key(f)), f, compute,
-                   kind=kind, row=row_dim, col=col_dim)
+                   kind=kind, row=row_dim, col=col_dim,
+                   **({'compare': compare} if compare else {}))
+
+
+# ============================================================================
+# INTEGRITY (lab/strategy/009 A2)
+# ============================================================================
+
+@app.route('/api/atlas/integrity')
+@security.login_required
+def api_atlas_integrity():
+    """The system's integrity beside its activity: the latest state epoch, the latest anchor
+    batch, and the Athena board's verdict on the database this application is connected to.
+
+    Header rows only, read by their keys: an epoch's leaves name credentials, and are not read;
+    nor is the operator who closed the epoch. A count in them is withheld below the minimum, as
+    every Atlas count is. The board reads the catalogue, so it is not routed to a replica: it
+    answers for this database, as the Athena page does."""
+    payload = _atlas_cache_get(('integrity',))
+    if payload is None:
+        import athena_board   # the board's catalogue reads; it imports nothing from app.py
+        epoch = query("SELECT epoch_id, valid_from, valid_until, closed_at, committed_count "
+                      "FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 1", fetch='one')
+        batch = query("SELECT batch_id, created_at, batch_size, committed_to_chain, "
+                      "external_chain, external_chain_tx "
+                      "FROM AnchorBatch ORDER BY batch_id DESC LIMIT 1", fetch='one')
+        board = athena_board.read_board(query)
+        states = [rule['state'] for rule in board['rules']]
+        payload = {
+            'epoch': epoch and {
+                'id': epoch['epoch_id'], 'closed_at': _ts(epoch['closed_at']),
+                'valid_from': _ts(epoch['valid_from']), 'valid_until': _ts(epoch['valid_until']),
+                # Past it, a proof against the latest epoch fails: no current state to prove in.
+                'expired': epoch['valid_until'] <= _db_now(),
+                'committed': _count(epoch['committed_count'])},
+            'anchor': batch and {
+                'id': batch['batch_id'], 'created_at': _ts(batch['created_at']),
+                'size': _count(batch['batch_size']),
+                'chain': batch['external_chain'] if batch['committed_to_chain'] else None,
+                'tx': batch['external_chain_tx'] if batch['committed_to_chain'] else None},
+            'board': {
+                'rules': len(states), 'in_force': states.count('in_force'),
+                'not_in_force': states.count('not_in_force'),
+                'repository': states.count('repository'),
+                'verified_at': _ts(board['verified_at'])},
+            'min_cell': _ATLAS_MIN_CELL,
+        }
+        _atlas_cache_set(('integrity',), payload)
+    return jsonify(payload)
 
 
 @app.route('/api/atlas/facet/agencies')
@@ -860,11 +1077,11 @@ def api_atlas_facet_agencies():
         kind = _kind(request.args)
         limit = min(int(request.args.get('limit', '20')), _ATLAS_MAX_CATEGORIES)
         if limit < 0:
-            raise ValueError("limit must not be negative")   # it reached SQL's LIMIT as a 500
+            raise _AtlasRefusal('limit_negative')   # it reached SQL's LIMIT as a 500
         search = (request.args.get('q') or '').strip()[:60] or None
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
     def compute():
         rows = query("""

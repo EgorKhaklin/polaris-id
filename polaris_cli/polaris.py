@@ -539,8 +539,9 @@ def cmd_issue(args):
     try:
         with conn.cursor() as cur:
             try:
-                sig, pubkey = _issuance_signature(signer, cur, args.token_value, args.agency)
-            except (signer.PQCUnavailableError, signer.SigningError) as e:
+                algorithm_id, algorithm = _signer_algorithm(signer, cur, args.agency, args.algorithm)
+                sig, pubkey = _issuance_signature(signer, cur, args.token_value, args.agency, algorithm)
+            except (signer.PQCUnavailableError, signer.SigningError, AlgorithmRefused) as e:
                 conn.rollback()
                 sys.stderr.write(red(f"UC-1 rejected: {e}\n"))
                 sys.exit(3)
@@ -550,7 +551,7 @@ def cmd_issue(args):
                 ) AS token_id
             """, (
                 args.legal_name, args.dob, args.jurisdiction,
-                args.agency, args.algorithm,
+                args.agency, algorithm_id,
                 args.biometric, args.witness,
                 args.liveness, args.token_value, args.serial,
                 args.hardware, contexts,
@@ -788,27 +789,40 @@ def cmd_migrate_population(args):
 
 
 def cmd_migrate_algorithm(args):
-    """UC-6 / R11-1 / M2-6: migrate a token to a new cryptographic algorithm.
+    """UC-6 / R11-1 / M2-6: add a signature to a token under --new-algorithm, made by a key
+    under it as /uc6/migrate makes it: the issuing authority's own key when that key signs
+    under it, else the key provisioned for the migration (docs/operator/QUANTUM-EVENT.md), or
+    nothing is recorded. Optionally deprecate the old ones.
 
-    Calls uc6_migrate_algorithm(token_id, new_algorithm_id,
-    new_signature_bytes, deprecate_old). Reads signature from --signature-hex
-    (raw hex) or --signature-file (binary bytes). Optionally deprecates the
-    old signature(s) with --deprecate-old.
+    It took the signature as raw bytes (--signature-hex or --signature-file) and recorded them
+    under the algorithm given, with no key: a row that named an algorithm nothing here made it
+    with, and that verified under nothing. Left out, --new-algorithm is the authority's own.
     """
-    if args.signature_hex:
-        sig_bytes = bytes.fromhex(args.signature_hex)
-    else:
-        with open(args.signature_file, 'rb') as f:
-            sig_bytes = f.read()
+    signer = _load_signer('migrate-algorithm')
     conn = connect()
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                CALL uc6_migrate_algorithm(%s, %s, %s, %s)
-            """, (args.token, args.new_algorithm, sig_bytes, args.deprecate_old))
+            cur.execute("SELECT token_value, issuing_agency_id FROM IdentityToken "
+                        "WHERE token_id = %s", (args.token,))
+            row = cur.fetchone()
+            if not row:
+                sys.stderr.write(red(f"UC-6 rejected: token #{args.token} does not exist\n"))
+                sys.exit(3)
+            try:
+                algorithm_id, algorithm = _migration_target(
+                    signer, cur, row["issuing_agency_id"], args.new_algorithm)
+                sig, pubkey = _issuance_signature(
+                    signer, cur, row["token_value"], row["issuing_agency_id"], algorithm,
+                    migration=True)
+            except (signer.PQCUnavailableError, signer.SigningError, AlgorithmRefused) as e:
+                conn.rollback()
+                sys.stderr.write(red(f"UC-6 rejected: {e}\n"))
+                sys.exit(3)
+            cur.execute("CALL uc6_migrate_algorithm(%s, %s, %s, %s, %s)",
+                        (args.token, algorithm_id, psycopg2.Binary(sig), args.deprecate_old, pubkey))
             conn.commit()
         action = "migrated + deprecated old" if args.deprecate_old else "migrated"
-        print(green(f"✓ Token #{args.token}: {action} to algorithm #{args.new_algorithm}"))
+        print(green(f"✓ Token #{args.token}: {action} to {algorithm}"))
     except psycopg2.Error as e:
         conn.rollback()
         sys.stderr.write(red(f"UC-6 rejected: {db_error_message(e)}\n"))
@@ -895,18 +909,38 @@ def cmd_recovery_complete(args):
     request. APPROVED issues a new token bound to the individual;
     REJECTED closes the request with the supplied reason.
     """
+    signer = _load_signer('recovery-complete') if args.decision == 'APPROVED' else None
     conn = connect()
     try:
         with conn.cursor() as cur:
+            # An approval issues a credential, signed like any other: by the requesting
+            # authority's key, under its algorithm, over the new token value.
+            algorithm_id, sig, pubkey = args.algorithm, None, None
+            if signer is not None and args.new_token_value:
+                cur.execute("SELECT requesting_agency_id FROM RecoveryRequest WHERE recovery_id = %s",
+                            (args.recovery_id,))
+                owner = cur.fetchone()
+                if owner:
+                    try:
+                        algorithm_id, algorithm = _signer_algorithm(
+                            signer, cur, owner["requesting_agency_id"], args.algorithm)
+                        sig, pubkey = _issuance_signature(
+                            signer, cur, args.new_token_value, owner["requesting_agency_id"],
+                            algorithm)
+                    except (signer.PQCUnavailableError, signer.SigningError, AlgorithmRefused) as e:
+                        conn.rollback()
+                        sys.stderr.write(red(f"UC-9 complete rejected: {e}\n"))
+                        sys.exit(3)
             cur.execute("""
                 CALL uc9_complete_recovery(
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
             """, (
                 args.recovery_id, args.deciding_user, args.decision,
                 args.reason, args.new_token_value, args.new_serial,
-                args.algorithm, args.biometric_binding,
+                algorithm_id, args.biometric_binding,
                 args.liveness_check, args.published_location,
+                psycopg2.Binary(sig) if sig is not None else None, pubkey,
             ))
             conn.commit()
         print(green(f"✓ Recovery #{args.recovery_id}: {args.decision}"))
@@ -2098,20 +2132,75 @@ def _load_signer(command):
         _needs_the_application(command, "pqc_signing", e)
 
 
-def _issuance_signature(signer, cur, token_value, agency_id):
-    """(signature_bytes, public_key_hex) for a credential the CLI issues, made the way the issuing
-    route makes them (use_case_routes.uc1_issue): under the issuing agency's own key when it has
-    one, and refused when the agency is registered to a key other than the one that signed."""
-    sig, _label, pubkey = signer.signature_with_key_for_token(token_value, agency_id=agency_id)
-    if pubkey is not None:
+class AlgorithmRefused(Exception):
+    """A signature asked for under an algorithm no key here makes it under."""
+
+
+def _registry_name(cur, algorithm_id):
+    cur.execute("SELECT name FROM CryptographicAlgorithm WHERE algorithm_id = %s", (algorithm_id,))
+    row = cur.fetchone()
+    if not row:
+        raise AlgorithmRefused("algorithm #%d is not in the algorithm registry" % algorithm_id)
+    return row["name"]
+
+
+def _signer_algorithm(signer, cur, agency_id, requested=None):
+    """(algorithm_id, name): the algorithm `agency_id` issues under, the one its key signs with,
+    which a signature row records (use_case_routes._signer_algorithm, the same rule).
+    --algorithm, when given, must be it; left out, it is the signer's."""
+    name = signer.algorithm_name(agency_id)
+    cur.execute("SELECT algorithm_id FROM CryptographicAlgorithm WHERE name = %s", (name,))
+    row = cur.fetchone()
+    if not row:
+        raise AlgorithmRefused("the signer's algorithm, %s, is not in the algorithm registry" % name)
+    if requested is not None and requested != row["algorithm_id"]:
+        asked = _registry_name(cur, requested)
+        if asked not in signer.ACCEPTED_ALGORITHMS:
+            raise AlgorithmRefused(
+                "nothing here signs with %s, so no signature can be recorded under it" % asked)
+        raise AlgorithmRefused(
+            "authority %d issues under %s, the algorithm its key signs with, so a credential "
+            "cannot be issued under %s; migrate-algorithm adds a signature under it"
+            % (agency_id, name, asked))
+    return row["algorithm_id"], name
+
+
+def _migration_target(signer, cur, agency_id, requested=None):
+    """(algorithm_id, name): the set a migration moves one of `agency_id`'s credentials onto
+    (use_case_routes._migration_target, the same rule). --new-algorithm names it and must be a
+    set some signer here produces; left out, it is the authority's own."""
+    if requested is None:
+        return _signer_algorithm(signer, cur, agency_id)
+    name = _registry_name(cur, requested)
+    if name not in signer.ACCEPTED_ALGORITHMS:
+        raise AlgorithmRefused(
+            "nothing here signs with %s, so no signature can be recorded under it" % name)
+    return requested, name
+
+
+def _issuance_signature(signer, cur, token_value, agency_id, algorithm, migration=False):
+    """(signature_bytes, public_key_hex) for a credential the CLI signs, made the way the routes
+    make them (use_case_routes._signed_for): under `algorithm`, which the signature must be
+    under; by the issuing agency's own key when that key signs under it, refused when the
+    agency is registered to another key; for a migration onto another set, by the key custody
+    provisions for it."""
+    signature = (signer.migration_signature(token_value, algorithm, agency_id=agency_id)
+                 if migration else signer.credential_signature(token_value, agency_id=agency_id))
+    if signature.algorithm_name != algorithm:
+        raise signer.SigningError(
+            "the signer moved from %s to %s while this was asked; nothing was recorded"
+            % (algorithm, signature.algorithm_name))
+    # The registered key is the one the agency issues with: a key provisioned for a migration
+    # target is another key by design, so the binding is asked of the agency's own key alone.
+    if signature.public_key_hex is not None and algorithm == signer.algorithm_name(agency_id):
         cur.execute("SELECT signing_public_key_hex FROM Agency WHERE agency_id = %s", (agency_id,))
         row = cur.fetchone()
         registered = row["signing_public_key_hex"] if row else None
-        if registered and registered != pubkey:
+        if registered and registered != signature.public_key_hex:
             raise signer.SigningError(
                 "issuing agency %d is registered to a different signing key; refusing to issue a "
                 "token signed by a non-agency key (PE.3b federation binding)" % agency_id)
-    return sig, pubkey
+    return signature.signature_bytes, signature.public_key_hex
 
 
 def cmd_bulk_enroll(args):
@@ -2124,10 +2213,18 @@ def cmd_bulk_enroll(args):
     conn = connect()
     try:
         with conn.cursor() as cur:
+            # Every row is signed by the batch authority's key, so the batch is under that key's
+            # algorithm and no other: --algorithm, when given, must be it.
+            try:
+                algorithm_id, algorithm = _signer_algorithm(signer, cur, args.agency, args.algorithm)
+            except AlgorithmRefused as e:
+                conn.rollback()
+                sys.stderr.write(red(f"Bulk enrollment rejected: {e}\n"))
+                sys.exit(3)
             cur.execute(
                 "INSERT INTO BulkEnrollmentBatch (issuing_agency_id, algorithm_id, note) "
                 "VALUES (%s, %s, %s) RETURNING batch_id",
-                (args.agency, args.algorithm, args.note),
+                (args.agency, algorithm_id, args.note),
             )
             batch_id = cur.fetchone()["batch_id"]
             # Stage client-side (COPY FROM STDIN, the \copy path) into a scratch
@@ -2169,7 +2266,8 @@ def cmd_bulk_enroll(args):
                         f"physical serial {r['physical_serial']!r} is refused: {problem}\n"))
                     sys.exit(3)
                 try:
-                    sig, pubkey = _issuance_signature(signer, cur, r["token_value"], args.agency)
+                    sig, pubkey = _issuance_signature(signer, cur, r["token_value"], args.agency,
+                                                      algorithm)
                 except (signer.PQCUnavailableError, signer.SigningError) as e:
                     conn.rollback()
                     sys.stderr.write(red(
@@ -2293,7 +2391,9 @@ def build_parser():
     p_i.add_argument('--dob',         required=True, help='YYYY-MM-DD')
     p_i.add_argument('--jurisdiction', required=True, help='e.g. US-PA')
     p_i.add_argument('--agency',      type=int, required=True, help='Issuing agency ID')
-    p_i.add_argument('--algorithm',   type=int, required=True, help='Cryptographic algorithm ID')
+    p_i.add_argument('--algorithm',   type=int,
+        help="Cryptographic algorithm ID; must be the one the issuing authority's key signs with "
+             "(the default)")
     p_i.add_argument('--biometric',   default='IRIS',
                      choices=['NONE', 'FINGERPRINT', 'FACE', 'IRIS'])
     p_i.add_argument('--witness',     type=int, help='Witness agency ID (optional)')
@@ -2335,11 +2435,10 @@ def build_parser():
     p_6 = sub.add_parser('migrate-algorithm',
         help='UC-6: migrate a token to a new cryptographic algorithm')
     p_6.add_argument('--token',         type=int, required=True)
-    p_6.add_argument('--new-algorithm', type=int, required=True,
-        help='New CryptographicAlgorithm ID (must be non-deprecated)')
-    sig = p_6.add_mutually_exclusive_group(required=True)
-    sig.add_argument('--signature-hex',  help='New signature as raw hex string')
-    sig.add_argument('--signature-file', help='Path to file containing signature bytes')
+    p_6.add_argument('--new-algorithm', type=int,
+        help="CryptographicAlgorithm ID of the new signature, signed by a key under it: the "
+             "token's issuing authority's own (the default) or the key provisioned for the "
+             "migration (POLARIS_MIGRATION_SIGNING_KEY_FILE)")
     p_6.add_argument('--deprecate-old', action='store_true',
         help='Also deprecate prior signatures (one-way operation)')
 
@@ -2427,7 +2526,8 @@ def build_parser():
     p_9c.add_argument('--new-serial',
         help='(APPROVED only) Serial for the newly-issued token')
     p_9c.add_argument('--algorithm', type=int,
-        help='(APPROVED only) CryptographicAlgorithm ID')
+        help="(APPROVED only) CryptographicAlgorithm ID; must be the one the requesting "
+             "authority's key signs with (the default)")
     p_9c.add_argument('--biometric-binding',
         help='(APPROVED only) Biometric binding modality')
     p_9c.add_argument('--liveness-check',
@@ -2449,7 +2549,8 @@ def build_parser():
                       help="Pipe-delimited extract: legal_name|date_of_birth|jurisdiction|"
                            "biometric_binding_type|token_value|physical_serial|permitted_contexts")
     p_be.add_argument('--agency',    type=int, required=True, help='Issuing agency ID (must hold ISSUE/BOTH on the algorithm)')
-    p_be.add_argument('--algorithm', type=int, required=True, help='Cryptographic algorithm ID')
+    p_be.add_argument('--algorithm', type=int,
+        help="Cryptographic algorithm ID; must be the one the authority's key signs with (the default)")
     p_be.add_argument('--note',      help='Optional batch note (recorded on BulkEnrollmentBatch)')
     p_be.add_argument('--dry-run',   action='store_true',
                       help='Stage and validate the extract, then roll back without issuing')

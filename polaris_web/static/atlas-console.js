@@ -392,11 +392,60 @@
     if (box) box.hidden = true;
   }
 
+  // Integrity (lab/strategy/009 A2): the latest state epoch and anchor batch, and the Athena
+  // board's verdict on this database. Not windowed, so the filters do not change it.
+  function utc(ts) { return ts ? ts.replace('T', ' ').slice(0, 16) + ' UTC' : ''; }
+  var CHAINS = { ALGORAND_PQ: 'Algorand (post-quantum)', HYPERLEDGER_INDY: 'Hyperledger Indy',
+                 CUSTOM_LATTICE: 'a lattice-signed custom ledger' };
+  function setInt(key, value, sub, tone, title) {
+    var v = $('[data-ov-int-value="' + key + '"]', overview);
+    var s2 = $('[data-ov-int-sub="' + key + '"]', overview);
+    var item = $('[data-ov-int="' + key + '"]', overview);
+    if (v) v.textContent = value;
+    if (s2) { s2.textContent = sub; if (title) s2.title = title; else s2.removeAttribute('title'); }
+    if (item) item.setAttribute('data-tone', tone || '');
+  }
+  var intSeq = 0;
+  function loadIntegrity() {
+    if (!$('[data-ov-integrity]', overview)) return;
+    var seq = ++intSeq;
+    apiCall('/api/atlas/integrity').then(function (d) {
+      if (seq !== intSeq) return;
+      var b = d.board, checked = b.rules - b.repository;
+      if (b.not_in_force) {
+        setInt('board', b.not_in_force + ' of ' + checked + ' not in force',
+               'verified ' + utc(b.verified_at) + ' on this database', 'danger');
+      } else {
+        setInt('board', b.in_force + ' of ' + checked + ' in force',
+               'verified ' + utc(b.verified_at) + ' on this database'
+               + (b.repository ? '; ' + b.repository + ' held by repository checks' : ''), 'ok');
+      }
+      var e = d.epoch;
+      if (!e) setInt('epoch', 'None closed', 'no state epoch has been closed yet', 'warn');
+      else setInt('epoch', '#' + fmtInt(e.id),
+                  'closed ' + utc(e.closed_at) + '; ' + fmtCount(e.committed)
+                  + ' credentials committed; ' + (e.expired ? 'expired ' : 'valid until ')
+                  + e.valid_until.slice(0, 10), e.expired ? 'danger' : 'ok');
+      var a = d.anchor;
+      if (!a) setInt('anchor', 'None yet', 'no anchor batch has been made yet', 'warn');
+      else setInt('anchor', '#' + fmtInt(a.id),
+                  utc(a.created_at) + '; ' + fmtCount(a.size) + ' anchors; '
+                  + (a.chain ? 'committed to ' + (CHAINS[a.chain] || prettyLabel(a.chain)) : 'not yet committed to a chain'),
+                  a.chain ? 'ok' : 'warn', a.tx ? 'transaction ' + a.tx : null);
+    }).catch(function (err) {
+      if (seq !== intSeq) return;
+      ['board', 'epoch', 'anchor'].forEach(function (k) {
+        setInt(k, 'Unavailable', 'could not read it: ' + err.message, 'warn');
+      });
+    });
+  }
+
   var loadSeq = 0;
   function loadOverview() {
     var seq = ++loadSeq;
     hideError();
     configurePanels();
+    loadIntegrity();
     var q = gfilterQuery();
 
     // 1) the volume series drives the hero + the volume/failure/zk KPIs.
@@ -477,7 +526,7 @@
   // outcome and disclosure so an anomalous profile stands out.
   // =========================================================================
   var bd = $('[data-atlas-view-panel="breakdown"]');
-  var bdState = { dim: 'agency', metric: 'volume', search: '' };  // stream/window are global
+  var bdState = { dim: 'agency', metric: 'volume', search: '', compare: 'off' };  // stream/window are global
   var BD_DIMS = {
     verification: [
       { key: 'agency', label: 'Agency' }, { key: 'context', label: 'Context' },
@@ -531,7 +580,17 @@
       c.addEventListener('click', function () {
         bdState.metric = c.getAttribute('data-bd-metric');
         bdSetChips('data-bd-metric', bdState.metric);
-        if (bdLastCats) renderRankedTable($('[data-bd-ranked]', bd), bdLastCats, bdState.metric);
+        if (bdLastCats) renderRankedTable($('[data-bd-ranked]', bd), bdLastCats, bdState.metric, bdLastCompared);
+      });
+    });
+    // The window before (lab/strategy/009 A4). The whole history has none, so the control
+    // is off and disabled while the window is 'all'; the server refuses the question too.
+    $$('[data-bd-compare]', bd).forEach(function (c) {
+      c.addEventListener('click', function () {
+        if (c.disabled) return;
+        bdState.compare = c.getAttribute('data-bd-compare');
+        bdSyncCompare();
+        loadBreakdown();
       });
     });
     var bdRetry = $('[data-bd-retry]', bd);
@@ -548,6 +607,28 @@
       });
     }
     bdBuildDimPicker();
+    bdSyncCompare();
+  }
+
+  function bdSyncCompare() {
+    var open = gfilters.window === 'all';
+    if (open) bdState.compare = 'off';
+    $$('[data-bd-compare="previous"]', bd).forEach(function (c) {
+      c.disabled = open;
+      c.title = open ? 'The whole history has no window before it' : '';
+    });
+    bdSetChips('data-bd-compare', bdState.compare);
+    var byChange = $('[data-bd-metric="change"]', bd);
+    if (byChange) byChange.hidden = bdState.compare !== 'previous';
+    if (bdState.compare !== 'previous' && bdState.metric === 'change') {
+      bdState.metric = 'volume';
+      bdSetChips('data-bd-metric', 'volume');
+    }
+  }
+  function bdCompareQuery() { return bdState.compare === 'previous' ? '&compare=previous' : ''; }
+  function fmtChange(n) {
+    if (withheld(n)) return '—';
+    return n > 0 ? '+' + fmtInt(n) : n < 0 ? '−' + fmtInt(-n) : '0';
   }
 
   function bdClearSearch() {
@@ -556,9 +637,10 @@
     if (elx) elx.value = '';
   }
 
-  function renderRankedTable(mount, cats, metric) {
+  function renderRankedTable(mount, cats, metric, compared) {
     if (!mount) return;
     mount.textContent = '';
+    mount.classList.toggle('bd-table-compare', !!compared);
     if (!cats || !cats.length) { mount.appendChild(el('div', { class: 'ov-empty', text: 'No data in this window.' })); return; }
     // Shown categories first, by the chosen metric; withheld ones after, by name; the folded
     // row last. No share column: a share needs the window's total, which the list does not
@@ -575,12 +657,23 @@
         if ((ra === null) !== (rb === null)) return ra === null ? 1 : -1;
         if (ra !== rb) return (rb || 0) - (ra || 0);
       }
+      if (metric === 'change' && compared) {
+        // The largest change first, either way; a change that cannot be shown after.
+        var ca = withheld(a.change) ? null : Math.abs(a.change);
+        var cb = withheld(b.change) ? null : Math.abs(b.change);
+        if ((ca === null) !== (cb === null)) return ca === null ? 1 : -1;
+        if (ca !== cb) return (cb || 0) - (ca || 0);
+      }
       return b.n_total - a.n_total;
     });
     var head = el('div', { class: 'bd-row bd-row-head' });
     head.appendChild(el('span', { class: 'bd-row-label', text: 'Category' }));
     head.appendChild(el('span', { class: 'bd-row-barhead', text: 'Volume' }));
     head.appendChild(el('span', { class: 'bd-row-vol', text: '#' }));
+    if (compared) {
+      head.appendChild(el('span', { class: 'bd-row-vol bd-row-before', text: 'Before' }));
+      head.appendChild(el('span', { class: 'bd-row-change', text: 'Change' }));
+    }
     head.appendChild(el('span', { class: 'bd-row-rate', text: 'Fail %' }));
     mount.appendChild(head);
     sorted.forEach(function (c) {
@@ -596,8 +689,21 @@
       }
       row.appendChild(track);
       row.appendChild(el('span', { class: 'bd-row-vol', text: fmtCount(c.n_total) }));
-      row.appendChild(el('span', { class: 'bd-row-rate' + (r !== null && r >= 0.15 ? ' bd-rate-high' : ''),
-        text: r === null ? 'withheld' : fmtPct(100 * r) }));
+      if (compared) {
+        row.appendChild(el('span', { class: 'bd-row-vol bd-row-before',
+          text: c.folded ? '' : fmtCount(c.prev_total) }));
+        row.appendChild(el('span', { class: 'bd-row-change' + (c.change > 0 ? ' bd-change-up' : c.change < 0 ? ' bd-change-down' : ''),
+          text: c.folded ? '' : fmtChange(c.change),
+          title: c.folded ? 'Not compared: the small categories differ from one window to the next'
+                 : withheld(c.change) ? 'Not shown: a count in one of the two windows is withheld' : '' }));
+      }
+      var rose = compared && c.failure_rose === true;
+      var rateCell = el('span', { class: 'bd-row-rate' + (r !== null && r >= 0.15 ? ' bd-rate-high' : '')
+                                  + (rose ? ' bd-rate-rose' : ''),
+        text: (r === null ? 'withheld' : fmtPct(100 * r)) + (rose ? ' ▲' : '') });
+      if (rose) rateCell.title = 'The failure share at least doubled against the window before, '
+                                 + 'with ten or more extra failures';
+      row.appendChild(rateCell);
       mount.appendChild(row);
     });
   }
@@ -608,8 +714,18 @@
     if (!data || !data.rows.length || !data.cols.length) {
       mount.appendChild(el('div', { class: 'ov-empty', text: 'No data in this window.' })); return;
     }
-    var lut = {};
-    data.cells.forEach(function (c) { lut[c.row + '\u0000' + c.col] = c.n; });
+    var lut = {}, before = {};
+    var compared = !!data.previous;
+    data.cells.forEach(function (c) {
+      lut[c.row + '\u0000' + c.col] = c.n;
+      before[c.row + '\u0000' + c.col] = c;
+    });
+    function delta(mountCell, change, prev) {
+      // The change beneath the count, where both windows' counts are shown.
+      if (!compared || withheld(change)) return;
+      mountCell.appendChild(el('small', { class: 'bd-mx-delta', text: fmtChange(change) }));
+      mountCell.title += '; before: ' + fmtInt(prev);
+    }
     var grid = el('div', { class: 'bd-matrix-grid' });
     grid.style.gridTemplateColumns = 'minmax(84px,1.3fr) repeat(' + data.cols.length + ', 1fr) auto';
     grid.appendChild(el('span', { class: 'bd-mx-corner' }));
@@ -631,11 +747,17 @@
             + (share === null ? '' : ' (' + fmtPct(100 * share) + ' of row)') });
         cell.style.background = hexA(COL_TONE[col] || '#8da6c4', 0.10 + 0.60 * (share === null ? 0.5 : share));
         if (share !== null && share >= 0.5) cell.classList.add('bd-mx-strong');
+        var bc = before[r.label + '\u0000' + col];
+        delta(cell, bc && bc.change, bc && bc.prev);
         grid.appendChild(cell);
       });
-      grid.appendChild(el('span', { class: 'bd-mx-cell bd-mx-total', text: fmtCount(r.total) }));
+      var tot = el('span', { class: 'bd-mx-cell bd-mx-total', text: fmtCount(r.total),
+                             title: r.label + ': ' + fmtCount(r.total) });
+      delta(tot, r.change, r.prev_total);
+      grid.appendChild(tot);
     });
     mount.appendChild(grid);
+    if (compared) mount.appendChild(el('div', { class: 'bd-explorer-foot', text: previousLabel(data) }));
     // At the row cap the quietest rows are in no row of the matrix, so it says so.
     if (data.truncated) {
       mount.appendChild(el('div', { class: 'bd-explorer-foot',
@@ -648,7 +770,17 @@
     box.hidden = false; var d = $('[data-bd-error-detail]', bd); if (d) d.textContent = msg;
   }
 
-  var bdRankedSeq = 0, bdXtabSeq = 0, bdLastCats = null;
+  var bdRankedSeq = 0, bdXtabSeq = 0, bdLastCats = null, bdLastCompared = false;
+
+  // What a comparison compared against, or why it could not.
+  function previousLabel(data) {
+    var p = data.previous;
+    if (!p) return '';
+    if (p.incomplete) return 'Not compared: ' + p.incomplete;
+    var byDay = data.grain === 'day';
+    return 'Compared with ' + p.since.replace('T', ' ').slice(0, byDay ? 10 : 16) + ' to '
+           + p.until.replace('T', ' ').slice(0, byDay ? 10 : 16) + (byDay ? '' : ' UTC');
+  }
 
   // The ranked dimension list. Re-fetched on its own for search (a label filter
   // narrows the list without touching the cross-tabs), so thousands of agencies
@@ -662,11 +794,13 @@
     if (title) title.textContent = 'By ' + dim;
     var q = gfilterQuery()
           + '&dimension=' + dim + '&limit=40'
-          + (bdState.search ? '&search=' + encodeURIComponent(bdState.search) : '');
+          + (bdState.search ? '&search=' + encodeURIComponent(bdState.search) : '')
+          + bdCompareQuery();
     apiCall('/api/atlas/breakdown?' + q).then(function (data) {
       if (seq !== bdRankedSeq) return;
       bdLastCats = data.categories || [];
-      renderRankedTable($('[data-bd-ranked]', bd), bdLastCats, bdState.metric);
+      bdLastCompared = !!data.previous;
+      renderRankedTable($('[data-bd-ranked]', bd), bdLastCats, bdState.metric, bdLastCompared);
       var foot = $('[data-bd-count]', bd);
       if (foot) {
         // The folded row is a remainder, not one more of the dimension's values.
@@ -677,6 +811,7 @@
                                         + (s ? ' matching "' + s + '".' : ' in this window.');
         else if (data.truncated) foot.textContent = 'Top ' + n + ' by volume' + (s ? ' matching "' + s + '"' : '') + ' — refine the filter to narrow';
         else foot.textContent = n + ' ' + plural + (s ? ' matching "' + s + '"' : '');
+        if (data.previous) foot.textContent = foot.textContent.replace(/\.$/, '') + '. ' + previousLabel(data);
       }
     }).catch(function (e) { if (seq === bdRankedSeq) bdShowError('Breakdown failed: ' + e.message); });
   }
@@ -698,7 +833,8 @@
       var mount = $('[data-bd-crosstab="' + colKey + '"]', bd);
       var tEl = $('[data-bd-xtab-title="' + colKey + '"]', bd);
       if (tEl) tEl.textContent = conf.title;
-      apiCall('/api/atlas/crosstab?' + q + '&row=' + dim + '&col=' + conf.col + '&limit=20').then(function (data) {
+      apiCall('/api/atlas/crosstab?' + q + '&row=' + dim + '&col=' + conf.col + '&limit=20'
+              + bdCompareQuery()).then(function (data) {
         if (seq !== bdXtabSeq) return;
         renderMatrix(mount, data);
       }).catch(function (e) { if (seq === bdXtabSeq) bdShowError('Cross-tab failed: ' + e.message); });
@@ -722,6 +858,7 @@
   // Reload whichever analytical view is visible (coordinated views).
   function applyFilters() {
     renderGfChips();
+    if (bd) bdSyncCompare();
     if (overview && !overview.hidden) loadOverview();
     else if (bd && !bd.hidden) loadBreakdown();
   }

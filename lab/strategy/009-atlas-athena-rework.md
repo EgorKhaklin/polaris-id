@@ -454,3 +454,36 @@ Next, a release later: drop the columns, the generated `geo` columns, the seed's
 the tests and checks that name them. An archive made before then keeps its coordinates for as
 long as the archive retention policy keeps the archive. `requestor_location`, the place a
 verifier states, is a separate question: it has a reader, the warrant audit.
+
+### A2 and A4 (2026-10-02): integrity beside activity, and the window before
+
+**A2, integrity.** The Overview carries three facts beside the activity figures. The latest state
+epoch: its number, when it closed, how many credentials it commits, and until when it is valid.
+The latest anchor batch: when, how many anchors, and whether it is committed to a chain, and
+which. And the Athena board's verdict on the connected database: the rules in force of those it
+can check, when it checked, linked to the board. An epoch past its validity reads expired, on the
+database's clock: a proof against it fails. `GET /api/atlas/integrity` reads the two header rows by
+their keys and calls the board. It reads no leaf, since a leaf names a credential, and
+not the operator who closed the epoch; its counts are withheld below five. It is not windowed,
+and not routed to a replica: the verdict is about the database the application is connected to.
+
+**A4, the window before.** `compare=previous` on the breakdown and the cross-tab reads the window
+of the same nominal length immediately before, `[since - span, since)` on the same grain,
+through the same readers, which now take the window's end as well as its start. Each listed
+category carries its counts in that window, withheld against that window's own scope; a change
+only where both counts are shown; and a mark where the failure share at least doubled with ten
+or more extra failures, computed from shown counts alone. The row of small categories is not
+compared, since its members change. The open window has nothing before it and is refused. When
+a retention purge has taken the hourly rollup the window before would read, the daily rollup
+holding a day before the first hour still held, the comparison says so and compares nothing,
+rather than reading a purge as a fall. A question is logged as narrow when either window is.
+
+What it adds to the residual: nothing new. The window before is what the same question answered
+one window ago, and a fold changes no count. Within one response a change cannot be subtracted
+back into a withheld count, since it is shown only where both counts are.
+
+`AtlasCompareTests` hold every compared figure to a plain count of the event table on both grains,
+before and after a fold, and `AtlasIntegrityTests` the card to the rows and the board; fifteen
+mutants of the rules, the windows, the SQL bounds and the reads, each killed. Two browser tests:
+the card fills from the database, and the comparison adds its columns, says what it compared
+with, and is switched off under 'all'.

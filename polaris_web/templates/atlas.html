@@ -141,6 +141,34 @@
                 </div>
             </div>
 
+            {# Integrity (lab/strategy/009 A2): the system's state beside its activity. The latest
+               state epoch and anchor batch, read by their keys, and the Athena board's verdict
+               on this database. Not windowed: atlas-console.js fills it from
+               /api/atlas/integrity, and it reads no person, credential or operator. #}
+            <section class="ov-card ov-integrity" data-ov-integrity aria-labelledby="ov-integrity-h">
+                <div class="ov-card-head">
+                    <h2 class="ov-card-title" id="ov-integrity-h">Integrity</h2>
+                    <a class="ov-card-link" href="{{ url_for('athena_console') }}">Open the Athena board</a>
+                </div>
+                <div class="ov-int-grid">
+                    <div class="ov-int-item" data-ov-int="board">
+                        <span class="ov-int-label">Constitution</span>
+                        <span class="ov-int-value" data-ov-int-value="board">…</span>
+                        <span class="ov-int-sub" data-ov-int-sub="board">reading this database's catalogue</span>
+                    </div>
+                    <div class="ov-int-item" data-ov-int="epoch">
+                        <span class="ov-int-label">State epoch</span>
+                        <span class="ov-int-value" data-ov-int-value="epoch">…</span>
+                        <span class="ov-int-sub" data-ov-int-sub="epoch"></span>
+                    </div>
+                    <div class="ov-int-item" data-ov-int="anchor">
+                        <span class="ov-int-label">Anchor batch</span>
+                        <span class="ov-int-value" data-ov-int-value="anchor">…</span>
+                        <span class="ov-int-sub" data-ov-int-sub="anchor"></span>
+                    </div>
+                </div>
+            </section>
+
             {# Hero: the volume time-series, success vs failure. #}
             <div class="ov-card ov-hero">
                 <div class="ov-card-head">
@@ -211,11 +239,24 @@
             <span class="cmd-label">SLICE BY</span>
             <div class="chip-group" role="radiogroup" aria-label="Slice dimension" data-bd-dim-group></div>
             <span class="toolbar-spacer"></span>
-            <span class="cmd-label">SORT</span>
-            <div class="chip-group" role="radiogroup" aria-label="Sort metric">
-                <button class="toolbar-chip toolbar-chip-active" type="button" role="radio" aria-checked="true" data-bd-metric="volume">Volume</button>
-                <button class="toolbar-chip" type="button" role="radio" aria-checked="false" data-bd-metric="failure">Failure rate</button>
-            </div>
+            {# Each label wraps with its chips, never apart from them. #}
+            <span class="ov-control-pair">
+                <span class="cmd-label">SORT</span>
+                <span class="chip-group" role="radiogroup" aria-label="Sort metric">
+                    <button class="toolbar-chip toolbar-chip-active" type="button" role="radio" aria-checked="true" data-bd-metric="volume">Volume</button>
+                    <button class="toolbar-chip" type="button" role="radio" aria-checked="false" data-bd-metric="failure">Failure rate</button>
+                    <button class="toolbar-chip" type="button" role="radio" aria-checked="false" data-bd-metric="change" hidden>Change</button>
+                </span>
+            </span>
+            {# lab/strategy/009 A4: each count beside the window before. A change is shown only
+               when both counts are, each withheld against its own window. #}
+            <span class="ov-control-pair">
+                <span class="cmd-label">COMPARE</span>
+                <span class="chip-group" role="radiogroup" aria-label="Compare with" data-bd-compare-group>
+                    <button class="toolbar-chip toolbar-chip-active" type="button" role="radio" aria-checked="true" data-bd-compare="off">Off</button>
+                    <button class="toolbar-chip" type="button" role="radio" aria-checked="false" data-bd-compare="previous">Window before</button>
+                </span>
+            </span>
         </div>
 
         <div class="bd-layout">
@@ -252,7 +293,7 @@
             <span data-bd-error-detail>Could not load the breakdown.</span>
             <button type="button" class="toolbar-chip" data-bd-retry>Retry</button>
         </div>
-        <p class="ov-foot">Every figure is a bounded server-side aggregate (top-K rows, low-cardinality columns). A cross-tab cell is shaded by its share of the row, so an anomalous slice (a high failure or full-disclosure share for one agency or context) stands out. Zero-knowledge is counted in every tally but never located (C6).</p>
+        <p class="ov-foot">Every figure is a bounded server-side aggregate (top-K rows, low-cardinality columns). A cross-tab cell is shaded by its share of the row, so an anomalous slice (a high failure or full-disclosure share for one agency or context) stands out. Compared with the window before, a change is shown only where both counts are, and a category is marked when its failure share at least doubled with ten or more extra failures; the row of small categories is not compared, since its members change. Zero-knowledge is counted in every tally but never located (C6).</p>
     </div>
 
     {# ================= TRENDS (ship 7): temporal rhythm + composition ============= #}
