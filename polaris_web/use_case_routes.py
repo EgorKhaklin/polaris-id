@@ -93,6 +93,83 @@ def _status(missing, status=200):
     return 404 if missing and request.method == 'GET' and status == 200 else status
 
 
+class _AlgorithmRefused(ValueError):
+    """A signature asked for under an algorithm no key here makes it under."""
+
+
+def _registry_name(algorithm_id):
+    row = query("SELECT name FROM CryptographicAlgorithm WHERE algorithm_id = %s",
+                (algorithm_id,), fetch='one')
+    if not row:
+        raise _AlgorithmRefused("Algorithm #%d is not in the algorithm registry." % algorithm_id)
+    return row['name']
+
+
+def _nothing_signs_with(name):
+    return "Nothing here signs with %s, so no signature can be recorded under it." % name
+
+
+def _signer_algorithm(agency_id, requested=None):
+    """(algorithm_id, name): the algorithm `agency_id` issues under, the one its key signs with,
+    which a signature row records (CORE-BUG, docs/design/multi-sig-migration.md: "The schema
+    records which algorithm produced a signature"). Issuance recorded the form's choice and
+    signed with whatever the signer made: ML-DSA-65 bytes, or the placeholder, under
+    SLH-DSA-256s. A requested algorithm that is not the signer's is refused here, before
+    anything is signed; one left out is the signer's."""
+    name = pqc_signing.algorithm_name(agency_id)
+    row = query("SELECT algorithm_id FROM CryptographicAlgorithm WHERE name = %s", (name,), fetch='one')
+    if not row:
+        raise _AlgorithmRefused("The signer's algorithm, %s, is not in the algorithm registry." % name)
+    if requested is not None and requested != row['algorithm_id']:
+        asked = _registry_name(requested)
+        if asked not in pqc_signing.ACCEPTED_ALGORITHMS:
+            raise _AlgorithmRefused(_nothing_signs_with(asked))
+        raise _AlgorithmRefused(
+            "Authority %d issues under %s, the algorithm its key signs with, so a credential "
+            "cannot be issued under %s; a migration adds a signature under it."
+            % (agency_id, name, asked))
+    return row['algorithm_id'], name
+
+
+def _migration_target(agency_id, requested=None):
+    """(algorithm_id, name): the set a migration moves one of `agency_id`'s credentials onto.
+    Unlike issuance, the request names it: the authority goes on issuing under its own set
+    while its credentials move to the new one (docs/operator/QUANTUM-EVENT.md). It must be a
+    set some signer here produces; whether a key for it is provisioned is asked where the
+    signature is made (pqc_signing.migration_signature). Left out, it is the authority's own."""
+    if requested is None:
+        return _signer_algorithm(agency_id)
+    name = _registry_name(requested)
+    if name not in pqc_signing.ACCEPTED_ALGORITHMS:
+        raise _AlgorithmRefused(_nothing_signs_with(name))
+    return requested, name
+
+
+def _signed_for(token_value, agency_id, algorithm, migration=False):
+    """The credential's signature under `algorithm`: by `agency_id`'s own key when that key signs
+    under it, refused when the key is not the one the authority registered (PE.3b federation
+    binding: an authority's credentials are signed by the authority, not by whatever key the
+    box holds). A migration onto another set is signed by the key custody provisions for it
+    (pqc_signing.migration_signature), as the population path signs."""
+    signature = (pqc_signing.migration_signature(token_value, algorithm, agency_id=agency_id)
+                 if migration else pqc_signing.credential_signature(token_value, agency_id=agency_id))
+    if signature.algorithm_name != algorithm:
+        raise pqc_signing.SigningError(
+            "the signer moved from %s to %s while this was asked; nothing was recorded"
+            % (algorithm, signature.algorithm_name))
+    # The registered key is the one the authority issues with, so the binding is asked of that
+    # key alone: a key provisioned for a migration target is another key by design.
+    if signature.public_key_hex is not None and algorithm == pqc_signing.algorithm_name(agency_id):
+        reg = query("SELECT signing_public_key_hex FROM Agency WHERE agency_id = %s",
+                    (agency_id,), fetch='one')
+        registered = reg['signing_public_key_hex'] if reg else None
+        if registered and registered != signature.public_key_hex:
+            raise pqc_signing.SigningError(
+                "authority %d is registered to a different signing key; refusing a signature made "
+                "by a key that is not the authority's (PE.3b federation binding)" % agency_id)
+    return signature
+
+
 @app.route('/uc1/issue', methods=['GET', 'POST'])
 @security.login_required
 @security.require_role('admin', 'operator')
@@ -122,16 +199,10 @@ def uc1_issue():
             _denied = _operator_authority_permits(_issuing_agency)
             if _denied:
                 return _denied
-            sig_bytes, _sig_alg, sig_pubkey = pqc_signing.signature_with_key_for_token(
-                request.form['token_value'], agency_id=_issuing_agency)
-            if sig_pubkey is not None:
-                _reg = query("SELECT signing_public_key_hex FROM Agency WHERE agency_id = %s",
-                             (_issuing_agency,), fetch='one')
-                _registered = _reg['signing_public_key_hex'] if _reg else None
-                if _registered and _registered != sig_pubkey:
-                    raise pqc_signing.SigningError(
-                        "issuing agency %d is registered to a different signing key; refusing to issue a "
-                        "token signed by a non-agency key (PE.3b federation binding)" % _issuing_agency)
+            _requested = request.form.get('algorithm_id')
+            _algorithm_id, _algorithm = _signer_algorithm(
+                _issuing_agency, int(_requested) if _requested else None)
+            _signature = _signed_for(request.form['token_value'], _issuing_agency, _algorithm)
             new_token_id = query("""
                 SELECT uc1_issue_and_activate(
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
@@ -141,7 +212,7 @@ def uc1_issue():
                 request.form['date_of_birth'],
                 request.form['jurisdiction'],
                 int(request.form['issuing_agency_id']),
-                int(request.form['algorithm_id']),
+                _algorithm_id,
                 request.form['biometric_binding_type'],
                 int(request.form['witness_agency_id']) if request.form.get('witness_agency_id') else None,
                 request.form.get('liveness_check_type') or None,
@@ -149,12 +220,15 @@ def uc1_issue():
                 request.form['physical_serial'],
                 request.form.get('hardware_model') or None,
                 contexts,
-                psycopg2.Binary(sig_bytes),
-                sig_pubkey,
+                psycopg2.Binary(_signature.signature_bytes),
+                _signature.public_key_hex,
             ), fetch='returning')['token_id']  # 'returning' commits the transaction
             _record_agency_event('issue', request.form['issuing_agency_id'])
             flash(f'Token #{new_token_id} is issued and active.', 'success')
             return redirect(url_for('tokens_detail', tok_id=new_token_id))
+        except _AlgorithmRefused as e:
+            flash(f'The token could not be issued. {e}', 'error')
+            status = 400
         except (pqc_signing.PQCUnavailableError, pqc_signing.SigningError) as e:
             flash(f'The token could not be issued. {e}', 'error')
             # 2026-09-27: a token value that is not a credential serial (WIRE-SPEC 3.7) is
@@ -167,11 +241,11 @@ def uc1_issue():
                 status = 429
 
     agencies = query("SELECT * FROM Agency WHERE authorization_level >= 4 ORDER BY agency_id")
-    algorithms = query("SELECT * FROM CryptographicAlgorithm WHERE quantum_resistant = TRUE ORDER BY algorithm_id")
     contexts = query("SELECT * FROM VerificationContext ORDER BY context_id")
     return render_template('uc1_issue.html',
                            agencies=agencies,
-                           algorithms=algorithms,
+                           signer_algorithms={ag['agency_id']: pqc_signing.algorithm_name(ag['agency_id'])
+                                              for ag in agencies},
                            contexts=contexts), status
 
 
@@ -563,6 +637,7 @@ def uc9_decide(recovery_id):
     """Phase 2 of UC-9: admin decision (APPROVED or REJECTED) on a PENDING
     request. Admin-only — operator can initiate but not complete; auditor
     can view the queue but not act."""
+    status = 200
     if request.method == 'POST':
         # 1.0.0-rc.30: a recovery belongs to the authority that requested it, and approving one
         # issues the new credential under that authority. An admin bound to another authority
@@ -590,15 +665,27 @@ def uc9_decide(recovery_id):
             liveness_check    = (request.form.get('liveness_check')    or '').strip() or None
             published_location = (request.form.get('published_location') or '').strip() or None
 
+            # An approval issues a credential, signed like any other: by the requesting
+            # authority's key, under its signer's algorithm, over the new token value. Until
+            # 2026-10-02 the procedure wrote a placeholder string as the signature, and the
+            # credential a recovery handed back verified under nothing.
+            signature = None
+            if decision == 'APPROVED' and owner is not None and new_token_value:
+                algorithm_id, _algorithm = _signer_algorithm(owner['requesting_agency_id'],
+                                                             algorithm_id)
+                signature = _signed_for(new_token_value, owner['requesting_agency_id'], _algorithm)
+
             conn = get_db()
             try:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        CALL uc9_complete_recovery(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        CALL uc9_complete_recovery(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         recovery_id, session.get('user_id'), decision, reason,
                         new_token_value, new_serial, algorithm_id,
                         biometric_binding, liveness_check, published_location,
+                        psycopg2.Binary(signature.signature_bytes) if signature else None,
+                        signature.public_key_hex if signature else None,
                     ))
                 conn.commit()
             finally:
@@ -606,6 +693,11 @@ def uc9_decide(recovery_id):
 
             flash(f'Recovery request #{recovery_id} is {decision}.', 'success')
             return redirect(url_for('uc9_queue'))
+        except _AlgorithmRefused as e:
+            flash(f'The recovery could not be approved. {e}', 'error')
+            status = 400
+        except (pqc_signing.PQCUnavailableError, pqc_signing.SigningError) as e:
+            flash(f'The recovery could not be approved. {e}', 'error')
         except (psycopg2.Error, ValueError) as e:
             flash(db_error_to_message(e), 'error')
 
@@ -629,13 +721,10 @@ def uc9_decide(recovery_id):
         flash(f'Recovery request #{recovery_id} does not exist.', 'error')
         return redirect(url_for('uc9_queue'))
 
-    algorithms = query("""
-        SELECT algorithm_id, name, quantum_resistant
-        FROM CryptographicAlgorithm
-        WHERE deprecation_date IS NULL OR deprecation_date > polaris_utc_date()
-        ORDER BY algorithm_id
-    """)
-    return render_template('uc9_decide.html', req=req, algorithms=algorithms)
+    # The new credential is signed by the requesting authority's key, so it is under that key's
+    # algorithm and no other (docs/design/multi-sig-migration.md).
+    return render_template('uc9_decide.html', req=req,
+                           signer_algorithm=pqc_signing.algorithm_name(req['requesting_agency_id'])), status
 
 
 # ============================================================================
@@ -658,7 +747,7 @@ def uc6_migrate():
     if request.method == 'POST':
         try:
             token_id = int(request.form['token_id'])
-            new_algorithm = int(request.form['new_algorithm'])
+            _requested = request.form.get('new_algorithm')
             deprecate_old = bool(request.form.get('deprecate_old'))
             _denied = _token_authority_denied(token_id)
             if _denied:
@@ -670,29 +759,38 @@ def uc6_migrate():
             # carries the issuer public key — exactly like issuance — instead of a
             # hardcoded operator string. The key is stored with the signature so
             # verification at use is self-contained.
-            trow = query("SELECT token_value FROM IdentityToken WHERE token_id = %s",
+            trow = query("SELECT token_value, issuing_agency_id FROM IdentityToken WHERE token_id = %s",
                          (token_id,), fetch='one')
             if not trow:
                 raise ValueError(f"Token #{token_id} not found")
-            sig_bytes, _sig_alg, sig_pubkey = pqc_signing.signature_with_key_for_token(
-                trow['token_value'])
+            # The new signature is under the set the form names, made by a key under it: the
+            # issuing authority's own, or the one custody provisions for the target. Until the
+            # CORE-BUG fix it was the global key's, whatever its set, recorded under the set the
+            # form named.
+            new_algorithm, _algorithm = _migration_target(
+                trow['issuing_agency_id'], int(_requested) if _requested else None)
+            _signature = _signed_for(trow['token_value'], trow['issuing_agency_id'], _algorithm,
+                                     migration=True)
 
             conn = get_db()
             try:
                 with conn.cursor() as cur:
                     cur.execute("""
                         CALL uc6_migrate_algorithm(%s, %s, %s, %s, %s)
-                    """, (token_id, new_algorithm, psycopg2.Binary(sig_bytes),
-                          deprecate_old, sig_pubkey))
+                    """, (token_id, new_algorithm, psycopg2.Binary(_signature.signature_bytes),
+                          deprecate_old, _signature.public_key_hex))
                 conn.commit()
             finally:
                 conn.close()
 
             flash(
-                f'Token #{token_id} is migrated to algorithm #{new_algorithm}'
+                f'Token #{token_id} is migrated to {_algorithm}'
                 + (', and the previous signature is deprecated.' if deprecate_old else '.'),
                 'success')
             return redirect(url_for('tokens_detail', tok_id=token_id))
+        except _AlgorithmRefused as e:
+            flash(f'The migration could not be completed. {e}', 'error')
+            status = 400
         except (pqc_signing.PQCUnavailableError, pqc_signing.SigningError) as e:
             flash(f'The migration could not be completed. {e}', 'error')
         except (psycopg2.Error, ValueError) as e:
@@ -712,14 +810,19 @@ def uc6_migrate():
              WHERE s.token_id = %s
              ORDER BY alg.algorithm_id
         """, (credential['token_id'],))
+        # The sets a signer here produces; the registry also lists sets none does (SLH-DSA),
+        # under which no signature can truthfully be recorded.
         algorithms = query("""
             SELECT algorithm_id, name, quantum_resistant
             FROM CryptographicAlgorithm
-            WHERE deprecation_date IS NULL OR deprecation_date > polaris_utc_date()
+            WHERE name = ANY(%s)
+              AND (deprecation_date IS NULL OR deprecation_date > polaris_utc_date())
             ORDER BY algorithm_id
-        """)
+        """, (list(pqc_signing.ACCEPTED_ALGORITHMS),))
     return render_template('uc6_migrate.html',
                            credential=credential, missing=missing,
                            signatures=signatures,
                            signed_names={s['algorithm_name'] for s in signatures},
+                           signer_algorithm=(pqc_signing.algorithm_name(credential['issuing_agency_id'])
+                                             if credential else None),
                            algorithms=algorithms), _status(missing, status)

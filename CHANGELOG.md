@@ -11,6 +11,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- The Atlas answered a refused parameter with the exception's text, which could carry the request back; it states a fixed sentence.
 - An operator bound to one authority could be served other authorities' Atlas counts from its response cache.
 - The database refuses a successful verification of a dead credential, outside its permitted contexts, or across an untrusted edge.
 - An operator bound to one authority can no longer activate a reserve another authority issued (UC-4).
@@ -55,15 +56,17 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The credential page is rebuilt: facts beside proofs, one table per kind of row, empty kinds in one line.
 - On a phone, each list keeps a row's identifier, state and holder; the rest is on the record's page.
 - A status change is offered only where the database makes it; revocation keeps its own operation.
+- `polaris-id migrate-algorithm` signs as the route does; `--signature-hex` and `--signature-file` are withdrawn.
 
 ### Fixed
 
 - The README's OpenID Certified badge now names what it covers: the polaris-oid4vp verifier, not Polaris.
-- The Atlas marked every withheld count "<5", false for one withheld for its whole's sake; it shows a neutral mark.
+- SECURITY.md called PyPI's publish attestation the same kind of provenance as build provenance; it says what each is.
 - A credential's page and both investigation pages read its verifications through an index, not a full scan.
 - The advisory-lock check reads locks taken in functions; the holder key register's lock gains contention tests.
 - The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
 - The warrant audit page no longer says zero-knowledge events come back redacted; they are never returned.
+- The Atlas marked every withheld count "<5", false for one withheld for its whole's sake; it shows a neutral mark.
 - A person's investigation page takes its colours from the theme; a credential value read at 3.48:1 in light.
 - A credential's investigation page found its successor by scanning every credential: 904 ms at 3.6 million.
 - A credential's page read its device bindings and revocations by scanning those tables.
@@ -78,6 +81,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - API.md pointed at `app.py` for the federation check; it is in `verification_routes.py`.
 - The signals queue said "N of M active" while counting every credential with a duress code, in 923 ms.
 - Delete buttons for a person, a credential and an authority, which the database always refuses, are gone.
+- A credential issued by recovery carried a placeholder for a signature and verified under nothing; approval now signs it.
+- Issuance and migration recorded the algorithm a request named, not the one that signed; now the signing key's set.
+- The readiness ledger said a Module-LWE break needs no verification code; the hash-based fallback has no signer or verifier.
 - A status change to a number that is no credential reported success.
 - A refused deep page number now says what to do instead and offers the list back.
 - The population recount's lock test passed with the lock deleted; it now holds a fold that touches no row.

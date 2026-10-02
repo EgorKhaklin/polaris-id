@@ -91,6 +91,16 @@ def _issue_batch(cur, agency_id: int, algorithm_id: int,
     """Stage one batch with COPY and issue it through uc_bulk_issue. `seq` is a
     global monotonic counter that makes token_value / physical_serial unique
     across the whole build. Returns the advanced counter."""
+    # The batch is under the algorithm its authority's signer signs with, as bulk enrolment's
+    # is: a batch that named another would store every row under an algorithm that did not
+    # make it.
+    cur.execute("SELECT name FROM CryptographicAlgorithm WHERE algorithm_id = %s", (algorithm_id,))
+    row = cur.fetchone()
+    algorithm = row["name"] if row else None
+    if algorithm != _pqc.algorithm_name(agency_id):
+        raise ValueError(
+            "the simulation issues under algorithm #%d (%s), but authority %d's signer signs "
+            "with %s" % (algorithm_id, algorithm, agency_id, _pqc.algorithm_name(agency_id)))
     cur.execute(
         "INSERT INTO BulkEnrollmentBatch (issuing_agency_id, algorithm_id, note) "
         "VALUES (%s, %s, 'polaris_sim substrate') RETURNING batch_id",
@@ -103,9 +113,10 @@ def _issue_batch(cur, agency_id: int, algorithm_id: int,
         bio = _BIO_TYPES[seq % len(_BIO_TYPES)]
         token_value = f"SIMTOK-{seq:012d}"
         serial = f"SIMSER-{seq:012d}"
-        # Sign the token_value the same way single issuance does; stage the real
-        # signature + public key so uc_bulk_issue stores them (it refuses NULL).
-        sig, _label, pubkey = _pqc.signature_with_key_for_token(token_value)
+        # Sign the token_value the same way single issuance does, by the batch authority's key;
+        # stage the real signature + public key so uc_bulk_issue stores them (it refuses NULL).
+        signature = _pqc.credential_signature(token_value, agency_id=agency_id)
+        sig, pubkey = signature.signature_bytes, signature.public_key_hex
         sig_field = "\\x" + sig.hex()          # CSV bytea hex input
         pk_field = pubkey if pubkey else ""    # empty -> NULL (placeholder has no key)
         # batch_id | legal_name | dob | jurisdiction | biometric | token | serial | contexts | sig | pubkey
