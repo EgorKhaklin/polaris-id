@@ -18,6 +18,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- README badges for the pre-pilot status and the four outside wallets the verifier accepted.
 - Exact credential and live-signature counts by authority, kept by triggers that only append (`PopulationCount`).
 - Indexes for expiring credentials, credentials by status, issuance in a window and one credential's verifications.
 - Find a credential by number, token value or card serial, or a person by name and date of birth; the text stays out of URLs.
@@ -57,6 +58,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- The README's OpenID Certified badge now names what it covers: the polaris-oid4vp verifier, not Polaris.
 - A credential's page and both investigation pages read its verifications through an index, not a full scan.
 - The advisory-lock check reads locks taken in functions; the holder key register's lock gains contention tests.
 - The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
