@@ -2733,6 +2733,83 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             conn.rollback()
             conn.close()
 
+    def test_the_database_refuses_a_success_the_verification_rules_forbid(self):
+        """2026-10-02 (THREAT-MODEL). A SUCCESS naming a credential says the credential was live,
+        permitted in the context, and trusted by the verifying authority. The verification form
+        refuses each otherwise, but polaris_app holds INSERT on VerificationEvent: measured
+        before the trigger, a SUCCESS for a REVOKED credential and one in a context the credential
+        is not permitted in were both accepted from this role, and C1 keeps such a row for good.
+        Each rule is refused here with its own reason, and the control (a SUCCESS that keeps all
+        three) is accepted, so each refusal is that rule's and not a blanket one."""
+        conn = self._app_conn()
+        insert = ("INSERT INTO VerificationEvent (token_id, requesting_agency_id, context_id, "
+                  "outcome, disclosure_level) VALUES (%s, %s, %s, 'SUCCESS', 'FULL')")
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT set_config('polaris.operator_agency_id', '', false)")
+                # A live credential with a context it is permitted in, one it is not, and an
+                # authority with no live attestation toward its issuer for the permitted context.
+                cur.execute("""
+                    SELECT t.token_id, t.issuing_agency_id, min(p.context_id) AS permitted,
+                           (SELECT min(c.context_id) FROM VerificationContext c
+                             WHERE NOT EXISTS (SELECT 1 FROM TokenPermission q
+                                                WHERE q.token_id = t.token_id
+                                                  AND q.context_id = c.context_id)) AS unpermitted
+                      FROM IdentityToken t JOIN TokenPermission p ON p.token_id = t.token_id
+                     WHERE t.status = 'ACTIVE'
+                       AND (t.expiration_date IS NULL OR t.expiration_date >= polaris_utc_date())
+                     GROUP BY t.token_id, t.issuing_agency_id
+                    HAVING (SELECT min(c.context_id) FROM VerificationContext c
+                             WHERE NOT EXISTS (SELECT 1 FROM TokenPermission q
+                                                WHERE q.token_id = t.token_id
+                                                  AND q.context_id = c.context_id)) IS NOT NULL
+                     ORDER BY t.token_id LIMIT 1""")
+                live = cur.fetchone()
+                self.assertIsNotNone(live, "fixture: a live credential with an unpermitted context")
+                cur.execute("""
+                    SELECT a.agency_id FROM Agency a
+                     WHERE a.agency_id <> %(issuer)s
+                       AND NOT EXISTS (SELECT 1 FROM AgencyTrustAttestation x
+                                        WHERE x.attesting_agency_id = a.agency_id
+                                          AND x.attested_agency_id = %(issuer)s
+                                          AND x.context_id = %(ctx)s
+                                          AND x.revocation_date IS NULL
+                                          AND x.valid_until >= polaris_utc_date())
+                     ORDER BY a.agency_id LIMIT 1""",
+                            {"issuer": live["issuing_agency_id"], "ctx": live["permitted"]})
+                stranger = cur.fetchone()
+                self.assertIsNotNone(stranger, "fixture: an authority that does not trust the issuer")
+                cur.execute("SELECT token_id, issuing_agency_id FROM IdentityToken "
+                            "WHERE status IN ('REVOKED', 'LOST') ORDER BY token_id LIMIT 1")
+                dead = cur.fetchone()
+                self.assertIsNotNone(dead, "fixture: a revoked or lost credential")
+            conn.rollback()
+            cases = (
+                ("a credential that is no longer live", "cannot have succeeded, it is",
+                 (dead["token_id"], dead["issuing_agency_id"], live["permitted"])),
+                ("a context the credential is not permitted in", "not permitted in context",
+                 (live["token_id"], live["issuing_agency_id"], live["unpermitted"])),
+                ("an authority with no attestation toward the issuer", "holds no live attestation",
+                 (live["token_id"], stranger["agency_id"], live["permitted"])),
+            )
+            for label, reason, args in cases:
+                with self.subTest(case=label):
+                    try:
+                        with conn.cursor() as cur:
+                            with self.assertRaisesRegex(psycopg2.Error, reason):
+                                cur.execute(insert, args)
+                    finally:
+                        conn.rollback()   # an accepted row must not reach the control's count
+            # The control: the same credential, its own issuer, a permitted context.
+            with conn.cursor() as cur:
+                cur.execute(insert, (live["token_id"], live["issuing_agency_id"], live["permitted"]))
+                cur.execute("SELECT count(*) AS n FROM VerificationEvent WHERE token_id = %s "
+                            "AND outcome = 'SUCCESS' AND event_timestamp >= now()", (live["token_id"],))
+                self.assertEqual(cur.fetchone()["n"], 1, "a SUCCESS that keeps every rule must be recorded")
+        finally:
+            conn.rollback()
+            conn.close()
+
     def test_a_rule_the_database_enforces_holds_for_a_bound_operator(self):
         """1.0.0-rc.42. Row-level security hides another authority's credentials from an
         operator bound to one, and routines that enforce a rule by READING those credentials

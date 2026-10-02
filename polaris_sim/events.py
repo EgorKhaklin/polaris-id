@@ -66,6 +66,13 @@ def _weighted(rng: random.Random, choices: tuple[tuple[object, float], ...]):
 class TokenRef:
     token_id: int
     jurisdiction: str
+    # What the rules a success keeps need to know (trg_verification_success_rules): the issuing
+    # authority, the contexts the credential is permitted in, and the (verifier, context) pairs
+    # whose verifier holds a live attestation toward that issuer. None for a reference built
+    # without them (the pure tests), which leaves outcomes as drawn.
+    issuer: int | None = None
+    contexts: frozenset = frozenset()
+    trusted: frozenset = frozenset()
 
 
 # One generated verification, matching the VerificationEvent columns the writer
@@ -111,6 +118,14 @@ def iter_verifications(pool: list[TokenRef], agency_ids: list[int], count: int,
                                commit, None, None, None, _PURPOSES[i % len(_PURPOSES)])
         else:
             ref = pool[rng.randrange(len(pool))]
+            # A success has to be true (trg_verification_success_rules): a presentation outside
+            # the credential's contexts, or to a verifier that does not trust its issuer, is
+            # recorded as what it was. The draws above are unchanged, so the stream stays
+            # deterministic.
+            if (outcome == "SUCCESS" and ref.issuer is not None
+                    and (context not in ref.contexts
+                         or (agency != ref.issuer and (agency, context) not in ref.trusted))):
+                outcome = "UNAUTHORIZED"
             lat0, lon0 = reference.STATE_CENTROIDS.get(ref.jurisdiction, (39.0, -98.0))
             lat = round(lat0 + rng.uniform(-1.4, 1.4), 5)
             lon = round(lon0 + rng.uniform(-1.4, 1.4), 5)
@@ -201,12 +216,27 @@ def load_pools(conn, sample: int = 5000) -> tuple[list[TokenRef], list[int], lis
     and context id lists. A random sample of tokens is population-weighted for
     free, since the substrate enrolled people in proportion to population."""
     with conn.cursor() as cur:
+        # Live credentials only (ACTIVE and not past their date), with what the success rules
+        # read: the issuer, the permitted contexts, and who trusts the issuer for which context.
         cur.execute("""
-            SELECT it.token_id, ind.jurisdiction
+            SELECT attesting_agency_id AS verifier, attested_agency_id AS issuer, context_id
+              FROM AgencyTrustAttestation
+             WHERE revocation_date IS NULL AND valid_until >= polaris_utc_date()""")
+        trust: dict[int, set] = {}
+        for r in cur.fetchall():
+            trust.setdefault(r["issuer"], set()).add((r["verifier"], r["context_id"]))
+        trusted = {issuer: frozenset(pairs) for issuer, pairs in trust.items()}
+        cur.execute("""
+            SELECT it.token_id, ind.jurisdiction, it.issuing_agency_id,
+                   ARRAY(SELECT tp.context_id FROM TokenPermission tp
+                          WHERE tp.token_id = it.token_id) AS contexts
             FROM IdentityToken it JOIN Individual ind ON it.individual_id = ind.individual_id
             WHERE it.status = 'ACTIVE'
+              AND (it.expiration_date IS NULL OR it.expiration_date >= polaris_utc_date())
             ORDER BY random() LIMIT %s""", (sample,))
-        pool = [TokenRef(r["token_id"], r["jurisdiction"]) for r in cur.fetchall()]
+        pool = [TokenRef(r["token_id"], r["jurisdiction"], r["issuing_agency_id"],
+                         frozenset(r["contexts"] or ()), trusted.get(r["issuing_agency_id"], frozenset()))
+                for r in cur.fetchall()]
         cur.execute("SELECT agency_id FROM Agency ORDER BY agency_id")
         agencies = [r["agency_id"] for r in cur.fetchall()]
         cur.execute("SELECT context_id FROM VerificationContext ORDER BY context_id")
