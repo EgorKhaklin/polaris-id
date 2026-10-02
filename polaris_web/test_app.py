@@ -4143,7 +4143,11 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
                         "'MULTI_MODAL', 'https://crl.example/u')",
                         (rid, self._user_id('admin'), 'TKN-UC9-UNSIGNED-%d' % rid,
                          'SN-UC9-UNSIGNED-%d' % rid))
-        self.assertIn('signature', str(c.exception))
+        # The procedure's own refusal, not the NOT NULL column that would also stop the insert
+        # further on: the procedure drill deleted the refusal and a test asserting only that
+        # "signature" was mentioned still passed on the column's message.
+        self.assertIn("requires the new credential's signature", str(c.exception))
+        self.assertEqual(c.exception.pgcode, '23514')
         self.assertEqual(_sql("SELECT status FROM RecoveryRequest WHERE recovery_id = %s", (rid,),
                               fetch='one')['status'], 'PENDING')
 
