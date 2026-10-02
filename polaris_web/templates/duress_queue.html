@@ -22,6 +22,7 @@
 {% if not rows %}
     <div class="empty-state">No duress signals recorded.</div>
 {% else %}
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr>
@@ -56,6 +57,7 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 {% endif %}
 
 <div class="info-panel">

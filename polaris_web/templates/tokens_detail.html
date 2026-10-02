@@ -153,8 +153,8 @@
     </div>
     {% endif %}
     <p class="section-note">
-        {% if not verifications %}No verification names this credential. {% endif %}A zero-knowledge
-        verification never does, by design (C2).
+        {% if not verifications %}No verification names this credential.{% endif %}
+        A zero-knowledge verification never names its credential, by design (C2), so none is listed here.
         {% if verifications_more %}<a href="{{ url_for('verifications_list', token_id=token.token_id) }}">Every verification of this credential</a> is in the log.{% endif %}
     </p>
 </section>

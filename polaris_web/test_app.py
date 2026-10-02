@@ -1658,10 +1658,16 @@ class PopulationScaleTests(PolarisTestCase):
             _assert_bounded_plans(self, [("SELECT status, COUNT(*) AS n FROM IdentityToken GROUP BY status", None)],
                                   budget=6_000, sample_rows=2_000)
         with self.assertRaises(AssertionError):
-            # A capped count of a rare condition through a filter rather than an index.
+            # A capped count of a rare condition no index serves: a filter finds it by reading.
             _assert_bounded_plans(self, [("SELECT count(*) FROM (SELECT 1 FROM IdentityToken "
-                                          "WHERE status = 'ACTIVE' AND duress_code_hash IS NOT NULL LIMIT 501) c", None)],
+                                          "WHERE status = 'ACTIVE' AND hardware_model = 'no such model' "
+                                          "LIMIT 501) c", None)],
                                   budget=6_000, sample_rows=2_000)
+        # Until step 4 this control was the signals queue's own count of active credentials with a
+        # duress code; idx_identitytoken_duress_enrolled now serves it, and it is bounded.
+        _assert_bounded_plans(self, [("SELECT count(*) FROM (SELECT 1 FROM IdentityToken "
+                                      "WHERE duress_code_hash IS NOT NULL AND status = 'ACTIVE' LIMIT 501) c", None)],
+                              budget=6_000, sample_rows=2_000)
 
 
 def _statements_of_post(client, path, data):
@@ -2139,9 +2145,10 @@ class ListsAndRecordsAtScaleTests(PolarisTestCase):
         self.assertIn('or more', body)
 
     def test_every_list_and_record_page_has_a_bounded_plan(self):
-        """Falsifier 2 of record 008 for step 3, over the synthetic population with every bound
-        shrunk: the lists by key, a rare filter through its window, a credential's page, both
-        investigation pages and the verification log filtered by one credential."""
+        """Falsifier 2 of record 008 for steps 3 and 4, over the synthetic population with every
+        bound shrunk: the lists by key, a rare filter through its window, a credential's page, both
+        investigation pages, the verification log filtered by one credential, the enrolment
+        summary and the signals queue."""
         _synthetic_population()
         tok = _sql("SELECT token_id, individual_id FROM IdentityToken WHERE status = 'ACTIVE' "
                    "ORDER BY token_id DESC LIMIT 1", fetch='one')
@@ -2153,7 +2160,8 @@ class ListsAndRecordsAtScaleTests(PolarisTestCase):
                          '/verifications', '/verifications?outcome=UNAUTHORIZED',
                          '/verifications?token_id=%d' % tok['token_id'],
                          '/tokens/%d' % tok['token_id'], '/investigate/token/%d' % tok['token_id'],
-                         '/investigate/individual/%d' % tok['individual_id']):
+                         '/investigate/individual/%d' % tok['individual_id'],
+                         '/individuals/enrollment', '/duress'):
                 r, seen = _statements_of(self.client, path)
                 self.assertEqual(r.status_code, 200, path)
                 statements += seen
