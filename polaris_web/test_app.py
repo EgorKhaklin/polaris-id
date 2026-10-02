@@ -10714,8 +10714,22 @@ class AtlasParameterTests(_AtlasCase):
                 r = self.client.get(path)
                 self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
                 self.assertTrue(r.get_json()['error'])
+        # A refusal is a fixed sentence: it says what is accepted and never carries the request,
+        # or a library's exception text, back (CWE-209; code scanning #379-#388).
         r = self.client.get('/api/atlas/series?outcomes=NOT_AN_OUTCOME')
-        self.assertIn('NOT_AN_OUTCOME', r.get_json()['error'])
+        self.assertEqual(r.get_json()['error'],
+                         "outcomes must be among ['SUCCESS', 'FAILURE', 'EXPIRED', 'UNAUTHORIZED']")
+        for path, sent in (('/api/atlas/series?buckets=abc', 'abc'),
+                           ('/api/atlas/stats?window=probe-1y', 'probe'),
+                           ('/api/atlas/stats?window=all&agencies=12PROBE', 'PROBE'),
+                           ('/api/atlas/stats?window=all&contexts=PROBE', 'PROBE'),
+                           ('/api/atlas/series?outcomes=PROBE', 'PROBE')):
+            with self.subTest(path):
+                r = self.client.get(path)
+                self.assertEqual(r.status_code, 400)
+                self.assertNotIn(sent, r.get_data(as_text=True))
+        self.assertEqual(self.client.get('/api/atlas/series?buckets=abc').get_json()['error'],
+                         'a request parameter is not valid')
         r = self.client.get('/api/atlas/facet/agencies?window=all&limit=-1')
         self.assertEqual(r.get_json()['error'], 'limit must not be negative')
 
