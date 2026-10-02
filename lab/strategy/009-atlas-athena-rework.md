@@ -403,3 +403,54 @@ check-mutation drill leaves none of 134 checks standing.
 
 Next: whether the event tables keep the location indexes the Atlas no longer reads, since every
 insert pays for them, and the optional PostGIS layer with them. Then B3 and B4.
+
+### Step 4, part three (2026-10-02): no coordinate written, indexed or shown
+
+With the Atlas on the rollups, no query filters or sorts an event by where it happened. Tracing
+the writers found none in production: no route, API path or procedure writes a coordinate, and
+the auto-audit trigger copied `polaris.event_lat` and `event_lon` into each lifecycle row from
+session settings nothing set. Only the simulator and the seed filled the columns, and the seed
+loads in every deployment, so its demonstration rows carry a few.
+
+The first trace searched for the words latitude and longitude and missed what names neither. The
+optional `13_postgis.sql` GiST-indexed a generated `geo` column on both event tables wherever
+PostGIS could be created, which no test database has. And three reads took whole rows: the token
+export (`le.*`, `ve.*`) put each event's coordinates in the file it downloads, though it exports
+the detail page, which shows none; the detail page read them and dropped them; and the
+investigation timeline's view carried a transition's into a field nothing displays.
+
+So the columns were a capability rather than a trail: empty for every real event, and one session
+setting away from a location history per credential with no change to the schema. This part
+closes the writers, the indexes and the reads, and leaves the columns for a later release:
+
+- Five indexes are dropped (migration 2026-10-02-005): the three B-trees on (latitude, longitude)
+  and, where they exist, the two GiST indexes on `geo`. Per million located verifications the two
+  B-trees on `VerificationEvent` held 177 MB (73 and 104) beside a 208 MB heap, maintained on
+  every located insert for no query. Inserting a million located verifications took 38.7 and
+  53.4 s with them and 34.8 and 33.2 s without, on a machine loaded by other work; the size is
+  the stable figure.
+- `13_postgis.sql` creates nothing: a spatial extension and columns that are NULL on every row
+  Polaris writes would add attack surface and serve no query. It reports any `geo` column an
+  earlier release left.
+- The audit trigger no longer reads the settings (the same migration carries its body, so a
+  database built by load-then-migrate runs it too), and the simulator no longer generates
+  coordinates, so demonstration data looks like production's.
+- The token export and the detail page name their columns, and the timeline view gives a
+  transition no detail. Nothing in the application selects a coordinate.
+
+One reader keeps them on purpose: `polaris-archive.sh` copies whole rows, because
+`polaris-purge.sh` needs an archive that reconstitutes every row it deletes. An archive made
+before the contract step carries whatever coordinates the database held.
+
+`TestEventsCarryNoLocation` reads the catalogue for an index on either event table or its
+partitions over a coordinate or a column generated from one, shows on a temporary table that it
+sees the generated case, and sets both settings before a status change to show the row carries
+none; both fail against the down migration's state, with the `geo` columns and without.
+`check_event_locations_unindexed` reads every load file, a DO block's EXECUTE strings included,
+for the same index, since CI cannot run the PostGIS path; it fails on the file as it stood. The
+export test finds the seeded coordinates in the file neither as keys nor as values.
+
+Next, a release later: drop the columns, the generated `geo` columns, the seed's coordinates and
+the tests and checks that name them. An archive made before then keeps its coordinates for as
+long as the archive retention policy keeps the archive. `requestor_location`, the place a
+verifier states, is a separate question: it has a reader, the warrant audit.

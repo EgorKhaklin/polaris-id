@@ -37,6 +37,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The Atlas withholds every count below five and any figure that would give one back; a narrow question is logged.
 - The Atlas map draws counts per jurisdiction only; its cluster, hexagon and timeline layers are withdrawn.
 - An Atlas filter takes one context and one authority at a time, and every Atlas figure counts any non-success as a failure.
+- No event coordinate is indexed or written: five indexes go, and the optional PostGIS path is withdrawn.
+- The token export carries no coordinate, as no page shows one; its events name their fields.
 - Athena's Constitution tab reads each mechanism from the connected database's catalogue when opened.
 - Athena's self-test attempts six forbidden writes, rolled back, and shows on each rule what refused it.
 - The Overview costs the same at any population: 10.4 s to 0.12 s at two million persons.

@@ -144,31 +144,12 @@ deferred in lab/strategy/009 rather than built ahead of a need.
    redraw dominate, and none of them is a question an operator needs answered at once.
 4. **The top six bands of the stacked series.** More than six colours stop reading as categories.
 
-## The optional PostGIS path
+## The PostGIS path, withdrawn
 
-`polaris_sql/13_postgis.sql` adds, when the `postgis` extension is available, a generated
-`geography(Point, 4326)` column to each event table with a GiST index, for operators who query
-locations directly (the verification log's own filters, an investigation under warrant). The
-Atlas no longer reads a location, so it gains nothing from the path; whether the event tables
-keep their location indexes at all, now that the Atlas does not read them, is the next step of
-lab/strategy/009 (each costs every insert something).
-
-An operator with PostGIS active can query the GiST index directly, for example every
-verification within 50 km of a point:
-
-```sql
-SELECT event_id, event_timestamp, latitude, longitude
-FROM VerificationEvent
-WHERE geo IS NOT NULL
-  AND ST_DWithin(
-          geo,
-          ST_SetSRID(ST_MakePoint(-79.9959, 40.4406), 4326)::geography,
-          50000   -- meters
-      );
-```
-
-That query reads events and is a read of the event log, not of the Atlas.
-
-**When to leave it off.** The extension is around fifty megabytes and sits behind a paid tier
-on some managed PostgreSQL providers; a deployment whose role cannot run
-`CREATE EXTENSION postgis` gets a notice from the migration and keeps the B-tree indexes.
+`polaris_sql/13_postgis.sql` added, where the `postgis` extension could be created, a generated
+`geography(Point, 4326)` column to each event table with a GiST index, for the Atlas's
+bounding-box layers. The Atlas reads no location since step 4 of lab/strategy/009, and step 4c
+withdrew the path: migration 2026-10-02-005 drops the GiST indexes with the B-tree ones, and the
+file now creates nothing, since a spatial extension and columns that are NULL on every row
+Polaris writes would add attack surface and serve no query. A database that had PostGIS keeps its
+`geo` columns, unindexed, until the contract step drops them with `latitude` and `longitude`.

@@ -580,10 +580,12 @@ def tokens_detail(tok_id):
     # lab/strategy/008 step 3: every section reads one credential's rows through an index on
     # token_id, and the ones that grow for as long as the credential lives (its verifications, its
     # lifecycle, its epoch leaves) read only the latest few, saying so when there are more. The
-    # verification log, filtered by this credential, pages through the rest.
+    # verification log, filtered by this credential, pages through the rest. Both name the
+    # columns the page shows, so neither reads where an event happened (lab/strategy/009 step 4c).
     lifecycle = query("""
         SELECT * FROM (
-            SELECT le.*, ag.name AS actor_name
+            SELECT le.event_id, le.event_type, le.event_timestamp, le.reason_code,
+                   ag.name AS actor_name
             FROM   TokenLifecycleEvent le
             LEFT JOIN Agency ag ON le.actor_agency_id = ag.agency_id
             WHERE  le.token_id = %s
@@ -596,7 +598,8 @@ def tokens_detail(tok_id):
         lifecycle = lifecycle[1:]           # the oldest of the latest DETAIL_ROWS + 1
 
     verifications = query("""
-        SELECT ve.*, vc.context_type, ag.name AS verifier_name
+        SELECT ve.event_id, ve.event_timestamp, ve.outcome, ve.disclosure_level,
+               vc.context_type, ag.name AS verifier_name
         FROM   VerificationEvent ve
         JOIN   VerificationContext vc ON ve.context_id = vc.context_id
         JOIN   Agency ag              ON ve.requesting_agency_id = ag.agency_id
@@ -748,9 +751,9 @@ def tokens_export(tok_id):
     """Download everything the operator may already see for one token, as a
     JSON file. This is an export of the token-detail view, not new access: it
     is login-gated like that page, audit-logged, and carries no secret material
-    (duress hash → boolean; signature/key bytes dropped). C6 holds for free —
-    ZERO_KNOWLEDGE verifications carry no token_id, so a token's verification
-    set never contains one."""
+    (duress hash → boolean; signature/key bytes dropped) and no coordinate, which
+    no page shows. C6 holds for free: ZERO_KNOWLEDGE verifications carry no
+    token_id, so a token's verification set never contains one."""
     token = query("""
         SELECT t.*, i.legal_name AS holder_name, i.jurisdiction,
                ag.name AS issuer_name, alg.name AS algorithm_name,
@@ -769,17 +772,27 @@ def tokens_export(tok_id):
         token['duress_enrolled'] = token.get('duress_code_hash') is not None
     token.pop('duress_code_hash', None)   # never export the secret
 
+    # The events name their columns (lab/strategy/009 step 4c). No page shows where an event
+    # happened, and `le.*` and `ve.*` carried latitude and longitude into the file, and `geo`
+    # where an earlier release added it, which made the export more than the view it exports.
+    # A token's verifications hold no ZERO_KNOWLEDGE row (C2); the clause says so to the reader.
     lifecycle = query("""
-        SELECT le.*, ag.name AS actor_name FROM TokenLifecycleEvent le
-        LEFT JOIN Agency ag ON le.actor_agency_id = ag.agency_id
-        WHERE le.token_id = %s ORDER BY le.event_timestamp
+        SELECT le.event_id, le.token_id, le.actor_agency_id, le.event_type,
+               le.event_timestamp, le.reason_code, ag.name AS actor_name
+          FROM TokenLifecycleEvent le
+          LEFT JOIN Agency ag ON le.actor_agency_id = ag.agency_id
+         WHERE le.token_id = %s ORDER BY le.event_timestamp
     """, (tok_id,))
     verifications = query("""
-        SELECT ve.*, vc.context_type, ag.name AS verifier_name
+        SELECT ve.event_id, ve.token_id, ve.requesting_agency_id, ve.context_id,
+               ve.event_timestamp, ve.outcome, ve.disclosure_level, ve.proof_commitment,
+               ve.requesting_purpose_text, ve.requestor_location,
+               vc.context_type, ag.name AS verifier_name
           FROM VerificationEvent ve
           JOIN VerificationContext vc ON ve.context_id = vc.context_id
           JOIN Agency ag ON ve.requesting_agency_id = ag.agency_id
-         WHERE ve.token_id = %s ORDER BY ve.event_timestamp DESC
+         WHERE ve.token_id = %s AND ve.disclosure_level <> 'ZERO_KNOWLEDGE'
+         ORDER BY ve.event_timestamp DESC
     """, (tok_id,))
     devices = query('SELECT * FROM DeviceBinding WHERE token_id=%s ORDER BY binding_id', (tok_id,))
     anchors = query('SELECT * FROM BlockchainAnchor WHERE token_id=%s', (tok_id,))

@@ -418,9 +418,9 @@ against an expendable database.
 already see on the token-detail page as one JSON file: the token, its
 holder, its lifecycle events, its verification events and its signature
 rows. It is an export of an existing view, not new access: the duress
-hash is reduced to a boolean and signature and key bytes are dropped.
-ZERO_KNOWLEDGE verifications carry no `token_id`, so a token's export
-never contains one.
+hash is reduced to a boolean, signature and key bytes are dropped, and the
+events carry no coordinate, which no page shows. ZERO_KNOWLEDGE
+verifications carry no `token_id`, so a token's export never contains one.
 
 ---
 
@@ -1215,9 +1215,9 @@ server-side regardless.
 | `uc_pseudonymize_individual` | Right-to-erasure pseudonymization, logged in `IndividualErasureEvent` |
 
 All procedures use `SECURITY INVOKER`. The audit trigger on
-`IdentityToken` reads `polaris.actor_agency_id`,
-`polaris.reason_code`, `polaris.event_lat`, `polaris.event_lon` GUCs;
-procedures set them via `SET LOCAL`.
+`IdentityToken` reads the `polaris.actor_agency_id` and
+`polaris.reason_code` GUCs; procedures set them via `SET LOCAL`. The
+lifecycle rows it writes carry no location (lab/strategy/009, step 4c).
 
 ### `POST /uc8/revoke` (UC-8)
 
