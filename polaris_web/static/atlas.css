@@ -1694,3 +1694,91 @@ a.atlas-limits-rule:focus-visible { border-color: var(--cyan); }
 /* ---- A region's counts, on click ---- */
 .atlas-region-pop { font-size: 12px; line-height: 1.5; color: #0b1520; }
 .atlas-region-pop strong { display: block; margin-bottom: 2px; }
+
+/* ---- Integrity (lab/strategy/009 A2): the system's state beside its activity. One strip of
+   three facts, each with a status mark; the colour says in force, waiting or broken, and the
+   words say the same, so neither carries it alone. ---- */
+.ov-integrity { grid-column: 1 / -1; }
+.ov-integrity h2.ov-card-title { margin: 0; }
+.ov-card-link {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--cyan);
+    text-decoration: none;
+}
+.ov-card-link:hover, .ov-card-link:focus-visible { text-decoration: underline; }
+.ov-int-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0;
+}
+.ov-int-item {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    padding: 2px 16px;
+    border-left: 1px solid var(--line);
+}
+.ov-int-item:first-child { border-left: none; padding-left: 0; }
+.ov-int-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+}
+.ov-int-value {
+    font-family: var(--font-mono);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--ink);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.ov-int-value::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--steel);
+    flex: none;
+}
+.ov-int-item[data-tone="ok"] .ov-int-value::before { background: var(--green); }
+.ov-int-item[data-tone="warn"] .ov-int-value::before { background: var(--amber); }
+.ov-int-item[data-tone="danger"] .ov-int-value::before { background: var(--red); }
+.ov-int-item[data-tone="danger"] .ov-int-value { color: var(--red); }
+.ov-int-sub { font-size: 11px; color: var(--ink-dim); line-height: 1.4; overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+    .ov-int-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+    .ov-int-item { border-left: none; padding-left: 0; }
+}
+
+/* ---- The window before (lab/strategy/009 A4): two more columns, and the change beneath a
+   cross-tab count. A change is neutral in colour: more verifications is not good or bad;
+   only the failure mark, which says why, takes the alarm colour. ---- */
+.ov-control-pair { display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+/* Compared, the list is a table of figures: the volume bar repeats the # column, so it gives way
+   to the two the comparison adds, and every column keeps its whole value. */
+.bd-table-compare .bd-row { grid-template-columns: minmax(0, 1fr) 48px 48px 56px 70px; }
+.bd-table-compare .ov-bar-track,
+.bd-table-compare .bd-row-barhead { display: none; }
+.bd-row-before { color: var(--ink-dim); }
+.bd-row-change { font-family: var(--font-mono); font-size: 12px; color: var(--ink-dim); text-align: right; }
+.bd-change-up, .bd-change-down { color: var(--ink); }
+.bd-rate-rose {
+    color: var(--red);
+    font-weight: 700;
+    background: var(--red-tint);
+    border-radius: 3px;
+    padding: 1px 4px;
+}
+.bd-mx-delta {
+    display: block;
+    font-size: 10px;
+    color: var(--ink-dim);
+    margin-top: 2px;
+    font-weight: 400;
+}

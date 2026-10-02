@@ -246,6 +246,16 @@ capped at `_ATLAS_MAX_CATEGORIES` (50; `?limit=` lowers it). Verification:
 `?search=` filters labels (case-insensitive, 60 characters); `truncated` is true when the cap
 was reached.
 
+`?compare=previous` adds the window of the same nominal length immediately before
+(`previous: {since, until, incomplete}`, refused for `all`, which has nothing before it). Each
+listed category also carries `prev_total` and `prev_failure`, withheld against that window's
+own scope; `change`, only when both counts are shown, since a change computed from a withheld
+count would give it back; and `failure_rose`, true when the failure share at least doubled with
+ten or more extra failures, `null` unless all four counts are shown. The `Fewer than 5 each`
+row is not compared: its members change from one window to the next. When a purge has taken
+the hourly rollup the window before would read, `incomplete` says so and nothing is compared.
+A question is logged as narrow when either window is.
+
 ```json
 {"kind": "verification", "dimension": "agency", "limit": 40, "search": null,
  "truncated": false, "count": 3, "window": "7d", "grain": "hour", "since": "...", "min_cell": 5,
@@ -260,7 +270,10 @@ was reached.
 value for each. Verification rows `agency|context|jurisdiction|algorithm`, columns
 `outcome|disclosure`; lifecycle rows `agency|event_type`, column `event_type`. A row's total is
 withheld when the cells withheld beneath it sum to less than the minimum, so it cannot be
-subtracted back into them; `truncated` as for the breakdown.
+subtracted back into them; `truncated` as for the breakdown. `?compare=previous` adds the
+window before as for the breakdown: each listed row's `prev_total` and each of its cells'
+`prev`, withheld by the same rules against that window's scope, and `change` where both are
+shown.
 
 ```json
 {"kind": "verification", "row": "agency", "col": "outcome", "limit": 20, "truncated": false,
@@ -308,6 +321,24 @@ Volume over the window broken out by one dimension (verification
 `labels`, the top six by volume with `Other` last, and `points: [{ts, values: {label: n}}]` for
 every bucket (`?buckets=`, default 48, `(0, 240]`). A category below the minimum over the whole
 window joins `Other`, so the bands do not name small categories.
+
+### `GET /api/atlas/integrity`
+
+The system's integrity beside its activity, not windowed: the latest state epoch and anchor
+batch, read by their keys, and the Athena board's verdict on the database the application is
+connected to (rules in force, not in force, and held by repository checks only). Header rows
+only: an epoch's leaves name credentials and are not read, nor is the operator who closed it.
+`committed` and `size` are counts, withheld below 5. `null` when there is none yet; `chain` and
+`tx` are `null` until a batch is committed to one.
+
+```json
+{"min_cell": 5,
+ "epoch": {"id": 41, "closed_at": "2026-10-02T14:00:00", "valid_from": "2026-10-02T14:00:00",
+           "valid_until": "2026-10-03T14:00:00", "committed": 2210},
+ "anchor": {"id": 17, "created_at": "2026-10-02T13:00:00", "size": null, "chain": null, "tx": null},
+ "board": {"rules": 11, "in_force": 10, "not_in_force": 0, "repository": 1,
+           "verified_at": "2026-10-02T16:04:11"}}
+```
 
 ### `GET /api/atlas/cache-stats`
 

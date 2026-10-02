@@ -28,6 +28,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Exact enrolment counts by jurisdiction and status (`EnrollmentCount`), kept by triggers; the application role cannot read the per-person row.
 - An index for counting the active credentials that carry a duress code.
 - Hourly and daily activity counts by authority, context and outcome, kept by triggers; no person, place or minute.
+- The Atlas Overview shows the latest state epoch and anchor batch, and the Athena board's verdict on the database.
+- Atlas breakdowns and cross-tabs compare with the window before; a change shows only where both counts do.
 
 ### Changed
 
