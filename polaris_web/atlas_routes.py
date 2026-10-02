@@ -32,7 +32,7 @@ import threading
 import time as _time
 from datetime import timedelta
 
-from flask import abort, g, jsonify, render_template, request
+from flask import abort, g, jsonify, render_template, request, session
 
 import app as _app          # for the two values app.py owns and callers repoint; see below
 import security
@@ -216,8 +216,22 @@ _atlas_cache_lock = threading.Lock()
 _atlas_cache_stats = {'hits': 0, 'misses': 0, 'expired': 0, 'evicted': 0}
 
 
+def _atlas_cache_scope():
+    """Whom an answer was computed for: the authority the signed-in operator is bound to, or
+    None. Row-level security answers a bound operator for that authority alone (the request
+    tells the database who is asking, app._apply_operator_binding), so an answer cached for one
+    scope is never served to another. Until 2026-10-02 the key held only the question, and an
+    unbound administrator's breakdown of every authority reached an operator bound to one."""
+    try:
+        return session.get('operator_agency_id') if session.get('logged_in') else None
+    except RuntimeError:     # no request: a CLI or a test outside one, unscoped as the database is
+        return None
+
+
 def _atlas_cache_get(key):
-    """Return the cached payload if fresh, else None. Thread-safe."""
+    """Return the cached payload if fresh, else None. Thread-safe. The key is the question and
+    whom it was answered for."""
+    key = (_atlas_cache_scope(), key)
     if _ATLAS_CACHE_TTL_SECONDS <= 0:
         return None
     # Live simulation mode wants the console to update as events stream in, so it
@@ -250,7 +264,9 @@ def _atlas_cache_get(key):
 
 
 def _atlas_cache_set(key, payload):
-    """Store payload with current timestamp. Evict oldest if at capacity."""
+    """Store payload with current timestamp, for the scope it was answered for. Evict oldest if
+    at capacity."""
+    key = (_atlas_cache_scope(), key)
     if _ATLAS_CACHE_TTL_SECONDS <= 0:
         return
     now = _time.time()
