@@ -7286,8 +7286,8 @@ class BoundedConsoleTests(PolarisTestCase):
         body = r.get_data(as_text=True)
         self.assertIn('the first 3 rows', body)
         self.assertIn('returned more than 3 rows', body)
-        self.assertIn('<td>3</td>', body)
-        self.assertNotIn('<td>4</td>', body)
+        cells = re.findall(r'<td[^>]*>\s*(.*?)\s*</td>', body, re.S)
+        self.assertEqual(cells, ['1', '2', '3'])
         r = self._post('/sql', data={'sql': 'SELECT n FROM generate_series(1, 2) n'})
         self.assertNotIn('returned more than', r.get_data(as_text=True), 'a small result is whole')
 
@@ -7339,7 +7339,7 @@ class BoundedConsoleTests(PolarisTestCase):
         self.assertIn('One statement at a time', body)
         self.assertNotIn('<table class="data">', body)
         r = self._post('/sql', data={'sql': "SELECT ';' AS semicolon -- ; a comment\n"})
-        self.assertIn('<td>;</td>', r.get_data(as_text=True))
+        self.assertEqual(re.findall(r'<td[^>]*>\s*(.*?)\s*</td>', r.get_data(as_text=True), re.S), [';'])
         for text, n in (("SELECT 1;", 1), ("SELECT 'a'';b'", 1), ("SELECT E'a\\';b'", 1),
                         ("SELECT 'a\\'; SELECT 2", 2), ("SELECT $t$ ; $t$", 1),
                         ("SELECT 1 /* ; /* ; */ ; */", 1), ('SELECT "a;b"', 1),
