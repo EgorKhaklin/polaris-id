@@ -10405,6 +10405,8 @@ class AtlasArithmeticTests(_AtlasCase):
 
     def test_the_lifecycle_stream_counts_every_transition(self):
         """A transition no authority made is counted as 'System / device', not dropped."""
+        _sql("INSERT INTO TokenLifecycleEvent (token_id, actor_agency_id, event_type) "
+             "VALUES (1, NULL, 'DEVICE_BOUND'), (1, NULL, 'DEVICE_REVOKED')", fetch='none')
         raw = _sql("SELECT count(*) AS n FROM TokenLifecycleEvent", fetch='one')['n']
         lost = _sql("SELECT count(*) AS n FROM TokenLifecycleEvent "
                     " WHERE event_type IN ('REVOKED', 'LOST')", fetch='one')['n']
@@ -10728,7 +10730,7 @@ class AtlasParameterTests(_AtlasCase):
     def test_an_authority_is_written_in_ascii_digits(self):
         """str.isdigit() takes a superscript two and an Arabic-Indic three, which the SQL would
         then match as text against nothing."""
-        for bad in ('%C2%B2', '%D9%A3', '1e3', '-1', '+1', '0x10', '12345678901'):
+        for bad in ('%C2%B2', '%D9%A3', '1e3', '-1', '%2B1', '0x10', '12345678901'):
             with self.subTest(bad):
                 r = self.client.get('/api/atlas/stats?window=all&agencies=' + bad)
                 self.assertEqual(r.status_code, 400)
@@ -13432,7 +13434,7 @@ class RouteGuardMatrixTests(PolarisTestCase):
     #: by hand, which is what the two lists they replace were. Changing a guard is
     #: meant to fail here: updating the line is the moment somebody confirms the
     #: new exposure is intended.
-    EXPECTED_LOGIN_ONLY = 44
+    EXPECTED_LOGIN_ONLY = 41   # 44 until 009 step 4 withdrew the Atlas cluster, hexagon and timeline layers
     ROLE_GATES = {
         '/agencies/<int:ag_id>/delete': ('admin',),
         '/agencies/<int:ag_id>/edit': ('admin',),
@@ -19856,8 +19858,9 @@ class AtlasCacheScopeTests(PolarisTestCase):
                 self.fail('polaris_app unreachable in CI: %s' % exc)
             self.skipTest('polaris_app unreachable: %s' % exc)
         # Two authorities with at least the minimum cell each, so each is named rather than
-        # folded: the sample's bank has six, and authority 1 is given six more.
-        _atlas_events(6, agency=1)
+        # folded; authority 1, with the most, is the one an operator is bound to.
+        _atlas_events(7, agency=1)
+        _atlas_events(6, agency=2)
         self.agency = _sql("SELECT requesting_agency_id AS a, count(*) AS n FROM VerificationEvent "
                            "GROUP BY 1 ORDER BY n DESC, a LIMIT 1", fetch='one')['a']
         self.own = _sql("SELECT name FROM Agency WHERE agency_id = %s", (self.agency,),

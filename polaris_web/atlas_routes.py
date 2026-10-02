@@ -582,8 +582,8 @@ def api_atlas_series():
             r = by_ts.get(t)
             n = int(r['n_total']) if r else 0
             points.append({'ts': _ts(t), 'n_total': _part(n, scope),
-                           'n_failure': _part(r['n_failure'], n) if r else None,
-                           'n_zk': _part(r['n_zk'], n) if r else None})
+                           'n_failure': _part(r['n_failure'] if r else 0, n),
+                           'n_zk': _part(r['n_zk'] if r else 0, n)})
         # The window's own totals, withheld as its parts are: the page shows these, never a sum of
         # the points, which would read a withheld bucket as none.
         first = rows[0] if rows else {'scope_failure': 0, 'scope_zk': 0}
@@ -634,7 +634,7 @@ def api_atlas_heatmap():
                 r = by_cell.get((dow, hour))
                 n = int(r['n']) if r else 0
                 cells.append({'dow': dow, 'hour': hour, 'n': _part(n, scope),
-                              'n_failure': _part(r['n_failure'], n) if r else None})
+                              'n_failure': _part(r['n_failure'] if r else 0, n)})
         payload = dict(kind=kind, cells=cells, **dict(
             _window_fields(f), grain='hour', since=since.isoformat() if since else None))
         return payload, scope
