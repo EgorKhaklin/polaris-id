@@ -1357,7 +1357,9 @@ without requiring an active token" requirement at the aggregate level.
 | `jurisdiction` | string | optional | ISO 3166-2 jurisdiction filter (e.g., `US-PA`); omit for all jurisdictions |
 
 The page renders a pivot table (jurisdiction down the side, status
-across the top) plus the five-status vocabulary glossary.
+across the top) plus the five-status vocabulary glossary. The counts are
+maintained (`EnrollmentCount`, lab/strategy/008), so the page costs the same at
+any population; the filter offers the jurisdictions that have people in them.
 Per-individual enumeration of `NOT_ENROLLED` is deliberately NOT
 exposed as a route: an admin who needs it writes the join against
 `IndividualCurrentEnrollment` directly, which leaves an

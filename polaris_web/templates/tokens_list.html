@@ -43,23 +43,26 @@
 <table class="data">
     <thead>
         <tr>
-            <th scope="col">Credential</th><th scope="col">Token value</th><th scope="col">Holder</th><th scope="col">Issuer</th>
-            <th scope="col">Algorithm</th><th scope="col">Status</th><th scope="col">Issued</th>
-            <th scope="col">Expires</th><th scope="col"><span class="visually-hidden">Timeline</span></th>
+            {# On a phone the row keeps what identifies it and its state; the rest is on the
+               credential's page (.col-wide, polaris.css). #}
+            <th scope="col">Credential</th><th scope="col">Status</th><th scope="col">Holder</th>
+            <th scope="col" class="col-wide">Token value</th><th scope="col" class="col-wide">Issuer</th>
+            <th scope="col" class="col-wide">Algorithm</th><th scope="col" class="col-wide">Issued</th>
+            <th scope="col" class="col-wide">Expires</th><th scope="col" class="col-wide"><span class="visually-hidden">Timeline</span></th>
         </tr>
     </thead>
     <tbody>
         {% for r in rows %}
         <tr data-key="{{ r.token_id }}">
             <td><a class="mono" href="{{ url_for('tokens_detail', tok_id=r.token_id) }}">#{{ r.token_id }}</a></td>
-            <td class="mono">{{ r.token_value }}</td>
-            <td><a href="{{ url_for('investigate_individual', ind_id=r.individual_id) }}">{{ r.legal_name }}</a></td>
-            <td>{{ r.issuer_name }}</td>
-            <td><span class="mono">{{ r.alg_name }}</span>{% if r.quantum_resistant %}<span class="type-tag type-tag-pq">PQ</span>{% endif %}</td>
             <td>{{ ui.pill(r.status) }}</td>
-            <td class="mono">{{ r.issued_date.strftime('%Y-%m-%d') }}</td>
-            <td class="mono">{{ r.expiration_date.strftime('%Y-%m-%d') if r.expiration_date else 'None' }}</td>
-            <td><a class="small" href="{{ url_for('investigate_token', tok_id=r.token_id) }}">Timeline</a></td>
+            <td><a href="{{ url_for('investigate_individual', ind_id=r.individual_id) }}">{{ r.legal_name }}</a></td>
+            <td class="mono col-wide">{{ r.token_value }}</td>
+            <td class="col-wide">{{ r.issuer_name }}</td>
+            <td class="col-wide"><span class="mono">{{ r.alg_name }}</span>{% if r.quantum_resistant %}<span class="type-tag type-tag-pq">PQ</span>{% endif %}</td>
+            <td class="mono col-wide">{{ r.issued_date.strftime('%Y-%m-%d') }}</td>
+            <td class="mono col-wide">{{ r.expiration_date.strftime('%Y-%m-%d') if r.expiration_date else 'None' }}</td>
+            <td class="col-wide"><a class="small" href="{{ url_for('investigate_token', tok_id=r.token_id) }}">Timeline</a></td>
         </tr>
         {% else %}
         <tr><td colspan="9" class="empty">No credential matches the filter.</td></tr>

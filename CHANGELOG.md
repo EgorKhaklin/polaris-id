@@ -22,6 +22,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A credential's page offers the operations its state admits; a person's page offers recovery and the warrant audit.
 - The verification log filters by credential, and a credential's page links its every verification there.
 - An index on every foreign key between tables that grow with the population, and a test that reads the catalogue for one missing.
+- Exact enrolment counts by jurisdiction and status (`EnrollmentCount`), kept by triggers; the application role cannot read the per-person row.
+- An index for counting the active credentials that carry a duress code.
 
 ### Changed
 
@@ -33,6 +35,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A filtered verification log reads at most 20,000 events for a page and says how far it looked.
 - A credential's page and the investigation pages show the latest rows and cap their lifetime counts.
 - The wording checks read the three pages served without sign-in: landing, sign-in and walkthrough.
+- The enrolment summary reads the maintained counts: 7.2 s to 14.5 ms at two million people, in 64-bit counts.
+- The credential page is rebuilt: facts beside proofs, one table per kind of row, empty kinds in one line.
+- On a phone, each list keeps a row's identifier, state and holder; the rest is on the record's page.
+- A status change is offered only where the database makes it; revocation keeps its own operation.
 
 ### Fixed
 
@@ -48,6 +54,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Public pages: no empty band above the first line, a visible secondary action, a four-column feature grid.
 - The duress wording check passed the noun "compulsion resistance"; API.md and DATA-MODEL.md named the mechanism with it.
 - API.md pointed at `app.py` for the federation check; it is in `verification_routes.py`.
+- The signals queue said "N of M active" while counting every credential with a duress code, in 923 ms.
+- Delete buttons for a person, a credential and an authority, which the database always refuses, are gone.
+- A status change to a number that is no credential reported success.
+- A refused deep page number now says what to do instead and offers the list back.
 
 ## v1.0.0-rc.70 — 2026-10-01 (the three verifiers read every input alike)
 

@@ -418,6 +418,31 @@ BEGIN
     END IF;
 END$$;
 
+-- 2026-10-02 (lab/strategy/008, step 4). The enrolment counts, likewise: written only by the
+-- owner's triggers and routines; the application role reads them and may fold. EnrollmentCurrent,
+-- each person's status behind them, it may not even read: the summary needs only the totals, and
+-- a per-person status table would make the list of everyone NOT_ENROLLED cheaper to pull than
+-- docs/design/tiered-enrollment.md means it to be (it stays where it was, behind the view). Nor may
+-- it write one: that would set a person's enrolment without an event, which the recorder rule on
+-- EnrollmentStatusEvent refuses (1.0.0-rc.39). The full rebuild SHARE-locks Individual and the
+-- event table, and is the owner's.
+REVOKE SELECT, INSERT, UPDATE, DELETE ON EnrollmentCurrent FROM polaris_app;
+REVOKE INSERT, UPDATE, DELETE ON EnrollmentCount, EnrollmentCountDelta FROM polaris_app;
+DO $$
+DECLARE
+    v_sig TEXT;
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'polaris_app') THEN
+        FOR v_sig IN
+            SELECT p.oid::regprocedure::text
+              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = 'public' AND p.proname = 'uc_rebuild_enrollment_counts'
+        LOOP
+            EXECUTE format('REVOKE EXECUTE ON ROUTINE %s FROM polaris_app', v_sig);
+        END LOOP;
+    END IF;
+END$$;
+
 -- 2026-09-25: the minimum anonymity set for a zero-knowledge epoch, 20 unless something already
 -- set it (the notional sample data sets 1, and says why). uc11_close_epoch refuses to close an
 -- epoch below it and the verifier refuses a proof against one.

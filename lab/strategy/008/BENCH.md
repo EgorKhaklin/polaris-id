@@ -124,6 +124,24 @@ three runs after a warm-up. A deep offset page is now refused (400) by design, a
 | `/investigate/individual/<newest>` | 36.9 | 35.7 | 36.9 | 1.0 | holds |
 | `/individuals/enrollment` | 16.5 | 6838.0 | 6429.7 | 390 | fails (step 4) |
 
+## Step 4, first part: the enrolment summary, the signals queue and the credential page (2026-10-02)
+
+The same harness and scale database (2,000,012 people, 3,640,007 credentials, 4,000,013 enrolment
+events), with migrations 2026-10-02-001 and 002 applied: 23.3 s and 1.5 s, the first being the
+rebuild that fills each person's kept status and the totals. "Before" is step 3's code on the same
+database; seed and scale after are five runs after a warm-up. At two million people the summary
+equals a full grouping of `IndividualCurrentEnrollment` row for row.
+
+| Page | Seed (ms) | Scale before (ms) | Scale after (ms) | After / seed | Falsifier 1 |
+|---|---|---|---|---|---|
+| `/individuals/enrollment` | 13.4 | 7236.5 | 14.5 | 1.1 | holds |
+| `/duress` | 23.8 | 923.3 | 27.4 | 1.2 | holds |
+| `/tokens/1` (rebuilt) | 53.6 | 52.2 | 53.0 | 1.0 | holds |
+| `/tokens/<newest>` (rebuilt) | 63.6 | 77.7 | 55.2 | 0.9 | holds |
+
+The credential page's time on either database is mostly verifying each signature at use; it
+reads one credential's rows through an index, and its two anchor tables are now one query.
+
 ## Estimates checked against exact counts (falsifier 4)
 
 Both estimators the step first tried were measured here and dropped (record 008, section 11): a

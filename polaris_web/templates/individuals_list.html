@@ -1,7 +1,9 @@
 {# People (docs/design/console-design.md). Paged by key, so a page costs the same at any depth; a
    person is found by number, or by name with the date of birth, never by paging to them
    (lab/strategy/008). A person is not owned by an authority: every operator sees the same list.
-   CSP C5: the delete confirmation is static/confirm-submit.js reading data-confirm. #}
+   No delete action: every person has an append-only enrolment event that refers to them, so the
+   database refuses the delete in every case; the page says how a person's name is erased instead.
+   CSP C5: no inline script. #}
 {% extends "base.html" %}
 {% from "_pager.html" import render_pager %}
 {% block title %}People{% endblock %}
@@ -21,8 +23,8 @@
 <table class="data">
     <thead>
         <tr>
-            <th scope="col">Person</th><th scope="col">Name</th><th scope="col">Born</th>
-            <th scope="col">Jurisdiction</th><th scope="col">Enrolled</th>
+            <th scope="col">Person</th><th scope="col">Name</th><th scope="col" class="col-wide">Born</th>
+            <th scope="col" class="col-wide">Jurisdiction</th><th scope="col" class="col-wide">Enrolled</th>
             <th scope="col"><span class="visually-hidden">Actions</span></th>
         </tr>
     </thead>
@@ -31,18 +33,13 @@
         <tr data-key="{{ r.individual_id }}">
             <td><a class="mono" href="{{ url_for('investigate_individual', ind_id=r.individual_id) }}">#{{ r.individual_id }}</a></td>
             <td><a href="{{ url_for('investigate_individual', ind_id=r.individual_id) }}">{{ r.legal_name }}</a></td>
-            <td class="mono">{{ r.date_of_birth.strftime('%Y-%m-%d') }}</td>
-            <td class="mono">{{ r.jurisdiction }}</td>
-            <td class="mono">{{ r.enrollment_date.strftime('%Y-%m-%d') }}</td>
+            <td class="mono col-wide">{{ r.date_of_birth.strftime('%Y-%m-%d') }}</td>
+            <td class="mono col-wide">{{ r.jurisdiction }}</td>
+            <td class="mono col-wide">{{ r.enrollment_date.strftime('%Y-%m-%d') }}</td>
             <td class="row-actions">
                 <a class="small" href="{{ url_for('tokens_list', individual_id=r.individual_id) }}">Credentials</a>
                 {% if current_user.role == 'admin' %}
                 <a class="small" href="{{ url_for('individuals_edit', ind_id=r.individual_id) }}">Edit</a>
-                <form method="post" action="{{ url_for('individuals_delete', ind_id=r.individual_id) }}" class="inline-form"
-                      data-confirm="Delete person #{{ r.individual_id }}? This fails while any credential names them.">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-                </form>
                 {% endif %}
             </td>
         </tr>
@@ -56,4 +53,7 @@
                 cursor_mode=cursor_mode|default(false),
                 first_cursor=first_cursor|default(none),
                 last_cursor=last_cursor|default(none)) }}
+<p class="footnote">A person is never deleted: their enrolment history is append-only. Erasure replaces
+   the name with a pseudonym and keeps the record (<span class="mono">uc_pseudonymize_individual</span>,
+   run by the database owner; see the privacy notes).</p>
 {% endblock %}

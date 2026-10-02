@@ -1,15 +1,33 @@
 {% extends "base.html" %}
-{% block title %}Token #{{ token.token_id }}{% endblock %}
+{% block title %}Credential #{{ token.token_id }}{% endblock %}
 {% block content %}
 {% import "_ui.html" as ui with context %}
-<h1>
-    Token #{{ token.token_id }}
-    <span class="pill pill-{{ token.status|lower }}" style="font-size: 13px; vertical-align: middle;">{{ token.status }}</span>
-</h1>
+{# A credential's page (docs/design/console-design.md): what it is, the operations its state admits,
+   then what has happened to it. Every section reads this credential's rows through an index and
+   shows the latest of whatever grows (lab/strategy/008). A section with nothing in it is named in
+   one closing line rather than drawn as an empty table. The duress enrolment appears only for the
+   roles that may learn it (_duress_visible_to_viewer): an operator's screen, the surface a coercer
+   can watch, never carries it, label included. CSP C5: no inline script. #}
+<header class="page-head">
+    <div class="page-head-text">
+        <p class="eyebrow">Credential</p>
+        <div class="record-title">
+            <h1>Credential #{{ token.token_id }}</h1>
+            {{ ui.pill(token.status) }}
+        </div>
+        <p class="lede">Held by <a href="{{ url_for('investigate_individual', ind_id=token.individual_id) }}">{{ token.legal_name }}</a>,
+           issued by {{ token.issuer_name }}.</p>
+    </div>
+    <div class="page-head-actions">
+        <a class="btn btn-secondary" href="{{ url_for('investigate_token', tok_id=token.token_id) }}">{{ ui.icon('clock') }}Timeline</a>
+        <a class="btn btn-secondary" href="{{ url_for('tokens_export', tok_id=token.token_id) }}" download
+           title="Everything an operator may see about this credential, as JSON. The download is recorded.">{{ ui.icon('download') }}Download data</a>
+    </div>
+</header>
 
-{# The operations act on this credential from here (docs/design/console-design.md: actions live on
-   the thing they act on); each opens on this credential and lists nothing (lab/strategy/008). Only
-   the actions its state admits are offered; the procedures refuse the rest regardless. #}
+{# The operations act on this credential from here (actions live on the thing they act on); each
+   opens on this credential and lists nothing (lab/strategy/008). Only the ones its state admits
+   are offered; the procedures refuse the rest regardless. #}
 {% if current_user.role in ('admin', 'operator') %}
 <nav class="record-actions" aria-label="Act on this credential">
     {% if token.status == 'ACTIVE' %}
@@ -26,367 +44,277 @@
 </nav>
 {% endif %}
 
-<dl class="detail-grid">
-    <div><dt>Token Value</dt><dd class="mono">{{ token.token_value }}</dd></div>
-    <div><dt>Physical Serial</dt><dd class="mono">{{ token.physical_serial }}</dd></div>
-    <div><dt>Hardware Model</dt><dd>{{ token.hardware_model or absent }}</dd></div>
-    <div><dt>Holder</dt><dd>{{ token.legal_name }} (#{{ token.individual_id }})</dd></div>
-    <div><dt>Issuer</dt><dd>{{ token.issuer_name }}</dd></div>
-    <div><dt>Algorithm</dt><dd class="mono">{{ token.alg_name }} {% if token.quantum_resistant %}<span class="pill pill-active">PQ</span>{% else %}<span class="pill pill-revoked">CLASSICAL</span>{% endif %}</dd></div>
-    <div><dt>Biometric Binding</dt><dd>{{ token.biometric_binding_type }}</dd></div>
-    <div><dt>Liveness Check</dt><dd>{{ token.liveness_check_type or absent }}</dd></div>
-    <div><dt>Issued</dt><dd>{{ token.issued_date.strftime('%Y-%m-%d %H:%M') }}</dd></div>
-    <div><dt>Activated</dt><dd>{{ token.activated_date.strftime('%Y-%m-%d %H:%M') if token.activated_date else not_yet }}</dd></div>
-    <div><dt>Expires</dt><dd>{{ token.expiration_date.strftime('%Y-%m-%d') if token.expiration_date else no_expiry }}</dd></div>
-    <div><dt>Activation Sequence</dt><dd>{{ token.activation_sequence }}</dd></div>
-    {% if token.predecessor_token_id %}
-    <div><dt>Predecessor</dt><dd><a href="{{ url_for('tokens_detail', tok_id=token.predecessor_token_id) }}">Token #{{ token.predecessor_token_id }}</a></dd></div>
-    {% endif %}
-</dl>
-
-{# Role-gated: tokens_transition requires admin/operator. Showing the form to
-   an auditor only manufactures a 403 error page on submit. #}
-{% if current_user.role in ('admin', 'operator') %}
-<h2>State Transition</h2>
-<form method="post" action="{{ url_for('tokens_transition', tok_id=token.token_id) }}" class="standard">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="form-row">
-        <div class="form-group">
-            <label for="new_status">Transition To</label>
-            <select id="new_status" name="new_status" required>
-                {% for s in ['ACTIVE', 'DORMANT', 'REVOKED', 'LOST', 'EXPIRED'] %}
-                    {% if s != token.status %}
-                        <option value="{{ s }}">{{ s }}</option>
-                    {% endif %}
-                {% endfor %}
-            </select>
-            <span class="help">The state-machine trigger rejects any transition the lifecycle does not allow.</span>
-        </div>
-    </div>
-    <div class="form-actions">
-        <button type="submit" class="btn">Apply Transition</button>
-    </div>
-</form>
-{% endif %}
-
-<h2>Lifecycle History ({% if lifecycle_more %}the latest {{ lifecycle|length }}{% else %}{{ lifecycle|length }} event{{ '' if lifecycle|length == 1 else 's' }}{% endif %})</h2>
-<div class="table-wrap">
-<table class="data">
-    <thead>
-        <tr><th>Event</th><th>Type</th><th>Actor</th><th>Timestamp</th><th>Reason</th></tr>
-    </thead>
-    <tbody>
-        {% for e in lifecycle %}
-        <tr>
-            <td>#{{ e.event_id }}</td>
-            <td><strong>{{ e.event_type }}</strong></td>
-            <td>{{ e.actor_name or absent }}</td>
-            <td>{{ e.event_timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
-            <td class="mono">{{ e.reason_code or absent }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="5" class="empty">No lifecycle events.</td></tr>
-        {% endfor %}
-    </tbody>
-</table>
-</div>
-
-<h2>Verification Events ({% if verifications_more %}the latest {{ verifications|length }}{% else %}{{ verifications|length }}{% endif %})</h2>
-{% if verifications_more %}
-<p class="help"><a href="{{ url_for('verifications_list', token_id=token.token_id) }}">Every verification of this credential</a>, in the verification log.</p>
-{% endif %}
-<div class="table-wrap">
-<table class="data">
-    <thead>
-        <tr><th>Event</th><th>Context</th><th>Verifier</th><th>Outcome</th><th>Disclosure</th><th>Timestamp</th></tr>
-    </thead>
-    <tbody>
-        {% for v in verifications %}
-        <tr>
-            <td>#{{ v.event_id }}</td>
-            <td>{{ v.context_type }}</td>
-            <td>{{ v.verifier_name }}</td>
-            <td><span class="pill pill-{{ v.outcome|lower }}">{{ v.outcome }}</span></td>
-            <td><span class="pill pill-{{ v.disclosure_level|lower }}">{{ v.disclosure_level }}</span></td>
-            <td>{{ v.event_timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="6" class="empty">No verifications yet (or all were ZERO_KNOWLEDGE, they don't reference this token by design).</td></tr>
-        {% endfor %}
-    </tbody>
-</table>
-</div>
-
-<h2>Device Bindings ({% if devices_more %}the first {{ devices|length }}{% else %}{{ devices|length }}{% endif %})</h2>
-<div class="table-wrap">
-<table class="data">
-    <thead>
-        <tr><th>Binding</th><th>Type</th><th>Fingerprint</th><th>Method</th><th>Status</th><th>Authorized</th><th>Expires</th></tr>
-    </thead>
-    <tbody>
-        {% for d in devices %}
-        <tr>
-            <td>#{{ d.binding_id }}</td>
-            <td>{{ d.device_type }}</td>
-            <td class="mono">{{ d.device_fingerprint[:30] }}{% if d.device_fingerprint|length > 30 %}…{% endif %}</td>
-            <td class="mono">{{ d.binding_method }}</td>
-            <td><span class="pill pill-{{ d.status|lower }}">{{ d.status }}</span></td>
-            <td>{{ d.authorized_date.strftime('%Y-%m-%d') }}</td>
-            <td>{{ d.expires_date.strftime('%Y-%m-%d') if d.expires_date else no_expiry }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="7" class="empty">No device bindings.</td></tr>
-        {% endfor %}
-    </tbody>
-</table>
-</div>
-
-<h2>Blockchain Anchors</h2>
-<div class="table-wrap">
-<table class="data">
-    <thead>
-        <tr><th>Anchor</th><th>DID</th><th>Network</th><th>Anchored</th><th>Status</th></tr>
-    </thead>
-    <tbody>
-        {% for a in anchors %}
-        <tr>
-            <td>#{{ a.anchor_id }}</td>
-            <td class="mono">{{ a.did[:50] }}{% if a.did|length > 50 %}…{% endif %}</td>
-            <td>{{ a.ledger_network }}</td>
-            <td>{{ a.anchored_date.strftime('%Y-%m-%d') }}</td>
-            <td><span class="pill pill-{{ a.status|lower }}">{{ a.status }}</span></td>
-        </tr>
-        {% else %}
-        <tr><td colspan="5" class="empty">Not anchored.</td></tr>
-        {% endfor %}
-    </tbody>
-</table>
-</div>
-
-<h2>Revocation Records</h2>
-<div class="table-wrap">
-<table class="data">
-    <thead>
-        <tr><th>ID</th><th>Revoked By</th><th>Reason</th><th>Effective</th><th>Published Location</th></tr>
-    </thead>
-    <tbody>
-        {% for r in revocations %}
-        <tr>
-            <td>#{{ r.revocation_id }}</td>
-            <td>{{ r.revoker_name }}</td>
-            <td>{{ r.reason_code }}</td>
-            <td>{{ r.effective_date }}</td>
-            <td class="mono">{{ r.published_location or absent }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="5" class="empty">No revocations.</td></tr>
-        {% endfor %}
-    </tbody>
-</table>
-</div>
-
-<h2>Permissions ({{ permissions|length }})</h2>
-<div class="table-wrap">
-<table class="data">
-    <thead>
-        <tr><th>Context</th><th>Level</th><th>Granted</th></tr>
-    </thead>
-    <tbody>
-        {% for p in permissions %}
-        <tr>
-            <td><strong>{{ p.context_type }}</strong></td>
-            <td>{{ p.permission_level }}</td>
-            <td>{{ p.granted_date.strftime('%Y-%m-%d') }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="3" class="empty">No permissions granted (token is in {{ token.status }} state).</td></tr>
-        {% endfor %}
-    </tbody>
-</table>
-</div>
-
-{# The token's presence in the proof and trust tables: TokenSignature,
-   AnchorBatch membership via BlockchainAnchor, TokenStateEpochLeaf, and the
-   duress-enrollment flag (a boolean only; the hash is never rendered and
-   never joined into operator views). #}
-<h2>Signatures, anchors and proofs</h2>
-<div class="v2-substrate-grid">
-    {# The whole card, label included, not just its value. The operator screen is the
-       surface a coercer can observe (docs/design/duress-codes.md), and a card headed
-       "Duress Code" reading NOT ENROLLED tells that coercer as much as ENROLLED does:
-       it says this holder has nothing to fall back on. The view passes None rather than
-       False for a role that may not be told, so an absent card is absence of permission
-       and never absence of enrolment. #}
-    {% if duress_enrolled is not none %}
-    <div class="v2-substrate-card">
-        <div class="v2-substrate-label">Duress Code</div>
-        <div class="v2-substrate-value">
-            {% if duress_enrolled %}
-                <span class="pill pill-success">ENROLLED</span>
-            {% else %}
-                <span class="pill">NOT ENROLLED</span>
+{% set live_signatures = v2_signatures|selectattr('deprecation_date', 'none')|list %}
+<div class="record-layout">
+    <section class="panel" aria-labelledby="facts-h">
+        <div class="panel-head"><h2 id="facts-h">The credential</h2></div>
+        <dl class="facts">
+            <dt>Token value</dt><dd class="mono">{{ token.token_value }}</dd>
+            <dt>Card serial</dt><dd class="mono">{{ token.physical_serial }}</dd>
+            <dt>Hardware model</dt><dd>{{ token.hardware_model or absent }}</dd>
+            <dt>Holder</dt><dd><a href="{{ url_for('investigate_individual', ind_id=token.individual_id) }}">{{ token.legal_name }}</a> <span class="mono muted">#{{ token.individual_id }}</span></dd>
+            <dt>Issuer</dt><dd>{{ token.issuer_name }}</dd>
+            <dt>Algorithm</dt><dd><span class="mono">{{ token.alg_name }}</span>{% if token.quantum_resistant %}<span class="type-tag type-tag-pq">PQ</span>{% endif %}</dd>
+            <dt>Biometric binding</dt><dd>{{ token.biometric_binding_type|replace('_', ' ')|title }}</dd>
+            <dt>Liveness check</dt><dd>{{ token.liveness_check_type|replace('_', ' ')|title if token.liveness_check_type else absent }}</dd>
+            <dt>Issued</dt><dd class="mono">{{ token.issued_date.strftime('%Y-%m-%d %H:%M') }}</dd>
+            <dt>Activated</dt><dd class="mono">{{ token.activated_date.strftime('%Y-%m-%d %H:%M') if token.activated_date else not_yet }}</dd>
+            <dt>Expires</dt><dd class="mono">{{ token.expiration_date.strftime('%Y-%m-%d') if token.expiration_date else no_expiry }}</dd>
+            <dt>Activation sequence</dt><dd>{{ token.activation_sequence }}</dd>
+            {% if token.predecessor_token_id %}
+            <dt>Predecessor</dt><dd><a class="mono" href="{{ url_for('tokens_detail', tok_id=token.predecessor_token_id) }}">#{{ token.predecessor_token_id }}</a></dd>
             {% endif %}
-        </div>
-        <div class="v2-substrate-note">
-            The hash is never displayed; enrollment is shown because it
-            is policy, not content.
-        </div>
+        </dl>
+    </section>
+
+    <div class="record-side">
+        <section class="panel" aria-labelledby="proof-h">
+            <div class="panel-head"><h2 id="proof-h">Signatures, anchors and proofs</h2></div>
+            <dl class="facts">
+                <dt>Live signatures</dt><dd>{{ live_signatures|length }} <span class="muted">of {{ v2_signatures|length }}</span></dd>
+                <dt>Anchors</dt><dd>{{ anchors|length }}{% if anchors_more %}+{% endif %}</dd>
+                <dt>Epoch leaves</dt><dd>{{ v2_epoch_leaves|length }}{% if epoch_leaves_more %}+{% endif %}</dd>
+                <dt>Permitted contexts</dt><dd>{{ permissions|length }}</dd>
+                {# The whole row, label included, only for a role that may learn it: a row headed
+                   "Duress code" reading Not enrolled tells a coercer as much as Enrolled does. The
+                   view passes None rather than False for a role that may not be told, so an absent
+                   row is absence of permission, never absence of enrolment. #}
+                {% if duress_enrolled is not none %}
+                <dt>Duress code</dt><dd>{% if duress_enrolled %}<span class="pill pill-success">Enrolled</span>{% else %}<span class="pill">Not enrolled</span>{% endif %}</dd>
+                {% endif %}
+            </dl>
+            {% if duress_enrolled is not none %}
+            <p class="panel-foot">The duress hash is never shown; enrolment is shown because it is policy, not content.</p>
+            {% endif %}
+        </section>
+
+        {# Role-gated: tokens_transition is admin and operator only. Offered only for the moves a
+           status change can make from this status (STATUS_MOVES); revocation is its own operation. #}
+        {% if current_user.role in ('admin', 'operator') and moves %}
+        <section class="panel" aria-labelledby="status-h">
+            <div class="panel-head"><h2 id="status-h">Change status</h2></div>
+            <form method="post" action="{{ url_for('tokens_transition', tok_id=token.token_id) }}" class="status-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="form-group">
+                    <label for="new_status">From {{ token.status|title }} to</label>
+                    <select id="new_status" name="new_status" required>
+                        {% for s in moves %}<option value="{{ s }}">{{ s|title }}</option>{% endfor %}
+                    </select>
+                </div>
+                <button type="submit" class="btn">Change status</button>
+            </form>
+            <p class="panel-foot">The state machine refuses any move the lifecycle does not allow; the change is recorded as a lifecycle event.</p>
+        </section>
+        {% endif %}
+    </div>
+</div>
+
+{% set empty = [] %}
+
+<section class="record-section" aria-labelledby="life-h">
+    <h2 id="life-h">Lifecycle <span class="count">{% if lifecycle_more %}the latest {{ lifecycle|length }}{% else %}{{ lifecycle|length }}{% endif %}</span></h2>
+    <div class="table-wrap">
+    <table class="data">
+        <thead><tr><th scope="col">Event</th><th scope="col">Type</th><th scope="col">By</th><th scope="col">When (UTC)</th><th scope="col">Reason</th></tr></thead>
+        <tbody>
+            {% for e in lifecycle %}
+            <tr>
+                <td class="mono">#{{ e.event_id }}</td>
+                <td>{{ e.event_type|replace('_', ' ')|title }}</td>
+                <td>{{ e.actor_name or absent }}</td>
+                <td class="mono">{{ e.event_timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td class="mono">{{ e.reason_code or absent }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+
+<section class="record-section" aria-labelledby="ver-h">
+    <h2 id="ver-h">Verifications <span class="count">{% if verifications_more %}the latest {{ verifications|length }}{% else %}{{ verifications|length }}{% endif %}</span></h2>
+    {% if verifications %}
+    <div class="table-wrap">
+    <table class="data">
+        <thead><tr><th scope="col">Event</th><th scope="col">Context</th><th scope="col">Verifier</th><th scope="col">Outcome</th><th scope="col">Disclosure</th><th scope="col">When (UTC)</th></tr></thead>
+        <tbody>
+            {% for v in verifications %}
+            <tr>
+                <td class="mono">#{{ v.event_id }}</td>
+                <td>{{ v.context_type|replace('_', ' ')|title }}</td>
+                <td>{{ v.verifier_name }}</td>
+                <td>{{ ui.pill(v.outcome) }}</td>
+                <td>{{ ui.pill(v.disclosure_level) }}</td>
+                <td class="mono">{{ v.event_timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
     </div>
     {% endif %}
-    <div class="v2-substrate-card">
-        <div class="v2-substrate-label">Active Signatures</div>
-        <div class="v2-substrate-value">
-            {{ v2_signatures|selectattr('deprecation_date', 'none')|list|length }}
-            <span class="footnote">/ {{ v2_signatures|length }} total</span>
-        </div>
-        <div class="v2-substrate-note">Active and deprecated signatures.</div>
+    <p class="section-note">
+        {% if not verifications %}No verification names this credential. {% endif %}A zero-knowledge
+        verification never does, by design (C2).
+        {% if verifications_more %}<a href="{{ url_for('verifications_list', token_id=token.token_id) }}">Every verification of this credential</a> is in the log.{% endif %}
+    </p>
+</section>
+
+{% if v2_signatures %}
+<section class="record-section" aria-labelledby="sig-h">
+    <h2 id="sig-h">Signatures <span class="count">{{ v2_signatures|length }}</span></h2>
+    <div class="table-wrap">
+    <table class="data">
+        <thead><tr><th scope="col">Signature</th><th scope="col">Algorithm</th><th scope="col">Signed (UTC)</th><th scope="col">State</th><th scope="col">Verification</th></tr></thead>
+        <tbody>
+            {% for s in v2_signatures %}
+            <tr>
+                <td class="mono">#{{ s.signature_id }}</td>
+                <td><span class="mono">{{ s.algorithm_name }}</span>{% if s.quantum_resistant %}<span class="type-tag type-tag-pq">PQ</span>{% endif %}</td>
+                <td class="mono">{{ s.signed_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td>
+                    {% if s.deprecation_date %}
+                    <span class="pill pill-warn">Deprecated {{ s.deprecation_date.strftime('%Y-%m-%d') }}</span>
+                    {% else %}
+                    {{ ui.pill('ACTIVE', 'Live') }}
+                    {% endif %}
+                </td>
+                <td>
+                    {# v9.117: verified at use against the public key stored with the signature. #}
+                    {% if s.verification == 'verified' %}
+                    <span class="pill pill-success" title="An ML-DSA signature, verified against the issuer key stored with it">&#10003; verified</span>
+                    {% elif s.verification == 'invalid' %}
+                    <span class="pill pill-failure" title="The signature did not verify against its stored key">&#10007; INVALID</span>
+                    {% elif s.verification == 'unverifiable' %}
+                    <span class="pill pill-warn" title="A real signature; no ML-DSA library here to verify it">verifier offline</span>
+                    {% elif s.verification == 'placeholder_ok' %}
+                    <span class="pill pill-warn" title="The development placeholder: integrity only, no authenticity">placeholder</span>
+                    {% else %}
+                    <span class="pill pill-warn" title="A placeholder that does not match the credential (seed data)">placeholder (unverified)</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
     </div>
-    <div class="v2-substrate-card">
-        <div class="v2-substrate-label">Anchor Receipts</div>
-        <div class="v2-substrate-value">{{ v2_anchor_batches|length }}</div>
-        <div class="v2-substrate-note">BlockchainAnchor rows.</div>
+</section>
+{% else %}{% set _ = empty.append('signatures') %}{% endif %}
+
+{% if devices %}
+<section class="record-section" aria-labelledby="dev-h">
+    <h2 id="dev-h">Device bindings <span class="count">{% if devices_more %}the first {{ devices|length }}{% else %}{{ devices|length }}{% endif %}</span></h2>
+    <div class="table-wrap">
+    <table class="data">
+        <thead><tr><th scope="col">Binding</th><th scope="col">Type</th><th scope="col">Fingerprint</th><th scope="col">Method</th><th scope="col">Status</th><th scope="col">Authorized</th><th scope="col">Expires</th></tr></thead>
+        <tbody>
+            {% for d in devices %}
+            <tr>
+                <td class="mono">#{{ d.binding_id }}</td>
+                <td>{{ d.device_type|replace('_', ' ')|title }}</td>
+                <td class="mono" title="{{ d.device_fingerprint }}">{{ d.device_fingerprint[:24] }}{% if d.device_fingerprint|length > 24 %}…{% endif %}</td>
+                <td class="mono">{{ d.binding_method }}</td>
+                <td>{{ ui.pill(d.status) }}</td>
+                <td class="mono">{{ d.authorized_date.strftime('%Y-%m-%d') }}</td>
+                <td class="mono">{{ d.expires_date.strftime('%Y-%m-%d') if d.expires_date else no_expiry }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
     </div>
-    <div class="v2-substrate-card">
-        <div class="v2-substrate-label">Epoch Leaves</div>
-        <div class="v2-substrate-value">{{ v2_epoch_leaves|length }}{% if epoch_leaves_more %}+{% endif %}</div>
-        <div class="v2-substrate-note">ZK inclusion witnesses.</div>
+</section>
+{% else %}{% set _ = empty.append('device bindings') %}{% endif %}
+
+{% if anchors %}
+<section class="record-section" aria-labelledby="anc-h">
+    <h2 id="anc-h">Anchors <span class="count">{% if anchors_more %}the latest {{ anchors|length }}{% else %}{{ anchors|length }}{% endif %}</span></h2>
+    <div class="table-wrap">
+    <table class="data">
+        <thead><tr><th scope="col">Anchor</th><th scope="col">Identifier</th><th scope="col">Network</th><th scope="col">Anchored</th><th scope="col">Batch</th><th scope="col">On chain</th><th scope="col">Status</th></tr></thead>
+        <tbody>
+            {% for a in anchors %}
+            <tr>
+                <td class="mono">#{{ a.anchor_id }}</td>
+                <td class="mono" title="{{ a.did }}">{{ a.did[:28] }}{% if a.did|length > 28 %}…{% endif %}</td>
+                <td>{{ a.ledger_network }}</td>
+                <td class="mono">{{ a.anchored_date.strftime('%Y-%m-%d') }}</td>
+                <td>{% if a.batch_id %}<a class="mono" href="{{ url_for('anchors_list') }}#batch-{{ a.batch_id }}">#{{ a.batch_id }}</a>{% else %}<span class="pill pill-warn">Pending</span>{% endif %}</td>
+                <td>{% if a.batch_id and a.committed_to_chain %}<span class="pill pill-success">{{ a.external_chain or 'Committed' }}</span>{% else %}<span class="pill">Off chain</span>{% endif %}</td>
+                <td>{{ ui.pill(a.status) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
     </div>
-</div>
+</section>
+{% else %}{% set _ = empty.append('anchors') %}{% endif %}
 
-<h3>Token Signatures</h3>
-<div class="table-wrap">
-<table class="data">
-    <thead>
-        <tr><th>ID</th><th>Algorithm</th><th>Signed</th><th>State</th><th>Verification</th></tr>
-    </thead>
-    <tbody>
-        {% for s in v2_signatures %}
-        <tr>
-            <td class="mono">#{{ s.signature_id }}</td>
-            <td>
-                <span class="pill {% if s.quantum_resistant %}pill-success{% else %}pill-warn{% endif %}">
-                    {{ s.algorithm_name }}
-                </span>
-            </td>
-            <td class="mono">{{ s.signed_at.strftime('%Y-%m-%d %H:%M') }}</td>
-            <td>
-                {% if s.deprecation_date %}
-                    <span class="pill pill-warn">DEPRECATED {{ s.deprecation_date.strftime('%Y-%m-%d') }}</span>
-                {% else %}
-                    <span class="pill pill-success">ACTIVE</span>
-                {% endif %}
-            </td>
-            <td>
-                {# v9.117: verified at use against the public key stored with the signature. #}
-                {% if s.verification == 'verified' %}
-                    <span class="pill pill-success" title="Real ML-DSA-65 signature verified against the stored issuer public key">&#10003; verified</span>
-                {% elif s.verification == 'invalid' %}
-                    <span class="pill pill-failure" title="Signature did NOT verify against its stored public key">&#10007; INVALID</span>
-                {% elif s.verification == 'unverifiable' %}
-                    <span class="pill pill-warn" title="Real signature, but liboqs is unavailable here to verify it">verifier offline</span>
-                {% elif s.verification == 'placeholder_ok' %}
-                    <span class="pill pill-warn" title="Deterministic placeholder (integrity only, not an authenticity proof)">placeholder</span>
-                {% else %}
-                    <span class="pill pill-warn" title="Placeholder signature that does not match the token (legacy/seed data)">placeholder (unverified)</span>
-                {% endif %}
-            </td>
-        </tr>
-        {% else %}
-        <tr><td colspan="5" class="empty">No signatures recorded.</td></tr>
-        {% endfor %}
-    </tbody>
-</table>
-</div>
+{% if v2_epoch_leaves %}
+<section class="record-section" aria-labelledby="leaf-h">
+    <h2 id="leaf-h">Epoch leaves <span class="count">{% if epoch_leaves_more %}the latest {{ v2_epoch_leaves|length }}{% else %}{{ v2_epoch_leaves|length }}{% endif %}</span></h2>
+    <div class="table-wrap">
+    <table class="data">
+        <thead><tr><th scope="col">Leaf</th><th scope="col">Epoch</th><th scope="col">Valid until</th><th scope="col">Closed (UTC)</th><th scope="col">Leaf hash</th></tr></thead>
+        <tbody>
+            {% for l in v2_epoch_leaves %}
+            <tr>
+                <td class="mono">#{{ l.leaf_id }}</td>
+                <td><a class="mono" href="{{ url_for('epochs_list', epoch_id=l.epoch_id) }}">#{{ l.epoch_id }}</a></td>
+                <td class="mono">{{ l.valid_until.strftime('%Y-%m-%d') }}</td>
+                <td class="mono">{{ l.closed_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td class="mono" title="{{ l.leaf_hash }}">{{ l.leaf_hash[:8] }}…{{ l.leaf_hash[-6:] }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+{% else %}{% set _ = empty.append('epoch leaves') %}{% endif %}
 
-<h3>Anchor Batch Membership</h3>
-<div class="table-wrap">
-<table class="data">
-    <thead>
-        <tr>
-            <th>Anchor</th>
-            <th>Batched</th>
-            <th>Batch</th>
-            <th>Algorithm</th>
-            <th>On-Chain</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for a in v2_anchor_batches %}
-        <tr>
-            <td class="mono">#{{ a.anchor_id }}</td>
-            <td class="mono">{{ a.anchor_timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
-            <td>
-                {% if a.batch_id %}
-                    <a href="{{ url_for('anchors_list') }}#batch-{{ a.batch_id }}" class="mono">
-                        #{{ a.batch_id }}
-                    </a>
-                {% else %}
-                    <span class="pill pill-warn">PENDING</span>
-                {% endif %}
-            </td>
-            <td>{{ a.algorithm_name or absent }}</td>
-            <td>
-                {% if a.batch_id and a.committed_to_chain %}
-                    <span class="pill pill-success">{{ a.external_chain or 'COMMITTED' }}</span>
-                {% else %}
-                    <span class="pill">OFF-CHAIN</span>
-                {% endif %}
-            </td>
-        </tr>
-        {% else %}
-        <tr><td colspan="5" class="empty">No anchor receipts.</td></tr>
-        {% endfor %}
-    </tbody>
-</table>
-</div>
+{% if revocations %}
+<section class="record-section" aria-labelledby="rev-h">
+    <h2 id="rev-h">Revocations <span class="count">{{ revocations|length }}</span></h2>
+    <div class="table-wrap">
+    <table class="data">
+        <thead><tr><th scope="col">Revocation</th><th scope="col">By</th><th scope="col">Reason</th><th scope="col">Effective</th><th scope="col">Published at</th></tr></thead>
+        <tbody>
+            {% for r in revocations %}
+            <tr>
+                <td class="mono">#{{ r.revocation_id }}</td>
+                <td>{{ r.revoker_name }}</td>
+                <td class="mono">{{ r.reason_code }}</td>
+                <td class="mono">{{ r.effective_date }}</td>
+                <td class="mono">{{ r.published_location or absent }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+{% else %}{% set _ = empty.append('revocations') %}{% endif %}
 
-<h3>Epoch Leaves</h3>
-<div class="table-wrap">
-<table class="data">
-    <thead>
-        <tr>
-            <th>Leaf</th>
-            <th>Epoch</th>
-            <th>Valid Until</th>
-            <th>Closed</th>
-            <th>Leaf Hash</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for l in v2_epoch_leaves %}
-        <tr>
-            <td class="mono">#{{ l.leaf_id }}</td>
-            <td>
-                <a href="{{ url_for('epochs_list', epoch_id=l.epoch_id) }}" class="mono">
-                    #{{ l.epoch_id }}
-                </a>
-            </td>
-            <td class="mono">{{ l.valid_until.strftime('%Y-%m-%d') }}</td>
-            <td class="mono">{{ l.closed_at.strftime('%Y-%m-%d %H:%M') }}</td>
-            <td class="mono" title="{{ l.leaf_hash }}">
-                {{ l.leaf_hash[:8] }}…{{ l.leaf_hash[-6:] }}
-            </td>
-        </tr>
-        {% else %}
-        <tr><td colspan="5" class="empty">No epoch leaves.</td></tr>
-        {% endfor %}
-    </tbody>
-</table>
-</div>
+{% if permissions %}
+<section class="record-section" aria-labelledby="perm-h">
+    <h2 id="perm-h">Permitted contexts <span class="count">{{ permissions|length }}</span></h2>
+    <div class="table-wrap">
+    <table class="data">
+        <thead><tr><th scope="col">Context</th><th scope="col">Level</th><th scope="col">Granted</th></tr></thead>
+        <tbody>
+            {% for p in permissions %}
+            <tr>
+                <td>{{ p.context_type|replace('_', ' ')|title }}</td>
+                <td class="mono">{{ p.permission_level }}</td>
+                <td class="mono">{{ p.granted_date.strftime('%Y-%m-%d') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+{% else %}{% set _ = empty.append('permitted contexts') %}{% endif %}
 
-<div class="footer-actions">
-    <a href="{{ url_for('tokens_list') }}" class="btn btn-secondary">← Back to Token List</a>
-    <a href="{{ url_for('investigate_token', tok_id=token.token_id) }}" class="btn btn-secondary"
-       title="Full chronological timeline: lifecycle + verification events">Investigate Timeline</a>
-    <a href="{{ url_for('tokens_export', tok_id=token.token_id) }}" class="btn btn-secondary" download
-       title="Download all operator-viewable data for this token as JSON (audit-logged; no secret material)">⤓ Download data (JSON)</a>
-    <span class="filler"></span>
-    {% if current_user.role == 'admin' %}
-    <form method="post" action="{{ url_for('tokens_delete', tok_id=token.token_id) }}" class="inline-form"
-          data-confirm="Delete token #{{ token.token_id }}? This will FAIL because of FK constraints from lifecycle events. Tokens are normally never deleted (audit invariant).">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-danger">Delete Token</button>
-    </form>
-    {% endif %}
-</div>
+{% if empty %}
+<p class="record-none">None recorded: {{ empty|join(', ') }}.</p>
+{% endif %}
+<p class="footnote">A credential is never deleted: its lifecycle is append-only. It ends by revocation,
+   or as lost or expired, and its record stays.</p>
 {% endblock %}

@@ -301,8 +301,10 @@ def verifications_list():
     page   = max(1, _int_arg('page', '1'))
     offset = (page - 1) * page_size
     if offset > population.MAX_OFFSET_ROWS:
-        abort(400, description='page numbers reach %d verifications deep; page with Next'
-                               % population.MAX_OFFSET_ROWS)
+        abort(400, description='Page numbers reach only the first %s verifications. To go further, open '
+                               'the list and use Next: it pages by time, so it reaches '
+                               'any depth at the same cost.'
+                               % format(population.MAX_OFFSET_ROWS, ','))
     sql = base_select + where_sql + (
         " ORDER BY ve.event_timestamp DESC, ve.event_id DESC LIMIT %s OFFSET %s")
     rows = query(sql, params + [page_size + 1, offset])

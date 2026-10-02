@@ -3,9 +3,10 @@
 **Opened 2026-10-01.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md),
 on the owner's direction of 2026-10-01: Polaris is to hold eight billion credentials and more, for
 as long as it runs. State: OPEN. The falsifiers in section 10 were written before the changes they
-judge; sections 11 to 13 record what they found. Steps 1 to 3 (the Overview, the operation
-forms, the lists and record pages) are done; the aggregate pages (enrolment, the signals queue,
-the Atlas), the revocation procedure's counts and the 64-bit keys are next.
+judge; sections 11 to 14 record what they found. Steps 1 to 3 (the Overview, the operation
+forms, the lists and record pages) and the first part of step 4 (the enrolment summary, the
+signals queue) are done; the Atlas, the SQL console's bounds, the revocation procedure's counts
+and the 64-bit keys are next.
 
 ---
 
@@ -201,3 +202,31 @@ a person by number or by the beginning of the name with the date of birth
 - **Falsifier 2** is `test_every_list_and_record_page_has_a_bounded_plan`: the lists by key, a rare
   filter through its window, a credential's page, both investigation pages and the log filtered by
   one credential, run with EXPLAIN ANALYZE over the synthetic population with every bound shrunk.
+
+## 14. What the falsifiers found (step 4, first part: the enrolment summary and the signals queue)
+
+- **The enrolment summary counted everyone on every view.** A person's status is their latest
+  enrolment event, and the summary found that event for every person (a `DISTINCT ON` over all
+  of them) each time it was opened: 7.2 s at two million people. Its count was an `INTEGER`,
+  which a jurisdiction past 2^31 people would overflow. `EnrollmentCurrent` now keeps each
+  person's latest status beside their jurisdiction, maintained by a trigger on the events (the
+  latest in the view's own order, so a late arrival with an earlier stamp does not displace a
+  later one) and one on a change of jurisdiction. `EnrollmentCount` keeps the totals the way
+  `PopulationCount` does. The summary reads them and returns `BIGINT`: 14.5 ms at two million
+  people, 13.4 on the seed, and equal to a full grouping of the view row for row.
+- **The new per-person table is closed to the application role.** It is written only by the
+  owner's triggers, like the counts, and the application role cannot read it: the summary needs
+  only the totals. A per-person status table it could read would make the list of everyone not
+  enrolled cheaper to pull than [tiered enrollment](../../docs/design/tiered-enrollment.md)
+  means it to be.
+- **The signals queue counted every credential twice.** It counted the credentials with a
+  duress code and the active credentials with two full counts (923 ms at two million), and
+  printed the first as "N of M active", though it counted every credential with a code, active
+  or not. Active credentials now come from the maintained counts, and the active ones with a
+  code from a capped count over a partial index (migration 2026-10-02-002): 27 ms.
+- **Falsifier 1** holds for both pages and for the rebuilt credential page (within 1.2 times
+  the seed; [008/BENCH.md](008/BENCH.md), step 4). **Falsifier 5**: the counts are exact by
+  construction; `EnrollmentCountTests` holds them to the view after every kind of write, as the
+  application role and as the owner, and `test_an_enrolment_fold_skips_while_a_rebuild_holds_the_lock`
+  shows the fold and the rebuild exclude each other.
+

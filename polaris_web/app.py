@@ -2152,14 +2152,16 @@ def duress_dashboard():
         filter_criteria={'route': '/duress', 'limit': 200},
         result_row_count=len(rows),
     )
-    enrolled_count = query(
-        "SELECT count(*) AS n FROM IdentityToken WHERE duress_code_hash IS NOT NULL",
-        fetch='one'
-    )['n']
-    active_token_count = query(
-        "SELECT count(*) AS n FROM IdentityToken WHERE status = 'ACTIVE'",
-        fetch='one'
-    )['n']
+    # lab/strategy/008, step 4: both figures cost the same at any population. Active credentials
+    # from the maintained counts (exact; scoped by authority like the credentials); of those, the
+    # ones carrying a duress code counted through idx_identitytoken_duress_enrolled up to a cap
+    # that says "or more". The line said "N of M active" and counted every credential with a
+    # code, active or not.
+    enrolled_count = population.capped(
+        query, "SELECT 1 FROM IdentityToken WHERE duress_code_hash IS NOT NULL AND status = 'ACTIVE'")
+    active_token_count = population.Figure(sum(
+        int(n) for (facet, _agency, item), n in population.counts(query).items()
+        if facet == 'credential_status' and item == 'ACTIVE'))
     return render_template(
         'duress_queue.html',
         rows=rows,
