@@ -6503,6 +6503,24 @@ def test_api_routes_documented_check_fails_in_both_directions(tmp_path):
     assert checks.check_api_routes_documented(tmp_path)[0].level == "FAIL", "must FAIL when the doc names a route that does not exist"
 
 
+def test_openapi_covers_api_v1_check_fails_in_both_directions(tmp_path):
+    (tmp_path / "docs/reference").mkdir(parents=True)
+    doc = "## RP\n\n### `POST /api/v1/verify`\n\n### `GET /api/v1/trust-list/<agency_id>`\n"
+    spec = ("openapi: 3.1.0\npaths:\n"
+            "  /api/v1/verify:\n    post:\n      responses:\n        \"200\": {description: ok}\n"
+            "  /api/v1/trust-list/{agency_id}:\n    get:\n      responses:\n        \"200\": {description: ok}\n")
+    (tmp_path / "docs/reference/API.md").write_text(doc)
+    (tmp_path / "docs/reference/openapi.yaml").write_text(spec)
+    assert checks.check_openapi_covers_api_v1(tmp_path)[0].level == "OK", "param names and converters must not matter"
+
+    (tmp_path / "docs/reference/API.md").write_text(doc + "\n### `POST /api/v1/mdoc`\n")
+    assert checks.check_openapi_covers_api_v1(tmp_path)[0].level == "FAIL", "must FAIL when the spec omits a documented route"
+
+    (tmp_path / "docs/reference/API.md").write_text(doc)
+    (tmp_path / "docs/reference/openapi.yaml").write_text(spec + "  /api/v1/ghost:\n    get:\n      responses:\n        \"200\": {description: ok}\n")
+    assert checks.check_openapi_covers_api_v1(tmp_path)[0].level == "FAIL", "must FAIL when the spec names a route not in API.md"
+
+
 def test_compose_trusts_edge_check_fails_without_trust_proxy(tmp_path):
     (tmp_path / "polaris_web").mkdir()
     caddy = "reverse_proxy app:8000 {\n        header_up X-Forwarded-For {remote_host}\n}\n"
