@@ -54,8 +54,9 @@ updates:
     commit-message:
       prefix: deps
 
-  # What lab/interop/*/run.sh install beside polaris-oid4vp (its one dependency and the build
-  # backend), hash-pinned by pip-compile in lab/interop; Dependabot recompiles the hashes.
+  # What lab/interop/*/run.sh install beside polaris-oid4vp: its one dependency (requirements.txt,
+  # Python 3.9) and, for a run that builds it from the tree, the build backend
+  # (requirements-build.txt, Python 3.10), hash-pinned by pip-compile; Dependabot recompiles both.
   - package-ecosystem: pip
     directory: /lab/interop
     schedule:

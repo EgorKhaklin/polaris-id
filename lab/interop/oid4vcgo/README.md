@@ -78,7 +78,9 @@ refused, (d) with the same `certificate signed by unknown authority`.
     OID4VCGO_VERSION=v0.22.0 lab/interop/oid4vcgo/run.sh          # adds control (d)
 
 It installs the verifier from this repository into a fresh venv, its dependencies by hash from
-[`../requirements.txt`](../requirements.txt) (`POLARIS_OID4VP` overrides the verifier),
+[`../requirements.txt`](../requirements.txt) and, since it builds the verifier from the tree, the
+build backend by hash from [`../requirements-build.txt`](../requirements-build.txt), which needs
+Python 3.10 or newer (`POLARIS_OID4VP` overrides the verifier; a release on PyPI builds nothing),
 builds the wallet at the pinned version inside the official Go image, writes a test PKI
 ([`setup_pki.py`](setup_pki.py): the issuer CA, the issuer's CA-issued leaf, the holder key, the
 wallet's own TLS pair, and an unrelated CA for control (a)), runs the wallet in a container, and

@@ -1,7 +1,7 @@
-# What lab/interop/*/run.sh install beside polaris-oid4vp itself: its one dependency, and the
-# build backend that builds it from the tree. requirements.txt is compiled from this with hashes:
+# What lab/interop/*/run.sh install beside polaris-oid4vp itself: its one dependency.
+# requirements.txt is compiled from this with hashes:
 #   pip-compile --generate-hashes --allow-unsafe --strip-extras requirements.in
 # (under the oldest Python a run supports, 3.9) and installed with
-# pip install --require-hashes -r requirements.txt.
+# pip install --require-hashes -r requirements.txt. A run that installs a release from PyPI needs
+# nothing else: pip fetches the published wheel and builds nothing.
 cryptography>=42
-setuptools>=68
