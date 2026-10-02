@@ -46,6 +46,10 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   https URL on one. Without `iss`, the certificate's subject is the issuer.
 - `--issuer-jwks` trusts every key it lists for every `iss`, except one whose `use`, `key_ops` or `alg`
   says it is not for ES256 signatures; list one issuer's keys per verifier.
+- `--public-base-url https://verifier.example` sets the HTTPS origin a wallet reaches this
+  verifier by when it runs behind a reverse proxy or a tunnel, where the public URL differs
+  from the local `--bind`/`--port`. It is used for the `request_uri` and `response_uri`;
+  without it they are `https://<--host>:<--port>`.
 - `serve` with neither `--issuer-jwks` nor `--issuer-trust-anchor` refuses every presentation
   (`issuer_key`) and says so on stderr. An `--issuer-jwks` file it cannot read, or none of whose keys
   can verify ES256 when no anchor is given, stops `serve` before it listens (exit 2).
@@ -150,7 +154,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 359 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 360 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 120 refusals accept and requires a
