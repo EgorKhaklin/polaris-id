@@ -68,6 +68,17 @@ anchors, and a README section on what a passing run shows. Its author closed the
 2026-10-01 and shipped v0.23.0, which also holds the verifier's leaf to HAIP 1.0 section 5. The
 last two rows are those versions, checked here on request. It is an outside project acting on a report, not an outside party using Polaris.
 
+**eudi-dev changed after a report from here, 2026-10-02.** It did not validate the verifier's TLS
+certificate, even in `--mode strict`; reported as
+[issue 21](https://github.com/dominikschlosser/eudi-dev/issues/21). The maintainer fixed it in
+[v2.5.0](https://github.com/dominikschlosser/eudi-dev/releases/tag/v2.5.0): strict mode now verifies
+TLS for every HTTPS destination, with `--tls-verify` and `--tls-ca` overrides, and asked for a
+re-test. Checked here against the eudi-dev walk: `eudi-dev:v2.5.0 --mode strict` refuses
+`polaris-oid4vp`'s self-signed listener certificate (`tls: failed to verify certificate: x509:
+certificate signed by unknown authority`), where v2.3.7 presented; and `--tls-verify=false` restores
+presenting (accepted, all three controls refused). It is an outside project acting on a report, not
+an outside party using Polaris.
+
 **walt.id refused Polaris first, and was right.** `polaris-oid4vp keygen` issued a
 request-signing leaf with no `digitalSignature` key usage; eleven conformance modules, 142
 package tests and every internal check had passed over it. Fixed in v9.465 with a test. Two
