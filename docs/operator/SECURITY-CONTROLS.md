@@ -200,9 +200,9 @@ The report's "Cryptographic migration during transitions" problem: how tokens mo
 
 Not covered: a compromise of a not-yet-deprecated algorithm (orderly deprecation cannot retroactively reject signatures that were valid when produced), and automatic cascade from `CryptographicAlgorithm.deprecation_date` (algorithm-wide and per-signature deprecation are separate columns by design; operator policy through UC-6 is the only path). Signing itself, real ML-DSA-65 or the deterministic placeholder, is [PQC-POSTURE.md](../reference/PQC-POSTURE.md). Mechanism walk: [multi-sig-migration.md](../design/multi-sig-migration.md).
 
-### Compulsion resistance: duress codes
+### Duress codes
 
-The report's "Compulsion resistance" problem: biometric binding stops casual theft but not compelled presentation. A holder under coercion types a secondary code. The verification flow:
+The report's compulsion problem (PDF §9.5): biometric binding stops casual theft but not compelled presentation. A holder under coercion types a secondary code. The verification flow:
 
 1. Compares the input against `IdentityToken.duress_code_hash` with `werkzeug.security.check_password_hash` (scrypt, the same primitive as operator passwords).
 2. On a match, records a `DuressEvent` row through `uc12_record_duress` on a background thread by default, so the match is not measurable in the response latency. `POLARIS_DURESS_SYNC=1` moves it onto the request thread for tests and is refused in production (`check_prod_fail_closed`).

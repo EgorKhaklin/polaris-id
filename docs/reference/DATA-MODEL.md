@@ -482,7 +482,7 @@ for the eventual external-PQ-ledger integration. See
 
 ### `DuressEvent`
 
-Compulsion-resistance audit-of-record (PDF §9.5). Each row is a
+Duress audit-of-record (PDF §9.5). Each row is a
 detected duress signal: the holder typed their secondary duress code (a Werkzeug scrypt
 hash stored in `IdentityToken.duress_code_hash`) under coercion,
 and the verification flow silently fired this alert while the

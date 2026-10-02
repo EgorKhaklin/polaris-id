@@ -46,6 +46,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Record pages' tables scroll at phone width, and their hard-coded pill colours (3.49:1) take the theme.
 - The public walkthrough said post-quantum signing protects against coercion; it now marks where each rule is enforced.
 - Public pages: no empty band above the first line, a visible secondary action, a four-column feature grid.
+- The duress wording check passed the noun "compulsion resistance"; API.md and DATA-MODEL.md named the mechanism with it.
+- API.md pointed at `app.py` for the federation check; it is in `verification_routes.py`.
 
 ## v1.0.0-rc.70 — 2026-10-01 (the three verifiers read every input alike)
 

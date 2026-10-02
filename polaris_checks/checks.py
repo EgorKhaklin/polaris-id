@@ -10630,6 +10630,9 @@ _APPARATUS_HISTORY = ("CHANGELOG.md", "docs/history/", "DEVNOTES/", "polaris_sql
 #: symmetric rather than adding whichever one was just seen.
 #: 2026-09-30: and it carried two nouns where the claim has three. CITATION.cff's abstract said
 #: "duress-resistant operation", on an outward surface this check reads, and passed.
+#: 2026-10-02: and three shapes where the claim has four. The noun passed: "coercion resistance"
+#: was accepted on every outward surface, and API.md and DATA-MODEL.md named the duress
+#: mechanism "Compulsion-resistance".
 _COMPULSION_ASSERTIONS = ("compulsion-resistant", "compulsion resistant",
                           "coercion-resistant", "coercion resistant",
                           "duress-resistant", "duress resistant",
@@ -10638,7 +10641,10 @@ _COMPULSION_ASSERTIONS = ("compulsion-resistant", "compulsion resistant",
                           "resists duress", "resistant to duress",
                           "compulsion-proof", "compulsion proof",
                           "coercion-proof", "coercion proof",
-                          "duress-proof", "duress proof")
+                          "duress-proof", "duress proof",
+                          "compulsion-resistance", "compulsion resistance",
+                          "coercion-resistance", "coercion resistance",
+                          "duress-resistance", "duress resistance")
 
 #: Where the assessment lives, so a surface making the weaker claim has somewhere to point.
 _DURESS_LIMITATION_REL = "lab/duress/README.md"

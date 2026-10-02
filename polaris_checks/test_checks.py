@@ -19711,6 +19711,7 @@ def test_the_compulsion_ban_covers_all_three_nouns_and_all_three_shapes(tmp_path
     neither coercion form, so the identical claim written with the other noun passed. It
     carried no "-proof" spelling either, while the post-quantum list next to it did.
     Until 2026-09-30 it carried no duress form, and CITATION.cff said "duress-resistant".
+    Until 2026-10-02 it carried no noun, and API.md called the mechanism "Compulsion-resistance".
     """
     for phrase in checks._COMPULSION_ASSERTIONS:
         _write_outward(tmp_path, extra_readme="Polaris is %s.\n" % phrase)
@@ -19719,7 +19720,7 @@ def test_the_compulsion_ban_covers_all_three_nouns_and_all_three_shapes(tmp_path
             "%r must be refused; the vocation is what this list protects" % phrase
 
     for noun in ("compulsion", "coercion", "duress"):
-        for shape in ("%s-resistant", "resists %s", "%s-proof"):
+        for shape in ("%s-resistant", "resists %s", "%s-proof", "%s-resistance"):
             assert shape % noun in checks._COMPULSION_ASSERTIONS, \
                 "the three nouns and three shapes must stay symmetric; %r is missing" % (shape % noun)
 

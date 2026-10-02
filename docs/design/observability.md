@@ -5,7 +5,7 @@
 An operator should be able to see what a Polaris deployment is doing with
 nothing but the running stack, and above everything else they should see a
 duress signal. A duress code that raises a row nobody reads makes the whole
-compulsion-resistance mechanism decorative, so the design question here is not
+duress mechanism decorative, so the design question here is not
 what can be measured but what must be impossible to miss.
 
 Two surfaces carry it: a log stream, and four counters.
