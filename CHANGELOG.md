@@ -11,6 +11,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- The Atlas answered a refused parameter with the exception's text, which could carry the request back; it states a fixed sentence.
 - An operator bound to one authority could be served other authorities' Atlas counts from its response cache.
 - The database refuses a successful verification of a dead credential, outside its permitted contexts, or across an untrusted edge.
 - An operator bound to one authority can no longer activate a reserve another authority issued (UC-4).
@@ -60,14 +61,16 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Fixed
 
 - The README's OpenID Certified badge now names what it covers: the polaris-oid4vp verifier, not Polaris.
+- SECURITY.md called PyPI's publish attestation the same kind of provenance as build provenance; it says what each is.
+- A credential's page and both investigation pages read its verifications through an index, not a full scan.
+- Release SBOMs failed the NTIA minimum elements and four were invalid SPDX; the release checks both before publishing.
+- The advisory-lock check reads locks taken in functions; the holder key register's lock gains contention tests.
+- The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
 - A migration's signature was dated by the credential's issuance, so its key read unauthorized; each is dated by its own.
 - A holder's pack was refused at the relying-party door once a migration added signatures; any in force verifies.
 - Closing a migration window cut superseded signatures off at once, whatever its grace; they verify until the date.
 - Under the placeholder profile a population migration wrote a signature no verify path accepted; now issuance's.
 - A population migration onto a set nothing here signs with (SLH-DSA) is refused before it starts.
-- A credential's page and both investigation pages read its verifications through an index, not a full scan.
-- The advisory-lock check reads locks taken in functions; the holder key register's lock gains contention tests.
-- The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
 - The warrant audit page no longer says zero-knowledge events come back redacted; they are never returned.
 - A person's investigation page takes its colours from the theme; a credential value read at 3.48:1 in light.
 - A credential's investigation page found its successor by scanning every credential: 904 ms at 3.6 million.
