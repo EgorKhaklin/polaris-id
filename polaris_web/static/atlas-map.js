@@ -43,20 +43,17 @@
         || 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 
     // -- Tone palette (shared with the legend) --------------------------------
-    // Cyan is the colour of an aggregate, not of a disclosure level. A
-    // ZERO_KNOWLEDGE verification is never plotted at all (C6, enforced in
-    // polaris_sql/11_atlas.sql for both the cluster and the point layer), so a
-    // cyan marker cannot mean zero-knowledge: it means "a cluster of events".
-    var TONE_COLORS = {
-        cluster: '#5dd6ff', selective: '#b094eb', full: '#ffc861', alert: '#ff7478'
-    };
+    // Cyan is the colour of an aggregate. The map draws counts only: a region
+    // or a hexagon, never a single event (lab/strategy/009), and a
+    // ZERO_KNOWLEDGE verification is counted but never placed (C6).
+    var TONE_COLORS = { cluster: '#5dd6ff', alert: '#ff7478' };
     var EMPTY_FC = { type: 'FeatureCollection', features: [] };
 
     // -- Unified filter state (mirrors the v8.3 model the API speaks) ---------
     var filterState = {
         view:      'verification',
         window:    'all',
-        modifiers: { pq: false, anomalies: false, full: false },
+        modifiers: { anomalies: false, full: false },
         contexts:  [],
         agencies:  []
     };
@@ -89,10 +86,9 @@
     // data layers are driven by the fetch coordinator, not this handle).
     try { window.atlasMap = map; } catch (e) { /* noop */ }
 
-    var renderMode = 'cluster';
     // v9.253 (Map v2): the map is aggregation-first. mapMode selects the layer
-    // shown — 'regions' (jurisdiction rollup, the DEFAULT) | 'density' (hexbin)
-    // | 'points' (the cluster->point drill). Projection defaults to FLAT; the
+    // shown: 'regions' (jurisdiction rollup, the DEFAULT) or 'density' (hexbin).
+    // The drill to single events went with lab/strategy/009. Projection defaults to FLAT; the
     // globe becomes an opt-in toggle rather than the always-on view, so the
     // console opens on a legible thematic map, not a spinning sphere.
     var mapMode = 'regions';
@@ -116,7 +112,6 @@
         updateModeUI();
         updateLegendForMode();
         scheduleFetch();
-        loadEventFeed();
         loadTimeline();
         syncReadouts();
     });
@@ -130,59 +125,10 @@
     });
 
     // =========================================================================
-    // Event source + layers (clusters as sized circles, points as reticles)
+    // Aggregate layers: regions (the default) and the density surface
     // =========================================================================
     function addEventLayers() {
-        if (map.getSource('atlas-events')) return;
-        map.addSource('atlas-events', {
-            type: 'geojson',
-            data: { type: 'FeatureCollection', features: [] }
-        });
-
-        var toneColor = ['match', ['get', 'tone'],
-            'alert', TONE_COLORS.alert, 'full', TONE_COLORS.full,
-            'selective', TONE_COLORS.selective, 'cluster', TONE_COLORS.cluster,
-            TONE_COLORS.cluster];
-
-        map.addLayer({
-            id: 'atlas-clusters', type: 'circle', source: 'atlas-events',
-            filter: ['==', ['get', 'isCluster'], true],
-            paint: {
-                'circle-radius': ['interpolate', ['linear'], ['get', 'count'],
-                    1, 9, 10, 16, 100, 26, 1000, 38, 100000, 54],
-                'circle-color': toneColor, 'circle-opacity': 0.22,
-                'circle-stroke-width': 1.5, 'circle-stroke-color': toneColor,
-                'circle-stroke-opacity': 0.9
-            }
-        });
-        map.addLayer({
-            id: 'atlas-cluster-count', type: 'symbol', source: 'atlas-events',
-            filter: ['==', ['get', 'isCluster'], true],
-            layout: {
-                'text-field': ['get', 'countLabel'], 'text-size': 11,
-                'text-font': ['Open Sans Bold'], 'text-allow-overlap': true
-            },
-            paint: { 'text-color': '#eaf4ff', 'text-halo-color': '#050a12', 'text-halo-width': 1 }
-        });
-        map.addLayer({
-            id: 'atlas-points', type: 'circle', source: 'atlas-events',
-            filter: ['!=', ['get', 'isCluster'], true],
-            paint: {
-                'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 5, 14, 9],
-                'circle-color': toneColor, 'circle-opacity': 0.95,
-                'circle-stroke-width': 2, 'circle-stroke-color': '#050a12'
-            }
-        });
-
-        map.on('click', 'atlas-clusters', function (e) {
-            map.flyTo({ center: e.features[0].geometry.coordinates,
-                        zoom: Math.min(18, map.getZoom() + 2.2), speed: 1.1 });
-        });
-        map.on('click', 'atlas-points', function (e) { selectFeature(e.features[0]); });
-        ['atlas-clusters', 'atlas-points'].forEach(function (id) {
-            map.on('mouseenter', id, function () { map.getCanvas().style.cursor = 'pointer'; });
-            map.on('mouseleave', id, function () { map.getCanvas().style.cursor = ''; });
-        });
+        if (map.getSource('atlas-regions')) return;
 
         // --- Density layer (v9.253): a hexbin surface of located activity. ----
         // Filled hexagons graduated by count give an honest density read at
@@ -227,48 +173,19 @@
             paint: { 'text-color': '#eaf4ff', 'text-halo-color': '#050a12', 'text-halo-width': 1 }
         });
 
-        // Drill: a click on any aggregate flies in and drops to the Points view.
+        // Zoom in: a region opens the density surface around it; a hexagon zooms
+        // the surface. Neither opens an event: there is none to open.
         map.on('click', 'atlas-region-fill', function (e) {
-            drillToPoints(e.features[0].geometry.coordinates, 6);
+            zoomToDensity(e.features[0].geometry.coordinates, 6);
         });
         map.on('click', 'atlas-hex-fill', function (e) {
             var g = e.features[0].geometry.coordinates[0];
-            drillToPoints(g[0], Math.max(6, map.getZoom() + 2));
+            zoomToDensity(g[0], Math.max(6, map.getZoom() + 2));
         });
         ['atlas-region-fill', 'atlas-hex-fill'].forEach(function (id) {
             map.on('mouseenter', id, function () { map.getCanvas().style.cursor = 'pointer'; });
             map.on('mouseleave', id, function () { map.getCanvas().style.cursor = ''; });
         });
-
-        // --- Subject-focus layers (v9.148): one investigated subject's path ---
-        // A gold trajectory connecting their disclosed events in time order, on
-        // top of (and replacing) the operational clusters. ZK events are never
-        // here, the server withholds them.
-        map.addSource('atlas-subject', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-        map.addSource('atlas-subject-path', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-        map.addLayer({
-            id: 'atlas-subject-line', type: 'line', source: 'atlas-subject-path',
-            paint: { 'line-color': '#e8be64', 'line-width': 2, 'line-opacity': 0.7, 'line-dasharray': [2, 1.5] }
-        });
-        map.addLayer({
-            id: 'atlas-subject-points', type: 'circle', source: 'atlas-subject',
-            paint: {
-                'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 6, 14, 11],
-                'circle-color': ['match', ['get', 'tone'],
-                    'alert', TONE_COLORS.alert, 'full', TONE_COLORS.full,
-                    'selective', TONE_COLORS.selective, '#e8be64'],
-                'circle-stroke-width': 2.5, 'circle-stroke-color': '#e8be64', 'circle-opacity': 0.95
-            }
-        });
-        map.addLayer({
-            id: 'atlas-subject-seq', type: 'symbol', source: 'atlas-subject',
-            layout: { 'text-field': ['get', 'seq'], 'text-size': 10, 'text-font': ['Open Sans Bold'],
-                      'text-offset': [0, -1.3], 'text-allow-overlap': true },
-            paint: { 'text-color': '#ffe9b0', 'text-halo-color': '#050a12', 'text-halo-width': 1 }
-        });
-        map.on('click', 'atlas-subject-points', function (e) { selectFeature(e.features[0]); });
-        map.on('mouseenter', 'atlas-subject-points', function () { map.getCanvas().style.cursor = 'pointer'; });
-        map.on('mouseleave', 'atlas-subject-points', function () { map.getCanvas().style.cursor = ''; });
     }
 
     // =========================================================================
@@ -283,17 +200,6 @@
             Math.max(-89.9, b.getSouth()), Math.max(-179.9, b.getWest()),
             Math.min(89.9, b.getNorth()), Math.min(179.9, b.getEast())
         ];
-    }
-    function chooseGrid(z) {
-        if (z >= 14) return 0.01;  /* ~1 km: street-level pinpointing */
-        if (z >= 12) return 0.02;
-        if (z >= 10) return 0.05;
-        if (z >= 8)  return 0.2;
-        if (z >= 6)  return 0.5;
-        if (z >= 5)  return 1;
-        if (z >= 3)  return 2;
-        if (z >= 1.5) return 5;
-        return 10;
     }
     function apiKind() { return filterState.view === 'lifecycle' ? 'lifecycle' : 'verification'; }
 
@@ -320,9 +226,9 @@
         fetchTimer = setTimeout(fetchData, 200);
     }
 
-    // Hex size (circumradius, degrees) by zoom — mirrors chooseGrid's ramp so a
-    // Density hex is a sensible bin at each scale. The client renders with the
-    // SAME size it sends, so the lattice tiles perfectly.
+    // Hex size (circumradius, degrees) by zoom, so a Density hex is a sensible
+    // bin at each scale. The client renders with the SAME size it sends, so the
+    // lattice tiles perfectly.
     function chooseHexSize(z) {
         if (z >= 12) return 0.03;
         if (z >= 10) return 0.08;
@@ -336,8 +242,7 @@
     // fetchData dispatches by mapMode. Each mode owns its dedup key, its layer,
     // and its legend; the HUD stats fetch (viewport totals) runs in every mode.
     function fetchData() {
-        if (!map.getSource || !map.getSource('atlas-events')) return;
-        if (focusedSubject) return;   // subject-focus owns the map; no operational fetch
+        if (!map.getSource || !map.getSource('atlas-regions')) return;
         var bbox = currentBbox();
         var kind = apiKind();
         var filterQS = serializeFilters();
@@ -345,9 +250,8 @@
         var b3 = bbox.map(function (v) { return v.toFixed(3); }).join(',');
 
         var key;
-        if (mapMode === 'regions')      key = 'regions|' + kind + '|' + filterQS;         // not viewport-bound
-        else if (mapMode === 'density') key = 'density|' + kind + '|' + b3 + '|' + chooseHexSize(map.getZoom()) + '|' + filterQS;
-        else                            key = 'points|'  + kind + '|' + b3 + '|' + chooseGrid(map.getZoom()) + '|' + filterQS;
+        if (mapMode === 'regions') key = 'regions|' + kind + '|' + filterQS;         // not viewport-bound
+        else                       key = 'density|' + kind + '|' + b3 + '|' + chooseHexSize(map.getZoom()) + '|' + filterQS;
         if (key === lastFetchKey) return;
         lastFetchKey = key;
 
@@ -356,36 +260,12 @@
         var signal = inflight ? inflight.signal : undefined;
 
         clearLayersExcept(mapMode);
-        if (mapMode === 'regions')      fetchRegions(kind, filterQS, signal);
-        else if (mapMode === 'density') fetchDensity(bboxParam, kind, filterQS, signal);
-        else                            fetchPoints(bboxParam, kind, filterQS, signal);
+        if (mapMode === 'regions') fetchRegions(kind, filterQS, signal);
+        else                       fetchDensity(bboxParam, kind, filterQS, signal);
 
         apiCall('/api/atlas/stats?bbox=' + encodeURIComponent(bboxParam) + '&' + filterQS, signal)
             .then(updateStats)
             .catch(function (err) { if (err.name !== 'AbortError') { /* HUD stale; non-fatal */ } });
-    }
-
-    // -- Points mode: the existing cluster->point drill (aggregate at a --------
-    // distance, individual reticles once a cell holds few enough events). ------
-    function fetchPoints(bboxParam, kind, filterQS, signal) {
-        var grid = chooseGrid(map.getZoom());
-        apiCall('/api/atlas/clusters?bbox=' + encodeURIComponent(bboxParam) +
-                '&grid=' + grid + '&kind=' + kind + '&' + filterQS, signal)
-            .then(function (data) {
-                if (data.count <= 30 && map.getZoom() >= 5) {
-                    return apiCall('/api/atlas/points?bbox=' + encodeURIComponent(bboxParam) +
-                                   '&kind=' + kind + '&limit=500&' + filterQS, signal)
-                        .then(function (pts) {
-                            renderMode = 'point';
-                            setFeatures((pts.points || []).map(function (p) { return pointFeature(p, kind); }));
-                        });
-                }
-                renderMode = 'cluster';
-                setFeatures((data.clusters || []).map(function (c) { return clusterFeature(c, kind); }));
-            })
-            .catch(function (err) {
-                if (err.name !== 'AbortError') { lastFetchKey = null; showAtlasError(err); }
-            });
     }
 
     // -- Regions mode (DEFAULT): jurisdiction proportional symbols. Not --------
@@ -429,7 +309,6 @@
     // Empty a source. On mode switch the stale layer must clear so two
     // aggregates never paint at once.
     function clearLayersExcept(mode) {
-        if (mode !== 'points'  && map.getSource('atlas-events'))  map.getSource('atlas-events').setData(EMPTY_FC);
         if (mode !== 'regions' && map.getSource('atlas-regions')) map.getSource('atlas-regions').setData(EMPTY_FC);
         if (mode !== 'density' && map.getSource('atlas-hexes'))   map.getSource('atlas-hexes').setData(EMPTY_FC);
     }
@@ -466,177 +345,23 @@
         };
     }
 
-    // Switch the active layer. Drill and the mode chips both route through here.
+    // Switch the active layer. Zoom-in and the mode chips both route through here.
     function setMode(mode) {
-        if (mode !== 'regions' && mode !== 'density' && mode !== 'points') return;
+        if (mode !== 'regions' && mode !== 'density') return;
         mapMode = mode;
         updateModeUI();
         updateLegendForMode();
         refetchAll();
     }
-    function drillToPoints(center, zoom) {
-        mapMode = 'points';
+    function zoomToDensity(center, zoom) {
+        mapMode = 'density';
         updateModeUI();
         updateLegendForMode();
         map.flyTo({ center: center, zoom: Math.max(map.getZoom(), zoom || 6), speed: 1.1 });
         refetchAll();   // moveend will also fire; the dedup key absorbs the double
     }
 
-    function setFeatures(features) {
-        var src = map.getSource('atlas-events');
-        if (src) src.setData({ type: 'FeatureCollection', features: features });
-        applyPointFilter();
-        toggleEmptyHint(features.length === 0);
-        hideAtlasError();
-    }
-
-    // +PQ modifier filters individual reticles to post-quantum-signed events
-    // (clusters are aggregates and keep showing; the HUD carries the PQ %).
-    function applyPointFilter() {
-        if (!map.getLayer || !map.getLayer('atlas-points')) return;
-        var base = ['!=', ['get', 'isCluster'], true];
-        map.setFilter('atlas-points',
-            filterState.modifiers.pq ? ['all', base, ['==', ['get', 'pq'], true]] : base);
-    }
-
-    // -- Feature builders -----------------------------------------------------
     function fmtCount(n) { return n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n); }
-
-    function clusterFeature(c, kind) {
-        var alert = (c.n_failure || 0) + (c.n_revoked || 0) + (c.n_lost || 0);
-        var tone = alert > 0 ? 'alert' : 'cluster';
-        return {
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: [c.lon, c.lat] },
-            properties: {
-                isCluster: true, tone: tone, count: c.n_total,
-                countLabel: fmtCount(c.n_total),
-                meta: kind === 'verification'
-                    ? ((c.n_failure || 0) + ' failures · ' + (c.n_full || 0) + ' FULL')
-                    : ((c.n_revoked || 0) + ' revoked · ' + (c.n_lost || 0) + ' lost'),
-                kind: kind
-            }
-        };
-    }
-
-    function pointFeature(p, kind) {
-        var tone;
-        if (kind === 'verification') {
-            // The precise-point layer receives SELECTIVE and FULL only: the
-            // query drops ZERO_KNOWLEDGE rows (C6). An unexpected one is drawn
-            // in the aggregate colour rather than mislabelled as a disclosure,
-            // and announced, because it would mean the server broke C6.
-            if (p.disclosure_level === 'ZERO_KNOWLEDGE') {
-                console.warn('Atlas: a zero-knowledge verification reached the point layer; C6 expects none.');
-            }
-            tone = p.outcome && p.outcome !== 'SUCCESS' ? 'alert'
-                 : (p.disclosure_level === 'FULL' ? 'full'
-                 : (p.disclosure_level === 'SELECTIVE' ? 'selective' : 'cluster'));
-        } else {
-            tone = ['REVOKED', 'LOST', 'EXPIRED', 'DEVICE_REVOKED'].indexOf(p.event_type) >= 0
-                 ? 'alert' : 'selective';
-        }
-        return {
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
-            properties: {
-                isCluster: false, tone: tone, kind: kind,
-                event_id: p.event_id, token_id: p.token_id || null,
-                holder: p.holder_name || null, agency: p.agency_name || null,
-                algorithm: p.algorithm_name || null, pq: !!p.pq,
-                context: p.context_type || null, outcome: p.outcome || null,
-                disclosure: p.disclosure_level || null, eventType: p.event_type || null,
-                reason: p.reason_code || null, timestamp: p.event_timestamp || null,
-                location: p.requestor_location || null
-            }
-        };
-    }
-
-    // =========================================================================
-    // Node console (dock tab "console", auto-activated on selection)
-    // =========================================================================
-    var detail = document.getElementById('atlas-globe-detail');
-
-    function activateDockTab(name) {
-        document.querySelectorAll('[data-dock-tab]').forEach(function (b) {
-            b.classList.toggle('dock-tab-active', b.dataset.dockTab === name);
-        });
-        document.querySelectorAll('[data-dock-panel]').forEach(function (p) {
-            p.classList.toggle('dock-panel-active', p.dataset.dockPanel === name);
-        });
-    }
-    document.querySelectorAll('[data-dock-tab]').forEach(function (b) {
-        b.addEventListener('click', function () { activateDockTab(b.dataset.dockTab); });
-    });
-
-    function row(label, value) {
-        if (value === null || value === undefined || value === '') return null;
-        var d = document.createElement('div');
-        d.className = 'detail-row';
-        var k = document.createElement('span'); k.className = 'detail-k'; k.textContent = label;
-        var v = document.createElement('span'); v.className = 'detail-v'; v.textContent = value;
-        d.appendChild(k); d.appendChild(v); return d;
-    }
-
-    function selectFeature(f) {
-        if (!detail) return;
-        activateDockTab('console');
-        var pr = f.properties || {};
-        detail.replaceChildren();
-
-        var kicker = document.createElement('span');
-        kicker.className = 'detail-kicker';
-        kicker.textContent = (pr.kind === 'lifecycle' ? 'LIFECYCLE EVENT' : 'VERIFICATION EVENT')
-                             + ' / ' + (pr.eventType || pr.context || 'EVENT') + '-' + (pr.event_id || '');
-        detail.appendChild(kicker);
-
-        var title = document.createElement('strong');
-        title.textContent = pr.kind === 'lifecycle'
-            ? (pr.eventType || 'Lifecycle') + ' · token #' + (pr.token_id || '?')
-            : (pr.context || 'Verification') + ' verification';
-        detail.appendChild(title);
-
-        var c = (f.geometry && f.geometry.coordinates) || null;
-        var coordText = c
-            ? Math.abs(c[1]).toFixed(4) + '°' + (c[1] >= 0 ? 'N' : 'S') + '  '
-              + Math.abs(c[0]).toFixed(4) + '°' + (c[0] >= 0 ? 'E' : 'W')
-            : null;
-        [
-            row('Event', pr.kind === 'lifecycle' ? (pr.eventType || 'lifecycle') : (pr.context || 'verification')),
-            row('Event ID', pr.event_id),
-            row('Token', pr.token_id ? '#' + pr.token_id : null),
-            row('Holder', pr.holder),
-            row('Agency', pr.agency),
-            row('Algorithm', pr.algorithm ? pr.algorithm + (pr.pq ? '  · PQ' : '  · classical') : null),
-            row('Outcome', pr.outcome),
-            row('Disclosure', pr.disclosure),
-            row('Reason', pr.reason),
-            row('Location', pr.location),
-            row('Coordinates', coordText),
-            row('When', pr.timestamp)
-        ].forEach(function (r) { if (r) detail.appendChild(r); });
-
-        if (pr.token_id) {
-            var actions = document.createElement('div');
-            actions.className = 'detail-actions';
-            var link = document.createElement('a');
-            link.className = 'detail-link';
-            link.href = '/tokens/' + pr.token_id;
-            link.textContent = 'Open token detail →';
-            actions.appendChild(link);
-            // Download everything the operator may see for this token (gated +
-            // audit-logged server-side; ZK verifications carry no token link so
-            // they are not in the export).
-            var dl = document.createElement('a');
-            dl.className = 'detail-link';
-            dl.href = '/api/tokens/' + pr.token_id + '/export';
-            dl.setAttribute('download', '');
-            dl.textContent = '⤓ Download token data (JSON)';
-            actions.appendChild(dl);
-            detail.appendChild(actions);
-        }
-        if (c) map.flyTo({ center: c, zoom: Math.max(map.getZoom(), 9), speed: 0.9 });
-    }
 
     // =========================================================================
     // HUD stats
@@ -681,57 +406,8 @@
     });
 
     // =========================================================================
-    // Event feed (dock) + cursor / readouts / clock
+    // Cursor / readouts
     // =========================================================================
-    var feedEl = document.querySelector('[data-atlas-event-feed]');
-    var feedLoading = false, feedCursor = null;
-
-    function feedRow(ev) {
-        var li = document.createElement('li');
-        li.className = 'atlas-feed-row tone-' + (ev.tone || 'selective');
-        var badge = document.createElement('span');
-        badge.className = 'atlas-feed-badge';
-        badge.textContent = (ev.kind === 'lifecycle' ? (ev.event_type || 'LIFECYCLE') : (ev.context_type || 'VERIFICATION'));
-        var body = document.createElement('span');
-        body.className = 'atlas-feed-body';
-        body.textContent = ev.holder_name || (ev.token_id ? 'token #' + ev.token_id : '(zero-knowledge)');
-        var sub = document.createElement('span');
-        sub.className = 'atlas-feed-sub';
-        sub.textContent = (ev.agency_name || '') + (ev.requestor_location ? ' · ' + ev.requestor_location : '');
-        var stamp = document.createElement('time');
-        stamp.className = 'atlas-feed-stamp';
-        stamp.textContent = ev.event_timestamp || '';
-        li.appendChild(badge); li.appendChild(stamp); li.appendChild(body); li.appendChild(sub);
-        if (ev.lat != null && ev.lon != null) {
-            li.style.cursor = 'pointer';
-            li.addEventListener('click', function () {
-                map.flyTo({ center: [ev.lon, ev.lat], zoom: Math.max(map.getZoom(), 9), speed: 0.9 });
-            });
-        }
-        return li;
-    }
-
-    function loadEventFeed() {
-        if (feedLoading || !feedEl) return;
-        feedLoading = true;
-        var url = '/api/atlas/events?limit=50' + (feedCursor ? '&cursor=' + encodeURIComponent(feedCursor) : '');
-        apiCall(url).then(function (data) {
-            (data.events || []).forEach(function (ev) { feedEl.appendChild(feedRow(ev)); });
-            feedCursor = data.next_cursor;
-            feedLoading = false;
-            var c = document.querySelector('[data-atlas-feed-count]');
-            if (c) c.textContent = String(feedEl.children.length);
-        }).catch(function () { feedLoading = false; });
-    }
-
-    if (feedEl) {
-        feedEl.innerHTML = '';
-        var rail = feedEl.closest('[data-atlas-event-feed-scroll]') || feedEl;
-        rail.addEventListener('scroll', function () {
-            if (rail.scrollTop + rail.clientHeight >= rail.scrollHeight - 80 && feedCursor) loadEventFeed();
-        });
-    }
-
     // Cursor lat/lon + heading/pitch/zoom readouts
     var cursorEl = document.getElementById('atlas-hud-cursor');
     function fmtCoord(v, pos, neg) {
@@ -892,158 +568,6 @@
     }
 
     // =========================================================================
-    // Subject focus (v9.148), single-subject investigation (admin/auditor).
-    // Search a person, drop everything else, plot only their disclosed events
-    // as a gold path of "what they did". ZK verifications are withheld by the
-    // server and reported as a count. This is governed (gated + audit-logged
-    // server-side), not population profiling.
-    // =========================================================================
-    var focusedSubject = null;
-    var searchInput = document.querySelector('[data-atlas-subject-search]');
-    var resultsEl = document.querySelector('[data-atlas-subject-results]');
-    var bannerEl = document.querySelector('[data-atlas-subject-banner]');
-
-    function setOperationalLayers(visible) {
-        ['atlas-clusters', 'atlas-cluster-count', 'atlas-points',
-         'atlas-region-fill', 'atlas-region-count', 'atlas-hex-fill', 'atlas-hex-stroke'].forEach(function (id) {
-            if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none');
-        });
-    }
-
-    function subjectFeature(ev, kind, seq) {
-        var tone;
-        if (kind === 'verification') {
-            tone = ev.outcome && ev.outcome !== 'SUCCESS' ? 'alert'
-                 : (ev.disclosure_level === 'FULL' ? 'full' : 'selective');
-        } else {
-            tone = ['REVOKED', 'LOST', 'EXPIRED'].indexOf(ev.event_type) >= 0 ? 'alert' : 'selective';
-        }
-        return {
-            type: 'Feature', geometry: { type: 'Point', coordinates: [ev.lon, ev.lat] },
-            properties: {
-                isCluster: false, kind: kind, tone: tone, seq: String(seq),
-                event_id: ev.event_id, token_id: ev.token_id || null,
-                agency: ev.agency_name || null, context: ev.context_type || null,
-                outcome: ev.outcome || null, disclosure: ev.disclosure_level || null,
-                eventType: ev.event_type || null, reason: ev.reason_code || null,
-                timestamp: ev.event_timestamp || null, location: ev.requestor_location || null
-            }
-        };
-    }
-
-    function focusSubject(id, name) {
-        apiCall('/api/atlas/subject?individual_id=' + encodeURIComponent(id))
-            .then(function (data) {
-                focusedSubject = data.individual;
-                if (inflight) inflight.abort();
-                // Combine verifications AND lifecycle events (issuance/activation/
-                // revocation), ordered in time, the real "what they did" path. A
-                // subject may have only a lifecycle event (e.g. just an ISSUED
-                // activation and no verifications yet); it must still plot and the
-                // map must still zoom to it.
-                var all = []
-                    .concat((data.verifications || []).map(function (ev) { return { ev: ev, kind: 'verification' }; }))
-                    .concat((data.lifecycle || []).map(function (ev) { return { ev: ev, kind: 'lifecycle' }; }));
-                all.sort(function (a, b) {
-                    return (a.ev.event_timestamp || '') < (b.ev.event_timestamp || '') ? -1 : 1;
-                });
-                var feats = [], coords = [];
-                all.forEach(function (item, i) {
-                    feats.push(subjectFeature(item.ev, item.kind, i + 1));
-                    coords.push([item.ev.lon, item.ev.lat]);
-                });
-                map.getSource('atlas-subject').setData({ type: 'FeatureCollection', features: feats });
-                map.getSource('atlas-subject-path').setData(coords.length >= 2
-                    ? { type: 'FeatureCollection', features: [{ type: 'Feature',
-                        geometry: { type: 'LineString', coordinates: coords }, properties: {} }] }
-                    : { type: 'FeatureCollection', features: [] });
-                setOperationalLayers(false);
-                // In focus mode the banner is the single source of truth; the
-                // separate empty-hint chip stays hidden so the two never overlap.
-                toggleEmptyHint(false);
-
-                // Banner, accurate count, ZK note. "located" counts what is on
-                // the map (non-ZK verifications + lifecycle events).
-                if (bannerEl) {
-                    bannerEl.hidden = false;
-                    var nm = document.querySelector('[data-atlas-subject-name]');
-                    var st = document.querySelector('[data-atlas-subject-stats]');
-                    if (nm) nm.textContent = data.individual.legal_name + '  #' + data.individual.individual_id
-                                             + '  · ' + (data.individual.jurisdiction || '');
-                    if (st) {
-                        st.textContent = data.located === 0
-                            ? '0 located events · activity is entirely zero-knowledge (C2)'
-                            : (data.located + ' located event' + (data.located === 1 ? '' : 's')
-                               + ' · zero-knowledge activity is unattributable (C2)');
-                    }
-                }
-
-                // Frame the subject's events.
-                if (coords.length === 1) {
-                    map.flyTo({ center: coords[0], zoom: 12, duration: 900 });
-                    selectFeature(feats[0]);   // a single event: open its details immediately
-                } else if (coords.length > 1) {
-                    var b = coords.reduce(function (bb, c) { return bb.extend(c); },
-                        new maplibregl.LngLatBounds(coords[0], coords[0]));
-                    map.fitBounds(b, { padding: 90, maxZoom: 14, duration: 900 });
-                }
-                hideResults();
-                if (searchInput) searchInput.value = name || data.individual.legal_name;
-            })
-            .catch(function (err) {
-                if (err.name !== 'AbortError') console.warn('Subject focus failed:', err);
-            });
-    }
-
-    function clearFocus() {
-        focusedSubject = null;
-        if (map.getSource('atlas-subject')) map.getSource('atlas-subject').setData({ type: 'FeatureCollection', features: [] });
-        if (map.getSource('atlas-subject-path')) map.getSource('atlas-subject-path').setData({ type: 'FeatureCollection', features: [] });
-        setOperationalLayers(true);
-        if (bannerEl) bannerEl.hidden = true;
-        if (searchInput) searchInput.value = '';
-        if (emptyChip) emptyChip.hidden = true;
-        lastFetchKey = null;
-        scheduleFetch();
-    }
-
-    function hideResults() { if (resultsEl) { resultsEl.hidden = true; resultsEl.replaceChildren(); } }
-
-    var searchTimer = null;
-    if (searchInput) {
-        searchInput.addEventListener('input', function () {
-            var q = searchInput.value.trim();
-            if (searchTimer) clearTimeout(searchTimer);
-            if (q.length < 2) { hideResults(); return; }
-            searchTimer = setTimeout(function () {
-                apiCall('/api/atlas/subjects/search?q=' + encodeURIComponent(q))
-                    .then(function (data) {
-                        if (!resultsEl) return;
-                        resultsEl.replaceChildren();
-                        (data.results || []).forEach(function (r) {
-                            var b = document.createElement('button');
-                            b.type = 'button';
-                            b.className = 'subject-result';
-                            b.textContent = r.legal_name + '  · ' + (r.jurisdiction || '') + '  #' + r.individual_id;
-                            b.addEventListener('click', function () { focusSubject(r.individual_id, r.legal_name); });
-                            resultsEl.appendChild(b);
-                        });
-                        if (!(data.results || []).length) {
-                            var none = document.createElement('div');
-                            none.className = 'subject-result subject-result-none';
-                            none.textContent = 'no match';
-                            resultsEl.appendChild(none);
-                        }
-                        resultsEl.hidden = false;
-                    }).catch(function () { hideResults(); });
-            }, 220);
-        });
-        searchInput.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideResults(); });
-    }
-    var clearBtn = document.querySelector('[data-atlas-subject-clear]');
-    if (clearBtn) clearBtn.addEventListener('click', clearFocus);
-
-    // =========================================================================
     // Controls, zoom / reset / spin / fullscreen
     // =========================================================================
     var zin = document.querySelector('[data-atlas-zoom-in]');
@@ -1053,7 +577,6 @@
 
     var resetBtn = document.querySelector('[data-atlas-reset]');
     if (resetBtn) resetBtn.addEventListener('click', function () {
-        if (focusedSubject) clearFocus();   // Reset also exits subject focus
         map.flyTo({ center: HOME.center, zoom: HOME.zoom, bearing: 0, pitch: 0, speed: 1.1 });
     });
 
@@ -1115,8 +638,6 @@
     function liveRefresh() {
         if (document.hidden) return;
         lastFetchKey = null; scheduleFetch();
-        // feed: prepend-refresh is heavier; reload from top.
-        if (feedEl) { feedEl.innerHTML = ''; feedCursor = null; loadEventFeed(); }
         loadTimeline();
     }
     setInterval(liveRefresh, 60000);

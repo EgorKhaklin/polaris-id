@@ -1107,11 +1107,6 @@ class AtlasTests(PolarisTestCase):
             'Active Tokens', 'Anomalies',
             'Post-Quantum', 'Zero-Knowledge')
 
-    def test_atlas_has_event_feed_rail(self):
-        """The right rail is the live event feed (drives selection)."""
-        r = self.client.get('/atlas')
-        self.assertHTML(r, 'Event Feed')
-
     def test_atlas_classification_banner_reframed(self):
         """v9.248: the console opens on the analytical Overview (the globe is a
         tab); the SCS-230 reference stays dropped and the map strip is a slim,
@@ -5485,11 +5480,10 @@ class IssuerFederationTests(PolarisTestCase):
         refuses it in the path, query and form fields; inside a JSON body the provider refuses
         it, and the route answers the malformed body as its contract says."""
         for url in ('/api/atlas/facet/agencies?window=all&q=a%00b',
-                    '/api/atlas/subjects/search?q=a%00b',
                     '/tokens?status=a%00b', '/verifications?outcome=a%00b'):
             r = self.client.get(url)
             self.assertEqual(r.status_code, 400, url)
-        self.assertIn('NUL', self.client.get('/api/atlas/subjects/search?q=a%00b').get_json()['error'])
+        self.assertIn('NUL', self.client.get('/api/atlas/facet/agencies?window=all&q=a%00b').get_json()['error'])
         csrf = self._csrf_token_from('/verifications/new')
         r = self.client.post('/tokens/1/transition', data={'csrf_token': csrf, 'new_status': 'a\x00b'})
         self.assertEqual(r.status_code, 400)
@@ -10345,14 +10339,6 @@ class AtlasAPITests(PolarisTestCase):
             self.assertLess(antimeridian_sum + london_zone, total + 1,
                 "antimeridian bbox must not double-count or include the other hemisphere")
 
-    def test_points_endpoint_caps_at_max(self):
-        r = self.client.get('/api/atlas/points?bbox=-89,-179,89,179&kind=verification&limit=99999&window=all')
-        self.assertEqual(r.status_code, 200)
-        data = r.get_json()
-        # The hard cap _ATLAS_MAX_POINTS should bound the response
-        self.assertLessEqual(data['count'], 2000,
-            "/api/atlas/points should cap at _ATLAS_MAX_POINTS")
-
     # ----- v7: atlas cache (R8-5) -----
 
     def test_cache_stats_endpoint_reports_counters(self):
@@ -10523,66 +10509,6 @@ class AtlasConsoleAPITests(PolarisTestCase):
         # and the breakdown honours it too
         bd = self.client.get('/api/atlas/breakdown?window=all&dimension=agency&outcomes=FAILURE')
         self.assertEqual(bd.status_code, 200)
-
-    # -- v9.252: the records data grid (keyset-paginated, ZK-redacted) ---------
-
-    def test_records_shape_and_keyset_pagination(self):
-        # Page one, then page two via the returned cursor. Keyset pagination
-        # means page two is strictly older events — no overlap, no OFFSET.
-        r1 = self.client.get('/api/atlas/records?window=all&kind=verification&limit=5')
-        self.assertEqual(r1.status_code, 200)
-        d1 = r1.get_json()
-        self.assertEqual(d1['count'], len(d1['records']))
-        self.assertLessEqual(len(d1['records']), 5)
-        for rec in d1['records']:
-            for k in ('event_id', 'ts', 'agency', 'category', 'outcome', 'disclosure',
-                      'subject', 'location', 'tone'):
-                self.assertIn(k, rec)
-        # rows are newest-first by (ts, event_id)
-        keys = [(rec['ts'], rec['event_id']) for rec in d1['records']]
-        self.assertEqual(keys, sorted(keys, reverse=True), "records must be newest-first")
-        if d1['next_cursor']:
-            r2 = self.client.get('/api/atlas/records?window=all&kind=verification&limit=5'
-                                 '&cursor=' + d1['next_cursor'])
-            self.assertEqual(r2.status_code, 200)
-            ids1 = {rec['event_id'] for rec in d1['records']}
-            ids2 = {rec['event_id'] for rec in r2.get_json()['records']}
-            self.assertFalse(ids1 & ids2, "keyset page two must not repeat page one's rows")
-
-    def test_records_redacts_zero_knowledge(self):
-        # C6: a zero-knowledge verification is a row, but its subject is withheld
-        # and it carries no location — exactly as the map never plots it.
-        r = self.client.get('/api/atlas/records?window=all&kind=verification&limit=500')
-        self.assertEqual(r.status_code, 200)
-        zk = [rec for rec in r.get_json()['records']
-              if rec['disclosure'] == 'ZERO_KNOWLEDGE']
-        self.assertTrue(zk, "the seed has zero-knowledge verifications")
-        for rec in zk:
-            self.assertEqual(rec['subject'], '(zero-knowledge)',
-                             "a ZK verification's subject must be withheld (C6)")
-            self.assertIsNone(rec['location'], "a ZK verification carries no location (C6)")
-
-    def test_records_honours_global_filter(self):
-        # The grid is coordinated with the rest of the console: an outcome
-        # filter reaches the SQL and every returned row matches it.
-        r = self.client.get('/api/atlas/records?window=all&kind=verification'
-                            '&outcomes=FAILURE&limit=500')
-        self.assertEqual(r.status_code, 200)
-        recs = r.get_json()['records']
-        self.assertTrue(recs, "the seed has FAILURE verifications")
-        for rec in recs:
-            self.assertEqual(rec['outcome'], 'FAILURE', "the filter must reach the records SQL")
-
-    def test_records_capped_at_max_events(self):
-        r = self.client.get('/api/atlas/records?window=all&kind=verification&limit=100000')
-        self.assertEqual(r.status_code, 200)
-        self.assertLessEqual(r.get_json()['count'], atlas_routes._ATLAS_MAX_EVENTS)
-
-    def test_records_rejects_bad_cursor(self):
-        self.assertEqual(
-            self.client.get('/api/atlas/records?window=all&cursor=notacursor').status_code, 400)
-        self.assertEqual(
-            self.client.get('/api/atlas/records?window=all&kind=gender').status_code, 400)
 
     # -- v9.253: Map v2 — the Density (hexbin) + Regions (jurisdiction) layers --
 
@@ -11155,37 +11081,14 @@ class HealthEndpointTests(PolarisTestCase):
         self.assertGreaterEqual(data['pq_pct'], 0)
         self.assertLessEqual(data['pq_pct'], 100)
 
-    def test_events_endpoint_paginates_with_cursor(self):
-        # First page
-        r1 = self.client.get('/api/atlas/events?limit=3')
-        self.assertEqual(r1.status_code, 200)
-        d1 = r1.get_json()
-        self.assertEqual(d1['count'], 3)
-        self.assertIsNotNone(d1.get('next_cursor'),
-            "First page with full results should have a next_cursor")
-
-        # Second page
-        r2 = self.client.get(f'/api/atlas/events?limit=3&cursor={d1["next_cursor"]}')
-        self.assertEqual(r2.status_code, 200)
-        d2 = r2.get_json()
-        # Page 2 events must be chronologically before page 1's last
-        last_p1 = d1['events'][-1]['event_timestamp']
-        for ev in d2['events']:
-            self.assertLessEqual(ev['event_timestamp'], last_p1,
-                "Cursor pagination must descend in time")
-
-    def test_events_endpoint_rejects_bad_cursor(self):
-        r = self.client.get('/api/atlas/events?cursor=garbage')
-        self.assertEqual(r.status_code, 400)
-
     def test_atlas_endpoints_require_login(self):
         # Drop the session
         with self.client.session_transaction() as sess:
             sess.clear()
         for path in ('/api/atlas/clusters?bbox=0,0,1,1&grid=1',
-                     '/api/atlas/points?bbox=0,0,1,1',
+                     '/api/atlas/hexbin?bbox=0,0,1,1&size=1',
                      '/api/atlas/stats?bbox=0,0,1,1',
-                     '/api/atlas/events'):
+                     '/api/atlas/series?window=all'):
             r = self.client.get(path)
             self.assertIn(r.status_code, (302, 401, 403),
                 f"Anonymous access to {path} should be denied, got {r.status_code}")
@@ -12247,26 +12150,12 @@ class ZKLocationRedactionTests(unittest.TestCase):
                 and round(float(lat), 3) == round(self.ZK_LAT, 3)
                 and round(float(lon), 3) == round(self.ZK_LON, 3))
 
-    def test_atlas_points_excludes_zk(self):
-        rows = self._rows(
-            "SELECT * FROM atlas_points_verifications(-90,90,-180,180,5000,"
-            "NULL,NULL,NULL,NULL)")
-        for r in rows:
-            self.assertNotEqual(r['requestor_location'], self.SECRET)
-            self.assertFalse(self._at_zk_point(r['lat'], r['lon']))
-
     def test_atlas_clusters_excludes_zk(self):
         rows = self._rows(
             "SELECT * FROM atlas_clusters_verifications(-90,90,-180,180,5,"
             "NULL,NULL,NULL,NULL)")
         for r in rows:
             self.assertFalse(self._at_zk_point(r['lat'], r['lon']))
-
-    def test_atlas_recent_events_redacts_zk(self):
-        rows = self._rows("SELECT * FROM atlas_recent_events(NULL,NULL,500)")
-        for r in rows:
-            self.assertNotEqual(r.get('detail'), self.SECRET)
-            self.assertFalse(self._at_zk_point(r.get('lat'), r.get('lon')))
 
     def test_verifications_list_projection_redacts_zk(self):
         # The /verifications base_select projects requestor_location through a
@@ -12288,69 +12177,6 @@ class ZKLocationRedactionTests(unittest.TestCase):
         for r in rows:
             if r.get('disclosure_level') == 'ZERO_KNOWLEDGE':
                 self.assertIsNone(r['requestor_location'])
-
-
-class AtlasEventCursorTests(unittest.TestCase):
-    """The /api/atlas/events keyset cursor must carry full microsecond
-    precision. atlas_recent_events filters with a strict `< (cursor_ts,
-    cursor_id)`, so a whole-second-truncated cursor excludes every event in the
-    (S.0, S.f) sub-second band at a page boundary — dropping them from the feed
-    entirely. Events are inserted uncommitted (append-only table) and rolled
-    back, so nothing is polluted."""
-
-    def setUp(self):
-        self.conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
-        self.our_ids = []
-        # Five events in the SAME whole second, distinct microseconds, far-future
-        # so they sort to the top of the recent-events feed.
-        with self.conn.cursor() as cur:
-            for i in range(5):
-                cur.execute(
-                    "INSERT INTO VerificationEvent "
-                    "(token_id, requesting_agency_id, context_id, outcome, "
-                    " disclosure_level, event_timestamp) "
-                    "VALUES (NULL, 1, 1, 'SUCCESS', 'SELECTIVE', %s::timestamp) "
-                    "RETURNING event_id",
-                    (f'2099-06-04 12:00:00.{i + 1:06d}',))
-                self.our_ids.append(cur.fetchone()['event_id'])
-
-    def tearDown(self):
-        self.conn.rollback()
-        self.conn.close()
-
-    def _page(self, cursor_ts, cursor_id, limit):
-        with self.conn.cursor() as cur:
-            cur.execute(
-                "SELECT event_id, "
-                "  to_char(event_timestamp,'YYYY-MM-DD HH24:MI:SS.US') AS tsc, "
-                "  to_char(event_timestamp,'YYYY-MM-DD HH24:MI:SS')    AS tss "
-                "FROM atlas_recent_events(%s::timestamp, %s, %s)",
-                (cursor_ts, cursor_id, limit))
-            return cur.fetchall()
-
-    def test_full_precision_cursor_skips_no_subsecond_event(self):
-        limit = 3
-        p1 = self._page(None, None, limit)
-        last = p1[-1]
-        # The fix: cursor carries microseconds.
-        p2 = self._page(last['tsc'], last['event_id'], limit)
-        seen = {r['event_id'] for r in p1} | {r['event_id'] for r in p2}
-        for eid in self.our_ids:
-            self.assertIn(eid, seen,
-                'a full-precision cursor must not skip a same-second event')
-
-    def test_truncated_cursor_demonstrates_the_skip(self):
-        # Proves WHY the fix is needed: a whole-second cursor drops the
-        # sub-second band, so at least one of our same-second events is lost.
-        limit = 3
-        p1 = self._page(None, None, limit)
-        last = p1[-1]
-        p2 = self._page(last['tss'], last['event_id'], limit)
-        seen = {r['event_id'] for r in p1} | {r['event_id'] for r in p2}
-        skipped = [eid for eid in self.our_ids if eid not in seen]
-        self.assertTrue(
-            skipped,
-            'a whole-second cursor should skip sub-second events (the bug the fix removes)')
 
 
 class ResourceBoundTests(unittest.TestCase):
@@ -12670,73 +12496,101 @@ class ErasureTests(PolarisTestCase):
 # nothing a user can see and click renders an error page.
 # ============================================================================
 
-class AtlasSubjectFocusTests(PolarisTestCase):
-    """Subject-focus is single-subject warrant-audit investigation (UC-7), not
-    population profiling. Pin the three guarantees that keep it on the right
-    side of the constitution: it is governed (admin/auditor only), it is
-    audit-logged, and C6 holds — a ZERO_KNOWLEDGE verification is never
-    returned for any subject (it carries no token link, C2, so it cannot be
-    attributed at all)."""
+class AtlasShowsNoPersonTests(PolarisTestCase):
+    """lab/strategy/009, step A0. The Atlas shows counts: no response names a person or a
+    credential or returns one event, and the person search, the person focus, the event feed,
+    the map's points and the records grid are gone.
 
-    DEFAULT_ROLE = None
+    The counterexample this answers, measured on main 4f18e1b6: signed in as an operator,
+    /api/atlas/events returned seventeen events, fourteen naming the holder with the credential
+    number and coordinates, and wrote no AuditAccessLog row, while each page of the
+    verification log writes one (docs/design/transparency-program.md states the rule;
+    check_audited_reads_are_logged read only 05_procedures.sql, and the functions were in
+    11_atlas.sql)."""
 
-    def test_subject_endpoints_deny_operator(self):
-        self._login('operator')
-        self.assertEqual(self.client.get('/api/atlas/subject?individual_id=2').status_code, 403)
-        self.assertEqual(self.client.get('/api/atlas/subjects/search?q=ma').status_code, 403)
+    DEFAULT_ROLE = 'operator'
 
-    def test_subject_endpoints_deny_anonymous(self):
-        # No login: login_required redirects (302) or 401/403, never 200.
-        self.assertNotEqual(self.client.get('/api/atlas/subject?individual_id=2').status_code, 200)
+    WITHDRAWN = ('/api/atlas/points', '/api/atlas/events', '/api/atlas/records',
+                 '/api/atlas/subjects/search', '/api/atlas/subject')
+    ROUTES = ('/api/atlas/clusters?bbox=-89,-179,89,179&grid=5&kind=verification&window=all',
+              '/api/atlas/clusters?bbox=-89,-179,89,179&grid=5&kind=lifecycle&window=all',
+              '/api/atlas/hexbin?bbox=-89,-179,89,179&size=5&kind=verification&window=all',
+              '/api/atlas/geo/jurisdictions?window=all&kind=verification',
+              '/api/atlas/geo/jurisdictions?window=all&kind=lifecycle',
+              '/api/atlas/stats?bbox=-89,-179,89,179',
+              '/api/atlas/timeline?bbox=-89,-179,89,179&kind=verification',
+              '/api/atlas/series?window=all&kind=verification&buckets=24',
+              '/api/atlas/series?window=all&kind=lifecycle&buckets=24',
+              '/api/atlas/heatmap?window=all&kind=verification',
+              '/api/atlas/stacked?window=all&kind=verification&dimension=context&buckets=24',
+              '/api/atlas/breakdown?window=all&kind=verification&dimension=agency&limit=50',
+              '/api/atlas/breakdown?window=all&kind=lifecycle&dimension=agency&limit=50',
+              '/api/atlas/crosstab?window=all&kind=verification&row=agency&col=outcome',
+              '/api/atlas/facet/agencies?window=all',
+              '/api/atlas/cache-stats')
+    PERSON_KEY = re.compile(r"(token_id|token_value|individual_id|legal_name|holder|subject|event_id"
+                            r"|date_of_birth)", re.I)
 
-    def test_subject_search_and_focus_for_admin(self):
-        self._login('admin')
-        r = self.client.get('/api/atlas/subjects/search?q=Maria')
-        self.assertEqual(r.status_code, 200)
-        names = [x['legal_name'] for x in r.get_json()['results']]
-        self.assertIn('Maria Santos', names)
-
-        # Short query returns nothing (no full-table dump on a single char).
-        self.assertEqual(self.client.get('/api/atlas/subjects/search?q=m').get_json()['results'], [])
-
-        # Non-integer id is a 400, not a 500.
-        self.assertEqual(self.client.get('/api/atlas/subject?individual_id=abc').status_code, 400)
-
-    def test_subject_focus_never_returns_zero_knowledge(self):
-        """The C6 guarantee for the subject view: not one plotted event may be
-        ZERO_KNOWLEDGE, for ANY subject. ZK verifications have token_id NULL and
-        cannot be attributed to an individual at all."""
-        self._login('admin')
-        for iid in range(1, 9):
-            r = self.client.get(f'/api/atlas/subject?individual_id={iid}')
-            if r.status_code != 200:
-                continue
-            data = r.get_json()
-            for v in data['verifications']:
-                self.assertNotEqual(
-                    v['disclosure_level'], 'ZERO_KNOWLEDGE',
-                    f"subject {iid} leaked a ZERO_KNOWLEDGE verification onto the map")
-                self.assertIsNotNone(v['lat'])
-                self.assertIsNotNone(v['lon'])
-
-    def test_subject_focus_audit_logged(self):
-        """Every subject access is warrant-grade and writes an AuditAccessLog
-        row naming the individual investigated."""
-        self._login('admin')
-        before = self._audit_count()
-        self.client.get('/api/atlas/subject?individual_id=2')
-        self.assertGreater(self._audit_count(), before,
-                           "subject focus must write an audit-of-record row")
-
-    def _audit_count(self):
+    def _names(self):
         conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT count(*) AS n FROM AuditAccessLog "
-                            "WHERE filter_criteria_jsonb::text LIKE %s", ('%/api/atlas/subject%',))
+                cur.execute("SELECT legal_name FROM Individual")
+                return {r['legal_name'] for r in cur.fetchall()}
+        finally:
+            conn.close()
+
+    def _audit_rows(self):
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) AS n FROM AuditAccessLog")
                 return cur.fetchone()['n']
         finally:
             conn.close()
+
+    def test_the_withdrawn_routes_are_gone(self):
+        for role in ('operator', 'auditor', 'admin'):
+            self._login(role)
+            for path in self.WITHDRAWN:
+                r = self.client.get(path + '?bbox=-89,-179,89,179&individual_id=2&q=ma&limit=50')
+                self.assertEqual(r.status_code, 404, (role, path))
+
+    def test_no_atlas_response_names_a_person(self):
+        """The counterexample, run over every Atlas route that answers: no key names a person,
+        a credential or an event, no value is a holder's name, and no read of a history means
+        no AuditAccessLog row is owed or written."""
+        names = self._names()
+        self.assertTrue(names, 'the seed has people')
+        before = self._audit_rows()
+
+        def walk(node, url):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    self.assertIsNone(self.PERSON_KEY.search(str(k)), (url, k))
+                    walk(v, url)
+            elif isinstance(node, list):
+                for v in node:
+                    walk(v, url)
+            elif isinstance(node, str):
+                self.assertNotIn(node, names, (url, 'a holder\'s name'))
+        for url in self.ROUTES:
+            r = self.client.get(url)
+            self.assertEqual(r.status_code, 200, (url, r.get_data(as_text=True)[:200]))
+            walk(r.get_json(), url)
+        self.assertEqual(self._audit_rows(), before, 'the Atlas reads no history, so it logs none')
+
+    def test_the_page_offers_no_person_or_event_view(self):
+        for role in ('operator', 'admin'):
+            self._login(role)
+            body = self.client.get('/atlas').get_data(as_text=True)
+            for hook in ('data-atlas-subject-search', 'data-atlas-subject-banner', 'data-rec-grid',
+                         'data-atlas-view-tab="records"', 'data-atlas-mapmode="points"',
+                         'data-atlas-event-feed', 'atlas-globe-detail', 'data-atlas-modifier="pq"'):
+                self.assertNotIn(hook, body, (role, hook))
+            for kept in ('data-atlas-view-tab="overview"', 'data-atlas-mapmode="regions"',
+                         'data-atlas-mapmode="density"'):
+                self.assertIn(kept, body, (role, kept))
 
 
 class TokenExportTests(PolarisTestCase):
@@ -13697,14 +13551,12 @@ class RouteGuardMatrixTests(PolarisTestCase):
     #: by hand, which is what the two lists they replace were. Changing a guard is
     #: meant to fail here: updating the line is the moment somebody confirms the
     #: new exposure is intended.
-    EXPECTED_LOGIN_ONLY = 47
+    EXPECTED_LOGIN_ONLY = 44
     ROLE_GATES = {
         '/agencies/<int:ag_id>/delete': ('admin',),
         '/agencies/<int:ag_id>/edit': ('admin',),
         '/agencies/new': ('admin',),
         '/api/anchor/batch': ('admin',),
-        '/api/atlas/subject': ('admin', 'auditor'),
-        '/api/atlas/subjects/search': ('admin', 'auditor'),
         '/api/duress/events': ('admin', 'auditor'),
         '/api/duress/record': ('admin', 'operator'),
         '/api/federation/attest': ('admin',),
@@ -16015,8 +15867,8 @@ class RelyingPartyApiTests(PolarisTestCase):
         tok = anon.post('/api/v1/oauth/token', headers=self._basic(cid, 'secret-hhh'),
                         data={'grant_type': 'client_credentials'}).get_json()
         bearer = {'Authorization': 'Bearer ' + tok['access_token']}
-        for route in ('/api/atlas/subject?individual_id=1', '/api/tokens/1/export',
-                      '/api/tokens/1/verify', '/dashboard', '/individuals', '/api/atlas/records'):
+        for route in ('/api/atlas/series?window=all', '/api/tokens/1/export',
+                      '/api/tokens/1/verify', '/dashboard', '/individuals', '/api/atlas/breakdown?window=all'):
             code = anon.get(route, headers=bearer).status_code
             self.assertIn(code, (301, 302, 401, 403),
                           "an RP bearer must not reach operator route %s (got %s)" % (route, code))
@@ -18899,13 +18751,6 @@ class RefusalsTheAppMutationDrillFound(PolarisTestCase):
         self.addCleanup(p.stop)
 
     # -- 404: a named thing that does not exist ------------------------------------------
-
-    def test_atlas_subject_focus_of_an_unknown_individual_is_404(self):
-        """The Atlas subject view answers 404 for an individual that does not exist."""
-        self.assertEqual(self.client.get('/api/atlas/subject?individual_id=2').status_code, 200,
-                         'control: a real subject is served')
-        r = self.client.get('/api/atlas/subject?individual_id=999999')
-        self.assertEqual(r.status_code, 404, r.get_data(as_text=True)[:200])
 
     def test_editing_an_unknown_agency_is_404(self):
         """The agency edit form answers 404 for an agency that does not exist."""

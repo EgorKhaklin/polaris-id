@@ -69,7 +69,7 @@ def attack_ac3_operator_reaches_admin_auditor_route():
     _reset_rate_limit(ta)
     c = _fresh_client(ta)
     lr = c.post("/login", data={"username": "operator", "password": ta.TEST_PASSWORDS["operator"]})
-    r = c.get("/api/atlas/subject?individual_id=1")
+    r = c.get("/api/duress/events")
     succeeded = (r.status_code == 200)
     return succeeded, ("operator got HTTP %d on an admin/auditor-only route (expected 403); login HTTP %d"
                        % (r.status_code, lr.status_code))
@@ -259,8 +259,8 @@ def attack_ac6_rp_credential_reaches_operator_surface():
     anon, bearer = _register_rp_and_bearer(ta, cid, sec)
     breaches = []
     try:
-        for route in ("/api/atlas/subject?individual_id=1", "/api/tokens/1/export",
-                      "/api/tokens/1/verify", "/dashboard", "/individuals", "/api/atlas/records"):
+        for route in ("/api/atlas/series?window=all", "/api/tokens/1/export",
+                      "/api/tokens/1/verify", "/dashboard", "/individuals", "/api/atlas/breakdown?window=all"):
             if anon.get(route, headers=bearer).status_code == 200:
                 breaches.append(route)
         # P8.4: a VERIFY bearer must not reach the auth broker either -- the token endpoint

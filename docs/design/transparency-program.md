@@ -35,11 +35,20 @@ finds it. UC-7 selects from `uc7_warrant_audit()`; the table appears only in
 unlogged reads of a table would have had to already know which procedures return that table's
 rows.
 
-So the rule is now stated where the evasion lives. `check_audited_reads_are_logged` parses the
-procedures file for functions that RETURN ROWS SOURCED FROM a tracked audit table, and requires
-every route calling one to write an `AuditAccessLog` row. Procedures that merely count or purge
+So the rule is now stated where the evasion lives. `check_audited_reads_are_logged` parses
+every SQL source a database is built from for functions that RETURN ROWS OF a tracked audit
+table's history, and requires every route calling one to write an `AuditAccessLog` row. A row is
+a history when it carries an event's own key or identifies a person or a credential, or when the
+function selects one person's or one credential's rows. Functions that merely count or purge
 internally are not caught, because they hand the caller nothing. The check fails if it finds no
-such procedure at all: a parse that has broken must not pass by finding nothing to check.
+such function at all: a parse that has broken must not pass by finding nothing to check.
+
+**And the same escape, one file over.** Until 2026-10-02 the check read the procedures file
+alone. Four Atlas functions in `11_atlas.sql` returned one row per event naming the holder and
+the credential (the map's points with coordinates too), to every signed-in role, and their
+routes wrote no row, so the sentence above about every other read being a `SELECT` a grep finds
+did not hold for them. They were withdrawn ([lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md));
+the Atlas returns counts, and the check reads every SQL source.
 
 The row records the QUERY and never the RESULTS. An audit-of-audit that copied the subject's
 verification history would double the exposure it exists to police, and the warrant already
@@ -168,7 +177,7 @@ happened in should not be able to publish a tidy series afterwards that hides th
 
 | Mechanism | What it holds |
 | --- | --- |
-| `check_audited_reads_are_logged` | A route reading audited rows through a row-returning procedure writes an `AuditAccessLog` row. Fails if the procedure parse finds nothing. |
+| `check_audited_reads_are_logged` | A route reading a history of audited rows through a function, in any SQL source, writes an `AuditAccessLog` row. Fails if the parse finds nothing. |
 | `check_transparency_program` | Every figure carries its source; the invertibility re-check runs BEFORE the digest; complementary suppression is tried before the total is withheld; the two kinds of withheld cell keep different a-priori ranges; periods are suppressed independently; no running total; the report states its own limit. |
 | `scripts/polaris-transparency-report-drill.py` | Attacks the report AS PUBLISHED over thousands of random tables and a growing multi-quarter series, with an adversary that enumerates reachable sums rather than recomputing the module's own bounds. Two different algorithms agreeing is evidence; one agreeing with itself is not. |
 | `polaris_web/test_transparency.py` | 36 measured tests: the worked example above, two cells pinned at the ceiling (which a "at least two withheld cells" rule passes and discloses), the refusal, per-period independence, the digest's domain separation. |

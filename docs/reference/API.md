@@ -164,10 +164,16 @@ awareness page. All endpoints take a `bbox` query parameter:
 Antimeridian-spanning bboxes (where `min_lon > max_lon`) are
 supported; they cover `[min_lon, 180] ∪ [-180, max_lon]`.
 
-Result sets are bounded (constraint C8): the list endpoints (clusters,
-points, events) carry `_ATLAS_MAX_*` LIMITs, the timeline is capped at
-240 buckets, subject search at 20 rows; the remaining endpoints return
-aggregates. Responses past a cap are truncated; the caller cannot raise it.
+Result sets are bounded (constraint C8): the clusters, categories and regions
+carry `_ATLAS_MAX_*` LIMITs and the time series are capped at 240 buckets.
+Responses past a cap are truncated; the caller cannot raise it.
+
+Every endpoint returns counts per cell, area, bucket or category. None returns
+an event row or names a person or a credential ([lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md),
+step A0): a single event is read on the verification log, which writes an
+`AuditAccessLog` row, and one person's history only through the warrant audit.
+The point, event-feed, records and subject endpoints were withdrawn on
+2026-10-02; they answer 404.
 
 ### `GET /api/atlas/clusters`
 
@@ -196,19 +202,6 @@ Response (verification kind):
 
 Cap: `_ATLAS_MAX_CLUSTERS = 5000`. Cached for `_ATLAS_CACHE_TTL_SECONDS`
 (default 30s); R8-5.
-
-### `GET /api/atlas/points`
-
-Individual events in the bbox. Used at high zoom when cluster count
-falls below the cluster→point threshold.
-
-| param | type | default | notes |
-|---|---|---|---|
-| `bbox` | csv-floats | required | as above |
-| `limit` | int | `500` | clamped to `_ATLAS_MAX_POINTS = 2000` |
-| `kind` | enum | `verification` | as above |
-
-Response shape mirrors clusters but with `points` array instead.
 
 ### `GET /api/atlas/hexbin`
 
@@ -275,11 +268,6 @@ Four HUD signals scoped to the visible bbox.
 ```
 
 Cached; R8-5.
-
-### `GET /api/atlas/events`
-
-Paginated event feed for the right rail. Cursor pagination supported
-via `?cursor=…`.
 
 ### `GET /api/atlas/timeline`
 
@@ -362,35 +350,6 @@ capped at `_ATLAS_MAX_CATEGORIES`. Non-geographic (C6). `@replica_reads`.
 }
 ```
 
-### `GET /api/atlas/records`
-
-The records data grid (roadmap P2.3, v9.252): the raw event rows behind the
-charts, matching the global filter. One row per event with `event_id`, `ts`,
-`agency`, `category`, `outcome`, `disclosure`, `subject`, `location`, and
-`tone`. Paging is **keyset, not offset**: pass `?cursor=TIMESTAMP|EVENT_ID` from
-the previous response's `next_cursor` to fetch the next (older) page, so a deep
-page costs the same as the first. `kind` is `verification` (default) or
-`lifecycle`; `limit` is capped at `_ATLAS_MAX_EVENTS` (C8); the usual
-`window`/`outcomes`/`disclosure`/`contexts`/`agencies` filter params apply.
-`next_cursor` is `null` on the last page. C6: a zero-knowledge verification is a
-row, but its `subject` reads `(zero-knowledge)` and its `location` is `null`, so
-the grid counts it without ever locating or identifying it. `@replica_reads`.
-
-```json
-{
-  "kind": "verification", "count": 50,
-  "next_cursor": "2026-09-06T10:41:21|8123",
-  "records": [
-    {"event_id": 8172, "ts": "2026-09-06T10:44:02", "agency": "First National Bank",
-     "category": "Banking", "outcome": "SUCCESS", "disclosure": "SELECTIVE",
-     "subject": "Ada Lovelace", "location": "New York, NY", "tone": "ok"},
-    {"event_id": 8171, "ts": "2026-09-06T10:43:55", "agency": "Transit Authority",
-     "category": "Transit", "outcome": "SUCCESS", "disclosure": "ZERO_KNOWLEDGE",
-     "subject": "(zero-knowledge)", "location": null, "tone": "ok"}
-  ]
-}
-```
-
 ### `GET /api/atlas/cache-stats`
 
 Cache observability for R8-5. Returns hit/miss/expired/evicted
@@ -410,20 +369,6 @@ counters and current cache size.
 ```
 
 ---
-
-### `GET /api/atlas/subjects/search`
-
-**Roles:** admin, auditor. Typeahead for the subject-focus picker.
-`q` (string, at least two characters) matches legal names with `ILIKE`;
-returns `{"results": [...]}` with at most 20 rows.
-
-### `GET /api/atlas/subject`
-
-**Roles:** admin, auditor; audit-logged. `individual_id` (int) selects
-one subject; the response carries that subject's located verification
-events for the focused map view. ZERO_KNOWLEDGE verifications are never
-plotted: they are returned only as a withheld count, so even the
-investigator cannot place them (constraint C6).
 
 ---
 

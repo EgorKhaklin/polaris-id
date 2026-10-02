@@ -14,6 +14,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - An operator bound to one authority could be served other authorities' Atlas counts from its response cache.
 - The database refuses a successful verification of a dead credential, outside its permitted contexts, or across an untrusted edge.
 - An operator bound to one authority can no longer activate a reserve another authority issued (UC-4).
+- The Atlas no longer returns events naming their holders; the access check reads every SQL source.
 
 ### Added
 
@@ -30,6 +31,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Changed
 
 - The operator console is rethought around what Polaris is now: grouped, role-gated navigation; new sign-in, landing and Overview.
+- The Atlas shows counts only: its map points, event feed, records grid and person focus are withdrawn.
 - The Overview costs the same at any population: 10.4 s to 0.12 s at two million persons.
 - Console counts read to thirteen digits and beyond; a capped count says "or more".
 - The seven operation forms start from one record found by lookup instead of listing every credential or person.

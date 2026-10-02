@@ -262,7 +262,7 @@ this via `@security.csrf_protect` on every state-changing route.
 
 **Cursor pagination**: pagination scheme using a "where am I"
 cursor instead of OFFSET. O(log n) per page vs O(offset).
-Implemented in `/api/atlas/events`.
+Implemented in the verification log (`/verifications`) and the console's lists.
 
 **Rate limiter**: R8-2 / v7.5 mechanism guarding login + sensitive
 endpoints against brute-force. In-memory backend for single-worker
