@@ -67,6 +67,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The advisory-lock check reads locks taken in functions; the holder key register's lock gains contention tests.
 - The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
 - The warrant audit page no longer says zero-knowledge events come back redacted; they are never returned.
+- The Atlas marked every withheld count "<5", false for one withheld for its whole's sake; it shows a neutral mark.
 - A person's investigation page takes its colours from the theme; a credential value read at 3.48:1 in light.
 - A credential's investigation page found its successor by scanning every credential: 904 ms at 3.6 million.
 - A credential's page read its device bindings and revocations by scanning those tables.
