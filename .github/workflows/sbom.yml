@@ -136,8 +136,10 @@ jobs:
       # leaves suppliers, the subject's version and the author short and copies license names
       # that are not on the SPDX list; scripts/polaris-sbom-enrich.py fills each from facts the
       # SBOM and the release hold (and fails, naming the component, where it holds none). The
-      # SPDX project's checker then decides from its JSON report: since 5.0 it exits 0 on a
-      # non-conformant SBOM, so its exit status proves nothing. A failure leaves the draft.
+      # SPDX project's checker then decides, and the verdict is read from its JSON report: the
+      # SBOM must be conformant AND carry no validation message. Its own non-zero exit would end
+      # the step before naming the SBOM and printing the report, so it is not what decides here.
+      # A failure leaves the draft.
       - name: Meet the NTIA minimum elements, judged by the SPDX project's checker
         env:
           TAG: ${{ steps.tag.outputs.tag }}
@@ -154,7 +156,7 @@ jobs:
             sbom/sbom-image-postgres.spdx.json sbom/sbom-image-etcd.spdx.json
           fail=0
           for f in sbom/*.spdx.json; do
-            "$RUNNER_TEMP/sbom-check/bin/ntia-checker" -r json "$f" > "$RUNNER_TEMP/verdict.json"
+            "$RUNNER_TEMP/sbom-check/bin/ntia-checker" -r json "$f" > "$RUNNER_TEMP/verdict.json" || true
             if jq -e '.isConformant == true and (.validationMessages | length) == 0' \
                 "$RUNNER_TEMP/verdict.json" > /dev/null; then
               echo "$f: NTIA minimum elements met, valid SPDX 2.3"

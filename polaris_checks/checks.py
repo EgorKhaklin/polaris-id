@@ -5643,8 +5643,9 @@ def check_sbom_workflow(root: pathlib.Path) -> list[Finding]:
     # 2026-10-02: every SBOM meets the 2021 NTIA minimum elements and is valid SPDX 2.3 before it
     # is attested. Measured on v1.0.0-rc.70, none of the six met them: Trivy leaves suppliers, the
     # subject's version and the author short, and four carried license names off the SPDX list.
-    # scripts/polaris-sbom-enrich.py fills them; the SPDX project's checker decides, from its JSON
-    # report, because since 5.0 it exits 0 on a non-conformant SBOM.
+    # scripts/polaris-sbom-enrich.py fills them; the SPDX project's checker decides, and the gate
+    # reads the verdict from its JSON report, so the criteria are stated where they are applied:
+    # conformant, and no validation message.
     attest = re.search(r"^\s*(?:-\s*)?uses:\s*actions/attest-build-provenance@", wf, re.M)
     enrich = re.search(r"^[^#\n]*scripts/polaris-sbom-enrich\.py --version", wf, re.M)
     checker = re.search(r"^[^#\n]*\bntia-checker\b[^\n]*-r json", wf, re.M)
@@ -5652,8 +5653,8 @@ def check_sbom_workflow(root: pathlib.Path) -> list[Finding]:
     if not (enrich and checker and verdict):
         return _fail("sbom", "sbom.yml does not fill the NTIA minimum elements "
                      "(scripts/polaris-sbom-enrich.py) and judge each SBOM by the checker's JSON "
-                     "verdict (ntia-checker -r json, .isConformant == true); the checker's exit "
-                     "status passes a non-conformant SBOM")
+                     "verdict (ntia-checker -r json, .isConformant == true), so the criteria the "
+                     "release applies are stated in the workflow")
     if "--require-hashes -r .github/sbom/requirements.txt" not in wf:
         return _fail("sbom", "sbom.yml installs the SBOM checker without its hash lock "
                      "(pip install --require-hashes -r .github/sbom/requirements.txt)")

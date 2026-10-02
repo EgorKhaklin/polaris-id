@@ -2450,7 +2450,8 @@ def test_sbom_workflow_check_discriminates(tmp_path):
     assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
         "must FAIL when the SBOMs are attested without the NTIA minimum elements filled and checked"
 
-    # Checked by the checker's exit status, which is 0 on a non-conformant SBOM since 5.0.
+    # Judged by the exit status alone: the criteria are unstated, and the step stops at the first
+    # failure without naming the element that failed.
     sbom.write_text(head + "      - run: |\n" + install + fill
                     + "          ntia-checker \"$f\"\n" + attest + publish)
     assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
