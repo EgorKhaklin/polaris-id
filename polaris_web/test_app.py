@@ -15832,6 +15832,39 @@ class RelyingPartyApiTests(PolarisTestCase):
             tid = cur.fetchone()['token_id']
         return self.client.get('/api/tokens/%d/authenticity-pack' % tid).get_json()
 
+    def test_the_pack_a_holder_carries_verifies_through_a_migration_window(self):
+        """docs/operator/QUANTUM-EVENT.md section 2: "A credential's old signature keeps
+        verifying until its deprecation_date ... an old verifier accepts the old one, a new
+        verifier the new one". A holder's pack carries the signature it was issued with, and
+        no population can be reached at once to be handed a new one, so the relying-party
+        door has to accept every signature still in force, not only the newest. Under the
+        placeholder profile the two signatures are the same bytes and this cannot tell them
+        apart; the real-signer suite runs it where they differ."""
+        import migration
+        import pqc_signing
+        cid = self._register_rp('window-secret-1', suffix='0201')
+        auth = self._bearer(cid, 'window-secret-1')
+        pack = self._issue_and_pack('RP-WINDOW-1')
+        old = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
+        self.assertEqual(self.client.post('/api/v1/verify', json=old, headers=auth)
+                         .get_json()['decision'], 'accept', 'control: the pack verifies')
+        with self._new_conn() as conn:
+            target_id, target_name = migration.resolve_target(conn, 'ML-DSA-87')
+            migration.migrate_population(conn, target_id, target_name, batch_size=50)
+            with conn.cursor() as cur:
+                cur.execute("SELECT s.signature_bytes FROM TokenSignature s JOIN IdentityToken t "
+                            "  ON t.token_id = s.token_id WHERE t.token_value = %s "
+                            "   AND s.algorithm_id = %s", (pack['token_value'], target_id))
+                new_sig = bytes(cur.fetchone()['signature_bytes']).hex()
+        if pqc_signing.is_enabled():
+            self.assertNotEqual(new_sig, pack['signature_hex'], 'two signatures, two byte strings')
+        during = self.client.post('/api/v1/verify', json=old, headers=auth).get_json()
+        self.assertTrue(during['authentic'], during)
+        self.assertEqual(during['decision'], 'accept', during)
+        new = dict(old, signature_hex=new_sig)
+        self.assertEqual(self.client.post('/api/v1/verify', json=new, headers=auth)
+                         .get_json()['decision'], 'accept', 'the new signature verifies too')
+
     # -- a refusal here that the application mutation drill found nothing noticing
     # -- (2026-09-17): the bearer token outlives the relying party's standing to use it.
 

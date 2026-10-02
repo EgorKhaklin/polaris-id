@@ -519,7 +519,7 @@ authenticity pack — and receives the verdict. Never any personal data.
 | field | type | notes |
 |---|---|---|
 | `api_version` | string | `v1` |
-| `authentic` | bool | the presented signature is the genuine issued signature over `SHA3-256(token_value)` |
+| `authentic` | bool | the presented signature is a genuine issued signature over `SHA3-256(token_value)` still in force: during a migration window, either the old or the new one |
 | `issuer_authorized_at_signing` | bool \| null | the key was authorized for this authority when the credential was signed; survives rotation; `null` when undecidable |
 | `issuer_key_current` | bool \| null | the key is still active for that authority today; `false` after a rotation, which says nothing about the credential; `null` when undecidable |
 | `currently_authoritative` | bool | the token is `ACTIVE` **and** not past its `expiration_date`, read fresh from the primary. The same predicate the operator endpoint uses, so the two cannot disagree |
@@ -529,9 +529,9 @@ authenticity pack — and receives the verdict. Never any personal data.
 | `decision` | string | `accept` or `reject` |
 | `reason` | string \| null | why, on a reject |
 
-**No enumeration, no existence oracle.** The caller must present the genuine
-issued signature: a not-found `token_value` or a signature that does not match the
-stored one returns the same uniform `{ "authentic": false, "decision": "reject",
+**No enumeration, no existence oracle.** The caller must present a genuine
+issued signature: a not-found `token_value` or a signature that matches none of the
+credential's signatures in force returns the same uniform `{ "authentic": false, "decision": "reject",
 "reason": "not a verifiable presentation" }`, so a relying party cannot walk token
 ids or values to survey the population. `signature_hex` is hex digits and nothing else, as
 the published verifiers read it: the genuine signature with whitespace in it gets the same
