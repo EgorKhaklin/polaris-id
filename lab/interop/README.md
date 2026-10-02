@@ -20,6 +20,13 @@ It measured **Polaris as issuer**: can a credential Polaris signs be verified by
 HAIP verifier? Answer, still: no, because HAIP makes ES256 the floor and Polaris signs with
 ML-DSA-65, which a conforming implementation is not required to support.
 
+That answer is about the **core credential**, signed with ML-DSA-65, which is not verifiable
+outside Polaris. The OpenID4VCI wallet **copy** is a different artifact: a classical ES256
+`dc+sd-jwt` SD-JWT VC (`polaris_web/wallet_copy.py`), and it is. The reference `sd-jwt` library
+verifies a product-issued copy with no code from this repository, and refuses a tampered
+signature and a forged disclosure ([sd-jwt-ref](sd-jwt-ref/README.md)). So the issuer direction
+is closed for the core credential and open for the copy.
+
 The product artifact is `polaris-verify`. The contract's target is *"OpenID4VP 1.0 + HAIP
 **verifier**"*. The direction that matters is therefore the other one: **can Polaris verify a
 presentation somebody else produced?** And in that direction the conformance suite does the
