@@ -189,6 +189,13 @@ stdout: the edge runs as an unprivileged user with no writable host directory
 stdout is capped by the json-file driver (`max-size` x `max-file`), so logs
 cannot fill the disk.
 
+**The Athena self-test leaves expected errors in the Postgres log.** An administrator or auditor
+who presses "Run the self-test" on `/athena` makes the database refuse six forbidden writes on
+purpose, each rolled back. Each refusal is a normal Postgres ERROR line (a permission denied, a
+check or unique violation, a trigger's message), tagged `application_name=polaris-athena-selftest`
+when the log line prefix includes `%a`, and the app log records who ran it and the result. A run
+is a check of the database, not an incident; a refusal from any other application name is.
+
 ### Operator authentication (WebAuthn-MFA)
 
 Operator login for admin accounts is two-factor: password + WebAuthn

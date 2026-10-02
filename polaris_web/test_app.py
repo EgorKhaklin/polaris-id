@@ -13564,6 +13564,9 @@ class RouteGuardMatrixTests(PolarisTestCase):
         '/api/v1/exchange-receipt/<int:agency_id>': ('admin', 'operator'),
         '/api/v1/sign/<int:agency_id>': ('admin', 'operator'),
         '/api/zk/epoch/close': ('admin',),
+        # 2026-10-02 (lab/strategy/009, step B2): the self-test attempts forbidden writes,
+        # rolled back, and is for those who audit the constitution.
+        '/athena/self-test': ('admin', 'auditor'),
         '/duress': ('admin', 'auditor'),
         '/individuals/<int:ind_id>/delete': ('admin',),
         '/individuals/<int:ind_id>/edit': ('admin',),
@@ -13771,8 +13774,8 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
             "Either add @csrf_protect, or add an entry to CSRF_EXEMPT saying why a browser "
             "cannot be made to call this with someone else's authority.")
         self.assertEqual(
-            len(csrf), 35,
-            f"{len(csrf)} routes carry @csrf_protect and 35 are recorded. A guard that was "
+            len(csrf), 36,
+            f"{len(csrf)} routes carry @csrf_protect and 36 are recorded. A guard that was "
             "removed shows up here, because a route without one simply stops appearing in the "
             "protected set.")
         self.assertEqual(len(cross_site), 2, f"{len(cross_site)} routes reject cross-site "
@@ -13803,7 +13806,7 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
                     f"{method} {url} without a CSRF token returned {r.status_code}; the token "
                     "is not being required")
             checked += 1
-        self.assertEqual(checked, 35,
+        self.assertEqual(checked, 36,
                          f"only {checked} CSRF-protected routes were exercised; the route table "
                          "is no longer being read and this test is passing by finding nothing")
 
@@ -15228,6 +15231,339 @@ class AthenaOntologyTests(PolarisTestCase):
             conn.close()
 
 
+class AthenaConstraintBoardTests(PolarisTestCase):
+    """lab/strategy/009, step B1. The Constitution tab is the board athena_board.read_board()
+    builds from the live catalogue when the page is read. Each test below changes the database,
+    as its owner, and reads the board and the page again: a board that cannot fail is the
+    record's falsifier 8. Every change is undone in a finally."""
+
+    def _owner(self):
+        """The schema owner, each statement its own transaction. Not `with conn:`, which in
+        psycopg2 2.9 opens a transaction even in autocommit, and a DDL left uncommitted would hold
+        its lock while the board, on another connection, waits for it."""
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        conn.autocommit = True
+        self.addCleanup(conn.close)
+        return conn
+
+    def _board(self):
+        import athena_board
+        with flask_app.app.test_request_context('/'):
+            return athena_board.read_board(flask_app.query)
+
+    @staticmethod
+    def _rule(board, code):
+        return next(r for r in board['rules'] if r['rule_code'] == code)
+
+    def test_a_loaded_database_holds_every_mechanism(self):
+        board = self._board()
+        failing = [(r['rule_code'], m['name'], m['reason']) for r in board['rules']
+                   for m in r['mechanisms'] + r['guards'] if m['status'] == 'not_in_force']
+        self.assertEqual(failing, [], 'a freshly loaded database holds every mechanism it names')
+        self.assertEqual(board['summary']['not_in_force'], 0)
+        c1 = self._rule(board, 'C1')
+        self.assertEqual(len(c1['guards']), 32, 'C1 lists the audit of record table by table')
+        self.assertEqual(c1['guards_held'], 32)
+        self.assertEqual(c1['state'], 'in_force')
+        for g in c1['guards']:
+            self.assertIn('BEFORE UPDATE OR DELETE, each row on ', g['detail'], g['name'])
+        c5 = [m for m in self._rule(board, 'C5')['mechanisms'] if m['source'] == 'application']
+        self.assertEqual([(m['status'], m['detail']) for m in c5], [('in_force', "script-src 'self'")])
+        c8 = [m for m in self._rule(board, 'C8')['mechanisms'] if m['source'] == 'application']
+        self.assertEqual(c8[0]['status'], 'in_force')
+        self.assertIn('clusters 5,000', c8[0]['detail'])
+        c2 = next(m for m in self._rule(board, 'C2')['mechanisms'] if m['kind'] == 'CHECK_CONSTRAINT')
+        self.assertRegex(c2['detail'], r'^on verificationevent and its \d+ partitions$',
+                         'a constraint names the table it was declared on, its partitions counted')
+        self.assertEqual(self._rule(board, 'C9')['state'], 'repository',
+                         'a rule pinned only by repository checks claims nothing about this database')
+        with self._owner().cursor() as cur:
+            cur.execute("SELECT current_database() AS db")
+            self.assertEqual(board['database'], cur.fetchone()['db'])
+
+    def test_the_page_is_the_board(self):
+        body = self.client.get('/athena').get_data(as_text=True)
+        for text in ('not in force', 'in force in this database', '32 of 32 tables',
+                     'Definition in this database', 'Read from', "script-src &#39;self&#39;"):
+            self.assertIn(text, body)
+
+    def test_a_trigger_switched_off_turns_its_rule_red(self):
+        with self._owner().cursor() as cur:
+            cur.execute("ALTER TABLE AnchorBatch DISABLE TRIGGER trg_anchor_batch_append_only")
+            try:
+                board = self._board()
+                c1 = self._rule(board, 'C1')
+                self.assertEqual(c1['state'], 'not_in_force')
+                self.assertEqual(c1['guards_held'], 31)
+                off = c1['guards'][0]
+                self.assertEqual((off['name'], off['status']), ('trg_anchor_batch_append_only', 'not_in_force'))
+                self.assertIn('switched off on anchorbatch', off['reason'])
+                self.assertGreaterEqual(board['summary']['not_in_force'], 1)
+                body = self.client.get('/athena').get_data(as_text=True)
+                self.assertIn('31 of 32 tables', body)
+                self.assertIn('Switched off on anchorbatch', body)
+            finally:
+                cur.execute("ALTER TABLE AnchorBatch ENABLE TRIGGER trg_anchor_batch_append_only")
+
+    def test_a_trigger_switched_off_on_one_partition_turns_its_rule_red(self):
+        """A partitioned table's trigger is cloned onto each partition and each clone can be
+        switched off alone; the board's one line per table must still see it."""
+        with self._owner().cursor() as cur:
+            cur.execute("ALTER TABLE VerificationEvent_default DISABLE TRIGGER trg_verification_append_only")
+            try:
+                c1 = self._rule(self._board(), 'C1')
+                g = next(g for g in c1['guards'] if g['name'] == 'trg_verification_append_only')
+                self.assertEqual(g['status'], 'not_in_force')
+                self.assertIn('verificationevent_default', g['reason'])
+                self.assertEqual(c1['state'], 'not_in_force')
+            finally:
+                cur.execute("ALTER TABLE VerificationEvent_default ENABLE TRIGGER trg_verification_append_only")
+
+    def test_a_constraint_dropped_turns_its_rule_red(self):
+        with self._owner().cursor() as cur:
+            cur.execute("SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint "
+                        "WHERE conname = 'chk_appuser_failed_count_nonneg'")
+            definition = cur.fetchone()['d']
+            cur.execute("ALTER TABLE AppUser DROP CONSTRAINT chk_appuser_failed_count_nonneg")
+            try:
+                c4 = self._rule(self._board(), 'C4')
+                m = next(m for m in c4['mechanisms'] if m['name'] == 'chk_appuser_failed_count_nonneg')
+                self.assertEqual((m['status'], m['reason']), ('not_in_force', 'absent from this database'))
+                self.assertEqual(c4['state'], 'not_in_force')
+            finally:
+                cur.execute("ALTER TABLE AppUser ADD CONSTRAINT chk_appuser_failed_count_nonneg " + definition)
+
+    def test_a_unique_index_made_plain_turns_its_rule_red(self):
+        """C3 is a partial UNIQUE index. Replaced by a plain index of the same name, it is present
+        and enforces nothing; the board reads indisunique, not the name."""
+        conn = self._owner()
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_get_indexdef(i.indexrelid) AS d FROM pg_index i "
+                        "JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = 'uq_one_active_per_person'")
+            definition = cur.fetchone()['d']
+            plain = definition.replace('CREATE UNIQUE INDEX', 'CREATE INDEX', 1)
+            self.assertNotEqual(plain, definition)
+            cur.execute("BEGIN")
+            try:
+                cur.execute("DROP INDEX uq_one_active_per_person")
+                cur.execute(plain)
+                c3 = self._rule(self._board_in(conn), 'C3')
+                m = next(m for m in c3['mechanisms'] if m['name'] == 'uq_one_active_per_person')
+                self.assertEqual((m['status'], m['reason']), ('not_in_force', 'not unique'))
+                self.assertEqual(c3['state'], 'not_in_force')
+            finally:
+                cur.execute("ROLLBACK")
+
+    def _board_in(self, conn):
+        """The board read through one connection, inside its open transaction: an index swap is
+        made and undone in a transaction no other session sees."""
+        import athena_board
+
+        def query(sql, params=None, fetch='all'):
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                return cur.fetchone() if fetch == 'one' else cur.fetchall()
+        with flask_app.app.test_request_context('/'):
+            return athena_board.read_board(query)
+
+    def test_the_board_reads_no_person(self):
+        """The board's code names no person surface (check_athena_console reads it too), and the
+        page carries no name of a person."""
+        with self._owner().cursor() as cur:
+            cur.execute("SELECT legal_name FROM Individual")
+            names = {r['legal_name'] for r in cur.fetchall()}
+        body = self.client.get('/athena').get_data(as_text=True)
+        self.assertTrue(names)
+        for n in names:
+            self.assertNotIn(n, body)
+
+
+class AthenaSelfTestTests(PolarisTestCase):
+    """lab/strategy/009, step B2. The self-test attempts each forbidden write on the application's
+    own connection and rolls everything back. These tests run it as the suite's role (the schema
+    owner here, polaris_app in the gate's app-role stage), so each asserts what holds for the role
+    the run actually used, the way the page explains it."""
+
+    def _owner(self):
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        conn.autocommit = True
+        self.addCleanup(conn.close)
+        return conn
+
+    def _run(self):
+        import athena_selftest
+        with flask_app.app.test_request_context('/'):
+            return athena_selftest.run(flask_app.get_db())
+
+    def _post_selftest(self):
+        """POST the self-test with the session's CSRF token (the page that renders the form is the
+        one being tested, and a role that may not run it renders none)."""
+        with self.client.session_transaction() as sess:
+            sess['csrf_token'] = sess.get('csrf_token') or 'selftest-csrf'
+            token = sess['csrf_token']
+        return self.client.post('/athena/self-test', data={'csrf_token': token})
+
+    def _fingerprint(self):
+        """What a probe could have changed, read as the owner."""
+        with self._owner().cursor() as cur:
+            cur.execute("SELECT (SELECT count(*) FROM VerificationEvent) AS ve, "
+                        "(SELECT count(*) FROM DuressEvent) AS de, "
+                        "(SELECT md5(string_agg(token_id || ':' || status || ':' || individual_id, ',' "
+                        "        ORDER BY token_id)) FROM IdentityToken) AS tokens, "
+                        "(SELECT max(event_id) FROM VerificationEvent) AS max_ve")
+            return cur.fetchone()
+
+    def test_every_probe_is_refused_or_exempt_and_nothing_is_kept(self):
+        before = self._fingerprint()
+        result = self._run()
+        self.assertEqual(self._fingerprint(), before, 'a self-test that writes is falsifier 7')
+        statuses = {p['rule']: p['status'] for p in result['probes']}
+        self.assertEqual(result['failed'], 0, result['probes'])
+        for rule in ('C1', 'C2'):
+            self.assertEqual(statuses[rule], 'refused', (rule, result['probes']))
+        # C3 needs a person holding an ACTIVE credential and a live reserve; the seed has none, and
+        # the probe says so rather than guessing (the next test builds the pair).
+        self.assertIn(statuses['C3'], ('refused', 'inconclusive'), result['probes'])
+        for rule in ('Success rules', 'Binding', 'Privilege'):
+            # The owner is exempt from these by design; polaris_app is refused.
+            self.assertEqual(statuses[rule], 'owner_exempt' if result['is_owner'] else 'refused',
+                             (rule, result['role'], result['probes']))
+        by = {p['rule']: p['refused_by'] for p in result['probes']}
+        self.assertEqual(by['C2'], 'chk_disclosure_token_consistency')
+        self.assertIn(by['C1'], ('reject_audit_modification', 'the privilege boundary'))
+        for p in result['probes']:
+            self.assertNotRegex(p['message'] or '', r'\b\d+\b', 'every standalone number is masked')
+
+    def test_c3_is_refused_when_a_person_holds_a_live_reserve(self):
+        """Give a person with an ACTIVE credential the seed's live reserve (as the owner, the only
+        role the binding lets move a credential), run the self-test, and put the reserve back."""
+        with self._owner().cursor() as cur:
+            cur.execute("SELECT r.token_id, r.individual_id AS was, "
+                        "(SELECT a.individual_id FROM IdentityToken a WHERE a.status = 'ACTIVE' "
+                        " AND a.individual_id <> r.individual_id ORDER BY a.token_id LIMIT 1) AS holder "
+                        "FROM IdentityToken r WHERE r.status = 'RESERVE' "
+                        "AND (r.expiration_date IS NULL OR r.expiration_date > now()) ORDER BY r.token_id LIMIT 1")
+            pair = cur.fetchone()
+            self.assertIsNotNone(pair, 'the seed has a live reserve')
+            cur.execute("UPDATE IdentityToken SET individual_id = %s WHERE token_id = %s",
+                        (pair['holder'], pair['token_id']))
+            try:
+                c3 = next(p for p in self._run()['probes'] if p['rule'] == 'C3')
+                self.assertEqual((c3['status'], c3['refused_by'], c3['sqlstate']),
+                                 ('refused', 'uq_one_active_per_person', '23505'), c3)
+            finally:
+                cur.execute("UPDATE IdentityToken SET individual_id = %s WHERE token_id = %s",
+                            (pair['was'], pair['token_id']))
+
+    def test_a_hollow_trigger_is_caught(self):
+        """What the board cannot see: a trigger present and switched on whose function no longer
+        refuses. Rewritten to let the write through, the C1 probe is accepted, for a role the
+        privilege boundary does not already stop."""
+        with self._owner().cursor() as cur:
+            cur.execute("SELECT pg_get_functiondef('reject_audit_modification'::regproc) AS d")
+            original = cur.fetchone()['d']
+            cur.execute("CREATE OR REPLACE FUNCTION reject_audit_modification() RETURNS TRIGGER "
+                        "LANGUAGE plpgsql AS $hollow$ BEGIN RETURN COALESCE(NEW, OLD); END; $hollow$")
+            try:
+                result = self._run()
+                c1 = next(p for p in result['probes'] if p['rule'] == 'C1')
+                if result['is_owner']:
+                    self.assertEqual(c1['status'], 'accepted', 'a hollow trigger must read as not enforced')
+                    self.assertEqual(result['failed'], 1)
+                else:
+                    self.assertEqual((c1['status'], c1['refused_by']), ('refused', 'the privilege boundary'),
+                                     'polaris_app is still stopped by its missing UPDATE privilege')
+            finally:
+                cur.execute(original)
+        self.assertEqual(next(p for p in self._run()['probes'] if p['rule'] == 'C1')['status'], 'refused')
+
+    def test_the_page_runs_it_for_an_administrator(self):
+        r = self._post_selftest()
+        self.assertEqual(r.status_code, 200)
+        body = r.get_data(as_text=True)
+        self.assertIn('refused as expected', body)
+        self.assertIn('Clamped by the application', body)
+        self.assertIn('polaris-athena-selftest', body)
+
+    @staticmethod
+    def _card(body, rule):
+        """One rule's card on the board, as rendered."""
+        match = re.search(r'<article class="rule-card([^"]*)" id="rule-%s">(.*?)</article>' % rule.lower(),
+                          body, re.S)
+        if match is None:
+            raise AssertionError('no card for %s' % rule)
+        return match.group(1), match.group(2)
+
+    def test_each_card_shows_its_probe_beside_the_catalogue(self):
+        """Present and switched on (the catalogue) and refused when tried (the probe) are two
+        findings; a card the self-test speaks for shows both, and a card it does not shows none."""
+        body = self._post_selftest().get_data(as_text=True)
+        for rule in ('C1', 'C2'):
+            _, card = self._card(body, rule)
+            self.assertIn('rule-tested-label', card, rule)
+            self.assertIn('Refused</span>', card, rule)
+            self.assertIn(', as expected', card, rule)
+        _, c8 = self._card(body, 'C8')
+        self.assertIn('Clamped by the application', c8)
+        _, c4 = self._card(body, 'C4')
+        self.assertNotIn('rule-tested', c4, 'no probe covers C4, and its card does not pretend one does')
+
+    def test_a_card_says_when_its_write_was_not_tried(self):
+        _, card = self._card(self.client.get('/athena').get_data(as_text=True), 'C1')
+        self.assertIn('Not run yet', card, 'an administrator sees the self-test has not run')
+        self._login('operator')
+        body = self.client.get('/athena').get_data(as_text=True)
+        self.assertNotIn('rule-tested', body, 'a role that may not run it is not offered it')
+        self.assertNotIn('id="selftest"', body)
+
+    def test_a_hollow_trigger_marks_its_card(self):
+        """The catalogue still says in force; the card says the write went through, and is marked
+        as the two disagreeing. Under polaris_app the privilege boundary refuses first."""
+        with self._owner().cursor() as cur:
+            cur.execute("SELECT pg_get_functiondef('reject_audit_modification'::regproc) AS d")
+            original = cur.fetchone()['d']
+            cur.execute("CREATE OR REPLACE FUNCTION reject_audit_modification() RETURNS TRIGGER "
+                        "LANGUAGE plpgsql AS $hollow$ BEGIN RETURN COALESCE(NEW, OLD); END; $hollow$")
+            try:
+                body = self._post_selftest().get_data(as_text=True)
+            finally:
+                cur.execute(original)
+        classes, card = self._card(body, 'C1')
+        self.assertIn('In force', card, 'the catalogue cannot see a hollow function')
+        if 'connects as the schema owner' in body:
+            self.assertIn('rule-contradicted', classes)
+            self.assertIn('Accepted: not enforced', card)
+            self.assertIn('the database let it through', card)
+        else:
+            self.assertNotIn('rule-contradicted', classes)
+            self.assertIn('the privilege boundary', card)
+
+    def test_it_is_for_administrators_and_auditors_on_purpose(self):
+        self._login('operator')
+        self.assertEqual(self._post_selftest().status_code, 403)
+        self._login('admin')
+        self.assertIn(self.client.get('/athena/self-test').status_code, (404, 405), 'POST only')
+        with self.client.session_transaction() as sess:
+            sess['operator_agency_id'] = 1
+            _bind_account(sess, 1)   # the account too, or the session is ended as tampered with
+        try:
+            r = self._post_selftest()
+            self.assertEqual(r.status_code, 403, 'an account bound to one authority is refused')
+            self.assertIn('bound to one authority', r.get_data(as_text=True))
+        finally:
+            with self.client.session_transaction() as sess:
+                sess['operator_agency_id'] = None
+                _bind_account(sess, None)
+
+    def test_the_clamp_probe_reports_the_cap(self):
+        import atlas_routes
+        self._login('admin')
+        r = self._post_selftest()
+        body = r.get_data(as_text=True)
+        self.assertIn('_ATLAS_MAX_CATEGORIES = %d' % atlas_routes._ATLAS_MAX_CATEGORIES, body)
+        self.assertIn('allowed %d' % atlas_routes._ATLAS_MAX_CATEGORIES, body)
+
+
 class AthenaConsoleAPITests(PolarisTestCase):
     """v9.267 (roadmap P6.8): the operator-facing Athena console and its three
     read-only drill-down endpoints. Login-gated, person-free, bounded, and 400 on
@@ -15253,7 +15589,7 @@ class AthenaConsoleAPITests(PolarisTestCase):
         r = self.client.get('/athena')
         self.assertEqual(r.status_code, 200)
         body = r.get_data(as_text=True)
-        self.assertIn('athena-rule', body)          # constitution cards
+        self.assertIn('rule-card', body)            # constitution cards, one per rule
         self.assertIn('C1', body)                    # a rule code
         self.assertIn('athena-console.js', body)     # external JS (C5)
 

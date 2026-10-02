@@ -1878,6 +1878,138 @@ table.data td.mono, table.data td > .mono { white-space: nowrap; }
     }
 }
 
+/* ----- Athena: the constraint board (lab/strategy/009, step B1) -------------------------
+   Each rule a card; each mechanism a line that states its condition in words and in colour
+   (WCAG 1.4.1). The summary leads with what is not in force, which is the figure to act on. */
+.board-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--s-3);
+    margin: 0 0 var(--s-3);
+}
+.board-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--s-3) var(--s-4);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface);
+}
+.board-n {
+    font-size: 26px;
+    font-weight: 600;
+    line-height: 1.1;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+}
+.board-l { font-size: 12.5px; color: var(--ink-3); }
+.board-stat-ok .board-n { color: var(--ok); }
+.board-stat-danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: var(--danger-wash); }
+.board-stat-danger .board-n { color: var(--danger); }
+.board-when {
+    max-width: 78ch;
+    margin: 0 0 var(--s-5);
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink-3);
+}
+.board {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr));
+    gap: var(--s-4);
+    align-items: start;
+}
+.rule-card {
+    min-width: 0;
+    padding: var(--s-4) var(--s-5);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+}
+.rule-not_in_force { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); }
+.rule-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+}
+.rule-code { color: var(--gold); font-size: 12px; }
+.rule-title { margin: 0; font-size: 15px; font-weight: 600; text-wrap: balance; }
+.rule-head .type-tag { margin-left: 0; }
+.rule-head .pill { margin-left: auto; }
+.rule-statement { margin: var(--s-2) 0 var(--s-3); font-size: 13px; line-height: 1.5; color: var(--ink-2); }
+/* The self-test's result for the rule, beside what the catalogue says: a second, separate finding. */
+.rule-tested {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    margin: 0 0 var(--s-3);
+    padding: var(--s-2) var(--s-3);
+    border-radius: var(--r-md);
+    background: var(--sunken);
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--ink-2);
+}
+.rule-tested > span:last-child { flex: 1 1 24ch; min-width: 0; overflow-wrap: anywhere; }
+.rule-tested code { font-size: 11.5px; }
+.rule-tested a { white-space: nowrap; }
+.rule-tested-label { font-size: var(--text-xs); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--ink-3); }
+.rule-untested { background: none; padding-inline: 0; }
+.rule-contradicted { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); }
+.rule-contradicted .rule-tested { background: var(--danger-wash); }
+.mech-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+.mech {
+    padding: var(--s-2) 0 0;
+    border-top: 1px solid var(--line);
+}
+.mech-line { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-2); min-width: 0; }
+.mech-kind { font-size: var(--text-xs); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--ink-3); }
+.mech-name { font-size: 12px; color: var(--ink); overflow-wrap: anywhere; }
+.mech-detail, .mech-reason { margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--ink-3); }
+.mech-reason { color: var(--danger); font-weight: 500; }
+.mech-def { margin-top: 4px; }
+.mech-def summary, .rule-guards summary { cursor: pointer; font-size: 12.5px; color: var(--accent); }
+.mech-def pre {
+    margin: var(--s-2) 0 0;
+    padding: var(--s-2) var(--s-3);
+    max-width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--sunken);
+    color: var(--ink-2);
+    font-size: 11.5px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.rule-guards { margin: 0 0 var(--s-3); }
+.selftest { grid-column: 1 / -1; }
+.selftest .help { max-width: 86ch; }
+.selftest-who { margin: var(--s-3) 0; font-size: 13px; color: var(--ink-2); }
+.selftest-table td { vertical-align: top; font-size: 12.5px; }
+.selftest-table code { font-size: 11.5px; overflow-wrap: anywhere; }
+.rule-guards summary {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    color: var(--ink-2);
+    list-style-position: inside;
+}
+.rule-guards summary > span { line-height: 1.4; }
+.rule-guards summary::-webkit-details-marker { display: none; }
+.rule-guards summary { list-style: none; }
+.guards-toggle { margin-left: auto; color: var(--accent); display: inline-flex; transition: transform 0.15s ease; }
+.rule-guards[open] .guards-toggle { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .guards-toggle { transition: none; } }
+.rule-guards .table-wrap { margin-top: var(--s-2); max-height: 320px; overflow: auto; }
+.guard-table td { font-size: 12.5px; }
+@media (max-width: 760px) {
+    .board-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 @media print {
     :root { color-scheme: light; }
     body { background: #fff; color: #000; }

@@ -7199,12 +7199,15 @@ def test_athena_non_sovereign_check_discriminates(tmp_path):
     assert checks.check_athena_non_sovereign(tmp_path)[0].level == "FAIL", "must FAIL when an edge leaves its source table"
 
 
-def test_athena_rule_enforcement_resolves_check_discriminates(tmp_path):
-    # Every rule maps to a mechanism that exists; every rule is enforced.
+def test_athena_rule_enforcement_resolves_check_discriminates(tmp_path, monkeypatch):
+    # Every rule maps to a mechanism that exists; every rule is enforced; and C1 names the
+    # audit of record table by table (lab/strategy/009, step B1). The fixture's audit of record
+    # is the one table X.
+    monkeypatch.setattr(checks, "_AOR_TABLES", ("X",))
     _athena_write(tmp_path, "polaris_checks/checks.py",
                   "def check_demo_mechanism(root):\n    return []\n")
     _athena_write(tmp_path, "polaris_sql/06_triggers.sql",
-                  "CREATE TRIGGER trg_demo_append_only BEFORE UPDATE ON X\n"
+                  "CREATE TRIGGER trg_demo_append_only BEFORE UPDATE OR DELETE ON X\n"
                   "  FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();\n")
     GOOD = ("INSERT INTO athena_constitutional_rule (rule_code, title, statement, kind, source_ref) VALUES\n"
             "  ('C1','Audit','append only','CONSTRAINT','MISSION.md C1')\n"
@@ -7243,14 +7246,36 @@ def test_athena_rule_enforcement_resolves_check_discriminates(tmp_path):
     assert checks.check_athena_rule_enforcement_resolves(tmp_path)[0].level == "FAIL", \
         "must FAIL when only a COMMENT ON names the trigger"
 
+    # C1 TABLE BY TABLE. An audit-of-record table with no C1 row is one the board never looks at.
+    TRIGGERS = ("CREATE TRIGGER trg_demo_append_only BEFORE UPDATE OR DELETE ON X\n"
+                "  FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();\n"
+                "CREATE TRIGGER trg_y_append_only BEFORE UPDATE OR DELETE ON Y\n"
+                "  FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();\n")
+    _athena_write(tmp_path, "polaris_sql/06_triggers.sql", TRIGGERS)
+    _athena_write(tmp_path, "polaris_sql/16_athena.sql", GOOD)
+    assert checks.check_athena_rule_enforcement_resolves(tmp_path)[0].level == "OK", "control: X is covered"
+    monkeypatch.setattr(checks, "_AOR_TABLES", ("X", "Y"))
+    out = checks.check_athena_rule_enforcement_resolves(tmp_path)[0]
+    assert out.level == "FAIL" and "no row for y" in out.message, \
+        "must FAIL when an audit-of-record table has no C1 row"
+    # ...and a C1 row for a table outside the audit of record is a claim the constitution does not make.
+    monkeypatch.setattr(checks, "_AOR_TABLES", ("X",))
+    _athena_write(tmp_path, "polaris_sql/16_athena.sql",
+                  GOOD.replace("  ('C1','TRIGGER','trg_demo_append_only','note')\n",
+                               "  ('C1','TRIGGER','trg_demo_append_only','note'),\n"
+                               "  ('C1','TRIGGER','trg_y_append_only','note')\n"))
+    out = checks.check_athena_rule_enforcement_resolves(tmp_path)[0]
+    assert out.level == "FAIL" and "outside it: y" in out.message, \
+        "must FAIL on a C1 row for a table outside the audit of record"
+
 
 def test_athena_console_check_discriminates(tmp_path):
     # The console must be login-gated, person-free, and render CSP-safe.
     APP = (
         "@app.route('/athena')\n@security.login_required\n@replica_reads\n"
         "def athena_console():\n"
-        "    rules = query(\"SELECT rule_code FROM athena_constitutional_rule\")\n"
-        "    return render_template('athena.html', rules=rules)\n\n"
+        "    board = athena_board.read_board(query)\n"
+        "    return render_template('athena.html', board=board)\n\n"
         "@app.route('/api/athena/authority-chain')\n@security.login_required\n"
         "def api_athena_authority_chain():\n"
         "    return jsonify(steps=query(\"SELECT step FROM athena_authority_chain(%s,%s)\", (1, 1)))\n\n"
@@ -7259,18 +7284,51 @@ def test_athena_console_check_discriminates(tmp_path):
         "    return jsonify(impacts=query(\"SELECT impact_kind FROM athena_affected_by_algorithm(%s)\", (1,)))\n\n"
         "@app.route('/api/athena/explain-proof')\n@security.login_required\n"
         "def api_athena_explain_proof():\n"
-        "    return jsonify(rows=query(\"SELECT disclosure_level FROM athena_explain_proof(%s)\", (1,)))\n"
+        "    return jsonify(rows=query(\"SELECT disclosure_level FROM athena_explain_proof(%s)\", (1,)))\n\n"
+        "@app.route('/athena/self-test', methods=['POST'])\n@security.login_required\n"
+        "@security.require_role('admin', 'auditor')\n@security.csrf_protect\n"
+        "def athena_self_test():\n"
+        "    return athena_selftest.run(get_db())\n"
     )
     JS = "function el(){ var n = document.createElement('div'); n.textContent = 'x'; return n; }\n"
     TPL = "".join(
         '<button data-athena-tab="%s"></button><section data-athena-panel="%s"></section>\n' % (t, t)
         for t in ("constitution", "authority", "proof", "trust")
-    ) + '<script src="/static/athena-console.js"></script>\n'
+    ) + '<time>{{ board.verified_at }}</time><script src="/static/athena-console.js"></script>\n'
+    # The board: a docstring may name what it never reads; the code may not.
+    BOARD = (
+        '"""Reads the catalogue, never Individual."""\n'
+        "def read_board(query):\n"
+        "    t = query(\"SELECT tgenabled FROM pg_trigger\")\n"
+        "    c = query(\"SELECT convalidated FROM pg_constraint\")\n"
+        "    i = query(\"SELECT indisvalid FROM pg_index\")\n"
+        "    p = query(\"SELECT proname FROM pg_proc\")\n"
+        "    return dict(t=t, c=c, i=i, p=p)\n"
+    )
 
-    def write(app=APP, js=JS, tpl=TPL):
+    # The self-test: every probe's savepoint and the whole transaction rolled back in a finally.
+    SELFTEST = (
+        "def _run_probe(cur, probe):\n"
+        "    cur.execute('SAVEPOINT p')\n"
+        "    try:\n"
+        "        cur.execute(probe)\n"
+        "    finally:\n"
+        "        cur.execute('ROLLBACK TO SAVEPOINT p')\n\n"
+        "def run(conn):\n"
+        "    try:\n"
+        "        with conn.cursor() as cur:\n"
+        "            return [_run_probe(cur, p) for p in PROBES]\n"
+        "    finally:\n"
+        "        conn.rollback()\n"
+        "        conn.close()\n"
+    )
+
+    def write(app=APP, js=JS, tpl=TPL, board=BOARD, selftest=SELFTEST):
         _athena_write(tmp_path, "polaris_web/app.py", app)
         _athena_write(tmp_path, "polaris_web/static/athena-console.js", js)
         _athena_write(tmp_path, "polaris_web/templates/athena.html", tpl)
+        _athena_write(tmp_path, "polaris_web/athena_board.py", board)
+        _athena_write(tmp_path, "polaris_web/athena_selftest.py", selftest)
 
     write()
     assert checks.check_athena_console(tmp_path)[0].level == "OK", "must PASS the good console"
@@ -7278,8 +7336,9 @@ def test_athena_console_check_discriminates(tmp_path):
     write(app=APP.replace("@app.route('/athena')\n@security.login_required\n", "@app.route('/athena')\n"))
     assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL when a route is not login-gated"
     # a person table reaches the console
-    write(app=APP.replace("FROM athena_constitutional_rule",
-                          "FROM athena_constitutional_rule JOIN Individual USING (individual_id)"))
+    write(app=APP.replace("    board = athena_board.read_board(query)\n",
+                          "    board = athena_board.read_board(query)\n"
+                          "    x = query(\"SELECT 1 FROM athena_constitutional_rule JOIN Individual USING (individual_id)\")\n"))
     assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL on a person query"
     # unsafe innerHTML rendering
     write(js="function r(m, s){ m.innerHTML = '<b>' + s + '</b>'; }\n")
@@ -7287,6 +7346,50 @@ def test_athena_console_check_discriminates(tmp_path):
     # a tab mount is dropped
     write(tpl=TPL.replace('<button data-athena-tab="trust"></button><section data-athena-panel="trust"></section>\n', ""))
     assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL when a tab mount is missing"
+
+    # lab/strategy/009, step B1: the Constitution tab reads the live catalogue.
+    write(app=APP.replace("    board = athena_board.read_board(query)\n",
+                          "    board = query(\"SELECT rule_code FROM athena_constitutional_rule\")\n"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the page is built from the curated rows instead of the board"
+    write(board=BOARD.replace("SELECT tgenabled FROM pg_trigger", "SELECT 1"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the board stops asking whether a trigger is switched on"
+    write(board=BOARD.replace("indisvalid", "1 AS ok"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the board stops asking whether an index is valid"
+    write(tpl=TPL.replace("<time>{{ board.verified_at }}</time>", ""))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the page no longer says when it read the database"
+    write(board=BOARD.replace('    return dict(', '    x = query("SELECT legal_name FROM Individual")\n    return dict('))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL when the board reads a person"
+    import os
+    os.remove(tmp_path / "polaris_web" / "athena_board.py")
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL without the board"
+
+    # lab/strategy/009, step B2: the self-test cannot write (falsifier 7).
+    write()
+    assert checks.check_athena_console(tmp_path)[0].level == "OK", "control: the self-test as written passes"
+    write(selftest=SELFTEST.replace("        conn.rollback()\n", "        conn.commit()\n"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL when the self-test commits"
+    write(selftest=SELFTEST.replace("    try:\n        with conn.cursor() as cur:\n",
+                                    "    conn.autocommit = True\n    try:\n        with conn.cursor() as cur:\n"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL when the self-test autocommits"
+    write(selftest=SELFTEST.replace("    finally:\n        cur.execute('ROLLBACK TO SAVEPOINT p')\n",
+                                    "    except Exception:\n        cur.execute('ROLLBACK TO SAVEPOINT p')\n"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a probe the database accepted would keep its savepoint"
+    write(selftest=SELFTEST.replace("    finally:\n        conn.rollback()\n        conn.close()\n",
+                                    "    finally:\n        conn.close()\n"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the transaction is not rolled back in a finally"
+    write(app=APP.replace("@security.require_role('admin', 'auditor')\n@security.csrf_protect\n"
+                          "def athena_self_test", "@security.csrf_protect\ndef athena_self_test"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL when any role may run the self-test"
+    write(app=APP.replace("@security.csrf_protect\ndef athena_self_test", "def athena_self_test"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL without CSRF protection"
+    write(app=APP.replace("@app.route('/athena/self-test', methods=['POST'])", "@app.route('/athena/self-test')"))
+    assert checks.check_athena_console(tmp_path)[0].level == "FAIL", "must FAIL when a GET could run it"
 
 
 def test_zk_claim_precise_check_discriminates(tmp_path):
