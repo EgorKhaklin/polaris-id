@@ -185,8 +185,8 @@ def measure_atlas_reads(conn) -> dict:
 
 _LAT_SQL = ("INSERT INTO VerificationEvent "
             "(token_id, requesting_agency_id, context_id, outcome, disclosure_level, "
-            " requestor_location, latitude, longitude, requesting_purpose_text) "
-            "VALUES (%s, %s, %s, 'SUCCESS', 'SELECTIVE', %s, %s, %s, 'latency probe')")
+            " requestor_location, requesting_purpose_text) "
+            "VALUES (%s, %s, %s, 'SUCCESS', 'SELECTIVE', %s, 'latency probe')")
 
 
 def measure_write_latency(conn, pool, agency_ids, samples: int) -> Percentiles:
@@ -201,10 +201,9 @@ def measure_write_latency(conn, pool, agency_ids, samples: int) -> Percentiles:
         cur.execute("SAVEPOINT lat")
         for _ in range(samples):
             ref = pool[rng.randrange(len(pool))]
-            lat0, lon0 = _events.reference.STATE_CENTROIDS.get(ref.jurisdiction, (39.0, -98.0))
+            # A verification is written as the application writes one: no coordinate.
             args = (ref.token_id, agency_ids[rng.randrange(len(agency_ids))],
-                    1, _events.reference.STATE_NAMES.get(ref.jurisdiction, "United States"),
-                    round(lat0, 5), round(lon0, 5))
+                    1, _events.reference.STATE_NAMES.get(ref.jurisdiction, "United States"))
             times.append(_time_ms(lambda: cur.execute(_LAT_SQL, args)))
         cur.execute("ROLLBACK TO SAVEPOINT lat")
     return Percentiles.of(times)

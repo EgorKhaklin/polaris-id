@@ -1365,6 +1365,47 @@ def test_migration_drift_check_fails_on_column_missing_from_schema(tmp_path):
     assert out[0].level == "FAIL", "must FAIL when a migration adds a column missing from 01_schema.sql"
 
 
+def test_event_locations_unindexed_sees_an_index_on_a_generated_coordinate(tmp_path):
+    """lab/strategy/009 step 4c: an index on an event table over a coordinate fails, and so does
+    one over a column generated from a coordinate, the GiST index 13_postgis.sql built on `geo`,
+    which names no latitude, run from a DO block where no test database has PostGIS."""
+    sql = tmp_path / "polaris_sql"
+    sql.mkdir()
+    INDEXES = ("CREATE INDEX idx_verificationevent_token_time\n"
+               "    ON VerificationEvent (token_id, event_timestamp DESC)\n"
+               "    WHERE token_id IS NOT NULL;\n"
+               "CREATE INDEX idx_tokenlifecycleevent_token ON TokenLifecycleEvent (token_id);\n"
+               "-- CREATE INDEX idx_verificationevent_geo ON VerificationEvent (latitude, longitude);\n")
+    GEO = ("DO $postgis$ BEGIN\n"
+           "    EXECUTE $sql$ ALTER TABLE VerificationEvent ADD COLUMN geo geography(Point, 4326)\n"
+           "        GENERATED ALWAYS AS (CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL\n"
+           "            THEN ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography\n"
+           "            ELSE NULL END) STORED $sql$;\n")
+    GIST = ("    EXECUTE $sql$ CREATE INDEX IF NOT EXISTS gix_verification_geo\n"
+            "        ON VerificationEvent USING GIST (geo) WHERE geo IS NOT NULL $sql$;\n")
+    (sql / "02_indexes.sql").write_text(INDEXES)
+    assert checks.check_event_locations_unindexed(tmp_path)[0].level == "OK", \
+        "must PASS when no index covers a coordinate (a commented-out one does not count)"
+    (sql / "02_indexes.sql").write_text(
+        INDEXES + "CREATE INDEX idx_verificationevent_geo ON VerificationEvent (latitude, longitude)"
+                  " WHERE latitude IS NOT NULL;\n")
+    out = checks.check_event_locations_unindexed(tmp_path)
+    assert out[0].level == "FAIL" and "idx_verificationevent_geo" in out[0].message, \
+        "must FAIL on a B-tree over the coordinates"
+    (sql / "02_indexes.sql").write_text(INDEXES)
+    (sql / "13_postgis.sql").write_text(GEO + GIST + "END $postgis$;\n")
+    out = checks.check_event_locations_unindexed(tmp_path)
+    assert out[0].level == "FAIL" and "gix_verification_geo" in out[0].message, \
+        "must FAIL on a GiST index over a column generated from the coordinates"
+    (sql / "13_postgis.sql").write_text(GEO + "END $postgis$;\n")
+    assert checks.check_event_locations_unindexed(tmp_path)[0].level == "OK", \
+        "an unindexed generated column is the contract step's to drop, not an index"
+    (sql / "02_indexes.sql").write_text("CREATE INDEX idx_x ON VerificationEvent (event_timestamp);\n")
+    out = checks.check_event_locations_unindexed(tmp_path)
+    assert out[0].level == "FAIL" and "idx_verificationevent_token_time" in out[0].message, \
+        "must FAIL when the parse cannot find the index it anchors on"
+
+
 def test_c6_atlas_zk_check_fails_when_zk_location_not_redacted(tmp_path):
     """C6 at the Atlas since lab/strategy/009 step 4: no function returns a location, no rollup
     has a column for one, and the series and the regions still count zero-knowledge."""

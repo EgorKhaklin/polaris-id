@@ -4643,6 +4643,65 @@ def _atlas_location_columns(sql: str) -> tuple[list, int]:
     return located, len(fns)
 
 
+#: An index the event tables keep, in 02_indexes.sql: check_event_locations_unindexed anchors on
+#: it, so a parse that finds no index on an event table fails rather than passing by reading none.
+_EVENT_INDEX_ANCHOR = "idx_verificationevent_token_time"
+
+
+def check_event_locations_unindexed(root: pathlib.Path) -> list[Finding]:
+    """No load file indexes where an event happened (lab/strategy/009, step 4c).
+
+    TestEventsCarryNoLocation reads the catalogue of a database built from the load files, the
+    strong form. But no test database has PostGIS, and the optional 13_postgis.sql GiST-indexed a
+    generated `geo` column on both event tables wherever the extension could be created. That
+    path was invisible to every test and to step 4c's first trace, which searched for the words
+    latitude and longitude, and a GiST index on `geo` names neither. So this reads every load
+    file, EXECUTE strings in a DO block included, for an index on VerificationEvent or
+    TokenLifecycleEvent over a coordinate or over a column generated from one. A migration that
+    built one would differ from the load files, which the schema-drift stage of the gate refuses.
+    """
+    name = "event_locations_unindexed"
+    indexes = _read(root, "polaris_sql/02_indexes.sql")
+    if not indexes:
+        return _fail(name, "polaris_sql/02_indexes.sql could not be read")
+    sql = _strip_sql_comments("\n".join(
+        _read_path(p) for p in sorted((root / "polaris_sql").glob("*.sql"))))
+    located = {"latitude", "longitude"}
+    # A column generated from a coordinate, as 13_postgis.sql's `geo geography(Point, 4326)
+    # GENERATED ALWAYS AS (CASE WHEN latitude ...) STORED` was. The type is one word, with
+    # PRECISION or a parenthesised modifier, so the name captured is the column's and not a word
+    # of the ALTER TABLE ... ADD COLUMN in front of it.
+    for m in re.finditer(r"(\w+)\s+\w+(?:\s+PRECISION)?(?:\s*\([^)]*\))?\s+GENERATED\s+ALWAYS\s+"
+                         r"AS\s*\((.*?)\)\s*STORED", sql, re.I | re.S):
+        if re.search(r"\b(latitude|longitude)\b", m.group(2), re.I):
+            located.add(m.group(1).lower())
+    # Every index on an event table or one of its partitions, to the end of its statement or of
+    # the dollar-quoted string an EXECUTE runs it from.
+    found, hits = [], []
+    for m in re.finditer(r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"
+                         r"(?:(\w+)\s+)?ON\s+(?:ONLY\s+)?(?:public\.)?"
+                         r"((?:VerificationEvent|TokenLifecycleEvent)\w*)\b([^;$]*)", sql, re.I):
+        found.append((m.group(1) or "(unnamed)").lower())
+        cols = {c.lower() for c in re.findall(r"\w+", m.group(3))} & located
+        if cols:
+            hits.append("%s on %s (%s)" % (m.group(1) or "an unnamed index", m.group(2),
+                                           ", ".join(sorted(cols))))
+    if _EVENT_INDEX_ANCHOR not in found:
+        return _fail(name, "found %d index(es) on the event tables in polaris_sql/ and not %s; "
+                           "the parse and the load files have drifted, so 'no index covers a "
+                           "coordinate' would pass by reading nothing" % (len(found),
+                                                                          _EVENT_INDEX_ANCHOR))
+    if hits:
+        return _fail(name, "%d index(es) on an event table cover a coordinate or a column "
+                           "generated from one: %s. Nothing filters or sorts an event by where "
+                           "it happened (lab/strategy/009 step 4c), and each index made every "
+                           "located insert pay for one" % (len(hits), "; ".join(hits)))
+    return _ok(name, "none of the %d index(es) the load files build on VerificationEvent and "
+                     "TokenLifecycleEvent, a DO block's EXECUTE strings included, covers a "
+                     "coordinate or a column generated from one (%s)"
+               % (len(found), ", ".join(sorted(located))))
+
+
 #: The redaction the verification log's list query carries (verification_routes.py). It anchors
 #: check_c6_app_read_paths_redact: a parse that cannot find this query is measuring nothing.
 _C6_LOG_ANCHOR = "THEN NULL ELSE ve.requestor_location"
@@ -24317,6 +24376,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_local_clock_convention,
     check_c6_atlas_redacts_zk_location,
     check_c6_app_read_paths_redact,
+    check_event_locations_unindexed,
     check_coercion_evidence_retained,
     check_zk_verify_anti_replay,
     check_no_migration_column_drift,
