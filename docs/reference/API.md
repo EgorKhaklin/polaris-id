@@ -397,8 +397,9 @@ verifications carry no `token_id`, so a token's export never contains one.
 
 ### `GET /api/tokens/<id>/verify`
 
-**Login required; replica-routed.** Cryptographically verifies the token's
-active signature *at use* and reports whether it is authentic and whether the
+**Login required; replica-routed.** Cryptographically verifies each of the token's
+signatures in force *at use* (during a migration's grace, the superseded one too)
+and reports whether it is authentic and whether the
 token is currently usable. This is the throughput-oriented verification path: it
 checks **single-witness** (liboqs alone), because issuance already established
 two-witness validity and refused to persist a signature both implementations did
@@ -414,7 +415,7 @@ Returns JSON:
 | field | type | notes |
 |---|---|---|
 | `token_id` | int | echoes the path |
-| `signature_valid` | bool | authenticity: the active signature verifies. Immutable material, replica-safe, and safe for a relying party to cache |
+| `signature_valid` | bool | authenticity: every signature in force verifies. Immutable material, replica-safe, and safe for a relying party to cache |
 | `signature_cacheable` | bool | always `true` — the authenticity verdict may be cached; the authorization verdict below may NOT |
 | `issuer_authorized_at_signing` | bool \| null | Was the signing key authorized for this authority **at the instant the credential was signed**? Read from the append-only `AuthorityKeyEvent` register against the `ISSUED` row in `TokenLifecycleEvent`. Survives an ordinary key rotation. `null` when it cannot be established: no key history, no real signing key, or no `ISSUED` row to date it by |
 | `issuer_key_current` | bool \| null | Is that key still **active** for the authority today (not retired, not compromised)? A rotation makes this `false`, which is a fact about the key and not a verdict on the credential. `null` when undecidable |

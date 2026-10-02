@@ -877,7 +877,8 @@ def api_token_verify(tok_id):
                ts.signature_bytes, ts.signing_public_key_hex, alg.name AS algorithm,
                ag.signing_public_key_hex AS agency_key
         FROM   IdentityToken it
-        JOIN   TokenSignature ts  ON ts.token_id = it.token_id AND ts.deprecation_date IS NULL
+        JOIN   TokenSignature ts  ON ts.token_id = it.token_id
+                                 AND (ts.deprecation_date IS NULL OR ts.deprecation_date > now())
         JOIN   CryptographicAlgorithm alg ON ts.algorithm_id = alg.algorithm_id
         JOIN   Agency ag ON ag.agency_id = it.issuing_agency_id
         WHERE  it.token_id = %s
@@ -1020,7 +1021,7 @@ def token_authenticity_pack(tok_id):
         JOIN   CryptographicAlgorithm alg ON ts.algorithm_id = alg.algorithm_id
         JOIN   Agency ag ON it.issuing_agency_id = ag.agency_id
         WHERE  it.token_id = %s
-        ORDER BY ts.signed_at DESC
+        ORDER BY ts.signed_at DESC, ts.signature_id DESC
     """, (tok_id,))
     if not rows:
         return jsonify(error='no such token, or it has no active signature'), 404

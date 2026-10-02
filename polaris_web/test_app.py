@@ -15865,6 +15865,37 @@ class RelyingPartyApiTests(PolarisTestCase):
         self.assertEqual(self.client.post('/api/v1/verify', json=new, headers=auth)
                          .get_json()['decision'], 'accept', 'the new signature verifies too')
 
+    def test_a_superseded_signature_verifies_until_its_deprecation_date(self):
+        """docs/operator/QUANTUM-EVENT.md section 6: "The grace period is the interval before
+        the superseded signatures stop verifying", as the schema's own comment on the column
+        says: deprecation_date is "no longer accepted after this timestamp". The verify reads
+        took deprecation_date IS NULL, so closing a window with a grace cut every old pack off
+        at once. The operator route's list of signatures shows it under either profile; the
+        pack itself is told apart only under real signing, where old and new differ."""
+        import time
+        import migration
+        import pqc_signing
+        cid = self._register_rp('grace-secret-1', suffix='0202')
+        auth = self._bearer(cid, 'grace-secret-1')
+        pack = self._issue_and_pack('RP-GRACE-1')
+        old = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
+
+        def listed():
+            v = self.client.get('/api/tokens/%d/verify' % pack['token_id']).get_json()
+            return v['signature_valid'], sorted(x['algorithm'] for x in v['signatures'])
+        with self._new_conn() as conn:
+            target_id, target_name = migration.resolve_target(conn, 'ML-DSA-87')
+            migration.migrate_population(conn, target_id, target_name, batch_size=50)
+            migration.deprecate_superseded(conn, target_id, grace_seconds=2)
+        self.assertEqual(listed(), (True, ['ML-DSA-65', target_name]), 'within the grace')
+        within = self.client.post('/api/v1/verify', json=old, headers=auth).get_json()
+        self.assertEqual(within['decision'], 'accept', within)
+        time.sleep(2.5)
+        self.assertEqual(listed(), (True, [target_name]), 'past the deprecation date')
+        after = self.client.post('/api/v1/verify', json=old, headers=auth).get_json()
+        if pqc_signing.is_enabled():
+            self.assertEqual(after['reason'], 'not a verifiable presentation', after)
+
     # -- a refusal here that the application mutation drill found nothing noticing
     # -- (2026-09-17): the bearer token outlives the relying party's standing to use it.
 
@@ -17045,6 +17076,7 @@ class PopulationMigrationTests(PolarisTestCase):
         migrated credential answered signature_valid false the moment the run wrote its row,
         since every active signature must verify, while verifiability_report, which counts
         rows, said nobody was dark. The verify route is the effect, asked twice."""
+        import time
         m = self._migration()
         with self._new_conn() as conn:
             mine = [self._issue_signed(conn, 'TKN-OH-QE-%d' % i, status)
@@ -17067,7 +17099,9 @@ class PopulationMigrationTests(PolarisTestCase):
                 self.assertEqual(algorithms, ['ML-DSA-65', target_name], token_id)
                 self.assertTrue(valid, "credential %d does not verify during the window: %r"
                                 % (token_id, during))
-            m.deprecate_superseded(conn, target_id, grace_seconds=60)
+            # The shortest grace there is; past it, the old signature is no longer in force.
+            m.deprecate_superseded(conn, target_id, grace_seconds=1)
+            time.sleep(1.5)
             after = verdicts()
             for token_id, (valid, algorithms) in after.items():
                 self.assertEqual(algorithms, [target_name], token_id)

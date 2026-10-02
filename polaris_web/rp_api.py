@@ -271,12 +271,17 @@ def _possession_authenticated(token_value, presented_sig_hex):
     holder presenting a pack was refused here, and the window refused the holders it exists
     for. The issuer facts a caller derives from the row are then the facts of the key that
     made the signature presented."""
+    # In force: not deprecated, or deprecated with the date still ahead. The column says a
+    # deprecated signature is "no longer accepted after this timestamp", and the window's grace
+    # (QUANTUM-EVENT.md, section 6) is that interval; reading IS NULL alone cut every superseded
+    # pack off the moment a window was closed, whatever grace the operator gave.
     rows = query("""
         SELECT it.token_id, it.individual_id, it.token_value, it.status, it.issuing_agency_id,
                it.expiration_date, ts.signature_bytes, ts.signing_public_key_hex,
                now() AS as_of
         FROM   IdentityToken it
-        JOIN   TokenSignature ts ON ts.token_id = it.token_id AND ts.deprecation_date IS NULL
+        JOIN   TokenSignature ts ON ts.token_id = it.token_id
+                                AND (ts.deprecation_date IS NULL OR ts.deprecation_date > now())
         WHERE  it.token_value = %s
         ORDER BY ts.signed_at DESC, ts.signature_id DESC
     """, (token_value,), primary=True)

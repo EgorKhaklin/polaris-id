@@ -55,6 +55,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- A holder's pack was refused at the relying-party door once a migration added signatures; any in force verifies.
+- Closing a migration window cut superseded signatures off at once, whatever its grace; they verify until the date.
 - Under the placeholder profile a population migration wrote a signature no verify path accepted; now issuance's.
 - A population migration onto a set nothing here signs with (SLH-DSA) is refused before it starts.
 - A credential's page and both investigation pages read its verifications through an index, not a full scan.
