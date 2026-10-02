@@ -133,8 +133,10 @@ def keygen(out: pathlib.Path, host: str) -> dict:
 
 
 def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
-                  issuer_trust_anchors=None) -> Verifier:
-    base = "https://%s:%d" % (host, port)
+                  issuer_trust_anchors=None, public_base_url=None) -> Verifier:
+    # A verifier behind a reverse proxy or a tunnel reaches wallets at a public origin that is
+    # not its own host:port; the HAIP request_uri and response_uri must advertise that origin.
+    base = public_base_url.rstrip("/") if public_base_url else "https://%s:%d" % (host, port)
     return Verifier(
         client_cert_pem=(pki / FILES["client_cert"]).read_bytes(),
         client_key_pem=(pki / FILES["client_key"]).read_bytes(),
@@ -228,7 +230,8 @@ def _cmd_serve(args) -> int:
             return 2
         print("polaris-oid4vp: %s; only issuers whose x5c chains to --issuer-trust-anchor can be "
               "verified." % why, file=sys.stderr)
-    verifier = verifier_from(pki, args.host, args.port, issuer_jwks, anchors)
+    verifier = verifier_from(pki, args.host, args.port, issuer_jwks, anchors,
+                             public_base_url=args.public_base_url)
     if not issuer_jwks and not anchors:
         print("polaris-oid4vp: no --issuer-jwks or --issuer-trust-anchor given, so no "
               "credential can be verified: "
@@ -247,7 +250,8 @@ def _cmd_serve(args) -> int:
                                       if verdict and verdict.authentic
                                       else "refused: %s: %s" % (verdict.code, verdict.reason)
                                       if verdict else "refused")))
-    print("polaris-oid4vp serving on https://%s:%d" % (args.host, args.port))
+    print("polaris-oid4vp serving on %s (listening on %s:%d)"
+          % (verifier.request_uri[:-len(REQUEST_PATH)], args.bind, args.port))
     print("  client_id     %s" % verifier.client_id)
     print("  request_uri   %s%s" % (verifier.request_uri, ""))
     print("  response_uri  %s" % verifier.response_uri)
@@ -306,6 +310,10 @@ def main(argv=None) -> int:
     s.add_argument("--host", default="localhost", help="the name a wallet reaches this by")
     s.add_argument("--bind", default="0.0.0.0")
     s.add_argument("--port", type=int, default=9443)
+    s.add_argument("--public-base-url", default=None, metavar="URL",
+                   help="the HTTPS origin a wallet reaches this verifier by when it is behind a "
+                        "reverse proxy or tunnel (e.g. https://verifier.example); used for the "
+                        "request_uri and response_uri in place of https://host:port")
     s.add_argument("--issuer-jwks", default=None,
                    help="a JSON file of issuer public JWKs to trust")
     s.add_argument("--issuer-trust-anchor", action="append", default=[], metavar="PEM",

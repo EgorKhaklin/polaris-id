@@ -67,6 +67,16 @@ class KeygenTests(unittest.TestCase):
         digest = hashlib.sha256(base64.b64decode(verifier.x5c[0])).digest()
         self.assertEqual(verifier.client_id, "x509_hash:" + b64u_encode(digest))
 
+    def test_public_base_url_overrides_the_advertised_origin(self):
+        """A verifier behind a tunnel or proxy advertises a public origin, not its host:port."""
+        from polaris_oid4vp.serve import REQUEST_PATH, RESPONSE_PATH
+        v = verifier_from(self.tmp, "verifier.test", 9443,
+                          public_base_url="https://tunnel.example/")
+        self.assertEqual(v.request_uri, "https://tunnel.example" + REQUEST_PATH)
+        self.assertEqual(v.response_uri, "https://tunnel.example" + RESPONSE_PATH)
+        default = verifier_from(self.tmp, "verifier.test", 9443)
+        self.assertEqual(default.request_uri, "https://verifier.test:9443" + REQUEST_PATH)
+
     def test_the_leaf_asserts_digital_signature(self):
         """An unmodified walt.id Wallet API v2 refused the leaf this used to produce.
 
