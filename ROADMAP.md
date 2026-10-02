@@ -9,8 +9,8 @@ have done with it is [the scoreboard](lab/EXTERNAL-NOUNS.md).
 
 **Have, working, CI-proven:**
 
-- A 57-table constraint-enforced schema (64 in a migrated deployment) with append-only audit and 341 invariant checks (v1.0.0-rc.70), each with a detection test.
-- A 129-route application with WebAuthn operator MFA, per-agency quotas and the Atlas; an operator CLI.
+- A 57-table constraint-enforced schema (64 in a migrated deployment) with append-only audit and 342 invariant checks (v1.0.0-rc.70), each with a detection test.
+- A 130-route application with WebAuthn operator MFA, per-agency quotas and the Atlas; an operator CLI.
 - ML-DSA-65 signing checked by two implementations, behind a custody interface (file, PKCS#11, KMS).
 - A Plonky2 ZK membership proof with an independent Python second witness.
 - The protocol layer: a signed registry, trust lists, the exchange gateway with receipts, a timestamp authority, document signing, an auth broker and offline wallet presentations; frozen at version 1 with a cross-version suite in CI.

@@ -18,6 +18,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- README badges for the pre-pilot status and the four outside wallets the verifier accepted.
 - Exact credential and live-signature counts by authority, kept by triggers that only append (`PopulationCount`).
 - Indexes for expiring credentials, credentials by status, issuance in a window and one credential's verifications.
 - Find a credential by number, token value or card serial, or a person by name and date of birth; the text stays out of URLs.
@@ -28,6 +29,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Exact enrolment counts by jurisdiction and status (`EnrollmentCount`), kept by triggers; the application role cannot read the per-person row.
 - An index for counting the active credentials that carry a duress code.
 - Hourly and daily activity counts by authority, context and outcome, kept by triggers; no person, place or minute.
+- The Atlas Overview shows the latest state epoch and anchor batch, and the Athena board's verdict on the database.
+- Atlas breakdowns and cross-tabs compare with the window before; a change shows only where both counts do.
 
 ### Changed
 
@@ -52,9 +55,11 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The credential page is rebuilt: facts beside proofs, one table per kind of row, empty kinds in one line.
 - On a phone, each list keeps a row's identifier, state and holder; the rest is on the record's page.
 - A status change is offered only where the database makes it; revocation keeps its own operation.
+- `polaris-id migrate-algorithm` signs as the route does; `--signature-hex` and `--signature-file` are withdrawn.
 
 ### Fixed
 
+- The README's OpenID Certified badge now names what it covers: the polaris-oid4vp verifier, not Polaris.
 - A migration's signature was dated by the credential's issuance, so its key read unauthorized; each is dated by its own.
 - A holder's pack was refused at the relying-party door once a migration added signatures; any in force verifies.
 - Closing a migration window cut superseded signatures off at once, whatever its grace; they verify until the date.
@@ -78,6 +83,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - API.md pointed at `app.py` for the federation check; it is in `verification_routes.py`.
 - The signals queue said "N of M active" while counting every credential with a duress code, in 923 ms.
 - Delete buttons for a person, a credential and an authority, which the database always refuses, are gone.
+- A credential issued by recovery carried a placeholder for a signature and verified under nothing; approval now signs it.
+- Issuance and migration recorded the algorithm a request named, not the one that signed; now the signing key's set.
+- The readiness ledger said a Module-LWE break needs no verification code; the hash-based fallback has no signer or verifier.
 - A status change to a number that is no credential reported success.
 - A refused deep page number now says what to do instead and offers the list back.
 - The population recount's lock test passed with the lock deleted; it now holds a fold that touches no row.

@@ -34,6 +34,7 @@ import os
 import re
 import sys
 import unittest
+import hashlib
 from unittest.mock import patch
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
@@ -51,6 +52,8 @@ import population      # lab/strategy/008: figures that cost the same at any pop
 import lookup          # lab/strategy/008: a form finds one record, never lists them all
 import operator_routes  # lab/strategy/008 step 3: the record pages' bounds
 import verification_routes  # and the verification log's filter window
+import pqc_signing     # CORE-BUG 2026-10-02: the algorithm a signature row records
+import custody         # and the migration key a named target is signed with
 
 
 # ----------------------------------------------------------------------------
@@ -2656,7 +2659,9 @@ class UC1Tests(PolarisTestCase):
         self.assertNotIn('&#10007; INVALID', body, "a correctly-issued signature must not show INVALID")
 
     def test_unauthorized_algorithm_rejected(self):
-        """Agency 2 (PA) does not hold a grant on algorithm 4 (SLH-DSA-256s)."""
+        """Agency 2 (PA) does not hold a grant on algorithm 4 (SLH-DSA-256s), and nothing here
+        signs with it: refused before anything is signed (CORE-BUG 2026-10-02), so the grant is
+        never asked. SignatureAlgorithmTruthTests keeps the grant refusal live."""
         r = self._post('/uc1/issue', data={
             'legal_name': 'Test Unauthorized',
             'date_of_birth': '1985-06-20',
@@ -2669,12 +2674,9 @@ class UC1Tests(PolarisTestCase):
             'hardware_model': 'TitanQ-3',
             'contexts': ['1'],
         }, follow_redirects=True)
-        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.status_code, 400)
         body = r.get_data(as_text=True)
-        # Procedure raises with "is not authorized to issue"
-        self.assertTrue('not authorized to issue' in body or
-                        'insufficient_privilege' in body.lower(),
-                        f"Expected authorization error, got: {body[:500]}")
+        self.assertIn('Nothing here signs with SLH-DSA-256s', body)
 
     def test_issue_refuses_a_token_value_that_is_not_a_serial(self):
         """2026-09-27 (WIRE-SPEC 3.7): issuance signs SHA3-256(token_value) with no domain, so a
@@ -3515,6 +3517,254 @@ class TieredEnrollmentTests(PolarisTestCase):
 # ============================================================================
 
 
+class SignatureAlgorithmTruthTests(PolarisTestCase):
+    """CORE-BUG 2026-10-02. docs/design/multi-sig-migration.md: "The schema records which
+    algorithm produced a signature"; API.md /uc6/migrate adds a signature "under a new
+    algorithm". Issuance and migration signed with the signing module and recorded the
+    algorithm the form named, so ML-DSA-65 bytes, or the placeholder, were stored under
+    SLH-DSA-256s; a migration signed with the global key, not the issuing authority's; and an
+    approved recovery stored a placeholder string as the new credential's signature, which
+    verified under nothing. pqc_signing.credential_signature (issuance) and migration_signature
+    (a migration's named target) now return the algorithm with the signature, and every writer
+    records it."""
+
+    ISSUE = {'legal_name': 'Algorithm Truth', 'date_of_birth': '1985-06-20',
+             'jurisdiction': 'US-OH', 'issuing_agency_id': '1', 'biometric_binding_type': 'IRIS',
+             'hardware_model': 'TitanQ-3', 'contexts': ['1']}
+
+    def _signer(self, agency=1):
+        name = pqc_signing.algorithm_name(agency)
+        return _sql("SELECT algorithm_id FROM CryptographicAlgorithm WHERE name = %s", (name,),
+                    fetch='one')['algorithm_id'], name
+
+    def _issue(self, token_value, **over):
+        data = dict(self.ISSUE, token_value=token_value, physical_serial='SN-' + token_value)
+        data.update(over)
+        return self._post('/uc1/issue', data={k: v for k, v in data.items() if v is not None})
+
+    def _rows(self, token_value):
+        return _sql("SELECT t.algorithm_id AS token_alg, s.algorithm_id AS sig_alg, "
+                    "       s.signing_public_key_hex AS pk, a.name "
+                    "  FROM IdentityToken t JOIN TokenSignature s ON s.token_id = t.token_id "
+                    "  JOIN CryptographicAlgorithm a ON a.algorithm_id = s.algorithm_id "
+                    " WHERE t.token_value = %s", (token_value,))
+
+    def test_issuance_under_an_algorithm_other_than_the_signers_is_refused(self):
+        """400 before anything is signed or written, for each algorithm that is not the
+        issuing authority's signer's: ML-DSA-87, which its key does not sign with (a migration
+        adds a signature under it), and both SLH-DSA sets, which nothing here signs with."""
+        signer_id, signer = self._signer()
+        for other, says in ((2, 'cannot be issued under ML-DSA-87'),
+                            (3, 'Nothing here signs with SLH-DSA-128s'),
+                            (4, 'Nothing here signs with SLH-DSA-256s')):
+            self.assertNotEqual(other, signer_id)
+            tv = 'TKN-OH-ALG-REFUSED-%d' % other
+            r = self._issue(tv, algorithm_id=str(other))
+            self.assertEqual(r.status_code, 400, other)
+            self.assertIn(says, r.get_data(as_text=True))
+            self.assertEqual(self._rows(tv), [], 'nothing was written for algorithm %d' % other)
+
+    def test_the_issue_form_names_each_authoritys_algorithm(self):
+        """The form offers no algorithm to choose; each authority is shown with the algorithm
+        its own key signs with, which need not be the instance's."""
+        moved = lambda agency_id=None: 'ML-DSA-87' if agency_id == 2 else 'ML-DSA-65'
+        with patch.object(pqc_signing, 'algorithm_name', moved):
+            body = self.client.get('/uc1/issue').get_data(as_text=True)
+        self.assertNotIn('name="algorithm_id"', body)
+        self.assertRegex(body, r'value="1">#1 [^<]*, signs with ML-DSA-65<')
+        self.assertRegex(body, r'value="2">#2 [^<]*, signs with ML-DSA-87<')
+
+    def test_issuance_records_the_algorithm_its_signer_made(self):
+        """Named or left out, the credential and its signature record the signer's algorithm;
+        a real signature's key confirms the set."""
+        signer_id, signer = self._signer()
+        for posted in (str(signer_id), None):
+            tv = 'TKN-OH-ALG-OK-%s' % (posted or 'derived')
+            r = self._issue(tv, algorithm_id=posted)
+            self.assertIn(r.status_code, (302, 303), r.get_data(as_text=True)[:400])
+            rows = self._rows(tv)
+            self.assertEqual([(x['token_alg'], x['sig_alg'], x['name']) for x in rows],
+                             [(signer_id, signer_id, signer)])
+            if rows[0]['pk']:
+                self.assertEqual(pqc_signing.algorithm_for_public_key_hex(rows[0]['pk']), signer)
+
+    def test_a_grant_is_still_required_for_the_signers_algorithm(self):
+        """The signer's algorithm decides the label; the authority's grant still decides
+        whether it may issue under it. Authority 4 holds VERIFY only."""
+        tv = 'TKN-OH-ALG-NOGRANT'
+        r = self._issue(tv, issuing_agency_id='4')
+        body = r.get_data(as_text=True)
+        self.assertTrue('not authorized to issue' in body or 'insufficient_privilege' in body.lower(),
+                        body[:500])
+        self.assertEqual(self._rows(tv), [])
+
+    def _seed_token(self, token_value, agency=2):
+        """An ACTIVE credential issued by `agency` under ML-DSA-65, signed by the module."""
+        signature = pqc_signing.credential_signature(token_value, agency_id=agency)
+        iid = _sql("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                   "VALUES ('Migration Truth', '1990-01-01', 'US-PA') RETURNING individual_id",
+                   fetch='one')['individual_id']
+        tid = _sql("INSERT INTO IdentityToken (token_value, physical_serial, hardware_model, "
+                   "  biometric_binding_type, individual_id, issuing_agency_id, algorithm_id, status, "
+                   "  issued_date, expiration_date) "
+                   "VALUES (%s, %s, 'TitanQ-3', 'IRIS', %s, %s, 1, 'RESERVE', CURRENT_TIMESTAMP, "
+                   "        (polaris_utc_date() + INTERVAL '10 years')::date) RETURNING token_id",
+                   (token_value, 'SN-' + token_value, iid, agency), fetch='one')['token_id']
+        _sql("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
+             "VALUES (%s, 1, %s, %s)", (tid, psycopg2.Binary(signature.signature_bytes),
+                                        signature.public_key_hex), fetch='none')
+        return tid
+
+    def _signatures(self, tid):
+        return _sql("SELECT a.name FROM TokenSignature s JOIN CryptographicAlgorithm a "
+                    "  ON a.algorithm_id = s.algorithm_id WHERE s.token_id = %s ORDER BY 1", (tid,))
+
+    def test_a_migration_to_an_algorithm_no_signer_here_produces_is_refused(self):
+        """Both SLH-DSA sets are registered and nothing here signs with either: 400, nothing
+        written, and the form does not offer them."""
+        tid = self._seed_token('TKN-PA-MIG-REFUSED')
+        before = self._signatures(tid)
+        for other, name in ((3, 'SLH-DSA-128s'), (4, 'SLH-DSA-256s')):
+            r = self._post('/uc6/migrate', data={'token_id': str(tid), 'new_algorithm': str(other)})
+            self.assertEqual(r.status_code, 400, other)
+            self.assertIn('Nothing here signs with %s' % name, r.get_data(as_text=True))
+        self.assertEqual(self._signatures(tid), before, 'no signature row was added')
+        form = self.client.get('/uc6/migrate?token_id=%d' % tid).get_data(as_text=True)
+        self.assertRegex(form, r'<option value="2"[^>]*>ML-DSA-87')
+        self.assertNotRegex(form, r'<option value="[34]"')
+
+    def test_a_migration_onto_another_accepted_set_is_signed_under_it(self):
+        """The quantum-event shape (docs/operator/QUANTUM-EVENT.md): the authority still issues
+        under ML-DSA-65 and one credential moves to ML-DSA-87. The new row is under 87 and was
+        made under 87: a real signature's key is an ML-DSA-87 key that both witnesses accept,
+        and the placeholder is the bytes the verify path recomputes. The credential still
+        verifies, under both signatures."""
+        tv = 'TKN-PA-MIG-TO-87'
+        tid = self._seed_token(tv, agency=2)
+        self.assertEqual(pqc_signing.algorithm_name(2), 'ML-DSA-65')
+        r = self._post('/uc6/migrate', data={'token_id': str(tid), 'new_algorithm': '2'})
+        self.assertIn(r.status_code, (302, 303), r.get_data(as_text=True)[:400])
+        self.assertEqual([x['name'] for x in self._signatures(tid)], ['ML-DSA-65', 'ML-DSA-87'])
+        row = _sql("SELECT signature_bytes, signing_public_key_hex AS pk FROM TokenSignature "
+                   " WHERE token_id = %s AND algorithm_id = 2", (tid,), fetch='one')
+        if row['pk']:
+            self.assertEqual(pqc_signing.algorithm_for_public_key_hex(row['pk']), 'ML-DSA-87')
+        else:
+            self.assertEqual(bytes(row['signature_bytes']), hashlib.sha3_256(tv.encode()).digest())
+        self.assertTrue(pqc_signing.verify_stored_signature(tv, bytes(row['signature_bytes']),
+                                                            row['pk']))
+        verdict = self.client.get('/api/tokens/%d/verify' % tid).get_json()
+        self.assertTrue(verdict['signature_valid'], verdict)
+        self.assertEqual(sorted(x['algorithm'] for x in verdict['signatures']),
+                         ['ML-DSA-65', 'ML-DSA-87'])
+
+    def test_a_migration_with_no_key_for_its_target_records_nothing(self):
+        """Under real signing, a target custody holds no key for is refused by custody, never
+        signed with the key at hand (custody.AlgorithmUnavailableError), and the refusal reaches
+        the operator instead of a server error."""
+        tid = self._seed_token('TKN-PA-MIG-NOKEY', agency=2)
+        before = self._signatures(tid)
+
+        def no_key(token_value, algorithm, agency_id=None):
+            raise custody.AlgorithmUnavailableError(
+                "the configured custody key is ML-DSA-65 and the migration targets %s" % algorithm)
+        with patch.dict(os.environ, {'POLARIS_USE_REAL_PQC': '1'}), \
+                patch.object(pqc_signing, 'signature_for_migration', no_key):
+            r = self._post('/uc6/migrate', data={'token_id': str(tid), 'new_algorithm': '2'})
+        self.assertLess(r.status_code, 500)
+        self.assertIn('the migration targets ML-DSA-87', r.get_data(as_text=True))
+        self.assertEqual(self._signatures(tid), before, 'no signature row was added')
+
+    def test_a_migration_signs_by_the_issuing_authority_under_its_algorithm(self):
+        """The authority's key moved to ML-DSA-87: the migration signature is that authority's,
+        under 87, and recorded as 87. Placeholder bytes in both stages, so the test means the
+        same with and without real signing; the agency the signer was asked for is the point."""
+        tid = self._seed_token('TKN-PA-MIG-87', agency=2)
+        asked = []
+        real = pqc_signing.signature_with_key_for_token
+
+        def signer(token_value, agency_id=None):
+            asked.append(agency_id)
+            return (hashlib.sha3_256(token_value.encode()).digest(),
+                    pqc_signing.PLACEHOLDER_LABEL, None)
+        moved = lambda agency_id=None: 'ML-DSA-87' if agency_id == 2 else 'ML-DSA-65'
+        with patch.object(pqc_signing, 'algorithm_name', moved), \
+                patch.object(pqc_signing, 'signature_with_key_for_token', signer):
+            r = self._post('/uc6/migrate', data={'token_id': str(tid)})
+        self.assertIn(r.status_code, (302, 303), r.get_data(as_text=True)[:400])
+        self.assertEqual(asked, [2], 'signed by the issuing authority, not the global key')
+        self.assertEqual([x['name'] for x in self._signatures(tid)], ['ML-DSA-65', 'ML-DSA-87'])
+        self.assertIs(pqc_signing.signature_with_key_for_token, real)
+
+    def _seed_legacy(self, token_value, agency=2):
+        """A RESERVE credential signed only under ECDSA-P256 (registered, for migration)."""
+        iid = _sql("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                   "VALUES ('Legacy Truth', '1980-02-02', 'US-PA') RETURNING individual_id",
+                   fetch='one')['individual_id']
+        tid = _sql("INSERT INTO IdentityToken (token_value, physical_serial, hardware_model, "
+                   "  biometric_binding_type, individual_id, issuing_agency_id, algorithm_id, status, "
+                   "  issued_date, expiration_date) "
+                   "VALUES (%s, %s, 'TitanQ-3', 'IRIS', %s, %s, 5, 'RESERVE', CURRENT_TIMESTAMP, "
+                   "        (polaris_utc_date() + INTERVAL '10 years')::date) RETURNING token_id",
+                   (token_value, 'SN-' + token_value, iid, agency), fetch='one')['token_id']
+        _sql("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes) "
+             "VALUES (%s, 5, 'LEGACY-ECDSA')", (tid,), fetch='none')
+        return tid
+
+    def test_the_registered_key_binds_the_authoritys_own_key_only(self):
+        """PE.3b at migration: a signature by the authority's own key must be by the key it
+        registered, as at issuance; a key provisioned for a migration target is another key by
+        design, and is not refused for being one."""
+        _sql("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 2", ('ab' * 1952,),
+             fetch='none')
+        own = self._seed_legacy('TKN-PA-MIG-OWNKEY')
+        with patch.object(pqc_signing, 'signature_with_key_for_token',
+                          lambda tv, agency_id=None: (b'\x01' * 3309, 'ML-DSA-65', 'cd' * 1952)), \
+                patch.object(pqc_signing, 'algorithm_name', lambda agency_id=None: 'ML-DSA-65'):
+            r = self._post('/uc6/migrate', data={'token_id': str(own), 'new_algorithm': '1'})
+        self.assertIn('registered to a different signing key', r.get_data(as_text=True))
+        self.assertEqual([x['name'] for x in self._signatures(own)], ['ECDSA-P256'])
+
+        target = self._seed_legacy('TKN-PA-MIG-TARGETKEY')
+        with patch.dict(os.environ, {'POLARIS_USE_REAL_PQC': '1'}), \
+                patch.object(pqc_signing, 'algorithm_name', lambda agency_id=None: 'ML-DSA-65'), \
+                patch.object(pqc_signing, 'signature_for_migration',
+                             lambda tv, alg, agency_id=None: (b'\x02' * 4627, alg, 'ef' * 2592)):
+            r = self._post('/uc6/migrate', data={'token_id': str(target), 'new_algorithm': '2'})
+        self.assertIn(r.status_code, (302, 303), r.get_data(as_text=True)[:400])
+        row = _sql("SELECT signing_public_key_hex AS pk FROM TokenSignature "
+                   " WHERE token_id = %s AND algorithm_id = 2", (target,), fetch='one')
+        self.assertEqual(row['pk'], 'ef' * 2592)
+
+    def test_the_migration_signer_refuses_what_no_key_here_made(self):
+        """migration_signature itself, beneath the route's own refusal: a set nothing here
+        signs with, a signature whose key is of another set than the target, and a target
+        custody has no key for each raise SigningError, so no writer can record them."""
+        with self.assertRaises(pqc_signing.SigningError):
+            pqc_signing.migration_signature('TKN-PA-ANY', 'SLH-DSA-256s')
+        with patch.dict(os.environ, {'POLARIS_USE_REAL_PQC': '1'}), \
+                patch.object(pqc_signing, 'algorithm_name', lambda agency_id=None: 'ML-DSA-65'):
+            with patch.object(pqc_signing, 'signature_for_migration',
+                              lambda tv, alg, agency_id=None: (b'x', alg, 'cd' * 1952)), \
+                    self.assertRaises(pqc_signing.SigningError):
+                pqc_signing.migration_signature('TKN-PA-ANY', 'ML-DSA-87')
+
+            def no_key(tv, alg, agency_id=None):
+                raise custody.AlgorithmUnavailableError('no %s key' % alg)
+            with patch.object(pqc_signing, 'signature_for_migration', no_key), \
+                    self.assertRaises(pqc_signing.SigningError):
+                pqc_signing.migration_signature('TKN-PA-ANY', 'ML-DSA-87')
+
+    def test_a_signature_whose_key_is_of_another_set_is_never_recorded(self):
+        """credential_signature refuses a real signature whose key's length names another set
+        than the configured one: the row would carry the wrong label."""
+        with patch.object(pqc_signing, 'signature_with_key_for_token',
+                          lambda tv, agency_id=None: (b'x', 'ML-DSA-65', 'ab' * 2592)), \
+                patch.object(pqc_signing, 'algorithm_name', lambda agency_id=None: 'ML-DSA-65'):
+            with self.assertRaises(pqc_signing.SigningError):
+                pqc_signing.credential_signature('TKN-KEY-MISMATCH')
+
+
 class CatastrophicLossRecoveryTests(PolarisTestCase):
     """Tests for R11-2 / M2-7 — UC-9 catastrophic-loss recovery."""
 
@@ -3638,7 +3888,7 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
                   deciding_user='admin', new_token_suffix='RCV'):
         with self._new_conn() as conn, conn.cursor() as cur:
             cur.execute("""
-                CALL uc9_complete_recovery(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                CALL uc9_complete_recovery(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 recovery_id, self._user_id(deciding_user), decision,
                 'test reason',
@@ -3647,6 +3897,8 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
                 1,  # ML-DSA-65
                 'IRIS', 'MULTI_MODAL',
                 f'https://crl.idtoken.gov/test/{recovery_id}',
+                *(_recovery_signature(f'TKN-TEST-{recovery_id}-{new_token_suffix}')
+                  if decision == 'APPROVED' else (None, None)),
             ))
             conn.commit()
 
@@ -3670,13 +3922,14 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
         uid = deciding_user_id if deciding_user_id is not None else self._user_id(deciding_user)
         with self._new_conn() as conn, conn.cursor() as cur:
             cur.execute(
-                "CALL uc9_complete_recovery(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "CALL uc9_complete_recovery(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (recovery_id, uid, decision, reason,
                  ('TKN-R9-%s' % recovery_id) if token else None,
                  ('SN-R9-%s' % recovery_id) if token else None,
                  1 if token else None,
                  biometric, liveness,
-                 'https://crl.idtoken.gov/test/%s' % recovery_id))
+                 'https://crl.idtoken.gov/test/%s' % recovery_id,
+                 *(_recovery_signature('TKN-R9-%s' % recovery_id) if token else (None, None))))
             conn.commit()
 
     def test_an_unknown_recovery_is_refused(self):
@@ -3840,6 +4093,63 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
         with self.assertRaises(psycopg2.Error) as ctx:
             self._complete(rid)
         self.assertIn('three', str(ctx.exception).lower())
+
+    def _pending_recovery(self, label):
+        """A PENDING recovery, cool-down past and all three channels recorded, requested by
+        authority 1's operator for a person with no ACTIVE credential."""
+        iid = self._make_individual(label)
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO RecoveryRequest
+                    (claimed_individual_id, requested_at, requesting_agency_id,
+                     requesting_user_id, biometric_verified, sworn_statement_hash,
+                     witness_agency_id, witness_co_sign_user_id, cooldown_expires_at)
+                VALUES (%s, CURRENT_TIMESTAMP - INTERVAL '50 hours', 1, %s, TRUE, %s, 3, %s,
+                        CURRENT_TIMESTAMP - INTERVAL '2 hours')
+                RETURNING recovery_id
+            """, (iid, self._user_id('operator'), 'a' * 64, self._user_id('auditor')))
+            rid = cur.fetchone()['recovery_id']
+            conn.commit()
+        return rid
+
+    def test_a_recovered_credential_carries_a_signature_that_verifies(self):
+        """CORE-BUG 2026-10-02: the procedure wrote 'UC9_RECOVERY_PLACEHOLDER_<id>_TOKEN_<id>' as
+        the new credential's signature, so the credential an approved recovery handed back
+        answered signature_valid false at /api/tokens/<id>/verify. Through the route, as an
+        operator approves one: the new credential verifies, and its signature row names the
+        algorithm the requesting authority's signer made it with."""
+        rid = self._pending_recovery('recovered signature')
+        tv = 'TKN-UC9-SIGNED-%d' % rid
+        r = self._post('/uc9/decide/%d' % rid, data={
+            'decision': 'APPROVED', 'reason': 'channels verified', 'new_token_value': tv,
+            'new_serial': 'SN-UC9-SIGNED-%d' % rid, 'biometric_binding': 'IRIS',
+            'liveness_check': 'MULTI_MODAL', 'published_location': 'https://crl.example/%d' % rid})
+        self.assertIn(r.status_code, (302, 303), r.get_data(as_text=True)[:400])
+        row = _sql("SELECT t.token_id, a.name, s.signature_bytes FROM IdentityToken t "
+                   "  JOIN TokenSignature s ON s.token_id = t.token_id "
+                   "  JOIN CryptographicAlgorithm a ON a.algorithm_id = s.algorithm_id "
+                   " WHERE t.token_value = %s", (tv,), fetch='one')
+        self.assertNotIn(b'PLACEHOLDER', bytes(row['signature_bytes']))
+        self.assertEqual(row['name'], pqc_signing.algorithm_name(1))
+        verdict = self.client.get('/api/tokens/%d/verify' % row['token_id']).get_json()
+        self.assertTrue(verdict['signature_valid'], verdict)
+
+    def test_an_approval_without_a_signature_is_refused(self):
+        """No placeholder any more: an APPROVED decision that carries no signature is refused,
+        and the recovery stays PENDING."""
+        rid = self._pending_recovery('unsigned approval')
+        with self.assertRaises(psycopg2.Error) as c, self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("CALL uc9_complete_recovery(%s, %s, 'APPROVED', 'r', %s, %s, 1, 'IRIS', "
+                        "'MULTI_MODAL', 'https://crl.example/u')",
+                        (rid, self._user_id('admin'), 'TKN-UC9-UNSIGNED-%d' % rid,
+                         'SN-UC9-UNSIGNED-%d' % rid))
+        # The procedure's own refusal, not the NOT NULL column that would also stop the insert
+        # further on: the procedure drill deleted the refusal and a test asserting only that
+        # "signature" was mentioned still passed on the column's message.
+        self.assertIn("requires the new credential's signature", str(c.exception))
+        self.assertEqual(c.exception.pgcode, '23514')
+        self.assertEqual(_sql("SELECT status FROM RecoveryRequest WHERE recovery_id = %s", (rid,),
+                              fetch='one')['status'], 'PENDING')
 
     def test_approved_path_issues_new_token_and_lost_old(self):
         """Full APPROVED happy path:
@@ -4280,10 +4590,17 @@ class MultiSignatureTests(PolarisTestCase):
         with self._new_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT token_value FROM IdentityToken WHERE token_id=%s", (tid,))
             token_value = cur.fetchone()['token_value']
-        r = self._post('/uc6/migrate', data={
-            'token_id': str(tid),
-            'new_algorithm': '2',
-        }, follow_redirects=True)
+        # The issuing authority's signer (authority 1) under ML-DSA-87, so the migration has an
+        # algorithm to move to (CORE-BUG 2026-10-02: one no signer here produces is refused).
+        # The placeholder stands in for 87; a real 87 key needs custody this test does not have.
+        def placeholder(tv, agency_id=None):
+            return hashlib.sha3_256(tv.encode()).digest(), pqc_signing.PLACEHOLDER_LABEL, None
+        with patch.object(pqc_signing, 'algorithm_name', lambda agency_id=None: 'ML-DSA-87'), \
+                patch.object(pqc_signing, 'signature_with_key_for_token', placeholder):
+            r = self._post('/uc6/migrate', data={
+                'token_id': str(tid),
+                'new_algorithm': '2',
+            }, follow_redirects=True)
         self.assertEqual(r.status_code, 200)
         with self._new_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT signature_bytes, signing_public_key_hex FROM TokenSignature "
@@ -4291,9 +4608,8 @@ class MultiSignatureTests(PolarisTestCase):
             row = cur.fetchone()
         self.assertIsNotNone(row, "uc6 route did not add a signature for the new algorithm")
         stored = bytes(row['signature_bytes'])
-        _assert_signed_by_the_signing_module(
-            self, token_value, stored, row['signing_public_key_hex'],
-            "uc6 migration signature is not the signing module's output")
+        self.assertEqual(stored, hashlib.sha3_256(token_value.encode()).digest(),
+                         "uc6 migration signature is not the signing module's output")
         self.assertNotIn(b'UC6_OPERATOR_MIGRATE', stored)
 
     def test_migrate_rejects_nonexistent_token(self):
@@ -9328,12 +9644,13 @@ class ConcurrencyTests(PolarisTestCase):
             try:
                 with self._new_conn() as conn, conn.cursor() as cur:
                     cur.execute("""
-                        CALL uc9_complete_recovery(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        CALL uc9_complete_recovery(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         rid, admin_uid, 'APPROVED', f'race {suffix}',
                         f'TKN-UC9-RACE-{suffix}', f'SN-UC9-RACE-{suffix}',
                         1, 'IRIS', 'MULTI_MODAL',
                         f'https://crl.idtoken.gov/race/{suffix}',
+                        *_recovery_signature(f'TKN-UC9-RACE-{suffix}'),
                     ))
                     conn.commit()
                 with results_lock: results['success'] += 1
@@ -9398,12 +9715,13 @@ class ConcurrencyTests(PolarisTestCase):
 
         def complete(rid, suffix):
             return lambda cur: cur.execute("""
-                CALL uc9_complete_recovery(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                CALL uc9_complete_recovery(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 rid, admin_uid, 'APPROVED', f'cross {suffix}',
                 f'TKN-UC9-XR-{suffix}', f'SN-UC9-XR-{suffix}',
                 1, 'IRIS', 'MULTI_MODAL',
                 f'https://crl.idtoken.gov/xr/{suffix}',
+                *_recovery_signature(f'TKN-UC9-XR-{suffix}'),
             ))
 
         self.assertDoesNotContend(complete(rid_a, 'A'), complete(rid_b, 'B'),
@@ -10787,6 +11105,243 @@ class AtlasCacheTests(_AtlasCase):
             self.assertEqual((everything['totals']['n_total'], hour['totals']['n_total']), (6, 6))
             again = self._ask('/api/atlas/series?window=all&agencies=3&buckets=10')
             self.assertEqual(again['totals']['n_total'], 6, 'the cached answer, not a recount')
+
+
+class AtlasCompareTests(_AtlasCase):
+    """compare=previous (lab/strategy/009 A4): each count beside the same count in the window of
+    the same nominal length immediately before, withheld against that window's own scope, a
+    change only where both counts are shown, and a mark where the failure share at least doubled
+    with ten or more extra failures. Authorities 4, 5 and 6 are this class's: no other suite
+    records a verification there, so each test's slice holds its own events alone."""
+
+    def _count(self, agency, where, params):
+        return self._raw('requesting_agency_id = %s AND ' + where, (agency,) + tuple(params))
+
+    def test_the_window_before_is_counted_as_the_window_is(self):
+        """Every compared figure is the event table's own count, on the hourly grain and on the
+        daily, and the window before ends where this one starts."""
+        _atlas_events(6, agency=6, context=5, outcome='FAILURE', disclosure='SELECTIVE')
+        _atlas_events(11, agency=6, context=5, outcome='FAILURE', disclosure='SELECTIVE',
+                      minutes_ago=26 * 60)
+        _atlas_events(8, agency=6, context=5, minutes_ago=30 * 60)
+        _atlas_events(9, agency=6, context=5, minutes_ago=31 * 24 * 60)
+        # First as the triggers left them, in the delta; then folded into the hourly and daily
+        # rollups, so each of the three branches a window reads is bounded at its end.
+        for folded, (window, span) in ((f, w) for f in (False, True)
+                                       for w in (('24h', timedelta(hours=24)),
+                                                 ('30d', timedelta(days=30)))):
+            if folded and window == '24h':
+                _sql("SELECT uc_fold_activity_rollups() AS folded", fetch='one')
+            with self.subTest(window=window, folded=folded), self._unwithheld():
+                d = self._ask('/api/atlas/breakdown?window=%s&dimension=outcome&agencies=6'
+                              '&contexts=VOTING&compare=previous' % window)
+                prev = d['previous']
+                self.assertEqual((prev['until'], prev['incomplete']), (d['since'], None))
+                since = datetime.fromisoformat(d['since'])
+                before = datetime.fromisoformat(prev['since'])
+                self.assertEqual(since - before, span)
+                for c in d['categories']:
+                    now_n = self._count(6, "context_id = 5 AND outcome = %s AND event_timestamp >= %s",
+                                        (c['label'], since))
+                    then_n = self._count(6, "context_id = 5 AND outcome = %s AND event_timestamp >= %s "
+                                            "AND event_timestamp < %s", (c['label'], before, since))
+                    self.assertEqual((c['n_total'], c['prev_total'], c['change']),
+                                     (now_n, then_n, now_n - then_n), c['label'])
+                by = {c['label']: c for c in d['categories']}
+                self.assertGreater(by['FAILURE']['prev_total'] + by['SUCCESS']['prev_total'], 0)
+
+    def test_a_change_is_shown_only_where_both_counts_are(self):
+        """Now 6 failures and 8 successes; before 3 failures, 10 successes and 7 expiries. The 3
+        is withheld, so the failures' change is too: 6 and a change of 3 would give it back."""
+        _atlas_events(6, agency=6, context=6, outcome='FAILURE', disclosure='SELECTIVE')
+        _atlas_events(8, agency=6, context=6)
+        _atlas_events(3, agency=6, context=6, outcome='FAILURE', disclosure='SELECTIVE',
+                      minutes_ago=26 * 60)
+        _atlas_events(10, agency=6, context=6, minutes_ago=26 * 60)
+        _atlas_events(7, agency=6, context=6, outcome='EXPIRED', disclosure='SELECTIVE',
+                      minutes_ago=26 * 60)
+        d = self._ask('/api/atlas/breakdown?window=24h&dimension=outcome&agencies=6'
+                      '&contexts=MOTOR_VEHICLE&compare=previous')
+        got = {c['label']: (c['n_total'], c['prev_total'], c['change']) for c in d['categories']}
+        self.assertEqual(got, {'FAILURE': (6, None, None), 'SUCCESS': (8, 10, -2),
+                               'EXPIRED': (None, 7, None), 'UNAUTHORIZED': (None, None, None)})
+
+    def test_a_rising_failure_share_is_marked_from_shown_counts_alone(self):
+        """Doubled with fifteen more failures is marked; doubled with six more is not, nor is
+        eleven more short of double, nor anything beside a withheld count."""
+        for context, (s_before, f_before, s_now, f_now) in ((2, (40, 5, 25, 20)),
+                                                            (3, (40, 5, 34, 11)),
+                                                            (7, (30, 10, 25, 21)),
+                                                            (1, (40, 2, 25, 20))):
+            _atlas_events(s_before, agency=5, context=context, minutes_ago=26 * 60)
+            _atlas_events(f_before, agency=5, context=context, outcome='FAILURE',
+                          disclosure='SELECTIVE', minutes_ago=26 * 60)
+            _atlas_events(s_now, agency=5, context=context)
+            _atlas_events(f_now, agency=5, context=context, outcome='FAILURE', disclosure='SELECTIVE')
+        d = self._ask('/api/atlas/breakdown?window=24h&dimension=context&agencies=5&compare=previous')
+        rose = {c['label']: c['failure_rose'] for c in d['categories'] if not c.get('folded')}
+        self.assertEqual({k: rose[k] for k in ('EMPLOYMENT', 'HEALTHCARE', 'GOVERNMENT_BENEFITS')},
+                         {'EMPLOYMENT': True, 'HEALTHCARE': False, 'GOVERNMENT_BENEFITS': False})
+        self.assertIsNone(rose['VOTING'], 'no count, no mark')
+        # 2 failures before is withheld: 20 now would mark it from a count nobody may see.
+        self.assertIsNone(rose['BANKING'], 'a withheld count marks nothing')
+
+    def test_the_cross_tab_compares_each_cell_and_row(self):
+        _atlas_events(5, agency=4, context=4)
+        _atlas_events(6, agency=4, context=4, outcome='FAILURE', disclosure='SELECTIVE')
+        _atlas_events(7, agency=4, context=4, minutes_ago=26 * 60)
+        _atlas_events(2, agency=4, context=4, outcome='FAILURE', disclosure='SELECTIVE',
+                      minutes_ago=26 * 60)
+        with self._unwithheld():
+            d = self._ask('/api/atlas/crosstab?window=24h&row=agency&col=outcome&agencies=4'
+                          '&compare=previous')
+        since = datetime.fromisoformat(d['since'])
+        before = datetime.fromisoformat(d['previous']['since'])
+        rows = {r['label']: r for r in d['rows']}
+        tsa = rows['Transportation Security Admin']
+        then_total = self._count(4, "event_timestamp >= %s AND event_timestamp < %s", (before, since))
+        self.assertEqual((tsa['prev_total'], tsa['change']),
+                         (then_total, tsa['total'] - then_total))
+        for c in d['cells']:
+            if c['row'] != 'Transportation Security Admin':
+                self.assertEqual((c['prev'], c['change']), (None, None), 'the folded row')
+                continue
+            then_n = self._count(4, "outcome = %s AND event_timestamp >= %s AND event_timestamp < %s",
+                                 (c['col'], before, since))
+            self.assertEqual((c['prev'], c['change']), (then_n, c['n'] - then_n), c['col'])
+        self.assertEqual(rows[atlas_routes._ATLAS_FOLDED]['prev_total'], None)
+
+    def test_nothing_comes_before_all_time(self):
+        for path in ('/api/atlas/breakdown?window=all&dimension=outcome&compare=previous',
+                     '/api/atlas/crosstab?window=all&row=agency&col=outcome&compare=previous',
+                     '/api/atlas/breakdown?window=24h&dimension=outcome&compare=next'):
+            with self.subTest(path):
+                self.assertIn('error', self._ask(path, status=400))
+
+    def test_purged_hours_are_not_compared(self):
+        """A purge deletes the hourly rollup before its cutoff and keeps the daily one. A window
+        before reaching past the first hour still held would count less than happened, so when
+        the daily rollup holds a day before that hour's, nothing in it is compared."""
+        now = self._db_now().replace(minute=0, second=0, microsecond=0)
+        url = '/api/atlas/breakdown?window=24h&dimension=outcome&compare=previous'
+        with patch.object(atlas_routes, '_first_hour', return_value=now - timedelta(hours=2)), \
+                patch.object(atlas_routes, '_first_day', return_value=now - timedelta(days=90)):
+            d = self._ask(url)
+        self.assertIn('no longer held', d['previous']['incomplete'])
+        self.assertTrue(all(c['prev_total'] is None and c['change'] is None
+                            for c in d['categories']))
+        atlas_routes._atlas_cache_clear()
+        # A system that began two hours ago purged nothing: its days start the day its hours do.
+        with patch.object(atlas_routes, '_first_hour', return_value=now - timedelta(hours=2)), \
+                patch.object(atlas_routes, '_first_day',
+                             return_value=(now - timedelta(hours=2)).replace(hour=0)):
+            self.assertIsNone(self._ask(url)['previous']['incomplete'])
+
+    def test_a_narrow_window_before_is_noted_and_a_comparison_is_its_own_question(self):
+        _atlas_events(60, agency=4, context=2)
+        url = '/api/atlas/breakdown?window=24h&dimension=outcome&agencies=4&contexts=EMPLOYMENT'
+        self.assertNotIn('previous', self._ask(url), 'not asked, not answered')
+        with self.assertLogs(flask_app.app.logger, level='INFO') as logs:
+            flask_app.app.logger.info('control')
+            d = self._ask(url + '&compare=previous')
+        self.assertIn('previous', d, 'the comparison is not the cached answer without it')
+        lines = [m for m in logs.output if 'atlas narrow question' in m]
+        self.assertEqual(len(lines), 1, 'the window before holds fewer than fifty')
+        self.assertIn('compare=previous', lines[0])
+
+
+class AtlasIntegrityTests(_AtlasCase):
+    """The integrity card (lab/strategy/009 A2): the latest state epoch and anchor batch, read
+    by their keys, and the Athena board's verdict on this database. Header rows only: no leaf,
+    no person, not the operator who closed the epoch; a count in them withheld below five."""
+
+    def test_the_latest_epoch_and_batch_are_read_by_their_keys(self):
+        """A new epoch over the sample's credentials, five or more, beside the sample's own: the
+        card shows the newer, its count shown."""
+        from psycopg2.extras import Json
+        admin = _sql("SELECT user_id FROM AppUser WHERE role = 'admin' AND is_active "
+                     "ORDER BY user_id LIMIT 1", fetch='one')['user_id']
+        tokens = [r['token_id'] for r in _sql("SELECT token_id FROM IdentityToken "
+                                              "ORDER BY token_id LIMIT 6")]
+        _sql("CALL uc11_close_epoch(%s, %s, %s, %s)",
+             ('f' * 64, datetime.now() + timedelta(days=30), admin,
+              Json([{'token_id': t, 'leaf_hash': '%02x' % t * 32} for t in tokens])), fetch='none')
+        self.assertGreater(_sql("SELECT count(*) AS n FROM TokenStateEpoch", fetch='one')['n'], 1)
+        e = _sql("SELECT * FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 1", fetch='one')
+        self.assertEqual(e['committed_count'], len(tokens))
+        self.assertGreaterEqual(len(tokens), 5, 'enough credentials for a count that is shown')
+        b = _sql("SELECT * FROM AnchorBatch ORDER BY batch_id DESC LIMIT 1", fetch='one')
+        self.assertTrue(e and b, 'the sample has an epoch and a batch')
+        with self._unwithheld():
+            d = self._ask('/api/atlas/integrity')
+        self.assertEqual(d['epoch'], {
+            'id': e['epoch_id'], 'closed_at': e['closed_at'].isoformat(timespec='seconds'),
+            'valid_from': e['valid_from'].isoformat(timespec='seconds'),
+            'valid_until': e['valid_until'].isoformat(timespec='seconds'),
+            'expired': False, 'committed': e['committed_count']})
+        self.assertEqual(d['anchor'], {
+            'id': b['batch_id'], 'created_at': b['created_at'].isoformat(timespec='seconds'),
+            'size': b['batch_size'],
+            'chain': b['external_chain'] if b['committed_to_chain'] else None,
+            'tx': b['external_chain_tx'] if b['committed_to_chain'] else None})
+
+    def test_an_epoch_past_its_validity_reads_expired(self):
+        """On the database's clock: the browser's may be wrong, and the verifier's is the
+        database's."""
+        until = _sql("SELECT valid_until FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 1",
+                     fetch='one')['valid_until']
+        for now, expired in ((until - timedelta(seconds=1), False), (until, True),
+                             (until + timedelta(days=1), True)):
+            atlas_routes._atlas_cache_clear()
+            with patch.object(atlas_routes, '_db_now', return_value=now):
+                self.assertEqual(self._ask('/api/atlas/integrity')['epoch']['expired'], expired, now)
+
+    def test_a_count_below_five_is_withheld(self):
+        """The sample's epoch commits 3 credentials and its batches hold 1 anchor each."""
+        e = _sql("SELECT committed_count FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 1",
+                 fetch='one')['committed_count']
+        b = _sql("SELECT batch_size FROM AnchorBatch ORDER BY batch_id DESC LIMIT 1",
+                 fetch='one')['batch_size']
+        d = self._ask('/api/atlas/integrity')
+        self.assertEqual((d['epoch']['committed'], d['anchor']['size']),
+                         (e if e >= 5 else None, b if b >= 5 else None))
+        self.assertLess(min(e, b), 5, 'the sample exercises the withholding')
+
+    def test_the_verdict_is_the_boards(self):
+        import athena_board
+        with flask_app.app.test_request_context('/'):
+            states = [r['state'] for r in athena_board.read_board(flask_app.query)['rules']]
+        board = self._ask('/api/atlas/integrity')['board']
+        self.assertEqual((board['rules'], board['in_force'], board['not_in_force'], board['repository']),
+                         (len(states), states.count('in_force'), states.count('not_in_force'),
+                          states.count('repository')))
+        self.assertGreater(board['in_force'], 0)
+
+    def test_a_rule_not_in_force_reads_so(self):
+        import athena_board
+        with flask_app.app.test_request_context('/'):
+            real = athena_board.read_board(flask_app.query)
+        broken = dict(real, rules=[dict(real['rules'][0], state='not_in_force')] + real['rules'][1:])
+        with patch.object(athena_board, 'read_board', return_value=broken):
+            board = self._ask('/api/atlas/integrity')['board']
+        self.assertEqual(board['not_in_force'],
+                         [r['state'] for r in broken['rules']].count('not_in_force'))
+        self.assertGreaterEqual(board['not_in_force'], 1)
+
+    def test_the_closer_is_not_named(self):
+        closer = _sql("SELECT u.username FROM TokenStateEpoch e JOIN AppUser u "
+                      "  ON u.user_id = e.closed_by_user_id ORDER BY e.epoch_id DESC LIMIT 1",
+                      fetch='one')['username']
+        body = self.client.get('/api/atlas/integrity').get_data(as_text=True)
+        self.assertNotIn('closed_by', body)
+        self.assertNotIn('"%s"' % closer, body)
+
+    def test_the_page_carries_the_card_and_the_control(self):
+        body = self.client.get('/atlas').get_data(as_text=True)
+        for hook in ('data-ov-integrity', 'href="/athena"', 'data-ov-int-value="board"',
+                     'data-ov-int-value="epoch"', 'data-ov-int-value="anchor"',
+                     'data-bd-compare="previous"', 'data-bd-metric="change"'):
+            self.assertIn(hook, body, hook)
 
 
 class AtlasReadsNoEventTableTests(PolarisTestCase):
@@ -12398,6 +12953,10 @@ class AtlasShowsNoPersonTests(PolarisTestCase):
               '/api/atlas/breakdown?window=all&kind=lifecycle&dimension=agency&limit=50',
               '/api/atlas/crosstab?window=all&kind=verification&row=agency&col=outcome',
               '/api/atlas/facet/agencies?window=all',
+              '/api/atlas/breakdown?window=7d&kind=verification&dimension=agency&compare=previous',
+              '/api/atlas/crosstab?window=7d&kind=verification&row=agency&col=outcome'
+              '&compare=previous',
+              '/api/atlas/integrity',
               '/api/atlas/cache-stats')
     PERSON_KEY = re.compile(r"(token_id|token_value|individual_id|legal_name|holder|subject|event_id"
                             r"|date_of_birth)", re.I)
@@ -13529,7 +14088,8 @@ class RouteGuardMatrixTests(PolarisTestCase):
     #: by hand, which is what the two lists they replace were. Changing a guard is
     #: meant to fail here: updating the line is the moment somebody confirms the
     #: new exposure is intended.
-    EXPECTED_LOGIN_ONLY = 41   # 44 until 009 step 4 withdrew the Atlas cluster, hexagon and timeline layers
+    EXPECTED_LOGIN_ONLY = 42   # 44 until 009 step 4 withdrew the Atlas cluster, hexagon and timeline layers;
+                               # 42 with 009 A2's /api/atlas/integrity, read by any signed-in role
     ROLE_GATES = {
         '/agencies/<int:ag_id>/delete': ('admin',),
         '/agencies/<int:ag_id>/edit': ('admin',),
@@ -13922,6 +14482,16 @@ def _bind_account(sess, agency_id):
             cur.execute("UPDATE AppUser SET agency_id = %s WHERE user_id = %s", (agency_id, uid))
     finally:
         conn.close()
+
+def _recovery_signature(token_value, agency_id=1):
+    """The two trailing arguments uc9_complete_recovery takes for an approval: the new
+    credential's signature by the signing module, and its key (None for the placeholder). The
+    procedure wrote a placeholder string until 2026-10-02 and now refuses an approval without
+    them."""
+    import pqc_signing
+    signature = pqc_signing.credential_signature(token_value, agency_id=agency_id)
+    return psycopg2.Binary(signature.signature_bytes), signature.public_key_hex
+
 
 def _sql(query, params=None, fetch='all'):
     conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)

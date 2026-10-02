@@ -19,9 +19,10 @@ revocation ceiling in [issuer-discretion.md](issuer-discretion.md).
 ## What it does not do
 
 - **It does not choose algorithms.** The schema records which algorithm
-  produced a signature. Which algorithms are credible is a decision for the
-  agencies and the jurisdiction's cryptographic authority, the same posture C7
-  takes throughout.
+  produced a signature, and the application records the one that did: the
+  algorithm of the key that signed, never one a request names. Which algorithms
+  are credible is a decision for the agencies and the jurisdiction's
+  cryptographic authority, the same posture C7 takes throughout.
 - **It does not cascade deprecation.** `CryptographicAlgorithm.deprecation_date`
   says an algorithm is end-of-life globally.
   `TokenSignature.deprecation_date` says one signature is no longer accepted.
@@ -63,7 +64,8 @@ CALL uc6_migrate_algorithm(
     p_token_id      => 42,
     p_new_algorithm => 2,        -- the incoming algorithm
     p_new_signature => <bytes>,  -- produced outside the database
-    p_deprecate_old => FALSE     -- FALSE keeps both active for the window
+    p_deprecate_old => FALSE,    -- FALSE keeps both active for the window
+    p_signing_public_key_hex => <hex>  -- the key that made the bytes
 );
 ```
 
@@ -139,6 +141,21 @@ At issuance the application produces the signature and passes it in: a real
 ML-DSA-65 signature when the deployment has real post-quantum signing on,
 which both shipped production paths do, and a labelled deterministic value
 otherwise. The public key that produced it is stored beside it.
+
+**The algorithm a row records is the one that made the signature.** Issuance
+signs through `pqc_signing.credential_signature`, which returns the bytes, the
+key and the algorithm together, all three from the issuing authority's key; a
+request that names another algorithm is refused before anything is signed. A
+migration names its target, because the authority goes on issuing under its
+own set while its credentials move ([QUANTUM-EVENT.md](../operator/QUANTUM-EVENT.md)):
+`pqc_signing.migration_signature` signs with the authority's key when that key
+is under the target, and otherwise with the key provisioned for the migration,
+as the population path does, refusing a target that no key is provisioned for
+and one that nothing here signs with at all. Until 2026-10-02 the routes and the
+CLI recorded the algorithm the request named, whatever made the bytes, so a row
+could claim ML-DSA-87 over an ML-DSA-65 signature and verify under neither;
+`check_signature_rows_name_their_signer` refuses a writer that signs outside
+those two functions.
 
 A direct SQL caller that passes nothing falls back to a labelled placeholder,
 which is what the seed data carries, so a developer loading the sample schema

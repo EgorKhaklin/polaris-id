@@ -1176,6 +1176,82 @@ def check_no_debug_artifacts(root: pathlib.Path) -> list[Finding]:
 # accept it (p_signature_bytes). Otherwise the headline post-quantum claim
 # decays back into a hardcoded SQL string and the signing module is dead code.
 # ---------------------------------------------------------------------------
+#: The product code that writes a TokenSignature row, or stages one: issuance, migration and
+#: recovery in the application, the CLI, and the simulation's bulk loader.
+_SIGNATURE_ROW_WRITERS = ("polaris_web/use_case_routes.py", "polaris_cli/polaris.py",
+                          "polaris_sim/load.py")
+#: Those that also migrate a credential onto a named algorithm (UC-6, the route and the CLI).
+_SIGNATURE_ROW_MIGRATORS = ("polaris_web/use_case_routes.py", "polaris_cli/polaris.py")
+
+
+def check_signature_rows_name_their_signer(root: pathlib.Path) -> list[Finding]:
+    """A signature row names the algorithm that made it (CORE-BUG, 2026-10-02;
+    docs/design/multi-sig-migration.md: "The schema records which algorithm produced a
+    signature").
+
+    Issuance, migration, the CLI and bulk enrolment each called signature_with_key_for_token,
+    dropped the algorithm it returned and recorded the one the operator chose, so ML-DSA-65
+    bytes, or the placeholder, were stored under SLH-DSA-256s; and the recovery procedure stored
+    a literal no algorithm made. pqc_signing.credential_signature returns the algorithm with
+    the signature, and migration_signature does for a migration's named target, signing with a
+    key under it or refusing. This holds every product writer of a signature row to them: each
+    must call credential_signature, each that migrates migration_signature, and none may call
+    the label-returning functions beneath them, which is how the label was dropped four times
+    over. The recovery procedure must take its signature from the caller."""
+    name = "signature_algorithm_truth"
+    pqc = _read(root, "polaris_web/pqc_signing.py")
+    for fn, needles in (
+            ("credential_signature", (
+                ("algorithm_name(", "the configured set for the authority"),
+                ("algorithm_for_public_key_hex(", "the set a real signature's key has"),
+                ("raise SigningError", "a refusal when they disagree"))),
+            ("migration_signature", (
+                ("ACCEPTED_ALGORITHMS", "the sets a signer here produces, refusing any other"),
+                ("signature_for_migration(", "the key custody provisions for the target"),
+                ("algorithm_for_public_key_hex(", "the set a real signature's key has"),
+                ("raise SigningError", "a refusal when they disagree")))):
+        m = re.search(r"def %s\(.*?(?=\n(?:def |@|class ))" % fn, pqc, re.S)
+        if not m:
+            return _fail(name, "pqc_signing.py must define %s, the way a writer gets a signature "
+                               "and the algorithm its row records" % fn)
+        for needle, why in needles:
+            if needle not in m.group(0):
+                return _fail(name, "%s must compare the signer's label with %s (%s)"
+                                   % (fn, why, needle))
+    writers = {rel: _read(root, rel) for rel in _SIGNATURE_ROW_WRITERS}
+    for rel, src in writers.items():
+        if not src:
+            return _fail(name, "%s could not be read; it writes signature rows" % rel)
+        code = "\n".join(l.split("#", 1)[0] for l in src.splitlines())
+        if "credential_signature(" not in code:
+            return _fail(name, "%s writes a signature row without credential_signature, so the "
+                               "algorithm it records does not come from the signer" % rel)
+        if rel in _SIGNATURE_ROW_MIGRATORS and "migration_signature(" not in code:
+            return _fail(name, "%s migrates a credential without migration_signature, so the "
+                               "algorithm it records is not the target's key's" % rel)
+        dropped = re.search(r"\bsignature_(with_key_for_token|bytes_for_token|for_migration)\(",
+                            code)
+        if dropped:
+            return _fail(name, "%s calls %s directly: the label it returns is the one four "
+                               "writers dropped, recording the operator's algorithm instead "
+                               "(use pqc_signing.credential_signature or migration_signature)"
+                         % (rel, dropped.group(0)[:-1]))
+    proc = _read(root, "polaris_sql/05_procedures.sql")
+    rec = re.search(r"CREATE OR REPLACE PROCEDURE uc9_complete_recovery\(.*?END\$\$;", proc, re.S)
+    if not rec:
+        return _fail(name, "05_procedures.sql must define uc9_complete_recovery")
+    rec = _strip_sql_comments(rec.group(0))
+    if "p_signature_bytes" not in rec or re.search(r"PLACEHOLDER_'", rec):
+        return _fail(name, "uc9_complete_recovery must store the signature its caller made "
+                           "(p_signature_bytes), not a placeholder string no algorithm made")
+    return _ok(name, "every product writer of a signature row (%s) takes the bytes and the "
+                     "algorithm the row records from pqc_signing.credential_signature, and each "
+                     "migration from migration_signature, which refuse a signer that disagrees "
+                     "with its configuration, its target or its key; the recovery procedure "
+                     "stores its caller's signature"
+               % ", ".join(rel.split("/")[-1] for rel in _SIGNATURE_ROW_WRITERS))
+
+
 def check_pqc_signing_wired(root: pathlib.Path) -> list[Finding]:
     proc = _read(root, "polaris_sql/05_procedures.sql")
     if "p_signature_bytes" not in proc:
@@ -1185,14 +1261,14 @@ def check_pqc_signing_wired(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
     if "import pqc_signing" not in app:
         return _fail("pqc_wired", "the application does not import pqc_signing")
-    # Issuance must route through the signing module — either the 2-tuple
-    # signature_bytes_for_token or the 3-tuple signature_with_key_for_token
-    # (v9.117, which also surfaces the public key to store with the signature).
-    if not re.search(r"pqc_signing\.signature_(bytes_for_token|with_key_for_token)", app):
+    # Issuance must route through the signing module: credential_signature since the
+    # 2026-10-02 CORE-BUG fix (the bytes, the key and the algorithm the row records, together),
+    # which calls signature_with_key_for_token (v9.117) beneath it.
+    if not re.search(r"pqc_signing\.(credential_signature|signature_bytes_for_token|"
+                     r"signature_with_key_for_token)", app):
         return _fail("pqc_wired",
-                     "the application does not call pqc_signing.signature_bytes_for_token / "
-                     "signature_with_key_for_token; the issuance signature would bypass the "
-                     "signing module")
+                     "the application does not call pqc_signing.credential_signature; the "
+                     "issuance signature would bypass the signing module")
     # v9.119: uc6 algorithm-migration must also route through the signing module,
     # not write a hardcoded operator string.
     if "UC6_OPERATOR_MIGRATE" in app:
@@ -10092,10 +10168,10 @@ def check_national_simulation(root: pathlib.Path) -> list[Finding]:
                      "pipeline), so every synthetic person passes the full constraint set")
     # v9.257: the loader SIGNS each token through the real module before staging,
     # so mass-issued tokens carry a real signature, not a placeholder literal.
-    if "signature_with_key_for_token" not in ld:
+    if "credential_signature" not in ld:
         return _fail("national_simulation",
                      "polaris_sim/load.py must sign each token_value through pqc_signing "
-                     "(signature_with_key_for_token) so mass-issued tokens are cryptographically "
+                     "(credential_signature) so mass-issued tokens are cryptographically "
                      "signed, not fabricated placeholders")
     for bypass in ("INSERT INTO IdentityToken", "INSERT INTO TokenLifecycleEvent"):
         if re.search(bypass, ld, re.I):
@@ -15038,9 +15114,9 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
                      "pqc_signing.signature_with_key_for_token must accept agency_id so issuance signs with the "
                      "issuing agency's key")
     app = _read_app(root)
-    if "signature_with_key_for_token(" not in app or "agency_id=" not in app:
+    if not re.search(r"(credential_signature|signature_with_key_for_token)\(", app) or "agency_id=" not in app:
         return _fail("federation_in_app",
-                     "uc1_issue must sign with the issuing agency's key (signature_with_key_for_token(..., agency_id=...))")
+                     "uc1_issue must sign with the issuing agency's key (credential_signature(..., agency_id=...))")
     if "federation binding" not in app:
         return _fail("federation_in_app",
                      "uc1_issue must REFUSE to issue a token whose real signature was produced by a key that is "
@@ -24376,6 +24452,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_local_clock_convention,
     check_c6_atlas_redacts_zk_location,
     check_c6_app_read_paths_redact,
+    check_signature_rows_name_their_signer,
     check_event_locations_unindexed,
     check_coercion_evidence_retained,
     check_zk_verify_anti_replay,
