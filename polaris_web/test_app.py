@@ -12797,9 +12797,11 @@ class FederationInAppTests(PolarisTestCase):
     def _new_conn(self):
         return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
 
-    def _token_signed_by(self, token_value, agency_id, signing_key_hex):
+    def _token_signed_by(self, token_value, agency_id, signing_key_hex, signed_at=None):
         """Insert an ACTIVE token issued by agency_id whose active TokenSignature
-        carries signing_public_key_hex=signing_key_hex; returns token_id."""
+        carries signing_public_key_hex=signing_key_hex; returns token_id. `signed_at` dates
+        the signature, as issuance dates it with its ISSUED row in one transaction; left
+        out, it is the moment of this insert."""
         conn = self._new_conn()
         try:
             with conn.cursor() as cur:
@@ -12820,8 +12822,9 @@ class FederationInAppTests(PolarisTestCase):
                 cur.execute("UPDATE IdentityToken SET status='ACTIVE', activated_date=CURRENT_TIMESTAMP "
                             "WHERE token_id=%s", (tid,))
                 cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
-                            "signing_public_key_hex) VALUES (%s, 1, %s, %s)",
-                            (tid, b'seed-signature-bytes', signing_key_hex))
+                            "signing_public_key_hex, signed_at) "
+                            "VALUES (%s, 1, %s, %s, COALESCE(%s::timestamp, CURRENT_TIMESTAMP))",
+                            (tid, b'seed-signature-bytes', signing_key_hex, signed_at))
                 conn.commit()
                 return tid
         finally:
@@ -12885,7 +12888,8 @@ class FederationInAppTests(PolarisTestCase):
         """The case the old single boolean got wrong. Issued under A, authority rotates to B:
         the credential was properly issued and says so, and the key is simply no longer the
         current one. Nothing about the credential changed."""
-        tid = self._token_signed_by('FED-ROTATE-0001', agency_id=1, signing_key_hex=self.KEY_A)
+        tid = self._token_signed_by('FED-ROTATE-0001', agency_id=1, signing_key_hex=self.KEY_A,
+                                    signed_at='2026-02-01 00:00:00')
         self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
         self._issued_at(tid, 1, '2026-02-01 00:00:00')
         authorized, current = self._facts(tid)
@@ -12911,7 +12915,8 @@ class FederationInAppTests(PolarisTestCase):
 
     def test_G_key_authorized_at_signing_but_retired_later(self):
         """Signed inside the window, retired after it. Authorized then; not current now."""
-        tid = self._token_signed_by('FED-RETIRED-0001', agency_id=1, signing_key_hex=self.KEY_A)
+        tid = self._token_signed_by('FED-RETIRED-0001', agency_id=1, signing_key_hex=self.KEY_A,
+                                    signed_at='2026-02-01 00:00:00')
         self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
         self._key_event(1, self.KEY_A, 'retired', '2026-06-01 00:00:00')
         self._issued_at(tid, 1, '2026-02-01 00:00:00')
@@ -12923,7 +12928,8 @@ class FederationInAppTests(PolarisTestCase):
         """The same history, the other side of the line: a credential whose ISSUED instant
         falls after the retirement was NOT authorized, and this is the one case that must
         actually answer False rather than None."""
-        tid = self._token_signed_by('FED-LATE-0001', agency_id=1, signing_key_hex=self.KEY_A)
+        tid = self._token_signed_by('FED-LATE-0001', agency_id=1, signing_key_hex=self.KEY_A,
+                                    signed_at='2026-07-01 00:00:00')
         self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
         self._key_event(1, self.KEY_A, 'retired', '2026-06-01 00:00:00')
         self._issued_at(tid, 1, '2026-07-01 00:00:00')
@@ -12939,6 +12945,70 @@ class FederationInAppTests(PolarisTestCase):
         authorized, current = self._facts(tid)
         self.assertIsNone(authorized, "no protected instant: unknown")
         self.assertIs(current, True, "but the key's status today is still knowable")
+
+    KEY_M = 'd4' * 32
+
+    def _add_signature(self, token_id, algorithm_id, key_hex, signed_at):
+        """A signature added after issuance, as a migration adds one."""
+        conn = self._new_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+                            "signing_public_key_hex, signed_at) VALUES (%s, %s, %s, %s, %s)",
+                            (token_id, algorithm_id, b'added-signature-bytes', key_hex, signed_at))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _signature_facts(self, token_id):
+        v = self.client.get('/api/tokens/%d/verify' % token_id).get_json()
+        return [(x['algorithm'], x['issuer_authorized_at_signing'], x['issuer_key_current'])
+                for x in v['signatures']]
+
+    def test_I_a_migration_signature_is_dated_by_its_own_signing(self):
+        """CORE-BUG, 2026-10-02. A migration key is registered after issuance and signs after
+        that. Dated by the credential's ISSUED instant it read as unauthorized, and the
+        credential's answer was whichever of its two signatures came back first."""
+        tid = self._token_signed_by('FED-MIGRATED-0001', agency_id=1, signing_key_hex=self.KEY_A,
+                                    signed_at='2026-02-01 00:00:00')
+        self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
+        self._issued_at(tid, 1, '2026-02-01 00:00:00')
+        self._key_event(1, self.KEY_M, 'registered', '2026-08-01 00:00:00')
+        self._add_signature(tid, 2, self.KEY_M, '2026-09-01 00:00:00')
+        self.assertEqual(self._signature_facts(tid),
+                         [('ML-DSA-65', True, True), ('ML-DSA-87', True, True)])
+        self.assertEqual(self._facts(tid), (True, True))
+
+    def test_I2_an_added_signature_is_never_dated_before_the_credential(self):
+        """The instant is the later of the signature's own and the protected ISSUED one. A row
+        dated before the credential existed would otherwise borrow a key window that closed
+        before issuance: KEY_M was retired before this credential was issued, so a signature
+        by it on this credential was not authorized, whatever date its row carries."""
+        tid = self._token_signed_by('FED-BACKDATED-0001', agency_id=1, signing_key_hex=self.KEY_A,
+                                    signed_at='2026-02-01 00:00:00')
+        self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
+        self._issued_at(tid, 1, '2026-02-01 00:00:00')
+        self._key_event(1, self.KEY_M, 'registered', '2025-06-01 00:00:00')
+        self._key_event(1, self.KEY_M, 'retired', '2026-01-15 00:00:00')
+        self._add_signature(tid, 2, self.KEY_M, '2025-12-01 00:00:00')
+        self.assertEqual(self._signature_facts(tid)[0], ('ML-DSA-87', False, False))
+        self.assertEqual(self._facts(tid), (False, False))
+
+    def test_J_the_credential_answers_with_the_weakest_of_its_signatures(self):
+        """Every signature in force must verify, so every key behind them must be authorized:
+        one unregistered key makes the credential's answer unknown, and one signed outside
+        its key's window makes it false, whatever order the rows come back in."""
+        tid = self._token_signed_by('FED-MIXED-0001', agency_id=1, signing_key_hex=self.KEY_A,
+                                    signed_at='2026-02-01 00:00:00')
+        self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
+        self._issued_at(tid, 1, '2026-02-01 00:00:00')
+        self._add_signature(tid, 2, self.KEY_NEVER, '2026-09-01 00:00:00')
+        self.assertEqual(self._signature_facts(tid),
+                         [('ML-DSA-65', True, True), ('ML-DSA-87', None, None)])
+        self.assertEqual(self._facts(tid), (None, None))
+        self._key_event(1, self.KEY_NEVER, 'registered', '2026-10-01 00:00:00')
+        self.assertEqual(self._facts(tid), (False, True),
+                         'registered only after it signed: not authorized when it signed')
 
     def test_H2_placeholder_signature_decides_neither(self):
         """The development placeholder path carries no signing key, so there is nothing to
@@ -15895,6 +15965,44 @@ class RelyingPartyApiTests(PolarisTestCase):
         after = self.client.post('/api/v1/verify', json=old, headers=auth).get_json()
         if pqc_signing.is_enabled():
             self.assertEqual(after['reason'], 'not a verifiable presentation', after)
+
+    def test_the_door_dates_a_migration_signature_by_its_own_signing(self):
+        """CORE-BUG, 2026-10-02. A key registered for a migration after the credential was
+        issued, and before it signed, is authorized for the signature it made; dated by the
+        credential's issuance it read false at the door for every new pack. Real signing only:
+        the placeholder carries no key to ask about."""
+        import migration
+        import pqc_signing
+        if not pqc_signing.is_enabled():
+            self.skipTest('the placeholder carries no key; the real-signer suite runs this')
+        cid = self._register_rp('dated-secret-1', suffix='0203')
+        auth = self._bearer(cid, 'dated-secret-1')
+        pack = self._issue_and_pack('RP-DATED-1')
+        with self._new_conn() as conn:
+            target_id, target_name = migration.resolve_target(conn, 'ML-DSA-87')
+            migration.migrate_population(conn, target_id, target_name, batch_size=50)
+            with conn.cursor() as cur:
+                cur.execute("SELECT s.signing_public_key_hex AS key, s.signed_at, s.signature_bytes, "
+                            "  (SELECT min(e.event_timestamp) FROM TokenLifecycleEvent e "
+                            "    WHERE e.token_id = s.token_id AND e.event_type = 'ISSUED') AS issued_at "
+                            "  FROM TokenSignature s JOIN IdentityToken t ON t.token_id = s.token_id "
+                            " WHERE t.token_value = %s ORDER BY s.signed_at, s.signature_id",
+                            (pack['token_value'],))
+                old, new = cur.fetchall()
+                self.assertLess(old['issued_at'], new['signed_at'])
+                # The issuing key, registered before issuance; the migration's, registered
+                # between issuance and the migration's signing.
+                cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, "
+                            "  event, effective_at) VALUES "
+                            "  (1, %s, 'ML-DSA-65', 'registered', %s - INTERVAL '1 day'), "
+                            "  (1, %s, 'ML-DSA-87', 'registered', %s + (%s - %s) / 2)",
+                            (old['key'], old['issued_at'], new['key'], old['issued_at'],
+                             new['signed_at'], old['issued_at']))
+            conn.commit()
+        for presented in (bytes(new['signature_bytes']).hex(), pack['signature_hex']):
+            r = self.client.post('/api/v1/verify', headers=auth, json={
+                'token_value': pack['token_value'], 'signature_hex': presented}).get_json()
+            self.assertEqual((r['decision'], r['issuer_authorized_at_signing']), ('accept', True), r)
 
     # -- a refusal here that the application mutation drill found nothing noticing
     # -- (2026-09-17): the bearer token outlives the relying party's standing to use it.

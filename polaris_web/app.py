@@ -2321,7 +2321,7 @@ def api_duress_record():
 # relying-party API's section while serving something else entirely; moving that section out
 # made it visible, and moving the federation routes out gave them somewhere to belong.
 
-def _issuer_key_facts(token_id, agency_id, token_key):
+def _issuer_key_facts(token_id, agency_id, token_key, signed_at=None):
     """Two separate facts about the key that signed a credential, never one boolean.
 
     Until 2026-09-17 `/verify` reported a single `issuer_authentic`, computed as
@@ -2347,6 +2347,15 @@ def _issuer_key_facts(token_id, agency_id, token_key):
     `reject_audit_modification`. If there is no ISSUED row, there is no trustworthy instant
     and the historical answer is None rather than a guess.
 
+    A SIGNATURE ADDED LATER is dated by its own making. A migration adds a signature under
+    another key long after issuance, and dating that key against the issuance instant read a
+    key registered for the migration as unauthorized (CORE-BUG, 2026-10-02). `signed_at` is
+    that signature's TokenSignature.signed_at, which its row cannot change once written; the
+    instant is the later of it and the protected ISSUED instant, so a signature is never dated
+    before the credential existed. Issuance writes its signature and the ISSUED row in one
+    transaction, so for the issuance signature the two are the same instant. Which instant an
+    inserter may write is the privilege boundary's question, not this function's.
+
     Either fact is None when it cannot be established: no key history for this authority, no
     real signing key on the credential (the development placeholder path), or no protected
     issuance instant. None means unknown, never false.
@@ -2363,7 +2372,7 @@ def _issuer_key_facts(token_id, agency_id, token_key):
         """
         SELECT k.status, k.registered_at, k.retired_at, k.compromised_at,
                (SELECT min(event_timestamp) FROM TokenLifecycleEvent
-                 WHERE token_id = %s AND event_type = 'ISSUED') AS signed_at
+                 WHERE token_id = %s AND event_type = 'ISSUED') AS issued_at
           FROM AuthorityKeyCurrent k
          WHERE k.agency_id = %s AND lower(k.public_key_hex) = lower(%s)
         """, (token_id, agency_id, token_key))
@@ -2371,13 +2380,27 @@ def _issuer_key_facts(token_id, agency_id, token_key):
         return None, None                      # no recorded history: unknown, not false
     k = rows[0]
     key_current = (k['status'] == 'active')
-    signed_at, registered = k['signed_at'], k['registered_at']
-    if signed_at is None or registered is None:
+    issued_at, registered = k['issued_at'], k['registered_at']
+    if issued_at is None or registered is None:
         return None, key_current               # no protected instant: unknown, not false
-    authorized = (registered <= signed_at
-                  and (k['retired_at'] is None or k['retired_at'] > signed_at)
-                  and (k['compromised_at'] is None or k['compromised_at'] > signed_at))
+    at = max(issued_at, signed_at) if signed_at is not None else issued_at
+    authorized = (registered <= at
+                  and (k['retired_at'] is None or k['retired_at'] > at)
+                  and (k['compromised_at'] is None or k['compromised_at'] > at))
     return authorized, key_current
+
+
+def _weakest_fact(facts):
+    """One answer for a credential that holds several signatures: False when any is False,
+    unknown (None) when any is unknown or there is none, True only when every one is True.
+    Every signature in force must verify for the credential to, so every key behind them
+    must be one the authority authorized."""
+    facts = list(facts)
+    if any(f is False for f in facts):
+        return False
+    if not facts or any(f is None for f in facts):
+        return None
+    return True
 
 
 #: A credential whose `expiration_date` has passed is not currently authoritative, whatever

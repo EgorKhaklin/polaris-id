@@ -208,7 +208,7 @@ def api_v1_verify():
     currently_authoritative = (status == 'ACTIVE' and _not_expired(row['expiration_date']))
     tkey = row['signing_public_key_hex']
     authorized_at_signing, key_current = _issuer_key_facts(
-        row['token_id'], row['issuing_agency_id'], tkey)
+        row['token_id'], row['issuing_agency_id'], tkey, row['signed_at'])
     return jsonify(
         api_version='v1',
         authentic=True,
@@ -277,7 +277,7 @@ def _possession_authenticated(token_value, presented_sig_hex):
     # pack off the moment a window was closed, whatever grace the operator gave.
     rows = query("""
         SELECT it.token_id, it.individual_id, it.token_value, it.status, it.issuing_agency_id,
-               it.expiration_date, ts.signature_bytes, ts.signing_public_key_hex,
+               it.expiration_date, ts.signature_bytes, ts.signing_public_key_hex, ts.signed_at,
                now() AS as_of
         FROM   IdentityToken it
         JOIN   TokenSignature ts ON ts.token_id = it.token_id

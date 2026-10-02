@@ -55,6 +55,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- A migration's signature was dated by the credential's issuance, so its key read unauthorized; each is dated by its own.
 - A holder's pack was refused at the relying-party door once a migration added signatures; any in force verifies.
 - Closing a migration window cut superseded signatures off at once, whatever its grace; they verify until the date.
 - Under the placeholder profile a population migration wrote a signature no verify path accepted; now issuance's.
