@@ -3,9 +3,9 @@
 """polaris_web/test_e2e_atlas.py — Atlas end-to-end smoke tests.
 
 **Why end-to-end for the Atlas.** The Atlas (`/atlas`) is the operational
-investigation surface: a MapLibre map rendered by `atlas-map.js`, with
-server-side clustering, individual event markers at high zoom, and
-click-through into token records. None of that is exercised by the
+analytics console: an Overview, a Breakdown, Trends and a MapLibre map of
+counts per jurisdiction rendered by `atlas-map.js`, every figure a count and
+none an event (lab/strategy/009). None of that is exercised by the
 structural-invariant suite, which reads source, or by the route tests, which
 only confirm the page returns 200. The defects that reach this surface are
 CSS-class drift, script load failures, JSON data-island parse errors and CSP
@@ -184,31 +184,26 @@ class TestAtlasGlobeE2E(unittest.TestCase):
         finally:
             page.close()
 
-    def test_map_v2_modes_and_globe_toggle(self):
-        """v9.253 (Map v2): the map is aggregation-first. It must open on the
-        Regions layer (jurisdiction rollup) with a FLAT projection, switch
-        between Regions and Density, offer no single-event layer, and toggle the globe on. Catches: the
-        mode wiring, the default-mode/default-projection flip, the layer
-        sources failing to build, and the projection toggle."""
+    def test_the_map_draws_regions_and_toggles_the_globe(self):
+        """The map draws counts per jurisdiction and nothing else (lab/strategy/009, step 4: the
+        density and point layers are withdrawn), so it offers no layer mode; it opens FLAT, and
+        the globe is an opt-in toggle. Catches: the regions source failing to build, a withdrawn
+        layer's control coming back, the default projection flipping, and the toggle."""
         page = self._context.new_page()
         try:
             self._login_and_goto(page)
             page.click('[data-atlas-view-tab="map"]')
             page.wait_for_selector("#atlas-map", state="visible", timeout=3000)
             page.wait_for_timeout(2800)  # lazy boot + first aggregate fetch
-            # Regions is the default active mode; the projection starts flat.
-            self.assertEqual(page.get_attribute('[data-atlas-mapmode="regions"]', 'aria-pressed'), 'true',
-                "the map must open on the Regions layer (aggregation-first)")
+            self.assertEqual(page.query_selector_all('[data-atlas-mapmode]'), [],
+                "the map draws regions only, so it offers no layer to switch to")
+            regions = page.evaluate(
+                "() => { try { return !!window.atlasMap.getSource('atlas-regions') } catch(e){ return false } }")
+            self.assertTrue(regions, "the regions source must be built")
             proj0 = page.evaluate("() => { try { return window.atlasMap.getProjection().type } catch(e){ return 'n/a' } }")
             self.assertEqual(proj0, 'mercator', "the map must open FLAT, not on the globe")
             self.assertFalse(page.is_visible('[data-atlas-error]'),
-                "the Map error banner must stay hidden when the aggregate loads")
-            # Density activates its mode. There is no Points mode: the map draws counts and
-            # never a single event (lab/strategy/009).
-            page.click('[data-atlas-mapmode="density"]'); page.wait_for_timeout(1200)
-            self.assertEqual(page.get_attribute('[data-atlas-mapmode="density"]', 'aria-pressed'), 'true')
-            self.assertEqual(page.query_selector_all('[data-atlas-mapmode="points"]'), [],
-                "the map must offer no single-event layer")
+                "the Map error banner must stay hidden when the regions load")
             # The globe is an opt-in toggle.
             page.click('[data-atlas-projection]'); page.wait_for_timeout(1500)
             proj1 = page.evaluate("() => { try { return window.atlasMap.getProjection().type } catch(e){ return 'n/a' } }")

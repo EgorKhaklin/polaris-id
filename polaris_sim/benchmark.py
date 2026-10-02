@@ -21,7 +21,6 @@ from __future__ import annotations
 import datetime
 import os
 import platform
-import re
 import socket
 import time
 from dataclasses import dataclass, field

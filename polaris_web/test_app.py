@@ -11703,7 +11703,6 @@ class RateLimiterSelectionTests(_rl_unittest.TestCase):
         self.assertEqual(self._make().name, 'memory')
 
 
-import math
 
 
 class V2SubstrateUITests(PolarisTestCase):
@@ -13223,7 +13222,6 @@ except ImportError:
 
 import tracing as polaris_tracing
 import observability as observability_mod
-import json
 
 
 @unittest.skipUnless(_OTEL_TEST_OK, 'opentelemetry packages not installed')
@@ -15154,7 +15152,11 @@ class AthenaConstraintBoardTests(PolarisTestCase):
         self.assertEqual([(m['status'], m['detail']) for m in c5], [('in_force', "script-src 'self'")])
         c8 = [m for m in self._rule(board, 'C8')['mechanisms'] if m['source'] == 'application']
         self.assertEqual(c8[0]['status'], 'in_force')
-        self.assertIn('clusters 5,000', c8[0]['detail'])
+        # Read from atlas_routes' _ATLAS_MAX_* constants when the board is built; the cluster
+        # cap went with the cluster layer (lab/strategy/009, step 4).
+        for cap in ('buckets 240', 'categories 50', 'regions 500'):
+            self.assertIn(cap, c8[0]['detail'])
+        self.assertNotIn('clusters', c8[0]['detail'])
         c2 = next(m for m in self._rule(board, 'C2')['mechanisms'] if m['kind'] == 'CHECK_CONSTRAINT')
         self.assertRegex(c2['detail'], r'^on verificationevent and its \d+ partitions$',
                          'a constraint names the table it was declared on, its partitions counted')
