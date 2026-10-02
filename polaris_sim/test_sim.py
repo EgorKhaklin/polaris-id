@@ -107,6 +107,24 @@ class EventStreamTests(unittest.TestCase):
         zk = sum(1 for e in a if e.disclosure_level == "ZERO_KNOWLEDGE")
         self.assertGreater(zk, len(a) * 0.4)
 
+    def test_a_success_the_rules_forbid_is_recorded_as_unauthorized(self):
+        """trg_verification_success_rules refuses a SUCCESS for a credential outside its contexts or
+        to a verifier that does not trust its issuer; the stream records those as UNAUTHORIZED, and
+        keeps every SUCCESS that the rules allow."""
+        trusted = frozenset({(11, 1)})            # verifier 11 trusts issuer 10 for context 1 only
+        pool = [events.TokenRef(1, "US-CA", 10, frozenset({1, 2}), trusted)]
+        now = datetime.datetime(2026, 9, 6, 12, 0, 0)
+        stream = [e for e in events.iter_verifications(pool, [10, 11, 12], 2000, 24.0, 7, now)
+                  if e.token_id is not None]
+        self.assertTrue(stream, "control: some events name the credential")
+        for e in stream:
+            allowed = (e.context_id in (1, 2)
+                       and (e.requesting_agency_id == 10 or (e.requesting_agency_id, e.context_id) in trusted))
+            if e.outcome == "SUCCESS":
+                self.assertTrue(allowed, "a SUCCESS the rules forbid: %r" % (e,))
+        self.assertTrue(any(e.outcome == "SUCCESS" for e in stream), "control: allowed successes remain")
+        self.assertTrue(any(e.outcome == "UNAUTHORIZED" for e in stream), "control: forbidden ones are recorded")
+
     def test_no_agencies_is_an_error(self):
         with self.assertRaises(ValueError):
             list(events.iter_verifications([], [], 1, 24.0, 1, datetime.datetime(2026, 9, 6)))
