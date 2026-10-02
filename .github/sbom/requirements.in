@@ -1,0 +1,6 @@
+# The checker sbom.yml runs over every release SBOM before attesting it: the SPDX project's NTIA
+# conformance checker, which also installs license-expression, the license list both it and
+# scripts/polaris-sbom-enrich.py read. requirements.txt is compiled from this with hashes:
+#   pip-compile --generate-hashes --allow-unsafe --strip-extras requirements.in
+# and installed with pip install --require-hashes, so the release checks with exactly these files.
+ntia-conformance-checker

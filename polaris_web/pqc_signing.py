@@ -424,6 +424,84 @@ def signature_bytes_for_token(token_value: str) -> tuple:
     return sig, label
 
 
+@dataclass(frozen=True)
+class CredentialSignature:
+    """A credential's signature, and the algorithm the row that stores it must name.
+
+    `algorithm_name` is the signer's, never a caller's choice: a real signature names the
+    parameter set it was made under, which its key's length confirms; the placeholder names
+    the set it stands in for. `public_key_hex` is None for the placeholder, which has no key.
+    """
+    signature_bytes: bytes
+    public_key_hex: Optional[str]
+    algorithm_name: str
+
+
+def credential_signature(token_value: str, agency_id=None) -> CredentialSignature:
+    """Sign a credential for a TokenSignature row: the one way a product writer of a signature
+    row (issuance, migration, bulk enrolment, the CLI, the simulator) gets both the bytes and
+    the algorithm to record (CORE-BUG, docs/design/multi-sig-migration.md: "The schema records
+    which algorithm produced a signature").
+
+    Until it, each of those writers called signature_with_key_for_token, dropped the label it
+    returns and recorded the algorithm the operator chose: ML-DSA-65 bytes, or the placeholder,
+    stored under SLH-DSA-256s. Here the algorithm comes with the signature. A real one must be
+    the set `algorithm_name(agency_id)` reports and the set its key's length says it is, or
+    nothing is recorded: a signer and a configuration that disagree are a fault to stop on, not
+    a label to pick from.
+    """
+    sig, label, public_key_hex = signature_with_key_for_token(token_value, agency_id=agency_id)
+    configured = algorithm_name(agency_id)
+    if label == PLACEHOLDER_LABEL:
+        return CredentialSignature(sig, None, configured)
+    keyed = algorithm_for_public_key_hex(public_key_hex)
+    if label != configured or keyed != label:
+        raise SigningError(
+            "the signer produced %s under a key of %s, where %s is configured; refusing to record "
+            "a signature under an algorithm it was not made with"
+            % (label, keyed or "no accepted parameter set", configured))
+    return CredentialSignature(sig, public_key_hex, label)
+
+
+def migration_signature(token_value: str, algorithm: str, agency_id=None) -> CredentialSignature:
+    """Sign a credential for the TokenSignature row a migration onto `algorithm` adds.
+
+    A migration names its target, because the authority keeps issuing under its current set
+    while its credentials move to the new one (docs/operator/QUANTUM-EVENT.md): the target is
+    not the signer's configuration, as it is at issuance. It is a set something here signs
+    under, and the row names the set that made the signature. That is the authority's own key
+    when the key is already under the target (`credential_signature`); otherwise the key
+    custody provisions for the target (`signature_for_migration`, the population path's
+    signer), which refuses when there is none; and for a set no signer here produces, SLH-DSA
+    included, nothing at all.
+
+    The development placeholder stands in for the target the way it stands in at issuance:
+    the same bytes over the token value, which the verify path recomputes, and no key.
+    Refuses (SigningError) a target nothing here signs under, or one custody holds no key for.
+    """
+    if algorithm not in ACCEPTED_ALGORITHMS:
+        raise SigningError(
+            "nothing here signs with %s (the signers are %s), so no signature can be recorded "
+            "under it" % (algorithm, ", ".join(ACCEPTED_ALGORITHMS)))
+    if algorithm == algorithm_name(agency_id):
+        return credential_signature(token_value, agency_id=agency_id)
+    if os.environ.get("POLARIS_USE_REAL_PQC", "0") != "1":
+        sig, _label, _key = signature_with_key_for_token(token_value, agency_id=agency_id)
+        return CredentialSignature(sig, None, algorithm)
+    try:
+        sig, label, public_key_hex = signature_for_migration(token_value, algorithm,
+                                                             agency_id=agency_id)
+    except custody.CustodyError as e:
+        raise SigningError(str(e)) from e
+    keyed = algorithm_for_public_key_hex(public_key_hex)
+    if label != algorithm or keyed != algorithm:
+        raise SigningError(
+            "the migration signer produced %s under a key of %s for a migration onto %s; refusing "
+            "to record a signature under an algorithm it was not made with"
+            % (label, keyed or "no accepted parameter set", algorithm))
+    return CredentialSignature(sig, public_key_hex, algorithm)
+
+
 def signature_with_key_for_token(token_value: str, agency_id=None) -> tuple:
     """Like `signature_bytes_for_token`, but also returns the signing PUBLIC KEY.
 

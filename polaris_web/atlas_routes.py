@@ -347,6 +347,52 @@ def _window_start(now, delta, grain):
     return start.replace(minute=0, second=0, microsecond=0)
 
 
+class _AtlasRefusal(ValueError):
+    """A request parameter the Atlas refuses, named by a key. The route answers with the fixed
+    sentence for the key, never with an exception's text (CWE-209; code scanning #379-#388): a
+    sentence built from the request carries the request back, and a ValueError from library
+    parsing (an int() that failed) could carry anything."""
+
+    def __init__(self, key):
+        super().__init__(key)
+        self.key = key
+
+
+_ATLAS_REFUSED = 'a request parameter is not valid'
+
+
+def _refusal_sentence(key):
+    """What a refused request reads, built from the module's constants and nothing else."""
+    sentences = {
+        'window': 'window must be one of %s' % sorted(_ATLAS_TIME_WINDOWS),
+        'outcome': 'outcomes must be among %s' % list(_ATLAS_OUTCOMES),
+        'disclosure': 'disclosure must be among %s' % list(_ATLAS_DISCLOSURES),
+        'one_context': 'one context at a time',
+        'context': 'context must be one of %s' % list(_ATLAS_CONTEXTS),
+        'one_agency': 'one authority at a time',
+        'agency': 'authority id must be an integer',
+        'kind': "kind must be 'verification' or 'lifecycle'",
+        'compare': "compare must be 'previous'",
+        'compare_all': "compare=previous needs a bounded window: 'all' has nothing before it",
+        'buckets': 'buckets must be in (0, %d]' % _ATLAS_MAX_BUCKETS,
+        'stack_dimension': 'dimension is not valid for this stream',
+        'limit_positive': 'limit must be positive',
+        'limit_negative': 'limit must not be negative',
+    }
+    for kind in ('verification', 'lifecycle'):
+        sentences['breakdown_dimension:' + kind] = 'dimension must be one of %s for %s' % (
+            list(_ATLAS_BREAKDOWN_DIMENSIONS[kind]), kind)
+        sentences['row:' + kind] = 'row must be one of %s for %s' % (list(_ATLAS_CROSSTAB_ROWS[kind]), kind)
+        sentences['col:' + kind] = 'col must be one of %s for %s' % (list(_ATLAS_CROSSTAB_COLS[kind]), kind)
+    return sentences.get(key, _ATLAS_REFUSED)
+
+
+def _refused(e):
+    """The 400 for a refused request: its fixed sentence, or one plain sentence for any other
+    ValueError, whose text is not the response's to carry."""
+    return jsonify(error=_refusal_sentence(e.key) if isinstance(e, _AtlasRefusal) else _ATLAS_REFUSED), 400
+
+
 def _parse_atlas_filters(args):
     """The filters every Atlas route takes, as SQL-ready values: window, since (the start of the
     window, or None for 'all'), daily (whether it reads the daily rollup), grain, outcomes and
@@ -354,36 +400,35 @@ def _parse_atlas_filters(args):
     anything malformed, which the route turns into a 400."""
     window = (args.get('window') or '24h').strip().lower()
     if window not in _ATLAS_TIME_WINDOWS:
-        raise ValueError(
-            f"window must be one of {sorted(_ATLAS_TIME_WINDOWS.keys())}; got {window!r}")
+        raise _AtlasRefusal('window')
     delta, grain = _ATLAS_TIME_WINDOWS[window]
 
     outcomes = (args.get('outcomes') or '').strip()
     outcomes = _ATLAS_OUTCOME_ALIASES.get(outcomes, outcomes) or None
     for v in (outcomes or '').split(',') if outcomes else ():
         if v not in _ATLAS_OUTCOMES:
-            raise ValueError(f"unknown outcome: {v!r}")
+            raise _AtlasRefusal('outcome')
 
     disclosure = (args.get('disclosure') or '').strip() or None
     for v in (disclosure or '').split(',') if disclosure else ():
         if v not in _ATLAS_DISCLOSURES:
-            raise ValueError(f"unknown disclosure level: {v!r}")
+            raise _AtlasRefusal('disclosure')
 
     # One context and one authority at a time (lab/strategy/009, step 4): with a set, the
     # answer for all but one would subtract from the answer for all.
     contexts = (args.get('contexts') or '').strip() or None
     if contexts and ',' in contexts:
-        raise ValueError("one context at a time")
+        raise _AtlasRefusal('one_context')
     if contexts and contexts not in _ATLAS_CONTEXTS:
-        raise ValueError(f"unknown context: {contexts!r}")
+        raise _AtlasRefusal('context')
 
     agencies = (args.get('agencies') or '').strip() or None
     if agencies and ',' in agencies:
-        raise ValueError("one authority at a time")
+        raise _AtlasRefusal('one_agency')
     # ASCII digits only: str.isdigit() takes '\u00b2' and '\u0663' too. Normalised, so '007' is
     # authority 7, which the SQL matches as text.
     if agencies and not (agencies.isascii() and agencies.isdigit() and len(agencies) <= 10):
-        raise ValueError(f"authority id must be an integer: {agencies!r}")
+        raise _AtlasRefusal('agency')
     if agencies:
         agencies = str(int(agencies))
 
@@ -415,7 +460,7 @@ def _window_fields(f):
 def _kind(args):
     kind = args.get('kind', 'verification')
     if kind not in ('verification', 'lifecycle'):
-        raise ValueError("kind must be 'verification' or 'lifecycle'")
+        raise _AtlasRefusal('kind')
     return kind
 
 
@@ -476,9 +521,9 @@ def _parse_compare(args, f):
     if compare is None:
         return None
     if compare != 'previous':
-        raise ValueError("compare must be 'previous'")
+        raise _AtlasRefusal('compare')
     if f['since'] is None:
-        raise ValueError("compare=previous needs a bounded window: 'all' has nothing before it")
+        raise _AtlasRefusal('compare_all')
     return compare
 
 
@@ -553,7 +598,7 @@ def api_atlas_geo_jurisdictions():
         kind = _kind(request.args)
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
     def compute():
         rows = query("""
@@ -599,7 +644,7 @@ def api_atlas_stats():
     try:
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
     def compute():
         row = query("SELECT * FROM atlas_stats(%s, %s, %s)",
@@ -629,11 +674,11 @@ def api_atlas_series():
     try:
         buckets = int(request.args.get('buckets', '60'))
         if not (0 < buckets <= _ATLAS_MAX_BUCKETS):
-            raise ValueError(f"buckets must be in (0, {_ATLAS_MAX_BUCKETS}]")
+            raise _AtlasRefusal('buckets')
         kind = _kind(request.args)
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
     def compute():
         since, until = _series_since(f, kind), _db_now()
@@ -684,7 +729,7 @@ def api_atlas_heatmap():
         kind = _kind(request.args)
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
     def compute():
         rows = query("""
@@ -720,14 +765,14 @@ def api_atlas_stacked():
     try:
         buckets = int(request.args.get('buckets', '48'))
         if not (0 < buckets <= _ATLAS_MAX_BUCKETS):
-            raise ValueError(f"buckets must be in (0, {_ATLAS_MAX_BUCKETS}]")
+            raise _AtlasRefusal('buckets')
         kind = _kind(request.args)
         dimension = request.args.get('dimension', 'context')
         if dimension not in _ATLAS_STACK_DIMENSIONS[kind]:
-            raise ValueError("dimension is not valid for this stream")
+            raise _AtlasRefusal('stack_dimension')
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
     top_k = 6
 
@@ -796,19 +841,18 @@ def api_atlas_breakdown():
         kind = _kind(request.args)
         dimension = (request.args.get('dimension') or '').strip().lower()
         if dimension not in _ATLAS_BREAKDOWN_DIMENSIONS[kind]:
-            raise ValueError(
-                f"dimension must be one of {list(_ATLAS_BREAKDOWN_DIMENSIONS[kind])} for {kind}")
+            raise _AtlasRefusal('breakdown_dimension:' + kind)
         limit = min(int(request.args.get('limit', str(_ATLAS_MAX_CATEGORIES))),
                     _ATLAS_MAX_CATEGORIES)
         if limit <= 0:
-            raise ValueError("limit must be positive")
+            raise _AtlasRefusal('limit_positive')
         # A case-insensitive label search, so one slice is findable among thousands. Bounded
         # length (defence in depth; it is a bound parameter).
         search = (request.args.get('search') or '').strip()[:60] or None
         f = _parse_atlas_filters(request.args)
         compare = _parse_compare(request.args, f)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
     def counts(since, until):
         """{label: (n_total, n_failure)}, the scope, and whether the top-K was full."""
@@ -903,17 +947,17 @@ def api_atlas_crosstab():
         row_dim = (request.args.get('row') or '').strip().lower()
         col_dim = (request.args.get('col') or '').strip().lower()
         if row_dim not in _ATLAS_CROSSTAB_ROWS[kind]:
-            raise ValueError(f"row must be one of {list(_ATLAS_CROSSTAB_ROWS[kind])} for {kind}")
+            raise _AtlasRefusal('row:' + kind)
         if col_dim not in _ATLAS_CROSSTAB_COLS[kind]:
-            raise ValueError(f"col must be one of {list(_ATLAS_CROSSTAB_COLS[kind])} for {kind}")
+            raise _AtlasRefusal('col:' + kind)
         limit = min(int(request.args.get('limit', str(_ATLAS_MAX_CATEGORIES))),
                     _ATLAS_MAX_CATEGORIES)
         if limit <= 0:
-            raise ValueError("limit must be positive")
+            raise _AtlasRefusal('limit_positive')
         f = _parse_atlas_filters(request.args)
         compare = _parse_compare(request.args, f)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
     def counts(since, until):
         """{(row, col): n}, {row: total}, the scope, and whether the top-K rows were full."""
@@ -1033,11 +1077,11 @@ def api_atlas_facet_agencies():
         kind = _kind(request.args)
         limit = min(int(request.args.get('limit', '20')), _ATLAS_MAX_CATEGORIES)
         if limit < 0:
-            raise ValueError("limit must not be negative")   # it reached SQL's LIMIT as a 500
+            raise _AtlasRefusal('limit_negative')   # it reached SQL's LIMIT as a 500
         search = (request.args.get('q') or '').strip()[:60] or None
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
-        return jsonify(error=str(e)), 400
+        return _refused(e)
 
     def compute():
         rows = query("""
