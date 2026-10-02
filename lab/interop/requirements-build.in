@@ -1,0 +1,8 @@
+# The build backend, for a run that builds polaris-oid4vp from the tree (POLARIS_OID4VP set to a
+# path, which oid4vcgo/run.sh does by default). requirements-build.txt is compiled from this with
+# hashes:
+#   pip-compile --generate-hashes --allow-unsafe --strip-extras requirements-build.in
+# under Python 3.10, and installed beside requirements.txt only for such a run. setuptools 83
+# closes an sdist exclusion bypass on macOS file systems (GHSA-h35f-9h28-mq5c) and supports
+# Python 3.10 or newer, so building from the tree needs one; installing a release does not.
+setuptools>=83

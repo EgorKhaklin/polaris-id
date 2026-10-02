@@ -96,8 +96,18 @@ echo "verifier   pip install --pre $PKG"
 mkdir -p "$WORK" && cd "$WORK"
 "$PY" -m venv venv
 # Every third-party package by hash (../requirements.txt); then polaris-oid4vp itself, built from
-# $PKG with nothing else fetched and installed as that one wheel.
+# $PKG with nothing else fetched and installed as that one wheel. A release from PyPI arrives as
+# its published wheel and builds nothing; a path is built here, with the build backend by hash
+# (../requirements-build.txt), whose setuptools supports Python 3.10 or newer.
 venv/bin/pip install -q --require-hashes -r "$HERE/../requirements.txt"
+if [ -e "$PKG" ]; then
+  venv/bin/python -c 'import sys; sys.exit(sys.version_info < (3, 10))' || {
+    echo "building $PKG from the tree needs Python 3.10 or newer; set PYTHON to one, or set" >&2
+    echo "POLARIS_OID4VP to a release on PyPI, which installs its wheel on any supported Python" >&2
+    exit 2
+  }
+  venv/bin/pip install -q --require-hashes -r "$HERE/../requirements-build.txt"
+fi
 venv/bin/pip wheel -q --pre --no-deps --no-build-isolation -w wheel "$PKG"
 venv/bin/pip install -q --no-deps wheel/*.whl
 echo "installed  polaris-oid4vp $(venv/bin/python -c 'import importlib.metadata as m; print(m.version("polaris-oid4vp"))')"

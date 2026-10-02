@@ -2738,6 +2738,45 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             conn.rollback()
             conn.close()
 
+    def test_a_bound_operator_sees_only_its_authoritys_activity(self):
+        """The activity rollups (lab/strategy/009) are isolated by authority like the events they
+        count. The test lived in TestActivityRollups, where the constraint mutation drill, which
+        runs this class, never looked: all six policies weakened to USING (true) left this class
+        green and main's product suite red. As polaris_app bound to one authority, no other
+        authority's row is visible in any rollup, totals, days or pending; unbound, they exist,
+        so the zero is the policy's. A transition no authority made (actor 0) stays visible, as
+        its NULL is on the event table."""
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                a1, a2, ctx, tok = TestActivityRollups._fixture(cur)
+                TestActivityRollups._record_events(cur, a1, a2, ctx, tok)
+                cur.execute("SET LOCAL ROLE polaris_app")
+                tables = (("VerificationRollup", "requesting_agency_id <> %s"),
+                          ("VerificationRollupDaily", "requesting_agency_id <> %s"),
+                          ("VerificationRollupDelta", "requesting_agency_id <> %s"),
+                          ("LifecycleRollup", "actor_agency_id NOT IN (0, %s)"),
+                          ("LifecycleRollupDaily", "actor_agency_id NOT IN (0, %s)"),
+                          ("LifecycleRollupDelta", "actor_agency_id NOT IN (0, %s)"))
+                for table, other in tables:
+                    sql = "SELECT count(*) AS n FROM %s WHERE %s" % (table, other)
+                    cur.execute("SELECT set_config('polaris.operator_agency_id', '', true)")
+                    cur.execute(sql, (a1,))
+                    self.assertGreater(cur.fetchone()["n"], 0,
+                                       "fixture: another authority's rows in " + table)
+                    cur.execute("SELECT set_config('polaris.operator_agency_id', %s, true)", (str(a1),))
+                    cur.execute(sql, (a1,))
+                    self.assertEqual(cur.fetchone()["n"], 0,
+                                     "a bound operator reads another authority's " + table)
+                cur.execute("SELECT count(*) AS n FROM LifecycleRollupDelta WHERE actor_agency_id = 0")
+                self.assertGreater(cur.fetchone()["n"], 0, "a transition no authority made stays visible")
+                cur.execute("SELECT count(*) AS n FROM VerificationRollupDelta")
+                self.assertGreater(cur.fetchone()["n"], 0,
+                                   "the binding hides other authorities, not the operator's own")
+        finally:
+            conn.rollback()
+            conn.close()
+
     def test_the_database_refuses_a_success_the_verification_rules_forbid(self):
         """2026-10-02 (THREAT-MODEL). A SUCCESS naming a credential says the credential was live,
         permitted in the context, and trusted by the verifying authority. The verification form
@@ -4925,7 +4964,8 @@ class TestActivityRollups(_CheckBase):
               "algorithm_id")
     _L_KEY = ("bucket", "actor_agency_id", "event_type")
 
-    def _fixture(self, cur):
+    @staticmethod
+    def _fixture(cur):
         cur.execute("SELECT agency_id FROM Agency ORDER BY agency_id LIMIT 2")
         a1, a2 = [r["agency_id"] for r in cur.fetchall()]
         cur.execute("SELECT min(context_id) AS c FROM VerificationContext")
@@ -4934,7 +4974,8 @@ class TestActivityRollups(_CheckBase):
         tok = cur.fetchone()
         return a1, a2, ctx, tok
 
-    def _record_events(self, cur, a1, a2, ctx, tok):
+    @staticmethod
+    def _record_events(cur, a1, a2, ctx, tok):
         """One statement into each event table: two hours, two authorities, a zero-knowledge
         verification, and a transition no authority made."""
         cur.execute(
@@ -5043,33 +5084,6 @@ class TestActivityRollups(_CheckBase):
             cur.execute("TRUNCATE TokenLifecycleEvent")
             cur.execute(counts)
             self.assertEqual(dict(cur.fetchone()), {"v": 0, "l": 0})
-
-    def test_a_bound_operator_sees_only_its_authoritys_activity(self):
-        """As polaris_app bound to one authority, no other authority's row is visible in any
-        rollup, totals, days or pending; unbound, they exist, so the zero is the policy's. A
-        transition no authority made (actor 0) stays visible, as its NULL is on the event table."""
-        with self.conn.cursor() as cur:
-            a1, a2, ctx, tok = self._fixture(cur)
-            self._record_events(cur, a1, a2, ctx, tok)
-            cur.execute("SET LOCAL ROLE polaris_app")
-            tables = (("VerificationRollup", "requesting_agency_id <> %s"),
-                      ("VerificationRollupDaily", "requesting_agency_id <> %s"),
-                      ("VerificationRollupDelta", "requesting_agency_id <> %s"),
-                      ("LifecycleRollup", "actor_agency_id NOT IN (0, %s)"),
-                      ("LifecycleRollupDaily", "actor_agency_id NOT IN (0, %s)"),
-                      ("LifecycleRollupDelta", "actor_agency_id NOT IN (0, %s)"))
-            for table, other in tables:
-                sql = "SELECT count(*) AS n FROM %s WHERE %s" % (table, other)
-                cur.execute("SELECT set_config('polaris.operator_agency_id', '', true)")
-                cur.execute(sql, (a1,))
-                self.assertGreater(cur.fetchone()["n"], 0, "fixture: another authority's rows in " + table)
-                cur.execute("SELECT set_config('polaris.operator_agency_id', %s, true)", (str(a1),))
-                cur.execute(sql, (a1,))
-                self.assertEqual(cur.fetchone()["n"], 0, "a bound operator reads another authority's " + table)
-            cur.execute("SELECT count(*) AS n FROM LifecycleRollupDelta WHERE actor_agency_id = 0")
-            self.assertGreater(cur.fetchone()["n"], 0, "a transition no authority made stays visible")
-            cur.execute("SELECT count(*) AS n FROM VerificationRollupDelta")
-            self.assertGreater(cur.fetchone()["n"], 0, "the binding hides other authorities, not the operator's own")
 
     def test_the_application_role_writes_no_rollup(self):
         """A count the application role could write is a count a compromised application could

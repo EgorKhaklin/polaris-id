@@ -41,7 +41,10 @@ Verifier. The run below used exactly those two releases, and then the wallet's c
 One command, about a minute once the image is local. It installs the verifier from PyPI into a
 fresh venv in a scratch directory (`WORK`, default a new temporary one), the newest release as
 `pip install --pre` gives a stranger unless `POLARIS_OID4VP` pins one, with its dependencies by hash
-from [`../requirements.txt`](../requirements.txt), and prints the version it got. [`wallet-canary.yml`](../../../.github/workflows/wallet-canary.yml) runs it weekly on a
+from [`../requirements.txt`](../requirements.txt), and prints the version it got. A release arrives as
+its published wheel and builds nothing, so this runs on Python 3.9 or newer; with `POLARIS_OID4VP`
+set to a path in the tree, the walk builds it, with the build backend by hash from
+[`../requirements-build.txt`](../requirements-build.txt), which needs Python 3.10 or newer. [`wallet-canary.yml`](../../../.github/workflows/wallet-canary.yml) runs it weekly on a
 machine nobody here set up, against v2.3.7 and the wallet's latest release. It makes the verifier's
 test PKI with `polaris-oid4vp keygen`, lets the wallet generate its holder key, mints one SD-JWT
 VC bound to it with [`../waltid/issue_sdjwt_vc.py`](../waltid/issue_sdjwt_vc.py), imports it,
@@ -53,8 +56,8 @@ the wallet's own release binary for the machine (macOS or Linux, x86-64 or arm64
 instead of the image. The v2.3.7 binaries' SHA-256 are pinned in `run.sh`, so a download is
 checked against this repository, not only against the checksums published beside it; a
 mismatch stops the run before the binary is executed. Walked 2026-09-30 on macOS (arm64) with
-the system Python 3.9.6 and no Docker: accepted, all three controls refused, 15 s from an empty
-directory. [`wallet-canary.yml`](../../../.github/workflows/wallet-canary.yml) runs this mode too.
+the system Python 3.9.6 and no Docker, the verifier installed as PyPI's wheel: accepted, all three
+controls refused, 15 s from an empty directory. [`wallet-canary.yml`](../../../.github/workflows/wallet-canary.yml) runs this mode too.
 
 **Nothing is configured for the verifier's TLS listener, and nothing needs to be.** `keygen`'s
 listener certificate is self-signed; its test anchor signs the request object's certificate,
