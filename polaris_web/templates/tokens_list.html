@@ -1,71 +1,72 @@
+{# Credentials (docs/design/console-design.md). Paged by key, so a page costs the same at any
+   depth; the status filter's counts are the exact ones the database keeps (PopulationCount); a
+   credential is found by lookup, never by paging to it (lab/strategy/008). CSP C5: no inline
+   script. #}
 {% extends "base.html" %}
 {% from "_pager.html" import render_pager %}
-{% block title %}Tokens{% endblock %}
+{% block title %}Credentials{% endblock %}
 {% block content %}
 {% import "_ui.html" as ui with context %}
-<h1>Identity Tokens</h1>
-<p class="subtitle">The schema's central artifact. Every other relationship originates from or terminates at IdentityToken.</p>
-
-{# At any population the way to one credential is to look it up (lab/strategy/008). #}
-<div class="panel find-panel">{{ ui.find_credential('tokens_detail', label='Find a credential') }}</div>
-
-<form method="get" class="filter-row">
-    <div class="form-group">
-        <label for="status">Status filter</label>
-        <select id="status" name="status">
-            <option value="">All statuses</option>
-            {% for s in ['ACTIVE', 'RESERVE', 'DORMANT', 'REVOKED', 'LOST', 'EXPIRED'] %}
-                <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s }}</option>
-            {% endfor %}
-        </select>
-    </div>
-    <div class="form-group">
-        <label for="individual_id">Individual ID</label>
-        <input type="number" id="individual_id" name="individual_id" min="1" placeholder="any"
-               value="{{ individual_filter or '' }}">
-    </div>
-    <div class="filter-actions">
-        <button type="submit" class="btn btn-sm">Filter</button>
-        <a href="{{ url_for('tokens_list') }}" class="btn btn-sm btn-secondary">Clear</a>
-    </div>
-</form>
-
-<div class="actions-bar">
-    {# uc1_issue requires admin/operator; auditors would 403 #}
+{% call ui.page_head('Credentials', eyebrow='Registry',
+                     lede='Every credential an authority issued, by number. Open one to see its history and act on it.') %}
     {% if current_user.role in ('admin', 'operator') %}
-    <a href="{{ url_for('uc1_issue') }}" class="btn btn-gold">+ Issue New Token (UC-1)</a>
+    <a class="btn btn-primary" href="{{ url_for('uc1_issue') }}">{{ ui.icon('badge-plus') }}Issue a credential</a>
     {% endif %}
-    <span class="record-count">{{ rows|length }} tokens</span>
+{% endcall %}
+
+<div class="list-tools">
+    <div class="panel find-panel">{{ ui.find_credential('tokens_detail', label='Find a credential') }}</div>
+    <form method="get" class="panel list-filter" aria-label="Filter credentials">
+        <fieldset>
+            <legend>Status</legend>
+            <ul class="status-chips">
+                <li><a class="chip{% if not status_filter %} is-current{% endif %}" href="{{ url_for('tokens_list', individual_id=individual_filter or none) }}"{% if not status_filter %} aria-current="true"{% endif %}>All{% if not individual_filter %} <span class="chip-count">{{ ui.figure(total, compact=True) }}</span>{% endif %}</a></li>
+                {% for s, n in by_status.items() %}
+                <li><a class="chip{% if status_filter == s %} is-current{% endif %}" href="{{ url_for('tokens_list', status=s, individual_id=individual_filter or none) }}"{% if status_filter == s %} aria-current="true"{% endif %}>{{ s|title }}{% if not individual_filter %} <span class="chip-count">{{ ui.figure(n, compact=True) }}</span>{% endif %}</a></li>
+                {% endfor %}
+            </ul>
+        </fieldset>
+        <div class="list-filter-row">
+            {% if status_filter %}<input type="hidden" name="status" value="{{ status_filter }}">{% endif %}
+            <div class="form-group">
+                <label for="individual_id">Holder number</label>
+                <input type="text" id="individual_id" name="individual_id" inputmode="numeric" class="mono"
+                       value="{{ individual_filter or '' }}" placeholder="Any holder" autocomplete="off">
+            </div>
+            <button type="submit" class="btn">Filter</button>
+            {% if status_filter or individual_filter %}<a class="btn btn-ghost" href="{{ url_for('tokens_list') }}">Clear</a>{% endif %}
+        </div>
+    </form>
 </div>
 
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr>
-            <th>ID</th><th>Token Value</th><th>Holder</th><th>Issuer</th>
-            <th>Algorithm</th><th>Status</th><th>Issued</th><th>Actions</th>
+            <th scope="col">Credential</th><th scope="col">Token value</th><th scope="col">Holder</th><th scope="col">Issuer</th>
+            <th scope="col">Algorithm</th><th scope="col">Status</th><th scope="col">Issued</th>
+            <th scope="col">Expires</th><th scope="col"><span class="visually-hidden">Timeline</span></th>
         </tr>
     </thead>
     <tbody>
         {% for r in rows %}
-        <tr>
-            <td>#{{ r.token_id }}</td>
+        <tr data-key="{{ r.token_id }}">
+            <td><a class="mono" href="{{ url_for('tokens_detail', tok_id=r.token_id) }}">#{{ r.token_id }}</a></td>
             <td class="mono">{{ r.token_value }}</td>
-            <td>{{ r.legal_name }}</td>
+            <td><a href="{{ url_for('investigate_individual', ind_id=r.individual_id) }}">{{ r.legal_name }}</a></td>
             <td>{{ r.issuer_name }}</td>
-            <td class="mono">{{ r.alg_name }}</td>
-            <td><span class="pill pill-{{ r.status|lower }}">{{ r.status }}</span></td>
-            <td>{{ r.issued_date.strftime('%Y-%m-%d') }}</td>
-            <td class="actions">
-                <a href="{{ url_for('tokens_detail', tok_id=r.token_id) }}" class="btn btn-sm btn-secondary">Detail</a>
-                <a href="{{ url_for('investigate_token', tok_id=r.token_id) }}" class="btn btn-sm btn-secondary"
-                   title="Full chronological timeline: lifecycle + verification events">Investigate</a>
-            </td>
+            <td><span class="mono">{{ r.alg_name }}</span>{% if r.quantum_resistant %}<span class="type-tag type-tag-pq">PQ</span>{% endif %}</td>
+            <td>{{ ui.pill(r.status) }}</td>
+            <td class="mono">{{ r.issued_date.strftime('%Y-%m-%d') }}</td>
+            <td class="mono">{{ r.expiration_date.strftime('%Y-%m-%d') if r.expiration_date else 'None' }}</td>
+            <td><a class="small" href="{{ url_for('investigate_token', tok_id=r.token_id) }}">Timeline</a></td>
         </tr>
         {% else %}
-        <tr><td colspan="8" class="empty">No tokens match the filter.</td></tr>
+        <tr><td colspan="9" class="empty">No credential matches the filter.</td></tr>
         {% endfor %}
     </tbody>
 </table>
+</div>
 {{ render_pager(page, has_prev, has_next, page_size,
                 cursor_mode=cursor_mode|default(false),
                 first_cursor=first_cursor|default(none),

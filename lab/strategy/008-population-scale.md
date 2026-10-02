@@ -3,8 +3,9 @@
 **Opened 2026-10-01.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md),
 on the owner's direction of 2026-10-01: Polaris is to hold eight billion credentials and more, for
 as long as it runs. State: OPEN. The falsifiers in section 10 were written before the changes they
-judge; sections 11 and 12 record what they found. Step 1, the Overview, and step 2, the
-operation forms, are done; the lists, the detail pages and the 64-bit keys are next.
+judge; sections 11 to 13 record what they found. Steps 1 to 3 (the Overview, the operation
+forms, the lists and record pages) are done; the aggregate pages (enrolment, the signals queue,
+the Atlas), the revocation procedure's counts and the 64-bit keys are next.
 
 ---
 
@@ -169,3 +170,34 @@ a person by number or by the beginning of the name with the date of birth
   (the page now says what the query does; the comment is corrected with the next migration that
   replaces the function); and `uc8_revoke_token` counts an authority's every credential, and every
   revocation in the window, on each revocation (open: the engine half of the next step).
+
+## 13. What the falsifiers found (step 3, the lists and the record pages)
+
+- **Lists page by key by default.** The credentials, people and verification lists already had
+  key paging, behind a parameter; a list opened from a link paged by offset, and OFFSET reads every
+  row it skips (`/verifications?page=5000` took 3.1 s at two million persons). Key paging is now
+  the default and an old page number answers while its offset stays within 10,000 rows.
+- **A filter the indexes do not serve reads a bounded window.** Filtering the verification log by
+  outcome walked the time index until it had a page of matches: one match in a million read a
+  million rows for a page. A filtered page now reads at most 20,000 events, says how far it looked,
+  and its pager goes on from there. Filtering by credential is new and is served by the
+  credential's own index, so it needs no window.
+- **Foreign keys between population tables carry an index.** A catalogue query found nine with
+  none: reading one record's rows scanned the referencing table, and deleting a referenced row
+  scanned it to check the key. The investigation page found a credential's successor by a parallel
+  scan of every credential (904 ms at 3.6 million), and every credential's page read its device
+  bindings and revocations the same way. Migration 2026-10-01-007 adds the nine;
+  `test_every_foreign_key_between_population_tables_is_indexed` reads the catalogue for any other,
+  and its control drops one.
+- **A record's page shows the latest rows** of whatever grows while the record lives (its
+  verifications, its lifecycle, its epoch leaves), links the rest, and counts lifetimes up to a
+  cap that says "or more".
+- **Falsifier 1** holds for every list and record page at two million persons: each costs
+  within 1.7 times its seed time, and an offset page past the bound is refused (one 5,000
+  pages into the verification log took 37 s). A filter with no match in the log took 1.4 s and
+  takes 49 ms; the credential investigation page took 200 ms and takes 51 ms
+  ([008/BENCH.md](008/BENCH.md), step 3). The enrolment summary still fails it (6.4 s): it is
+  the next step's.
+- **Falsifier 2** is `test_every_list_and_record_page_has_a_bounded_plan`: the lists by key, a rare
+  filter through its window, a credential's page, both investigation pages and the log filtered by
+  one credential, run with EXPLAIN ANALYZE over the synthetic population with every bound shrunk.

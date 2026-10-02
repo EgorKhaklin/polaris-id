@@ -74,7 +74,12 @@ relying-party registration are the schema owner's acts through the CLI; the cons
   same at any population. It reads a primary-key or unique lookup, a slice of an index under a
   `LIMIT`, an exact count the database keeps (`PopulationCount`), or a count capped where it stops
   and says "or more". A share says which slice it describes. An estimate is marked as one, and none
-  is stretched over a window it did not read. Lists page by key, not by offset.
+  is stretched over a window it did not read. Lists page by key, not by offset; an old page number
+  answers only while its offset stays within 10,000 rows. A filter that an index does not serve
+  reads a bounded window (the verification log: 20,000 events a page) and says how far it looked.
+  A record's page shows the latest rows of whatever grows while the record lives, links the rest,
+  and counts it up to a cap. Every foreign key between tables that grow with the population has an
+  index on its referencing columns.
 - **One record at a time.** An operation starts from one record: opened from that record's own
   page, or found by what the operator holds (`polaris_web/lookup.py`): a credential by its number,
   token value or card serial, a person by number or by the beginning of the name with the date of

@@ -20,6 +20,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Find a credential by number, token value or card serial, or a person by name and date of birth; the text stays out of URLs.
 - An index for finding a person by date of birth and the beginning of the name.
 - A credential's page offers the operations its state admits; a person's page offers recovery and the warrant audit.
+- The verification log filters by credential, and a credential's page links its every verification there.
+- An index on every foreign key between tables that grow with the population, and a test that reads the catalogue for one missing.
 
 ### Changed
 
@@ -27,6 +29,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The Overview costs the same at any population: 10.4 s to 0.12 s at two million persons.
 - Console counts read to thirteen digits and beyond; a capped count says "or more".
 - The seven operation forms start from one record found by lookup instead of listing every credential or person.
+- Lists page by key by default; an old page number answers while its offset stays within 10,000 rows.
+- A filtered verification log reads at most 20,000 events for a page and says how far it looked.
+- A credential's page and the investigation pages show the latest rows and cap their lifetime counts.
 
 ### Fixed
 
@@ -35,6 +40,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
 - The warrant audit page no longer says zero-knowledge events come back redacted; they are never returned.
 - A person's investigation page takes its colours from the theme; a credential value read at 3.48:1 in light.
+- A credential's investigation page found its successor by scanning every credential: 904 ms at 3.6 million.
+- A credential's page read its device bindings and revocations by scanning those tables.
+- Record pages' tables scroll at phone width, and their hard-coded pill colours (3.49:1) take the theme.
 
 ## v1.0.0-rc.70 — 2026-10-01 (the three verifiers read every input alike)
 

@@ -69,7 +69,8 @@
 </form>
 {% endif %}
 
-<h2>Lifecycle History ({{ lifecycle|length }} event{{ '' if lifecycle|length == 1 else 's' }})</h2>
+<h2>Lifecycle History ({% if lifecycle_more %}the latest {{ lifecycle|length }}{% else %}{{ lifecycle|length }} event{{ '' if lifecycle|length == 1 else 's' }}{% endif %})</h2>
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr><th>Event</th><th>Type</th><th>Actor</th><th>Timestamp</th><th>Reason</th></tr>
@@ -88,8 +89,13 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 
-<h2>Verification Events ({{ verifications|length }})</h2>
+<h2>Verification Events ({% if verifications_more %}the latest {{ verifications|length }}{% else %}{{ verifications|length }}{% endif %})</h2>
+{% if verifications_more %}
+<p class="help"><a href="{{ url_for('verifications_list', token_id=token.token_id) }}">Every verification of this credential</a>, in the verification log.</p>
+{% endif %}
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr><th>Event</th><th>Context</th><th>Verifier</th><th>Outcome</th><th>Disclosure</th><th>Timestamp</th></tr>
@@ -109,8 +115,10 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 
-<h2>Device Bindings ({{ devices|length }})</h2>
+<h2>Device Bindings ({% if devices_more %}the first {{ devices|length }}{% else %}{{ devices|length }}{% endif %})</h2>
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr><th>Binding</th><th>Type</th><th>Fingerprint</th><th>Method</th><th>Status</th><th>Authorized</th><th>Expires</th></tr>
@@ -131,8 +139,10 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 
 <h2>Blockchain Anchors</h2>
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr><th>Anchor</th><th>DID</th><th>Network</th><th>Anchored</th><th>Status</th></tr>
@@ -151,8 +161,10 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 
 <h2>Revocation Records</h2>
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr><th>ID</th><th>Revoked By</th><th>Reason</th><th>Effective</th><th>Published Location</th></tr>
@@ -171,8 +183,10 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 
 <h2>Permissions ({{ permissions|length }})</h2>
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr><th>Context</th><th>Level</th><th>Granted</th></tr>
@@ -189,6 +203,7 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 
 {# The token's presence in the proof and trust tables: TokenSignature,
    AnchorBatch membership via BlockchainAnchor, TokenStateEpochLeaf, and the
@@ -233,12 +248,13 @@
     </div>
     <div class="v2-substrate-card">
         <div class="v2-substrate-label">Epoch Leaves</div>
-        <div class="v2-substrate-value">{{ v2_epoch_leaves|length }}</div>
+        <div class="v2-substrate-value">{{ v2_epoch_leaves|length }}{% if epoch_leaves_more %}+{% endif %}</div>
         <div class="v2-substrate-note">ZK inclusion witnesses.</div>
     </div>
 </div>
 
 <h3>Token Signatures</h3>
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr><th>ID</th><th>Algorithm</th><th>Signed</th><th>State</th><th>Verification</th></tr>
@@ -280,8 +296,10 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 
 <h3>Anchor Batch Membership</h3>
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr>
@@ -320,8 +338,10 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 
 <h3>Epoch Leaves</h3>
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr>
@@ -352,6 +372,7 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 
 <div class="footer-actions">
     <a href="{{ url_for('tokens_list') }}" class="btn btn-secondary">← Back to Token List</a>

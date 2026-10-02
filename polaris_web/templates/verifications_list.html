@@ -1,88 +1,100 @@
+{# The verification log (docs/design/console-design.md). Append-only by trigger. Paged by key, newest
+   first; a filter by credential is served by its own index, and any other filter reads a bounded
+   window of the log and says how far it looked (lab/strategy/008). A zero-knowledge row names no
+   credential and no holder (C2), and its location is not shown on any read path (C6).
+   CSP C5: no inline script. #}
 {% extends "base.html" %}
 {% from "_pager.html" import render_pager %}
-{% block title %}Verifications{% endblock %}
+{% block title %}Verification log{% endblock %}
 {% block content %}
-<h1>Verification Events</h1>
-<p class="subtitle">Append-only audit log. ZERO_KNOWLEDGE events have <code>token_id=NULL</code> and produce no holder reference.</p>
+{% import "_ui.html" as ui with context %}
+{% call ui.page_head('Verification log', eyebrow='Verification',
+                     lede='Every recorded presentation of a credential, newest first. A recorded event is never changed or removed.') %}
+    {% if current_user.role in ('admin', 'operator') %}
+    <a class="btn btn-primary" href="{{ url_for('verifications_new') }}">{{ ui.icon('shield-check') }}Record a verification</a>
+    {% endif %}
+{% endcall %}
 
-<form method="get" class="filter-row">
-    <div class="form-group">
-        <label for="context">Context</label>
-        <select id="context" name="context">
-            <option value="">All</option>
-            {% for c in contexts %}
-                <option value="{{ c.context_type }}" {% if context == c.context_type %}selected{% endif %}>{{ c.context_type }}</option>
-            {% endfor %}
-        </select>
-    </div>
-    <div class="form-group">
-        <label for="outcome">Outcome</label>
-        <select id="outcome" name="outcome">
-            <option value="">All</option>
-            {% for o in ['SUCCESS', 'FAILURE', 'EXPIRED', 'UNAUTHORIZED'] %}
-                <option value="{{ o }}" {% if outcome == o %}selected{% endif %}>{{ o }}</option>
-            {% endfor %}
-        </select>
-    </div>
-    <div class="form-group">
-        <label for="disclosure">Disclosure</label>
-        <select id="disclosure" name="disclosure">
-            <option value="">All</option>
-            {% for d in ['ZERO_KNOWLEDGE', 'SELECTIVE', 'FULL'] %}
-                <option value="{{ d }}" {% if disclosure == d %}selected{% endif %}>{{ d }}</option>
-            {% endfor %}
-        </select>
-    </div>
-    <div class="filter-actions">
-        <button type="submit" class="btn btn-sm">Filter</button>
-        <a href="{{ url_for('verifications_list') }}" class="btn btn-sm btn-secondary">Clear</a>
+<form method="get" class="panel list-filter" aria-label="Filter the log">
+    <div class="list-filter-row">
+        <div class="form-group">
+            <label for="context">Context</label>
+            <select id="context" name="context">
+                <option value="">Every context</option>
+                {% for c in contexts %}
+                <option value="{{ c.context_type }}"{% if context == c.context_type %} selected{% endif %}>{{ c.context_type|replace('_', ' ')|title }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="outcome">Outcome</label>
+            <select id="outcome" name="outcome">
+                <option value="">Every outcome</option>
+                {% for o in ['SUCCESS', 'FAILURE', 'EXPIRED', 'UNAUTHORIZED'] %}
+                <option value="{{ o }}"{% if outcome == o %} selected{% endif %}>{{ o|title }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="disclosure">Disclosure</label>
+            <select id="disclosure" name="disclosure">
+                <option value="">Every disclosure</option>
+                {% for d in ['ZERO_KNOWLEDGE', 'SELECTIVE', 'FULL'] %}
+                <option value="{{ d }}"{% if disclosure == d %} selected{% endif %}>{{ d|replace('_', '-')|capitalize }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="token_id">Credential number</label>
+            <input type="text" id="token_id" name="token_id" inputmode="numeric" class="mono"
+                   value="{{ token_id or '' }}" placeholder="Any credential" autocomplete="off">
+        </div>
+        <button type="submit" class="btn">Filter</button>
+        {% if context or outcome or disclosure or token_id %}<a class="btn btn-ghost" href="{{ url_for('verifications_list') }}">Clear</a>{% endif %}
     </div>
 </form>
 
-<div class="actions-bar">
-    {# verifications_new requires admin/operator; auditors would 403 #}
-    {% if current_user.role in ('admin', 'operator') %}
-    <a href="{{ url_for('verifications_new') }}" class="btn btn-gold">+ Record Verification</a>
-    {% endif %}
-    <span class="record-count">{{ rows|length }} events</span>
+{# A filtered page reads a bounded window of the log and says so (lab/strategy/008 step 3). #}
+{% if searched_to %}
+<div class="callout" role="note">
+    {{ ui.icon('info') }}
+    <p>A filtered page looks through at most {{ filter_window|num }} verifications, and these are the
+       matches among them. The pager goes on from where it stopped looking,
+       {{ searched_to[0].strftime('%Y-%m-%d %H:%M') }} UTC.</p>
 </div>
+{% endif %}
 
+<div class="table-wrap">
 <table class="data">
     <thead>
         <tr>
-            <th>Event</th><th>Timestamp</th><th>Holder</th>
-            <th>Context</th><th>Verifier</th><th>Outcome</th>
-            <th>Disclosure</th><th>Location</th>
+            <th scope="col">When (UTC)</th><th scope="col">Event</th><th scope="col">Holder</th>
+            <th scope="col">Context</th><th scope="col">Verifier</th><th scope="col">Outcome</th>
+            <th scope="col">Disclosure</th><th scope="col">Location</th>
         </tr>
     </thead>
     <tbody>
         {% for r in rows %}
-        <tr>
-            <td>#{{ r.event_id }}</td>
-            <td>{{ r.event_timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
-            <td>
-                {%- if r.holder_name %}{{ r.holder_name }}
-                {%- else %}<em style="color: var(--steel-light);">None (ZK)</em>{% endif %}
-            </td>
-            <td>{{ r.context_type }}</td>
+        <tr data-key="{{ r.event_id }}">
+            <td class="mono">{{ r.event_timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="mono">#{{ r.event_id }}</td>
+            <td>{% if r.holder_name %}{{ r.holder_name }}{% else %}<span class="redacted">None (zero-knowledge)</span>{% endif %}</td>
+            <td>{{ r.context_type|replace('_', ' ')|title }}</td>
             <td>{{ r.verifier_name }}</td>
-            <td><span class="pill pill-{{ r.outcome|lower }}">{{ r.outcome }}</span></td>
-            <td><span class="pill pill-{{ r.disclosure_level|lower }}">{{ r.disclosure_level }}</span></td>
+            <td>{{ ui.pill(r.outcome) }}</td>
+            <td>{{ ui.pill(r.disclosure_level) }}</td>
             <td>{{ r.requestor_location or absent }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="8" class="empty">No verification events.</td></tr>
+        <tr><td colspan="8" class="empty">No verification matches.</td></tr>
         {% endfor %}
     </tbody>
 </table>
-
-<p style="font-size: 12px; color: var(--steel); margin-top: 12px;">
-    <strong>Note:</strong> This table is append-only by trigger. UPDATE and DELETE operations are rejected
-    by the database to preserve the audit invariant (NFR-4). To remove an event, the trigger must be
-    explicitly dropped: a deliberate friction point.
-</p>
+</div>
 {{ render_pager(page, has_prev, has_next, page_size,
                 cursor_mode=cursor_mode|default(false),
                 first_cursor=first_cursor|default(none),
                 last_cursor=last_cursor|default(none)) }}
+<p class="footnote">The log is append-only by trigger: the database refuses an update or a delete
+   of any recorded event.</p>
 {% endblock %}

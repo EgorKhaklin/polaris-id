@@ -28,6 +28,7 @@ Output: one line per test (PASS/FAIL with description), final summary.
 ============================================================================
 """
 
+import html
 import os
 import re
 import sys
@@ -47,6 +48,8 @@ import atlas_routes
 import rp_api          # and the relying-party API v1, the same day
 import population      # lab/strategy/008: figures that cost the same at any population
 import lookup          # lab/strategy/008: a form finds one record, never lists them all
+import operator_routes  # lab/strategy/008 step 3: the record pages' bounds
+import verification_routes  # and the verification log's filter window
 
 
 # ----------------------------------------------------------------------------
@@ -1219,7 +1222,7 @@ POPULATION_TABLES = {
     'enrollmentstatusevent', 'enrollmentproofing', 'enrollmentevidence', 'devicebinding',
     'revocationlist', 'holderkeyevent', 'credentialcopy', 'duressevent', 'authauditlog',
     'recoveryrequest', 'tokenpermission', 'tokenstateepochleaf', 'blockchainanchor',
-    'cardpersonalization', 'individualerasureevent',
+    'cardpersonalization', 'individualerasureevent', 'refereevouching', 'enrollmentcode',
 }
 _PARTITION_SUFFIX = re.compile(r'_(\d{4}_\d{2}|default)$')
 
@@ -1599,6 +1602,54 @@ class PopulationScaleTests(PolarisTestCase):
         self.assertGreater(len(statements), 10)
         _assert_bounded_plans(self, statements, budget=6_000, sample_rows=2_000)
 
+    _UNINDEXED_POPULATION_KEYS = """
+        SELECT c.conname
+          FROM pg_constraint c
+          JOIN pg_class rc ON rc.oid = c.conrelid
+          JOIN pg_class fc ON fc.oid = c.confrelid
+         WHERE c.contype = 'f' AND c.connamespace = 'public'::regnamespace
+           AND NOT rc.relispartition
+           AND lower(rc.relname) = ANY(%(tables)s) AND lower(fc.relname) = ANY(%(tables)s)
+           AND NOT EXISTS (
+               SELECT 1 FROM pg_index i
+                WHERE i.indrelid = c.conrelid
+                  AND (i.indkey::int2[])[0:cardinality(c.conkey) - 1] = c.conkey
+                  -- A partial index counts only when its condition is the key being set: one on
+                  -- another condition (a pending anchor) serves neither the check nor the rows.
+                  AND (i.indpred IS NULL
+                       OR pg_get_expr(i.indpred, i.indrelid) = '(' || (
+                            SELECT a.attname FROM pg_attribute a
+                             WHERE a.attrelid = c.conrelid AND a.attnum = c.conkey[1]) || ' IS NOT NULL)'))
+         ORDER BY 1"""
+
+    def test_every_foreign_key_between_population_tables_is_indexed(self):
+        """lab/strategy/008 step 3: a foreign key between two tables that grow with the population
+        has an index leading with its referencing columns. Without one, reading one record's rows
+        scans the referencing table, and deleting a referenced row scans it to check the key: the
+        investigation page found a credential's successor by a parallel scan of every credential.
+        Read from the catalogue, so a new key without its index fails here."""
+        found = [r['conname'] for r in _sql(self._UNINDEXED_POPULATION_KEYS,
+                                             {'tables': sorted(POPULATION_TABLES)})]
+        self.assertEqual(found, [], 'foreign keys between population tables with no index')
+        keys = _sql("SELECT count(*) AS n FROM pg_constraint c JOIN pg_class rc ON rc.oid = c.conrelid "
+                    "JOIN pg_class fc ON fc.oid = c.confrelid WHERE c.contype = 'f' "
+                    "AND lower(rc.relname) = ANY(%(t)s) AND lower(fc.relname) = ANY(%(t)s)",
+                    {'t': sorted(POPULATION_TABLES)}, fetch='one')['n']
+        self.assertGreater(keys, 10, 'control: the scan finds the population keys at all')
+
+    def test_the_foreign_key_index_test_sees_a_missing_index(self):
+        """The control, twice: with an index dropped, the catalogue names its key; and with
+        BlockchainAnchor's full token index dropped, its partial index on pending anchors does
+        not count for the key."""
+        _sql("DROP INDEX idx_devicebinding_token; DROP INDEX idx_blockchainanchor_token", fetch='none')
+        try:
+            found = [r['conname'] for r in _sql(self._UNINDEXED_POPULATION_KEYS,
+                                                 {'tables': sorted(POPULATION_TABLES)})]
+        finally:
+            _sql("CREATE INDEX idx_devicebinding_token ON DeviceBinding (token_id, binding_id); "
+                 "CREATE INDEX idx_blockchainanchor_token ON BlockchainAnchor (token_id)", fetch='none')
+        self.assertEqual(found, ['blockchainanchor_token_id_fkey', 'devicebinding_token_id_fkey'])
+
     def test_the_bounded_plan_guard_sees_a_proportional_read(self):
         """The guard's own control: the Overview's old population count, a GROUP BY over every
         credential, must fail it on the same synthetic population."""
@@ -1815,6 +1866,113 @@ class PopulationLookupTests(PolarisTestCase):
         finally:
             _sql("CREATE INDEX idx_individual_birth_name ON Individual "
                  "(date_of_birth, (lower(legal_name)) COLLATE \"C\", individual_id)", fetch='none')
+
+
+class ListsAndRecordsAtScaleTests(PolarisTestCase):
+    """lab/strategy/008, step 3: a list and a record's page cost the same at any population. Lists
+    page by key by default, and an old page number answers only while its offset stays within
+    population.MAX_OFFSET_ROWS; a filter on the verification log reads a bounded window and says
+    how far it looked; a record's page shows the latest rows of anything that grows while the
+    record lives, and counts it up to a cap."""
+
+    def test_an_offset_page_past_the_bound_answers_400(self):
+        # The documented depth (console-design.md: 10,000 rows), written here rather than read
+        # from the constant, so that a looser bound fails this test instead of moving it.
+        for path in ('/tokens', '/individuals', '/verifications'):
+            with self.subTest(list=path):
+                self.assertEqual(self.client.get('%s?page=1002&page_size=10' % path).status_code, 400)
+                self.assertEqual(self.client.get('%s?page=2&page_size=10' % path).status_code, 200,
+                                 'control: a shallow page number still answers')
+
+    def test_the_people_list_pages_by_key(self):
+        ids = [r['individual_id'] for r in _sql("SELECT individual_id FROM Individual ORDER BY 1")]
+        self.assertGreater(len(ids), 3)
+        body = self.client.get('/individuals?page_size=10').get_data(as_text=True)
+        self.assertIn('rel="next"', body) if len(ids) > 10 else self.assertNotIn('Page 1', body)
+        r = self.client.get('/individuals?cursor=%d&page_size=10' % ids[1])
+        self.assertEqual(r.status_code, 200)
+        page = r.get_data(as_text=True)
+        self.assertNotIn('>#%d<' % ids[0], page)
+        self.assertIn('#%d' % ids[2], page)
+
+    def _verifications(self, n, outcome='SUCCESS', minutes_ago=0, token_id=None):
+        _sql("""INSERT INTO VerificationEvent (token_id, requesting_agency_id, context_id, event_timestamp,
+                                               outcome, disclosure_level, proof_commitment)
+                SELECT %s, 1, 1, now() - make_interval(mins => %s + g), %s,
+                       CASE WHEN %s IS NULL THEN 'ZERO_KNOWLEDGE' ELSE 'FULL' END,
+                       CASE WHEN %s IS NULL THEN md5(g::text || %s) END
+                  FROM generate_series(1, %s) g""",
+             (token_id, minutes_ago, outcome, token_id, token_id, outcome, n), fetch='none')
+
+    def test_a_filtered_log_page_looks_through_a_bounded_window_and_goes_on(self):
+        """With the window at five verifications and the one UNAUTHORIZED event older than the
+        newest twelve, the first filtered page finds nothing, says how far it looked, and its Next
+        goes on from there until the match is found."""
+        self._verifications(12)
+        self._verifications(1, outcome='UNAUTHORIZED', minutes_ago=100)
+        with patch.object(verification_routes, 'FILTER_WINDOW', 5):
+            r = self.client.get('/verifications?outcome=UNAUTHORIZED')
+            body = r.get_data(as_text=True)
+            self.assertIn('looks through at most 5 verifications', body)
+            seen, url = 0, self._next(body)
+            for _ in range(10):
+                if url is None:
+                    break
+                # The pager's links are the query alone, relative to the page.
+                body = self.client.get('/verifications' + url).get_data(as_text=True)
+                seen += body.count('pill-UNAUTHORIZED')
+                if seen:
+                    break
+                url = self._next(body)
+        self.assertEqual(seen, 1, 'Next never reached the older match')
+
+    @staticmethod
+    def _next(body):
+        m = (re.search(r'<a[^>]*href="([^"]+)"[^>]*rel="next"', body)
+             or re.search(r'<a[^>]*rel="next"[^>]*href="([^"]+)"', body))
+        return html.unescape(m.group(1)) if m else None
+
+    def test_a_credentials_page_shows_its_latest_verifications_and_links_the_rest(self):
+        tok = _sql("SELECT token_id FROM IdentityToken WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1",
+                   fetch='one')['token_id']
+        self._verifications(operator_routes.DETAIL_ROWS + 5, token_id=tok)
+        body = self.client.get('/tokens/%d' % tok).get_data(as_text=True)
+        self.assertIn('the latest %d' % operator_routes.DETAIL_ROWS, body)
+        self.assertIn('/verifications?token_id=%d' % tok, body)
+        log = self.client.get('/verifications?token_id=%d&page_size=500' % tok).get_data(as_text=True)
+        total = _sql("SELECT count(*) AS n FROM VerificationEvent WHERE token_id = %s", (tok,), fetch='one')['n']
+        self.assertEqual(log.count('pill-FULL') + log.count('pill-SELECTIVE'), total,
+                         'the log filtered by the credential shows every verification of it')
+
+    def test_an_investigation_counts_up_to_its_cap(self):
+        tok = _sql("SELECT token_id FROM IdentityToken WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1",
+                   fetch='one')['token_id']
+        self._verifications(4, token_id=tok)
+        with patch.object(operator_routes, 'COUNT_CAP', 2):
+            body = self.client.get('/investigate/token/%d' % tok).get_data(as_text=True)
+        self.assertIn('2+', body)
+        self.assertIn('or more', body)
+
+    def test_every_list_and_record_page_has_a_bounded_plan(self):
+        """Falsifier 2 of record 008 for step 3, over the synthetic population with every bound
+        shrunk: the lists by key, a rare filter through its window, a credential's page, both
+        investigation pages and the verification log filtered by one credential."""
+        _synthetic_population()
+        tok = _sql("SELECT token_id, individual_id FROM IdentityToken WHERE status = 'ACTIVE' "
+                   "ORDER BY token_id DESC LIMIT 1", fetch='one')
+        statements = []
+        with patch.object(verification_routes, 'FILTER_WINDOW', 2_000), \
+                patch.object(operator_routes, 'COUNT_CAP', 500):
+            for path in ('/tokens', '/tokens?status=REVOKED', '/tokens?cursor=%d' % (tok['token_id'] - 500),
+                         '/individuals', '/individuals?cursor=%d' % (tok['individual_id'] - 500),
+                         '/verifications', '/verifications?outcome=UNAUTHORIZED',
+                         '/verifications?token_id=%d' % tok['token_id'],
+                         '/tokens/%d' % tok['token_id'], '/investigate/token/%d' % tok['token_id'],
+                         '/investigate/individual/%d' % tok['individual_id']):
+                r, seen = _statements_of(self.client, path)
+                self.assertEqual(r.status_code, 200, path)
+                statements += seen
+        _assert_bounded_plans(self, statements, budget=6_000, sample_rows=0)
 
 
 class HeartbeatTests(PolarisTestCase):
@@ -6540,7 +6698,7 @@ class VerificationTests(PolarisTestCase):
     def test_list_renders(self):
         r = self.client.get('/verifications')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'Verification Events', 'BANKING')
+        self.assertHTML(r, 'Verification log', 'BANKING')
 
     def test_filter_by_disclosure(self):
         r = self.client.get('/verifications?disclosure=ZERO_KNOWLEDGE')
@@ -10807,16 +10965,19 @@ class ClusterCorrectnessTests(PolarisTestCase):
 # ============================================================================
 
 class ListPaginationTests(PolarisTestCase):
+    # lab/strategy/008 step 3: a list opened with no paging parameter pages by key, so its pager
+    # shows the page size and no page number.
     def test_tokens_list_paginates(self):
         r = self.client.get('/tokens')
         self.assertEqual(r.status_code, 200)
-        # Pager should be present and on page 1
-        self.assertHTML(r, 'pager', 'Page 1')
+        self.assertHTML(r, 'pager', 'per page')
+        self.assertNotIn('Page 1', r.get_data(as_text=True))
 
     def test_verifications_list_paginates(self):
         r = self.client.get('/verifications')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'pager', 'Page 1')
+        self.assertHTML(r, 'pager', 'per page')
+        self.assertNotIn('Page 1', r.get_data(as_text=True))
 
     def test_verifications_list_clamps_oversize_page(self):
         # page_size > 500 should be clamped to 500 (no OOM via huge requests)
@@ -10845,8 +11006,8 @@ class CursorPaginationTokensTests(PolarisTestCase):
     """Tokens pagination uses a single-int cursor on token_id ASC."""
 
     def _ids_on_page(self, body):
-        # The list HTML renders '#<id>' in the first <td> per row.
-        return [int(m) for m in _re_pager.findall(r'<td>#(\d+)</td>', body)]
+        # Each row of the list carries its key (lab/strategy/008 step 3's list markup).
+        return [int(m) for m in _re_pager.findall(r'<tr data-key="(\d+)"', body)]
 
     def _next_cursor_url_from_pager(self, body):
         # Pager renders <a class="pager-link" href="..." rel="next">.
@@ -10973,7 +11134,7 @@ class CursorPaginationVerificationsTests(PolarisTestCase):
     silently drop or duplicate rows at the boundary."""
 
     def _event_ids_on_page(self, body):
-        return [int(m) for m in _re_pager.findall(r'<td>#(\d+)</td>', body)]
+        return [int(m) for m in _re_pager.findall(r'<tr data-key="(\d+)"', body)]
 
     def _next_cursor_url_from_pager(self, body):
         m = (_re_pager.search(r'<a[^>]*href="([^"]+)"[^>]*rel="next"', body)
@@ -12971,9 +13132,9 @@ class UiLinkIntegrityTests(PolarisTestCase):
         """The concrete v9.143 findings, pinned individually."""
         self._login('auditor')
         r = self.client.get('/verifications')
-        self.assertNotIn('+ Record Verification', r.get_data(as_text=True))
+        self.assertNotIn('class="btn btn-primary" href="/verifications/new"', r.get_data(as_text=True))
         r = self.client.get('/tokens')
-        self.assertNotIn('Issue New Token', r.get_data(as_text=True))
+        self.assertNotIn('class="btn btn-primary" href="/uc1/issue"', r.get_data(as_text=True))
         r = self.client.get('/tokens/2')
         body = r.get_data(as_text=True)
         self.assertNotIn('Apply Transition', body)
@@ -12986,13 +13147,20 @@ class UiLinkIntegrityTests(PolarisTestCase):
         self.assertNotIn('/agencies/1/edit', body)
         r = self.client.get('/individuals')
         body = r.get_data(as_text=True)
-        self.assertNotIn('+ New Individual', body)
+        self.assertNotIn('Enrol a person', body)
         self.assertNotIn('/individuals/1/edit', body)
 
-        # Admin keeps every control.
+        # Admin keeps every control, which is what keeps the absences above from passing because
+        # a label was renamed.
         self._login('admin')
         r = self.client.get('/agencies')
         self.assertIn('+ New Agency', r.get_data(as_text=True))
+        self.assertIn('class="btn btn-primary" href="/verifications/new"',
+                      self.client.get('/verifications').get_data(as_text=True))
+        self.assertIn('class="btn btn-primary" href="/uc1/issue"', self.client.get('/tokens').get_data(as_text=True))
+        body = self.client.get('/individuals').get_data(as_text=True)
+        self.assertIn('Enrol a person', body)
+        self.assertIn('/individuals/1/edit', body)
         r = self.client.get('/tokens/2')
         self.assertIn('Apply Transition', r.get_data(as_text=True))
 

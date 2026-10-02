@@ -34,6 +34,7 @@ from flask import (
 import app as _app          # for _METRICS_VERIFY_DISAGREEMENT only; see the note at its use
 import lookup
 import observability
+import population
 import pqc_signing
 import security
 from app import (
@@ -140,12 +141,47 @@ def find_person():
 @app.route('/individuals')
 @security.login_required
 def individuals_list():
-    """List of individuals with pagination. At national scale (millions of
-    holders) the unpaginated list would crash any browser; the (individual_id)
-    primary key already serves the ORDER BY here, so paging is O(1)."""
-    page      = max(1, _int_arg('page', '1'))
+    """People by number, paged by key (lab/strategy/008 step 3), as /tokens pages credentials:
+    ?cursor=N shows the people numbered above N, ?prev_cursor=N those below it, a range of the
+    primary key under a LIMIT, so a page costs the same at any depth. ?page=N, the offset paging
+    this replaced, still answers while its offset stays within population.MAX_OFFSET_ROWS. (Its
+    docstring called offset paging O(1) because the key serves the ORDER BY; OFFSET still reads
+    every row it skips: 37 ms at page 5,000 of two million people, against 6 ms on the seed.)"""
     page_size = min(500, max(10, _int_arg('page_size', '100')))
+    cursor_raw = request.args.get('cursor')
+    prev_cursor_raw = request.args.get('prev_cursor')
+    if cursor_raw is not None or prev_cursor_raw is not None or not request.args.get('page'):
+        cursor = _parse_cursor_int(cursor_raw)
+        prev_cursor = _parse_cursor_int(prev_cursor_raw)
+        if prev_cursor is not None:
+            rows = query('SELECT * FROM Individual WHERE individual_id < %s '
+                         'ORDER BY individual_id DESC LIMIT %s', (prev_cursor, page_size + 1))
+            has_prev = len(rows) > page_size
+            rows = list(reversed(rows[:page_size]))
+            has_next = True
+        else:
+            if cursor is not None:
+                rows = query('SELECT * FROM Individual WHERE individual_id > %s '
+                             'ORDER BY individual_id LIMIT %s', (cursor, page_size + 1))
+            else:
+                rows = query('SELECT * FROM Individual ORDER BY individual_id LIMIT %s',
+                             (page_size + 1,))
+            has_next = len(rows) > page_size
+            rows = rows[:page_size]
+            has_prev = cursor is not None and bool(rows) and query(
+                'SELECT 1 FROM Individual WHERE individual_id < %s LIMIT 1',
+                (rows[0]['individual_id'],), fetch='one') is not None
+        return render_template('individuals_list.html',
+                               rows=rows, page=None, page_size=page_size, cursor_mode=True,
+                               first_cursor=rows[0]['individual_id'] if rows else None,
+                               last_cursor=rows[-1]['individual_id'] if rows else None,
+                               has_next=has_next, has_prev=has_prev)
+
+    page      = max(1, _int_arg('page', '1'))
     offset    = (page - 1) * page_size
+    if offset > population.MAX_OFFSET_ROWS:
+        abort(400, description='page numbers reach %d people deep; page with Next'
+                               % population.MAX_OFFSET_ROWS)
     rows = query(
         'SELECT * FROM Individual ORDER BY individual_id LIMIT %s OFFSET %s',
         (page_size + 1, offset)
@@ -376,18 +412,29 @@ def tokens_list():
     Supports filtering by status via query string (?status=ACTIVE).
 
     Pagination (R7-3, v7): two modes.
-      - Cursor mode (preferred): ?cursor=N walks forward, ?prev_cursor=N walks
+      - Cursor mode: ?cursor=N walks forward, ?prev_cursor=N walks
         backward. Sort key is t.token_id ASC; a single int cursor is sufficient
         because token_id is the primary key. Cost is O(log n + page_size)
         regardless of depth — page 20000-equivalent runs in <100ms vs 13.6s
-        with OFFSET on the 2M-row stress dataset.
-      - Page mode (legacy): ?page=N. Backward-compatible. OFFSET-bound and
-        slow at depth, retained so that bookmarked URLs still work.
+        with OFFSET on the 2M-row stress dataset. The default since
+        lab/strategy/008 step 3: a page opened with no paging parameter is
+        cursor mode, so no link the console renders pays for depth.
+      - Page mode (legacy): ?page=N, for links made before. OFFSET reads every
+        row it skips, so it answers only while the offset stays within
+        population.MAX_OFFSET_ROWS and is refused (400) deeper.
       Cursor params take precedence over page when both are supplied.
     Page size clamped to [10, 500] in both modes.
     """
     status_filter = request.args.get('status', '')
     individual_filter = request.args.get('individual_id', '')
+    # The filter's counts: exact, kept by the database (PopulationCount), summed over the
+    # authorities this operator may see (row-level security scopes them).
+    by_status = {s: 0 for s in ('ACTIVE', 'RESERVE', 'DORMANT', 'REVOKED', 'LOST', 'EXPIRED')}
+    for (facet, _agency, item), n in population.counts(query).items():
+        if facet == 'credential_status' and item in by_status:
+            by_status[item] += int(n)
+    counts = {'by_status': {k: population.Figure(v) for k, v in by_status.items()},
+              'total': population.Figure(sum(by_status.values()))}
     # Page size: hard cap at 500 (browser OOM); floor at 1 (clamping below
     # protects against negative or zero values that would corrupt OFFSET
     # arithmetic, but does not punish legitimate small-page requests).
@@ -395,7 +442,8 @@ def tokens_list():
 
     cursor_raw      = request.args.get('cursor')
     prev_cursor_raw = request.args.get('prev_cursor')
-    cursor_mode = (cursor_raw is not None) or (prev_cursor_raw is not None)
+    cursor_mode = (cursor_raw is not None) or (prev_cursor_raw is not None) \
+        or not request.args.get('page')
     cursor      = _parse_cursor_int(cursor_raw)
     prev_cursor = _parse_cursor_int(prev_cursor_raw)
 
@@ -413,7 +461,8 @@ def tokens_list():
         params.append(individual_id)
 
     base_select = """
-        SELECT t.*, i.legal_name, ag.name AS issuer_name, alg.name AS alg_name
+        SELECT t.*, i.legal_name, ag.name AS issuer_name, alg.name AS alg_name,
+               alg.quantum_resistant
         FROM   IdentityToken t
         JOIN   Individual i ON t.individual_id = i.individual_id
         JOIN   Agency    ag ON t.issuing_agency_id = ag.agency_id
@@ -459,7 +508,7 @@ def tokens_list():
 
         return render_template('tokens_list.html',
                                rows=rows,
-                               status_filter=status_filter,
+                               status_filter=status_filter, **counts,
                                individual_filter=individual_filter,
                                page=None,
                                page_size=page_size,
@@ -471,6 +520,9 @@ def tokens_list():
 
     page   = max(1, _int_arg('page', '1'))
     offset = (page - 1) * page_size
+    if offset > population.MAX_OFFSET_ROWS:
+        abort(400, description='page numbers reach %d credentials deep; page with Next'
+                               % population.MAX_OFFSET_ROWS)
     sql = base_select + where_sql + " ORDER BY t.token_id ASC LIMIT %s OFFSET %s"
     rows = query(sql, params + [page_size + 1, offset])
     has_next = len(rows) > page_size
@@ -478,13 +530,18 @@ def tokens_list():
 
     return render_template('tokens_list.html',
                            rows=rows,
-                           status_filter=status_filter,
+                           status_filter=status_filter, **counts,
                            individual_filter=individual_filter,
                            page=page,
                            page_size=page_size,
                            cursor_mode=False,
                            has_next=has_next,
                            has_prev=page > 1)
+
+
+#: The most rows a credential's page shows of anything that grows while the credential lives
+#: (lab/strategy/008 step 3); the verification log pages through the rest.
+DETAIL_ROWS = 50
 
 
 @app.route('/tokens/<int:tok_id>')
@@ -506,13 +563,23 @@ def tokens_detail(tok_id):
     if not token:
         abort(404)
 
+    # lab/strategy/008 step 3: every section reads one credential's rows through an index on
+    # token_id, and the ones that grow for as long as the credential lives (its verifications, its
+    # lifecycle, its epoch leaves) read only the latest few, saying so when there are more. The
+    # verification log, filtered by this credential, pages through the rest.
     lifecycle = query("""
-        SELECT le.*, ag.name AS actor_name
-        FROM   TokenLifecycleEvent le
-        LEFT JOIN Agency ag ON le.actor_agency_id = ag.agency_id
-        WHERE  le.token_id = %s
-        ORDER BY le.event_timestamp
-    """, (tok_id,))
+        SELECT * FROM (
+            SELECT le.*, ag.name AS actor_name
+            FROM   TokenLifecycleEvent le
+            LEFT JOIN Agency ag ON le.actor_agency_id = ag.agency_id
+            WHERE  le.token_id = %s
+            ORDER BY le.event_timestamp DESC, le.event_id DESC
+            LIMIT %s) latest
+        ORDER BY event_timestamp, event_id
+    """, (tok_id, DETAIL_ROWS + 1))
+    lifecycle_more = len(lifecycle) > DETAIL_ROWS
+    if lifecycle_more:
+        lifecycle = lifecycle[1:]           # the oldest of the latest DETAIL_ROWS + 1
 
     verifications = query("""
         SELECT ve.*, vc.context_type, ag.name AS verifier_name
@@ -520,11 +587,16 @@ def tokens_detail(tok_id):
         JOIN   VerificationContext vc ON ve.context_id = vc.context_id
         JOIN   Agency ag              ON ve.requesting_agency_id = ag.agency_id
         WHERE  ve.token_id = %s
-        ORDER BY ve.event_timestamp DESC
-    """, (tok_id,))
+        ORDER BY ve.event_timestamp DESC, ve.event_id DESC
+        LIMIT %s
+    """, (tok_id, DETAIL_ROWS + 1))
+    verifications_more = len(verifications) > DETAIL_ROWS
+    verifications = verifications[:DETAIL_ROWS]
 
-    devices = query('SELECT * FROM DeviceBinding WHERE token_id=%s ORDER BY binding_id',
-                    (tok_id,))
+    devices = query('SELECT * FROM DeviceBinding WHERE token_id=%s ORDER BY binding_id LIMIT %s',
+                    (tok_id, DETAIL_ROWS + 1))
+    devices_more = len(devices) > DETAIL_ROWS
+    devices = devices[:DETAIL_ROWS]
     anchors = query('SELECT * FROM BlockchainAnchor WHERE token_id=%s', (tok_id,))
     revocations = query("""
         SELECT rl.*, ag.name AS revoker_name
@@ -590,16 +662,20 @@ def tokens_detail(tok_id):
           FROM TokenStateEpochLeaf l
           JOIN TokenStateEpoch e ON l.epoch_id = e.epoch_id
          WHERE l.token_id = %s
-         ORDER BY e.closed_at DESC
-    """, (tok_id,))
+         ORDER BY l.leaf_id DESC
+         LIMIT %s
+    """, (tok_id, DETAIL_ROWS + 1))
+    epoch_leaves_more = len(v2_epoch_leaves) > DETAIL_ROWS
+    v2_epoch_leaves = v2_epoch_leaves[:DETAIL_ROWS]
     duress_enrolled = (bool(token.get('duress_code_hash'))
                        if _duress_visible_to_viewer() else None)
 
     return render_template('tokens_detail.html',
                            token=token,
-                           lifecycle=lifecycle,
-                           verifications=verifications,
-                           devices=devices,
+                           lifecycle=lifecycle, lifecycle_more=lifecycle_more,
+                           verifications=verifications, verifications_more=verifications_more,
+                           devices=devices, devices_more=devices_more,
+                           epoch_leaves_more=epoch_leaves_more, detail_rows=DETAIL_ROWS,
                            anchors=anchors,
                            revocations=revocations,
                            permissions=permissions,
@@ -971,6 +1047,12 @@ def token_authenticity_pack(tok_id):
 # semantic data; no new mutation paths.
 # ============================================================================
 
+#: The latest events an investigation timeline shows, and where a lifetime count stops and says
+#: "or more" (lab/strategy/008 step 3).
+TIMELINE_ROWS = 200
+COUNT_CAP = 10_000
+
+
 @app.route('/investigate/token/<int:tok_id>')
 @security.login_required
 def investigate_token(tok_id):
@@ -983,14 +1065,27 @@ def investigate_token(tok_id):
     per-individual counts (correlated subqueries) are computed inline in
     investigate_individual only.
     """
+    # lab/strategy/008 step 3: the record without the view's lifetime counts (a column the query
+    # does not name is not computed), and those counts capped, because a credential's
+    # verifications grow for as long as it lives; the timeline shows the latest TIMELINE_ROWS.
     token = query(
-        "SELECT * FROM v_ontology_token WHERE token_id = %s",
+        "SELECT token_id, token_value, physical_serial, individual_id, issuing_agency_id, "
+        "algorithm_id, predecessor_token_id, activation_sequence, status, issued_date, "
+        "activated_date, expiration_date, has_duress_code, age_days, individual_legal_name, "
+        "issuing_agency_name, algorithm_name, quantum_resistant "
+        "FROM v_ontology_token WHERE token_id = %s",
         (tok_id,), fetch='one',
     )
     if not token:
         abort(404)
+    token['lifecycle_event_count'] = population.capped(
+        query, 'SELECT 1 FROM TokenLifecycleEvent WHERE token_id = %s', (tok_id,), cap=COUNT_CAP)
+    token['verification_event_count'] = population.capped(
+        query, 'SELECT 1 FROM VerificationEvent WHERE token_id = %s', (tok_id,), cap=COUNT_CAP)
+    token['signature_count'] = population.capped(
+        query, 'SELECT 1 FROM TokenSignature WHERE token_id = %s', (tok_id,), cap=COUNT_CAP)
 
-    # Timeline: lifecycle + verification events chronologically.
+    # Timeline: lifecycle + verification events, the latest first.
     timeline = query("""
         SELECT t.*,
                aa.name AS actor_agency_name,
@@ -1002,7 +1097,10 @@ def investigate_token(tok_id):
      LEFT JOIN VerificationContext  vc ON (t.detail_jsonb->>'context_id')::int = vc.context_id
          WHERE t.token_id = %s
       ORDER BY t.event_timestamp DESC, t.event_id DESC
-    """, (tok_id,))
+         LIMIT %s
+    """, (tok_id, TIMELINE_ROWS + 1))
+    timeline_more = len(timeline) > TIMELINE_ROWS
+    timeline = timeline[:TIMELINE_ROWS]
     # v9.20 audit-access logging: investigate-token reads TLE + VE.
     # Record both reads; the ontology view unions them so we log both
     # tables the underlying SELECT touched.
@@ -1033,7 +1131,7 @@ def investigate_token(tok_id):
 
     return render_template(
         'investigate_token.html',
-        token=token, timeline=timeline,
+        token=token, timeline=timeline, timeline_more=timeline_more,
         predecessor=predecessor, successor=successor,
         duress_visible=_duress_visible_to_viewer(),
     )
@@ -1067,10 +1165,6 @@ def investigate_individual(ind_id):
                        WHERE t.individual_id = i.individual_id
                          AND t.status = 'ACTIVE'), 0)
                 AS active_token_count,
-            (SELECT COUNT(*) FROM VerificationEvent v
-               JOIN IdentityToken t ON v.token_id = t.token_id
-              WHERE t.individual_id = i.individual_id)
-                AS lifetime_verification_count,
             (SELECT MAX(t.issued_date) FROM IdentityToken t
               WHERE t.individual_id = i.individual_id)
                 AS most_recent_token_issued_at
@@ -1079,6 +1173,11 @@ def investigate_individual(ind_id):
     """, (ind_id,), fetch='one')
     if not individual:
         abort(404)
+    # Capped (lab/strategy/008 step 3): a person's verifications grow for as long as they hold
+    # credentials; the count stops at COUNT_CAP and says "or more".
+    individual['lifetime_verification_count'] = population.capped(
+        query, 'SELECT 1 FROM VerificationEvent v JOIN IdentityToken t ON v.token_id = t.token_id '
+               'WHERE t.individual_id = %s', (ind_id,), cap=COUNT_CAP)
 
     tokens = query("""
         SELECT

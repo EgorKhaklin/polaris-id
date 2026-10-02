@@ -946,10 +946,10 @@ table.data td.actions, table.data th.actions { text-align: right; white-space: n
 .pill-success, .pill-active, .pill-ok, .pill-ACTIVE, .pill-SUCCESS {
     color: var(--ok); background: var(--ok-wash); border-color: color-mix(in srgb, var(--ok) 30%, transparent);
 }
-.pill-warn, .pill-LOST, .pill-PENDING, .pill-SUSPENDED {
+.pill-warn, .pill-LOST, .pill-PENDING, .pill-SUSPENDED, .pill-EXPIRED {
     color: var(--warn); background: var(--warn-wash); border-color: color-mix(in srgb, var(--warn) 30%, transparent);
 }
-.pill-revoked, .pill-danger, .pill-error, .pill-REVOKED, .pill-FAILURE, .pill-COMPROMISED {
+.pill-revoked, .pill-danger, .pill-error, .pill-REVOKED, .pill-FAILURE, .pill-COMPROMISED, .pill-UNAUTHORIZED {
     color: var(--danger); background: var(--danger-wash); border-color: color-mix(in srgb, var(--danger) 30%, transparent);
 }
 .pill-info, .pill-accent, .pill-RESERVE { color: var(--accent); background: var(--accent-wash); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
@@ -1621,6 +1621,41 @@ a.kpi-link:hover .kpi-label { color: var(--ink-2); }
 .match-main { font-weight: 550; min-width: 0; overflow-wrap: anywhere; }
 .match-meta { grid-column: 2 / -1; color: var(--ink-3); font-size: 12.5px; overflow-wrap: anywhere; }
 
+/* Lists: the lookup beside the filter, then the table and its key pager (lab/strategy/008). */
+.list-tools {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    gap: var(--s-4);
+    align-items: stretch;
+    margin-bottom: var(--s-5);
+}
+/* An identifier or a date is read whole in a table: it never breaks at its hyphens; the table's
+   wrapper scrolls instead when the columns do not fit. */
+table.data td.mono, table.data td > .mono { white-space: nowrap; }
+.list-tools .find-panel { margin-bottom: 0; max-width: none; }
+.list-filter { margin-bottom: var(--s-5); }
+.list-tools .list-filter { margin-bottom: 0; }
+.list-filter fieldset { margin: 0 0 var(--s-3); }
+.list-filter-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--s-3); }
+.list-filter-row .form-group { margin-bottom: 0; min-width: 160px; flex: 0 1 220px; }
+.status-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    min-height: 30px;
+    padding: 0 var(--s-3);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--ink-2);
+    font-size: 12.5px;
+    text-decoration: none;
+}
+.chip:hover { background: var(--surface-2); color: var(--ink); text-decoration: none; }
+.chip.is-current { border-color: var(--ink-3); background: var(--surface-2); color: var(--ink); font-weight: 550; }
+.chip-count { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.row-actions { display: flex; align-items: center; gap: var(--s-3); white-space: nowrap; }
+
 /* The operations a record admits, on the record's own page. */
 .record-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); margin: 0 0 var(--s-5); }
 .find-panel { margin-bottom: var(--s-5); max-width: 760px; }
@@ -1663,6 +1698,7 @@ a.kpi-link:hover .kpi-label { color: var(--ink-2); }
 }
 
 @media (max-width: 1100px) {
+    .list-tools { grid-template-columns: minmax(0, 1fr); }
     .op { grid-template-columns: minmax(0, 1fr); }
     .op-rule { position: static; }
     .hero { grid-template-columns: 1fr; padding-top: 56px; }
