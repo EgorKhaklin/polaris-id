@@ -78,6 +78,7 @@ import zk
 import webauthn_auth
 import observability  # v9.31 freeze condition 6 — operator-readable metrics surface
 import pqc_signing    # v9.58 — issuance signature comes from the signing module
+import population     # lab/strategy/008 — figures that cost the same at any population
 import tracing        # v9.187 (P1.6) — opt-in OpenTelemetry distributed tracing
 
 # v8.93 — Prometheus-compatible /metrics endpoint. The dependency is
@@ -1219,6 +1220,17 @@ app.jinja_env.globals['absent'] = _Markup('<span class="muted">not recorded</spa
 app.jinja_env.globals['not_yet'] = _Markup('<span class="muted">not yet</span>')
 app.jinja_env.globals['no_expiry'] = _Markup('<span class="muted">no expiry</span>')
 
+# Counts at population scale (lab/strategy/008): `num` groups digits (8,123,456,789);
+# `compact` fits a tile (8.12 B); `words` is the same count as a reader hears it (8.12 billion);
+# `figure_text` adds "about" to an estimate and "or more" to a capped count. _ui.html's
+# figure() macro composes them, so an estimate is never shown without saying so.
+app.jinja_env.filters['num'] = population.fmt_int
+app.jinja_env.filters['compact'] = population.fmt_compact
+app.jinja_env.filters['words'] = population.fmt_words
+app.jinja_env.filters['figure_text'] = population.fmt_figure
+app.jinja_env.filters['estimate'] = population.fmt_estimate
+app.jinja_env.filters['estimate_words'] = population.fmt_estimate_words
+
 
 @app.template_filter('camel_wbr')
 def _camel_wbr(value):
@@ -1254,6 +1266,9 @@ def _inject_security_context():
         # The error page shows this so an operator can quote one string that
         # matches the log line and the X-Request-ID response header.
         'request_id': observability.get_request_id(),
+        # Every console page states the signing mode in force, so nobody mistakes the
+        # development placeholder for a signature (docs/design/console-design.md).
+        'signing': {'real': pqc_signing.is_enabled(), 'algorithm': pqc_signing.algorithm_name()},
     })
     return ctx
 
@@ -1488,18 +1503,13 @@ def dashboard():
     explained each panel in a paragraph. This one reports state an operator
     acts on: whether the service is healthy, how the token population is
     moving, how verification is behaving, what needs a human, the
-    cryptographic posture, and the audit of record. Every figure is a bounded
-    aggregate (C8); nothing here enumerates a population.
+    cryptographic posture, and the audit of record. Nothing here enumerates a
+    population, and since lab/strategy/008 nothing here costs in proportion to one:
+    see _dashboard_model.
     """
     return render_template('dashboard.html', **_dashboard_model())
 
 
-def _window_counts(sql_template):
-    """Run one aggregate for the 24-hour and 7-day windows."""
-    return {
-        '24h': query(sql_template.format(window="INTERVAL '24 hours'"), fetch='one')['n'] or 0,
-        '7d':  query(sql_template.format(window="INTERVAL '7 days'"), fetch='one')['n'] or 0,
-    }
 
 
 def _dashboard_service():
@@ -1566,89 +1576,134 @@ def _dashboard_signing():
     }
 
 
+#: The most a condition on the Overview's attention list is counted to before it reads "or more".
+#: Each is an index range, so this is what bounds its cost (lab/strategy/008).
+_OVERVIEW_ATTENTION_CAP = 10_000
+#: The same for activity in a window (verifications, issuances, revocations in 24 hours or 7 days).
+_OVERVIEW_ACTIVITY_CAP = 100_000
+
+
 def _dashboard_model():
+    """The Overview's figures, each costing the same at any population (lab/strategy/008).
+
+    Composition (credentials by status and issuing authority, live signatures by algorithm) is
+    exact, from the counts the triggers maintain (PopulationCount). Activity (issuance,
+    verification volume, outcomes, disclosure, contexts) is read from the latest
+    population.RECENT_ROWS events through each table's time index. A condition a person must act
+    on is an exact count capped at _OVERVIEW_ATTENTION_CAP, through an index ordered by the
+    condition, so the cap is what bounds it. Every figure is a population.Figure that says
+    whether it is exact, and the page labels those that are not.
+    """
     now = datetime.now(timezone.utc)
     overall, service = _dashboard_service()
     signing = _dashboard_signing()
+    Figure = population.Figure
+    cap = _OVERVIEW_ATTENTION_CAP
+    activity_cap = _OVERVIEW_ACTIVITY_CAP
 
-    # --- Token population ---------------------------------------------------
-    by_status = {r['status']: r['n'] for r in query(
-        "SELECT status, COUNT(*) AS n FROM IdentityToken GROUP BY status")}
-    for st in ('ACTIVE', 'RESERVE', 'DORMANT', 'REVOKED', 'LOST', 'EXPIRED'):
-        by_status.setdefault(st, 0)
-    issued = _window_counts("SELECT COUNT(*) AS n FROM TokenLifecycleEvent "
-                            "WHERE event_type = 'ISSUED' AND event_timestamp >= now() - {window}")
-    revoked = _window_counts("SELECT COUNT(*) AS n FROM TokenLifecycleEvent "
-                             "WHERE event_type = 'REVOKED' AND event_timestamp >= now() - {window}")
-    expiry = query("""
-        -- `< polaris_utc_date()`, matching `_not_expired`, not `< now()`. The two differed by up
-        -- to a day: a credential expiring today read as already past here from one second
-        -- after midnight while the verification path still honoured it. One predicate, two
-        -- spellings, is how the next disagreement starts.
-        SELECT SUM(CASE WHEN expiration_date < polaris_utc_date() THEN 1 ELSE 0 END) AS past,
-               SUM(CASE WHEN expiration_date >= polaris_utc_date()
-                         AND expiration_date < polaris_utc_date() + INTERVAL '30 days' THEN 1 ELSE 0 END) AS soon
-          FROM IdentityToken WHERE status = 'ACTIVE'
-    """, fetch='one')
-    by_issuer = query("""
-        SELECT ag.name, ag.agency_type,
-               COUNT(*) FILTER (WHERE t.status = 'ACTIVE') AS active,
-               COUNT(*) FILTER (WHERE t.status = 'RESERVE') AS reserve,
-               COUNT(*) AS issued
-          FROM Agency ag
-          JOIN IdentityToken t ON t.issuing_agency_id = ag.agency_id
-         GROUP BY ag.agency_id, ag.name, ag.agency_type
-         ORDER BY active DESC, issued DESC, ag.name
-         LIMIT 8
-    """)
+    # --- Credential population: exact, from the maintained counts (PopulationCount) ------------
+    agencies = query("SELECT agency_id, name, agency_type FROM Agency ORDER BY name", readonly=True)
+    agency_by_id = {a['agency_id']: a for a in agencies}
+    counted = population.counts(query)
+    status_n = {st: 0 for st in ('ACTIVE', 'RESERVE', 'DORMANT', 'REVOKED', 'LOST', 'EXPIRED')}
+    per_agency = {}
+    live = {}
+    for (facet, agency_id, item), n in counted.items():
+        if facet == 'credential_status':
+            status_n[item] = status_n.get(item, 0) + int(n)
+            row = per_agency.setdefault(agency_id, {'active': 0, 'reserve': 0, 'issued': 0})
+            row['issued'] += int(n)
+            if item in ('ACTIVE', 'RESERVE'):
+                row[item.lower()] += int(n)
+        elif facet == 'live_signature':
+            live[int(item)] = live.get(int(item), 0) + int(n)
+    by_status = {st: Figure(n) for st, n in status_n.items()}
+    by_issuer = sorted(
+        ({'name': (agency_by_id.get(a) or {}).get('name') or '#%s' % a,
+          'agency_type': (agency_by_id.get(a) or {}).get('agency_type'),
+          'active': Figure(r['active']), 'reserve': Figure(r['reserve']), 'issued': Figure(r['issued'])}
+         for a, r in per_agency.items()),
+        key=lambda r: (-int(r['active']), -int(r['issued']), r['name']))[:8]
+
     tokens = {
-        'by_status': by_status, 'total': sum(by_status.values()),
-        'issued': issued, 'revoked': revoked,
-        'active_past_expiry': expiry['past'] or 0,
-        'expiring_30d': expiry['soon'] or 0,
+        'by_status': by_status,
+        'total': Figure(sum(status_n.values())),
+        # ISSUED and REVOKED each have a partial index (idx_lifecycle_issued_time,
+        # idx_lifecycle_revoked_time), so both are counted exactly up to the cap. Each capped count
+        # orders by the index it should use, which makes that index the plan without a sort; the
+        # planner otherwise picks whichever looks cheapest on the day.
+        'issued': {'24h': population.capped(
+                       query, "SELECT token_id FROM TokenLifecycleEvent WHERE event_type = 'ISSUED' "
+                       "AND event_timestamp >= now() - INTERVAL '24 hours' "
+                       "ORDER BY event_timestamp DESC, token_id", cap=activity_cap),
+                   '7d': population.capped(
+                       query, "SELECT token_id FROM TokenLifecycleEvent WHERE event_type = 'ISSUED' "
+                       "AND event_timestamp >= now() - INTERVAL '7 days' "
+                       "ORDER BY event_timestamp DESC, token_id", cap=activity_cap)},
+        'revoked': {'24h': population.capped(
+                        query, "SELECT token_id FROM TokenLifecycleEvent WHERE event_type = 'REVOKED' "
+                        "AND event_timestamp >= now() - INTERVAL '24 hours' "
+                        "ORDER BY event_timestamp DESC, token_id", cap=activity_cap),
+                    '7d': population.capped(
+                        query, "SELECT token_id FROM TokenLifecycleEvent WHERE event_type = 'REVOKED' "
+                        "AND event_timestamp >= now() - INTERVAL '7 days' "
+                        "ORDER BY event_timestamp DESC, token_id", cap=activity_cap)},
+        # `< polaris_utc_date()`, matching `_not_expired`, not `< now()`. The two differed by up
+        # to a day: a credential expiring today read as already past here from one second after
+        # midnight while the verification path still honoured it. One predicate, two spellings,
+        # is how the next disagreement starts. Both are served by idx_identitytoken_active_expiry,
+        # in its order: a credential past its expiry is rare, and a count of a rare condition is
+        # bounded only when the index reads the condition, not when a filter looks for it.
+        'active_past_expiry': population.capped(
+            query, "SELECT 1 FROM IdentityToken WHERE status = 'ACTIVE' "
+            "AND expiration_date < polaris_utc_date() ORDER BY expiration_date", cap=cap),
+        'expiring_30d': population.capped(
+            query, "SELECT 1 FROM IdentityToken WHERE status = 'ACTIVE' "
+            "AND expiration_date >= polaris_utc_date() AND expiration_date < polaris_utc_date() + 30 "
+            "ORDER BY expiration_date", cap=cap),
         'by_issuer': by_issuer,
     }
 
-    # --- Verification activity ------------------------------------------------
-    volume = _window_counts("SELECT COUNT(*) AS n FROM VerificationEvent "
-                            "WHERE event_timestamp >= now() - {window}")
-    outcomes = {r['outcome']: r['n'] for r in query("""
-        SELECT outcome, COUNT(*) AS n FROM VerificationEvent
-         WHERE event_timestamp >= now() - INTERVAL '7 days' GROUP BY outcome""")}
-    for o in ('SUCCESS', 'FAILURE', 'EXPIRED', 'UNAUTHORIZED'):
-        outcomes.setdefault(o, 0)
-    not_success = outcomes['FAILURE'] + outcomes['EXPIRED'] + outcomes['UNAUTHORIZED']
-    failure_rate = (100.0 * not_success / volume['7d']) if volume['7d'] else None
-    disclosure_rows = query("""
-        SELECT disclosure_level, COUNT(*) AS n FROM VerificationEvent GROUP BY disclosure_level""")
-    disc = {r['disclosure_level']: r['n'] for r in disclosure_rows}
-    disc_total = sum(disc.values())
-    disclosure = []
-    for level in ('ZERO_KNOWLEDGE', 'SELECTIVE', 'FULL'):
-        n = disc.get(level, 0)
-        disclosure.append({'level': level, 'n': n,
-                           'pct': (100.0 * n / disc_total) if disc_total else 0.0})
-    by_context = query("""
-        SELECT vc.context_type,
-               COUNT(ve.event_id) FILTER (WHERE ve.event_timestamp >= now() - INTERVAL '7 days') AS v7d,
-               COUNT(ve.event_id) FILTER (WHERE ve.event_timestamp >= now() - INTERVAL '7 days'
-                                            AND ve.outcome <> 'SUCCESS') AS notok7d,
-               COUNT(ve.event_id) AS total
-          FROM VerificationContext vc
-          LEFT JOIN VerificationEvent ve ON ve.context_id = vc.context_id
-         GROUP BY vc.context_type
-         ORDER BY v7d DESC, total DESC, vc.context_type
-    """)
+    # --- Verification activity ---------------------------------------------------------------------
+    # Volume in each window is an exact count up to the cap, through the time index. Shares and
+    # per-context counts describe the latest RECENT_ROWS verifications, exactly, and say so; they
+    # are never stretched over a window the slice does not cover (lab/strategy/008 measured a
+    # rate times a window missing a day's count by 57% once traffic had paused).
+    volume = {
+        '24h': population.capped(query, "SELECT 1 FROM VerificationEvent "
+                                 "WHERE event_timestamp >= now() - INTERVAL '24 hours' "
+                                 "ORDER BY event_timestamp DESC", cap=activity_cap),
+        '7d': population.capped(query, "SELECT 1 FROM VerificationEvent "
+                                "WHERE event_timestamp >= now() - INTERVAL '7 days' "
+                                "ORDER BY event_timestamp DESC", cap=activity_cap),
+    }
+    recent = population.Recent(query, 'VerificationEvent', ['outcome', 'disclosure_level', 'context_id'])
+    sampled = len(recent)
+    not_success = recent.count(lambda r: r['outcome'] != 'SUCCESS')
+    mix = recent.mix('disclosure_level')
+    disclosure = [{'level': level, 'n': mix.get(level, 0),
+                   'pct': (100.0 * mix.get(level, 0) / sampled) if sampled else 0.0}
+                  for level in ('ZERO_KNOWLEDGE', 'SELECTIVE', 'FULL')]
+    by_context = []
+    for c in query("SELECT context_id, context_type FROM VerificationContext", readonly=True):
+        cid = c['context_id']
+        by_context.append({
+            'context_type': c['context_type'],
+            'n': recent.count(lambda r, cid=cid: r['context_id'] == cid),
+            'not_ok': recent.count(lambda r, cid=cid: r['context_id'] == cid and r['outcome'] != 'SUCCESS'),
+        })
+    by_context.sort(key=lambda c: (-c['n'], c['context_type']))
     verifications = {
-        'volume': volume, 'outcomes_7d': outcomes, 'not_success_7d': not_success,
-        'failure_rate_7d': failure_rate, 'disclosure': disclosure,
-        'disclosure_total': disc_total, 'by_context': by_context,
+        'volume': volume,
+        'recent': sampled, 'recent_complete': recent.complete, 'recent_newest': recent.newest,
+        'recent_per_second': recent.per_second(),
+        'not_success_pct': (100.0 * not_success / sampled) if sampled else None,
+        'disclosure': disclosure, 'by_context': by_context,
     }
 
-    # --- Cryptographic posture --------------------------------------------------
+    # --- Cryptographic posture: live signatures on active credentials, by algorithm (exact) -------
     algorithms = query("""
         SELECT alg.algorithm_id, alg.name, alg.quantum_resistant, alg.deprecation_date,
-               COUNT(DISTINCT t.token_id) AS active_tokens,
                (SELECT COUNT(DISTINCT a.agency_id) FROM AgencyAlgorithmAuth a
                  WHERE a.algorithm_id = alg.algorithm_id
                    AND a.authorization_type IN ('ISSUE', 'BOTH')) AS agencies_issue,
@@ -1656,27 +1711,25 @@ def _dashboard_model():
                  WHERE a.algorithm_id = alg.algorithm_id
                    AND a.authorization_type IN ('VERIFY', 'BOTH')) AS agencies_verify
           FROM CryptographicAlgorithm alg
-          LEFT JOIN TokenSignature s ON s.algorithm_id = alg.algorithm_id
-                                    AND s.deprecation_date IS NULL
-          LEFT JOIN IdentityToken t ON t.token_id = s.token_id AND t.status = 'ACTIVE'
-         GROUP BY alg.algorithm_id, alg.name, alg.quantum_resistant, alg.deprecation_date
          ORDER BY alg.quantum_resistant DESC, alg.algorithm_id
-    """)
-    pq_active = sum(r['active_tokens'] for r in algorithms if r['quantum_resistant'])
-    classical_active = sum(r['active_tokens'] for r in algorithms if not r['quantum_resistant'])
-    signed_total = pq_active + classical_active
+    """, readonly=True)
+    for a in algorithms:
+        a['active_tokens'] = Figure(live.get(a['algorithm_id'], 0))
+    pq_active = Figure(sum(int(a['active_tokens']) for a in algorithms if a['quantum_resistant']))
+    classical_active = Figure(sum(int(a['active_tokens']) for a in algorithms
+                                  if not a['quantum_resistant']))
+    signed_total = int(pq_active) + int(classical_active)
     crypto = {
-        'algorithms': algorithms, 'pq_active': pq_active,
-        'classical_active': classical_active,
-        'pq_pct': (100.0 * pq_active / signed_total) if signed_total else None,
+        'algorithms': algorithms, 'pq_active': pq_active, 'classical_active': classical_active,
+        'pq_pct': (100.0 * int(pq_active) / signed_total) if signed_total else None,
     }
 
-    # --- Authorizations (the matrix, collapsed by default) --------------------
-    agencies = query("SELECT agency_id, name, agency_type FROM Agency ORDER BY name")
+    # --- Authorizations (the matrix, collapsed by default): two small tables -------------------
     matrix = {(g['agency_id'], g['algorithm_id']): g['authorization_type']
-              for g in query("SELECT agency_id, algorithm_id, authorization_type FROM AgencyAlgorithmAuth")}
+              for g in query("SELECT agency_id, algorithm_id, authorization_type FROM AgencyAlgorithmAuth",
+                             readonly=True)}
 
-    # --- Operators ---------------------------------------------------------------
+    # --- Operators: one row per operator account, a bounded table --------------------------------
     ops = query("""
         SELECT COUNT(*) AS privileged,
                COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM OperatorWebauthnCredential c
@@ -1689,24 +1742,28 @@ def _dashboard_model():
           FROM AppUser u
          WHERE u.is_active AND u.role IN ('admin', 'operator')
     """, fetch='one')
-    failed_logins_24h = query("""
-        SELECT COUNT(*) AS n FROM AuthAuditLog
-         WHERE event_type IN ('LOGIN_FAILED', 'LOGIN_LOCKED')
-           AND event_timestamp >= now() - INTERVAL '24 hours'""", fetch='one')['n'] or 0
+    failed_logins_24h = population.capped(
+        query, "SELECT 1 FROM AuthAuditLog WHERE event_type IN ('LOGIN_FAILED', 'LOGIN_LOCKED') "
+        "AND event_timestamp >= now() - INTERVAL '24 hours' ORDER BY event_timestamp DESC", cap=cap)
     operators = {
         'privileged': ops['privileged'] or 0, 'with_credential': ops['with_credential'] or 0,
         'overdue': ops['overdue'] or 0, 'locked': ops['locked'] or 0,
         'failed_logins_24h': failed_logins_24h,
     }
 
-    # --- Attention: what needs a human ----------------------------------------
-    duress = query("""
-        SELECT COUNT(*) AS total,
-               COUNT(*) FILTER (WHERE event_timestamp >= now() - INTERVAL '24 hours') AS last_24h,
-               MAX(event_timestamp) AS latest
-          FROM DuressEvent""", fetch='one')
-    pending_recoveries = query(
-        "SELECT COUNT(*) AS n FROM RecoveryRequest WHERE status = 'PENDING'", fetch='one')['n'] or 0
+    # --- Attention: what needs a human -----------------------------------------------------------
+    duress = {
+        'last_24h': population.capped(
+            query, "SELECT 1 FROM DuressEvent WHERE event_timestamp >= now() - INTERVAL '24 hours' "
+            "ORDER BY event_timestamp DESC", cap=cap),
+        'total': population.capped(
+            query, "SELECT 1 FROM DuressEvent ORDER BY event_timestamp DESC", cap=10 * cap),
+        'latest': (query("SELECT event_timestamp AS latest FROM DuressEvent "
+                         "ORDER BY event_timestamp DESC LIMIT 1", fetch='one') or {}).get('latest'),
+    }
+    pending_recoveries = population.capped(
+        query, "SELECT 1 FROM RecoveryRequest WHERE status = 'PENDING'", cap=cap)
+    # One batch per anchoring interval and one epoch per closure: bounded tables (capacity.py).
     anchors = query("""
         SELECT COUNT(*) AS n, MAX(created_at) AS latest,
                COUNT(*) FILTER (WHERE NOT committed_to_chain) AS uncommitted
@@ -1721,10 +1778,10 @@ def _dashboard_model():
     def item(key, count, one, many, severity, href=None, note=None):
         attention.append({'key': key, 'count': count, 'label': one if count == 1 else many,
                           'severity': severity if count else 'ok', 'href': href, 'note': note})
-    item('duress', duress['last_24h'] or 0,
+    item('duress', duress['last_24h'],
          'duress signal in the last 24 hours', 'duress signals in the last 24 hours', 'critical',
          url_for('duress_dashboard'),
-         f"{duress['total'] or 0} on record" if duress['total'] else None)
+         f"{population.fmt_figure(duress['total'])} on record" if duress['total'] else None)
     item('recoveries', pending_recoveries,
          'recovery request awaiting a decision', 'recovery requests awaiting a decision', 'warning',
          url_for('uc9_queue'))
@@ -1732,14 +1789,14 @@ def _dashboard_model():
          'privileged account past its WebAuthn deadline', 'privileged accounts past their WebAuthn deadline',
          'warning', None, 'polaris-id user-list shows who')
     item('past_expiry', tokens['active_past_expiry'],
-         'active token past its expiry date', 'active tokens past their expiry date',
+         'active credential past its expiry date', 'active credentials past their expiry date',
          'warning', url_for('tokens_list', status='ACTIVE'))
     # A link the reader cannot open is worse than none: UC-6 is admin and
     # operator only, so an auditor gets the fact without the link.
     role = (security.current_user() or {}).get('role')
     item('classical', classical_active,
-         'active token still signed under a classical algorithm',
-         'active tokens still signed under a classical algorithm',
+         'active credential still signed under a classical algorithm',
+         'active credentials still signed under a classical algorithm',
          'warning', url_for('uc6_migrate') if role in ('admin', 'operator') else None,
          'migrate with UC-6')
     item('locked', operators['locked'],
@@ -1748,7 +1805,7 @@ def _dashboard_model():
     item('failed_logins', failed_logins_24h,
          'failed login in the last 24 hours', 'failed logins in the last 24 hours', 'info', None)
     item('expiring', tokens['expiring_30d'],
-         'active token expiring within 30 days', 'active tokens expiring within 30 days', 'info',
+         'active credential expiring within 30 days', 'active credentials expiring within 30 days', 'info',
          url_for('tokens_list', status='ACTIVE'))
     item('uncommitted', anchors['uncommitted'] or 0,
          'anchor batch not yet committed to a chain', 'anchor batches not yet committed to a chain',
@@ -1757,7 +1814,7 @@ def _dashboard_model():
         item('no_epoch', 1, 'no ZK epoch has been closed yet', 'no ZK epoch has been closed yet',
              'info', url_for('epochs_list'), 'proofs need a closed epoch to verify against')
 
-    # --- Audit of record ---------------------------------------------------------
+    # --- Audit of record ---------------------------------------------------------------------------
     recent_events = query("""
         SELECT le.event_id, le.event_type, le.event_timestamp, le.token_id, le.reason_code,
                ag.name AS actor_name
@@ -1781,8 +1838,7 @@ def _dashboard_model():
                    'last_closed': epochs['last_closed']},
         'anchors': {'count': anchors['n'] or 0, 'latest': anchors['latest'],
                     'uncommitted': anchors['uncommitted'] or 0},
-        'duress': {'total': duress['total'] or 0, 'last_24h': duress['last_24h'] or 0,
-                   'latest': duress['latest']},
+        'duress': duress,
     }
 
     return dict(
@@ -1793,6 +1849,7 @@ def _dashboard_model():
         tokens=tokens, verifications=verifications, crypto=crypto,
         agencies=agencies, auth_matrix=matrix,
         operators=operators, attention=attention, audit=audit,
+        recent_rows=population.RECENT_ROWS,
     )
 
 

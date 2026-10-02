@@ -25,6 +25,7 @@ import psycopg2
 
 from flask import flash, jsonify, redirect, render_template, request, session, url_for
 
+import lookup
 import pqc_signing
 import security
 from app import (
@@ -65,6 +66,31 @@ def _token_authority_denied(token_id):
                                              'on a credential it cannot see'), 403
         return None
     return _operator_authority_permits(row['issuing_agency_id'])
+
+
+def _acting_authority(credential=None):
+    """The authority a form proposes as the actor: the operator's own when bound, else the
+    credential's issuer. Only a default; the operator chooses, and the binding is asked."""
+    bound = session.get('operator_agency_id')
+    if bound is not None:
+        return int(bound)
+    return credential['issuing_agency_id'] if credential else None
+
+
+def _the_record(field):
+    """The number of the record a form acts on: the posted field after a refused POST, so the
+    page comes back showing what the operator was acting on, else the URL's token_id or
+    individual_id that a lookup or a record's page led here with."""
+    if request.method == 'POST':
+        return request.form.get(field)
+    return request.args.get('individual_id' if field == 'individual_id' else 'token_id')
+
+
+def _status(missing, status=200):
+    """404 for a page opened on a record it cannot show (absent, or hidden from this
+    operator: lookup.py), else the status the request already has. A refused POST keeps its
+    own, as before."""
+    return 404 if missing and request.method == 'GET' and status == 200 else status
 
 
 @app.route('/uc1/issue', methods=['GET', 'POST'])
@@ -153,18 +179,34 @@ def uc1_issue():
 # UC-4: RESERVE ACTIVATION (uses stored procedure)
 # ============================================================================
 
+#: The most reserve credentials UC-4 offers for one holder. A holder has a few; the bound keeps
+#: the page's cost fixed even for a holder some process gave thousands.
+RESERVES_SHOWN = 50
+
+
 @app.route('/uc4/activate-reserve', methods=['GET', 'POST'])
 @security.login_required
 @security.require_role('admin', 'operator')
 @security.csrf_protect
 def uc4_activate_reserve():
-    """Wraps the uc4_activate_reserve stored procedure."""
+    """Wraps the uc4_activate_reserve stored procedure. The page starts from the credential
+    reported lost (lookup.py) and offers only that holder's live reserves."""
+    status = 200
     if request.method == 'POST':
         # 1.0.0-rc.33: the lost token's own issuer is asked, always. The actor alone was asked,
         # and a missing or malformed actor skipped even that; uc4_activate_reserve runs as its
         # owner since rc.19, so nothing below this line refuses another authority's token.
         try:
             _denied = _token_authority_denied(int(request.form['lost_token_id']))
+        except (KeyError, ValueError):
+            _denied = None
+        if _denied:
+            return _denied
+        # 2026-10-01: and the reserve's. The request names two credentials, and a person can
+        # hold credentials from more than one authority: asked about the lost one alone, an
+        # operator bound to one authority activated a reserve another authority had issued.
+        try:
+            _denied = _token_authority_denied(int(request.form['reserve_token_id']))
         except (KeyError, ValueError):
             _denied = None
         if _denied:
@@ -190,24 +232,32 @@ def uc4_activate_reserve():
         except (psycopg2.Error, ValueError) as e:
             flash(db_error_to_message(e), 'error')
 
-    active_tokens = query("""
-        SELECT t.token_id, i.legal_name, t.token_value
-        FROM   IdentityToken t JOIN Individual i ON t.individual_id = i.individual_id
-        WHERE  t.status = 'ACTIVE'
-        ORDER BY t.token_id
-    """)
-    reserve_tokens = query("""
-        SELECT t.token_id, i.legal_name, t.token_value
-        FROM   IdentityToken t JOIN Individual i ON t.individual_id = i.individual_id
-        WHERE  t.status = 'RESERVE'
-          AND  (t.expiration_date IS NULL OR t.expiration_date >= polaris_utc_date())
-        ORDER BY t.token_id
-    """)
-    agencies = query("SELECT * FROM Agency ORDER BY agency_id")
+    credential, missing = lookup.chosen_credential(query, _the_record('lost_token_id'))
+    reserves, agencies = [], []
+    if credential and credential['status'] == 'ACTIVE':
+        # One holder's credentials, through idx_identitytoken_individual: a few rows whatever the
+        # population. Row-level security leaves a bound operator its own authority's reserves.
+        reserves = query("""
+            SELECT t.token_id, t.expiration_date, ag.name AS issuer_name,
+                   alg.name AS algorithm_name
+              FROM IdentityToken t
+              JOIN Agency ag ON ag.agency_id = t.issuing_agency_id
+              JOIN CryptographicAlgorithm alg ON alg.algorithm_id = t.algorithm_id
+             WHERE t.individual_id = %s
+               AND t.status = 'RESERVE'
+               AND (t.expiration_date IS NULL OR t.expiration_date >= polaris_utc_date())
+             ORDER BY t.token_id
+             LIMIT %s
+        """, (credential['individual_id'], RESERVES_SHOWN + 1))
+        agencies = query("SELECT agency_id, name FROM Agency ORDER BY agency_id")
     return render_template('uc4_activate.html',
-                           active_tokens=active_tokens,
-                           reserve_tokens=reserve_tokens,
-                           agencies=agencies)
+                           credential=credential, missing=missing,
+                           reserves=reserves[:RESERVES_SHOWN],
+                           reserves_more=len(reserves) > RESERVES_SHOWN,
+                           bound=session.get('operator_agency_id') is not None,
+                           agencies=agencies,
+                           actor_default=_acting_authority(credential)), _status(missing, status)
+
 
 
 # ============================================================================
@@ -219,7 +269,9 @@ def uc4_activate_reserve():
 @security.require_role('admin', 'operator')
 @security.csrf_protect
 def uc5_bind_device():
-    """Wraps the uc5_bind_device stored procedure."""
+    """Wraps the uc5_bind_device stored procedure. The page starts from one credential
+    (lookup.py)."""
+    status = 200
     if request.method == 'POST':
         try:
             _denied = _token_authority_denied(int(request.form['token_id']))
@@ -239,13 +291,9 @@ def uc5_bind_device():
         except (psycopg2.Error, ValueError) as e:
             flash(db_error_to_message(e), 'error')
 
-    active_tokens = query("""
-        SELECT t.token_id, i.legal_name, t.token_value
-        FROM   IdentityToken t JOIN Individual i ON t.individual_id = i.individual_id
-        WHERE  t.status = 'ACTIVE'
-        ORDER BY t.token_id
-    """)
-    return render_template('uc5_bind.html', active_tokens=active_tokens)
+    credential, missing = lookup.chosen_credential(query, _the_record('token_id'))
+    return render_template('uc5_bind.html', credential=credential,
+                           missing=missing), _status(missing, status)
 
 
 # ============================================================================
@@ -260,12 +308,17 @@ def uc7_warrant_audit():
     """Wraps the uc7_warrant_audit stored procedure with disclosure-aware redaction."""
     results = None
     individual_id = None
+    status = 200
+    scope = {}
     if request.method == 'POST':
         try:
             individual_id = int(request.form['individual_id'])
             window_start = request.form.get('window_start') or '1970-01-01 00:00:00'
             window_end   = request.form.get('window_end')   or '2099-12-31 23:59:59'
             context_filter = request.form.get('context_filter') or None
+            scope = {'window_start': request.form.get('window_start'),
+                     'window_end': request.form.get('window_end'),
+                     'context_filter': context_filter}
             results = query("""
                 SELECT * FROM uc7_warrant_audit(%s, %s, %s, %s)
                 ORDER BY event_timestamp
@@ -293,11 +346,13 @@ def uc7_warrant_audit():
         except (psycopg2.Error, ValueError) as e:
             flash(db_error_to_message(e), 'error')
 
-    individuals = query("SELECT * FROM Individual ORDER BY individual_id")
+    person, missing = lookup.chosen_person(query, _the_record('individual_id'))
+    contexts = query("SELECT context_type FROM VerificationContext ORDER BY context_type") \
+        if person else []
     return render_template('uc7_warrant.html',
-                           individuals=individuals,
-                           results=results,
-                           individual_id=individual_id)
+                           person=person, missing=missing,
+                           contexts=contexts, scope=scope,
+                           results=results), _status(missing, status)
 
 
 # ============================================================================
@@ -359,23 +414,14 @@ def uc8_revoke():
             if _quota_refused(e, 'revoke', _issuing_agency_of(request.form.get('token_id'))):
                 status = 429
 
-    active_tokens = query("""
-        SELECT t.token_id, i.legal_name, t.token_value,
-               t.issuing_agency_id, ag.name AS issuing_agency_name,
-               ca.name AS algorithm_name, t.algorithm_id
-        FROM   IdentityToken t
-        JOIN   Individual              i  ON t.individual_id = i.individual_id
-        JOIN   Agency                  ag ON t.issuing_agency_id = ag.agency_id
-        JOIN   CryptographicAlgorithm  ca ON t.algorithm_id = ca.algorithm_id
-        WHERE  t.status = 'ACTIVE'
-        ORDER BY t.token_id
-    """)
+    credential, missing = lookup.chosen_credential(query, _the_record('token_id'))
     agencies = query("""
         SELECT agency_id, name, agency_type FROM Agency ORDER BY agency_id
-    """)
+    """) if credential else []
     return render_template('uc8_revoke.html',
-                           active_tokens=active_tokens,
-                           agencies=agencies), status
+                           credential=credential, missing=missing,
+                           agencies=agencies,
+                           actor_default=_acting_authority(credential)), _status(missing, status)
 
 
 # ============================================================================
@@ -391,7 +437,9 @@ def uc8_revoke():
 @security.require_role('admin', 'operator')
 @security.csrf_protect
 def uc9_initiate():
-    """Phase 1 of UC-9: open a PENDING RecoveryRequest."""
+    """Phase 1 of UC-9: open a PENDING RecoveryRequest. The page starts from one person
+    (lookup.py) and says first whether a recovery is the right path for them."""
+    status = 200
     if request.method == 'POST':
         try:
             individual_id = int(request.form['individual_id'])
@@ -420,25 +468,25 @@ def uc9_initiate():
         except (psycopg2.Error, ValueError) as e:
             flash(db_error_to_message(e), 'error')
 
-    # Build the form. Individuals without an ACTIVE token are the legitimate
-    # candidates for recovery (UC-4 is the right path otherwise).
-    individuals = query("""
-        SELECT i.individual_id, i.legal_name, i.jurisdiction,
-               COALESCE(ice.current_status, 'NOT_ENROLLED') AS enrollment_status
-        FROM   Individual i
-        LEFT JOIN IndividualCurrentEnrollment ice
-               ON i.individual_id = ice.individual_id
-        WHERE  NOT EXISTS (
-                 SELECT 1 FROM IdentityToken t
-                 WHERE t.individual_id = i.individual_id AND t.status='ACTIVE')
-        ORDER BY i.individual_id
-    """)
-    agencies = query("""
-        SELECT agency_id, name, agency_type FROM Agency ORDER BY agency_id
-    """)
+    person, missing = lookup.chosen_person(query, _the_record('individual_id'))
+    active = pending = None
+    agencies = []
+    if person:
+        # A recovery is for a person with no active credential (UC-4 is the path otherwise) and
+        # none already pending: both read through one person's index entries.
+        active = query("SELECT token_id FROM IdentityToken "
+                       "WHERE individual_id = %s AND status = 'ACTIVE'",
+                       (person['individual_id'],), fetch='one')
+        pending = query("SELECT recovery_id FROM RecoveryRequest "
+                        "WHERE claimed_individual_id = %s AND status = 'PENDING' "
+                        "ORDER BY recovery_id LIMIT 1",
+                        (person['individual_id'],), fetch='one')
+        agencies = query("SELECT agency_id, name, agency_type FROM Agency ORDER BY agency_id")
     return render_template('uc9_initiate.html',
-                           individuals=individuals,
-                           agencies=agencies)
+                           person=person, missing=missing,
+                           active=active, pending=pending,
+                           agencies=agencies,
+                           actor_default=_acting_authority()), _status(missing, status)
 
 
 @app.route('/uc9/queue')
@@ -605,7 +653,8 @@ def uc9_decide(recovery_id):
 @security.csrf_protect
 def uc6_migrate():
     """Migrate a token to a new algorithm — add a new TokenSignature row,
-    optionally deprecate the old."""
+    optionally deprecate the old. The page starts from one credential (lookup.py)."""
+    status = 200
     if request.method == 'POST':
         try:
             token_id = int(request.form['token_id'])
@@ -649,27 +698,28 @@ def uc6_migrate():
         except (psycopg2.Error, ValueError) as e:
             flash(db_error_to_message(e), 'error')
 
-    tokens = query("""
-        SELECT t.token_id, t.token_value, t.status,
-               i.legal_name,
-               ag.name AS issuing_agency_name,
-               ARRAY(SELECT alg.name FROM TokenSignature s
-                     JOIN CryptographicAlgorithm alg ON s.algorithm_id = alg.algorithm_id
-                     WHERE s.token_id = t.token_id
-                       AND s.deprecation_date IS NULL
-                     ORDER BY alg.algorithm_id) AS active_algorithms
-        FROM IdentityToken t
-        JOIN Individual i  ON t.individual_id     = i.individual_id
-        JOIN Agency     ag ON t.issuing_agency_id = ag.agency_id
-        WHERE t.status IN ('RESERVE','ACTIVE')
-        ORDER BY t.token_id
-    """)
-    algorithms = query("""
-        SELECT algorithm_id, name, quantum_resistant
-        FROM CryptographicAlgorithm
-        WHERE deprecation_date IS NULL OR deprecation_date > polaris_utc_date()
-        ORDER BY algorithm_id
-    """)
+    credential, missing = lookup.chosen_credential(query, _the_record('token_id'))
+    signatures, algorithms = [], []
+    if credential:
+        # One credential's signatures, live and deprecated: a handful of rows through its key.
+        # Every one counts against a new algorithm, because UNIQUE (token_id, algorithm_id)
+        # refuses a second signature under an algorithm whose first was deprecated.
+        signatures = query("""
+            SELECT alg.name AS algorithm_name, alg.quantum_resistant,
+                   s.deprecation_date IS NULL AS live
+              FROM TokenSignature s
+              JOIN CryptographicAlgorithm alg ON alg.algorithm_id = s.algorithm_id
+             WHERE s.token_id = %s
+             ORDER BY alg.algorithm_id
+        """, (credential['token_id'],))
+        algorithms = query("""
+            SELECT algorithm_id, name, quantum_resistant
+            FROM CryptographicAlgorithm
+            WHERE deprecation_date IS NULL OR deprecation_date > polaris_utc_date()
+            ORDER BY algorithm_id
+        """)
     return render_template('uc6_migrate.html',
-                           tokens=tokens,
-                           algorithms=algorithms)
+                           credential=credential, missing=missing,
+                           signatures=signatures,
+                           signed_names={s['algorithm_name'] for s in signatures},
+                           algorithms=algorithms), _status(missing, status)

@@ -1,76 +1,74 @@
+{# UC-9 phase 1, catastrophic-loss recovery. The page starts from one person, found by number, or by
+   name with the date of birth (lookup.py), and never lists the population (lab/strategy/008).
+   uc9_initiate_recovery holds the rule. CSP C5: no inline script. #}
 {% extends "base.html" %}
-{% block title %}UC-9: Initiate Recovery{% endblock %}
+{% block title %}Open a recovery{% endblock %}
 {% block content %}
-<div class="uc-banner">
-    <div class="uc-id">Use Case 9: Phase 1</div>
-    <h1>Initiate Catastrophic-Loss Recovery</h1>
-    <div class="uc-desc">
-        Out-of-band recovery ceremony for the case where a holder loses all of their tokens and devices
-        at once. This is phase 1: open a <code>PENDING</code> request. No token is issued here. A
-        <strong>different</strong> administrator must complete phase 2 after the 48-hour cool-down and after all
-        three out-of-band channels (biometric, sworn statement, witness agency co-sign) are verified.
-        Recovery, tiered enrollment and bounded revocation together keep the schema from being
-        turned against the holder.
+{% import "_ui.html" as ui with context %}
+{% call ui.page_head('Open a recovery', eyebrow='Operations · UC-9',
+                     lede='For a holder who has lost every credential and device at once. This opens a pending request; nothing is issued here.') %}
+    <a class="btn btn-secondary" href="{{ url_for('uc9_queue') }}">{{ ui.icon('life-buoy') }}Recovery queue</a>
+{% endcall %}
+
+<div class="op">
+<div class="op-main">
+    <section class="panel" aria-labelledby="op-record-h">
+        <div class="panel-head"><h2 id="op-record-h">The person</h2></div>
+        {% if person %}
+            {{ ui.person_card(person, change=url_for('uc9_initiate')) }}
+        {% else %}
+            {% if missing %}{{ ui.not_found('person', missing) }}{% endif %}
+            {{ ui.find_person('uc9_initiate', autofocus=not missing) }}
+        {% endif %}
+    </section>
+
+    {% if person and active %}
+    <div class="callout callout-warn" role="note">
+        {{ ui.icon('info') }}
+        <p>{{ person.legal_name }} holds an active credential, <a class="mono" href="{{ url_for('tokens_detail', tok_id=active.token_id) }}">#{{ active.token_id }}</a>,
+           so this is not a recovery. If it was lost, <a href="{{ url_for('uc4_activate_reserve', token_id=active.token_id) }}">activate a reserve</a> in its place.</p>
     </div>
+    {% elif person and pending %}
+    <div class="callout callout-warn" role="note">
+        {{ ui.icon('info') }}
+        <p>A recovery for {{ person.legal_name }} is already pending: request
+           <span class="mono">#{{ pending.recovery_id }}</span> in the <a href="{{ url_for('uc9_queue') }}">recovery queue</a>.</p>
+    </div>
+    {% elif person %}
+    <form method="post" class="panel op-form" aria-labelledby="op-act-h">
+        <div class="panel-head"><h2 id="op-act-h">Request</h2></div>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="individual_id" value="{{ person.individual_id }}">
+        <div class="form-group">
+            <label for="requesting_agency_id">Requesting authority</label>
+            <select id="requesting_agency_id" name="requesting_agency_id" required>
+                <option value="">Choose&hellip;</option>
+                {% for ag in agencies %}
+                <option value="{{ ag.agency_id }}"{% if ag.agency_id == actor_default %} selected{% endif %}>{{ ag.name }} (#{{ ag.agency_id }}, {{ ag.agency_type|lower }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">{{ ui.icon('life-buoy') }}Open the recovery request</button>
+            <a href="{{ url_for('investigate_individual', ind_id=person.individual_id) }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+    {% endif %}
 </div>
 
-{% if not individuals %}
-    <div class="flash flash-error">
-        <span class="flash-icon">⚠</span>
-        <span class="flash-text">Every individual currently has an ACTIVE token. Use UC-4 (Activate Reserve) instead.</span>
-    </div>
-{% endif %}
-
-<form method="post" class="standard">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="form-row">
-        <div class="form-group full">
-            <label for="individual_id">Claimed Individual</label>
-            <select id="individual_id" name="individual_id" required>
-                <option value="">Select&hellip;</option>
-                {% for ind in individuals %}
-                    <option value="{{ ind.individual_id }}">
-                        #{{ ind.individual_id }}: {{ ind.legal_name }}
-                        ({{ ind.jurisdiction }}; enrollment: {{ ind.enrollment_status }})
-                    </option>
-                {% endfor %}
-            </select>
-            <span class="help">Only individuals without an ACTIVE token are listed. UC-4 (reserve activation) is the right path otherwise.</span>
-        </div>
-    </div>
-
-    <div class="form-row">
-        <div class="form-group full">
-            <label for="requesting_agency_id">Requesting Agency</label>
-            <select id="requesting_agency_id" name="requesting_agency_id" required>
-                <option value="">Select&hellip;</option>
-                {% for ag in agencies %}
-                    <option value="{{ ag.agency_id }}">#{{ ag.agency_id }}, {{ ag.name }} ({{ ag.agency_type }})</option>
-                {% endfor %}
-            </select>
-            <span class="help">The agency on whose behalf the recovery is being initiated.</span>
-        </div>
-    </div>
-
-    <div class="info-panel">
-        <p><strong>What happens after submit:</strong></p>
-        <ol>
-            <li>A <code>RecoveryRequest</code> row is created with status=<code>PENDING</code>.</li>
-            <li>The 48-hour cool-down clock starts.</li>
-            <li>Out-of-band verification (biometric, sworn statement, witness agency) happens externally.</li>
-            <li>A <strong>different</strong> administrator reviews the queue (<a href="{{ url_for('uc9_queue') }}">/uc9/queue</a>) and decides APPROVED or REJECTED.</li>
-        </ol>
-        <p class="footnote">
-            On APPROVED, the procedure transitions all of the individual's non-terminal tokens to LOST
-            (publishing each to RevocationList) and issues a new ACTIVE token with predecessor_token_id=NULL.
-            All transitions are audit-tagged <code>[RECOVERY:&lt;id&gt;]</code> in the lifecycle log.
-        </p>
-    </div>
-
-    <div class="form-actions">
-        <button type="submit" class="btn btn-gold" {% if not individuals %}disabled{% endif %}>Open Recovery Request</button>
-        <a href="{{ url_for('uc9_queue') }}" class="btn btn-secondary">View Queue</a>
-        <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Cancel</a>
-    </div>
-</form>
+<aside class="panel op-rule" aria-labelledby="op-rule-h">
+    <div class="panel-head"><h2 id="op-rule-h">What follows</h2></div>
+    <ol class="steps">
+        <li>The request opens as pending, and a 48-hour cool-down starts.</li>
+        <li>Three out-of-band channels are recorded by someone other than the requester: the
+            biometric check, a sworn statement, and a co-sign from a second authority.</li>
+        <li>A different administrator decides it. Approval ends every credential the person still
+            holds, publishing each revocation, and issues a new active one.</li>
+    </ol>
+    <p>A person who holds an active credential is not recovered: losing it is a reserve
+       activation. One recovery is pending for a person at a time.</p>
+    <p class="muted">Enforced in the database by <span class="mono">uc9_initiate_recovery</span> and
+       <span class="mono">uc9_complete_recovery</span>.</p>
+</aside>
+</div>
 {% endblock %}

@@ -1,0 +1,206 @@
+{# Shared presentation macros for the console (docs/design/console-design.md).
+   Import with: {% import "_ui.html" as ui %} #}
+
+{# An icon from the vendored Lucide sprite (static/vendor/lucide/sprite.svg). Decorative by
+   default; pass a label when the icon is the only thing that names a control. #}
+{% macro icon(name, cls='', label=None) -%}
+<svg class="icon {{ cls }}"{% if label %} role="img" aria-label="{{ label }}"{% else %} aria-hidden="true" focusable="false"{% endif %}><use href="{{ url_for('static', filename='vendor/lucide/sprite.svg') }}?v={{ polaris_version }}#i-{{ name }}"></use></svg>
+{%- endmacro %}
+
+{# The page header: an eyebrow naming the section, the title, an optional lede, and actions. #}
+{% macro page_head(title, eyebrow=None, lede=None) -%}
+<header class="page-head">
+    <div class="page-head-text">
+        {% if eyebrow %}<p class="eyebrow">{{ eyebrow }}</p>{% endif %}
+        <h1>{{ title }}</h1>
+        {% if lede %}<p class="lede">{{ lede }}</p>{% endif %}
+    </div>
+    {% if caller %}<div class="page-head-actions">{{ caller() }}</div>{% endif %}
+</header>
+{%- endmacro %}
+
+{# A state pill. `state` is the stored value (ACTIVE, RESERVE, REVOKED, ...); the class carries
+   it so the palette follows the state, and the text stays readable without colour. #}
+{% macro pill(state, text=None) -%}
+<span class="pill pill-{{ state }}">{{ text or state|replace('_', ' ')|title }}</span>
+{%- endmacro %}
+
+{# A count at any scale (lab/strategy/008). An exact count prints its grouped digits, or with
+   compact=True, at a million and above, three figures (8.12 B) with the digits for a screen
+   reader. An estimate prints "≈" and three significant figures, and is read as "about"; a
+   capped count prints "+" and is read as "or more". A plain int prints as an exact count. #}
+{% macro figure(f, compact=False) -%}
+{%- if f.at_least is defined and f.at_least -%}
+<span aria-hidden="true">{{ f|num }}+</span><span class="visually-hidden">{{ f|figure_text }}</span>
+{%- elif f.exact is defined and not f.exact -%}
+<span class="approx" aria-hidden="true">&#8776;&#8239;{{ f|estimate }}</span><span class="visually-hidden">{{ f|figure_text }}</span>
+{%- elif compact and f >= 1000000 -%}
+<span aria-hidden="true">{{ f|compact }}</span><span class="visually-hidden">{{ f|num }}</span>
+{%- else -%}
+{{ f|num }}
+{%- endif -%}
+{%- endmacro %}
+
+{# The navigation, as data: (group caption or None, [(endpoint, label, icon, roles or None,
+   [other endpoints that belong to this entry])]). roles None = every signed-in user. The
+   breadcrumb and the current-page mark are derived from the same table, so they cannot drift. #}
+{% set NAV = [
+    (None, [
+        ('dashboard', 'Overview', 'layout-dashboard', None, []),
+    ]),
+    ('Registry', [
+        ('tokens_list', 'Credentials', 'id-card', None, ['tokens_detail', 'investigate_token']),
+        ('individuals_list', 'People', 'users', None, ['individuals_new', 'individuals_edit', 'investigate_individual', 'enrollment_summary']),
+        ('agencies_list', 'Authorities', 'landmark', None, ['agencies_new', 'agencies_edit']),
+    ]),
+    ('Operations', [
+        ('uc1_issue', 'Issue a credential', 'badge-plus', ('admin', 'operator'), []),
+        ('uc4_activate_reserve', 'Activate a reserve', 'power', ('admin', 'operator'), []),
+        ('uc5_bind_device', 'Bind a device', 'smartphone', ('admin', 'operator'), []),
+        ('uc6_migrate', 'Migrate an algorithm', 'arrow-right-left', ('admin', 'operator'), []),
+        ('uc8_revoke', 'Revoke', 'octagon-x', ('admin', 'operator'), []),
+        ('uc9_queue', 'Recovery', 'life-buoy', ('admin', 'operator'), ['uc9_initiate', 'uc9_decide']),
+    ]),
+    ('Verification', [
+        ('verifications_list', 'Verification log', 'shield-check', None, ['verifications_new']),
+    ]),
+    ('Transparency', [
+        ('anchors_list', 'Anchor batches', 'anchor', None, []),
+        ('epochs_list', 'ZK epochs', 'layers', None, []),
+        ('federation_viewer', 'Federation', 'network', None, []),
+    ]),
+    ('Governance', [
+        ('athena_console', 'Athena', 'scale', None, []),
+    ]),
+    ('Analytics', [
+        ('atlas', 'Atlas', 'globe', None, []),
+    ]),
+    ('Audit', [
+        ('uc7_warrant_audit', 'Warrant audit', 'gavel', ('admin', 'auditor'), []),
+        ('duress_dashboard', 'Duress signals', 'siren', ('admin', 'auditor'), []),
+        ('sql_query', 'SQL console', 'terminal', ('admin', 'auditor'), []),
+    ]),
+] %}
+
+{# The breadcrumb for the current endpoint: the group (not a page, so plain text), the section
+   entry, and the page itself when its title differs. An ordered list with aria-current on the
+   last item (the WAI-ARIA breadcrumb pattern); the separators are drawn in CSS, so a screen
+   reader does not announce them. #}
+{% macro crumbs(endpoint, title) -%}
+{%- set found = namespace(group=None, label=None, href=None) -%}
+{%- for group, items in NAV -%}
+  {%- for ep, label, ic, roles, also in items -%}
+    {%- if endpoint == ep or endpoint in also -%}
+      {%- set found.group = group -%}{%- set found.label = label -%}{%- set found.href = url_for(ep) -%}
+    {%- endif -%}
+  {%- endfor -%}
+{%- endfor -%}
+<ol class="crumbs">
+{%- if found.group %}<li>{{ found.group }}</li>{% endif -%}
+{%- if found.label and title and title != found.label -%}
+<li><a href="{{ found.href }}">{{ found.label }}</a></li><li aria-current="page">{{ title }}</li>
+{%- elif found.label -%}
+<li aria-current="page">{{ found.label }}</li>
+{%- elif title -%}
+<li aria-current="page">{{ title }}</li>
+{%- endif -%}
+</ol>
+{%- endmacro %}
+
+{# Where an operation starts at any population (lab/strategy/008): the operator types what they
+   hold, it travels in a POST body to /find/credential (never in a URL), and the page `next`
+   names comes back with the credential's number. #}
+{% macro find_credential(next, text='', label='Find the credential', autofocus=False) -%}
+<form method="post" action="{{ url_for('find_credential') }}" class="find" role="search" aria-label="Find a credential">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label for="find-credential">{{ label }}</label>
+    <div class="find-row">
+        <input type="search" id="find-credential" name="credential" value="{{ text }}" required
+               maxlength="128" class="mono" autocomplete="off" spellcheck="false"
+               aria-describedby="find-credential-help"{% if autofocus %} autofocus{% endif %}>
+        <button type="submit" class="btn btn-primary">{{ icon('search') }}Find</button>
+    </div>
+    <p class="help" id="find-credential-help">Its number (#1234), its token value or its card serial.</p>
+</form>
+{%- endmacro %}
+
+{# The same for a person: a number, or a name with the date of birth. #}
+{% macro find_person(next, text='', born='', autofocus=False) -%}
+<form method="post" action="{{ url_for('find_person') }}" class="find" role="search" aria-label="Find a person">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <div class="find-fields">
+        <div class="form-group">
+            <label for="find-person">Name or person number</label>
+            <input type="search" id="find-person" name="person" value="{{ text }}" required
+                   maxlength="200" autocomplete="off" spellcheck="false"
+                   aria-describedby="find-person-help"{% if autofocus %} autofocus{% endif %}>
+        </div>
+        <div class="form-group">
+            <label for="find-born">Date of birth</label>
+            <input type="date" id="find-born" name="born" value="{{ born }}"
+                   aria-describedby="find-person-help">
+        </div>
+        <button type="submit" class="btn btn-primary">{{ icon('search') }}Find</button>
+    </div>
+    <p class="help" id="find-person-help">A number (#1234) alone, or the beginning of the name as recorded with the date of birth.</p>
+</form>
+{%- endmacro %}
+
+{# A credential's state as a sentence reads it: "this one is a reserve", "is revoked". #}
+{% macro state_words(status) -%}
+{{ {'RESERVE': 'a reserve', 'DORMANT': 'dormant'}.get(status, status|lower) }}
+{%- endmacro %}
+
+{# One credential, as an operation shows it before acting on it. #}
+{% macro credential_card(c, change=None) -%}
+<div class="record">
+    <div class="record-head">
+        <a class="record-id mono" href="{{ url_for('tokens_detail', tok_id=c.token_id) }}">#{{ c.token_id }}</a>
+        {{ pill(c.status) }}
+        {% if c.past_expiry %}<span class="pill pill-EXPIRED">Past its expiry</span>{% endif %}
+        {% if change %}<a class="record-change" href="{{ change }}">Choose another</a>{% endif %}
+    </div>
+    <dl class="kv">
+        <dt>Holder</dt>
+        <dd><a href="{{ url_for('investigate_individual', ind_id=c.individual_id) }}">{{ c.legal_name }}</a> <span class="muted mono">#{{ c.individual_id }}</span></dd>
+        <dt>Issuer</dt>
+        <dd>{{ c.issuer_name }}</dd>
+        <dt>Algorithm</dt>
+        <dd><span class="mono">{{ c.algorithm_name }}</span>
+            {% if c.quantum_resistant %}<span class="type-tag type-tag-pq">PQ</span>{% else %}<span class="type-tag">Classical</span>{% endif %}</dd>
+        <dt>Token value</dt>
+        <dd class="mono">{{ c.token_value }}</dd>
+        <dt>Card serial</dt>
+        <dd class="mono">{{ c.physical_serial }}</dd>
+        <dt>Expires</dt>
+        <dd>{{ c.expiration_date.strftime('%Y-%m-%d') if c.expiration_date else 'No expiry' }}</dd>
+    </dl>
+</div>
+{%- endmacro %}
+
+{# One person, as an operation shows them before acting. #}
+{% macro person_card(p, change=None) -%}
+<div class="record">
+    <div class="record-head">
+        <a class="record-id mono" href="{{ url_for('investigate_individual', ind_id=p.individual_id) }}">#{{ p.individual_id }}</a>
+        <strong class="record-name">{{ p.legal_name }}</strong>
+        {% if change %}<a class="record-change" href="{{ change }}">Choose another</a>{% endif %}
+    </div>
+    <dl class="kv">
+        <dt>Date of birth</dt>
+        <dd>{{ p.date_of_birth.strftime('%Y-%m-%d') }}</dd>
+        <dt>Jurisdiction</dt>
+        <dd class="mono">{{ p.jurisdiction }}</dd>
+        <dt>Enrolled</dt>
+        <dd>{{ p.enrollment_date.strftime('%Y-%m-%d') }}</dd>
+    </dl>
+</div>
+{%- endmacro %}
+
+{# What a page says when the record it was asked to act on is not there, or not visible to this
+   operator: the two read the same (lookup.py). `missing` is the number asked for, or '?'. #}
+{% macro not_found(kind, missing) -%}
+<div class="callout callout-warn" role="alert">{{ icon('triangle-alert') }}<p>No {{ kind }} matches {% if missing is number %}#{{ missing }}{% else %}that number{% endif %}.</p></div>
+{%- endmacro %}

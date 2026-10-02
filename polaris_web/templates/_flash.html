@@ -1,0 +1,16 @@
+{% import "_ui.html" as ui with context %}
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+<div class="flash-region" role="status" aria-live="polite">
+    {% for category, message in messages %}
+    <div class="flash flash-{{ category }}">
+        <span class="flash-icon">{{ ui.icon('circle-check' if category == 'success' else ('circle-x' if category == 'error' else ('triangle-alert' if category == 'warning' else 'info'))) }}</span>
+        <span class="flash-text">{{ message }}</span>
+        {% if category != 'success' %}
+        <button type="button" class="flash-dismiss" aria-label="Dismiss this message">{{ ui.icon('x', 'icon-sm') }}</button>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endwith %}

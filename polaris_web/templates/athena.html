@@ -7,6 +7,7 @@
 {% extends "base.html" %}
 {% block title %}Athena{% endblock %}
 {% block body_class %} body-athena{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='atlas.css') }}?v={{ polaris_version }}">{% endblock %}
 {% block content %}
 <div class="athena-shell">
   <header class="athena-head">

@@ -1,47 +1,57 @@
 {% extends "base.html" %}
-{% block title %}Sign In{% endblock %}
-{% block content %}
-
-<div class="login-page">
-    <div class="login-card">
-        <div class="login-mark">
-            <div class="login-brand">POLARIS</div>
-            <div class="login-sub">Identity Token System</div>
+{% block title %}Sign in{% endblock %}
+{% block public %}
+<main id="main" class="auth" tabindex="-1">
+    <section class="auth-brand" aria-label="Polaris">
+        <div class="auth-ident">
+            <img src="{{ url_for('static', filename='brand/polaris-logo.png') }}" alt="The Polaris seal" width="104" height="104">
+            <span class="wordmark">POLARIS</span>
+            <p>The issuing authority's console: credentials issued and kept current here, verifiable
+               by anyone, offline, against the authority's published keys.</p>
+            <div class="env-badge">Pre-pilot · notional data · <span class="ver">v{{ polaris_version }}</span></div>
         </div>
-
-        <form method="post" class="login-form" autocomplete="off" spellcheck="false" novalidate>
-            {# Decoy fields defeat Chrome/Edge autofill even when autocomplete=off #}
-            <input type="text" name="prevent_autofill" autocomplete="off"
-                   style="display:none" tabindex="-1" aria-hidden="true">
-            <input type="password" name="prevent_autofill_pw" autocomplete="new-password"
-                   style="display:none" tabindex="-1" aria-hidden="true">
-
-            <div class="login-error" id="loginError" role="alert" aria-live="polite"></div>
-
-            <div class="form-group">
-                <label for="username">Username</label>
-                <input type="text" id="username" name="username" autofocus
-                       autocomplete="off"
-                       maxlength="50" pattern="[a-z0-9._-]{3,50}"
-                       value="{{ username }}">
-            </div>
-            <div class="form-group">
-                <label for="password">Password</label>
-                <input type="password" id="password" name="password"
-                       autocomplete="new-password"
-                       maxlength="128">
-            </div>
-            <div class="form-actions">
-                <button type="submit" class="btn btn-gold">Sign In</button>
-            </div>
-        </form>
-
-        <script src="{{ url_for('static', filename='login-form.js') }}?v={{ polaris_version }}" defer></script>
-
-        <div class="login-help">
-            Authorized use only. All authentication events are logged.
+        <div class="auth-maker">
+            <a class="maker" href="https://github.com/EgorKhaklin" rel="noopener" aria-label="Khaklin Technologies">
+                <span class="maker-lockup" aria-hidden="true"></span>
+            </a>
         </div>
-    </div>
-</div>
+    </section>
 
+    <section class="auth-form">
+        <div class="auth-card">
+            {% include "_flash.html" %}
+            <h1>Sign in</h1>
+            <p class="lede">With your operator account. If you have registered a security key, it is asked for next.</p>
+
+            <form method="post" class="login-form" autocomplete="off" spellcheck="false" novalidate>
+                {# Decoy fields defeat Chrome/Edge autofill even when autocomplete=off #}
+                <input type="text" name="prevent_autofill" autocomplete="off"
+                       style="display:none" tabindex="-1" aria-hidden="true">
+                <input type="password" name="prevent_autofill_pw" autocomplete="new-password"
+                       style="display:none" tabindex="-1" aria-hidden="true">
+
+                <div class="login-error" id="loginError" role="alert" aria-live="polite"></div>
+
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" autofocus
+                           autocomplete="off"
+                           maxlength="50" pattern="[a-z0-9._-]{3,50}"
+                           value="{{ username }}">
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password"
+                           autocomplete="new-password"
+                           maxlength="128">
+                </div>
+                <button type="submit" class="btn btn-primary btn-lg btn-block">Sign in</button>
+            </form>
+
+            <p class="auth-note">Authorized use only. Every authentication event is recorded in the
+               audit log.</p>
+        </div>
+    </section>
+</main>
+<script src="{{ url_for('static', filename='login-form.js') }}?v={{ polaris_version }}" defer></script>
 {% endblock %}

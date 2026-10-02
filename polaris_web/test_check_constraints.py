@@ -2599,7 +2599,8 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         uc8_revoke_token as the owner. Measured with a role holding no grant at all: it entered
         the body and was stopped only by the business rules. Now it is refused at the door, and
         the application role keeps its EXECUTE, except on the retention routines, which take
-        the acting admin as a parameter and are the owner's alone (2026-10-01, review F2)."""
+        the acting admin as a parameter and are the owner's alone (2026-10-01, review F2), and the
+        population recount, which SHARE-locks the credential tables (lab/strategy/008)."""
         owner = psycopg2.connect(**DB_CONFIG)
         try:
             with owner.cursor() as cur:
@@ -2607,9 +2608,10 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                             "WHERE p.prosecdef AND p.pronamespace = 'public'::regnamespace")
                 routines = [r[0] for r in cur.fetchall()]
                 self.assertGreaterEqual(len(routines), 9)
-                owner_only = {"uc_archive_purge", "uc_set_retention_policy", "uc_apply_retention_template"}
+                owner_only = {"uc_archive_purge", "uc_set_retention_policy", "uc_apply_retention_template",
+                              "uc_rebuild_population_counts"}
                 self.assertEqual({sig.split("(")[0] for sig in routines} & owner_only, owner_only,
-                                 "the owner-only retention routines must exist for this to mean anything")
+                                 "the owner-only routines must exist for this to mean anything")
                 for sig in routines:
                     cur.execute("SELECT has_function_privilege('polaris_app', %s, 'EXECUTE'), "
                                 "       has_function_privilege('public', %s, 'EXECUTE')", (sig, sig))
@@ -2690,6 +2692,42 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                     cur.execute(sql, (agency,))
                     self.assertEqual(cur.fetchone()["n"], 0,
                                      "a bound operator sees another authority's %s" % label)
+        finally:
+            conn.rollback()
+            conn.close()
+
+    def test_a_bound_operator_sees_only_its_authoritys_population_counts(self):
+        """2026-10-02. The population counts (lab/strategy/008) are isolated by authority like the
+        credentials they count. The constraint mutation drill weakened both policies to USING
+        (true) and every suite stayed green. As polaris_app bound to one authority, no other
+        authority's figure is visible, folded or pending; unbound, they exist, so the zero is
+        the policy's. A status change on another authority's credential, rolled back with the
+        rest, makes the pending figure: a folded table has none."""
+        conn = self._app_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT min(agency_id) AS a FROM Agency")
+                agency = cur.fetchone()["a"]
+                cur.execute("SELECT token_id FROM IdentityToken WHERE status = 'ACTIVE' "
+                            "AND issuing_agency_id <> %s ORDER BY token_id LIMIT 1", (agency,))
+                tok = cur.fetchone()
+                self.assertIsNotNone(tok, "fixture: another authority's ACTIVE credential")
+                cur.execute("SELECT set_config('polaris.justification', 'population isolation probe', true)")
+                cur.execute("UPDATE IdentityToken SET status = 'DORMANT' WHERE token_id = %s",
+                            (tok["token_id"],))
+                for table in ("PopulationCount", "PopulationCountDelta"):
+                    sql = "SELECT count(*) AS n FROM %s WHERE agency_id <> %%s" % table
+                    cur.execute("SELECT set_config('polaris.operator_agency_id', '', false)")
+                    cur.execute(sql, (agency,))
+                    self.assertGreater(cur.fetchone()["n"], 0,
+                                       "fixture: another authority's rows in %s" % table)
+                    cur.execute("SELECT set_config('polaris.operator_agency_id', %s, false)", (str(agency),))
+                    cur.execute(sql, (agency,))
+                    self.assertEqual(cur.fetchone()["n"], 0,
+                                     "a bound operator reads another authority's %s" % table)
+                cur.execute("SELECT count(*) AS n FROM PopulationCount WHERE agency_id = %s", (agency,))
+                self.assertGreater(cur.fetchone()["n"], 0,
+                                   "the binding hides other authorities, not the operator's own")
         finally:
             conn.rollback()
             conn.close()

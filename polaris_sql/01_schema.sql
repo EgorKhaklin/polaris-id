@@ -62,6 +62,8 @@ DROP TABLE IF EXISTS RefereeVouching       CASCADE;
 DROP TABLE IF EXISTS EnrollmentProofing    CASCADE;
 DROP TABLE IF EXISTS CardPersonalization   CASCADE;
 DROP TABLE IF EXISTS ZkVerificationNonce    CASCADE;
+DROP TABLE IF EXISTS PopulationCountDelta   CASCADE;
+DROP TABLE IF EXISTS PopulationCount        CASCADE;
 DROP TABLE IF EXISTS BulkEnrollmentStaging   CASCADE;
 DROP TABLE IF EXISTS BulkEnrollmentBatch     CASCADE;
 -- v9.189: AuditAccessLog (migration-added 2026-05-15-003, plain CREATE TABLE)
@@ -2143,6 +2145,48 @@ CREATE TABLE IF NOT EXISTS BulkEnrollmentStaging (
 CREATE INDEX IF NOT EXISTS idx_bulkstaging_batch ON BulkEnrollmentStaging(batch_id);
 
 -- ============================================================================
+-- Population counts (lab/strategy/008)
+--
+-- How many credentials an authority holds in each status, and how many live signatures under
+-- each algorithm its active credentials carry, at any population and exactly. A count over
+-- IdentityToken costs in proportion to the table; these cost the same at eight billion rows as
+-- at eight. They are maintained by statement triggers on IdentityToken and TokenSignature
+-- (06_triggers.sql), which only APPEND signed changes to PopulationCountDelta, so a writer never
+-- waits on another writer's counter row and two writers cannot deadlock over one.
+-- uc_fold_population_counts() moves the changes into PopulationCount; a reader sums both tables,
+-- so a count is exact whether or not the last changes have been folded.
+--
+-- The application role reads them and writes neither: a count it could write is a count a
+-- compromised application could forge (09_grants.sql).
+-- ============================================================================
+CREATE TABLE PopulationCount (
+    facet       VARCHAR(20) NOT NULL
+        CHECK (facet IN ('credential_status', 'live_signature')),
+    agency_id   INTEGER     NOT NULL REFERENCES Agency(agency_id),
+    -- credential_status: a status; live_signature: an algorithm id, as text.
+    item        VARCHAR(40) NOT NULL,
+    n           BIGINT      NOT NULL CHECK (n >= 0),
+    PRIMARY KEY (facet, agency_id, item)
+);
+
+CREATE TABLE PopulationCountDelta (
+    delta_id    BIGSERIAL   PRIMARY KEY,
+    facet       VARCHAR(20) NOT NULL
+        CHECK (facet IN ('credential_status', 'live_signature')),
+    agency_id   INTEGER     NOT NULL REFERENCES Agency(agency_id),
+    item        VARCHAR(40) NOT NULL,
+    n           BIGINT      NOT NULL CHECK (n <> 0)
+);
+
+COMMENT ON TABLE PopulationCount IS
+  'Exact population counts by authority (lab/strategy/008): credentials by status and live '
+  'signatures on active credentials by algorithm. Folded from PopulationCountDelta by '
+  'uc_fold_population_counts(); a reader sums both. Written only by the owner''s routines.';
+COMMENT ON TABLE PopulationCountDelta IS
+  'Signed changes to PopulationCount not yet folded in, appended by the statement triggers on '
+  'IdentityToken and TokenSignature. Append-only for writers, so counting never serialises them.';
+
+-- ============================================================================
 -- Event-table partition manager + bootstrap (roadmap P2.1, v9.245)
 -- Defined here, at the end of the schema, so the initial monthly partitions
 -- exist before ANY row is inserted (04_data's seed and the enrollment trigger
@@ -2337,4 +2381,23 @@ CREATE POLICY lifecycle_authority_isolation ON TokenLifecycleEvent
         OR actor_agency_id = coalesce(
             NULLIF(current_setting('polaris.operator_agency_id', true), '')::INTEGER,
             actor_agency_id)
+    );
+
+-- The population counts are an authority's figures (lab/strategy/008): scoped the same way, so an
+-- operator bound to one authority reads that authority's counts and no other's.
+ALTER TABLE PopulationCount ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS population_count_authority_isolation ON PopulationCount;
+CREATE POLICY population_count_authority_isolation ON PopulationCount
+    USING (
+        agency_id = coalesce(
+            NULLIF(current_setting('polaris.operator_agency_id', true), '')::INTEGER,
+            agency_id)
+    );
+ALTER TABLE PopulationCountDelta ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS population_count_delta_authority_isolation ON PopulationCountDelta;
+CREATE POLICY population_count_delta_authority_isolation ON PopulationCountDelta
+    USING (
+        agency_id = coalesce(
+            NULLIF(current_setting('polaris.operator_agency_id', true), '')::INTEGER,
+            agency_id)
     );

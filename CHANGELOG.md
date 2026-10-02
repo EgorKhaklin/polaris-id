@@ -7,6 +7,35 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
+## Unreleased
+
+### Security
+
+- An operator bound to one authority can no longer activate a reserve another authority issued (UC-4).
+
+### Added
+
+- Exact credential and live-signature counts by authority, kept by triggers that only append (`PopulationCount`).
+- Indexes for expiring credentials, credentials by status, issuance in a window and one credential's verifications.
+- Find a credential by number, token value or card serial, or a person by name and date of birth; the text stays out of URLs.
+- An index for finding a person by date of birth and the beginning of the name.
+- A credential's page offers the operations its state admits; a person's page offers recovery and the warrant audit.
+
+### Changed
+
+- The operator console is rethought around what Polaris is now: grouped, role-gated navigation; new sign-in, landing and Overview.
+- The Overview costs the same at any population: 10.4 s to 0.12 s at two million persons.
+- Console counts read to thirteen digits and beyond; a capped count says "or more".
+- The seven operation forms start from one record found by lookup instead of listing every credential or person.
+
+### Fixed
+
+- A credential's page and both investigation pages read its verifications through an index, not a full scan.
+- The advisory-lock check reads locks taken in functions; the holder key register's lock gains contention tests.
+- The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
+- The warrant audit page no longer says zero-knowledge events come back redacted; they are never returned.
+- A person's investigation page takes its colours from the theme; a credential value read at 3.48:1 in light.
+
 ## v1.0.0-rc.70 — 2026-10-01 (the three verifiers read every input alike)
 
 The three verifiers read instants, ids, keys, grant actions and status answers alike, and `polaris-verify` refuses a flag its mode would not read; `polaris-oid4vp` verifies only under keys meant for ES256 signatures; the application's database role no longer writes the holder key register directly. 10 security changes, 12 fixes.

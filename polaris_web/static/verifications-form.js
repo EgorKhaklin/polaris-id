@@ -2,47 +2,45 @@
 // Copyright 2026 Egor Khaklin and the Polaris contributors
 /* polaris_web/static/verifications-form.js
  *
- * Disclosure-level constraint hint for /verifications/new.
+ * The disclosure hint for /verifications/new.
  *
- * Polaris C2 invariant: ZERO_KNOWLEDGE verifications MUST have
- * token_id IS NULL. C6 enforces this server-side; this script
- * provides client-side guidance, disabling the token-id select
- * and updating the hint text, so operators see the constraint
- * before submitting rather than after a server-side 400.
+ * Polaris C2: a ZERO_KNOWLEDGE verification stores no credential. The server enforces it (the
+ * form handler drops the credential for zero-knowledge, and chk_disclosure_token_consistency
+ * refuses anything else); this script shows the operator the rule before they submit. When a
+ * credential was found (lookup.py), its number rides in a hidden field, which zero-knowledge
+ * disables so that it is not sent at all.
  *
- * v8.46: externalized from verifications_form.html inline <script>
- * and inline `onchange=` attribute. The onchange listener is now
- * attached via addEventListener, since `onchange=` is also blocked
- * under `script-src 'self'`.
- *
- * No external dependencies.
+ * CSP C5: loaded with defer from the template, no inline script. No dependencies.
  */
 (function () {
-    var disclosureSel = document.getElementById('disclosure_level');
-    var tokenSel = document.getElementById('token_id');
+    var disclosure = document.getElementById('disclosure_level');
+    var token = document.getElementById('token_id');     // absent when no credential was found
     var hint = document.getElementById('token-hint');
 
-    if (!disclosureSel || !tokenSel || !hint) {
+    if (!disclosure || !hint) {
         return; // page does not have the form; nothing to do
     }
 
-    function updateTokenField() {
-        var disc = disclosureSel.value;
-        if (disc === 'ZERO_KNOWLEDGE') {
-            tokenSel.value = '';
-            tokenSel.disabled = true;
-            hint.textContent = 'ZERO_KNOWLEDGE: token_id MUST be NULL. '
-                + 'Field disabled.';
-        } else if (disc === 'FULL') {
-            tokenSel.disabled = false;
-            hint.textContent = 'FULL: token_id required. '
-                + 'Selecting "(none)" will be rejected by the constraint.';
+    function update() {
+        var level = disclosure.value;
+        if (token) {
+            token.disabled = (level === 'ZERO_KNOWLEDGE');
+        }
+        if (level === 'ZERO_KNOWLEDGE') {
+            hint.textContent = token
+                ? 'Zero-knowledge: the credential above is not recorded with this event.'
+                : 'Zero-knowledge: no credential is recorded with this event.';
+        } else if (level === 'FULL') {
+            hint.textContent = token
+                ? 'Full disclosure: the event names the credential above.'
+                : 'A full disclosure names its credential: find it above first.';
         } else {
-            tokenSel.disabled = false;
-            hint.textContent = 'SELECTIVE: token_id is optional.';
+            hint.textContent = token
+                ? 'Selective disclosure: the event names the credential above.'
+                : 'A selective disclosure that names no credential is recorded only as refused.';
         }
     }
 
-    disclosureSel.addEventListener('change', updateTokenField);
-    updateTokenField();
+    disclosure.addEventListener('change', update);
+    update();
 })();

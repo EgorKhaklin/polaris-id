@@ -14,6 +14,7 @@ and the posture documents see [reference/](../reference/README.md).
 
 | Document | What it answers |
 |---|---|
+| [console-design.md](console-design.md) | How the operator console is organised and why: the information architecture rethought from the system Polaris is now, the design system, and the rules every page keeps |
 | [threat-model.md](threat-model.md) | Which adversaries, reaching which surfaces, and what is deliberately out of scope |
 | [audit-of-record.md](audit-of-record.md) | Why the audit tables are append-only at the database, and what that costs |
 | [transparency-program.md](transparency-program.md) | What the authority publishes about its own most invasive power: why every figure names its source, and why withholding a small count is not the same as protecting it |

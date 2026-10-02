@@ -159,6 +159,14 @@ GROWTH = {
         "basis": ASSUMED,
         "why": "operator authentication events, assuming ten a second nationally",
     },
+    "PopulationCountDelta": {
+        # lab/strategy/008. Folded rows are deleted, but the id keeps counting: every statement
+        # that moves a credential count appends one row per key it moves, a status change two.
+        "rate": lambda t: 4 * t["enrollment_surge"] / 86400.0,
+        "basis": ASSUMED,
+        "why": "two rows per status change (the status left, the status entered) and one per "
+               "signature added or deprecated, at about four changes per enrollment",
+    },
     "DuressEvent": {
         "rate": lambda t: 1.0 / 86400.0,
         "basis": ASSUMED,

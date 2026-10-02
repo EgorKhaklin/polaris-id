@@ -8,49 +8,50 @@
     500: 'Something failed on the server'
    }.get(code, 'Something went wrong') %}
 {% block title %}{{ code }} · {{ headline }}{% endblock %}
-{% block body_class %} body-error{% endblock %}
+{% block body_class %}body-error{% endblock %}
 {% block content %}
+{% import "_ui.html" as ui with context %}
 
-<section class="error-page" aria-labelledby="error-title">
-    <div class="error-code" aria-hidden="true">{{ code }}</div>
-    <h1 id="error-title" class="error-title">{{ headline }}</h1>
-    <p class="error-message">{{ message }}</p>
+<section class="error-page page" aria-labelledby="error-title">
+    <p class="error-code">Error {{ code }}</p>
+    <h1 id="error-title">{{ headline }}</h1>
+    {% if message %}<p class="lede">{{ message }}</p>{% endif %}
 
+    <div class="stack" style="margin-top: var(--s-5)">
     {% if code == 404 %}
         <p class="error-hint">
-            That path is not part of Polaris. If you followed a link from
-            Polaris's own documentation, the link is wrong: tell an operator,
-            and quote the request id below.
+            That path is not part of Polaris. If you followed a link from Polaris's own
+            documentation, the link is wrong: tell an operator, and quote the request id below.
         </p>
     {% elif code == 403 and hint %}
         <p class="error-hint">{{ hint }}</p>
     {% elif code == 403 %}
         <p class="error-hint">
-            You are signed in, but this page needs a different role. An
-            administrator can grant it.
+            You are signed in, but this page needs a different role. An administrator can grant it.
         </p>
     {% elif code == 429 %}
         <p class="error-hint">
-            The rate limit is per address, and it resets on a rolling
-            one-minute window.
+            The rate limit is per address, and it resets on a rolling one-minute window.
         </p>
     {% elif code == 500 %}
         <p class="error-hint">
-            The failure is recorded in the log with the request id below. If it
-            happens again, send that id to the on-call operator; the response
-            runbooks are in <code>docs/operator/RUNBOOKS.md</code>.
+            The failure is recorded in the log with the request id below. If it happens again, send
+            that id to the on-call operator; the response runbooks are in
+            <code>docs/operator/RUNBOOKS.md</code>.
         </p>
     {% endif %}
 
-    <p class="error-requestid">
-        Request id <code>{{ request_id }}</code>
-    </p>
+        <dl class="kv">
+            <dt>Request id</dt>
+            <dd><code>{{ request_id }}</code></dd>
+        </dl>
+    </div>
 
-    <div class="error-actions">
+    <div class="footer-actions">
         {% if current_user %}
-            <a href="{{ url_for('dashboard') }}" class="btn btn-gold">Back to the dashboard</a>
+            <a href="{{ url_for('dashboard') }}" class="btn btn-primary">{{ ui.icon('layout-dashboard') }}Back to the overview</a>
         {% else %}
-            <a href="{{ url_for('home') }}" class="btn btn-gold">Back to the overview</a>
+            <a href="{{ url_for('home') }}" class="btn btn-primary">Back to the home page</a>
             <a href="{{ url_for('login') }}" class="btn btn-ghost">Sign in</a>
         {% endif %}
     </div>

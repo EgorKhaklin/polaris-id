@@ -7821,7 +7821,9 @@ def check_image_builds_are_retried(root: pathlib.Path) -> list[Finding]:
 # same values, and this check is the pair that makes a drift visible.
 # ---------------------------------------------------------------------------
 def _css_root_tokens(text: str) -> dict[str, str]:
-    """Every custom property declared in the first :root block, normalised."""
+    """Every custom property declared in the first :root block, normalised. Comments go first,
+    so a header comment that names :root ahead of an @font-face block is not taken for it."""
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
     start = text.find(":root")
     if start < 0:
         return {}
@@ -20991,6 +20993,10 @@ _GLOBAL_LOCK_DOMAINS = {
     "polaris.zk.close-epoch":
         "epoch_id comes from a SERIAL and closures must not skip a gap, so every "
         "closure in the system serializes on one key by design",
+    "polaris.population.fold":
+        "one fold of the population counts at a time, by design (lab/strategy/008): writers "
+        "take it only with pg_try_advisory_xact_lock and skip the fold when it is held, so no "
+        "writer waits on it; only the owner's recount waits",
 }
 
 
@@ -21008,6 +21014,14 @@ _GLOBAL_LOCK_DOMAINS = {
 #: and it is the one case this session found where a mutation surviving was the
 #: correct answer. An entry here means "no test can tell these apart", never "nothing
 #: tests this".
+#: Routines that take their advisory lock with pg_try_advisory_xact_lock. They never wait, so no
+#: contention probe can see them: each names the test that shows it skipping while another holds
+#: the lock, and the check requires that test to exist, so the declaration cannot outlive it.
+_TRY_LOCKS = {
+    "uc_fold_population_counts": "test_a_fold_skips_while_a_recount_holds_the_lock",
+}
+
+
 _UNOBSERVABLE_LOCKS = {
     "uc9_complete_recovery":
         "keyed on claimed_individual_id, and uq_one_pending_recovery_per_individual "
@@ -21029,11 +21043,15 @@ def check_advisory_locks_have_a_contention_test(root: pathlib.Path) -> list[Find
     domains: dict[str, set] = {}
     parameterised: dict[str, bool] = {}
     current = "module"
+    # A FUNCTION holds a lock as a procedure does (2026-10-01: a function's lock was credited to
+    # the procedure above it, and a domain with an underscore, polaris.holder_key, was not read
+    # at all). The key is per-entity when the text is joined to a value (`||`) or when the
+    # two-key form passes the entity as the second argument.
     for line in procs.splitlines():
-        m = re.match(r"\s*CREATE OR REPLACE PROCEDURE (\w+)\(", line)
+        m = re.match(r"\s*CREATE OR REPLACE (?:PROCEDURE|FUNCTION) (\w+)\(", line)
         if m:
             current = m.group(1)
-        m = re.search(r"hashtext\('([a-z0-9.\-]+?)\.?'\s*(\|\|)?", line)
+        m = re.search(r"hashtext\('([a-z0-9._\-]+?)\.?'\s*(\|\||\)\s*,)?", line)
         if m and "advisory" in procs[max(0, procs.index(line) - 200):procs.index(line) + 200]:
             domain, joined = m.group(1), bool(m.group(2))
             domains.setdefault(domain, set()).add(current)
@@ -21080,7 +21098,7 @@ def check_advisory_locks_have_a_contention_test(root: pathlib.Path) -> list[Find
                     and not line.lstrip().startswith("#")]
         if not executed:
             continue
-        hand_taken = set(re.findall(r"CALL (\w+)\(", body)) & set().union(*domains.values())
+        hand_taken = set(re.findall(r"(?:CALL|SELECT) (\w+)\(", body)) & set().union(*domains.values())
         if hand_taken:
             return _fail("advisory_lock_tests",
                          "a test acquires pg_advisory_xact_lock itself and then calls %s, "
@@ -21092,10 +21110,21 @@ def check_advisory_locks_have_a_contention_test(root: pathlib.Path) -> list[Find
     # Which procedures does each direction actually drive?
     driven, held = set(), set()
     for body in re.split(r"\n    def ", tests):
+        # A procedure is CALLed and a function SELECTed.
         if "assertDoesNotContend" in body:
-            driven.update(re.findall(r"CALL (\w+)\(", body))
+            driven.update(re.findall(r"(?:CALL|SELECT) (\w+)\(", body))
         if "assertContends" in body:
-            held.update(re.findall(r"CALL (\w+)\(", body))
+            held.update(re.findall(r"(?:CALL|SELECT) (\w+)\(", body))
+
+    # A try-lock never waits, so it is shown skipping instead; the test it names must exist.
+    for routine, test_name in sorted(_TRY_LOCKS.items()):
+        if any(routine in procs_ for procs_ in domains.values()) and "def %s(" % test_name not in tests:
+            return _fail("advisory_lock_tests",
+                         "%s takes its lock with pg_try_advisory_xact_lock and is declared as "
+                         "shown by %s, which no longer exists. A try-lock never waits, so "
+                         "without that test nothing shows it takes the lock at all"
+                         % (routine, test_name))
+    skipping = {r for r, t in _TRY_LOCKS.items() if "def %s(" % t in tests}
 
     for domain in sorted(domains):
         if domain in _GLOBAL_LOCK_DOMAINS:
@@ -21124,7 +21153,7 @@ def check_advisory_locks_have_a_contention_test(root: pathlib.Path) -> list[Find
         procs = domains[domain]
         if procs & held:
             continue
-        undeclared = procs - set(_UNOBSERVABLE_LOCKS)
+        undeclared = procs - set(_UNOBSERVABLE_LOCKS) - skipping
         if undeclared:
             return _fail("advisory_lock_tests",
                          "nothing proves %s takes the advisory lock on %r at all. Every "
@@ -21144,7 +21173,7 @@ def check_advisory_locks_have_a_contention_test(root: pathlib.Path) -> list[Find
     # a lock must be exercised by a contention test in one direction or the other.
     exercised = driven | held
     for domain in sorted(domains):
-        missing = domains[domain] - exercised - set(_UNOBSERVABLE_LOCKS)
+        missing = domains[domain] - exercised - set(_UNOBSERVABLE_LOCKS) - skipping
         if missing:
             return _fail("advisory_lock_tests",
                          "%s take(s) the advisory lock on %r and no contention test drives "
@@ -23607,6 +23636,27 @@ _CROSS_AUTHORITY_TOKEN_ROUTES = {
 _TOKEN_IN_REQUEST = re.compile(r"""(form|payload|body|_json_object\(\))\s*(\.get\()?\[?\(?['"]\w*token_id['"]""")
 _BINDING_ASKED = re.compile(r"_operator_authority_permits|_token_authority_denied|"
                             r"operator_agency_id")
+_TOKEN_FIELD = re.compile(r"""(?:form|payload|body|_json_object\(\))\s*(?:\.get\()?\[?\(?['"](\w*token_id)['"]""")
+
+
+def _token_fields_never_asked(body: str) -> list:
+    """The token fields a route's request names whose issuer the route never asks about. A field
+    is asked about when a line that calls _token_authority_denied names it, or names a variable
+    a line assigned from it. 2026-10-01: /uc4/activate-reserve names the lost credential and the
+    reserve, asked about the first, and was counted as bound because the call appeared once."""
+    lines = body.splitlines()
+    never = []
+    for field in sorted(set(_TOKEN_FIELD.findall(body))):
+        names = {field}
+        for ln in lines:
+            m = re.match(r"\s*(\w+)\s*=[^=]", ln)
+            if m and re.search(r"""['"]%s['"]""" % re.escape(field), ln):
+                names.add(m.group(1))
+        if not any("_token_authority_denied" in ln
+                   and any(re.search(r"(?<!\w)%s(?!\w)" % re.escape(n), ln) for n in names)
+                   for ln in lines):
+            never.append(field)
+    return never
 
 
 def check_state_changing_routes_ask_the_binding(root: pathlib.Path) -> list[Finding]:
@@ -23652,6 +23702,11 @@ def check_state_changing_routes_ask_the_binding(root: pathlib.Path) -> list[Find
                     # 1.0.0-rc.33: the same for a token named in the FORM. /uc8/revoke asked
                     # only about the actor it was told to act as, never whose token it was.
                     unbound.append(f"{f.name}: {route} (names a token, never asks its issuer)")
+                # 2026-10-01: about EVERY token the request names, each by its own field.
+                elif route not in _CROSS_AUTHORITY_TOKEN_ROUTES and _token_fields_never_asked(body):
+                    unbound.append(f"{f.name}: {route} (names "
+                                   + ", ".join(_token_fields_never_asked(body))
+                                   + " and never asks its issuer)")
             after = k
     if not seen:
         return _fail(name, "no state-changing admin or operator route found; the scan is blind")

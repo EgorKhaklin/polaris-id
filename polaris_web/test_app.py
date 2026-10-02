@@ -45,6 +45,8 @@ import app as flask_app
 # works: app.py imports it at the end of its own startup, so it is already loaded here.
 import atlas_routes
 import rp_api          # and the relying-party API v1, the same day
+import population      # lab/strategy/008: figures that cost the same at any population
+import lookup          # lab/strategy/008: a form finds one record, never lists them all
 
 
 # ----------------------------------------------------------------------------
@@ -1028,7 +1030,8 @@ class DashboardTests(PolarisTestCase):
     def test_dashboard_renders(self):
         r = self.client.get('/dashboard')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'POLARIS', 'Operations', 'Service', 'Needs attention',
+        # Titled Overview since the console was rethought (docs/design/console-design.md).
+        self.assertHTML(r, 'POLARIS', '<h1>Overview</h1>', 'Service', 'Needs attention',
                         'Cryptographic posture', 'Audit of record')
 
     def test_dashboard_reports_service_state(self):
@@ -1207,6 +1210,622 @@ class DashboardAnalyticsTests(PolarisTestCase):
         body = self.client.get('/dashboard').get_data(as_text=True)
         self.assertLessEqual(body.count('class="pill pill-issued"') + body.count('class="pill pill-activated"')
                              + body.count('class="pill pill-revoked"'), 10 + 3)
+
+
+#: Tables that grow with the population or its activity (lab/strategy/008). A console page may
+#: read them only through a bounded plan; see _assert_bounded_plan.
+POPULATION_TABLES = {
+    'identitytoken', 'individual', 'tokensignature', 'tokenlifecycleevent', 'verificationevent',
+    'enrollmentstatusevent', 'enrollmentproofing', 'enrollmentevidence', 'devicebinding',
+    'revocationlist', 'holderkeyevent', 'credentialcopy', 'duressevent', 'authauditlog',
+    'recoveryrequest', 'tokenpermission', 'tokenstateepochleaf', 'blockchainanchor',
+    'cardpersonalization', 'individualerasureevent',
+}
+_PARTITION_SUFFIX = re.compile(r'_(\d{4}_\d{2}|default)$')
+
+
+def _population_relation(name):
+    """The population table a relation (or one of its partitions) belongs to, or None."""
+    base = _PARTITION_SUFFIX.sub('', (name or '').lower())
+    return base if base in POPULATION_TABLES else None
+
+
+#: Plan nodes that read their whole input before passing a row on, so a LIMIT above one of them
+#: bounds nothing below it. An incremental sort is not one: it sorts one presorted group at a time.
+_BLOCKING_NODES = ('Sort', 'Aggregate', 'Hash', 'Materialize', 'Unique', 'WindowAgg', 'SetOp',
+                   'Gather Merge')
+
+
+def _population_scans(plan, under_limit=False):
+    """(table, node type, rows examined, under a LIMIT) for every scan of a population table in an
+    EXPLAIN (ANALYZE, FORMAT JSON) plan. Rows examined counts what the scan read, kept or not:
+    rows returned plus rows a filter or a recheck removed, over every loop."""
+    out = []
+    node = plan.get('Node Type')
+    rel = _population_relation(plan.get('Relation Name'))
+    if rel:
+        loops = plan.get('Actual Loops') or 1
+        examined = loops * (plan.get('Actual Rows', 0) + plan.get('Rows Removed by Filter', 0)
+                            + plan.get('Rows Removed by Index Recheck', 0))
+        out.append((rel, node, examined, under_limit))
+    limit_here = (under_limit or node == 'Limit') and node not in _BLOCKING_NODES
+    for child in plan.get('Plans') or []:
+        out += _population_scans(child, limit_here)
+    return out
+
+
+def _assert_bounded_plans(testcase, statements, budget, sample_rows):
+    """Run EXPLAIN ANALYZE on each (sql, params) that reads a population table, with sequential
+    and bitmap scans priced out as they are at scale, and fail on any scan that examined more
+    rows than the page's own bounds allow: a block sample beyond a few times its target, any other
+    scan beyond `budget`, or a sequential scan with no LIMIT over it. A read proportional to the
+    table shows up here as a count far above the budget; a filter hunting a rare row does too."""
+    conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+    problems = []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET enable_seqscan = off; SET enable_bitmapscan = off;")
+            for sql, params in statements:
+                if not re.search(r'\b(' + '|'.join(POPULATION_TABLES) + r')\b', sql, re.I):
+                    continue
+                cur.execute('EXPLAIN (ANALYZE, FORMAT JSON) ' + sql, params)
+                plan = cur.fetchone()[0][0]['Plan']
+                for rel, node, examined, limited in _population_scans(plan):
+                    if node == 'Sample Scan':
+                        bad = examined > 4 * sample_rows
+                    elif node == 'Seq Scan' and not limited:
+                        bad = True
+                    else:
+                        bad = examined > budget
+                    if bad:
+                        problems.append('%s on %s examined %d rows (budget %d)\n      in: %s'
+                                        % (node, rel, examined, budget, ' '.join(sql.split())[:220]))
+            conn.rollback()
+    finally:
+        conn.close()
+    testcase.assertEqual(problems, [], 'unbounded population reads:\n  ' + '\n  '.join(problems))
+
+
+def _synthetic_population(people=30_000, verifications=100_000):
+    """A population large enough that the planner chooses the plans it would choose at scale
+    (lab/strategy/008/gen.sql, smaller): every person one ACTIVE credential, half a RESERVE,
+    a quarter a REVOKED one; a live signature each; ISSUED, ACTIVATED and REVOKED events; and
+    verifications over the last thirty days, a third of them zero-knowledge with no token id
+    (C2). Written as the owner with triggers off, consistent by construction, then analysed.
+    The next test's reload truncates all of it (04_data.sql, RESTART IDENTITY CASCADE)."""
+    conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("SET LOCAL session_replication_role = replica")
+            cur.execute("SELECT (SELECT COALESCE(max(individual_id), 0) FROM Individual), "
+                        "(SELECT COALESCE(max(token_id), 0) FROM IdentityToken)")
+            bp, bt = cur.fetchone()
+            cur.execute("""
+                INSERT INTO Individual (individual_id, legal_name, date_of_birth, jurisdiction, enrollment_date)
+                SELECT %(bp)s + g, 'Synthetic ' || g, date '1950-01-01' + g %% 20000, 'US-PA',
+                       now()::timestamp - interval '40 days'
+                  FROM generate_series(1, %(n)s) g;
+                INSERT INTO IdentityToken (token_id, token_value, physical_serial, biometric_binding_type,
+                       individual_id, issuing_agency_id, algorithm_id, status, issued_date,
+                       activated_date, expiration_date)
+                SELECT %(bt)s + row_number() OVER (), 'TKN-SYN-' || k || '-' || g, 'SN-SYN-' || k || '-' || g,
+                       'NONE', %(bp)s + g, 1 + g %% 3, CASE WHEN g %% 100 = 0 THEN 5 ELSE 1 END, s,
+                       now()::timestamp - interval '35 days',
+                       CASE WHEN s = 'ACTIVE' THEN now()::timestamp - interval '34 days' END,
+                       (now() + interval '5 years')::date + g %% 365
+                  FROM (VALUES (0, 'ACTIVE', 1), (1, 'RESERVE', 2), (2, 'REVOKED', 4)) AS kinds(k, s, every)
+                 CROSS JOIN LATERAL generate_series(1, %(n)s) g
+                 WHERE g %% every = 0;
+                INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signed_at)
+                SELECT token_id, algorithm_id, decode(repeat('ab', 64), 'hex'), issued_date
+                  FROM IdentityToken WHERE token_id > %(bt)s;
+                INSERT INTO TokenLifecycleEvent (token_id, actor_agency_id, event_type, event_timestamp, reason_code)
+                SELECT token_id, issuing_agency_id, 'ISSUED', issued_date, 'INITIAL_ENROLLMENT'
+                  FROM IdentityToken WHERE token_id > %(bt)s
+                UNION ALL
+                SELECT token_id, issuing_agency_id, 'REVOKED', now()::timestamp - interval '1 day' * (token_id %% 30),
+                       'ADMINISTRATIVE_PAPERWORK_ERROR'
+                  FROM IdentityToken WHERE token_id > %(bt)s AND status = 'REVOKED';
+                INSERT INTO VerificationEvent (token_id, requesting_agency_id, context_id, event_timestamp,
+                       outcome, disclosure_level, proof_commitment)
+                SELECT CASE WHEN g %% 3 = 0 THEN NULL ELSE %(bt)s + 1 + (g::bigint * 7919) %% %(n)s END,
+                       1 + g %% 6, 1 + g %% 7,
+                       now()::timestamp - interval '30 days' * (g::float8 / %(v)s),
+                       CASE WHEN g %% 33 = 0 THEN 'FAILURE' ELSE 'SUCCESS' END,
+                       CASE g %% 3 WHEN 0 THEN 'ZERO_KNOWLEDGE' WHEN 1 THEN 'SELECTIVE' ELSE 'FULL' END,
+                       CASE WHEN g %% 3 = 0 THEN md5(g::text) END
+                  FROM generate_series(1, %(v)s) g;
+            """, {'bp': bp, 'bt': bt, 'n': people, 'v': verifications})
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("SELECT uc_rebuild_population_counts()")   # triggers were off for the load
+            cur.execute("ANALYZE")
+    finally:
+        conn.close()
+
+
+def _statements_of(client, path):
+    """Every (sql, params) the application runs through query() to serve GET `path`. Recorded at
+    _run_query, below query(), which route modules import by name and so must not be repointed
+    (check_no_module_imports_an_unstable_name)."""
+    seen = []
+    real = flask_app._run_query
+
+    def recording(conn, sql, params, fetch):
+        seen.append((sql, params))
+        return real(conn, sql, params, fetch)
+    with patch.object(flask_app, '_run_query', recording):
+        r = client.get(path)
+    return r, seen
+
+
+class PopulationScaleTests(PolarisTestCase):
+    """lab/strategy/008: the Overview costs the same at any population. Its credential and
+    signature counts are exact at any size (PopulationCount, kept by triggers); its activity
+    windows are exact counts up to a cap that says "or more" beyond it; its shares describe the
+    latest slice of verifications and say so; and every query it runs has a bounded plan."""
+
+    def test_a_figure_is_an_int_that_knows_how_it_was_counted(self):
+        f = population.Figure(12.6, exact=False)
+        self.assertEqual(f, 13)
+        self.assertFalse(f.exact)
+        self.assertFalse(f.at_least)
+        c = population.Figure(10, at_least=True)
+        self.assertTrue(c.at_least)
+        self.assertFalse(c.exact, 'a capped count is not exact')
+        self.assertTrue(population.Figure(3).exact)
+        self.assertEqual(f + 1, 14)
+
+    def test_counts_format_to_thirteen_digits_and_beyond(self):
+        P = population
+        self.assertEqual(P.fmt_int(8_123_456_789), '8,123,456,789')
+        self.assertEqual(P.fmt_compact(8_123_456_789), '8.12 B')
+        self.assertEqual(P.fmt_compact(999_999), '999,999')
+        self.assertEqual(P.fmt_compact(1_000_000), '1 M')
+        self.assertEqual(P.fmt_compact(999_960_000), '1 B', 'rounds up into the next scale, not 1000 M')
+        self.assertEqual(P.fmt_compact(2 ** 63 - 1), '9.22 Qi', 'total over BIGINT')
+        self.assertEqual(P.fmt_words(350_000_000), '350 million')
+        self.assertEqual(P.fmt_estimate(12_345), '12,300', 'an estimate keeps three significant figures')
+        self.assertEqual(P.fmt_figure(P.Figure(8_123_456_789, exact=False)), 'about 8.12 billion')
+        self.assertEqual(P.fmt_figure(P.Figure(10_000, at_least=True)), '10,000 or more')
+        self.assertEqual(P.fmt_figure(P.Figure(8_123_456_789)), '8,123,456,789')
+
+    def test_a_capped_count_says_or_more(self):
+        n = flask_app.query("SELECT count(*) AS n FROM IdentityToken", fetch='one')['n']
+        self.assertGreater(n, 2)
+        f = population.capped(flask_app.query, "SELECT 1 FROM IdentityToken", cap=2)
+        self.assertTrue(f.at_least)
+        self.assertEqual(f, 2)
+        g = population.capped(flask_app.query, "SELECT 1 FROM IdentityToken", cap=n)
+        self.assertTrue(g.exact)
+        self.assertEqual(g, n)
+
+    def test_the_latest_slice_reports_only_what_it_read(self):
+        """Recent counts, mixes and rates over the slice it read, and nothing beyond it."""
+        total = flask_app.query("SELECT count(*) AS n FROM VerificationEvent", fetch='one')['n']
+        self.assertGreater(total, 2)
+        whole = population.Recent(flask_app.query, 'VerificationEvent', ['outcome'])
+        self.assertTrue(whole.complete)
+        self.assertEqual(len(whole), total)
+        self.assertEqual(whole.count(), total)
+        self.assertEqual(sum(whole.mix('outcome').values()), total)
+        part = population.Recent(flask_app.query, 'VerificationEvent', ['outcome'], limit=2)
+        self.assertFalse(part.complete)
+        self.assertEqual(len(part), 2)
+        self.assertGreaterEqual(part.newest, part.oldest)
+        newest = flask_app.query("SELECT max(event_timestamp) AS t FROM VerificationEvent", fetch='one')['t']
+        self.assertEqual(part.newest, newest)
+
+    def test_the_rate_is_measured_over_the_slice_not_up_to_now(self):
+        """Ten events a minute apart, an hour ago: the rate is one a minute, however long the
+        quiet since. (A rate up to now is how a window estimate missed a day by 57%.)"""
+        self._owner("""
+            INSERT INTO VerificationEvent (token_id, requesting_agency_id, context_id, event_timestamp,
+                                           outcome, disclosure_level, proof_commitment)
+            SELECT NULL, 1, 1, now() - interval '1 hour' - make_interval(mins => g), 'SUCCESS',
+                   'ZERO_KNOWLEDGE', md5(g::text)
+              FROM generate_series(0, 9) g""")
+        part = population.Recent(flask_app.query, 'VerificationEvent', ['outcome'], limit=10)
+        self.assertAlmostEqual(part.per_second(), 1 / 60.0, places=6)
+
+    def test_the_overview_is_exact_on_small_data(self):
+        """Falsifier 5 of record 008: on a small population every figure is exact."""
+        body = self.client.get('/dashboard').get_data(as_text=True)
+        self.assertNotIn('class="approx"', body)
+        self.assertNotIn('or more', body)
+
+    def test_the_overview_marks_every_capped_count(self):
+        """No count beyond its cap without its mark: with the activity cap at one and three
+        verifications from the last hour, both verification windows read "1+" and are heard as
+        "or more", and the credential counts beside them stay exact."""
+        self._owner("""
+            INSERT INTO VerificationEvent (token_id, requesting_agency_id, context_id, event_timestamp,
+                                           outcome, disclosure_level, proof_commitment)
+            SELECT NULL, 1, 1, now() - make_interval(mins => g), 'SUCCESS', 'ZERO_KNOWLEDGE', md5(g::text)
+              FROM generate_series(1, 3) g""")
+        with patch.object(flask_app, '_OVERVIEW_ACTIVITY_CAP', 1):
+            body = self.client.get('/dashboard').get_data(as_text=True)
+        tiles = dict((label, value) for value, label in re.findall(
+            r'<span class="kpi-value">(.*?)</span>\s*<span class="kpi-label">([a-z0-9 ,]+)</span>', body, re.S))
+        for label in ('last 24 h', 'last 7 d'):
+            self.assertIn('1+', tiles[label], label)
+            self.assertIn('or more', tiles[label], label)
+        for label in ('active', 'reserve', 'revoked', 'lost', 'expired', 'dormant'):
+            self.assertNotIn('+', tiles[label], label)
+            self.assertNotIn('approx', tiles[label], label)
+
+    # -- The maintained counts -------------------------------------------------------------
+
+    def _truth(self):
+        """What the tables hold, by a full count: the reference the triggers must equal."""
+        return {(r['facet'], r['agency_id'], r['item']): r['n'] for r in flask_app.query("""
+            SELECT 'credential_status' AS facet, issuing_agency_id AS agency_id, status AS item,
+                   count(*) AS n
+              FROM IdentityToken GROUP BY 2, 3
+            UNION ALL
+            SELECT 'live_signature', t.issuing_agency_id, s.algorithm_id::TEXT, count(*)
+              FROM TokenSignature s JOIN IdentityToken t ON t.token_id = s.token_id
+             WHERE s.deprecation_date IS NULL AND t.status = 'ACTIVE'
+             GROUP BY 2, 3""")}
+
+    def _assert_counts_exact(self, step):
+        self.assertEqual({k: int(v) for k, v in population.counts(flask_app.query).items()},
+                         self._truth(), 'counts drifted after: %s' % step)
+
+    def _owner(self, sql, args=(), fetch=False):
+        conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute(sql, args)
+                return cur.fetchall() if fetch else None
+        finally:
+            conn.close()
+
+    def test_the_counts_equal_a_full_count_after_every_kind_of_change(self):
+        """Every statement that can move a count, then the count compared with a full count:
+        an insert, each status move, a signature added and one deprecated (an algorithm
+        migration), a statement over many rows that moves nothing counted, a rolled-back change,
+        a fold, and a delete."""
+        self._assert_counts_exact('the seed')
+        person = self._owner("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                             "VALUES ('Count Check', '1990-01-01', 'US-PA') RETURNING individual_id",
+                             fetch=True)[0][0]
+        tok = self._owner("""
+            WITH t AS (
+                INSERT INTO IdentityToken (token_value, physical_serial, biometric_binding_type,
+                                           individual_id, issuing_agency_id, algorithm_id, status)
+                VALUES ('TKN-COUNT-1', 'SN-COUNT-1', 'NONE', %s, 2, 1, 'RESERVE') RETURNING token_id)
+            INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes)
+            SELECT token_id, 1, '\\x00'::bytea FROM t RETURNING token_id""", (person,), fetch=True)[0][0]
+        self._assert_counts_exact('a RESERVE credential and its signature')
+        self._owner("UPDATE IdentityToken SET status = 'ACTIVE', activated_date = now() WHERE token_id = %s", (tok,))
+        self._assert_counts_exact('RESERVE to ACTIVE')
+        self._owner("""INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes) VALUES (%s, 2, '\\x01'::bytea);
+                       UPDATE TokenSignature SET deprecation_date = now() + interval '1 second'
+                        WHERE token_id = %s AND algorithm_id = 1""", (tok, tok))
+        self._assert_counts_exact('an algorithm migration: a new signature, the old one deprecated')
+        self._owner("UPDATE IdentityToken SET hardware_model = 'count-check' WHERE issuing_agency_id IN (1, 2)")
+        self._assert_counts_exact('a statement over many rows that moves nothing counted')
+        conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE IdentityToken SET status = 'LOST' WHERE token_id = %s", (tok,))
+            conn.rollback()
+        finally:
+            conn.close()
+        self._assert_counts_exact('a change rolled back')
+        self._owner("UPDATE IdentityToken SET status = 'LOST' WHERE token_id = %s", (tok,))
+        self._assert_counts_exact('ACTIVE to LOST')
+        folded = self._owner("SELECT uc_fold_population_counts()", fetch=True)[0][0]
+        self.assertGreater(folded, 0, 'control: there were changes to fold')
+        self.assertEqual(self._owner("SELECT count(*) FROM PopulationCountDelta", fetch=True)[0][0], 0)
+        self._assert_counts_exact('a fold')
+        # A signature is never deleted (enforce_token_signature_immutability), so the delete path
+        # is a credential that was never signed.
+        other = self._owner("""
+            INSERT INTO IdentityToken (token_value, physical_serial, biometric_binding_type,
+                                       individual_id, issuing_agency_id, algorithm_id, status)
+            VALUES ('TKN-COUNT-2', 'SN-COUNT-2', 'NONE', %s, 3, 1, 'RESERVE') RETURNING token_id""",
+                            (person,), fetch=True)[0][0]
+        self._assert_counts_exact('an unsigned RESERVE credential')
+        self._owner("DELETE FROM IdentityToken WHERE token_id = %s", (other,))
+        self._assert_counts_exact('a credential deleted')
+
+    def test_a_fresh_load_starts_with_exact_counts(self):
+        """A fresh load runs the seed (04_data.sql) before the count triggers exist
+        (06_triggers.sql), so the seed is counted only by the recount that file ends with.
+        Reproduced: the insert triggers dropped, the seed reloaded uncounted, the file run."""
+        self._owner("DROP TRIGGER trg_population_count_token_insert ON IdentityToken; "
+                    "DROP TRIGGER trg_population_count_signature_insert ON TokenSignature;")
+        reload_sample_data()
+        self.assertTrue(population.counts(flask_app.query), 'control: the seed has credentials')
+        self._assert_counts_exact('a load whose seed ran before the triggers')
+
+    def test_the_application_role_reads_the_counts_and_writes_none(self):
+        """A count the application role could write is one a compromised application could
+        forge: it reads them and may fold changes in; every write and the full recount are
+        refused by privilege."""
+        conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET ROLE polaris_app")
+                cur.execute("SELECT count(*) FROM PopulationCount")
+                self.assertGreater(cur.fetchone()[0], 0, 'control: the role reads the counts')
+                cur.execute("SELECT uc_fold_population_counts()")
+                for stmt in ("INSERT INTO PopulationCount VALUES ('credential_status', 1, 'ACTIVE', 1)",
+                             "UPDATE PopulationCount SET n = n + 1",
+                             "DELETE FROM PopulationCount",
+                             "INSERT INTO PopulationCountDelta (facet, agency_id, item, n) "
+                             "VALUES ('credential_status', 1, 'ACTIVE', 1)",
+                             "UPDATE PopulationCountDelta SET n = 2",
+                             "DELETE FROM PopulationCountDelta",
+                             "SELECT uc_rebuild_population_counts()"):
+                    cur.execute("SAVEPOINT attempt")
+                    with self.assertRaises(psycopg2.errors.InsufficientPrivilege, msg=stmt):
+                        cur.execute(stmt)
+                    cur.execute("ROLLBACK TO SAVEPOINT attempt")
+        finally:
+            conn.rollback()
+            conn.close()
+
+    def test_an_authority_bound_session_reads_only_its_own_counts(self):
+        conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET ROLE polaris_app")
+                cur.execute("SELECT DISTINCT agency_id FROM PopulationCount")
+                self.assertGreater(len(cur.fetchall()), 1, 'control: an unscoped session sees every authority')
+                cur.execute("SELECT set_config('polaris.operator_agency_id', '1', true)")
+                cur.execute("SELECT DISTINCT agency_id FROM PopulationCount UNION "
+                            "SELECT DISTINCT agency_id FROM PopulationCountDelta")
+                self.assertEqual({r[0] for r in cur.fetchall()}, {1})
+        finally:
+            conn.rollback()
+            conn.close()
+
+    def test_every_overview_query_has_a_bounded_plan(self):
+        """Falsifier 2 of record 008: with sequential and bitmap scans priced out, no query the
+        Overview runs reads a population table except through a capped index range, a slice of
+        the latest rows, or a row-by-row lookup. Planned and run over a synthetic population,
+        because on the seed's few rows the planner prefers whichever index is nearest."""
+        _synthetic_population()
+        # Every bound shrunk far below the synthetic tables (52,500 credentials, 100,000
+        # verifications), so a read that grows with a table cannot hide under one of them.
+        with patch.object(population, 'RECENT_ROWS', 2_000), \
+                patch.object(flask_app, '_OVERVIEW_ATTENTION_CAP', 500), \
+                patch.object(flask_app, '_OVERVIEW_ACTIVITY_CAP', 500):
+            r, statements = _statements_of(self.client, '/dashboard')
+        self.assertEqual(r.status_code, 200)
+        self.assertGreater(len(statements), 10)
+        _assert_bounded_plans(self, statements, budget=6_000, sample_rows=2_000)
+
+    def test_the_bounded_plan_guard_sees_a_proportional_read(self):
+        """The guard's own control: the Overview's old population count, a GROUP BY over every
+        credential, must fail it on the same synthetic population."""
+        _synthetic_population()
+        with self.assertRaises(AssertionError):
+            _assert_bounded_plans(self, [("SELECT status, COUNT(*) AS n FROM IdentityToken GROUP BY status", None)],
+                                  budget=6_000, sample_rows=2_000)
+        with self.assertRaises(AssertionError):
+            # A capped count of a rare condition through a filter rather than an index.
+            _assert_bounded_plans(self, [("SELECT count(*) FROM (SELECT 1 FROM IdentityToken "
+                                          "WHERE status = 'ACTIVE' AND duress_code_hash IS NOT NULL LIMIT 501) c", None)],
+                                  budget=6_000, sample_rows=2_000)
+
+
+def _statements_of_post(client, path, data):
+    """As _statements_of, for a POST."""
+    seen = []
+    real = flask_app._run_query
+
+    def recording(conn, sql, params, fetch):
+        seen.append((sql, params))
+        return real(conn, sql, params, fetch)
+    with patch.object(flask_app, '_run_query', recording):
+        r = client.post(path, data=data)
+    return r, seen
+
+
+#: The pages that act on one record and, before lab/strategy/008 step 2, listed a population to
+#: choose it from: (path, what a lookup there finds).
+OPERATION_FORMS = (
+    ('/uc4/activate-reserve', 'credential'), ('/uc5/bind-device', 'credential'),
+    ('/uc6/migrate', 'credential'), ('/uc8/revoke', 'credential'),
+    ('/verifications/new', 'credential'), ('/uc7/warrant-audit', 'person'),
+    ('/uc9/initiate-recovery', 'person'),
+)
+
+
+class PopulationLookupTests(PolarisTestCase):
+    """lab/strategy/008, step 2: an operation starts from one record, found through a unique
+    index by what the operator holds (lookup.py), and no form lists a population. What the
+    operator typed travels in a POST body and never reaches a URL; another authority's record
+    reads exactly as a record that does not exist; and every lookup has a bounded plan."""
+
+    def _find(self, kind, nxt, **fields):
+        csrf = self._csrf_token_from('/uc8/revoke')
+        return self.client.post('/find/' + kind, data=dict(fields, next=nxt, csrf_token=csrf))
+
+    def _bind(self, agency_id):
+        with self.client.session_transaction() as sess:
+            sess['operator_agency_id'] = agency_id
+            _bind_account(sess, agency_id)
+
+    def test_a_record_number_is_read_strictly(self):
+        """'1234', '#1234' or '# 1234', ASCII digits only, within a key's range; anything longer than
+        a number can be is refused before it is scanned (a URL parameter can be any length)."""
+        cases = {'1234': 1234, '#1234': 1234, '# 1234': 1234, ' #12 ': 12, '##12': None,
+                 '12a': None, '': None, '\u0663': None, '0': None, '-5': None, '+5': None,
+                 str(lookup.MAX_KEY): lookup.MAX_KEY, str(lookup.MAX_KEY + 1): None,
+                 '#' + ' ' * 100_000 + '1': None, 1234: 1234, True: None, None: None}
+        for typed, expected in cases.items():
+            with self.subTest(typed=typed if len(str(typed)) < 40 else 'long'):
+                self.assertEqual(lookup.number(typed), expected)
+
+    def test_no_operation_form_lists_a_population(self):
+        """The forms that listed every active credential or every person name nobody until a
+        record is chosen: the seed's holders appear on none of them, and each offers a lookup."""
+        holders = [r['legal_name'] for r in _sql("SELECT legal_name FROM Individual", fetch='all')]
+        self.assertGreater(len(holders), 3, 'control: the seed has holders')
+        for path, kind in OPERATION_FORMS:
+            with self.subTest(form=path):
+                body = self.client.get(path).get_data(as_text=True)
+                self.assertIn('action="/find/%s"' % kind, body)
+                for name in holders:
+                    self.assertNotIn(name, body)
+
+    def test_a_credential_is_found_by_its_number_value_or_serial(self):
+        row = _sql("SELECT token_id, token_value, physical_serial FROM IdentityToken "
+                   "WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1", fetch='one')
+        for typed in (str(row['token_id']), '#%d' % row['token_id'], ' %s ' % row['token_value'],
+                      row['physical_serial']):
+            with self.subTest(typed=typed):
+                r = self._find('credential', 'uc8_revoke', credential=typed)
+                self.assertEqual(r.status_code, 302, r.get_data(as_text=True)[:300])
+                self.assertTrue(r.headers['Location'].endswith('/uc8/revoke?token_id=%d' % row['token_id']),
+                                r.headers['Location'])
+
+    def test_what_the_operator_typed_never_reaches_a_url(self):
+        """The search text is a POST field: the redirect names the record by its number only, and
+        a miss answers in place, the text back in its field and in no address."""
+        row = _sql("SELECT token_id, token_value FROM IdentityToken ORDER BY token_id LIMIT 1", fetch='one')
+        r = self._find('credential', 'tokens_detail', credential=row['token_value'])
+        self.assertEqual(r.status_code, 302)
+        self.assertNotIn(row['token_value'], r.headers['Location'])
+        self.assertTrue(r.headers['Location'].endswith('/tokens/%d' % row['token_id']))
+        miss = self._find('credential', 'tokens_detail', credential='TKN-NOBODY-HAS-THIS')
+        self.assertEqual(miss.status_code, 404)
+        self.assertNotIn('Location', miss.headers)
+        body = miss.get_data(as_text=True)
+        self.assertIn('value="TKN-NOBODY-HAS-THIS"', body)
+        self.assertNotIn('?credential=', body)
+
+    def test_a_number_that_is_also_a_serial_is_a_choice(self):
+        """A number, a value and a serial written the same way can be three credentials: the
+        lookup shows each and picks none."""
+        target = _sql("SELECT token_id FROM IdentityToken ORDER BY token_id LIMIT 1", fetch='one')['token_id']
+        _sql("""INSERT INTO IdentityToken (token_value, physical_serial, biometric_binding_type,
+                                           individual_id, issuing_agency_id, algorithm_id, status)
+                VALUES ('TKN-LOOKUP-TWIN', %s, 'NONE', 2, 2, 1, 'RESERVE')""", (str(target),), fetch='none')
+        r = self._find('credential', 'uc6_migrate', credential=str(target))
+        self.assertEqual(r.status_code, 200)
+        body = r.get_data(as_text=True)
+        self.assertIn('/uc6/migrate?token_id=%d"' % target, body)
+        self.assertIn('TKN-LOOKUP-TWIN', body)
+
+    def test_a_lookup_leads_only_to_its_own_pages(self):
+        for nxt in ('https://example.org/', 'sql_query', 'logout', ''):
+            with self.subTest(next=nxt):
+                r = self._find('credential', nxt, credential='1')
+                self.assertEqual(r.status_code, 302 if nxt == '' else 400)
+        self.assertEqual(self._find('person', 'uc8_revoke', person='1').status_code, 400,
+                         'a person lookup does not lead to a credential page')
+
+    def test_a_person_is_found_by_number_or_by_name_and_birth_date(self):
+        p = _sql("SELECT individual_id, legal_name, date_of_birth FROM Individual "
+                 "ORDER BY individual_id LIMIT 1", fetch='one')
+        by_number = self._find('person', 'uc9_initiate', person='#%d' % p['individual_id'])
+        self.assertTrue(by_number.headers['Location'].endswith('/uc9/initiate-recovery?individual_id=%d' % p['individual_id']))
+        prefix = p['legal_name'][:3].upper()
+        by_name = self._find('person', 'uc7_warrant_audit', person=prefix,
+                             born=p['date_of_birth'].isoformat())
+        self.assertEqual(by_name.status_code, 302, by_name.get_data(as_text=True)[:300])
+        self.assertNotIn(prefix, by_name.headers['Location'])
+        self.assertTrue(by_name.headers['Location'].endswith('/uc7/warrant-audit?individual_id=%d' % p['individual_id']))
+
+    def test_a_name_is_searched_only_with_the_birth_date_and_only_as_a_prefix(self):
+        p = _sql("SELECT legal_name, date_of_birth FROM Individual ORDER BY individual_id LIMIT 1", fetch='one')
+        no_date = self._find('person', 'uc9_initiate', person=p['legal_name'])
+        self.assertEqual(no_date.status_code, 400)
+        self.assertIn('together with the date of birth', no_date.get_data(as_text=True))
+        for pattern in ('%', '_', p['legal_name'][1:4]):
+            with self.subTest(pattern=pattern):
+                r = self._find('person', 'uc9_initiate', person=pattern, born=p['date_of_birth'].isoformat())
+                self.assertEqual(r.status_code, 404, 'a wildcard or a middle of a name matched')
+        bad = self._find('person', 'uc9_initiate', person=p['legal_name'], born='21/04/1990')
+        self.assertEqual(bad.status_code, 400)
+
+    def test_more_matches_than_the_limit_say_so(self):
+        _sql("""INSERT INTO Individual (legal_name, date_of_birth, jurisdiction)
+                SELECT 'Lookup Crowd ' || g, date '1977-07-07', 'US-PA'
+                  FROM generate_series(1, %s) g""", (lookup.LOOKUP_LIMIT + 1,), fetch='none')
+        r = self._find('person', 'investigate_individual', person='lookup crowd', born='1977-07-07')
+        self.assertEqual(r.status_code, 200)
+        body = r.get_data(as_text=True)
+        self.assertEqual(body.count('class="match"'), lookup.LOOKUP_LIMIT)
+        self.assertIn('The first %d are shown' % lookup.LOOKUP_LIMIT, body)
+
+    def test_a_form_opened_on_a_credential_shows_it_and_acts_on_it_alone(self):
+        tok = _sql("SELECT t.token_id, i.legal_name FROM IdentityToken t JOIN Individual i USING (individual_id) "
+                   "WHERE t.status = 'ACTIVE' ORDER BY t.token_id LIMIT 1", fetch='one')
+        body = self.client.get('/uc8/revoke?token_id=%d' % tok['token_id']).get_data(as_text=True)
+        self.assertIn(tok['legal_name'], body)
+        self.assertIn('name="token_id" value="%d"' % tok['token_id'], body)
+        self.assertEqual(body.count('name="token_id"'), 1, 'the form acts on the credential shown, and no other')
+
+    def test_a_lost_credential_offers_only_its_holders_live_reserves(self):
+        """UC-4 starts from the credential reported lost and offers that holder's reserves: the
+        seed's reserve T1 belongs to individual 1, who is given an active credential to lose."""
+        lost = _sql("""INSERT INTO IdentityToken (token_value, physical_serial, biometric_binding_type,
+                                                  individual_id, issuing_agency_id, algorithm_id, status,
+                                                  expiration_date)
+                       VALUES ('TKN-UC4-LOOKUP', 'SN-UC4-LOOKUP', 'NONE', 1, 2, 1, 'RESERVE',
+                               polaris_utc_date() + 3650) RETURNING token_id""", fetch='one')['token_id']
+        _sql("UPDATE IdentityToken SET status = 'ACTIVE', activated_date = now() WHERE token_id = %s",
+             (lost,), fetch='none')
+        other_reserves = _sql("SELECT token_id FROM IdentityToken WHERE status = 'RESERVE' "
+                              "AND individual_id <> 1", fetch='all')
+        body = self.client.get('/uc4/activate-reserve?token_id=%d' % lost).get_data(as_text=True)
+        self.assertIn('name="reserve_token_id" value="1"', body)
+        for r in other_reserves:
+            self.assertNotIn('name="reserve_token_id" value="%d"' % r['token_id'], body)
+
+    def test_every_lookup_has_a_bounded_plan(self):
+        """Falsifier 2 of record 008 for step 2: each lookup, and each form opened on the record it
+        found, reads the population only through a key, a unique index, or a limited index range.
+        Planned and run over a synthetic population, as the Overview's test is."""
+        _synthetic_population()
+        csrf = self._csrf_token_from('/uc8/revoke')
+        some = _sql("SELECT t.token_id, t.token_value, t.physical_serial, t.individual_id, i.date_of_birth "
+                    "FROM IdentityToken t JOIN Individual i USING (individual_id) "
+                    "WHERE t.status = 'ACTIVE' ORDER BY t.token_id DESC LIMIT 1", fetch='one')
+        statements = []
+        for typed in (str(some['token_id']), some['token_value'], some['physical_serial']):
+            r, seen = _statements_of_post(self.client, '/find/credential',
+                                          {'credential': typed, 'next': 'uc8_revoke', 'csrf_token': csrf})
+            self.assertEqual(r.status_code, 302)
+            statements += seen
+        r, seen = _statements_of_post(self.client, '/find/person',
+                                      {'person': 'synthetic', 'born': some['date_of_birth'].isoformat(),
+                                       'next': 'uc9_initiate', 'csrf_token': csrf})
+        self.assertIn(r.status_code, (200, 302))
+        statements += seen
+        for path in ('/uc4/activate-reserve?token_id=%d', '/uc5/bind-device?token_id=%d',
+                     '/uc6/migrate?token_id=%d', '/uc8/revoke?token_id=%d', '/verifications/new?token_id=%d'):
+            r, seen = _statements_of(self.client, path % some['token_id'])
+            self.assertEqual(r.status_code, 200, path)
+            statements += seen
+        for path in ('/uc7/warrant-audit?individual_id=%d', '/uc9/initiate-recovery?individual_id=%d'):
+            r, seen = _statements_of(self.client, path % some['individual_id'])
+            self.assertEqual(r.status_code, 200, path)
+            statements += seen
+        _assert_bounded_plans(self, statements, budget=lookup.LOOKUP_LIMIT * 4, sample_rows=0)
+
+    def test_the_person_lookup_needs_its_index(self):
+        """The control for the plan above: without idx_individual_birth_name a name search reads
+        everyone born that day, and the guard fails it."""
+        _synthetic_population()
+        _sql("DROP INDEX idx_individual_birth_name", fetch='none')
+        try:
+            some = _sql("SELECT date_of_birth FROM Individual ORDER BY individual_id DESC LIMIT 1", fetch='one')
+            stmt = []
+            lookup.people(lambda sql, params=None, **kw: stmt.append((sql, params)) or [],
+                          'synthetic', some['date_of_birth'])
+            with self.assertRaises(AssertionError):
+                _assert_bounded_plans(self, stmt, budget=lookup.LOOKUP_LIMIT * 4, sample_rows=0)
+        finally:
+            _sql("CREATE INDEX idx_individual_birth_name ON Individual "
+                 "(date_of_birth, (lower(legal_name)) COLLATE \"C\", individual_id)", fetch='none')
 
 
 class HeartbeatTests(PolarisTestCase):
@@ -1696,17 +2315,20 @@ class UC4Tests(PolarisTestCase):
     def test_form_renders(self):
         r = self.client.get('/uc4/activate-reserve')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'UC-4', 'Reserve Token Activation')
+        self.assertHTML(r, 'UC-4', 'Activate a reserve', 'action="/find/credential"')
 
-    def test_form_lists_active_and_reserve_tokens(self):
-        """Pristine state: T1 (Egor, individual 1) is RESERVE; T2/T3/T4 are
-        ACTIVE for individuals 2/3/4. The form should list both buckets."""
-        r = self.client.get('/uc4/activate-reserve')
-        body = r.get_data(as_text=True)
-        # Active tokens dropdown should show holders of active tokens
-        self.assertIn('Maria Santos', body)  # T2 is ACTIVE
-        # Reserve dropdown should show Egor's RESERVE token
-        self.assertIn('Adrian Vasquez', body)
+    def test_form_starts_from_the_lost_credential_and_offers_its_holders_reserve(self):
+        """Pristine state: T1 (individual 1) is RESERVE; T2/T3/T4 are ACTIVE for individuals
+        2/3/4. The bare form lists nobody (lab/strategy/008); opened on an active credential it
+        shows that holder, and the reserves offered are that holder's alone: T2's holder has
+        none, so T1 is not offered."""
+        bare = self.client.get('/uc4/activate-reserve').get_data(as_text=True)
+        self.assertNotIn('Maria Santos', bare)
+        self.assertNotIn('Adrian Vasquez', bare)
+        body = self.client.get('/uc4/activate-reserve?token_id=2').get_data(as_text=True)
+        self.assertIn('Maria Santos', body)
+        self.assertNotIn('name="reserve_token_id" value="1"', body)
+        self.assertIn('holds no live reserve credential', body)
 
     def test_uc4_activates_reserve_end_to_end(self):
         """Full UC-4 happy path. Sets up the precondition (Egor needs to have
@@ -1809,7 +2431,7 @@ class UC5Tests(PolarisTestCase):
     def test_form_renders(self):
         r = self.client.get('/uc5/bind-device')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'UC-5', 'Device Binding')
+        self.assertHTML(r, 'UC-5', 'Bind a device', 'action="/find/credential"')
 
     def test_bind_device_to_active_token(self):
         r = self._post('/uc5/bind-device', data={
@@ -1845,7 +2467,7 @@ class UC7Tests(PolarisTestCase):
     def test_form_renders(self):
         r = self.client.get('/uc7/warrant-audit')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'UC-7', 'Warrant-Authorized')
+        self.assertHTML(r, 'UC-7', 'Warrant audit', 'action="/find/person"')
 
     def test_warrant_returns_events_for_james(self):
         """James Chen (id=3) has 3 verification events: 1 ZK + 1 FULL + 1 SELECTIVE.
@@ -1858,8 +2480,8 @@ class UC7Tests(PolarisTestCase):
         self.assertEqual(r.status_code, 200)
         body = r.get_data(as_text=True)
         # Slice to just the results table to avoid form options matching
-        results_section = body[body.index('Warrant Results'):body.index('</table>') + 8] \
-            if 'Warrant Results' in body and '</table>' in body[body.index('Warrant Results'):] else ''
+        results_section = body[body.index('id="op-res-h"'):body.index('</table>', body.index('id="op-res-h"')) + 8] \
+            if 'id="op-res-h"' in body and '</table>' in body[body.index('id="op-res-h"'):] else ''
         # SELECTIVE and FULL events appear with full data
         self.assertIn('TRAVEL', results_section)
         self.assertIn('BANKING', results_section)
@@ -1867,7 +2489,7 @@ class UC7Tests(PolarisTestCase):
         # ZK event for James (HEALTHCARE) does NOT appear in results
         self.assertNotIn('HEALTHCARE', results_section)
         # Result count is 2, not 3
-        self.assertIn('Warrant Results (2 events)', body)
+        self.assertIn('>2 events<', results_section)
 
     def test_warrant_excludes_zero_knowledge_events(self):
         """The warrant query for any individual cannot return ZK events for that
@@ -1877,8 +2499,8 @@ class UC7Tests(PolarisTestCase):
             'individual_id': '3',  # James Chen
         })
         body = r.get_data(as_text=True)
-        results_section = body[body.index('Warrant Results'):body.index('</table>') + 8] \
-            if 'Warrant Results' in body and '</table>' in body[body.index('Warrant Results'):] else ''
+        results_section = body[body.index('id="op-res-h"'):body.index('</table>', body.index('id="op-res-h"')) + 8] \
+            if 'id="op-res-h"' in body and '</table>' in body[body.index('id="op-res-h"'):] else ''
         # ZERO_KNOWLEDGE pill should not appear in the results table
         self.assertNotIn('ZERO_KNOWLEDGE', results_section)
         # Confirm we DO see SELECTIVE and FULL pills (sanity: results are populated)
@@ -2016,7 +2638,7 @@ class IssuerDiscretionBoundsTests(PolarisTestCase):
     def test_form_renders(self):
         r = self.client.get('/uc8/revoke')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'UC-8', 'Bounded Revocation')
+        self.assertHTML(r, 'UC-8', 'Revoke a credential', 'action="/find/credential"')
 
     # -- held-out, 2026-09-24 -------------------------------------------------
     # Twelve semantic mutations of uc8_revoke_token (the procedure drill inverts refusals;
@@ -2732,7 +3354,7 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
     def test_initiate_page_renders(self):
         r = self.client.get('/uc9/initiate-recovery')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'Initiate Catastrophic-Loss Recovery')
+        self.assertHTML(r, 'UC-9', 'Open a recovery', 'action="/find/person"')
 
     # ------------------------------------------------------------------
     # uc9_initiate_recovery behavior
@@ -3100,7 +3722,7 @@ class MultiSignatureTests(PolarisTestCase):
     def test_migrate_page_renders(self):
         r = self.client.get('/uc6/migrate')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'Algorithm Migration', 'TokenSignature')
+        self.assertHTML(r, 'UC-6', 'Migrate an algorithm', 'uc6_migrate_algorithm')
 
     # ------------------------------------------------------------------
     # Backfill + invariants
@@ -6395,10 +7017,13 @@ class Uc4ReserveExpiryTests(PolarisTestCase):
                          'control: a credential live through today still activates')
 
     def test_the_form_offers_no_expired_reserve(self):
+        lost_id = self._holder_with_active()
+        page = '/uc4/activate-reserve?token_id=%d' % lost_id
+        self.assertIn('name="reserve_token_id" value="1"', self.client.get(page).get_data(as_text=True),
+                      'control: the holder\'s live reserve is offered')
         _sql("UPDATE IdentityToken SET expiration_date = polaris_utc_date() - 1 WHERE token_id = 1",
              fetch='none')
-        body = self.client.get('/uc4/activate-reserve').get_data(as_text=True)
-        self.assertNotIn('Adrian Vasquez', body)
+        self.assertNotIn('name="reserve_token_id" value="1"', self.client.get(page).get_data(as_text=True))
 
 
 class TransparencyProofBoundsTests(UnauthenticatedTestCase):
@@ -6445,6 +7070,38 @@ class BoundOperatorRouteIsolationTests(PolarisTestCase):
         patcher = mock.patch.dict(flask_app.DB_CONFIG, app_cfg)
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    def test_a_lookup_answers_another_authoritys_credential_as_one_that_does_not_exist(self):
+        """lab/strategy/008 step 2: the lookup reads through the same policies, so another
+        authority's credential, asked for by its value, gets exactly the answer a value nobody
+        holds gets: the lookup is not an oracle for another authority's records."""
+        csrf = self._csrf_token_from('/uc8/revoke')
+
+        def find(text):
+            return self.client.post('/find/credential', data={'credential': text, 'next': 'uc8_revoke',
+                                                              'csrf_token': csrf})
+        hidden, absent = find(self.foreign_value), find('TKN-NOBODY-HAS-THIS')
+        self.assertEqual((hidden.status_code, absent.status_code), (404, 404),
+                         hidden.get_data(as_text=True)[:300])
+
+        def page(r, typed):
+            return re.sub(r'name="csrf_token" value="[^"]*"', '', r.get_data(as_text=True)).replace(typed, 'X')
+        self.assertEqual(page(hidden, self.foreign_value), page(absent, 'TKN-NOBODY-HAS-THIS'))
+        self.assertEqual(find(self.own_value).status_code, 302,
+                         'control: the operator finds its own authority\'s credential')
+
+    def test_no_form_opens_on_another_authoritys_credential(self):
+        for path in ('/uc4/activate-reserve', '/uc5/bind-device', '/uc6/migrate', '/uc8/revoke',
+                     '/verifications/new'):
+            with self.subTest(form=path):
+                r = self.client.get(path + '?token_id=2')
+                self.assertEqual(r.status_code, 404)
+                body = r.get_data(as_text=True)
+                self.assertNotIn(self.foreign_value, body)
+                self.assertIn('No credential matches #2', body)
+                own = self.client.get(path + '?token_id=3')
+                self.assertEqual(own.status_code, 200, 'control: its own credential opens')
+                self.assertIn(self.own_value, own.get_data(as_text=True))
 
     def test_no_wallet_offer_for_a_credential_the_operator_cannot_see(self):
         # Row-level security hides token 2 from an operator bound to authority 1, and hidden is
@@ -6624,7 +7281,7 @@ class F01_AuthenticationTests(UnauthenticatedTestCase):
         """The login page itself must be reachable without auth."""
         r = self.client.get('/login')
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'POLARIS', 'Sign In')
+        self.assertHTML(r, 'POLARIS', 'Sign in')
 
     def test_login_success_with_valid_credentials(self):
         r = self.client.post('/login', data={
@@ -7530,28 +8187,28 @@ class RoleBasedAccessControlTests(PolarisTestCase):
         r = self.client.get('/dashboard')
         # Operator can't use SQL console, so the nav link shouldn't appear
         # (The role-based template hides it.)
-        self.assertNotHTML(r, '>SQL Console<')
+        self.assertNotHTML(r, '>SQL console<')
         # v8.14 iteration 11: UC-* nav items moved into a <details>
         # dropdown menu; operator sees UC-1 / UC-4 / UC-5 / UC-6 / UC-8 / UC-9.
         # v8.15 R11-6: UC-8 (bounded revocation) added to the operator set.
         # v8.17 R11-2: UC-9 (recovery queue) added to the operator set.
         # v8.18 R11-1: UC-6 (algorithm migration) added to the operator set.
-        self.assertHTML(r, '>UC-1<')   # in the dropdown menu
-        self.assertHTML(r, '>UC-6<')
-        self.assertHTML(r, '>UC-8<')
-        self.assertHTML(r, '>UC-9<')
+        self.assertHTML(r, '>Issue a credential<')   # in the Operations group
+        self.assertHTML(r, '>Migrate an algorithm<')
+        self.assertHTML(r, '>Revoke<')
+        self.assertHTML(r, '>Recovery<')
 
         self._logout()
         self._login('auditor')
         r = self.client.get('/dashboard')
         # Auditor sees SQL but not UC-1/6/8/9 (only UC-7 in the dropdown)
-        self.assertHTML(r, '>SQL Console<')
-        self.assertNotHTML(r, '>UC-1<')
-        self.assertNotHTML(r, '>UC-6<')
-        self.assertNotHTML(r, '>UC-8<')
-        self.assertNotHTML(r, '>UC-9<')
+        self.assertHTML(r, '>SQL console<')
+        self.assertNotHTML(r, '>Issue a credential<')
+        self.assertNotHTML(r, '>Migrate an algorithm<')
+        self.assertNotHTML(r, '>Revoke<')
+        self.assertNotHTML(r, '>Recovery<')
         # Auditor still sees UC-7 in the dropdown
-        self.assertHTML(r, '>UC-7<')
+        self.assertHTML(r, '>Warrant audit<')
 
 
 class PasswordHashingTests(unittest.TestCase):
@@ -8900,6 +9557,100 @@ class ConcurrencyTests(PolarisTestCase):
                 (tid, algorithm_id, ('LPMIG_%d' % algorithm_id).encode(), False))
 
         self.assertContends(migrate(2), migrate(3), 'Same-token migrations')
+
+    # 2026-10-01. Locks taken in FUNCTIONS, which check_advisory_locks_have_a_contention_test
+    # did not see until then: the holder key register's per-credential lock (a domain with an
+    # underscore, which the check did not read) and the population counts' fold lock.
+
+    def _live_credential(self, tag):
+        """A fresh ACTIVE credential with a live signature, for a lock test of its own."""
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                        "VALUES (%s, '1990-01-01', 'US-PA') RETURNING individual_id", ('C9 ' + tag,))
+            iid = cur.fetchone()['individual_id']
+            cur.execute("""
+                INSERT INTO IdentityToken
+                    (token_value, physical_serial, biometric_binding_type, individual_id,
+                     issuing_agency_id, algorithm_id, status, issued_date, activated_date,
+                     expiration_date)
+                VALUES (%s, %s, 'NONE', %s, 1, 1, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        (polaris_utc_date() + INTERVAL '10 years')::date)
+                RETURNING token_id
+            """, ('TKN-C9-%s-%s' % (tag, iid), 'SN-C9-%s-%s' % (tag, iid), iid))
+            tid = cur.fetchone()['token_id']
+            cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes) "
+                        "VALUES (%s, 1, %s)", (tid, ('C9_%s_%d' % (tag, tid)).encode()))
+            conn.commit()
+        return tid
+
+    def test_holder_key_events_on_two_credentials_do_not_block(self):
+        a, b = self._live_credential('hk-a'), self._live_credential('hk-b')
+
+        def bind(tid, key_byte):
+            return lambda cur: cur.execute(
+                "SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'bound')", (tid, key_byte * 32))
+        self.assertDoesNotContend(bind(a, 'ab'), bind(b, 'cd'), 'Holder keys bound to two credentials')
+
+    def test_holder_key_events_on_one_credential_serialize(self):
+        """The register's writer takes its lock before reading the key in force, so a second
+        change to the same credential waits at the lock, not at a constraint."""
+        a = self._live_credential('hk-one')
+
+        def bind(key_byte):
+            return lambda cur: cur.execute(
+                "SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'bound')", (a, key_byte * 32))
+        self.assertContends(bind('ab'), bind('cd'), 'Two holder key changes to one credential')
+
+    def test_a_population_recount_takes_its_lock(self):
+        recount = lambda cur: cur.execute("SELECT uc_rebuild_population_counts()")  # noqa: E731
+        self.assertContends(recount, recount, 'Two population recounts')
+
+    def test_a_fold_skips_while_a_recount_holds_the_lock(self):
+        """uc_fold_population_counts takes its lock with pg_try_advisory_xact_lock: while a
+        recount holds it, a fold returns at once having folded nothing, and leaves the changes
+        for the next fold. A try-lock never waits, so assertContends cannot see it; this does."""
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE IdentityToken SET status = 'LOST' WHERE token_id = 4")
+            conn.commit()
+        holder = self._new_conn()
+        try:
+            with holder.cursor() as cur:
+                cur.execute("SELECT uc_rebuild_population_counts()")   # holds the lock, left open
+            probe = self._new_conn()
+            try:
+                with probe.cursor() as cur:
+                    cur.execute("SET lock_timeout = '2s'")
+                    cur.execute("SELECT uc_fold_population_counts() AS folded")
+                    self.assertEqual(cur.fetchone()['folded'], 0,
+                                     'a fold ran while a recount held the lock')
+                probe.commit()
+            finally:
+                probe.close()
+        finally:
+            holder.rollback()
+            holder.close()
+        # The control: with nobody holding the lock, the fold folds every change there is, and
+        # the totals it leaves equal a full count. The change above is a pure decrement of two
+        # existing totals (an ACTIVE credential and its live signature), the case INSERT ... ON
+        # CONFLICT refused before the fold updated existing totals in their own statement.
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM PopulationCountDelta")
+            pending = cur.fetchone()['n']
+            cur.execute("SELECT uc_fold_population_counts() AS folded")
+            self.assertEqual(cur.fetchone()['folded'], pending)
+            conn.commit()
+            cur.execute("SELECT count(*) AS n FROM PopulationCountDelta")
+            self.assertEqual(cur.fetchone()['n'], 0)
+            cur.execute("""
+                SELECT facet, agency_id, item, n FROM PopulationCount WHERE n <> 0
+                EXCEPT
+                (SELECT 'credential_status', issuing_agency_id, status, count(*)
+                   FROM IdentityToken GROUP BY 2, 3
+                 UNION ALL
+                 SELECT 'live_signature', t.issuing_agency_id, s.algorithm_id::TEXT, count(*)
+                   FROM TokenSignature s JOIN IdentityToken t ON t.token_id = s.token_id
+                  WHERE s.deprecation_date IS NULL AND t.status = 'ACTIVE' GROUP BY 2, 3)""")
+            self.assertEqual(cur.fetchall(), [], 'a folded total disagrees with a full count')
 
     # uc9_complete_recovery's advisory lock is NOT independently observable, and
     # this is where a test proving it takes one would go. The key is
@@ -10758,16 +11509,16 @@ class V2SubstrateUITests(PolarisTestCase):
 
     def test_dashboard_duress_tile_visible_for_admin(self):
         r = self.client.get('/dashboard')
-        self.assertIn('Duress Signals', r.data.decode())
+        self.assertIn('Duress signals', r.data.decode())
 
     def test_dashboard_duress_tile_hidden_for_operator(self):
         self._logout()
         self._login('operator')
         r = self.client.get('/dashboard')
         body = r.data.decode()
-        self.assertNotIn('Duress Signals', body)
+        self.assertNotIn('Duress signals', body)
         # The other four substrate tiles should still be visible
-        self.assertIn('Anchor Batches', body)
+        self.assertIn('Anchor batches', body)
 
     # ---------- /anchors ----------
 
@@ -10867,16 +11618,16 @@ class V2SubstrateUITests(PolarisTestCase):
     def test_substrate_menu_visible_for_admin(self):
         r = self.client.get('/dashboard')
         body = r.data.decode()
-        self.assertIn('PROOFS', body)
-        self.assertIn('Anchor Batches', body)
-        self.assertIn('ZK Epochs', body)
+        self.assertIn('Transparency', body)
+        self.assertIn('Anchor batches', body)
+        self.assertIn('ZK epochs', body)
         self.assertIn('Federation', body)
 
     def test_substrate_menu_visible_for_operator(self):
         self._logout()
         self._login('operator')
         r = self.client.get('/dashboard')
-        self.assertIn('PROOFS', r.data.decode())
+        self.assertIn('Transparency', r.data.decode())
 
 
 class NextUrlSafetyTests(unittest.TestCase):
@@ -12484,7 +13235,7 @@ class RouteGuardMatrixTests(PolarisTestCase):
     #: by hand, which is what the two lists they replace were. Changing a guard is
     #: meant to fail here: updating the line is the moment somebody confirms the
     #: new exposure is intended.
-    EXPECTED_LOGIN_ONLY = 45
+    EXPECTED_LOGIN_ONLY = 47
     ROLE_GATES = {
         '/agencies/<int:ag_id>/delete': ('admin',),
         '/agencies/<int:ag_id>/edit': ('admin',),
@@ -12633,7 +13384,7 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
     """Every state-changing route, classified by which cross-site defence applies (v9.418).
 
     CSRF protection only bites where a browser will attach ambient authority. The
-    route table has 54 state-changing routes: 33 carry @csrf_protect, 2 are the
+    route table has 56 state-changing routes: 35 carry @csrf_protect, 2 are the
     launcher's anonymous local-control endpoints and carry @reject_cross_site, and
     19 are the machine API and the pre-session auth endpoints, where there is no
     cookie authority to abuse.
@@ -12706,8 +13457,8 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
             "Either add @csrf_protect, or add an entry to CSRF_EXEMPT saying why a browser "
             "cannot be made to call this with someone else's authority.")
         self.assertEqual(
-            len(csrf), 33,
-            f"{len(csrf)} routes carry @csrf_protect and 33 are recorded. A guard that was "
+            len(csrf), 35,
+            f"{len(csrf)} routes carry @csrf_protect and 35 are recorded. A guard that was "
             "removed shows up here, because a route without one simply stops appearing in the "
             "protected set.")
         self.assertEqual(len(cross_site), 2, f"{len(cross_site)} routes reject cross-site "
@@ -12738,7 +13489,7 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
                     f"{method} {url} without a CSRF token returned {r.status_code}; the token "
                     "is not being required")
             checked += 1
-        self.assertEqual(checked, 33,
+        self.assertEqual(checked, 35,
                          f"only {checked} CSRF-protected routes were exercised; the route table "
                          "is no longer being read and this test is passing by finding nothing")
 
@@ -17049,8 +17800,11 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
                                 'algorithm_id': '1', 'biometric_binding_type': 'NONE',
                                 'token_value': 'TKN-SCOPE-{A}', 'physical_serial': 'SN-SCOPE-{A}',
                                 'hardware_model': 'TitanQ-3', 'contexts': ['1']}),
+        # Both credentials authority 1's (T3, T4), so that only the binding is under test; the
+        # procedure refuses the pair itself (T4 is no reserve of T3's holder). Until 2026-10-01
+        # the reserve was T1, authority 2's, and this control asserted the binding admitted it.
         ('/uc4/activate-reserve', 'form', {'lost_token_id': '3', 'actor_agency_id': '{A}',
-                                           'reason_code': 'LOST', 'reserve_token_id': '1',
+                                           'reason_code': 'LOST', 'reserve_token_id': '4',
                                            'published_location': 'https://crl.test/x'}),
         ('/uc8/revoke', 'form', {'token_id': '3', 'actor_agency_id': '{A}',
                                  'reason_code': 'ADMINISTRATIVE',
@@ -17082,6 +17836,47 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
                              json={'attestation_id': 1, 'revocation_reason': 'withdrawn by owner'},
                              headers={'X-CSRFToken': csrf})
         self.assertEqual(r.status_code, 200, "control: the attesting authority withdraws its own")
+
+    def _holder_with_active_from(self, agency):
+        """Individual 1 holds T1, a live reserve authority 2 issued (seed). Give them an active
+        credential from `agency`, the one an operator will report lost."""
+        lost = _sql("""INSERT INTO IdentityToken (token_value, physical_serial, biometric_binding_type,
+                                                  individual_id, issuing_agency_id, algorithm_id, status,
+                                                  expiration_date)
+                       VALUES ('TKN-UC4-BIND-' || %s, 'SN-UC4-BIND-' || %s, 'NONE', 1, %s, 1, 'RESERVE',
+                               polaris_utc_date() + 3650) RETURNING token_id""",
+                    (agency, agency, agency), fetch='one')['token_id']
+        _sql("UPDATE IdentityToken SET status = 'ACTIVE', activated_date = now() WHERE token_id = %s",
+             (lost,), fetch='none')
+        return lost
+
+    def _report_lost(self, lost, actor):
+        return self._form('/uc4/activate-reserve', {
+            'lost_token_id': str(lost), 'actor_agency_id': str(actor), 'reason_code': 'LOST',
+            'reserve_token_id': '1', 'published_location': 'https://crl.test/uc4-binding'})
+
+    def test_a_bound_operator_cannot_activate_another_authoritys_reserve(self):
+        """2026-10-01 (THREAT-MODEL: a coerced operator). UC-4 names two credentials, the one
+        reported lost and the reserve that replaces it, and asked the binding about the first
+        alone. A person can hold credentials from more than one authority, so an operator bound to
+        authority 3 reported its own credential lost and activated a reserve authority 2 had
+        issued: authority 2's credential went live on authority 3's word."""
+        lost = self._holder_with_active_from(3)
+        self._bind(3)
+        r = self._report_lost(lost, 3)
+        self.assertEqual(r.status_code, 403, r.get_data(as_text=True)[:200])
+        after = _sql("SELECT token_id, status FROM IdentityToken WHERE token_id IN (1, %s) "
+                     "ORDER BY token_id", (lost,), fetch='all')
+        self.assertEqual([x['status'] for x in after], ['RESERVE', 'ACTIVE'], 'the refused activation happened')
+
+    def test_the_reserves_own_authority_still_activates_it(self):
+        """The control: the same report by an operator bound to the authority that issued both."""
+        lost = self._holder_with_active_from(2)
+        self._bind(2)
+        r = self._report_lost(lost, 2)
+        self.assertEqual(r.status_code, 302, r.get_data(as_text=True)[:200])
+        self.assertEqual(_sql("SELECT status FROM IdentityToken WHERE token_id = 1", fetch='one')['status'],
+                         'ACTIVE')
 
     def _post(self, path, kind, data, agency):
         def fill(v):
