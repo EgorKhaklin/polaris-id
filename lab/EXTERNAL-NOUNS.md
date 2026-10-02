@@ -39,6 +39,7 @@ accepts everything prints the same success line.
 | 2026-10-01 | Pomerium 0.33.3 (identity-aware proxy, unmodified), with the lab gate as its OIDC provider and walt.id's wallet presenting | this repository, lab/strategy/007 | admitted; the released claims reached the protected app | the issuer untrusted (refused, not admitted) | [lab/strategy/007](strategy/007/README.md) |
 | 2026-10-01 | Pomerium 0.33.3 (unmodified), checking an agent's bearer token on each request (`bearer_token_format: idp_identity_token`, a `claim/action` policy per route) | this repository, lab/strategy/007, with an ML-DSA-65 grant chain | admitted on each action's own route | the other action's route; no token; a token the gate never signed (Pomerium refused); the same proof twice; an action outside the grant; a revoked grant (the gate refused) | [lab/strategy/007](strategy/007/README.md#pomerium-end-to-end) |
 | weekly since 2026-09-28 | eudi-dev v2.3.7 (by digest) and latest | the newest PyPI release | accepted (rc7, then rc8) | all three | `.github/workflows/wallet-canary.yml` |
+| 2026-10-02 | eudi-dev v2.5.0 (Go), strict mode now checking the verifier's TLS | this repository, PyPI 1.0.0rc13 | strict mode refused the self-signed listener (`x509: certificate signed by unknown authority`); with `--tls-verify=false` it presented, `200 authentic` | all three (in the `--tls-verify=false` run) | [eudi-dev](interop/eudi-dev/README.md#the-verifiers-tls-checked-in-strict-mode-2026-10-02) |
 
 eudi-dev v2.3.7 and OID4VCgo 0.12.0 are listed by the OpenID Foundation as certified OID4VP 1.0
 + HAIP 1.0 wallets.
@@ -71,13 +72,15 @@ last two rows are those versions, checked here on request. It is an outside proj
 **eudi-dev changed after a report from here, 2026-10-02.** It did not validate the verifier's TLS
 certificate, even in `--mode strict`; reported as
 [issue 21](https://github.com/dominikschlosser/eudi-dev/issues/21). The maintainer fixed it in
-[v2.5.0](https://github.com/dominikschlosser/eudi-dev/releases/tag/v2.5.0): strict mode now verifies
-TLS for every HTTPS destination, with `--tls-verify` and `--tls-ca` overrides, and asked for a
-re-test. Checked here against the eudi-dev walk: `eudi-dev:v2.5.0 --mode strict` refuses
-`polaris-oid4vp`'s self-signed listener certificate (`tls: failed to verify certificate: x509:
-certificate signed by unknown authority`), where v2.3.7 presented; and `--tls-verify=false` restores
-presenting (accepted, all three controls refused). It is an outside project acting on a report, not
-an outside party using Polaris.
+[v2.5.0](https://github.com/dominikschlosser/eudi-dev/releases/tag/v2.5.0), whose release notes say
+strict mode now verifies TLS for every HTTPS destination, with `--tls-verify` and `--tls-ca`
+overrides, and asked for a re-test. Checked here against the eudi-dev walk, with `polaris-oid4vp`
+1.0.0rc13 as the verifier: `eudi-dev:v2.5.0 --mode strict` refuses its self-signed listener
+certificate (`tls: failed to verify certificate: x509: certificate signed by unknown authority`),
+where v2.3.7 presented; and `--tls-verify=false` restores presenting (accepted, all three controls
+refused). The one destination checked here is that listener; every-destination is the release's
+claim, not this run's. It is an outside project acting on a report, not an outside party using
+Polaris. Evidence: [lab/interop/eudi-dev](interop/eudi-dev/README.md#the-verifiers-tls-checked-in-strict-mode-2026-10-02).
 
 **walt.id refused Polaris first, and was right.** `polaris-oid4vp keygen` issued a
 request-signing leaf with no `digitalSignature` key usage; eleven conformance modules, 142
