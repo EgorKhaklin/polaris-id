@@ -140,3 +140,41 @@ Remaining: a full presentation (a wallet completing `direct_post` through the tu
 evidence to record, beside the reachability shown here. The scoreboard row is a NAMED external
 wallet that presented through the tunnel; until then this is "implemented and externally reachable,"
 not "externally exercised".
+
+## 12. A certified wallet presented through the tunnel (2026-10-02)
+
+The reachability in section 11 was then exercised end to end. The eudi-dev interop walk
+(`lab/interop/eudi-dev`) was run with the verifier behind a cloudflared quick tunnel
+(`serve --public-base-url https://<name>.trycloudflare.com --no-local-tls`), the certified eudi-dev
+v2.3.7 wallet talking to it over the public internet. Run twice, on two fresh tunnel URLs
+(`rabbit-combo-wild-except` and `athletics-race-stockholm-rico`), with identical results:
+
+- **Genuine presentation (accepted).** The wallet fetched the signed request from the public URL,
+  selected and disclosed `given_name` and `family_name` from its `urn:eudi:pid:1` SD-JWT credential,
+  encrypted the response (`direct_post.jwt`), and posted it back through the tunnel. The verifier
+  answered `200 authentic, claims ['cnf', 'family_name', 'given_name', 'iat', 'iss', 'vct']`. So the
+  tunnel carries a full, accepted OID4VP presentation from an outside wallet over the public
+  internet, not only a reachable endpoint. This is the "remaining" evidence section 11 named.
+- **Replay refused through the tunnel.** Re-fetching the same request after it was answered returned
+  the verifier's own `404` through the tunnel (`wallet-replay.log`), and the walk recorded "refused
+  at the request stage". The verifier is not restarted for this control, so the tunnel stayed
+  connected and the real verifier response came back.
+
+The two remaining controls could not be driven through the tunnel, for a harness reason, not a
+verifier one. Both the issuer-key swap and the client_id mismatch RESTART the verifier (new trust,
+new identifier) between the genuine run and the control. A cloudflared quick tunnel does not reliably
+reconnect to a restarted origin on the same port: the wallet's next `POST` to the `request_uri`
+returned cloudflare's `HTTP 530` (`wallet-a.log`, `wallet-c.log`), so the control never reached the
+verifier's refusal logic. The verifier itself restarted cleanly and re-advertised the tunnel URL
+(`verifier-other.log`); only cloudflared's origin leg lagged. That the non-restart control (replay)
+got a real `404` while the two restart controls got `530` is the signature of this: the tunnel is
+fine until the origin process is replaced under it. These two refusals are therefore established by
+the LOCAL eudi-dev walk, which refuses all three, and the verifier's refusal logic is identical with
+or without a tunnel in front of it. Recorded as a limit of quick tunnels for a restart-based walk,
+not a change in verifier behaviour.
+
+Still not a scoreboard row: this was run by us against a certified wallet implementation, not a named
+external party pointing their own wallet at the tunnel. The kill criterion above is unchanged. This
+is the strongest internal evidence short of it: a certified wallet presented a credential to a
+Polaris verifier over the public internet and was accepted, one step below the same from an external
+party.
