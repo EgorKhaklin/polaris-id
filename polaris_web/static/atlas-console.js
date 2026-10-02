@@ -18,6 +18,11 @@
  * markup — so `script-src 'self'` (C5) stays strict and no charting CDN is
  * needed. Zero-knowledge events are counted in every figure but never located
  * (C6): the server aggregates enforce that; the console only ever shows counts.
+ *
+ * A count below the minimum cell size arrives as null (lab/strategy/009, step 4) and
+ * is shown as "<5", drawn as a gap or a neutral mark, and never as a number or as
+ * zero. The console never sums the points it was given into a figure of its own: a
+ * withheld point would read as none. Headline figures come from the server's totals.
  * ======================================================================== */
 (function () {
   'use strict';
@@ -53,6 +58,23 @@
     return String(n);
   }
   function fmtPct(x) { return (Math.round(x * 10) / 10) + '%'; }
+
+  var MIN_CELL = parseInt(shell.getAttribute('data-min-cell') || '5', 10);
+  function withheld(n) { return n === null || n === undefined; }
+  function fmtCount(n) { return withheld(n) ? '<' + MIN_CELL : fmtInt(n); }
+  function fmtShare(part, whole) {
+    return (withheld(part) || withheld(whole) || !whole) ? 'withheld' : fmtPct(100 * part / whole);
+  }
+  // Runs of consecutive points whose `key` is shown: a line breaks where a count is withheld.
+  function shownRuns(points, key) {
+    var runs = [], cur = [];
+    points.forEach(function (p, i) {
+      if (withheld(p[key])) { if (cur.length) runs.push(cur); cur = []; }
+      else cur.push(i);
+    });
+    if (cur.length) runs.push(cur);
+    return runs;
+  }
 
   function apiCall(url) {
     return fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
@@ -108,28 +130,30 @@
   // stays a bounded server-side operation at any scale. The map keeps its own
   // controls until its redesign ship.
   // =========================================================================
+  // One context and one authority at a time (lab/strategy/009, step 4): with a set of
+  // either, the answer for all but one would subtract from the answer for all. Outcomes
+  // and disclosure levels stay sets; their complements are what the breakdowns show.
   var gfilters = {
     stream: 'verification', window: 'all',
-    contexts: [], outcomes: [], disclosure: [], agencies: []   // agencies: [{id,name}]
+    context: null, outcomes: [], disclosure: [], agency: null   // agency: {id, name}
   };
-  var FACET_PARAM = { context: 'contexts', outcome: 'outcomes', disclosure: 'disclosure' };
+  var FACETS = ['context', 'outcome', 'disclosure'];
+  var FACET_PARAM = { outcome: 'outcomes', disclosure: 'disclosure' };   // the set-valued ones
 
-  function gfilterQuery() {
-    var p = ['window=' + encodeURIComponent(gfilters.window), 'kind=' + encodeURIComponent(gfilters.stream)];
-    if (gfilters.contexts.length)   p.push('contexts=' + gfilters.contexts.map(encodeURIComponent).join(','));
-    if (gfilters.outcomes.length)   p.push('outcomes=' + gfilters.outcomes.map(encodeURIComponent).join(','));
-    if (gfilters.disclosure.length) p.push('disclosure=' + gfilters.disclosure.map(encodeURIComponent).join(','));
-    if (gfilters.agencies.length)   p.push('agencies=' + gfilters.agencies.map(function (a) { return a.id; }).join(','));
-    return p.join('&');
+  function facetValues(facet) {
+    if (facet === 'context') return gfilters.context ? [gfilters.context] : [];
+    return gfilters[FACET_PARAM[facet]];
   }
+
+  function gfilterQuery() { return facetContextQuery(null); }
   // A facet's own menu counts every OTHER active facet but not itself (standard
-  // faceting: you can still see and add the other values of this dimension).
+  // faceting: you can still see and choose the other values of this dimension).
   function facetContextQuery(exceptFacet) {
     var t = 'window=' + encodeURIComponent(gfilters.window) + '&kind=' + encodeURIComponent(gfilters.stream);
-    if (exceptFacet !== 'context'    && gfilters.contexts.length)   t += '&contexts=' + gfilters.contexts.map(encodeURIComponent).join(',');
+    if (exceptFacet !== 'context'    && gfilters.context)           t += '&contexts=' + encodeURIComponent(gfilters.context);
     if (exceptFacet !== 'outcome'    && gfilters.outcomes.length)   t += '&outcomes=' + gfilters.outcomes.map(encodeURIComponent).join(',');
     if (exceptFacet !== 'disclosure' && gfilters.disclosure.length) t += '&disclosure=' + gfilters.disclosure.map(encodeURIComponent).join(',');
-    if (exceptFacet !== 'agency'     && gfilters.agencies.length)   t += '&agencies=' + gfilters.agencies.map(function (a) { return a.id; }).join(',');
+    if (exceptFacet !== 'agency'     && gfilters.agency)            t += '&agencies=' + encodeURIComponent(gfilters.agency.id);
     return t;
   }
 
@@ -169,14 +193,17 @@
   // A filled area for the primary series with a stroked overlay for failures.
   function renderHero(mount, points) {
     mount.textContent = '';
-    if (!points || !points.length) {
-      mount.appendChild(el('div', { class: 'ov-empty', text: 'No events in this window.' }));
+    var shownN = (points || []).filter(function (p) { return !withheld(p.n_total); }).length;
+    if (!points || !points.length || !shownN) {
+      mount.appendChild(el('div', { class: 'ov-empty', text: points && points.length
+        ? 'Every interval in this window holds fewer than ' + MIN_CELL + ' events, so none is shown.'
+        : 'No events in this window.' }));
       return;
     }
     var W = 820, H = 220, padL = 8, padR = 8, padT = 12, padB = 22;
     var iW = W - padL - padR, iH = H - padT - padB;
     var maxV = 1;
-    points.forEach(function (p) { if (p.n_total > maxV) maxV = p.n_total; });
+    points.forEach(function (p) { if (!withheld(p.n_total) && p.n_total > maxV) maxV = p.n_total; });
     var n = points.length;
     function X(i) { return padL + (n === 1 ? iW / 2 : (i / (n - 1)) * iW); }
     function Y(v) { return padT + iH - (v / maxV) * iH; }
@@ -186,8 +213,9 @@
     // says what the picture says, rather than being a static string that goes stale. (P6.5)
     var s = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'ov-hero-svg',
       preserveAspectRatio: 'none', role: 'img',
-      'aria-label': 'Verification volume over time: ' + n + ' interval'
-        + (n === 1 ? '' : 's') + ', peak ' + fmtInt(maxV) + ' per interval' });
+      'aria-label': 'Volume over time: ' + n + ' interval'
+        + (n === 1 ? '' : 's') + ', peak ' + fmtInt(maxV) + ' per interval, '
+        + (n - shownN) + ' withheld as fewer than ' + MIN_CELL });
 
     // horizontal gridlines at 0/50/100% of max
     [0, 0.5, 1].forEach(function (f) {
@@ -197,20 +225,27 @@
         f === 0 ? '' : fmtInt(Math.round(maxV * f));
     });
 
-    // area path for n_total
-    var d = 'M ' + X(0) + ' ' + Y(points[0].n_total);
-    for (var i = 1; i < n; i++) d += ' L ' + X(i) + ' ' + Y(points[i].n_total);
-    var area = d + ' L ' + X(n - 1) + ' ' + (padT + iH) + ' L ' + X(0) + ' ' + (padT + iH) + ' Z';
-    s.appendChild(svg('path', { d: area, class: 'ov-area' }));
-    s.appendChild(svg('path', { d: d, class: 'ov-line' }));
+    // area and line for each run of shown intervals; a withheld one breaks the line and
+    // gets a neutral tick on the baseline instead of a zero.
+    shownRuns(points, 'n_total').forEach(function (run) {
+      var d = 'M ' + X(run[0]) + ' ' + Y(points[run[0]].n_total);
+      run.slice(1).forEach(function (i) { d += ' L ' + X(i) + ' ' + Y(points[i].n_total); });
+      var area = d + ' L ' + X(run[run.length - 1]) + ' ' + (padT + iH) + ' L ' + X(run[0]) + ' ' + (padT + iH) + ' Z';
+      s.appendChild(svg('path', { d: area, class: 'ov-area' }));
+      s.appendChild(svg('path', { d: d, class: 'ov-line' }));
+    });
+    points.forEach(function (p, i) {
+      if (withheld(p.n_total)) {
+        s.appendChild(svg('line', { x1: X(i), y1: padT + iH - 4, x2: X(i), y2: padT + iH, class: 'ov-withheld-tick' }));
+      }
+    });
 
-    // failure overlay (only if any)
-    var anyFail = points.some(function (p) { return p.n_failure > 0; });
-    if (anyFail) {
-      var fd = 'M ' + X(0) + ' ' + Y(points[0].n_failure);
-      for (var j = 1; j < n; j++) fd += ' L ' + X(j) + ' ' + Y(points[j].n_failure);
+    // failure overlay, where shown
+    shownRuns(points, 'n_failure').forEach(function (run) {
+      var fd = 'M ' + X(run[0]) + ' ' + Y(points[run[0]].n_failure);
+      run.slice(1).forEach(function (j) { fd += ' L ' + X(j) + ' ' + Y(points[j].n_failure); });
       s.appendChild(svg('path', { d: fd, class: 'ov-line-fail' }));
-    }
+    });
     mount.appendChild(s);
 
     // date range under the chart
@@ -230,15 +265,16 @@
     mount.textContent = '';
     if (!values || !values.length) return;
     var W = 100, H = 26, max = 1;
-    values.forEach(function (v) { if (v > max) max = v; });
+    values.forEach(function (v) { if (!withheld(v) && v > max) max = v; });
     var n = values.length;
     var s = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'ov-spark-svg', preserveAspectRatio: 'none' });
     function X(i) { return n === 1 ? W / 2 : (i / (n - 1)) * W; }
     function Y(v) { return H - 2 - (v / max) * (H - 4); }
-    var d = 'M ' + X(0) + ' ' + Y(values[0]);
-    for (var i = 1; i < n; i++) d += ' L ' + X(i) + ' ' + Y(values[i]);
-    var p = svg('path', { d: d, fill: 'none', stroke: tone || TONE.total, 'stroke-width': '1.5' });
-    s.appendChild(p);
+    shownRuns(values.map(function (v) { return { v: v }; }), 'v').forEach(function (run) {
+      var d = 'M ' + X(run[0]) + ' ' + Y(values[run[0]]);
+      run.slice(1).forEach(function (i) { d += ' L ' + X(i) + ' ' + Y(values[i]); });
+      s.appendChild(svg('path', { d: d, fill: 'none', stroke: tone || TONE.total, 'stroke-width': '1.5' }));
+    });
     mount.appendChild(s);
   }
 
@@ -250,27 +286,32 @@
       return;
     }
     var max = 1;
-    cats.forEach(function (c) { if (c.n_total > max) max = c.n_total; });
+    cats.forEach(function (c) { if (!withheld(c.n_total) && c.n_total > max) max = c.n_total; });
     cats.forEach(function (c) {
-      var row = el('div', { class: 'ov-bar-row' + (onClick ? ' ov-bar-row-click' : '') });
-      if (onClick) {
+      var clickable = onClick && !c.folded;
+      var row = el('div', { class: 'ov-bar-row' + (clickable ? ' ov-bar-row-click' : '')
+        + (c.folded ? ' ov-bar-row-folded' : '') });
+      if (clickable) {
         row.title = 'Filter to ' + c.label;
         row.addEventListener('click', function () { onClick(c.label); });
       }
       row.appendChild(el('span', { class: 'ov-bar-label', title: c.label, text: c.label }));
       var track = el('span', { class: 'ov-bar-track' });
-      var okN = Math.max(0, c.n_total - c.n_failure);
-      var ok = el('span', { class: 'ov-bar-fill' });
-      ok.style.width = (100 * okN / max) + '%';
-      track.appendChild(ok);
-      if (c.n_failure > 0) {
-        var bad = el('span', { class: 'ov-bar-fill ov-bar-fill-fail',
-          title: c.n_failure + ' non-success' });
-        bad.style.width = (100 * c.n_failure / max) + '%';
-        track.appendChild(bad);
+      if (!withheld(c.n_total)) {
+        // With its failures withheld, a bar is drawn whole and neutral: green would say none.
+        var failShown = !withheld(c.n_failure);
+        var ok = el('span', { class: 'ov-bar-fill' + (failShown ? '' : ' ov-bar-fill-neutral'),
+          title: failShown ? '' : 'non-success withheld: fewer than ' + MIN_CELL + ', or all but that many' });
+        ok.style.width = (100 * (c.n_total - (failShown ? c.n_failure : 0)) / max) + '%';
+        track.appendChild(ok);
+        if (failShown && c.n_failure > 0) {
+          var bad = el('span', { class: 'ov-bar-fill ov-bar-fill-fail', title: c.n_failure + ' non-success' });
+          bad.style.width = (100 * c.n_failure / max) + '%';
+          track.appendChild(bad);
+        }
       }
       row.appendChild(track);
-      row.appendChild(el('span', { class: 'ov-bar-val', text: fmtInt(c.n_total) }));
+      row.appendChild(el('span', { class: 'ov-bar-val', text: fmtCount(c.n_total) }));
       mount.appendChild(row);
     });
   }
@@ -279,6 +320,12 @@
   function renderMix(mount, cats) {
     mount.textContent = '';
     if (!cats || !cats.length) return;
+    // Shares only when every level is shown: a share of a withheld level would give it back.
+    if (cats.some(function (c) { return withheld(c.n_total); })) {
+      mount.appendChild(el('div', { class: 'ov-mix-withheld',
+        text: 'Shares withheld: a level holds fewer than ' + MIN_CELL + ' in this window.' }));
+      return;
+    }
     var total = 0;
     cats.forEach(function (c) { total += c.n_total; });
     if (!total) return;
@@ -339,14 +386,13 @@
     apiCall('/api/atlas/series?' + q + '&buckets=48').then(function (data) {
       if (seq !== loadSeq) return;
       var pts = data.points || [];
+      var t = data.totals || {};
       renderHero($('[data-ov-hero]', overview), pts);
-      var vol = 0, fail = 0, zk = 0;
-      pts.forEach(function (p) { vol += p.n_total; fail += p.n_failure; zk += p.n_zk; });
-      setKpi('volume', fmtInt(vol));
+      setKpi('volume', fmtCount(t.n_total));
       setSub('volume', windowLabel(data));
-      setKpi('failure-rate', vol ? fmtPct(100 * fail / vol) : '0%');
-      setSub('failure-rate', fmtInt(fail) + ' non-success');
-      if (state.stream === 'verification') setKpi('zk', vol ? fmtPct(100 * zk / vol) : '0%');
+      setKpi('failure-rate', fmtShare(t.n_failure, t.n_total));
+      setSub('failure-rate', withheld(t.n_failure) ? 'non-success withheld' : fmtInt(t.n_failure) + ' non-success');
+      if (state.stream === 'verification') setKpi('zk', fmtShare(t.n_zk, t.n_total));
       renderSparkline($('[data-ov-spark="volume"]', overview), pts.map(function (p) { return p.n_total; }), TONE.total);
       renderSparkline($('[data-ov-spark="failure"]', overview), pts.map(function (p) { return p.n_failure; }), TONE.fail);
       if (state.stream === 'verification')
@@ -364,7 +410,7 @@
         var cats = data.categories || [];
         // Cross-filtering: a value-based facet dimension's bars filter the whole
         // console on click (agency needs an id, so it is not click-to-filter here).
-        var onClick = FACET_PARAM[panel.dim]
+        var onClick = FACETS.indexOf(panel.dim) >= 0
           ? function (label) { toggleFacetValue(panel.dim, label); }
           : null;
         renderBars(mount, cats, onClick);
@@ -376,9 +422,11 @@
     });
   }
 
+  // The window as the rollups read it: from the top of an hour (or a day), never a minute.
   function windowLabel(data) {
-    if (state.window === 'all') return 'all recorded';
-    return 'last ' + state.window;
+    if (!data || !data.since) return 'all recorded';
+    var byDay = data.grain === 'day';
+    return 'since ' + data.since.replace('T', ' ').slice(0, byDay ? 10 : 16) + (byDay ? ', by day' : ', by hour');
   }
 
   // Show only the panels this stream has data for; retitle the shared mounts.
@@ -495,12 +543,20 @@
     if (!mount) return;
     mount.textContent = '';
     if (!cats || !cats.length) { mount.appendChild(el('div', { class: 'ov-empty', text: 'No data in this window.' })); return; }
-    var total = cats.reduce(function (a, c) { return a + c.n_total; }, 0) || 1;
-    var maxV = Math.max.apply(null, cats.map(function (c) { return c.n_total; })) || 1;
+    // Shown categories first, by the chosen metric; withheld ones after, by name; the folded
+    // row last. No share column: a share needs the window's total, which the list does not
+    // carry, so that no category can be subtracted from it.
+    function rate(c) { return withheld(c.n_total) || withheld(c.n_failure) || !c.n_total ? null : c.n_failure / c.n_total; }
+    var maxV = 1;
+    cats.forEach(function (c) { if (!withheld(c.n_total) && c.n_total > maxV) maxV = c.n_total; });
     var sorted = cats.slice().sort(function (a, b) {
+      if (!!a.folded !== !!b.folded) return a.folded ? 1 : -1;
+      if (withheld(a.n_total) !== withheld(b.n_total)) return withheld(a.n_total) ? 1 : -1;
+      if (withheld(a.n_total)) return String(a.label).localeCompare(String(b.label));
       if (metric === 'failure') {
-        var ra = a.n_total ? a.n_failure / a.n_total : 0, rb = b.n_total ? b.n_failure / b.n_total : 0;
-        return (rb - ra) || (b.n_total - a.n_total);
+        var ra = rate(a), rb = rate(b);
+        if ((ra === null) !== (rb === null)) return ra === null ? 1 : -1;
+        if (ra !== rb) return (rb || 0) - (ra || 0);
       }
       return b.n_total - a.n_total;
     });
@@ -509,19 +565,22 @@
     head.appendChild(el('span', { class: 'bd-row-barhead', text: 'Volume' }));
     head.appendChild(el('span', { class: 'bd-row-vol', text: '#' }));
     head.appendChild(el('span', { class: 'bd-row-rate', text: 'Fail %' }));
-    head.appendChild(el('span', { class: 'bd-row-share', text: 'Share' }));
     mount.appendChild(head);
     sorted.forEach(function (c) {
-      var rate = c.n_total ? c.n_failure / c.n_total : 0;
-      var row = el('div', { class: 'bd-row' });
+      var r = rate(c);
+      var row = el('div', { class: 'bd-row' + (c.folded ? ' bd-row-folded' : '') });
       row.appendChild(el('span', { class: 'bd-row-label', title: c.label, text: c.label }));
       var track = el('span', { class: 'ov-bar-track' });
-      var ok = el('span', { class: 'ov-bar-fill' }); ok.style.width = (100 * (c.n_total - c.n_failure) / maxV) + '%'; track.appendChild(ok);
-      if (c.n_failure > 0) { var bad = el('span', { class: 'ov-bar-fill ov-bar-fill-fail' }); bad.style.width = (100 * c.n_failure / maxV) + '%'; track.appendChild(bad); }
+      if (!withheld(c.n_total)) {
+        var failShown = !withheld(c.n_failure);
+        var ok = el('span', { class: 'ov-bar-fill' + (failShown ? '' : ' ov-bar-fill-neutral') });
+        ok.style.width = (100 * (c.n_total - (failShown ? c.n_failure : 0)) / maxV) + '%'; track.appendChild(ok);
+        if (failShown && c.n_failure > 0) { var bad = el('span', { class: 'ov-bar-fill ov-bar-fill-fail' }); bad.style.width = (100 * c.n_failure / maxV) + '%'; track.appendChild(bad); }
+      }
       row.appendChild(track);
-      row.appendChild(el('span', { class: 'bd-row-vol', text: fmtInt(c.n_total) }));
-      row.appendChild(el('span', { class: 'bd-row-rate' + (rate >= 0.15 ? ' bd-rate-high' : ''), text: fmtPct(100 * rate) }));
-      row.appendChild(el('span', { class: 'bd-row-share', text: fmtPct(100 * c.n_total / total) }));
+      row.appendChild(el('span', { class: 'bd-row-vol', text: fmtCount(c.n_total) }));
+      row.appendChild(el('span', { class: 'bd-row-rate' + (r !== null && r >= 0.15 ? ' bd-rate-high' : ''),
+        text: r === null ? 'withheld' : fmtPct(100 * r) }));
       mount.appendChild(row);
     });
   }
@@ -540,17 +599,24 @@
     data.cols.forEach(function (col) { grid.appendChild(el('span', { class: 'bd-mx-colhead', title: col, text: prettyLabel(col) })); });
     grid.appendChild(el('span', { class: 'bd-mx-colhead bd-mx-total', text: 'Total' }));
     data.rows.forEach(function (r) {
-      grid.appendChild(el('span', { class: 'bd-mx-rowhead', title: r.label, text: r.label }));
+      grid.appendChild(el('span', { class: 'bd-mx-rowhead' + (r.folded ? ' bd-mx-folded' : ''), title: r.label, text: r.label }));
       data.cols.forEach(function (col) {
-        var n = lut[r.label + '\u0000' + col] || 0;
-        var share = r.total ? n / r.total : 0;
-        var cell = el('span', { class: 'bd-mx-cell', text: n ? fmtInt(n) : '·',
-          title: r.label + ' · ' + prettyLabel(col) + ': ' + fmtInt(n) + ' (' + fmtPct(100 * share) + ' of row)' });
-        cell.style.background = n ? hexA(COL_TONE[col] || '#8da6c4', 0.10 + 0.60 * share) : 'transparent';
-        if (share >= 0.5 && n) cell.classList.add('bd-mx-strong');
+        var n = lut[r.label + '\u0000' + col];
+        if (withheld(n)) {
+          grid.appendChild(el('span', { class: 'bd-mx-cell bd-mx-withheld', text: '<' + MIN_CELL,
+            title: r.label + ' · ' + prettyLabel(col) + ': withheld (fewer than ' + MIN_CELL
+              + ', or all but that many of the row)' }));
+          return;
+        }
+        var share = withheld(r.total) || !r.total ? null : n / r.total;
+        var cell = el('span', { class: 'bd-mx-cell', text: fmtInt(n),
+          title: r.label + ' · ' + prettyLabel(col) + ': ' + fmtInt(n)
+            + (share === null ? '' : ' (' + fmtPct(100 * share) + ' of row)') });
+        cell.style.background = hexA(COL_TONE[col] || '#8da6c4', 0.10 + 0.60 * (share === null ? 0.5 : share));
+        if (share !== null && share >= 0.5) cell.classList.add('bd-mx-strong');
         grid.appendChild(cell);
       });
-      grid.appendChild(el('span', { class: 'bd-mx-cell bd-mx-total', text: fmtInt(r.total) }));
+      grid.appendChild(el('span', { class: 'bd-mx-cell bd-mx-total', text: fmtCount(r.total) }));
     });
     mount.appendChild(grid);
   }
@@ -643,7 +709,7 @@
       var det = $('.gf-facet[data-gf-facet="' + facet + '"]', gbar);
       if (det) { det.hidden = !isVerif; if (!isVerif) det.open = false; }
     });
-    if (!isVerif) { gfilters.contexts = []; gfilters.outcomes = []; gfilters.disclosure = []; }
+    if (!isVerif) { gfilters.context = null; gfilters.outcomes = []; gfilters.disclosure = []; }
   }
 
   if (gbar) {
@@ -683,7 +749,7 @@
                 + (qv ? '&q=' + encodeURIComponent(qv) : '') + '&limit=20').then(function (data) {
           agResults.textContent = '';
           (data.results || []).forEach(function (a) {
-            var on = gfilters.agencies.some(function (x) { return x.id === a.agency_id; });
+            var on = !!gfilters.agency && gfilters.agency.id === a.agency_id;
             var row = facetOptRow(on, a.name, a.n_total, function () {
               toggleAgency(a.agency_id, a.name); agencyDet._load();
             });
@@ -698,7 +764,7 @@
 
     var gfClear = $('[data-gf-clear]');
     if (gfClear) gfClear.addEventListener('click', function () {
-      gfilters.contexts = []; gfilters.outcomes = []; gfilters.disclosure = []; gfilters.agencies = [];
+      gfilters.context = null; gfilters.outcomes = []; gfilters.disclosure = []; gfilters.agency = null;
       applyFilters();
     });
   }
@@ -707,7 +773,7 @@
     var row = el('button', { class: 'gf-facet-opt' + (on ? ' gf-facet-opt-on' : ''), type: 'button' });
     row.appendChild(el('span', { class: 'gf-facet-check', text: on ? '☑' : '☐' }));
     row.appendChild(el('span', { class: 'gf-facet-optlabel', title: label, text: label }));
-    row.appendChild(el('span', { class: 'gf-facet-optcount', text: fmtInt(count) }));
+    row.appendChild(el('span', { class: 'gf-facet-optcount', text: fmtCount(count) }));
     row.addEventListener('click', onClick);
     return row;
   }
@@ -717,8 +783,9 @@
     menu.textContent = 'Loading…';
     apiCall('/api/atlas/breakdown?' + facetContextQuery(facet) + '&dimension=' + facet + '&limit=40').then(function (data) {
       menu.textContent = '';
-      var selected = gfilters[FACET_PARAM[facet]];
+      var selected = facetValues(facet);
       (data.categories || []).forEach(function (c) {
+        if (c.folded) return;   // the folded row is not a value one can choose
         menu.appendChild(facetOptRow(selected.indexOf(c.label) >= 0, prettyLabel(c.label), c.n_total, function () {
           toggleFacetValue(facet, c.label); loadFacetMenu(det, facet);
         }));
@@ -726,23 +793,27 @@
       if (!(data.categories || []).length) menu.appendChild(el('div', { class: 'gf-facet-empty', text: 'No values.' }));
     }).catch(function () { menu.textContent = 'Could not load.'; });
   }
+  // A context is chosen one at a time (a second choice replaces the first, the same one
+  // clears it); outcomes and disclosure levels toggle within their sets.
   function toggleFacetValue(facet, value) {
-    var arr = gfilters[FACET_PARAM[facet]];
-    var i = arr.indexOf(value);
-    if (i >= 0) arr.splice(i, 1); else arr.push(value);
+    if (facet === 'context') {
+      gfilters.context = gfilters.context === value ? null : value;
+    } else {
+      var arr = gfilters[FACET_PARAM[facet]];
+      var i = arr.indexOf(value);
+      if (i >= 0) arr.splice(i, 1); else arr.push(value);
+    }
     applyFilters();
   }
   function toggleAgency(id, name) {
-    var i = -1;
-    gfilters.agencies.forEach(function (a, idx) { if (a.id === id) i = idx; });
-    if (i >= 0) gfilters.agencies.splice(i, 1); else gfilters.agencies.push({ id: id, name: name });
+    gfilters.agency = (gfilters.agency && gfilters.agency.id === id) ? null : { id: id, name: name };
     applyFilters();
   }
   function updateFacetBadges() {
     if (!gbar) return;
     $$('.gf-facet[data-gf-facet]', gbar).forEach(function (det) {
       var facet = det.getAttribute('data-gf-facet');
-      var n = facet === 'agency' ? gfilters.agencies.length : gfilters[FACET_PARAM[facet]].length;
+      var n = facet === 'agency' ? (gfilters.agency ? 1 : 0) : facetValues(facet).length;
       var badge = $('[data-gf-facet-count]', det);
       if (badge) { badge.textContent = n ? String(n) : ''; badge.hidden = !n; }
     });
@@ -761,14 +832,15 @@
       x.addEventListener('click', onRemove);
       c.appendChild(x); box.appendChild(c);
     }
-    ['context', 'outcome', 'disclosure'].forEach(function (facet) {
-      gfilters[FACET_PARAM[facet]].slice().forEach(function (v) {
+    FACETS.forEach(function (facet) {
+      facetValues(facet).slice().forEach(function (v) {
         chip(facet + ': ' + prettyLabel(v), function () { toggleFacetValue(facet, v); });
       });
     });
-    gfilters.agencies.slice().forEach(function (a) {
+    if (gfilters.agency) {
+      var a = gfilters.agency;
       chip(a.name, function () { toggleAgency(a.id, a.name); });
-    });
+    }
     var clear = $('[data-gf-clear]');
     if (clear) clear.hidden = !any;
   }
@@ -817,9 +889,13 @@
   function renderHeatmap(mount, cells) {
     if (!mount) return;
     mount.textContent = '';
-    if (!cells.length) { mount.appendChild(el('div', { class: 'ov-empty', text: 'No events in this window.' })); return; }
+    if (!cells.some(function (c) { return !withheld(c.n); })) {
+      mount.appendChild(el('div', { class: 'ov-empty', text: 'Every hour of the week holds fewer than '
+        + MIN_CELL + ' events in this window, so none is shown.' }));
+      return;
+    }
     var grid = {}, maxN = 1;
-    cells.forEach(function (c) { grid[c.dow + ':' + c.hour] = c; if (c.n > maxN) maxN = c.n; });
+    cells.forEach(function (c) { grid[c.dow + ':' + c.hour] = c; if (!withheld(c.n) && c.n > maxN) maxN = c.n; });
     var padL = 34, padT = 16, cw = 30, ch = 20, W = padL + 24 * cw + 8, H = padT + 7 * ch + 8;
     var s = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'trends-hm-svg', preserveAspectRatio: 'xMinYMin meet', role: 'img' });
     for (var h = 0; h < 24; h += 3)
@@ -827,13 +903,16 @@
     for (var d = 1; d <= 7; d++) {
       s.appendChild(svg('text', { x: padL - 6, y: padT + (d - 1) * ch + ch / 2 + 3, class: 'ov-axis', 'text-anchor': 'end' })).textContent = DOW[d - 1];
       for (var hr = 0; hr < 24; hr++) {
-        var cell = grid[d + ':' + hr], n = cell ? cell.n : 0;
+        var cell = grid[d + ':' + hr], n = cell ? cell.n : null;
+        var hidden = withheld(n);
         var r = svg('rect', {
           x: padL + hr * cw + 1, y: padT + (d - 1) * ch + 1, width: cw - 2, height: ch - 2, rx: 2,
-          class: 'trends-hm-cell', fill: n ? '#79e6b3' : '#1b2733',
-          'fill-opacity': n ? (0.12 + 0.88 * (n / maxN)).toFixed(3) : 1
+          class: 'trends-hm-cell' + (hidden ? ' trends-hm-withheld' : ''), fill: hidden ? '#1b2733' : '#79e6b3',
+          'fill-opacity': hidden ? 1 : (0.12 + 0.88 * (n / maxN)).toFixed(3)
         });
-        var tt = svg('title'); tt.textContent = DOW[d - 1] + ' ' + (hr < 10 ? '0' + hr : hr) + ':00 — ' + fmtInt(n) + ' event' + (n === 1 ? '' : 's') + (cell && cell.n_failure ? ' (' + fmtInt(cell.n_failure) + ' failed)' : '');
+        var tt = svg('title'); tt.textContent = DOW[d - 1] + ' ' + (hr < 10 ? '0' + hr : hr) + ':00 — '
+          + (hidden ? 'fewer than ' + MIN_CELL + ' events (withheld)'
+                    : fmtInt(n) + ' events' + (cell && !withheld(cell.n_failure) ? ' (' + fmtInt(cell.n_failure) + ' failed)' : ''));
         r.appendChild(tt); s.appendChild(r);
       }
     }
@@ -846,6 +925,7 @@
     var labels = (data && data.labels) || [], points = (data && data.points) || [];
     if (!labels.length || !points.length) { mount.appendChild(el('div', { class: 'ov-empty', text: 'No events in this window.' })); return; }
     var W = 820, H = 240, padL = 8, padR = 8, padT = 12, padB = 22, iW = W - padL - padR, iH = H - padT - padB;
+    var anyWithheld = points.some(function (p) { return labels.some(function (l) { return withheld(p.values[l]); }); });
     var totals = points.map(function (p) { var t = 0; labels.forEach(function (l) { t += (p.values[l] || 0); }); return t; });
     var maxT = Math.max(1, Math.max.apply(null, totals));
     var n = points.length;
@@ -878,6 +958,10 @@
     range.appendChild(el('span', { text: shortTs(points[0].ts) }));
     range.appendChild(el('span', { text: shortTs(points[n - 1].ts) }));
     mount.appendChild(range);
+    if (anyWithheld) {
+      mount.appendChild(el('div', { class: 'ov-withheld-note',
+        text: 'A band draws nothing in an interval where it holds fewer than ' + MIN_CELL + '.' }));
+    }
   }
 
   function renderTrendsLegend(mount, labels) {

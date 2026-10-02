@@ -3,42 +3,63 @@
 """polaris_web/atlas_routes.py -- the Atlas: what the system is doing, never who.
 
 The third block lifted out of app.py (2026-09-18) and the largest: the /atlas page, the
-/api/atlas aggregation endpoints, the filter parser, the bbox parser and the TTL cache they
-share. 1,241 lines then. app.py is presentation-free to this extent.
+/api/atlas aggregation endpoints, the filter parser and the TTL cache they share. 1,241 lines
+then. app.py is presentation-free to this extent.
 
-NO PERSON AND NO EVENT. Every endpoint here returns counts per cell, area, bucket or
-category. Five endpoints that returned events, four of them naming the holder, and one that
-focused the map on a person, were withdrawn (lab/strategy/009, step A0): a single event is
-read on the verification log, which writes an AuditAccessLog row, and one person's history
-only through the warrant audit. check_atlas_console holds this module and 11_atlas.sql to it.
+NO PERSON, NO EVENT, NO PLACE. Every endpoint here returns counts per window, category or
+region, read from the activity rollups (11_atlas.sql over 01_schema.sql), which hold no person,
+credential, event or coordinate. Five endpoints that returned events, four of them naming the
+holder, were withdrawn (lab/strategy/009, step A0), and the cluster, hexagon and timeline layers
+with step 4: at street zoom a count of one is a point. A single event is read on the
+verification log, which writes an AuditAccessLog row, and one person's history only through the
+warrant audit. check_atlas_console holds this module and 11_atlas.sql to it.
+
+SMALL CELLS ARE WITHHELD (lab/strategy/009, step 4). A count of one at a known authority,
+context and hour tells someone who knows who was there what happened to them, and the Atlas,
+unlike the verification log, records no read. So every count below _ATLAS_MIN_CELL comes back
+null, zeros included wherever a dimension is fixed (an outcome, a disclosure level, an event
+type, an hour of the week, a bucket of a series). Every count is a part of its window's scope
+(the window under the request's filters), and a part is withheld when it or the rest of its
+whole is below the minimum, so a category of 98 in a scope of 100 does not give the other 2
+back; a share is withheld when its part is; a total is withheld when the counts withheld
+beneath it sum to less than the minimum; and an open list's small categories (an authority, a
+context, a jurisdiction) fold into one row, so a list does not say which of them had activity. Subtraction ACROSS responses can still recover a small
+cell; the record says so, and names complementary suppression as the stronger fix it defers. A
+request whose filtered window holds fewer than _ATLAS_NARROW_SCOPE events is answered, with
+those counts withheld, and written to the application log with the user, the route, the window
+and the filters, never a person: a narrowing question leaves a trace, as a read of the
+verification log does.
+
+THE WINDOWS ARE THE ROLLUPS'. A window starts at the top of the hour (the day, past a week) that
+holds its nominal start, so '24h' read at 10:20 starts at 10:00 yesterday, and every response
+says where its window starts and what grain it reads. One context and one authority at a time:
+a set of either would let one question subtract another's answer (lab/strategy/009, step 4).
 
 C8 TRAVELS WITH IT. Every Atlas aggregate is bounded, and the bound is the `_ATLAS_MAX_*`
 clamp a route applies before the SQL sees a caller-controlled count: the SQL alone bounds
-nothing. Those constants are in this file now, beside the routes that apply them, which is
-where check_c8_atlas_caps looks because it reads the polaris_web package rather than a path.
-The move mutation drill carries a c8_atlas_caps payload for exactly this, and it is the reason
-the move is safe to make rather than a hope that it was.
+nothing. Those constants are in this file, beside the routes that apply them, which is where
+check_c8_atlas_caps looks because it reads the polaris_web package rather than a path. The move
+mutation drill carries a c8_atlas_caps payload for exactly this.
 
 THE CACHE IS SHARED STATE AND STAYS ONE OBJECT. `_atlas_cache`, its lock and its counters are
 mutated in place and never reassigned, so app.py's readiness report reaches them as
 `atlas_routes._atlas_cache`, resolved at use time, and sees the same dict this module writes.
 It must not import them by name: `from` copies a binding, and while a dict would survive that,
 the habit does not survive the next name that is rebound rather than mutated.
-check_no_module_imports_an_unstable_name draws that line.
-
-The `import threading` and `import time as _time` that used to sit in the middle of the cache
-section stayed in app.py: other code there uses both, and an import is not owned by the section
-it happens to be written next to.
+check_no_module_imports_an_unstable_name draws that line. Its key holds whom an answer was
+computed for (_atlas_cache_scope), since row-level security answers each scope differently.
 
 Routes register by import: app.py imports this module at the END, after every name below
 exists, and aliases itself into sys.modules first so `python3 app.py` does not load it twice.
 """
+import json
+import math
 import os
 import threading
 import time as _time
 from datetime import timedelta
 
-from flask import g, jsonify, render_template, request
+from flask import g, jsonify, render_template, request, session
 
 import app as _app          # for the two values app.py owns and callers repoint; see below
 import security
@@ -55,86 +76,38 @@ from app import (
 # ATLAS: the system at scale, in counts (lab/strategy/009)
 # ============================================================================
 
+# Hard caps on what one response may carry (C8). The breakdowns, the cross-tab rows and the
+# authority facet return at most _ATLAS_MAX_CATEGORIES categories, top-K by volume; the regions
+# layer at most _ATLAS_MAX_REGIONS jurisdictions; a series at most _ATLAS_MAX_BUCKETS buckets.
+_ATLAS_MAX_CATEGORIES = 50
+_ATLAS_MAX_REGIONS = 500
+_ATLAS_MAX_BUCKETS = 240
+
+#: The minimum cell size (lab/strategy/009, step 4). See the module docstring.
+_ATLAS_MIN_CELL = 5
+#: A request whose filtered window holds fewer events than this is written to the application
+#: log (lab/strategy/009, step 4).
+_ATLAS_NARROW_SCOPE = 50
+
+
 @app.route('/atlas')
 @security.login_required
 def atlas():
-    """The Atlas: what the system is doing, as counts over windows, areas and
-    categories. It shows no event and no person (lab/strategy/009). A single
-    event is read on the verification log, which records the read; one
-    person's history is reached only through the warrant audit."""
+    """The Atlas: what the system is doing, as counts over windows, categories and regions.
+    It shows no event, no person and no place (lab/strategy/009). A single event is read on the
+    verification log, which records the read; one person's history is reached only through the
+    warrant audit."""
 
     # v9.146: opt this one page into the MapLibre tile-basemap CSP relaxation
-    # (apply_security_headers reads g.atlas_tiles). Every other page stays
-    # strict self-only. ZERO_KNOWLEDGE events are never plotted (C6).
+    # (apply_security_headers reads g.atlas_tiles). Every other page stays strict self-only.
     g.atlas_tiles = True
     g.atlas_tile_origins = atlas_basemap_origins()
 
-    # --- Agency roster for the operational agency filter (v9.146). ---------
-    # Plotting/filtering is by issuing/acting AGENCY, an operational pivot,
-    # never by any attribute of a person.
+    # The authority roster for the authority filter: an operational pivot, never an attribute of
+    # a person. Authorities are few; the facet typeahead (/api/atlas/facet/agencies) serves the
+    # deployment that has thousands.
     agencies = query('SELECT agency_id, name, agency_type FROM Agency ORDER BY name')
 
-    # --- Health snapshot for HUD chrome -----------------------------------
-    table_counts = {}
-    for tbl in ['Individual', 'Agency', 'IdentityToken',
-                'TokenLifecycleEvent', 'VerificationEvent', 'DeviceBinding']:
-        table_counts[tbl] = query(f'SELECT COUNT(*) AS n FROM {tbl}', fetch='one')['n']
-
-    state_pop = {row['status']: row['n'] for row in query("""
-        SELECT status, COUNT(*) AS n FROM IdentityToken GROUP BY status
-    """)}
-    for s in ['ACTIVE', 'RESERVE', 'DORMANT', 'REVOKED', 'LOST', 'EXPIRED']:
-        state_pop.setdefault(s, 0)
-
-    pq_active = query("""
-        SELECT alg.quantum_resistant, COUNT(t.algorithm_id) AS n
-        FROM CryptographicAlgorithm alg
-        LEFT JOIN IdentityToken t ON alg.algorithm_id = t.algorithm_id AND t.status='ACTIVE'
-        GROUP BY alg.quantum_resistant
-    """)
-    pq_n = sum(r['n'] for r in pq_active if r['quantum_resistant'])
-    cls_n = sum(r['n'] for r in pq_active if not r['quantum_resistant'])
-
-    disc = {r['disclosure_level']: r['n'] for r in query("""
-        SELECT disclosure_level, COUNT(*) AS n
-        FROM VerificationEvent GROUP BY disclosure_level
-    """)}
-    disc_total = sum(disc.values()) or 1
-
-    # --- Anomaly indicators visible from the globe ------------------------
-    anomalies = query("""
-        SELECT
-          SUM(CASE WHEN outcome != 'SUCCESS' THEN 1 ELSE 0 END) AS fail_n,
-          SUM(CASE WHEN disclosure_level = 'FULL' THEN 1 ELSE 0 END) AS full_n
-        FROM VerificationEvent
-    """, fetch='one')
-
-    # v9.248: the Overview's 'all' window spans the actual data range; expose
-    # the earliest verification timestamp so the console can label the scope.
-    oldest = query("SELECT min(event_timestamp) AS t FROM VerificationEvent", fetch='one')
-
-    health = {
-        'verifications_total': table_counts['VerificationEvent'],
-        'oldest_event':       (oldest['t'].isoformat() if oldest and oldest['t'] else ''),
-        'tokens_total':       table_counts['IdentityToken'],
-        'tokens_active':      state_pop.get('ACTIVE', 0),
-        'tokens_reserve':     state_pop.get('RESERVE', 0),
-        'tokens_terminal':    (state_pop.get('REVOKED', 0)
-                               + state_pop.get('LOST', 0)
-                               + state_pop.get('EXPIRED', 0)),
-        'pq_pct': (100 * pq_n // (pq_n + cls_n)) if (pq_n + cls_n) else 0,
-        'zk_pct': (100 * disc.get('ZERO_KNOWLEDGE', 0) // disc_total) if disc_total else 0,
-        'agencies':           table_counts['Agency'],
-        'individuals':        table_counts['Individual'],
-        'verif_events':       table_counts['VerificationEvent'],
-        'lifecycle_events':   table_counts['TokenLifecycleEvent'],
-        'device_binds':       table_counts['DeviceBinding'],
-        'failures':           int(anomalies['fail_n'] or 0),
-        'full_disclosures':   int(anomalies['full_n'] or 0),
-    }
-
-    # The globe is data-driven via /api/atlas/* (clusters, points, events);
-    # the page itself ships only the health snapshot for the HUD.
     return render_template(
         'atlas.html',
         # Read at USE time, not copied at import. This value has two readers, the CSP
@@ -144,97 +117,141 @@ def atlas():
         # repoints it found exactly that split on 2026-09-18, the CSP half passing and
         # the page half failing.
         atlas_basemap_style=_app.ATLAS_BASEMAP_STYLE_URL,
-        health=health, agencies=agencies)
+        health=_atlas_health(), agencies=agencies, min_cell=_ATLAS_MIN_CELL,
+        narrow_scope=_ATLAS_NARROW_SCOPE)
+
+
+def _atlas_health():
+    """The page's headline figures, each from a count kept as it changes (lab/strategy/008 and
+    009, step 4), so the page costs the same at any population. Withheld below the minimum cell
+    size as on every Atlas route: the figures cover everything recorded, and a deployment with a
+    handful of credentials is a deployment whose figures are about a handful of people."""
+    stats = query("SELECT * FROM atlas_stats(NULL, TRUE)", fetch='one')
+    status = {r['item']: int(r['n']) for r in query("""
+        SELECT item, sum(n) AS n
+          FROM (SELECT item, n FROM PopulationCount WHERE facet = 'credential_status'
+                UNION ALL
+                SELECT item, n FROM PopulationCountDelta WHERE facet = 'credential_status') c
+         GROUP BY item""")}
+    signatures = query("""
+        SELECT COALESCE(sum(c.n) FILTER (WHERE a.quantum_resistant), 0) AS pq,
+               COALESCE(sum(c.n), 0) AS total
+          FROM (SELECT item, n FROM PopulationCount WHERE facet = 'live_signature'
+                UNION ALL
+                SELECT item, n FROM PopulationCountDelta WHERE facet = 'live_signature') c
+          JOIN CryptographicAlgorithm a ON a.algorithm_id::TEXT = c.item""", fetch='one')
+    # Where the 'all' window starts: the first day the rollups count, not an event's time.
+    first = query("""
+        SELECT least((SELECT min(bucket) FROM VerificationRollupDaily),
+                     (SELECT date_trunc('day', min(bucket)) FROM VerificationRollupDelta)) AS d""",
+                  fetch='one')
+    n_verifs = int(stats['n_verifs'])
+    terminal = sum(status.get(s, 0) for s in ('REVOKED', 'LOST', 'EXPIRED'))
+    return {
+        'oldest_event':      first['d'].date().isoformat() if first and first['d'] else '',
+        'verifications_total': _count(n_verifs),
+        'tokens_active':     _count(status.get('ACTIVE', 0)),
+        'tokens_reserve':    _count(status.get('RESERVE', 0)),
+        'tokens_terminal':   _count(terminal),
+        'pq_pct':            _share(signatures['pq'], signatures['total']),
+        'zk_pct':            _share(stats['n_zk'], n_verifs),
+        'failures':          _part(stats['n_failures'], n_verifs),
+        'full_disclosures':  _part(stats['n_full'], n_verifs),
+    }
 
 
 # ============================================================================
-# ATLAS API — server-side spatial aggregation for scaling to millions of events
-#
-# The Atlas frontend used to receive every event inline as JSON in the
-# template, which was fine for the 17-row sample but cannot scale: at 100k
-# events the page is slow, at 1M it's OOM. These endpoints implement the
-# proper architecture:
-#
-#   GET /api/atlas/clusters?bbox=...&grid=...&kind=...
-#       Server-side bin aggregation: the world resolves into O(100) cells
-#       with summary counts.
-#
-#   GET /api/atlas/hexbin, /api/atlas/geo/jurisdictions
-#       The density surface and the counts per jurisdiction.
-#
-#   GET /api/atlas/stats?bbox=...
-#       The four operational ratios (Active Tokens, Anomalies, PQ%, ZK%)
-#       scoped to the visible bounding box.
-#
-#   GET /api/atlas/timeline, /series, /heatmap, /stacked, /breakdown,
-#       /crosstab, /facet/agencies
-#       Counts over time buckets and categories for the analytical views.
-#
-# None returns an event row or names a person or a credential.
-#
-# Bounding-box parameter format: "min_lat,min_lon,max_lat,max_lon" decimal
-# degrees, all four required. Out-of-range or NaN values yield 400.
+# WITHHOLDING SMALL CELLS (lab/strategy/009, step 4)
 # ============================================================================
 
-# Hard caps to protect the server. Even with a maximally-zoomed-out bbox
-# the cluster count is bounded by the grid; here we limit the upper bound
-# of any single response.
-_ATLAS_MAX_CLUSTERS = 5000
-# v9.248 (roadmap P2.3, the analytical console): the Overview/Breakdown roll-ups
-# return at most this many categories per dimension (top-K by volume). Bounds
-# the analytical payload the same way the cluster/point/event caps bound the
-# map (C8): a dimension can only have so many rows sent to the browser.
-_ATLAS_MAX_CATEGORIES = 50
-# v9.253 (roadmap P2.3, Map v2): the Regions layer rolls verification volume up
-# by requesting-agency jurisdiction (ISO 3166-2). The count of distinct
-# jurisdictions is bounded by the standard (a few hundred at national+
-# international scale), but the response is hard-capped like every other atlas
-# surface (C8). The hexbin Density layer reuses the cluster cap.
-_ATLAS_MAX_REGIONS = 500
+def _count(n):
+    """A count the Atlas may show, or None below the minimum cell size (zero included)."""
+    n = int(n or 0)
+    return n if n >= _ATLAS_MIN_CELL else None
+
+
+def _part(part, whole):
+    """A part of a whole the same response shows, withheld when it or the rest of the whole is
+    below the minimum: a part of 98 out of 100 would give the other 2 back."""
+    part, whole = int(part or 0), int(whole or 0)
+    return part if min(part, whole - part) >= _ATLAS_MIN_CELL else None
+
+
+def _share(part, whole):
+    """A whole-number percentage of a whole, withheld as its part would be."""
+    shown = _part(part, whole)
+    return None if shown is None else round(100 * shown / int(whole))
+
+
+#: The row that holds an open list's small categories (an authority, a context, a jurisdiction,
+#: an algorithm): listed one by one, each would say that it had activity even with its count
+#: withheld.
+_ATLAS_FOLDED = 'Fewer than %d each' % _ATLAS_MIN_CELL
+
+
+def _fold_small(counts):
+    """Split an open list's {label: count} into the labels at or above the minimum, in order of
+    volume, and the sum of the rest (zero when there is none), which the caller shows as one
+    row, withheld in turn below the minimum."""
+    shown = sorted((lbl for lbl, n in counts.items() if n >= _ATLAS_MIN_CELL),
+                   key=lambda lbl: (-counts[lbl], lbl))
+    return shown, sum(n for lbl, n in counts.items() if n < _ATLAS_MIN_CELL)
+
+
+def _note_narrow(route, f, scope_total, **asked):
+    """Write a narrow question to the application log: one whose filtered window holds fewer
+    than _ATLAS_NARROW_SCOPE events. Who asked and what they asked, never a count below the
+    threshold and never a person. Called on a cached answer too: a narrowing question is
+    recorded each time it is asked, by whoever asks it."""
+    if int(scope_total or 0) >= _ATLAS_NARROW_SCOPE:
+        return
+    detail = ' '.join('%s=%s' % kv for kv in sorted(asked.items()))
+    app.logger.info(
+        'atlas narrow question: user %s asked %s window=%s from=%s outcomes=%s disclosure=%s '
+        'context=%s authority=%s %s (fewer than %d events in scope)',
+        session.get('user_id'), route, f['window'], f['since'], f['outcomes'], f['disclosure'],
+        f['contexts'], f['agencies'], detail, _ATLAS_NARROW_SCOPE)
 
 
 # =============================================================================
 # Atlas TTL cache (R8-5)
 # =============================================================================
-# In-process TTL cache for atlas API responses. Keys are computed from the
-# request parameters (bbox, grid, kind, limit) and values are tuples of
-# (timestamp, response_dict). Hot atlas queries — the same bbox/grid being
-# polled by multiple operators — hit the cache instead of the SQL
-# aggregation function.
-#
-# This is the in-memory variant. R8-2 (Redis-backed limiter) introduces
-# the multi-worker dependency; once Redis is available, this cache should
-# migrate to a Redis backend so cache hits work across gunicorn workers.
-# Until then, each worker has its own cache (acceptable: cache hits on
-# the same worker still help; the worst case is cold-start across all
-# workers, which is no worse than no cache at all).
-#
-# Cache invalidation: pure TTL. Atlas data changes when verifications or
-# lifecycle events are written, but for a 30-second TTL the staleness is
-# bounded and matches the typical operator polling interval.
+# In-process TTL cache for Atlas answers, keyed by the question and whom it was answered for,
+# holding (timestamp, (payload, scope total)). Hot questions polled by several operators hit the
+# cache instead of the SQL. Each worker has its own cache; the worst case is a cold start in
+# every worker, which is no worse than no cache. Invalidation is pure TTL: the rollups change as
+# events are recorded, and thirty seconds of staleness matches the polling interval.
 
 _ATLAS_CACHE_TTL_SECONDS = float(os.environ.get('POLARIS_ATLAS_CACHE_TTL', '30'))
 _ATLAS_CACHE_MAX_ENTRIES = int(os.environ.get('POLARIS_ATLAS_CACHE_MAX', '256'))
-_atlas_cache = {}                               # dict[key, tuple[float, dict]]
+_atlas_cache = {}                               # dict[key, tuple[float, tuple[dict, int]]]
 _atlas_cache_lock = threading.Lock()
 _atlas_cache_stats = {'hits': 0, 'misses': 0, 'expired': 0, 'evicted': 0}
 
 
+def _atlas_cache_scope():
+    """Whom an answer was computed for: the authority the signed-in operator is bound to, or
+    None. Row-level security answers a bound operator for that authority alone (the request
+    tells the database who is asking, app._apply_operator_binding), so an answer cached for one
+    scope is never served to another. Until 2026-10-02 the key held only the question, and an
+    unbound administrator's breakdown of every authority reached an operator bound to one."""
+    try:
+        return session.get('operator_agency_id') if session.get('logged_in') else None
+    except RuntimeError:     # no request: a CLI or a test outside one, unscoped as the database is
+        return None
+
+
 def _atlas_cache_get(key):
-    """Return the cached payload if fresh, else None. Thread-safe."""
+    """Return the cached entry if fresh, else None. Thread-safe. The key is the question and
+    whom it was answered for."""
+    key = (_atlas_cache_scope(), key)
     if _ATLAS_CACHE_TTL_SECONDS <= 0:
         return None
-    # Live simulation mode wants the console to update as events stream in, so it
-    # bypasses the 30 s aggregate cache (dev/demo only; the roll-ups are bounded
-    # and partition-pruned, so recomputing each refresh is cheap). Production is
-    # unaffected — SIM_MODE is force-off there.
-    # Read at USE time. SIM_MODE is app.py's, it is force-off under POLARIS_ENV=production,
-    # and the simulation suite flips it per test because, as its own docstring says, it is read
-    # at request time. A `from app import` copy froze it at startup: the flip stopped reaching
-    # here, the cache stopped being bypassed, and the console would have shown 30-second-stale
-    # roll-ups in the one mode whose whole point is watching events arrive. Nothing failed.
-    # No test covers the bypass, and check_ui_drill reads this function's SOURCE, which still
-    # said the right thing. Found by check_no_module_imports_an_unstable_name, 2026-09-18.
+    # Live simulation mode wants the console to update as events stream in, so it bypasses the
+    # aggregate cache (dev/demo only). Production is unaffected: SIM_MODE is force-off there.
+    # Read at USE time. SIM_MODE is app.py's, and the simulation suite flips it per test; a
+    # `from app import` copy froze it at startup and the cache stopped being bypassed, with
+    # nothing failing (found by check_no_module_imports_an_unstable_name, 2026-09-18).
     if _app.SIM_MODE:
         return None
     now = _time.time()
@@ -243,28 +260,29 @@ def _atlas_cache_get(key):
         if entry is None:
             _atlas_cache_stats['misses'] += 1
             return None
-        ts, payload = entry
+        ts, value = entry
         if now - ts > _ATLAS_CACHE_TTL_SECONDS:
             del _atlas_cache[key]
             _atlas_cache_stats['expired'] += 1
             _atlas_cache_stats['misses'] += 1
             return None
         _atlas_cache_stats['hits'] += 1
-        return payload
+        return value
 
 
-def _atlas_cache_set(key, payload):
-    """Store payload with current timestamp. Evict oldest if at capacity."""
+def _atlas_cache_set(key, value):
+    """Store an entry with the current timestamp, for the scope it was answered for. Evict the
+    oldest at capacity."""
+    key = (_atlas_cache_scope(), key)
     if _ATLAS_CACHE_TTL_SECONDS <= 0:
         return
     now = _time.time()
     with _atlas_cache_lock:
         if len(_atlas_cache) >= _ATLAS_CACHE_MAX_ENTRIES:
-            # Evict the oldest entry — simple LRU-ish behavior without ordereddict
             oldest_key = min(_atlas_cache, key=lambda k: _atlas_cache[k][0])
             del _atlas_cache[oldest_key]
             _atlas_cache_stats['evicted'] += 1
-        _atlas_cache[key] = (now, payload)
+        _atlas_cache[key] = (now, value)
 
 
 def _atlas_cache_clear():
@@ -275,461 +293,295 @@ def _atlas_cache_clear():
             _atlas_cache_stats[k] = 0
 
 
-def _parse_bbox(s):
-    """Parse 'min_lat,min_lon,max_lat,max_lon' → 4-tuple of floats.
-    Validates ranges and ordering. Raises ValueError on bad input."""
-    if not s:
-        raise ValueError("bbox required (format: min_lat,min_lon,max_lat,max_lon)")
-    parts = s.split(',')
-    if len(parts) != 4:
-        raise ValueError("bbox must have exactly four comma-separated values")
-    try:
-        min_lat, min_lon, max_lat, max_lon = (float(p) for p in parts)
-    except ValueError:
-        raise ValueError("bbox values must be numeric")
-    if not (-90 <= min_lat <= 90 and -90 <= max_lat <= 90):
-        raise ValueError("latitudes must be in [-90, 90]")
-    if not (-180 <= min_lon <= 180 and -180 <= max_lon <= 180):
-        raise ValueError("longitudes must be in [-180, 180]")
-    if min_lat > max_lat:
-        raise ValueError("min_lat must be <= max_lat")
-    # Antimeridian-spanning bboxes (min_lon > max_lon) are supported as
-    # of v7. The atlas SQL functions in 11_atlas.sql use a wrap-aware
-    # longitude predicate: when min_lon > max_lon, the bbox covers
-    # [min_lon, 180] ∪ [-180, max_lon] (i.e. wraps across the date line).
-    return min_lat, min_lon, max_lat, max_lon
+def _answer(route, cache_key, f, compute, **asked):
+    """Answer an Atlas question from the cache when it is fresh for this scope, else by
+    `compute()`, which returns (payload, scope total). Either way a narrow question is noted."""
+    entry = _atlas_cache_get(cache_key)
+    if entry is None:
+        entry = compute()
+        _atlas_cache_set(cache_key, entry)
+    payload, scope_total = entry
+    _note_narrow(route, f, scope_total, **asked)
+    return jsonify(payload)
 
 
-# Window labels → timedelta. The schema stores event_timestamp as TIMESTAMP-without-zone in
-# the database session's wall clock, so the window is measured from THAT clock (_db_now).
-# Until 1.0.0-rc.29 this used the app's `datetime.now()` on the premise that app and database
-# share a zone; the v8.3 smoke test caught the UTC-clock version of the same mistake, and
-# rc.28 (the database on UTC) made the local-clock version wrong on any host not on UTC.
+# ============================================================================
+# THE WINDOWS AND THE FILTERS
+# ============================================================================
+
+#: label -> (nominal span, the grain the window reads). The schema stores event_timestamp as
+#: TIMESTAMP in the database session's wall clock (UTC since rc.28), so the window is measured
+#: from THAT clock (_db_now), and starts at the top of the hour or the day holding its start.
 _ATLAS_TIME_WINDOWS = {
-    '1h':   timedelta(hours=1),
-    '24h':  timedelta(hours=24),
-    '7d':   timedelta(days=7),
-    '30d':  timedelta(days=30),
-    'all':  None,                     # no time filter
+    '1h':  (timedelta(hours=1), 'hour'),
+    '24h': (timedelta(hours=24), 'hour'),
+    '7d':  (timedelta(days=7), 'hour'),
+    '30d': (timedelta(days=30), 'day'),
+    'all': (None, 'day'),
 }
 
-# Outcome alias: "anomalies" = the union the operator typically wants when
-# they're investigating a security incident. Anchored here (not in JS) so
-# the SQL parameter is the same set across UI versions.
+# Outcome alias: "anomalies" = the union the operator typically wants when investigating an
+# incident. Anchored here (not in JS) so the SQL parameter is the same set across UI versions.
 _ATLAS_OUTCOME_ALIASES = {
     'anomalies': 'FAILURE,UNAUTHORIZED,EXPIRED',
 }
+_ATLAS_OUTCOMES = ('SUCCESS', 'FAILURE', 'EXPIRED', 'UNAUTHORIZED')
+_ATLAS_DISCLOSURES = ('ZERO_KNOWLEDGE', 'SELECTIVE', 'FULL')
+_ATLAS_CONTEXTS = ('BANKING', 'EMPLOYMENT', 'HEALTHCARE', 'TRAVEL', 'VOTING', 'MOTOR_VEHICLE',
+                   'GOVERNMENT_BENEFITS')
+_ATLAS_EVENT_TYPES = ('ISSUED', 'ACTIVATED', 'DEACTIVATED', 'DEVICE_BOUND', 'DEVICE_REVOKED',
+                      'REVOKED', 'LOST', 'EXPIRED', 'REPLACED')
+
+
+def _window_start(now, delta, grain):
+    """The top of the hour (or day) that holds now - delta; None for the open window."""
+    if delta is None:
+        return None
+    start = now - delta
+    if grain == 'day':
+        return start.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start.replace(minute=0, second=0, microsecond=0)
+
 
 def _parse_atlas_filters(args):
-    """Pull the v8.3 / A+C filter parameters off the request and return a
-    dict of the SQL-ready values: since (TIMESTAMP or None), outcomes (CSV
-    or None), disclosure (CSV or None), contexts (CSV or None),
-    event_types (lifecycle, CSV or None), window_label (str). Raises
-    ValueError on any malformed input so the route returns 400."""
+    """The filters every Atlas route takes, as SQL-ready values: window, since (the start of the
+    window, or None for 'all'), daily (whether it reads the daily rollup), grain, outcomes and
+    disclosure (CSV or None), contexts and agencies (one value or None). Raises ValueError on
+    anything malformed, which the route turns into a 400."""
     window = (args.get('window') or '24h').strip().lower()
     if window not in _ATLAS_TIME_WINDOWS:
         raise ValueError(
-            f"window must be one of {sorted(_ATLAS_TIME_WINDOWS.keys())}; got {window!r}"
-        )
-    delta = _ATLAS_TIME_WINDOWS[window]
-    since = (_db_now() - delta) if delta is not None else None
+            f"window must be one of {sorted(_ATLAS_TIME_WINDOWS.keys())}; got {window!r}")
+    delta, grain = _ATLAS_TIME_WINDOWS[window]
 
-    outcomes_raw = (args.get('outcomes') or '').strip()
-    if outcomes_raw in _ATLAS_OUTCOME_ALIASES:
-        outcomes_raw = _ATLAS_OUTCOME_ALIASES[outcomes_raw]
-    outcomes = outcomes_raw or None
-    # Whitelist outcome values to prevent SQL string-list smuggling
-    if outcomes:
-        valid = {'SUCCESS', 'FAILURE', 'EXPIRED', 'UNAUTHORIZED'}
-        for v in outcomes.split(','):
-            if v.strip() not in valid:
-                raise ValueError(f"unknown outcome: {v!r}")
+    outcomes = (args.get('outcomes') or '').strip()
+    outcomes = _ATLAS_OUTCOME_ALIASES.get(outcomes, outcomes) or None
+    for v in (outcomes or '').split(',') if outcomes else ():
+        if v not in _ATLAS_OUTCOMES:
+            raise ValueError(f"unknown outcome: {v!r}")
 
-    disclosure_raw = (args.get('disclosure') or '').strip()
-    disclosure = disclosure_raw or None
-    if disclosure:
-        valid = {'ZERO_KNOWLEDGE', 'SELECTIVE', 'FULL'}
-        for v in disclosure.split(','):
-            if v.strip() not in valid:
-                raise ValueError(f"unknown disclosure level: {v!r}")
+    disclosure = (args.get('disclosure') or '').strip() or None
+    for v in (disclosure or '').split(',') if disclosure else ():
+        if v not in _ATLAS_DISCLOSURES:
+            raise ValueError(f"unknown disclosure level: {v!r}")
 
-    contexts_raw = (args.get('contexts') or '').strip()
-    contexts = contexts_raw or None
-    if contexts:
-        valid = {'BANKING', 'EMPLOYMENT', 'HEALTHCARE', 'TRAVEL',
-                 'VOTING', 'MOTOR_VEHICLE', 'GOVERNMENT_BENEFITS'}
-        for v in contexts.split(','):
-            if v.strip() not in valid:
-                raise ValueError(f"unknown context: {v!r}")
+    # One context and one authority at a time (lab/strategy/009, step 4): with a set, the
+    # answer for all but one would subtract from the answer for all.
+    contexts = (args.get('contexts') or '').strip() or None
+    if contexts and ',' in contexts:
+        raise ValueError("one context at a time")
+    if contexts and contexts not in _ATLAS_CONTEXTS:
+        raise ValueError(f"unknown context: {contexts!r}")
 
-    event_types_raw = (args.get('event_types') or '').strip()
-    event_types = event_types_raw or None
-    if event_types:
-        valid = {'ISSUED', 'ACTIVATED', 'DEACTIVATED', 'DEVICE_BOUND',
-                 'DEVICE_REVOKED', 'REVOKED', 'LOST', 'EXPIRED', 'REPLACED'}
-        for v in event_types.split(','):
-            if v.strip() not in valid:
-                raise ValueError(f"unknown event_type: {v!r}")
-
-    # v9.146 operational agency filter — CSV of agency_id integers. Validated
-    # as integers (defence in depth; the value is passed as a single bound
-    # param to ANY(string_to_array(...)) so it cannot smuggle SQL). This is an
-    # operational pivot (which issuer/actor), never an attribute of a person.
-    agencies_raw = (args.get('agencies') or '').strip()
-    agencies = None
-    if agencies_raw:
-        ids = [a.strip() for a in agencies_raw.split(',') if a.strip()]
-        for a in ids:
-            if not a.isdigit():
-                raise ValueError(f"agency id must be an integer: {a!r}")
-        agencies = ','.join(ids) or None
+    agencies = (args.get('agencies') or '').strip() or None
+    if agencies and ',' in agencies:
+        raise ValueError("one authority at a time")
+    if agencies and not agencies.isdigit():
+        raise ValueError(f"authority id must be an integer: {agencies!r}")
 
     return {
         'window': window,
-        'since': since,
+        'since': _window_start(_db_now(), delta, grain),
+        'daily': grain == 'day',
+        'grain': grain,
         'outcomes': outcomes,
         'disclosure': disclosure,
         'contexts': contexts,
-        'event_types': event_types,
         'agencies': agencies,
     }
 
 
-def _filter_cache_key(filters):
-    """Reduce a filter dict to a hashable cache key fragment."""
-    return (filters['window'], filters['outcomes'], filters['disclosure'],
-            filters['contexts'], filters['event_types'], filters.get('agencies'))
+def _filter_cache_key(f):
+    """Reduce a filter dict to a hashable cache key fragment. The window's start is in it: the
+    same label read in the next hour is a different window."""
+    return (f['window'], f['since'], f['outcomes'], f['disclosure'], f['contexts'], f['agencies'])
 
 
-@app.route('/api/atlas/clusters')
-@security.login_required
-@replica_reads
-def api_atlas_clusters():
-    """Spatial aggregation endpoint. Returns ≤ _ATLAS_MAX_CLUSTERS bins.
-    R8-5: result cached for _ATLAS_CACHE_TTL_SECONDS to absorb hot polling.
-
-    v8.3 (A+C): accepts ?window= (1h/24h/7d/30d/all), ?outcomes= (CSV
-    incl. 'anomalies' alias), ?disclosure= (CSV), ?contexts= (CSV) for
-    verification kind, and ?event_types= (CSV) for lifecycle kind. The
-    cache key includes the filter-set so different filter combinations
-    do NOT collide."""
-    try:
-        min_lat, min_lon, max_lat, max_lon = _parse_bbox(request.args.get('bbox'))
-        grid = float(request.args.get('grid', '5'))
-        # `not (0 < x <= 90)`, not `x <= 0 or x > 90`: the second is False for NaN, which
-        # passed, reached the query and put NaN into the response and the cache key (2026-09-24).
-        if not (0 < grid <= 90):
-            raise ValueError("grid must be in (0, 90] decimal degrees")
-        kind = request.args.get('kind', 'verification')
-        if kind not in ('verification', 'lifecycle'):
-            raise ValueError("kind must be 'verification' or 'lifecycle'")
-        f = _parse_atlas_filters(request.args)
-    except ValueError as e:
-        return jsonify(error=str(e)), 400
-
-    cache_key = ('clusters', kind, min_lat, min_lon, max_lat, max_lon, grid,
-                 _filter_cache_key(f))
-    cached = _atlas_cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
-
-    if kind == 'verification':
-        rows = query("""
-            SELECT lat, lon, n_total, n_failure, n_pq, n_zk, n_full
-            FROM atlas_clusters_verifications(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            LIMIT %s
-        """, (min_lat, min_lon, max_lat, max_lon, grid,
-              f['since'], f['outcomes'], f['disclosure'], f['contexts'], f['agencies'],
-              _ATLAS_MAX_CLUSTERS))
-    else:
-        rows = query("""
-            SELECT lat, lon, n_total, n_revoked, n_lost, n_issued, n_activated
-            FROM atlas_clusters_lifecycles(%s, %s, %s, %s, %s, %s, %s, %s)
-            LIMIT %s
-        """, (min_lat, min_lon, max_lat, max_lon, grid,
-              f['since'], f['event_types'], f['agencies'],
-              _ATLAS_MAX_CLUSTERS))
-
-    payload = dict(
-        kind=kind,
-        bbox=[min_lat, min_lon, max_lat, max_lon],
-        grid=grid,
-        window=f['window'],
-        count=len(rows),
-        clusters=[dict(r) for r in rows],
-    )
-    _atlas_cache_set(cache_key, payload)
-    return jsonify(payload)
+def _window_fields(f):
+    """What every response says about its window."""
+    return {'window': f['window'], 'grain': f['grain'],
+            'since': f['since'].isoformat() if f['since'] else None,
+            'min_cell': _ATLAS_MIN_CELL}
 
 
-@app.route('/api/atlas/hexbin')
-@security.login_required
-@replica_reads
-def api_atlas_hexbin():
-    """Map v2 Density layer (roadmap P2.3, v9.253): located verification events
-    binned into a pointy-top hex grid of size ?size= (degrees) within the bbox,
-    the top-K densest centres by count (≤ _ATLAS_MAX_CLUSTERS, C8). C6: ZK
-    verifications are excluded entirely, like the cluster map. Cached like the
-    other spatial aggregates."""
-    try:
-        min_lat, min_lon, max_lat, max_lon = _parse_bbox(request.args.get('bbox'))
-        size = float(request.args.get('size', '5'))
-        # `not (0 < x <= 90)`, not `x <= 0 or x > 90`: the second is False for NaN, which
-        # passed, reached the query and put NaN into the response and the cache key (2026-09-24).
-        if not (0 < size <= 90):
-            raise ValueError("size must be in (0, 90] decimal degrees")
-        kind = request.args.get('kind', 'verification')
-        if kind not in ('verification', 'lifecycle'):
-            raise ValueError("kind must be 'verification' or 'lifecycle'")
-        f = _parse_atlas_filters(request.args)
-    except ValueError as e:
-        return jsonify(error=str(e)), 400
+def _kind(args):
+    kind = args.get('kind', 'verification')
+    if kind not in ('verification', 'lifecycle'):
+        raise ValueError("kind must be 'verification' or 'lifecycle'")
+    return kind
 
-    cache_key = ('hexbin', kind, min_lat, min_lon, max_lat, max_lon, size,
-                 _filter_cache_key(f))
-    cached = _atlas_cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
 
-    # atlas_hexbin bins verification events only (located, non-ZK); a lifecycle
-    # request returns an empty surface rather than an error, so the client can
-    # fall back to Points for that stream.
-    rows = query("""
-        SELECT lat, lon, n_total, n_failure
-        FROM atlas_hexbin(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    """, (min_lat, min_lon, max_lat, max_lon, size, _ATLAS_MAX_CLUSTERS,
-          f['since'], kind, f['outcomes'], f['disclosure'], f['contexts'], f['agencies']))
+def _series_since(f, kind):
+    """Where a series starts: the window's start, or for 'all' the first day the rollups count,
+    as the caller may see them. A series needs a fixed start to cut its buckets from."""
+    if f['since'] is not None:
+        return f['since']
+    table, delta = (('VerificationRollupDaily', 'VerificationRollupDelta') if kind == 'verification'
+                    else ('LifecycleRollupDaily', 'LifecycleRollupDelta'))
+    row = query(f"SELECT least((SELECT min(bucket) FROM {table}), "
+                f"(SELECT date_trunc('day', min(bucket)) FROM {delta})) AS d", fetch='one')
+    if row and row['d']:
+        return row['d']
+    return _window_start(_db_now(), timedelta(days=30), 'day')
 
-    payload = dict(
-        kind=kind,
-        bbox=[min_lat, min_lon, max_lat, max_lon],
-        size=size,
-        window=f['window'],
-        count=len(rows),
-        hexes=[dict(r) for r in rows],
-    )
-    _atlas_cache_set(cache_key, payload)
-    return jsonify(payload)
+
+def _bucket_width(since, until, buckets, grain):
+    """A series bucket: the window cut into at most `buckets`, rounded up to whole hours (or
+    days), since the rollups hold nothing finer."""
+    unit = 3600 if grain == 'hour' else 86400
+    span = max((until - since).total_seconds(), unit)
+    return timedelta(seconds=max(1, math.ceil(span / buckets / unit)) * unit)
+
+
+def _buckets(since, until, width):
+    """Every bucket start from `since` to `until`: a series is filled, so a quiet bucket reads
+    as withheld, as a small one does, and never as a zero that says nothing happened."""
+    out, t = [], since
+    while t <= until:
+        out.append(t)
+        t += width
+    return out
+
+
+def _ts(t):
+    return t.strftime('%Y-%m-%dT%H:%M:%S')
+
+
+# ============================================================================
+# THE REGIONS LAYER
+# ============================================================================
+
+# Where a jurisdiction sits on the map: reference data about the jurisdiction (static, beside
+# the page), never where anyone was verified. Loaded once; an unknown code is counted and not
+# placed.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static',
+                       'atlas-regions.json'), encoding='utf-8') as _fh:
+    _ATLAS_REGIONS = json.load(_fh)['regions']
 
 
 @app.route('/api/atlas/geo/jurisdictions')
 @security.login_required
 @replica_reads
 def api_atlas_geo_jurisdictions():
-    """Map v2 Regions layer (roadmap P2.3, v9.253) — the DEFAULT map view.
-    Verification (or lifecycle) volume rolled up by the requesting agency's
-    jurisdiction (ISO 3166-2), top-K by volume (≤ _ATLAS_MAX_REGIONS, C8). Not
-    viewport-bound: the Regions layer shows every jurisdiction, not just the
-    ones on screen. C6: a jurisdiction is a regulatory grouping, not a
-    coordinate, so a zero-knowledge verification is COUNTED in its jurisdiction
-    (n_zk) yet never located — the centroid derives from located, non-ZK events
-    only, and a ZK-only jurisdiction has a null centroid (counted, unplaceable).
-    Cached like the other rollups."""
+    """The regions layer, the map's only layer: the window's counts by the requesting
+    authority's jurisdiction (the acting authority's, for the lifecycle), top-K by volume
+    (<= _ATLAS_MAX_REGIONS, C8), placed from reference data about each jurisdiction. A
+    zero-knowledge verification is counted in its jurisdiction and located nowhere (C6): the
+    rollups hold no location at all."""
     try:
-        kind = request.args.get('kind', 'verification')
-        if kind not in ('verification', 'lifecycle'):
-            raise ValueError("kind must be 'verification' or 'lifecycle'")
+        kind = _kind(request.args)
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
         return jsonify(error=str(e)), 400
 
-    cache_key = ('geojur', kind, _filter_cache_key(f))
-    cached = _atlas_cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
+    def compute():
+        rows = query("""
+            SELECT jurisdiction, n_total, n_failure, n_zk, scope_total
+              FROM atlas_geo_jurisdictions(%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (f['since'], f['daily'], _ATLAS_MAX_REGIONS, kind,
+              f['outcomes'], f['disclosure'], f['contexts'], f['agencies']))
+        # A jurisdiction with fewer than the minimum is not drawn (a mark on the map would say it
+        # had activity); its count joins `elsewhere`. So does one the reference data cannot place.
+        scope = int(rows[0]['scope_total']) if rows else 0
+        regions, unplaced, elsewhere = [], [], 0
+        for r in rows:
+            n = int(r['n_total'])
+            if n < _ATLAS_MIN_CELL:
+                elsewhere += n
+                continue
+            region = {'jurisdiction': r['jurisdiction'], 'n_total': _part(n, scope),
+                      'n_failure': _part(r['n_failure'], n), 'n_zk': _part(r['n_zk'], n)}
+            ref = _ATLAS_REGIONS.get(r['jurisdiction'])
+            if ref:
+                region.update(name=ref['name'], lat=ref['lat'], lon=ref['lon'])
+                regions.append(region)
+            else:
+                unplaced.append(region)
+        payload = dict(kind=kind, count=len(regions) + len(unplaced), regions=regions,
+                       unplaced=unplaced, elsewhere=_part(elsewhere, scope), **_window_fields(f))
+        return payload, scope
 
-    rows = query("""
-        SELECT jurisdiction, n_total, n_failure, n_zk, n_located, centroid_lat, centroid_lon
-        FROM atlas_geo_jurisdictions(%s, %s, %s, %s, %s, %s, %s)
-    """, (f['since'], _ATLAS_MAX_REGIONS, kind,
-          f['outcomes'], f['disclosure'], f['contexts'], f['agencies']))
-
-    # Split the placeable jurisdictions (a centroid) from the ZK-only /
-    # unlocatable ones, which are reported as a count the legend can surface
-    # without ever putting them on the map (C6).
-    placeable = [dict(r) for r in rows if r['centroid_lat'] is not None]
-    unplaceable = [dict(r) for r in rows if r['centroid_lat'] is None]
-    payload = dict(
-        kind=kind,
-        window=f['window'],
-        count=len(rows),
-        n_unplaceable=len(unplaceable),
-        n_unplaceable_events=sum(r['n_total'] for r in unplaceable),
-        regions=placeable,
-        unplaceable=unplaceable,
-    )
-    _atlas_cache_set(cache_key, payload)
-    return jsonify(payload)
+    return _answer('regions', ('geojur', kind, _filter_cache_key(f)), f, compute, kind=kind)
 
 
 @app.route('/api/atlas/stats')
 @security.login_required
 @replica_reads
 def api_atlas_stats():
-    """The four HUD signals scoped to the visible bbox.
-    R8-5: cached for _ATLAS_CACHE_TTL_SECONDS.
-
-    v8.3 (A): also accepts ?window= so the HUD numbers reflect the
-    operator's selected time slice, not just lifetime."""
+    """The window's headline counts: verifications, failures, full disclosures, the
+    zero-knowledge share, the share made with a credential under a quantum-resistant algorithm,
+    lifecycle events, and active credentials (the population counts, not the window's)."""
     try:
-        min_lat, min_lon, max_lat, max_lon = _parse_bbox(request.args.get('bbox'))
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
         return jsonify(error=str(e)), 400
 
-    cache_key = ('stats', min_lat, min_lon, max_lat, max_lon, f['window'])
-    cached = _atlas_cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
+    def compute():
+        row = query("SELECT * FROM atlas_stats(%s, %s, %s)",
+                    (f['since'], f['daily'], f['agencies']), fetch='one')
+        n = int(row['n_verifs'])
+        payload = dict(
+            n_active_tokens=_count(row['n_active_tokens']),
+            n_verifs=_count(n),
+            n_failures=_part(row['n_failures'], n),
+            n_full=_part(row['n_full'], n),
+            zk_pct=_share(row['n_zk'], n),
+            pq_pct=_share(row['n_pq'], row['n_named']),
+            n_lifecycles=_count(row['n_lifecycles']),
+            **_window_fields(f))
+        return payload, n + int(row['n_lifecycles'])
 
-    row = query("""
-        SELECT n_active_tokens, n_anomalies, n_failures, n_full,
-               pq_pct, zk_pct, n_verifs, n_lifecycles
-        FROM atlas_stats(%s, %s, %s, %s, %s, %s)
-    """, (min_lat, min_lon, max_lat, max_lon, f['since'], f['agencies']), fetch='one')
+    return _answer('stats', ('stats', _filter_cache_key(f)), f, compute)
 
-    payload = dict(
-        bbox=[min_lat, min_lon, max_lat, max_lon],
-        window=f['window'],
-        n_active_tokens=int(row['n_active_tokens']),
-        n_anomalies=int(row['n_anomalies']),
-        n_failures=int(row['n_failures']),
-        n_full=int(row['n_full']),
-        pq_pct=int(row['pq_pct']),
-        zk_pct=int(row['zk_pct']),
-        n_verifs=int(row['n_verifs']),
-        n_lifecycles=int(row['n_lifecycles']),
-    )
-    _atlas_cache_set(cache_key, payload)
-    return jsonify(payload)
-
-
-@app.route('/api/atlas/timeline')
-@security.login_required
-@replica_reads
-def api_atlas_timeline():
-    """Bucket counts for the histogram strip below the toolbar.
-
-    Returns N points where each point is `{ts: ISO-8601, n_total, n_anomaly}`
-    over the requested `?window=` time range, with `?buckets=` slices.
-    Honors the same outcome / disclosure / context / event_types filters as
-    the cluster endpoint so the strip reflects the operator's full filter
-    state. Hard-capped at 240 buckets so a misconfigured client can't ask
-    for 100k pixels of histogram. v8.3 / A."""
-    try:
-        min_lat, min_lon, max_lat, max_lon = _parse_bbox(request.args.get('bbox'))
-        buckets = int(request.args.get('buckets', '60'))
-        if buckets <= 0 or buckets > 240:
-            raise ValueError("buckets must be in (0, 240]")
-        kind = request.args.get('kind', 'verification')
-        if kind not in ('verification', 'lifecycle'):
-            raise ValueError("kind must be 'verification' or 'lifecycle'")
-        f = _parse_atlas_filters(request.args)
-    except ValueError as e:
-        return jsonify(error=str(e)), 400
-
-    # 'all' window has no fixed start; default to 30d in that case so the
-    # histogram has a meaningful x-range. The HUD reads 'all'; the
-    # histogram reads '30d-strip' so both can be honest about scope.
-    since = f['since'] or (_db_now() - _ATLAS_TIME_WINDOWS['30d'])
-
-    cache_key = ('timeline', kind, min_lat, min_lon, max_lat, max_lon,
-                 buckets, _filter_cache_key(f))
-    cached = _atlas_cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
-
-    rows = query("""
-        SELECT to_char(bucket_ts, 'YYYY-MM-DD"T"HH24:MI:SS') AS ts,
-               n_total, n_anomaly
-        FROM atlas_timeline(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ORDER BY bucket_ts
-    """, (min_lat, min_lon, max_lat, max_lon, since, buckets, kind,
-          f['outcomes'], f['disclosure'], f['contexts'], f['agencies']))
-
-    payload = dict(
-        bbox=[min_lat, min_lon, max_lat, max_lon],
-        window=f['window'],
-        kind=kind,
-        buckets=buckets,
-        since=since.isoformat(),
-        until=_db_now().isoformat(),
-        points=[
-            {'ts': r['ts'], 'n_total': int(r['n_total']),
-             'n_anomaly': int(r['n_anomaly'])}
-            for r in rows
-        ],
-    )
-    _atlas_cache_set(cache_key, payload)
-    return jsonify(payload)
-
-
-# ----------------------------------------------------------------------------
-# THE ANALYTICAL CONSOLE (v9.248, roadmap P2.3) — the Overview's non-geographic
-# aggregates. Both are bounded server-side (C8) and count zero-knowledge events
-# without ever locating them (C6): a ZK verification adds to volume, ZK-share
-# and the disclosure/agency/context/jurisdiction tallies, but is never plotted.
-# ----------------------------------------------------------------------------
 
 @app.route('/api/atlas/series')
 @security.login_required
 @replica_reads
 def api_atlas_series():
-    """Non-geographic total-volume time series for the Overview hero chart.
-
-    Returns `{ts, n_total, n_failure, n_zk}` per bucket over the `?window=`
-    range with `?buckets=` slices, honoring the same filters as the rest of the
-    Atlas. Unlike /api/atlas/timeline (located events only, for the map strip),
-    this counts EVERY event, so the volume is honest and zero-knowledge
-    verifications are included in n_total and n_zk without a location (C6).
-    Hard-capped at 240 buckets."""
+    """Volume over the window: `{ts, n_total, n_failure, n_zk}` per bucket, every bucket from
+    the window's start to now, at most `?buckets=` (<= _ATLAS_MAX_BUCKETS) of them, each whole
+    hours or days wide. Counts every event, zero-knowledge ones included, located nowhere (C6)."""
     try:
         buckets = int(request.args.get('buckets', '60'))
-        if buckets <= 0 or buckets > 240:
-            raise ValueError("buckets must be in (0, 240]")
-        kind = request.args.get('kind', 'verification')
-        if kind not in ('verification', 'lifecycle'):
-            raise ValueError("kind must be 'verification' or 'lifecycle'")
+        if not 0 < buckets <= _ATLAS_MAX_BUCKETS:
+            raise ValueError(f"buckets must be in (0, {_ATLAS_MAX_BUCKETS}]")
+        kind = _kind(request.args)
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
         return jsonify(error=str(e)), 400
 
-    # 'all' has no fixed start; span the actual data range so the chart is not
-    # empty on old seed data. min(event_timestamp) hits the earliest partition.
-    since = f['since']
-    if since is None:
-        col = 'VerificationEvent' if kind == 'verification' else 'TokenLifecycleEvent'
-        row = query(f"SELECT min(event_timestamp) AS t FROM {col}", fetch='one')
-        since = (row and row['t']) or (_db_now() - _ATLAS_TIME_WINDOWS['30d'])
+    def compute():
+        since, until = _series_since(f, kind), _db_now()
+        width = _bucket_width(since, until, buckets, f['grain'])
+        rows = query("""
+            SELECT bucket_ts, n_total, n_failure, n_zk, scope_total, scope_failure, scope_zk
+              FROM atlas_volume_series(%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (since, f['daily'], width, kind, f['outcomes'], f['disclosure'],
+              f['contexts'], f['agencies']))
+        scope = int(rows[0]['scope_total']) if rows else 0
+        by_ts = {r['bucket_ts']: r for r in rows}
+        points = []
+        for t in _buckets(since, until, width):
+            r = by_ts.get(t)
+            n = int(r['n_total']) if r else 0
+            points.append({'ts': _ts(t), 'n_total': _part(n, scope),
+                           'n_failure': _part(r['n_failure'], n) if r else None,
+                           'n_zk': _part(r['n_zk'], n) if r else None})
+        # The window's own totals, withheld as its parts are: the page shows these, never a sum of
+        # the points, which would read a withheld bucket as none.
+        first = rows[0] if rows else {'scope_failure': 0, 'scope_zk': 0}
+        totals = {'n_total': _count(scope), 'n_failure': _part(first['scope_failure'], scope),
+                  'n_zk': _part(first['scope_zk'], scope)}
+        payload = dict(kind=kind, buckets=len(points), bucket_seconds=int(width.total_seconds()),
+                       until=until.isoformat(), points=points, totals=totals,
+                       **dict(_window_fields(f), since=since.isoformat()))
+        return payload, scope
 
-    cache_key = ('series', kind, buckets, _filter_cache_key(f))
-    cached = _atlas_cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
-
-    rows = query("""
-        SELECT to_char(bucket_ts, 'YYYY-MM-DD"T"HH24:MI:SS') AS ts,
-               n_total, n_failure, n_zk
-        FROM atlas_volume_series(%s, %s, %s, %s, %s, %s, %s)
-        ORDER BY bucket_ts
-    """, (since, buckets, kind, f['outcomes'], f['disclosure'],
-          f['contexts'], f['agencies']))
-
-    payload = dict(
-        window=f['window'], kind=kind, buckets=buckets,
-        since=since.isoformat(), until=_db_now().isoformat(),
-        points=[
-            {'ts': r['ts'], 'n_total': int(r['n_total']),
-             'n_failure': int(r['n_failure']), 'n_zk': int(r['n_zk'])}
-            for r in rows
-        ],
-    )
-    _atlas_cache_set(cache_key, payload)
-    return jsonify(payload)
+    return _answer('series', ('series', kind, buckets, _filter_cache_key(f)), f, compute,
+                   kind=kind)
 
 
-# The dimensions the stacked Trends series can break a stream out by (whitelisted
-# before the SQL CASE, same discipline as the breakdown dimensions).
+# The dimensions the stacked series can break a stream out by (whitelisted before the SQL CASE).
 _ATLAS_STACK_DIMENSIONS = {
     'verification': ('context', 'outcome', 'disclosure', 'agency', 'jurisdiction'),
     'lifecycle':    ('agency', 'event_type'),
@@ -740,111 +592,103 @@ _ATLAS_STACK_DIMENSIONS = {
 @security.login_required
 @replica_reads
 def api_atlas_heatmap():
-    """Trends: events by ISO weekday (1=Mon..7=Sun) x hour of day (0..23), the
-    temporal-rhythm view. Returns `cells: [{dow, hour, n, n_failure}]`, at most
-    7x24=168 cells (C8), counting zero-knowledge events in their cell without a
-    location (C6). Honors the same filters as the rest of the Atlas."""
+    """The window's counts by ISO weekday (1 Monday .. 7 Sunday) and hour of day: all 168 cells,
+    `{dow, hour, n, n_failure}`, each withheld below the minimum (C8, C6). Always the hourly
+    rollup; for 'all' that is every hour still kept, since a purge takes the hours it empties."""
     try:
-        kind = request.args.get('kind', 'verification')
-        if kind not in ('verification', 'lifecycle'):
-            raise ValueError("kind must be 'verification' or 'lifecycle'")
+        kind = _kind(request.args)
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
         return jsonify(error=str(e)), 400
 
-    since = f['since']
-    if since is None:
-        col = 'VerificationEvent' if kind == 'verification' else 'TokenLifecycleEvent'
-        row = query(f"SELECT min(event_timestamp) AS t FROM {col}", fetch='one')
-        since = (row and row['t']) or (_db_now() - _ATLAS_TIME_WINDOWS['30d'])
+    def compute():
+        rows = query("""
+            SELECT dow, hour, n, n_failure, scope_total
+              FROM atlas_heatmap(%s, %s, %s, %s, %s, %s)
+        """, (f['since'], kind, f['outcomes'], f['disclosure'], f['contexts'], f['agencies']))
+        scope = int(rows[0]['scope_total']) if rows else 0
+        by_cell = {(int(r['dow']), int(r['hour'])): r for r in rows}
+        cells = []
+        for dow in range(1, 8):
+            for hour in range(24):
+                r = by_cell.get((dow, hour))
+                n = int(r['n']) if r else 0
+                cells.append({'dow': dow, 'hour': hour, 'n': _part(n, scope),
+                              'n_failure': _part(r['n_failure'], n) if r else None})
+        payload = dict(kind=kind, cells=cells, **dict(_window_fields(f), grain='hour'))
+        return payload, scope
 
-    cache_key = ('heatmap', kind, _filter_cache_key(f))
-    cached = _atlas_cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
-
-    rows = query("""
-        SELECT dow, hour, n, n_failure
-        FROM atlas_heatmap(%s, %s, %s, %s, %s, %s)
-        ORDER BY dow, hour
-    """, (since, kind, f['outcomes'], f['disclosure'], f['contexts'], f['agencies']))
-
-    payload = dict(
-        window=f['window'], kind=kind,
-        cells=[{'dow': int(r['dow']), 'hour': int(r['hour']),
-                'n': int(r['n']), 'n_failure': int(r['n_failure'])} for r in rows],
-    )
-    _atlas_cache_set(cache_key, payload)
-    return jsonify(payload)
+    return _answer('heatmap', ('heatmap', kind, _filter_cache_key(f)), f, compute, kind=kind)
 
 
 @app.route('/api/atlas/stacked')
 @security.login_required
 @replica_reads
 def api_atlas_stacked():
-    """Trends: volume over time broken out by one dimension (top-K categories,
-    the rest folded into 'Other'), for a stacked-area chart. Returns ordered
-    `labels` and `points: [{ts, values: {label: n}}]`, bounded to
-    buckets x (K+1) (C8); zero-knowledge events are counted, never located (C6)."""
+    """Volume over the window broken out by one dimension: the top six categories by volume,
+    the rest folded into 'Other', every bucket from the window's start, as ordered `labels` and
+    `points: [{ts, values: {label: n}}]` (C8). Each value is withheld below the minimum."""
     try:
         buckets = int(request.args.get('buckets', '48'))
-        if buckets <= 0 or buckets > 240:
-            raise ValueError("buckets must be in (0, 240]")
-        kind = request.args.get('kind', 'verification')
-        if kind not in ('verification', 'lifecycle'):
-            raise ValueError("kind must be 'verification' or 'lifecycle'")
+        if not 0 < buckets <= _ATLAS_MAX_BUCKETS:
+            raise ValueError(f"buckets must be in (0, {_ATLAS_MAX_BUCKETS}]")
+        kind = _kind(request.args)
         dimension = request.args.get('dimension', 'context')
-        if dimension not in _ATLAS_STACK_DIMENSIONS.get(kind, ()):
+        if dimension not in _ATLAS_STACK_DIMENSIONS[kind]:
             raise ValueError("dimension is not valid for this stream")
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
         return jsonify(error=str(e)), 400
 
-    since = f['since']
-    if since is None:
-        col = 'VerificationEvent' if kind == 'verification' else 'TokenLifecycleEvent'
-        row = query(f"SELECT min(event_timestamp) AS t FROM {col}", fetch='one')
-        since = (row and row['t']) or (_db_now() - _ATLAS_TIME_WINDOWS['30d'])
-
     top_k = 6
-    cache_key = ('stacked', kind, buckets, dimension, _filter_cache_key(f))
-    cached = _atlas_cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
 
-    rows = query("""
-        SELECT to_char(bucket_ts, 'YYYY-MM-DD"T"HH24:MI:SS') AS ts, label, n
-        FROM atlas_series_stacked(%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ORDER BY bucket_ts, label
-    """, (since, buckets, dimension, kind, top_k,
-          f['outcomes'], f['disclosure'], f['contexts'], f['agencies']))
+    def compute():
+        since, until = _series_since(f, kind), _db_now()
+        width = _bucket_width(since, until, buckets, f['grain'])
+        rows = query("""
+            SELECT bucket_ts, label, n, scope_total
+              FROM atlas_series_stacked(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (since, f['daily'], width, dimension, kind, top_k,
+              f['outcomes'], f['disclosure'], f['contexts'], f['agencies']))
+        scope = int(rows[0]['scope_total']) if rows else 0
+        totals = {}
+        for r in rows:
+            totals[r['label']] = totals.get(r['label'], 0) + int(r['n'])
+        # A category with fewer than the minimum over the whole window joins 'Other', so the
+        # bands do not say which small categories had activity. Ordered by volume, 'Other' last.
+        labels = sorted((lbl for lbl in totals if lbl != 'Other' and totals[lbl] >= _ATLAS_MIN_CELL),
+                        key=lambda lbl: (-totals[lbl], lbl))
+        cells = {}
+        for r in rows:
+            band = r['label'] if r['label'] in labels else 'Other'
+            cells[(r['bucket_ts'], band)] = cells.get((r['bucket_ts'], band), 0) + int(r['n'])
+        if any(lbl not in labels for lbl in totals):
+            labels.append('Other')
+        points = [{'ts': _ts(t), 'values': {lbl: _part(cells.get((t, lbl), 0), scope) for lbl in labels}}
+                  for t in _buckets(since, until, width)]
+        payload = dict(kind=kind, dimension=dimension, buckets=len(points),
+                       bucket_seconds=int(width.total_seconds()), labels=labels, points=points,
+                       **dict(_window_fields(f), since=since.isoformat()))
+        return payload, scope
 
-    # Pivot to per-bucket {label: n}, and an ordered label list (by total volume,
-    # 'Other' always last) so the client stacks the bands consistently.
-    by_ts, totals = {}, {}
-    for r in rows:
-        by_ts.setdefault(r['ts'], {})[r['label']] = int(r['n'])
-        totals[r['label']] = totals.get(r['label'], 0) + int(r['n'])
-    labels = sorted((lbl for lbl in totals if lbl != 'Other'),
-                    key=lambda lbl: (-totals[lbl], lbl))
-    if 'Other' in totals:
-        labels.append('Other')
-    payload = dict(
-        window=f['window'], kind=kind, dimension=dimension, buckets=buckets,
-        labels=labels,
-        points=[{'ts': ts, 'values': by_ts[ts]} for ts in sorted(by_ts)],
-    )
-    _atlas_cache_set(cache_key, payload)
-    return jsonify(payload)
+    return _answer('stacked', ('stacked', kind, buckets, dimension, _filter_cache_key(f)), f,
+                   compute, kind=kind, dimension=dimension)
 
 
-# The dimensions each stream can be broken down by (whitelisted here so a
-# malformed ?dimension= can never reach the SQL CASE as anything but a known
-# value). Jurisdiction is the REQUESTING agency's, so it covers ZK too.
+# The dimensions each stream can be broken down by (whitelisted here so a malformed
+# ?dimension= can never reach the SQL CASE as anything but a known value). Jurisdiction is the
+# REQUESTING authority's, so it covers zero-knowledge verifications too.
 _ATLAS_BREAKDOWN_DIMENSIONS = {
-    'verification': ('agency', 'context', 'outcome', 'disclosure',
-                     'algorithm', 'jurisdiction'),
+    'verification': ('agency', 'context', 'outcome', 'disclosure', 'algorithm', 'jurisdiction'),
     'lifecycle':    ('agency', 'event_type'),
+}
+#: The fixed dimensions: every value is listed, so a missing row cannot say "none" where a
+#: withheld count would say "fewer than five".
+_ATLAS_FIXED_VALUES = {
+    'context':    list(_ATLAS_CONTEXTS),
+    'outcome':    list(_ATLAS_OUTCOMES),
+    'disclosure': list(_ATLAS_DISCLOSURES),
+    'event_type': list(_ATLAS_EVENT_TYPES),
 }
 
 
@@ -852,16 +696,11 @@ _ATLAS_BREAKDOWN_DIMENSIONS = {
 @security.login_required
 @replica_reads
 def api_atlas_breakdown():
-    """Top-K categorical roll-up for the Overview/Breakdown views.
-
-    `?dimension=` groups the window's events by one whitelisted dimension and
-    returns `{label, n_total, n_failure}` ordered by volume, capped at
-    _ATLAS_MAX_CATEGORIES. Non-geographic; zero-knowledge events are counted
-    like any other (C6)."""
+    """The window's counts by one whitelisted dimension, `{label, n_total, n_failure}` ordered
+    by volume and capped at _ATLAS_MAX_CATEGORIES. An outcome, disclosure or event-type
+    breakdown lists every value; the others list what is there, top-K."""
     try:
-        kind = request.args.get('kind', 'verification')
-        if kind not in _ATLAS_BREAKDOWN_DIMENSIONS:
-            raise ValueError("kind must be 'verification' or 'lifecycle'")
+        kind = _kind(request.args)
         dimension = (request.args.get('dimension') or '').strip().lower()
         if dimension not in _ATLAS_BREAKDOWN_DIMENSIONS[kind]:
             raise ValueError(
@@ -870,42 +709,48 @@ def api_atlas_breakdown():
                     _ATLAS_MAX_CATEGORIES)
         if limit <= 0:
             raise ValueError("limit must be positive")
-        # v9.250: a case-insensitive label search so one slice is findable among
-        # thousands. Bounded length (defence in depth; it is a bound parameter).
+        # A case-insensitive label search, so one slice is findable among thousands. Bounded
+        # length (defence in depth; it is a bound parameter).
         search = (request.args.get('search') or '').strip()[:60] or None
         f = _parse_atlas_filters(request.args)
     except ValueError as e:
         return jsonify(error=str(e)), 400
 
-    cache_key = ('breakdown', kind, dimension, limit, search, _filter_cache_key(f))
-    cached = _atlas_cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
+    def compute():
+        rows = query("""
+            SELECT label, n_total, n_failure, scope_total
+              FROM atlas_breakdown(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (dimension, f['since'], f['daily'], limit, kind, f['outcomes'],
+              f['disclosure'], f['contexts'], f['agencies'], search))
+        scope = int(rows[0]['scope_total']) if rows else 0
+        found = {r['label']: (int(r['n_total']), int(r['n_failure'])) for r in rows}
+        fixed = _ATLAS_FIXED_VALUES.get(dimension)
+        if fixed:
+            # Every value listed, a zero withheld like a small count.
+            labels = [v for v in fixed if not search or search.lower() in v.lower()]
+            categories = [{'label': lbl, 'n_total': _part(found.get(lbl, (0, 0))[0], scope),
+                           'n_failure': _part(found.get(lbl, (0, 0))[1], found.get(lbl, (0, 0))[0])}
+                          for lbl in labels]
+        else:
+            labels, small = _fold_small({lbl: n for lbl, (n, _) in found.items()})
+            categories = [{'label': lbl, 'n_total': _part(found[lbl][0], scope),
+                           'n_failure': _part(found[lbl][1], found[lbl][0])} for lbl in labels]
+            small_failures = sum(nf for lbl, (n, nf) in found.items() if n < _ATLAS_MIN_CELL)
+            categories.append({'label': _ATLAS_FOLDED, 'n_total': _part(small, scope),
+                               'n_failure': _part(small_failures, small), 'folded': True})
+        payload = dict(kind=kind, dimension=dimension, limit=limit, search=search,
+                       truncated=(not fixed and len(rows) == limit), count=len(categories),
+                       categories=categories, **_window_fields(f))
+        return payload, scope
 
-    rows = query("""
-        SELECT label, n_total, n_failure
-        FROM atlas_breakdown(%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ORDER BY n_total DESC, label ASC
-    """, (dimension, f['since'], limit, kind, f['outcomes'],
-          f['disclosure'], f['contexts'], f['agencies'], search))
-
-    payload = dict(
-        kind=kind, dimension=dimension, window=f['window'], limit=limit,
-        search=search, truncated=(len(rows) == limit), count=len(rows),
-        categories=[
-            {'label': r['label'], 'n_total': int(r['n_total']),
-             'n_failure': int(r['n_failure'])}
-            for r in rows
-        ],
-    )
-    _atlas_cache_set(cache_key, payload)
-    return jsonify(payload)
+    return _answer('breakdown', ('breakdown', kind, dimension, limit, search,
+                                 _filter_cache_key(f)), f, compute,
+                   kind=kind, dimension=dimension)
 
 
-# The row/column dimensions each stream's cross-tab accepts (whitelisted here so
-# a malformed ?row=/?col= can never reach the SQL CASE as anything but a known
-# value). The column dimension is deliberately low-cardinality so the cell count
-# stays bounded (C8); the rows are capped at _ATLAS_MAX_CATEGORIES.
+# The row and column dimensions each stream's cross-tab accepts (whitelisted so a malformed
+# ?row=/?col= never reaches the SQL CASE). The column dimension is fixed and low-cardinality, so
+# the cells stay bounded (C8); the rows are capped at _ATLAS_MAX_CATEGORIES.
 _ATLAS_CROSSTAB_ROWS = {
     'verification': ('agency', 'context', 'jurisdiction', 'algorithm'),
     'lifecycle':    ('agency', 'event_type'),
@@ -914,31 +759,19 @@ _ATLAS_CROSSTAB_COLS = {
     'verification': ('outcome', 'disclosure'),
     'lifecycle':    ('event_type',),
 }
-# Canonical column order per column dimension (so the matrix reads left-to-right
-# in a sensible order rather than alphabetically).
-_ATLAS_COL_ORDER = {
-    'outcome':    ['SUCCESS', 'FAILURE', 'EXPIRED', 'UNAUTHORIZED'],
-    'disclosure': ['ZERO_KNOWLEDGE', 'SELECTIVE', 'FULL'],
-    'event_type': ['ISSUED', 'ACTIVATED', 'DEACTIVATED', 'DEVICE_BOUND',
-                   'DEVICE_REVOKED', 'REVOKED', 'LOST', 'EXPIRED', 'REPLACED'],
-}
 
 
 @app.route('/api/atlas/crosstab')
 @security.login_required
 @replica_reads
 def api_atlas_crosstab():
-    """A 2-D categorical pivot for the Breakdown view: `?row=` by `?col=`.
-
-    Returns the top-K rows of the row dimension (by volume, capped at
-    _ATLAS_MAX_CATEGORIES) crossed with the column dimension, as
-    `{rows:[{label,total}], cols:[label], cells:[{row,col,n}]}`. Both
-    dimensions are whitelisted per stream. Non-geographic; zero-knowledge
-    events are counted like any other (C6)."""
+    """A row dimension by a column dimension: the top-K rows by volume (capped at
+    _ATLAS_MAX_CATEGORIES), every column value for each, as `{rows: [{label, total}], cols,
+    cells: [{row, col, n}]}`. A cell is withheld below the minimum or when the rest of its row
+    is; a row's total is withheld when the cells withheld beneath it sum to less than the
+    minimum, so the row cannot be subtracted back into them."""
     try:
-        kind = request.args.get('kind', 'verification')
-        if kind not in _ATLAS_CROSSTAB_ROWS:
-            raise ValueError("kind must be 'verification' or 'lifecycle'")
+        kind = _kind(request.args)
         row_dim = (request.args.get('row') or '').strip().lower()
         col_dim = (request.args.get('col') or '').strip().lower()
         if row_dim not in _ATLAS_CROSSTAB_ROWS[kind]:
@@ -953,54 +786,56 @@ def api_atlas_crosstab():
     except ValueError as e:
         return jsonify(error=str(e)), 400
 
-    cache_key = ('crosstab', kind, row_dim, col_dim, limit, _filter_cache_key(f))
-    cached = _atlas_cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
+    def compute():
+        rows = query("""
+            SELECT row_label, col_label, n_total, scope_total
+              FROM atlas_crosstab(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (row_dim, col_dim, f['since'], f['daily'], limit, kind, f['outcomes'],
+              f['disclosure'], f['contexts'], f['agencies']))
+        scope = int(rows[0]['scope_total']) if rows else 0
+        found, row_totals = {}, {}
+        for r in rows:
+            found[(r['row_label'], r['col_label'])] = int(r['n_total'])
+            row_totals[r['row_label']] = row_totals.get(r['row_label'], 0) + int(r['n_total'])
+        cols = list(_ATLAS_FIXED_VALUES[col_dim])
+        # Rows with fewer than the minimum fold into one, as an open list's categories do.
+        labels, _ = _fold_small(row_totals)
+        folded = {col: sum(found.get((lbl, col), 0) for lbl in row_totals if lbl not in labels)
+                  for col in cols}
+        table = [(lbl, {col: found.get((lbl, col), 0) for col in cols}) for lbl in labels]
+        table.append((_ATLAS_FOLDED, folded))
+        out_rows, cells = [], []
+        for label, by_col in table:
+            total = sum(by_col.values())
+            withheld = [n for n in by_col.values() if _part(n, total) is None]
+            for col in cols:
+                cells.append({'row': label, 'col': col, 'n': _part(by_col[col], total)})
+            # The total is shown only when it cannot be subtracted back into a small count: no
+            # cell withheld, or the withheld cells summing to the minimum or more. Zeros count as
+            # withheld, so a total equal to its shown cells cannot say the rest were none.
+            total_shown = (_part(total, scope) if not withheld or sum(withheld) >= _ATLAS_MIN_CELL
+                           else None)
+            out_rows.append({'label': label, 'total': total_shown,
+                             'folded': label == _ATLAS_FOLDED})
+        payload = dict(kind=kind, row=row_dim, col=col_dim, limit=limit, rows=out_rows, cols=cols,
+                       cells=cells, **_window_fields(f))
+        return payload, scope
 
-    rows = query("""
-        SELECT row_label, col_label, n_total
-        FROM atlas_crosstab(%s, %s, %s, %s, %s, %s, %s, %s, %s)
-    """, (row_dim, col_dim, f['since'], limit, kind, f['outcomes'],
-          f['disclosure'], f['contexts'], f['agencies']))
-
-    # Assemble the matrix: row order by total desc, columns in canonical order
-    # (falling back to sorted for any label not in the canonical list).
-    row_totals, seen_cols = {}, set()
-    for r in rows:
-        row_totals[r['row_label']] = row_totals.get(r['row_label'], 0) + int(r['n_total'])
-        seen_cols.add(r['col_label'])
-    ordered_rows = sorted(row_totals.items(), key=lambda kv: (-kv[1], kv[0]))
-    canon = _ATLAS_COL_ORDER.get(col_dim, [])
-    ordered_cols = [c for c in canon if c in seen_cols] + sorted(seen_cols - set(canon))
-
-    payload = dict(
-        kind=kind, row=row_dim, col=col_dim, window=f['window'], limit=limit,
-        rows=[{'label': lbl, 'total': tot} for lbl, tot in ordered_rows],
-        cols=ordered_cols,
-        cells=[{'row': r['row_label'], 'col': r['col_label'], 'n': int(r['n_total'])}
-               for r in rows],
-    )
-    _atlas_cache_set(cache_key, payload)
-    return jsonify(payload)
+    return _answer('crosstab', ('crosstab', kind, row_dim, col_dim, limit,
+                                _filter_cache_key(f)), f, compute,
+                   kind=kind, row=row_dim, col=col_dim)
 
 
 @app.route('/api/atlas/facet/agencies')
 @security.login_required
 @replica_reads
 def api_atlas_facet_agencies():
-    """The agency facet for the global filter (roadmap P2.3, v9.251).
-
-    Agencies with `(agency_id, name, n_total)` matching an optional `?q=`
-    search, honouring the other active facets (outcome/disclosure/context) but
-    not the agency selection. A chip flyout of every agency does not survive
-    thousands of them; the operator types and the server returns the matches
-    with their activity counts, capped. Non-geographic (C6); operational pivot,
-    never an attribute of a person."""
+    """The authority facet for the global filter: every authority matching an optional `?q=`, in
+    name order, with `(agency_id, name, n_total)` honouring the other filters but not the
+    authority selection, capped. Every match is listed, active or not, so the list does not say
+    which small authorities had activity; each count is withheld below the minimum."""
     try:
-        kind = request.args.get('kind', 'verification')
-        if kind not in ('verification', 'lifecycle'):
-            raise ValueError("kind must be 'verification' or 'lifecycle'")
+        kind = _kind(request.args)
         limit = min(int(request.args.get('limit', '20')), _ATLAS_MAX_CATEGORIES)
         if limit < 0:
             raise ValueError("limit must not be negative")   # it reached SQL's LIMIT as a 500
@@ -1009,27 +844,26 @@ def api_atlas_facet_agencies():
     except ValueError as e:
         return jsonify(error=str(e)), 400
 
-    cache_key = ('facet_agencies', kind, limit, search, _filter_cache_key(f))
-    cached = _atlas_cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
+    def compute():
+        rows = query("""
+            SELECT agency_id, name, n_total, scope_total
+              FROM atlas_agency_facet(%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (f['since'], f['daily'], limit, kind, search, f['outcomes'], f['disclosure'],
+              f['contexts']))
+        scope = int(rows[0]['scope_total']) if rows else 0
+        payload = dict(kind=kind, count=len(rows), results=[
+            {'agency_id': r['agency_id'], 'name': r['name'], 'n_total': _part(r['n_total'], scope)}
+            for r in rows], **_window_fields(f))
+        return payload, scope
 
-    rows = query("""
-        SELECT agency_id, name, n_total
-        FROM atlas_agency_facet(%s, %s, %s, %s, %s, %s, %s)
-    """, (f['since'], limit, kind, search, f['outcomes'], f['disclosure'], f['contexts']))
-    payload = dict(kind=kind, count=len(rows), results=[
-        {'agency_id': r['agency_id'], 'name': r['name'], 'n_total': int(r['n_total'])}
-        for r in rows])
-    _atlas_cache_set(cache_key, payload)
-    return jsonify(payload)
+    return _answer('facet', ('facet_agencies', kind, limit, search, _filter_cache_key(f)), f,
+                   compute, kind=kind)
 
 
 @app.route('/api/atlas/cache-stats')
 @security.login_required
 def api_atlas_cache_stats():
-    """Cache observability — hit/miss/expired/evicted counters and current size.
-    Useful for verifying R8-5 effectiveness in production."""
+    """Cache observability: hit/miss/expired/evicted counters and current size."""
     with _atlas_cache_lock:
         return jsonify(
             ttl_seconds=_ATLAS_CACHE_TTL_SECONDS,

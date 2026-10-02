@@ -41,6 +41,19 @@
 {%- endif -%}
 {%- endmacro %}
 
+{# A count the Atlas may show, or the sign that it is withheld (lab/strategy/009, step 4): fewer than
+   the minimum cell size, or a figure that would give such a count back. Never a number, never 0. #}
+{% macro cell(n, k=5) -%}
+{%- if n is none -%}<span class="withheld" title="Withheld: fewer than {{ k }}, or a figure that would give such a count back">&lt;{{ k }}</span>
+{%- else -%}{{ figure(n) }}{%- endif -%}
+{%- endmacro %}
+
+{# A share the Atlas may show, or the sign that it is withheld: a share is withheld when its count is. #}
+{% macro share(p) -%}
+{%- if p is none -%}<span class="withheld" title="Withheld: the share would give a count under the minimum back">withheld</span>
+{%- else -%}{{ p }}%{%- endif -%}
+{%- endmacro %}
+
 {# The navigation, as data: (group caption or None, [(endpoint, label, icon, roles or None,
    [other endpoints that belong to this entry])]). roles None = every signed-in user. The
    breadcrumb and the current-page mark are derived from the same table, so they cannot drift. #}
