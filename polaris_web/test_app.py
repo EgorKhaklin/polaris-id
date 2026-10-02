@@ -13445,6 +13445,9 @@ class RouteGuardMatrixTests(PolarisTestCase):
         '/api/v1/exchange-receipt/<int:agency_id>': ('admin', 'operator'),
         '/api/v1/sign/<int:agency_id>': ('admin', 'operator'),
         '/api/zk/epoch/close': ('admin',),
+        # 2026-10-02 (lab/strategy/009, step B2): the self-test attempts forbidden writes,
+        # rolled back, and is for those who audit the constitution.
+        '/athena/self-test': ('admin', 'auditor'),
         '/duress': ('admin', 'auditor'),
         '/individuals/<int:ind_id>/delete': ('admin',),
         '/individuals/<int:ind_id>/edit': ('admin',),
@@ -13652,8 +13655,8 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
             "Either add @csrf_protect, or add an entry to CSRF_EXEMPT saying why a browser "
             "cannot be made to call this with someone else's authority.")
         self.assertEqual(
-            len(csrf), 35,
-            f"{len(csrf)} routes carry @csrf_protect and 35 are recorded. A guard that was "
+            len(csrf), 36,
+            f"{len(csrf)} routes carry @csrf_protect and 36 are recorded. A guard that was "
             "removed shows up here, because a route without one simply stops appearing in the "
             "protected set.")
         self.assertEqual(len(cross_site), 2, f"{len(cross_site)} routes reject cross-site "
@@ -13684,7 +13687,7 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
                     f"{method} {url} without a CSRF token returned {r.status_code}; the token "
                     "is not being required")
             checked += 1
-        self.assertEqual(checked, 35,
+        self.assertEqual(checked, 36,
                          f"only {checked} CSRF-protected routes were exercised; the route table "
                          "is no longer being read and this test is passing by finding nothing")
 
