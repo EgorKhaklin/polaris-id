@@ -23793,15 +23793,30 @@ def check_unread_signed_fields_tool_is_green(root: pathlib.Path) -> list[Finding
 # @app.route decorators. Parameter names and converters do not matter.
 # ---------------------------------------------------------------------------
 def _openapi_api_v1_routes(spec_text: str) -> set[tuple[str, str]]:
-    import yaml
-    spec = yaml.safe_load(spec_text)
+    # Parsed with the standard library, not PyYAML: the invariant layer (polaris_checks.run) runs
+    # in CI with no pip install, so a check may import only the standard library. The spec is
+    # emitted with 2-space path keys and 4-space method keys under `paths:`, and this reads that
+    # shape; a path key is normalised so parameter names and converters do not matter.
     out: set[tuple[str, str]] = set()
-    for path, item in ((spec or {}).get("paths") or {}).items():
-        if isinstance(path, str) and path.startswith("/api/v1") and isinstance(item, dict):
-            norm = _norm_api_path(path.replace("{", "<").replace("}", ">"))
-            for method in item:
-                if method in ("get", "post", "put", "patch", "delete"):
-                    out.add((method.upper(), norm))
+    in_paths = False
+    current = None
+    for line in spec_text.splitlines():
+        if re.match(r"^paths:\s*$", line):
+            in_paths, current = True, None
+            continue
+        if re.match(r"^\S", line):            # any other top-level key ends the paths block
+            in_paths, current = False, None
+            continue
+        if not in_paths:
+            continue
+        path_key = re.match(r"^  (/[^:\s]+):\s*$", line)          # a path at 2-space indent
+        if path_key:
+            current = path_key.group(1)
+            continue
+        method = re.match(r"^    (get|post|put|patch|delete):\s*$", line)   # a method at 4-space
+        if method and current and current.startswith("/api/v1"):
+            out.add((method.group(1).upper(),
+                     _norm_api_path(current.replace("{", "<").replace("}", ">"))))
     return out
 
 
