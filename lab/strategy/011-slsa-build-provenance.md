@@ -2,9 +2,10 @@
 
 **Opened 2026-10-02.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md),
 on the owner's direction of 2026-10-02 (work toward the badges Polaris can earn; SLSA was on the
-owner's list). State: APPROVED by the owner 2026-10-02 (decision D14): build the SLSA Build L3 provenance and have
-publish.yml publish the attested files, so the bytes on PyPI and npm are the bytes the provenance names;
-scheduled to be built after 1.0.0-rc.71 ships. The falsifiers in section 10 were written before the build.
+owner's list). State: OPEN; decision D14 (whether publish.yml publishes the attested release
+files) is the owner's to make. Lane 2 recommends building it after 1.0.0-rc.71 ships: the SLSA Build
+L3 provenance, with publish.yml publishing the attested files so the bytes on PyPI and npm are the
+bytes the provenance names. The falsifiers in section 10 were written before the build.
 
 ---
 
