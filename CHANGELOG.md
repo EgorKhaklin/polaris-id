@@ -56,11 +56,15 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The credential page is rebuilt: facts beside proofs, one table per kind of row, empty kinds in one line.
 - On a phone, each list keeps a row's identifier, state and holder; the rest is on the record's page.
 - A status change is offered only where the database makes it; revocation keeps its own operation.
+- The SQL console shows at most 500 rows of a query, read from a server-side cursor, and says when there are more.
+- A web request's statements end two seconds before its worker's timeout, so no query outlives its request.
+- The landing emblem has no ring; a soft gold halo sits behind it.
 - `polaris-id migrate-algorithm` signs as the route does; `--signature-hex` and `--signature-file` are withdrawn.
 
 ### Fixed
 
 - The README's OpenID Certified badge now names what it covers: the polaris-oid4vp verifier, not Polaris.
+- The SQL console runs one statement per query; a second statement could lift its five-second limit.
 - SECURITY.md called PyPI's publish attestation the same kind of provenance as build provenance; it says what each is.
 - A credential's page and both investigation pages read its verifications through an index, not a full scan.
 - Release SBOMs failed the NTIA minimum elements and four were invalid SPDX; the release checks both before publishing.

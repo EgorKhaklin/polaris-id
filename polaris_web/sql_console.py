@@ -18,10 +18,86 @@ import rather than a subtle bug.
 """
 import psycopg2
 
+import re
+
 from flask import render_template, request, session
 
 import security
 from app import DB_CONFIG, _apply_operator_scope, app, db_error_to_message
+
+#: The most rows the console shows of one query (lab/strategy/008, step 4). The rows come from a
+#: server-side cursor, so the database hands over only these and the rest of a large result never
+#: leaves it: `SELECT * FROM IdentityToken` at eight billion rows reads a page, not the table.
+SQL_MAX_ROWS = 500
+
+_IDENT_CHAR = re.compile(r"[A-Za-z0-9_$\u0080-\uffff]")
+_DOLLAR_TAG = re.compile(r"\$(?:[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$")
+
+
+def statement_count(sql):
+    """How many statements PostgreSQL would run for this text (lab/strategy/008, step 4).
+
+    One execute() runs every statement in its string, and SET is permitted in a read-only
+    transaction, so `SELECT ...; SET statement_timeout = 0; SELECT pg_sleep(600)` ran its last
+    statement with no limit. A statement cannot lift its own limit, which is set when it starts,
+    so the console runs one statement and refuses text that holds more.
+
+    A semicolon separates statements only outside a string ('...', E'...' with backslash
+    escapes), a quoted identifier ("..."), a dollar-quoted body ($tag$...$tag$) and a comment
+    (-- to the end of the line, /* ... */ nested). This reads strings the way the server does
+    with standard_conforming_strings on, its default; where the two could differ (the setting
+    off), this sees a string end no later than the server does, so it can count a separator the
+    server would not and refuse a query, never the reverse. Text left open at the end (an
+    unterminated quote, comment or body) is a syntax error the server raises before it runs
+    anything."""
+    i, n, count, content = 0, len(sql), 0, False
+    while i < n:
+        c = sql[i]
+        if sql.startswith('--', i):
+            j = sql.find('\n', i)
+            i = n if j < 0 else j + 1
+            continue
+        if sql.startswith('/*', i):
+            depth, i = 1, i + 2
+            while i < n and depth:
+                if sql.startswith('/*', i):
+                    depth, i = depth + 1, i + 2
+                elif sql.startswith('*/', i):
+                    depth, i = depth - 1, i + 2
+                else:
+                    i += 1
+            continue
+        if c in "'\"":
+            content = True
+            escapes = (c == "'" and i > 0 and sql[i - 1] in 'eE'
+                       and (i < 2 or not _IDENT_CHAR.match(sql[i - 2])))
+            i += 1
+            while i < n:
+                if escapes and sql[i] == '\\':
+                    i += 2
+                elif sql[i] == c:
+                    if i + 1 < n and sql[i + 1] == c:
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                else:
+                    i += 1
+            continue
+        if c == '$' and not (i > 0 and _IDENT_CHAR.match(sql[i - 1])):
+            m = _DOLLAR_TAG.match(sql, i)
+            if m:
+                content = True
+                j = sql.find(m.group(0), m.end())
+                i = n if j < 0 else j + len(m.group(0))
+                continue
+        if c == ';':
+            count += content
+            content = False
+        elif not c.isspace():
+            content = True
+        i += 1
+    return count + content
 
 
 # ============================================================================
@@ -40,7 +116,10 @@ def sql_query():
 
     Hardening:
         - Query length capped at 5000 chars to prevent pasting huge payloads
-        - Statement timeout of 5 seconds so a runaway query can't hang the worker
+        - Statement timeout of 5 seconds so a runaway query can't hang the worker, and one
+          statement per request so a second one cannot lift it (statement_count)
+        - At most SQL_MAX_ROWS rows, fetched from a server-side cursor, so a query over the
+          whole population sends the page what it shows and no more
         - The session is set READ ONLY (`set_session(readonly=True)`) before any
           statement opens a transaction, so the engine itself refuses every write.
           This is the real boundary: the first-keyword whitelist below is only a
@@ -74,6 +153,7 @@ def sql_query():
     results = None
     columns = None
     error = None
+    truncated = False
     explain_mode = bool(request.form.get('explain'))
     sql = request.form.get('sql', '') if request.method == 'POST' else ''
 
@@ -87,6 +167,9 @@ def sql_query():
             first_word = sql.strip().split()[0].upper() if sql.strip() else ''
             if first_word not in ('SELECT', 'WITH'):
                 error = "This console is read-only. Only SELECT and WITH queries are accepted."
+            elif statement_count(sql) != 1:
+                error = ("One statement at a time: the console runs a single SELECT or WITH query. "
+                         "Remove the semicolon between statements.")
             else:
                 conn = None
                 try:
@@ -118,15 +201,30 @@ def sql_query():
                     with conn.cursor() as cur:
                         cur.execute(f"SET statement_timeout = {SQL_TIMEOUT_MS}")
 
-                        # If EXPLAIN ANALYZE was requested, wrap the query
-                        actual_sql = f"EXPLAIN ANALYZE {sql}" if explain_mode else sql
-                        cur.execute(actual_sql)
-
-                        if cur.description:
+                    if explain_mode:
+                        # A plan is a few dozen lines, and DECLARE takes no EXPLAIN.
+                        with conn.cursor() as cur:
+                            cur.execute(f"EXPLAIN ANALYZE {sql}")
                             columns = [c.name for c in cur.description]
                             results = [dict(zip(columns, row)) for row in cur.fetchall()]
-                        else:
-                            error = "Query returned no result set."
+                    else:
+                        # A server-side cursor: the query runs at the first FETCH, under the
+                        # timeout above, and only the rows fetched leave the database
+                        # (lab/strategy/008, step 4). It takes one query, which is all the console
+                        # has ever been for.
+                        with conn.cursor(name='polaris_console') as cur:
+                            cur.execute(sql)
+                            # The query runs at the FETCH, not here, so the limit is set again
+                            # in between: whatever ran with the DECLARE cannot have lifted it.
+                            with conn.cursor() as guard:
+                                guard.execute(f"SET statement_timeout = {SQL_TIMEOUT_MS}")
+                            rows = cur.fetchmany(SQL_MAX_ROWS + 1)
+                            if cur.description:
+                                columns = [c.name for c in cur.description]
+                                truncated = len(rows) > SQL_MAX_ROWS
+                                results = [dict(zip(columns, row)) for row in rows[:SQL_MAX_ROWS]]
+                            else:
+                                error = "Query returned no result set."
                 except psycopg2.errors.QueryCanceled:
                     error = (f"Query timed out after {SQL_TIMEOUT_MS}ms. "
                              f"Add LIMIT, narrow WHERE conditions, or use the appropriate index.")
@@ -152,11 +250,13 @@ def sql_query():
          "JOIN Individual i ON t.individual_id = i.individual_id\n"
          "JOIN CryptographicAlgorithm alg ON t.algorithm_id = alg.algorithm_id\n"
          "WHERE alg.quantum_resistant = TRUE AND t.status = 'ACTIVE'\n"
-         "ORDER BY t.token_id;"),
-        ("Verification volume by context (Q5)",
+         "ORDER BY t.token_id DESC\n"
+         "LIMIT 100;"),
+        ("Verification volume by context, the last 7 days (Q5)",
          "SELECT vc.context_type, COUNT(ve.event_id) AS vol\n"
          "FROM VerificationEvent ve\n"
          "JOIN VerificationContext vc ON ve.context_id = vc.context_id\n"
+         "WHERE ve.event_timestamp >= now() - INTERVAL '7 days'\n"
          "GROUP BY vc.context_type\n"
          "ORDER BY vol DESC;"),
         ("Agencies with BOTH grants on ML-DSA-65 (Q3)",
@@ -173,7 +273,8 @@ def sql_query():
          "FROM IdentityToken t1\n"
          "JOIN IdentityToken t2 ON t1.predecessor_token_id = t2.token_id\n"
          "WHERE t1.status = 'ACTIVE'\n"
-         "ORDER BY t1.activation_sequence DESC;"),
+         "ORDER BY t1.token_id DESC\n"
+         "LIMIT 100;"),
     ]
 
     return render_template('sql_console.html',
@@ -183,5 +284,7 @@ def sql_query():
                            error=error,
                            examples=examples,
                            explain_mode=explain_mode,
+                           truncated=truncated,
+                           max_rows=SQL_MAX_ROWS,
                            max_length=SQL_MAX_LENGTH,
                            timeout_ms=SQL_TIMEOUT_MS)

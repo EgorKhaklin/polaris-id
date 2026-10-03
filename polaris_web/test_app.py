@@ -7587,6 +7587,98 @@ class SQLConsoleTests(PolarisTestCase):
         self.assertIn('timed out', body.lower())
 
 
+class BoundedConsoleTests(PolarisTestCase):
+    """lab/strategy/008, step 4. The SQL console reads a query's rows from a server-side cursor
+    and shows at most sql_console.SQL_MAX_ROWS of them, saying when there were more; a web
+    request's statements end before its worker does."""
+
+    def test_a_large_result_shows_its_first_rows_and_says_so(self):
+        import sql_console
+        with patch.object(sql_console, 'SQL_MAX_ROWS', 3):
+            r = self._post('/sql', data={'sql': 'SELECT n FROM generate_series(1, 10) n ORDER BY n'})
+        self.assertEqual(r.status_code, 200)
+        body = r.get_data(as_text=True)
+        self.assertIn('the first 3 rows', body)
+        self.assertIn('returned more than 3 rows', body)
+        cells = re.findall(r'<td[^>]*>\s*(.*?)\s*</td>', body, re.S)
+        self.assertEqual(cells, ['1', '2', '3'])
+        r = self._post('/sql', data={'sql': 'SELECT n FROM generate_series(1, 2) n'})
+        self.assertNotIn('returned more than', r.get_data(as_text=True), 'a small result is whole')
+
+    def test_the_rows_shown_are_all_that_leave_the_database(self):
+        """A hundred million rows, produced lazily by a cross join: read whole (fetchall), the
+        query runs into the console's timeout; read through the cursor, the page has its rows at
+        once. The effect, not the code shape, is what is asserted."""
+        r = self._post('/sql', data={
+            'sql': 'SELECT a.n, b.m FROM generate_series(1, 100000) a(n), generate_series(1, 1000) b(m)'})
+        self.assertEqual(r.status_code, 200)
+        body = r.get_data(as_text=True)
+        self.assertNotIn('timed out', body.lower())
+        self.assertIn('returned more than', body)
+
+    def test_a_request_connection_ends_its_statements_before_its_worker_does(self):
+        def timeout_ms(conn):
+            with conn.cursor() as cur:
+                cur.execute("SELECT (EXTRACT(EPOCH FROM current_setting('statement_timeout')::interval)"
+                            " * 1000)::bigint AS ms")
+                return cur.fetchone()['ms']
+        with flask_app.app.test_request_context('/'):
+            conn = flask_app.get_db()
+            try:
+                self.assertEqual(timeout_ms(conn), flask_app.WEB_STATEMENT_TIMEOUT_MS)
+            finally:
+                conn.close()
+        conn = flask_app.get_db()            # outside a request: a job, the CLI's own connection
+        try:
+            self.assertEqual(timeout_ms(conn), 0, 'a connection outside a request is not held to it')
+        finally:
+            conn.close()
+        # The effect: a statement past the bound is ended by the database.
+        with patch.object(flask_app, 'WEB_STATEMENT_TIMEOUT_MS', 200), \
+                flask_app.app.test_request_context('/'):
+            with self.assertRaises(psycopg2.errors.QueryCanceled):
+                flask_app.query("SELECT pg_sleep(2)", fetch='one')
+
+    def test_the_console_runs_one_statement(self):
+        """A second statement could lift the console's limit: SET is permitted in a read-only
+        transaction, and one execute() runs every statement in its text. The text is refused
+        before a connection opens, and a semicolon inside a string, a comment or a dollar-quoted
+        body is not a separator."""
+        import sql_console
+        # The console's own connection points nowhere: had the text been sent, the page would
+        # carry a connection error instead of the refusal. No other connection is touched.
+        with patch.object(sql_console, 'DB_CONFIG', dict(flask_app.DB_CONFIG, port=1, connect_timeout=1)):
+            r = self._post('/sql', data={'sql': "SELECT 1; SET statement_timeout = 0; SELECT pg_sleep(30)"})
+        body = r.get_data(as_text=True)
+        self.assertIn('One statement at a time', body)
+        self.assertNotIn('<table class="data">', body)
+        r = self._post('/sql', data={'sql': "SELECT ';' AS semicolon -- ; a comment\n"})
+        self.assertEqual(re.findall(r'<td[^>]*>\s*(.*?)\s*</td>', r.get_data(as_text=True), re.S), [';'])
+        for text, n in (("SELECT 1;", 1), ("SELECT 'a'';b'", 1), ("SELECT E'a\\';b'", 1),
+                        ("SELECT 'a\\'; SELECT 2", 2), ("SELECT $t$ ; $t$", 1),
+                        ("SELECT 1 /* ; /* ; */ ; */", 1), ('SELECT "a;b"', 1),
+                        ("SELECT a$b; SELECT 2", 2), ("SELECT 1; -- after", 1), ("SELECT 'open; x", 1)):
+            with self.subTest(text=text):
+                self.assertEqual(sql_console.statement_count(text), n)
+
+    def test_the_limit_is_set_again_before_the_rows_are_read(self):
+        """A server-side cursor's query runs at the FETCH, after the DECLARE that carried the
+        text. Were a second statement ever let through (the lexer above is the first guard), a
+        SET riding with the DECLARE would otherwise lift the limit for the query itself."""
+        import sql_console
+        with patch.object(sql_console, 'statement_count', return_value=1):
+            r = self._post('/sql', data={'sql': "SELECT pg_sleep(8); SET statement_timeout = 0"})
+        # Lifted, the sleep would finish and its row would show; held, the database cancels it.
+        self.assertIn('timed out', r.get_data(as_text=True).lower())
+
+    def test_the_bound_follows_the_worker_timeout(self):
+        for env, expected in (({}, 28_000), ({'POLARIS_TIMEOUT': '120'}, 118_000),
+                              ({'POLARIS_TIMEOUT': '2'}, 1_000),
+                              ({'POLARIS_TIMEOUT': '30', 'POLARIS_DB_STATEMENT_TIMEOUT_MS': '9000'}, 9_000)):
+            with self.subTest(env=env):
+                self.assertEqual(flask_app._web_statement_timeout_ms(env), expected)
+
+
 # ============================================================================
 # ERROR HANDLING TESTS
 # ============================================================================
