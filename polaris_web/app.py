@@ -65,7 +65,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    abort, session, g, jsonify
+    abort, session, g, jsonify, has_request_context
 )
 from flask.json.provider import DefaultJSONProvider
 import psycopg2
@@ -713,6 +713,33 @@ def replica_reads(fn):
     return wrapper
 
 
+#: How long one statement may run inside a web request (lab/strategy/008, step 4). gunicorn ends a
+#: worker after POLARIS_TIMEOUT seconds, and the query that worker was waiting on ran on in the
+#: database with no one left to read it; this ends the query first, two seconds earlier.
+#: Connections opened outside a request (the scheduler's jobs, the CLI's own) are not held to it.
+def _web_statement_timeout_ms(environ=os.environ):
+    """POLARIS_DB_STATEMENT_TIMEOUT_MS when set, otherwise two seconds short of the worker's
+    POLARIS_TIMEOUT, and never under a second."""
+    explicit = environ.get('POLARIS_DB_STATEMENT_TIMEOUT_MS')
+    if explicit:
+        return int(explicit)
+    return max(1000, (int(environ.get('POLARIS_TIMEOUT', '30')) - 2) * 1000)
+
+
+WEB_STATEMENT_TIMEOUT_MS = _web_statement_timeout_ms()
+
+
+def _apply_web_statement_timeout(conn):
+    """Inside a request, the connection's statements end at WEB_STATEMENT_TIMEOUT_MS. pgbouncer
+    pools by session (check_pooler_keeps_the_operator_scope), so a session setting stays with this
+    connection; the connection is closed at the end of the request."""
+    if not has_request_context():
+        return
+    with conn.cursor() as cur:
+        cur.execute("SELECT set_config('statement_timeout', %s, false)",
+                    (str(int(WEB_STATEMENT_TIMEOUT_MS)),))
+
+
 def get_db(readonly=False):
     """
     Open a fresh connection per request. `readonly=True` connects to the
@@ -723,9 +750,11 @@ def get_db(readonly=False):
     if readonly and DB_CONFIG_REPLICA is not None:
         conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG_REPLICA)
         conn.set_session(readonly=True)
+        _apply_web_statement_timeout(conn)
         _apply_operator_scope(conn)
         return conn
     conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+    _apply_web_statement_timeout(conn)
     _apply_operator_scope(conn)
     return conn
 
