@@ -63,11 +63,19 @@ Measured 2026-10-01 with `OID4VCGO_VERSION=v0.23.0` against this repository at 4
 (`polaris-oid4vp` 1.0.0rc12 in the tree): accepted, `<- 200 authentic`, and all four controls
 refused, (d) with the same `certificate signed by unknown authority`.
 
+## v0.25.0 against the published verifier (2026-10-03)
+
+OID4VCgo shipped v0.24.0 and v0.25.0 after the walk above. `OID4VCGO_VERSION=v0.25.0` against
+`polaris-oid4vp` 1.0.0rc14 from PyPI (`POLARIS_OID4VP=polaris-oid4vp==1.0.0rc14`): accepted,
+`<- 200 authentic`, and all four controls refused, (d) with the same
+`certificate signed by unknown authority`. The tree at bf3798d4, which reads an issuer `x5c`
+through intermediate CAs, gives the same with v0.23.0.
+
 ## Versions
 
 | | |
 |---|---|
-| Wallet | `github.com/idfoundry/oid4vcgo` v0.12.0 (`h1:0S48shym0HCNkh95aBA9W+v3r5daoOVG858PX3B7RrQ=`), v0.19.0 (`h1:avvf87LFxqfqjiHFdqvqJp/A5qsV1VU9vtvvlqFJqSo=`) v0.22.0 and v0.23.0, `cmd/conformance-wallet-vp`, built with `go install` in `golang:1.26`, run in `alpine:3.20` |
+| Wallet | `github.com/idfoundry/oid4vcgo` v0.12.0 (`h1:0S48shym0HCNkh95aBA9W+v3r5daoOVG858PX3B7RrQ=`), v0.19.0 (`h1:avvf87LFxqfqjiHFdqvqJp/A5qsV1VU9vtvvlqFJqSo=`) v0.22.0, v0.23.0 and v0.25.0, `cmd/conformance-wallet-vp`, built with `go install` in `golang:1.26`, run in `alpine:3.20` |
 | Verifier | `polaris-oid4vp` from this repository by default, so a run tests the tree (1.0.0rc12 at 4e208b5a); `--issuer-trust-anchor`, which the run needs, is in every release from 1.0.0rc8, so `POLARIS_OID4VP=polaris-oid4vp==1.0.0rc11` runs a published one |
 | Runtime | Python 3.12, Docker 29.4.3, macOS 26.3 |
 

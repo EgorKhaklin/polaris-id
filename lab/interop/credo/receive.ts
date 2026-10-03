@@ -64,7 +64,7 @@ async function main(): Promise<number> {
   dm.registerInstance(InjectionSymbols.StorageService, new MemoryStorageService())
   const agent = new Agent(
     {
-      config: { logger: new ConsoleLogger(LogLevel.warn), autoUpdateStorageOnStartup: true },
+      config: { logger: new ConsoleLogger((LogLevel as unknown as Record<string, number>)['Warn'] ?? (LogLevel as unknown as Record<string, number>)['warn']), autoUpdateStorageOnStartup: true },
       dependencies: { ...agentDependencies, fetch: loggingFetch as never },
       modules: {
         kms: new Kms.KeyManagementModule({

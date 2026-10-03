@@ -1,0 +1,389 @@
+{
+  "verifier": {
+    "clientIdPrefix": "x509_hash",
+    "effectiveClientId": "x509_hash:mpmlskjxrohwU4gTGHMUpH-u0D3nPPGZVp65MFz3ZpI"
+  },
+  "signedAuthorizationRequest": {
+    "header": {
+      "alg": "ES256",
+      "typ": "oauth-authz-req+jwt",
+      "x5c": [
+        "MIIBbDCCAROgAwIBAgIUFDwuS5cEDQoE4TiAb7nPehr0hiQwCgYIKoZIzj0EAwIwITEfMB0GA1UEAwwWcG9sYXJpcy1vaWQ0dnAgdGVzdCBDQTAeFw0yNjEwMDIyMTE3MTBaFw0yNzAxMDEyMTE3MTBaMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABIw/xVvuRABFbIt740pMSDjWs73KPsfm/kgwPP9Wn1VoRLKdZlnUSKcSZUbp4ZfqvHZzyBwTd+civuSa0b+sbhWjNjA0MAwGA1UdEwEB/wQCMAAwFAYDVR0RBA0wC4IJbG9jYWxob3N0MA4GA1UdDwEB/wQEAwIHgDAKBggqhkjOPQQDAgNHADBEAiAp0phT+DT0GOZCP0FxHjQp4u7REX0MurEaE3yRzEIZXgIgXWeOq/ugSPw6puR8oXMNhrH5k+kTDBpD1zYLWqVdrK8="
+      ]
+    },
+    "payload": {
+      "iss": "x509_hash:mpmlskjxrohwU4gTGHMUpH-u0D3nPPGZVp65MFz3ZpI",
+      "aud": "https://self-issued.me/v2",
+      "iat": 1791062231,
+      "exp": 1791062531,
+      "nonce": "fIdr_f2f3SFw9iCHcUdqw6_xo4Gm2Kv-b6knFd_hPlc",
+      "client_id": "x509_hash:mpmlskjxrohwU4gTGHMUpH-u0D3nPPGZVp65MFz3ZpI",
+      "response_type": "vp_token",
+      "response_mode": "direct_post.jwt",
+      "response_uri": "https://localhost:9553/response",
+      "state": "hHhAf-n9XiF1NzvUQjRgkw",
+      "client_metadata": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "use": "enc",
+              "alg": "ECDH-ES",
+              "kid": "enc-hHhAf-n9XiF1NzvUQjRgkw",
+              "x": "Q-geKdk630ig_6LcPk_LbKsSB7CZAlunrE_zMB6Ne5g",
+              "y": "IsDiaEZGc8VIV3ceSVarG7cOucwndwrjkHozLnVAFSU"
+            }
+          ]
+        },
+        "vp_formats_supported": {
+          "dc+sd-jwt": {
+            "sd-jwt_alg_values": [
+              "ES256"
+            ],
+            "kb-jwt_alg_values": [
+              "ES256"
+            ]
+          }
+        },
+        "encrypted_response_enc_values_supported": [
+          "A128GCM",
+          "A256GCM"
+        ]
+      },
+      "dcql_query": {
+        "credentials": [
+          {
+            "id": "pid",
+            "format": "dc+sd-jwt",
+            "meta": {
+              "vct_values": [
+                "urn:eudi:pid:1"
+              ]
+            },
+            "claims": [
+              {
+                "path": [
+                  "given_name"
+                ]
+              },
+              {
+                "path": [
+                  "family_name"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "signer": {
+      "method": "x5c"
+    }
+  },
+  "authorizationRequestPayload": {
+    "response_type": "vp_token",
+    "client_id": "x509_hash:mpmlskjxrohwU4gTGHMUpH-u0D3nPPGZVp65MFz3ZpI",
+    "response_uri": "https://localhost:9553/response",
+    "response_mode": "direct_post.jwt",
+    "nonce": "fIdr_f2f3SFw9iCHcUdqw6_xo4Gm2Kv-b6knFd_hPlc",
+    "dcql_query": {
+      "credentials": [
+        {
+          "id": "pid",
+          "format": "dc+sd-jwt",
+          "meta": {
+            "vct_values": [
+              "urn:eudi:pid:1"
+            ]
+          },
+          "claims": [
+            {
+              "path": [
+                "given_name"
+              ]
+            },
+            {
+              "path": [
+                "family_name"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "client_metadata": {
+      "jwks": {
+        "keys": [
+          {
+            "kty": "EC",
+            "crv": "P-256",
+            "x": "Q-geKdk630ig_6LcPk_LbKsSB7CZAlunrE_zMB6Ne5g",
+            "y": "IsDiaEZGc8VIV3ceSVarG7cOucwndwrjkHozLnVAFSU",
+            "alg": "ECDH-ES",
+            "kid": "enc-hHhAf-n9XiF1NzvUQjRgkw",
+            "use": "enc"
+          }
+        ]
+      },
+      "vp_formats_supported": {
+        "dc+sd-jwt": {
+          "sd-jwt_alg_values": [
+            "ES256"
+          ],
+          "kb-jwt_alg_values": [
+            "ES256"
+          ]
+        }
+      },
+      "encrypted_response_enc_values_supported": [
+        "A128GCM",
+        "A256GCM"
+      ]
+    },
+    "state": "hHhAf-n9XiF1NzvUQjRgkw",
+    "iss": "x509_hash:mpmlskjxrohwU4gTGHMUpH-u0D3nPPGZVp65MFz3ZpI",
+    "aud": "https://self-issued.me/v2",
+    "iat": 1791062231,
+    "exp": 1791062531
+  },
+  "dcqlQueryResult": {
+    "credentials": [
+      {
+        "id": "pid",
+        "require_cryptographic_holder_binding": true,
+        "multiple": false,
+        "format": "dc+sd-jwt",
+        "claims": [
+          {
+            "path": [
+              "given_name"
+            ]
+          },
+          {
+            "path": [
+              "family_name"
+            ]
+          }
+        ],
+        "meta": {
+          "vct_values": [
+            "urn:eudi:pid:1"
+          ]
+        }
+      }
+    ],
+    "can_be_satisfied": true,
+    "credential_matches": {
+      "pid": {
+        "success": true,
+        "credential_query_id": "pid",
+        "failed_credentials": [
+          {
+            "success": false,
+            "input_credential_index": 1,
+            "trusted_authorities": {
+              "success": true
+            },
+            "meta": {
+              "success": false,
+              "issues": {
+                "credential_format": [
+                  "Expected credential format to be 'dc+sd-jwt' but received 'vc+sd-jwt'"
+                ]
+              },
+              "output": {
+                "credential_format": "vc+sd-jwt",
+                "vct": "urn:eudi:pid:1",
+                "cryptographic_holder_binding": true
+              }
+            },
+            "claims": {
+              "success": true,
+              "valid_claim_sets": [
+                {
+                  "success": true,
+                  "output": {
+                    "iss": "https://issuer.polaris.test",
+                    "vct": "urn:eudi:pid:1",
+                    "iat": 1791062231,
+                    "cnf": {
+                      "jwk": {
+                        "kty": "EC",
+                        "x": "1Qit-X_Sxn-J8HOYHLlLipiKlnRdraafCoilS_6AZME",
+                        "y": "CET8Ok_GU2nW9QjrnzqkKygVcKJttxBXC-okNvfE0M0",
+                        "crv": "P-256"
+                      }
+                    },
+                    "given_name": "Jean",
+                    "family_name": "Dupont"
+                  },
+                  "valid_claim_indexes": [
+                    0,
+                    1
+                  ],
+                  "disclosed_paths": [
+                    [
+                      "iss"
+                    ],
+                    [
+                      "vct"
+                    ],
+                    [
+                      "iat"
+                    ],
+                    [
+                      "cnf"
+                    ],
+                    [
+                      "given_name"
+                    ],
+                    [
+                      "family_name"
+                    ]
+                  ]
+                }
+              ],
+              "valid_claims": [
+                {
+                  "success": true,
+                  "claim_index": 0,
+                  "output": {
+                    "given_name": "Jean"
+                  }
+                },
+                {
+                  "success": true,
+                  "claim_index": 1,
+                  "output": {
+                    "family_name": "Dupont"
+                  }
+                }
+              ]
+            },
+            "record": {
+              "_tags": {
+                "vct": "urn:eudi:pid:1",
+                "extendedVctValues": [],
+                "sdAlg": "sha-256",
+                "alg": "ES256",
+                "multiInstanceState": "SingleInstanceUnused"
+              },
+              "metadata": {},
+              "multiInstanceState": "SingleInstanceUnused",
+              "id": "eb3240ce-d273-4f55-a6f2-d2f775c6cd0a",
+              "createdAt": "2026-10-03T21:17:11.514Z",
+              "credentialInstances": [
+                {
+                  "compactSdJwtVc": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCeERDQ0FXdWdBd0lCQWdJVUpnMkJxUnorZzhjc0JzTmptVXRTSzc2cW0wa3dDZ1lJS29aSXpqMEVBd0l3SkRFaU1DQUdBMVVFQXd3WmNHOXNZWEpwY3lCcGJuUmxjbTl3SUdsemMzVmxjaUJEUVRBZUZ3MHlOakV3TURJeU1URTNNVEZhRncweU5qRXhNREl5TVRFM01URmFNQ0V4SHpBZEJnTlZCQU1NRm5CdmJHRnlhWE1nYVc1MFpYSnZjQ0JwYzNOMVpYSXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU1ZUQ0x3N2oxb0ZlUW1obzJFMkFSam5mWVhqTEpNN2pOQ3MxZk5ja1BSWTZaUkxRaU9ROGNzN2t2b3ZVMi9hYVFBcldKVjlSejc5bGd4QjcybWw1U2dvMzR3ZkRBTUJnTlZIUk1CQWY4RUFqQUFNQTRHQTFVZER3RUIvd1FFQXdJSGdEQTdCZ05WSFJFRU5EQXloaHRvZEhSd2N6b3ZMMmx6YzNWbGNpNXdiMnhoY21sekxuUmxjM1NDRTJsemMzVmxjaTV3YjJ4aGNtbHpMblJsYzNRd0h3WURWUjBqQkJnd0ZvQVV4NHZsWit5elZMTy9nWE9jVWxTRm05cjNCTEF3Q2dZSUtvWkl6ajBFQXdJRFJ3QXdSQUlnYi9WaStSRDVSYWp6cnFBUEMwajFkOXZrUXh2dGI2MEsrQ1pZK2tBNUt4UUNJQ0RFc3ZvRGswVWVUU2ltUVo5RWUxRlJITVZtSzYxdDIyV2xOTXBQYzk0WCJdfQ.eyJpc3MiOiJodHRwczovL2lzc3Vlci5wb2xhcmlzLnRlc3QiLCJ2Y3QiOiJ1cm46ZXVkaTpwaWQ6MSIsImlhdCI6MTc5MTA2MjIzMSwiX3NkIjpbInBjeHlGRmtxZHh0NFBtaTlHbTdYNzMzZUFleFVDNVZidEVfZHRkN3JJaHciLCI0RVVHa0tha21UemlIMUp5OVoyS1JTckgtR1VGeHZWSWFkVU5id2VuN0pJIl0sIl9zZF9hbGciOiJzaGEtMjU2IiwiY25mIjp7Imp3ayI6eyJrdHkiOiJFQyIsIngiOiIxUWl0LVhfU3huLUo4SE9ZSExsTGlwaUtsblJkcmFhZkNvaWxTXzZBWk1FIiwieSI6IkNFVDhPa19HVTJuVzlRanJuenFrS3lnVmNLSnR0eEJYQy1va052ZkUwTTAiLCJjcnYiOiJQLTI1NiJ9fX0.LxF5ZnJN4HaSiZ_r6WB9IRzPAirlFv3uLPMwz4SopNgvvHUeXI20YtdL4o1Lrl6QybYgzSNJPtSPQaT_RITkxg~WyJzMCIsImdpdmVuX25hbWUiLCJKZWFuIl0~WyJzMSIsImZhbWlseV9uYW1lIiwiRHVwb250Il0~",
+                  "kmsKeyId": "f8b5e4b4-d642-4779-93fa-bfd1abfd0909"
+                }
+              ],
+              "updatedAt": "2026-10-03T21:17:11.514Z"
+            }
+          }
+        ],
+        "valid_credentials": [
+          {
+            "success": true,
+            "input_credential_index": 0,
+            "trusted_authorities": {
+              "success": true
+            },
+            "meta": {
+              "success": true,
+              "output": {
+                "credential_format": "dc+sd-jwt",
+                "vct": "urn:eudi:pid:1",
+                "cryptographic_holder_binding": true
+              }
+            },
+            "claims": {
+              "success": true,
+              "valid_claim_sets": [
+                {
+                  "success": true,
+                  "output": {
+                    "iss": "https://issuer.polaris.test",
+                    "vct": "urn:eudi:pid:1",
+                    "iat": 1791062231,
+                    "cnf": {
+                      "jwk": {
+                        "kty": "EC",
+                        "x": "1Qit-X_Sxn-J8HOYHLlLipiKlnRdraafCoilS_6AZME",
+                        "y": "CET8Ok_GU2nW9QjrnzqkKygVcKJttxBXC-okNvfE0M0",
+                        "crv": "P-256"
+                      }
+                    },
+                    "given_name": "Jean",
+                    "family_name": "Dupont"
+                  },
+                  "valid_claim_indexes": [
+                    0,
+                    1
+                  ],
+                  "disclosed_paths": [
+                    [
+                      "iss"
+                    ],
+                    [
+                      "vct"
+                    ],
+                    [
+                      "iat"
+                    ],
+                    [
+                      "cnf"
+                    ],
+                    [
+                      "given_name"
+                    ],
+                    [
+                      "family_name"
+                    ]
+                  ]
+                }
+              ],
+              "valid_claims": [
+                {
+                  "success": true,
+                  "claim_index": 0,
+                  "output": {
+                    "given_name": "Jean"
+                  }
+                },
+                {
+                  "success": true,
+                  "claim_index": 1,
+                  "output": {
+                    "family_name": "Dupont"
+                  }
+                }
+              ]
+            },
+            "record": {
+              "_tags": {
+                "vct": "urn:eudi:pid:1",
+                "extendedVctValues": [],
+                "sdAlg": "sha-256",
+                "alg": "ES256",
+                "multiInstanceState": "SingleInstanceUnused"
+              },
+              "metadata": {},
+              "multiInstanceState": "SingleInstanceUnused",
+              "id": "eb3240ce-d273-4f55-a6f2-d2f775c6cd0a",
+              "createdAt": "2026-10-03T21:17:11.514Z",
+              "credentialInstances": [
+                {
+                  "compactSdJwtVc": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCeERDQ0FXdWdBd0lCQWdJVUpnMkJxUnorZzhjc0JzTmptVXRTSzc2cW0wa3dDZ1lJS29aSXpqMEVBd0l3SkRFaU1DQUdBMVVFQXd3WmNHOXNZWEpwY3lCcGJuUmxjbTl3SUdsemMzVmxjaUJEUVRBZUZ3MHlOakV3TURJeU1URTNNVEZhRncweU5qRXhNREl5TVRFM01URmFNQ0V4SHpBZEJnTlZCQU1NRm5CdmJHRnlhWE1nYVc1MFpYSnZjQ0JwYzNOMVpYSXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU1ZUQ0x3N2oxb0ZlUW1obzJFMkFSam5mWVhqTEpNN2pOQ3MxZk5ja1BSWTZaUkxRaU9ROGNzN2t2b3ZVMi9hYVFBcldKVjlSejc5bGd4QjcybWw1U2dvMzR3ZkRBTUJnTlZIUk1CQWY4RUFqQUFNQTRHQTFVZER3RUIvd1FFQXdJSGdEQTdCZ05WSFJFRU5EQXloaHRvZEhSd2N6b3ZMMmx6YzNWbGNpNXdiMnhoY21sekxuUmxjM1NDRTJsemMzVmxjaTV3YjJ4aGNtbHpMblJsYzNRd0h3WURWUjBqQkJnd0ZvQVV4NHZsWit5elZMTy9nWE9jVWxTRm05cjNCTEF3Q2dZSUtvWkl6ajBFQXdJRFJ3QXdSQUlnYi9WaStSRDVSYWp6cnFBUEMwajFkOXZrUXh2dGI2MEsrQ1pZK2tBNUt4UUNJQ0RFc3ZvRGswVWVUU2ltUVo5RWUxRlJITVZtSzYxdDIyV2xOTXBQYzk0WCJdfQ.eyJpc3MiOiJodHRwczovL2lzc3Vlci5wb2xhcmlzLnRlc3QiLCJ2Y3QiOiJ1cm46ZXVkaTpwaWQ6MSIsImlhdCI6MTc5MTA2MjIzMSwiX3NkIjpbInBjeHlGRmtxZHh0NFBtaTlHbTdYNzMzZUFleFVDNVZidEVfZHRkN3JJaHciLCI0RVVHa0tha21UemlIMUp5OVoyS1JTckgtR1VGeHZWSWFkVU5id2VuN0pJIl0sIl9zZF9hbGciOiJzaGEtMjU2IiwiY25mIjp7Imp3ayI6eyJrdHkiOiJFQyIsIngiOiIxUWl0LVhfU3huLUo4SE9ZSExsTGlwaUtsblJkcmFhZkNvaWxTXzZBWk1FIiwieSI6IkNFVDhPa19HVTJuVzlRanJuenFrS3lnVmNLSnR0eEJYQy1va052ZkUwTTAiLCJjcnYiOiJQLTI1NiJ9fX0.LxF5ZnJN4HaSiZ_r6WB9IRzPAirlFv3uLPMwz4SopNgvvHUeXI20YtdL4o1Lrl6QybYgzSNJPtSPQaT_RITkxg~WyJzMCIsImdpdmVuX25hbWUiLCJKZWFuIl0~WyJzMSIsImZhbWlseV9uYW1lIiwiRHVwb250Il0~",
+                  "kmsKeyId": "f8b5e4b4-d642-4779-93fa-bfd1abfd0909"
+                }
+              ],
+              "updatedAt": "2026-10-03T21:17:11.514Z"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "versions": {
+    "date": "2026-10-03T21:17:06.073Z",
+    "node": "v24.11.1",
+    "credo_core": "0.7.2",
+    "credo_openid4vc": "0.7.2",
+    "credo_node": "0.7.2",
+    "openid4vc_openid4vp": "0.6.0",
+    "openid4vc_oauth2": "0.6.0",
+    "sd_jwt_core": "0.21.1",
+    "polaris_oid4vp": "1.0.0rc14"
+  },
+  "requestUrl": "openid4vp://authorize?client_id=x509_hash%3A6DsL_KN9uF1iLlW1yAL-nYZ5rm0OfjMx-4xVLPVpCo0&request_uri=https%3A%2F%2Flocalhost%3A9553%2Frequest.jwt%3Fstate%3DccqhIoMTUs2RHof4Os4PEg&request_uri_method=post",
+  "verifierVerdict": "<- 400 refused: issuer_key: the x5c leaf does not chain to any configured trust anchor",
+  "credo": "accept returned",
+  "ok": false,
+  "serverResponse": {
+    "status": 400,
+    "body": {
+      "error": "invalid_request",
+      "error_description": "the presentation was not accepted"
+    }
+  },
+  "authorizationResponsePayload": {
+    "vp_token": {
+      "pid": [
+        "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCeFRDQ0FXdWdBd0lCQWdJVUI1NnJmUUxSVi80TWR0c01IbHRSYUVIa1JIMHdDZ1lJS29aSXpqMEVBd0l3SkRFaU1DQUdBMVVFQXd3WmNHOXNZWEpwY3lCcGJuUmxjbTl3SUdsemMzVmxjaUJEUVRBZUZ3MHlOakV3TURJeU1URTNNRFphRncweU5qRXhNREl5TVRFM01EWmFNQ0V4SHpBZEJnTlZCQU1NRm5CdmJHRnlhWE1nYVc1MFpYSnZjQ0JwYzNOMVpYSXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBVElrWUhwQmJ5bjYvWlZQTFlPN1lWR0NqdGdUSjQ5MG1sYzRGakVkVzlkdWZaQWJCVE9pQVFxWmh1WWhocmNPVkkvZmpIWjBZOVkxaDlYMjd0WkpvZ0ZvMzR3ZkRBTUJnTlZIUk1CQWY4RUFqQUFNQTRHQTFVZER3RUIvd1FFQXdJSGdEQTdCZ05WSFJFRU5EQXloaHRvZEhSd2N6b3ZMMmx6YzNWbGNpNXdiMnhoY21sekxuUmxjM1NDRTJsemMzVmxjaTV3YjJ4aGNtbHpMblJsYzNRd0h3WURWUjBqQkJnd0ZvQVVwMXlUOUh3SXo3YVdPREpoamNTNzgyTzJ4T3N3Q2dZSUtvWkl6ajBFQXdJRFNBQXdSUUlnVWdDWWpPNjlVOFlKdjZxbHFuaUtSZW9YTEJCUW80SGQ3NEdaWk9RNm1zZ0NJUUQ1RHM3aFdVTHJiQzA3b09HSXlRbnU1MjZkNlU2cTBCdUgwSVZzUysyZ3N3PT0iXX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5wb2xhcmlzLnRlc3QiLCJ2Y3QiOiJ1cm46ZXVkaTpwaWQ6MSIsImlhdCI6MTc5MTA2MjIyNiwiX3NkIjpbInBjeHlGRmtxZHh0NFBtaTlHbTdYNzMzZUFleFVDNVZidEVfZHRkN3JJaHciLCI0RVVHa0tha21UemlIMUp5OVoyS1JTckgtR1VGeHZWSWFkVU5id2VuN0pJIl0sIl9zZF9hbGciOiJzaGEtMjU2IiwiY25mIjp7Imp3ayI6eyJrdHkiOiJFQyIsIngiOiIweFlaT1U4emFUTjVodGpFMm54dmpGRWRqNllFa19TckZhMHhkZ1VQSU1JIiwieSI6Il9jRm10UGlLNTcyUlREOUZrbTlVOS1jNTdjWVJkZmxlUFRFN2kzc1UxNWciLCJjcnYiOiJQLTI1NiJ9fX0.9ccLMDPigj7c5ECPqxJsK-Huiu5RUHwNtJdmY6wlMCXGmHddVxRHoOECa6bSvjUOfNqVXyTmdtPBCsyrRoBf8g~WyJzMCIsImdpdmVuX25hbWUiLCJKZWFuIl0~WyJzMSIsImZhbWlseV9uYW1lIiwiRHVwb250Il0~eyJ0eXAiOiJrYitqd3QiLCJhbGciOiJFUzI1NiJ9.eyJpYXQiOjE3OTEwNjIyMjYsIm5vbmNlIjoidGZ2cjUyekFjanF0d0VxUXRLQURUaEZzakZJNjA2VG8wbXJaRkhDVVFxcyIsImF1ZCI6Ing1MDlfaGFzaDo2RHNMX0tOOXVGMWlMbFcxeUFMLW5ZWjVybTBPZmpNeC00eFZMUFZwQ28wIiwic2RfaGFzaCI6IjkyYnVLdy1ScTFJT3VQYmc5aE95dkhCc21vb3lRQXBJV3RCV25rMk1qRHcifQ.L21y5KlTBCXfg845dnV1SytehkFSlQshjyGTix620XvIoLLbGERgAWq73DYhrEKfZW3SCHeNHV2xphefouxBfg"
+      ]
+    },
+    "state": "ccqhIoMTUs2RHof4Os4PEg"
+  }
+}
