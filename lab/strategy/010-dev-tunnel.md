@@ -178,3 +178,15 @@ external party pointing their own wallet at the tunnel. The kill criterion above
 is the strongest internal evidence short of it: a certified wallet presented a credential to a
 Polaris verifier over the public internet and was accepted, one step below the same from an external
 party.
+
+## 13. All three controls through tunnels, with the wallet checking TLS (2026-10-03)
+
+`lab/interop/eudi-dev/run.sh` gained `EUDI_TUNNEL=1`, which starts a fresh quick tunnel for every
+verifier the walk starts, so the two controls that restart the verifier no longer meet the stale
+origin of section 12. Walked with eudi-dev v2.5.0 in strict mode, whose TLS check refuses a
+self-signed listener (2026-10-02), presenting a PID its own issuer signed: genuine accepted
+(`200 authentic`), and all three controls refused through tunnels, by the verifier (`issuer_key`,
+the answered request's `404`) and by the wallet (the `client_id` mismatch). The run also found the
+verifier reading an issuer's `x5c` one link deep, which v2.5.0's intermediate CA exposed; fixed in
+bf3798d4 ([eudi-dev](../interop/eudi-dev/README.md#strict-mode-with-the-verifiers-tls-checked-through-a-tunnel-2026-10-03)).
+The kill criterion above is unchanged: this is still the author driving a published wallet.

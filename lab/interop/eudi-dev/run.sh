@@ -275,8 +275,19 @@ print("openid4vp://authorize?" + urllib.parse.urlencode(
 EOF
 }
 
+# A wallet that checks the verifier's TLS (eudi-dev v2.5.0 and later, in strict mode) is given the
+# listener's own certificate to trust, as a deployed wallet trusts its verifier's; one that does
+# not check it has no such flag, so the flag is read off the wallet's own help. Behind a tunnel
+# the public certificate needs nothing.
+TLS_CA=() TLS_CHECKED=""
+if [ "$TUNNEL" != 1 ] && wallet accept --help 2>&1 | grep -q -- '--tls-ca'; then
+  TLS_CA=(--tls-ca "$(in_wallet_view pki/tls.pem)") TLS_CHECKED=1
+  echo "TLS        the wallet checks the verifier's; it trusts keygen's listener certificate"
+fi
+
 present() {  # $1 launch URI, $2 wallet log
-  wallet accept "$1" --auto-accept --haip --mode strict --no-open > "$2" 2>&1 || true
+  wallet accept "$1" --auto-accept --haip --mode strict --no-open ${TLS_CA[@]+"${TLS_CA[@]}"} \
+    > "$2" 2>&1 || true
 }
 
 fail=0
@@ -303,6 +314,15 @@ start_verifier "$OTHER" verifier-other.log
 present "$(launch_uri verifier-other.log x509_hash:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA)" wallet-c.log
 expect "the wallet refused the request" wallet-c.log 'does not match outer client_id'
 
+if [ -n "$TLS_CHECKED" ]; then
+  # Proof that the TLS check ran: the same wallet, trusting an unrelated certificate for the
+  # verifier's TLS, presents nothing. It refuses before it fetches, so (a) can still use the request.
+  echo "== control (d): the wallet trusts an unrelated certificate for the verifier's TLS"
+  wallet accept "$(launch_uri verifier-other.log)" --auto-accept --haip --mode strict --no-open \
+    --tls-ca "$(in_wallet_view pki/anchor.pem)" > wallet-d.log 2>&1 || true
+  expect "the wallet refused the verifier's certificate" wallet-d.log 'certificate signed by unknown authority'
+fi
+
 if [ "$TRUST" = --issuer-jwks ]; then
   echo "== control (a): the verifier trusts a different issuer key under the same kid"
 else
@@ -313,5 +333,7 @@ expect "the wallet was told only that it was not accepted" wallet-a.log 'Respons
 expect "the verifier refused the issuer" verifier-other.log "<- 400 refused: $REFUSAL_A"
 stop_verifier
 
-[ "$fail" -eq 0 ] && echo "RESULT: accepted, and all three controls refused" || echo "RESULT: FAILED"
+if [ "$fail" -ne 0 ]; then echo "RESULT: FAILED"
+elif [ -n "$TLS_CHECKED" ]; then echo "RESULT: accepted, and all four controls refused"
+else echo "RESULT: accepted, and all three controls refused"; fi
 exit "$fail"
