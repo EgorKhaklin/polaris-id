@@ -172,6 +172,11 @@ def run_module(suite, verifier, config, module, plan_id=None):
         alias = config["alias"]
     run = api(suite, "/api/runner?test=%s&plan=%s" % (module, plan_id), "POST") or {}
     test_id = run["id"]
+    # The suite refuses an authorization request until the module is WAITING. Against the
+    # suite image of 2026-10-03 its setup outlasted the request on the first modules after a
+    # start: "Please wait for the test to be in WAITING state. The current status is CREATED",
+    # and the module was interrupted before any presentation. So wait for WAITING first.
+    wait_until_waiting(suite, test_id)
 
     session, _ = verifier.new_request()
     # The product's own parameters, not a hand-rolled copy. The drill building its own set
@@ -247,6 +252,20 @@ def outcome(tally, needs_screenshot):
 def _stop(httpd):
     httpd.shutdown()
     httpd.server_close()
+
+
+def wait_until_waiting(suite, test_id, timeout=120):
+    """The module's status once it is WAITING for the verifier, or has already ended, or
+    whatever it was when `timeout` ran out."""
+    import time
+    deadline = time.time() + timeout
+    status = None
+    while time.time() < deadline:
+        status = (api(suite, "/api/info/" + test_id) or {}).get("status")
+        if status in ("WAITING", "FINISHED", "INTERRUPTED"):
+            return status
+        time.sleep(1)
+    return status
 
 
 def wait_finished(suite, test_id, needs_screenshot, timeout=900):
