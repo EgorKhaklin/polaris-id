@@ -108,7 +108,7 @@ python3 ../../conformance/run_conformance.py --verifier "node src/conformance.ts
 npm install polaris-sdk-ts@next
 ```
 
-This is release candidate 1.0.0-rc.8. Candidates are published under the `next` dist-tag; a plain
+This is release candidate 1.0.0-rc.9. Candidates are published under the `next` dist-tag; a plain
 `npm install polaris-sdk-ts` resolves 0.1.0 until 1.0.0.
 
 It needs Node >= 20.19.0: the post-quantum crypto dependencies (`@noble/post-quantum` and the

@@ -18,6 +18,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - An operator bound to one authority can no longer activate a reserve another authority issued (UC-4).
 - The Atlas no longer returns events naming their holders; the access check reads every SQL source.
 
+### Fixed
+
+- polaris-sdk-ts requires Node >= 20.19.0 for its post-quantum dependencies; rc.8 declared >= 18 but does not load there.
+
 ### Added
 
 - An issuance tunnel serves only the wallet's OpenID4VCI endpoints over your own tunnel, so a wallet can be issued a demo copy.
