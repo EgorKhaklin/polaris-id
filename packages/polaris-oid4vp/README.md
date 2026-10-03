@@ -13,7 +13,7 @@ Foundation [lists the certification](https://openid.net/certification/certified-
 (2026-09-24). It covers that version in that role: not an endorsement, not an audit, and not
 other versions.
 
-**Status:** 1.0.0rc13, a release candidate, not certified: it carries the fixes made since
+**Status:** 1.0.0rc14, a release candidate, not certified: it carries the fixes made since
 1.0.0rc7. Outside results: the Foundation's hosted suite (0.1.0, then 1.0.0rc7 for
 certification) and four unmodified external wallets: walt.id Wallet API v2 (last against
 1.0.0-rc.3), Credo 0.6.3 (against 1.0.0rc7, 2026-09-27), eudi-dev v2.3.7 and OID4VCgo 0.12.0
