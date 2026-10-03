@@ -46,6 +46,16 @@ verifier's first verdict line is `<- 200 authentic`. The four controls:
 Each control exits 0 only when the side that should refuse did refuse. `PORT` (default 9543)
 moves the verifier. `npm run typecheck` runs `tsc --strict` over both files.
 
+## One command
+
+    lab/interop/credo/run.sh                         # the pinned Credo
+    CREDO_VERSION=latest lab/interop/credo/run.sh    # the newest release, installed without saving
+
+[`run.sh`](run.sh) installs `polaris-oid4vp` from PyPI into a fresh venv (dependencies by hash), runs
+`npm ci`, then `npm run present` once and once per control, and exits 0 only if the presentation is
+accepted and all four controls are refused. Its evidence goes under `$WORK/evidence`, never over the
+recorded runs below; with `CREDO_VERSION` the pinned install is put back at the end.
+
 ## Credo 0.7.2 (2026-10-03)
 
 Credo 0.7 names an SD-JWT VC issuer only by DID or by certificate. Storing the walk's credential,

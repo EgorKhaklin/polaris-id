@@ -84,11 +84,14 @@ through intermediate CAs, gives the same with v0.23.0.
     lab/interop/oid4vcgo/run.sh                                   # v0.12.0, the certified release
     OID4VCGO_VERSION=v0.19.0 lab/interop/oid4vcgo/run.sh
     OID4VCGO_VERSION=v0.22.0 lab/interop/oid4vcgo/run.sh          # adds control (d)
+    OID4VCGO_VERSION=latest lab/interop/oid4vcgo/run.sh           # the newest release
+    POLARIS_OID4VP=polaris-oid4vp lab/interop/oid4vcgo/run.sh     # the newest PyPI release
 
 It installs the verifier from this repository into a fresh venv, its dependencies by hash from
 [`../requirements.txt`](../requirements.txt) and, since it builds the verifier from the tree, the
 build backend by hash from [`../requirements-build.txt`](../requirements-build.txt), which needs
-Python 3.10 or newer (`POLARIS_OID4VP` overrides the verifier; a release on PyPI builds nothing),
+Python 3.10 or newer (`POLARIS_OID4VP` overrides the verifier; a release on PyPI builds nothing,
+and a bare name installs the newest one, candidates included: until 2026-10-03 it installed 0.1.0),
 builds the wallet at the pinned version inside the official Go image, writes a test PKI
 ([`setup_pki.py`](setup_pki.py): the issuer CA, the issuer's CA-issued leaf, the holder key, the
 wallet's own TLS pair, and an unrelated CA for control (a)), runs the wallet in a container, and

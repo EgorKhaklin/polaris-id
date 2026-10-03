@@ -18,6 +18,11 @@
 # The fourth has eudi-dev's own issuer sign the credential, so the verifier is the only Polaris
 # software in the exchange.
 #
+# Since 2026-10-03 the other three wallets too, each pinned and at its newest release: walt.id
+# (wallet-api2), OID4VCgo (its conformance wallet, built from source) and Credo (OpenWallet
+# Foundation, from npm). In one week three of the four shipped, and Credo 0.7 changed what it
+# accepts from an issuer.
+#
 # Kept out of the Polaris CI workflow: a change on the wallet's side is news, not a
 # defect in the commit that happened to be pushed that day.
 # ============================================================================
@@ -67,3 +72,79 @@ jobs:
           EUDI_ISSUER: ${{ matrix.wallet.issuer }}
           WORK: ${{ runner.temp }}/eudi
         run: bash lab/interop/eudi-dev/run.sh
+
+  waltid:
+    name: walt.id ${{ matrix.label }} presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: wallet-api2 1.1.1, by digest
+            image: waltid/wallet-api2:1.1.1@sha256:d5fab1868802c98a28ce2ccee5ac6cc282f0b3a7ad079382ed42934296b700b5
+          - label: latest
+            image: waltid/wallet-api2:latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Present, then the two controls
+        env:
+          WALTID_IMAGE: ${{ matrix.image }}
+          WORK: ${{ runner.temp }}/waltid
+        run: bash lab/interop/waltid/run.sh
+
+  oid4vcgo:
+    name: OID4VCgo ${{ matrix.version }} presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # v0.12.0 is the release the OpenID Foundation lists as a certified wallet.
+        version: [v0.12.0, latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Present, then the controls
+        env:
+          OID4VCGO_VERSION: ${{ matrix.version }}
+          POLARIS_OID4VP: polaris-oid4vp
+          WORK: ${{ runner.temp }}/oid4vcgo
+        run: bash lab/interop/oid4vcgo/run.sh
+
+  credo:
+    name: Credo ${{ matrix.label }} presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: the lock file's release
+            version: ""
+          - label: latest
+            version: latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+      - name: Present, then the four controls
+        env:
+          CREDO_VERSION: ${{ matrix.version }}
+          WORK: ${{ runner.temp }}/credo
+        run: bash lab/interop/credo/run.sh

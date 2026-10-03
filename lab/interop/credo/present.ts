@@ -49,7 +49,7 @@ if (CONTROL && !['wrong-issuer', 'foreign-holder', 'replay', 'untrusted-verifier
 }
 // EVIDENCE_DIR records a run somewhere other than evidence/, so walking another Credo version does
 // not overwrite the recorded runs.
-const EVIDENCE = path.join(HERE, process.env.EVIDENCE_DIR ?? 'evidence', CONTROL || 'positive')
+const EVIDENCE = path.resolve(HERE, process.env.EVIDENCE_DIR ?? 'evidence', CONTROL || 'positive')
 const VERIFIER = process.env.POLARIS_OID4VP ?? 'polaris-oid4vp'
 const PYTHON = process.env.PYTHON ?? 'python3'
 const PORT = Number(process.env.PORT ?? 9543)
