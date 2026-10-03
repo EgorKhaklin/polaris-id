@@ -3,6 +3,20 @@
 The sequence that produced the row in [`lab/EXTERNAL-NOUNS.md`](../../EXTERNAL-NOUNS.md).
 walt.id runs unmodified at a pinned digest; only its configuration is touched.
 
+## One command
+
+    lab/interop/waltid/run.sh                                          # wallet-api2 1.1.1, by digest
+    WALTID_IMAGE=waltid/wallet-api2:1.0.0 lab/interop/waltid/run.sh    # the first recorded run's
+
+[`run.sh`](run.sh) does the five steps below in a scratch directory (`WORK`): a fresh venv with
+`polaris-oid4vp` from PyPI and its dependencies by hash, the wallet from its image, [`setup.sh`](setup.sh)
+for the wallet and its configuration, then the presentation and both controls. It exits 0 only if
+the presentation is accepted and both controls are refused, and it removes only the container it
+started. Walked on 2026-10-03 against 1.0.0rc14 from PyPI with wallet-api2 1.1.1
+(`sha256:d5fab1868802c98a28ce2ccee5ac6cc282f0b3a7ad079382ed42934296b700b5`) and with 1.0.0: accepted,
+`<- 200 authentic`, both controls refused. walt.id 1.1.1 still takes the issuer's bare `kid` with
+the JWKS, which Credo 0.7 no longer does ([Credo 0.7.2](../credo/README.md#credo-072-2026-10-03)).
+
 ## 1. The wallet
 
     docker run -d --name polaris-waltid -p 7006:7006 \
