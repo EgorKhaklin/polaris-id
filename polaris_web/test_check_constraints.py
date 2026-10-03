@@ -2175,17 +2175,54 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 cur.execute("SELECT effective_at <= CURRENT_TIMESTAMP AS now FROM HolderKeyEvent "
                             "WHERE token_id = %s AND public_key_hex = %s", (tid, k1))
                 self.assertTrue(cur.fetchone()["now"], "the routine records the first binding, in force now")
-                for label, args in (("bind over the live key", (tid, k2, 'ML-DSA-65', 'bound')),
-                                    ("revoke a key that is not the live one", (tid, k2, 'ML-DSA-65', 'revoked'))):
+                # 2026-10-02 (review S1): pass the signer so each case reaches the guard it means to test
+                # (bind-over hits the already-bound guard; revoke-not-live, signed by the live k1, hits the
+                # names-the-live-key guard) rather than the new signer-under-lock guard.
+                for label, args in (("bind over the live key", (tid, k2, 'ML-DSA-65', 'bound', None)),
+                                    ("revoke a key that is not the live one", (tid, k2, 'ML-DSA-65', 'revoked', k1))):
                     with self.subTest(label):
                         cur.execute("SAVEPOINT s")
                         with self.assertRaises(pg_errors.CheckViolation):
-                            cur.execute("SELECT uc_record_holder_key_event(%s, %s, %s, %s)", args)
+                            cur.execute("SELECT uc_record_holder_key_event(%s, %s, %s, %s, %s)", args)
                         cur.execute("ROLLBACK TO SAVEPOINT s")
-                cur.execute("SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'rotated')", (tid, k2))
-                cur.execute("SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'revoked')", (tid, k2))
+                # The signer is the key live at each step: k1 signs the rotation to k2, then k2 (now live)
+                # signs its own revocation (review S1).
+                cur.execute("SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'rotated', %s)", (tid, k2, k1))
+                cur.execute("SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'revoked', %s)", (tid, k2, k2))
                 cur.execute("SELECT event FROM HolderKeyCurrent WHERE token_id = %s", (tid,))
                 self.assertEqual(cur.fetchone()["event"], "revoked", "rotate then revoke, in order")
+        finally:
+            conn.rollback()
+
+    def test_a_rotation_signed_by_a_superseded_key_is_refused(self):
+        """2026-10-02 (review S1, High): the read-before-lock rotation race. The route verifies
+        change_proof against the live key it read, then uc_record_holder_key_event confirms, under the
+        per-token lock, that that signer is still the live key. A rotation signed by a key a concurrent
+        rotation has already replaced (a stolen-but-still-live key racing the holder's own) is refused,
+        so it cannot append a second change over a stale key. On the pre-fix procedure, which checked
+        only that some key was live, this rotation succeeded."""
+        owner = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        self.addCleanup(owner.close)
+        with owner.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken t WHERE status = 'ACTIVE' AND NOT EXISTS "
+                        "(SELECT 1 FROM HolderKeyEvent h WHERE h.token_id = t.token_id) ORDER BY token_id LIMIT 1")
+            tid = cur.fetchone()["token_id"]
+        k1, k2, k3 = "a1" * 40, "b2" * 40, "c3" * 40
+        conn = self._app_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'bound', NULL)", (tid, k1))
+                # The holder rotates k1 -> k2, signed by the live key k1. k2 is now the live key.
+                cur.execute("SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'rotated', %s)", (tid, k2, k1))
+                # A second rotation still signed by k1, now superseded, must be refused under the lock.
+                cur.execute("SAVEPOINT s")
+                with self.assertRaises(pg_errors.CheckViolation):
+                    cur.execute("SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'rotated', %s)", (tid, k3, k1))
+                cur.execute("ROLLBACK TO SAVEPOINT s")
+                # The live key is the holder's k2, not the stale-signed k3.
+                cur.execute("SELECT public_key_hex FROM HolderKeyCurrent WHERE token_id = %s", (tid,))
+                self.assertEqual(cur.fetchone()["public_key_hex"], k2,
+                                 "a rotation signed by a superseded key leaves the live key unchanged")
         finally:
             conn.rollback()
 
