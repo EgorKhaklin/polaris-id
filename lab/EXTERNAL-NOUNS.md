@@ -40,6 +40,7 @@ accepts everything prints the same success line.
 | 2026-10-01 | Pomerium 0.33.3 (unmodified), checking an agent's bearer token on each request (`bearer_token_format: idp_identity_token`, a `claim/action` policy per route) | this repository, lab/strategy/007, with an ML-DSA-65 grant chain | admitted on each action's own route | the other action's route; no token; a token the gate never signed (Pomerium refused); the same proof twice; an action outside the grant; a revoked grant (the gate refused) | [lab/strategy/007](strategy/007/README.md#pomerium-end-to-end) |
 | weekly since 2026-09-28 | eudi-dev v2.3.7 (by digest) and latest | the newest PyPI release | accepted (rc7, then rc8) | all three | `.github/workflows/wallet-canary.yml` |
 | 2026-10-02 | eudi-dev v2.5.0 (Go), strict mode now checking the verifier's TLS | this repository, PyPI 1.0.0rc13 | strict mode refused the self-signed listener (`x509: certificate signed by unknown authority`); with `--tls-verify=false` it presented, `200 authentic` | all three (in the `--tls-verify=false` run) | [eudi-dev](interop/eudi-dev/README.md#the-verifiers-tls-checked-in-strict-mode-2026-10-02) |
+| 2026-10-03 | eudi-dev v2.3.7 (Go), HAIP strict, its own binary (no Docker) | this repository, PyPI 1.0.0rc14 | accepted: `200 authentic` | wrong issuer key; the answered request again; a mismatched `client_id` (the wallet refused) | [eudi-dev](interop/eudi-dev/README.md) |
 
 eudi-dev v2.3.7 and OID4VCgo 0.12.0 are listed by the OpenID Foundation as certified OID4VP 1.0
 + HAIP 1.0 wallets.
@@ -109,7 +110,7 @@ The fee was waived on 2026-09-23 under the Foundation's open-source policy.
 
 It is a self-certification the Foundation reviewed and published, not an endorsement and not an
 independent verification (Certification Terms 3(e)). It covers that version in the verifier role
-on that profile. It does not cover the rest of Polaris, other versions (1.0.0rc8 to 1.0.0rc13 are
+on that profile. It does not cover the rest of Polaris, other versions (1.0.0rc8 to 1.0.0rc14 are
 not certified), the wallet role, other formats, or anything the suite does not test.
 Measured after it, on 2026-09-30: 1.0.0rc7 refuses an issuer certificate whose extended key
 usage is ISO 18013-5's document signer, as EUDI issuers' are (eudi-dev's PID Provider: its chain
@@ -141,7 +142,7 @@ become installable only when a maintainer approves them with a second factor.
 | Package | First | Release candidate | Current |
 |---|---|---|---|
 | `polaris-verify` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc7, 2026-10-01 |
-| `polaris-oid4vp` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc13, 2026-10-02 (1.0.0rc7 is the certified one) |
+| `polaris-oid4vp` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc14, 2026-10-03 (1.0.0rc7 is the certified one) |
 | `polaris-sdk-python` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc7, 2026-10-01 |
 | `polaris-id-cli` (PyPI) | 1.0.0rc1, 2026-09-30 | 1.0.0rc1, 2026-09-30 | 1.0.0rc1, 2026-09-30 |
 | `polaris-sdk-ts` (npm) | 0.1.0, 2026-09-15 | 1.0.0-rc.1, 2026-09-16, under `next` | 1.0.0-rc.9, 2026-10-03, under `next` |

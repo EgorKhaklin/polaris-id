@@ -5,8 +5,8 @@ asking anyone a question.** If you cannot, that is the bug and we want to hear i
 [open a report](https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml).
 
 This page is run start to finish before it is changed, from outside the repository, against the
-package on PyPI rather than a working copy. Last walked 2026-10-02 against `polaris-oid4vp`
-1.0.0rc13 installed from the registry, with the system Python 3.9 and eudi-dev v2.3.7's own binary
+package on PyPI rather than a working copy. Last walked 2026-10-03 against `polaris-oid4vp`
+1.0.0rc14 installed from the registry, with the system Python 3.9.6 and eudi-dev v2.3.7's own binary
 (no Docker), on macOS: the wallet presented a PID credential, the verifier answered `200 authentic`,
 and all three controls were refused. Nothing here is from memory.
 
@@ -32,9 +32,9 @@ It installs `polaris-oid4vp` from PyPI into a venv of its own, lets the wallet g
 key, mints one credential bound to it, has the wallet present it with HAIP enforced, then runs
 three controls that must each be refused ([what they are](../lab/interop/eudi-dev/README.md)). It
 does every step for you, so it shows THAT the path works; the ten minutes below show what each
-step is. Walked 2026-10-02 as written, from an empty directory outside the repository, with the
-system Python 3.9.6 on macOS: it installed 1.0.0rc13, the wallet presented and the verifier
-answered `200 authentic` with all three controls refused, without Docker in 15 seconds, the
+step is. Walked 2026-10-03 as written, from an empty directory outside the repository, with the
+system Python 3.9.6 on macOS: it installed 1.0.0rc14, the wallet presented and the verifier
+answered `200 authentic` with all three controls refused, without Docker in 8 seconds, the
 binary's download included.
 
 ## 0. Prerequisites
@@ -66,7 +66,7 @@ and splitting them across two directories is the single most common way this pat
     mkdir -p ~/polaris-try && cd ~/polaris-try
     python3 -m venv .venv && . .venv/bin/activate
 
-From the registry. You do not need this repository. `--pre` because 1.0.0rc13 is a release
+From the registry. You do not need this repository. `--pre` because 1.0.0rc14 is a release
 candidate and pip skips those unless told; 0.1.0 is the previous release and also works.
 
     pip install --pre polaris-oid4vp

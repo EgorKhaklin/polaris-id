@@ -72,7 +72,7 @@ Around the credential:
 | | version | where |
 |---|---|---|
 | this tree | 1.0.0-rc.70 | the source you are reading |
-| `polaris-oid4vp` | 1.0.0rc13 | PyPI; 1.0.0rc7 is the certified version |
+| `polaris-oid4vp` | 1.0.0rc14 | PyPI; 1.0.0rc7 is the certified version |
 | `polaris-verify`, `polaris-sdk-python` | 1.0.0rc7 | PyPI |
 | `polaris-id-cli` | 1.0.0rc1 | PyPI; the operator CLI, for a running Polaris PostgreSQL |
 | `polaris-sdk-ts` | 1.0.0-rc.9 | npm, under `next` (`latest` stays 0.1.0) |
