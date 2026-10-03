@@ -607,14 +607,21 @@ def signature_for_migration(token_value: str, algorithm: str, agency_id=None) ->
     and labelled as such, so a dev-profile migration can be exercised end to end without
     anything mistaking its output for a signature.
 
-    Refuses (NotACredentialSerial) a token_value that is not a credential serial."""
+    Refuses (NotACredentialSerial) a token_value that is not a credential serial, and
+    (SigningError) a set no signer here produces, in every profile."""
     require_credential_serial(token_value)
+    if algorithm not in ACCEPTED_ALGORITHMS:
+        raise SigningError(
+            f"nothing here signs with {algorithm!r} (the signers are "
+            f"{', '.join(ACCEPTED_ALGORITHMS)}); refusing a migration signature under it")
     flag_set = os.environ.get("POLARIS_USE_REAL_PQC", "0") == "1"
     if not flag_set:
-        # The placeholder is per (token, algorithm): a migration that produced the same bytes
-        # for both parameter sets would let a drill "pass" while proving nothing changed.
-        return (hashlib.sha3_256(f"{algorithm}|{token_value}".encode()).digest(),
-                PLACEHOLDER_LABEL, None)
+        # The placeholder issuance writes: SHA3-256 over the token value, which is what the
+        # verify path recomputes. Until 2026-10-02 it was taken over "<algorithm>|<token value>"
+        # so that the two sets' bytes differed, and no verify path accepted it: under the
+        # placeholder profile every migrated credential verified false from the moment its
+        # row was written. The row's algorithm is what tells the sets apart.
+        return (hashlib.sha3_256(token_value.encode("utf-8")).digest(), PLACEHOLDER_LABEL, None)
     if not _OQS_AVAILABLE:
         raise PQCUnavailableError(
             "POLARIS_USE_REAL_PQC=1 but liboqs-python is not importable: "

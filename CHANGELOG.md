@@ -78,6 +78,11 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Release SBOMs failed the NTIA minimum elements and four were invalid SPDX; the release checks both before publishing.
 - The advisory-lock check reads locks taken in functions; the holder key register's lock gains contention tests.
 - The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
+- A migration's signature was dated by the credential's issuance, so its key read unauthorized; each is dated by its own.
+- A holder's pack was refused at the relying-party door once a migration added signatures; any in force verifies.
+- Closing a migration window cut superseded signatures off at once, whatever its grace; they verify until the date.
+- Under the placeholder profile a population migration wrote a signature no verify path accepted; now issuance's.
+- A population migration onto a set nothing here signs with (SLH-DSA) is refused before it starts.
 - The warrant audit page no longer says zero-knowledge events come back redacted; they are never returned.
 - The Atlas marked every withheld count "<5", false for one withheld for its whole's sake; it shows a neutral mark.
 - A person's investigation page takes its colours from the theme; a credential value read at 3.48:1 in light.
