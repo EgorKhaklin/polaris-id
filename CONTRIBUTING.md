@@ -30,8 +30,9 @@ You do not need permission to start: open a draft pull request early and ask. Th
 
 ## How to propose a change
 
-Questions go to [Discussions](https://github.com/EgorKhaklin/polaris-id/discussions), not issues;
-[.github/SUPPORT.md](.github/SUPPORT.md) says where each kind of message goes.
+Questions go to [Discussions](https://github.com/EgorKhaklin/polaris-id/discussions) or the
+[Discord](https://discord.gg/ragewuCKj) help forum, not issues; [.github/SUPPORT.md](.github/SUPPORT.md) says where each
+kind of message goes.
 
 - **Small fixes** (a typo, a broken link, a missed test, an isolated bug): open an issue or a pull
   request. The [pull-request template](.github/PULL_REQUEST_TEMPLATE.md) asks for the motivation,

@@ -11,7 +11,8 @@ Polaris ID is pre-pilot software with one maintainer. Where each kind of message
 | A bug you can reproduce | [an issue](https://github.com/EgorKhaklin/polaris-id/issues/new/choose) |
 | A security finding | [a private advisory](https://github.com/EgorKhaklin/polaris-id/security/advisories/new), never a public post; see [SECURITY.md](../SECURITY.md) |
 | A question about operating an instance | [the operator runbooks](../docs/operator/README.md) |
+| A quick question, or a conversation with the people building it | [Discord](https://discord.gg/ragewuCKj): its help forum; an answer worth keeping moves to Discussions or the docs |
 
 Questions are answered as time allows; security reports follow the response times in
-[SECURITY.md](../SECURITY.md). An answer in Discussions is not a review, an audit or a
+[SECURITY.md](../SECURITY.md). An answer in Discussions or on Discord is not a review, an audit or a
 certification.

@@ -6,6 +6,9 @@ contact_links:
   - name: Questions, needs and interop results
     url: https://github.com/EgorKhaklin/polaris-id/discussions
     about: Ask in Discussions (Q&A), describe a need and who has it (Ideas), or share something you ran against Polaris ID (Show and tell).
+  - name: Chat with the people building it (Discord)
+    url: https://discord.gg/ragewuCKj
+    about: Quick questions in the help forum, wallet results in the interop channel, and a first contribution from the start-contributing channel.
   - name: Operator questions
     url: https://github.com/EgorKhaklin/polaris-id/tree/main/docs/operator
     about: The runbooks cover install, deployment, day-2 operation, secrets, recovery and hardening.

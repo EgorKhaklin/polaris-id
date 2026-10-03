@@ -28,6 +28,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - An issuance tunnel serves only the wallet's OpenID4VCI endpoints over your own tunnel, so a wallet can be issued a demo copy.
 - A one-command helper mints an OpenID4VCI wallet-copy offer through the operator route, for the issuance-tunnel demo.
 - README badges for the pre-pilot status and the four outside wallets the verifier accepted.
+- A Discord server for questions and conversation, linked from the README, CONTRIBUTING, SUPPORT.md and the issue chooser.
 - Exact credential and live-signature counts by authority, kept by triggers that only append (`PopulationCount`).
 - Indexes for expiring credentials, credentials by status, issuance in a window and one credential's verifications.
 - Find a credential by number, token value or card serial, or a person by name and date of birth; the text stays out of URLs.
