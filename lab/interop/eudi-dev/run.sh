@@ -11,6 +11,8 @@
 #   EUDI_IMAGE=ghcr.io/dominikschlosser/eudi-dev:v2.4.3 lab/interop/eudi-dev/run.sh
 #   EUDI_NATIVE=1 lab/interop/eudi-dev/run.sh         # the wallet's own binary, no Docker
 #   EUDI_ISSUER=1 lab/interop/eudi-dev/run.sh         # eudi-dev's own issuer signs the credential
+#   EUDI_TUNNEL=1 lab/interop/eudi-dev/run.sh         # each verifier behind its own cloudflared
+#                                                     # quick tunnel: public HTTPS a wallet can verify
 #
 # With Docker running, the wallet runs from its image. Without it (or with EUDI_NATIVE=1), the
 # wallet's release binary for this machine (macOS or Linux, x86-64 or arm64) is downloaded and
@@ -52,6 +54,16 @@ if [ "${EUDI_NATIVE:-}" != 1 ] && command -v docker >/dev/null 2>&1 && docker in
   [ "$(uname)" = Linux ] && ADD_HOST=(--add-host host.docker.internal:host-gateway)
 else
   MODE=native VHOST=localhost BIND=127.0.0.1
+fi
+# EUDI_TUNNEL=1: every verifier this walk starts sits behind its OWN cloudflared quick tunnel (no
+# account), serving plain HTTP on the loopback (--no-local-tls) and advertising the tunnel's public
+# HTTPS origin (--public-base-url). The wallet then fetches the request over a certificate it can
+# validate, which strict mode in eudi-dev v2.5.0 and later does. A fresh tunnel per verifier,
+# because a quick tunnel does not reliably reconnect to an origin restarted under it.
+TUNNEL="${EUDI_TUNNEL:-}"
+if [ "$TUNNEL" = 1 ]; then
+  command -v cloudflared >/dev/null 2>&1 || { echo "EUDI_TUNNEL=1 needs cloudflared on PATH" >&2; exit 2; }
+  BIND=127.0.0.1
 fi
 
 # v2.3.7's release binaries, pinned here so a download is checked against this repository and
@@ -195,23 +207,61 @@ wallet import "$(in_wallet_view credential.txt)" | tail -1
 TRUST=--issuer-jwks TRUSTED=issuer-jwks.json OTHER=issuer-jwks-other.json REFUSAL_A=issuer_signature
 fi
 
-VERIFIER_PID=""
+VERIFIER_PID="" TUNNEL_PID="" TUNNELS=0
 stop_verifier() {  # `wait` returns the killed server's 143, which set -e would take as ours
   if [ -n "$VERIFIER_PID" ]; then
     kill "$VERIFIER_PID" 2>/dev/null || true
     wait "$VERIFIER_PID" 2>/dev/null || true
     VERIFIER_PID=""
   fi
+  if [ -n "$TUNNEL_PID" ]; then
+    kill "$TUNNEL_PID" 2>/dev/null || true
+    wait "$TUNNEL_PID" 2>/dev/null || true
+    TUNNEL_PID=""
+  fi
 }
 trap stop_verifier EXIT
 
-start_verifier() {  # $1 what the verifier trusts (a JWKS or a CA, per $TRUST), $2 log file
-  PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host "$VHOST" \
-    --bind "$BIND" --port "$PORT" "$TRUST" "$1" --once > "$2" 2>&1 &
-  VERIFIER_PID=$!
-  for _ in $(seq 1 40); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
-  echo "verifier did not start; see $WORK/$2" >&2
+start_tunnel() {  # a quick tunnel to the loopback port; sets TUNNEL_URL, or exits 2
+  TUNNELS=$((TUNNELS + 1))
+  cloudflared tunnel --no-autoupdate --url "http://localhost:$PORT" > "cloudflared-$TUNNELS.log" 2>&1 &
+  TUNNEL_PID=$!
+  TUNNEL_URL=""
+  for _ in $(seq 1 60); do
+    TUNNEL_URL="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "cloudflared-$TUNNELS.log" | head -1 || true)"
+    [ -n "$TUNNEL_URL" ] && grep -q 'Registered tunnel connection' "cloudflared-$TUNNELS.log" && return 0
+    sleep 1
+  done
+  echo "the tunnel did not come up; see $WORK/cloudflared-$TUNNELS.log" >&2
   exit 2
+}
+
+start_verifier() {  # $1 what the verifier trusts (a JWKS or a CA, per $TRUST), $2 log file
+  if [ "$TUNNEL" = 1 ]; then
+    start_tunnel
+    # The request object's certificate names the tunnel host; a fresh one per tunnel.
+    venv/bin/polaris-oid4vp keygen --out "pki-$TUNNELS" --host "${TUNNEL_URL#https://}" >/dev/null
+    PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki "pki-$TUNNELS" --host "${TUNNEL_URL#https://}" \
+      --bind "$BIND" --port "$PORT" --public-base-url "$TUNNEL_URL" --no-local-tls \
+      "$TRUST" "$1" --once > "$2" 2>&1 &
+  else
+    PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host "$VHOST" \
+      --bind "$BIND" --port "$PORT" "$TRUST" "$1" --once > "$2" 2>&1 &
+  fi
+  VERIFIER_PID=$!
+  local up=""
+  for _ in $(seq 1 40); do grep -q 'state=' "$2" 2>/dev/null && up=1 && break; sleep 0.25; done
+  [ -n "$up" ] || { echo "verifier did not start; see $WORK/$2" >&2; exit 2; }
+  if [ "$TUNNEL" = 1 ]; then
+    # Present only once the verifier answers THROUGH the public name; a new quick-tunnel name can
+    # take some seconds to resolve.
+    for _ in $(seq 1 60); do
+      [ "$(curl -s -o /dev/null -w '%{http_code}' "$TUNNEL_URL/done" || true)" = 200 ] && { echo "tunnel     $TUNNEL_URL"; return 0; }
+      sleep 2
+    done
+    echo "the verifier did not answer through $TUNNEL_URL; see $WORK/cloudflared-$TUNNELS.log" >&2
+    exit 2
+  fi
 }
 
 launch_uri() {  # $1 log file, $2 optional client_id override
@@ -240,7 +290,8 @@ URI=$(launch_uri verifier.log)
 present "$URI" wallet.log
 expect "the wallet submitted and was answered 200" wallet.log 'Response: 200'
 expect "the verifier accepted it" verifier.log '<- 200 authentic'
-grep -E '<- 200' verifier.log | sed 's/^/        /'
+# A refused presentation prints nothing here; the controls still run and RESULT says FAILED.
+{ grep -E '<- 200' verifier.log || true; } | sed 's/^/        /'
 
 echo "== control (b): the same request again, after it was answered"
 present "$URI" wallet-replay.log

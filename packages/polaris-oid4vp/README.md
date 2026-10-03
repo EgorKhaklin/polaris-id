@@ -38,8 +38,11 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   anchor inside the chain; `keygen` avoids both. Its keys are for testing.
 - `serve --issuer-trust-anchor ca.pem` trusts an issuer that signs with its certificate in `x5c`,
   as HAIP issuers do (repeatable; each file may hold several PEM certificates). The leaf must
-  chain to an anchor in one link, be inside its validity period, and, when it states a key
-  usage, include digitalSignature; one that states extended key usages must name one an
+  chain to an anchor, directly or through the CA certificates the `x5c` sends after it (at most
+  three, in order, each certifying the one before it; each a CA allowed to sign certificates,
+  inside its validity period and its path length, with no critical extension this does not
+  read, and none of them the anchor itself). The leaf must be inside its validity period and,
+  when it states a key usage, include digitalSignature; one that states extended key usages must name one an
   issuer may hold (ISO 18013-5's document signer, as EUDI issuers use, or client auth, code
   signing or email protection). A leaf that states no key usage is not restricted by one. An `iss` must be
   a name the leaf gives: a URI subjectAltName exactly, or, for a leaf naming only DNS hosts, an
@@ -157,7 +160,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 361 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 378 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 120 refusals accept and requires a

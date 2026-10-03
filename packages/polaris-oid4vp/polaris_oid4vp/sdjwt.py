@@ -40,7 +40,7 @@ import urllib.parse
 
 try:
     from cryptography.exceptions import InvalidSignature
-    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils
     from cryptography import x509
     from cryptography.x509 import load_der_x509_certificate
@@ -117,6 +117,13 @@ if _HAVE_CRYPTO:
     ))
 else:  # pragma: no cover
     _ISSUER_EKUS = frozenset()
+
+#: How many certificates an issuer's `x5c` may carry: the signing certificate and up to three CA
+#: certificates between it and a configured trust anchor. RFC 7515 4.1.6 orders the array, each
+#: certificate certifying the one before it, so the chain is checked as sent, link by link, and
+#: nothing is searched for. Until 2026-10-03 only the leaf was read: eudi-dev v2.5.0's PID
+#: Provider signs under an intermediate CA that it sends as `x5c[1]`, and was refused.
+MAX_X5C_CERTS = 4
 
 
 def _utcnow():
@@ -451,18 +458,30 @@ def _issuer_public_keys(header, issuer_jwks, trust_anchors, now=None):
         chain = header["x5c"]
         if not isinstance(chain, list) or not chain:
             return [], "x5c is present but is not a non-empty array", None
+        if len(chain) > MAX_X5C_CERTS:
+            return [], ("x5c carries %d certificates; at most %d are read, the signing certificate "
+                        "and %d CAs" % (len(chain), MAX_X5C_CERTS, MAX_X5C_CERTS - 1)), None
         try:
             leaf = load_der_x509_certificate(base64.b64decode(chain[0]))
         except Exception as exc:  # noqa: BLE001  any parse failure is the same refusal
             return [], "the x5c leaf certificate does not parse: %s" % exc, None
+        intermediates = []
+        for position, item in enumerate(chain[1:], start=1):
+            try:
+                intermediates.append(load_der_x509_certificate(base64.b64decode(item)))
+            except Exception as exc:  # noqa: BLE001  any parse failure is the same refusal
+                return [], "x5c certificate %d does not parse: %s" % (position, exc), None
         if not trust_anchors:
             return [], ("the credential presents an x5c chain and no trust anchor is "
                         "configured, so nothing can be said about who signed it"), None
         why = _not_an_issuer_leaf(leaf)
         if why:
             return [], why, None
+        why = _an_anchor_in_the_chain(intermediates, trust_anchors)
+        if why:
+            return [], why, None
         for anchor in trust_anchors:
-            if _chains_to(leaf, anchor, now):
+            if _chains_to(leaf, anchor, now, intermediates):
                 return [leaf.public_key()], "", leaf
         return [], "the x5c leaf does not chain to any configured trust anchor", None
     if issuer_jwks:
@@ -519,31 +538,119 @@ def _not_an_issuer_leaf(leaf):
         pass
     except Exception:  # noqa: BLE001  a malformed extension is not a usable statement
         return "the x5c leaf's basic constraints do not parse"
-    try:
-        leaf.public_key().verify(leaf.signature, leaf.tbs_certificate_bytes,
-                                 ec.ECDSA(leaf.signature_hash_algorithm))
-    except Exception:  # noqa: BLE001  not signed by its own key, which is what a leaf is
+    if not _self_signed(leaf):
         return ""
     return ("the x5c leaf is self-signed, so it is a trust anchor and not an issuer's "
             "certificate (HAIP 1.0 6.1.1)")
 
 
-def _chains_to(leaf, anchor, now=None):
-    """Is `leaf` signed by `anchor`, and valid at `now` (POSIX seconds; None for the clock)? One
-    link, deliberately.
-
-    A full path builder is a different piece of software with its own failure modes. The
-    conformance profile registers the anchor out of band and sends the leaf alone, which is
-    exactly one link, and a verifier that quietly accepted a longer chain it had not checked
-    would be worse than one that says it only does this.
-    """
+def _self_signed(cert):
+    """True when `cert` verifies under its own key, which is what an anchor's certificate does."""
     try:
-        anchor.public_key().verify(leaf.signature, leaf.tbs_certificate_bytes,
-                                   ec.ECDSA(leaf.signature_hash_algorithm))
+        cert.public_key().verify(cert.signature, cert.tbs_certificate_bytes,
+                                 ec.ECDSA(cert.signature_hash_algorithm))
+    except Exception:  # noqa: BLE001  not signed by its own key
+        return False
+    return True
+
+
+def _signed_by(child, parent):
+    """True when `parent`'s key verifies `child`'s signature and `child` names `parent` as its
+    issuer."""
+    try:
+        parent.public_key().verify(child.signature, child.tbs_certificate_bytes,
+                                   ec.ECDSA(child.signature_hash_algorithm))
     except Exception:  # noqa: BLE001  wrong key, wrong algorithm, malformed: all one answer
         return False
-    if leaf.issuer != anchor.subject:
+    return child.issuer == parent.subject
+
+
+def _valid_at(cert, now):
+    """True when `now` (an aware datetime) is inside `cert`'s validity period."""
+    try:
+        not_before = cert.not_valid_before_utc
+        not_after = cert.not_valid_after_utc
+    except AttributeError:  # pragma: no cover - cryptography < 42
+        not_before = cert.not_valid_before.replace(tzinfo=datetime.timezone.utc)
+        not_after = cert.not_valid_after.replace(tzinfo=datetime.timezone.utc)
+    return not_before <= now <= not_after
+
+
+def _an_anchor_in_the_chain(intermediates, trust_anchors):
+    """"" when no CA certificate sent after the leaf is a trust anchor, else which one is.
+
+    HAIP 1.0 6.1.1 keeps the trust anchor's certificate out of `x5c`. A self-signed certificate is
+    an anchor however it is sent, and so is one that carries a configured anchor's key.
+    """
+    der = serialization.Encoding.DER
+    spki = serialization.PublicFormat.SubjectPublicKeyInfo
+    anchor_keys = set()
+    for anchor in trust_anchors:
+        try:
+            anchor_keys.add(anchor.public_key().public_bytes(der, spki))
+        except Exception:  # noqa: BLE001  an anchor whose key does not serialise matches nothing
+            continue
+    for position, ca in enumerate(intermediates, start=1):
+        try:
+            key = ca.public_key().public_bytes(der, spki)
+        except Exception:  # noqa: BLE001
+            return "x5c certificate %d has a public key that does not parse" % position
+        if key in anchor_keys or _self_signed(ca):
+            return ("x5c certificate %d is a trust anchor, and HAIP 1.0 6.1.1 keeps the anchor "
+                    "out of x5c" % position)
+    return ""
+
+
+def _may_certify(ca, below, now):
+    """True when `ca`, sent in `x5c`, may certify a path with `below` CA certificates under it,
+    at `now` (an aware datetime).
+
+    RFC 5280: a CA certificate asserts basicConstraints cA (4.2.1.9) and, when it states a key
+    usage, keyCertSign (4.2.1.3); its pathLenConstraint bounds the CAs beneath it; and a critical
+    extension that this code does not read refuses the certificate (4.2). An extended key usage
+    that names purposes must admit an issuer's, as the leaf's must.
+    """
+    try:
+        constraints = ca.extensions.get_extension_for_class(x509.BasicConstraints).value
+        if not constraints.ca:
+            return False
+        if constraints.path_length is not None and below > constraints.path_length:
+            return False
+        try:
+            if not ca.extensions.get_extension_for_class(x509.KeyUsage).value.key_cert_sign:
+                return False
+        except x509.ExtensionNotFound:
+            pass
+        try:
+            oids = set(ca.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value)
+            if (x509.oid.ExtendedKeyUsageOID.ANY_EXTENDED_KEY_USAGE not in oids
+                    and not oids & _ISSUER_EKUS):
+                return False
+        except x509.ExtensionNotFound:
+            pass
+        read = (x509.BasicConstraints, x509.KeyUsage, x509.ExtendedKeyUsage)
+        if any(ext.critical and not isinstance(ext.value, read) for ext in ca.extensions):
+            return False
+    except Exception:  # noqa: BLE001  absent or malformed basic constraints: not a CA
         return False
+    return _valid_at(ca, now)
+
+
+def _chains_to(leaf, anchor, now=None, intermediates=()):
+    """Is `leaf` certified by `anchor`, directly or through the CA certificates `intermediates`
+    that its `x5c` sends after it, and valid at `now` (POSIX seconds; None for the clock)?
+
+    The chain is checked as sent and nothing is searched for: RFC 7515 4.1.6 has each
+    certificate certify the one before it, so every link is the next certificate in the array
+    and the last is the anchor. A path builder is a different piece of software with its own
+    failure modes. Until 2026-10-03 this was one link only, because the conformance profile
+    registers the anchor out of band and sends the leaf alone; eudi-dev v2.5.0's PID Provider
+    sends its leaf and the intermediate CA that signed it.
+    """
+    path = [leaf, *intermediates]
+    for child, parent in zip(path, path[1:] + [anchor]):
+        if not _signed_by(child, parent):
+            return False
 
     # 2026-09-17: the signature and the issuer/subject match were the WHOLE check, and that
     # is not a trust decision, it is a "did this CA ever sign this" decision. Three things
@@ -563,14 +670,21 @@ def _chains_to(leaf, anchor, now=None):
     # binding's iat and the credential's exp and nbf, and this window alone read the wall clock,
     # so a leaf that had expired by `now` still chained (2026-10-01).
     now = _utcnow() if now is None else datetime.datetime.fromtimestamp(now, datetime.timezone.utc)
-    try:
-        not_before = leaf.not_valid_before_utc
-        not_after = leaf.not_valid_after_utc
-    except AttributeError:  # pragma: no cover - cryptography < 42
-        not_before = leaf.not_valid_before.replace(tzinfo=datetime.timezone.utc)
-        not_after = leaf.not_valid_after.replace(tzinfo=datetime.timezone.utc)
-    if not (not_before <= now <= not_after):
+    if not _valid_at(leaf, now):
         return False
+    for below, ca in enumerate(intermediates):
+        if not _may_certify(ca, below, now):
+            return False
+    if intermediates:
+        # The anchor's own pathLenConstraint, when it states one, bounds the CAs sent beneath it.
+        try:
+            limit = anchor.extensions.get_extension_for_class(x509.BasicConstraints).value.path_length
+        except x509.ExtensionNotFound:
+            limit = None
+        except Exception:  # noqa: BLE001  a malformed constraint is not a usable permission
+            return False
+        if limit is not None and len(intermediates) > limit:
+            return False
 
     # digitalSignature, when the certificate states a KeyUsage at all. A certificate that
     # says what it may be used for and does not say "sign" is not a signing certificate.
