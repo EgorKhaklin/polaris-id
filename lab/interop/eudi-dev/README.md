@@ -149,7 +149,8 @@ notes' wording, not this run's.
 
 Since 2026-10-03 the walk gives a wallet that checks TLS the listener's own certificate to trust
 (`--tls-ca`), so the default walk runs v2.5.0's strict mode with its check on: against 1.0.0rc14
-from PyPI, accepted, and all four controls refused, (d) with the error above.
+from PyPI, accepted, and all four controls refused, (d) with the error above. The same for v2.5.1,
+the `latest` the canary floats on (`sha256:47f3df6f89fdb70b788522c1f9f2cc7e1aecbc7ed56df44d4258cbb8f672526f`).
 
 ## Strict mode with the verifier's TLS checked, through a tunnel (2026-10-03)
 
