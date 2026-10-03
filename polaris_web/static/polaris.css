@@ -1257,17 +1257,44 @@ td.empty { border: 0; border-radius: 0; padding: var(--s-6); }
 .hero-actions { display: flex; flex-wrap: wrap; gap: var(--s-3); margin-top: var(--s-7); }
 .hero-actions .btn-secondary { border-color: var(--ink-3); }
 .hero-actions .btn-secondary:hover { border-color: var(--ink-2); }
+/* The emblem: the medallion carries its own gold frame, so no ring is drawn around it; a soft
+   gold halo behind it breathes, and stands still under reduced motion. The logo itself is the
+   file as delivered, never filtered, recoloured or masked. */
 .hero-mark {
     justify-self: center;
+    position: relative;
     display: grid;
     place-items: center;
-    width: min(360px, 100%);
+    width: min(340px, 100%);
     aspect-ratio: 1;
-    border: 1px solid var(--line);
-    border-radius: 50%;
-    background: radial-gradient(closest-side, var(--surface) 0%, var(--ground) 100%);
+    isolation: isolate;
 }
-.hero-mark img { width: 62%; height: auto; border-radius: 50%; }
+.hero-mark::before {
+    content: "";
+    position: absolute;
+    inset: -6%;
+    border-radius: 50%;
+    background: radial-gradient(circle at 50% 47%,
+        color-mix(in srgb, var(--gold) 24%, transparent) 0%,
+        color-mix(in srgb, var(--gold) 11%, transparent) 33%,
+        color-mix(in srgb, var(--gold) 4%, transparent) 54%,
+        transparent 70%);
+    z-index: -1;
+    animation: hero-breathe 7s ease-in-out infinite;
+}
+@keyframes hero-breathe {
+    0%, 100% { opacity: 0.8; transform: scale(1); }
+    50%      { opacity: 1;   transform: scale(1.035); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .hero-mark::before { animation: none; opacity: 0.92; }
+}
+.hero-mark img {
+    width: 60%;
+    height: auto;
+    position: relative;
+    z-index: 1;
+}
 .section {
     max-width: var(--page-max);
     margin: 0 auto;

@@ -2728,7 +2728,8 @@ CREATE OR REPLACE FUNCTION uc_record_holder_key_event(
     p_token_id        INTEGER,
     p_public_key_hex  TEXT,
     p_algorithm       VARCHAR(40),
-    p_event           VARCHAR(20)
+    p_event           VARCHAR(20),
+    p_signer_public_key_hex TEXT DEFAULT NULL  -- the key whose change_proof the caller verified (review S1)
 ) RETURNS BIGINT
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -2758,6 +2759,15 @@ BEGIN
         IF NOT FOUND OR v_live.event = 'revoked' THEN
             RAISE EXCEPTION 'no holder key is bound to this credential' USING ERRCODE = 'check_violation';
         END IF;
+        -- review S1 (2026-10-02, High): the change must be signed by the key that is live UNDER THIS
+        -- LOCK, not the one the caller read before taking it. The caller verifies change_proof against
+        -- the key it read; here, atomically, that signer must still be the live key, or a concurrent
+        -- rotation or revocation won the lock first and this one would append a second change over a
+        -- stale key (a stolen-but-still-live key racing the holder's own rotation).
+        IF p_signer_public_key_hex IS DISTINCT FROM v_live.public_key_hex THEN
+            RAISE EXCEPTION 'The holder key changed under a concurrent event; re-read it and retry'
+                USING ERRCODE = 'check_violation';
+        END IF;
         IF p_event = 'revoked' AND (p_public_key_hex IS DISTINCT FROM v_live.public_key_hex
                                     OR p_algorithm IS DISTINCT FROM v_live.algorithm) THEN
             RAISE EXCEPTION 'a revocation names the live holder key' USING ERRCODE = 'check_violation';
@@ -2768,10 +2778,11 @@ BEGIN
     RETURNING event_id INTO v_id;
     RETURN v_id;
 END$$;
-COMMENT ON FUNCTION uc_record_holder_key_event(INTEGER, TEXT, VARCHAR, VARCHAR) IS
+COMMENT ON FUNCTION uc_record_holder_key_event(INTEGER, TEXT, VARCHAR, VARCHAR, TEXT) IS
   'The only writer of HolderKeyEvent: sets the instant and holds bound / rotated / revoked in order '
-  'for a live credential. The holder''s consent to a change (a signature by the live key) is the '
-  'caller''s to verify.';
+  'for a live credential. The caller verifies the holder''s consent (a change_proof signed by the live '
+  'key); p_signer_public_key_hex is that key, and a rotation or revocation is refused unless it is still '
+  'the live key under the per-token lock, which closes the read-before-lock rotation race (review S1).';
 
 -- ----------------------------------------------------------------------------
 -- Population counts (lab/strategy/008). PopulationCount holds folded totals and

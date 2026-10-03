@@ -11,6 +11,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- A holder key rotation or revocation is refused unless its signer is still the live key under the per-token lock, closing a read-before-lock race a stolen-but-live key could ride.
 - The Atlas answered a refused parameter with the exception's text, which could carry the request back; it states a fixed sentence.
 - An operator bound to one authority could be served other authorities' Atlas counts from its response cache.
 - The database refuses a successful verification of a dead credential, outside its permitted contexts, or across an untrusted edge.
@@ -19,6 +20,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- An issuance tunnel serves only the wallet's OpenID4VCI endpoints over your own tunnel, so a wallet can be issued a demo copy.
 - README badges for the pre-pilot status and the four outside wallets the verifier accepted.
 - Exact credential and live-signature counts by authority, kept by triggers that only append (`PopulationCount`).
 - Indexes for expiring credentials, credentials by status, issuance in a window and one credential's verifications.
@@ -56,11 +58,15 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The credential page is rebuilt: facts beside proofs, one table per kind of row, empty kinds in one line.
 - On a phone, each list keeps a row's identifier, state and holder; the rest is on the record's page.
 - A status change is offered only where the database makes it; revocation keeps its own operation.
+- The SQL console shows at most 500 rows of a query, read from a server-side cursor, and says when there are more.
+- A web request's statements end two seconds before its worker's timeout, so no query outlives its request.
+- The landing emblem has no ring; a soft gold halo sits behind it.
 - `polaris-id migrate-algorithm` signs as the route does; `--signature-hex` and `--signature-file` are withdrawn.
 
 ### Fixed
 
 - The README's OpenID Certified badge now names what it covers: the polaris-oid4vp verifier, not Polaris.
+- The SQL console runs one statement per query; a second statement could lift its five-second limit.
 - SECURITY.md called PyPI's publish attestation the same kind of provenance as build provenance; it says what each is.
 - A credential's page and both investigation pages read its verifications through an index, not a full scan.
 - Release SBOMs failed the NTIA minimum elements and four were invalid SPDX; the release checks both before publishing.

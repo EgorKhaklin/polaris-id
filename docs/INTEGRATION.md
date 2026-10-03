@@ -38,6 +38,13 @@ is checkable offline against published keys with no Polaris code.
   [../lab/strategy/010-dev-tunnel.md](../lab/strategy/010-dev-tunnel.md).
 - **Obtain a wallet copy (OpenID4VCI).** Each agency with a wallet-copy key is a credential issuer
   at `/api/v1/oid4vci/<agency_id>/...`, with issuer metadata at the `.well-known` paths.
+- **Let a wallet reach a local issuer in one command (dev/eval).**
+  [`scripts/polaris-issuance-tunnel.sh`](../scripts/polaris-issuance-tunnel.sh) exposes ONLY those
+  OpenID4VCI wallet endpoints over your own cloudflared tunnel, minting a test issuer certificate for
+  the tunnel host; sign-in, the operator console, the relying-party API and the offer-minting route
+  stay off it by construction. It is the issuer half of the round-trip the dev tunnel above serves for
+  presentation. The design and its bounds are
+  [../lab/strategy/012-issuance-tunnel.md](../lab/strategy/012-issuance-tunnel.md).
 - **Self-test.** The outside-wallet and OpenID Foundation conformance assets are under
   [../lab/interop/README.md](../lab/interop/README.md).
 

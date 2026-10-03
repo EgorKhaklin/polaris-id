@@ -1,0 +1,133 @@
+# Plug-and-play across environments.
+#
+# The external doors a stranger installs (polaris-verify, polaris-oid4vp, the SDKs) are published
+# packages. Every other workflow in this repository runs on ubuntu-latest with Python 3.12 and
+# Node 24, so "it installs and works" is proven on exactly one environment. A stranger on macOS,
+# on Windows, or on a different Python or Node has no evidence until here.
+#
+# This installs each published package the way a stranger does, from the registry, and exercises
+# it across an operating-system x interpreter-version matrix. polaris-verify carries controls: a
+# genuine credential must be accepted and a tampered one must be refused, so a verifier that
+# accepts everything is caught in every environment rather than in none.
+#
+# It runs when this file changes (to prove the workflow itself), weekly (registry packages drift
+# as new OS images and interpreters ship), and on demand. It installs from the registry, so a run
+# measures the PUBLISHED packages, not this checkout; the checkout provides only the committed
+# test vectors.
+
+name: Plug-and-play across environments
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+  pull_request:
+    paths:
+      - ".github/workflows/plug-and-play-matrix.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: polaris-verify (${{ matrix.os }}, py${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout (only for the committed test vectors)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install polaris-verify from PyPI, the way a stranger does
+        run: python -m pip install --pre "polaris-verify[cryptography]"
+      - name: A genuine credential is accepted (exit 0)
+        shell: bash
+        run: polaris-verify --pqc-provider auto --signature-only --pack vectors/ml-dsa-65-valid.json
+      - name: A tampered signature is refused (exit 2) -- the control
+        shell: bash
+        run: |
+          set +e
+          polaris-verify --pqc-provider auto --signature-only --pack vectors/ml-dsa-65-tampered-signature.json
+          rc=$?
+          [ "$rc" = "2" ] || { echo "expected exit 2 (tampered refused), got $rc"; exit 1; }
+          echo "ok: a tampered signature was refused"
+      - name: With a trust anchor, the genuine credential is accepted (exit 0)
+        shell: bash
+        run: polaris-verify --pqc-provider auto --issuer-anchor vectors/anchors/ml-dsa-65-issuer.json --pack vectors/ml-dsa-65-valid.json
+      - name: A credential under an untrusted key is refused against that anchor -- the trust control
+        shell: bash
+        run: |
+          set +e
+          polaris-verify --pqc-provider auto --issuer-anchor vectors/anchors/ml-dsa-65-issuer.json --pack vectors/ml-dsa-65-wrong-key.json
+          rc=$?
+          [ "$rc" != "0" ] || { echo "a credential under an untrusted key was accepted"; exit 1; }
+          echo "ok: an untrusted key was refused (exit $rc)"
+
+  oid4vp:
+    name: polaris-oid4vp (${{ matrix.os }}, py${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install polaris-oid4vp from PyPI
+        run: python -m pip install --pre "polaris-oid4vp[cryptography]"
+      - name: It imports, so a wallet-facing verifier can be built on it
+        shell: bash
+        run: python -c "import polaris_oid4vp; print('polaris_oid4vp', getattr(polaris_oid4vp, '__version__', 'unknown'))"
+
+  sdk-python:
+    name: polaris-sdk-python (${{ matrix.os }}, py${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install polaris-sdk-python from PyPI
+        run: python -m pip install --pre polaris-sdk-python
+      - name: It installed
+        shell: bash
+        run: python -m pip show polaris-sdk-python
+
+  sdk-ts:
+    name: polaris-sdk-ts (${{ matrix.os }}, node${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ["20", "24"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Set up Node ${{ matrix.node }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install polaris-sdk-ts from npm, in a bare consumer project
+        shell: bash
+        run: |
+          mkdir consumer && cd consumer
+          npm init -y >/dev/null
+          npm install polaris-sdk-ts
+      - name: It loads, so a consumer can import it
+        shell: bash
+        run: cd consumer && node -e "const s = require('polaris-sdk-ts'); console.log('polaris-sdk-ts exports:', Object.keys(s).length)"

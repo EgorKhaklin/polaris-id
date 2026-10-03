@@ -8,7 +8,8 @@
     connection is opened read-only so the engine refuses a write smuggled
     through a CTE, and the application's database role holds no DDL privileges.
     A query is capped at <code>{{ max_length }}</code> characters and
-    <code>{{ (timeout_ms/1000)|int }}s</code> of execution time.
+    <code>{{ (timeout_ms/1000)|int }}s</code> of execution time, and shows at most
+    <code>{{ max_rows }}</code> rows, read from the database a page at a time.
 </p>
 
 <form method="post" class="standard wide">
@@ -37,7 +38,12 @@
 {% endif %}
 
 {% if results is not none %}
-    <h2>{% if explain_mode %}Query Plan{% else %}Results{% endif %} ({{ results|length }} row{{ '' if results|length == 1 else 's' }})</h2>
+    <h2>{% if explain_mode %}Query Plan{% else %}Results{% endif %} ({% if truncated %}the first {{ results|length }} rows{% else %}{{ results|length }} row{{ '' if results|length == 1 else 's' }}{% endif %})</h2>
+    {% if truncated %}
+    <p class="help">The query returned more than {{ max_rows }} rows; these are the first. Add a
+       <code>LIMIT</code>, an <code>ORDER BY</code> on an indexed column, or a narrower
+       <code>WHERE</code> to see the ones you mean.</p>
+    {% endif %}
     <div class="sql-results">
         <table class="data">
             <thead>

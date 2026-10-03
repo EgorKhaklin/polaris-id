@@ -718,8 +718,11 @@ def api_v1_holder_key_bind():
     try:
         with conn.cursor() as cur:
             # The register's only writer (review S2): it sets the instant and holds the order.
-            cur.execute("SELECT uc_record_holder_key_event(%s, %s, %s, %s)",
-                        (row['token_id'], holder_key, holder_alg, event))
+            # review S1: pass the signer (the live key we verified change_proof against) so the routine
+            # confirms it is still the live key under the lock, closing the read-before-lock rotation race.
+            cur.execute("SELECT uc_record_holder_key_event(%s, %s, %s, %s, %s)",
+                        (row['token_id'], holder_key, holder_alg, event,
+                         live['public_key_hex'] if live else None))
         conn.commit()
     except psycopg2.Error as e:
         conn.rollback()
