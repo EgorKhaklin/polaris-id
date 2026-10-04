@@ -81,7 +81,8 @@ OSV lists no advisory against any of the eleven pinned packages, queried by vers
 
 ## The wallet kit's own setting, 2026-10-04
 
-    JAR_ENCRYPTION=1 lab/interop/eudi-ios/run.sh
+    lab/interop/eudi-ios/run.sh                    # the default since 1.0.0rc16
+    JAR_ENCRYPTION=0 lab/interop/eudi-ios/run.sh   # for a release before it
 
 runs the wallet with the library configured as the EUDI iOS wallet kit 0.54.5 configures it
 (`jarConfiguration: .encryptionOption`): it fetches the request object by POST, sends its key in
@@ -92,8 +93,8 @@ runs the wallet with the library configured as the EUDI iOS wallet kit 0.54.5 co
 | PyPI 1.0.0rc15 | refused at the request stage: `validationError("The operation couldn’t be completed. (JOSESwift.JOSESwiftError error 5.)")`; the controls never reached their own stages |
 | this repository at 13d79e2b, which encrypts the request object for a wallet that asks | accepted: `<- 200 authentic, claims ['cnf', 'family_name', 'given_name', 'iat', 'iss', 'vct']`, and all four controls refused |
 
-The default stays `.noEncryptionOption` until a release carries the change, so the weekly canary,
-which runs against PyPI, measures what a stranger installs.
+PyPI 1.0.0rc16, published the same day, carries the change and was accepted with all four controls
+refused, so the walk's default is now the wallet kit's own setting and the weekly canary runs it.
 
 ## What this does not establish
 
