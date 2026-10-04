@@ -14,7 +14,7 @@ Foundation [lists the certification](https://openid.net/certification/certified-
 other versions. OpenID® and OpenID® Certified™ are trademarks of the OpenID Foundation, used under
 its [certification terms](https://openid.net/certification/mark/).
 
-**Status:** 1.0.0rc15, a release candidate, not certified: it carries the fixes made since
+**Status:** 1.0.0rc16, a release candidate, not certified: it carries the fixes made since
 1.0.0rc7. Outside results: the Foundation's hosted suite (0.1.0, then 1.0.0rc7 for
 certification) and the implementations in the table below, re-run weekly. No operator other
 than the author has run it and no independent security review exists. Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
