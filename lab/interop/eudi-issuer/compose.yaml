@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Egor Khaklin and the Polaris contributors
+#
+# The EU reference PID issuer (eudi-srv-pid-issuer) as its own docker-compose runs it: PostgreSQL,
+# Keycloak with the attestation-based client authentication (ABCA) extension, the issuer, and
+# HAProxy in front of both at https://localhost. run.sh fetches the upstream files from the
+# release's commit, checks each SHA-256, and takes every service's environment from the upstream
+# docker-compose.yaml (WORK/*.env). What differs from upstream:
+#   - images pinned by digest: the issuer at v0.11.1 (upstream runs :edge), and the stock Keycloak
+#     image upstream builds on, with the extension jar mounted where its Dockerfile copies it;
+#   - no status-list service: the issuer allocates a status only under a reuse policy, which the
+#     upstream configuration does not enable;
+#   - HAProxy (haproxy.cfg) also serves the test wallet provider's status list, and publishes no
+#     host port: the wallet runs inside HAProxy's network namespace, where https://localhost is
+#     the issuer, as it is on the machine upstream's compose is written for.
+services:
+  postgres:
+    image: postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+    env_file: ${WORK:?}/postgres.env
+    volumes:
+      - ${WORK}/upstream/docker-compose/postgresql/schema:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pid_issuer -d pid_issuer"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.6.2-2@sha256:f9ba7b2af90db8dc749a57ca9aedca51e840cb9224441ab546a968da941da900
+    command: [start-dev, --import-realm, "--features=dpop,passkeys"]
+    env_file: ${WORK}/keycloak.env
+    volumes:
+      - ${WORK}/upstream/abca-keycloak-ext-0.2.0.jar:/opt/keycloak/providers/abca-keycloak-ext.jar:ro
+      - ${WORK}/upstream/docker-compose/keycloak/realms:/opt/keycloak/data/import:ro
+      - ${WORK}/upstream/docker-compose/keycloak/certs:/etc/ssl/certs:ro
+      - ${WORK}/upstream/docker-compose/keycloak/conf/keycloak.conf:/opt/keycloak/conf/keycloak.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "{ printf 'HEAD /idp/health/ready HTTP/1.0\\r\\n\\r\\n' >&0; grep 'HTTP/1.0 200'; } 0<>/dev/tcp/localhost/9000"]
+      interval: 3s
+      timeout: 10s
+      retries: 100
+
+  pid-issuer:
+    image: ghcr.io/eu-digital-identity-wallet/eudi-srv-pid-issuer:v0.11.1@sha256:2e6176a00f3bea3266d79cdf8182c2fcad96436f5a7a463ad504eb533a6e06f2
+    platform: linux/amd64
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    env_file: ${WORK}/issuer.env
+    volumes:
+      - ${WORK}/upstream/docker-compose/pid-issuer/issuer-keys.jks:/issuer-keys.jks:ro
+
+  haproxy:
+    image: haproxy:2.8.3@sha256:fdd14bba61bed25638503b51a9d59ee31082d71a461ec28eddb29ad522156c67
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      pid-issuer:
+        condition: service_started
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ${WORK}/upstream/docker-compose/haproxy/certs:/etc/ssl/certs:ro
+      - ${WORK}/status-list.jwt:/usr/local/etc/haproxy/status-list.jwt:ro
