@@ -60,7 +60,14 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
 
 - `keygen` makes a CA, a leaf it signs and a listener certificate, and prints the `client_id`
   and the anchor a counterparty registers. The profile rejects a self-signed leaf and a trust
-  anchor inside the chain; `keygen` avoids both. Its keys are for testing.
+  anchor inside the chain; `keygen` avoids both. The listener certificate is marked for server
+  authentication, which Apple's TLS policy requires even of a certificate a client trusts by
+  name. Its keys are for testing.
+- A wallet that fetches the request object by POST and asks for it encrypted (its
+  `wallet_metadata` lists `ECDH-ES` in `request_object_encryption_alg_values_supported`, an
+  `enc` this package produces, A128GCM or A256GCM, and a P-256 key in `jwks`) gets the signed
+  object encrypted to that key, as the EUDI iOS wallet kit requires. A wallet that asks for
+  nothing, or for something this cannot produce, gets the signed object.
 - `serve --issuer-trust-anchor ca.pem` trusts an issuer that signs with its certificate in `x5c`,
   as HAIP issuers do (repeatable; each file may hold several PEM certificates). The leaf must
   chain to an anchor, directly or through the CA certificates the `x5c` sends after it (at most
@@ -200,7 +207,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 398 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 407 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 120 refusals accept and requires a

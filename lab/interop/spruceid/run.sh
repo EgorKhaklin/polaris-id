@@ -22,6 +22,7 @@ set -euo pipefail
 IMAGE="${RUST_IMAGE:-rust:1.99.0-bookworm@sha256:59037199c44290f2befcdd58dcc540164763fc296950255aaefeef096a1866b0}"
 COMMIT="${SPRUCEID_COMMIT:-e5f29b85f14ca0b3c6eb6852e4d2d158f601fd63}"
 PKG="${POLARIS_OID4VP:-polaris-oid4vp}"
+[ -e "$PKG" ] && PKG="$(cd "$PKG" && pwd)"   # a path to the tree, made absolute
 PORT="${PORT:-9481}"
 WALLET_PORT="${WALLET_PORT:-9482}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -178,7 +179,7 @@ start_verifier() {  # $1 issuer trust anchor, $2 log
     --bind 0.0.0.0 --port "$PORT" --no-local-tls --public-base-url "http://host.docker.internal:$PORT" \
     --issuer-trust-anchor "$1" --once > "$2" 2>&1 &
   VERIFIER_PID=$!
-  for _ in $(seq 1 40); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
+  for _ in $(seq 1 240); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
   echo "verifier did not start; see $WORK/$2" >&2
   exit 2
 }

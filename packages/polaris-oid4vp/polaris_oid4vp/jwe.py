@@ -245,11 +245,15 @@ def decrypt_response(token, private_key):
     return body
 
 
-def encrypt_compact(plaintext, public_key, enc="A128GCM", apu=b"", apv=b""):
-    """Produce a compact JWE. Present so the decryptor has something to be tested against.
+def encrypt_compact(plaintext, public_key, enc="A128GCM", apu=b"", apv=b"", extra_header=None):
+    """Produce a compact JWE under ECDH-ES.
 
-    This is what a WALLET does, and no verifier needs it. It lives here rather than in the
-    tests because a round trip written twice is two chances to make the same mistake once.
+    A wallet encrypts its response this way, and the decryptor above is tested against it: a
+    round trip written twice is two chances to make the same mistake once. Since 2026-10-04 the
+    verifier uses it too, for a wallet that fetches the request object by POST and asks for it
+    encrypted to a key in its `wallet_metadata` (OpenID4VP 1.0 section 5.10), as the EUDI iOS
+    wallet kit always does. `extra_header` adds parameters such as `kid` and `cty`; it cannot
+    replace `alg`, `enc`, `epk`, `apu` or `apv`.
     """
     if not _HAVE_CRYPTO:
         raise JweError("the cryptography package is not installed")
@@ -261,6 +265,10 @@ def encrypt_compact(plaintext, public_key, enc="A128GCM", apu=b"", apv=b""):
               "epk": {"kty": "EC", "crv": "P-256",
                       "x": b64u_encode(numbers.x.to_bytes(32, "big")),
                       "y": b64u_encode(numbers.y.to_bytes(32, "big"))}}
+    for name, value in (extra_header or {}).items():
+        if name in ("alg", "enc", "epk", "apu", "apv"):
+            raise JweError("extra_header may not set %r" % name)
+        header[name] = value
     if apu:
         header["apu"] = b64u_encode(apu)
     if apv:

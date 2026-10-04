@@ -56,7 +56,11 @@ struct Wallet {
         privateKey: try KeyController.generateECDHPrivateKey(),
         publicWebKeySet: WebKeySet(keys: []),
         supportedClientIdSchemes: [.x509Hash(trust: trust)],
-        jarConfiguration: .noEncryptionOption,
+        // The wallet kit (0.54.5) configures the library with .encryptionOption: on POST it asks
+        // for the request object encrypted to its key, and refuses one that is not.
+        // JAR_ENCRYPTION=1 runs this wallet with that setting.
+        jarConfiguration: ProcessInfo.processInfo.environment["JAR_ENCRYPTION"] == "1"
+          ? .encryptionOption : .noEncryptionOption,
         vpConfiguration: VPConfiguration(
           vpFormatsSupported: try VpFormatsSupported(values: [
             .sdJwtVc(sdJwtAlgorithms: [JWSAlgorithm(.ES256)], kbJwtAlgorithms: [JWSAlgorithm(.ES256)])

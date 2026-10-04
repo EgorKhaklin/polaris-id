@@ -24,6 +24,7 @@ GO_IMAGE="${GO_IMAGE:-golang:1.27.1-trixie@sha256:3b77fc618ec235a1ab412de7737f12
 GO="${GO:-go}"
 BUILD="${BUILD:-}"
 PKG="${POLARIS_OID4VP:-polaris-oid4vp}"
+[ -e "$PKG" ] && PKG="$(cd "$PKG" && pwd)"   # a path to the tree, made absolute
 PORT="${PORT:-9482}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="${WORK:-$(mktemp -d)}"
@@ -105,7 +106,7 @@ start_verifier() {  # $1 issuer trust anchor, $2 log
   PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host localhost \
     --bind 127.0.0.1 --port "$PORT" --issuer-trust-anchor "$1" --once > "$2" 2>&1 &
   VERIFIER_PID=$!
-  for _ in $(seq 1 40); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
+  for _ in $(seq 1 240); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
   echo "verifier did not start; see $WORK/$2" >&2
   exit 2
 }

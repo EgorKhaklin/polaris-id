@@ -46,7 +46,8 @@ try:
 except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
 
-from .jwe import JweError, b64u_encode, decrypt_response
+from .jwe import (ACCEPTED_ALG, ACCEPTED_ENC, JweError, _loads_depth_bounded,
+                  _public_key_from_jwk, b64u_encode, decrypt_response, encrypt_compact)
 from .sdjwt import Verdict, verify_presentation
 
 #: How long an outstanding request stays answerable. A nonce that is accepted forever is not
@@ -127,6 +128,52 @@ class Session:
         self.answered = False
 
 
+def request_object_encryption(wallet_metadata):
+    """Where to encrypt the request object for a wallet that asked, or None.
+
+    OpenID4VP 1.0 section 5.10: a wallet that requires the request object encrypted passes its
+    public encryption keys as `jwks` in `wallet_metadata`, beside the algorithms it can open,
+    `request_object_encryption_alg_values_supported` and `..._enc_values_supported`. The EUDI
+    iOS wallet kit (0.54.5) always asks, ECDH-ES with A128GCM on P-256, and refuses a request
+    object that is not encrypted (lab/interop/eudi-ios, 2026-10-04).
+
+    Returns (public_key, enc, kid) when the wallet names ECDH-ES, an `enc` this package can
+    produce (A128GCM or A256GCM, the wallet's order) and a P-256 key that is not marked for
+    another use or algorithm. Otherwise None, and the signed object is served as it always
+    was: to a wallet that asked for nothing, to one asking for what this cannot produce, and to
+    metadata that does not parse, because the verifier MUST ignore what it does not recognise.
+    The key is the wallet's to name; the object is public and signed, so encrypting it to
+    whoever asks gives them nothing an unencrypted fetch would not.
+    """
+    if isinstance(wallet_metadata, (str, bytes, bytearray)):
+        try:
+            wallet_metadata = _loads_depth_bounded(wallet_metadata, "wallet_metadata")
+        except ValueError:
+            return None
+    if not isinstance(wallet_metadata, dict):
+        return None
+    algs = wallet_metadata.get("request_object_encryption_alg_values_supported")
+    encs = wallet_metadata.get("request_object_encryption_enc_values_supported")
+    if not isinstance(algs, list) or ACCEPTED_ALG not in algs or not isinstance(encs, list):
+        return None
+    enc = next((e for e in encs if isinstance(e, str) and e in ACCEPTED_ENC), None)
+    jwks = wallet_metadata.get("jwks")
+    keys = jwks.get("keys") if isinstance(jwks, dict) else None
+    if enc is None or not isinstance(keys, list):
+        return None
+    for jwk in keys:
+        if (not isinstance(jwk, dict) or jwk.get("use", "enc") != "enc"
+                or jwk.get("alg", ACCEPTED_ALG) != ACCEPTED_ALG):
+            continue
+        try:
+            public_key = _public_key_from_jwk(jwk)
+        except JweError:
+            continue
+        kid = jwk.get("kid")
+        return public_key, enc, kid if isinstance(kid, str) else None
+    return None
+
+
 class Verifier:
     """Builds requests and judges responses. Holds no socket: see `serve()` for that.
 
@@ -179,7 +226,7 @@ class Verifier:
             self._by_request[session.state] = jar
         return session, jar
 
-    def request_object(self, state, wallet_nonce=None):
+    def request_object(self, state, wallet_nonce=None, wallet_metadata=None):
         """The JAR for an outstanding request, served as many times as it is asked for.
 
         The plan has a module that fetches the `request_uri` TWICE. Making a request object
@@ -191,6 +238,10 @@ class Verifier:
         as a top-level claim. It is the wallet's replay protection against a request object
         minted before the wallet existed, and the mirror of the `nonce` we send it, so a
         verifier that serves a cached object to a POST has taken that protection away.
+
+        `wallet_metadata`, posted beside it, may ask for the object encrypted to the wallet's
+        key (`request_object_encryption`). Then the same signed object comes back encrypted:
+        a signed-then-encrypted nested JWT, as RFC 9101 section 6.1 has it.
         """
         # An outstanding request only: a session past its lifetime is gone, and neither its cached
         # object nor a fresh one minted for a wallet nonce is served. Until 2026-10-01 this path
@@ -200,10 +251,19 @@ class Verifier:
             session = self._sessions.get(state)
             cached = self._by_request.get(state)
         if wallet_nonce is None:
-            return cached
-        if session is None:
+            jar = cached
+        elif session is None:
             return None
-        return self._request_object(session, wallet_nonce=wallet_nonce)
+        else:
+            jar = self._request_object(session, wallet_nonce=wallet_nonce)
+        target = None if jar is None else request_object_encryption(wallet_metadata)
+        if target is None:
+            return jar
+        public_key, enc, kid = target
+        header = {"cty": "JWT"}
+        if kid is not None:
+            header["kid"] = kid
+        return encrypt_compact(jar.encode("ascii"), public_key, enc, extra_header=header)
 
     def _request_object(self, session, wallet_nonce=None):
         numbers = session.enc_key.public_key().public_numbers()

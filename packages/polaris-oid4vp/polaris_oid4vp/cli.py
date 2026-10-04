@@ -39,7 +39,7 @@ try:
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
     _HAVE_CRYPTO = True
 except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
@@ -112,6 +112,11 @@ def keygen(out: pathlib.Path, host: str) -> dict:
            .not_valid_before(now - datetime.timedelta(days=1))
            .not_valid_after(now + datetime.timedelta(days=90))
            .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+           # serverAuth, because Apple's TLS policy refuses a server certificate without it, even
+           # one the client trusts explicitly: the EU iOS OpenID4VP library's wallet could fetch
+           # the request object only by pinning this certificate around the policy
+           # (lab/interop/eudi-ios, 2026-10-04).
+           .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
            .sign(tls_key, hashes.SHA256()))
 
     def write(name, data, mode=0o644):
