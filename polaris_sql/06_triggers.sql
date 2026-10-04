@@ -432,6 +432,14 @@ CREATE TRIGGER trg_credential_copy_append_only
     FOR EACH ROW
     EXECUTE FUNCTION reject_audit_modification();
 
+-- 013 (2026-10-04): a recorded chain anchor is history. Editing one would point the published
+-- record at another block or proof; deleting one would hide that a checkpoint was ever committed.
+DROP TRIGGER IF EXISTS trg_chain_anchor_append_only ON ChainAnchor;
+CREATE TRIGGER trg_chain_anchor_append_only
+    BEFORE UPDATE OR DELETE ON ChainAnchor
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_audit_modification();
+
 -- P8.7b (v9.328): a key event is history; it is never edited or removed.
 CREATE OR REPLACE FUNCTION reject_authority_key_event_modification()
 RETURNS TRIGGER

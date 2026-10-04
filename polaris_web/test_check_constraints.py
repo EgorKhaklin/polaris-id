@@ -31,6 +31,7 @@ Run:
 Coverage map: see the class docstrings. Each class is one schema table.
 """
 
+import hashlib
 import os
 import sys
 import unittest
@@ -1510,6 +1511,8 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         # 2026-09-28: the wallet copy record (docs/design/oid4vci-issuer.md). Editing a row
         # would move a copy's status index onto another copy.
         "CredentialCopy",
+        # 013 (2026-10-04): the logs' public-chain anchors, written only by the schema owner.
+        "ChainAnchor",
     )
 
     def _app_conn(self):
@@ -1562,13 +1565,14 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             # Since rc.40 the lifecycle log, and since 2026-09-25 the epoch leaves and the anchor
             # batches, are written only by SECURITY DEFINER routines; since 2026-09-27 the key
             # register, card personalization and retention policy only by the owner; since
-            # 2026-09-28 the wallet copy record only by uc_issue_credential_copy; and, since the contract
-            # migration 2026-10-01-003, the holder key register only by uc_record_holder_key_event.
+            # 2026-09-28 the wallet copy record only by uc_issue_credential_copy; since the contract
+            # migration 2026-10-01-003, the holder key register only by uc_record_holder_key_event;
+            # and since 2026-10-04 the chain anchors only by the schema owner.
             self.assertEqual(bool(row["ins"]),
                              tbl.lower() not in ("tokenlifecycleevent", "tokenstateepochleaf",
                                                  "anchorbatch", "duressevent", "authoritykeyevent",
                                                  "cardpersonalization", "retentionpolicy",
-                                                 "credentialcopy", "holderkeyevent"),
+                                                 "credentialcopy", "holderkeyevent", "chainanchor"),
                              f"append-only is insert-allowed except the lifecycle log, the epoch "
                              f"leaves, the anchor batches and the owner's registers: {tbl}")
             conn.rollback()
@@ -3007,6 +3011,62 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             owner.close()
 
 
+class TestChainAnchorRecord(unittest.TestCase):
+    """013: the record of each checkpoint committed to a public chain (ChainAnchor).
+
+    The row is not the evidence: polaris-verify rereads the proof against block headers it reads
+    itself. What the database holds to is that the record is the operator's and says one thing:
+    the digest is derived from the checkpoint bytes rather than asserted beside them, a checkpoint
+    is recorded once, the chain and method are the one the verifier reads, and the application
+    role, which publishes the record, cannot write it."""
+
+    CHECKPOINT = b'{"format":"polaris-chain-checkpoint/1","heads":["test"]}'
+
+    def _owner(self):
+        return TestCredentialCopyRecord._owner(self)
+
+    def _insert(self, cur, checkpoint=None, digest=None, chain="BITCOIN", header="0" * 160):
+        checkpoint = self.CHECKPOINT if checkpoint is None else checkpoint
+        cur.execute(
+            "INSERT INTO ChainAnchor (checkpoint, checkpoint_sha256, chain, method, proof, block_height, "
+            "block_header_hex, recorded_by) VALUES (%s, %s, %s, 'OPENTIMESTAMPS', %s, 969876, %s, 'test') "
+            "RETURNING anchor_id",
+            (checkpoint, digest or hashlib.sha256(checkpoint).hexdigest(), chain, b"\x00", header))
+        return cur.fetchone()["anchor_id"]
+
+    def test_the_owner_records_an_anchor_whose_digest_is_its_checkpoint_s(self):
+        conn = self._owner()
+        with conn.cursor() as cur:
+            self.assertIsNotNone(self._insert(cur))
+
+    def test_a_digest_that_is_not_the_checkpoint_s_is_refused(self):
+        conn = self._owner()
+        with conn.cursor() as cur:
+            with self.assertRaises(pg_errors.CheckViolation) as caught:
+                self._insert(cur, digest="0" * 64)
+            self.assertIn("chk_chain_anchor_digest", str(caught.exception))
+
+    def test_a_chain_or_header_the_verifier_does_not_read_is_refused(self):
+        for kw, rule in (({"chain": "ETHEREUM"}, "chk_chain_anchor_chain"),
+                         ({"header": "Z" * 160}, "chk_chain_anchor_header"),
+                         ({"header": "0" * 158}, "chk_chain_anchor_header")):
+            with self.subTest(rule=rule, kw=kw):
+                conn = self._owner()
+                with conn.cursor() as cur:
+                    with self.assertRaises(pg_errors.CheckViolation) as caught:
+                        self._insert(cur, **kw)
+                    self.assertIn(rule, str(caught.exception))
+
+    def test_the_application_role_reads_the_record_and_cannot_write_it(self):
+        conn = TestC1PrivilegeBoundary._app_conn(self)
+        self.addCleanup(conn.rollback)
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM ChainAnchor")
+            self.assertGreaterEqual(cur.fetchone()["n"], 0)
+            with self.assertRaises(pg_errors.InsufficientPrivilege):
+                self._insert(cur)
+
+
 class TestCredentialCopyRecord(unittest.TestCase):
     """The wallet copy record obeys the credential record (docs/design/oid4vci-issuer.md).
 
@@ -3538,6 +3598,14 @@ APPEND_ONLY_FIXTURES = {
         "profile_version, normal_public_key, duress_public_key, card_object_sha3_256) "
         "VALUES (1, 1, decode(repeat('00',32),'hex'), 1, decode(repeat('11',32),'hex'), "
         "decode(repeat('22',32),'hex'), decode(repeat('33',32),'hex')) RETURNING personalization_id"),
+    # 013 (2026-10-04): the logs' public-chain anchors. Written in production only by the schema
+    # owner after the proof verifies; the fixture is the owner, and its checkpoint is any bytes
+    # whose SHA-256 the database can derive.
+    'chainanchor': ('anchor_id',
+        "WITH c AS (SELECT convert_to('{\"format\":\"polaris-chain-checkpoint/1\",\"heads\":[]}', 'UTF8') AS b) "
+        "INSERT INTO ChainAnchor (checkpoint, checkpoint_sha256, chain, method, proof, block_height, "
+        "block_header_hex, recorded_by) SELECT c.b, encode(sha256(c.b), 'hex'), 'BITCOIN', "
+        "'OPENTIMESTAMPS', decode('00', 'hex'), 0, repeat('0', 160), 'fixture' FROM c RETURNING anchor_id"),
     # 2026-09-28: the wallet copy record. Written in production only by
     # uc_issue_credential_copy; the fixture is the owner, so it writes a legal row directly
     # (a copy id drawn first, because the list number is derived from it).
@@ -4778,6 +4846,13 @@ UNIQUE_RULE_FIXTURES = {
         "profile_version, normal_public_key, duress_public_key, card_object_sha3_256) "
         "VALUES (1, 1, decode(repeat('00',32),'hex'), 1, decode(repeat('11',32),'hex'), "
         "decode(repeat('22',32),'hex'), decode(repeat('33',32),'hex'))", {}),
+    # 013 (2026-10-04): one checkpoint is recorded once. A second row for the same checkpoint
+    # bytes is a copy the database refuses, whatever block it names.
+    'chainanchor_checkpoint_sha256_key': (
+        "WITH c AS (SELECT convert_to('{\"format\":\"polaris-chain-checkpoint/1\",\"heads\":[1]}', 'UTF8') AS b) "
+        "INSERT INTO ChainAnchor (checkpoint, checkpoint_sha256, chain, method, proof, block_height, "
+        "block_header_hex, recorded_by) SELECT c.b, encode(sha256(c.b), 'hex'), 'BITCOIN', "
+        "'OPENTIMESTAMPS', decode('00', 'hex'), 0, repeat('0', 160), 'fixture' FROM c", {}),
     # 2026-09-28: a wallet copy's place in a status list is unique per agency, day and list.
     # The copy of this seeded row keeps its list number because its new copy_id falls in the
     # same list (copy_id / 2^19), so the only rule it can break is this one.
