@@ -1778,8 +1778,9 @@ class EnrollmentCountTests(PolarisTestCase):
         finally:
             conn.close()
         self._assert_exact('a change rolled back')
+        pending = self._owner("SELECT count(*) FROM EnrollmentCountDelta", fetch=True)[0][0]
         folded = self._owner("SELECT uc_fold_enrollment_counts()", fetch=True)[0][0]
-        self.assertGreater(folded, 0, 'control: there were changes to fold')
+        self.assertEqual(folded, pending, 'the fold consumes exactly the deltas pending when it runs; a trigger fold (random() < 0.002) may have folded earlier, so the count is whatever is pending here, never assumed positive')
         self.assertEqual(self._owner("SELECT count(*) FROM EnrollmentCountDelta", fetch=True)[0][0], 0)
         self._assert_exact('a fold')
         # A person with no event at all comes only from a load with the triggers off; the view says
