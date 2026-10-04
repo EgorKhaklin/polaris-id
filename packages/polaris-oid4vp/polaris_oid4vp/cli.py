@@ -46,7 +46,7 @@ except ImportError:  # pragma: no cover
 
 from .sdjwt import _es256_public_key, _not_an_es256_verification_key
 from .serve import REQUEST_PATH, RESPONSE_PATH, serve
-from .verifier import Verifier, claim_query
+from .verifier import Verifier, claim_query, verifier_info_entries
 
 #: What `keygen` writes and `serve` reads. Four files, named for what they are rather than
 #: for the order somebody happened to generate them in.
@@ -172,7 +172,7 @@ def parse_claim(text):
 
 def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
                   issuer_trust_anchors=None, public_base_url=None, claims=None,
-                  vct_values=None) -> Verifier:
+                  vct_values=None, verifier_info=None) -> Verifier:
     # A verifier behind a reverse proxy or a tunnel reaches wallets at a public origin that is
     # not its own host:port; the HAIP request_uri and response_uri must advertise that origin.
     base = public_base_url.rstrip("/") if public_base_url else "https://%s:%d" % (host, port)
@@ -184,7 +184,8 @@ def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
         issuer_jwks=issuer_jwks or [],
         issuer_trust_anchors=issuer_trust_anchors or [],
         **({"claims": claims} if claims else {}),
-        **({"vct_values": vct_values} if vct_values else {}))
+        **({"vct_values": vct_values} if vct_values else {}),
+        **({"verifier_info": verifier_info} if verifier_info is not None else {}))
 
 
 def _load_trust_anchors(paths):
@@ -264,6 +265,15 @@ def _cmd_serve(args) -> int:
     except ValueError as exc:
         print("polaris-oid4vp: %s" % exc, file=sys.stderr)
         return 2
+    verifier_info = None
+    if args.verifier_info:
+        try:
+            with open(args.verifier_info, encoding="utf-8") as fh:
+                verifier_info = verifier_info_entries(json.load(fh), (Verifier.DCQL_QUERY_ID,))
+        except (OSError, ValueError) as exc:
+            print("polaris-oid4vp: --verifier-info %s: %s" % (args.verifier_info, exc),
+                  file=sys.stderr)
+            return 2
     # Keys named and none usable is a configuration that cannot be what was meant: every
     # credential from those issuers would be refused, with no word at startup (2026-10-01).
     if args.issuer_jwks and not any(_verifies_es256(k) for k in issuer_jwks):
@@ -278,7 +288,7 @@ def _cmd_serve(args) -> int:
               "verified." % why, file=sys.stderr)
     verifier = verifier_from(pki, args.host, args.port, issuer_jwks, anchors,
                              public_base_url=args.public_base_url, claims=claims,
-                             vct_values=args.vct)
+                             vct_values=args.vct, verifier_info=verifier_info)
     if not issuer_jwks and not anchors:
         print("polaris-oid4vp: no --issuer-jwks or --issuer-trust-anchor given, so no "
               "credential can be verified: "
@@ -379,6 +389,10 @@ def main(argv=None) -> int:
                         "JSON array of keys; =VALUE (e.g. =true) is the value it must have")
     s.add_argument("--vct", action="append", default=[], metavar="TYPE",
                    help="a credential type to accept (repeatable; default urn:eudi:pid:1)")
+    s.add_argument("--verifier-info", default=None, metavar="FILE",
+                   help="a JSON array of verifier attestations to put in the request object "
+                        "(OpenID4VP 1.0 section 5.1), e.g. a registrar's registration "
+                        "certificate: [{\"format\": \"registration_cert\", \"data\": \"<JWT>\"}]")
     s.add_argument("--once", action="store_true",
                    help="print one authorization request's parameters at startup")
     s.add_argument("--verbose", action="store_true")

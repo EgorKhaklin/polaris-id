@@ -12,6 +12,7 @@ A command that produces the right shape is only worth having if something assert
 is right, so these tests check the properties the suite checked, rather than checking that
 five files appeared.
 """
+import base64
 import os
 import pathlib
 import subprocess
@@ -294,6 +295,28 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(seen["verifier"].claims, [(("given_name",), None), (("family_name",), None)])
         self.assertEqual(seen["verifier"].vct_values, ["urn:eudi:pid:1"])
+
+    def test_verifier_info_reaches_the_request_object(self):
+        import json
+        path = self.tmp / "verifier-info.json"
+        info = [{"format": "registration_cert", "data": "eyJhbGciOiJFUzI1NiJ9.e30.c2ln"}]
+        path.write_text(json.dumps(info))
+        rc, seen, _, _ = self._serve("--verifier-info", str(path))
+        self.assertEqual(rc, 0)
+        _, jar = seen["verifier"].new_request()
+        payload = jar.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        self.assertEqual(claims["verifier_info"], info)
+
+    def test_verifier_info_it_cannot_send_stops_it_starting(self):
+        path = self.tmp / "verifier-info.json"
+        for content in ("{", "[]", '[{"format": "registration_cert"}]'):
+            with self.subTest(content=content):
+                path.write_text(content)
+                rc, seen, _, err = self._serve("--verifier-info", str(path))
+                self.assertEqual(rc, 2)
+                self.assertNotIn("verifier", seen)
+                self.assertIn("--verifier-info", err)
 
     def test_a_claim_it_cannot_judge_stops_it_starting(self):
         rc, seen, _, err = self._serve("--claim", "age_equal_or_over..18")

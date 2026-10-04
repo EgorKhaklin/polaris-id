@@ -137,6 +137,42 @@ class Session:
         self.answered = False
 
 
+
+def verifier_info_entries(entries, credential_ids=()):
+    """`verifier_info` for the request object, checked against OpenID4VP 1.0 section 5.1.
+
+    A non-empty array of attestations about the verifier: each an object with `format` (a
+    string, such as "registration_cert" for the registration certificate a registrar issues)
+    and `data` (a string or an object), and optionally `credential_ids`, the credential queries
+    it applies to. The German EUDI Wallet ecosystem requires one for a PID request, and its
+    verifier testing tool, ERICA, refuses a request without it (2026-10-04). This package does
+    not issue or check the attestation; it carries what the operator was given. Anything else
+    is refused here, at construction, rather than sent to a wallet.
+    """
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("verifier_info must be a non-empty JSON array of objects")
+    out = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("each verifier_info entry must be a JSON object, not %r" % (entry,))
+        unknown = set(entry) - {"format", "data", "credential_ids"}
+        if unknown:
+            raise ValueError("verifier_info entry has unknown member(s) %s"
+                             % ", ".join(sorted(map(str, unknown))))
+        if not isinstance(entry.get("format"), str) or not entry["format"]:
+            raise ValueError("each verifier_info entry needs a non-empty string format")
+        if not isinstance(entry.get("data"), (str, dict)) or entry["data"] in ("", {}):
+            raise ValueError("each verifier_info entry needs data: a string or an object")
+        ids = entry.get("credential_ids")
+        if ids is not None and (not isinstance(ids, list) or not ids
+                                or not all(isinstance(i, str) and i in credential_ids
+                                           for i in ids)):
+            raise ValueError("verifier_info credential_ids must be a non-empty array naming "
+                             "this request's credential queries (%s)" % ", ".join(credential_ids))
+        out.append(json.loads(json.dumps(entry)))
+    return out
+
+
 def request_object_encryption(wallet_metadata):
     """Where to encrypt the request object for a wallet that asked, or None.
 
@@ -194,7 +230,7 @@ class Verifier:
                  issuer_jwks=None, issuer_trust_anchors=None, redirect_uri=None,
                  request_ttl_seconds=DEFAULT_REQUEST_TTL_SECONDS,
                  vct_values=("urn:eudi:pid:1",), claims=("given_name", "family_name"),
-                 status_resolver=None):
+                 status_resolver=None, verifier_info=None):
         if not _HAVE_CRYPTO:
             raise RuntimeError("polaris-oid4vp requires the cryptography package")
         self.cert = load_pem_x509_certificate(client_cert_pem)
@@ -218,6 +254,8 @@ class Verifier:
         # operator uses: the class that answers the wallet. A parameter reachable only from
         # the function underneath it is a capability the product does not have.
         self.status_resolver = status_resolver
+        self.verifier_info = (None if verifier_info is None
+                              else verifier_info_entries(verifier_info, (self.DCQL_QUERY_ID,)))
         self._sessions = {}
         self._by_request = {}
         self._lock = threading.Lock()
@@ -310,6 +348,8 @@ class Verifier:
         }
         if wallet_nonce is not None:
             claims["wallet_nonce"] = wallet_nonce
+        if self.verifier_info:
+            claims["verifier_info"] = self.verifier_info
         header = {"alg": "ES256", "typ": "oauth-authz-req+jwt", "x5c": self.x5c}
         return _sign_es256(self.key, header, claims)
 

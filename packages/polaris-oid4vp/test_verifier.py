@@ -317,6 +317,47 @@ class OverDisclosureTests(unittest.TestCase):
                 self.assertEqual(_selected(path, requested), expected)
 
 
+
+class VerifierInfoTests(unittest.TestCase):
+    """OpenID4VP 1.0 section 5.1 `verifier_info`: attestations about the verifier, such as the
+    registration certificate a registrar issues. The German EUDI Wallet ecosystem requires one
+    for a PID request and ERICA, its verifier testing tool, refuses a request without it."""
+
+    REGISTRATION = [{"format": "registration_cert", "data": "eyJhbGciOiJFUzI1NiJ9.e30.c2ln"}]
+
+    def verifier(self, **kw):
+        cert_pem, key_pem = _client_chain()
+        return Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                        request_uri="https://verifier.test/request.jwt",
+                        response_uri="https://verifier.test/response", **kw)
+
+    def test_the_request_object_carries_it_as_given(self):
+        v = self.verifier(verifier_info=self.REGISTRATION + [
+            {"format": "policy", "data": {"retention": "P0D"}, "credential_ids": ["pid"]}])
+        _, jar = v.new_request()
+        self.assertEqual(Wallet.read_request(jar)[1]["verifier_info"], self.REGISTRATION + [
+            {"format": "policy", "data": {"retention": "P0D"}, "credential_ids": ["pid"]}])
+
+    def test_a_request_object_minted_for_a_wallet_nonce_carries_it_too(self):
+        v = self.verifier(verifier_info=self.REGISTRATION)
+        session, _ = v.new_request()
+        claims = Wallet.read_request(v.request_object(session.state, wallet_nonce="w"))[1]
+        self.assertEqual(claims["verifier_info"], self.REGISTRATION)
+
+    def test_without_it_the_request_object_has_none(self):
+        _, jar = self.verifier().new_request()
+        self.assertNotIn("verifier_info", Wallet.read_request(jar)[1])
+
+    def test_what_section_5_1_does_not_allow_is_refused_at_construction(self):
+        for bad in ([], {}, "registration_cert", [7], [{"data": "x"}], [{"format": "", "data": "x"}],
+                    [{"format": "f"}], [{"format": "f", "data": ""}], [{"format": "f", "data": 3}],
+                    [{"format": "f", "data": "x", "credential_ids": []}],
+                    [{"format": "f", "data": "x", "credential_ids": ["mdl"]}],
+                    [{"format": "f", "data": "x", "other": 1}]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.verifier(verifier_info=bad)
+
+
 class TheRequestTests(VerifierTestCase):
     """Built from what the running conformance suite accepted, condition by condition."""
 

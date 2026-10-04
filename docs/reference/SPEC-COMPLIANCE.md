@@ -39,7 +39,9 @@ other than the object a requested member is reached through, is refused: section
 wallet MUST NOT send one. A wallet may fetch the signed request object by POST (`request_uri_method=post`) with a
 `wallet_nonce`, which the object then carries; when its `wallet_metadata` asks for the object
 encrypted and names a P-256 key, ECDH-ES and A128GCM or A256GCM, the signed object comes back
-encrypted to that key (a nested JWT, RFC 9101 section 6.1).
+encrypted to that key (a nested JWT, RFC 9101 section 6.1). The operator may add `verifier_info`
+(section 5.1), such as a registrar's registration certificate, which the request object carries
+unchanged.
 
 ## HAIP 1.0
 
