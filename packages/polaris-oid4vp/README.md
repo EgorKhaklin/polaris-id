@@ -185,6 +185,10 @@ of a displayed result). The drill carries two negative controls: a verifier that
 everything must fail the positive modules, and one that accepts everything must fail all seven
 negative ones.
 
+The wallet canary runs the drill weekly against the newest release on PyPI, with the suite's
+prebuilt images at their newest (`POLARIS_OID4VP_INSTALLED=1` makes it import the installed
+package instead of the tree). A run is not a certification.
+
 ## Tests
 
 ```bash

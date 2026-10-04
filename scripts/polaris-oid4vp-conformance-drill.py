@@ -14,8 +14,10 @@ what the suite says.
     cd conformance-suite && docker compose -f docker-compose-prebuilt.yml up -d
     python3 scripts/polaris-oid4vp-conformance-drill.py
 
-It does NOT run in CI for that reason, which is the same shape as every other drill in this
-directory that needs infrastructure a runner does not have.
+It does not run in the Polaris CI workflow for that reason. The wallet canary
+(`.github/workflows/wallet-canary.yml`, weekly) starts the suite's prebuilt images on a runner and
+runs this against the PUBLISHED package: with POLARIS_OID4VP_INSTALLED=1 the verifier is the
+installed `polaris_oid4vp`, not the tree's.
 
 WHAT PASSING MEANS, AND WHAT IT DOES NOT. The seven negative modules are scored
 automatically: the suite's wallet sends a presentation broken in one specific way and the
@@ -46,7 +48,8 @@ import urllib.parse
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "packages" / "polaris-oid4vp"))
+if not os.environ.get("POLARIS_OID4VP_INSTALLED"):
+    sys.path.insert(0, str(ROOT / "packages" / "polaris-oid4vp"))
 
 from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
 
@@ -310,6 +313,13 @@ def main() -> int:
 
     workdir = pathlib.Path(args.workdir)
     workdir.mkdir(parents=True, exist_ok=True)
+    import polaris_oid4vp
+    where = pathlib.Path(polaris_oid4vp.__file__).resolve().parent
+    if os.environ.get("POLARIS_OID4VP_INSTALLED"):
+        from importlib.metadata import version
+        print("verifier   polaris-oid4vp %s, installed at %s" % (version("polaris-oid4vp"), where))
+    else:
+        print("verifier   the tree's polaris_oid4vp at %s" % where)
     pki = build_pki(workdir)
     issuer_jwk = credential_signing_jwk()
 

@@ -51,6 +51,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The wallet canary walks the EU reference OpenID4VP library too, so all five implementations are re-run weekly.
 - A sixth implementation, vck (A-SIT Plus, Kotlin), presents to the published verifier a credential it issued; re-run weekly.
 - A lab walk decides outside status lists: the draft's test vectors, its signed example and the OpenWallet Foundation's tokens.
+- The wallet canary runs the OpenID Foundation's conformance suite weekly against the published verifier, with both controls.
 
 ### Changed
 
