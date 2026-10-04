@@ -104,6 +104,17 @@ class KeygenTests(unittest.TestCase):
         tls = x509.load_pem_x509_certificate((self.tmp / FILES["tls_cert"]).read_bytes())
         self.assertEqual(tls.issuer, tls.subject)
 
+    def test_the_ca_and_the_leaf_carry_the_key_identifiers_rfc_5280_asks_for(self):
+        """Multipaz's trust manager finds a CA by key identifier and skipped one without
+        (lab/interop/multipaz, 2026-10-04)."""
+        ca = x509.load_pem_x509_certificate((self.tmp / FILES["anchor"]).read_bytes())
+        leaf = x509.load_pem_x509_certificate((self.tmp / FILES["client_cert"]).read_bytes())
+        ski = ca.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value
+        aki = leaf.extensions.get_extension_for_class(x509.AuthorityKeyIdentifier).value
+        self.assertEqual(aki.key_identifier, ski.digest)
+        self.assertEqual(ski, x509.SubjectKeyIdentifier.from_public_key(ca.public_key()))
+        leaf.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+
     def test_the_tls_certificate_is_marked_for_server_authentication(self):
         """Apple's TLS policy refuses a server certificate without serverAuth, even an
         explicitly trusted one (the EU iOS OpenID4VP library's walk, 2026-10-04)."""

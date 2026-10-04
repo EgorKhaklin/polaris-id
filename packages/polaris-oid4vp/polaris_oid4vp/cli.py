@@ -79,6 +79,12 @@ def keygen(out: pathlib.Path, host: str) -> dict:
           .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
           .add_extension(x509.KeyUsage(False, False, False, False, False, True, True,
                                        False, False), critical=True)
+          # Key identifiers, which RFC 5280 (4.2.1.1, 4.2.1.2) has every conforming CA put on
+          # its own certificate and on each one it signs. Multipaz's trust manager finds a CA by
+          # them and skipped this one without ("Skipping certificate without SKI"), so it refused
+          # the request (lab/interop/multipaz, 2026-10-04).
+          .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()),
+                         critical=False)
           .sign(ca_key, hashes.SHA256()))
 
     leaf_key = ec.generate_private_key(ec.SECP256R1())
@@ -90,6 +96,10 @@ def keygen(out: pathlib.Path, host: str) -> dict:
             .not_valid_after(now + datetime.timedelta(days=90))
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
             .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(leaf_key.public_key()),
+                           critical=False)
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+                           critical=False)
             .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False,
                                          key_encipherment=False, data_encipherment=False,
                                          key_agreement=False, key_cert_sign=False,

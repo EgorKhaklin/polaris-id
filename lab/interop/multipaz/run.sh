@@ -63,9 +63,10 @@ venv/bin/polaris-oid4vp keygen --out pki --host host.docker.internal --port "$PO
 venv/bin/polaris-oid4vp keygen --out other-pki --host host.docker.internal --port "$PORT" >/dev/null
 # Multipaz's trust manager finds a verifier's CA by key identifier: the CA's Subject Key Identifier
 # against the Authority Key Identifier of the certificate it signed, the identifiers RFC 5280 has
-# a conforming CA put in both. keygen's test certificates carry neither, so this re-issues each
-# pair under a new CA key (keygen keeps none) with them added: the same leaf key, names, validity
-# and extensions as keygen wrote.
+# a conforming CA put in both. keygen's test certificates carried neither until the tree's fix of
+# 2026-10-04, so for a release without it this re-issues each pair under a new CA key (keygen keeps
+# none) with them added: the same leaf key, names, validity and extensions as keygen wrote. A keygen
+# that writes them is used as written.
 venv/bin/python - <<'EOF'
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -73,6 +74,13 @@ from cryptography.hazmat.primitives.asymmetric import ec
 for d in ("pki", "other-pki"):
     old_ca = x509.load_pem_x509_certificate(open(d + "/anchor.pem", "rb").read())
     old_leaf = x509.load_pem_x509_certificate(open(d + "/client.pem", "rb").read())
+    try:
+        old_ca.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+        old_leaf.extensions.get_extension_for_class(x509.AuthorityKeyIdentifier)
+        print("pki        %s: keygen's certificates carry key identifiers, used as written" % d)
+        continue
+    except x509.ExtensionNotFound:
+        print("pki        %s: re-issued with key identifiers (this keygen writes none)" % d)
     leaf_key = serialization.load_pem_private_key(open(d + "/client-key.pem", "rb").read(), None)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ski = x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key())
