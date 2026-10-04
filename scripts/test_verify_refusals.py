@@ -27,6 +27,7 @@ import pathlib
 import stat
 import tempfile
 import unittest
+import unittest.mock
 from datetime import datetime, timedelta, timezone
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -1810,6 +1811,250 @@ class ReceiptInclusionDecisions(unittest.TestCase):
         v = V.verify_receipt_inclusion("receipt", self.proof(3), self.head())
         self.assertFalse(v["included"])
         self.assertIn("must be objects", v["note"])
+
+
+# --------------------------------------------------------------------------- the chain anchor
+
+class ChainAnchorDecisions(unittest.TestCase):
+    """013: a checkpoint of the transparency logs committed in a Bitcoin block. The fixture is
+    the real one: lab/strategy/013's checkpoint, its OpenTimestamps proof, and the raw headers
+    of blocks 969876 (the attested block) and 969877, as blockstream.info and mempool.space both
+    returned them on 2026-10-04."""
+
+    CHECKPOINT = (
+        '{"format":"polaris-chain-checkpoint/1","heads":[{"format":"polaris-transparency-sth/1","log_id":'
+        '"polaris-audit-anchor-log","root_hash_hex":"a0460165abc77f744daf24669123959b2a4c3f9dc3eff00e7fe6'
+        'dfa4e23bf135","timestamp":"2026-10-04T16:30:22Z","tree_size":2},{"format":"polaris-transparency-'
+        'sth/1","log_id":"polaris-exchange-receipt-log","root_hash_hex":"623b44419e93d5bf43bd2fa7d0ecaf1e'
+        'afa24f3594a33a45b5564dd2472a91be","timestamp":"2026-10-04T16:30:22Z","tree_size":2},{"format":"p'
+        'olaris-transparency-sth/1","log_id":"polaris-timestamp-log","root_hash_hex":"75d95f79470c3b43773'
+        'ef54072da6d505c34c48d3352869dd7b1d93942d101df","timestamp":"2026-10-04T16:30:22Z","tree_size":19'
+        '4}]}'
+    )
+    PROOF_HEX = (
+        "004f70656e54696d657374616d7073000050726f6f6600bf89e2e884e89294010807f61b18cb2b4e8367637f5a2cc175"
+        "6500da1d7ea64806c98818c537747c3b2df0103ebbefd5c20718220b3c7641d87febb208fff0081cd02d7a3ed7d1da08"
+        "f1205223bd1c2531f1ebce0fcd58f8d70dca1857f114580adb3446407d5a3b411b4f08f010489646bb2a75beca548a8e"
+        "c554c2a74908f12056056c8a29ae75416dc84ecd09f60b82391cd432e03193555bc0beb8450a377d08f020ddc432e964"
+        "abe79f9240dc72ed9fa067ec79aacfcc3d03e474a3a34431dd6e5608f1046ac27fa6f008441b00a8d55ab4f3ff0083df"
+        "e30d2ef90c8e2e2d68747470733a2f2f616c6963652e6274632e63616c656e6461722e6f70656e74696d657374616d70"
+        "732e6f726708f1208f3b81059eabfbc34d2b0b6f7084fe9ff5800c55321c4b8b94cab1134a01c12508f1209474829999"
+        "1f9dd4d3b3ff12999a986cf947066e92777aa4332e170ed11b52fe08f120f7277fe95eac2729948bc53015e54fd97694"
+        "60cadd96793e47b3c3b9b455657708f120f2ae198f24608885016b970c15cea8bb2b999c3117ad58a0b9e019e091839a"
+        "cf08f020084ae194d30cb240d9ed3efa708b0375d28275c9b73d2056d243dcc122d7df5908f020a5790b22a2d5333ad7"
+        "6689d95d0bba2e40934afd76ea9f3dee60c583bf928fe508f02022ebe2103d35592744bfd08b8df8cdba4cb58b0698c5"
+        "69225459563f27f06a0c08f1204d4a0c5a9f217a34ccadb89c4c050402de174df5e5fae1ba4eb3c56640ff7f4f08f020"
+        "500806a88b1a7c132ec132934c98d1abc689b4dfd91ec1b5405e02fab75663a508f02010f513987526f359340d94a65c"
+        "57db3eaf0695b2a70e033d3e181c4dea3941cb08f020d5722010aa7c6624ce20aba8966513ee2f7f0d286d06d233e34c"
+        "9a03d3a351ba08f15901000000014091d56393cdfc514793b74b1e714efb990d642b73629ad1ee05ab1bf547373e0000"
+        "000000feffffff02a106000000000000160014f79e67758ad5517bf5ee99a330a720967c7d359c000000000000000022"
+        "6a20f00493cc0e000808f0206ff351d65de3a94f96f44f821d14c651353877a68c409eaf356cbc585791d1c90808f020"
+        "db715a1f30890ba5c20619f89faa350f4ec6b784309aed026b9041d2d17476bd0808f1202434bc29fe3d58c480dd3315"
+        "ee2f0c92d69bdbdf2bee6d410d8fdbde91604f090808f020ec249bb32ce561379415c919a8329ff02ea902a384073236"
+        "ce1bb6bc8eb84cdb0808f020d1007f3ff19676182f27baa66522ee33df6612b74f69166fd7d765e42861576b0808f020"
+        "44703490e0551a714516282ece23c752e308a88e9b78457962a9c1af413dff310808f0206d0ad3dc9205ad2e47db561b"
+        "7cdc3945bdc258f87982874bcb2f16312745e5ec0808f020f4caa978221ecda93e73e4e9562dbe7879dfc67cc29f6fe6"
+        "3029f1bec8b593010808f1207798d7a651d881880d1f49b700c19f327c24236646a258c16d60c71d921db1bd0808f020"
+        "1a5ca861e71068808d0c6253e630e94580f7ae41da639d08214db6af61f2d74c0808f0204b0a931a532ab1a44347bc7b"
+        "97a59d1bd46c369546ed13e3fdd207513632e7f00808f1204c7f67b2380aaeac199bca9dc3ab26d56f8cc1d91625f5d1"
+        "f41f5e7fdac1f8620808f020fb0e4f17e28ef3c2684504db5898655736c7b18be6cd83770ab8cb804f79b7f208080005"
+        "88960d73d719010394993bfff010b6946699f1cd5f4d2f1b53fee784a45208f020de9860dbe74847a32cb59f205013db"
+        "e36fed0a6acb197cf5bbfcee581bff634908f1046ac27fa6f008b1ed76c6a01e49160083dfe30d2ef90c8e2322687474"
+        "70733a2f2f6274632e63616c656e6461722e636174616c6c6178792e636f6dfff010be79d2d828868e62c23701f9c88a"
+        "c1ac08f120f30d9eafd517b99359afb1f8310fcdec19a3901b9233d8c921c8216d275cd92908f1046ac27fa5f0082001"
+        "fc50144a7fba0083dfe30d2ef90c8e292868747470733a2f2f66696e6e65792e63616c656e6461722e657465726e6974"
+        "7977616c6c2e636f6df008ee33dee5733c6f1f08f0102722ae51de72c78f780712852ccac11c08f0203ec5d4cfb398f0"
+        "a5ea8623c0906cd7c6653fbbd90c27695a8c77f33b3e8e7d2f08f0207f20597b2aedd4f930e308c2eb735c70293b6e45"
+        "866dcb8fcfcd08e07124637608f1046ac27fa6f0084eb291b0ddc9dfdb0083dfe30d2ef90c8e2c2b68747470733a2f2f"
+        "626f622e6274632e63616c656e6461722e6f70656e74696d657374616d70732e6f7267"
+    )
+    HEADER = {
+        969876: "0000a729b432e510383fe90910c123bd976838dafd088a4ed87a00000000000000000000237aab588a2f62fba8665e3f5e3610c63ed55623a0b83a2fd8e57f30be2901974c86c26af01e0217242d0d90",
+        969877: "0000d82d144d213ec6dc17db3c9b447e9476b6b7fd558c49192d0100000000000000000098716e084fda1f7bb60fba3d503d54886e877925d38711aa1feef28da3daa2bf5e86c26af01e021752589234",
+    }
+    BLOCK_HASH = "000000000000000000012d19498c55fdb7b676947e449b3cdb17dcc63e214d14"
+    FIRST_APPEND = "3ebbefd5c20718220b3c7641d87febb2"   # the proof's first operation's argument
+
+    def anchor(self, **changes):
+        a = {"format": "polaris-chain-anchor/1", "checkpoint": self.CHECKPOINT, "proof_hex": self.PROOF_HEX}
+        a.update(changes)
+        return a
+
+    def sources(self, header=None, n=2):
+        return {"source-%d" % i: {969876: header or self.HEADER[969876]} for i in range(n)}
+
+    def digest(self, text=None):
+        return hashlib.sha256((text or self.CHECKPOINT).encode("utf-8")).digest()
+
+    @staticmethod
+    def proof(digest, body):
+        """A proof over `digest` whose timestamp is `body`, built from the format directly."""
+        return (V._OTS_MAGIC + b"\x01" + b"\x08" + digest + body).hex()
+
+    @staticmethod
+    def bitcoin(height, extra=b""):
+        payload = bytes([height]) + extra if height < 128 else None
+        return b"\x00" + V._OTS_BITCOIN + bytes([len(payload)]) + payload
+
+    def refused(self, anchor, sources=None, why="", **kw):
+        v = V.verify_chain_anchor(anchor, self.sources() if sources is None else sources, **kw)
+        self.assertFalse(v["anchored"], v)
+        self.assertIn(why, v["note"])
+        return v
+
+    # The genuine anchor, and the one decision it needs from the caller.
+    def test_the_genuine_anchor_holds_from_two_sources(self):
+        v = V.verify_chain_anchor(self.anchor(), self.sources())
+        self.assertTrue(v["anchored"], v)
+        self.assertEqual((v["block_height"], v["block_hash"], v["block_time"]),
+                         (969876, self.BLOCK_HASH, 1791133260))
+        self.assertEqual([h["tree_size"] for h in v["heads"]], [2, 2, 194])
+        self.assertEqual(V.chain_anchor_heights(self.anchor()), [969876])
+
+    def test_the_lab_checkpoint_is_the_canonical_form(self):
+        heads = json.loads(self.CHECKPOINT)["heads"]
+        self.assertEqual(V.chain_checkpoint(list(reversed(heads))), self.CHECKPOINT.encode("utf-8"))
+
+    def test_one_source_holds_only_when_the_caller_says_one_is_enough(self):
+        self.refused(self.anchor(), self.sources(n=1), "1 of 2 sources")
+        self.assertTrue(V.verify_chain_anchor(self.anchor(), self.sources(n=1), min_sources=1)["anchored"])
+        self.refused(self.anchor(), self.sources(), "positive integer", min_sources=0)
+
+    def test_sources_that_disagree_are_refused_even_when_one_matches(self):
+        mixed = {"a": {969876: self.HEADER[969876]}, "b": {969876: self.HEADER[969877]},
+                 "c": {969876: self.HEADER[969876]}}
+        self.refused(self.anchor(), mixed, "disagree about block 969876")
+
+    def test_a_height_key_read_from_json_text_is_the_same_height(self):
+        v = V.verify_chain_anchor(self.anchor(), {s: {"969876": self.HEADER[969876]} for s in "ab"})
+        self.assertTrue(v["anchored"], v)
+
+    # The checkpoint.
+    def test_a_changed_checkpoint_is_refused(self):
+        changed = self.CHECKPOINT.replace('"tree_size":194', '"tree_size":195')
+        self.assertNotEqual(changed, self.CHECKPOINT)
+        self.refused(self.anchor(checkpoint=changed), why="for another digest")
+
+    def test_a_stated_digest_that_is_not_the_checkpoint_s_is_refused(self):
+        self.refused(self.anchor(checkpoint_sha256="00" * 32), why="not the digest of its checkpoint")
+        self.assertTrue(V.verify_chain_anchor(self.anchor(checkpoint_sha256=self.digest().hex()),
+                                              self.sources())["anchored"])
+
+    def test_a_checkpoint_not_in_canonical_form_is_refused(self):
+        spaced = json.dumps(json.loads(self.CHECKPOINT), sort_keys=True)
+        self.refused(self.anchor(checkpoint=spaced), why="canonical form")
+
+    def test_a_checkpoint_naming_one_log_twice_is_refused(self):
+        heads = json.loads(self.CHECKPOINT)["heads"]
+        twice = V.chain_checkpoint([heads[0], dict(heads[0], tree_size=3)]).decode()
+        self.refused(self.anchor(checkpoint=twice), why="one log twice")
+
+    def test_a_head_that_is_not_a_statement_is_refused(self):
+        heads = json.loads(self.CHECKPOINT)["heads"]
+        for bad in (dict(heads[0], tree_size=True), dict(heads[0], tree_size=-1),
+                    dict(heads[0], format="other"), dict(heads[0], root_hash_hex=7)):
+            with self.subTest(bad=bad):
+                text = V.chain_checkpoint([bad]).decode()
+                self.refused(self.anchor(checkpoint=text), why="not a tree-head statement")
+
+    def test_anything_but_an_anchor_with_checkpoint_text_is_refused(self):
+        self.refused({"format": "other"}, why="not a polaris-chain-anchor/1")
+        self.refused(self.anchor(checkpoint=None), why="no checkpoint text")
+        self.refused(self.anchor(checkpoint="[]"), why="not a polaris-chain-checkpoint/1")
+        self.refused(self.anchor(checkpoint="{"), why="not JSON")
+        self.refused(self.anchor(checkpoint='{"format":"polaris-chain-checkpoint/1","heads":[]}'), why="lists no heads")
+
+    # The proof.
+    def test_a_changed_operation_is_refused(self):
+        self.assertEqual(self.PROOF_HEX.count(self.FIRST_APPEND), 1)
+        flipped = self.PROOF_HEX.replace(self.FIRST_APPEND, "3f" + self.FIRST_APPEND[2:])
+        self.refused(self.anchor(proof_hex=flipped), why="Merkle root is")
+
+    def test_the_wrong_block_is_refused(self):
+        self.refused(self.anchor(), self.sources(self.HEADER[969877]), "Merkle root is")
+
+    def test_a_pending_proof_is_refused(self):
+        pending = b"\x00" + bytes.fromhex("83dfe30d2ef90c8e") + b"\x06\x05https"
+        self.refused(self.anchor(proof_hex=self.proof(self.digest(), pending)), why="pending")
+        self.assertEqual(V.chain_anchor_heights(self.anchor(proof_hex=self.proof(self.digest(), pending))), [])
+
+    def test_a_proof_that_ends_early_or_runs_on_is_refused(self):
+        self.refused(self.anchor(proof_hex=self.PROOF_HEX[:-10]), why="ends early")
+        self.refused(self.anchor(proof_hex=self.PROOF_HEX + "00"), why="bytes after its timestamp")
+
+    def test_a_proof_that_is_not_one_is_refused(self):
+        self.refused(self.anchor(proof_hex="00" * 40), why="not an OpenTimestamps proof")
+        self.refused(self.anchor(proof_hex="zz"), why="does not open")
+        self.refused(self.anchor(proof_hex=None), why="does not open")
+        self.refused(self.anchor(proof_hex="00" * (V._OTS_MAX_PROOF + 1)), why="at most")
+        v2 = (V._OTS_MAGIC + b"\x02\x08" + self.digest()).hex()
+        self.refused(self.anchor(proof_hex=v2), why="major version")
+        sha1 = (V._OTS_MAGIC + b"\x01\x02" + self.digest()).hex()
+        self.refused(self.anchor(proof_hex=sha1), why="not over a SHA-256 digest")
+
+    def test_an_operation_this_verifier_does_not_know_is_refused(self):
+        self.refused(self.anchor(proof_hex=self.proof(self.digest(), b"\x67" + self.bitcoin(5))),
+                     why="does not know: 0x67")
+
+    def test_an_operation_this_python_cannot_compute_is_refused(self):
+        real = hashlib.new
+
+        def no_ripemd(name, *a):
+            if name == "ripemd160":
+                raise ValueError("unsupported hash type")
+            return real(name, *a)
+        body = b"\x03" + self.bitcoin(5)
+        with unittest.mock.patch.object(V.hashlib, "new", no_ripemd):
+            self.refused(self.anchor(proof_hex=self.proof(self.digest(), body)), why="cannot compute operation 0x03")
+        try:                                               # OpenSSL 3 without its legacy provider
+            real("ripemd160", b"")
+        except ValueError:
+            return
+        self.assertEqual(len(V.ots_bitcoin_attestations(bytes.fromhex(self.proof(self.digest(), body)), self.digest())), 1)
+
+    def test_an_append_with_no_argument_is_refused(self):
+        self.refused(self.anchor(proof_hex=self.proof(self.digest(), b"\xf0\x00" + self.bitcoin(5))),
+                     why="outside 1..4096")
+
+    def test_a_result_longer_than_the_format_allows_is_refused(self):
+        big = b"\xf0" + bytes([0x80, 0x20]) + b"\x00" * 4096   # varuint 4096
+        self.refused(self.anchor(proof_hex=self.proof(self.digest(), big + self.bitcoin(5))),
+                     why="exceeds 4096")
+
+    def test_a_proof_nested_deeper_than_the_format_allows_is_refused(self):
+        deep = b"\x08" * 300 + self.bitcoin(5)
+        self.refused(self.anchor(proof_hex=self.proof(self.digest(), deep)), why="nests deeper")
+        shallow = b"\x08" * 200 + self.bitcoin(5)
+        self.assertEqual(len(V.ots_bitcoin_attestations(bytes.fromhex(self.proof(self.digest(), shallow)),
+                                                        self.digest())), 1)
+
+    def test_a_length_past_64_bits_is_refused(self):
+        self.refused(self.anchor(proof_hex=(V._OTS_MAGIC + b"\x80" * 10 + b"\x01").hex()), why="64 bits")
+
+    def test_a_bitcoin_attestation_with_bytes_after_its_height_is_refused(self):
+        self.refused(self.anchor(proof_hex=self.proof(self.digest(), self.bitcoin(5, extra=b"\x00"))),
+                     why="bytes after its height")
+
+    # The block header.
+    def test_a_header_whose_hash_misses_its_target_is_refused(self):
+        raw = bytearray(bytes.fromhex(self.HEADER[969876]))
+        raw[76] ^= 0x01                                    # the nonce: same Merkle root, new hash
+        self.refused(self.anchor(), self.sources(raw.hex()), "proof of work")
+
+    def test_a_header_declaring_an_easier_target_than_mainnet_is_refused(self):
+        raw = bytearray(bytes.fromhex(self.HEADER[969876]))
+        raw[72:76] = (0x207FFFFF).to_bytes(4, "little")    # a test network's target
+        for nonce in range(1 << 16):                       # half of all hashes meet it
+            raw[76:80] = nonce.to_bytes(4, "little")
+            h = hashlib.sha256(hashlib.sha256(bytes(raw)).digest()).digest()
+            if int.from_bytes(h, "little") <= 0x7FFFFF << 232:
+                break
+        self.assertFalse(V.bitcoin_header(raw.hex())["pow_ok"])
+        self.refused(self.anchor(), self.sources(raw.hex()), "proof of work")
+
+    def test_a_header_that_is_not_80_bytes_is_refused(self):
+        self.refused(self.anchor(), self.sources(self.HEADER[969876][:-2]), "80 bytes")
+        self.refused(self.anchor(), self.sources("zz" * 80), "malformed")
 
 
 if __name__ == "__main__":
