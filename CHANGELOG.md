@@ -27,6 +27,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- polaris-oid4vp asks for a nested claim and its value (`--claim age_equal_or_over.18=true`): one statement of an EUDI PID, not all of them.
 - polaris-oid4vp verifies an issuer `x5c` through the intermediate CAs it carries, link by link in order, as eudi-dev v2.5.0's PID Provider sends.
 - An issuance tunnel serves only the wallet's OpenID4VCI endpoints over your own tunnel, so a wallet can be issued a demo copy.
 - A one-command helper mints an OpenID4VCI wallet-copy offer through the operator route, for the issuance-tunnel demo.
@@ -45,7 +46,6 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The Atlas Overview shows the latest state epoch and anchor batch, and the Athena board's verdict on the database.
 - Atlas breakdowns and cross-tabs compare with the window before; a change shows only where both counts do.
 - polaris-oid4vp runs behind a proxy or tunnel: `--public-base-url` sets the wallet-facing HTTPS origin, `--no-local-tls` serves plain HTTP.
-- polaris-oid4vp asks for a nested claim and its value (`--claim age_equal_or_over.18=true`): one statement of an EUDI PID, not all of them.
 
 ### Changed
 
