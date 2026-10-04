@@ -18,8 +18,8 @@ nothing else. Procivis does the work:
   JWT) and sends the response, encrypted to the verifier's key (`ECDH-ES`).
 
 The verifier trusts the issuer only through `--issuer-trust-anchor`, the CA certificate. With
-`x5c` the credential's `iss` must be a name the certificate carries, and Procivis writes its base
-URL into `iss`; the certificate names `procivis.test`, so the base URL is
+`x5c` the credential's `iss` must be a name the certificate carries, and Procivis's `iss` is a URL
+under its base URL; the certificate names `procivis.test`, so the base URL is
 `https://procivis.test`. `core-server` serves plain HTTP, so [`tls_front.py`](tls_front.py)
 terminates TLS for that name inside its container. Procivis's OpenID4VP is its own, beside
 walt.id's, Credo's, eudi-dev's, OID4VCgo's, the EU reference library's and vck's.
@@ -32,11 +32,12 @@ walt.id's, Credo's, eudi-dev's, OID4VCgo's, the EU reference library's and vck's
 [`run.sh`](run.sh) runs everything in a scratch directory (`WORK`):
 - `polaris-oid4vp` from PyPI in a fresh venv, its dependencies by hash;
 - Procivis One Core v1.87.2, downloaded at commit `8b701da8` and checked against its SHA-256,
-  then built with cargo from the lockfile it ships (`--locked`), `-j 4`, in a Rust image pinned
-  by digest. The upstream Dockerfile starts from an image on Procivis's own registry, so there is
-  no image to pull. The binary, cargo's registry and the target directory stay in named volumes,
-  so only the first run builds: a cold build took 13.6 minutes here (8 arm64 cores under Docker
-  Desktop, cargo's default parallelism, other builds running);
+  then built with cargo from the lockfile it ships (`--locked`, `-j 4`) in a Rust image pinned
+  by digest. Procivis publishes no image on Docker Hub, and the upstream Dockerfile starts from a
+  base image on Procivis's own registry, which asks for credentials. The binary, cargo's registry
+  and the target directory stay in named volumes, so only the first run builds: from empty
+  volumes that took 10.5 minutes here (8 arm64 cores under Docker Desktop), and a later run
+  skips the build;
 - the test PKI: the verifier's (`polaris-oid4vp keygen`), the issuer CA
   ([`pki.py`](pki.py)), a TLS certificate for `procivis.test`, and a fresh API token and
   encryption keys for `core-server`, made for the run and never written into the tree;
