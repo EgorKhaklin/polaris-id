@@ -172,6 +172,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/oauth-authz-req+jwt")
         self.send_header("Content-Length", str(len(raw)))
+        # Not to be kept by a cache between the verifier and the wallet: it carries this
+        # session's nonce and state, and a POST's wallet_nonce. The German EUDI Wallet
+        # developer guide's request_uri response sends these two, so cached copies are not
+        # reused (2026-10-04).
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Pragma", "no-cache")
         self.end_headers()
         self.wfile.write(raw)
 
