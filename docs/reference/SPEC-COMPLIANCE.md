@@ -23,7 +23,8 @@ Foundation on 24 September 2026
 ([listing](https://openid.net/certification/certified-oid4vp-haip-final/)). It is a
 self-certification for that package version in that role: not an endorsement, not an audit, and not
 a certification of the rest of Polaris. A later package version is not certified until it is
-re-tested and re-submitted.
+re-tested and re-submitted. OpenID® and OpenID® Certified™ are trademarks of the OpenID
+Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
 ## OpenID4VP 1.0
 

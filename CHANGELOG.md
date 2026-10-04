@@ -42,6 +42,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The Atlas Overview shows the latest state epoch and anchor batch, and the Athena board's verdict on the database.
 - Atlas breakdowns and cross-tabs compare with the window before; a change shows only where both counts do.
 - polaris-oid4vp runs behind a proxy or tunnel: `--public-base-url` sets the wallet-facing HTTPS origin, `--no-local-tls` serves plain HTTP.
+- The README and polaris-oid4vp's page list every outside implementation the verifier is walked against: maintainer, language, last walk.
+- The wallet canary walks the EU reference OpenID4VP library too, so all five implementations are re-run weekly.
 
 ### Changed
 
@@ -93,6 +95,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The UI drill and the performance baseline refuse a port another server holds; the drill's app no longer outlives it.
 - In the Atlas, a hovered tab keeps its label and a lone interval is drawn; a stacked chart no longer reads a withheld value as zero.
 - Public pages: no empty band above the first line, a visible secondary action, a four-column feature grid.
+- Every page showing the OpenID® Certified™ mark names the OpenID Foundation as its owner, as its trademark policy (2.2) asks.
 - The duress wording check passed the noun "compulsion resistance"; API.md and DATA-MODEL.md named the mechanism with it.
 - API.md pointed at `app.py` for the federation check; it is in `verification_routes.py`.
 - The signals queue said "N of M active" while counting every credential with a duress code, in 923 ms.
