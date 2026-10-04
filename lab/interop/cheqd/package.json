@@ -1,0 +1,23 @@
+{
+  "name": "polaris-interop-cheqd",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "description": "A Credo issuer with a P-256 did:cheqd on a cheqd localnet, and a Credo holder presenting to polaris-oid4vp",
+  "scripts": {
+    "walk": "node walk.ts",
+    "typecheck": "tsc --noEmit --module nodenext --moduleResolution nodenext --target es2022 --allowImportingTsExtensions --strict --skipLibCheck --types node walk.ts MemoryStorageService.ts"
+  },
+  "dependencies": {
+    "@credo-ts/cheqd": "0.7.2",
+    "@credo-ts/core": "0.7.2",
+    "@credo-ts/node": "0.7.2",
+    "@credo-ts/openid4vc": "0.7.2"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}

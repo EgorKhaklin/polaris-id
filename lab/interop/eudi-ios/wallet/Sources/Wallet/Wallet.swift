@@ -57,10 +57,11 @@ struct Wallet {
         publicWebKeySet: WebKeySet(keys: []),
         supportedClientIdSchemes: [.x509Hash(trust: trust)],
         // The wallet kit (0.54.5) configures the library with .encryptionOption: on POST it asks
-        // for the request object encrypted to its key, and refuses one that is not.
-        // JAR_ENCRYPTION=1 runs this wallet with that setting.
-        jarConfiguration: ProcessInfo.processInfo.environment["JAR_ENCRYPTION"] == "1"
-          ? .encryptionOption : .noEncryptionOption,
+        // for the request object encrypted to its key, and refuses one that is not. This wallet
+        // does the same since polaris-oid4vp 1.0.0rc16 encrypts it; JAR_ENCRYPTION=0 turns it off
+        // for a release before that.
+        jarConfiguration: ProcessInfo.processInfo.environment["JAR_ENCRYPTION"] == "0"
+          ? .noEncryptionOption : .encryptionOption,
         vpConfiguration: VPConfiguration(
           vpFormatsSupported: try VpFormatsSupported(values: [
             .sdJwtVc(sdJwtAlgorithms: [JWSAlgorithm(.ES256)], kbJwtAlgorithms: [JWSAlgorithm(.ES256)])
