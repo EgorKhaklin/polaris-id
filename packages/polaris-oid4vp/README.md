@@ -70,10 +70,11 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   `enc` this package produces, A128GCM or A256GCM, and a P-256 key in `jwks`) gets the signed
   object encrypted to that key, as the EUDI iOS wallet kit requires. A wallet that asks for
   nothing, or for something this cannot produce, gets the signed object.
-- `--verifier-info FILE` puts a JSON array of attestations about the verifier into the request
-  object (OpenID4VP 1.0 section 5.1), such as the registration certificate a registrar issues:
-  `[{"format": "registration_cert", "data": "<JWT>"}]`. The German EUDI Wallet ecosystem
-  requires one for a PID request. This package carries it and does not check it.
+- `--verifier-info FILE` puts attestations about the verifier into the request object, such as
+  the registration certificate a registrar issues: a JSON array as OpenID4VP 1.0 section 5.1 has
+  it, or one object, `{"format": "registration_cert", "data": "<JWT>"}`, as the German EUDI
+  Wallet guide and its testing tool read it. The German ecosystem requires one for a PID request.
+  This package carries it as given and does not check it.
 - `serve --issuer-trust-anchor ca.pem` trusts an issuer that signs with its certificate in `x5c`,
   as HAIP issuers do (repeatable; each file may hold several PEM certificates). The leaf must
   chain to an anchor, directly or through the CA certificates the `x5c` sends after it (at most
@@ -213,7 +214,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 419 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 420 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 120 refusals accept and requires a

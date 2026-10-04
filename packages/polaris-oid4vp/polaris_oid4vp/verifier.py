@@ -145,12 +145,16 @@ def verifier_info_entries(entries, credential_ids=()):
     string, such as "registration_cert" for the registration certificate a registrar issues)
     and `data` (a string or an object), and optionally `credential_ids`, the credential queries
     it applies to. The German EUDI Wallet ecosystem requires one for a PID request, and its
-    verifier testing tool, ERICA, refuses a request without it (2026-10-04). This package does
-    not issue or check the attestation; it carries what the operator was given. Anything else
-    is refused here, at construction, rather than sent to a wallet.
+    verifier testing tool, ERICA, refuses a request without it (2026-10-04). ERICA and the German
+    developer guide read a single object, `verifier_info.data`, where section 5.1 has an array,
+    so a single object is carried as a single object: the operator supplies the shape its
+    ecosystem reads. This package does not issue or check the attestation; it carries what the
+    operator was given. Anything else is refused here, at construction, rather than sent.
     """
+    if isinstance(entries, dict):
+        return verifier_info_entries([entries], credential_ids)[0]
     if not isinstance(entries, list) or not entries:
-        raise ValueError("verifier_info must be a non-empty JSON array of objects")
+        raise ValueError("verifier_info must be a JSON object or a non-empty JSON array of them")
     out = []
     for entry in entries:
         if not isinstance(entry, dict):

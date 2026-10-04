@@ -344,12 +344,19 @@ class VerifierInfoTests(unittest.TestCase):
         claims = Wallet.read_request(v.request_object(session.state, wallet_nonce="w"))[1]
         self.assertEqual(claims["verifier_info"], self.REGISTRATION)
 
+    def test_a_single_object_is_carried_as_one_object(self):
+        """ERICA and the German EUDI wallet guide read verifier_info.data, a single object."""
+        v = self.verifier(verifier_info=self.REGISTRATION[0])
+        _, jar = v.new_request()
+        self.assertEqual(Wallet.read_request(jar)[1]["verifier_info"], self.REGISTRATION[0])
+
     def test_without_it_the_request_object_has_none(self):
         _, jar = self.verifier().new_request()
         self.assertNotIn("verifier_info", Wallet.read_request(jar)[1])
 
     def test_what_section_5_1_does_not_allow_is_refused_at_construction(self):
-        for bad in ([], {}, "registration_cert", [7], [{"data": "x"}], [{"format": "", "data": "x"}],
+        for bad in ([], {}, {"data": "x"}, "registration_cert", [7], [{"data": "x"}],
+                    [{"format": "", "data": "x"}],
                     [{"format": "f"}], [{"format": "f", "data": ""}], [{"format": "f", "data": 3}],
                     [{"format": "f", "data": "x", "credential_ids": []}],
                     [{"format": "f", "data": "x", "credential_ids": ["mdl"]}],

@@ -65,6 +65,43 @@ case "$SERVE_HELP" in
   *--vct*) VCT_ARGS=(--vct "$VCT") ;;
   *) echo "           this polaris-oid4vp has no --vct: it asks for urn:eudi:pid:1, and ERICA's $VCT is refused" ;;
 esac
+# A verifier with --verifier-info (the tree since 2026-10-04) also refuses a presentation that
+# discloses claims the request did not select (OpenID4VP 1.0 6.4); with it the validation step
+# carries a registration certificate and OVER_DISCLOSURE joins the modes that must be refused.
+case "$SERVE_HELP" in
+  *--verifier-info*)
+    NEWER=1
+    venv/bin/python - verifier-info.json "${VCT}" <<'EOF'
+import base64, datetime, json, sys
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, utils
+from cryptography.x509.oid import NameOID
+b64 = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+# A registrar made for this run: ERICA trusts no registrar it was not given, so the certificate
+# shows the request carries one, not that anyone registered this verifier.
+key = ec.generate_private_key(ec.SECP256R1())
+name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Polaris lab test registrar")])
+now = datetime.datetime.now(datetime.timezone.utc)
+cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+        .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=30)).sign(key, hashes.SHA256()))
+header = {"alg": "ES256", "typ": "rc-wrp+jwt",
+          "x5c": [base64.b64encode(cert.public_bytes(serialization.Encoding.DER)).decode()]}
+payload = {"name": "Polaris lab walk", "sub": "polaris-lab", "iat": int(now.timestamp()),
+           "purpose": [{"lang": "en", "value": "Interoperability testing"}],
+           "credentials": [{"format": "dc+sd-jwt", "meta": {"vct_values": [sys.argv[2]]},
+                            "claim": [{"path": ["given_name"]}, {"path": ["family_name"]}]}]}
+signing_input = b64(json.dumps(header).encode()) + "." + b64(json.dumps(payload).encode())
+r, s_ = utils.decode_dss_signature(key.sign(signing_input.encode(), ec.ECDSA(hashes.SHA256())))
+jwt = signing_input + "." + b64(r.to_bytes(32, "big") + s_.to_bytes(32, "big"))
+# One object, as ERICA and the German EUDI wallet guide read verifier_info (OpenID4VP 1.0 5.1
+# has an array; polaris-oid4vp carries either as given).
+json.dump({"format": "registration_cert", "data": jwt}, open(sys.argv[1], "w"))
+EOF
+    VALIDATE_ARGS=(--verifier-info verifier-info.json) ;;
+  *) NEWER=; VALIDATE_ARGS=() ;;
+esac
 case "$SERVE_HELP" in *--claim*) CLAIMS=yes ;; esac
 
 # ERICA at the pinned commit, built with its own Dockerfile from exactly the committed files.
@@ -224,7 +261,7 @@ expect() {  # $1 label, $2 file, $3 pattern that must appear
 verdict() { { grep -E '<- [0-9]{3} ' "$1" || true; } | sed 's/^/        /'; }
 
 echo "== ERICA's checks on the request (validation only, nothing posted)"
-start_verifier erica-root.pem verifier-validate.log
+start_verifier erica-root.pem verifier-validate.log ${VALIDATE_ARGS[@]+"${VALIDATE_ARGS[@]}"}
 venv/bin/python "$HERE/drive.py" validate "$SHIPPED" "$(launch_uri verifier-validate.log)" validate.json > erica-validate.log 2>&1 || true
 expect "ERICA took the request" erica-validate.log '^VALIDATED'
 stop_verifier
@@ -285,7 +322,8 @@ fi
 # ERICA's negative modes that break the credential, its validity window or its key binding, or
 # withhold a requested claim, each answering its own request: every one must be refused.
 for mode in EXPIRED NOT_YET_VALID MISSING_SIGNATURE MISSING_CLAIMS WRONG_NONCE \
-            MISSING_HOLDER_BINDING WRONG_AUDIENCE WRONG_ISSUER WRONG_CREDENTIAL_TYPE; do
+            MISSING_HOLDER_BINDING WRONG_AUDIENCE WRONG_ISSUER WRONG_CREDENTIAL_TYPE \
+            ${NEWER:+OVER_DISCLOSURE}; do
   echo "== mode $mode"
   start_verifier erica-root.pem "verifier-$mode.log"
   erica "$CHAIN" "$(launch_uri "verifier-$mode.log")" "$mode" normal "$mode.json" "erica-$mode.log"

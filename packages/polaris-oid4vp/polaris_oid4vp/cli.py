@@ -390,9 +390,9 @@ def main(argv=None) -> int:
     s.add_argument("--vct", action="append", default=[], metavar="TYPE",
                    help="a credential type to accept (repeatable; default urn:eudi:pid:1)")
     s.add_argument("--verifier-info", default=None, metavar="FILE",
-                   help="a JSON array of verifier attestations to put in the request object "
-                        "(OpenID4VP 1.0 section 5.1), e.g. a registrar's registration "
-                        "certificate: [{\"format\": \"registration_cert\", \"data\": \"<JWT>\"}]")
+                   help="verifier attestations to put in the request object: a JSON array "
+                        "(OpenID4VP 1.0 section 5.1) or one object (as the German EUDI wallet "
+                        "guide shows), e.g. {\"format\": \"registration_cert\", \"data\": \"<JWT>\"}")
     s.add_argument("--once", action="store_true",
                    help="print one authorization request's parameters at startup")
     s.add_argument("--verbose", action="store_true")
