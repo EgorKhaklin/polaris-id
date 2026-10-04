@@ -29,6 +29,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp refuses a presentation disclosing claims the request did not select, which OpenID4VP 1.0 section 6.4 forbids; it accepted one.
 - polaris-oid4vp keygen gives its CA and leaf the key identifiers RFC 5280 asks for; Multipaz's trust manager skipped the CA without them.
 - polaris-oid4vp serves the request object with `Cache-Control: no-store`, as the German EUDI wallet guide's request_uri response does.
+- The record 007 Pomerium demo maps `*.localhost.pomerium.io` to loopback itself; public DNS stopped resolving it.
 
 ### Added
 
