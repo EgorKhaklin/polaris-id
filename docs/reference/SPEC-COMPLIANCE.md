@@ -23,13 +23,25 @@ Foundation on 24 September 2026
 ([listing](https://openid.net/certification/certified-oid4vp-haip-final/)). It is a
 self-certification for that package version in that role: not an endorsement, not an audit, and not
 a certification of the rest of Polaris. A later package version is not certified until it is
-re-tested and re-submitted.
+re-tested and re-submitted. OpenID® and OpenID® Certified™ are trademarks of the OpenID
+Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
 ## OpenID4VP 1.0
 
 Polaris's standalone verifier `polaris-oid4vp` implements the OpenID for Verifiable Presentations
 1.0 Verifier role (certified, above). The Wallet role is not Polaris's; outside wallets present to
 the verifier, and which ones have is recorded in [EXTERNAL-NOUNS.md](../../lab/EXTERNAL-NOUNS.md).
+Its request carries one DCQL credential query. A claim is a name or a path of object keys, with
+optional `values` the disclosed value must match in type and value (`age_equal_or_over`, `18`,
+`true`: one statement of an EUDI PID, not all of them); array indices and the null wildcard are not
+supported. A presentation that discloses a selectively disclosable claim the query did not select,
+other than the object a requested member is reached through, is refused: section 6.4 says a
+wallet MUST NOT send one. A wallet may fetch the signed request object by POST (`request_uri_method=post`) with a
+`wallet_nonce`, which the object then carries; when its `wallet_metadata` asks for the object
+encrypted and names a P-256 key, ECDH-ES and A128GCM or A256GCM, the signed object comes back
+encrypted to that key (a nested JWT, RFC 9101 section 6.1). The operator may add `verifier_info`
+(section 5.1), such as a registrar's registration certificate, which the request object carries
+unchanged.
 
 ## HAIP 1.0
 
@@ -39,9 +51,11 @@ identifier. The normative wire details are in [WIRE-SPEC.md](WIRE-SPEC.md).
 
 ## SD-JWT VC
 
-Issuer-signed SD-JWT VCs (`dc+sd-jwt` / `vc+sd-jwt`) are verified by the verifier, which checks the
-issuer signature, the certificate chain, the selective-disclosure digests and the key binding; and
-are issued as wallet copies over OpenID4VCI, signed ES256 under a per-agency certificate. See
+Issuer-signed SD-JWT VCs (`dc+sd-jwt`) are verified by the verifier, which checks the issuer
+signature, the certificate chain, the selective-disclosure digests and the key binding. An issuer
+JWT typed `vc+sd-jwt` is refused (`issuer_typ`): that was the type's name before SD-JWT VC renamed
+it, and it now names a W3C VC Data Model credential. Polaris issues SD-JWT VCs as wallet copies over
+OpenID4VCI, typed `dc+sd-jwt` and signed ES256 under a per-agency certificate. See
 [WIRE-SPEC.md](WIRE-SPEC.md).
 
 ## OpenID4VCI 1.0

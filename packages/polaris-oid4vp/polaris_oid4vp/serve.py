@@ -129,12 +129,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if path == REQUEST_PATH:
             # request_uri_method=post, OpenID4VP 1.0 section 5.10. A posted `wallet_nonce`
             # MUST come back as a claim in the request object, so this is not a POST that can
-            # be served from cache. `wallet_metadata` may also be posted and is ignored: this
-            # verifier's capabilities do not vary by wallet.
+            # be served from cache. A posted `wallet_metadata` is read for one thing only: a
+            # key to encrypt the request object to, when the wallet asks for that.
             posted = urllib.parse.parse_qs(raw)
             return self._serve_request_object(urllib.parse.parse_qs(query),
                                               wallet_nonce=(posted.get("wallet_nonce")
-                                                            or [None])[0])
+                                                            or [None])[0],
+                                              wallet_metadata=(posted.get("wallet_metadata")
+                                                               or [None])[0])
         if path != RESPONSE_PATH:
             return self._send(404, {"error": "not_found"})
         form = urllib.parse.parse_qs(raw)
@@ -159,9 +161,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self.on_verdict(status, body, verdict)
         return self._send(status, body)
 
-    def _serve_request_object(self, query, wallet_nonce=None):
+    def _serve_request_object(self, query, wallet_nonce=None, wallet_metadata=None):
         state = (query.get("state") or [""])[0]
-        jar = self.verifier.request_object(state, wallet_nonce=wallet_nonce)
+        jar = self.verifier.request_object(state, wallet_nonce=wallet_nonce,
+                                           wallet_metadata=wallet_metadata)
         if not jar:
             return self._send(404, {"error": "not_found",
                                     "error_description": "no such outstanding request"})
@@ -169,6 +172,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/oauth-authz-req+jwt")
         self.send_header("Content-Length", str(len(raw)))
+        # Not to be kept by a cache between the verifier and the wallet: it carries this
+        # session's nonce and state, and a POST's wallet_nonce. The German EUDI Wallet
+        # developer guide's request_uri response sends these two, so cached copies are not
+        # reused (2026-10-04).
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Pragma", "no-cache")
         self.end_headers()
         self.wfile.write(raw)
 

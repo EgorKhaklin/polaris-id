@@ -37,6 +37,7 @@ Verifier. The run below used exactly those two releases, and then the wallet's c
     POLARIS_OID4VP=polaris-oid4vp==1.0.0rc7 lab/interop/eudi-dev/run.sh    # the run above, exactly
     EUDI_NATIVE=1 lab/interop/eudi-dev/run.sh                              # no Docker
     EUDI_ISSUER=1 lab/interop/eudi-dev/run.sh                              # eudi-dev's own issuer
+    EUDI_TUNNEL=1 lab/interop/eudi-dev/run.sh                              # each verifier behind its own tunnel
 
 One command, about a minute once the image is local. It installs the verifier from PyPI into a
 fresh venv in a scratch directory (`WORK`, default a new temporary one), the newest release as
@@ -59,8 +60,10 @@ mismatch stops the run before the binary is executed. Walked 2026-09-30 on macOS
 the system Python 3.9.6 and no Docker, the verifier installed as PyPI's wheel: accepted, all three
 controls refused, 15 s from an empty directory. [`wallet-canary.yml`](../../../.github/workflows/wallet-canary.yml) runs this mode too.
 
-**Nothing is configured for the verifier's TLS listener, and nothing needs to be.** `keygen`'s
-listener certificate is self-signed; its test anchor signs the request object's certificate,
+**Nothing is configured for the verifier's TLS listener for a wallet that does not check it.**
+A wallet that does (eudi-dev v2.5.0 and later in strict mode, found from its own `--help`) is given
+`keygen`'s listener certificate to trust (`--tls-ca`), and control (d) below shows the check ran.
+`keygen`'s listener certificate is self-signed; its test anchor signs the request object's certificate,
 not the listener's. Until 2026-09-30 this script set `SSL_CERT_FILE` to that anchor and this page
 said the wallet trusted the listener through it. It did not: eudi-dev v2.3.7 and v2.4.3 present
 with the setting removed, and v2.3.7 as its own binary on macOS presents to `127.0.0.1` with a
@@ -78,6 +81,7 @@ wallet, credential and path with one thing wrong.
 | (a) | The verifier trusts a different issuer key under the same `kid` | the verifier | `<- 400 refused: issuer_signature`; the wallet got only `"the presentation was not accepted"` |
 | (b) | The same request presented again after it was answered | the verifier, at the request | the wallet: `POST to request_uri returned HTTP 404` |
 | (c) | The launch URI names a `client_id` that is not the signed request's | the wallet | `request object client_id "x509_hash:..." does not match outer client_id "x509_hash:AAAA..."` |
+| (d) | The wallet trusts an unrelated certificate for the verifier's TLS (only when the wallet checks TLS) | the wallet | `tls: failed to verify certificate: x509: certificate signed by unknown authority` |
 
 (c) is a control on the wallet: it shows eudi-dev reads the signed request object and compares
 it with what it was launched with, rather than presenting to whatever it is pointed at.
@@ -142,6 +146,80 @@ v2.5.0 strict mode validates the verifier's TLS certificate (the issue 21 fix), 
 override remains for local development. v2.3.7 and v2.4.3 presented regardless (the Versions above);
 v2.5.0 does not. The one destination checked here is that listener; every-destination is the release
 notes' wording, not this run's.
+
+Since 2026-10-03 the walk gives a wallet that checks TLS the listener's own certificate to trust
+(`--tls-ca`), so the default walk runs v2.5.0's strict mode with its check on: against 1.0.0rc14
+from PyPI, accepted, and all four controls refused, (d) with the error above. The same for v2.5.1,
+the `latest` the canary floats on (`sha256:47f3df6f89fdb70b788522c1f9f2cc7e1aecbc7ed56df44d4258cbb8f672526f`).
+
+## Strict mode with the verifier's TLS checked, through a tunnel (2026-10-03)
+
+The run above left v2.5.0's strict mode refusing the self-signed listener. `EUDI_TUNNEL=1` puts
+each verifier the walk starts behind its own cloudflared quick tunnel
+(`serve --public-base-url <tunnel> --no-local-tls`), so the wallet fetches the request and posts
+its response over a certificate it can validate, and strict mode runs with its TLS check on (no
+`--tls-verify=false`). Each verifier gets a fresh tunnel, because a quick tunnel does not reliably
+reconnect to an origin restarted under it ([010, section 12](../../strategy/010-dev-tunnel.md)).
+
+    EUDI_TUNNEL=1 EUDI_ISSUER=1 \
+      EUDI_IMAGE=ghcr.io/dominikschlosser/eudi-dev:v2.5.0@sha256:c6d28d171f12db5410cd5b4670572b13c350aa9fd54e7c4389a7544fe404b6bc \
+      lab/interop/eudi-dev/run.sh
+
+v2.5.0's own issuer changed shape. Its PID Provider certificate is now signed by an intermediate CA,
+"EUDI Dev Test pid CA NL" (basicConstraints cA with pathLen 0, keyCertSign), which the credential
+carries as `x5c[1]`, under the root that `eudi wallet ca-cert` exports (pathLen 1). v2.3.7 signed
+the leaf under the root directly.
+
+| | `polaris-oid4vp` | Result |
+|---|---|---|
+| The genuine presentation, strict mode, TLS checked | 1.0.0rc14 from PyPI | refused: `issuer_key: the x5c leaf does not chain to any configured trust anchor`, because the verifier read the leaf alone |
+| The same | this repository at bf3798d4 | accepted: `<- 200 authentic, claims ['cnf', 'exp', 'family_name', 'given_name', 'iat', 'iss', 'status', 'vct']` |
+| Control: the answered request again | bf3798d4 | refused at the request, through the tunnel: `request_uri returned HTTP 404` |
+| Control: a launch URI whose `client_id` is not the signed request's | bf3798d4 | refused by the wallet, through a second tunnel |
+| Control: the verifier trusts an unrelated CA | bf3798d4 | refused: `issuer_key` |
+
+From bf3798d4 the verifier reads the CA certificates an `x5c` carries after its leaf, in order and at
+most three, each checked as a link to the next and the last to a configured anchor
+([package README](../../../packages/polaris-oid4vp/README.md)). The same commit, walked the earlier
+ways, still accepts v2.3.7's one-link chain (`EUDI_ISSUER=1`, all three controls refused) and
+OID4VCgo v0.23.0's issuer ([oid4vcgo](../oid4vcgo/README.md), every control refused). Walked on
+macOS (arm64) with Docker; 1.0.0rc14 does not carry the change, and 1.0.0rc15 is the first release
+that does.
+
+## From PyPI 1.0.0rc15 (2026-10-04)
+
+    EUDI_NATIVE=1 EUDI_VERSION=v2.5.1 EUDI_ISSUER=1 POLARIS_OID4VP=polaris-oid4vp==1.0.0rc15 \
+      lab/interop/eudi-dev/run.sh
+
+eudi-dev v2.5.1's own binary, in strict mode with its TLS check on (it trusts keygen's listener
+certificate through `--tls-ca`), presented a PID its own issuer signed under the intermediate CA
+above. 1.0.0rc15 from PyPI accepted it: `<- 200 authentic, claims ['cnf', 'exp', 'family_name',
+'given_name', 'iat', 'iss', 'status', 'vct']`. All four controls were refused: an unrelated issuer
+CA (`issuer_key`), the answered request again, a mismatched `client_id` and an unrelated TLS trust
+(the last two by the wallet). The same walk against 1.0.0rc14 from PyPI refused the genuine
+presentation: `issuer_key: the x5c leaf does not chain to any configured trust anchor`. Walked on
+macOS (arm64), no Docker and no tunnel.
+
+## One member of a nested claim (2026-10-04)
+
+The PID eudi-dev's own issuer signs nests its claims as the PID Rulebook does: `address` and
+`place_of_birth` are objects whose members are each disclosable. A verifier that can ask only for
+top-level names has to ask for the whole `address`, and gets the street and the house number with
+the locality. `polaris-oid4vp` at c35393ac asks for a path, optionally with the value it must
+have (`serve --claim`; the walk's `CLAIMS` passes them):
+
+    EUDI_NATIVE=1 EUDI_ISSUER=1 CLAIMS="given_name address.locality place_of_birth.country=NL" \
+      POLARIS_OID4VP=packages/polaris-oid4vp lab/interop/eudi-dev/run.sh
+
+| Asked for | eudi-dev v2.3.7, its own binary and PID provider | Verifier |
+|---|---|---|
+| `given_name`, `address.locality`, `place_of_birth.country=NL` | its DCQL engine selected exactly those three and disclosed them: `Disclosing: [given_name address.locality place_of_birth.country]` | `<- 200 authentic`; all three controls refused |
+| `place_of_birth.country=DE` (the PID says NL) | `no matching credentials found for the DCQL query`: it presented nothing | nothing to judge |
+
+The street address, house number, postal code and region stayed with the wallet. The verifier
+refuses a wallet that would send another value anyway (`claims`; unit tests, a wallet that
+ignores `values`). This PID carries no age statements, so `age_equal_or_over.18` is not
+exercised here; the same path and value check covers it in the package's tests.
 
 ## What this does not establish
 

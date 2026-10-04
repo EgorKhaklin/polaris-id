@@ -18,10 +18,38 @@
 # The fourth has eudi-dev's own issuer sign the credential, so the verifier is the only Polaris
 # software in the exchange.
 #
+# Since 2026-10-03 the other three wallets too, each pinned and at its newest release: walt.id
+# (wallet-api2), OID4VCgo (its conformance wallet, built from source) and Credo (OpenWallet
+# Foundation, from npm). In one week three of the four shipped, and Credo 0.7 changed what it
+# accepts from an issuer.
+#
+# Since 2026-10-04 the EU reference OpenID4VP library too: lab/interop/eudi-kt builds a short
+# wallet on eudi-lib-jvm-openid4vp-kt (the library the EUDI reference wallet uses) in a JDK image
+# pinned by digest, every dependency checked against its verification metadata, and runs its four
+# controls. And vck (A-SIT Plus, lab/interop/vck): vck issues the credential and presents it, so the
+# verifier is the only Polaris software in the exchange; three controls.
+#
+# And the OpenID Foundation's own conformance suite (job oidf-suite): its wallet runs the eleven
+# sd_jwt_vc modules of the HAIP verifier plan against the published package, through
+# scripts/polaris-oid4vp-conformance-drill.py with its two negative controls. The suite's prebuilt
+# images float at their newest, so a change on the Foundation's side shows here first. A run is
+# not a certification: that is the hosted suite and a submission, for one version.
+#
+# Since 2026-10-04 three more: irmago v1.4.0 (the Go library under the Yivi wallet) under a wallet
+# built here, SpruceID's openid4vp conformance adapter (Rust, its test issuer replaced; the README
+# says exactly what), the EU reference OpenID4VP library for iOS on a macOS runner, and Procivis
+# One Core v1.87.2, which issues the credential over its own OpenID4VCI and presents it.
+# And ProtocolSoup v4.0.0's wallet harness, which the OpenID Foundation lists as certified.
+# And Multipaz (OpenWallet Foundation) under a wallet built here, on its JVM target.
+# And the EU reference PID issuer (eudi-srv-pid-issuer, by digest) issuing to a wallet on the EU libraries.
+# And Credo on a local cheqd ledger (cheqd-node by digest): a did:cheqd issuer, its status list on the ledger.
+# And ERICA, the German EUDI Wallet programme's verifier testing tool, with its negative modes (needs
+# polaris-oid4vp 1.0.0rc16 or later for --vct and --verifier-info).
+#
 # Kept out of the Polaris CI workflow: a change on the wallet's side is news, not a
 # defect in the commit that happened to be pushed that day.
 # ============================================================================
-name: Wallet canary (eudi-dev presents to the published verifier)
+name: Wallet canary (outside wallets present to the published verifier)
 
 on:
   schedule:
@@ -66,4 +94,315 @@ jobs:
           EUDI_NATIVE: ${{ matrix.wallet.native }}
           EUDI_ISSUER: ${{ matrix.wallet.issuer }}
           WORK: ${{ runner.temp }}/eudi
-        run: bash lab/interop/eudi-dev/run.sh
+        # From a directory holding only the files docs/STRANGER-PATH.md has a stranger download,
+        # so a file run.sh needs that the page does not name fails here rather than on a stranger.
+        run: |
+          mkdir -p "$RUNNER_TEMP/stranger"
+          grep -oE 'curl -fsSLO https://raw\.githubusercontent\.com/EgorKhaklin/polaris-id/main/[^ ]+' docs/STRANGER-PATH.md \
+            | sed 's|.*/polaris-id/main/||' | while read -r f; do cp "$f" "$RUNNER_TEMP/stranger/"; done
+          ls "$RUNNER_TEMP/stranger"
+          bash "$RUNNER_TEMP/stranger/run.sh"
+
+  waltid:
+    name: walt.id ${{ matrix.label }} presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: wallet-api2 1.1.1, by digest
+            image: waltid/wallet-api2:1.1.1@sha256:d5fab1868802c98a28ce2ccee5ac6cc282f0b3a7ad079382ed42934296b700b5
+          - label: latest
+            image: waltid/wallet-api2:latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Present, then the two controls
+        env:
+          WALTID_IMAGE: ${{ matrix.image }}
+          WORK: ${{ runner.temp }}/waltid
+        run: bash lab/interop/waltid/run.sh
+
+  oid4vcgo:
+    name: OID4VCgo ${{ matrix.version }} presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # v0.12.0 is the release the OpenID Foundation lists as a certified wallet.
+        version: [v0.12.0, latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Present, then the controls
+        env:
+          OID4VCGO_VERSION: ${{ matrix.version }}
+          POLARIS_OID4VP: polaris-oid4vp
+          WORK: ${{ runner.temp }}/oid4vcgo
+        run: bash lab/interop/oid4vcgo/run.sh
+
+  credo:
+    name: Credo ${{ matrix.label }} presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: the lock file's release
+            version: ""
+          - label: latest
+            version: latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+      - name: Present, then the four controls
+        env:
+          CREDO_VERSION: ${{ matrix.version }}
+          WORK: ${{ runner.temp }}/credo
+        run: bash lab/interop/credo/run.sh
+
+  eudi-kt:
+    name: The EUDI OpenID4VP library presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build the wallet, present, then the four controls
+        env:
+          WORK: ${{ runner.temp }}/eudi-kt
+        run: bash lab/interop/eudi-kt/run.sh
+
+  vck:
+    name: vck presents a credential it issued to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build the wallet, issue, present, then the three controls
+        env:
+          WORK: ${{ runner.temp }}/vck
+        run: bash lab/interop/vck/run.sh
+
+  oidf-suite:
+    name: The OpenID Foundation conformance suite tests polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Start the suite (prebuilt images, development mode, no account)
+        env:
+          SUITE: ${{ runner.temp }}/conformance-suite
+        # The suite reaches the verifier on this runner as host.docker.internal, which Docker on
+        # Linux defines only when asked.
+        run: |
+          git clone -q --depth 1 https://gitlab.com/openid/conformance-suite.git "$SUITE"
+          cd "$SUITE"
+          printf 'services:\n  server:\n    extra_hosts:\n      - "host.docker.internal:host-gateway"\n' > polaris.yml
+          docker compose -f docker-compose-prebuilt.yml -f polaris.yml up -d --quiet-pull
+          echo "suite at $(git rev-parse --short HEAD)"
+          for _ in $(seq 1 60); do
+            curl -fsk https://localhost:8443/api/runner/available >/dev/null 2>&1 && exit 0
+            sleep 5
+          done
+          docker compose -f docker-compose-prebuilt.yml logs --tail 50 server
+          exit 1
+      - name: Install polaris-oid4vp from PyPI
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q --require-hashes -r lab/interop/requirements.txt
+          "$RUNNER_TEMP/venv/bin/pip" wheel -q --pre --no-deps -w "$RUNNER_TEMP/wheel" polaris-oid4vp
+          "$RUNNER_TEMP/venv/bin/pip" install -q --no-deps "$RUNNER_TEMP"/wheel/*.whl
+      - name: Eleven modules, then the two negative controls
+        env:
+          POLARIS_OID4VP_INSTALLED: "1"
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" scripts/polaris-oid4vp-conformance-drill.py \
+            --workdir "$RUNNER_TEMP/drill"
+      - name: The suite's log, when a step failed
+        if: failure()
+        env:
+          SUITE: ${{ runner.temp }}/conformance-suite
+        run: cd "$SUITE" && docker compose -f docker-compose-prebuilt.yml logs --tail 200 server
+
+  irmago:
+    name: A wallet on irmago (Yivi) presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build the wallet in the pinned Go image, present, then the five controls
+        env:
+          BUILD: docker
+          WORK: ${{ runner.temp }}/irmago
+        run: bash lab/interop/irmago/run.sh
+
+  spruceid:
+    name: SpruceID's conformance adapter presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build the adapter in the pinned Rust image, present, then the three controls
+        env:
+          WORK: ${{ runner.temp }}/spruceid
+        run: bash lab/interop/spruceid/run.sh
+
+  eudi-ios:
+    name: The EUDI iOS OpenID4VP library presents to polaris-oid4vp from PyPI
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build the wallet with SwiftPM, present, then the four controls
+        env:
+          WORK: ${{ runner.temp }}/eudi-ios
+        run: |
+          swift --version
+          bash lab/interop/eudi-ios/run.sh
+
+  procivis:
+    name: Procivis One Core issues and presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build core-server in the pinned Rust image, issue, present, then the four controls
+        env:
+          WORK: ${{ runner.temp }}/procivis
+        run: bash lab/interop/procivis/run.sh
+
+  protocolsoup:
+    name: ProtocolSoup's wallet harness presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build the harness in the pinned Go image, import, present, then the six controls
+        env:
+          WORK: ${{ runner.temp }}/protocolsoup
+        run: bash lab/interop/protocolsoup/run.sh
+
+  multipaz:
+    name: A wallet on Multipaz presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build the wallet, present, then the three controls
+        env:
+          WORK: ${{ runner.temp }}/multipaz
+        run: bash lab/interop/multipaz/run.sh
+
+  eudi-issuer:
+    name: The EU reference PID issuer issues, a wallet on the EU libraries presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Start the issuer, issue, present, then the four controls
+        env:
+          WORK: ${{ runner.temp }}/eudi-issuer
+        run: bash lab/interop/eudi-issuer/run.sh
+
+  cheqd:
+    name: Credo issues under a did:cheqd on a local cheqd ledger, presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "22"
+      - name: Start the ledger, register the DID, issue, present, then the four controls
+        env:
+          WORK: ${{ runner.temp }}/cheqd
+        run: bash lab/interop/cheqd/run.sh
+
+  erica:
+    name: ERICA (the German EUDI Wallet programme's testing tool) checks and presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build ERICA, run its request checks and negative modes, present, then the controls
+        env:
+          WORK: ${{ runner.temp }}/erica
+        run: bash lab/interop/erica/run.sh

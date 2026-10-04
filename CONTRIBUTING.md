@@ -5,10 +5,34 @@ with AI assistance. The ten constraints in [MISSION.md](MISSION.md) are enforced
 schema, and a change that weakens one is refused however it is submitted. Participation is
 governed by the [Code of Conduct](CODE_OF_CONDUCT.md); decisions and roles by [GOVERNANCE.md](GOVERNANCE.md).
 
+## Where to start
+
+New here, or sent by a course or a club? Welcome. Polaris is a real, open codebase, and there is
+honest work at every level.
+
+- **Pick a [good first issue](https://github.com/EgorKhaklin/polaris-id/labels/good%20first%20issue)**
+  or a [help wanted](https://github.com/EgorKhaklin/polaris-id/labels/help%20wanted) one: each is
+  scoped and self-contained.
+- **The most useful first contribution needs no code:** walk [the stranger's path](docs/STRANGER-PATH.md)
+  with a wallet this project has not tested, and open an issue with the result. A named outside
+  presentation is the one thing the scoreboard ([lab/EXTERNAL-NOUNS.md](lab/EXTERNAL-NOUNS.md)) cannot
+  generate for itself.
+- **By skill:** Python and PostgreSQL (the engine, `polaris_web/` and `polaris_sql/`); TypeScript (the
+  verification SDK, `sdk/typescript/`); cryptography and security (the verifiers under `packages/`, and
+  the attacks on our own claims under `attacks/`); OpenID4VP and OpenID4VCI (interoperability,
+  `packages/polaris-oid4vp/` and `lab/interop/`); tests, docs and tooling (useful anywhere).
+- **To get running:** a doc or SDK change needs only a clone; the stranger's path needs `pip` and one
+  open port, no database. The database suites run under [the local gate](#the-local-gate), which the
+  maintainer also runs before merge, so a first change does not need Postgres on your machine.
+
+You do not need permission to start: open a draft pull request early and ask. Then read
+[How to propose a change](#how-to-propose-a-change) below.
+
 ## How to propose a change
 
-Questions go to [Discussions](https://github.com/EgorKhaklin/polaris-id/discussions), not issues;
-[.github/SUPPORT.md](.github/SUPPORT.md) says where each kind of message goes.
+Questions go to [Discussions](https://github.com/EgorKhaklin/polaris-id/discussions) or the
+[Discord](https://discord.gg/ragewuCKj) help forum, not issues; [.github/SUPPORT.md](.github/SUPPORT.md) says where each
+kind of message goes.
 
 - **Small fixes** (a typo, a broken link, a missed test, an isolated bug): open an issue or a pull
   request. The [pull-request template](.github/PULL_REQUEST_TEMPLATE.md) asks for the motivation,

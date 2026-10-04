@@ -11,6 +11,11 @@
 #   EUDI_IMAGE=ghcr.io/dominikschlosser/eudi-dev:v2.4.3 lab/interop/eudi-dev/run.sh
 #   EUDI_NATIVE=1 lab/interop/eudi-dev/run.sh         # the wallet's own binary, no Docker
 #   EUDI_ISSUER=1 lab/interop/eudi-dev/run.sh         # eudi-dev's own issuer signs the credential
+#   EUDI_ISSUER=1 CLAIMS=age_equal_or_over.18=true lab/interop/eudi-dev/run.sh
+#                                                     # ask for one age statement of its PID
+#                                                     # (each CLAIMS word is a --claim)
+#   EUDI_TUNNEL=1 lab/interop/eudi-dev/run.sh         # each verifier behind its own cloudflared
+#                                                     # quick tunnel: public HTTPS a wallet can verify
 #
 # With Docker running, the wallet runs from its image. Without it (or with EUDI_NATIVE=1), the
 # wallet's release binary for this machine (macOS or Linux, x86-64 or arm64) is downloaded and
@@ -41,6 +46,15 @@ if [ -z "$ISSUER" ] || [ ! -f "$ISSUER" ]; then
   exit 2
 fi
 ISSUER="$(cd "$(dirname "$ISSUER")" && pwd)/$(basename "$ISSUER")"
+# The dependencies' hashes, found the same way: downloaded beside this file, or in a clone.
+REQS=""
+for candidate in "$HERE/requirements.txt" "$HERE/../requirements.txt"; do
+  [ -f "$candidate" ] && REQS="$candidate" && break
+done
+if [ -z "$REQS" ]; then
+  echo "requirements.txt not found: put it beside run.sh (docs/STRANGER-PATH.md downloads it)" >&2
+  exit 2
+fi
 WORK="${WORK:-$(mktemp -d)}"
 PY="${PYTHON:-python3}"
 if [ "${EUDI_NATIVE:-}" != 1 ] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
@@ -52,6 +66,16 @@ if [ "${EUDI_NATIVE:-}" != 1 ] && command -v docker >/dev/null 2>&1 && docker in
   [ "$(uname)" = Linux ] && ADD_HOST=(--add-host host.docker.internal:host-gateway)
 else
   MODE=native VHOST=localhost BIND=127.0.0.1
+fi
+# EUDI_TUNNEL=1: every verifier this walk starts sits behind its OWN cloudflared quick tunnel (no
+# account), serving plain HTTP on the loopback (--no-local-tls) and advertising the tunnel's public
+# HTTPS origin (--public-base-url). The wallet then fetches the request over a certificate it can
+# validate, which strict mode in eudi-dev v2.5.0 and later does. A fresh tunnel per verifier,
+# because a quick tunnel does not reliably reconnect to an origin restarted under it.
+TUNNEL="${EUDI_TUNNEL:-}"
+if [ "$TUNNEL" = 1 ]; then
+  command -v cloudflared >/dev/null 2>&1 || { echo "EUDI_TUNNEL=1 needs cloudflared on PATH" >&2; exit 2; }
+  BIND=127.0.0.1
 fi
 
 # v2.3.7's release binaries, pinned here so a download is checked against this repository and
@@ -95,11 +119,11 @@ if [ "$MODE" = docker ]; then echo "wallet     $IMAGE"; else echo "wallet     eu
 echo "verifier   pip install --pre $PKG"
 mkdir -p "$WORK" && cd "$WORK"
 "$PY" -m venv venv
-# Every third-party package by hash (../requirements.txt); then polaris-oid4vp itself, built from
+# Every third-party package by hash ($REQS); then polaris-oid4vp itself, built from
 # $PKG with nothing else fetched and installed as that one wheel. A release from PyPI arrives as
 # its published wheel and builds nothing; a path is built here, with the build backend by hash
 # (../requirements-build.txt), whose setuptools supports Python 3.10 or newer.
-venv/bin/pip install -q --require-hashes -r "$HERE/../requirements.txt"
+venv/bin/pip install -q --require-hashes -r "$REQS"
 if [ -e "$PKG" ]; then
   venv/bin/python -c 'import sys; sys.exit(sys.version_info < (3, 10))' || {
     echo "building $PKG from the tree needs Python 3.10 or newer; set PYTHON to one, or set" >&2
@@ -195,23 +219,64 @@ wallet import "$(in_wallet_view credential.txt)" | tail -1
 TRUST=--issuer-jwks TRUSTED=issuer-jwks.json OTHER=issuer-jwks-other.json REFUSAL_A=issuer_signature
 fi
 
-VERIFIER_PID=""
+VERIFIER_PID="" TUNNEL_PID="" TUNNELS=0
 stop_verifier() {  # `wait` returns the killed server's 143, which set -e would take as ours
   if [ -n "$VERIFIER_PID" ]; then
     kill "$VERIFIER_PID" 2>/dev/null || true
     wait "$VERIFIER_PID" 2>/dev/null || true
     VERIFIER_PID=""
   fi
+  if [ -n "$TUNNEL_PID" ]; then
+    kill "$TUNNEL_PID" 2>/dev/null || true
+    wait "$TUNNEL_PID" 2>/dev/null || true
+    TUNNEL_PID=""
+  fi
 }
 trap stop_verifier EXIT
 
-start_verifier() {  # $1 what the verifier trusts (a JWKS or a CA, per $TRUST), $2 log file
-  PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host "$VHOST" \
-    --bind "$BIND" --port "$PORT" "$TRUST" "$1" --once > "$2" 2>&1 &
-  VERIFIER_PID=$!
-  for _ in $(seq 1 40); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
-  echo "verifier did not start; see $WORK/$2" >&2
+start_tunnel() {  # a quick tunnel to the loopback port; sets TUNNEL_URL, or exits 2
+  TUNNELS=$((TUNNELS + 1))
+  cloudflared tunnel --no-autoupdate --url "http://localhost:$PORT" > "cloudflared-$TUNNELS.log" 2>&1 &
+  TUNNEL_PID=$!
+  TUNNEL_URL=""
+  for _ in $(seq 1 60); do
+    TUNNEL_URL="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "cloudflared-$TUNNELS.log" | head -1 || true)"
+    [ -n "$TUNNEL_URL" ] && grep -q 'Registered tunnel connection' "cloudflared-$TUNNELS.log" && return 0
+    sleep 1
+  done
+  echo "the tunnel did not come up; see $WORK/cloudflared-$TUNNELS.log" >&2
   exit 2
+}
+
+CLAIM_ARGS=()
+for c in ${CLAIMS:-}; do CLAIM_ARGS+=(--claim "$c"); done
+
+start_verifier() {  # $1 what the verifier trusts (a JWKS or a CA, per $TRUST), $2 log file
+  if [ "$TUNNEL" = 1 ]; then
+    start_tunnel
+    # The request object's certificate names the tunnel host; a fresh one per tunnel.
+    venv/bin/polaris-oid4vp keygen --out "pki-$TUNNELS" --host "${TUNNEL_URL#https://}" >/dev/null
+    PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki "pki-$TUNNELS" --host "${TUNNEL_URL#https://}" \
+      --bind "$BIND" --port "$PORT" --public-base-url "$TUNNEL_URL" --no-local-tls \
+      "$TRUST" "$1" ${CLAIM_ARGS[@]+"${CLAIM_ARGS[@]}"} --once > "$2" 2>&1 &
+  else
+    PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host "$VHOST" \
+      --bind "$BIND" --port "$PORT" "$TRUST" "$1" ${CLAIM_ARGS[@]+"${CLAIM_ARGS[@]}"} --once > "$2" 2>&1 &
+  fi
+  VERIFIER_PID=$!
+  local up=""
+  for _ in $(seq 1 40); do grep -q 'state=' "$2" 2>/dev/null && up=1 && break; sleep 0.25; done
+  [ -n "$up" ] || { echo "verifier did not start; see $WORK/$2" >&2; exit 2; }
+  if [ "$TUNNEL" = 1 ]; then
+    # Present only once the verifier answers THROUGH the public name; a new quick-tunnel name can
+    # take some seconds to resolve.
+    for _ in $(seq 1 60); do
+      [ "$(curl -s -o /dev/null -w '%{http_code}' "$TUNNEL_URL/done" || true)" = 200 ] && { echo "tunnel     $TUNNEL_URL"; return 0; }
+      sleep 2
+    done
+    echo "the verifier did not answer through $TUNNEL_URL; see $WORK/cloudflared-$TUNNELS.log" >&2
+    exit 2
+  fi
 }
 
 launch_uri() {  # $1 log file, $2 optional client_id override
@@ -225,8 +290,19 @@ print("openid4vp://authorize?" + urllib.parse.urlencode(
 EOF
 }
 
+# A wallet that checks the verifier's TLS (eudi-dev v2.5.0 and later, in strict mode) is given the
+# listener's own certificate to trust, as a deployed wallet trusts its verifier's; one that does
+# not check it has no such flag, so the flag is read off the wallet's own help. Behind a tunnel
+# the public certificate needs nothing.
+TLS_CA=() TLS_CHECKED=""
+if [ "$TUNNEL" != 1 ] && wallet accept --help 2>&1 | grep -q -- '--tls-ca'; then
+  TLS_CA=(--tls-ca "$(in_wallet_view pki/tls.pem)") TLS_CHECKED=1
+  echo "TLS        the wallet checks the verifier's; it trusts keygen's listener certificate"
+fi
+
 present() {  # $1 launch URI, $2 wallet log
-  wallet accept "$1" --auto-accept --haip --mode strict --no-open > "$2" 2>&1 || true
+  wallet accept "$1" --auto-accept --haip --mode strict --no-open ${TLS_CA[@]+"${TLS_CA[@]}"} \
+    > "$2" 2>&1 || true
 }
 
 fail=0
@@ -240,7 +316,8 @@ URI=$(launch_uri verifier.log)
 present "$URI" wallet.log
 expect "the wallet submitted and was answered 200" wallet.log 'Response: 200'
 expect "the verifier accepted it" verifier.log '<- 200 authentic'
-grep -E '<- 200' verifier.log | sed 's/^/        /'
+# A refused presentation prints nothing here; the controls still run and RESULT says FAILED.
+{ grep -E '<- 200' verifier.log || true; } | sed 's/^/        /'
 
 echo "== control (b): the same request again, after it was answered"
 present "$URI" wallet-replay.log
@@ -252,6 +329,15 @@ start_verifier "$OTHER" verifier-other.log
 present "$(launch_uri verifier-other.log x509_hash:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA)" wallet-c.log
 expect "the wallet refused the request" wallet-c.log 'does not match outer client_id'
 
+if [ -n "$TLS_CHECKED" ]; then
+  # Proof that the TLS check ran: the same wallet, trusting an unrelated certificate for the
+  # verifier's TLS, presents nothing. It refuses before it fetches, so (a) can still use the request.
+  echo "== control (d): the wallet trusts an unrelated certificate for the verifier's TLS"
+  wallet accept "$(launch_uri verifier-other.log)" --auto-accept --haip --mode strict --no-open \
+    --tls-ca "$(in_wallet_view pki/anchor.pem)" > wallet-d.log 2>&1 || true
+  expect "the wallet refused the verifier's certificate" wallet-d.log 'certificate signed by unknown authority'
+fi
+
 if [ "$TRUST" = --issuer-jwks ]; then
   echo "== control (a): the verifier trusts a different issuer key under the same kid"
 else
@@ -262,5 +348,7 @@ expect "the wallet was told only that it was not accepted" wallet-a.log 'Respons
 expect "the verifier refused the issuer" verifier-other.log "<- 400 refused: $REFUSAL_A"
 stop_verifier
 
-[ "$fail" -eq 0 ] && echo "RESULT: accepted, and all three controls refused" || echo "RESULT: FAILED"
+if [ "$fail" -ne 0 ]; then echo "RESULT: FAILED"
+elif [ -n "$TLS_CHECKED" ]; then echo "RESULT: accepted, and all four controls refused"
+else echo "RESULT: accepted, and all three controls refused"; fi
 exit "$fail"

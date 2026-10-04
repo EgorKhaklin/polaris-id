@@ -1,0 +1,12 @@
+[2026-10-03T21:17:06.116Z] versions {"date":"2026-10-03T21:17:06.073Z","node":"v24.11.1","credo_core":"0.7.2","credo_openid4vc":"0.7.2","credo_node":"0.7.2","openid4vc_openid4vp":"0.6.0","openid4vc_oauth2":"0.6.0","sd_jwt_core":"0.21.1","polaris_oid4vp":"1.0.0rc14"}
+[2026-10-03T21:17:06.123Z] credo agent initialized (in-memory storage, NodeKeyManagementService)
+[2026-10-03T21:17:06.124Z] holder key created by Credo KMS: keyId=d019ff12-872f-447d-9ec3-45871a705f2f publicJwk={"kty":"EC","x":"0xYZOU8zaTN5htjE2nxvjFEdj6YEk_SrFa0xdgUPIMI","y":"_cFmtPiK572RTD9Fkm9U9-c57cYRdflePTE7i3sU15g","crv":"P-256","kid":"d019ff12-872f-447d-9ec3-45871a705f2f"}
+[2026-10-03T21:17:06.195Z] issuer: credential   eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlC... | disclosures  2 (given_name, family_name) | bound to     d019ff12-872f-447d-9ec3-45871a705f2f | wrote        ./run/credential.json
+[2026-10-03T21:17:06.264Z] CONTROL wrong-issuer: the verifier trusts an unrelated CA, not the one that certified the issuer
+[2026-10-03T21:17:06.268Z] credo stored 1 SD-JWT VC; vct=urn:eudi:pid:1 claims={"iss":"https://issuer.polaris.test","vct":"urn:eudi:pid:1","iat":1791062226,"cnf":{"jwk":{"kty":"EC","x":"0xYZOU8zaTN5htjE2nxvjFEdj6YEk_SrFa0xdgUPIMI","y":"_cFmtPiK572RTD9Fkm9U9-c57cYRdflePTE7i3sU15g","crv":"P-256"}},"given_name":"Jean","family_name":"Dupont"}
+[2026-10-03T21:17:06.371Z] authorization request: openid4vp://authorize?client_id=x509_hash%3A6DsL_KN9uF1iLlW1yAL-nYZ5rm0OfjMx-4xVLPVpCo0&request_uri=https%3A%2F%2Flocalhost%3A9553%2Frequest.jwt%3Fstate%3DccqhIoMTUs2RHof4Os4PEg&request_uri_method=post
+[2026-10-03T21:17:06.395Z] wire post https://localhost:9553/request.jwt?state=ccqhIoMTUs2RHof4Os4PEg -> 200
+[2026-10-03T21:17:06.414Z] resolved: clientIdPrefix=x509_hash effectiveClientId=x509_hash:6DsL_KN9uF1iLlW1yAL-nYZ5rm0OfjMx-4xVLPVpCo0 response_mode=direct_post.jwt dcql.canBeSatisfied=true
+[2026-10-03T21:17:06.426Z] wire POST https://localhost:9553/response -> 400
+[2026-10-03T21:17:06.426Z] accept returned ok=false serverResponse={"status":400,"body":{"error":"invalid_request","error_description":"the presentation was not accepted"}}
+[2026-10-03T21:17:07.951Z] verifier verdict: <- 400 refused: issuer_key: the x5c leaf does not chain to any configured trust anchor

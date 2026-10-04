@@ -25,7 +25,8 @@ PyPI release, and Credo runs from the npm tarballs with nothing patched.
 | Runtime | Node v24.11.1 (it runs `.ts` natively; no transpiler), Python 3.12.13, macOS (Darwin 25.3.0) |
 
 `package.json` pins the three Credo packages exactly and `package-lock.json` pins the rest.
-Credo 0.6.3 is the newest 0.6.x. 0.7.1 was already on npm on this date and was **not** tried.
+Credo 0.6.3 is the newest 0.6.x. 0.7.1 was already on npm on this date and was **not** tried. 0.7.2 was walked on
+2026-10-03 ([Credo 0.7.2](#credo-072-2026-10-03)).
 
 ## Reproduce
 
@@ -44,6 +45,44 @@ verifier's first verdict line is `<- 200 authentic`. The four controls:
 
 Each control exits 0 only when the side that should refuse did refuse. `PORT` (default 9543)
 moves the verifier. `npm run typecheck` runs `tsc --strict` over both files.
+
+## One command
+
+    lab/interop/credo/run.sh                         # the pinned Credo
+    CREDO_VERSION=latest lab/interop/credo/run.sh    # the newest release, installed without saving
+
+[`run.sh`](run.sh) installs `polaris-oid4vp` from PyPI into a fresh venv (dependencies by hash), runs
+`npm ci`, then `npm run present` once and once per control, and exits 0 only if the presentation is
+accepted and all four controls are refused. Its evidence goes under `$WORK/evidence`, never over the
+recorded runs below; with `CREDO_VERSION` the pinned install is put back at the end.
+
+## Credo 0.7.2 (2026-10-03)
+
+Credo 0.7 names an SD-JWT VC issuer only by DID or by certificate. Storing the walk's credential,
+signed under a bare `kid`, throws
+`SdJwtVcError: Unsupported signing method for SD-JWT VC. Only did and x5c are supported at the moment.`
+So from 0.7 `present.ts` issues under a certificate in `x5c` (`issue_sdjwt_vc.py --x5c`: a CA made
+for the run, and a leaf for the issuer key that names the `iss` URL). Credo trusts that CA
+(X509 trusted certificates); the verifier trusts it with `--issuer-trust-anchor`; and the
+`wrong-issuer` control has the verifier trust an unrelated CA. The walk reads Credo's version from
+`node_modules`, so 0.6.3 keeps the recorded `kid` and JWKS path.
+
+| Run | Result against `polaris-oid4vp` 1.0.0rc14 from PyPI |
+|---|---|
+| positive | accepted: `<- 200 authentic, claims ['cnf', 'family_name', 'given_name', 'iat', 'iss', 'vct']` |
+| `wrong-issuer` | refused by the verifier: `issuer_key: the x5c leaf does not chain to any configured trust anchor` |
+| `foreign-holder` | refused by the verifier: `kb_signature` |
+| `replay` | the first POST accepted, the identical second one refused |
+| `untrusted-verifier` | refused by Credo: `No trusted certificate was found while validating the X.509 chain` |
+
+Versions: `@credo-ts/core`, `@credo-ts/openid4vc` and `@credo-ts/node` 0.7.2, `@openid4vc/openid4vp`
+and `@openid4vc/oauth2` 0.6.0, `@sd-jwt/core` 0.21.1, Node v24.11.1. The runs are recorded in
+[`evidence/credo-0.7.2/`](evidence/credo-0.7.2/). The pins stay at 0.6.3: the OpenID4VCI receive
+scripts were recorded on it and were not re-run on 0.7.2 (they typecheck under both). To repeat:
+
+    npm ci && npm install --no-save @credo-ts/core@0.7.2 @credo-ts/node@0.7.2 @credo-ts/openid4vc@0.7.2
+    EVIDENCE_DIR=evidence/credo-0.7.2 PATH=/tmp/p/bin:$PATH PYTHON=/tmp/p/bin/python npm run present
+    npm ci                                     # back to the pinned 0.6.3
 
 ## What `present.ts` does
 

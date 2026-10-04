@@ -2,7 +2,9 @@
 
 **Opened 2026-10-02.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md),
 on the owner's direction of 2026-10-02 (work toward the badges Polaris can earn; SLSA was on the
-owner's list). State: OPEN. The falsifiers in section 10 were written before the build.
+owner's list). State: APPROVED by the owner 2026-10-02 (decision D14): build the SLSA Build L3
+provenance after 1.0.0-rc.71 ships, with publish.yml publishing the attested files so the bytes on
+PyPI and npm are the bytes the provenance names. The falsifiers in section 10 were written before the build.
 
 ---
 

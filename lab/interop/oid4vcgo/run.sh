@@ -16,11 +16,19 @@
 #   OID4VCGO_VERSION=v0.19.0 lab/interop/oid4vcgo/run.sh
 #   OID4VCGO_VERSION=v0.22.0 lab/interop/oid4vcgo/run.sh         # also checks the verifier's chain
 #   OID4VCGO_VERSION=v0.23.0 lab/interop/oid4vcgo/run.sh         # and holds its leaf to HAIP
+#   OID4VCGO_VERSION=latest lab/interop/oid4vcgo/run.sh          # the newest release
 #
 # Exits 0 only if the genuine presentation is accepted AND every control is refused.
 set -euo pipefail
 
 VERSION="${OID4VCGO_VERSION:-v0.12.0}"
+PY_FOR_LATEST="${PYTHON:-python3}"
+if [ "$VERSION" = latest ]; then
+  # The newest release as the Go module proxy states it, so the rest of the walk, which reads the
+  # version, sees a real one.
+  VERSION="$(curl -fsSL https://proxy.golang.org/github.com/idfoundry/oid4vcgo/@latest \
+    | "$PY_FOR_LATEST" -c 'import json, sys; print(json.load(sys.stdin)["Version"])')"
+fi
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # A clone's own package is the default, so a run tests the tree; POLARIS_OID4VP overrides it, and
 # --issuer-trust-anchor, which the run needs, is in every published release from 1.0.0rc8.
@@ -57,7 +65,7 @@ if [ -e "$PKG" ]; then
   }
   venv/bin/pip install -q --require-hashes -r "$HERE/../requirements-build.txt"
 fi
-venv/bin/pip wheel -q --no-deps --no-build-isolation -w wheel "$PKG"
+venv/bin/pip wheel -q --pre --no-deps --no-build-isolation -w wheel "$PKG"
 venv/bin/pip install -q --no-deps wheel/*.whl
 echo "installed  polaris-oid4vp $(venv/bin/python -c 'import importlib.metadata as m; print(m.version("polaris-oid4vp"))')"
 venv/bin/polaris-oid4vp serve --help | grep -q -- --issuer-trust-anchor || {

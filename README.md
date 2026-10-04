@@ -8,12 +8,12 @@
 [![Release](https://img.shields.io/github/v/release/EgorKhaklin/polaris-id?include_prereleases&label=release&color=c9a352&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/releases/latest)
 [![Status: pre-pilot, notional data](https://img.shields.io/badge/status-pre--pilot_%C2%B7_notional_data-9a6b2f?labelColor=0a1421&style=flat-square)](#status)
 [![License](https://img.shields.io/badge/license-Apache--2.0-2b5797?labelColor=0a1421&style=flat-square)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-join_the_server-5865F2?logo=discord&logoColor=white&labelColor=0a1421&style=flat-square)](https://discord.gg/ragewuCKj)
 [![OpenSSF Best Practices](https://img.shields.io/cii/level/15004?label=OpenSSF%20best%20practices&labelColor=0a1421&style=flat-square)](https://www.bestpractices.dev/projects/15004)
 [![OpenSSF Baseline](https://www.bestpractices.dev/projects/15004/baseline)](https://www.bestpractices.dev/projects/15004)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/EgorKhaklin/polaris-id/badge)](https://scorecard.dev/viewer/?uri=github.com/EgorKhaklin/polaris-id)
 
 [![OpenID Certified: polaris-oid4vp verifier](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_verifier-c9a352?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid-certified)
-[![Wallet interop: walt.id, Credo, eudi-dev, OID4VCgo](https://img.shields.io/badge/wallet_interop-walt.id_%C2%B7_Credo_%C2%B7_eudi--dev_%C2%B7_OID4VCgo-2b5797?labelColor=0a1421&style=flat-square)](lab/EXTERNAL-NOUNS.md#wallets)
 [![OpenID4VP 1.0](https://img.shields.io/badge/OpenID4VP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid4vp-10)
 [![HAIP 1.0](https://img.shields.io/badge/HAIP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#haip-10)
 [![SD-JWT VC](https://img.shields.io/badge/SD--JWT_VC-supported-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#sd-jwt-vc)
@@ -51,7 +51,7 @@ Around the credential:
 - **Verifiers anyone can hold to a contract.** Python and TypeScript SDKs and a conformance suite of 281 published cases; version 1 of the signed-statement protocol is frozen and re-verified on every push.
 - **Explicit federation.** Trust between agencies is explicit and non-transitive.
 - **Zero-knowledge by default.** A zero-knowledge verification stores no token identifier; a Plonky2 SNARK, re-checked by an independent second witness, proves ledger membership and nothing else.
-- **Gated by invariants.** 342 machine-checked invariants (v1.0.0-rc.70) gate every change in CI.
+- **Gated by invariants.** 343 machine-checked invariants (v1.0.0-rc.70) gate every change in CI.
 
 **The problem it models.** Americans carry six to eight credentials (driver's license, passport, Social Security card and more) with no shared revocation path or audit trail. Polaris models one active credential record per person, verified through context-scoped events (banking, voting, healthcare) at three disclosure levels.
 
@@ -67,27 +67,52 @@ Around the credential:
 
 <a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="docs/assets/openid-certified-mark-on-white.png" alt="OpenID Certified" width="150"></a>
 
-**`polaris-oid4vp 1.0.0rc7` is OpenID Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile** (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/), 24 September 2026). A self-certification the Foundation reviewed and published, for that package version in that role: not an endorsement, not an audit, and not a certification of the rest of Polaris.
+**`polaris-oid4vp 1.0.0rc7` is OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile** (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/), 24 September 2026). A self-certification the Foundation reviewed and published, for that package version in that role: not an endorsement, not an audit, and not a certification of the rest of Polaris. OpenID® and OpenID® Certified™ are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
 | | version | where |
 |---|---|---|
 | this tree | 1.0.0-rc.70 | the source you are reading |
-| `polaris-oid4vp` | 1.0.0rc13 | PyPI; 1.0.0rc7 is the certified version |
+| `polaris-oid4vp` | 1.0.0rc14 | PyPI; 1.0.0rc7 is the certified version |
 | `polaris-verify`, `polaris-sdk-python` | 1.0.0rc7 | PyPI |
 | `polaris-id-cli` | 1.0.0rc1 | PyPI; the operator CLI, for a running Polaris PostgreSQL |
-| `polaris-sdk-ts` | 1.0.0-rc.8 | npm, under `next` (`latest` stays 0.1.0) |
+| `polaris-sdk-ts` | 1.0.0-rc.9 | npm, under `next` (`latest` stays 0.1.0) |
 
 - **A release candidate.** A new candidate is cut as a release that collects the defects fixed since the last: see [releases](https://github.com/EgorKhaklin/polaris-id/releases) and the [CHANGELOG](CHANGELOG.md). What separates it from 1.0.0 is an operator who is not the author.
 - **Installing:** `pip install --pre` (pip skips candidates otherwise); npm `polaris-sdk-ts@next`. PyPI packages use trusted publishing over OIDC. Every publish is recorded in [RELEASING.md](docs/RELEASING.md).
 
-**Checked by someone other than the author:**
+### Tested against
 
-- **Four unmodified wallets** presented to the verifier and were accepted: walt.id Wallet API v2
-  (15 September 2026; repeat it in ten minutes with [STRANGER-PATH.md](docs/STRANGER-PATH.md)), the
-  OpenWallet Foundation's [Credo 0.6.3](lab/interop/credo/README.md), and two wallets the OpenID
-  Foundation lists as certified, [eudi-dev v2.3.7](lab/interop/eudi-dev/README.md) (HAIP strict mode)
-  and [OID4VCgo 0.12.0](lab/interop/oid4vcgo/README.md) (its own x5c-signed credential).
-- **The OpenID Foundation's hosted suite**, which certified the verifier as above.
+Outside OpenID4VP implementations present to the verifier, each unmodified unless its row says
+otherwise: configuration only (trust anchors, TLS roots). Every walk also sends controls that must be refused, because a verifier
+that accepts everything prints the same success line; among them a wrong issuer key under the same
+`kid`, the answered request again, a mismatched `client_id`, a key the wallet does not hold and an
+untrusted CA.
+The [wallet canary](.github/workflows/wallet-canary.yml) re-runs the walks every week against the
+newest `polaris-oid4vp` on PyPI.
+
+| Implementation | Maintained by | Language | Last walk | Re-run weekly |
+|---|---|---|---|---|
+| [walt.id Wallet API v2](lab/interop/waltid/README.md) | walt.id | Kotlin | 1.1.1, against 1.0.0rc16 (2026-10-04) | 1.1.1 by digest, and the latest |
+| [Credo](lab/interop/credo/README.md) | OpenWallet Foundation | TypeScript | 0.7.2, against 1.0.0rc14 (2026-10-03) | the lock file's release, and the latest |
+| [`eudi-lib-jvm-openid4vp-kt`](lab/interop/eudi-kt/README.md), the EUDI Wallet's OpenID4VP library, under a wallet built here | European Commission | Kotlin | 0.16.2, against 1.0.0rc16 (2026-10-04) | 0.16.2 |
+| [vck](lab/interop/vck/README.md) (`vck-openid-ktor`), under a wallet built here; vck also issued the credential | A-SIT Plus | Kotlin | 8.0.0, against 1.0.0rc16 (2026-10-04) | 8.0.0 |
+| [`eudi-lib-ios-openid4vp-swift`](lab/interop/eudi-ios/README.md), the EUDI Wallet's iOS OpenID4VP library, under a wallet built here | European Commission | Swift | 0.43.2, against 1.0.0rc16 (2026-10-04) | 0.43.2, on macOS |
+| [irmago](lab/interop/irmago/README.md), the library under the Yivi wallet, under a wallet built here | Privacy by Design Foundation (Yivi) | Go | v1.4.0, against 1.0.0rc16 (2026-10-04) | v1.4.0 |
+| [SpruceID `openid4vp`](lab/interop/spruceid/README.md), its conformance adapter with the test issuer replaced | SpruceID | Rust | e5f29b85, against 1.0.0rc16 (2026-10-04) | e5f29b85 |
+| [Procivis One Core](lab/interop/procivis/README.md) (`core-server`), which also issued the credential | Procivis | Rust | v1.87.2, against 1.0.0rc16 (2026-10-04) | v1.87.2 |
+| [ProtocolSoup](lab/interop/protocolsoup/README.md), its wallet harness | ParleSec | Go | v4.0.0, against 1.0.0rc16 (2026-10-04) | v4.0.0 (listed by the OpenID Foundation as certified) |
+| [The EU reference PID issuer](lab/interop/eudi-issuer/README.md) (`eudi-srv-pid-issuer`), issuing to a wallet built here on the EU's OpenID4VCI and OpenID4VP libraries | European Commission | Kotlin | v0.11.1, against 1.0.0rc16 (2026-10-04) | v0.11.1 |
+| [Credo on a cheqd ledger](lab/interop/cheqd/README.md), the issuer a `did:cheqd` with its status list on the ledger | cheqd, OpenWallet Foundation | TypeScript, Go | cheqd-node 4.2.1 and Credo 0.7.2, against 1.0.0rc15 (2026-10-04) | cheqd-node 4.2.1 |
+| [Multipaz](lab/interop/multipaz/README.md), under a wallet built here | OpenWallet Foundation | Kotlin | 0.101.0, against 1.0.0rc16 (2026-10-04) | 0.101.0 |
+| [ERICA](lab/interop/erica/README.md), the German EUDI Wallet programme's verifier testing tool, with its negative modes | the German EUDI Wallet programme (opencode.de) | TypeScript | 2c27dc92, against this repository (2026-10-04; the German PID type needs `--vct`, not in 1.0.0rc15) | |
+| [eudi-dev](lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | dominikschlosser | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) | v2.3.7 (listed by the OpenID Foundation as certified), the latest, its own binary, its own issuer's PID |
+| [OID4VCgo](lab/interop/oid4vcgo/README.md) | IDFoundry | Go | 0.25.0, against 1.0.0rc14 (2026-10-03) | 0.12.0 (listed as certified), and the latest |
+| [The OpenID Foundation's conformance suite](docs/reference/SPEC-COMPLIANCE.md#openid-certified) | OpenID Foundation | Java | all eleven modules of the HAIP verifier plan, 1.0.0rc7 (2026-09-24): the certification; eleven of eleven clean against 1.0.0rc15 on a GitHub runner, both controls noticed (2026-10-04) | the suite's newest prebuilt images |
+
+The author drove every walk: this is interoperability with those implementations, not use by their
+maintainers. Each row's controls, and what it does not establish, are in
+[the scoreboard](lab/EXTERNAL-NOUNS.md#wallets). Repeat one yourself in ten minutes with
+[STRANGER-PATH.md](docs/STRANGER-PATH.md).
 
 Everything else here is the project checking itself: one author's pre-pilot system on notional data. It has never held real identity data, and there has been no independent security review, no other operator and no pilot. The ledger of outside results is [the scoreboard](lab/EXTERNAL-NOUNS.md).
 
@@ -174,7 +199,7 @@ The vocation above them: **no person can be compelled to renounce, transfer, or 
 | **C9** | Concurrency is tested with real threads. | Engineering | Threaded suites against a live database |
 | **C10** | Identity is not money. | Constitutional | Structural absence, pinned by a check |
 
-Each is machine-checked by [`polaris_checks`](polaris_checks/): 342 plain `check_*` functions (v1.0.0-rc.70), each with a detection test proving it fails on a broken fixture. Why these ten: [MISSION.md](MISSION.md).
+Each is machine-checked by [`polaris_checks`](polaris_checks/): 343 plain `check_*` functions (v1.0.0-rc.70), each with a detection test proving it fails on a broken fixture. Why these ten: [MISSION.md](MISSION.md).
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
@@ -203,7 +228,7 @@ and writes nothing; the signer is ML-DSA-65, the algorithm a registry row ([over
 | [`polaris_web/`](polaris_web/) | Flask application: use-case flows, the Atlas, WebAuthn operator MFA, health and metrics. |
 | [`polaris_zk/`](polaris_zk/) | Plonky2 prover (Rust) and [`witness2/`](polaris_zk/witness2/), an independent Python reimplementation. |
 | [`polaris_cli/`](polaris_cli/) | Operator CLI for issuance, revocation, recovery and audit. |
-| [`polaris_checks/`](polaris_checks/) | The invariant layer: 342 checks (v1.0.0-rc.70). |
+| [`polaris_checks/`](polaris_checks/) | The invariant layer: 343 checks (v1.0.0-rc.70). |
 | [`packages/`](packages/), [`sdk/`](sdk/), [`conformance/`](conformance/) | The detached verifier, the OpenID4VP verifier, the verify SDKs and the conformance suite. |
 | [`scripts/`](scripts/), [`deploy/`](deploy/) | Wallet and relying-party tools, operator tooling, observability config. |
 
@@ -238,7 +263,7 @@ Counts of checks, tables, routes and CI jobs are re-measured by `polaris_checks`
 |---|---|---|
 | Product tests (live database) | 1245 | Constraints, use cases, routes, redaction, real-thread concurrency, the secret store |
 | Crypto witnesses | 126 passing of 131 collected | ML-DSA across both witnesses and a software PKCS#11 module; Rust and Python epoch roots agree |
-| Invariant checks | 342 | C1-C10 plus production posture, each with a detection test |
+| Invariant checks | 343 | C1-C10 plus production posture, each with a detection test |
 | CI jobs | 23 | Below |
 
 Test counts: reference machine, v1.0.0-rc.62 (`pytest -q` per suite, 2026-09-26). The five skipped crypto tests need a PKCS#11 module or a real KMS key.
@@ -325,7 +350,7 @@ The first two columns matter most: every other row is deployed at national scale
 | Operating an instance | [docs/operator/](docs/operator/README.md) |
 | Asking why a mechanism is built this way | [docs/design/](docs/design/README.md) |
 | Reading it as research | [Project report, Version 3](docs/paper/polaris_project_report_v3.pdf) (the system at 1.0.0-rc.7) · [Russian edition](docs/paper/polaris_project_report_v3_ru.pdf) · [CITATION.cff](CITATION.cff) |
-| Asking a question | [Discussions](https://github.com/EgorKhaklin/polaris-id/discussions) · [where each kind of message goes](.github/SUPPORT.md) |
+| Asking a question | [Discussions](https://github.com/EgorKhaklin/polaris-id/discussions) · [Discord](https://discord.gg/ragewuCKj) · [where each kind of message goes](.github/SUPPORT.md) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md) |
 
 <img src="docs/assets/rule.svg" width="100%" alt="">

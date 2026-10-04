@@ -43,6 +43,16 @@ class RoundTripTests(unittest.TestCase):
         token = encrypt_compact(json.dumps(BODY).encode(), key.public_key(), "A256GCM")
         self.assertEqual(decrypt_response(token, key), BODY)
 
+    def test_extra_header_parameters_ride_along_and_cannot_replace_the_core_ones(self):
+        key = ec.generate_private_key(ec.SECP256R1())
+        token = encrypt_compact(b"hello", key.public_key(), "A128GCM",
+                                extra_header={"kid": "k1", "cty": "JWT"})
+        self.assertEqual(decrypt_compact(token, key), b"hello")
+        for name in ("alg", "enc", "epk", "apu", "apv"):
+            with self.subTest(name=name):
+                with self.assertRaises(JweError):
+                    encrypt_compact(b"x", key.public_key(), "A128GCM", extra_header={name: "x"})
+
     def test_apu_and_apv_are_bound_into_the_key(self):
         key = ec.generate_private_key(ec.SECP256R1())
         token = encrypt_compact(b"hello", key.public_key(), "A128GCM",

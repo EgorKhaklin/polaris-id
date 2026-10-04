@@ -12,6 +12,7 @@ A command that produces the right shape is only worth having if something assert
 is right, so these tests check the properties the suite checked, rather than checking that
 five files appeared.
 """
+import base64
 import os
 import pathlib
 import subprocess
@@ -23,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from cryptography import x509  # noqa: E402
 
-from polaris_oid4vp.cli import FILES, keygen, main, verifier_from  # noqa: E402
+from polaris_oid4vp.cli import FILES, keygen, main, parse_claim, verifier_from  # noqa: E402
 from test_verifier import Wallet  # noqa: E402
 
 
@@ -103,6 +104,24 @@ class KeygenTests(unittest.TestCase):
         tls = x509.load_pem_x509_certificate((self.tmp / FILES["tls_cert"]).read_bytes())
         self.assertEqual(tls.issuer, tls.subject)
 
+    def test_the_ca_and_the_leaf_carry_the_key_identifiers_rfc_5280_asks_for(self):
+        """Multipaz's trust manager finds a CA by key identifier and skipped one without
+        (lab/interop/multipaz, 2026-10-04)."""
+        ca = x509.load_pem_x509_certificate((self.tmp / FILES["anchor"]).read_bytes())
+        leaf = x509.load_pem_x509_certificate((self.tmp / FILES["client_cert"]).read_bytes())
+        ski = ca.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value
+        aki = leaf.extensions.get_extension_for_class(x509.AuthorityKeyIdentifier).value
+        self.assertEqual(aki.key_identifier, ski.digest)
+        self.assertEqual(ski, x509.SubjectKeyIdentifier.from_public_key(ca.public_key()))
+        leaf.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+
+    def test_the_tls_certificate_is_marked_for_server_authentication(self):
+        """Apple's TLS policy refuses a server certificate without serverAuth, even an
+        explicitly trusted one (the EU iOS OpenID4VP library's walk, 2026-10-04)."""
+        tls = x509.load_pem_x509_certificate((self.tmp / FILES["tls_cert"]).read_bytes())
+        eku = tls.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+        self.assertIn(x509.oid.ExtendedKeyUsageOID.SERVER_AUTH, list(eku))
+
     def test_generating_twice_does_not_reuse_a_key(self):
         second = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-cli-"))
         keygen(second, "verifier.test")
@@ -171,6 +190,27 @@ class ServeCommandTests(unittest.TestCase):
         self.assertEqual(body, verifier.REFUSAL_BODY, "the cause is on the wire")
         self.assertEqual(verdict.code, "issuer_key", "the operator was not told either")
 
+
+
+class ClaimFlagTests(unittest.TestCase):
+    """`--claim`: what an operator types, and the DCQL claim it becomes."""
+
+    def test_the_forms(self):
+        for text, claim in (
+                ("given_name", {"path": ["given_name"]}),
+                ("age_equal_or_over.18", {"path": ["age_equal_or_over", "18"]}),
+                ("age_equal_or_over.18=true", {"path": ["age_equal_or_over", "18"], "values": [True]}),
+                ("nationality=DE", {"path": ["nationality"], "values": ["DE"]}),
+                ('["address","locality"]', {"path": ["address", "locality"]}),
+                ('["a.b"]="x"', {"path": ["a.b"], "values": ["x"]}),
+                ("birth_year=1990", {"path": ["birth_year"], "values": [1990]})):
+            with self.subTest(text=text):
+                self.assertEqual(parse_claim(text), claim)
+
+    def test_what_it_cannot_ask_for_is_refused(self):
+        for text in ("a..b", ".a", '["a",1]', '["a"', '["a"]x', "[nope]", "a=null", "a=[1]"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                parse_claim(text)
 
 
 class KeygenHeldOutTests(unittest.TestCase):
@@ -252,6 +292,48 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         path = self.tmp / "issuers.json"
         path.write_text(json.dumps(content))
         return str(path)
+
+    def test_the_claims_and_types_asked_for_reach_the_verifier(self):
+        rc, seen, _, _ = self._serve("--claim", "given_name", "--claim", "age_equal_or_over.18=true",
+                                     "--vct", "urn:eudi:pid:1", "--vct", "eu.europa.ec.eudi.pid.1")
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen["verifier"].claims, [(("given_name",), None),
+                                                   (("age_equal_or_over", "18"), (True,))])
+        self.assertEqual(seen["verifier"].vct_values, ["urn:eudi:pid:1", "eu.europa.ec.eudi.pid.1"])
+
+    def test_without_them_it_asks_for_the_names(self):
+        rc, seen, _, _ = self._serve()
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen["verifier"].claims, [(("given_name",), None), (("family_name",), None)])
+        self.assertEqual(seen["verifier"].vct_values, ["urn:eudi:pid:1"])
+
+    def test_verifier_info_reaches_the_request_object(self):
+        import json
+        path = self.tmp / "verifier-info.json"
+        info = [{"format": "registration_cert", "data": "eyJhbGciOiJFUzI1NiJ9.e30.c2ln"}]
+        path.write_text(json.dumps(info))
+        rc, seen, _, _ = self._serve("--verifier-info", str(path))
+        self.assertEqual(rc, 0)
+        _, jar = seen["verifier"].new_request()
+        payload = jar.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        self.assertEqual(claims["verifier_info"], info)
+
+    def test_verifier_info_it_cannot_send_stops_it_starting(self):
+        path = self.tmp / "verifier-info.json"
+        for content in ("{", "[]", '[{"format": "registration_cert"}]'):
+            with self.subTest(content=content):
+                path.write_text(content)
+                rc, seen, _, err = self._serve("--verifier-info", str(path))
+                self.assertEqual(rc, 2)
+                self.assertNotIn("verifier", seen)
+                self.assertIn("--verifier-info", err)
+
+    def test_a_claim_it_cannot_judge_stops_it_starting(self):
+        rc, seen, _, err = self._serve("--claim", "age_equal_or_over..18")
+        self.assertEqual(rc, 2)
+        self.assertNotIn("verifier", seen)
+        self.assertIn("age_equal_or_over..18", err)
 
     def test_it_runs_to_the_end_and_shuts_the_listener(self):
         rc, seen, out, _ = self._serve()

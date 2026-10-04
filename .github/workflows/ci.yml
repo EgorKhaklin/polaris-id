@@ -661,8 +661,14 @@ jobs:
       # app shelling into the binary, not by `cargo test`, so counting it would
       # understate the tested surface. The floor is a ratchet set below the
       # measured baseline (~92% lines); raise it as coverage climbs.
+      # Pinned to a release, not the action's per-tool tag: that tag moves on every release, which
+      # leaves a pinned commit unreachable upstream. fallback: none keeps the install to the
+      # checksummed prebuilt binary.
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
+        with:
+          tool: cargo-llvm-cov
+          fallback: none
       - name: ZK library coverage floor
         working-directory: polaris_zk
         run: |

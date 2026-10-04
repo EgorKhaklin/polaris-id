@@ -39,14 +39,14 @@ try:
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
     _HAVE_CRYPTO = True
 except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
 
 from .sdjwt import _es256_public_key, _not_an_es256_verification_key
 from .serve import REQUEST_PATH, RESPONSE_PATH, serve
-from .verifier import Verifier
+from .verifier import Verifier, claim_query, verifier_info_entries
 
 #: What `keygen` writes and `serve` reads. Four files, named for what they are rather than
 #: for the order somebody happened to generate them in.
@@ -79,6 +79,12 @@ def keygen(out: pathlib.Path, host: str) -> dict:
           .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
           .add_extension(x509.KeyUsage(False, False, False, False, False, True, True,
                                        False, False), critical=True)
+          # Key identifiers, which RFC 5280 (4.2.1.1, 4.2.1.2) has every conforming CA put on
+          # its own certificate and on each one it signs. Multipaz's trust manager finds a CA by
+          # them and skipped this one without ("Skipping certificate without SKI"), so it refused
+          # the request (lab/interop/multipaz, 2026-10-04).
+          .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()),
+                         critical=False)
           .sign(ca_key, hashes.SHA256()))
 
     leaf_key = ec.generate_private_key(ec.SECP256R1())
@@ -90,6 +96,10 @@ def keygen(out: pathlib.Path, host: str) -> dict:
             .not_valid_after(now + datetime.timedelta(days=90))
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
             .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(leaf_key.public_key()),
+                           critical=False)
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+                           critical=False)
             .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False,
                                          key_encipherment=False, data_encipherment=False,
                                          key_agreement=False, key_cert_sign=False,
@@ -112,6 +122,11 @@ def keygen(out: pathlib.Path, host: str) -> dict:
            .not_valid_before(now - datetime.timedelta(days=1))
            .not_valid_after(now + datetime.timedelta(days=90))
            .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+           # serverAuth, because Apple's TLS policy refuses a server certificate without it, even
+           # one the client trusts explicitly: the EU iOS OpenID4VP library's wallet could fetch
+           # the request object only by pinning this certificate around the policy
+           # (lab/interop/eudi-ios, 2026-10-04).
+           .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
            .sign(tls_key, hashes.SHA256()))
 
     def write(name, data, mode=0o644):
@@ -132,8 +147,42 @@ def keygen(out: pathlib.Path, host: str) -> dict:
     return {"out": out, "host": host}
 
 
+def parse_claim(text):
+    """`--claim`: a name (`given_name`), a dotted path of object keys (`age_equal_or_over.18`)
+    or a JSON array of keys (`["address","locality"]`), optionally `=VALUE` (JSON: `=true`,
+    `=18`, `="DE"`; anything else is taken as a string) for the value the request accepts."""
+    if text.startswith("["):
+        end = text.find("]")
+        if end < 0:
+            raise ValueError("--claim %s: a JSON path needs its closing ]" % text)
+        path_text, rest = text[:end + 1], text[end + 1:]
+        try:
+            path = json.loads(path_text)
+        except ValueError as exc:
+            raise ValueError("--claim %s: the path is not JSON (%s)" % (text, exc)) from None
+        if rest and not rest.startswith("="):
+            raise ValueError("--claim %s: after the JSON path only =VALUE may follow" % text)
+        value_text, has_value = rest[1:], bool(rest)
+    else:
+        path_text, sep, value_text = text.partition("=")
+        path, has_value = path_text.split("."), bool(sep)
+    claim = {"path": path}
+    if has_value:
+        try:
+            value = json.loads(value_text)
+        except ValueError:
+            value = value_text
+        claim["values"] = [value]
+    try:
+        claim_query(claim)      # refuses here what the verifier would refuse at startup
+    except ValueError as exc:
+        raise ValueError("--claim %s: %s" % (text, exc)) from None
+    return claim
+
+
 def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
-                  issuer_trust_anchors=None, public_base_url=None) -> Verifier:
+                  issuer_trust_anchors=None, public_base_url=None, claims=None,
+                  vct_values=None, verifier_info=None) -> Verifier:
     # A verifier behind a reverse proxy or a tunnel reaches wallets at a public origin that is
     # not its own host:port; the HAIP request_uri and response_uri must advertise that origin.
     base = public_base_url.rstrip("/") if public_base_url else "https://%s:%d" % (host, port)
@@ -143,7 +192,10 @@ def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
         request_uri=base + REQUEST_PATH,
         response_uri=base + RESPONSE_PATH,
         issuer_jwks=issuer_jwks or [],
-        issuer_trust_anchors=issuer_trust_anchors or [])
+        issuer_trust_anchors=issuer_trust_anchors or [],
+        **({"claims": claims} if claims else {}),
+        **({"vct_values": vct_values} if vct_values else {}),
+        **({"verifier_info": verifier_info} if verifier_info is not None else {}))
 
 
 def _load_trust_anchors(paths):
@@ -218,6 +270,20 @@ def _cmd_serve(args) -> int:
     except SystemExit as exc:
         print(exc, file=sys.stderr)
         return 2
+    try:
+        claims = [parse_claim(c) for c in args.claim]
+    except ValueError as exc:
+        print("polaris-oid4vp: %s" % exc, file=sys.stderr)
+        return 2
+    verifier_info = None
+    if args.verifier_info:
+        try:
+            with open(args.verifier_info, encoding="utf-8") as fh:
+                verifier_info = verifier_info_entries(json.load(fh), (Verifier.DCQL_QUERY_ID,))
+        except (OSError, ValueError) as exc:
+            print("polaris-oid4vp: --verifier-info %s: %s" % (args.verifier_info, exc),
+                  file=sys.stderr)
+            return 2
     # Keys named and none usable is a configuration that cannot be what was meant: every
     # credential from those issuers would be refused, with no word at startup (2026-10-01).
     if args.issuer_jwks and not any(_verifies_es256(k) for k in issuer_jwks):
@@ -231,7 +297,8 @@ def _cmd_serve(args) -> int:
         print("polaris-oid4vp: %s; only issuers whose x5c chains to --issuer-trust-anchor can be "
               "verified." % why, file=sys.stderr)
     verifier = verifier_from(pki, args.host, args.port, issuer_jwks, anchors,
-                             public_base_url=args.public_base_url)
+                             public_base_url=args.public_base_url, claims=claims,
+                             vct_values=args.vct, verifier_info=verifier_info)
     if not issuer_jwks and not anchors:
         print("polaris-oid4vp: no --issuer-jwks or --issuer-trust-anchor given, so no "
               "credential can be verified: "
@@ -326,6 +393,16 @@ def main(argv=None) -> int:
     s.add_argument("--issuer-trust-anchor", action="append", default=[], metavar="PEM",
                    help="a PEM file of CA certificates an issuer's x5c leaf must chain to "
                         "(repeatable); the HAIP way to trust an issuer")
+    s.add_argument("--claim", action="append", default=[], metavar="PATH[=VALUE]",
+                   help="a claim to ask for (repeatable; default given_name and family_name): a "
+                        "name, a dotted path of object keys such as age_equal_or_over.18, or a "
+                        "JSON array of keys; =VALUE (e.g. =true) is the value it must have")
+    s.add_argument("--vct", action="append", default=[], metavar="TYPE",
+                   help="a credential type to accept (repeatable; default urn:eudi:pid:1)")
+    s.add_argument("--verifier-info", default=None, metavar="FILE",
+                   help="verifier attestations to put in the request object: a JSON array "
+                        "(OpenID4VP 1.0 section 5.1) or one object (as the German EUDI wallet "
+                        "guide shows), e.g. {\"format\": \"registration_cert\", \"data\": \"<JWT>\"}")
     s.add_argument("--once", action="store_true",
                    help="print one authorization request's parameters at startup")
     s.add_argument("--verbose", action="store_true")

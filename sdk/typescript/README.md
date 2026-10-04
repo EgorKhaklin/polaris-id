@@ -108,8 +108,12 @@ python3 ../../conformance/run_conformance.py --verifier "node src/conformance.ts
 npm install polaris-sdk-ts@next
 ```
 
-This is release candidate 1.0.0-rc.8. Candidates are published under the `next` dist-tag; a plain
-`npm install polaris-sdk-ts` resolves 0.1.0 until 1.0.0.
+This is release candidate 1.0.0-rc.9. Candidates are published under the `next` dist-tag; an install
+without the tag resolves npm's `latest`, 0.1.0, until 1.0.0.
+
+It needs Node >= 20.19.0: the post-quantum crypto dependencies (`@noble/post-quantum` and the
+`@noble` ciphers, curves and hashes it rests on) require it, so the package does not load on
+Node 18. Deno, Bun, browsers and workers are unaffected.
 
 From a clone, if you are working on the SDK itself (`npm install github:...` does not work, because
 the repository root is not a package):

@@ -29,8 +29,8 @@ from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils  # noqa: E402
 from cryptography.x509.oid import NameOID  # noqa: E402
 
-from polaris_oid4vp.jwe import b64u_decode, b64u_encode, encrypt_compact  # noqa: E402
-from polaris_oid4vp.verifier import Verifier  # noqa: E402
+from polaris_oid4vp.jwe import b64u_decode, b64u_encode, decrypt_compact, encrypt_compact  # noqa: E402
+from polaris_oid4vp.verifier import Verifier, claim_query  # noqa: E402
 from polaris_oid4vp import sdjwt  # noqa: E402
 
 
@@ -162,6 +162,209 @@ class VerifierTestCase(unittest.TestCase):
         return session, status, body
 
 
+class PidWallet(Wallet):
+    """A wallet holding an EUDI-PID-shaped credential. `age_equal_or_over` is an object whose
+    statements are each selectively disclosable, as the PID Rulebook issues it, so a wallet can
+    answer "18 or over" without the others. `ages` are the issued statements; `disclose` the
+    ones this presentation reveals, and `names` the top-level claims it reveals besides."""
+
+    def __init__(self, ages=(("18", True), ("21", True), ("65", False)), disclose=("18",),
+                 names=("given_name", "family_name")):
+        super().__init__()
+        self.ages, self.disclose, self.names = ages, disclose, names
+
+    def _presentation(self, *, nonce, audience, iat=None, sd_hash=None, corrupt_issuer_sig=False,
+                      corrupt_kb_sig=False, extra_disclosure=None, vct=None, status=None):
+        def disclosure(*parts):
+            d = b64u_encode(json.dumps(list(parts), separators=(",", ":")).encode())
+            return d, b64u_encode(hashlib.sha256(d.encode("ascii")).digest())
+        given = disclosure("s0", "given_name", "Jean")
+        family = disclosure("s1", "family_name", "Dupont")
+        members = {name: disclosure("a" + name, name, value) for name, value in self.ages}
+        age = disclosure("s2", "age_equal_or_over", {"_sd": sorted(d for _, d in members.values())})
+        payload = {"iss": "https://issuer.example", "vct": "urn:eudi:pid:1",
+                   "iat": int(time.time()), "_sd": sorted([given[1], family[1], age[1]]),
+                   "cnf": {"jwk": _public_jwk(self.holder_key)}}
+        issuer_jwt = _jws(self.issuer_key,
+                          {"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1"}, payload)
+        top = {"given_name": given[0], "family_name": family[0]}
+        shown = ([top[n] for n in self.names] + [age[0]]
+                 + [members[n][0] for n in self.disclose])
+        presented = issuer_jwt + "~" + "".join(d + "~" for d in shown)
+        kb = _jws(self.holder_key, {"alg": "ES256", "typ": "kb+jwt"},
+                  {"iat": int(time.time()), "aud": audience, "nonce": nonce,
+                   "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())})
+        return presented + kb
+
+
+class NestedClaimTests(unittest.TestCase):
+    """A claim is a path. The EUDI PID nests its age statements, so asking for
+    `age_equal_or_over` would ask for every one of them; `age_equal_or_over.18` asks for one,
+    and only that one answers. `values` is the value the request accepts."""
+
+    AGE = {"path": ["age_equal_or_over", "18"], "values": [True]}
+
+    def exchange(self, wallet, claims):
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                            request_uri="https://verifier.test/request.jwt",
+                            response_uri="https://verifier.test/response",
+                            issuer_jwks=[wallet.issuer_jwk], claims=claims)
+        _, jar = verifier.new_request()
+        status, _, verdict = verifier.handle_direct_post(wallet.respond(jar))
+        return jar, status, verdict
+
+    def test_the_request_asks_for_the_path_and_the_value(self):
+        jar, _, _ = self.exchange(PidWallet(), ["given_name", self.AGE])
+        query = Wallet.read_request(jar)[1]["dcql_query"]["credentials"][0]["claims"]
+        self.assertEqual(query, [{"path": ["given_name"]},
+                                 {"path": ["age_equal_or_over", "18"], "values": [True]}])
+
+    def test_the_one_statement_answers(self):
+        _, status, _ = self.exchange(PidWallet(disclose=("18",), names=("given_name",)),
+                                     ["given_name", self.AGE])
+        self.assertEqual(status, 200)
+
+    def test_a_different_statement_does_not_answer(self):
+        # 21 or over implies 18 or over, but it is not what was asked, and it says more.
+        _, status, verdict = self.exchange(PidWallet(disclose=("21",), names=()), [self.AGE])
+        self.assertEqual(status, 400)
+        self.assertEqual(verdict.code, "claims")
+        self.assertIn("'age_equal_or_over.18'", verdict.reason)
+
+    def test_the_object_without_the_statement_does_not_answer(self):
+        _, status, verdict = self.exchange(PidWallet(disclose=(), names=()), [self.AGE])
+        self.assertEqual((status, verdict.code), (400, "claims"))
+
+    def test_a_false_statement_is_not_the_value_asked_for(self):
+        wallet = PidWallet(ages=(("18", False),), disclose=("18",), names=())
+        _, status, verdict = self.exchange(wallet, [self.AGE])
+        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertIn("a value the request does not accept", verdict.reason)
+
+    def test_a_value_of_another_type_is_not_the_value_asked_for(self):
+        # DCQL compares type and value: 1 is not true, although Python says 1 == True.
+        wallet = PidWallet(ages=(("18", 1),), disclose=("18",), names=())
+        _, status, verdict = self.exchange(wallet, [self.AGE])
+        self.assertEqual((status, verdict.code), (400, "claims"))
+
+    def test_without_values_the_disclosed_statement_answers_whatever_it_says(self):
+        wallet = PidWallet(ages=(("18", False),), disclose=("18",), names=())
+        _, status, _ = self.exchange(wallet, [["age_equal_or_over", "18"]])
+        self.assertEqual(status, 200)
+
+    def test_the_top_level_name_still_means_the_whole_claim(self):
+        _, status, _ = self.exchange(PidWallet(disclose=("18",), names=()), ["age_equal_or_over"])
+        self.assertEqual(status, 200)
+
+    def test_claims_it_cannot_judge_are_refused_at_construction(self):
+        for bad in ([], ["age_equal_or_over", 0], ["a", None], [""], None, 7,
+                    {"path": ["a"], "values": []}, {"path": ["a"], "values": [1.5]},
+                    {"path": ["a"], "values": [None]}, {"path": ["a"], "other": 1},
+                    {"values": [True]}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                claim_query(bad)
+
+
+
+class OverDisclosureTests(unittest.TestCase):
+    """OpenID4VP 1.0 section 6.4: a wallet MUST NOT send selectively disclosable claims the
+    request did not select. ERICA, the German EUDI Wallet programme's verifier testing tool,
+    sends one as a negative case (OVER_DISCLOSURE); until 2026-10-04 it got 200 and the
+    operator received claims nobody asked for."""
+
+    AGE = NestedClaimTests.AGE
+    exchange = NestedClaimTests.exchange
+
+    def test_a_claim_the_request_did_not_select_is_refused(self):
+        _, status, verdict = self.exchange(PidWallet(disclose=("18",)), [self.AGE])
+        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertIn("did not select", verdict.reason)
+        self.assertIn("'given_name'", verdict.reason)
+
+    def test_a_statement_beside_the_one_asked_for_is_refused(self):
+        _, status, verdict = self.exchange(PidWallet(disclose=("18", "65"), names=()),
+                                           [self.AGE])
+        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertIn("'age_equal_or_over.65'", verdict.reason)
+
+    def test_the_object_a_requested_member_is_reached_through_is_not_extra(self):
+        _, status, verdict = self.exchange(PidWallet(disclose=("18",), names=()), [self.AGE])
+        self.assertEqual(status, 200, verdict.reason if verdict else None)
+        self.assertEqual(set(verdict.disclosed),
+                         {("age_equal_or_over",), ("age_equal_or_over", "18")})
+
+    def test_every_member_of_a_requested_object_is_selected(self):
+        _, status, _ = self.exchange(PidWallet(disclose=("18", "21", "65"), names=()),
+                                     ["age_equal_or_over"])
+        self.assertEqual(status, 200)
+
+    def test_what_the_issuer_signed_in_clear_text_is_not_a_disclosure(self):
+        _, status, verdict = self.exchange(PidWallet(disclose=("18",)),
+                                           ["given_name", "family_name", self.AGE])
+        self.assertEqual(status, 200)
+        self.assertIn("vct", verdict.claims)
+        self.assertNotIn(("vct",), verdict.disclosed)
+
+    def test_selection_is_by_path_prefix_in_both_directions(self):
+        from polaris_oid4vp.verifier import _selected
+        requested = [("address", "locality"), ("nationalities",)]
+        for path, expected in ((("address",), True), (("address", "locality"), True),
+                               (("address", "street"), False), (("nationalities", 0), True),
+                               (("nationality",), False), (("address", "locality", "x"), True),
+                               ((), True)):
+            with self.subTest(path=path):
+                self.assertEqual(_selected(path, requested), expected)
+
+
+
+class VerifierInfoTests(unittest.TestCase):
+    """OpenID4VP 1.0 section 5.1 `verifier_info`: attestations about the verifier, such as the
+    registration certificate a registrar issues. The German EUDI Wallet ecosystem requires one
+    for a PID request and ERICA, its verifier testing tool, refuses a request without it."""
+
+    REGISTRATION = [{"format": "registration_cert", "data": "eyJhbGciOiJFUzI1NiJ9.e30.c2ln"}]
+
+    def verifier(self, **kw):
+        cert_pem, key_pem = _client_chain()
+        return Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                        request_uri="https://verifier.test/request.jwt",
+                        response_uri="https://verifier.test/response", **kw)
+
+    def test_the_request_object_carries_it_as_given(self):
+        v = self.verifier(verifier_info=self.REGISTRATION + [
+            {"format": "policy", "data": {"retention": "P0D"}, "credential_ids": ["pid"]}])
+        _, jar = v.new_request()
+        self.assertEqual(Wallet.read_request(jar)[1]["verifier_info"], self.REGISTRATION + [
+            {"format": "policy", "data": {"retention": "P0D"}, "credential_ids": ["pid"]}])
+
+    def test_a_request_object_minted_for_a_wallet_nonce_carries_it_too(self):
+        v = self.verifier(verifier_info=self.REGISTRATION)
+        session, _ = v.new_request()
+        claims = Wallet.read_request(v.request_object(session.state, wallet_nonce="w"))[1]
+        self.assertEqual(claims["verifier_info"], self.REGISTRATION)
+
+    def test_a_single_object_is_carried_as_one_object(self):
+        """ERICA and the German EUDI wallet guide read verifier_info.data, a single object."""
+        v = self.verifier(verifier_info=self.REGISTRATION[0])
+        _, jar = v.new_request()
+        self.assertEqual(Wallet.read_request(jar)[1]["verifier_info"], self.REGISTRATION[0])
+
+    def test_without_it_the_request_object_has_none(self):
+        _, jar = self.verifier().new_request()
+        self.assertNotIn("verifier_info", Wallet.read_request(jar)[1])
+
+    def test_what_section_5_1_does_not_allow_is_refused_at_construction(self):
+        for bad in ([], {}, {"data": "x"}, "registration_cert", [7], [{"data": "x"}],
+                    [{"format": "", "data": "x"}],
+                    [{"format": "f"}], [{"format": "f", "data": ""}], [{"format": "f", "data": 3}],
+                    [{"format": "f", "data": "x", "credential_ids": []}],
+                    [{"format": "f", "data": "x", "credential_ids": ["mdl"]}],
+                    [{"format": "f", "data": "x", "other": 1}]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.verifier(verifier_info=bad)
+
+
 class TheRequestTests(VerifierTestCase):
     """Built from what the running conformance suite accepted, condition by condition."""
 
@@ -245,6 +448,84 @@ class TheRequestTests(VerifierTestCase):
     def test_a_wallet_nonce_for_an_unknown_state_gets_nothing(self):
         self.assertIsNone(self.verifier.request_object("no-such-state",
                                                        wallet_nonce="w-1"))
+
+
+
+class RequestObjectEncryptionTests(VerifierTestCase):
+    """OpenID4VP 1.0 section 5.10: a wallet that asks gets the request object encrypted to its
+    key. The EUDI iOS wallet kit (0.54.5) always asks, and refused the signed object it got
+    instead (lab/interop/eudi-ios, 2026-10-04)."""
+
+    def _metadata(self, **over):
+        self.wallet_key = ec.generate_private_key(ec.SECP256R1())
+        jwk = dict(_public_jwk(self.wallet_key), use="enc", alg="ECDH-ES", kid="wallet-enc-1")
+        meta = {"jwks": {"keys": [jwk]},
+                "request_object_encryption_alg_values_supported": ["ECDH-ES"],
+                "request_object_encryption_enc_values_supported": ["A128GCM"]}
+        meta.update(over)
+        return json.dumps(meta)
+
+    def test_a_wallet_that_asks_gets_the_signed_object_encrypted_to_its_key(self):
+        session, _ = self.verifier.new_request()
+        jwe = self.verifier.request_object(session.state, wallet_nonce="w-1",
+                                           wallet_metadata=self._metadata())
+        self.assertEqual(len(jwe.split(".")), 5)
+        header = json.loads(b64u_decode(jwe.split(".")[0]))
+        self.assertEqual((header["alg"], header["enc"], header["cty"], header["kid"]),
+                         ("ECDH-ES", "A128GCM", "JWT", "wallet-enc-1"))
+        jws_header, claims = Wallet.read_request(decrypt_compact(jwe, self.wallet_key).decode())
+        self.assertEqual(jws_header["typ"], "oauth-authz-req+jwt")
+        self.assertEqual((claims["wallet_nonce"], claims["state"]), ("w-1", session.state))
+
+    def test_without_a_nonce_the_cached_object_is_what_gets_encrypted(self):
+        session, cached = self.verifier.new_request()
+        jwe = self.verifier.request_object(session.state, wallet_metadata=self._metadata())
+        self.assertEqual(decrypt_compact(jwe, self.wallet_key).decode(), cached)
+
+    def test_the_wallets_enc_order_is_followed_where_this_can_produce_it(self):
+        session, _ = self.verifier.new_request()
+        meta = self._metadata(request_object_encryption_enc_values_supported=[
+            "A128CBC-HS256", "A256GCM", "A128GCM"])
+        jwe = self.verifier.request_object(session.state, wallet_nonce="w", wallet_metadata=meta)
+        self.assertEqual(json.loads(b64u_decode(jwe.split(".")[0]))["enc"], "A256GCM")
+        self.assertIn(b"w", decrypt_compact(jwe, self.wallet_key))
+
+    def test_a_wallet_that_asks_for_nothing_gets_the_signed_object(self):
+        session, _ = self.verifier.new_request()
+        for meta in (None, "{}", json.dumps({"vp_formats_supported": {}}),
+                     self._metadata(request_object_encryption_alg_values_supported=None)):
+            with self.subTest(meta=meta):
+                jar = self.verifier.request_object(session.state, wallet_nonce="w",
+                                                   wallet_metadata=meta)
+                self.assertEqual(len(jar.split(".")), 3)
+
+    def test_what_this_cannot_produce_is_served_signed_as_before(self):
+        session, _ = self.verifier.new_request()
+        off_curve = dict(_public_jwk(ec.generate_private_key(ec.SECP256R1())),
+                         y=b64u_encode(b"\x01" * 32))
+        cases = {
+            "an enc this cannot produce": self._metadata(
+                request_object_encryption_enc_values_supported=["A128CBC-HS256"]),
+            "an alg this cannot produce": self._metadata(
+                request_object_encryption_alg_values_supported=["RSA-OAEP-256"]),
+            "a key marked for signing": self._metadata(jwks={"keys": [dict(
+                _public_jwk(ec.generate_private_key(ec.SECP256R1())), use="sig")]}),
+            "a point off the curve": self._metadata(jwks={"keys": [off_curve]}),
+            "no keys": self._metadata(jwks={"keys": []}),
+            "metadata that does not parse": "{",
+            "metadata nested past the bound": "[" * 5000 + "]" * 5000,
+        }
+        for label, meta in cases.items():
+            with self.subTest(label):
+                jar = self.verifier.request_object(session.state, wallet_nonce="w",
+                                                   wallet_metadata=meta)
+                self.assertEqual(len(jar.split(".")), 3)
+
+    def test_an_unknown_state_gets_nothing_even_when_encryption_is_asked(self):
+        for nonce in (None, "w"):
+            with self.subTest(nonce=nonce):
+                self.assertIsNone(self.verifier.request_object(
+                    "no-such-state", wallet_nonce=nonce, wallet_metadata=self._metadata()))
 
 
 class TheHappyPathTests(VerifierTestCase):

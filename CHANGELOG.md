@@ -11,15 +11,33 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- A holder key rotation or revocation is refused unless its signer is still the live key under the per-token lock, closing a read-before-lock race a stolen-but-live key could ride.
 - The Atlas answered a refused parameter with the exception's text, which could carry the request back; it states a fixed sentence.
 - An operator bound to one authority could be served other authorities' Atlas counts from its response cache.
 - The database refuses a successful verification of a dead credential, outside its permitted contexts, or across an untrusted edge.
 - An operator bound to one authority can no longer activate a reserve another authority issued (UC-4).
 - The Atlas no longer returns events naming their holders; the access check reads every SQL source.
 
+### Fixed
+
+- Every documented install reaches the current candidate; a bare `pip install` gets 0.1.0, which predates every fix in SECURITY.md.
+- The plug-and-play matrix tests the SDKs' current candidates on a genuine and a tampered credential, not npm's `latest`.
+- The EU-library lab wallet's lockfile carried nine OSV advisories (Bouncy Castle 1.83, Kotlin 2.2.21); it pins fixed releases.
+- polaris-sdk-ts requires Node >= 20.19.0 for its post-quantum dependencies; rc.8 declared >= 18 but does not load there.
+- polaris-oid4vp decides status lists the draft sizes as ordinary; a 2^20-entry list with 10% revoked was refused as malformed.
+- polaris-oid4vp keygen marks the listener certificate for server authentication; Apple's TLS policy refused it.
+- polaris-oid4vp refuses a presentation disclosing claims the request did not select, which OpenID4VP 1.0 section 6.4 forbids; it accepted one.
+- polaris-oid4vp keygen gives its CA and leaf the key identifiers RFC 5280 asks for; Multipaz's trust manager skipped the CA without them.
+- polaris-oid4vp serves the request object with `Cache-Control: no-store`, as the German EUDI wallet guide's request_uri response does.
+
 ### Added
 
-- README badges for the pre-pilot status and the four outside wallets the verifier accepted.
+- polaris-oid4vp asks for a nested claim and its value (`--claim age_equal_or_over.18=true`): one statement of an EUDI PID, not all of them.
+- polaris-oid4vp verifies an issuer `x5c` through the intermediate CAs it carries, link by link in order, as eudi-dev v2.5.0's PID Provider sends.
+- An issuance tunnel serves only the wallet's OpenID4VCI endpoints over your own tunnel, so a wallet can be issued a demo copy.
+- A one-command helper mints an OpenID4VCI wallet-copy offer through the operator route, for the issuance-tunnel demo.
+- A README badge for the pre-pilot status; the outside implementations are listed under Tested against.
+- A Discord server for questions and conversation, linked from the README, CONTRIBUTING, SUPPORT.md and the issue chooser.
 - Exact credential and live-signature counts by authority, kept by triggers that only append (`PopulationCount`).
 - Indexes for expiring credentials, credentials by status, issuance in a window and one credential's verifications.
 - Find a credential by number, token value or card serial, or a person by name and date of birth; the text stays out of URLs.
@@ -32,9 +50,25 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Hourly and daily activity counts by authority, context and outcome, kept by triggers; no person, place or minute.
 - The Atlas Overview shows the latest state epoch and anchor batch, and the Athena board's verdict on the database.
 - Atlas breakdowns and cross-tabs compare with the window before; a change shows only where both counts do.
+- polaris-oid4vp runs behind a proxy or tunnel: `--public-base-url` sets the wallet-facing HTTPS origin, `--no-local-tls` serves plain HTTP.
+- The README and polaris-oid4vp's page list every outside implementation the verifier is walked against: maintainer, language, last walk.
+- The wallet canary walks the EU reference OpenID4VP library too, so all five implementations are re-run weekly.
+- A sixth implementation, vck (A-SIT Plus, Kotlin), presents to the published verifier a credential it issued; re-run weekly.
+- A lab walk decides outside status lists: the draft's test vectors, its signed example and the OpenWallet Foundation's tokens.
+- The wallet canary runs the OpenID Foundation's conformance suite weekly against the published verifier, with both controls.
+- Four more walks against the published verifier, re-run weekly: the EU iOS OpenID4VP library, irmago (Yivi), SpruceID's adapter and Procivis One Core.
+- ProtocolSoup v4.0.0, a wallet the OpenID Foundation lists as certified, presents to the published verifier; re-run weekly.
+- ERICA, the German EUDI Wallet programme's verifier testing tool, presents and runs its negative modes; it passes 48 of 49 request checks.
+- Multipaz 0.101.0 (OpenWallet Foundation) presents to the published verifier; re-run weekly.
+- The EU reference PID issuer issues a PID that the published verifier accepts, trusting only the issuer's test root; re-run weekly.
+- A credential issued under a `did:cheqd` on a local cheqd ledger, its status list on the ledger, is accepted and its status decided; re-run weekly.
+- The weekly canary also runs ERICA, and the EU iOS library with the wallet kit's own request-object encryption.
+- polaris-oid4vp encrypts the request object to the wallet's key when its `wallet_metadata` asks, as the EU iOS wallet kit requires.
+- polaris-oid4vp `serve --verifier-info` adds attestations such as a registration certificate to the request, as the German wallet requires.
 
 ### Changed
 
+- MISSION.md's second item reads "ML-DSA-65 by default", not "Post-quantum by default", by the owner's direction (2026-10-03).
 - The operator console is rethought around what Polaris is now: grouped, role-gated navigation; new sign-in, landing and Overview.
 - The Atlas shows counts only: its map points, event feed, records grid and person focus are withdrawn.
 - The Atlas reads hourly and daily totals, never an event: the page from 6.7 s to 31 ms at ten million verifications.
@@ -56,11 +90,15 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The credential page is rebuilt: facts beside proofs, one table per kind of row, empty kinds in one line.
 - On a phone, each list keeps a row's identifier, state and holder; the rest is on the record's page.
 - A status change is offered only where the database makes it; revocation keeps its own operation.
+- The SQL console shows at most 500 rows of a query, read from a server-side cursor, and says when there are more.
+- A web request's statements end two seconds before its worker's timeout, so no query outlives its request.
+- The landing emblem has no ring; a soft gold halo sits behind it.
 - `polaris-id migrate-algorithm` signs as the route does; `--signature-hex` and `--signature-file` are withdrawn.
 
 ### Fixed
 
 - The README's OpenID Certified badge now names what it covers: the polaris-oid4vp verifier, not Polaris.
+- The SQL console runs one statement per query; a second statement could lift its five-second limit.
 - SECURITY.md called PyPI's publish attestation the same kind of provenance as build provenance; it says what each is.
 - A credential's page and both investigation pages read its verifications through an index, not a full scan.
 - Release SBOMs failed the NTIA minimum elements and four were invalid SPDX; the release checks both before publishing.
@@ -72,6 +110,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Under the placeholder profile a population migration wrote a signature no verify path accepted; now issuance's.
 - A population migration onto a set nothing here signs with (SLH-DSA) is refused before it starts.
 - The warrant audit page no longer says zero-knowledge events come back redacted; they are never returned.
+- The Atlas marked every withheld count "<5", false for one withheld for its whole's sake; it shows a neutral mark.
 - A person's investigation page takes its colours from the theme; a credential value read at 3.48:1 in light.
 - A credential's investigation page found its successor by scanning every credential: 904 ms at 3.6 million.
 - A credential's page read its device bindings and revocations by scanning those tables.
@@ -82,6 +121,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The UI drill and the performance baseline refuse a port another server holds; the drill's app no longer outlives it.
 - In the Atlas, a hovered tab keeps its label and a lone interval is drawn; a stacked chart no longer reads a withheld value as zero.
 - Public pages: no empty band above the first line, a visible secondary action, a four-column feature grid.
+- Every page showing the OpenID® Certified™ mark names the OpenID Foundation as its owner, as its trademark policy (2.2) asks.
+- SPEC-COMPLIANCE.md said `vc+sd-jwt` credentials are verified; the verifier refuses them (`issuer_typ`), as its README says.
+- The EU-library lab walk failed its dependency check on a clean machine: its verification metadata missed one BOM a cold cache fetches.
 - The duress wording check passed the noun "compulsion resistance"; API.md and DATA-MODEL.md named the mechanism with it.
 - API.md pointed at `app.py` for the federation check; it is in `verification_routes.py`.
 - The signals queue said "N of M active" while counting every credential with a duress code, in 923 ms.

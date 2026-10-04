@@ -46,7 +46,8 @@ try:
 except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
 
-from .jwe import JweError, b64u_encode, decrypt_response
+from .jwe import (ACCEPTED_ALG, ACCEPTED_ENC, JweError, _loads_depth_bounded,
+                  _public_key_from_jwk, b64u_encode, decrypt_response, encrypt_compact)
 from .sdjwt import Verdict, verify_presentation
 
 #: How long an outstanding request stays answerable. A nonce that is accepted forever is not
@@ -57,6 +58,68 @@ DEFAULT_REQUEST_TTL_SECONDS = 300
 #: The audience of a request object, fixed by OpenID4VP 1.0 for a wallet that is not a
 #: specific named entity.
 WALLET_AUDIENCE = "https://self-issued.me/v2"
+
+
+def claim_query(claim):
+    """One claim the DCQL query asks for, as `(path, values)`.
+
+    A claim is a name (`"given_name"`), a path of object keys (`["age_equal_or_over", "18"]`:
+    the EUDI PID Rulebook nests its age statements, so asking for `age_equal_or_over` alone
+    asks the wallet for every age statement at once), or a DCQL claim object
+    `{"path": [...], "values": [...]}`, whose `values` the disclosed value must match.
+
+    Array indices and the null wildcard are refused: an undisclosed array element is left out
+    of the disclosed claims, so a position counted after disclosure is not the position the
+    issuer signed, and a verifier that checked it would check the wrong element.
+    """
+    if isinstance(claim, str):
+        path, values = [claim], None
+    elif isinstance(claim, dict):
+        unknown = sorted(set(claim) - {"path", "values"})
+        if unknown:
+            raise ValueError("a claim object has `path` and `values` only, not %s" % ", ".join(unknown))
+        path, values = claim.get("path"), claim.get("values")
+    elif isinstance(claim, (list, tuple)):
+        path, values = list(claim), None
+    else:
+        raise ValueError("a claim is a name, a path or a DCQL claim object: %r" % (claim,))
+    if not isinstance(path, list) or not path or not all(isinstance(k, str) and k for k in path):
+        raise ValueError("a claim's path is one or more object keys (non-empty strings); array "
+                         "indices and null are not supported: %r" % (claim,))
+    # bool is an int in Python, which is what DCQL allows: strings, integers and booleans.
+    if values is not None and (not isinstance(values, list) or not values
+                               or not all(isinstance(v, (str, int)) for v in values)):
+        raise ValueError("a claim's values are a non-empty list of strings, integers or "
+                         "booleans: %r" % (claim,))
+    return tuple(path), (tuple(values) if values is not None else None)
+
+
+def disclosed_at(claims, path):
+    """`(True, value)` when the disclosed claims hold `path`, key by key; else `(False, None)`."""
+    node = claims
+    for key in path:
+        if not isinstance(node, dict) or key not in node:
+            return False, None
+        node = node[key]
+    return True, node
+
+
+def value_matches(value, values):
+    """DCQL `values`: the type and the value both match one of them, so `true` is not `1`."""
+    return any(type(value) is type(v) and value == v for v in values)
+
+
+def _shown(path):
+    return repr(".".join(str(key) for key in path))
+
+
+def _selected(path, requested):
+    """Whether a disclosed claim at `path` is one the request selected (OpenID4VP 1.0 6.4).
+
+    It is when it lies on the way to a requested path (the object a requested member is
+    reached through) or inside one (a member of a requested object or array).
+    """
+    return any(path == r[:len(path)] or r == path[:len(r)] for r in requested)
 
 
 class Session:
@@ -74,6 +137,92 @@ class Session:
         self.answered = False
 
 
+
+def verifier_info_entries(entries, credential_ids=()):
+    """`verifier_info` for the request object, checked against OpenID4VP 1.0 section 5.1.
+
+    A non-empty array of attestations about the verifier: each an object with `format` (a
+    string, such as "registration_cert" for the registration certificate a registrar issues)
+    and `data` (a string or an object), and optionally `credential_ids`, the credential queries
+    it applies to. The German EUDI Wallet ecosystem requires one for a PID request, and its
+    verifier testing tool, ERICA, refuses a request without it (2026-10-04). ERICA and the German
+    developer guide read a single object, `verifier_info.data`, where section 5.1 has an array,
+    so a single object is carried as a single object: the operator supplies the shape its
+    ecosystem reads. This package does not issue or check the attestation; it carries what the
+    operator was given. Anything else is refused here, at construction, rather than sent.
+    """
+    if isinstance(entries, dict):
+        return verifier_info_entries([entries], credential_ids)[0]
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("verifier_info must be a JSON object or a non-empty JSON array of them")
+    out = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("each verifier_info entry must be a JSON object, not %r" % (entry,))
+        unknown = set(entry) - {"format", "data", "credential_ids"}
+        if unknown:
+            raise ValueError("verifier_info entry has unknown member(s) %s"
+                             % ", ".join(sorted(map(str, unknown))))
+        if not isinstance(entry.get("format"), str) or not entry["format"]:
+            raise ValueError("each verifier_info entry needs a non-empty string format")
+        if not isinstance(entry.get("data"), (str, dict)) or entry["data"] in ("", {}):
+            raise ValueError("each verifier_info entry needs data: a string or an object")
+        ids = entry.get("credential_ids")
+        if ids is not None and (not isinstance(ids, list) or not ids
+                                or not all(isinstance(i, str) and i in credential_ids
+                                           for i in ids)):
+            raise ValueError("verifier_info credential_ids must be a non-empty array naming "
+                             "this request's credential queries (%s)" % ", ".join(credential_ids))
+        out.append(json.loads(json.dumps(entry)))
+    return out
+
+
+def request_object_encryption(wallet_metadata):
+    """Where to encrypt the request object for a wallet that asked, or None.
+
+    OpenID4VP 1.0 section 5.10: a wallet that requires the request object encrypted passes its
+    public encryption keys as `jwks` in `wallet_metadata`, beside the algorithms it can open,
+    `request_object_encryption_alg_values_supported` and `..._enc_values_supported`. The EUDI
+    iOS wallet kit (0.54.5) always asks, ECDH-ES with A128GCM on P-256, and refuses a request
+    object that is not encrypted (lab/interop/eudi-ios, 2026-10-04).
+
+    Returns (public_key, enc, kid) when the wallet names ECDH-ES, an `enc` this package can
+    produce (A128GCM or A256GCM, the wallet's order) and a P-256 key that is not marked for
+    another use or algorithm. Otherwise None, and the signed object is served as it always
+    was: to a wallet that asked for nothing, to one asking for what this cannot produce, and to
+    metadata that does not parse, because the verifier MUST ignore what it does not recognise.
+    The key is the wallet's to name; the object is public and signed, so encrypting it to
+    whoever asks gives them nothing an unencrypted fetch would not.
+    """
+    if isinstance(wallet_metadata, (str, bytes, bytearray)):
+        try:
+            wallet_metadata = _loads_depth_bounded(wallet_metadata, "wallet_metadata")
+        except ValueError:
+            return None
+    if not isinstance(wallet_metadata, dict):
+        return None
+    algs = wallet_metadata.get("request_object_encryption_alg_values_supported")
+    encs = wallet_metadata.get("request_object_encryption_enc_values_supported")
+    if not isinstance(algs, list) or ACCEPTED_ALG not in algs or not isinstance(encs, list):
+        return None
+    enc = next((e for e in encs if isinstance(e, str) and e in ACCEPTED_ENC), None)
+    jwks = wallet_metadata.get("jwks")
+    keys = jwks.get("keys") if isinstance(jwks, dict) else None
+    if enc is None or not isinstance(keys, list):
+        return None
+    for jwk in keys:
+        if (not isinstance(jwk, dict) or jwk.get("use", "enc") != "enc"
+                or jwk.get("alg", ACCEPTED_ALG) != ACCEPTED_ALG):
+            continue
+        try:
+            public_key = _public_key_from_jwk(jwk)
+        except JweError:
+            continue
+        kid = jwk.get("kid")
+        return public_key, enc, kid if isinstance(kid, str) else None
+    return None
+
+
 class Verifier:
     """Builds requests and judges responses. Holds no socket: see `serve()` for that.
 
@@ -85,7 +234,7 @@ class Verifier:
                  issuer_jwks=None, issuer_trust_anchors=None, redirect_uri=None,
                  request_ttl_seconds=DEFAULT_REQUEST_TTL_SECONDS,
                  vct_values=("urn:eudi:pid:1",), claims=("given_name", "family_name"),
-                 status_resolver=None):
+                 status_resolver=None, verifier_info=None):
         if not _HAVE_CRYPTO:
             raise RuntimeError("polaris-oid4vp requires the cryptography package")
         self.cert = load_pem_x509_certificate(client_cert_pem)
@@ -102,13 +251,15 @@ class Verifier:
         self.issuer_trust_anchors = list(issuer_trust_anchors or [])
         self.request_ttl_seconds = request_ttl_seconds
         self.vct_values = list(vct_values)
-        self.claims = list(claims)
+        self.claims = [claim_query(c) for c in claims]
         # Revocation. None means the verdict reports `not_evaluated`, which is what this
         # verifier can honestly say about a status list nobody read. Threaded from here
         # rather than left on `verify_presentation` alone because THIS is the surface an
         # operator uses: the class that answers the wallet. A parameter reachable only from
         # the function underneath it is a capability the product does not have.
         self.status_resolver = status_resolver
+        self.verifier_info = (None if verifier_info is None
+                              else verifier_info_entries(verifier_info, (self.DCQL_QUERY_ID,)))
         self._sessions = {}
         self._by_request = {}
         self._lock = threading.Lock()
@@ -126,7 +277,7 @@ class Verifier:
             self._by_request[session.state] = jar
         return session, jar
 
-    def request_object(self, state, wallet_nonce=None):
+    def request_object(self, state, wallet_nonce=None, wallet_metadata=None):
         """The JAR for an outstanding request, served as many times as it is asked for.
 
         The plan has a module that fetches the `request_uri` TWICE. Making a request object
@@ -138,6 +289,10 @@ class Verifier:
         as a top-level claim. It is the wallet's replay protection against a request object
         minted before the wallet existed, and the mirror of the `nonce` we send it, so a
         verifier that serves a cached object to a POST has taken that protection away.
+
+        `wallet_metadata`, posted beside it, may ask for the object encrypted to the wallet's
+        key (`request_object_encryption`). Then the same signed object comes back encrypted:
+        a signed-then-encrypted nested JWT, as RFC 9101 section 6.1 has it.
         """
         # An outstanding request only: a session past its lifetime is gone, and neither its cached
         # object nor a fresh one minted for a wallet nonce is served. Until 2026-10-01 this path
@@ -147,10 +302,19 @@ class Verifier:
             session = self._sessions.get(state)
             cached = self._by_request.get(state)
         if wallet_nonce is None:
-            return cached
-        if session is None:
+            jar = cached
+        elif session is None:
             return None
-        return self._request_object(session, wallet_nonce=wallet_nonce)
+        else:
+            jar = self._request_object(session, wallet_nonce=wallet_nonce)
+        target = None if jar is None else request_object_encryption(wallet_metadata)
+        if target is None:
+            return jar
+        public_key, enc, kid = target
+        header = {"cty": "JWT"}
+        if kid is not None:
+            header["kid"] = kid
+        return encrypt_compact(jar.encode("ascii"), public_key, enc, extra_header=header)
 
     def _request_object(self, session, wallet_nonce=None):
         numbers = session.enc_key.public_key().public_numbers()
@@ -182,11 +346,14 @@ class Verifier:
                 "id": self.DCQL_QUERY_ID,
                 "format": "dc+sd-jwt",
                 "meta": {"vct_values": self.vct_values},
-                "claims": [{"path": [c]} for c in self.claims],
+                "claims": [dict({"path": list(path)}, **({"values": list(values)} if values else {}))
+                           for path, values in self.claims],
             }]},
         }
         if wallet_nonce is not None:
             claims["wallet_nonce"] = wallet_nonce
+        if self.verifier_info:
+            claims["verifier_info"] = self.verifier_info
         header = {"alg": "ES256", "typ": "oauth-authz-req+jwt", "x5c": self.x5c}
         return _sign_es256(self.key, header, claims)
 
@@ -279,11 +446,35 @@ class Verifier:
         # The claims the DCQL query above asked for. Every one is required (it names no
         # `claim_sets`), and a presentation that discloses fewer does not answer the request;
         # until 2026-10-01 a wallet that withheld one got the same 200 as one that did not.
+        # A path is followed key by key through what was disclosed, so `age_equal_or_over.18`
+        # is answered by that one statement and not by the object around it.
         disclosed = verdict.claims if isinstance(verdict.claims, dict) else {}
-        missing = [c for c in self.claims if c not in disclosed]
+        missing, unaccepted = [], []
+        for path, values in self.claims:
+            found, value = disclosed_at(disclosed, path)
+            if not found:
+                missing.append(path)
+            elif values is not None and not value_matches(value, values):
+                unaccepted.append(path)
         if missing:
             return self._error("claims", "the presentation does not disclose %s, which the "
-                                         "request asked for" % ", ".join(repr(c) for c in missing))
+                                         "request asked for" % ", ".join(_shown(p) for p in missing))
+        # The query's `values`: a wallet SHOULD return the claim only when it matches, so one
+        # that returns another value has not answered, and `age_equal_or_over.18: false` must
+        # not pass where `true` was asked for.
+        if unaccepted:
+            return self._error("claims", "the presentation discloses %s with a value the request "
+                                         "does not accept" % ", ".join(_shown(p) for p in unaccepted))
+        # OpenID4VP 1.0 section 6.4: a wallet MUST NOT send selectively disclosable claims the
+        # request did not select. ERICA, the German EUDI Wallet programme's verifier testing
+        # tool, sends one as a negative case (OVER_DISCLOSURE); until 2026-10-04 it got 200 and
+        # the operator received claims nobody asked for. What the issuer signed in clear text is
+        # not a disclosure and is not judged here.
+        requested = [path for path, _ in self.claims]
+        extra = sorted((p for p in verdict.disclosed if not _selected(p, requested)), key=repr)
+        if extra:
+            return self._error("claims", "the presentation discloses %s, which the request did "
+                                         "not select" % ", ".join(_shown(p) for p in extra[:5]))
 
         # A status the operator's resolver CHECKED, whose value is not VALID (0): the issuer
         # says this credential is revoked or suspended. That is a fact, not a policy question, so

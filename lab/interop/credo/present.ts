@@ -47,7 +47,9 @@ const CONTROL = process.env.CONTROL ?? ''
 if (CONTROL && !['wrong-issuer', 'foreign-holder', 'replay', 'untrusted-verifier'].includes(CONTROL)) {
   throw new Error(`unknown CONTROL '${CONTROL}'`)
 }
-const EVIDENCE = path.join(HERE, 'evidence', CONTROL || 'positive')
+// EVIDENCE_DIR records a run somewhere other than evidence/, so walking another Credo version does
+// not overwrite the recorded runs.
+const EVIDENCE = path.resolve(HERE, process.env.EVIDENCE_DIR ?? 'evidence', CONTROL || 'positive')
 const VERIFIER = process.env.POLARIS_OID4VP ?? 'polaris-oid4vp'
 const PYTHON = process.env.PYTHON ?? 'python3'
 const PORT = Number(process.env.PORT ?? 9543)
@@ -143,7 +145,7 @@ async function main(): Promise<number> {
       // A fresh in-memory store has no storage-version record, which Credo reads as 0.1 and
       // refuses; askar and drizzle seed it when they create a store. Updating an empty store
       // migrates nothing.
-      config: { logger: new ConsoleLogger(LogLevel.warn), autoUpdateStorageOnStartup: true },
+      config: { logger: new ConsoleLogger(logLevel(LogLevel, 'warn')), autoUpdateStorageOnStartup: true },
       dependencies: { ...agentDependencies, fetch: loggingFetch as never },
       modules: {
         kms: new Kms.KeyManagementModule({
@@ -168,17 +170,38 @@ async function main(): Promise<number> {
   if (CONTROL === 'foreign-holder') log('CONTROL foreign-holder: cnf.jwk is a key generated outside Credo')
 
   // --- 3. the credential -------------------------------------------------------------------
+  // Credo 0.7 names an SD-JWT VC issuer only by DID or certificate ("Only did and x5c are
+  // supported"), so from 0.7 the issuer signs under a certificate in x5c and the wallet and the
+  // verifier both trust the CA that certified it. 0.6 took a bare kid, the recorded runs' JWKS way.
+  const [credoMajor, credoMinor] = pkgVersion('@credo-ts/core').split('.').map(Number)
+  const X5C_ISSUER = credoMajor > 0 || credoMinor >= 7
   const issuerOut = execFileSync(
     PYTHON,
-    [ISSUER_SCRIPT, '--holder-jwk', path.join(RUN, 'holder.json'), '--out', path.join(RUN, 'credential.json')],
+    [ISSUER_SCRIPT, '--holder-jwk', path.join(RUN, 'holder.json'), '--out', path.join(RUN, 'credential.json'),
+      ...(X5C_ISSUER ? ['--x5c'] : [])],
     { encoding: 'utf8' }
   )
   log(`issuer: ${issuerOut.trim().replace(/\n/g, ' | ')}`)
   const minted = JSON.parse(readFileSync(path.join(RUN, 'credential.json'), 'utf8'))
-  const trustedIssuerJwks =
-    CONTROL === 'wrong-issuer' ? [freshP256Jwk(minted.issuer_jwks[0].kid)] : minted.issuer_jwks
-  if (CONTROL === 'wrong-issuer') log('CONTROL wrong-issuer: verifier trusts a different key under the same kid')
-  writeFileSync(path.join(RUN, 'issuer-jwks.json'), JSON.stringify(trustedIssuerJwks))
+  let issuerTrust: string[]
+  if (X5C_ISSUER) {
+    agent.x509.config.addTrustedCertificate(minted.issuer_ca_pem)
+    writeFileSync(path.join(RUN, 'issuer-ca.pem'), minted.issuer_ca_pem)
+    let trustedCa = path.join(RUN, 'issuer-ca.pem')
+    if (CONTROL === 'wrong-issuer') {
+      const other = path.join(RUN, 'other-issuer')
+      execFileSync(VERIFIER, ['keygen', '--out', other, '--host', HOST, '--port', String(PORT)])
+      trustedCa = path.join(other, 'anchor.pem')
+      log('CONTROL wrong-issuer: the verifier trusts an unrelated CA, not the one that certified the issuer')
+    }
+    issuerTrust = ['--issuer-trust-anchor', trustedCa]
+  } else {
+    const trustedIssuerJwks =
+      CONTROL === 'wrong-issuer' ? [freshP256Jwk(minted.issuer_jwks[0].kid)] : minted.issuer_jwks
+    if (CONTROL === 'wrong-issuer') log('CONTROL wrong-issuer: verifier trusts a different key under the same kid')
+    writeFileSync(path.join(RUN, 'issuer-jwks.json'), JSON.stringify(trustedIssuerJwks))
+    issuerTrust = ['--issuer-jwks', path.join(RUN, 'issuer-jwks.json')]
+  }
 
   const record = new SdJwtVcRecord({
     credentialInstances: [{ compactSdJwtVc: minted.credential, kmsKeyId: holderKey.keyId }],
@@ -193,7 +216,7 @@ async function main(): Promise<number> {
     VERIFIER,
     [
       'serve', '--pki', PKI, '--host', HOST, '--bind', '127.0.0.1', '--port', String(PORT),
-      '--issuer-jwks', path.join(RUN, 'issuer-jwks.json'), '--once', '--verbose',
+      ...issuerTrust, '--once', '--verbose',
     ],
     { env: { ...process.env, PYTHONUNBUFFERED: '1' } }
   )
@@ -317,6 +340,12 @@ async function waitForParams(lines: string[], proc: ChildProcess): Promise<Recor
     await delay(100)
   }
   throw new Error(`verifier did not print its authorization request parameters:\n${lines.join('\n')}`)
+}
+
+// Credo 0.7 renamed the log levels (LogLevel.warn became LogLevel.Warn); this reads either.
+function logLevel(levels: object, name: string): number {
+  const table = levels as Record<string, number>
+  return table[name[0].toUpperCase() + name.slice(1)] ?? table[name]
 }
 
 function pkgVersion(name: string): string {

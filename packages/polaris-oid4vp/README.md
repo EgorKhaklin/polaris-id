@@ -6,24 +6,55 @@ holder key binding, delivered over `direct_post.jwt`.
 
 <a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/docs/assets/openid-certified-mark-on-white.png" alt="OpenID Certified" width="160"></a>
 
-**OpenID Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile.**
+**OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile.**
 `polaris-oid4vp 1.0.0rc7` finished all eleven modules of the Foundation's hosted
 `oid4vp-1final-verifier-haip-test-plan` (`sd_jwt_vc`, `direct_post.jwt`) without failure, and the OpenID
 Foundation [lists the certification](https://openid.net/certification/certified-oid4vp-haip-final/)
 (2026-09-24). It covers that version in that role: not an endorsement, not an audit, and not
-other versions.
+other versions. OpenID® and OpenID® Certified™ are trademarks of the OpenID Foundation, used under
+its [certification terms](https://openid.net/certification/mark/).
 
-**Status:** 1.0.0rc13, a release candidate, not certified: it carries the fixes made since
+**Status:** 1.0.0rc16, a release candidate, not certified: it carries the fixes made since
 1.0.0rc7. Outside results: the Foundation's hosted suite (0.1.0, then 1.0.0rc7 for
-certification) and four unmodified external wallets: walt.id Wallet API v2 (last against
-1.0.0-rc.3), Credo 0.6.3 (against 1.0.0rc7, 2026-09-27), eudi-dev v2.3.7 and OID4VCgo 0.12.0
-(2026-09-28). No operator other than the author has run it and no independent security
-review exists. Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
+certification) and the implementations in the table below, re-run weekly. No operator other
+than the author has run it and no independent security review exists. Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
 
 **Try it in ten minutes, without cloning anything:**
 [the stranger's path](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md)
 takes a clean machine with Docker, this package and an unmodified walt.id wallet to an accepted
 presentation. If it fails for you, please open an issue.
+
+## Tested against
+
+Outside OpenID4VP implementations present to this verifier, each unmodified unless its row says
+otherwise: configuration only (trust anchors, TLS roots). Every walk also sends controls that must be refused, because a
+verifier that accepts everything prints the same success line; among them a wrong issuer key
+under the same `kid`, the answered request again, a mismatched `client_id`, a key the wallet does
+not hold and an untrusted CA. A [weekly canary](https://github.com/EgorKhaklin/polaris-id/blob/main/.github/workflows/wallet-canary.yml) re-runs
+the walks against the newest release on PyPI.
+
+| Implementation | Maintained by | Language | Last walk |
+|---|---|---|---|
+| [walt.id Wallet API v2](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/waltid/README.md) | walt.id | Kotlin | 1.1.1, against 1.0.0rc16 (2026-10-04) |
+| [Credo](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/credo/README.md) | OpenWallet Foundation | TypeScript | 0.7.2, against 1.0.0rc14 (2026-10-03) |
+| [`eudi-lib-jvm-openid4vp-kt`](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-kt/README.md), the EUDI Wallet's OpenID4VP library, under a short wallet built for the walk | European Commission | Kotlin | 0.16.2, against 1.0.0rc16 (2026-10-04) |
+| [vck](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/vck/README.md) (`vck-openid-ktor`), under a short wallet built for the walk; vck also issued the credential | A-SIT Plus | Kotlin | 8.0.0, against 1.0.0rc16 (2026-10-04) |
+| [`eudi-lib-ios-openid4vp-swift`](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-ios/README.md), the EUDI Wallet's iOS OpenID4VP library, under a short wallet built for the walk | European Commission | Swift | 0.43.2, against 1.0.0rc16 (2026-10-04) |
+| [irmago](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/irmago/README.md), the library under the Yivi wallet, under a short wallet built for the walk | Privacy by Design Foundation (Yivi) | Go | v1.4.0, against 1.0.0rc16 (2026-10-04) |
+| [SpruceID `openid4vp`](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/spruceid/README.md), its conformance adapter with the test issuer replaced | SpruceID | Rust | e5f29b85, against 1.0.0rc16 (2026-10-04) |
+| [Procivis One Core](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/procivis/README.md) (`core-server`), which also issued the credential | Procivis | Rust | v1.87.2, against 1.0.0rc16 (2026-10-04) |
+| [ProtocolSoup](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/protocolsoup/README.md), its wallet harness (listed as certified) | ParleSec | Go | v4.0.0, against 1.0.0rc16 (2026-10-04) |
+| [The EU reference PID issuer](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-issuer/README.md) (`eudi-srv-pid-issuer`), issuing to a wallet built on the EU's libraries | European Commission | Kotlin | v0.11.1, against 1.0.0rc16 (2026-10-04) |
+| [Credo on a cheqd ledger](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/cheqd/README.md), the issuer a `did:cheqd` with its status list on the ledger | cheqd, OpenWallet Foundation | TypeScript, Go | cheqd-node 4.2.1 and Credo 0.7.2, against 1.0.0rc15 (2026-10-04) |
+| [Multipaz](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/multipaz/README.md), under a short wallet built for the walk | OpenWallet Foundation | Kotlin | 0.101.0, against 1.0.0rc16 (2026-10-04) |
+| [ERICA](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/erica/README.md), the German EUDI Wallet programme's verifier testing tool, with its negative modes | the German EUDI Wallet programme (opencode.de) | TypeScript | 2c27dc92, against the tree (2026-10-04) |
+| [eudi-dev](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | dominikschlosser | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) |
+| [OID4VCgo](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/oid4vcgo/README.md) | IDFoundry | Go | 0.25.0, against 1.0.0rc14 (2026-10-03) |
+| [The OpenID Foundation's conformance suite](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SPEC-COMPLIANCE.md#openid-certified) | OpenID Foundation | Java | eleven of eleven HAIP verifier modules clean against 1.0.0rc15, both controls noticed (2026-10-04); 1.0.0rc7 certified (2026-09-24) |
+
+The author drove every walk: interoperability with those implementations, not use by their
+maintainers. Each walk is one script you can run against your own copy; to test your wallet,
+point it at `polaris-oid4vp serve` as below.
 
 ## Install and run
 
@@ -35,11 +66,27 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
 
 - `keygen` makes a CA, a leaf it signs and a listener certificate, and prints the `client_id`
   and the anchor a counterparty registers. The profile rejects a self-signed leaf and a trust
-  anchor inside the chain; `keygen` avoids both. Its keys are for testing.
+  anchor inside the chain; `keygen` avoids both. The CA and the leaf carry the key identifiers
+  RFC 5280 asks for, which some wallets find a CA by. The listener certificate is marked for server
+  authentication, which Apple's TLS policy requires even of a certificate a client trusts by
+  name. Its keys are for testing.
+- A wallet that fetches the request object by POST and asks for it encrypted (its
+  `wallet_metadata` lists `ECDH-ES` in `request_object_encryption_alg_values_supported`, an
+  `enc` this package produces, A128GCM or A256GCM, and a P-256 key in `jwks`) gets the signed
+  object encrypted to that key, as the EUDI iOS wallet kit requires. A wallet that asks for
+  nothing, or for something this cannot produce, gets the signed object.
+- `--verifier-info FILE` puts attestations about the verifier into the request object, such as
+  the registration certificate a registrar issues: a JSON array as OpenID4VP 1.0 section 5.1 has
+  it, or one object, `{"format": "registration_cert", "data": "<JWT>"}`, as the German EUDI
+  Wallet guide and its testing tool read it. The German ecosystem requires one for a PID request.
+  This package carries it as given and does not check it.
 - `serve --issuer-trust-anchor ca.pem` trusts an issuer that signs with its certificate in `x5c`,
   as HAIP issuers do (repeatable; each file may hold several PEM certificates). The leaf must
-  chain to an anchor in one link, be inside its validity period, and, when it states a key
-  usage, include digitalSignature; one that states extended key usages must name one an
+  chain to an anchor, directly or through the CA certificates the `x5c` sends after it (at most
+  three, in order, each certifying the one before it; each a CA allowed to sign certificates,
+  inside its validity period and its path length, with no critical extension this does not
+  read, and none of them the anchor itself). The leaf must be inside its validity period and,
+  when it states a key usage, include digitalSignature; one that states extended key usages must name one an
   issuer may hold (ISO 18013-5's document signer, as EUDI issuers use, or client auth, code
   signing or email protection). A leaf that states no key usage is not restricted by one. An `iss` must be
   a name the leaf gives: a URI subjectAltName exactly, or, for a leaf naming only DNS hosts, an
@@ -53,6 +100,17 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
 - `--no-local-tls` serves the local listener over plain HTTP, for when that proxy or tunnel
   terminates TLS and provides the public HTTPS. The listener still binds `--bind` (localhost by
   default); pair it with `--public-base-url`, which is then the HTTPS `request_uri` a wallet uses.
+- `--claim` names a claim to ask for (repeatable; without it, `given_name` and `family_name`): a
+  name, a dotted path of object keys, or a JSON array of keys, optionally `=VALUE` (JSON) for
+  the value it must have. A path asks for one member of a nested claim and nothing around it:
+  `--claim age_equal_or_over.18=true` asks an EUDI PID whether its holder is 18 or over and
+  nothing else, where `--claim age_equal_or_over` would ask for every age statement it holds.
+  A presentation that withholds a claim, or discloses it with another value or type (`1` is
+  not `true`), is refused (`claims`). Array indices are not accepted: an undisclosed element is
+  left out of the disclosed claims, so a position counted afterwards is not the one the issuer
+  signed. `--vct` (repeatable) names the credential types to accept; without it,
+  `urn:eudi:pid:1`. `Verifier(claims=..., vct_values=...)` takes the same, a claim as a name, a
+  list of keys, or `{"path": [...], "values": [...]}`.
 - `serve` with neither `--issuer-jwks` nor `--issuer-trust-anchor` refuses every presentation
   (`issuer_key`) and says so on stderr. An `--issuer-jwks` file it cannot read, or none of whose keys
   can verify ES256 when no anchor is given, stops `serve` before it listens (exit 2).
@@ -87,7 +145,7 @@ make every presentation replayable. `sdjwt.py` touches no socket and reads no co
 | `kb_signature` | a key-binding signature that does not verify |
 | `nonce`, `audience` | a key-binding JWT for another request or verifier |
 | `kb_freshness` | a key-binding `iat` outside the window, or an `exp` or `nbf` it carries that has passed or not arrived |
-| `claims` | (`Verifier`) a presentation that withholds a claim the request asked for |
+| `claims` | (`Verifier`) a presentation that withholds a claim the request asked for, discloses it with a value the request does not accept, or discloses a selectively disclosable claim the request did not select (OpenID4VP 1.0 section 6.4) |
 | `revoked` | (`Verifier`) a credential whose checked status value is not VALID (0) |
 | `credential_validity` | a credential past its `exp` or before its `nbf` |
 | `vct` | a credential of a type the query did not ask for |
@@ -150,6 +208,10 @@ of a displayed result). The drill carries two negative controls: a verifier that
 everything must fail the positive modules, and one that accepts everything must fail all seven
 negative ones.
 
+The wallet canary runs the drill weekly against the newest release on PyPI, with the suite's
+prebuilt images at their newest (`POLARIS_OID4VP_INSTALLED=1` makes it import the installed
+package instead of the tree). A run is not a certification.
+
 ## Tests
 
 ```bash
@@ -157,7 +219,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 361 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 422 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 120 refusals accept and requires a

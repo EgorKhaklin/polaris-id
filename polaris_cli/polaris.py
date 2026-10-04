@@ -79,7 +79,7 @@ def _require_werkzeug():
         return generate_password_hash
     except ImportError:
         sys.stderr.write("ERROR: werkzeug is required for user-management commands.\n")
-        sys.stderr.write("    pip install 'polaris-id-cli[user-mgmt]'  (or Flask, which ships it)\n")
+        sys.stderr.write("    pip install --pre 'polaris-id-cli[user-mgmt]'  (or Flask, which ships it)\n")
         sys.exit(1)
 
 
