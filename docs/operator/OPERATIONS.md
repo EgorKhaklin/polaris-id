@@ -115,6 +115,7 @@ Volumes:
 | Verify archive integrity | Quarterly | `./scripts/polaris-archive.sh --verify-latest --dest=DIR` |
 | Audit-log purge | Operator-driven, after archive verify | `./scripts/polaris-purge.sh --archive=TARBALL --actor-user-id=N` |
 | Audit-log archive, per class | Yearly, when retention differs by class | `./scripts/polaris-archive.sh --from-policy` then the purge above |
+| Anchor the transparency logs in Bitcoin | Daily, or at the cadence you choose | `./scripts/polaris-chain-anchor.py checkpoint`, `ots stamp`, later `ots upgrade`, `verify`, `polaris-id anchor-record`; see [Anchoring the logs in Bitcoin](#anchoring-the-logs-in-bitcoin) |
 | Certificate transparency check | Daily (cron) | `./scripts/polaris-ct-monitor.sh`: alerts on unexpected cert issuance for `${POLARIS_DOMAIN}`; see [Certificate transparency monitoring](#certificate-transparency-monitoring) |
 | Audit-log rotation | Yearly (cron) | `./scripts/polaris-rotate-logs.sh --actor-user-id=N`: archive from the retention policy, verify, purge, in one cron-ready pipeline (`--cutoff-days` overrides the policy with one fixed cutoff) |
 | Operator onboarding | As needed | `./scripts/polaris-create-operator.sh --username NAME --role admin\|operator\|auditor --password-file PATH`: scrypt-hashed AppUser + AuthAuditLog entry |
@@ -498,6 +499,46 @@ attacker who controls a different CA path or the operator's DNS.
 | 4    | Network error (crt.sh unreachable; treat as inconclusive and retry next cycle) |
 | 5    | Anomaly: UNKNOWN cert detected; investigate immediately |
 | 6    | Malformed allowlist file |
+
+### Anchoring the logs in Bitcoin
+
+Decision 013 ([transparency-log.md](../design/transparency-log.md#public-chain-anchoring-decision-013)).
+A checkpoint is the canonical JSON of the three logs' signed tree heads at one moment. Its
+SHA-256 goes to public OpenTimestamps calendars, which commit many digests at once in a Bitcoin
+transaction. Only the digest leaves the machine, and there is no key, account or fee. Once a
+block holds it, anyone with the checkpoint and its proof can show what the logs held by that
+block's time, and any later head of the same logs must extend it. The OpenTimestamps client is
+your tool, not a Polaris dependency: `pip install opentimestamps-client`.
+
+```bash
+./scripts/polaris-chain-anchor.py checkpoint --url https://$POLARIS_DOMAIN --out anchors/$(date -u +%F)
+ots stamp anchors/$(date -u +%F)/checkpoint.json
+# Usually one to three hours later, once the calendars' transaction has six confirmations:
+ots upgrade anchors/<day>/checkpoint.json.ots
+./scripts/polaris-chain-anchor.py verify anchors/<day>/checkpoint.json anchors/<day>/checkpoint.json.ots \
+    --out anchors/<day>/anchor.json
+POLARIS_DB_USER=<schema owner> polaris-id anchor-record anchors/<day>/anchor.json
+```
+
+`verify` reads each block header from two public Esplora services, which must return the same
+80 bytes, or from your own node: `--header HEIGHT=$(bitcoin-cli getblockheader $(bitcoin-cli
+getblockhash HEIGHT) false)`. Exit 0 is anchored, 1 is still pending (upgrade again later), 2 is
+refused. `anchor-record` decides the anchor again from the file before writing; it runs as the
+schema owner, and the application role is refused with exit 3. The instance then publishes it at
+`/api/v1/transparency/anchors`.
+
+Anyone can check an instance against its anchors, with no account and no Polaris code beyond the
+script and the detached verifier:
+
+```bash
+./scripts/polaris-chain-anchor.py check --url https://$POLARIS_DOMAIN
+```
+
+Every published anchor must verify, and each anchored head must be a prefix of that log today
+(an RFC 6962 consistency proof). Exit 2 means an anchor does not verify or a log no longer
+extends what was anchored. The second is the finding anchoring exists for: history was
+rewritten after it was committed. `check` does not authenticate today's heads;
+`polaris-transparency-monitor.py` does that against the log's key.
 
 ---
 

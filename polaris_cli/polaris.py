@@ -50,6 +50,8 @@ drift from what the program accepts):
     key-register         Register an authority signing key (P8.7b): it becomes the agency's current key
     key-retire           Retire an authority key: an orderly rotation, effective from an instant
     key-compromise       Declare an authority key compromised, untrusted from an instant
+    anchor-record        013: record a checkpoint of the logs committed to Bitcoin, once it verifies
+    anchor-list          013: the recorded chain anchors, newest first
 
 The database connection uses the same environment variables as the web
 application: POLARIS_DB_HOST, POLARIS_DB_NAME, POLARIS_DB_USER,
@@ -58,6 +60,7 @@ POLARIS_DB_PASSWORD. Every command accepts --help.
 
 import argparse
 import getpass
+import json
 import os
 import re
 import sys
@@ -2691,6 +2694,14 @@ def build_parser():
         p_k.add_argument('--algorithm', default=None, choices=('ML-DSA-65', 'ML-DSA-87'),
                          help='The key\'s parameter set (default: inferred from the key length, else ML-DSA-65)')
 
+    # the logs' public-chain anchors (decision 013)
+    p_ar = sub.add_parser('anchor-record',
+                          help='013: record a checkpoint of the logs committed to Bitcoin, once it verifies')
+    p_ar.add_argument('anchor_file', help='The file polaris-chain-anchor.py verify --out wrote')
+    p_ar.add_argument('--recorded-by', default=None, help='Who recorded it (default: $USER)')
+    p_al = sub.add_parser('anchor-list', help='013: the recorded chain anchors, newest first')
+    p_al.add_argument('--limit', type=int, default=20, help='How many (default 20)')
+
     # retention (roadmap P1.11)
     p_rsh = sub.add_parser('retention-show',
                            help='What retention is in force, and the cutoff it resolves to')
@@ -2794,6 +2805,112 @@ def cmd_key_retire(args):
 
 def cmd_key_compromise(args):
     return _cmd_key_event(args, 'compromised')
+
+
+# ----------------------------------------------------------------------------
+# COMMAND: anchor-record / anchor-list (decision 013, the logs' public-chain anchors)
+# ----------------------------------------------------------------------------
+
+def _chain_verifier():
+    """The detached verifier: beside this file in a checkout, else the polaris-verify package."""
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'scripts', 'polaris-verify.py')
+    if os.path.isfile(path):
+        spec = importlib.util.spec_from_file_location('polaris_verify_for_cli', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    try:
+        from polaris_verify_cli import verifier
+    except ImportError:
+        return None
+    return verifier
+
+
+def cmd_anchor_record(args):
+    """Record one chain anchor (decision 013) from the file `polaris-chain-anchor.py verify --out`
+    wrote: the checkpoint, its OpenTimestamps proof and the block headers it was decided against.
+    The anchor is decided again here, offline, and a pending or refused one is not recorded. The
+    record is what the instance publishes at /api/v1/transparency/anchors; a verifier rereads the
+    proof against headers it reads itself, so the row is never the evidence. Schema owner only."""
+    V = _chain_verifier()
+    if V is None or not hasattr(V, 'verify_chain_anchor'):
+        sys.stderr.write(red("anchor-record needs the detached verifier: run it from a checkout, or "
+                             "pip install --pre polaris-verify.\n"))
+        return 1
+    try:
+        with open(args.anchor_file) as f:
+            doc = json.load(f)
+        anchor, headers = doc['anchor'], doc['headers']
+        min_sources = doc.get('min_sources', 2)
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        sys.stderr.write(red(f"{args.anchor_file} is not an anchor file from polaris-chain-anchor.py verify: {e}\n"))
+        return 1
+    v = V.verify_chain_anchor(anchor, headers, min_sources=min_sources)
+    if not v['anchored']:
+        sys.stderr.write(red(f"Not recorded: {v['note']}\n"))
+        return 1
+    # The sources agreed on this header, or the verdict above would not hold; any one of them is it.
+    header = next(h.get(v['block_height'], h.get(str(v['block_height'])))
+                  for h in headers.values()
+                  if isinstance(h, dict) and (v['block_height'] in h or str(v['block_height']) in h))
+    checkpoint = anchor['checkpoint'].encode('utf-8')
+    recorded_by = (args.recorded_by or os.environ.get('USER') or 'operator')[:50]
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO ChainAnchor (checkpoint, checkpoint_sha256, chain, method, proof, block_height, "
+                "block_header_hex, recorded_by) VALUES (%s, %s, 'BITCOIN', 'OPENTIMESTAMPS', %s, %s, %s, %s) "
+                "RETURNING anchor_id",
+                (checkpoint, v['checkpoint_sha256'], bytes.fromhex(anchor['proof_hex']), v['block_height'],
+                 header.lower(), recorded_by))
+            anchor_id = cur.fetchone()['anchor_id']
+            conn.commit()
+        print(green(f"\u2713 Recorded chain anchor #{anchor_id}: Bitcoin block {v['block_height']} "
+                    f"({v['block_hash']})"))
+        for h in v['heads']:
+            print(f"  {h['log_id']}: size {h['tree_size']}, root {h['root_hash_hex'][:16]}...")
+        print(dim("  Published at /api/v1/transparency/anchors; anyone checks it with "
+                  "polaris-chain-anchor.py check."))
+        return 0
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        sys.stderr.write(red("This checkpoint is already recorded.\n"))
+        return 1
+    except psycopg2.errors.InsufficientPrivilege:
+        conn.rollback()
+        sys.stderr.write(red("Refused: recording a chain anchor is the operator's act, which the application's "
+                             "database role cannot perform. Run it as the schema owner (set "
+                             "POLARIS_DB_USER).\n"))
+        return 3
+    except psycopg2.Error as e:
+        conn.rollback()
+        sys.stderr.write(red(f"Database error: {db_error_message(e)}\n"))
+        return 2
+    finally:
+        conn.close()
+
+
+def cmd_anchor_list(args):
+    """The recorded chain anchors, newest first (decision 013)."""
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT anchor_id, chain, block_height, checkpoint_sha256, recorded_at, recorded_by "
+                        "FROM ChainAnchor ORDER BY anchor_id DESC LIMIT %s", (args.limit,))
+            rows = cur.fetchall()
+        if not rows:
+            print(dim("No chain anchors are recorded."))
+            return 0
+        for r in rows:
+            print(f"#{r['anchor_id']:<5} {r['chain']} block {r['block_height']:<8} "
+                  f"checkpoint {r['checkpoint_sha256'][:16]}...  recorded {r['recorded_at']:%Y-%m-%d %H:%M} "
+                  f"by {r['recorded_by']}")
+        return 0
+    finally:
+        conn.close()
 
 
 _RP_OWNER_ONLY = ("Refused: registering a relying party or setting its policy is a governance decision "
@@ -3026,6 +3143,8 @@ HANDLERS = {
     'key-register':     cmd_key_register,
     'key-retire':       cmd_key_retire,
     'key-compromise':   cmd_key_compromise,
+    'anchor-record':    cmd_anchor_record,
+    'anchor-list':      cmd_anchor_list,
 }
 
 

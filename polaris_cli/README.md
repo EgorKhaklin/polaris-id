@@ -82,6 +82,7 @@ polaris-id issue --help
 | `rp-policy <client_id>` | Set a relying party's auth-broker policy |
 | `rp-history [client_id]` | Every recorded decision about a relying party |
 | `key-register` / `key-retire` / `key-compromise` | Authority signing-key lifecycle |
+| `anchor-record <file>` / `anchor-list` | Record a checkpoint of the logs committed to Bitcoin, once it verifies (schema owner); list them |
 | `retention-show` / `retention-set` | Retention in force, and recording a decision |
 
 `polaris-id <command> --help` lists every flag.

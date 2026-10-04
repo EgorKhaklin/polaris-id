@@ -1817,62 +1817,15 @@ class ReceiptInclusionDecisions(unittest.TestCase):
 
 class ChainAnchorDecisions(unittest.TestCase):
     """013: a checkpoint of the transparency logs committed in a Bitcoin block. The fixture is
-    the real one: lab/strategy/013's checkpoint, its OpenTimestamps proof, and the raw headers
-    of blocks 969876 (the attested block) and 969877, as blockstream.info and mempool.space both
-    returned them on 2026-10-04."""
+    the real one (sdk/testdata/chain-anchor-969876.json): lab/strategy/013's checkpoint, its
+    OpenTimestamps proof, and the raw headers of blocks 969876 (the attested block) and 969877,
+    as blockstream.info and mempool.space both returned them on 2026-10-04."""
 
-    CHECKPOINT = (
-        '{"format":"polaris-chain-checkpoint/1","heads":[{"format":"polaris-transparency-sth/1","log_id":'
-        '"polaris-audit-anchor-log","root_hash_hex":"a0460165abc77f744daf24669123959b2a4c3f9dc3eff00e7fe6'
-        'dfa4e23bf135","timestamp":"2026-10-04T16:30:22Z","tree_size":2},{"format":"polaris-transparency-'
-        'sth/1","log_id":"polaris-exchange-receipt-log","root_hash_hex":"623b44419e93d5bf43bd2fa7d0ecaf1e'
-        'afa24f3594a33a45b5564dd2472a91be","timestamp":"2026-10-04T16:30:22Z","tree_size":2},{"format":"p'
-        'olaris-transparency-sth/1","log_id":"polaris-timestamp-log","root_hash_hex":"75d95f79470c3b43773'
-        'ef54072da6d505c34c48d3352869dd7b1d93942d101df","timestamp":"2026-10-04T16:30:22Z","tree_size":19'
-        '4}]}'
-    )
-    PROOF_HEX = (
-        "004f70656e54696d657374616d7073000050726f6f6600bf89e2e884e89294010807f61b18cb2b4e8367637f5a2cc175"
-        "6500da1d7ea64806c98818c537747c3b2df0103ebbefd5c20718220b3c7641d87febb208fff0081cd02d7a3ed7d1da08"
-        "f1205223bd1c2531f1ebce0fcd58f8d70dca1857f114580adb3446407d5a3b411b4f08f010489646bb2a75beca548a8e"
-        "c554c2a74908f12056056c8a29ae75416dc84ecd09f60b82391cd432e03193555bc0beb8450a377d08f020ddc432e964"
-        "abe79f9240dc72ed9fa067ec79aacfcc3d03e474a3a34431dd6e5608f1046ac27fa6f008441b00a8d55ab4f3ff0083df"
-        "e30d2ef90c8e2e2d68747470733a2f2f616c6963652e6274632e63616c656e6461722e6f70656e74696d657374616d70"
-        "732e6f726708f1208f3b81059eabfbc34d2b0b6f7084fe9ff5800c55321c4b8b94cab1134a01c12508f1209474829999"
-        "1f9dd4d3b3ff12999a986cf947066e92777aa4332e170ed11b52fe08f120f7277fe95eac2729948bc53015e54fd97694"
-        "60cadd96793e47b3c3b9b455657708f120f2ae198f24608885016b970c15cea8bb2b999c3117ad58a0b9e019e091839a"
-        "cf08f020084ae194d30cb240d9ed3efa708b0375d28275c9b73d2056d243dcc122d7df5908f020a5790b22a2d5333ad7"
-        "6689d95d0bba2e40934afd76ea9f3dee60c583bf928fe508f02022ebe2103d35592744bfd08b8df8cdba4cb58b0698c5"
-        "69225459563f27f06a0c08f1204d4a0c5a9f217a34ccadb89c4c050402de174df5e5fae1ba4eb3c56640ff7f4f08f020"
-        "500806a88b1a7c132ec132934c98d1abc689b4dfd91ec1b5405e02fab75663a508f02010f513987526f359340d94a65c"
-        "57db3eaf0695b2a70e033d3e181c4dea3941cb08f020d5722010aa7c6624ce20aba8966513ee2f7f0d286d06d233e34c"
-        "9a03d3a351ba08f15901000000014091d56393cdfc514793b74b1e714efb990d642b73629ad1ee05ab1bf547373e0000"
-        "000000feffffff02a106000000000000160014f79e67758ad5517bf5ee99a330a720967c7d359c000000000000000022"
-        "6a20f00493cc0e000808f0206ff351d65de3a94f96f44f821d14c651353877a68c409eaf356cbc585791d1c90808f020"
-        "db715a1f30890ba5c20619f89faa350f4ec6b784309aed026b9041d2d17476bd0808f1202434bc29fe3d58c480dd3315"
-        "ee2f0c92d69bdbdf2bee6d410d8fdbde91604f090808f020ec249bb32ce561379415c919a8329ff02ea902a384073236"
-        "ce1bb6bc8eb84cdb0808f020d1007f3ff19676182f27baa66522ee33df6612b74f69166fd7d765e42861576b0808f020"
-        "44703490e0551a714516282ece23c752e308a88e9b78457962a9c1af413dff310808f0206d0ad3dc9205ad2e47db561b"
-        "7cdc3945bdc258f87982874bcb2f16312745e5ec0808f020f4caa978221ecda93e73e4e9562dbe7879dfc67cc29f6fe6"
-        "3029f1bec8b593010808f1207798d7a651d881880d1f49b700c19f327c24236646a258c16d60c71d921db1bd0808f020"
-        "1a5ca861e71068808d0c6253e630e94580f7ae41da639d08214db6af61f2d74c0808f0204b0a931a532ab1a44347bc7b"
-        "97a59d1bd46c369546ed13e3fdd207513632e7f00808f1204c7f67b2380aaeac199bca9dc3ab26d56f8cc1d91625f5d1"
-        "f41f5e7fdac1f8620808f020fb0e4f17e28ef3c2684504db5898655736c7b18be6cd83770ab8cb804f79b7f208080005"
-        "88960d73d719010394993bfff010b6946699f1cd5f4d2f1b53fee784a45208f020de9860dbe74847a32cb59f205013db"
-        "e36fed0a6acb197cf5bbfcee581bff634908f1046ac27fa6f008b1ed76c6a01e49160083dfe30d2ef90c8e2322687474"
-        "70733a2f2f6274632e63616c656e6461722e636174616c6c6178792e636f6dfff010be79d2d828868e62c23701f9c88a"
-        "c1ac08f120f30d9eafd517b99359afb1f8310fcdec19a3901b9233d8c921c8216d275cd92908f1046ac27fa5f0082001"
-        "fc50144a7fba0083dfe30d2ef90c8e292868747470733a2f2f66696e6e65792e63616c656e6461722e657465726e6974"
-        "7977616c6c2e636f6df008ee33dee5733c6f1f08f0102722ae51de72c78f780712852ccac11c08f0203ec5d4cfb398f0"
-        "a5ea8623c0906cd7c6653fbbd90c27695a8c77f33b3e8e7d2f08f0207f20597b2aedd4f930e308c2eb735c70293b6e45"
-        "866dcb8fcfcd08e07124637608f1046ac27fa6f0084eb291b0ddc9dfdb0083dfe30d2ef90c8e2c2b68747470733a2f2f"
-        "626f622e6274632e63616c656e6461722e6f70656e74696d657374616d70732e6f7267"
-    )
-    HEADER = {
-        969876: "0000a729b432e510383fe90910c123bd976838dafd088a4ed87a00000000000000000000237aab588a2f62fba8665e3f5e3610c63ed55623a0b83a2fd8e57f30be2901974c86c26af01e0217242d0d90",
-        969877: "0000d82d144d213ec6dc17db3c9b447e9476b6b7fd558c49192d0100000000000000000098716e084fda1f7bb60fba3d503d54886e877925d38711aa1feef28da3daa2bf5e86c26af01e021752589234",
-    }
-    BLOCK_HASH = "000000000000000000012d19498c55fdb7b676947e449b3cdb17dcc63e214d14"
+    FIXTURE = json.loads((ROOT / "sdk" / "testdata" / "chain-anchor-969876.json").read_text())
+    CHECKPOINT = FIXTURE["anchor"]["checkpoint"]
+    PROOF_HEX = FIXTURE["anchor"]["proof_hex"]
+    HEADER = {int(h): x for h, x in FIXTURE["headers"].items()}
+    BLOCK_HASH = FIXTURE["block_hash"]
     FIRST_APPEND = "3ebbefd5c20718220b3c7641d87febb2"   # the proof's first operation's argument
 
     def anchor(self, **changes):
@@ -1910,6 +1863,16 @@ class ChainAnchorDecisions(unittest.TestCase):
                          (969876, self.BLOCK_HASH, 1791133260))
         self.assertEqual([h["tree_size"] for h in v["heads"]], [2, 2, 194])
         self.assertEqual(V.chain_anchor_heights(self.anchor()), [969876])
+
+    def test_the_record_s_own_block_fields_are_never_read(self):
+        """013 falsifier 2: the record is not evidence. A published anchor carries the block it
+        was recorded against; the verdict comes from the proof and the caller's sources alone."""
+        lying = self.anchor(block_height=1, block_header_hex=self.HEADER[969877], anchor_id=7)
+        v = V.verify_chain_anchor(lying, self.sources())
+        self.assertTrue(v["anchored"], v)
+        self.assertEqual(v["block_height"], 969876)
+        self.refused(self.anchor(block_height=969876, block_header_hex=self.HEADER[969876]),
+                     self.sources(self.HEADER[969877]), "Merkle root is")
 
     def test_the_lab_checkpoint_is_the_canonical_form(self):
         heads = json.loads(self.CHECKPOINT)["heads"]

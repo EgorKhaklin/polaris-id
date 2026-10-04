@@ -69,19 +69,21 @@ leaf belongs to exactly one batch.
 - **It does not mark a batch as committed.** `committed_to_chain` exists and
   no trigger sets it. Publishing to a ledger is an operator action, and the
   schema records the fact rather than performing it.
-- **It ships no procedure for recording the publication.** A tooling layer
-  could add one that takes a batch, a chain and a transaction identifier and
-  sets the flag. Until an operator has chosen a ledger there is nothing to
-  design it against.
+- **It does not record the publication on the batch.** The batch is audit of
+  record, so its columns cannot change after it closes. Since decision 013
+  (2026-10-04) a publication is recorded beside it instead: a checkpoint over
+  the transparency logs' heads, which include the anchor log's root over every
+  batch, is committed to Bitcoin and recorded in `ChainAnchor`
+  ([transparency-log.md](transparency-log.md#public-chain-anchoring-decision-013)).
 - **It does not store the hash function.** Which function closed a given batch
   is answered by this document and by the proof geometry, not by a column.
 
 The three future fields, `committed_to_chain`, `external_chain` and
 `external_chain_tx`, move together under the `batch_chain_consistency` check,
 so a transaction identifier cannot appear while the flag is false. Nothing
-writes them yet. They are here so that the relationship between the off-chain
-batch and the on-chain commitment is documented in the schema before the
-on-chain side exists, and so that wiring it later is not a migration.
+writes them, and nothing will: an append-only row cannot be marked after it
+closes, and `external_chain` admits no public chain. They remain as the
+record of the first design; `ChainAnchor` holds what they were reserved for.
 
 ## The ten-thousand-leaf cap
 

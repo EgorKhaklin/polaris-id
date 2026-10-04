@@ -2609,6 +2609,51 @@ def api_v1_transparency_entries():
     return err if err else jsonify(body)
 
 
+# --- 013: the logs' public-chain anchors ------------------------------------------------------
+#
+# At the operator's cadence one checkpoint over the three logs' signed tree heads is committed to
+# Bitcoin through OpenTimestamps, and the operator records it (ChainAnchor, which only the schema
+# owner writes) once the proof reaches a block. They are published here beside the heads as
+# polaris-chain-anchor/1 objects, which polaris-verify's verify_chain_anchor decides against block
+# headers the verifier reads itself, so nothing here is taken on trust; a monitor that keeps them
+# can later prove what the logs held at each anchored moment.
+_CHAIN_ANCHOR_FORMAT = 'polaris-chain-anchor/1'
+_CHAIN_ANCHORS_CAP = int(os.environ.get('POLARIS_CHAIN_ANCHORS_CAP', '50'))
+
+
+def _chain_anchor_body(row):
+    return {
+        'format': _CHAIN_ANCHOR_FORMAT,
+        'anchor_id': row['anchor_id'],
+        'chain': row['chain'],
+        'method': row['method'],
+        'checkpoint': bytes(row['checkpoint']).decode('utf-8'),
+        'checkpoint_sha256': row['checkpoint_sha256'],
+        'proof_hex': bytes(row['proof']).hex(),
+        'block_height': row['block_height'],
+        'block_header_hex': row['block_header_hex'],
+        'recorded_at': row['recorded_at'].isoformat(),
+    }
+
+
+@app.route('/api/v1/transparency/anchors')
+def api_v1_transparency_anchors():
+    """013: the checkpoints of the three logs committed to Bitcoin, positions [start, end) in the
+    order they were recorded, for a monitor to verify with verify_chain_anchor and keep. Bounded
+    result set (C8): at most POLARIS_CHAIN_ANCHORS_CAP per call. Public; no personal data."""
+    total = query("SELECT count(*) AS n FROM ChainAnchor", fetch='one', primary=True)['n']
+    start = request.args.get('start', 0, type=int)
+    end = request.args.get('end', total, type=int)
+    if start is None or end is None or start < 0 or end < start:
+        return jsonify(error='invalid range', count=total), 400
+    end = min(end, total, start + _CHAIN_ANCHORS_CAP)
+    rows = query("SELECT anchor_id, chain, method, checkpoint, checkpoint_sha256, proof, block_height, "
+                 "block_header_hex, recorded_at FROM ChainAnchor ORDER BY anchor_id OFFSET %s LIMIT %s",
+                 (start, max(end - start, 0)), primary=True) if end > start else []
+    return jsonify({'count': total, 'start': start, 'end': max(end, start),
+                    'anchors': [_chain_anchor_body(r) for r in rows]})
+
+
 # --- P8.2c: the RECEIPT log -- a second transparency log, same machinery ----------------
 #
 # Every exchange receipt's SHA3-256 (never the receipt) is appended to ExchangeReceiptLog,

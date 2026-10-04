@@ -294,6 +294,18 @@ never retained; no document, no requester). Published as an RFC-6962 log
 timestamp backdated under a stolen authority key is one absent from every witnessed head of its
 claimed era. Migration 007.
 
+### `ChainAnchor` (constraint C1: append-only; decision 013)
+
+The record of each checkpoint of the transparency logs committed to a public chain (2026-10-04).
+`anchor_id SERIAL PRIMARY KEY`, `checkpoint BYTEA` (the canonical JSON of the three logs' signed
+tree heads, exactly the bytes hashed), `checkpoint_sha256 CHAR(64) UNIQUE` (derived by
+`chk_chain_anchor_digest`, never asserted), `chain` (`BITCOIN`) and `method` (`OPENTIMESTAMPS`),
+`proof BYTEA` (the OpenTimestamps proof), `block_height`, `block_header_hex` (the raw 80-byte
+header), `recorded_at`, `recorded_by`. Written only by the schema owner (`polaris-id
+anchor-record`, after the proof verifies); the application role reads it and publishes it at
+`/api/v1/transparency/anchors`. The row is not the evidence: a verifier rereads the proof against
+block headers it reads itself. No personal data. Migration 2026-10-04-001.
+
 ### `ExchangeNonce` (constraint C1: append-only; roadmap P8.2d)
 
 The exchange gateway's replay register. Before forwarding a signed exchange

@@ -972,6 +972,82 @@ class KeyEventCommandTests(CLIBaseTestCase):
         self.assertEqual(self._events()[0], ['registered', 'compromised'])
 
 
+class ChainAnchorCommandTests(CLIBaseTestCase):
+    """anchor-record and anchor-list (decision 013). The anchor is the real one in
+    sdk/testdata/chain-anchor-969876.json, in Bitcoin block 969876. anchor-record decides it again
+    before writing, so an anchor that does not verify, against the headers its file carries, is
+    never recorded; the application role is refused (GovernanceCommandsRefuseTheAppRole)."""
+
+    with open(os.path.join(os.path.dirname(HERE), 'sdk', 'testdata', 'chain-anchor-969876.json')) as _f:
+        FIXTURE = json.load(_f)
+
+    def setUp(self):
+        super().setUp()
+        # ChainAnchor is append-only by trigger and outside the sample-data reload; the owner
+        # empties it the way the reload empties the other audit tables (TRUNCATE fires no row
+        # trigger), so each test starts from no anchors.
+        conn = psycopg2.connect(**DB_CONFIG)
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute("TRUNCATE ChainAnchor RESTART IDENTITY")
+        finally:
+            conn.close()
+
+    def _file(self, header=None, sources=2):
+        doc = {'anchor': self.FIXTURE['anchor'], 'min_sources': 2,
+               'headers': {'source-%d' % i: {'969876': header or self.FIXTURE['headers']['969876']}
+                           for i in range(sources)}}
+        f = tempfile.NamedTemporaryFile('w', suffix='.json', delete=False)
+        json.dump(doc, f)
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def _rows(self):
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT block_height, block_header_hex, checkpoint_sha256 FROM ChainAnchor")
+                return cur.fetchall()
+        finally:
+            conn.close()
+
+    def test_the_owner_records_an_anchor_that_verifies_and_lists_it(self):
+        r = run_cli('anchor-record', self._file(), '--recorded-by', 'cli-test')
+        self.assertIn('Recorded chain anchor #1: Bitcoin block 969876', r.stdout)
+        rows = self._rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]['block_height'], rows[0]['block_header_hex']),
+                         (969876, self.FIXTURE['headers']['969876']))
+        self.assertIn('block 969876', run_cli('anchor-list').stdout)
+
+    def test_one_checkpoint_is_recorded_once(self):
+        run_cli('anchor-record', self._file())
+        again = run_cli('anchor-record', self._file(), expect_success=False)
+        self.assertEqual(again.returncode, 1, again.stdout + again.stderr)
+        self.assertIn('already recorded', again.stderr)
+        self.assertEqual(len(self._rows()), 1)
+
+    def test_an_anchor_that_does_not_verify_is_not_recorded(self):
+        for path, why in ((self._file(header=self.FIXTURE['headers']['969877']), 'Merkle root'),
+                          (self._file(sources=1), '1 of 2 sources')):
+            with self.subTest(why):
+                r = run_cli('anchor-record', path, expect_success=False)
+                self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                self.assertIn('Not recorded', r.stderr)
+                self.assertIn(why, r.stderr)
+        self.assertEqual(self._rows(), [])
+
+    def test_a_file_that_is_not_an_anchor_file_is_refused(self):
+        f = tempfile.NamedTemporaryFile('w', suffix='.json', delete=False)
+        f.write('{"anchor": {}}')
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        r = run_cli('anchor-record', f.name, expect_success=False)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn('is not an anchor file', r.stderr)
+
+
 class CommandsNoTestRanTests(CLIBaseTestCase):
     """Five commands had never been run by a test (2026-09-30). key-register, one of the untested
     success paths beside them, had failed for three weeks unnoticed, so each is run here and its
@@ -1068,6 +1144,19 @@ class GovernanceCommandsRefuseTheAppRole(unittest.TestCase):
                 r = self._as_app(*args)
                 self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
                 self.assertIn("schema owner", r.stderr)
+
+    def test_the_app_role_cannot_record_a_chain_anchor(self):
+        """2026-10-04 (decision 013): the application publishes the chain anchors and cannot
+        write one; recording is the operator's, as the schema owner, after the proof verifies."""
+        fixture = ChainAnchorCommandTests.FIXTURE
+        f = tempfile.NamedTemporaryFile('w', suffix='.json', delete=False)
+        json.dump({'anchor': fixture['anchor'], 'min_sources': 2,
+                   'headers': {s: {'969876': fixture['headers']['969876']} for s in ('a', 'b')}}, f)
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        r = self._as_app('anchor-record', f.name)
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn("schema owner", r.stderr)
 
     def test_the_app_role_cannot_register_an_authority_key(self):
         """2026-09-27: a registered key then made the authority's signing key, as the application

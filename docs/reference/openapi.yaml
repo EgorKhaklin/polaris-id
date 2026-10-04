@@ -749,6 +749,23 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/LogEntries" }
+  /api/v1/transparency/anchors:
+    get:
+      tags: [Transparency]
+      operationId: getChainAnchors
+      summary: The checkpoints of the three logs committed to Bitcoin, for a monitor to verify and keep.
+      description: "Public; no auth (decision 013). Each is a polaris-chain-anchor/1 that polaris-verify's verify_chain_anchor decides against block headers the verifier reads itself. Positions [start, end) in the order recorded; bounded result set (C8): at most POLARIS_CHAIN_ANCHORS_CAP per call."
+      parameters:
+        - { $ref: "#/components/parameters/RangeStart" }
+        - { $ref: "#/components/parameters/RangeEnd" }
+      responses:
+        "200":
+          description: The anchors in the range.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChainAnchors" }
+        "400":
+          description: The range is invalid.
   /api/v1/transparency/timestamps/sth:
     get:
       tags: [Transparency]
@@ -1485,6 +1502,30 @@ components:
         leaf_hash_hex: { type: [string, "null"] }
         proof_hex: { type: string }
         root_hash_hex: { type: [string, "null"] }
+    ChainAnchors:
+      type: object
+      required: [count, anchors]
+      properties:
+        count: { type: integer, format: int64, description: The anchors recorded in all. }
+        start: { type: integer, format: int64 }
+        end: { type: integer, format: int64 }
+        anchors:
+          type: array
+          items: { $ref: "#/components/schemas/ChainAnchor" }
+    ChainAnchor:
+      type: object
+      required: [format, checkpoint, proof_hex]
+      properties:
+        format: { type: string, example: polaris-chain-anchor/1 }
+        anchor_id: { type: integer, format: int64 }
+        chain: { type: string, example: BITCOIN }
+        method: { type: string, example: OPENTIMESTAMPS }
+        checkpoint: { type: string, description: "The checkpoint's exact text: the canonical JSON of {format polaris-chain-checkpoint/1, heads}, whose SHA-256 the proof commits." }
+        checkpoint_sha256: { type: string }
+        proof_hex: { type: string, description: The OpenTimestamps proof, hex. }
+        block_height: { type: integer, format: int64, description: Recorded for display; a verifier reads the height from the proof. }
+        block_header_hex: { type: string, description: The block's 80-byte header as recorded; a verifier reads headers from its own sources. }
+        recorded_at: { type: string }
     LogEntries:
       type: object
       required: [entries]

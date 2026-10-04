@@ -1099,6 +1099,17 @@ mirror to replicate and recompute independently. Bounded result set (C8): at mos
 `POLARIS_TRANSPARENCY_ENTRIES_CAP` per call. The append-only guarantee and the monitor are
 specified in [transparency-log.md](../design/transparency-log.md).
 
+### `GET /api/v1/transparency/anchors`
+
+**Public; no auth.** The checkpoints of the three logs committed to Bitcoin (decision 013):
+`{count, start, end, anchors}`, each anchor a `polaris-chain-anchor/1` `{anchor_id, chain,
+method, checkpoint, checkpoint_sha256, proof_hex, block_height, block_header_hex, recorded_at}`.
+The checkpoint is the canonical JSON of the logs' signed tree heads at one moment, and the
+OpenTimestamps proof commits its SHA-256 to a block. `polaris-verify`'s `verify_chain_anchor`
+decides an anchor against block headers the verifier reads from its own node or from two
+sources that must agree, never against the recorded block. Positions `[start, end)` in the
+order recorded; bounded result set (C8): at most `POLARIS_CHAIN_ANCHORS_CAP` (50) per call.
+
 ## OpenID4VCI issuance (wallet copies)
 
 An agency that holds a wallet-copy key ([key ceremony](../operator/KEY-CEREMONY.md#wallet-copy-keys-es256))
