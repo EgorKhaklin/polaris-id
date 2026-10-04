@@ -59,6 +59,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - ProtocolSoup v4.0.0, a wallet the OpenID Foundation lists as certified, presents to the published verifier; re-run weekly.
 - ERICA, the German EUDI Wallet programme's verifier testing tool, presents and runs its negative modes; it passes 48 of 49 request checks.
 - Multipaz 0.101.0 (OpenWallet Foundation) presents to the published verifier; re-run weekly.
+- The EU reference PID issuer issues a PID that the published verifier accepts, trusting only the issuer's test root; re-run weekly.
 - polaris-oid4vp encrypts the request object to the wallet's key when its `wallet_metadata` asks, as the EU iOS wallet kit requires.
 - polaris-oid4vp `serve --verifier-info` adds attestations such as a registration certificate to the request, as the German wallet requires.
 
