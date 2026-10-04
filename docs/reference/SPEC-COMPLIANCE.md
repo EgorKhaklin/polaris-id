@@ -23,7 +23,8 @@ Foundation on 24 September 2026
 ([listing](https://openid.net/certification/certified-oid4vp-haip-final/)). It is a
 self-certification for that package version in that role: not an endorsement, not an audit, and not
 a certification of the rest of Polaris. A later package version is not certified until it is
-re-tested and re-submitted.
+re-tested and re-submitted. OpenID® and OpenID® Certified™ are trademarks of the OpenID
+Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
 ## OpenID4VP 1.0
 
@@ -43,9 +44,11 @@ identifier. The normative wire details are in [WIRE-SPEC.md](WIRE-SPEC.md).
 
 ## SD-JWT VC
 
-Issuer-signed SD-JWT VCs (`dc+sd-jwt` / `vc+sd-jwt`) are verified by the verifier, which checks the
-issuer signature, the certificate chain, the selective-disclosure digests and the key binding; and
-are issued as wallet copies over OpenID4VCI, signed ES256 under a per-agency certificate. See
+Issuer-signed SD-JWT VCs (`dc+sd-jwt`) are verified by the verifier, which checks the issuer
+signature, the certificate chain, the selective-disclosure digests and the key binding. An issuer
+JWT typed `vc+sd-jwt` is refused (`issuer_typ`): that was the type's name before SD-JWT VC renamed
+it, and it now names a W3C VC Data Model credential. Polaris issues SD-JWT VCs as wallet copies over
+OpenID4VCI, typed `dc+sd-jwt` and signed ES256 under a per-agency certificate. See
 [WIRE-SPEC.md](WIRE-SPEC.md).
 
 ## OpenID4VCI 1.0

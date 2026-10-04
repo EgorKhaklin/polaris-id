@@ -421,6 +421,51 @@ class IssuerKeyChoiceTests(unittest.TestCase):
                 self.assertEqual(v.code, "issuer_key")
                 self.assertIn("x5c is present but is not a non-empty array", v.reason)
 
+class KeysTheCredentialNamesForItselfTests(unittest.TestCase):
+    """The verifier trusts the keys it was given and the anchors it was given, never a key the
+    credential supplies about itself: a `jwk` in the header is not a trust decision, and a `jku`
+    or `x5u` is not fetched (verification opens no socket at all)."""
+
+    HEADER = {"alg": "ES256", "typ": "dc+sd-jwt"}
+
+    def setUp(self):
+        self.issuer = Wallet()          # the issuer the verifier trusts
+        self.stranger = Wallet()        # someone else, signing with their own key
+
+    def test_a_jwk_in_the_header_does_not_make_its_key_trusted(self):
+        presentation = self.stranger.present(issuer_header=dict(
+            self.HEADER, jwk=_public_jwk(self.stranger.issuer_key)))
+        v = self.stranger.verify(presentation, issuer_jwks=[self.issuer.issuer_jwk])
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_signature")
+
+    def test_with_no_key_configured_a_header_jwk_verifies_nothing(self):
+        presentation = self.stranger.present(issuer_header=dict(
+            self.HEADER, jwk=_public_jwk(self.stranger.issuer_key)))
+        v = self.stranger.verify(presentation, issuer_jwks=[])
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key")
+
+    def test_a_jku_or_x5u_is_not_fetched(self):
+        import socket
+        from unittest import mock
+        for extra in ({"jku": "https://keys.example/jwks.json"}, {"x5u": "https://keys.example/cert.pem"}):
+            with self.subTest(extra=extra), \
+                    mock.patch.object(socket, "socket", side_effect=AssertionError("a socket was opened")), \
+                    mock.patch.object(socket, "create_connection", side_effect=AssertionError("a connection was made")):
+                v = self.stranger.verify(self.stranger.present(issuer_header=dict(self.HEADER, **extra)),
+                                         issuer_jwks=[self.issuer.issuer_jwk])
+                self.assertFalse(v.authentic)
+                self.assertEqual(v.code, "issuer_signature")
+
+    def test_the_trusted_issuer_still_verifies_with_the_same_headers(self):
+        # Positive control: the refusals above are about the key, not about the header shape.
+        presentation = self.issuer.present(issuer_header=dict(
+            self.HEADER, jwk=_public_jwk(self.issuer.issuer_key), jku="https://keys.example/jwks.json"))
+        v = self.issuer.verify(presentation, issuer_jwks=[self.issuer.issuer_jwk])
+        self.assertTrue(v.authentic, v.reason)
+
+
 class TheSevenConformanceRefusalsTests(unittest.TestCase):
     """One test per negative module in oid4vp-1final-verifier-haip-test-plan."""
 

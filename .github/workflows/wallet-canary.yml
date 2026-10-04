@@ -23,10 +23,16 @@
 # Foundation, from npm). In one week three of the four shipped, and Credo 0.7 changed what it
 # accepts from an issuer.
 #
+# Since 2026-10-04 the EU reference OpenID4VP library too: lab/interop/eudi-kt builds a short
+# wallet on eudi-lib-jvm-openid4vp-kt (the library the EUDI reference wallet uses) in a JDK image
+# pinned by digest, every dependency checked against its verification metadata, and runs its four
+# controls. And vck (A-SIT Plus, lab/interop/vck): vck issues the credential and presents it, so the
+# verifier is the only Polaris software in the exchange; three controls.
+#
 # Kept out of the Polaris CI workflow: a change on the wallet's side is news, not a
 # defect in the commit that happened to be pushed that day.
 # ============================================================================
-name: Wallet canary (eudi-dev presents to the published verifier)
+name: Wallet canary (outside wallets present to the published verifier)
 
 on:
   schedule:
@@ -155,3 +161,35 @@ jobs:
           CREDO_VERSION: ${{ matrix.version }}
           WORK: ${{ runner.temp }}/credo
         run: bash lab/interop/credo/run.sh
+
+  eudi-kt:
+    name: The EUDI OpenID4VP library presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build the wallet, present, then the four controls
+        env:
+          WORK: ${{ runner.temp }}/eudi-kt
+        run: bash lab/interop/eudi-kt/run.sh
+
+  vck:
+    name: vck presents a credential it issued to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build the wallet, issue, present, then the three controls
+        env:
+          WORK: ${{ runner.temp }}/vck
+        run: bash lab/interop/vck/run.sh

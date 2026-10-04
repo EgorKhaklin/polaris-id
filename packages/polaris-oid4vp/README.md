@@ -6,24 +6,45 @@ holder key binding, delivered over `direct_post.jwt`.
 
 <a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/docs/assets/openid-certified-mark-on-white.png" alt="OpenID Certified" width="160"></a>
 
-**OpenID Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile.**
+**OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile.**
 `polaris-oid4vp 1.0.0rc7` finished all eleven modules of the Foundation's hosted
 `oid4vp-1final-verifier-haip-test-plan` (`sd_jwt_vc`, `direct_post.jwt`) without failure, and the OpenID
 Foundation [lists the certification](https://openid.net/certification/certified-oid4vp-haip-final/)
 (2026-09-24). It covers that version in that role: not an endorsement, not an audit, and not
-other versions.
+other versions. OpenID® and OpenID® Certified™ are trademarks of the OpenID Foundation, used under
+its [certification terms](https://openid.net/certification/mark/).
 
 **Status:** 1.0.0rc15, a release candidate, not certified: it carries the fixes made since
 1.0.0rc7. Outside results: the Foundation's hosted suite (0.1.0, then 1.0.0rc7 for
-certification) and four unmodified external wallets: walt.id Wallet API v2 (last against
-1.0.0-rc.3), Credo 0.6.3 (against 1.0.0rc7, 2026-09-27), eudi-dev v2.3.7 and OID4VCgo 0.12.0
-(2026-09-28). No operator other than the author has run it and no independent security
-review exists. Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
+certification) and the implementations in the table below, re-run weekly. No operator other
+than the author has run it and no independent security review exists. Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
 
 **Try it in ten minutes, without cloning anything:**
 [the stranger's path](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md)
 takes a clean machine with Docker, this package and an unmodified walt.id wallet to an accepted
 presentation. If it fails for you, please open an issue.
+
+## Tested against
+
+Outside OpenID4VP implementations present to this verifier, each unmodified: configuration only
+(trust anchors, TLS roots). Every walk also sends controls that must be refused, because a
+verifier that accepts everything prints the same success line; among them a wrong issuer key
+under the same `kid`, the answered request again, a mismatched `client_id`, a key the wallet does
+not hold and an untrusted CA. A [weekly canary](https://github.com/EgorKhaklin/polaris-id/blob/main/.github/workflows/wallet-canary.yml) re-runs
+the walks against the newest release on PyPI.
+
+| Implementation | Maintained by | Language | Last walk |
+|---|---|---|---|
+| [walt.id Wallet API v2](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/waltid/README.md) | walt.id | Kotlin | 1.1.1, against 1.0.0rc14 (2026-10-03) |
+| [Credo](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/credo/README.md) | OpenWallet Foundation | TypeScript | 0.7.2, against 1.0.0rc14 (2026-10-03) |
+| [`eudi-lib-jvm-openid4vp-kt`](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-kt/README.md), the EUDI Wallet's OpenID4VP library, under a short wallet built for the walk | European Commission | Kotlin | 0.16.2, against 1.0.0rc15 (2026-10-04) |
+| [vck](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/vck/README.md) (`vck-openid-ktor`), under a short wallet built for the walk; vck also issued the credential | A-SIT Plus | Kotlin | 8.0.0, against 1.0.0rc15 (2026-10-04) |
+| [eudi-dev](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | dominikschlosser | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) |
+| [OID4VCgo](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/oid4vcgo/README.md) | IDFoundry | Go | 0.25.0, against 1.0.0rc14 (2026-10-03) |
+
+The author drove every walk: interoperability with those implementations, not use by their
+maintainers. Each walk is one script you can run against your own copy; to test your wallet,
+point it at `polaris-oid4vp serve` as below.
 
 ## Install and run
 
@@ -171,7 +192,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 392 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 396 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 120 refusals accept and requires a
