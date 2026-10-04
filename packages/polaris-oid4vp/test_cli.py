@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from cryptography import x509  # noqa: E402
 
-from polaris_oid4vp.cli import FILES, keygen, main, verifier_from  # noqa: E402
+from polaris_oid4vp.cli import FILES, keygen, main, parse_claim, verifier_from  # noqa: E402
 from test_verifier import Wallet  # noqa: E402
 
 
@@ -173,6 +173,27 @@ class ServeCommandTests(unittest.TestCase):
 
 
 
+class ClaimFlagTests(unittest.TestCase):
+    """`--claim`: what an operator types, and the DCQL claim it becomes."""
+
+    def test_the_forms(self):
+        for text, claim in (
+                ("given_name", {"path": ["given_name"]}),
+                ("age_equal_or_over.18", {"path": ["age_equal_or_over", "18"]}),
+                ("age_equal_or_over.18=true", {"path": ["age_equal_or_over", "18"], "values": [True]}),
+                ("nationality=DE", {"path": ["nationality"], "values": ["DE"]}),
+                ('["address","locality"]', {"path": ["address", "locality"]}),
+                ('["a.b"]="x"', {"path": ["a.b"], "values": ["x"]}),
+                ("birth_year=1990", {"path": ["birth_year"], "values": [1990]})):
+            with self.subTest(text=text):
+                self.assertEqual(parse_claim(text), claim)
+
+    def test_what_it_cannot_ask_for_is_refused(self):
+        for text in ("a..b", ".a", '["a",1]', '["a"', '["a"]x', "[nope]", "a=null", "a=[1]"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                parse_claim(text)
+
+
 class KeygenHeldOutTests(unittest.TestCase):
     """A held-out round on 2026-09-24: of twelve mutations of cli.py, ten survived every test
     in the package. These are the certificate half. Each property is one a counterparty
@@ -252,6 +273,26 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         path = self.tmp / "issuers.json"
         path.write_text(json.dumps(content))
         return str(path)
+
+    def test_the_claims_and_types_asked_for_reach_the_verifier(self):
+        rc, seen, _, _ = self._serve("--claim", "given_name", "--claim", "age_equal_or_over.18=true",
+                                     "--vct", "urn:eudi:pid:1", "--vct", "eu.europa.ec.eudi.pid.1")
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen["verifier"].claims, [(("given_name",), None),
+                                                   (("age_equal_or_over", "18"), (True,))])
+        self.assertEqual(seen["verifier"].vct_values, ["urn:eudi:pid:1", "eu.europa.ec.eudi.pid.1"])
+
+    def test_without_them_it_asks_for_the_names(self):
+        rc, seen, _, _ = self._serve()
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen["verifier"].claims, [(("given_name",), None), (("family_name",), None)])
+        self.assertEqual(seen["verifier"].vct_values, ["urn:eudi:pid:1"])
+
+    def test_a_claim_it_cannot_judge_stops_it_starting(self):
+        rc, seen, _, err = self._serve("--claim", "age_equal_or_over..18")
+        self.assertEqual(rc, 2)
+        self.assertNotIn("verifier", seen)
+        self.assertIn("age_equal_or_over..18", err)
 
     def test_it_runs_to_the_end_and_shuts_the_listener(self):
         rc, seen, out, _ = self._serve()

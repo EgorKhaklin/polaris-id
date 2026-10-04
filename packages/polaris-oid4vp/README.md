@@ -56,6 +56,17 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
 - `--no-local-tls` serves the local listener over plain HTTP, for when that proxy or tunnel
   terminates TLS and provides the public HTTPS. The listener still binds `--bind` (localhost by
   default); pair it with `--public-base-url`, which is then the HTTPS `request_uri` a wallet uses.
+- `--claim` names a claim to ask for (repeatable; without it, `given_name` and `family_name`): a
+  name, a dotted path of object keys, or a JSON array of keys, optionally `=VALUE` (JSON) for
+  the value it must have. A path asks for one member of a nested claim and nothing around it:
+  `--claim age_equal_or_over.18=true` asks an EUDI PID whether its holder is 18 or over and
+  nothing else, where `--claim age_equal_or_over` would ask for every age statement it holds.
+  A presentation that withholds a claim, or discloses it with another value or type (`1` is
+  not `true`), is refused (`claims`). Array indices are not accepted: an undisclosed element is
+  left out of the disclosed claims, so a position counted afterwards is not the one the issuer
+  signed. `--vct` (repeatable) names the credential types to accept; without it,
+  `urn:eudi:pid:1`. `Verifier(claims=..., vct_values=...)` takes the same, a claim as a name, a
+  list of keys, or `{"path": [...], "values": [...]}`.
 - `serve` with neither `--issuer-jwks` nor `--issuer-trust-anchor` refuses every presentation
   (`issuer_key`) and says so on stderr. An `--issuer-jwks` file it cannot read, or none of whose keys
   can verify ES256 when no anchor is given, stops `serve` before it listens (exit 2).
@@ -90,7 +101,7 @@ make every presentation replayable. `sdjwt.py` touches no socket and reads no co
 | `kb_signature` | a key-binding signature that does not verify |
 | `nonce`, `audience` | a key-binding JWT for another request or verifier |
 | `kb_freshness` | a key-binding `iat` outside the window, or an `exp` or `nbf` it carries that has passed or not arrived |
-| `claims` | (`Verifier`) a presentation that withholds a claim the request asked for |
+| `claims` | (`Verifier`) a presentation that withholds a claim the request asked for, or discloses it with a value the request does not accept |
 | `revoked` | (`Verifier`) a credential whose checked status value is not VALID (0) |
 | `credential_validity` | a credential past its `exp` or before its `nbf` |
 | `vct` | a credential of a type the query did not ask for |
@@ -160,7 +171,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 378 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 392 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 120 refusals accept and requires a
