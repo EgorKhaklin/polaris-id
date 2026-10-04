@@ -27,6 +27,9 @@ and after you close the window.
 polaris migrate-population --to ML-DSA-87 --dry-run
 ```
 
+Run it as the schema owner. The application role cannot write a credential's signatures (since
+2026-10-04), so as that role the command is refused with exit 3 before it signs anything.
+
 The `unverifiable` count in that output is the number. It counts credentials with
 no signature in force; it does not re-verify bytes, which were verified as they were
 written (by both witnesses, under real signing), and the drill re-verifies a sample.

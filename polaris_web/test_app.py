@@ -658,8 +658,8 @@ class DocumentSigningTests(UnauthenticatedTestCase):
         row = flask_app.query("SELECT token_id, token_value FROM IdentityToken WHERE issuing_agency_id = 1 "
                               "AND status = 'ACTIVE' ORDER BY token_id LIMIT 1", fetch='one', primary=True)
         placeholder, key_hex = _deployment_signature(row['token_value'])
-        flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
-                        "VALUES (%s, 1, %s, %s)", (row['token_id'], psycopg2.Binary(placeholder), key_hex), fetch='none')
+        _owner_write("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
+                        "VALUES (%s, 1, %s, %s)", (row['token_id'], psycopg2.Binary(placeholder), key_hex))
         return row['token_value'], placeholder.hex()
 
     def test_holder_signing_by_possession(self):
@@ -792,8 +792,8 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         row = flask_app.query("SELECT token_id, token_value FROM IdentityToken WHERE issuing_agency_id = 1 "
                               "AND status = 'ACTIVE' ORDER BY token_id LIMIT 1", fetch='one', primary=True)
         placeholder, key_hex = _deployment_signature(row['token_value'])
-        flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
-                        "VALUES (%s, 1, %s, %s)", (row['token_id'], psycopg2.Binary(placeholder), key_hex), fetch='none')
+        _owner_write("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
+                        "VALUES (%s, 1, %s, %s)", (row['token_id'], psycopg2.Binary(placeholder), key_hex))
         _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,))
         return row['token_id'], row['token_value'], placeholder.hex()
 
@@ -6178,9 +6178,9 @@ class ZKSnarkTests(PolarisTestCase):
         ph, key_hex = _deployment_signature(row['token_value'])
         if not flask_app.query("SELECT 1 FROM TokenSignature WHERE token_id = %s AND algorithm_id = 1",
                                (row['token_id'],), fetch='one', primary=True):
-            flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+            _owner_write("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
                             "signing_public_key_hex) VALUES (%s, 1, %s, %s)",
-                            (row['token_id'], _pg.Binary(ph), key_hex), fetch='none')
+                            (row['token_id'], _pg.Binary(ph), key_hex))
         return row['token_value'], ph.hex()
 
     def _expire(self, token_value):
@@ -6555,9 +6555,9 @@ class ZKSnarkTests(PolarisTestCase):
                               "ORDER BY token_id LIMIT 1", fetch='one', primary=True)
         tv = row['token_value']
         placeholder, key_hex = _deployment_signature(tv)
-        flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+        _owner_write("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
                         "signing_public_key_hex) VALUES (%s, 1, %s, %s)",
-                        (row['token_id'], _pg.Binary(placeholder), key_hex), fetch='none')
+                        (row['token_id'], _pg.Binary(placeholder), key_hex))
         r = self.client.post('/api/v1/status-assertion',
                              json={'token_value': tv, 'signature_hex': placeholder.hex()})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
@@ -16752,18 +16752,51 @@ class RelyingPartyApiTests(PolarisTestCase):
     # -- role may INSERT into TokenSignature; registration (AuthorityKeyEvent) is closed to it.
 
     def _plant_as_app(self, token_value, signature, key_hex):
-        """INSERT a TokenSignature row AS polaris_app, under ML-DSA-87, an algorithm the
-        credential (issued under ML-DSA-65) lacks, so the per-algorithm UNIQUE admits it."""
+        """Plant a TokenSignature row under ML-DSA-87, an algorithm the credential (issued under
+        ML-DSA-65) lacks, so the per-algorithm UNIQUE admits it. The application role is refused
+        the write since 2026-10-04 (test_the_application_role_cannot_write_a_signature_row), so
+        the row is written as the owner: what is tested here is that possession still refuses a
+        row whose key the authority never registered, whoever wrote it."""
         import psycopg2 as _pg
         conn = _pg.connect(**_OWNER_DB_CONFIG)
         try:
             with conn.cursor() as cur:
-                cur.execute("SET ROLE polaris_app")
                 cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
                             "signing_public_key_hex) SELECT token_id, 2, %s, %s FROM IdentityToken "
                             "WHERE token_value = %s", (_pg.Binary(signature), key_hex, token_value))
-                self.assertEqual(cur.rowcount, 1, 'control: the application role CAN plant the row')
+                self.assertEqual(cur.rowcount, 1)
             conn.commit()
+        finally:
+            conn.close()
+
+    def test_the_application_role_cannot_write_a_signature_row(self):
+        """THREAT-MODEL (2026-10-04): a compromised application cannot plant, move or remove a
+        credential's signature. Each write is refused by PRIVILEGE (InsufficientPrivilege), not by
+        the immutability trigger, which a reordered or dropped trigger would not show; the read is
+        the control that the role is the one the application runs as."""
+        import psycopg2 as _pg
+        tv = self._issue_and_pack('RP-NO-WRITE-1')['token_value']
+        writes = (
+            ("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
+             "SELECT token_id, 2, '\\x00'::bytea, NULL FROM IdentityToken WHERE token_value = %s", (tv,)),
+            ("UPDATE TokenSignature SET deprecation_date = now() WHERE token_id = "
+             "(SELECT token_id FROM IdentityToken WHERE token_value = %s)", (tv,)),
+            ("DELETE FROM TokenSignature WHERE token_id = "
+             "(SELECT token_id FROM IdentityToken WHERE token_value = %s)", (tv,)),
+        )
+        conn = _pg.connect(**_OWNER_DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET ROLE polaris_app")
+                cur.execute("SELECT count(*) FROM TokenSignature s JOIN IdentityToken t USING (token_id) "
+                            "WHERE t.token_value = %s", (tv,))
+                self.assertEqual(cur.fetchone()[0], 1, 'control: the application role reads the signature')
+                conn.commit()
+                for sql, params in writes:
+                    cur.execute("SET ROLE polaris_app")
+                    with self.assertRaises(_pg.errors.InsufficientPrivilege, msg=sql.split()[0]):
+                        cur.execute(sql, params)
+                    conn.rollback()
         finally:
             conn.close()
 
@@ -20013,9 +20046,9 @@ class RefusalsTheAppMutationDrillFound(PolarisTestCase):
                               "WHERE issuing_agency_id = 1 AND status = 'ACTIVE' "
                               "ORDER BY token_id LIMIT 1", fetch='one', primary=True)
         ph, key_hex = _deployment_signature(row['token_value'])
-        flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+        _owner_write("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
                         "signing_public_key_hex) VALUES (%s, 1, %s, %s)",
-                        (row['token_id'], psycopg2.Binary(ph), key_hex), fetch='none')
+                        (row['token_id'], psycopg2.Binary(ph), key_hex))
         return row['token_value'], ph.hex()
 
     def _relying_party(self, scope):
