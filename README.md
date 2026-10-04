@@ -13,7 +13,7 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/EgorKhaklin/polaris-id/badge)](https://scorecard.dev/viewer/?uri=github.com/EgorKhaklin/polaris-id)
 
 [![OpenID Certified: polaris-oid4vp verifier](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_verifier-c9a352?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid-certified)
-[![Wallet interop: walt.id, Credo, eudi-dev, OID4VCgo](https://img.shields.io/badge/wallet_interop-walt.id_%C2%B7_Credo_%C2%B7_eudi--dev_%C2%B7_OID4VCgo-2b5797?labelColor=0a1421&style=flat-square)](lab/EXTERNAL-NOUNS.md#wallets)
+[![Tested against: walt.id, Credo, the EUDI library, eudi-dev, OID4VCgo](https://img.shields.io/badge/tested_against-walt.id_%C2%B7_Credo_%C2%B7_EUDI_library_%C2%B7_eudi--dev_%C2%B7_OID4VCgo-2b5797?labelColor=0a1421&style=flat-square)](#tested-against)
 [![OpenID4VP 1.0](https://img.shields.io/badge/OpenID4VP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid4vp-10)
 [![HAIP 1.0](https://img.shields.io/badge/HAIP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#haip-10)
 [![SD-JWT VC](https://img.shields.io/badge/SD--JWT_VC-supported-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#sd-jwt-vc)
@@ -67,7 +67,7 @@ Around the credential:
 
 <a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="docs/assets/openid-certified-mark-on-white.png" alt="OpenID Certified" width="150"></a>
 
-**`polaris-oid4vp 1.0.0rc7` is OpenID Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile** (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/), 24 September 2026). A self-certification the Foundation reviewed and published, for that package version in that role: not an endorsement, not an audit, and not a certification of the rest of Polaris.
+**`polaris-oid4vp 1.0.0rc7` is OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile** (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/), 24 September 2026). A self-certification the Foundation reviewed and published, for that package version in that role: not an endorsement, not an audit, and not a certification of the rest of Polaris. OpenID® and OpenID® Certified™ are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
 | | version | where |
 |---|---|---|
@@ -80,14 +80,29 @@ Around the credential:
 - **A release candidate.** A new candidate is cut as a release that collects the defects fixed since the last: see [releases](https://github.com/EgorKhaklin/polaris-id/releases) and the [CHANGELOG](CHANGELOG.md). What separates it from 1.0.0 is an operator who is not the author.
 - **Installing:** `pip install --pre` (pip skips candidates otherwise); npm `polaris-sdk-ts@next`. PyPI packages use trusted publishing over OIDC. Every publish is recorded in [RELEASING.md](docs/RELEASING.md).
 
-**Checked by someone other than the author:**
+### Tested against
 
-- **Four unmodified wallets** presented to the verifier and were accepted: walt.id Wallet API v2
-  (15 September 2026; repeat it in ten minutes with [STRANGER-PATH.md](docs/STRANGER-PATH.md)), the
-  OpenWallet Foundation's [Credo 0.6.3](lab/interop/credo/README.md), and two wallets the OpenID
-  Foundation lists as certified, [eudi-dev v2.3.7](lab/interop/eudi-dev/README.md) (HAIP strict mode)
-  and [OID4VCgo 0.12.0](lab/interop/oid4vcgo/README.md) (its own x5c-signed credential).
-- **The OpenID Foundation's hosted suite**, which certified the verifier as above.
+Outside OpenID4VP implementations present to the verifier, each unmodified: configuration only
+(trust anchors, TLS roots). Every walk also sends controls that must be refused, because a verifier
+that accepts everything prints the same success line; among them a wrong issuer key under the same
+`kid`, the answered request again, a mismatched `client_id`, a key the wallet does not hold and an
+untrusted CA.
+The [wallet canary](.github/workflows/wallet-canary.yml) re-runs the walks every week against the
+newest `polaris-oid4vp` on PyPI.
+
+| Implementation | Maintained by | Language | Last walk | Re-run weekly |
+|---|---|---|---|---|
+| [walt.id Wallet API v2](lab/interop/waltid/README.md) | walt.id | Kotlin | 1.1.1, against 1.0.0rc14 (2026-10-03) | 1.1.1 by digest, and the latest |
+| [Credo](lab/interop/credo/README.md) | OpenWallet Foundation | TypeScript | 0.7.2, against 1.0.0rc14 (2026-10-03) | the lock file's release, and the latest |
+| [`eudi-lib-jvm-openid4vp-kt`](lab/interop/eudi-kt/README.md), the EUDI Wallet's OpenID4VP library, under a wallet built here | European Commission | Kotlin | 0.16.2, against 1.0.0rc15 (2026-10-04) | 0.16.2 |
+| [eudi-dev](lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | dominikschlosser | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) | v2.3.7 (listed by the OpenID Foundation as certified), the latest, its own binary, its own issuer's PID |
+| [OID4VCgo](lab/interop/oid4vcgo/README.md) | IDFoundry | Go | 0.25.0, against 1.0.0rc14 (2026-10-03) | 0.12.0 (listed as certified), and the latest |
+| [The OpenID Foundation's conformance suite](docs/reference/SPEC-COMPLIANCE.md#openid-certified) | OpenID Foundation | Java | all eleven modules of the HAIP verifier plan, 1.0.0rc7 (2026-09-24): the certification | |
+
+The author drove every walk: this is interoperability with those implementations, not use by their
+maintainers. Each row's controls, and what it does not establish, are in
+[the scoreboard](lab/EXTERNAL-NOUNS.md#wallets). Repeat one yourself in ten minutes with
+[STRANGER-PATH.md](docs/STRANGER-PATH.md).
 
 Everything else here is the project checking itself: one author's pre-pilot system on notional data. It has never held real identity data, and there has been no independent security review, no other operator and no pilot. The ledger of outside results is [the scoreboard](lab/EXTERNAL-NOUNS.md).
 
