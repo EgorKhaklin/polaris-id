@@ -30,8 +30,8 @@ from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils  #
 from cryptography.x509.oid import NameOID  # noqa: E402
 
 from polaris_oid4vp.sdjwt import (  # noqa: E402
-    DEFAULT_MAX_SKEW_SECONDS, MAX_DISCLOSURES, MAX_PRESENTATION_BYTES, MAX_RESOLVE_DEPTH, Verdict,
-    b64u_encode, verify_presentation)
+    DEFAULT_MAX_SKEW_SECONDS, MAX_DISCLOSURES, MAX_PRESENTATION_BYTES, MAX_RESOLVE_DEPTH,
+    MAX_X5C_CERTS, Verdict, b64u_encode, verify_presentation)
 
 NONCE = "vJ3xQ2kZ8fLpN1sT7wRm5bYc0aHdEgUi"
 AUDIENCE = "x509_hash:0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
@@ -1707,6 +1707,207 @@ class IssuerCertificateTests(unittest.TestCase):
                                 expected_audience=AUDIENCE, trust_anchors=[ca])
         self.assertIsInstance(v, Verdict)
         self.assertFalse(v.authentic)
+
+
+class IntermediateChainTests(unittest.TestCase):
+    """An issuer's x5c may carry the CA certificates between its leaf and the anchor, in order
+    (RFC 7515 4.1.6). eudi-dev v2.5.0's PID Provider sends its leaf and the intermediate CA that
+    signed it, the anchor registered out of band, and until 2026-10-03 only the leaf was read, so
+    that credential was refused. Every refusal below is the first positive control with one thing
+    wrong."""
+
+    @staticmethod
+    def _name(cn):
+        return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+
+    @classmethod
+    def _cert(cls, subject, issuer_name, issuer_key, key, *, ca, path_length=None, usage="ca",
+              not_before=None, not_after=None, extensions=()):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        builder = (x509.CertificateBuilder().subject_name(cls._name(subject))
+                   .issuer_name(issuer_name).public_key(key.public_key())
+                   .serial_number(x509.random_serial_number())
+                   .not_valid_before(not_before or now - datetime.timedelta(days=1))
+                   .not_valid_after(not_after or now + datetime.timedelta(days=365)))
+        if ca is not None:
+            builder = builder.add_extension(
+                x509.BasicConstraints(ca=ca, path_length=path_length if ca else None), critical=True)
+        builder = builder.add_extension(x509.KeyUsage(
+            digital_signature=usage == "sign", content_commitment=False, key_encipherment=False,
+            data_encipherment=False, key_agreement=False, key_cert_sign=usage == "ca",
+            crl_sign=usage == "ca", encipher_only=False, decipher_only=False), critical=True)
+        for ext, critical in extensions:
+            builder = builder.add_extension(ext, critical=critical)
+        return builder.sign(issuer_key, hashes.SHA256())
+
+    def _make(self, depth=1, root_path_length=None, change=None):
+        """A root, `depth` CAs under it, and a leaf under those: (root, x5c leaf first, leaf key).
+        `change(position, options)` edits the options of the CA at x5c position `position`
+        (1 is the one that signs the leaf) before it is built."""
+        root_key = ec.generate_private_key(ec.SECP256R1())
+        root = self._cert("test root", self._name("test root"), root_key, root_key, ca=True,
+                          path_length=root_path_length)
+        parent_name, parent_key, cas = root.subject, root_key, []
+        for level in range(depth):
+            position = depth - level
+            key = ec.generate_private_key(ec.SECP256R1())
+            options = dict(ca=True, path_length=position - 1)
+            if change:
+                change(position, options)
+            cert = self._cert("test CA %d" % position, parent_name, parent_key, key, **options)
+            cas.append(cert)
+            parent_name, parent_key = cert.subject, key
+        leaf_key = ec.generate_private_key(ec.SECP256R1())
+        leaf = self._cert("issuer", parent_name, parent_key, leaf_key, ca=False, usage="sign",
+                          extensions=((x509.SubjectAlternativeName(
+                              [x509.UniformResourceIdentifier("https://issuer.example")]), False),))
+        return root, [leaf] + cas[::-1], leaf_key
+
+    def _verify(self, anchor, chain, leaf_key):
+        w = Wallet()
+        w.issuer_key = leaf_key
+        x5c = [c if isinstance(c, str) else
+               base64.b64encode(c.public_bytes(serialization.Encoding.DER)).decode() for c in chain]
+        original = _jws
+
+        def patched(key, header, payload):
+            if header.get("typ") == "dc+sd-jwt":
+                header = dict(header, x5c=x5c)
+                header.pop("kid", None)
+            return original(key, header, payload)
+        globals()["_jws"] = patched
+        try:
+            presentation = w.present()
+        finally:
+            globals()["_jws"] = original
+        return verify_presentation(presentation, expected_nonce=NONCE, expected_audience=AUDIENCE,
+                                   trust_anchors=[anchor])
+
+    def _refused(self, v, reason=None):
+        self.assertFalse(v.authentic, "accepted")
+        self.assertEqual(v.code, "issuer_key")
+        if reason:
+            self.assertIn(reason, v.reason)
+
+    def test_a_leaf_under_one_intermediate_is_authentic(self):
+        """The positive control, in eudi-dev v2.5.0's shape: the root allows one CA beneath it
+        and the intermediate none. Without it every refusal below passes on a verifier that
+        refuses every chain."""
+        root, chain, key = self._make(depth=1, root_path_length=1)
+        v = self._verify(root, chain, key)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
+    def test_a_leaf_under_as_many_intermediates_as_the_bound_allows_is_authentic(self):
+        root, chain, key = self._make(depth=MAX_X5C_CERTS - 1)
+        self.assertEqual(len(chain), MAX_X5C_CERTS)
+        v = self._verify(root, chain, key)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
+    def test_a_chain_longer_than_the_bound_is_refused(self):
+        root, chain, key = self._make(depth=MAX_X5C_CERTS)
+        self._refused(self._verify(root, chain, key), "at most %d" % MAX_X5C_CERTS)
+
+    def test_the_leaf_without_the_intermediate_that_signed_it_is_refused(self):
+        root, chain, key = self._make(depth=1)
+        self._refused(self._verify(root, chain[:1], key))
+
+    def test_intermediates_out_of_order_are_refused(self):
+        root, chain, key = self._make(depth=2)
+        self._refused(self._verify(root, [chain[0], chain[2], chain[1]], key))
+
+    def test_an_intermediate_from_another_root_is_refused(self):
+        _, chain, key = self._make(depth=1)
+        other_root, _, _ = self._make(depth=1)
+        self._refused(self._verify(other_root, chain, key))
+
+    def test_an_intermediate_that_is_not_a_ca_is_refused(self):
+        for label, options in (("cA false", dict(ca=False)),
+                               ("no basic constraints", dict(ca=None))):
+            with self.subTest(label):
+                root, chain, key = self._make(
+                    depth=1, change=lambda position, o, options=options: o.update(options))
+                self._refused(self._verify(root, chain, key))
+
+    def test_an_intermediate_whose_key_usage_cannot_sign_certificates_is_refused(self):
+        root, chain, key = self._make(depth=1, change=lambda position, o: o.update(usage="sign"))
+        self._refused(self._verify(root, chain, key))
+
+    def test_an_intermediate_outside_its_validity_period_is_refused(self):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        day = datetime.timedelta(days=1)
+        for label, window in (("expired", (now - 30 * day, now - day)),
+                              ("not yet valid", (now + day, now + 30 * day))):
+            with self.subTest(label):
+                root, chain, key = self._make(depth=1, change=lambda position, o, w=window: o.update(
+                    not_before=w[0], not_after=w[1]))
+                self._refused(self._verify(root, chain, key))
+
+    def test_an_intermediates_path_length_is_held(self):
+        """Two CAs; the upper one (x5c position 2) allows no CA beneath it, and one is there."""
+        root, chain, key = self._make(
+            depth=2, change=lambda position, o: position == 2 and o.update(path_length=0))
+        self._refused(self._verify(root, chain, key))
+
+    def test_the_anchors_path_length_is_held(self):
+        root, chain, key = self._make(depth=1, root_path_length=0)
+        self._refused(self._verify(root, chain, key))
+
+    def test_the_anchor_sent_in_x5c_is_refused(self):
+        """HAIP 1.0 6.1.1 keeps the trust anchor's certificate out of x5c."""
+        root, chain, key = self._make(depth=1)
+        self._refused(self._verify(root, chain + [root], key), "HAIP 1.0 6.1.1")
+
+    def test_a_self_signed_certificate_in_x5c_is_refused_as_an_anchor_even_unconfigured(self):
+        """A self-signed certificate is an anchor however it is sent. This one is not the
+        configured anchor, so the chain would fail anyway; the reason must say what it is."""
+        root, chain, key = self._make(depth=1)
+        stranger_key = ec.generate_private_key(ec.SECP256R1())
+        stranger = self._cert("someone's root", self._name("someone's root"), stranger_key,
+                              stranger_key, ca=True)
+        self._refused(self._verify(root, chain + [stranger], key), "HAIP 1.0 6.1.1")
+
+    def test_a_ca_carrying_the_anchors_key_is_refused(self):
+        """Not self-signed, so only the key says it is the anchor: a CA certificate for the
+        anchor's own key, certified under the anchor through a second CA. Every link holds, and
+        the leaf is signed by the anchor's key."""
+        root_key = ec.generate_private_key(ec.SECP256R1())
+        root = self._cert("test root", self._name("test root"), root_key, root_key, ca=True)
+        upper_key = ec.generate_private_key(ec.SECP256R1())
+        upper = self._cert("upper CA", root.subject, root_key, upper_key, ca=True, path_length=1)
+        twin = self._cert("anchor's twin", upper.subject, upper_key, root_key, ca=True, path_length=0)
+        leaf_key = ec.generate_private_key(ec.SECP256R1())
+        leaf = self._cert("issuer", twin.subject, root_key, leaf_key, ca=False, usage="sign",
+                          extensions=((x509.SubjectAlternativeName(
+                              [x509.UniformResourceIdentifier("https://issuer.example")]), False),))
+        self._refused(self._verify(root, [leaf, twin, upper], leaf_key), "HAIP 1.0 6.1.1")
+
+    def test_an_intermediate_with_a_critical_extension_this_code_does_not_read_is_refused(self):
+        """RFC 5280 4.2: a certificate with a critical extension the verifier does not process is
+        refused. Name constraints are not enforced here, so a CA that states them critically is
+        not one this verifier can stand behind; the same constraint stated non-critically is the
+        control."""
+        constraint = x509.NameConstraints(permitted_subtrees=[x509.DNSName("example.org")],
+                                          excluded_subtrees=None)
+        for critical in (True, False):
+            with self.subTest(critical=critical):
+                root, chain, key = self._make(depth=1, change=lambda position, o, c=critical: o.update(
+                    extensions=((constraint, c),)))
+                v = self._verify(root, chain, key)
+                if critical:
+                    self._refused(v)
+                else:
+                    self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
+    def test_an_intermediate_whose_extended_key_usage_excludes_issuing_is_refused(self):
+        usage = x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH])
+        root, chain, key = self._make(depth=1, change=lambda position, o: o.update(
+            extensions=((usage, False),)))
+        self._refused(self._verify(root, chain, key))
+
+    def test_an_intermediate_that_does_not_parse_is_refused(self):
+        root, chain, key = self._make(depth=1)
+        junk = base64.b64encode(b"not a certificate").decode()
+        self._refused(self._verify(root, [chain[0], junk], key), "x5c certificate 1 does not parse")
 
 
 class TheBoundsThemselvesAreAssertedTests(unittest.TestCase):

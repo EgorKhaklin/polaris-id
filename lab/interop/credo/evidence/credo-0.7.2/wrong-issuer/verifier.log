@@ -1,0 +1,15 @@
+polaris-oid4vp serving on https://localhost:9553 (listening on 127.0.0.1:9553)
+  client_id     x509_hash:6DsL_KN9uF1iLlW1yAL-nYZ5rm0OfjMx-4xVLPVpCo0
+  request_uri   https://localhost:9553/request.jwt
+  response_uri  https://localhost:9553/response
+  anchor to register: ./run/pki/anchor.pem
+Start a request with --once to print the parameters a wallet is launched with.
+authorization request parameters:
+  client_id          x509_hash:6DsL_KN9uF1iLlW1yAL-nYZ5rm0OfjMx-4xVLPVpCo0
+  request_uri        https://localhost:9553/request.jwt?state=ccqhIoMTUs2RHof4Os4PEg
+  request_uri_method post
+POST /request.jwt?state=ccqhIoMTUs2RHof4Os4PEg
+polaris-oid4vp: refused: issuer_key: the x5c leaf does not chain to any configured trust anchor
+POST /response
+  <- 400 refused: issuer_key: the x5c leaf does not chain to any configured trust anchor
+stopping

@@ -1,0 +1,32 @@
+{
+  "versions": {
+    "date": "2026-10-03T21:17:08.772Z",
+    "node": "v24.11.1",
+    "credo_core": "0.7.2",
+    "credo_openid4vc": "0.7.2",
+    "credo_node": "0.7.2",
+    "openid4vc_openid4vp": "0.6.0",
+    "openid4vc_oauth2": "0.6.0",
+    "sd_jwt_core": "0.21.1",
+    "polaris_oid4vp": "1.0.0rc14"
+  },
+  "requestUrl": "openid4vp://authorize?client_id=x509_hash%3AON_9EmLJFiR69zFx4pozNKfcDRCJ8RD5i-rVI-Msv40&request_uri=https%3A%2F%2Flocalhost%3A9553%2Frequest.jwt%3Fstate%3DxabZDNXCCLlIp__GytDi1g&request_uri_method=post",
+  "verifierVerdict": "<- 400 refused: kb_signature: the key binding JWT signature does not verify under the credential's cnf.jwk, so the holder did not produce this presentation",
+  "credo": "accept returned",
+  "ok": false,
+  "serverResponse": {
+    "status": 400,
+    "body": {
+      "error": "invalid_request",
+      "error_description": "the presentation was not accepted"
+    }
+  },
+  "authorizationResponsePayload": {
+    "vp_token": {
+      "pid": [
+        "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCeERDQ0FXdWdBd0lCQWdJVWJ1V0R0YmUxZDl6b3Q4SE5Sc2hKdE45dkQ4RXdDZ1lJS29aSXpqMEVBd0l3SkRFaU1DQUdBMVVFQXd3WmNHOXNZWEpwY3lCcGJuUmxjbTl3SUdsemMzVmxjaUJEUVRBZUZ3MHlOakV3TURJeU1URTNNRGhhRncweU5qRXhNREl5TVRFM01EaGFNQ0V4SHpBZEJnTlZCQU1NRm5CdmJHRnlhWE1nYVc1MFpYSnZjQ0JwYzNOMVpYSXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU3NXNUNXK0JWa28zbmk2b2ZLTGVLb2N4QmtZSzVZbHlyRmplY1ZmNm1JeUlLRnZjd2pIYW9hMWZFeW5xRFJjakk3WDFQR284d2R0Q3R2RzVFYnN4bnJvMzR3ZkRBTUJnTlZIUk1CQWY4RUFqQUFNQTRHQTFVZER3RUIvd1FFQXdJSGdEQTdCZ05WSFJFRU5EQXloaHRvZEhSd2N6b3ZMMmx6YzNWbGNpNXdiMnhoY21sekxuUmxjM1NDRTJsemMzVmxjaTV3YjJ4aGNtbHpMblJsYzNRd0h3WURWUjBqQkJnd0ZvQVVIWGphUU96MUllMTNQSlR4SHVBWVNTNFpia2N3Q2dZSUtvWkl6ajBFQXdJRFJ3QXdSQUlnSDVrOXIvVHcyNEhNdWhzbVl4MTJscmNRaGNuSVVLTzRoaWRIRTFrbERqd0NJSHU3TFRidUJsT294Q2dvMjV6WEJFUGlXTlV4VUNFb05QM2wzRVNzTmx6aCJdfQ.eyJpc3MiOiJodHRwczovL2lzc3Vlci5wb2xhcmlzLnRlc3QiLCJ2Y3QiOiJ1cm46ZXVkaTpwaWQ6MSIsImlhdCI6MTc5MTA2MjIyOCwiX3NkIjpbInBjeHlGRmtxZHh0NFBtaTlHbTdYNzMzZUFleFVDNVZidEVfZHRkN3JJaHciLCI0RVVHa0tha21UemlIMUp5OVoyS1JTckgtR1VGeHZWSWFkVU5id2VuN0pJIl0sIl9zZF9hbGciOiJzaGEtMjU2IiwiY25mIjp7Imp3ayI6eyJrdHkiOiJFQyIsImNydiI6IlAtMjU2IiwieCI6IlRKMS1IQzVtYzlQUTJVZXIzZDlNTjV6bUc5MFdya2ZYcXNIbDZITE94UzQiLCJ5IjoiNFluaWNVYkgySXlrT04wTHR3blpleWZVaHRnbDB1eHNVSkxkbXVyVE56YyJ9fX0.tOIG6758sWmxz7XRduSbAxBbJfBuLSlqrgRAUmeZ7MZZJ7RKXNW1V9DecMi40fzZEEZlWoGWVgepdYiimhbavg~WyJzMCIsImdpdmVuX25hbWUiLCJKZWFuIl0~WyJzMSIsImZhbWlseV9uYW1lIiwiRHVwb250Il0~eyJ0eXAiOiJrYitqd3QiLCJhbGciOiJFUzI1NiJ9.eyJpYXQiOjE3OTEwNjIyMjksIm5vbmNlIjoiT2M0T0QtS1FlZU05TXl4MHUzYVdybDJXaWpOMU9GTHNsRmkxTV9ITjlLQSIsImF1ZCI6Ing1MDlfaGFzaDpPTl85RW1MSkZpUjY5ekZ4NHBvek5LZmNEUkNKOFJENWktclZJLU1zdjQwIiwic2RfaGFzaCI6Ilg1VXZtTXJnU0NYblNYZlNFc0J4aG9JdGVDTE11cUxPN0dtWjBnekFGbTQifQ.lCOp_nEi1mnu1n2Av68LIZK1CCL8PN6DrnlJrKyjUcPqnaScITWNxQlwkjyGhv-5awEQCJoiVMQAbAklwLeY_g"
+      ]
+    },
+    "state": "xabZDNXCCLlIp__GytDi1g"
+  }
+}
