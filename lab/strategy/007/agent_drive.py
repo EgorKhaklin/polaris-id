@@ -12,11 +12,13 @@ every check holds.
         --audience pomerium --read https://status.localhost.pomerium.io:8443/ \\
         --write https://config.localhost.pomerium.io:8443/
 
-AGENT_DIR is what `grants.py mint` wrote.
+AGENT_DIR is what `grants.py mint` wrote. On the host, add --loopback .localhost.pomerium.io: those
+names no longer resolve in public DNS.
 """
 import argparse
 import json
 import pathlib
+import socket
 import ssl
 import sys
 import urllib.error
@@ -42,7 +44,13 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="An agent and its holder against the gate and Pomerium (lab).")
     for name in ("--dir", "--gate", "--cafile", "--audience", "--read", "--write"):
         ap.add_argument(name, required=True)
+    ap.add_argument("--loopback", metavar="SUFFIX",
+                    help="resolve host names ending in SUFFIX to 127.0.0.1 (when run on the host)")
     args = ap.parse_args(argv)
+    if args.loopback:
+        real = socket.getaddrinfo
+        socket.getaddrinfo = lambda host, *a, **k: real(
+            "127.0.0.1" if isinstance(host, str) and host.endswith(args.loopback) else host, *a, **k)
 
     chain = json.loads((pathlib.Path(args.dir) / "chain.json").read_text())
     holder = grants.Key.load(pathlib.Path(args.dir) / "holder.key")

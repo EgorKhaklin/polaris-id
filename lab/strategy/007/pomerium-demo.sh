@@ -34,6 +34,11 @@ WALLET="waltid/wallet-api2:1.0.0"
 NET=polaris-gate-net
 ADD_HOST=()
 [ "$(uname)" = Linux ] && ADD_HOST=(--add-host host.docker.internal:host-gateway)
+# *.localhost.pomerium.io no longer resolves in public DNS (it used to answer 127.0.0.1), so the
+# names are mapped here: for curl, the browser (drive.py), the agent and Pomerium itself.
+NAMES=(authenticate verify status config)
+RESOLVE=(); for n in "${NAMES[@]}"; do RESOLVE+=(--resolve "$n.localhost.pomerium.io:8443:127.0.0.1"); done
+for n in "${NAMES[@]}"; do ADD_HOST+=(--add-host "$n.localhost.pomerium.io:127.0.0.1"); done
 
 for p in 7006 8443 9443 9444; do
   if lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then echo "port $p is in use" >&2; exit 2; fi
@@ -62,7 +67,7 @@ echo "== an issuer, a holder and the agent the holder grants read:status and wri
 "$PY" "$HERE/grants.py" mint --out ./agent --actions read:status,write:config
 
 echo "== walt.id's wallet, and one credential in it"
-docker run -d --name polaris-gate-wallet -p 7006:7006 ${ADD_HOST[@]+"${ADD_HOST[@]}"} "$WALLET" >/dev/null
+docker run -d --name polaris-gate-wallet -p 7006:7006 "${ADD_HOST[@]}" "$WALLET" >/dev/null
 for _ in $(seq 1 90); do curl -sf http://localhost:7006/livez >/dev/null && break; sleep 1; done
 CONTAINER=polaris-gate-wallet PYTHON="$PY" bash "$ROOT/lab/interop/waltid/setup.sh" ./pki >setup.log 2>&1 \
   || { tail -20 setup.log; exit 1; }
@@ -134,11 +139,11 @@ routes:
 EOF
 docker network create "$NET" >/dev/null
 docker run -d --name polaris-gate-whoami --network "$NET" "$WHOAMI" >/dev/null
-docker run -d --name polaris-gate-pomerium --network "$NET" -p 8443:8443 ${ADD_HOST[@]+"${ADD_HOST[@]}"} \
+docker run -d --name polaris-gate-pomerium --network "$NET" -p 8443:8443 "${ADD_HOST[@]}" \
   -e SSL_CERT_FILE=/pki/tls.pem -v "$WORK/pomerium.yaml:/pomerium/config.yaml:ro" -v "$WORK/pki:/pki:ro" \
   "$POMERIUM" >/dev/null
 for _ in $(seq 1 60); do
-  code=$(curl -sk -o /dev/null -w '%{http_code}' https://verify.localhost.pomerium.io:8443/ || true)
+  code=$(curl -sk "${RESOLVE[@]}" -o /dev/null -w '%{http_code}' https://verify.localhost.pomerium.io:8443/ || true)
   [ "$code" = 302 ] && break; sleep 1
 done
 
@@ -160,7 +165,7 @@ sys.exit(0 if ok else 1)
 EOF
 
 echo "== an agent calls two API routes with tokens the gate issued against its grant"
-"$PY" "$HERE/agent_drive.py" --dir ./agent --gate https://localhost:9444 --cafile pki/tls.pem \
+"$PY" "$HERE/agent_drive.py" --loopback .localhost.pomerium.io --dir ./agent --gate https://localhost:9444 --cafile pki/tls.pem \
   --audience pomerium --read https://status.localhost.pomerium.io:8443/ \
   --write https://config.localhost.pomerium.io:8443/ > agent.out || fail=1
 grep -v '^{' agent.out
