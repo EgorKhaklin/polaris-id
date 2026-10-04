@@ -183,8 +183,22 @@ most three, each checked as a link to the next and the last to a configured anch
 ([package README](../../../packages/polaris-oid4vp/README.md)). The same commit, walked the earlier
 ways, still accepts v2.3.7's one-link chain (`EUDI_ISSUER=1`, all three controls refused) and
 OID4VCgo v0.23.0's issuer ([oid4vcgo](../oid4vcgo/README.md), every control refused). Walked on
-macOS (arm64) with Docker; 1.0.0rc14 does not carry the change, so a release after it is the first
-that will.
+macOS (arm64) with Docker; 1.0.0rc14 does not carry the change, and 1.0.0rc15 is the first release
+that does.
+
+## From PyPI 1.0.0rc15 (2026-10-04)
+
+    EUDI_NATIVE=1 EUDI_VERSION=v2.5.1 EUDI_ISSUER=1 POLARIS_OID4VP=polaris-oid4vp==1.0.0rc15 \
+      lab/interop/eudi-dev/run.sh
+
+eudi-dev v2.5.1's own binary, in strict mode with its TLS check on (it trusts keygen's listener
+certificate through `--tls-ca`), presented a PID its own issuer signed under the intermediate CA
+above. 1.0.0rc15 from PyPI accepted it: `<- 200 authentic, claims ['cnf', 'exp', 'family_name',
+'given_name', 'iat', 'iss', 'status', 'vct']`. All four controls were refused: an unrelated issuer
+CA (`issuer_key`), the answered request again, a mismatched `client_id` and an unrelated TLS trust
+(the last two by the wallet). The same walk against 1.0.0rc14 from PyPI refused the genuine
+presentation: `issuer_key: the x5c leaf does not chain to any configured trust anchor`. Walked on
+macOS (arm64), no Docker and no tunnel.
 
 ## What this does not establish
 
