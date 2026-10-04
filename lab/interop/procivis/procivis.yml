@@ -1,0 +1,17 @@
+# Read after one-core's config/config-procivis-base.yml: one instance that is both the issuer and
+# the holder, on SQLite, with its REST API on. Its base URL is https (tls_front.py terminates TLS
+# in the container). No key material is here: run.sh passes the key-storage and OpenID4VCI
+# encryption keys, and the API token, as ONE_* environment variables made fresh for each run.
+app:
+  databaseUrl: "sqlite:///data/one.db?mode=rwc"
+  coreBaseUrl: "https://procivis.test"
+  serverIp: "0.0.0.0"
+  serverPort: 3000
+  traceJson: false
+  traceLevel: "info,one_core=debug,core_server=debug,sea_orm=warn,sqlx=warn,hyper=warn,h2=warn,reqwest=warn"
+  hideErrorResponseCause: false
+  enableServerInfo: true
+  enableExternalEndpoints: true
+  enableManagementEndpoints: true
+  auth:
+    mode: UNSAFE_STATIC
