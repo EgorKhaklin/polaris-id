@@ -1,0 +1,7 @@
+# OSV-Scanner exceptions for this lab wallet's Go modules. OpenSSF Scorecard's Vulnerabilities
+# check runs OSV-Scanner over every lockfile in the repository and reads this file beside go.mod.
+# The wallet is lab code that drives irmago in one walk; it is not a Polaris product.
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = "golang.org/x/crypto/openpgp is flagged as unmaintained in every x/crypto release. No openpgp package is compiled into this wallet: go list -deps ./... lists 349 packages and none under x/crypto/openpgp (2026-10-04, x/crypto v0.57.0)."

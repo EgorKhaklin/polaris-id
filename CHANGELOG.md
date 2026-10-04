@@ -52,6 +52,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A sixth implementation, vck (A-SIT Plus, Kotlin), presents to the published verifier a credential it issued; re-run weekly.
 - A lab walk decides outside status lists: the draft's test vectors, its signed example and the OpenWallet Foundation's tokens.
 - The wallet canary runs the OpenID Foundation's conformance suite weekly against the published verifier, with both controls.
+- Three more walks against the published verifier, re-run weekly: the EU iOS OpenID4VP library, irmago (Yivi) and SpruceID's adapter.
 
 ### Changed
 

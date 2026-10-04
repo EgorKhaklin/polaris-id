@@ -35,6 +35,10 @@
 # images float at their newest, so a change on the Foundation's side shows here first. A run is
 # not a certification: that is the hosted suite and a submission, for one version.
 #
+# Since 2026-10-04 three more: irmago v1.4.0 (the Go library under the Yivi wallet) under a wallet
+# built here, SpruceID's openid4vp conformance adapter (Rust, its test issuer replaced; the README
+# says exactly what), and the EU reference OpenID4VP library for iOS on a macOS runner.
+#
 # Kept out of the Polaris CI workflow: a change on the wallet's side is news, not a
 # defect in the commit that happened to be pushed that day.
 # ============================================================================
@@ -245,3 +249,54 @@ jobs:
         env:
           SUITE: ${{ runner.temp }}/conformance-suite
         run: cd "$SUITE" && docker compose -f docker-compose-prebuilt.yml logs --tail 200 server
+
+  irmago:
+    name: A wallet on irmago (Yivi) presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build the wallet in the pinned Go image, present, then the five controls
+        env:
+          BUILD: docker
+          WORK: ${{ runner.temp }}/irmago
+        run: bash lab/interop/irmago/run.sh
+
+  spruceid:
+    name: SpruceID's conformance adapter presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build the adapter in the pinned Rust image, present, then the three controls
+        env:
+          WORK: ${{ runner.temp }}/spruceid
+        run: bash lab/interop/spruceid/run.sh
+
+  eudi-ios:
+    name: The EUDI iOS OpenID4VP library presents to polaris-oid4vp from PyPI
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build the wallet with SwiftPM, present, then the four controls
+        env:
+          WORK: ${{ runner.temp }}/eudi-ios
+        run: |
+          swift --version
+          bash lab/interop/eudi-ios/run.sh
