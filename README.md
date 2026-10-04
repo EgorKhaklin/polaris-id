@@ -13,7 +13,7 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/EgorKhaklin/polaris-id/badge)](https://scorecard.dev/viewer/?uri=github.com/EgorKhaklin/polaris-id)
 
 [![OpenID Certified: polaris-oid4vp verifier](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_verifier-c9a352?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid-certified)
-[![Tested against: walt.id, Credo, the EUDI library, eudi-dev, OID4VCgo](https://img.shields.io/badge/tested_against-walt.id_%C2%B7_Credo_%C2%B7_EUDI_library_%C2%B7_eudi--dev_%C2%B7_OID4VCgo-2b5797?labelColor=0a1421&style=flat-square)](#tested-against)
+[![Tested against: walt.id, Credo, the EUDI library, vck, eudi-dev, OID4VCgo](https://img.shields.io/badge/tested_against-walt.id_%C2%B7_Credo_%C2%B7_EUDI_library_%C2%B7_vck_%C2%B7_eudi--dev_%C2%B7_OID4VCgo-2b5797?labelColor=0a1421&style=flat-square)](#tested-against)
 [![OpenID4VP 1.0](https://img.shields.io/badge/OpenID4VP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid4vp-10)
 [![HAIP 1.0](https://img.shields.io/badge/HAIP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#haip-10)
 [![SD-JWT VC](https://img.shields.io/badge/SD--JWT_VC-supported-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#sd-jwt-vc)
@@ -95,6 +95,7 @@ newest `polaris-oid4vp` on PyPI.
 | [walt.id Wallet API v2](lab/interop/waltid/README.md) | walt.id | Kotlin | 1.1.1, against 1.0.0rc14 (2026-10-03) | 1.1.1 by digest, and the latest |
 | [Credo](lab/interop/credo/README.md) | OpenWallet Foundation | TypeScript | 0.7.2, against 1.0.0rc14 (2026-10-03) | the lock file's release, and the latest |
 | [`eudi-lib-jvm-openid4vp-kt`](lab/interop/eudi-kt/README.md), the EUDI Wallet's OpenID4VP library, under a wallet built here | European Commission | Kotlin | 0.16.2, against 1.0.0rc15 (2026-10-04) | 0.16.2 |
+| [vck](lab/interop/vck/README.md) (`vck-openid-ktor`), under a wallet built here; vck also issued the credential | A-SIT Plus | Kotlin | 8.0.0, against 1.0.0rc15 (2026-10-04) | 8.0.0 |
 | [eudi-dev](lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | dominikschlosser | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) | v2.3.7 (listed by the OpenID Foundation as certified), the latest, its own binary, its own issuer's PID |
 | [OID4VCgo](lab/interop/oid4vcgo/README.md) | IDFoundry | Go | 0.25.0, against 1.0.0rc14 (2026-10-03) | 0.12.0 (listed as certified), and the latest |
 | [The OpenID Foundation's conformance suite](docs/reference/SPEC-COMPLIANCE.md#openid-certified) | OpenID Foundation | Java | all eleven modules of the HAIP verifier plan, 1.0.0rc7 (2026-09-24): the certification | |

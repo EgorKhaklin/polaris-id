@@ -38,6 +38,7 @@ the walks against the newest release on PyPI.
 | [walt.id Wallet API v2](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/waltid/README.md) | walt.id | Kotlin | 1.1.1, against 1.0.0rc14 (2026-10-03) |
 | [Credo](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/credo/README.md) | OpenWallet Foundation | TypeScript | 0.7.2, against 1.0.0rc14 (2026-10-03) |
 | [`eudi-lib-jvm-openid4vp-kt`](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-kt/README.md), the EUDI Wallet's OpenID4VP library, under a short wallet built for the walk | European Commission | Kotlin | 0.16.2, against 1.0.0rc15 (2026-10-04) |
+| [vck](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/vck/README.md) (`vck-openid-ktor`), under a short wallet built for the walk; vck also issued the credential | A-SIT Plus | Kotlin | 8.0.0, against 1.0.0rc15 (2026-10-04) |
 | [eudi-dev](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | dominikschlosser | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) |
 | [OID4VCgo](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/oid4vcgo/README.md) | IDFoundry | Go | 0.25.0, against 1.0.0rc14 (2026-10-03) |
 

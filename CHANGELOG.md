@@ -44,6 +44,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp runs behind a proxy or tunnel: `--public-base-url` sets the wallet-facing HTTPS origin, `--no-local-tls` serves plain HTTP.
 - The README and polaris-oid4vp's page list every outside implementation the verifier is walked against: maintainer, language, last walk.
 - The wallet canary walks the EU reference OpenID4VP library too, so all five implementations are re-run weekly.
+- A sixth implementation, vck (A-SIT Plus, Kotlin), presents to the published verifier a credential it issued; re-run weekly.
 
 ### Changed
 
