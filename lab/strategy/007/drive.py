@@ -18,9 +18,10 @@ from playwright.sync_api import sync_playwright
 url, wallet_api, wallet_id, key_id = sys.argv[1:5]
 
 with sync_playwright() as p:
-    # host.docker.internal resolves inside containers, not on every host; the browser runs on
-    # the host, so it is pointed at the loopback for that one name.
-    browser = p.chromium.launch(args=["--host-resolver-rules=MAP host.docker.internal 127.0.0.1"])
+    # host.docker.internal resolves inside containers, not on every host, and *.localhost.pomerium.io
+    # no longer resolves in public DNS; the browser runs on the host, so both point at the loopback.
+    browser = p.chromium.launch(args=["--host-resolver-rules=MAP host.docker.internal 127.0.0.1,"
+                                      " MAP *.localhost.pomerium.io 127.0.0.1"])
     page = browser.new_context(ignore_https_errors=True).new_page()
     page.goto(url, wait_until="domcontentloaded", timeout=30000)
     page.wait_for_selector("#launch", timeout=30000)        # the gate's page: present a credential
