@@ -110,7 +110,16 @@ def value_matches(value, values):
 
 
 def _shown(path):
-    return repr(".".join(path))
+    return repr(".".join(str(key) for key in path))
+
+
+def _selected(path, requested):
+    """Whether a disclosed claim at `path` is one the request selected (OpenID4VP 1.0 6.4).
+
+    It is when it lies on the way to a requested path (the object a requested member is
+    reached through) or inside one (a member of a requested object or array).
+    """
+    return any(path == r[:len(path)] or r == path[:len(r)] for r in requested)
 
 
 class Session:
@@ -412,6 +421,16 @@ class Verifier:
         if unaccepted:
             return self._error("claims", "the presentation discloses %s with a value the request "
                                          "does not accept" % ", ".join(_shown(p) for p in unaccepted))
+        # OpenID4VP 1.0 section 6.4: a wallet MUST NOT send selectively disclosable claims the
+        # request did not select. ERICA, the German EUDI Wallet programme's verifier testing
+        # tool, sends one as a negative case (OVER_DISCLOSURE); until 2026-10-04 it got 200 and
+        # the operator received claims nobody asked for. What the issuer signed in clear text is
+        # not a disclosure and is not judged here.
+        requested = [path for path, _ in self.claims]
+        extra = sorted((p for p in verdict.disclosed if not _selected(p, requested)), key=repr)
+        if extra:
+            return self._error("claims", "the presentation discloses %s, which the request did "
+                                         "not select" % ", ".join(_shown(p) for p in extra[:5]))
 
         # A status the operator's resolver CHECKED, whose value is not VALID (0): the issuer
         # says this credential is revoked or suspended. That is a fact, not a policy question, so

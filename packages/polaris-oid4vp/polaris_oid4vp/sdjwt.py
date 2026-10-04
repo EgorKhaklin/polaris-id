@@ -161,14 +161,19 @@ class Verdict:
     third party's endpoint does.
     """
 
-    __slots__ = ("authentic", "code", "reason", "claims", "revocation")
+    __slots__ = ("authentic", "code", "reason", "claims", "revocation", "disclosed")
 
-    def __init__(self, authentic, code="", reason="", claims=None, revocation=None):
+    def __init__(self, authentic, code="", reason="", claims=None, revocation=None,
+                 disclosed=None):
         self.authentic = authentic
         self.code = code
         self.reason = reason
         self.claims = claims or {}
         self.revocation = revocation
+        # The path of every claim a disclosure supplied: object keys, and list positions for
+        # array elements. What the issuer signed in clear text is not among them. A verifier
+        # reads it to hold a wallet to OpenID4VP 1.0 section 6.4 (see Verifier).
+        self.disclosed = frozenset(disclosed or ())
 
     def __repr__(self):
         if self.authentic:
@@ -851,8 +856,13 @@ class _TooDeep(ValueError):
     """The resolver hit its depth cap. A ValueError so existing handlers see it."""
 
 
-def _resolve(node, by_digest, used, collisions=None, depth=0, memo=None):
+def _resolve(node, by_digest, used, collisions=None, depth=0, memo=None, path=(),
+             disclosed=None):
     """Rebuild the claims by substituting disclosed values for the digests standing in.
+
+    `disclosed`, when given a set, collects the path of every claim a disclosure supplied
+    (`path` is where `node` sits). A repeated digest is refused before this runs, so each
+    disclosure has one path and the memo below never hides a second one.
 
     `collisions` collects any disclosure whose name is already present at the same level.
     draft-ietf-oauth-selective-disclosure-jwt section 9.3 requires the verifier to REJECT
@@ -877,7 +887,8 @@ def _resolve(node, by_digest, used, collisions=None, depth=0, memo=None):
         for key, value in node.items():
             if key in ("_sd", "_sd_alg"):
                 continue
-            out[key] = _resolve(value, by_digest, used, collisions, depth + 1, memo)
+            out[key] = _resolve(value, by_digest, used, collisions, depth + 1, memo,
+                                path + (key,), disclosed)
         sd = node.get("_sd")
         # `node.get("_sd", []) or []` let a non-list through: `_sd: 5` reached the for-loop
         # and raised TypeError out of the verifier. The digests themselves must be strings
@@ -891,9 +902,11 @@ def _resolve(node, by_digest, used, collisions=None, depth=0, memo=None):
                 name = disclosure[1]
                 if name in out and collisions is not None:
                     collisions.append(name)
+                if disclosed is not None:
+                    disclosed.add(path + (name,))
                 if digest not in memo:
                     memo[digest] = _resolve(disclosure[2], by_digest, used, collisions,
-                                            depth + 1, memo)
+                                            depth + 1, memo, path + (name,), disclosed)
                 out[name] = memo[digest]
         return out
     if isinstance(node, list):
@@ -904,12 +917,15 @@ def _resolve(node, by_digest, used, collisions=None, depth=0, memo=None):
                 if disclosure and len(disclosure) == 2:
                     key = item["..."]
                     used.add(key)
+                    if disclosed is not None:
+                        disclosed.add(path + (len(out),))
                     if key not in memo:
                         memo[key] = _resolve(disclosure[1], by_digest, used, collisions,
-                                             depth + 1, memo)
+                                             depth + 1, memo, path + (len(out),), disclosed)
                     out.append(memo[key])
                 continue
-            out.append(_resolve(item, by_digest, used, collisions, depth + 1, memo))
+            out.append(_resolve(item, by_digest, used, collisions, depth + 1, memo,
+                                path + (len(out),), disclosed))
         return out
     return node
 
@@ -1087,8 +1103,9 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
 
     used = set()
     collisions = []
+    disclosed = set()
     try:
-        claims = _resolve(payload, by_digest, used, collisions)
+        claims = _resolve(payload, by_digest, used, collisions, disclosed=disclosed)
     except _TooDeep as exc:
         return _refuse("disclosure", str(exc))
     if collisions:
@@ -1113,7 +1130,8 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
             return _refuse("disclosure", "%d disclosure(s) were presented that resolve to nothing "
                                          "in the credential" % len(orphans))
         return Verdict(True, claims=claims,
-                       revocation=_revocation_state(payload, status_resolver))
+                       revocation=_revocation_state(payload, status_resolver),
+                       disclosed=disclosed)
 
     cnf = payload.get("cnf")
     if not isinstance(cnf, dict) or not isinstance(cnf.get("jwk"), dict):
@@ -1211,4 +1229,5 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         return _refuse("disclosure", "%d disclosure(s) were presented that resolve to nothing "
                                      "in the credential" % len(orphans))
 
-    return Verdict(True, claims=claims, revocation=_revocation_state(payload, status_resolver))
+    return Verdict(True, claims=claims, revocation=_revocation_state(payload, status_resolver),
+                   disclosed=disclosed)

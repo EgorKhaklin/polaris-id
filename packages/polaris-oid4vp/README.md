@@ -135,7 +135,7 @@ make every presentation replayable. `sdjwt.py` touches no socket and reads no co
 | `kb_signature` | a key-binding signature that does not verify |
 | `nonce`, `audience` | a key-binding JWT for another request or verifier |
 | `kb_freshness` | a key-binding `iat` outside the window, or an `exp` or `nbf` it carries that has passed or not arrived |
-| `claims` | (`Verifier`) a presentation that withholds a claim the request asked for, or discloses it with a value the request does not accept |
+| `claims` | (`Verifier`) a presentation that withholds a claim the request asked for, discloses it with a value the request does not accept, or discloses a selectively disclosable claim the request did not select (OpenID4VP 1.0 section 6.4) |
 | `revoked` | (`Verifier`) a credential whose checked status value is not VALID (0) |
 | `credential_validity` | a credential past its `exp` or before its `nbf` |
 | `vct` | a credential of a type the query did not ask for |
@@ -209,7 +209,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 407 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 413 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 120 refusals accept and requires a

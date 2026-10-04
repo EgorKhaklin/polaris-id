@@ -26,6 +26,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-sdk-ts requires Node >= 20.19.0 for its post-quantum dependencies; rc.8 declared >= 18 but does not load there.
 - polaris-oid4vp decides status lists the draft sizes as ordinary; a 2^20-entry list with 10% revoked was refused as malformed.
 - polaris-oid4vp keygen marks the listener certificate for server authentication; Apple's TLS policy refused it.
+- polaris-oid4vp refuses a presentation disclosing claims the request did not select, which OpenID4VP 1.0 section 6.4 forbids; it accepted one.
 
 ### Added
 
