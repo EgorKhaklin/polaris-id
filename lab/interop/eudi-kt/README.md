@@ -52,6 +52,14 @@ Against `polaris-oid4vp` 1.0.0rc14 from PyPI, with `eudi-lib-jvm-openid4vp-kt` 0
 OkHttp) on JDK 21: accepted, `<- 200 authentic, claims ['cnf', 'family_name', 'given_name', 'iat',
 'iss', 'vct']`, and the library reported `Accepted`. All four controls were refused.
 
+Re-walked 2026-10-04 against `polaris-oid4vp` 1.0.0rc15 from PyPI, built with Kotlin 2.4.20 and
+Bouncy Castle 1.86: accepted, `<- 200 authentic`, and all four controls refused. The library brings
+Bouncy Castle 1.83, which OSV lists advisories against (fixed in 1.85), and Kotlin 2.2.21 had one in
+its build cache (fixed in 2.4.20); [`build.gradle.kts`](wallet/build.gradle.kts) lifts both. The
+verification metadata now lists only what the build resolves (120 components, no OSV advisory),
+regenerated with `gradle --write-verification-metadata sha256 installDist` after removing the old
+file.
+
 ## What this does not establish
 
 - It is a wallet built here on the library, not the EUDI reference wallet app. The library is the
