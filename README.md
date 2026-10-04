@@ -34,7 +34,6 @@
 <a href="#verified-not-asserted"><img src="docs/assets/nav/verified.svg" alt="Verified"></a>
 <a href="#run-it"><img src="docs/assets/nav/run-it.svg" alt="Run it"></a>
 <a href="#documentation"><img src="docs/assets/nav/documentation.svg" alt="Documentation"></a>
-<a href="https://discord.gg/ragewuCKj"><img src="docs/assets/nav/discord.svg" alt="Discord"></a>
 
 </div>
 
