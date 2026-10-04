@@ -71,7 +71,14 @@ jobs:
           EUDI_NATIVE: ${{ matrix.wallet.native }}
           EUDI_ISSUER: ${{ matrix.wallet.issuer }}
           WORK: ${{ runner.temp }}/eudi
-        run: bash lab/interop/eudi-dev/run.sh
+        # From a directory holding only the files docs/STRANGER-PATH.md has a stranger download,
+        # so a file run.sh needs that the page does not name fails here rather than on a stranger.
+        run: |
+          mkdir -p "$RUNNER_TEMP/stranger"
+          grep -oE 'curl -fsSLO https://raw\.githubusercontent\.com/EgorKhaklin/polaris-id/main/[^ ]+' docs/STRANGER-PATH.md \
+            | sed 's|.*/polaris-id/main/||' | while read -r f; do cp "$f" "$RUNNER_TEMP/stranger/"; done
+          ls "$RUNNER_TEMP/stranger"
+          bash "$RUNNER_TEMP/stranger/run.sh"
 
   waltid:
     name: walt.id ${{ matrix.label }} presents to polaris-oid4vp from PyPI

@@ -22,13 +22,15 @@ against a SHA-256 pinned in this repository before running it.
     mkdir -p ~/polaris-quick && cd ~/polaris-quick
     curl -fsSLO https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/lab/interop/eudi-dev/run.sh
     curl -fsSLO https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/lab/interop/waltid/issue_sdjwt_vc.py
+    curl -fsSLO https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/lab/interop/requirements.txt
     bash run.sh
 
 The last line it prints when all is well:
 
     RESULT: accepted, and all three controls refused
 
-It installs `polaris-oid4vp` from PyPI into a venv of its own, lets the wallet generate its own
+It installs `polaris-oid4vp` from PyPI into a venv of its own, every dependency checked against
+the hashes in `requirements.txt`, lets the wallet generate its own
 key, mints one credential bound to it, has the wallet present it with HAIP enforced, then runs
 three controls that must each be refused ([what they are](../lab/interop/eudi-dev/README.md)). It
 does every step for you, so it shows THAT the path works; the ten minutes below show what each

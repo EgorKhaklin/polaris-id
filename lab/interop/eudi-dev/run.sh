@@ -43,6 +43,15 @@ if [ -z "$ISSUER" ] || [ ! -f "$ISSUER" ]; then
   exit 2
 fi
 ISSUER="$(cd "$(dirname "$ISSUER")" && pwd)/$(basename "$ISSUER")"
+# The dependencies' hashes, found the same way: downloaded beside this file, or in a clone.
+REQS=""
+for candidate in "$HERE/requirements.txt" "$HERE/../requirements.txt"; do
+  [ -f "$candidate" ] && REQS="$candidate" && break
+done
+if [ -z "$REQS" ]; then
+  echo "requirements.txt not found: put it beside run.sh (docs/STRANGER-PATH.md downloads it)" >&2
+  exit 2
+fi
 WORK="${WORK:-$(mktemp -d)}"
 PY="${PYTHON:-python3}"
 if [ "${EUDI_NATIVE:-}" != 1 ] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
@@ -107,11 +116,11 @@ if [ "$MODE" = docker ]; then echo "wallet     $IMAGE"; else echo "wallet     eu
 echo "verifier   pip install --pre $PKG"
 mkdir -p "$WORK" && cd "$WORK"
 "$PY" -m venv venv
-# Every third-party package by hash (../requirements.txt); then polaris-oid4vp itself, built from
+# Every third-party package by hash ($REQS); then polaris-oid4vp itself, built from
 # $PKG with nothing else fetched and installed as that one wheel. A release from PyPI arrives as
 # its published wheel and builds nothing; a path is built here, with the build backend by hash
 # (../requirements-build.txt), whose setuptools supports Python 3.10 or newer.
-venv/bin/pip install -q --require-hashes -r "$HERE/../requirements.txt"
+venv/bin/pip install -q --require-hashes -r "$REQS"
 if [ -e "$PKG" ]; then
   venv/bin/python -c 'import sys; sys.exit(sys.version_info < (3, 10))' || {
     echo "building $PKG from the tree needs Python 3.10 or newer; set PYTHON to one, or set" >&2
