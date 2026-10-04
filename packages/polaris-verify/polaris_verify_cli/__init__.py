@@ -6,7 +6,7 @@ The primary external door. It runs with no Polaris server, no database and no op
 console: a relying party installs it, configures a trust root, and decides for itself
 whether material is authentic.
 
-    pip install polaris-verify
+    pip install --pre "polaris-verify[cryptography]"
     polaris-verify --pqc-provider auto --issuer-anchor trusted-keys.json --pack credential.json
 
 It refuses to start unless the run says what cryptography it is doing (`--pqc-provider`
