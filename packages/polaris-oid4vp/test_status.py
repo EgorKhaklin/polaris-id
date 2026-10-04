@@ -16,6 +16,7 @@ malformed list, which blames the issuer for the endpoint's failure.
 """
 import base64
 import json
+import random
 import unittest
 import zlib
 
@@ -291,8 +292,18 @@ class HostileJsonTests(unittest.TestCase):
                 self.assertFalse(v["checked"])
                 self.assertEqual(v["code"], "malformed")
 
-    def test_an_oversized_json_document_is_refused(self):
-        v = self._decide(json.dumps({"sub": URI, "pad": "A" * (200 * 1024)}))
+    def test_an_oversized_header_is_refused(self):
+        """The header keeps the 64 KiB bound: nothing honest puts a list in it."""
+        tok = ".".join([b64u(json.dumps({"alg": "ES256", "typ": "statuslist+jwt",
+                                         "pad": "A" * (200 * 1024)})),
+                        b64u(json.dumps(payload())), b64u(b"sig")])
+        v = decide(tok, issuer_key_verify=accept)
+        self.assertFalse(v["checked"])
+        self.assertEqual(v["code"], "malformed")
+
+    def test_a_payload_the_token_bound_cannot_hold_is_refused(self):
+        """The payload's size bound is the token's own (MAX_PAYLOAD_JSON_BYTES)."""
+        v = self._decide(json.dumps({"sub": URI, "pad": "A" * S.MAX_PAYLOAD_JSON_BYTES}))
         self.assertFalse(v["checked"])
         self.assertEqual(v["code"], "malformed")
 
@@ -300,6 +311,29 @@ class HostileJsonTests(unittest.TestCase):
         """The positive control for this class: the bounds must not refuse real tokens."""
         v = decide(token(payload()), issuer_key_verify=accept)
         self.assertTrue(v["checked"], v["reason"])
+
+
+class ListSizeTests(unittest.TestCase):
+    """A list the draft sizes as ordinary must decide (2026-10-04).
+
+    The payload carries the compressed array, and it was held to the header's 64 KiB. The
+    draft's Appendix B puts 2^20 entries at 10% revoked at 67.6 KB compressed; the OpenWallet
+    Foundation's @sd-jwt/jwt-status-list 0.19.0 signs that list as a 97,153-byte payload, and
+    this refused it as malformed. lab/interop/status-list decides the library's own tokens.
+    """
+
+    def test_a_million_entries_at_ten_percent_revoked_decide(self):
+        rng = random.Random(7)
+        statuses = [1 if rng.random() < 0.10 else 0 for _ in range(1 << 20)]
+        p = payload(statuses=statuses, bits=1)
+        self.assertGreater(len(json.dumps(p)), S.MAX_JSON_BYTES,
+                           "the fixture must be past the header's bound, or it tests nothing")
+        tok = token(p)
+        for idx in (statuses.index(1), statuses.index(0), len(statuses) - 1):
+            with self.subTest(index=idx):
+                v = decide(tok, index=idx, issuer_key_verify=accept)
+                self.assertTrue(v["checked"], v["reason"])
+                self.assertEqual(v["status"], statuses[idx])
 
 
 class RollbackTests(unittest.TestCase):

@@ -10,7 +10,7 @@ Anything the author ran against the author's own code belongs in the last sectio
 |---|---|
 | Wallets | 4 unmodified wallets presented to `polaris-oid4vp` and were accepted; 2 received wallet copies from the product |
 | Conformance profile | `polaris-oid4vp 1.0.0rc7` OpenID Certified to OID4VP 1.0 + HAIP 1.0 Verifier, 2026-09-24 |
-| Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push |
+| Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push; the Token Status List draft's vectors and signed example, all decided (lab walk, 2026-10-04) |
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
 | External relying party / operator | none |
 | Use | 0 outside users |
@@ -143,6 +143,8 @@ throwaway issuer key; their test identifiers let anyone signed in fetch the same
 Project Wycheproof, `testvectors_v1/mldsa_65_verify_test.json` at 613a2e44cb64: 58 of 58 under
 both witnesses (liboqs and `cryptography`), on every push (CI job `pqc-real`). It tests the
 cryptographic primitive, not the credential protocol, and moves no row above.
+
+draft-ietf-oauth-status-list-21: the byte arrays of Section 4.2, the four Appendix C test vectors (1, 2, 4 and 8 bits, 2^20 entries) and the signed example of Section 8.2 under the example key the draft's authors publish, decided by `polaris_oid4vp.status.decide`, with tokens signed by the OpenWallet Foundation's `@sd-jwt/jwt-status-list` 0.19.0 beside them (2026-10-04, [lab/interop/status-list](interop/status-list/README.md); run by the author, not every push). Every status matched. The library's 2^20-entry list at 10% revoked was refused by 1.0.0rc15 (payload over 64 KiB); the bound is fixed in the tree.
 
 ### Public distribution
 

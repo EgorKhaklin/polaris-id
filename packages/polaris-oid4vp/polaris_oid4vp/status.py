@@ -89,9 +89,15 @@ MAX_TOKEN_BYTES = 2 * 1024 * 1024
 #: interpreter that has just unwound a stack overflow is not where security decisions should
 #: be made. Refusing the SHAPE before parsing is deterministic.
 #:
-#: A status list token is two small JSON documents and a compressed array. 64 KiB and 64
-#: levels are far past anything honest.
+#: The header is a small JSON document, and 64 KiB and 64 levels are far past anything honest
+#: for it. The payload is not small: the compressed array is inside it, base64url-encoded in
+#: `lst`. It was held to the same 64 KiB until 2026-10-04, which refused lists the draft itself
+#: sizes as ordinary (Appendix B: 2^20 entries at 10% revoked is 67.6 KB compressed). The
+#: OpenWallet Foundation's @sd-jwt/jwt-status-list 0.19.0 signs that list as a 97,153-byte
+#: payload, and every credential on it was undecidable here (lab/interop/status-list). The
+#: payload's size bound is now the token's own; its depth bound is unchanged.
 MAX_JSON_BYTES = 64 * 1024
+MAX_PAYLOAD_JSON_BYTES = MAX_TOKEN_BYTES
 MAX_JSON_DEPTH = 64
 
 
@@ -122,11 +128,11 @@ def _nesting_depth(text):
     return maximum
 
 
-def _json_bounded(raw, what):
+def _json_bounded(raw, what, limit=MAX_JSON_BYTES):
     """`json.loads` with the three bounds it has none of: size, depth and bare constants."""
-    if len(raw) > MAX_JSON_BYTES:
+    if len(raw) > limit:
         raise ValueError("the %s is %d bytes, over the %d byte limit"
-                         % (what, len(raw), MAX_JSON_BYTES))
+                         % (what, len(raw), limit))
     text = raw.decode("utf-8", "strict") if isinstance(raw, bytes) else raw
     if _nesting_depth(text) > MAX_JSON_DEPTH:
         raise ValueError("the %s nests deeper than %d levels" % (what, MAX_JSON_DEPTH))
@@ -327,7 +333,8 @@ def decide(token, *, index, expected_uri, authority, now, credential_issuer=None
         return _refuse("malformed", "the status list token is not a compact JWS of three parts")
     try:
         header = _json_bounded(_b64u(parts[0], "the header"), "header")
-        payload = _json_bounded(_b64u(parts[1], "the payload"), "payload")
+        payload = _json_bounded(_b64u(parts[1], "the payload"), "payload",
+                                MAX_PAYLOAD_JSON_BYTES)
         signature = _b64u(parts[2], "the signature")
     except (ValueError, UnicodeDecodeError) as exc:
         return _refuse("malformed", "the status list token does not parse: %s" % exc)
