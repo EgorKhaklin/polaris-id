@@ -8,9 +8,9 @@ Anything the author ran against the author's own code belongs in the last sectio
 
 | Noun | State |
 |---|---|
-| Wallets | 4 unmodified wallets presented to `polaris-oid4vp` and were accepted; 2 received wallet copies from the product |
+| Wallets | 5 unmodified wallets presented to `polaris-oid4vp` and were accepted, and 5 more implementations (four libraries under a wallet built here, one adapter with its test issuer replaced); 2 received wallet copies from the product |
 | Conformance profile | `polaris-oid4vp 1.0.0rc7` OpenID Certified to OID4VP 1.0 + HAIP 1.0 Verifier, 2026-09-24 |
-| Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push |
+| Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push; the Token Status List draft's vectors and signed example, all decided (lab walk, 2026-10-04) |
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
 | External relying party / operator | none |
 | Use | 0 outside users |
@@ -22,8 +22,9 @@ Anything the author ran against the author's own code belongs in the last sectio
 
 ### Wallets
 
-Every wallet ran unmodified, with no contact with its authors; configuration only (trust
-anchors, TLS roots). Each run carries controls that must be refused, because a verifier that
+Every wallet ran with no contact with its authors, and unmodified unless its row says otherwise:
+configuration only (trust anchors, TLS roots). Where a row names a library, a short wallet built
+here drove it. Each run carries controls that must be refused, because a verifier that
 accepts everything prints the same success line.
 
 | Date | Wallet | Verifier | Result | Controls, each refused | Evidence |
@@ -38,7 +39,7 @@ accepts everything prints the same success line.
 | 2026-10-01 | OID4VCgo 0.23.0 (Go), which also refuses a verifier leaf that is a CA, cannot sign, or travels with its anchor | this repository, 4e208b5a | accepted | the same four (the wallet refused) | [lab/interop/oid4vcgo](interop/oid4vcgo/README.md#v0230-the-verifiers-leaf-is-held-to-haip-2026-10-01) |
 | 2026-10-01 | Pomerium 0.33.3 (identity-aware proxy, unmodified), with the lab gate as its OIDC provider and walt.id's wallet presenting | this repository, lab/strategy/007 | admitted; the released claims reached the protected app | the issuer untrusted (refused, not admitted) | [lab/strategy/007](strategy/007/README.md) |
 | 2026-10-01 | Pomerium 0.33.3 (unmodified), checking an agent's bearer token on each request (`bearer_token_format: idp_identity_token`, a `claim/action` policy per route) | this repository, lab/strategy/007, with an ML-DSA-65 grant chain | admitted on each action's own route | the other action's route; no token; a token the gate never signed (Pomerium refused); the same proof twice; an action outside the grant; a revoked grant (the gate refused) | [lab/strategy/007](strategy/007/README.md#pomerium-end-to-end) |
-| weekly since 2026-09-28; four wallets since 2026-10-04, six implementations since the EU library and vck joined | eudi-dev v2.3.7 (by digest, its own binary, its own issuer) and latest; walt.id 1.1.1 (by digest) and latest; Credo (the lock file's release) and latest; OID4VCgo v0.12.0 and latest; `eudi-lib-jvm-openid4vp-kt` 0.16.2; vck 8.0.0 | the newest PyPI release | all ten jobs accepted 1.0.0rc15 (run 37171180209, 2026-10-04; eudi-dev from the three files STRANGER-PATH downloads); all twelve with the EU library and vck (run 37183058188, 2026-10-04); earlier runs accepted rc7 and rc8 | each walk's own controls | `.github/workflows/wallet-canary.yml` |
+| weekly since 2026-09-28; four wallets since 2026-10-04, six implementations since the EU library and vck joined | eudi-dev v2.3.7 (by digest, its own binary, its own issuer) and latest; walt.id 1.1.1 (by digest) and latest; Credo (the lock file's release) and latest; OID4VCgo v0.12.0 and latest; `eudi-lib-jvm-openid4vp-kt` 0.16.2; vck 8.0.0 | the newest PyPI release | all ten jobs accepted 1.0.0rc15 (run 37171180209, 2026-10-04; eudi-dev from the three files STRANGER-PATH downloads); all twelve with the EU library and vck (run 37183058188, 2026-10-04); all thirteen with the OpenID Foundation suite's eleven modules and both controls (run 37191051451, 2026-10-04); earlier runs accepted rc7 and rc8 | each walk's own controls | `.github/workflows/wallet-canary.yml` |
 | 2026-10-02 | eudi-dev v2.5.0 (Go), strict mode now checking the verifier's TLS | this repository, PyPI 1.0.0rc13 | strict mode refused the self-signed listener (`x509: certificate signed by unknown authority`); with `--tls-verify=false` it presented, `200 authentic` | all three (in the `--tls-verify=false` run) | [eudi-dev](interop/eudi-dev/README.md#the-verifiers-tls-checked-in-strict-mode-2026-10-02) |
 | 2026-10-03 | eudi-dev v2.3.7 (Go), HAIP strict, its own binary (no Docker) | this repository, PyPI 1.0.0rc14 | accepted: `200 authentic` | wrong issuer key; the answered request again; a mismatched `client_id` (the wallet refused) | [eudi-dev](interop/eudi-dev/README.md) |
 | 2026-10-03 | The EU reference OpenID4VP library, `eudi-lib-jvm-openid4vp-kt` 0.16.2 (Kotlin, European Commission EUDI Wallet), under a wallet built here | PyPI 1.0.0rc14 | accepted: `200 authentic`, the library reported `Accepted` | wrong issuer key; the answered request again; a mismatched `client_id` and an unrelated CA for the verifier (both refused by the library) | [lab/interop/eudi-kt](interop/eudi-kt/README.md) |
@@ -50,6 +51,11 @@ accepts everything prints the same success line.
 | 2026-10-04 | eudi-dev v2.3.7 (Go), its own binary and PID provider, asked for one member of nested claims: `given_name`, `address.locality`, `place_of_birth.country=NL` | this repository at c35393ac (`serve --claim`) | accepted: `200 authentic`; the wallet disclosed exactly those three members, not the rest of `address` or `place_of_birth` | wrong issuer CA; the answered request again; a mismatched `client_id` (the wallet refused); and `place_of_birth.country=DE`, which the wallet matched to nothing | [eudi-dev](interop/eudi-dev/README.md#one-member-of-a-nested-claim-2026-10-04) |
 | 2026-10-04 | eudi-dev v2.5.1 (Go), its own binary, HAIP strict with its TLS check on (`--tls-ca`), presenting a PID its own issuer signed under an intermediate CA | PyPI 1.0.0rc15, with 1.0.0rc14 as the control | 1.0.0rc15 accepted: `200 authentic`; 1.0.0rc14 refused the same presentation (`issuer_key`) | an unrelated issuer CA; the answered request again; a mismatched `client_id` and an unrelated TLS trust (both refused by the wallet) | [eudi-dev](interop/eudi-dev/README.md#from-pypi-100rc15-2026-10-04) |
 | 2026-10-04 | vck 8.0.0 (`vck-openid-ktor`, A-SIT Plus, Kotlin), under a wallet built here; vck's own `IssuerAgent` issued the credential, so the verifier was the only Polaris software in the exchange | PyPI 1.0.0rc15 | accepted: `200 authentic`, vck reported `AuthenticationSuccess` | a different issuer key; the answered request again; an unrelated CA for the verifier (vck refused) | [lab/interop/vck](interop/vck/README.md) |
+| 2026-10-04 | The EU reference OpenID4VP library for iOS, `eudi-lib-ios-openid4vp-swift` 0.43.2 with `eudi-lib-sdjwt-swift` 0.14.7 (Swift, European Commission EUDI Wallet; the versions the iOS wallet kit 0.54.5 pins), under a wallet built here, fetching the request object unencrypted | PyPI 1.0.0rc15 | accepted: `200 authentic`, the library reported it accepted | a different issuer key; the answered request again; a mismatched `client_id` and an unrelated CA for the verifier (both refused by the library) | [lab/interop/eudi-ios](interop/eudi-ios/README.md) |
+| 2026-10-04 | The same library with the EUDI iOS wallet kit's own setting (`.encryptionOption`): on POST it asks for the request object encrypted to its key and refuses one that is not | this repository at 13d79e2b; PyPI 1.0.0rc15 as the control | 13d79e2b accepted: `200 authentic`; 1.0.0rc15 refused at the request stage (`JOSESwiftError error 5`) | the same four (at 13d79e2b) | [lab/interop/eudi-ios](interop/eudi-ios/README.md#the-wallet-kits-own-setting-2026-10-04) |
+| 2026-10-04 | SpruceID `openid4vp` (Rust) at e5f29b85, its `wallet-conformance-adapter`, with the adapter's test issuer key, certificate and `vct` replaced (its certificate names no issuer; nothing else changed); over plain HTTP, as the adapter trusts only public roots | PyPI 1.0.0rc15 | accepted: `200 authentic` | an unrelated issuer CA; the answered request again; a mismatched `client_id` (the library refused) | [lab/interop/spruceid](interop/spruceid/README.md) |
+| 2026-10-04 | irmago v1.4.0 (Yivi's library, Go), under a wallet built here | PyPI 1.0.0rc15 | accepted: `200 authentic`, irmago reported the session complete | an unrelated issuer CA; the answered request again; a mismatched `client_id`, an unrelated CA for the verifier and another listener certificate (all three refused by irmago) | [lab/interop/irmago](interop/irmago/README.md) |
+| 2026-10-04 | Procivis One Core v1.87.2 (Rust, `core-server`, unmodified), which issued the credential over its own OpenID4VCI to its own holder and presented it, under both its `OPENID4VP_FINAL1` and `OPENID4VP_FINAL1_HAIP` profiles; the verifier was the only Polaris software in the exchange | PyPI 1.0.0rc15 | accepted: `200 authentic`, for both profiles | an unrelated issuer CA; the answered request again; a mismatched `client_id` and an unrelated TLS certificate for the verifier's listener (both refused by Procivis) | [lab/interop/procivis](interop/procivis/README.md) |
 
 eudi-dev v2.3.7 and OID4VCgo 0.12.0 are listed by the OpenID Foundation as certified OID4VP 1.0
 + HAIP 1.0 wallets.
@@ -138,11 +144,18 @@ happy flow, and one answering 200 to everything fails all seven negative modules
 Foundation's signed exports were downloaded and are not committed, because they embed the run's
 throwaway issuer key; their test identifiers let anyone signed in fetch the same logs.
 
+Weekly since 2026-10-04, the wallet canary runs the suite's newest prebuilt images on a GitHub
+runner against the newest PyPI release: run 37191051451 (suite 9497248, 1.0.0rc15) finished 11 of
+11 modules clean (7 negative PASSED automatically, 4 positive in REVIEW) and both controls were
+noticed. A self-hosted run, not a certification: 1.0.0rc15 is not certified.
+
 ### Outside test corpus
 
 Project Wycheproof, `testvectors_v1/mldsa_65_verify_test.json` at 613a2e44cb64: 58 of 58 under
 both witnesses (liboqs and `cryptography`), on every push (CI job `pqc-real`). It tests the
 cryptographic primitive, not the credential protocol, and moves no row above.
+
+draft-ietf-oauth-status-list-21: the byte arrays of Section 4.2, the four Appendix C test vectors (1, 2, 4 and 8 bits, 2^20 entries) and the signed example of Section 8.2 under the example key the draft's authors publish, decided by `polaris_oid4vp.status.decide`, with tokens signed by the OpenWallet Foundation's `@sd-jwt/jwt-status-list` 0.19.0 beside them (2026-10-04, [lab/interop/status-list](interop/status-list/README.md); run by the author, not every push). Every status matched. The library's 2^20-entry list at 10% revoked was refused by 1.0.0rc15 (payload over 64 KiB); the bound is fixed in the tree.
 
 ### Public distribution
 

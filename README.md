@@ -83,8 +83,8 @@ Around the credential:
 
 ### Tested against
 
-Outside OpenID4VP implementations present to the verifier, each unmodified: configuration only
-(trust anchors, TLS roots). Every walk also sends controls that must be refused, because a verifier
+Outside OpenID4VP implementations present to the verifier, each unmodified unless its row says
+otherwise: configuration only (trust anchors, TLS roots). Every walk also sends controls that must be refused, because a verifier
 that accepts everything prints the same success line; among them a wrong issuer key under the same
 `kid`, the answered request again, a mismatched `client_id`, a key the wallet does not hold and an
 untrusted CA.
@@ -97,9 +97,13 @@ newest `polaris-oid4vp` on PyPI.
 | [Credo](lab/interop/credo/README.md) | OpenWallet Foundation | TypeScript | 0.7.2, against 1.0.0rc14 (2026-10-03) | the lock file's release, and the latest |
 | [`eudi-lib-jvm-openid4vp-kt`](lab/interop/eudi-kt/README.md), the EUDI Wallet's OpenID4VP library, under a wallet built here | European Commission | Kotlin | 0.16.2, against 1.0.0rc15 (2026-10-04) | 0.16.2 |
 | [vck](lab/interop/vck/README.md) (`vck-openid-ktor`), under a wallet built here; vck also issued the credential | A-SIT Plus | Kotlin | 8.0.0, against 1.0.0rc15 (2026-10-04) | 8.0.0 |
+| [`eudi-lib-ios-openid4vp-swift`](lab/interop/eudi-ios/README.md), the EUDI Wallet's iOS OpenID4VP library, under a wallet built here | European Commission | Swift | 0.43.2, against 1.0.0rc15 (2026-10-04) | 0.43.2, on macOS |
+| [irmago](lab/interop/irmago/README.md), the library under the Yivi wallet, under a wallet built here | Privacy by Design Foundation (Yivi) | Go | v1.4.0, against 1.0.0rc15 (2026-10-04) | v1.4.0 |
+| [SpruceID `openid4vp`](lab/interop/spruceid/README.md), its conformance adapter with the test issuer replaced | SpruceID | Rust | e5f29b85, against 1.0.0rc15 (2026-10-04) | e5f29b85 |
+| [Procivis One Core](lab/interop/procivis/README.md) (`core-server`), which also issued the credential | Procivis | Rust | v1.87.2, against 1.0.0rc15 (2026-10-04) | v1.87.2 |
 | [eudi-dev](lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | dominikschlosser | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) | v2.3.7 (listed by the OpenID Foundation as certified), the latest, its own binary, its own issuer's PID |
 | [OID4VCgo](lab/interop/oid4vcgo/README.md) | IDFoundry | Go | 0.25.0, against 1.0.0rc14 (2026-10-03) | 0.12.0 (listed as certified), and the latest |
-| [The OpenID Foundation's conformance suite](docs/reference/SPEC-COMPLIANCE.md#openid-certified) | OpenID Foundation | Java | all eleven modules of the HAIP verifier plan, 1.0.0rc7 (2026-09-24): the certification | |
+| [The OpenID Foundation's conformance suite](docs/reference/SPEC-COMPLIANCE.md#openid-certified) | OpenID Foundation | Java | all eleven modules of the HAIP verifier plan, 1.0.0rc7 (2026-09-24): the certification; eleven of eleven clean against 1.0.0rc15 on a GitHub runner, both controls noticed (2026-10-04) | the suite's newest prebuilt images |
 
 The author drove every walk: this is interoperability with those implementations, not use by their
 maintainers. Each row's controls, and what it does not establish, are in

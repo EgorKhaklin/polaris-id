@@ -29,7 +29,7 @@ from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils  # noqa: E402
 from cryptography.x509.oid import NameOID  # noqa: E402
 
-from polaris_oid4vp.jwe import b64u_decode, b64u_encode, encrypt_compact  # noqa: E402
+from polaris_oid4vp.jwe import b64u_decode, b64u_encode, decrypt_compact, encrypt_compact  # noqa: E402
 from polaris_oid4vp.verifier import Verifier, claim_query  # noqa: E402
 from polaris_oid4vp import sdjwt  # noqa: E402
 
@@ -345,6 +345,84 @@ class TheRequestTests(VerifierTestCase):
     def test_a_wallet_nonce_for_an_unknown_state_gets_nothing(self):
         self.assertIsNone(self.verifier.request_object("no-such-state",
                                                        wallet_nonce="w-1"))
+
+
+
+class RequestObjectEncryptionTests(VerifierTestCase):
+    """OpenID4VP 1.0 section 5.10: a wallet that asks gets the request object encrypted to its
+    key. The EUDI iOS wallet kit (0.54.5) always asks, and refused the signed object it got
+    instead (lab/interop/eudi-ios, 2026-10-04)."""
+
+    def _metadata(self, **over):
+        self.wallet_key = ec.generate_private_key(ec.SECP256R1())
+        jwk = dict(_public_jwk(self.wallet_key), use="enc", alg="ECDH-ES", kid="wallet-enc-1")
+        meta = {"jwks": {"keys": [jwk]},
+                "request_object_encryption_alg_values_supported": ["ECDH-ES"],
+                "request_object_encryption_enc_values_supported": ["A128GCM"]}
+        meta.update(over)
+        return json.dumps(meta)
+
+    def test_a_wallet_that_asks_gets_the_signed_object_encrypted_to_its_key(self):
+        session, _ = self.verifier.new_request()
+        jwe = self.verifier.request_object(session.state, wallet_nonce="w-1",
+                                           wallet_metadata=self._metadata())
+        self.assertEqual(len(jwe.split(".")), 5)
+        header = json.loads(b64u_decode(jwe.split(".")[0]))
+        self.assertEqual((header["alg"], header["enc"], header["cty"], header["kid"]),
+                         ("ECDH-ES", "A128GCM", "JWT", "wallet-enc-1"))
+        jws_header, claims = Wallet.read_request(decrypt_compact(jwe, self.wallet_key).decode())
+        self.assertEqual(jws_header["typ"], "oauth-authz-req+jwt")
+        self.assertEqual((claims["wallet_nonce"], claims["state"]), ("w-1", session.state))
+
+    def test_without_a_nonce_the_cached_object_is_what_gets_encrypted(self):
+        session, cached = self.verifier.new_request()
+        jwe = self.verifier.request_object(session.state, wallet_metadata=self._metadata())
+        self.assertEqual(decrypt_compact(jwe, self.wallet_key).decode(), cached)
+
+    def test_the_wallets_enc_order_is_followed_where_this_can_produce_it(self):
+        session, _ = self.verifier.new_request()
+        meta = self._metadata(request_object_encryption_enc_values_supported=[
+            "A128CBC-HS256", "A256GCM", "A128GCM"])
+        jwe = self.verifier.request_object(session.state, wallet_nonce="w", wallet_metadata=meta)
+        self.assertEqual(json.loads(b64u_decode(jwe.split(".")[0]))["enc"], "A256GCM")
+        self.assertIn(b"w", decrypt_compact(jwe, self.wallet_key))
+
+    def test_a_wallet_that_asks_for_nothing_gets_the_signed_object(self):
+        session, _ = self.verifier.new_request()
+        for meta in (None, "{}", json.dumps({"vp_formats_supported": {}}),
+                     self._metadata(request_object_encryption_alg_values_supported=None)):
+            with self.subTest(meta=meta):
+                jar = self.verifier.request_object(session.state, wallet_nonce="w",
+                                                   wallet_metadata=meta)
+                self.assertEqual(len(jar.split(".")), 3)
+
+    def test_what_this_cannot_produce_is_served_signed_as_before(self):
+        session, _ = self.verifier.new_request()
+        off_curve = dict(_public_jwk(ec.generate_private_key(ec.SECP256R1())),
+                         y=b64u_encode(b"\x01" * 32))
+        cases = {
+            "an enc this cannot produce": self._metadata(
+                request_object_encryption_enc_values_supported=["A128CBC-HS256"]),
+            "an alg this cannot produce": self._metadata(
+                request_object_encryption_alg_values_supported=["RSA-OAEP-256"]),
+            "a key marked for signing": self._metadata(jwks={"keys": [dict(
+                _public_jwk(ec.generate_private_key(ec.SECP256R1())), use="sig")]}),
+            "a point off the curve": self._metadata(jwks={"keys": [off_curve]}),
+            "no keys": self._metadata(jwks={"keys": []}),
+            "metadata that does not parse": "{",
+            "metadata nested past the bound": "[" * 5000 + "]" * 5000,
+        }
+        for label, meta in cases.items():
+            with self.subTest(label):
+                jar = self.verifier.request_object(session.state, wallet_nonce="w",
+                                                   wallet_metadata=meta)
+                self.assertEqual(len(jar.split(".")), 3)
+
+    def test_an_unknown_state_gets_nothing_even_when_encryption_is_asked(self):
+        for nonce in (None, "w"):
+            with self.subTest(nonce=nonce):
+                self.assertIsNone(self.verifier.request_object(
+                    "no-such-state", wallet_nonce=nonce, wallet_metadata=self._metadata()))
 
 
 class TheHappyPathTests(VerifierTestCase):

@@ -103,6 +103,13 @@ class KeygenTests(unittest.TestCase):
         tls = x509.load_pem_x509_certificate((self.tmp / FILES["tls_cert"]).read_bytes())
         self.assertEqual(tls.issuer, tls.subject)
 
+    def test_the_tls_certificate_is_marked_for_server_authentication(self):
+        """Apple's TLS policy refuses a server certificate without serverAuth, even an
+        explicitly trusted one (the EU iOS OpenID4VP library's walk, 2026-10-04)."""
+        tls = x509.load_pem_x509_certificate((self.tmp / FILES["tls_cert"]).read_bytes())
+        eku = tls.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+        self.assertIn(x509.oid.ExtendedKeyUsageOID.SERVER_AUTH, list(eku))
+
     def test_generating_twice_does_not_reuse_a_key(self):
         second = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-cli-"))
         keygen(second, "verifier.test")

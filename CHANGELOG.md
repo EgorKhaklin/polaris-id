@@ -24,6 +24,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The plug-and-play matrix tests the SDKs' current candidates on a genuine and a tampered credential, not npm's `latest`.
 - The EU-library lab wallet's lockfile carried nine OSV advisories (Bouncy Castle 1.83, Kotlin 2.2.21); it pins fixed releases.
 - polaris-sdk-ts requires Node >= 20.19.0 for its post-quantum dependencies; rc.8 declared >= 18 but does not load there.
+- polaris-oid4vp decides status lists the draft sizes as ordinary; a 2^20-entry list with 10% revoked was refused as malformed.
+- polaris-oid4vp keygen marks the listener certificate for server authentication; Apple's TLS policy refused it.
 
 ### Added
 
@@ -49,6 +51,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The README and polaris-oid4vp's page list every outside implementation the verifier is walked against: maintainer, language, last walk.
 - The wallet canary walks the EU reference OpenID4VP library too, so all five implementations are re-run weekly.
 - A sixth implementation, vck (A-SIT Plus, Kotlin), presents to the published verifier a credential it issued; re-run weekly.
+- A lab walk decides outside status lists: the draft's test vectors, its signed example and the OpenWallet Foundation's tokens.
+- The wallet canary runs the OpenID Foundation's conformance suite weekly against the published verifier, with both controls.
+- Four more walks against the published verifier, re-run weekly: the EU iOS OpenID4VP library, irmago (Yivi), SpruceID's adapter and Procivis One Core.
+- polaris-oid4vp encrypts the request object to the wallet's key when its `wallet_metadata` asks, as the EU iOS wallet kit requires.
 
 ### Changed
 

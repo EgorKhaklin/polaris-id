@@ -29,6 +29,17 @@
 # controls. And vck (A-SIT Plus, lab/interop/vck): vck issues the credential and presents it, so the
 # verifier is the only Polaris software in the exchange; three controls.
 #
+# And the OpenID Foundation's own conformance suite (job oidf-suite): its wallet runs the eleven
+# sd_jwt_vc modules of the HAIP verifier plan against the published package, through
+# scripts/polaris-oid4vp-conformance-drill.py with its two negative controls. The suite's prebuilt
+# images float at their newest, so a change on the Foundation's side shows here first. A run is
+# not a certification: that is the hosted suite and a submission, for one version.
+#
+# Since 2026-10-04 three more: irmago v1.4.0 (the Go library under the Yivi wallet) under a wallet
+# built here, SpruceID's openid4vp conformance adapter (Rust, its test issuer replaced; the README
+# says exactly what), the EU reference OpenID4VP library for iOS on a macOS runner, and Procivis
+# One Core v1.87.2, which issues the credential over its own OpenID4VCI and presents it.
+#
 # Kept out of the Polaris CI workflow: a change on the wallet's side is news, not a
 # defect in the commit that happened to be pushed that day.
 # ============================================================================
@@ -193,3 +204,116 @@ jobs:
         env:
           WORK: ${{ runner.temp }}/vck
         run: bash lab/interop/vck/run.sh
+
+  oidf-suite:
+    name: The OpenID Foundation conformance suite tests polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Start the suite (prebuilt images, development mode, no account)
+        env:
+          SUITE: ${{ runner.temp }}/conformance-suite
+        # The suite reaches the verifier on this runner as host.docker.internal, which Docker on
+        # Linux defines only when asked.
+        run: |
+          git clone -q --depth 1 https://gitlab.com/openid/conformance-suite.git "$SUITE"
+          cd "$SUITE"
+          printf 'services:\n  server:\n    extra_hosts:\n      - "host.docker.internal:host-gateway"\n' > polaris.yml
+          docker compose -f docker-compose-prebuilt.yml -f polaris.yml up -d --quiet-pull
+          echo "suite at $(git rev-parse --short HEAD)"
+          for _ in $(seq 1 60); do
+            curl -fsk https://localhost:8443/api/runner/available >/dev/null 2>&1 && exit 0
+            sleep 5
+          done
+          docker compose -f docker-compose-prebuilt.yml logs --tail 50 server
+          exit 1
+      - name: Install polaris-oid4vp from PyPI
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q --require-hashes -r lab/interop/requirements.txt
+          "$RUNNER_TEMP/venv/bin/pip" wheel -q --pre --no-deps -w "$RUNNER_TEMP/wheel" polaris-oid4vp
+          "$RUNNER_TEMP/venv/bin/pip" install -q --no-deps "$RUNNER_TEMP"/wheel/*.whl
+      - name: Eleven modules, then the two negative controls
+        env:
+          POLARIS_OID4VP_INSTALLED: "1"
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" scripts/polaris-oid4vp-conformance-drill.py \
+            --workdir "$RUNNER_TEMP/drill"
+      - name: The suite's log, when a step failed
+        if: failure()
+        env:
+          SUITE: ${{ runner.temp }}/conformance-suite
+        run: cd "$SUITE" && docker compose -f docker-compose-prebuilt.yml logs --tail 200 server
+
+  irmago:
+    name: A wallet on irmago (Yivi) presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build the wallet in the pinned Go image, present, then the five controls
+        env:
+          BUILD: docker
+          WORK: ${{ runner.temp }}/irmago
+        run: bash lab/interop/irmago/run.sh
+
+  spruceid:
+    name: SpruceID's conformance adapter presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build the adapter in the pinned Rust image, present, then the three controls
+        env:
+          WORK: ${{ runner.temp }}/spruceid
+        run: bash lab/interop/spruceid/run.sh
+
+  eudi-ios:
+    name: The EUDI iOS OpenID4VP library presents to polaris-oid4vp from PyPI
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build the wallet with SwiftPM, present, then the four controls
+        env:
+          WORK: ${{ runner.temp }}/eudi-ios
+        run: |
+          swift --version
+          bash lab/interop/eudi-ios/run.sh
+
+  procivis:
+    name: Procivis One Core issues and presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build core-server in the pinned Rust image, issue, present, then the four controls
+        env:
+          WORK: ${{ runner.temp }}/procivis
+        run: bash lab/interop/procivis/run.sh

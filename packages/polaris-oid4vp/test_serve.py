@@ -115,6 +115,27 @@ class RequestUriTests(ServeTestCase):
         _, claims = Wallet.read_request(body.decode())
         self.assertEqual(claims["wallet_nonce"], "w-from-the-wire")
 
+    def test_posted_wallet_metadata_that_asks_gets_the_object_encrypted(self):
+        """The EUDI iOS wallet kit posts its key in wallet_metadata and refuses a request
+        object that is not encrypted to it (lab/interop/eudi-ios, 2026-10-04)."""
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from polaris_oid4vp.jwe import b64u_encode, decrypt_compact
+        key = ec.generate_private_key(ec.SECP256R1())
+        n = key.public_key().public_numbers()
+        meta = {"jwks": {"keys": [{"kty": "EC", "crv": "P-256", "use": "enc",
+                                   "x": b64u_encode(n.x.to_bytes(32, "big")),
+                                   "y": b64u_encode(n.y.to_bytes(32, "big"))}]},
+                "request_object_encryption_alg_values_supported": ["ECDH-ES"],
+                "request_object_encryption_enc_values_supported": ["A128GCM"]}
+        session, _ = self.verifier.new_request()
+        status, ctype, body = _post("%s/request.jwt?state=%s" % (self.base, session.state),
+                                    {"wallet_nonce": "w-wire",
+                                     "wallet_metadata": json.dumps(meta)})
+        self.assertEqual((status, ctype), (200, "application/oauth-authz-req+jwt"))
+        self.assertEqual(len(body.split(b".")), 5)
+        _, claims = Wallet.read_request(decrypt_compact(body.decode(), key).decode())
+        self.assertEqual(claims["wallet_nonce"], "w-wire")
+
     def test_a_post_without_a_wallet_nonce_still_serves_the_object(self):
         session, jar = self.verifier.new_request()
         status, _, body = _post("%s/request.jwt?state=%s" % (self.base, session.state), {})
