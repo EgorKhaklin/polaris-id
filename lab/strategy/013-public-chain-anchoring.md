@@ -4,6 +4,7 @@
 on the owner's direction of 2026-10-04: an interest in blockchain integration, choosing "anchor the
 audit log on-chain" over trusting chain-based issuers by DID and a bridge to another identity
 network's zero-knowledge stack. State: OPEN. The falsifiers in section 6 were written before the build.
+Step 1 passed on 2026-10-04 ([013/STEP1.md](013/STEP1.md)): Bitcoin block 969876.
 
 ---
 
