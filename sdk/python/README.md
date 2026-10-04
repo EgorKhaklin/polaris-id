@@ -32,9 +32,11 @@ Offline only (no `issuer_url`) yields a `provisional` verdict from authenticity
 alone. `verify_authenticity(pack, anchors)` exposes the offline check directly.
 
 A first run needs no issuer and no credential of your own: the repository publishes test
-vectors.
+vectors. `--pre` matters: this is a release candidate, and without it pip installs 0.1.0, which
+predates every fix in [SECURITY.md](https://github.com/EgorKhaklin/polaris-id/blob/main/SECURITY.md).
 
 ```bash
+pip install --pre polaris-sdk-python
 base=https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/vectors
 curl -sO $base/ml-dsa-65-valid.json && curl -sO $base/ml-dsa-65-tampered-signature.json
 python3 -c "

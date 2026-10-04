@@ -24,7 +24,7 @@ instance of the verifier: intra-module calls resolve through the same globals a 
 patches, which is what the single file did before it moved. One source, no copy, and the
 mutation semantics are unchanged.
 
-Run the installed command instead where you can: `pip install polaris-verify` then
+Run the installed command instead where you can: `pip install --pre polaris-verify` then
 `polaris-verify --help`.
 """
 import pathlib

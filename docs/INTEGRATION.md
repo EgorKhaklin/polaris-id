@@ -13,7 +13,8 @@ is checkable offline against published keys with no Polaris code.
 
 ## 1. You verify Polaris credentials (a relying party)
 
-- **Offline, no network.** `pip install polaris-verify`, then check a presentation against the
+- **Offline, no network.** `pip install --pre "polaris-verify[cryptography]"` (without `--pre`, pip
+  installs 0.1.0, which predates every fix in [SECURITY.md](../SECURITY.md)), then check a presentation against the
   authority's published keys. The cleanest proof is [STRANGER-PATH.md](STRANGER-PATH.md): a clean
   machine to an accepted presentation.
 - **Online, for authoritative status.** The stable `/api/v1` API answers whether a credential is

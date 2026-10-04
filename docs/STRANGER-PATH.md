@@ -70,7 +70,8 @@ and splitting them across two directories is the single most common way this pat
     python3 -m venv .venv && . .venv/bin/activate
 
 From the registry. You do not need this repository. `--pre` because 1.0.0rc15 is a release
-candidate and pip skips those unless told; 0.1.0 is the previous release and also works.
+candidate and pip skips those unless told: without it pip installs 0.1.0, an old release that
+[SECURITY.md](../SECURITY.md) lists as carrying known defects.
 
     pip install --pre polaris-oid4vp
     polaris-oid4vp --help
