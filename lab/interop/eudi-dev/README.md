@@ -200,6 +200,27 @@ CA (`issuer_key`), the answered request again, a mismatched `client_id` and an u
 presentation: `issuer_key: the x5c leaf does not chain to any configured trust anchor`. Walked on
 macOS (arm64), no Docker and no tunnel.
 
+## One member of a nested claim (2026-10-04)
+
+The PID eudi-dev's own issuer signs nests its claims as the PID Rulebook does: `address` and
+`place_of_birth` are objects whose members are each disclosable. A verifier that can ask only for
+top-level names has to ask for the whole `address`, and gets the street and the house number with
+the locality. `polaris-oid4vp` at c35393ac asks for a path, optionally with the value it must
+have (`serve --claim`; the walk's `CLAIMS` passes them):
+
+    EUDI_NATIVE=1 EUDI_ISSUER=1 CLAIMS="given_name address.locality place_of_birth.country=NL" \
+      POLARIS_OID4VP=packages/polaris-oid4vp lab/interop/eudi-dev/run.sh
+
+| Asked for | eudi-dev v2.3.7, its own binary and PID provider | Verifier |
+|---|---|---|
+| `given_name`, `address.locality`, `place_of_birth.country=NL` | its DCQL engine selected exactly those three and disclosed them: `Disclosing: [given_name address.locality place_of_birth.country]` | `<- 200 authentic`; all three controls refused |
+| `place_of_birth.country=DE` (the PID says NL) | `no matching credentials found for the DCQL query`: it presented nothing | nothing to judge |
+
+The street address, house number, postal code and region stayed with the wallet. The verifier
+refuses a wallet that would send another value anyway (`claims`; unit tests, a wallet that
+ignores `values`). This PID carries no age statements, so `age_equal_or_over.18` is not
+exercised here; the same path and value check covers it in the package's tests.
+
 ## What this does not establish
 
 - **Not observed.** Whether eudi-dev posted a `wallet_nonce` with `request_uri_method=post`
