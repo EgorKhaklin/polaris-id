@@ -5086,8 +5086,14 @@ class TestActivityRollups(_CheckBase):
                 self.assertEqual(sum(recounted.values()), 3, "fixture: the three transitions")
                 self.assertEqual(rolled, recounted, "lifecycle events, " + stage)
                 if stage == "pending":
+                    # A trigger folds by itself now and then (random() < 0.002 per statement), so
+                    # some or all of the fixture's changes may be folded already: the fold moves
+                    # exactly what is still pending, never assumed positive.
+                    cur.execute("SELECT (SELECT count(*) FROM VerificationRollupDelta) "
+                                "     + (SELECT count(*) FROM LifecycleRollupDelta) AS n")
+                    pending = cur.fetchone()["n"]
                     cur.execute("SELECT uc_fold_activity_rollups() AS folded")
-                    self.assertGreater(cur.fetchone()["folded"], 0)
+                    self.assertEqual(cur.fetchone()["folded"], pending)
             cur.execute("SELECT (SELECT count(*) FROM VerificationRollupDelta) "
                         "     + (SELECT count(*) FROM LifecycleRollupDelta) AS n")
             self.assertEqual(cur.fetchone()["n"], 0, "a fold leaves nothing pending")

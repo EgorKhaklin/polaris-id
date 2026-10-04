@@ -8,6 +8,7 @@
 [![Release](https://img.shields.io/github/v/release/EgorKhaklin/polaris-id?include_prereleases&label=release&color=c9a352&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/releases/latest)
 [![Status: pre-pilot, notional data](https://img.shields.io/badge/status-pre--pilot_%C2%B7_notional_data-9a6b2f?labelColor=0a1421&style=flat-square)](#status)
 [![License](https://img.shields.io/badge/license-Apache--2.0-2b5797?labelColor=0a1421&style=flat-square)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-join_the_server-5865F2?logo=discord&logoColor=white&labelColor=0a1421&style=flat-square)](https://discord.gg/ragewuCKj)
 [![OpenSSF Best Practices](https://img.shields.io/cii/level/15004?label=OpenSSF%20best%20practices&labelColor=0a1421&style=flat-square)](https://www.bestpractices.dev/projects/15004)
 [![OpenSSF Baseline](https://www.bestpractices.dev/projects/15004/baseline)](https://www.bestpractices.dev/projects/15004)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/EgorKhaklin/polaris-id/badge)](https://scorecard.dev/viewer/?uri=github.com/EgorKhaklin/polaris-id)
@@ -33,6 +34,7 @@
 <a href="#verified-not-asserted"><img src="docs/assets/nav/verified.svg" alt="Verified"></a>
 <a href="#run-it"><img src="docs/assets/nav/run-it.svg" alt="Run it"></a>
 <a href="#documentation"><img src="docs/assets/nav/documentation.svg" alt="Documentation"></a>
+<a href="https://discord.gg/ragewuCKj"><img src="docs/assets/nav/discord.svg" alt="Discord"></a>
 
 </div>
 
@@ -51,7 +53,7 @@ Around the credential:
 - **Verifiers anyone can hold to a contract.** Python and TypeScript SDKs and a conformance suite of 281 published cases; version 1 of the signed-statement protocol is frozen and re-verified on every push.
 - **Explicit federation.** Trust between agencies is explicit and non-transitive.
 - **Zero-knowledge by default.** A zero-knowledge verification stores no token identifier; a Plonky2 SNARK, re-checked by an independent second witness, proves ledger membership and nothing else.
-- **Gated by invariants.** 342 machine-checked invariants (v1.0.0-rc.70) gate every change in CI.
+- **Gated by invariants.** 343 machine-checked invariants (v1.0.0-rc.70) gate every change in CI.
 
 **The problem it models.** Americans carry six to eight credentials (driver's license, passport, Social Security card and more) with no shared revocation path or audit trail. Polaris models one active credential record per person, verified through context-scoped events (banking, voting, healthcare) at three disclosure levels.
 
@@ -190,7 +192,7 @@ The vocation above them: **no person can be compelled to renounce, transfer, or 
 | **C9** | Concurrency is tested with real threads. | Engineering | Threaded suites against a live database |
 | **C10** | Identity is not money. | Constitutional | Structural absence, pinned by a check |
 
-Each is machine-checked by [`polaris_checks`](polaris_checks/): 342 plain `check_*` functions (v1.0.0-rc.70), each with a detection test proving it fails on a broken fixture. Why these ten: [MISSION.md](MISSION.md).
+Each is machine-checked by [`polaris_checks`](polaris_checks/): 343 plain `check_*` functions (v1.0.0-rc.70), each with a detection test proving it fails on a broken fixture. Why these ten: [MISSION.md](MISSION.md).
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
@@ -219,7 +221,7 @@ and writes nothing; the signer is ML-DSA-65, the algorithm a registry row ([over
 | [`polaris_web/`](polaris_web/) | Flask application: use-case flows, the Atlas, WebAuthn operator MFA, health and metrics. |
 | [`polaris_zk/`](polaris_zk/) | Plonky2 prover (Rust) and [`witness2/`](polaris_zk/witness2/), an independent Python reimplementation. |
 | [`polaris_cli/`](polaris_cli/) | Operator CLI for issuance, revocation, recovery and audit. |
-| [`polaris_checks/`](polaris_checks/) | The invariant layer: 342 checks (v1.0.0-rc.70). |
+| [`polaris_checks/`](polaris_checks/) | The invariant layer: 343 checks (v1.0.0-rc.70). |
 | [`packages/`](packages/), [`sdk/`](sdk/), [`conformance/`](conformance/) | The detached verifier, the OpenID4VP verifier, the verify SDKs and the conformance suite. |
 | [`scripts/`](scripts/), [`deploy/`](deploy/) | Wallet and relying-party tools, operator tooling, observability config. |
 
@@ -254,7 +256,7 @@ Counts of checks, tables, routes and CI jobs are re-measured by `polaris_checks`
 |---|---|---|
 | Product tests (live database) | 1245 | Constraints, use cases, routes, redaction, real-thread concurrency, the secret store |
 | Crypto witnesses | 126 passing of 131 collected | ML-DSA across both witnesses and a software PKCS#11 module; Rust and Python epoch roots agree |
-| Invariant checks | 342 | C1-C10 plus production posture, each with a detection test |
+| Invariant checks | 343 | C1-C10 plus production posture, each with a detection test |
 | CI jobs | 23 | Below |
 
 Test counts: reference machine, v1.0.0-rc.62 (`pytest -q` per suite, 2026-09-26). The five skipped crypto tests need a PKCS#11 module or a real KMS key.

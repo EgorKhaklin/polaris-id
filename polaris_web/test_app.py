@@ -1521,8 +1521,9 @@ class PopulationScaleTests(PolarisTestCase):
         self._assert_counts_exact('a change rolled back')
         self._owner("UPDATE IdentityToken SET status = 'LOST' WHERE token_id = %s", (tok,))
         self._assert_counts_exact('ACTIVE to LOST')
+        pending = self._owner("SELECT count(*) FROM PopulationCountDelta", fetch=True)[0][0]
         folded = self._owner("SELECT uc_fold_population_counts()", fetch=True)[0][0]
-        self.assertGreater(folded, 0, 'control: there were changes to fold')
+        self.assertEqual(folded, pending, 'the fold consumes exactly the deltas pending when it runs; a trigger fold (random() < 0.002) may have folded earlier, so the count is whatever is pending here, never assumed positive')
         self.assertEqual(self._owner("SELECT count(*) FROM PopulationCountDelta", fetch=True)[0][0], 0)
         self._assert_counts_exact('a fold')
         # A signature is never deleted (enforce_token_signature_immutability), so the delete path

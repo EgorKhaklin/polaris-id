@@ -18839,6 +18839,72 @@ def test_stranger_path_current_check_discriminates(tmp_path):
         "must FAIL rather than pass when the published version cannot be read"
 
 
+def test_install_lines_reach_the_candidate_check_discriminates(tmp_path):
+    """An install instruction must reach the current candidate, not the old final release.
+
+    The defect (2026-10-04): every registry still holds 0.1.0, pip skips candidates without
+    `--pre` and npm installs `latest` without `@next`, so the relying party's guide, the system
+    map, two docstrings and the matrix's npm job all installed 0.1.0, which predates every fix
+    SECURITY.md lists.
+    """
+    LEDGER = (
+        "| Source | Registry | Package | Latest published | Previous |\n"
+        "|---|---|---|---|---|\n"
+        "| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc7, 2026-10-01 | 1.0.0rc6, 2026-10-01 |\n"
+        "| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc15, 2026-10-04 | 1.0.0rc14, 2026-10-03 |\n"
+        "| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.9, 2026-10-03 | 1.0.0-rc.8, 2026-10-01 |\n")
+    GOOD = (
+        "pip install --pre \"polaris-verify[cryptography]\"\n"
+        "POLARIS_OID4VP=polaris-oid4vp==1.0.0rc14 run.sh; pip install polaris-oid4vp==1.0.0rc14\n"
+        "pip install \"polaris-oid4vp @ git+https://example.invalid/polaris#subdirectory=x\"\n"
+        "npm install polaris-sdk-ts@next\n")
+
+    def write(doc=GOOD, ledger=LEDGER, extra=None):
+        (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "docs" / "RELEASING.md").write_text(ledger)
+        (tmp_path / "README.md").write_text(doc)
+        for rel, text in (extra or {}).items():
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / rel).write_text(text)
+
+    fn = checks.check_install_instructions_reach_the_current_candidate
+    write()
+    assert fn(tmp_path)[0].level == "OK", \
+        "must PASS when every install carries --pre, a pin, a direct reference or a tag"
+
+    # THE defect, pip: a bare install of a package at a candidate resolves 0.1.0.
+    write(doc=GOOD + "Offline: `pip install polaris-verify`, then check a presentation\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "README.md:5" in out[0].message \
+        and "polaris-verify" in out[0].message, "must FAIL on a bare pip install of a candidate"
+
+    # THE defect, npm: a bare install resolves the `latest` tag, 0.1.0.
+    write(doc=GOOD + "npm install polaris-sdk-ts\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "without a tag" in out[0].message, \
+        "must FAIL on an npm install with no tag or version"
+
+    # A docstring in code is an instruction too; a comment line is not.
+    write(extra={"pkg/cli.py": '"""Install it:\n\n    pip install polaris-verify\n"""\n'})
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "pkg/cli.py:3" in out[0].message, \
+        "must FAIL on a bare install inside a docstring"
+    write(extra={"pkg/cli.py": "# `pip install polaris-verify` is what a stranger runs\n"})
+    assert fn(tmp_path)[0].level == "OK", "a comment line neither runs nor prints"
+
+    # The rule follows the ledger: a final release needs no --pre.
+    write(doc=GOOD + "pip install polaris-verify\n",
+          ledger=LEDGER.replace("1.0.0rc7, 2026-10-01", "1.0.0, 2026-11-01"))
+    assert fn(tmp_path)[0].level == "OK", \
+        "a package whose latest release is final is reached by a bare install"
+
+    # Anti-vacuity: an unparseable ledger fails rather than reporting clean instructions.
+    write(ledger="nothing that looks like a ledger\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "pass by finding nothing" in out[0].message, \
+        "must FAIL rather than pass when the ledger cannot be parsed"
+
+
 def test_precommit_wiring_check_discriminates(tmp_path):
     """The local safety net must contain the hooks three documents say it contains.
 

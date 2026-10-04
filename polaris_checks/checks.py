@@ -22970,6 +22970,104 @@ def check_stranger_path_was_walked_against_what_is_published(root: pathlib.Path)
                      % (walked_on, walked, _RELEASE_LEDGER_REL))
 
 
+#: Files a reader copies an install command out of, or that run one. Code files count too:
+#: a docstring or an error message that says how to install is an instruction.
+_INSTALL_TEXT_EXTS = {".md", ".html", ".txt", ".rst", ".cff", ".sh", ".yml", ".yaml", ".toml", ".py"}
+_INSTALL_COMMENTED = {".sh", ".yml", ".yaml", ".toml", ".py"}
+_PIP_INSTALL_CMD = re.compile(r"\bpip3?\s+install\b([^\n`|;&<>]*)")
+_NPM_INSTALL_CMD = re.compile(r"\bnpm\s+(?:install|i|add)\b([^\n`|;&<>]*)")
+_PRERELEASE = re.compile(r"\d(?:a|b|rc|\.dev)\d|-[0-9A-Za-z]")
+
+
+def _ledger_registry_versions(root: pathlib.Path) -> dict:
+    """package -> (registry, latest published version), from the release ledger's table."""
+    out = {}
+    for line in _read_raw(root, _RELEASE_LEDGER_REL).splitlines():
+        if not line.startswith("| `"):
+            continue
+        cells = [c.strip().strip("`") for c in line.strip().strip("|").split("|")]
+        if len(cells) < 4 or cells[1] not in ("PyPI", "npm"):
+            continue
+        version = cells[3].split(",")[0].strip().strip("`")
+        if re.match(r"^\d+\.\d+\.\d+", version):
+            out[cells[2]] = (cells[1], version)
+    return out
+
+
+def check_install_instructions_reach_the_current_candidate(root: pathlib.Path) -> list[Finding]:
+    """Every install instruction in the tree must install the release a reader is meant to get.
+
+    Every package is at a release candidate, and the registries still hold an older final
+    release: 0.1.0 on PyPI for polaris-verify, polaris-oid4vp and polaris-sdk-python, and npm's
+    `latest` tag, 0.1.0, for polaris-sdk-ts. pip passes over candidates unless told (`--pre`)
+    and npm installs `latest` unless told (`@next`), so a bare `pip install polaris-verify`
+    installs 0.1.0, which predates every fix SECURITY.md lists. On 2026-10-04 the relying
+    party's guide (docs/INTEGRATION.md), the system map and two docstrings gave that bare
+    command, the Python SDK's README gave none at all, and the plug-and-play matrix's npm job
+    installed and tested 0.1.0 under a name that said it tested what a stranger installs.
+
+    So, for each package whose latest published version (docs/RELEASING.md) is a pre-release:
+    a `pip install` naming it carries `--pre` or pins it (`==`, or a direct `@ git+...` reference),
+    and an `npm install` naming
+    it names a tag or a version (`@next`, `@1.0.0-rc.9`). Comment lines in code, shell and YAML
+    are skipped (they neither run nor print), and so is the history (CHANGELOG, docs/history,
+    DEVNOTES). Held to the LEDGER rather than a registry, like the other registry checks.
+    """
+    name = "install_lines_reach_the_candidate"
+    ledger = _ledger_registry_versions(root)
+    if len(ledger) < 3:
+        return _fail(name, "only %d published package(s) parsed out of %s; the parse has "
+                           "broken and this check would pass by finding nothing"
+                           % (len(ledger), _RELEASE_LEDGER_REL))
+    pre = {pkg: reg for pkg, (reg, ver) in ledger.items() if _PRERELEASE.search(ver)}
+    if not pre:
+        return _ok(name, "no package's latest published version in %s is a pre-release, so a "
+                         "bare install already reaches it" % _RELEASE_LEDGER_REL)
+
+    def named(pkg, args):
+        return re.search(r"(?<![\w./@-])%s(?:\[[^\]]*\])?(?:(@[^\s\"']+)|(?![\w.-]))"
+                         % re.escape(pkg), args)
+
+    problems, scanned = [], 0
+    for rel in _tracked_files(root):
+        suffix = pathlib.PurePosixPath(rel).suffix.lower()
+        if (suffix not in _INSTALL_TEXT_EXTS or rel in _NAMED_REF_EXEMPT
+                or any(d in _NAMED_REF_SKIP_DIRS for d in rel.split("/"))
+                or rel == "CHANGELOG.md" or rel.startswith(("docs/history/", "DEVNOTES/"))):
+            continue
+        try:
+            text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        scanned += 1
+        for n, line in enumerate(text.splitlines(), 1):
+            if suffix in _INSTALL_COMMENTED and line.lstrip().startswith("#"):
+                continue
+            for m in _PIP_INSTALL_CMD.finditer(line):
+                args = m.group(1)
+                for pkg in (p for p, reg in pre.items() if reg == "PyPI"):
+                    if (named(pkg, args) and "--pre" not in args
+                            and not re.search(r"%s(?:\[[^\]]*\])?\s*(?:==|@)" % re.escape(pkg), args)):
+                        problems.append("%s:%d (`pip install %s` without --pre)" % (rel, n, pkg))
+            for m in _NPM_INSTALL_CMD.finditer(line):
+                for pkg in (p for p, reg in pre.items() if reg == "npm"):
+                    hit = named(pkg, m.group(1))
+                    if hit and not hit.group(1):
+                        problems.append("%s:%d (`npm install %s` without a tag or version)"
+                                        % (rel, n, pkg))
+    if not scanned:
+        return _fail(name, "no tracked text file was read, so this check would pass by "
+                           "finding nothing")
+    if problems:
+        return _fail(name, "%d install instruction(s) skip the current release candidate and "
+                           "install an older final release instead (0.1.0 for every package "
+                           "today, which predates every fix SECURITY.md lists): %s"
+                           % (len(problems), "; ".join(problems)))
+    return _ok(name, "every pip and npm install instruction in %d tracked files reaches the "
+                     "current candidate of %s (`--pre`, `==`, or a tag), so none of them hands a "
+                     "reader the old 0.1.0" % (scanned, ", ".join(sorted(pre))))
+
+
 #: hook id -> what the tree SAYS that hook does, and where it says it. The safety net is
 #: described in three documents and defined in one file; this is what holds them together.
 _PRECOMMIT_HOOKS = {
@@ -24212,6 +24310,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_published_algorithm_table_matches_the_seed,
     check_security_page_matches_the_release_ledger,
     check_stranger_path_was_walked_against_what_is_published,
+    check_install_instructions_reach_the_current_candidate,
     check_precommit_config_wires_what_the_docs_claim,
     check_pre_commit_folded_entries_stay_one_line,
     check_verification_plan_covers_the_check_layer,
