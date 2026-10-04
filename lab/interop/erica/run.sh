@@ -223,9 +223,10 @@ for c in "$NAME-shipped" "$NAME-chain"; do
     *) echo "$c did not load its issuer files (it would have generated others)" >&2; exit 2 ;;
   esac
 done
-curl -fsS "$SHIPPED/api/issuer/trust-anchor" | venv/bin/python -c '
-import json, sys
-served = json.load(sys.stdin)["data"]["certificate"]["pem"].strip()
+curl -fsS -o served-anchor.json "$SHIPPED/api/issuer/trust-anchor"
+venv/bin/python -c '
+import json
+served = json.load(open("served-anchor.json"))["data"]["certificate"]["pem"].strip()
 assert served == open("erica-root.pem").read().strip(), "the served trust anchor is not the committed one"'
 
 start_verifier() {  # $1 issuer trust anchor, $2 log, then extra serve arguments
