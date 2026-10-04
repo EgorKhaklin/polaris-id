@@ -8,7 +8,7 @@ Anything the author ran against the author's own code belongs in the last sectio
 
 | Noun | State |
 |---|---|
-| Wallets | 4 unmodified wallets presented to `polaris-oid4vp` and were accepted, and 5 more implementations (four libraries under a wallet built here, one adapter with its test issuer replaced); 2 received wallet copies from the product |
+| Wallets | 5 unmodified wallets presented to `polaris-oid4vp` and were accepted, and 5 more implementations (four libraries under a wallet built here, one adapter with its test issuer replaced); 2 received wallet copies from the product |
 | Conformance profile | `polaris-oid4vp 1.0.0rc7` OpenID Certified to OID4VP 1.0 + HAIP 1.0 Verifier, 2026-09-24 |
 | Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push; the Token Status List draft's vectors and signed example, all decided (lab walk, 2026-10-04) |
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
@@ -55,6 +55,7 @@ accepts everything prints the same success line.
 | 2026-10-04 | The same library with the EUDI iOS wallet kit's own setting (`.encryptionOption`): on POST it asks for the request object encrypted to its key and refuses one that is not | this repository at 13d79e2b; PyPI 1.0.0rc15 as the control | 13d79e2b accepted: `200 authentic`; 1.0.0rc15 refused at the request stage (`JOSESwiftError error 5`) | the same four (at 13d79e2b) | [lab/interop/eudi-ios](interop/eudi-ios/README.md#the-wallet-kits-own-setting-2026-10-04) |
 | 2026-10-04 | SpruceID `openid4vp` (Rust) at e5f29b85, its `wallet-conformance-adapter`, with the adapter's test issuer key, certificate and `vct` replaced (its certificate names no issuer; nothing else changed); over plain HTTP, as the adapter trusts only public roots | PyPI 1.0.0rc15 | accepted: `200 authentic` | an unrelated issuer CA; the answered request again; a mismatched `client_id` (the library refused) | [lab/interop/spruceid](interop/spruceid/README.md) |
 | 2026-10-04 | irmago v1.4.0 (Yivi's library, Go), under a wallet built here | PyPI 1.0.0rc15 | accepted: `200 authentic`, irmago reported the session complete | an unrelated issuer CA; the answered request again; a mismatched `client_id`, an unrelated CA for the verifier and another listener certificate (all three refused by irmago) | [lab/interop/irmago](interop/irmago/README.md) |
+| 2026-10-04 | Procivis One Core v1.87.2 (Rust, `core-server`, unmodified), which issued the credential over its own OpenID4VCI to its own holder and presented it, under both its `OPENID4VP_FINAL1` and `OPENID4VP_FINAL1_HAIP` profiles; the verifier was the only Polaris software in the exchange | PyPI 1.0.0rc15 | accepted: `200 authentic`, for both profiles | an unrelated issuer CA; the answered request again; a mismatched `client_id` and an unrelated TLS certificate for the verifier's listener (both refused by Procivis) | [lab/interop/procivis](interop/procivis/README.md) |
 
 eudi-dev v2.3.7 and OID4VCgo 0.12.0 are listed by the OpenID Foundation as certified OID4VP 1.0
 + HAIP 1.0 wallets.

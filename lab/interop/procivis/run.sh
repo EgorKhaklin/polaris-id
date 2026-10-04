@@ -23,6 +23,7 @@ ONE_CORE_COMMIT=8b701da849c8b9ad8a339c76c5191d69548bffff
 # SHA-256 of https://codeload.github.com/procivis/one-core/tar.gz/$ONE_CORE_COMMIT
 ONE_CORE_SHA256=c22c5f52d696f12d67e78f525bc29322825b46924c3bef80da95548bc935558f
 PKG="${POLARIS_OID4VP:-polaris-oid4vp}"
+[ -e "$PKG" ] && PKG="$(cd "$PKG" && pwd)"   # a path to the tree, made absolute
 PORT="${PORT:-9484}"
 API_PORT="${API_PORT:-9485}"   # core-server's REST API, published on 127.0.0.1 only
 JOBS="${CARGO_JOBS:-4}"
@@ -146,7 +147,7 @@ start_verifier() {  # $1 issuer trust anchor, $2 log
   PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host host.docker.internal \
     --bind 0.0.0.0 --port "$PORT" --issuer-trust-anchor "$1" --once --verbose > "$2" 2>&1 &
   VERIFIER_PID=$!
-  for _ in $(seq 1 40); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
+  for _ in $(seq 1 240); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
   echo "verifier did not start; see $WORK/$2" >&2
   exit 2
 }
