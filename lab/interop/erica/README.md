@@ -64,6 +64,19 @@ accepted and every negative case is refused. Docker is required. The verifier li
 
 ## What ERICA says about the request
 
+**At 520456da** (`--vct urn:eudi:pid:de:1`, and `--verifier-info` carrying a registration
+certificate signed by a registrar made for the run, as the single object ERICA reads): 31 of 31
+request checks and 17 of 18 parse-url checks passed. The one left is the registrar's trust in the
+access certificate, which only a certificate a German Registrar issued can clear:
+
+    WARNING parse-url url.request_jwt.x5c_trust_anchor (Trust Anchor Validation, Security)
+        issue    Access Certificate not trusted by any Registrar in trust list
+    verdict  valid=True, 31 of 31 request checks passed, 0 error(s), 0 warning(s)
+             17 of 18 parse-url checks passed
+
+The registration certificate here shows that the request carries one where ERICA looks for it,
+not that anyone registered this verifier. Earlier the same day, before `verifier_info`:
+
 ERICA ran 48 checks on the request: 18 as it fetched and parsed it (the URL, the TLS fetch, the
 JWT, the `x5c` certificate, the signature, the `client_id` in the link against the signed one)
 and 30 on its content under its PID presentation profile. Every check of an OpenID4VP or HAIP
@@ -128,6 +141,7 @@ log only.
 | `WRONG_AUDIENCE` | the key binding JWT's `aud` | the verifier | `<- 400 refused: audience: the key binding JWT's aud is 'wrong-audience' and this verifier is 'x509_hash:...': ...` |
 | `WRONG_ISSUER` | `iss` `did:example:wrong-issuer`, signed | the verifier | `<- 400 refused: issuer_key: the credential names issuer 'did:example:wrong-issuer' and the certificate that signed it names 'https://debugger.eudi-wallet-demo.example'` |
 | `WRONG_CREDENTIAL_TYPE` | `vct` `urn:eudi:wrong:type` | the verifier | `<- 400 refused: vct: the credential is of type 'urn:eudi:wrong:type' and this request asked for ['urn:eudi:pid:de:1']: ...` |
+| `OVER_DISCLOSURE` | three claims the request did not ask for disclosed | the verifier, at 520456da | `<- 400 refused: claims: the presentation discloses 'administrative_number', 'document_number', 'issuing_authority', which the request did not select`. 1.0.0rc15 and 6df94c73 answered it 200: the walk found the gap, and OpenID4VP 1.0 section 6.4 says a wallet MUST NOT send such claims |
 | `INVALID_SIGNATURE` | would sign with an alternate test key | nothing was sent | ERICA: `Invalid JWK EC key`. The key's `x` and `y` (`src/simulator/TestKeys.ts`) are not a point on P-256, so Node refuses it and ERICA builds no presentation |
 
 `WRONG_ISSUER` and `WRONG_CREDENTIAL_TYPE` are listed as planned in ERICA's README; its API takes
@@ -145,6 +159,10 @@ by a wrong key would meet the check `MISSING_SIGNATURE` met, `issuer_signature`.
 | (c) | The launch URI names a `client_id` that is not the signed request's | ERICA | `client_id mismatch: URL has 'x509_hash:AAAA...' but JWT payload has 'x509_hash:...'` |
 
 ## Result, 2026-10-04
+
+At 520456da, which refuses over-disclosure and carries `verifier_info`: accepted, every negative
+mode that reaches the verifier refused (`OVER_DISCLOSURE` among them), the three controls refused,
+and ERICA's request checks as above (21 expectations, none failed).
 
 Against the tree (`6df94c73`, `--vct urn:eudi:pid:de:1`), with ERICA `2c27dc92` on Node 22:
 

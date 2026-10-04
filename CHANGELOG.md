@@ -56,6 +56,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The wallet canary runs the OpenID Foundation's conformance suite weekly against the published verifier, with both controls.
 - Four more walks against the published verifier, re-run weekly: the EU iOS OpenID4VP library, irmago (Yivi), SpruceID's adapter and Procivis One Core.
 - ProtocolSoup v4.0.0, a wallet the OpenID Foundation lists as certified, presents to the published verifier; re-run weekly.
+- ERICA, the German EUDI Wallet programme's verifier testing tool, presents and runs its negative modes; it passes 48 of 49 request checks.
 - polaris-oid4vp encrypts the request object to the wallet's key when its `wallet_metadata` asks, as the EU iOS wallet kit requires.
 - polaris-oid4vp `serve --verifier-info` adds attestations such as a registration certificate to the request, as the German wallet requires.
 
