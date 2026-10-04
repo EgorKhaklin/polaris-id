@@ -79,18 +79,31 @@ OSV lists no advisory against any of the eleven pinned packages, queried by vers
 `SwiftURL`) and by commit, nor against the C code two of them vendor (libsecp256k1 0.7.1 in
 `secp256k1.swift`, BoringSSL in `swift-crypto`).
 
+## The wallet kit's own setting, 2026-10-04
+
+    JAR_ENCRYPTION=1 lab/interop/eudi-ios/run.sh
+
+runs the wallet with the library configured as the EUDI iOS wallet kit 0.54.5 configures it
+(`jarConfiguration: .encryptionOption`): it fetches the request object by POST, sends its key in
+`wallet_metadata` and refuses an object that is not encrypted to it.
+
+| Verifier | Result |
+|---|---|
+| PyPI 1.0.0rc15 | refused at the request stage: `validationError("The operation couldn’t be completed. (JOSESwift.JOSESwiftError error 5.)")`; the controls never reached their own stages |
+| this repository at 13d79e2b, which encrypts the request object for a wallet that asks | accepted: `<- 200 authentic, claims ['cnf', 'family_name', 'given_name', 'iat', 'iss', 'vct']`, and all four controls refused |
+
+The default stays `.noEncryptionOption` until a release carries the change, so the weekly canary,
+which runs against PyPI, measures what a stranger installs.
+
 ## What this does not establish
 
 - It is a wallet built here on the library, not the EUDI reference wallet app or the wallet kit. The
   library is the part that speaks OpenID4VP: it fetched, checked and answered the request. The trust
   decision is this repository's few lines; the presentation is the EU SD-JWT library's, called as the
   wallet kit calls it.
-- It does not show that an app built on the wallet kit can present to `polaris-oid4vp`. The wallet
-  kit configures the library to require an encrypted request object when it fetches one by POST
-  (`jarConfiguration: .encryptionOption`); this wallet does not (`.noEncryptionOption`), as the
-  Kotlin walk's does not. `polaris-oid4vp` signs the request object but does not encrypt it (it
-  ignores `wallet_metadata`), and with the wallet kit's setting the library refused it:
-  `validationError("The operation couldn’t be completed. (JOSESwift.JOSESwiftError error 5.)")`.
+- It does not show that an app built on the wallet kit presents to the published release. With the
+  wallet kit's setting (above) 1.0.0rc15 is refused and only the tree is accepted; the app itself,
+  with its own trust, storage and user interface, was not run.
 - One credential format and one path, ES256 throughout. The credential was minted by this
   repository's issuer script and trusted through a JWKS.
 - The library was built and run for macOS. Nothing here ran on an iPhone.
