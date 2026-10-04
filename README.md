@@ -92,18 +92,18 @@ newest `polaris-oid4vp` on PyPI.
 
 | Implementation | Maintained by | Language | Last walk | Re-run weekly |
 |---|---|---|---|---|
-| [walt.id Wallet API v2](lab/interop/waltid/README.md) | walt.id | Kotlin | 1.1.1, against 1.0.0rc14 (2026-10-03) | 1.1.1 by digest, and the latest |
+| [walt.id Wallet API v2](lab/interop/waltid/README.md) | walt.id | Kotlin | 1.1.1, against 1.0.0rc16 (2026-10-04) | 1.1.1 by digest, and the latest |
 | [Credo](lab/interop/credo/README.md) | OpenWallet Foundation | TypeScript | 0.7.2, against 1.0.0rc14 (2026-10-03) | the lock file's release, and the latest |
-| [`eudi-lib-jvm-openid4vp-kt`](lab/interop/eudi-kt/README.md), the EUDI Wallet's OpenID4VP library, under a wallet built here | European Commission | Kotlin | 0.16.2, against 1.0.0rc15 (2026-10-04) | 0.16.2 |
-| [vck](lab/interop/vck/README.md) (`vck-openid-ktor`), under a wallet built here; vck also issued the credential | A-SIT Plus | Kotlin | 8.0.0, against 1.0.0rc15 (2026-10-04) | 8.0.0 |
-| [`eudi-lib-ios-openid4vp-swift`](lab/interop/eudi-ios/README.md), the EUDI Wallet's iOS OpenID4VP library, under a wallet built here | European Commission | Swift | 0.43.2, against 1.0.0rc15 (2026-10-04) | 0.43.2, on macOS |
-| [irmago](lab/interop/irmago/README.md), the library under the Yivi wallet, under a wallet built here | Privacy by Design Foundation (Yivi) | Go | v1.4.0, against 1.0.0rc15 (2026-10-04) | v1.4.0 |
-| [SpruceID `openid4vp`](lab/interop/spruceid/README.md), its conformance adapter with the test issuer replaced | SpruceID | Rust | e5f29b85, against 1.0.0rc15 (2026-10-04) | e5f29b85 |
-| [Procivis One Core](lab/interop/procivis/README.md) (`core-server`), which also issued the credential | Procivis | Rust | v1.87.2, against 1.0.0rc15 (2026-10-04) | v1.87.2 |
-| [ProtocolSoup](lab/interop/protocolsoup/README.md), its wallet harness | ParleSec | Go | v4.0.0, against 1.0.0rc15 (2026-10-04) | v4.0.0 (listed by the OpenID Foundation as certified) |
-| [The EU reference PID issuer](lab/interop/eudi-issuer/README.md) (`eudi-srv-pid-issuer`), issuing to a wallet built here on the EU's OpenID4VCI and OpenID4VP libraries | European Commission | Kotlin | v0.11.1, against 1.0.0rc15 (2026-10-04) | v0.11.1 |
+| [`eudi-lib-jvm-openid4vp-kt`](lab/interop/eudi-kt/README.md), the EUDI Wallet's OpenID4VP library, under a wallet built here | European Commission | Kotlin | 0.16.2, against 1.0.0rc16 (2026-10-04) | 0.16.2 |
+| [vck](lab/interop/vck/README.md) (`vck-openid-ktor`), under a wallet built here; vck also issued the credential | A-SIT Plus | Kotlin | 8.0.0, against 1.0.0rc16 (2026-10-04) | 8.0.0 |
+| [`eudi-lib-ios-openid4vp-swift`](lab/interop/eudi-ios/README.md), the EUDI Wallet's iOS OpenID4VP library, under a wallet built here | European Commission | Swift | 0.43.2, against 1.0.0rc16 (2026-10-04) | 0.43.2, on macOS |
+| [irmago](lab/interop/irmago/README.md), the library under the Yivi wallet, under a wallet built here | Privacy by Design Foundation (Yivi) | Go | v1.4.0, against 1.0.0rc16 (2026-10-04) | v1.4.0 |
+| [SpruceID `openid4vp`](lab/interop/spruceid/README.md), its conformance adapter with the test issuer replaced | SpruceID | Rust | e5f29b85, against 1.0.0rc16 (2026-10-04) | e5f29b85 |
+| [Procivis One Core](lab/interop/procivis/README.md) (`core-server`), which also issued the credential | Procivis | Rust | v1.87.2, against 1.0.0rc16 (2026-10-04) | v1.87.2 |
+| [ProtocolSoup](lab/interop/protocolsoup/README.md), its wallet harness | ParleSec | Go | v4.0.0, against 1.0.0rc16 (2026-10-04) | v4.0.0 (listed by the OpenID Foundation as certified) |
+| [The EU reference PID issuer](lab/interop/eudi-issuer/README.md) (`eudi-srv-pid-issuer`), issuing to a wallet built here on the EU's OpenID4VCI and OpenID4VP libraries | European Commission | Kotlin | v0.11.1, against 1.0.0rc16 (2026-10-04) | v0.11.1 |
 | [Credo on a cheqd ledger](lab/interop/cheqd/README.md), the issuer a `did:cheqd` with its status list on the ledger | cheqd, OpenWallet Foundation | TypeScript, Go | cheqd-node 4.2.1 and Credo 0.7.2, against 1.0.0rc15 (2026-10-04) | cheqd-node 4.2.1 |
-| [Multipaz](lab/interop/multipaz/README.md), under a wallet built here | OpenWallet Foundation | Kotlin | 0.101.0, against 1.0.0rc15 (2026-10-04) | 0.101.0 |
+| [Multipaz](lab/interop/multipaz/README.md), under a wallet built here | OpenWallet Foundation | Kotlin | 0.101.0, against 1.0.0rc16 (2026-10-04) | 0.101.0 |
 | [ERICA](lab/interop/erica/README.md), the German EUDI Wallet programme's verifier testing tool, with its negative modes | the German EUDI Wallet programme (opencode.de) | TypeScript | 2c27dc92, against this repository (2026-10-04; the German PID type needs `--vct`, not in 1.0.0rc15) | |
 | [eudi-dev](lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | dominikschlosser | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) | v2.3.7 (listed by the OpenID Foundation as certified), the latest, its own binary, its own issuer's PID |
 | [OID4VCgo](lab/interop/oid4vcgo/README.md) | IDFoundry | Go | 0.25.0, against 1.0.0rc14 (2026-10-03) | 0.12.0 (listed as certified), and the latest |

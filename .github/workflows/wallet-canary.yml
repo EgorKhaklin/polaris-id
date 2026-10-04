@@ -43,6 +43,8 @@
 # And Multipaz (OpenWallet Foundation) under a wallet built here, on its JVM target.
 # And the EU reference PID issuer (eudi-srv-pid-issuer, by digest) issuing to a wallet on the EU libraries.
 # And Credo on a local cheqd ledger (cheqd-node by digest): a did:cheqd issuer, its status list on the ledger.
+# And ERICA, the German EUDI Wallet programme's verifier testing tool, with its negative modes (needs
+# polaris-oid4vp 1.0.0rc16 or later for --vct and --verifier-info).
 #
 # Kept out of the Polaris CI workflow: a change on the wallet's side is news, not a
 # defect in the commit that happened to be pushed that day.
@@ -388,3 +390,19 @@ jobs:
         env:
           WORK: ${{ runner.temp }}/cheqd
         run: bash lab/interop/cheqd/run.sh
+
+  erica:
+    name: ERICA (the German EUDI Wallet programme's testing tool) checks and presents to polaris-oid4vp from PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Build ERICA, run its request checks and negative modes, present, then the controls
+        env:
+          WORK: ${{ runner.temp }}/erica
+        run: bash lab/interop/erica/run.sh
