@@ -24,6 +24,7 @@ PS_REPO="${PS_REPO:-https://github.com/ParleSec/ProtocolSoup.git}"
 PS_COMMIT="${PS_COMMIT:-97d306cafa3a005dd01c1641b13c9b5abb6bcc19}"   # tag v4.0.0
 GO_IMAGE="${GO_IMAGE:-golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2}"
 PKG="${POLARIS_OID4VP:-polaris-oid4vp}"
+[ -e "$PKG" ] && PKG="$(cd "$PKG" && pwd)"   # a path to the tree, made absolute
 PORT="${PORT:-9485}"
 ISSUER_PORT=$((PORT + 1))
 WALLET_PORTS=($((PORT + 2)) $((PORT + 3)) $((PORT + 4)))
