@@ -106,6 +106,13 @@ class RequestUriTests(ServeTestCase):
         self.assertEqual(first, second)
         self.assertEqual(first[0], 200)
 
+    def test_the_request_object_is_not_to_be_cached(self):
+        session, _ = self.verifier.new_request()
+        req = urllib.request.Request("%s/request.jwt?state=%s" % (self.base, session.state))
+        with urllib.request.urlopen(req, timeout=10) as r:
+            self.assertEqual(r.headers.get("Cache-Control"), "no-store")
+            self.assertEqual(r.headers.get("Pragma"), "no-cache")
+
     def test_a_posted_wallet_nonce_reaches_the_request_object(self):
         session, _ = self.verifier.new_request()
         status, ctype, body = _post("%s/request.jwt?state=%s" % (self.base, session.state),

@@ -34,10 +34,14 @@ the verifier, and which ones have is recorded in [EXTERNAL-NOUNS.md](../../lab/E
 Its request carries one DCQL credential query. A claim is a name or a path of object keys, with
 optional `values` the disclosed value must match in type and value (`age_equal_or_over`, `18`,
 `true`: one statement of an EUDI PID, not all of them); array indices and the null wildcard are not
-supported. A wallet may fetch the signed request object by POST (`request_uri_method=post`) with a
+supported. A presentation that discloses a selectively disclosable claim the query did not select,
+other than the object a requested member is reached through, is refused: section 6.4 says a
+wallet MUST NOT send one. A wallet may fetch the signed request object by POST (`request_uri_method=post`) with a
 `wallet_nonce`, which the object then carries; when its `wallet_metadata` asks for the object
 encrypted and names a P-256 key, ECDH-ES and A128GCM or A256GCM, the signed object comes back
-encrypted to that key (a nested JWT, RFC 9101 section 6.1).
+encrypted to that key (a nested JWT, RFC 9101 section 6.1). The operator may add `verifier_info`
+(section 5.1), such as a registrar's registration certificate, which the request object carries
+unchanged.
 
 ## HAIP 1.0
 

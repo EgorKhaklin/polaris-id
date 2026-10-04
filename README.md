@@ -14,7 +14,6 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/EgorKhaklin/polaris-id/badge)](https://scorecard.dev/viewer/?uri=github.com/EgorKhaklin/polaris-id)
 
 [![OpenID Certified: polaris-oid4vp verifier](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_verifier-c9a352?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid-certified)
-[![Tested against: walt.id, Credo, the EUDI library, vck, eudi-dev, OID4VCgo](https://img.shields.io/badge/tested_against-walt.id_%C2%B7_Credo_%C2%B7_EUDI_library_%C2%B7_vck_%C2%B7_eudi--dev_%C2%B7_OID4VCgo-2b5797?labelColor=0a1421&style=flat-square)](#tested-against)
 [![OpenID4VP 1.0](https://img.shields.io/badge/OpenID4VP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid4vp-10)
 [![HAIP 1.0](https://img.shields.io/badge/HAIP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#haip-10)
 [![SD-JWT VC](https://img.shields.io/badge/SD--JWT_VC-supported-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#sd-jwt-vc)
@@ -101,6 +100,10 @@ newest `polaris-oid4vp` on PyPI.
 | [irmago](lab/interop/irmago/README.md), the library under the Yivi wallet, under a wallet built here | Privacy by Design Foundation (Yivi) | Go | v1.4.0, against 1.0.0rc15 (2026-10-04) | v1.4.0 |
 | [SpruceID `openid4vp`](lab/interop/spruceid/README.md), its conformance adapter with the test issuer replaced | SpruceID | Rust | e5f29b85, against 1.0.0rc15 (2026-10-04) | e5f29b85 |
 | [Procivis One Core](lab/interop/procivis/README.md) (`core-server`), which also issued the credential | Procivis | Rust | v1.87.2, against 1.0.0rc15 (2026-10-04) | v1.87.2 |
+| [ProtocolSoup](lab/interop/protocolsoup/README.md), its wallet harness | ParleSec | Go | v4.0.0, against 1.0.0rc15 (2026-10-04) | v4.0.0 (listed by the OpenID Foundation as certified) |
+| [The EU reference PID issuer](lab/interop/eudi-issuer/README.md) (`eudi-srv-pid-issuer`), issuing to a wallet built here on the EU's OpenID4VCI and OpenID4VP libraries | European Commission | Kotlin | v0.11.1, against 1.0.0rc15 (2026-10-04) | v0.11.1 |
+| [Multipaz](lab/interop/multipaz/README.md), under a wallet built here | OpenWallet Foundation | Kotlin | 0.101.0, against 1.0.0rc15 (2026-10-04) | 0.101.0 |
+| [ERICA](lab/interop/erica/README.md), the German EUDI Wallet programme's verifier testing tool, with its negative modes | the German EUDI Wallet programme (opencode.de) | TypeScript | 2c27dc92, against this repository (2026-10-04; the German PID type needs `--vct`, not in 1.0.0rc15) | |
 | [eudi-dev](lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | dominikschlosser | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) | v2.3.7 (listed by the OpenID Foundation as certified), the latest, its own binary, its own issuer's PID |
 | [OID4VCgo](lab/interop/oid4vcgo/README.md) | IDFoundry | Go | 0.25.0, against 1.0.0rc14 (2026-10-03) | 0.12.0 (listed as certified), and the latest |
 | [The OpenID Foundation's conformance suite](docs/reference/SPEC-COMPLIANCE.md#openid-certified) | OpenID Foundation | Java | all eleven modules of the HAIP verifier plan, 1.0.0rc7 (2026-09-24): the certification; eleven of eleven clean against 1.0.0rc15 on a GitHub runner, both controls noticed (2026-10-04) | the suite's newest prebuilt images |

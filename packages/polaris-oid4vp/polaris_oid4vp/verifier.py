@@ -110,7 +110,16 @@ def value_matches(value, values):
 
 
 def _shown(path):
-    return repr(".".join(path))
+    return repr(".".join(str(key) for key in path))
+
+
+def _selected(path, requested):
+    """Whether a disclosed claim at `path` is one the request selected (OpenID4VP 1.0 6.4).
+
+    It is when it lies on the way to a requested path (the object a requested member is
+    reached through) or inside one (a member of a requested object or array).
+    """
+    return any(path == r[:len(path)] or r == path[:len(r)] for r in requested)
 
 
 class Session:
@@ -126,6 +135,46 @@ class Session:
         self.enc_key = enc_key
         self.created = time.time()
         self.answered = False
+
+
+
+def verifier_info_entries(entries, credential_ids=()):
+    """`verifier_info` for the request object, checked against OpenID4VP 1.0 section 5.1.
+
+    A non-empty array of attestations about the verifier: each an object with `format` (a
+    string, such as "registration_cert" for the registration certificate a registrar issues)
+    and `data` (a string or an object), and optionally `credential_ids`, the credential queries
+    it applies to. The German EUDI Wallet ecosystem requires one for a PID request, and its
+    verifier testing tool, ERICA, refuses a request without it (2026-10-04). ERICA and the German
+    developer guide read a single object, `verifier_info.data`, where section 5.1 has an array,
+    so a single object is carried as a single object: the operator supplies the shape its
+    ecosystem reads. This package does not issue or check the attestation; it carries what the
+    operator was given. Anything else is refused here, at construction, rather than sent.
+    """
+    if isinstance(entries, dict):
+        return verifier_info_entries([entries], credential_ids)[0]
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("verifier_info must be a JSON object or a non-empty JSON array of them")
+    out = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("each verifier_info entry must be a JSON object, not %r" % (entry,))
+        unknown = set(entry) - {"format", "data", "credential_ids"}
+        if unknown:
+            raise ValueError("verifier_info entry has unknown member(s) %s"
+                             % ", ".join(sorted(map(str, unknown))))
+        if not isinstance(entry.get("format"), str) or not entry["format"]:
+            raise ValueError("each verifier_info entry needs a non-empty string format")
+        if not isinstance(entry.get("data"), (str, dict)) or entry["data"] in ("", {}):
+            raise ValueError("each verifier_info entry needs data: a string or an object")
+        ids = entry.get("credential_ids")
+        if ids is not None and (not isinstance(ids, list) or not ids
+                                or not all(isinstance(i, str) and i in credential_ids
+                                           for i in ids)):
+            raise ValueError("verifier_info credential_ids must be a non-empty array naming "
+                             "this request's credential queries (%s)" % ", ".join(credential_ids))
+        out.append(json.loads(json.dumps(entry)))
+    return out
 
 
 def request_object_encryption(wallet_metadata):
@@ -185,7 +234,7 @@ class Verifier:
                  issuer_jwks=None, issuer_trust_anchors=None, redirect_uri=None,
                  request_ttl_seconds=DEFAULT_REQUEST_TTL_SECONDS,
                  vct_values=("urn:eudi:pid:1",), claims=("given_name", "family_name"),
-                 status_resolver=None):
+                 status_resolver=None, verifier_info=None):
         if not _HAVE_CRYPTO:
             raise RuntimeError("polaris-oid4vp requires the cryptography package")
         self.cert = load_pem_x509_certificate(client_cert_pem)
@@ -209,6 +258,8 @@ class Verifier:
         # operator uses: the class that answers the wallet. A parameter reachable only from
         # the function underneath it is a capability the product does not have.
         self.status_resolver = status_resolver
+        self.verifier_info = (None if verifier_info is None
+                              else verifier_info_entries(verifier_info, (self.DCQL_QUERY_ID,)))
         self._sessions = {}
         self._by_request = {}
         self._lock = threading.Lock()
@@ -301,6 +352,8 @@ class Verifier:
         }
         if wallet_nonce is not None:
             claims["wallet_nonce"] = wallet_nonce
+        if self.verifier_info:
+            claims["verifier_info"] = self.verifier_info
         header = {"alg": "ES256", "typ": "oauth-authz-req+jwt", "x5c": self.x5c}
         return _sign_es256(self.key, header, claims)
 
@@ -412,6 +465,16 @@ class Verifier:
         if unaccepted:
             return self._error("claims", "the presentation discloses %s with a value the request "
                                          "does not accept" % ", ".join(_shown(p) for p in unaccepted))
+        # OpenID4VP 1.0 section 6.4: a wallet MUST NOT send selectively disclosable claims the
+        # request did not select. ERICA, the German EUDI Wallet programme's verifier testing
+        # tool, sends one as a negative case (OVER_DISCLOSURE); until 2026-10-04 it got 200 and
+        # the operator received claims nobody asked for. What the issuer signed in clear text is
+        # not a disclosure and is not judged here.
+        requested = [path for path, _ in self.claims]
+        extra = sorted((p for p in verdict.disclosed if not _selected(p, requested)), key=repr)
+        if extra:
+            return self._error("claims", "the presentation discloses %s, which the request did "
+                                         "not select" % ", ".join(_shown(p) for p in extra[:5]))
 
         # A status the operator's resolver CHECKED, whose value is not VALID (0): the issuer
         # says this credential is revoked or suspended. That is a fact, not a policy question, so

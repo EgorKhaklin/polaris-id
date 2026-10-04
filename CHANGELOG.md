@@ -26,6 +26,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-sdk-ts requires Node >= 20.19.0 for its post-quantum dependencies; rc.8 declared >= 18 but does not load there.
 - polaris-oid4vp decides status lists the draft sizes as ordinary; a 2^20-entry list with 10% revoked was refused as malformed.
 - polaris-oid4vp keygen marks the listener certificate for server authentication; Apple's TLS policy refused it.
+- polaris-oid4vp refuses a presentation disclosing claims the request did not select, which OpenID4VP 1.0 section 6.4 forbids; it accepted one.
+- polaris-oid4vp keygen gives its CA and leaf the key identifiers RFC 5280 asks for; Multipaz's trust manager skipped the CA without them.
+- polaris-oid4vp serves the request object with `Cache-Control: no-store`, as the German EUDI wallet guide's request_uri response does.
 
 ### Added
 
@@ -33,7 +36,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp verifies an issuer `x5c` through the intermediate CAs it carries, link by link in order, as eudi-dev v2.5.0's PID Provider sends.
 - An issuance tunnel serves only the wallet's OpenID4VCI endpoints over your own tunnel, so a wallet can be issued a demo copy.
 - A one-command helper mints an OpenID4VCI wallet-copy offer through the operator route, for the issuance-tunnel demo.
-- README badges for the pre-pilot status and the four outside wallets the verifier accepted.
+- A README badge for the pre-pilot status; the outside implementations are listed under Tested against.
 - A Discord server for questions and conversation, linked from the README, CONTRIBUTING, SUPPORT.md and the issue chooser.
 - Exact credential and live-signature counts by authority, kept by triggers that only append (`PopulationCount`).
 - Indexes for expiring credentials, credentials by status, issuance in a window and one credential's verifications.
@@ -54,7 +57,12 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A lab walk decides outside status lists: the draft's test vectors, its signed example and the OpenWallet Foundation's tokens.
 - The wallet canary runs the OpenID Foundation's conformance suite weekly against the published verifier, with both controls.
 - Four more walks against the published verifier, re-run weekly: the EU iOS OpenID4VP library, irmago (Yivi), SpruceID's adapter and Procivis One Core.
+- ProtocolSoup v4.0.0, a wallet the OpenID Foundation lists as certified, presents to the published verifier; re-run weekly.
+- ERICA, the German EUDI Wallet programme's verifier testing tool, presents and runs its negative modes; it passes 48 of 49 request checks.
+- Multipaz 0.101.0 (OpenWallet Foundation) presents to the published verifier; re-run weekly.
+- The EU reference PID issuer issues a PID that the published verifier accepts, trusting only the issuer's test root; re-run weekly.
 - polaris-oid4vp encrypts the request object to the wallet's key when its `wallet_metadata` asks, as the EU iOS wallet kit requires.
+- polaris-oid4vp `serve --verifier-info` adds attestations such as a registration certificate to the request, as the German wallet requires.
 
 ### Changed
 

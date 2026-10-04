@@ -166,11 +166,12 @@ class PidWallet(Wallet):
     """A wallet holding an EUDI-PID-shaped credential. `age_equal_or_over` is an object whose
     statements are each selectively disclosable, as the PID Rulebook issues it, so a wallet can
     answer "18 or over" without the others. `ages` are the issued statements; `disclose` the
-    ones this presentation reveals."""
+    ones this presentation reveals, and `names` the top-level claims it reveals besides."""
 
-    def __init__(self, ages=(("18", True), ("21", True), ("65", False)), disclose=("18",)):
+    def __init__(self, ages=(("18", True), ("21", True), ("65", False)), disclose=("18",),
+                 names=("given_name", "family_name")):
         super().__init__()
-        self.ages, self.disclose = ages, disclose
+        self.ages, self.disclose, self.names = ages, disclose, names
 
     def _presentation(self, *, nonce, audience, iat=None, sd_hash=None, corrupt_issuer_sig=False,
                       corrupt_kb_sig=False, extra_disclosure=None, vct=None, status=None):
@@ -186,7 +187,9 @@ class PidWallet(Wallet):
                    "cnf": {"jwk": _public_jwk(self.holder_key)}}
         issuer_jwt = _jws(self.issuer_key,
                           {"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1"}, payload)
-        shown = [given[0], family[0], age[0]] + [members[n][0] for n in self.disclose]
+        top = {"given_name": given[0], "family_name": family[0]}
+        shown = ([top[n] for n in self.names] + [age[0]]
+                 + [members[n][0] for n in self.disclose])
         presented = issuer_jwt + "~" + "".join(d + "~" for d in shown)
         kb = _jws(self.holder_key, {"alg": "ES256", "typ": "kb+jwt"},
                   {"iat": int(time.time()), "aud": audience, "nonce": nonce,
@@ -218,39 +221,40 @@ class NestedClaimTests(unittest.TestCase):
                                  {"path": ["age_equal_or_over", "18"], "values": [True]}])
 
     def test_the_one_statement_answers(self):
-        _, status, _ = self.exchange(PidWallet(disclose=("18",)), ["given_name", self.AGE])
+        _, status, _ = self.exchange(PidWallet(disclose=("18",), names=("given_name",)),
+                                     ["given_name", self.AGE])
         self.assertEqual(status, 200)
 
     def test_a_different_statement_does_not_answer(self):
         # 21 or over implies 18 or over, but it is not what was asked, and it says more.
-        _, status, verdict = self.exchange(PidWallet(disclose=("21",)), [self.AGE])
+        _, status, verdict = self.exchange(PidWallet(disclose=("21",), names=()), [self.AGE])
         self.assertEqual(status, 400)
         self.assertEqual(verdict.code, "claims")
         self.assertIn("'age_equal_or_over.18'", verdict.reason)
 
     def test_the_object_without_the_statement_does_not_answer(self):
-        _, status, verdict = self.exchange(PidWallet(disclose=()), [self.AGE])
+        _, status, verdict = self.exchange(PidWallet(disclose=(), names=()), [self.AGE])
         self.assertEqual((status, verdict.code), (400, "claims"))
 
     def test_a_false_statement_is_not_the_value_asked_for(self):
-        wallet = PidWallet(ages=(("18", False),), disclose=("18",))
+        wallet = PidWallet(ages=(("18", False),), disclose=("18",), names=())
         _, status, verdict = self.exchange(wallet, [self.AGE])
         self.assertEqual((status, verdict.code), (400, "claims"))
         self.assertIn("a value the request does not accept", verdict.reason)
 
     def test_a_value_of_another_type_is_not_the_value_asked_for(self):
         # DCQL compares type and value: 1 is not true, although Python says 1 == True.
-        wallet = PidWallet(ages=(("18", 1),), disclose=("18",))
+        wallet = PidWallet(ages=(("18", 1),), disclose=("18",), names=())
         _, status, verdict = self.exchange(wallet, [self.AGE])
         self.assertEqual((status, verdict.code), (400, "claims"))
 
     def test_without_values_the_disclosed_statement_answers_whatever_it_says(self):
-        wallet = PidWallet(ages=(("18", False),), disclose=("18",))
+        wallet = PidWallet(ages=(("18", False),), disclose=("18",), names=())
         _, status, _ = self.exchange(wallet, [["age_equal_or_over", "18"]])
         self.assertEqual(status, 200)
 
     def test_the_top_level_name_still_means_the_whole_claim(self):
-        _, status, _ = self.exchange(PidWallet(disclose=("18",)), ["age_equal_or_over"])
+        _, status, _ = self.exchange(PidWallet(disclose=("18",), names=()), ["age_equal_or_over"])
         self.assertEqual(status, 200)
 
     def test_claims_it_cannot_judge_are_refused_at_construction(self):
@@ -260,6 +264,105 @@ class NestedClaimTests(unittest.TestCase):
                     {"values": [True]}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 claim_query(bad)
+
+
+
+class OverDisclosureTests(unittest.TestCase):
+    """OpenID4VP 1.0 section 6.4: a wallet MUST NOT send selectively disclosable claims the
+    request did not select. ERICA, the German EUDI Wallet programme's verifier testing tool,
+    sends one as a negative case (OVER_DISCLOSURE); until 2026-10-04 it got 200 and the
+    operator received claims nobody asked for."""
+
+    AGE = NestedClaimTests.AGE
+    exchange = NestedClaimTests.exchange
+
+    def test_a_claim_the_request_did_not_select_is_refused(self):
+        _, status, verdict = self.exchange(PidWallet(disclose=("18",)), [self.AGE])
+        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertIn("did not select", verdict.reason)
+        self.assertIn("'given_name'", verdict.reason)
+
+    def test_a_statement_beside_the_one_asked_for_is_refused(self):
+        _, status, verdict = self.exchange(PidWallet(disclose=("18", "65"), names=()),
+                                           [self.AGE])
+        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertIn("'age_equal_or_over.65'", verdict.reason)
+
+    def test_the_object_a_requested_member_is_reached_through_is_not_extra(self):
+        _, status, verdict = self.exchange(PidWallet(disclose=("18",), names=()), [self.AGE])
+        self.assertEqual(status, 200, verdict.reason if verdict else None)
+        self.assertEqual(set(verdict.disclosed),
+                         {("age_equal_or_over",), ("age_equal_or_over", "18")})
+
+    def test_every_member_of_a_requested_object_is_selected(self):
+        _, status, _ = self.exchange(PidWallet(disclose=("18", "21", "65"), names=()),
+                                     ["age_equal_or_over"])
+        self.assertEqual(status, 200)
+
+    def test_what_the_issuer_signed_in_clear_text_is_not_a_disclosure(self):
+        _, status, verdict = self.exchange(PidWallet(disclose=("18",)),
+                                           ["given_name", "family_name", self.AGE])
+        self.assertEqual(status, 200)
+        self.assertIn("vct", verdict.claims)
+        self.assertNotIn(("vct",), verdict.disclosed)
+
+    def test_selection_is_by_path_prefix_in_both_directions(self):
+        from polaris_oid4vp.verifier import _selected
+        requested = [("address", "locality"), ("nationalities",)]
+        for path, expected in ((("address",), True), (("address", "locality"), True),
+                               (("address", "street"), False), (("nationalities", 0), True),
+                               (("nationality",), False), (("address", "locality", "x"), True),
+                               ((), True)):
+            with self.subTest(path=path):
+                self.assertEqual(_selected(path, requested), expected)
+
+
+
+class VerifierInfoTests(unittest.TestCase):
+    """OpenID4VP 1.0 section 5.1 `verifier_info`: attestations about the verifier, such as the
+    registration certificate a registrar issues. The German EUDI Wallet ecosystem requires one
+    for a PID request and ERICA, its verifier testing tool, refuses a request without it."""
+
+    REGISTRATION = [{"format": "registration_cert", "data": "eyJhbGciOiJFUzI1NiJ9.e30.c2ln"}]
+
+    def verifier(self, **kw):
+        cert_pem, key_pem = _client_chain()
+        return Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                        request_uri="https://verifier.test/request.jwt",
+                        response_uri="https://verifier.test/response", **kw)
+
+    def test_the_request_object_carries_it_as_given(self):
+        v = self.verifier(verifier_info=self.REGISTRATION + [
+            {"format": "policy", "data": {"retention": "P0D"}, "credential_ids": ["pid"]}])
+        _, jar = v.new_request()
+        self.assertEqual(Wallet.read_request(jar)[1]["verifier_info"], self.REGISTRATION + [
+            {"format": "policy", "data": {"retention": "P0D"}, "credential_ids": ["pid"]}])
+
+    def test_a_request_object_minted_for_a_wallet_nonce_carries_it_too(self):
+        v = self.verifier(verifier_info=self.REGISTRATION)
+        session, _ = v.new_request()
+        claims = Wallet.read_request(v.request_object(session.state, wallet_nonce="w"))[1]
+        self.assertEqual(claims["verifier_info"], self.REGISTRATION)
+
+    def test_a_single_object_is_carried_as_one_object(self):
+        """ERICA and the German EUDI wallet guide read verifier_info.data, a single object."""
+        v = self.verifier(verifier_info=self.REGISTRATION[0])
+        _, jar = v.new_request()
+        self.assertEqual(Wallet.read_request(jar)[1]["verifier_info"], self.REGISTRATION[0])
+
+    def test_without_it_the_request_object_has_none(self):
+        _, jar = self.verifier().new_request()
+        self.assertNotIn("verifier_info", Wallet.read_request(jar)[1])
+
+    def test_what_section_5_1_does_not_allow_is_refused_at_construction(self):
+        for bad in ([], {}, {"data": "x"}, "registration_cert", [7], [{"data": "x"}],
+                    [{"format": "", "data": "x"}],
+                    [{"format": "f"}], [{"format": "f", "data": ""}], [{"format": "f", "data": 3}],
+                    [{"format": "f", "data": "x", "credential_ids": []}],
+                    [{"format": "f", "data": "x", "credential_ids": ["mdl"]}],
+                    [{"format": "f", "data": "x", "other": 1}]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.verifier(verifier_info=bad)
 
 
 class TheRequestTests(VerifierTestCase):
