@@ -307,6 +307,12 @@ def main():
     with _conn(B_DB) as cb, cb.cursor() as cur:
         cur.execute("UPDATE Agency SET signing_public_key_hex=%s WHERE agency_id=1", (pub_b,))
         cur.execute("UPDATE Agency SET signing_public_key_hex=%s WHERE agency_id=2", (pub_a,))
+        # B's key ceremony: register its own authority key before anything is signed under it.
+        # A possession proof on B accepts a credential signature only under a key B's authority
+        # had registered at the signature's instant (docs/operator/KEY-CEREMONY.md).
+        cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, event, effective_at, note) "
+                    "VALUES (1, %s, %s, 'registered', now() - INTERVAL '1 day', 'drill: B key ceremony')",
+                    (pub_b, ALG_B))
         cur.execute("INSERT INTO AgencyTrustAttestation (attesting_agency_id, attested_agency_id, context_id, attested_date, valid_until, signed_by) "
                     "VALUES (1, 2, %s, CURRENT_DATE, CURRENT_DATE + INTERVAL '1 year', 1)", (CONTEXT_ID,))
         cb.commit()
