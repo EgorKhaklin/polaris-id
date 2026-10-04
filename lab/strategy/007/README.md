@@ -100,7 +100,9 @@ Last, the gate stops trusting the credential's issuer, the same wallet presents 
 person is refused. The script exits 0 only if every one of these holds.
 
 It needs Docker, a `python3` with `playwright` (Chromium installed) and a `cryptography` with
-ML-DSA, and ports 7006, 8443, 9443 and 9444. Measured 2026-10-01 on macOS with Docker Desktop, in
+ML-DSA, and ports 7006, 8443, 9443 and 9444. `*.localhost.pomerium.io` no longer resolves in public
+DNS (by 2026-10-04), so the script maps those names to 127.0.0.1 itself, for curl, the browser, the
+agent and Pomerium's container. Measured 2026-10-01 on macOS with Docker Desktop, in
 44 seconds once the images were local:
 
     ok    admitted to https://verify.localhost.pomerium.io:8443/ with given_name=Jean family_name=Dupont
