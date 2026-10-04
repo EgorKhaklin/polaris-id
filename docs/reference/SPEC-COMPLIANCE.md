@@ -40,9 +40,11 @@ identifier. The normative wire details are in [WIRE-SPEC.md](WIRE-SPEC.md).
 
 ## SD-JWT VC
 
-Issuer-signed SD-JWT VCs (`dc+sd-jwt` / `vc+sd-jwt`) are verified by the verifier, which checks the
-issuer signature, the certificate chain, the selective-disclosure digests and the key binding; and
-are issued as wallet copies over OpenID4VCI, signed ES256 under a per-agency certificate. See
+Issuer-signed SD-JWT VCs (`dc+sd-jwt`) are verified by the verifier, which checks the issuer
+signature, the certificate chain, the selective-disclosure digests and the key binding. An issuer
+JWT typed `vc+sd-jwt` is refused (`issuer_typ`): that was the type's name before SD-JWT VC renamed
+it, and it now names a W3C VC Data Model credential. Polaris issues SD-JWT VCs as wallet copies over
+OpenID4VCI, typed `dc+sd-jwt` and signed ES256 under a per-agency certificate. See
 [WIRE-SPEC.md](WIRE-SPEC.md).
 
 ## OpenID4VCI 1.0

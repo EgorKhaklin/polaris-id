@@ -97,6 +97,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - In the Atlas, a hovered tab keeps its label and a lone interval is drawn; a stacked chart no longer reads a withheld value as zero.
 - Public pages: no empty band above the first line, a visible secondary action, a four-column feature grid.
 - Every page showing the OpenID® Certified™ mark names the OpenID Foundation as its owner, as its trademark policy (2.2) asks.
+- SPEC-COMPLIANCE.md said `vc+sd-jwt` credentials are verified; the verifier refuses them (`issuer_typ`), as its README says.
 - The duress wording check passed the noun "compulsion resistance"; API.md and DATA-MODEL.md named the mechanism with it.
 - API.md pointed at `app.py` for the federation check; it is in `verification_routes.py`.
 - The signals queue said "N of M active" while counting every credential with a duress code, in 923 ms.
