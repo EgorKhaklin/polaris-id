@@ -30,6 +30,10 @@ re-tested and re-submitted.
 Polaris's standalone verifier `polaris-oid4vp` implements the OpenID for Verifiable Presentations
 1.0 Verifier role (certified, above). The Wallet role is not Polaris's; outside wallets present to
 the verifier, and which ones have is recorded in [EXTERNAL-NOUNS.md](../../lab/EXTERNAL-NOUNS.md).
+Its request carries one DCQL credential query. A claim is a name or a path of object keys, with
+optional `values` the disclosed value must match in type and value (`age_equal_or_over`, `18`,
+`true`: one statement of an EUDI PID, not all of them); array indices and the null wildcard are not
+supported.
 
 ## HAIP 1.0
 

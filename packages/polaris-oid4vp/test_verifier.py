@@ -30,7 +30,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils  #
 from cryptography.x509.oid import NameOID  # noqa: E402
 
 from polaris_oid4vp.jwe import b64u_decode, b64u_encode, encrypt_compact  # noqa: E402
-from polaris_oid4vp.verifier import Verifier  # noqa: E402
+from polaris_oid4vp.verifier import Verifier, claim_query  # noqa: E402
 from polaris_oid4vp import sdjwt  # noqa: E402
 
 
@@ -160,6 +160,106 @@ class VerifierTestCase(unittest.TestCase):
         form = self.wallet.respond(jar, **kw)
         status, body, _ = self.verifier.handle_direct_post(form)
         return session, status, body
+
+
+class PidWallet(Wallet):
+    """A wallet holding an EUDI-PID-shaped credential. `age_equal_or_over` is an object whose
+    statements are each selectively disclosable, as the PID Rulebook issues it, so a wallet can
+    answer "18 or over" without the others. `ages` are the issued statements; `disclose` the
+    ones this presentation reveals."""
+
+    def __init__(self, ages=(("18", True), ("21", True), ("65", False)), disclose=("18",)):
+        super().__init__()
+        self.ages, self.disclose = ages, disclose
+
+    def _presentation(self, *, nonce, audience, iat=None, sd_hash=None, corrupt_issuer_sig=False,
+                      corrupt_kb_sig=False, extra_disclosure=None, vct=None, status=None):
+        def disclosure(*parts):
+            d = b64u_encode(json.dumps(list(parts), separators=(",", ":")).encode())
+            return d, b64u_encode(hashlib.sha256(d.encode("ascii")).digest())
+        given = disclosure("s0", "given_name", "Jean")
+        family = disclosure("s1", "family_name", "Dupont")
+        members = {name: disclosure("a" + name, name, value) for name, value in self.ages}
+        age = disclosure("s2", "age_equal_or_over", {"_sd": sorted(d for _, d in members.values())})
+        payload = {"iss": "https://issuer.example", "vct": "urn:eudi:pid:1",
+                   "iat": int(time.time()), "_sd": sorted([given[1], family[1], age[1]]),
+                   "cnf": {"jwk": _public_jwk(self.holder_key)}}
+        issuer_jwt = _jws(self.issuer_key,
+                          {"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1"}, payload)
+        shown = [given[0], family[0], age[0]] + [members[n][0] for n in self.disclose]
+        presented = issuer_jwt + "~" + "".join(d + "~" for d in shown)
+        kb = _jws(self.holder_key, {"alg": "ES256", "typ": "kb+jwt"},
+                  {"iat": int(time.time()), "aud": audience, "nonce": nonce,
+                   "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())})
+        return presented + kb
+
+
+class NestedClaimTests(unittest.TestCase):
+    """A claim is a path. The EUDI PID nests its age statements, so asking for
+    `age_equal_or_over` would ask for every one of them; `age_equal_or_over.18` asks for one,
+    and only that one answers. `values` is the value the request accepts."""
+
+    AGE = {"path": ["age_equal_or_over", "18"], "values": [True]}
+
+    def exchange(self, wallet, claims):
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                            request_uri="https://verifier.test/request.jwt",
+                            response_uri="https://verifier.test/response",
+                            issuer_jwks=[wallet.issuer_jwk], claims=claims)
+        _, jar = verifier.new_request()
+        status, _, verdict = verifier.handle_direct_post(wallet.respond(jar))
+        return jar, status, verdict
+
+    def test_the_request_asks_for_the_path_and_the_value(self):
+        jar, _, _ = self.exchange(PidWallet(), ["given_name", self.AGE])
+        query = Wallet.read_request(jar)[1]["dcql_query"]["credentials"][0]["claims"]
+        self.assertEqual(query, [{"path": ["given_name"]},
+                                 {"path": ["age_equal_or_over", "18"], "values": [True]}])
+
+    def test_the_one_statement_answers(self):
+        _, status, _ = self.exchange(PidWallet(disclose=("18",)), ["given_name", self.AGE])
+        self.assertEqual(status, 200)
+
+    def test_a_different_statement_does_not_answer(self):
+        # 21 or over implies 18 or over, but it is not what was asked, and it says more.
+        _, status, verdict = self.exchange(PidWallet(disclose=("21",)), [self.AGE])
+        self.assertEqual(status, 400)
+        self.assertEqual(verdict.code, "claims")
+        self.assertIn("'age_equal_or_over.18'", verdict.reason)
+
+    def test_the_object_without_the_statement_does_not_answer(self):
+        _, status, verdict = self.exchange(PidWallet(disclose=()), [self.AGE])
+        self.assertEqual((status, verdict.code), (400, "claims"))
+
+    def test_a_false_statement_is_not_the_value_asked_for(self):
+        wallet = PidWallet(ages=(("18", False),), disclose=("18",))
+        _, status, verdict = self.exchange(wallet, [self.AGE])
+        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertIn("a value the request does not accept", verdict.reason)
+
+    def test_a_value_of_another_type_is_not_the_value_asked_for(self):
+        # DCQL compares type and value: 1 is not true, although Python says 1 == True.
+        wallet = PidWallet(ages=(("18", 1),), disclose=("18",))
+        _, status, verdict = self.exchange(wallet, [self.AGE])
+        self.assertEqual((status, verdict.code), (400, "claims"))
+
+    def test_without_values_the_disclosed_statement_answers_whatever_it_says(self):
+        wallet = PidWallet(ages=(("18", False),), disclose=("18",))
+        _, status, _ = self.exchange(wallet, [["age_equal_or_over", "18"]])
+        self.assertEqual(status, 200)
+
+    def test_the_top_level_name_still_means_the_whole_claim(self):
+        _, status, _ = self.exchange(PidWallet(disclose=("18",)), ["age_equal_or_over"])
+        self.assertEqual(status, 200)
+
+    def test_claims_it_cannot_judge_are_refused_at_construction(self):
+        for bad in ([], ["age_equal_or_over", 0], ["a", None], [""], None, 7,
+                    {"path": ["a"], "values": []}, {"path": ["a"], "values": [1.5]},
+                    {"path": ["a"], "values": [None]}, {"path": ["a"], "other": 1},
+                    {"values": [True]}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                claim_query(bad)
 
 
 class TheRequestTests(VerifierTestCase):

@@ -11,6 +11,9 @@
 #   EUDI_IMAGE=ghcr.io/dominikschlosser/eudi-dev:v2.4.3 lab/interop/eudi-dev/run.sh
 #   EUDI_NATIVE=1 lab/interop/eudi-dev/run.sh         # the wallet's own binary, no Docker
 #   EUDI_ISSUER=1 lab/interop/eudi-dev/run.sh         # eudi-dev's own issuer signs the credential
+#   EUDI_ISSUER=1 CLAIMS=age_equal_or_over.18=true lab/interop/eudi-dev/run.sh
+#                                                     # ask for one age statement of its PID
+#                                                     # (each CLAIMS word is a --claim)
 #   EUDI_TUNNEL=1 lab/interop/eudi-dev/run.sh         # each verifier behind its own cloudflared
 #                                                     # quick tunnel: public HTTPS a wallet can verify
 #
@@ -245,6 +248,9 @@ start_tunnel() {  # a quick tunnel to the loopback port; sets TUNNEL_URL, or exi
   exit 2
 }
 
+CLAIM_ARGS=()
+for c in ${CLAIMS:-}; do CLAIM_ARGS+=(--claim "$c"); done
+
 start_verifier() {  # $1 what the verifier trusts (a JWKS or a CA, per $TRUST), $2 log file
   if [ "$TUNNEL" = 1 ]; then
     start_tunnel
@@ -252,10 +258,10 @@ start_verifier() {  # $1 what the verifier trusts (a JWKS or a CA, per $TRUST), 
     venv/bin/polaris-oid4vp keygen --out "pki-$TUNNELS" --host "${TUNNEL_URL#https://}" >/dev/null
     PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki "pki-$TUNNELS" --host "${TUNNEL_URL#https://}" \
       --bind "$BIND" --port "$PORT" --public-base-url "$TUNNEL_URL" --no-local-tls \
-      "$TRUST" "$1" --once > "$2" 2>&1 &
+      "$TRUST" "$1" ${CLAIM_ARGS[@]+"${CLAIM_ARGS[@]}"} --once > "$2" 2>&1 &
   else
     PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host "$VHOST" \
-      --bind "$BIND" --port "$PORT" "$TRUST" "$1" --once > "$2" 2>&1 &
+      --bind "$BIND" --port "$PORT" "$TRUST" "$1" ${CLAIM_ARGS[@]+"${CLAIM_ARGS[@]}"} --once > "$2" 2>&1 &
   fi
   VERIFIER_PID=$!
   local up=""
