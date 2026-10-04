@@ -46,7 +46,7 @@ except ImportError:  # pragma: no cover
 
 from .sdjwt import _es256_public_key, _not_an_es256_verification_key
 from .serve import REQUEST_PATH, RESPONSE_PATH, serve
-from .verifier import Verifier
+from .verifier import Verifier, claim_query
 
 #: What `keygen` writes and `serve` reads. Four files, named for what they are rather than
 #: for the order somebody happened to generate them in.
@@ -132,8 +132,42 @@ def keygen(out: pathlib.Path, host: str) -> dict:
     return {"out": out, "host": host}
 
 
+def parse_claim(text):
+    """`--claim`: a name (`given_name`), a dotted path of object keys (`age_equal_or_over.18`)
+    or a JSON array of keys (`["address","locality"]`), optionally `=VALUE` (JSON: `=true`,
+    `=18`, `="DE"`; anything else is taken as a string) for the value the request accepts."""
+    if text.startswith("["):
+        end = text.find("]")
+        if end < 0:
+            raise ValueError("--claim %s: a JSON path needs its closing ]" % text)
+        path_text, rest = text[:end + 1], text[end + 1:]
+        try:
+            path = json.loads(path_text)
+        except ValueError as exc:
+            raise ValueError("--claim %s: the path is not JSON (%s)" % (text, exc)) from None
+        if rest and not rest.startswith("="):
+            raise ValueError("--claim %s: after the JSON path only =VALUE may follow" % text)
+        value_text, has_value = rest[1:], bool(rest)
+    else:
+        path_text, sep, value_text = text.partition("=")
+        path, has_value = path_text.split("."), bool(sep)
+    claim = {"path": path}
+    if has_value:
+        try:
+            value = json.loads(value_text)
+        except ValueError:
+            value = value_text
+        claim["values"] = [value]
+    try:
+        claim_query(claim)      # refuses here what the verifier would refuse at startup
+    except ValueError as exc:
+        raise ValueError("--claim %s: %s" % (text, exc)) from None
+    return claim
+
+
 def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
-                  issuer_trust_anchors=None, public_base_url=None) -> Verifier:
+                  issuer_trust_anchors=None, public_base_url=None, claims=None,
+                  vct_values=None) -> Verifier:
     # A verifier behind a reverse proxy or a tunnel reaches wallets at a public origin that is
     # not its own host:port; the HAIP request_uri and response_uri must advertise that origin.
     base = public_base_url.rstrip("/") if public_base_url else "https://%s:%d" % (host, port)
@@ -143,7 +177,9 @@ def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
         request_uri=base + REQUEST_PATH,
         response_uri=base + RESPONSE_PATH,
         issuer_jwks=issuer_jwks or [],
-        issuer_trust_anchors=issuer_trust_anchors or [])
+        issuer_trust_anchors=issuer_trust_anchors or [],
+        **({"claims": claims} if claims else {}),
+        **({"vct_values": vct_values} if vct_values else {}))
 
 
 def _load_trust_anchors(paths):
@@ -218,6 +254,11 @@ def _cmd_serve(args) -> int:
     except SystemExit as exc:
         print(exc, file=sys.stderr)
         return 2
+    try:
+        claims = [parse_claim(c) for c in args.claim]
+    except ValueError as exc:
+        print("polaris-oid4vp: %s" % exc, file=sys.stderr)
+        return 2
     # Keys named and none usable is a configuration that cannot be what was meant: every
     # credential from those issuers would be refused, with no word at startup (2026-10-01).
     if args.issuer_jwks and not any(_verifies_es256(k) for k in issuer_jwks):
@@ -231,7 +272,8 @@ def _cmd_serve(args) -> int:
         print("polaris-oid4vp: %s; only issuers whose x5c chains to --issuer-trust-anchor can be "
               "verified." % why, file=sys.stderr)
     verifier = verifier_from(pki, args.host, args.port, issuer_jwks, anchors,
-                             public_base_url=args.public_base_url)
+                             public_base_url=args.public_base_url, claims=claims,
+                             vct_values=args.vct)
     if not issuer_jwks and not anchors:
         print("polaris-oid4vp: no --issuer-jwks or --issuer-trust-anchor given, so no "
               "credential can be verified: "
@@ -326,6 +368,12 @@ def main(argv=None) -> int:
     s.add_argument("--issuer-trust-anchor", action="append", default=[], metavar="PEM",
                    help="a PEM file of CA certificates an issuer's x5c leaf must chain to "
                         "(repeatable); the HAIP way to trust an issuer")
+    s.add_argument("--claim", action="append", default=[], metavar="PATH[=VALUE]",
+                   help="a claim to ask for (repeatable; default given_name and family_name): a "
+                        "name, a dotted path of object keys such as age_equal_or_over.18, or a "
+                        "JSON array of keys; =VALUE (e.g. =true) is the value it must have")
+    s.add_argument("--vct", action="append", default=[], metavar="TYPE",
+                   help="a credential type to accept (repeatable; default urn:eudi:pid:1)")
     s.add_argument("--once", action="store_true",
                    help="print one authorization request's parameters at startup")
     s.add_argument("--verbose", action="store_true")

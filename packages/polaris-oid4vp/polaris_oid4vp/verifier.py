@@ -59,6 +59,59 @@ DEFAULT_REQUEST_TTL_SECONDS = 300
 WALLET_AUDIENCE = "https://self-issued.me/v2"
 
 
+def claim_query(claim):
+    """One claim the DCQL query asks for, as `(path, values)`.
+
+    A claim is a name (`"given_name"`), a path of object keys (`["age_equal_or_over", "18"]`:
+    the EUDI PID Rulebook nests its age statements, so asking for `age_equal_or_over` alone
+    asks the wallet for every age statement at once), or a DCQL claim object
+    `{"path": [...], "values": [...]}`, whose `values` the disclosed value must match.
+
+    Array indices and the null wildcard are refused: an undisclosed array element is left out
+    of the disclosed claims, so a position counted after disclosure is not the position the
+    issuer signed, and a verifier that checked it would check the wrong element.
+    """
+    if isinstance(claim, str):
+        path, values = [claim], None
+    elif isinstance(claim, dict):
+        unknown = sorted(set(claim) - {"path", "values"})
+        if unknown:
+            raise ValueError("a claim object has `path` and `values` only, not %s" % ", ".join(unknown))
+        path, values = claim.get("path"), claim.get("values")
+    elif isinstance(claim, (list, tuple)):
+        path, values = list(claim), None
+    else:
+        raise ValueError("a claim is a name, a path or a DCQL claim object: %r" % (claim,))
+    if not isinstance(path, list) or not path or not all(isinstance(k, str) and k for k in path):
+        raise ValueError("a claim's path is one or more object keys (non-empty strings); array "
+                         "indices and null are not supported: %r" % (claim,))
+    # bool is an int in Python, which is what DCQL allows: strings, integers and booleans.
+    if values is not None and (not isinstance(values, list) or not values
+                               or not all(isinstance(v, (str, int)) for v in values)):
+        raise ValueError("a claim's values are a non-empty list of strings, integers or "
+                         "booleans: %r" % (claim,))
+    return tuple(path), (tuple(values) if values is not None else None)
+
+
+def disclosed_at(claims, path):
+    """`(True, value)` when the disclosed claims hold `path`, key by key; else `(False, None)`."""
+    node = claims
+    for key in path:
+        if not isinstance(node, dict) or key not in node:
+            return False, None
+        node = node[key]
+    return True, node
+
+
+def value_matches(value, values):
+    """DCQL `values`: the type and the value both match one of them, so `true` is not `1`."""
+    return any(type(value) is type(v) and value == v for v in values)
+
+
+def _shown(path):
+    return repr(".".join(path))
+
+
 class Session:
     """One outstanding presentation request, and the secrets that make it answerable once."""
 
@@ -102,7 +155,7 @@ class Verifier:
         self.issuer_trust_anchors = list(issuer_trust_anchors or [])
         self.request_ttl_seconds = request_ttl_seconds
         self.vct_values = list(vct_values)
-        self.claims = list(claims)
+        self.claims = [claim_query(c) for c in claims]
         # Revocation. None means the verdict reports `not_evaluated`, which is what this
         # verifier can honestly say about a status list nobody read. Threaded from here
         # rather than left on `verify_presentation` alone because THIS is the surface an
@@ -182,7 +235,8 @@ class Verifier:
                 "id": self.DCQL_QUERY_ID,
                 "format": "dc+sd-jwt",
                 "meta": {"vct_values": self.vct_values},
-                "claims": [{"path": [c]} for c in self.claims],
+                "claims": [dict({"path": list(path)}, **({"values": list(values)} if values else {}))
+                           for path, values in self.claims],
             }]},
         }
         if wallet_nonce is not None:
@@ -279,11 +333,25 @@ class Verifier:
         # The claims the DCQL query above asked for. Every one is required (it names no
         # `claim_sets`), and a presentation that discloses fewer does not answer the request;
         # until 2026-10-01 a wallet that withheld one got the same 200 as one that did not.
+        # A path is followed key by key through what was disclosed, so `age_equal_or_over.18`
+        # is answered by that one statement and not by the object around it.
         disclosed = verdict.claims if isinstance(verdict.claims, dict) else {}
-        missing = [c for c in self.claims if c not in disclosed]
+        missing, unaccepted = [], []
+        for path, values in self.claims:
+            found, value = disclosed_at(disclosed, path)
+            if not found:
+                missing.append(path)
+            elif values is not None and not value_matches(value, values):
+                unaccepted.append(path)
         if missing:
             return self._error("claims", "the presentation does not disclose %s, which the "
-                                         "request asked for" % ", ".join(repr(c) for c in missing))
+                                         "request asked for" % ", ".join(_shown(p) for p in missing))
+        # The query's `values`: a wallet SHOULD return the claim only when it matches, so one
+        # that returns another value has not answered, and `age_equal_or_over.18: false` must
+        # not pass where `true` was asked for.
+        if unaccepted:
+            return self._error("claims", "the presentation discloses %s with a value the request "
+                                         "does not accept" % ", ".join(_shown(p) for p in unaccepted))
 
         # A status the operator's resolver CHECKED, whose value is not VALID (0): the issuer
         # says this credential is revoked or suspended. That is a fact, not a policy question, so
