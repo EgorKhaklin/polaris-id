@@ -28,6 +28,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - An issuance tunnel serves only the wallet's OpenID4VCI endpoints over your own tunnel, so a wallet can be issued a demo copy.
 - A one-command helper mints an OpenID4VCI wallet-copy offer through the operator route, for the issuance-tunnel demo.
 - README badges for the pre-pilot status and the four outside wallets the verifier accepted.
+- A Discord server for questions and conversation, linked from the README, CONTRIBUTING, SUPPORT.md and the issue chooser.
 - Exact credential and live-signature counts by authority, kept by triggers that only append (`PopulationCount`).
 - Indexes for expiring credentials, credentials by status, issuance in a window and one credential's verifications.
 - Find a credential by number, token value or card serial, or a person by name and date of birth; the text stays out of URLs.
@@ -44,6 +45,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- MISSION.md's second item reads "ML-DSA-65 by default", not "Post-quantum by default", by the owner's direction (2026-10-03).
 - The operator console is rethought around what Polaris is now: grouped, role-gated navigation; new sign-in, landing and Overview.
 - The Atlas shows counts only: its map points, event feed, records grid and person focus are withdrawn.
 - The Atlas reads hourly and daily totals, never an event: the page from 6.7 s to 31 ms at ten million verifications.

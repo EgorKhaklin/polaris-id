@@ -5,10 +5,11 @@ asking anyone a question.** If you cannot, that is the bug and we want to hear i
 [open a report](https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml).
 
 This page is run start to finish before it is changed, from outside the repository, against the
-package on PyPI rather than a working copy. Last walked 2026-10-03 against `polaris-oid4vp`
-1.0.0rc14 installed from the registry, with the system Python 3.9.6 and eudi-dev v2.3.7's own binary
-(no Docker), on macOS: the wallet presented a PID credential, the verifier answered `200 authentic`,
-and all three controls were refused. Nothing here is from memory.
+package on PyPI rather than a working copy. Last walked 2026-10-04 against `polaris-oid4vp`
+1.0.0rc15 installed from the registry, with the system Python 3.9.6 on macOS. In the first minute,
+eudi-dev v2.3.7 (its image, then its own binary without Docker) presented a credential, the verifier
+answered `200 authentic`, and all three controls were refused. In the ten minutes, walt.id's wallet
+presented and the verifier answered `200 authentic`. Nothing here is from memory.
 
 ## One minute first
 
@@ -22,20 +23,22 @@ against a SHA-256 pinned in this repository before running it.
     mkdir -p ~/polaris-quick && cd ~/polaris-quick
     curl -fsSLO https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/lab/interop/eudi-dev/run.sh
     curl -fsSLO https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/lab/interop/waltid/issue_sdjwt_vc.py
+    curl -fsSLO https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/lab/interop/requirements.txt
     bash run.sh
 
 The last line it prints when all is well:
 
     RESULT: accepted, and all three controls refused
 
-It installs `polaris-oid4vp` from PyPI into a venv of its own, lets the wallet generate its own
+It installs `polaris-oid4vp` from PyPI into a venv of its own, every dependency checked against
+the hashes in `requirements.txt`, lets the wallet generate its own
 key, mints one credential bound to it, has the wallet present it with HAIP enforced, then runs
 three controls that must each be refused ([what they are](../lab/interop/eudi-dev/README.md)). It
 does every step for you, so it shows THAT the path works; the ten minutes below show what each
-step is. Walked 2026-10-03 as written, from an empty directory outside the repository, with the
-system Python 3.9.6 on macOS: it installed 1.0.0rc14, the wallet presented and the verifier
-answered `200 authentic` with all three controls refused, without Docker in 8 seconds, the
-binary's download included.
+step is. Walked 2026-10-04 as written, from an empty directory outside the repository, with the
+system Python 3.9.6 on macOS: it installed 1.0.0rc15, the wallet presented and the verifier
+answered `200 authentic` with all three controls refused, in 13 seconds with Docker running and in
+10 seconds without it (`EUDI_NATIVE=1`), the binary's download included.
 
 ## 0. Prerequisites
 
@@ -66,7 +69,7 @@ and splitting them across two directories is the single most common way this pat
     mkdir -p ~/polaris-try && cd ~/polaris-try
     python3 -m venv .venv && . .venv/bin/activate
 
-From the registry. You do not need this repository. `--pre` because 1.0.0rc14 is a release
+From the registry. You do not need this repository. `--pre` because 1.0.0rc15 is a release
 candidate and pip skips those unless told; 0.1.0 is the previous release and also works.
 
     pip install --pre polaris-oid4vp
