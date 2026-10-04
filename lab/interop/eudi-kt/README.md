@@ -56,9 +56,11 @@ Re-walked 2026-10-04 against `polaris-oid4vp` 1.0.0rc15 from PyPI, built with Ko
 Bouncy Castle 1.86: accepted, `<- 200 authentic`, and all four controls refused. The library brings
 Bouncy Castle 1.83, which OSV lists advisories against (fixed in 1.85), and Kotlin 2.2.21 had one in
 its build cache (fixed in 2.4.20); [`build.gradle.kts`](wallet/build.gradle.kts) lifts both. The
-verification metadata now lists only what the build resolves (120 components, no OSV advisory),
+verification metadata now lists only what the build resolves (121 components, no OSV advisory),
 regenerated with `gradle --write-verification-metadata sha256 installDist` after removing the old
-file.
+file. Generate it from an empty Gradle cache: a warm cache resolved the plugin classpath without
+`kotlinx-coroutines-bom` 1.8.0, which a clean machine fetches from the Gradle plugin portal, and the
+first CI run of this walk failed on it (2026-10-04). Its SHA-256 matches the copy on Maven Central.
 
 ## What this does not establish
 
