@@ -45,6 +45,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- MISSION.md's second item reads "ML-DSA-65 by default", not "Post-quantum by default", by the owner's direction (2026-10-03).
 - The operator console is rethought around what Polaris is now: grouped, role-gated navigation; new sign-in, landing and Overview.
 - The Atlas shows counts only: its map points, event feed, records grid and person focus are withdrawn.
 - The Atlas reads hourly and daily totals, never an event: the page from 6.7 s to 31 ms at ten million verifications.

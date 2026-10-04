@@ -32,7 +32,7 @@ This module is one of the cryptographic-primitive layers in Polaris:
   - Constitutional limits (R11-6)    — issuer-discretion bounds via advisory-lock
   - AnchorBatch (R10-2, this file)   — per-batch Merkle commitment
 
-Together they realize the "post-quantum by default" claim at the
+Together they realize MISSION.md's "ML-DSA-65 by default" at the
 substrate level, in line with PDF Appendix E.
 """
 # coverage:exempt - drives an external chain; the anchoring drill exercises it against a stand-in, and a unit test here would be testing the stand-in rather than the module.

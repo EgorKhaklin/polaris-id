@@ -61,7 +61,7 @@ Provenance and attribution are in [NOTICE](NOTICE).
    is who they say they are, in this context, at this moment." Nothing
    more.
 
-2. **Post-quantum by default.** Every new token is signed under
+2. **ML-DSA-65 by default.** Every new token is signed under
    ML-DSA-65 (FIPS 204). SLH-DSA (FIPS 205) is registered as the
    hash-based alternative so a rotation away from lattices is a row
    update, not a redeploy; no SLH-DSA signer is wired yet, and
