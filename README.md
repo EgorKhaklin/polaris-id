@@ -8,6 +8,7 @@
 [![Release](https://img.shields.io/github/v/release/EgorKhaklin/polaris-id?include_prereleases&label=release&color=c9a352&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/releases/latest)
 [![Status: pre-pilot, notional data](https://img.shields.io/badge/status-pre--pilot_%C2%B7_notional_data-9a6b2f?labelColor=0a1421&style=flat-square)](#status)
 [![License](https://img.shields.io/badge/license-Apache--2.0-2b5797?labelColor=0a1421&style=flat-square)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-join_the_server-5865F2?logo=discord&logoColor=white&labelColor=0a1421&style=flat-square)](https://discord.gg/ragewuCKj)
 [![OpenSSF Best Practices](https://img.shields.io/cii/level/15004?label=OpenSSF%20best%20practices&labelColor=0a1421&style=flat-square)](https://www.bestpractices.dev/projects/15004)
 [![OpenSSF Baseline](https://www.bestpractices.dev/projects/15004/baseline)](https://www.bestpractices.dev/projects/15004)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/EgorKhaklin/polaris-id/badge)](https://scorecard.dev/viewer/?uri=github.com/EgorKhaklin/polaris-id)
@@ -33,6 +34,7 @@
 <a href="#verified-not-asserted"><img src="docs/assets/nav/verified.svg" alt="Verified"></a>
 <a href="#run-it"><img src="docs/assets/nav/run-it.svg" alt="Run it"></a>
 <a href="#documentation"><img src="docs/assets/nav/documentation.svg" alt="Documentation"></a>
+<a href="https://discord.gg/ragewuCKj"><img src="docs/assets/nav/discord.svg" alt="Discord"></a>
 
 </div>
 
