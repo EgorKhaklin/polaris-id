@@ -37,8 +37,10 @@ any write that would leave a token with no non-deprecated signature.
 `enforce_token_signature_immutability` makes the row write-once: no deletes, no
 updates except to `deprecation_date`, and that field moves only from NULL to a
 timestamp, never back and never earlier. `idx_token_signature_active`, a
-partial index over the rows where `deprecation_date IS NULL`, keeps
-verification reading the small active set rather than the whole history.
+partial index over the rows where `deprecation_date IS NULL`, keeps the
+invariant's count reading the small active set rather than the whole history.
+Verification reads a credential's signatures in force, a deprecated one included
+until its date passes, through the unique `(token_id, algorithm_id)` index.
 
 ## Two modes, and which one production runs
 
