@@ -39,6 +39,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The transparency logs can be anchored in Bitcoin: `ChainAnchor` records each checkpoint, published at `/api/v1/transparency/anchors`.
 - polaris-verify `verify_chain_anchor` decides an anchor against block headers it reads itself, from a node or two agreeing sources.
 - `polaris-chain-anchor.py` builds, verifies and checks anchors; `polaris-id anchor-record` records one as the schema owner.
+- Algorithm migration is tested through arbitrary sequences, and in the lab through seven signature families.
 - polaris-oid4vp asks for a nested claim and its value (`--claim age_equal_or_over.18=true`): one statement of an EUDI PID, not all of them.
 - polaris-oid4vp verifies an issuer `x5c` through the intermediate CAs it carries, link by link in order, as eudi-dev v2.5.0's PID Provider sends.
 - An issuance tunnel serves only the wallet's OpenID4VCI endpoints over your own tunnel, so a wallet can be issued a demo copy.

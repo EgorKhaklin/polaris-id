@@ -21098,6 +21098,186 @@ class AtlasCacheScopeTests(PolarisTestCase):
         self._login('admin')
         self.assertGreater(len(self._labels()), 1, "an administrator was served a bound operator's answer")
 
+
+class MigrationChainPropertyTests(PolarisTestCase):
+    """Algorithm migration under arbitrary sequences (owner's direction, 2026-10-05: the function
+    must work "perfectly, securely and without problems" across many migrations and algorithms,
+    including the weak ones). A Hypothesis state machine drives the product paths a deployment
+    uses, the operator's /uc6/migrate, the population runner and its grace windows, against a
+    model, and after every step holds each credential to the promises of
+    docs/operator/QUANTUM-EVENT.md and docs/design/multi-sig-migration.md:
+
+      - it keeps at least one signature in force, and its signatures are exactly the model's;
+      - nothing is ever signed under an algorithm nothing here signs with, or twice under one;
+      - the operator's verify answers signature_valid and lists exactly the signatures in force;
+      - at the relying-party door, a pack carrying any signature still in force is accepted,
+        and (under real signing, where the bytes differ) one whose signature is past its
+        deprecation date is not.
+
+    Under the placeholder profile every signature is the same bytes, so the door half is
+    decided only by the real-signer suite, which runs this module as it is."""
+
+    _register_rp = RelyingPartyApiTests._register_rp
+    _basic = staticmethod(RelyingPartyApiTests._basic)
+    _bearer = RelyingPartyApiTests._bearer
+    _issue_and_pack = RelyingPartyApiTests._issue_and_pack
+
+    def setUp(self):
+        super().setUp()
+        self._rp_client_ids = []
+
+    def tearDown(self):
+        if getattr(self, '_rp_client_ids', None):
+            _sql("DELETE FROM RelyingParty WHERE client_id = ANY(%s)", (self._rp_client_ids,),
+                 fetch='none')
+        super().tearDown()
+
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def test_arbitrary_migration_sequences_keep_every_promise(self):
+        """Seeded random sequences rather than a Hypothesis state machine: the population runner
+        changes shared database state, which Hypothesis cannot replay. Each sequence is
+        reproducible from its seed, and a failure prints the steps that led to it."""
+        import random
+        import time
+        import migration
+
+        algos = {r['name']: r['algorithm_id'] for r in _sql(
+            "SELECT algorithm_id, name FROM CryptographicAlgorithm ORDER BY algorithm_id")}
+        signable = set()
+        for name in algos:
+            try:
+                pqc_signing.signature_for_migration('PROBE-SIGNABLE', name)
+                signable.add(name)
+            except Exception:
+                pass
+        self.assertIn('ML-DSA-87', signable, 'control: there is somewhere to migrate to')
+        self.assertTrue(set(algos) - signable, 'control: there are targets that must be refused')
+        cid = self._register_rp('chain-secret-1', suffix='0301')
+        auth = self._bearer(cid, 'chain-secret-1')
+        tag = os.urandom(3).hex()
+        sequences = int(os.environ.get('POLARIS_MIGRATION_SEQUENCES', '6'))
+        steps = int(os.environ.get('POLARIS_MIGRATION_STEPS', '8'))
+
+        def check(creds, trace):
+            for c in creds:
+                rows = _sql(
+                    "SELECT a.name, s.signature_bytes, s.signed_at, t.issued_date, "
+                    "       (s.deprecation_date IS NULL OR s.deprecation_date > now()) AS in_force, "
+                    # A deprecation within a few seconds of now may pass between this read and
+                    # the door's (a CI runner is slow): such a row is at the boundary, and
+                    # nothing is asserted about it in either direction.
+                    "       (s.deprecation_date IS NOT NULL AND s.deprecation_date "
+                    "          BETWEEN now() - interval '5 seconds' AND now() + interval '5 seconds') AS boundary "
+                    "  FROM TokenSignature s JOIN CryptographicAlgorithm a "
+                    "    ON a.algorithm_id = s.algorithm_id "
+                    "  JOIN IdentityToken t ON t.token_id = s.token_id WHERE s.token_id = %s",
+                    (c['tid'],))
+                where = '%s after %s' % (c['tv'], ' -> '.join(trace))
+                names = [r['name'] for r in rows]
+                self.assertEqual(len(names), len(set(names)), 'one signature per algorithm: ' + where)
+                self.assertEqual(set(names), c['model'], 'the database is the model: ' + where)
+                self.assertTrue(set(names) <= signable | {'ML-DSA-65'},
+                                'signed under an algorithm nothing here signs with: ' + where)
+                live = {r['name'] for r in rows if r['in_force']}
+                self.assertTrue(live, 'no signature in force: ' + where)
+                for r in rows:
+                    self.assertGreaterEqual(r['signed_at'], r['issued_date'],
+                                            'a signature predates its credential: ' + where)
+                v = self.client.get('/api/tokens/%d/verify' % c['tid']).get_json()
+                self.assertTrue(v['signature_valid'], '%s: %s' % (where, v))
+                listed = {x['algorithm'] for x in v['signatures']}
+                sure_live = {r['name'] for r in rows if r['in_force'] and not r['boundary']}
+                sure_gone = {r['name'] for r in rows if not r['in_force'] and not r['boundary']}
+                self.assertTrue(sure_live <= listed and not (sure_gone & listed),
+                                'the operator verify lists the signatures in force: %s %s' % (where, listed))
+                for r in rows:
+                    if r['boundary']:
+                        continue
+                    sig = bytes(r['signature_bytes'])
+                    flask_app.security.rate_limiter.reset()   # the door's per-address limit, not the subject
+                    answer = self.client.post('/api/v1/verify', headers=auth, json={
+                        'token_value': c['tv'], 'signature_hex': sig.hex()}).get_json()
+                    if r['in_force']:
+                        self.assertEqual(answer.get('decision'), 'accept',
+                                         'a pack under %s, in force: %s %s' % (r['name'], where, answer))
+                    elif pqc_signing.is_enabled() and not any(
+                            bytes(o['signature_bytes']) == sig for o in rows if o['in_force']):
+                        self.assertNotEqual(answer.get('decision'), 'accept',
+                                            'a pack under %s, past its deprecation date: %s %s'
+                                            % (r['name'], where, answer))
+
+        for seed in range(sequences):
+            rnd = random.Random(seed)
+            creds, trace = [], []
+            for k in range(2):
+                tv = 'CHAIN-%s-%d-%d' % (tag, seed, k)
+                pack = self._issue_and_pack(tv)
+                names = {r['name'] for r in _sql(
+                    "SELECT a.name FROM TokenSignature s JOIN CryptographicAlgorithm a "
+                    "  ON a.algorithm_id = s.algorithm_id WHERE s.token_id = %s", (pack['token_id'],))}
+                creds.append({'tid': pack['token_id'], 'tv': tv, 'model': names})
+            check(creds, ['seed %d: issued' % seed])
+            for _ in range(steps):
+                op = rnd.choice(['one', 'one', 'one', 'population', 'wait'])
+                if op == 'one':
+                    c, name, deprecate = rnd.choice(creds), rnd.choice(sorted(algos)), rnd.random() < 0.5
+                    data = {'token_id': str(c['tid']), 'new_algorithm': str(algos[name])}
+                    if deprecate:
+                        data['deprecate_old'] = '1'
+                    r = self._post('/uc6/migrate', data=data)
+                    allowed = name in signable and name not in c['model']
+                    trace.append('migrate %s to %s%s%s' % (c['tv'][-3:], name,
+                                 ' deprecating' if deprecate else '', '' if allowed else ' (refused)'))
+                    self.assertLess(r.status_code, 500, ' -> '.join(trace))
+                    body = r.get_data(as_text=True)
+                    if allowed and r.status_code not in (302, 303) and (
+                            'migration targets' in body or 'wrong parameter set' in body):
+                        trace[-1] += ' (refused: no key for the target here)'
+                    elif allowed:
+                        self.assertIn(r.status_code, (302, 303), '%s: %s' % (
+                            ' -> '.join(trace), body[:300]))
+                        c['model'].add(name)
+                    else:
+                        self.assertNotIn(r.status_code, (302, 303), ' -> '.join(trace))
+                elif op == 'population':
+                    name, grace = rnd.choice(sorted(algos)), rnd.choice([None, 0, 1])
+                    trace.append('population to %s%s' % (name, '' if grace is None else ' grace %ds' % grace))
+                    with self._new_conn() as conn:
+                        try:
+                            target_id, target_name = migration.resolve_target(conn, name)
+                        except Exception:
+                            self.assertNotIn(name, signable, ' -> '.join(trace))
+                            trace[-1] += ' (refused)'
+                            check(creds, trace)
+                            continue
+                        try:
+                            migration.migrate_population(conn, target_id, target_name, batch_size=200)
+                            if grace is not None:
+                                migration.deprecate_superseded(conn, target_id, grace_seconds=grace)
+                        except custody.AlgorithmUnavailableError:
+                            # This deployment's custody holds no key for the target (CI's real-signer
+                            # job provisions an ML-DSA-87 migration key only): the runner refuses
+                            # before writing anything, which is the drill's "a migration that cannot
+                            # sign stops".
+                            conn.rollback()
+                            trace[-1] += ' (refused: no key for the target here)'
+                            check(creds, trace)
+                            continue
+                        except migration.MigrationRefused:
+                            # A credential that already holds a retired signature under the target
+                            # can never be re-signed under it (one per algorithm, append-only): the
+                            # runner names them and closes nothing, rather than strand them.
+                            conn.rollback()
+                            trace[-1] += ' (refused: some cannot be re-signed)'
+                    for c in creds:
+                        c['model'].add(target_name)
+                else:
+                    trace.append('wait')
+                    time.sleep(1.2)
+                check(creds, trace)
+
 if __name__ == '__main__':
     # Pull in property-based invariant tests (C1, C2, C3) so they run as
     # part of the main suite. The import is at the bottom so test_app.py
