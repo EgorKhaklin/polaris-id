@@ -60,6 +60,9 @@ def main(argv):
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     ap.add_argument("--n", type=int, default=200, help="credentials to migrate")
     ap.add_argument("--keep", action="store_true", help="keep the database afterwards")
+    ap.add_argument("--every", action="store_true",
+                    help="every signature mechanism this liboqs build carries, not the seven above "
+                         "(the slow SLH-DSA/SPHINCS+ 's' sets are skipped: each signs in about a second)")
     a = ap.parse_args(argv)
     import warnings
     warnings.filterwarnings("ignore")
@@ -68,6 +71,21 @@ def main(argv):
     from psycopg2.extras import RealDictCursor
 
     enabled = set(oqs.get_enabled_sig_mechanisms())
+    chain = CHAIN
+    if a.every:
+        def family(m):
+            for prefix, fam in (("ML-DSA", "ML-DSA"), ("Falcon", "FN-DSA"), ("SLH_DSA", "SLH-DSA"),
+                                ("SPHINCS+", "SPHINCS+"), ("MAYO", "MAYO"), ("OV-", "UOV"),
+                                ("SNOVA", "SNOVA"), ("cross", "CROSS")):
+                if m.startswith(prefix):
+                    return fam
+            return m.split("-")[0][:40]
+
+        def slow(m):
+            return (m.startswith(("SLH_DSA", "SPHINCS+")) and
+                    any(t in m.upper() for t in ("128S", "192S", "256S", "-128S", "-192S", "-256S")))
+        chain = [(m, family(m), "liboqs %s" % oqs.oqs_version(), 128)
+                 for m in oqs.get_enabled_sig_mechanisms() if not slow(m) and m != "ML-DSA-44"]
     env = dict(os.environ)
     env.setdefault("PGHOST", env.get("POLARIS_DB_HOST", "localhost"))
     env.setdefault("PGUSER", env.get("POLARIS_DB_USER", "postgres"))
@@ -89,14 +107,14 @@ def main(argv):
                         " WHERE t.status IN ('ACTIVE','RESERVE') ORDER BY t.token_id LIMIT %s", (a.n,))
             creds = cur.fetchall()
         conn.commit()
-        print("migrating %d credentials through %d algorithms\n" % (len(creds), len(CHAIN)))
+        print("migrating %d credentials through %d algorithms\n" % (len(creds), len(chain)))
         hdr = "%-26s %-8s %10s %10s %9s %9s %9s %10s %s" % (
             "algorithm", "family", "pk bytes", "sig bytes", "keygen ms", "sign ms", "verify ms",
             "db ms/cred", "result")
         print(hdr)
         print("-" * len(hdr))
         used = []
-        for mech, family, status, bits in CHAIN:
+        for mech, family, status, bits in chain:
             if mech not in enabled:
                 print("%-26s %-8s %s" % (mech, family, "not in this liboqs build: skipped"))
                 continue

@@ -26,6 +26,27 @@ stored bytes and key alone, and a signature with one flipped byte was refused.
 
 Times are medians per credential, at NIST security category 5 for every family.
 
+## Every variant liboqs carries
+
+The same run with `--every`, 2026-10-05: **136 of 136 signature mechanisms in liboqs 0.15.0, every
+hop OK**, 50 credentials each. That is every variant the build carries except ML-DSA-44 (below
+Polaris's floor) and the 84 slow SLH-DSA and SPHINCS+ "s" sets, whose two category-5 members are
+measured above.
+
+| Family | Variants | Public key | Signature | Sign | Verify |
+|---|---:|---:|---:|---:|---:|
+| SLH-DSA (pure and pre-hash, "f" sets) | 78 | 32 to 64 B | 17,088 to 49,856 B | 13 to 63 ms | 1.2 to 1.9 ms |
+| CROSS | 18 | 54 to 153 B | 8,960 to 74,590 B | 0.3 to 3.8 ms | 0.4 to 1.8 ms |
+| UOV | 12 | 43,576 B to **2,869,440 B** | 96 to 260 B | 0.07 to 6.6 ms | 0.15 to 2.1 ms |
+| SNOVA | 12 | 1,016 to 31,266 B | 124 to 576 B | 0.5 to 3.4 ms | 0.2 to 1.5 ms |
+| SPHINCS+ ("f" sets) | 6 | 32 to 64 B | 17,088 to 49,856 B | 11 to 68 ms | 1.1 to 1.9 ms |
+| FN-DSA (Falcon, padded and not) | 4 | 897 to 1,793 B | 660 to 1,280 B | 0.2 to 0.5 ms | 0.05 to 0.09 ms |
+| MAYO | 4 | 1,420 to 5,554 B | 186 to 964 B | 0.1 to 1.6 ms | 0.05 to 0.6 ms |
+| ML-DSA | 2 | 1,952 to 2,592 B | 3,309 to 4,627 B | 0.2 to 0.6 ms | 0.14 to 0.25 ms |
+
+The largest UOV key, 2.87 MB, is 5.7 MB per signature row as stored today: finding 1 below, at
+its extreme.
+
 ## What it found
 
 **1. The storage layout does not survive large keys.** Every signature row stores the signing
