@@ -4,7 +4,10 @@
 on the owner's direction of 2026-10-05 (FN-DSA and the newer algorithms as something Polaris
 already runs). State: OPEN. The falsifiers in section 6 were written before the build. Step 1 (lab) passed on
 2026-10-05 ([015/STEP1.md](015/STEP1.md)): liboqs and `@noble/post-quantum` agree on 11 FN-DSA and
-SLH-DSA variants in both directions, and refuse tampering and wrong keys alike.
+SLH-DSA variants in both directions, and refuse tampering and wrong keys alike. Step 2 (lab, 2026-10-05,
+[015/STEP2.md](015/STEP2.md)): from Python, Falcon's signing time depends on the (public) message and
+no dependence on the secret key was detected; that resolution cannot clear falsifier 2, so FN-DSA
+stays lab-only pending a native harness.
 
 ---
 
