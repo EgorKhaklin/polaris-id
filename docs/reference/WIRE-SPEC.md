@@ -668,8 +668,10 @@ genuine ML-DSA-44 pack that MUST be refused, and a trust list recording such a m
 A future parameter set or algorithm family is introduced by adding it to the accepted set
 in a new version of this specification; until then a verifier MUST reject it.
 
-**The FN-DSA family (draft FIPS 206), since 1.0.0-rc.71.** A verifier also accepts
-`"Falcon-padded-1024"`: round-3 Falcon-1024 with fixed-length signatures (1,793-byte public key,
+**The FN-DSA family (draft FIPS 206), since 1.0.0-rc.71, optional.** A verifier MAY accept
+`"Falcon-padded-1024"`; one that does not MUST reject it like any value outside its accepted set,
+and the conformance suite runs the genuine-Falcon case only for a verifier that declares the
+family (`run_conformance.py --algorithm Falcon-padded-1024`). The algorithm is round-3 Falcon-1024 with fixed-length signatures (1,793-byte public key,
 1,280-byte signature, NIST category 5), the scheme FN-DSA standardises. The name is the scheme's,
 not the standard's, because FIPS 206 is not final and its encoding may still change; a final
 FN-DSA would be added under its own name. `"Falcon-512"` and `"Falcon-padded-512"` (category 1)

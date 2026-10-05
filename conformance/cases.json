@@ -3664,7 +3664,8 @@
       "expect": {
         "authentic": true
       },
-      "note": "A genuine Falcon-padded-1024 pack verifies: the FN-DSA family (draft FIPS 206), category 5, verification only.",
+      "note": "A genuine Falcon-padded-1024 pack verifies: the FN-DSA family (draft FIPS 206), category 5. Optional in version 1: a verifier that implements the family MUST pass this; one that does not MUST reject every Falcon artifact (the other two cases).",
+      "optional_algorithm": "Falcon-padded-1024",
       "since": "1.0.0-rc.71"
     },
     {

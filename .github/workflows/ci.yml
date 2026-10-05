@@ -2262,7 +2262,7 @@ jobs:
       # banner to STDOUT, in front of the verdict, so a third party's json.loads(stdout)
       # raised on the first character.
       - name: Conformance suite — Python SDK as an EXTERNAL subprocess (the published contract)
-        run: PYTHONPATH=sdk/python python conformance/run_conformance.py --verifier "python -m polaris_verify.conformance"
+        run: PYTHONPATH=sdk/python python conformance/run_conformance.py --verifier "python -m polaris_verify.conformance" --algorithm Falcon-padded-1024
 
       # v9.429 — does the published contract CONSTRAIN a verifier, or merely describe
       # one? The drill forces each decision field a verifier reports to its permissive
@@ -2596,7 +2596,7 @@ jobs:
       - name: SDK unit tests
         run: cd sdk/typescript && node --test
       - name: Conformance suite — TypeScript SDK (the same runner as the Python SDK)
-        run: python3 conformance/run_conformance.py --verifier "node sdk/typescript/src/conformance.ts"
+        run: python3 conformance/run_conformance.py --verifier "node sdk/typescript/src/conformance.ts" --algorithm Falcon-padded-1024
 
       # v9.330 (P8.8b) — the frozen version-1 cases under the CURRENT TypeScript SDK (immutability
       # checked first); the Python side of the suite runs in the pqc-real job.

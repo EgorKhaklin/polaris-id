@@ -93,8 +93,8 @@ def main():
     new_cases = [
         {"name": "pack-fndsa1024-valid", "artifact": "authenticity-pack",
          "pack_file": "conformance/vectors/pack-fndsa1024-valid.json", "expect": {"authentic": True},
-         "note": "A genuine Falcon-padded-1024 pack verifies: the FN-DSA family (draft FIPS 206), category 5, verification only.",
-         "since": SINCE},
+         "note": "A genuine Falcon-padded-1024 pack verifies: the FN-DSA family (draft FIPS 206), category 5. Optional in version 1: a verifier that implements the family MUST pass this; one that does not MUST reject every Falcon artifact (the other two cases).",
+         "optional_algorithm": "Falcon-padded-1024", "since": SINCE},
         {"name": "pack-fndsa1024-tampered", "artifact": "authenticity-pack",
          "pack_file": "conformance/vectors/pack-fndsa1024-tampered.json", "expect": {"authentic": False},
          "note": "One flipped signature byte under Falcon-padded-1024.", "since": SINCE},
