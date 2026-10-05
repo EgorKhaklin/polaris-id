@@ -1,20 +1,34 @@
 /* The styles for 404.html, kept out of the page so the site's Content-Security-Policy
-   (site/_headers) can refuse inline styles. The palette lives in tokens.css. */
-*{box-sizing:border-box}
-html,body{margin:0;padding:0;min-height:100vh;background:
-    radial-gradient(ellipse 120% 700px at 50% -90px, rgba(93,214,255,.05) 0%, transparent 55%),
-    linear-gradient(180deg,#081120 0%,var(--ground) 420px) var(--ground);
-    color:var(--ink);display:flex;align-items:center;justify-content:center;
-    font:14px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}
-main{text-align:center;padding:40px 22px;max-width:620px}
-.code{font-family:var(--font-mono);font-size:64px;font-weight:700;letter-spacing:.18em;color:var(--gold);
-    text-shadow:0 0 36px rgba(232,190,100,.3);margin:0 0 10px}
-h1{font-size:18px;font-weight:650;letter-spacing:.04em;margin:0 0 14px;color:var(--ink)}
-p{color:var(--ink-2);margin:0 0 26px}
-a.btn{display:inline-block;padding:12px 26px;font-family:var(--font-mono);font-size:12px;letter-spacing:.1em;
-    text-transform:uppercase;border:1px solid rgba(93,214,255,.35);border-radius:3px;color:var(--accent);
-    text-decoration:none}
-a.btn:hover{background:rgba(93,214,255,.1);border-color:var(--accent)}
-.foot{margin-top:34px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:.08em;
-    text-transform:uppercase;color:var(--ink-3)}
-.foot a{color:var(--ink-3)}
+   (site/_headers) can refuse inline styles. The palette lives in tokens.css; the fonts are
+   index.css's files, declared again here because this page does not load index.css. */
+@font-face { font-family: "Inter"; src: url("/fonts/InterVariable.woff2") format("woff2");
+             font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+             font-weight: 400; font-display: swap; }
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100vh; }
+body { display: flex; align-items: center; justify-content: center; color: var(--ink-2);
+       font: 400 16px/1.65 var(--font-sans); -webkit-font-smoothing: antialiased;
+       background: radial-gradient(ellipse 60% 50% at 50% 30%, rgba(13, 38, 77, 0.8), transparent 75%), var(--ground); }
+main { text-align: center; padding: 48px 24px; max-width: 560px; }
+.sky { position: relative; width: 200px; height: 200px; margin: 0 auto 24px; }
+.sky img { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+           filter: drop-shadow(0 0 22px rgba(221, 202, 155, 0.22)); }
+.trail { position: absolute; border-radius: 50%;
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 1.6px), #000 calc(100% - 1.2px));
+            mask: radial-gradient(farthest-side, transparent calc(100% - 1.6px), #000 calc(100% - 1.2px));
+    animation: turn linear infinite; }
+.t1 { inset: 18%; animation-duration: 60s; background: conic-gradient(from 20deg, transparent 0 52%, rgba(221, 202, 155, 0.55) 74%, transparent 75%); }
+.t2 { inset: 6%; animation-duration: 90s; background: conic-gradient(from 160deg, transparent 0 40%, rgba(221, 202, 155, 0.40) 66%, transparent 67%); }
+.t3 { inset: -6%; animation-duration: 130s; background: conic-gradient(from 260deg, transparent 0 58%, rgba(244, 244, 245, 0.28) 80%, transparent 81%); }
+@keyframes turn { to { transform: rotate(360deg); } }
+.code { font: 400 13px/1 var(--font-mono); letter-spacing: 0.3em; color: var(--gold); margin: 0 0 16px; }
+h1 { font-size: 26px; line-height: 1.25; letter-spacing: -0.015em; font-weight: 600; color: var(--ink); margin: 0 0 16px; }
+p { margin: 0 0 28px; }
+.btn { display: inline-flex; align-items: center; height: 46px; padding: 0 22px; border-radius: 9px;
+       background: var(--gold); color: var(--ground); font-weight: 600; font-size: 15px; text-decoration: none; }
+.btn:hover { background: var(--ink); }
+.btn:focus-visible, a:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.foot { margin: 36px 0 0; font-size: 13px; }
+.foot a { color: var(--ink-3); }
+@media (prefers-reduced-motion: reduce) { .trail { animation: none; } }
