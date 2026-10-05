@@ -21,6 +21,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- The trigger mutation drill credits a mutation only when the tests that failed fail again, so a flaky test can no longer hide an untested refusal.
 - Every documented install reaches the current candidate; a bare `pip install` gets 0.1.0, which predates every fix in SECURITY.md.
 - The plug-and-play matrix tests the SDKs' current candidates on a genuine and a tampered credential, not npm's `latest`.
 - The EU-library lab wallet's lockfile carried nine OSV advisories (Bouncy Castle 1.83, Kotlin 2.2.21); it pins fixed releases.
