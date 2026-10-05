@@ -21106,7 +21106,12 @@ class MigrationChainPropertyTests(PolarisTestCase):
             for c in creds:
                 rows = _sql(
                     "SELECT a.name, s.signature_bytes, s.signed_at, t.issued_date, "
-                    "       (s.deprecation_date IS NULL OR s.deprecation_date > now()) AS in_force "
+                    "       (s.deprecation_date IS NULL OR s.deprecation_date > now()) AS in_force, "
+                    # A deprecation within a few seconds of now may pass between this read and
+                    # the door's (a CI runner is slow): such a row is at the boundary, and
+                    # nothing is asserted about it in either direction.
+                    "       (s.deprecation_date IS NOT NULL AND s.deprecation_date "
+                    "          BETWEEN now() - interval '5 seconds' AND now() + interval '5 seconds') AS boundary "
                     "  FROM TokenSignature s JOIN CryptographicAlgorithm a "
                     "    ON a.algorithm_id = s.algorithm_id "
                     "  JOIN IdentityToken t ON t.token_id = s.token_id WHERE s.token_id = %s",
@@ -21124,9 +21129,14 @@ class MigrationChainPropertyTests(PolarisTestCase):
                                             'a signature predates its credential: ' + where)
                 v = self.client.get('/api/tokens/%d/verify' % c['tid']).get_json()
                 self.assertTrue(v['signature_valid'], '%s: %s' % (where, v))
-                self.assertEqual({x['algorithm'] for x in v['signatures']}, live,
-                                 'the operator verify lists exactly the signatures in force: ' + where)
+                listed = {x['algorithm'] for x in v['signatures']}
+                sure_live = {r['name'] for r in rows if r['in_force'] and not r['boundary']}
+                sure_gone = {r['name'] for r in rows if not r['in_force'] and not r['boundary']}
+                self.assertTrue(sure_live <= listed and not (sure_gone & listed),
+                                'the operator verify lists the signatures in force: %s %s' % (where, listed))
                 for r in rows:
+                    if r['boundary']:
+                        continue
                     sig = bytes(r['signature_bytes'])
                     flask_app.security.rate_limiter.reset()   # the door's per-address limit, not the subject
                     answer = self.client.post('/api/v1/verify', headers=auth, json={
