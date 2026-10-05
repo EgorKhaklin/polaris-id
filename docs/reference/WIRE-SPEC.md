@@ -649,7 +649,7 @@ pinned by checksum, with a pinned older detached verifier. On every CI run the c
 verifiers MUST hold every frozen case, and the pinned older verifier MUST agree on every
 current case at or before its release (each case carries `since`), MUST NOT accept anything
 a later case expects rejected, and may only decline what it predates.
-**Algorithm agility.** `algorithm` names a FIPS 204 parameter set. Version 1 accepts
+**Algorithm agility.** `algorithm` names a signature parameter set. Version 1 accepts
 `"ML-DSA-65"` (NIST level 3, the default) and `"ML-DSA-87"` (level 5). A verifier MUST
 verify under the declared parameter set: a signature that verifies only under another
 set is invalid, and a value outside the accepted set (`"ML-DSA-44"` included, since it
@@ -667,6 +667,14 @@ retired key is refused. The conformance suite carries vectors under both accepte
 genuine ML-DSA-44 pack that MUST be refused, and a trust list recording such a migration.
 A future parameter set or algorithm family is introduced by adding it to the accepted set
 in a new version of this specification; until then a verifier MUST reject it.
+
+**The FN-DSA family (draft FIPS 206), since 1.0.0-rc.71.** A verifier also accepts
+`"Falcon-padded-1024"`: round-3 Falcon-1024 with fixed-length signatures (1,793-byte public key,
+1,280-byte signature, NIST category 5), the scheme FN-DSA standardises. The name is the scheme's,
+not the standard's, because FIPS 206 is not final and its encoding may still change; a final
+FN-DSA would be added under its own name. `"Falcon-512"` and `"Falcon-padded-512"` (category 1)
+are below the floor and MUST be rejected. A verifier that predates this version declines such an
+artifact, as the rule above allows. Polaris verifies the family and signs nothing under it.
 
 A new major is introduced with its own frozen set beside version 1's; a verifier that
 implements both decides per artifact by its `format`, never by guessing.
