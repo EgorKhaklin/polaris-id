@@ -7,14 +7,23 @@
    ============================================================================ */
 :root {
     --accent: #8fb3e8;
+    --font-display: "Cinzel", Georgia, "Times New Roman", serif;
     --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+    --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     --gold: #ddca9b;
+    --gold-deep: #927e5e;
+    --gold-wash: rgba(221, 202, 155, 0.10);
     --ground: #09090b;
     --ink: #f4f4f5;
     --ink-2: #b4b4bb;
     --ink-3: #8e8e96;
     --line: #232328;
     --line-strong: #303037;
+    --navy: #0d264d;
+    --ok: #5ec29a;
+    --sunken: #060607;
+    --surface: #111114;
     --surface-2: #18181c;
     --warn: #e3b55b;
+    --warn-wash: rgba(227, 181, 91, 0.12);
 }
