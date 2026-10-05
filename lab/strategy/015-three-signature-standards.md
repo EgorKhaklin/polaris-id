@@ -2,7 +2,9 @@
 
 **Opened 2026-10-05.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md),
 on the owner's direction of 2026-10-05 (FN-DSA and the newer algorithms as something Polaris
-already runs). State: OPEN, nothing built. The falsifiers in section 6 are written before the build.
+already runs). State: OPEN. The falsifiers in section 6 were written before the build. Step 1 (lab) passed on
+2026-10-05 ([015/STEP1.md](015/STEP1.md)): liboqs and `@noble/post-quantum` agree on 11 FN-DSA and
+SLH-DSA variants in both directions, and refuse tampering and wrong keys alike.
 
 ---
 
