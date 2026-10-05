@@ -1648,6 +1648,62 @@ def check_signature_self_contained_verify(root: pathlib.Path) -> list[Finding]:
                "at use (token detail) — self-contained, survives key rotation")
 
 
+def check_possession_requires_registered_key(root: pathlib.Path) -> list[Finding]:
+    """THREAT-MODEL (2026-10-04): the application role may INSERT a TokenSignature row, so a
+    possession proof that trusts the row vouches for a forgery: a keyless row (SHA3-256 of the
+    token value, which anyone computes) or a row under an attacker's own key. Under real signing
+    `_possession_authenticated`, the one function every possession route calls, must refuse a
+    match unless `_issuer_key_facts(...)` says the issuing authority had registered that key at
+    the signature's instant, and must treat None (unknown) as a refusal: the shape is an
+    `if pqc_signing.is_enabled():` holding the `_issuer_key_facts` call and an
+    `if <fact> is not True: return None`, ahead of the function's final `return`. Read from the
+    syntax tree, so a comment naming the gate does not satisfy it. The effect is tested in
+    RelyingPartyApiTests (both plants, made as polaris_app)."""
+    name = "possession_requires_registered_key"
+    src = _read_raw(root, "polaris_web/rp_api.py")
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return _fail(name, "polaris_web/rp_api.py does not parse")
+    fn = next((n for n in tree.body if isinstance(n, ast.FunctionDef)
+               and n.name == "_possession_authenticated"), None)
+    if fn is None:
+        return _fail(name, "rp_api.py defines no _possession_authenticated, the possession proof "
+                           "every vouching route shares")
+
+    def is_enabled_test(node):
+        return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "is_enabled" and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "pqc_signing")
+
+    def refuses_unless_true(stmt):
+        t = stmt.test if isinstance(stmt, ast.If) else None
+        return (t is not None and isinstance(t, ast.Compare) and len(t.ops) == 1
+                and isinstance(t.ops[0], ast.IsNot) and isinstance(t.comparators[0], ast.Constant)
+                and t.comparators[0].value is True and len(stmt.body) == 1
+                and isinstance(stmt.body[0], ast.Return) and isinstance(stmt.body[0].value, ast.Constant)
+                and stmt.body[0].value.value is None)
+
+    gate_at = None
+    for i, stmt in enumerate(fn.body):
+        if isinstance(stmt, ast.If) and is_enabled_test(stmt.test):
+            calls = [c for c in ast.walk(stmt) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                     and c.func.id == "_issuer_key_facts"]
+            if calls and any(refuses_unless_true(b) for b in stmt.body):
+                gate_at = i
+    if gate_at is None:
+        return _fail(name, "_possession_authenticated has no `if pqc_signing.is_enabled():` that asks "
+                           "_issuer_key_facts and refuses (`if ... is not True: return None`) unless the "
+                           "authority had registered the key: a planted TokenSignature row, keyless or "
+                           "under an attacker's key, would be vouched for under real signing")
+    if not (fn.body and isinstance(fn.body[-1], ast.Return) and gate_at < len(fn.body) - 1):
+        return _fail(name, "the registered-key gate in _possession_authenticated is not ahead of its "
+                           "final return, so a match can leave without passing it")
+    return _ok(name, "under real signing every possession proof refuses a signature whose key the "
+                     "issuing authority had not registered at the signature's instant (None fails "
+                     "closed), so a TokenSignature row the application role plants vouches for nothing")
+
+
 # ---------------------------------------------------------------------------
 # Real PQC must be the PRODUCTION DEFAULT, not merely testable. That needs three
 # things together: liboqs in the prod image (so oqs imports at runtime), the
@@ -24505,6 +24561,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_pqc_posture,
     check_edge_pq_kex,
     check_signature_self_contained_verify,
+    check_possession_requires_registered_key,
     check_prod_real_pqc,
     check_sql_console_readonly,
     check_prod_image_no_test_deps,
