@@ -281,7 +281,7 @@ algorithms flow through the `CryptographicAlgorithm` table (C7)).
 Run the check layer via `python3 -m polaris_checks.run`; the DB-backed
 suites via `./scripts/polaris-test.sh` (which wraps the env). The measured
 counts, stamped with the version they were taken at, are in the
-README's "Verified, not asserted" table.
+"Verified, not asserted" table in [REVIEW-PACKET.md](REVIEW-PACKET.md#5-verified-not-asserted).
 
 The check layer verifies that the codebase IS A CERTAIN SHAPE, not just
 that it does the right thing on a given input: that the version string
