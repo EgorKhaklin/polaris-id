@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/hero.svg" width="100%" alt="Polaris ID">
+<img src="docs/assets/hero.svg?v=tm1" width="100%" alt="Polaris ID">
 
 **Polaris ID is identity infrastructure built to be checked, not trusted.**
 

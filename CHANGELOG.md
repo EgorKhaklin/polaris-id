@@ -75,7 +75,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The README is a front page: what it is, a one-minute check, outside evidence, the guarantees and limits; detail moved to the docs.
 - The project site is rebuilt: one claim, the one-minute check, outside evidence first, and the limits; still no script.
 - MISSION.md's second item reads "ML-DSA-65 by default", not "Post-quantum by default", by the owner's direction (2026-10-03).
-- The site's Khaklin Technologies lockup carries the trademark sign (™); the mark is applied for at the USPTO.
+- The Khaklin Technologies lockup on the site and in the README hero carries the trademark sign (™); the mark is applied for at the USPTO.
 - The operator console is rethought around what Polaris is now: grouped, role-gated navigation; new sign-in, landing and Overview.
 - The Atlas shows counts only: its map points, event feed, records grid and person focus are withdrawn.
 - The Atlas reads hourly and daily totals, never an event: the page from 6.7 s to 31 ms at ten million verifications.
