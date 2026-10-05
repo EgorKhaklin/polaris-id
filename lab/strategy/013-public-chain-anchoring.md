@@ -6,6 +6,8 @@ audit log on-chain" over trusting chain-based issuers by DID and a bridge to ano
 network's zero-knowledge stack. State: OPEN. The falsifiers in section 6 were written before the build.
 Step 1 passed on 2026-10-04 ([013/STEP1.md](013/STEP1.md)): Bitcoin block 969876. Step 2, the
 product record, built the same day ([013/STEP2.md](013/STEP2.md)); falsifiers 1, 2 and 4 held.
+Step 3, an EVM chain, in the lab on 2026-10-05 ([013/STEP3.md](013/STEP3.md)): verified on local chains
+with six controls refused; a public chain waits on an owner-funded key.
 
 ---
 
