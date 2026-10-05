@@ -4447,6 +4447,46 @@ def test_prod_real_pqc_check_discriminates(tmp_path):
         "must FAIL when requirements-pqc.txt does not pin liboqs-python with hashes"
 
 
+def test_possession_requires_registered_key_discriminates(tmp_path):
+    (tmp_path / "polaris_web").mkdir()
+    rp = tmp_path / "polaris_web" / "rp_api.py"
+    good = (
+        "def _possession_authenticated(token_value, sig):\n"
+        "    match = find(token_value, sig)\n"
+        "    if match is None:\n"
+        "        return None\n"
+        "    if pqc_signing.is_enabled():\n"
+        "        authorized, _ = _issuer_key_facts(match['token_id'], 1, match['k'], match['t'])\n"
+        "        if authorized is not True:\n"
+        "            return None\n"
+        "    return match\n")
+    rp.write_text(good)
+    assert checks.check_possession_requires_registered_key(tmp_path)[0].level == "OK", \
+        "must PASS when the possession proof refuses unless the key was registered"
+    rp.write_text(good.replace("    if pqc_signing.is_enabled():\n"
+                               "        authorized, _ = _issuer_key_facts(match['token_id'], 1, match['k'], match['t'])\n"
+                               "        if authorized is not True:\n"
+                               "            return None\n", ""))
+    assert checks.check_possession_requires_registered_key(tmp_path)[0].level == "FAIL", \
+        "must FAIL with no gate: a planted row would be vouched for"
+    rp.write_text(good.replace("if authorized is not True:", "if authorized is False:"))
+    assert checks.check_possession_requires_registered_key(tmp_path)[0].level == "FAIL", \
+        "must FAIL when only False refuses: None (an attacker key with no history) would pass"
+    rp.write_text(good.replace("    if pqc_signing.is_enabled():\n"
+                               "        authorized, _ = _issuer_key_facts(match['token_id'], 1, match['k'], match['t'])\n"
+                               "        if authorized is not True:\n"
+                               "            return None\n",
+                               "    # if pqc_signing.is_enabled(): _issuer_key_facts ... is not True: return None\n"))
+    assert checks.check_possession_requires_registered_key(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a comment names the gate and no code holds it"
+    rp.write_text(good.replace("    return match\n", "    return match\n    unreachable = 1\n"))
+    assert checks.check_possession_requires_registered_key(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the function does not end on its return after the gate"
+    rp.unlink()
+    assert checks.check_possession_requires_registered_key(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a tree with no rp_api.py"
+
+
 def test_signature_self_contained_verify_check_discriminates(tmp_path):
     web = tmp_path / "polaris_web"; sql = tmp_path / "polaris_sql"
     web.mkdir(); sql.mkdir()

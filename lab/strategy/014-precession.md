@@ -3,7 +3,10 @@
 **Opened 2026-10-05.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md),
 on the owner's direction of 2026-10-05: algorithm migration must work "perfectly, securely and
 without problems" across many migrations between many algorithms, continuously if need be. State:
-OPEN, nothing built. The falsifiers in section 6 are written before the build.
+OPEN. The falsifiers in section 6 were written before the build.
+Step 1 (lab) passed on 2026-10-05 ([014/STEP1.md](014/STEP1.md)): 2,200 credentials moved back and
+forth between ML-DSA-65 and ML-DSA-87 eight times, a new key each pass, nobody dark, history
+immutable, every lineage whole, 952 re-signings per second per runner.
 
 The name: the celestial pole is not fixed. Precession moves it from star to star, which is why
 Polaris is the pole star now and will not always be. A credential's signature has to be able to

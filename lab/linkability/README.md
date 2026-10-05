@@ -80,7 +80,7 @@ private than it was, and no deployed behaviour changed. A relying party reading
 
 ---
 
-## Finding 2: the privacy is exactly the epoch's membership, and nothing floors it
+## Finding 2: the privacy is exactly the epoch's membership (floored since rc.46)
 
 **2026-09-13. Measured, not fixed: this is a deployment fact, not a defect.**
 
@@ -124,6 +124,17 @@ Nothing requires them to look, and no verdict mentions it.
 **Not built.** Reporting the anonymity set alongside `correlation` would be a new product
 guarantee, which lab work does not get to create. It is recorded here and in the readiness
 ledger as a limitation for the deploying organisation to decide about.
+
+**Since 1.0.0-rc.46 (2026-09-25), the population is floored where proofs are decided.**
+`uc11_close_epoch` refuses to close an epoch with fewer members than
+`polaris.min_epoch_anonymity_set` (20 unless a deployment sets it; the notional sample data sets 1
+and says so), so an epoch of one can no longer be published by the procedure. The offline
+verifier's cross-authority path, `verify_cross_authority_zk`, refuses a proof over a foreign epoch
+whose `committed_count` is below 20 ("privacy unavailable"), because there the verifier, not the
+issuer's database, is the last line. Re-read 2026-10-05: the "nothing floors it" above described the
+tree before rc.46. What is still not built is the verdict carrying N: `verify_presentation`'s
+`bounded` remains a statement about the transcript, and a relying party that wants the crowd's size
+reads `committed_count` off the signed checkpoint.
 
 One speculation that did not survive checking: the epoch root looked like it might partition
 the population by issuing agency, which would have multiplied the adversary's advantage by
