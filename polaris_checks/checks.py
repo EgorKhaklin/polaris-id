@@ -169,6 +169,28 @@ def _read_path(p: pathlib.Path) -> str:
     return _cached_text(p, p.name, strip=True)
 
 
+def _tree_rglob(root: pathlib.Path, pattern: str):
+    """`_tree_rglob(root, pattern)` without the files of another checkout nested under the root.
+
+    A directory holding its own `.git` is a different tree: a worktree an agent or a
+    contributor made under `.claude/worktrees/`, a clone in a subdirectory. Its files are a
+    copy of some other revision, so they are not this tree's evidence, and a check that
+    walks into them reports that revision's state (or a stale copy of this one) as this one's.
+    """
+    nested: dict = {}
+
+    def other_checkout(d: pathlib.Path) -> bool:
+        if d == root:
+            return False
+        if d not in nested:
+            nested[d] = (d / ".git").exists() or other_checkout(d.parent)
+        return nested[d]
+
+    for p in root.rglob(pattern):
+        if not other_checkout(p.parent if p.is_file() or not p.is_dir() else p):
+            yield p
+
+
 #: Joined-package text, keyed on the identity of every module in it, so the join is paid
 #: once per run rather than 77 times for 832 KB.
 _PKG_CACHE: dict = {}
@@ -11210,7 +11232,7 @@ def check_no_citations_to_deleted_apparatus(root: pathlib.Path) -> list[Finding]
     name = "no_deleted_apparatus_citations"
     offenders: list[str] = []
     scanned = 0
-    for path in sorted(root.rglob("*")):
+    for path in sorted(_tree_rglob(root, "*")):
         if not path.is_file() or path.suffix not in (".py", ".sql", ".sh", ".md", ".html"):
             continue
         rel = str(path.relative_to(root))
@@ -14391,7 +14413,7 @@ def check_no_named_reference_systems(root: pathlib.Path) -> list[Finding]:
     because a comparison that hides its subjects is a weaker claim, not a stronger one;
     nowhere else, and not the prose around the table."""
     pats = [re.compile(x, re.I) if mode == "i" else re.compile(x) for mode, x in _NAMED_REFERENCE_SYSTEMS]
-    for f in sorted(root.rglob("*")):
+    for f in sorted(_tree_rglob(root, "*")):
         if not f.is_file() or f.suffix.lower() not in _NAMED_REF_EXTS:
             continue
         parts = f.relative_to(root).parts
@@ -14452,7 +14474,7 @@ def _tracked_files(root: pathlib.Path) -> list[str]:
             return sorted(line for line in out.stdout.splitlines() if line.strip())
     except (OSError, subprocess.SubprocessError):
         pass
-    return sorted("/".join(f.relative_to(root).parts) for f in root.rglob("*") if f.is_file())
+    return sorted("/".join(f.relative_to(root).parts) for f in _tree_rglob(root, "*") if f.is_file())
 
 
 def check_private_keys_only_in_listed_fixtures(root: pathlib.Path) -> list[Finding]:
@@ -15605,7 +15627,7 @@ def check_pairwise_presentation(root: pathlib.Path) -> list[Finding]:
     BAD = 'polaris-pairwise/1" ||'
     CARD_DOC = "docs/design/card-profile.md"
     misspecified = []
-    for md in sorted(root.rglob("*.md")):
+    for md in sorted(_tree_rglob(root, "*.md")):
         rel = md.relative_to(root).as_posix()
         if "/.git/" in str(md) or rel == CARD_DOC:
             continue
@@ -19027,7 +19049,7 @@ def check_documented_symbols_resolve(root: pathlib.Path) -> list[Finding]:
     name = "documented_symbols"
     skip = _POINT_IN_TIME_DOCS
     by_name: dict = {}
-    for p in root.rglob("*.py"):
+    for p in _tree_rglob(root, "*.py"):
         s = str(p)
         if any(x in s for x in ("/.git/", "/venv/", "/node_modules/", "__pycache__")):
             continue
@@ -19037,7 +19059,7 @@ def check_documented_symbols_resolve(root: pathlib.Path) -> list[Finding]:
                            "nothing")
 
     unresolved, cited = [], 0
-    for md in sorted(root.rglob("*.md")):
+    for md in sorted(_tree_rglob(root, "*.md")):
         rel = md.relative_to(root).as_posix()
         if "/.git/" in str(md) or any(rel.startswith(x) or rel == x for x in skip):
             continue
@@ -19164,7 +19186,7 @@ def check_every_test_suite_is_run(root: pathlib.Path) -> list[Finding]:
     That is the same mistake as reading one document and not the one beside it."""
     name = "suites_are_run"
     skip = ("/.git/", "/venv/", "/.venv/", "/node_modules/", "__pycache__", "/build/", "/dist/")
-    suites = sorted({p for p in root.rglob("test_*.py")
+    suites = sorted({p for p in _tree_rglob(root, "test_*.py")
                      if not any(x in str(p) for x in skip)})
     if not suites:
         return _fail(name, "no test_*.py found in the tree; a search that finds nothing is a "
@@ -22305,7 +22327,7 @@ def check_documented_test_citations_resolve(root: pathlib.Path) -> list[Finding]
     name = "documented_test_citations"
     defined: set = set()
     modules: set = set()
-    for p in root.rglob("*.py"):
+    for p in _tree_rglob(root, "*.py"):
         s = str(p)
         if any(x in s for x in ("/.git/", "/venv/", "/node_modules/", "__pycache__", "/archive/")):
             continue
@@ -22318,7 +22340,7 @@ def check_documented_test_citations_resolve(root: pathlib.Path) -> list[Finding]
                            "no evidence")
 
     unresolved, cited = [], 0
-    for md in sorted(root.rglob("*.md")):
+    for md in sorted(_tree_rglob(root, "*.md")):
         rel = md.relative_to(root).as_posix()
         if any(x in str(md) for x in ("/.git/", "/archive/", "/node_modules/")):
             continue
@@ -22484,7 +22506,7 @@ def check_source_path_citations_resolve(root: pathlib.Path) -> list[Finding]:
     skip = ("/.git/", "/venv/", "/node_modules/", "__pycache__", "/build/", "/target/",
             "/archive/", "/.tla/", "/.hypothesis/")
     unresolved, cited = [], 0
-    for p in sorted(root.rglob("*.py")):
+    for p in sorted(_tree_rglob(root, "*.py")):
         if any(x in str(p) for x in skip):
             continue
         src = _read_raw(root, str(p.relative_to(root)))
@@ -22568,7 +22590,7 @@ VACUOUS_IS_CORRECT = {
 def _hollow_tree(root: pathlib.Path, dest: pathlib.Path) -> int:
     """Copy the tree's SHAPE and none of its content: every path present, every file empty."""
     n = 0
-    for p in root.rglob("*"):
+    for p in _tree_rglob(root, "*"):
         rel = p.relative_to(root)
         if any(x in (".git", "node_modules", "__pycache__", ".venv", "target", "dist")
                for x in rel.parts):
