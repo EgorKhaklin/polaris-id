@@ -209,6 +209,35 @@ def _suite_is_red(module: str, env: dict[str, str]) -> bool:
                                    capture_output=True).returncode != 0
 
 
+def _suite_catches(module: str, env: dict[str, str]) -> bool:
+    """Red, and red again: the tests that failed under a mutation fail a second time.
+
+    A single red run credited a mutation with whatever else made the suite red, and a flaky
+    test then did two kinds of damage. Measured 2026-10-05: enforce_recovery_request_immutability#3,
+    a refusal a CHECK makes unreachable, was reported "now caught" on one CI run and not on the
+    next, failing an unrelated pull request. The same flake can make an UNTESTED refusal read as
+    caught, which hides exactly what the drill exists to find. So the tests that failed are run
+    again, alone, with the mutation still installed; only if they fail again was it caught."""
+    r = polaris_bounded_run.run([sys.executable, "-m", "unittest", module],
+                                cwd=str(ROOT / "polaris_web"), env=env,
+                                capture_output=True, text=True)
+    if r.returncode == 0:
+        return False
+    failed = []
+    for line in r.stderr.splitlines():
+        if line.startswith(("FAIL: ", "ERROR: ")) and "(" in line and line.endswith(")"):
+            failed.append(line[line.rindex("(") + 1:-1])        # module.Class.test_name
+    if not failed:
+        return True        # red with no test named (an import or setup error): as before
+    again = polaris_bounded_run.run([sys.executable, "-m", "unittest", *sorted(set(failed))],
+                                    cwd=str(ROOT / "polaris_web"), env=env,
+                                    capture_output=True, text=True)
+    if again.returncode == 0:
+        print(f"  (flaky: {', '.join(sorted(set(failed)))[:160]} went red once and green again; not credited)")
+        return False
+    return True
+
+
 
 SELF = "scripts/" + pathlib.Path(__file__).name
 
@@ -320,7 +349,7 @@ def main(argv: list[str]) -> int:
             try:
                 with conn.cursor() as cur:
                     cur.execute(f'DROP TRIGGER IF EXISTS "{name}" ON {table}')
-                caught_by = next((s for s in FAST_SUITES if _suite_is_red(s, env)), None)
+                caught_by = next((s for s in FAST_SUITES if _suite_catches(s, env)), None)
                 if caught_by is None and args.exhaustive and _suite_is_red(APP_SUITE, env):
                     caught_by = APP_SUITE
             finally:
@@ -426,7 +455,7 @@ def _refusals(env: dict[str, str]) -> int:
                 try:
                     with conn.cursor() as cur:
                         cur.execute(mutated)
-                    caught = next((s for s in FAST_SUITES if _suite_is_red(s, env)), None)
+                    caught = next((s for s in FAST_SUITES if _suite_catches(s, env)), None)
                 finally:
                     TRIGGERS_SQL.write_text(original)
                     try:
