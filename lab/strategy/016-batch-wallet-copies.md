@@ -2,8 +2,9 @@
 
 **Opened 2026-10-05.** STRATEGIC-BUILD under the [operating contract](../../docs/OPERATING-CONTRACT.md),
 from the proposed-items assessment of 2026-10-05 (the paper's "one-time presentation tokens",
-through the standard route). State: OPEN, nothing built. The falsifiers in section 5 are written
-before the build.
+through the standard route). State: OPEN. The falsifiers in section 5 were written before the
+build. Step 1 (lab) on 2026-10-05 ([016/STEP1.md](016/STEP1.md)): one copy lets verifiers link a
+holder by five values; a batch leaves only the issuer, the day and the disclosed answer.
 
 ---
 
@@ -67,8 +68,9 @@ wallet requests a batch, the reason becomes EXT-INTEROP.
 
 ## 5. Falsifiers, written before the build
 
-1. **The batch links itself.** If any two copies in a batch share a holder key, a status index,
-   signature bytes or an exact `iat`, the design fails.
+1. **The batch links itself.** If any two copies in a batch share a holder key, a status index or
+   signature bytes, or carry a timestamp finer than the day (a day-rounded `iat` is shared on
+   purpose, with every copy issued that day), the design fails.
 2. **Revocation misses a copy.** If revoking leaves any copy's index reading valid, stop.
 3. **The mapping leaks.** If the credential-to-index mapping is readable by the application role
    or appears in any published artifact, stop.
