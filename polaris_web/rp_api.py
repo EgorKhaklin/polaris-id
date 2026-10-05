@@ -270,7 +270,18 @@ def _possession_authenticated(token_value, presented_sig_hex):
     read only the newest, so the moment a population migration wrote its signatures every
     holder presenting a pack was refused here, and the window refused the holders it exists
     for. The issuer facts a caller derives from the row are then the facts of the key that
-    made the signature presented."""
+    made the signature presented.
+
+    Under real signing, one more refusal, here so every possession route shares it
+    (THREAT-MODEL, a compromised application role, 2026-10-04). The application role can INSERT
+    a TokenSignature row, so the row read above is not by itself the authority's. The key that
+    made the signature must be one the issuing authority had registered at the signature's
+    instant (_issuer_key_facts: issuer_authorized_at_signing IS True); anything else, None
+    included, fails closed. That refuses both plants: a row under an attacker's own key has no
+    recorded history, because registration is closed to the application role; and a KEYLESS
+    row has no key at all, which matters because verify_stored_signature's keyless branch
+    recomputes SHA3-256(token_value), which anyone can ("NOT an authenticity proof").
+    The placeholder profile keeps its behaviour: it never claims real authenticity."""
     # In force: not deprecated, or deprecated with the date still ahead. The column says a
     # deprecated signature is "no longer accepted after this timestamp", and the window's grace
     # (QUANTUM-EVENT.md, section 6) is that interval; reading IS NULL alone cut every superseded
@@ -296,10 +307,18 @@ def _possession_authenticated(token_value, presented_sig_hex):
         # Every row is compared, so the time taken does not say which one matched.
         if stored_sig and hmac.compare_digest(presented_sig, stored_sig) and match is None:
             match = row
-    if match is None or not pqc_signing.verify_stored_signature(
+    if match is None:
+        return None
+    if not pqc_signing.verify_stored_signature(
             token_value, bytes(match['signature_bytes']), match['signing_public_key_hex'],
             witnesses='single'):
         return None
+    if pqc_signing.is_enabled():
+        authorized_at_signing, _ = _issuer_key_facts(
+            match['token_id'], match['issuing_agency_id'], match['signing_public_key_hex'],
+            match['signed_at'])
+        if authorized_at_signing is not True:
+            return None
     return match
 
 
