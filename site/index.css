@@ -250,7 +250,7 @@ code, .term code { font-variant-ligatures: none; }
 /* ----- 12 Footer -------------------------------------------------------- */
 .foot { border-top: 1px solid var(--line); padding: 72px 0 56px; background: var(--sunken); }
 .foot-in { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 18px; }
-.maker img { width: 187px; opacity: 0.92; }
+.maker img { width: 192px; opacity: 0.92; }
 .maker:hover img { opacity: 1; }
 .motto { font: 500 12px/1.6 var(--font-display); letter-spacing: 0.24em; text-transform: uppercase; color: var(--ink-3); margin: 0; }
 .fine { font-size: 13px; color: var(--ink-3); margin: 0; }
