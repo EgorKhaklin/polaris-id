@@ -8,6 +8,8 @@ claim, so it gets the same treatment as the other two.
 proposed here. A verifier-readable algorithm status would be a new product guarantee, and
 lab work does not get to create one.
 
+**The machinery under seven signature families, 2026-10-05:** one population moved through ML-DSA, FN-DSA, SLH-DSA, MAYO, UOV, SNOVA and CROSS with nobody left unverifiable, and the storage layout found not to survive large keys: [CANDIDATES.md](CANDIDATES.md).
+
 **Measured 2026-09-17, `algorithm_status.py`.** This assessment was written by reading the
 code. It now has an instrument, so the day somebody publishes an algorithm status the claim
 can widen on evidence rather than on somebody noticing, and the day the gap is quietly
