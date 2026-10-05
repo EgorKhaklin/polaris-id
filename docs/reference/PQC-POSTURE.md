@@ -214,6 +214,40 @@ third-party-gated and are future work, not current defects.
    same client, measured. So the gate is a postgres major upgrade. Lower urgency:
    notional data, inside the trust boundary.
 
+## If every computational assumption fails
+
+The sections above bound one break: a cryptanalytic advance against the assumptions under
+ML-DSA. The general case is worth stating once, because it says what Polaris is when no
+algorithm holds. It covers a quantum computer beyond today's estimates, a classical
+breakthrough, or a model of computation that does not exist; a computer with access to closed
+timelike curves, for one, would solve every problem in PSPACE (Aaronson and Watrous, 2008), which
+no signature, hash or proof system is designed to survive.
+
+**What fails:** everything whose security is "too much work to compute". Credential signatures
+can be forged, so authenticity, the authenticity pack, offline verification and the signed status
+assertion stop meaning anything. The zero-knowledge proof can be forged (soundness fails).
+Transparency-log signatures, witness cosignatures and the Bitcoin anchors of record 013 stop
+binding history. TLS stops protecting anything in transit. Whether a past zero-knowledge
+proof reveals anything depends on the proof system's own zero-knowledge property, which this
+document does not claim.
+
+**What holds:** everything enforced by structure rather than hardness, as long as the database
+and its operators are not otherwise compromised. One ACTIVE credential per person is a unique
+index (C3). The audit of record is append-only by trigger (C1), so a forger cannot erase what was
+recorded. A zero-knowledge verification still stores no credential identifier, because that is
+a CHECK constraint (C2), not a property of the proof. Identity is not money (C10). Disclosure is
+decided by the server (C6). Recovery still needs independent channels, a cool-down and a witness
+from another authority, which are people and institutions, not computation.
+
+**What the authority can do:** detect (the audit and the issuer's own records do not depend on
+the forged signatures), revoke, and re-sign under whatever replaces the failed assumption, which
+is the migration path above and the reason it is drilled on every push. Information-theoretic
+tools (secret sharing, one-time authenticators) survive unbounded computation and are not used
+for signatures here.
+
+So the honest summary is not "Polaris is safe" but "Polaris loses its cryptographic layer and
+keeps its structural one". No sentence in this repository claims more.
+
 ## Closing note
 
 This is an audit of a reference system on notional data. The data is
