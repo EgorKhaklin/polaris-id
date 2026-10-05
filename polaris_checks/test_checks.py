@@ -9348,6 +9348,21 @@ def test_no_named_reference_systems_check_discriminates(tmp_path):
         "vendored and build directories are skipped"
 
 
+def test_nested_checkout_is_not_this_tree(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "app.py").write_text("print('ok')\n")
+    copy = tmp_path / ".claude" / "worktrees" / "agent-1"
+    copy.mkdir(parents=True)
+    (copy / "README.md").write_text("Like Estonia's X-Road.\n")
+    assert checks.check_no_named_reference_systems(tmp_path)[0].level == "FAIL", \
+        "control: without its .git the directory is part of this tree, and its file is read"
+    (copy / ".git").write_text("gitdir: /elsewhere/.git/worktrees/agent-1\n")
+    assert checks.check_no_named_reference_systems(tmp_path)[0].level == "OK", \
+        "a directory holding its own .git is another checkout, and its files are not this tree's"
+    assert [p.name for p in checks._tree_rglob(tmp_path, "*.py")] == ["app.py"], \
+        "the walk keeps this tree's own files"
+
+
 def test_preflight_ts_typecheck_discriminates(tmp_path):
     (tmp_path / "scripts").mkdir()
     good = (
