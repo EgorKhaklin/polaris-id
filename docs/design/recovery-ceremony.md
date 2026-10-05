@@ -51,7 +51,14 @@ channel at a time on a pending request, attributed and gated per channel:
   the statement is recorded as its SHA-256, never its text.
 - **Witness**: the witness co-signs as themselves, an active operator or admin
   bound to an authority other than the requesting one, recorded as
-  `witness_agency_id` and `witness_co_sign_user_id`.
+  `witness_agency_id` and `witness_co_sign_user_id`. Since 2026-10-05, when the
+  requesting authority has no standing over the person, the witness must be bound
+  to the person's original issuer (the issuer of their most recent credential).
+  Standing is that original issuer, or a non-private authority whose jurisdiction
+  is the person's or the person's country. Before this, any two authorities could
+  recover, and sign, a credential for a person neither had a tie to. A person who
+  never held a credential is recovered only by an authority with jurisdictional
+  standing.
 - Each channel is recorded once, and none after a decision (the trigger).
 
 The approver still has to be an admin who is neither the requester nor the

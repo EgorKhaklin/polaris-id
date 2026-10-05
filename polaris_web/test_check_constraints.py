@@ -1936,6 +1936,97 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         app.rollback()
         app.close()
 
+    def test_a_recovery_without_standing_is_witnessed_by_the_original_issuer(self):
+        """2026-10-05, THREAT-MODEL. The requesting authority was tied to nothing about the person
+        and the witness only had to be another authority, so two authorities could recover a
+        credential for a person neither ever issued to. Now a requester without standing (not
+        the original issuer, not a public authority of the person's jurisdiction or country)
+        needs a witness bound to the original issuer. Runs as polaris_app; fixtures as the owner."""
+        import secrets
+        owner = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        tag = secrets.token_hex(4)
+        try:
+            with owner, owner.cursor() as cur:
+                cur.execute("SELECT user_id FROM AppUser WHERE username = 'operator'")
+                operator = cur.fetchone()["user_id"]
+                # A person with credentials, no pending recovery, and an original issuer that is
+                # not the bank (agency 5, PRIVATE: never standing by jurisdiction).
+                cur.execute("""
+                    SELECT i.individual_id, (SELECT t.issuing_agency_id FROM IdentityToken t
+                                              WHERE t.individual_id = i.individual_id
+                                              ORDER BY t.issued_date DESC, t.token_id DESC LIMIT 1) AS original
+                      FROM Individual i
+                     WHERE EXISTS (SELECT 1 FROM IdentityToken t WHERE t.individual_id = i.individual_id)
+                       AND NOT EXISTS (SELECT 1 FROM RecoveryRequest r
+                                        WHERE r.claimed_individual_id = i.individual_id
+                                          AND r.status = 'PENDING')
+                     ORDER BY i.individual_id LIMIT 50""")
+                person = next(r for r in cur.fetchall() if r["original"] != 5)
+                original = person["original"]
+                stranger_agency = next(a for a in (1, 2, 3, 4, 6) if a != original)
+                cur.execute("SELECT set_config('polaris.justification', "
+                            "'UC-9 standing fixture: witnesses bound to named authorities', true)")
+                witnesses = {}
+                for agency in {original, stranger_agency, 2, 3, 6}:
+                    cur.execute("INSERT INTO AppUser (username, password_hash, role, agency_id) "
+                                "VALUES (%s, 'x', 'operator', %s) RETURNING user_id",
+                                ("std%d-%s" % (agency, tag), agency))
+                    witnesses[agency] = cur.fetchone()["user_id"]
+                cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                            "VALUES (%s, '1990-01-01', 'US-PA') RETURNING individual_id", ("STD " + tag,))
+                tokenless = cur.fetchone()["individual_id"]
+
+                def request(individual, agency):
+                    cur.execute("INSERT INTO RecoveryRequest (claimed_individual_id, requested_at, "
+                                "requesting_agency_id, requesting_user_id, cooldown_expires_at) VALUES "
+                                "(%s, now() - interval '50 hours', %s, %s, now() - interval '2 hours') "
+                                "RETURNING recovery_id", (individual, agency, operator))
+                    return cur.fetchone()["recovery_id"]
+                by_bank = request(person["individual_id"], 5)
+                by_california = request(tokenless, 3)
+        finally:
+            owner.close()
+
+        app = self._app_conn()
+        rec = "CALL uc9_record_recovery_channel(%s, %s, %s, %s)"
+        refusals = (
+            ("no standing, a third authority witnesses", (by_bank, witnesses[stranger_agency]), "original issuer"),
+            ("no standing, no credential ever issued", (by_california, witnesses[6]), "no credential was ever issued"),
+        )
+        for label, (rid, witness), words in refusals:
+            with self.subTest(label), app.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege) as c:
+                    cur.execute(rec, (rid, witness, "WITNESS", None))
+                self.assertIn(words, str(c.exception))
+            app.rollback()
+
+        with app.cursor() as cur:
+            cur.execute(rec, (by_bank, witnesses[original], "WITNESS", None))
+            cur.execute("SELECT witness_agency_id FROM RecoveryRequest WHERE recovery_id = %s", (by_bank,))
+            self.assertEqual(cur.fetchone()["witness_agency_id"], original,
+                             "the original issuer witnesses a request made without standing")
+        app.commit()
+
+        # Standing by jurisdiction: Pennsylvania requests for a Pennsylvanian, California witnesses.
+        owner = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with owner, owner.cursor() as cur:
+                cur.execute("SELECT set_config('polaris.justification', 'UC-9 standing fixture', true)")
+                cur.execute("UPDATE RecoveryRequest SET status = 'REJECTED', decided_at = now(), "
+                            "decided_by_user_id = (SELECT user_id FROM AppUser WHERE username = 'admin'), "
+                            "decision_reason = 'fixture' WHERE recovery_id = %s", (by_california,))
+                cur.execute("INSERT INTO RecoveryRequest (claimed_individual_id, requested_at, "
+                            "requesting_agency_id, requesting_user_id, cooldown_expires_at) VALUES "
+                            "(%s, now() - interval '50 hours', 2, %s, now() - interval '2 hours') "
+                            "RETURNING recovery_id", (tokenless, operator))
+                by_pennsylvania = cur.fetchone()["recovery_id"]
+        finally:
+            owner.close()
+        with app.cursor() as cur:
+            cur.execute(rec, (by_pennsylvania, witnesses[3], "WITNESS", None))
+        app.commit()
+        app.close()
+
     def test_each_recovery_channel_refusal_is_its_own(self):
         """1.0.0-rc.60, written after the procedure mutation drill found five refusals that could be
         deleted with the ceremony test still green. Each case here reaches exactly one refusal:
