@@ -122,6 +122,8 @@ The claim is **algorithm agility under an audited migration path**, not settled 
 
 Two ML-DSA implementations must agree at issuance or it fails closed; the TLS edge negotiates X25519MLKEM768.
 
+The migration path is tested beyond these: in the lab, one population moved through seven signature families (ML-DSA, FN-DSA, SLH-DSA, MAYO, UOV, SNOVA, CROSS) and 136 liboqs signature variants, never left without a valid signature ([CANDIDATES.md](lab/crypto-migration/CANDIDATES.md)). Lab results admit no algorithm to the product.
+
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## Limits, stated plainly
