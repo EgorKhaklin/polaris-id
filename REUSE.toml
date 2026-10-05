@@ -15,7 +15,7 @@ SPDX-License-Identifier = "Apache-2.0"
 # lockup. The license covers the files, not the names and marks they carry (TRADEMARKS.md).
 [[annotations]]
 path = ["site/polaris_logo_clean.png", "site/favicon.svg", "polaris_web/static/favicon.svg",
-        "docs/assets/seal.svg", "docs/assets/hero.svg"]
+        "docs/assets/seal.svg", "docs/assets/hero.svg", "site/khaklin.svg", "site/og.png"]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Egor Khaklin"
 SPDX-License-Identifier = "Apache-2.0"

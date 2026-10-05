@@ -2,21 +2,24 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Polaris ID: a pre-pilot, issuer-unlinkable, duress-aware identity-token system signed with ML-DSA-65 under an audited algorithm-migration path</title>
-<meta name="description" content="Polaris ID is a working, pre-pilot identity-token system: issuer-unlinkable, duress-aware, signed with ML-DSA-65 under an audited algorithm-migration path. Notional data only. The guarantees live in the database; CI boots the production-profile stack on every push. Pre-pilot, not a deployment.">
-<meta property="og:title" content="Polaris ID: a pre-pilot, issuer-unlinkable, duress-aware identity-token system signed with ML-DSA-65 under an audited algorithm-migration path">
-<meta property="og:description" content="A credential verification engine signed with ML-DSA-65: issue, hold, present, and verify a credential offline against published keys or online against current status. Issuer-unlinkable in its default verification mode, duress-aware by construction. Pre-pilot, on notional data; CI proves it on every push.">
-<meta property="og:image" content="https://polaris-id.e-khaklin.workers.dev/polaris_logo_clean.png">
-<meta property="og:image:alt" content="The Polaris emblem: a gold sun on a navy shield.">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polaris ID: pre-pilot identity credentials, built to be checked, not trusted</title>
+<meta name="description" content="Open-source, pre-pilot identity infrastructure: credentials signed with ML-DSA-65, verified offline against published keys. Its OpenID4VP verifier was OpenID Certified at version 1.0.0rc7, and six wallets nobody here wrote have presented to it. Notional data only.">
+<meta property="og:title" content="Polaris ID: pre-pilot identity credentials, built to be checked, not trusted">
+<meta property="og:description" content="Credentials signed with ML-DSA-65 and verified offline against published keys. An OpenID4VP verifier, certified at 1.0.0rc7, that six independent wallets have presented to. Check it yourself in one minute.">
+<meta property="og:image" content="https://polaris-id.e-khaklin.workers.dev/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The Polaris emblem beside the words: identity built to be checked, not trusted. Pre-pilot.">
 <meta property="og:url" content="https://polaris-id.e-khaklin.workers.dev/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Polaris ID (pre-pilot)">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="theme-color" content="#050a12">
+<meta name="theme-color" content="#09090b">
 <meta name="color-scheme" content="dark">
 <link rel="canonical" href="https://polaris-id.e-khaklin.workers.dev/">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preload" href="fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="index.css">
 </head>
@@ -24,272 +27,287 @@
 
 <a class="skip" href="#main">Skip to content</a>
 
-<header class="masthead">
-    <span class="brand">Polaris ID</span>
-    <nav aria-label="Sections of this page">
-        <a href="#what">What it is</a>
-        <a href="#guarantees">Guarantees</a>
-        <a href="#evidence">Evidence</a>
-        <a href="#limits">What it is not</a>
-        <a href="#run">Run it</a>
-    </nav>
+<header class="bar">
+    <div class="bar-in">
+        <a class="mark" href="#top" aria-label="Polaris ID, top of page">
+            <img src="polaris_logo_clean.png" alt="" width="28" height="28">
+            <span>Polaris</span>
+        </a>
+        <nav aria-label="Sections">
+            <a href="#verify">Verify</a>
+            <a href="#evidence">Evidence</a>
+            <a href="#how">How it works</a>
+            <a href="#limits">Limits</a>
+            <a href="#start">Start</a>
+        </nav>
+        <span class="tag">Pre-pilot</span>
+        <a class="gh" href="https://github.com/EgorKhaklin/polaris-id">GitHub</a>
+    </div>
 </header>
 
 <main id="main">
 
+<section class="hero-band" id="top" aria-labelledby="hero-h">
 <div class="hero">
-    <img src="polaris_logo_clean.png" alt="The Polaris emblem: a gold sun on a navy shield" width="180" height="180" fetchpriority="high" decoding="async">
-    <h1>POLARIS</h1>
-    <p class="sub">A working, pre-pilot identity-token system: issuer-unlinkable, duress-aware,
-        signed with ML-DSA-65 under an audited algorithm-migration path.</p>
-    <p class="scope">Pre-pilot · notional data only</p>
-    <p class="motto">Fixus inter mutabilia · fixed amid the mutable</p>
-    <div class="cta">
-        <a class="btn btn-gold" href="https://github.com/EgorKhaklin/polaris-id">View on GitHub</a>
-        <a class="btn btn-ghost" href="https://github.com/EgorKhaklin/polaris-id/blob/main/MISSION.md">Read the constitution</a>
+    <div class="sky" aria-hidden="true">
+        <span class="trail t1"></span><span class="trail t2"></span><span class="trail t3"></span>
+        <span class="trail t4"></span><span class="trail t5"></span><span class="trail t6"></span>
+        <img class="pole" src="polaris_logo_clean.png" alt="" width="220" height="220" fetchpriority="high">
     </div>
-    <p class="strip">
-        <strong>58</strong> schema tables · <strong>131</strong> routes ·
-        <strong>344</strong> machine-checked invariants ·
-        <strong>ML-DSA-65</strong> signing default ·
-        <strong>X25519MLKEM768</strong> TLS edge ·
-        <strong>Plonky2</strong> ZK + second witness
-    </p>
-</div>
-
-<section id="what" aria-labelledby="what-h">
-    <h2 id="what-h">What Polaris is</h2>
-    <p class="lede">An authority issues a credential signed with ML-DSA-65; a holder presents it; anyone
-        checks it two ways. <strong>Authenticity</strong> is offline: a standalone verifier checks the
-        signature against published keys, with no database and no network. <strong>Authorization</strong>
-        is answered online by a relying-party API, or offline by a short-lived signed status assertion.
-        The cryptographic claim is <strong>algorithm agility under an audited migration path</strong>,
-        not settled security against a quantum adversary.</p>
-    <p class="lede">The backbone is a schema whose constraints are the security boundary: the
-        guarantees live in the database, not in application code. A rule enforced by a trigger, a
-        CHECK constraint or a unique index binds every client and survives every restore from backup.</p>
-      <p class="lede">Around the credential: a protocol of signed statements (registry, trust list,
-        exchange receipts, timestamps, document signing, login tokens, wallet presentations), each
-        verified offline by the same verifier and both SDKs, frozen at version 1 and re-verified on
-        every push.</p>
-    <p class="lede">The problem it models: Americans carry six to eight credentials that do not talk
-        to each other. Polaris consolidates them into one token per person, verified through
-        context-scoped events (banking, voting and healthcare are different events with different
-        disclosure rules). The default disclosure level is zero-knowledge, so the typical verification
-        stores no token identifier at all, and the zero-knowledge verification graph cannot be
-        reconstructed even by someone holding the whole database (SELECTIVE and FULL events do carry a
-        token id).</p>
-</section>
-
-<section id="guarantees" aria-labelledby="guarantees-h">
-    <h2 id="guarantees-h">The ten guarantees</h2>
-    <p class="lede">Above all ten sits the vocation: no person can be compelled to renounce,
-        transfer, or surrender their identity against their will. Each guarantee is enforced
-        in the database, where no client can bypass it, and machine-checked on every change.</p>
-    <div class="laws">
-        <div class="law"><b>C1</b><p><strong>Append-only history.</strong> Triggers reject any UPDATE or DELETE on the audit tables. What happened, stays.</p></div>
-        <div class="law"><b>C2</b><p><strong>Zero-knowledge means zero.</strong> A CHECK constraint refuses to store a token id on a zero-knowledge verification.</p></div>
-        <div class="law"><b>C3</b><p><strong>One active token per person.</strong> A partial unique index makes a second ACTIVE row impossible, under any concurrency.</p></div>
-        <div class="law"><b>C4</b><p><strong>Atomic lockout counting.</strong> Failed logins increment in a single statement; there is no check-then-act race.</p></div>
-        <div class="law"><b>C5</b><p><strong>No inline scripts.</strong> Content-Security-Policy is script-src 'self', verified per route.</p></div>
-        <div class="law"><b>C6</b><p><strong>Server-side disclosure.</strong> A client cannot upgrade what a verification reveals; redaction is tested at every read path.</p></div>
-        <div class="law"><b>C7</b><p><strong>No hardcoded crypto.</strong> Algorithms are rows in a registry; rotation is an INSERT, not a redeploy.</p></div>
-        <div class="law"><b>C8</b><p><strong>Bounded aggregates.</strong> Every map and API result set carries a hard cap; payload scales with the viewport, not the ledger.</p></div>
-        <div class="law"><b>C9</b><p><strong>Real concurrency tests.</strong> Race-prone paths are tested with real threads against a live database, not mocks.</p></div>
-        <div class="law"><b>C10</b><p><strong>Identity is not money.</strong> The schema carries no monetary claim; the boundary is structural, not policy.</p></div>
+    <div class="hero-copy">
+        <p class="eyebrow">Open-source identity infrastructure &middot; pre-pilot</p>
+        <h1 id="hero-h">Identity built to be <span class="nb"><em>checked</em>, not trusted.</span></h1>
+        <p class="lead">Polaris issues identity credentials signed with ML-DSA-65 and verifies them
+            offline, against published keys, with no server and no network. Its OpenID4VP verifier
+            was certified by the OpenID Foundation at version 1.0.0rc7, and wallets nobody here
+            wrote have presented to it.</p>
+        <div class="cta">
+            <a class="btn btn-gold" href="#verify">Check it in one minute</a>
+            <a class="btn btn-line" href="#limits">Read what it is not</a>
+        </div>
     </div>
-</section>
-
-<section id="hard-parts" aria-labelledby="hard-parts-h">
-    <h2 id="hard-parts-h">The hard parts</h2>
-    <p class="lede">Consolidating six credentials into one token is the easy half.
-        The interesting half is what happens when an adversary shows up.
-        Six answered by construction, at the database layer, not in policy.</p>
-    <div class="threats">
-        <div class="threat"><h3>Cryptographic compulsion</h3>
-            <p class="attack">"Sign this or I break your fingers." The holder cannot refuse without injury.</p>
-            <p>A second secret produces a verification that looks identical and silently records a DuressEvent. By design the coercer sees success; the indistinguishability is a tested property of the modeled flow, not an audited side-channel guarantee.</p></div>
-        <div class="threat"><h3>Catastrophic loss</h3>
-            <p class="attack">Token lost, holder unidentified, nothing to prove who they are.</p>
-            <p>A two-phase ceremony gated by independent out-of-band channels, a cooldown, and an admin-only decision. Compromising one channel is not enough.</p></div>
-        <div class="threat"><h3>Quantum migration</h3>
-            <p class="attack">Today's signing algorithms break overnight when a quantum computer arrives.</p>
-            <p>Tokens carry classical AND post-quantum signatures simultaneously during cutover, with a hard database rule that exactly one is active. The default is already post-quantum.</p></div>
-        <div class="threat"><h3>Issuer concentration</h3>
-            <p class="attack">One agency issues tokens that masquerade as any other agency's.</p>
-            <p>Explicit-only federation; no transitive trust. Every cross-agency verification gates on an active trust attestation row.</p></div>
-        <div class="threat"><h3>Auditability without privacy loss</h3>
-            <p class="attack">"Prove this token was in the ledger" without revealing which one.</p>
-            <p>A Plonky2 proof over a Merkle commitment answers membership and nothing else. The verification graph cannot be reconstructed from zero-knowledge events.</p></div>
-        <div class="threat"><h3>Issuer overreach</h3>
-            <p class="attack">An agency revokes tokens at industrial scale, outside policy.</p>
-            <p>A per-agency revocation-rate ceiling enforced by trigger, sanctioned by a policy row, audited under an advisory lock.</p></div>
-    </div>
-</section>
-
-<section id="evidence" aria-labelledby="evidence-h">
-    <h2 id="evidence-h">Verified, not asserted</h2>
-    <p class="lede">Every number and every link on this page is checked before it is
-        published: the counts are recomputed from the repository, the links and images are
-        resolved against the tree, and either one failing stops the deployment. The two test
-        counts are measured per release on the reference machine. CI does not just run tests;
-        it exercises the artifacts.</p>
-    <div class="numbers">
-        <div class="num"><b>1245</b><span>product tests, live DB</span></div>
-        <div class="num"><b>126</b><span>crypto-witness tests</span></div>
-        <div class="num"><b>344</b><span>invariant checks</span></div>
-        <div class="num"><b>23</b><span>CI jobs</span></div>
-        <div class="num"><b>5</b><span>services booted in CI</span></div>
-    </div>
-    <p class="asof">test counts measured at v1.0.0-rc.62; the rest recomputed on every push</p>
-    <ul class="prodlist">
-        <li><strong>The production-profile stack boots in CI.</strong> Five services behind a self-built TLS edge come up end to end on every push, and health is asserted through the edge. Building that job surfaced four prod-down bugs the day it landed.</li>
-        <li><strong>Backups restore, provably.</strong> An encrypted backup and restore round-trip runs in CI with a fail-closed negative check, and the HA profile's automated failover is drilled on every push.</li>
-        <li><strong>The post-quantum handshake is proven, not claimed.</strong> CI negotiates X25519MLKEM768 against a real certificate on every push, and signs with real ML-DSA-65 inside the production image.</li>
-        <li><strong>CVEs gate the build.</strong> Both the dependency surface and all five self-built container images are scanned on every push; a fixable CRITICAL fails CI.</li>
-        <li><strong>Every check can prove it works.</strong> Each of the 344 invariant checks is paired with a detection test showing it fails on a broken fixture. A check that cannot detect its own violation is treated as broken.</li>
+    <ul class="proof" aria-label="Outside evidence">
+        <li><b>OpenID Certified</b><span>OpenID4VP 1.0 + HAIP 1.0 verifier, rc7</span></li>
+        <li><b>6 independent wallets</b><span>unmodified, presented and accepted</span></li>
+        <li><b>IETF SD-JWT</b><span>listed among the implementations</span></li>
+        <li><b>Apache-2.0</b><span>on PyPI and npm</span></li>
     </ul>
+</div>
 </section>
 
-<section id="outside" aria-labelledby="outside-h">
-    <h2 id="outside-h">What happened when somebody else's software tried it</h2>
-    <p class="lede">Everything above is this project checking itself. These are the only
-        results that are not. A constraint lattice and a verifier that an unmodified wallet
-        already spoke to is the whole of what is demonstrated here; the scale the architecture
-        is designed for is a design target, not a deployment.</p>
-    <div class="cells">
-        <div class="cell"><h3>A wallet nobody here wrote</h3>
-            <p>On 15 September 2026 an unmodified walt.id Wallet API v2 presented an SD-JWT VC over
-            OpenID4VP 1.0 and <code>polaris-oid4vp</code> accepted it. It first refused Polaris,
-            correctly: a certificate defect that every internal check had passed over.</p></div>
-        <div class="cell"><h3>OpenID Certified verifier</h3>
-            <p><a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="openid-certified-mark-on-white.png" alt="OpenID Certified" width="140" height="77"></a></p>
+<section class="band" id="verify" aria-labelledby="verify-h">
+    <div class="wrap split">
+        <div>
+            <p class="num">I</p>
+            <h2 id="verify-h">One minute, from an empty folder.</h2>
+            <p>Do not take this page's word for anything. The script below installs the verifier from
+                PyPI, every dependency checked against a pinned hash. It runs
+                <a href="https://github.com/dominikschlosser/eudi-dev">eudi-dev</a>, a wallet nobody
+                here wrote that the OpenID Foundation lists as certified, has it present a credential,
+                then sends three tampered presentations that must each be refused.</p>
+            <p>It needs <code>python3</code> and a free port. Docker is optional.</p>
+            <p class="more"><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md">The ten-minute version, step by step</a>
+                <a href="https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml">Tell us where it broke</a></p>
+        </div>
+        <figure class="term">
+            <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i><span>bash</span></div>
+<pre><code><span class="c">$</span> mkdir polaris-quick &amp;&amp; cd polaris-quick
+<span class="c">$</span> r=https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main
+<span class="c">$</span> curl -fsSLO $r/lab/interop/eudi-dev/run.sh
+<span class="c">$</span> curl -fsSLO $r/lab/interop/waltid/issue_sdjwt_vc.py
+<span class="c">$</span> curl -fsSLO $r/lab/interop/requirements.txt
+<span class="c">$</span> bash run.sh
+<span class="d">wallet     ghcr.io/dominikschlosser/eudi-dev:v2.3.7
+installed  polaris-oid4vp 1.0.0rc16</span>
+== genuine presentation
+  <span class="ok">ok</span>    the verifier accepted it
+          <span class="d">&lt;- 200 authentic</span>
+== control (b): the same request again, after it was answered
+  <span class="ok">ok</span>    refused at the request stage
+== control (c): a launch URI whose client_id is not the signed request's
+  <span class="ok">ok</span>    the wallet refused the request
+== control (a): the verifier trusts a different issuer key under the same kid
+  <span class="ok">ok</span>    the verifier refused the issuer
+<span class="res">RESULT: accepted, and all three controls refused</span></code></pre>
+            <figcaption>Recorded 5 October 2026 on macOS with the system Python 3.9: 13 seconds, from
+                an empty folder. Abridged: the full output also shows each step's request and
+                answer.</figcaption>
+        </figure>
+    </div>
+</section>
+
+<section class="band" id="evidence" aria-labelledby="evidence-h">
+    <div class="wrap">
+        <p class="num">II</p>
+        <h2 id="evidence-h">What other people's software did with it.</h2>
+        <p class="intro">Everything else on this page is the project describing itself. These are the
+            results that are not. Every run used software with no contact with its authors, and every
+            run carried controls that had to be refused, because a verifier that accepts everything
+            prints the same success line.</p>
+
+        <div class="roster">
+            <div class="roster-col">
+                <h3>Wallets, unmodified</h3>
+                <ul>
+                    <li><b>walt.id Wallet API</b><span>Kotlin</span></li>
+                    <li><b>Credo</b><span>TypeScript &middot; OpenWallet Foundation</span></li>
+                    <li><b>eudi-dev</b><span>Go &middot; OpenID Certified wallet</span></li>
+                    <li><b>OID4VCgo</b><span>Go &middot; OpenID Certified wallet</span></li>
+                    <li><b>ProtocolSoup</b><span>Go &middot; OpenID Certified wallet</span></li>
+                    <li><b>Procivis One Core</b><span>Rust</span></li>
+                </ul>
+            </div>
+            <div class="roster-col">
+                <h3>Libraries, services and test tools</h3>
+                <ul>
+                    <li><b>EUDI Wallet OpenID4VP library</b><span>Kotlin &middot; European Commission</span></li>
+                    <li><b>EUDI Wallet OpenID4VP library</b><span>Swift &middot; European Commission</span></li>
+                    <li><b>EUDI PID issuer</b><span>European Commission reference issuer</span></li>
+                    <li><b>vck</b><span>Kotlin &middot; A-SIT Plus</span></li>
+                    <li><b>Multipaz</b><span>Kotlin &middot; OpenWallet Foundation</span></li>
+                    <li><b>irmago</b><span>Go &middot; Yivi</span></li>
+                    <li><b>openid4vp</b><span>Rust &middot; SpruceID conformance adapter</span></li>
+                    <li><b>ERICA</b><span>TypeScript &middot; verifier testing tool</span></li>
+                </ul>
+            </div>
+        </div>
+        <p class="src">Dated runs, versions, controls and transcripts:
+            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md">the scoreboard</a>,
+            15 September to 4 October 2026.</p>
+
+        <div class="cert">
+            <a class="cert-mark" href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="openid-certified-mark-on-white.png" alt="OpenID Certified" width="140" height="77"></a>
             <p><b>OpenID&reg; Certified&trade; by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0
-            Verifier profile:</b> <code>polaris-oid4vp 1.0.0rc7</code>, 24 September 2026
-            (<a href="https://openid.net/certification/certified-oid4vp-haip-final/">listing</a>).
-            A self-certification the Foundation reviewed: not an endorsement, not an audit, and not
-            a certification of the rest of Polaris. OpenID&reg; and OpenID&reg; Certified&trade; are
-            trademarks of the OpenID Foundation, used under its
-            <a href="https://openid.net/certification/mark/">certification terms</a>.</p></div>
-        <div class="cell"><h3>Installable without cloning anything</h3>
-            <p>Release candidates on PyPI and npm:
-            <code>pip install --pre polaris-verify</code>,
-            <code>pip install --pre polaris-oid4vp</code>,
-            <code>pip install --pre polaris-sdk-python</code>,
-            <code>npm install polaris-sdk-ts@next</code>. Each was verified by installing from the
-            live registry into a clean environment.</p></div>
-        <div class="cell"><h3>Still missing</h3>
-            <p>No independent security review by anyone who did not build this. No non-author
-            operator has run it. No pilot, no real users, no real identity data. Distribution
-            is not validation, and a green test suite is not proof of correctness.</p></div>
+                Verifier profile:</b> <code>polaris-oid4vp 1.0.0rc7</code>, 24 September 2026
+                (<a href="https://openid.net/certification/certified-oid4vp-haip-final/">listing</a>).
+                A self-certification the Foundation reviewed: not an endorsement, not an audit, and not
+                a certification of the rest of Polaris. OpenID&reg; and OpenID&reg; Certified&trade; are
+                trademarks of the OpenID Foundation, used under its
+                <a href="https://openid.net/certification/mark/">certification terms</a>.</p>
+        </div>
+
+        <div class="zeros">
+            <h3>The scoreboard keeps its zeros</h3>
+            <dl>
+                <div><dt>Outside users</dt><dd>0</dd></div>
+                <div><dt>Pilot</dt><dd>none</dd></div>
+                <div><dt>Independent security review</dt><dd>none</dd></div>
+                <div><dt>Findings from outside</dt><dd>1 filed, 2 fixed</dd></div>
+            </dl>
+            <p>A listing is not use, and a download is not a person. These rows change only when a
+                named outside party does something, on a date, that can be pointed at.</p>
+        </div>
     </div>
 </section>
 
-<section id="crypto" aria-labelledby="crypto-h">
-    <h2 id="crypto-h">Real cryptography</h2>
-    <p class="lede">Which algorithm signed a token is data, not code: a foreign key into a
-        first-class registry, so adding or retiring one is a row, not a redeploy. The shipped
-        signer implements ML-DSA-65.</p>
-    <div class="cells">
-        <div class="cell"><h3>ML-DSA-65 signing</h3>
-            <p>NIST FIPS 204 lattice signatures, Level 3, on every new token. Both shipped production paths sign with real liboqs bytes, cross-checked by a second implementation. A development run without that flag records a deterministic SHA3-256 placeholder under a label that says so, so a development signature can never pass for a real one.</p></div>
-        <div class="cell"><h3>SLH-DSA registered</h3>
-            <p>FIPS 205 hash-based signatures rest on different assumptions than lattices, so both parameter sets are rows in the algorithm registry and a rotation is a row update. No SLH-DSA signer is wired yet; that gap is on the ledger in PQC-POSTURE.md.</p></div>
-        <div class="cell"><h3>Plonky2 ZK-SNARK</h3>
-            <p>FRI-based, transparent setup. Proves epoch membership without revealing which token. The epoch root is recomputed bit-for-bit by an independent Python witness.</p></div>
-        <div class="cell"><h3>Post-quantum TLS edge</h3>
-            <p>The public edge negotiates X25519MLKEM768 hybrid key exchange; CI proves the handshake on every push. What stays classical is mapped honestly in PQC-POSTURE.md.</p></div>
-        <div class="cell"><h3>WebAuthn MFA</h3>
-            <p>Admin accounts enroll a FIDO2 credential against a per-account deadline; once enrolled, or once the deadline passes, a password alone cannot reach the admin role. The relying party offers ML-DSA-65 first.</p></div>
+<section class="band" id="how" aria-labelledby="how-h">
+    <div class="wrap">
+        <p class="num">III</p>
+        <h2 id="how-h">How it works.</h2>
+        <ol class="flow">
+            <li><span class="step">Issue</span>
+                <p>An authority issues a credential and signs it with ML-DSA-65 under its registered
+                    key. Which algorithm signed it is data, not code: algorithm agility under an
+                    audited migration path.</p></li>
+            <li><span class="step">Hold</span>
+                <p>The person holds it, in a wallet over OpenID4VP or as a signed pack, and chooses
+                    what to disclose. In zero-knowledge mode the verifier learns no credential
+                    identifier at all, so the issuer cannot link where it was shown.</p></li>
+            <li><span class="step">Verify</span>
+                <p>Anyone checks it two ways. <b>Authenticity</b> is offline: the standalone
+                    verifier checks the signature against published keys, with no database and no
+                    network. <b>Authorization</b>, whether it counts right now, comes from a
+                    relying-party API or a short-lived signed status assertion.</p></li>
+        </ol>
+        <div class="kit">
+            <code>pip install --pre polaris-oid4vp</code>
+            <code>pip install --pre "polaris-verify[cryptography]"</code>
+            <code>pip install --pre polaris-sdk-python</code>
+            <code>npm install polaris-sdk-ts@next</code>
+        </div>
     </div>
 </section>
 
-<section id="limits" aria-labelledby="limits-h">
-    <h2 id="limits-h">What this is not</h2>
-    <div class="limits">
-        <p class="limits-status">Not production-ready for real identity data. Every engineering
-            gap the readiness ledger enumerated is closed and pinned by a check. What remains
-            cannot be built here: nine decisions that belong to the deploying organization,
-            two engineering limits carried openly, and the deployment-scale work the roadmap
-            tracks phase by phase.</p>
-        <p class="lede">The nine decisions, each one a named accountable choice rather than a
-            missing feature:</p>
-        <ul class="decisions">
-            <li>Legal basis, data-protection impact assessment, regulator approval</li>
-            <li>Signing-key custody and the rotation authority</li>
-            <li>The PostgreSQL high-availability topology and promotion policy</li>
-            <li>Encryption at rest on the host volume, and its key custodian</li>
-            <li>The offsite backup target, its retention and its schedule</li>
-            <li>The alerting backend and the named on-call rotation</li>
-            <li>The right-to-erasure policy against an append-only audit</li>
-            <li>The retention schedule per class and jurisdiction, and the counsel who says it satisfies the statute</li>
-            <li>An independent penetration test and threat-model sign-off</li>
+<section class="band" id="design" aria-labelledby="design-h">
+    <div class="wrap">
+        <p class="num">IV</p>
+        <h2 id="design-h">The rules live in the database.</h2>
+        <p class="intro">A rule enforced by a trigger, a CHECK constraint or a unique index binds every
+            client and survives every restore. The constitutional guarantees sit there, not in
+            application code, and each is pinned by a check that fails the build if it stops being
+            true.</p>
+        <table class="rules">
+            <thead><tr><th scope="col">Guarantee</th><th scope="col">Where it is enforced</th></tr></thead>
+            <tbody>
+                <tr><th scope="row">The audit of record is append-only</th><td>A trigger on every audit table; the application role cannot reach the purge path</td></tr>
+                <tr><th scope="row">A zero-knowledge verification stores no credential identifier</th><td>A two-way CHECK constraint on the verification table</td></tr>
+                <tr><th scope="row">One active credential per person</th><td>A partial unique index</td></tr>
+                <tr><th scope="row">Disclosure is decided by the server, not the caller</th><td>The form handler, the CHECK above and every read path</td></tr>
+                <tr><th scope="row">Identity is not money</th><td>Structural absence: no monetary table or column exists</td></tr>
+            </tbody>
+        </table>
+
+        <div class="hard">
+            <div>
+                <h3>Coercion</h3>
+                <p>A second code yields a verification that looks identical and quietly records a
+                    duress event. Duress-aware, not a defence against everyone: it works on a coercer
+                    who does not know the mechanism exists, and the
+                    <a href="https://github.com/EgorKhaklin/polaris-id/tree/main/lab/duress">lab measured</a>
+                    where it does not.</p>
+            </div>
+            <div>
+                <h3>Total loss</h3>
+                <p>A person who loses every device is recovered through three independent channels,
+                    a cool-down and a witness from another authority, never by one operator.</p>
+            </div>
+            <div>
+                <h3>Algorithm migration</h3>
+                <p>Credentials can carry an old and a new signature while an authority moves between
+                    algorithms, with a database rule that exactly one is active. Whether ML-DSA itself
+                    holds is mathematics, not a property of this repository.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="band limits" id="limits" aria-labelledby="limits-h">
+    <div class="wrap">
+        <p class="num">V</p>
+        <h2 id="limits-h">What it is not.</h2>
+        <ul class="nots">
+            <li><b>Not production-ready.</b> It has never held real identity data; it runs on notional data.</li>
+            <li><b>Not audited.</b> No independent security review has happened yet.</li>
+            <li><b>Not piloted, not deployed.</b> No authority operates it and no outside operator has run it.</li>
+            <li><b>Not certified as a whole.</b> One package version is certified to one profile.</li>
         </ul>
-        <p class="lede">The bound on every claim on this page is the ledger itself:
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md">PRODUCTION-READINESS.md</a>.
-            Polaris is pre-pilot and runs on notional data; it holds no real identity record.</p>
+        <p class="intro">What remains cannot be built here: the legal basis, key custody, the
+            retention schedule a regulator signs, and an independent penetration test belong to the
+            organization that deploys it. The bound on every claim on this page, including what a
+            break of the underlying lattice problem would and would not cost, is the
+            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md">readiness ledger</a>.</p>
     </div>
 </section>
 
-<section id="run" aria-labelledby="run-h">
-    <h2 id="run-h">Run it</h2>
-    <div class="quick">
-        <h3>Evaluate it locally (macOS, Docker Desktop)</h3>
-<pre><code>git clone https://github.com/EgorKhaklin/polaris-id.git polaris
-cd polaris
-./Polaris.command</code></pre>
-        <p class="runnote">The launcher pulls PostgreSQL, builds the image, loads the schema,
-            runs the SQL self-tests and opens the console on notional data with development
-            credentials.</p>
-
-        <h3>Single-host compose profile (any Docker host)</h3>
-<pre><code>./scripts/polaris-generate-secrets.sh
-export POLARIS_DOMAIN=polaris.example.com
-./scripts/polaris-deploy.sh prod
-curl -fsS https://$POLARIS_DOMAIN/api/health</code></pre>
-        <p class="runnote">Five services behind a self-built TLS edge that provisions its own
-            certificate. One host, so the database has no standby: that is one of the nine
-            decisions above.</p>
-
-        <h3>Linux server under systemd</h3>
-<pre><code>sudo POLARIS_DOMAIN=polaris.example.com deploy/linux/install.sh</code></pre>
-        <p class="runnote">The same stack as a system service on Debian, Ubuntu or an
-            RHEL-family host, installed by one script and exercised on Debian and Rocky in CI.
-            Hardening is a separate, documented step:
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/operator/LINUX-SERVER.md">LINUX-SERVER.md</a> then
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/operator/HARDENING.md">HARDENING.md</a>.</p>
-
-        <h3>Kubernetes reference profile</h3>
-<pre><code>helm install polaris deploy/helm/polaris --namespace polaris</code></pre>
-        <p class="runnote">The same topology with enforced network policies and the restricted
-            pod security standard, booted on kind in CI. It runs a single PostgreSQL replica;
-            high-availability automation is roadmap work, not a shipped feature.
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/operator/KUBERNETES.md">KUBERNETES.md</a>.</p>
-    </div>
-</section>
-
-<section id="evaluate" aria-labelledby="evaluate-h">
-    <h2 id="evaluate-h">Evaluate it</h2>
-    <p class="lede">The documents an assessor reads first, in the order they usually matter.</p>
-    <div class="evaluate">
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md"><b>Readiness ledger</b><span>What stands between this repository and real identity data</span></a>
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/MISSION.md"><b>The constitution</b><span>The vocation, the ten guarantees, and what may never be built</span></a>
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/PQC-POSTURE.md"><b>Post-quantum posture</b><span>What is post-quantum today and what stays classical</span></a>
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/SECURITY.md"><b>Security policy</b><span>How to report a vulnerability, and the response window</span></a>
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/operator/PRIVACY.md"><b>Privacy posture</b><span>What is stored, what is withheld, and where it is enforced</span></a>
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SYSTEM-MAP.md"><b>System map</b><span>Every top-level path and what it holds</span></a>
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/API.md"><b>API reference</b><span>Every route, its role gate and its result bound</span></a>
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/DATA-MODEL.md"><b>Data model</b><span>The schema whose constraints are the security boundary</span></a>
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/operator/OPERATIONS.md"><b>Operator runbooks</b><span>Day-two operations, backup, failover and the drills</span></a>
-        <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/ROADMAP.md"><b>Roadmap</b><span>What is deferred, and to which phase</span></a>
+<section class="band" id="start" aria-labelledby="start-h">
+    <div class="wrap">
+        <p class="num">VI</p>
+        <h2 id="start-h">Where to start.</h2>
+        <div class="paths">
+            <a href="https://github.com/EgorKhaklin/polaris-id/tree/main/packages/polaris-oid4vp">
+                <span class="who">Building a wallet or a verifier</span>
+                <b>polaris-oid4vp</b>
+                <span>An OpenID4VP 1.0 + HAIP verifier for SD-JWT VC, as a library or a server.</span></a>
+            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md">
+                <span class="who">Accepting credentials</span>
+                <b>The SDKs and the offline verifier</b>
+                <span>Python and TypeScript, checked against published keys with no network.</span></a>
+            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/MISSION.md">
+                <span class="who">Assessing it for an authority</span>
+                <b>The constitution and the ledger</b>
+                <span>The ten guarantees, what may never be built, and what is not done.</span></a>
+            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/SECURITY.md">
+                <span class="who">Trying to break it</span>
+                <b>Security policy and red-team scope</b>
+                <span>How to report, what is in scope, and the response window.</span></a>
+        </div>
+        <p class="src">Run the whole stack locally:
+            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/operator/INSTALL.md">installation</a> &middot;
+            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SYSTEM-MAP.md">system map</a> &middot;
+            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/API.md">API</a> &middot;
+            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/ROADMAP.md">roadmap</a></p>
     </div>
 </section>
 
 </main>
 
-<footer>
-    <a href="https://github.com/EgorKhaklin/polaris-id">github.com/EgorKhaklin/polaris-id</a>
-    &nbsp;·&nbsp; Apache-2.0
+<footer class="foot">
+    <div class="wrap foot-in">
+        <a class="maker" href="https://github.com/EgorKhaklin"><img src="khaklin.svg" alt="Khaklin Technologies" width="187" height="60"></a>
+        <p class="motto">Fixus inter mutabilia &middot; fixed amid the mutable</p>
+        <p class="fine"><a href="https://github.com/EgorKhaklin/polaris-id">github.com/EgorKhaklin/polaris-id</a>
+            &middot; Apache-2.0 &middot; This page runs no script and loads nothing from another site.</p>
+    </div>
 </footer>
 
 </body>
