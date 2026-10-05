@@ -216,7 +216,7 @@ Not covered: a coercer who knows the mechanism and forbids its use; a typo that 
 
 ## Test Coverage
 
-Measured at v9.237 (the README's "Verified, not asserted" table is the
+Measured at v9.237 (the "Verified, not asserted" table in [REVIEW-PACKET.md](../REVIEW-PACKET.md#5-verified-not-asserted) is the
 canonical statement and is re-stamped on every ship that changes it):
 
 ```
