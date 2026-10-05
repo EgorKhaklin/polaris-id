@@ -428,8 +428,9 @@ verifications carry no `token_id`, so a token's export never contains one.
 
 ### `GET /api/tokens/<id>/verify`
 
-**Login required; replica-routed.** Cryptographically verifies the token's
-active signature *at use* and reports whether it is authentic and whether the
+**Login required; replica-routed.** Cryptographically verifies each of the token's
+signatures in force *at use* (during a migration's grace, the superseded one too)
+and reports whether it is authentic and whether the
 token is currently usable. This is the throughput-oriented verification path: it
 checks **single-witness** (liboqs alone), because issuance already established
 two-witness validity and refused to persist a signature both implementations did
@@ -445,10 +446,10 @@ Returns JSON:
 | field | type | notes |
 |---|---|---|
 | `token_id` | int | echoes the path |
-| `signature_valid` | bool | authenticity: the active signature verifies. Immutable material, replica-safe, and safe for a relying party to cache |
+| `signature_valid` | bool | authenticity: every signature in force verifies. Immutable material, replica-safe, and safe for a relying party to cache |
 | `signature_cacheable` | bool | always `true` — the authenticity verdict may be cached; the authorization verdict below may NOT |
-| `issuer_authorized_at_signing` | bool \| null | Was the signing key authorized for this authority **at the instant the credential was signed**? Read from the append-only `AuthorityKeyEvent` register against the `ISSUED` row in `TokenLifecycleEvent`. Survives an ordinary key rotation. `null` when it cannot be established: no key history, no real signing key, or no `ISSUED` row to date it by |
-| `issuer_key_current` | bool \| null | Is that key still **active** for the authority today (not retired, not compromised)? A rotation makes this `false`, which is a fact about the key and not a verdict on the credential. `null` when undecidable |
+| `issuer_authorized_at_signing` | bool \| null | Was the signing key authorized for this authority **at the instant it signed**? Read from the append-only `AuthorityKeyEvent` register against that signature's own `signed_at`, never earlier than the `ISSUED` row in `TokenLifecycleEvent`, so a migration's signature is dated by the migration. Survives an ordinary key rotation. `null` when it cannot be established: no key history, no real signing key, or no `ISSUED` row to date it by. With several signatures in force, each entry in `signatures` carries its own, and this is the weakest of them: `false` if any is, `null` if any is unknown |
+| `issuer_key_current` | bool \| null | Is that key still **active** for the authority today (not retired, not compromised)? A rotation makes this `false`, which is a fact about the key and not a verdict on the credential. `null` when undecidable. Per signature in `signatures`, and the weakest of them here |
 | `status` | string | the token's current lifecycle status, read from the PRIMARY |
 | `status_source` | string | always `primary` — the authorization verdict is made on fresh state, never a stale replica |
 | `currently_authoritative` | bool | the "usable right now" authorization verdict: `status` is `ACTIVE` **and** `expiration_date` has not passed, read fresh from the primary. Until 2026-09-17 this was `status` alone, and a credential a decade past its stated end answered `true` |
@@ -550,8 +551,8 @@ authenticity pack — and receives the verdict. Never any personal data.
 | field | type | notes |
 |---|---|---|
 | `api_version` | string | `v1` |
-| `authentic` | bool | the presented signature is the genuine issued signature over `SHA3-256(token_value)` |
-| `issuer_authorized_at_signing` | bool \| null | the key was authorized for this authority when the credential was signed; survives rotation; `null` when undecidable |
+| `authentic` | bool | the presented signature is a genuine issued signature over `SHA3-256(token_value)` still in force: during a migration window, either the old or the new one |
+| `issuer_authorized_at_signing` | bool \| null | the key that made the presented signature was authorized for this authority when it signed (a migration's signature is dated by the migration); survives rotation; `null` when undecidable |
 | `issuer_key_current` | bool \| null | the key is still active for that authority today; `false` after a rotation, which says nothing about the credential; `null` when undecidable |
 | `currently_authoritative` | bool | the token is `ACTIVE` **and** not past its `expiration_date`, read fresh from the primary. The same predicate the operator endpoint uses, so the two cannot disagree |
 | `status` | string \| null | the lifecycle status; `null` when not verifiable |
@@ -560,9 +561,9 @@ authenticity pack — and receives the verdict. Never any personal data.
 | `decision` | string | `accept` or `reject` |
 | `reason` | string \| null | why, on a reject |
 
-**No enumeration, no existence oracle.** The caller must present the genuine
-issued signature: a not-found `token_value` or a signature that does not match the
-stored one returns the same uniform `{ "authentic": false, "decision": "reject",
+**No enumeration, no existence oracle.** The caller must present a genuine
+issued signature: a not-found `token_value` or a signature that matches none of the
+credential's signatures in force returns the same uniform `{ "authentic": false, "decision": "reject",
 "reason": "not a verifiable presentation" }`, so a relying party cannot walk token
 ids or values to survey the population. `signature_hex` is hex digits and nothing else, as
 the published verifiers read it: the genuine signature with whitespace in it gets the same
