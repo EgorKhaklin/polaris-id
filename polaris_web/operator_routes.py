@@ -41,6 +41,7 @@ from app import (
     _PROM_AVAILABLE,
     _int_arg,
     _issuer_key_facts,
+    _weakest_fact,
     _operator_authority_permits,
     _not_expired,
     _parse_cursor_int,
@@ -874,13 +875,15 @@ def api_token_verify(tok_id):
     # @replica_reads). It deliberately does NOT read status here.
     rows = query("""
         SELECT it.token_value, it.issuing_agency_id,
-               ts.signature_bytes, ts.signing_public_key_hex, alg.name AS algorithm,
-               ag.signing_public_key_hex AS agency_key
+               ts.signature_bytes, ts.signing_public_key_hex, ts.signed_at,
+               alg.name AS algorithm, ag.signing_public_key_hex AS agency_key
         FROM   IdentityToken it
-        JOIN   TokenSignature ts  ON ts.token_id = it.token_id AND ts.deprecation_date IS NULL
+        JOIN   TokenSignature ts  ON ts.token_id = it.token_id
+                                 AND (ts.deprecation_date IS NULL OR ts.deprecation_date > now())
         JOIN   CryptographicAlgorithm alg ON ts.algorithm_id = alg.algorithm_id
         JOIN   Agency ag ON ag.agency_id = it.issuing_agency_id
         WHERE  it.token_id = %s
+        ORDER BY ts.signed_at, ts.signature_id
     """, (tok_id,))
     if not rows:
         return jsonify(error='no such token, or it has no active signature'), 404
@@ -905,10 +908,14 @@ def api_token_verify(tok_id):
         sig = bytes(raw) if raw is not None else b''
         ok = pqc_signing.verify_stored_signature(
             token_value, sig, r['signing_public_key_hex'], witnesses='single')
+        authorized, current = _issuer_key_facts(
+            tok_id, r['issuing_agency_id'], r['signing_public_key_hex'], r['signed_at'])
         signatures.append({
             'algorithm': r['algorithm'],
             'valid': bool(ok),
             'real_signature': bool(r['signing_public_key_hex']),
+            'issuer_authorized_at_signing': authorized,
+            'issuer_key_current': current,
         })
         all_valid = all_valid and ok
 
@@ -948,9 +955,14 @@ def api_token_verify(tok_id):
     # decided (a placeholder signature, or an agency with no registered key). This is
     # authenticity of the ISSUER, distinct from signature_valid (the signature is
     # genuine) and currently_authoritative (the token is usable now).
-    _token_key = rows[0].get('signing_public_key_hex')
-    _authorized_at_signing, _key_current = _issuer_key_facts(
-        tok_id, rows[0].get('issuing_agency_id'), _token_key)
+    #
+    # Per signature since 2026-10-02 (CORE-BUG). The facts were those of rows[0], an arbitrary
+    # one of the signatures in force (the read had no ORDER BY), so during a migration window
+    # the answer depended on row order. Each signature now carries its own, dated by its own
+    # making, and the credential's are the weakest of them: every signature in force has to
+    # verify, so every key behind them has to be one the authority authorized.
+    _authorized_at_signing = _weakest_fact(s['issuer_authorized_at_signing'] for s in signatures)
+    _key_current = _weakest_fact(s['issuer_key_current'] for s in signatures)
 
     return jsonify(
         token_id=tok_id,
@@ -1020,7 +1032,7 @@ def token_authenticity_pack(tok_id):
         JOIN   CryptographicAlgorithm alg ON ts.algorithm_id = alg.algorithm_id
         JOIN   Agency ag ON it.issuing_agency_id = ag.agency_id
         WHERE  it.token_id = %s
-        ORDER BY ts.signed_at DESC
+        ORDER BY ts.signed_at DESC, ts.signature_id DESC
     """, (tok_id,))
     if not rows:
         return jsonify(error='no such token, or it has no active signature'), 404

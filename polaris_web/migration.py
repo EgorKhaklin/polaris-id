@@ -99,6 +99,12 @@ def resolve_target(conn, algorithm):
     if row is None:
         raise MigrationRefused(f"no such algorithm: {algorithm!r}")
     row_id, name = row["algorithm_id"], row["name"]
+    if name not in pqc_signing.ACCEPTED_ALGORITHMS:
+        # Registered is not signable: the SLH-DSA rows have no signer here. Under the
+        # placeholder profile the run used to record the whole population under one anyway.
+        raise MigrationRefused(
+            f"nothing here signs with {name}, so no credential can be re-signed under it "
+            f"(the signers are {', '.join(pqc_signing.ACCEPTED_ALGORITHMS)})")
     if row["deprecation_date"] is not None:
         raise MigrationRefused(
             f"{name} is itself deprecated; migrating a population ONTO a deprecated algorithm "
@@ -262,10 +268,14 @@ def deprecate_superseded(conn, target_algorithm_id, grace_seconds=0):
 
 
 def verifiability_report(conn):
-    """Every ACTIVE credential, and whether it has at least one signature that verifies today.
+    """Every live credential, and whether it has at least one signature in force today: not
+    deprecated, or deprecated with the date still ahead.
 
     The number a migration is judged by. It must be zero unverifiable at every instant, before
-    the migration, during it, and after the window closes."""
+    the migration, during it, and after the window closes. It counts rows and verifies no
+    bytes: the signing path checked each signature as it wrote it (both witnesses, under real
+    signing), and the quantum-event drill verifies a sample, because a count once read zero
+    while every migrated credential failed verification."""
     with conn.cursor() as cur:
         cur.execute(
             "SELECT count(*) AS total, "
