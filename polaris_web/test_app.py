@@ -16319,6 +16319,22 @@ class AthenaSelfTestTests(PolarisTestCase):
             self.assertNotIn('rule-contradicted', classes)
             self.assertIn('the privilege boundary', card)
 
+    def test_it_is_rate_limited_per_account(self):
+        # Each run attempts every forbidden write, so the route bounds how often an account may ask
+        # (_ATHENA_SELFTEST_PER_MINUTE). Found unexercised by the app mutation drill (2026-10-04).
+        saved = flask_app._ATHENA_SELFTEST_PER_MINUTE
+        flask_app._ATHENA_SELFTEST_PER_MINUTE = 1
+        try:
+            flask_app.security.rate_limiter.reset()
+            self.assertEqual(self._post_selftest().status_code, 200, 'the first run in the minute')
+            self.assertEqual(self._post_selftest().status_code, 429, 'the second is refused')
+            flask_app.security.rate_limiter.reset()
+            self.assertEqual(self._post_selftest().status_code, 200,
+                             'and the refusal was the limiter: cleared, the next run is admitted')
+        finally:
+            flask_app._ATHENA_SELFTEST_PER_MINUTE = saved
+            flask_app.security.rate_limiter.reset()
+
     def test_it_is_for_administrators_and_auditors_on_purpose(self):
         self._login('operator')
         self.assertEqual(self._post_selftest().status_code, 403)
