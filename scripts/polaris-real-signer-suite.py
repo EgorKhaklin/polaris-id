@@ -38,6 +38,28 @@ def main():
     if not pqc_signing.is_enabled():
         print("real-signer suite: liboqs is not importable here, so the real signer cannot run")
         return 1 if os.environ.get("CI") else 3
+    # One persistent issuer key, as production has (it fails closed at boot without one), not the
+    # per-call ephemeral fallback: a possession proof accepts a signature only under a key its
+    # authority had registered, and test_app registers this one after every reload, which is the
+    # key ceremony (docs/operator/KEY-CEREMONY.md). An ephemeral key is a different key on every
+    # signature, which no ceremony could have registered.
+    if not os.environ.get("POLARIS_PQC_SIGNING_KEY_FILE"):
+        import json
+        import tempfile
+        fd, key_file = tempfile.mkstemp(prefix="polaris-real-signer-", suffix=".key.json")
+        with os.fdopen(fd, "w") as f:
+            json.dump(pqc_signing.generate_keypair(), f)
+        os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = key_file
+    # And the migration key a quantum-event migration signs with (docs/operator/QUANTUM-EVENT.md):
+    # a persistent key for the target parameter set, which custody refuses to stand in for with
+    # the issuer key of another set.
+    if not os.environ.get("POLARIS_MIGRATION_SIGNING_KEY_FILE"):
+        import json
+        import tempfile
+        fd, migration_file = tempfile.mkstemp(prefix="polaris-real-signer-migration-", suffix=".key.json")
+        with os.fdopen(fd, "w") as f:
+            json.dump(pqc_signing.generate_keypair(algorithm="ML-DSA-87"), f)
+        os.environ["POLARIS_MIGRATION_SIGNING_KEY_FILE"] = migration_file
     import test_app as T
 
     suite = unittest.defaultTestLoader.loadTestsFromModule(T)
