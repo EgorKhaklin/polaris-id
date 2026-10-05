@@ -47,6 +47,19 @@ driver and key identifier, the public key hex and its fingerprint
 where the public key was published, and, for the file driver, where the
 sealed backup is.
 
+The ceremony ends by registering the key in the authority key register, before the first
+credential is issued under it:
+
+    polaris key-register AGENCY_ID PUBLIC_KEY_HEX --effective-at <the ceremony's instant>
+
+Under real signing this is not optional. Every possession route (`/api/v1/verify`, the status
+assertion, holder signing, the verifiable credential, the mdoc, sign-in) accepts a signature only
+under a key its authority had registered at the instant the signature was made, and refuses one
+whose key has no recorded history. The application role can write a signature row but cannot
+register a key, so this is what keeps a planted row from being vouched for. A credential issued
+before its key was registered is refused until the registration's `--effective-at` covers its
+signing instant.
+
 ### file
 
 ```bash
