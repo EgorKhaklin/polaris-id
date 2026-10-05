@@ -14,8 +14,8 @@ here (`.github/workflows/pages.yml`, which also re-checks the page's numbers and
 links on every push).
 
 `_headers` is the site's security policy, in Cloudflare's `_headers` format
-(GitHub Pages cannot send response headers). The policy allows styles and
-images from the site itself and nothing else: no inline style or script, no
+(GitHub Pages cannot send response headers). The policy allows styles,
+images and fonts from the site itself and nothing else: no inline style or script, no
 other origin, no framing. `check_site_pages_render_under_their_headers` reads
 the policy and every page and stylesheet here, so a page that would render
 broken under it fails the build.
@@ -24,21 +24,25 @@ broken under it fails the build.
 
 | File | What it is | Read by |
 |---|---|---|
-| `index.html` | The whole page: markup and content | The published site |
+| `index.html` | The whole page: markup and content. It runs no script: the hero's turning star trails are CSS, and stop under `prefers-reduced-motion` | The published site |
 | `index.css` | The page's styles, outside the page so the policy can refuse inline style | `index.html` |
 | `tokens.css` | The design tokens, under the same names `polaris_web/static/polaris.css` uses | `index.html`, `404.html` |
 | `404.html`, `404.css` | The not-found page and its styles | The host, for any unknown path (`not_found_handling` in `wrangler.jsonc`) |
 | `_headers` | The security headers the host sends with every file | Cloudflare |
 | `robots.txt` | Crawl policy: one page, nothing private | Crawlers |
 | `favicon.svg` | The tab icon | `index.html`, `404.html` |
-| `polaris_logo_clean.png` | The emblem, 440 x 440, drawn at 180 to 220 CSS pixels | `index.html`, the Open Graph preview, `docs/assets/hero.svg` (embedded), the Helm chart icon |
+| `og.png` | The 1200 x 630 social card: the emblem, the page's headline, "pre-pilot" and the maker's mark, captured from the page's own styles | `index.html` (`og:image`) |
+| `khaklin.svg` | The KHAKLIN TECHNOLOGIES lockup in the site's gold, from the traced lettering and owl (never redrawn) | `index.html` (footer), `og.png` |
+| `fonts/` | Inter, Cinzel and JetBrains Mono: the console's own files from `polaris_web/static/vendor/fonts/`, byte for byte, each beside its SIL OFL licence | `index.css`, `404.css` |
+| `polaris_logo_clean.png` | The emblem, 440 x 440, unchanged; drawn at 28 to 220 CSS pixels | `index.html`, the Open Graph preview, `docs/assets/hero.svg` (embedded), the Helm chart icon |
 | `openid-certified-mark-on-white.png` | The OpenID Certified mark, shown beside the scoped certification statement | `index.html` |
 
 ## Conventions
 
-- One copy of every binary, with one exception: the OpenID Certified mark is
-  also in `docs/assets/`, byte for byte, because the published polaris-oid4vp
-  README links to that path and the site can serve only this directory.
+- One copy of every binary, with two exceptions, each byte for byte, because the
+  site can serve only this directory: the OpenID Certified mark is also in
+  `docs/assets/` (the published polaris-oid4vp README links to that path), and
+  `fonts/` repeats the console's vendored fonts.
 - Outbound links to repository documents are absolute `github.com/.../blob/main`
   URLs. A relative link would 404 on the published site, whose root is this
   directory.
