@@ -284,7 +284,7 @@ Symptom: a done-list item once said "134 Python tests" while reality was
 releases. Since v9.194 `check_stated_counts` and
 `check_table_count_matches_doc` re-measure the headline counts on every
 run; test-suite totals are still measured by hand and stamped with the
-version (README's "Verified, not asserted" table is canonical).
+version (the "Verified, not asserted" table in docs/REVIEW-PACKET.md is canonical).
 
 ### "is this ready to ship?" checklists, scattered
 
