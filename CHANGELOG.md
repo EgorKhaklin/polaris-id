@@ -73,6 +73,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Changed
 
 - The scoreboard records the IETF SD-JWT repository listing polaris-oid4vp among its implementations.
+- The README's badges return in three rows, with a tested-against badge; each package README gets a badge row; the site links Discord.
 - The README is a front page: what it is, a one-minute check, outside evidence, the guarantees and limits; detail moved to the docs.
 - The project site is rebuilt: one claim, the one-minute check, outside evidence first, and the limits; still no script.
 - MISSION.md's second item reads "ML-DSA-65 by default", not "Post-quantum by default", by the owner's direction (2026-10-03).
