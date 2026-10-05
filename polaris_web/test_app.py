@@ -21147,9 +21147,13 @@ class MigrationChainPropertyTests(PolarisTestCase):
                     trace.append('migrate %s to %s%s%s' % (c['tv'][-3:], name,
                                  ' deprecating' if deprecate else '', '' if allowed else ' (refused)'))
                     self.assertLess(r.status_code, 500, ' -> '.join(trace))
-                    if allowed:
+                    body = r.get_data(as_text=True)
+                    if allowed and r.status_code not in (302, 303) and (
+                            'migration targets' in body or 'wrong parameter set' in body):
+                        trace[-1] += ' (refused: no key for the target here)'
+                    elif allowed:
                         self.assertIn(r.status_code, (302, 303), '%s: %s' % (
-                            ' -> '.join(trace), r.get_data(as_text=True)[:300]))
+                            ' -> '.join(trace), body[:300]))
                         c['model'].add(name)
                     else:
                         self.assertNotIn(r.status_code, (302, 303), ' -> '.join(trace))
@@ -21168,6 +21172,15 @@ class MigrationChainPropertyTests(PolarisTestCase):
                             migration.migrate_population(conn, target_id, target_name, batch_size=200)
                             if grace is not None:
                                 migration.deprecate_superseded(conn, target_id, grace_seconds=grace)
+                        except custody.AlgorithmUnavailableError:
+                            # This deployment's custody holds no key for the target (CI's real-signer
+                            # job provisions an ML-DSA-87 migration key only): the runner refuses
+                            # before writing anything, which is the drill's "a migration that cannot
+                            # sign stops".
+                            conn.rollback()
+                            trace[-1] += ' (refused: no key for the target here)'
+                            check(creds, trace)
+                            continue
                         except migration.MigrationRefused:
                             # A credential that already holds a retired signature under the target
                             # can never be re-signed under it (one per algorithm, append-only): the
