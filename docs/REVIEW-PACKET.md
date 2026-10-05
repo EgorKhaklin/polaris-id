@@ -177,3 +177,27 @@ What this does and does not say:
 - "Noticed" means some test went red, not that the right test went red for the right reason.
 - The application row was 116 examined, 44 survived, 25 of them undeclared, until 2026-09-27:
   no workflow ran that drill. Tests now cover the 25 and a weekly sweep keeps them covered.
+
+## 5. Verified, not asserted
+
+Counts of checks, tables, routes and CI jobs are re-measured by `polaris_checks` on every run; test counts are measured per release.
+
+| Layer | Scale | What it proves |
+|---|---|---|
+| Product tests (live database) | 1245 | Constraints, use cases, routes, redaction, real-thread concurrency, the secret store |
+| Crypto witnesses | 126 passing of 131 collected | ML-DSA across both witnesses and a software PKCS#11 module; Rust and Python epoch roots agree |
+| Invariant checks | 343 | C1-C10 plus production posture, each with a detection test |
+| CI jobs | 23 | Below |
+
+Test counts: reference machine, v1.0.0-rc.62 (`pytest -q` per suite, 2026-09-26). The five skipped crypto tests need a PKCS#11 module or a real KMS key.
+
+On every push, CI also boots the five-service production-profile stack, round-trips backups,
+fails over the HA profile under writes, proves the post-quantum TLS handshake and real ML-DSA-65
+signing, runs the federation and compatibility drills and the mutation drills, and gates on CVE
+scans ([ci.yml](../.github/workflows/ci.yml)). What the mutation drills broke, what noticed and which run each number
+is from: [the review packet](#4-broken-on-purpose).
+
+```bash
+python3 -m polaris_checks.run        # the invariant layer, no database needed
+python3 scripts/polaris-ship.py run  # the full local gate, matching CI
+```
