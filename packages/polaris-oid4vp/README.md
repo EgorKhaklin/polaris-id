@@ -1,23 +1,27 @@
 # polaris-oid4vp
 
+[![PyPI](https://img.shields.io/pypi/v/polaris-oid4vp?include_prereleases&label=PyPI&color=3775a9&labelColor=0a1421&style=flat-square)](https://pypi.org/project/polaris-oid4vp/)
+[![OpenID Certified: polaris-oid4vp verifier](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_verifier-c9a352?labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SPEC-COMPLIANCE.md#openid-certified)
+[![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
+[![GitHub stars](https://img.shields.io/github/stars/EgorKhaklin/polaris-id?label=stars&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id)
+[![Discord](https://img.shields.io/badge/Discord-join_the_server-5865F2?logo=discord&logoColor=white&labelColor=0a1421&style=flat-square)](https://discord.gg/ragewuCKj)
+
 **An OpenID4VP 1.0 verifier under the High Assurance Interoperability Profile.** It checks a
 presentation from a wallet that has never heard of Polaris: an SD-JWT VC signed with ES256, with
 holder key binding, delivered over `direct_post.jwt`.
 
 <a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/docs/assets/openid-certified-mark-on-white.png" alt="OpenID Certified" width="160"></a>
 
-**OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile.**
-`polaris-oid4vp 1.0.0rc7` finished all eleven modules of the Foundation's hosted
-`oid4vp-1final-verifier-haip-test-plan` (`sd_jwt_vc`, `direct_post.jwt`) without failure, and the OpenID
-Foundation [lists the certification](https://openid.net/certification/certified-oid4vp-haip-final/)
-(2026-09-24). It covers that version in that role: not an endorsement, not an audit, and not
-other versions. OpenID® and OpenID® Certified™ are trademarks of the OpenID Foundation, used under
-its [certification terms](https://openid.net/certification/mark/).
+**OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile** at
+version 1.0.0rc7, which passed all eleven modules of the Foundation's hosted HAIP verifier test plan
+(`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/),
+2026-09-24). The certification covers that version in that role. OpenID® and OpenID® Certified™
+are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Status:** 1.0.0rc16, a release candidate, not certified: it carries the fixes made since
-1.0.0rc7. Outside results: the Foundation's hosted suite (0.1.0, then 1.0.0rc7 for
-certification) and the implementations in the table below, re-run weekly. No operator other
-than the author has run it and no independent security review exists. Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
+**Status:** this release, 1.0.0rc16, is the certified rc7 verifier plus the fixes made since; the
+certification names rc7. It is re-run weekly against the outside implementations in the table
+below. No operator other than the author has run it and no independent security review exists.
+Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
 
 **Try it in ten minutes, without cloning anything:**
 [the stranger's path](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md)
