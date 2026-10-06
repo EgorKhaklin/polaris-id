@@ -1,0 +1,5 @@
+# The OpenTimestamps client and library for lab/strategy/013 (LGPL-3.0, used as tools, not vendored).
+# requirements.txt is compiled from this with hashes:
+#   pip-compile --generate-hashes --allow-unsafe --strip-extras requirements.in
+opentimestamps-client==0.7.2
+opentimestamps==0.4.5

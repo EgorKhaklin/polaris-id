@@ -42,7 +42,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - An experimental FN-DSA signer: Falcon-padded-1024 keys sign only under POLARIS_EXPERIMENTAL_SIGNERS, never in production, two-witnessed (liboqs, then @noble/post-quantum under Node); migration 2026-10-06-001.
 - A population migrates onto the FN-DSA family where its opt-in holds: 2,000 credentials re-signed at 604/s against ML-DSA-87's 319/s, nobody dark (quantum-event drill, POLARIS_QE_TARGET).
-- The FN-DSA family (draft FIPS 206) is verified, optionally: the detached verifier and both SDKs accept Falcon-padded-1024 and refuse Falcon-512; conformance runs its genuine case for a verifier that declares it; Polaris signs nothing under it yet.
+- A lab step puts a checkpoint of the three transparency logs into Bitcoin block 969876 through OpenTimestamps; its verifier reads the block from two sources.
+- The FN-DSA family (draft FIPS 206) is verified, optionally: the detached verifier and both SDKs accept Falcon-padded-1024 and refuse Falcon-512; conformance runs its genuine case for a verifier that declares it.
 - Algorithm migration is tested through arbitrary sequences, and in the lab through seven signature families.
 - polaris-oid4vp asks for a nested claim and its value (`--claim age_equal_or_over.18=true`): one statement of an EUDI PID, not all of them.
 - polaris-oid4vp verifies an issuer `x5c` through the intermediate CAs it carries, link by link in order, as eudi-dev v2.5.0's PID Provider sends.
