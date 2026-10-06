@@ -49,7 +49,11 @@ except Exception:  # noqa: BLE001  imported from a source tree, not installed
 ALGORITHM = "ML-DSA-65"   # the default parameter set
 # P8.8a: the accepted FIPS 204 parameter sets -> the cryptography witness class. ML-DSA-44 is
 # below the floor and is rejected like any unknown algorithm.
-ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey"}
+ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey",
+                       "Falcon-padded-1024": None}
+# 2026-10-05: the FN-DSA family (draft FIPS 206), verification only, under the name liboqs gives
+# the round-3 scheme it implements (FIPS 206 is not final). cryptography has no Falcon, so the
+# value is None and liboqs alone witnesses it here; Falcon-512 (category 1) stays below the floor.
 
 
 def _accepted(alg):
