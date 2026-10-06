@@ -99,3 +99,5 @@ asks to see the rotation run. No outside party has asked yet; that is recorded, 
 5. **Kill date.** If by 2027-03-12 neither an assessor nor an operator outside the project has
    asked about non-lattice fallback or compact signatures, the FN-DSA step is not taken; SLH-DSA
    stays, because the posture claim depends on it.
+
+**Step 3 (2026-10-06):** [`015/STEP3.md`](015/STEP3.md): the experimental FN-DSA signer end to end through the product's migration runner, 16 of 16 rows; onto Falcon at 604 re-signed/s against ML-DSA-87's 319.

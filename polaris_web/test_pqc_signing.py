@@ -595,3 +595,78 @@ class AlgorithmAgilityTests(unittest.TestCase):
         finally:
             os.environ.clear(); os.environ.update(old)
 
+
+
+def _falcon_ready():
+    """liboqs with Falcon (the primary) and Node with @noble/post-quantum (the second witness)."""
+    if not pqc_signing.is_available():
+        return False
+    import shutil
+    import oqs  # type: ignore
+    return ("Falcon-padded-1024" in oqs.get_enabled_sig_mechanisms() and shutil.which("node") is not None
+            and os.path.isfile(os.path.join(pqc_signing._noble_dir(), "falcon.js")))
+
+
+class ExperimentalSignerGateTests(unittest.TestCase):
+    """2026-10-06: the FN-DSA family signs only under its opt-in, never in production, and never
+    with one witness. Falsifiers F1, F2 and F3 of the step-2 plan, as tests."""
+
+    A = "Falcon-padded-1024"
+
+    def setUp(self):
+        self._env = dict(os.environ)
+        for k in ("POLARIS_EXPERIMENTAL_SIGNERS", "POLARIS_ENV", "POLARIS_NOBLE_DIR", "POLARIS_PQC_ALGORITHM"):
+            os.environ.pop(k, None)
+
+    def tearDown(self):
+        os.environ.clear(); os.environ.update(self._env)
+
+    def test_the_gate(self):
+        import custody
+        self.assertFalse(custody.experimental_signer_allowed(self.A), "no opt-in")
+        os.environ["POLARIS_EXPERIMENTAL_SIGNERS"] = self.A
+        self.assertTrue(custody.experimental_signer_allowed(self.A))
+        os.environ["POLARIS_ENV"] = "production"
+        self.assertFalse(custody.experimental_signer_allowed(self.A), "F1: production never signs under it")
+        os.environ["POLARIS_ENV"] = "development"
+        os.environ["POLARIS_EXPERIMENTAL_SIGNERS"] = "ML-DSA-87, Falcon-padded-512"
+        self.assertFalse(custody.experimental_signer_allowed(self.A), "only the named set")
+        self.assertFalse(custody.experimental_signer_allowed("Falcon-padded-512"), "never one not on the list")
+
+    def test_a_configured_falcon_algorithm_is_refused_without_the_opt_in(self):
+        import custody
+        os.environ["POLARIS_PQC_ALGORITHM"] = self.A
+        with self.assertRaises(custody.CustodyError):
+            custody.configured_algorithm()
+        os.environ["POLARIS_EXPERIMENTAL_SIGNERS"] = self.A
+        self.assertEqual(custody.configured_algorithm(), self.A)
+        os.environ["POLARIS_ENV"] = "production"
+        with self.assertRaises(custody.CustodyError):
+            custody.configured_algorithm()
+
+    def test_verification_needs_no_opt_in(self):
+        self.assertTrue(pqc_signing._verifies_under(self.A))
+        self.assertFalse(pqc_signing._signs_under(self.A))
+        self.assertFalse(pqc_signing._verifies_under("Falcon-padded-512"))
+
+    @unittest.skipUnless(_falcon_ready(), "needs liboqs with Falcon and Node with @noble/post-quantum")
+    def test_end_to_end_two_witnessed_and_fail_closed(self):
+        import oqs  # type: ignore
+        with self.assertRaises(ValueError):
+            pqc_signing.generate_keypair(self.A)
+        os.environ["POLARIS_EXPERIMENTAL_SIGNERS"] = self.A
+        kp = pqc_signing.generate_keypair(self.A)
+        self.assertEqual(len(kp["public_key_hex"]), 2 * 1793)
+        msg = b"POLARIS-FNDSA-UNIT-0001"
+        with oqs.Signature(self.A, secret_key=bytes.fromhex(kp["secret_key_hex"])) as s:
+            sig = bytes(s.sign(hashlib.sha3_256(msg).digest())).hex()
+        self.assertEqual(len(sig), 2 * 1280)
+        self.assertTrue(pqc_signing.verify_both(msg, sig, kp["public_key_hex"], require_witness=True))
+        bad = sig[:400] + ("0" if sig[400] != "0" else "1") + sig[401:]
+        self.assertFalse(pqc_signing.verify_both(msg, bad, kp["public_key_hex"], require_witness=True),
+                         "F3: a tampered signature is not certified")
+        os.environ["POLARIS_NOBLE_DIR"] = "/nonexistent"
+        self.assertIsNone(pqc_signing._falcon_witness(hashlib.sha3_256(msg).digest(), bytes.fromhex(sig),
+                                                      bytes.fromhex(kp["public_key_hex"])))
+        self.assertFalse(pqc_signing.verify_both(msg, sig, kp["public_key_hex"], require_witness=True),
+                         "F2: with the second witness absent, nothing is certified on one")
