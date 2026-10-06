@@ -592,8 +592,10 @@ class TestRecoveryRequestChecks(_CheckBase):
     def test_identity_fields_are_immutable(self):
         with self.conn.cursor() as cur:
             rid = self._open_request(cur, 1)
-        self._expect_refusal("UPDATE RecoveryRequest SET claimed_individual_id = 2 WHERE recovery_id = %s",
-                             (rid,), "append-only except for")
+        # Always a different person: a constant can equal the person the fixture picked, and an
+        # UPDATE that changes nothing is not a rewrite.
+        self._expect_refusal("UPDATE RecoveryRequest SET claimed_individual_id = claimed_individual_id + 1 "
+                             "WHERE recovery_id = %s", (rid,), "append-only except for")
 
     def test_delete_is_refused(self):
         with self.conn.cursor() as cur:
