@@ -140,7 +140,9 @@ echo "  → staging at ${STAGE}"
 
 # 1. pg_dump
 echo "  [1/2] pg_dump…"
-if docker compose -f "${COMPOSE_FILE}" ps --services 2>/dev/null | grep -q '^postgres$'; then
+# Capture before matching: under pipefail a grep -q that leaves early can SIGPIPE compose.
+RUNNING_SERVICES="$(docker compose -f "${COMPOSE_FILE}" ps --services 2>/dev/null || true)"
+if grep -qx postgres <<<"$RUNNING_SERVICES"; then
     # Production stack is up — dump via compose exec
     docker compose -f "${COMPOSE_FILE}" exec -T postgres \
         pg_dump -Fc -U postgres polaris > "${STAGE}/polaris.dump"
