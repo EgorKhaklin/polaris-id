@@ -7,7 +7,11 @@ already runs). State: OPEN. The falsifiers in section 6 were written before the 
 SLH-DSA variants in both directions, and refuse tampering and wrong keys alike. Step 2 (lab, 2026-10-05,
 [015/STEP2.md](015/STEP2.md)): from Python, Falcon's signing time depends on the (public) message and
 no dependence on the secret key was detected; that resolution cannot clear falsifier 2, so FN-DSA
-stays lab-only pending a native harness.
+stays lab-only pending a native harness. Step 4 (lab, 2026-10-06, [015/STEP4.md](015/STEP4.md)): the native
+harness, on an Apple M3 and on Linux x86_64 (the deployment profile's platform), detects no
+dependence of signing time on the secret key at a measured 100 ns sensitivity, and does not
+reproduce step 2's message signal. Falsifier 2 is not triggered on those platforms; the signer
+stays experimental while FIPS 206 is a draft.
 
 ---
 
@@ -95,3 +99,5 @@ asks to see the rotation run. No outside party has asked yet; that is recorded, 
 5. **Kill date.** If by 2027-03-12 neither an assessor nor an operator outside the project has
    asked about non-lattice fallback or compact signatures, the FN-DSA step is not taken; SLH-DSA
    stays, because the posture claim depends on it.
+
+**Step 3 (2026-10-06):** [`015/STEP3.md`](015/STEP3.md): the experimental FN-DSA signer end to end through the product's migration runner, 16 of 16 rows; onto Falcon at 604 re-signed/s against ML-DSA-87's 319.

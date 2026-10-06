@@ -1,0 +1,35 @@
+[
+ {
+  "algorithm": "DETERMINISTIC-PLACEHOLDER-SHA3-256",
+  "digest_construction": "SHA3-256(canonical statement: sorted-keys compact JSON of {format,log_id,tree_size,root_hash_hex,timestamp})",
+  "format": "polaris-transparency-sth/1",
+  "log_id": "polaris-audit-anchor-log",
+  "public_key_hex": null,
+  "root_hash_hex": "a0460165abc77f744daf24669123959b2a4c3f9dc3eff00e7fe6dfa4e23bf135",
+  "signature_hex": "1aaf434de4e394bb266a6f3aa889ecbf57221f8aa612c3b4904cc8805335cd23",
+  "timestamp": "2026-10-04T16:30:22Z",
+  "tree_size": 2
+ },
+ {
+  "algorithm": "DETERMINISTIC-PLACEHOLDER-SHA3-256",
+  "digest_construction": "SHA3-256(canonical statement: sorted-keys compact JSON of {format,log_id,tree_size,root_hash_hex,timestamp})",
+  "format": "polaris-transparency-sth/1",
+  "log_id": "polaris-exchange-receipt-log",
+  "public_key_hex": null,
+  "root_hash_hex": "623b44419e93d5bf43bd2fa7d0ecaf1eafa24f3594a33a45b5564dd2472a91be",
+  "signature_hex": "3dea0eb299f445f91fd6c0197ed560ad8032658f036246fc12469d88d802a6c2",
+  "timestamp": "2026-10-04T16:30:22Z",
+  "tree_size": 2
+ },
+ {
+  "algorithm": "DETERMINISTIC-PLACEHOLDER-SHA3-256",
+  "digest_construction": "SHA3-256(canonical statement: sorted-keys compact JSON of {format,log_id,tree_size,root_hash_hex,timestamp})",
+  "format": "polaris-transparency-sth/1",
+  "log_id": "polaris-timestamp-log",
+  "public_key_hex": null,
+  "root_hash_hex": "75d95f79470c3b43773ef54072da6d505c34c48d3352869dd7b1d93942d101df",
+  "signature_hex": "c5e70eadb9816f25ce65504481fb6d6be938acdb215faeb1ef9722c8f0760fff",
+  "timestamp": "2026-10-04T16:30:22Z",
+  "tree_size": 194
+ }
+]

@@ -110,7 +110,12 @@ VALUES
     -- 5: ECDSA-P256, classical, DEPRECATED. Retained only so existing
     --    AgencyAlgorithmAuth grants are queryable for migration audit.
     ('ECDSA-P256',    'ECDSA',   FALSE, 'FIPS 186-4 (legacy)',
-     128,   64,   72, '2027-12-31');
+     128,   64,   72, '2027-12-31'),
+    -- 6: Falcon-padded-1024, the FN-DSA family (draft FIPS 206), category 5. EXPERIMENTAL:
+    --    verified everywhere, signed only where POLARIS_EXPERIMENTAL_SIGNERS names it outside
+    --    production (polaris_web/custody.py; lab record 015 holds its signing-time test).
+    ('Falcon-padded-1024', 'FN-DSA', TRUE, 'FIPS 206 (draft)',
+     256, 1793, 1280, NULL);
 
 -- ============================================================================
 -- VERIFICATION CONTEXTS (7 rows)

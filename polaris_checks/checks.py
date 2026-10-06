@@ -13864,8 +13864,24 @@ def check_algorithm_agility(root: pathlib.Path) -> list[Finding]:
             return _fail("algorithm_agility", "%s accepts Falcon-512, which is category 1, below the floor" % n)
     if "a genuine Falcon-padded-512 pack is refused" not in v:
         return _fail("algorithm_agility", "the detached verifier's --selftest must prove Falcon-512 is refused")
-    if re.search(r'oqs\.Signature\("Falcon', _read(root, "polaris_web/custody.py") + _read(root, "polaris_web/pqc_signing.py")):
-        return _fail("algorithm_agility", "Polaris signs nothing under Falcon until lab/strategy/015 clears its signing timing")
+    # 2026-10-06: Polaris signs under it only as an EXPERIMENTAL signer: named in
+    # POLARIS_EXPERIMENTAL_SIGNERS, never under POLARIS_ENV=production, and two-witnessed by a
+    # second implementation (@noble/post-quantum under Node), as ML-DSA is by cryptography.
+    cust_src = _read(root, "polaris_web/custody.py")
+    if re.search(r'^ALGORITHM_SIZES = \{[^}]*Falcon', cust_src, re.M):
+        return _fail("algorithm_agility", "Falcon belongs in custody.EXPERIMENTAL_ALGORITHM_SIZES, not the accepted set")
+    for sym in ('EXPERIMENTAL_ALGORITHM_SIZES = {"Falcon-padded-1024": (1793, 1280)}', "def experimental_signer_allowed",
+                '== "production":', "POLARIS_EXPERIMENTAL_SIGNERS", "def signing_sizes"):
+        if sym not in cust_src:
+            return _fail("algorithm_agility", "custody.py must gate the experimental signer (%s missing)" % sym)
+    for sym in ("def _signs_under", "def _verifies_under", "def _falcon_witness", "not _signs_under(alg)"):
+        if sym not in pq:
+            return _fail("algorithm_agility", "pqc_signing.py must sign Falcon only through the gate, two-witnessed (%s missing)" % sym)
+    if "falcon1024padded.verify" not in _read(root, "polaris_web/witness/falcon_witness.mjs"):
+        return _fail("algorithm_agility", "polaris_web/witness/falcon_witness.mjs must be the Falcon second witness")
+    cli_src = _read(root, "polaris_cli/polaris.py")
+    if "def _experimental_key_allowed" not in cli_src or "3586: 'Falcon-padded-1024'" not in cli_src:
+        return _fail("algorithm_agility", "the CLI must register a Falcon key only under the experimental opt-in")
     cases = _read(root, "conformance/cases.json")
     for name in ("pack-mldsa87-valid", "pack-mldsa44-unaccepted", "status-assertion-mldsa87-active", "trust-list-migration",
                  "trust-list-migration-retired-signer", "pack-fndsa1024-valid", "pack-fndsa1024-tampered", "pack-fndsa512-unaccepted"):

@@ -64,6 +64,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 from dataclasses import dataclass
 from typing import Optional
 
@@ -173,6 +174,73 @@ _ALG_NAME = "ML-DSA-65"                 # the default parameter set (historical 
 DEFAULT_ALGORITHM = "ML-DSA-65"
 ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")
 _WITNESS_CLASSES = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey"}
+
+
+def _signs_under(algorithm) -> bool:
+    """May this process SIGN under `algorithm`? An accepted set always; an experimental one
+    (custody.EXPERIMENTAL_ALGORITHM_SIZES, the FN-DSA family) only when explicitly enabled
+    outside production (custody.experimental_signer_allowed)."""
+    return algorithm in ACCEPTED_ALGORITHMS or custody.experimental_signer_allowed(algorithm)
+
+
+def _verifies_under(algorithm) -> bool:
+    """May this process VERIFY under `algorithm`? Verifying touches public data only, so an
+    experimental set is verified wherever its witnesses exist, opt-in or not."""
+    return isinstance(algorithm, str) and (algorithm in ACCEPTED_ALGORITHMS
+                                           or algorithm in custody.EXPERIMENTAL_ALGORITHM_SIZES)
+
+
+# The FN-DSA family's second witness: cryptography carries no Falcon, so the independent
+# implementation is @noble/post-quantum, run by witness/falcon_witness.mjs under Node.
+_FALCON_WITNESS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "witness", "falcon_witness.mjs")
+_NOBLE_DIR_ENV = "POLARIS_NOBLE_DIR"
+
+
+def _noble_dir():
+    return os.environ.get(_NOBLE_DIR_ENV) or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "sdk", "typescript", "node_modules", "@noble", "post-quantum")
+
+
+_falcon_proc = None
+_falcon_proc_dir = None
+_falcon_lock = threading.Lock()
+
+
+def _falcon_witness(digest: bytes, sig_bytes: bytes, pk_bytes: bytes):
+    """Falcon-padded-1024 verified by @noble/post-quantum in a long-lived Node process: True/False,
+    or None when the witness cannot run (no Node, no library, a crash, a malformed answer). None is
+    "no witness", which issuance turns into a refusal; it is never read as a pass. One process
+    serves every request under a lock; any fault kills it, and the next request starts another."""
+    global _falcon_proc, _falcon_proc_dir
+    import subprocess
+    noble = _noble_dir()
+    if not os.path.isfile(os.path.join(noble, "falcon.js")):
+        return None
+    with _falcon_lock:
+        try:
+            if _falcon_proc is None or _falcon_proc.poll() is not None or _falcon_proc_dir != noble:
+                if _falcon_proc is not None and _falcon_proc.poll() is None:
+                    _falcon_proc.kill()
+                _falcon_proc = subprocess.Popen(["node", _FALCON_WITNESS, noble], stdin=subprocess.PIPE,
+                                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                                text=True, bufsize=1)
+                _falcon_proc_dir = noble
+            _falcon_proc.stdin.write(json.dumps({"pk": pk_bytes.hex(), "digest": digest.hex(),
+                                                 "sig": sig_bytes.hex()}) + "\n")
+            _falcon_proc.stdin.flush()
+            import select
+            ready, _, _ = select.select([_falcon_proc.stdout], [], [], 30)
+            line = _falcon_proc.stdout.readline() if ready else ""   # a hung witness is no witness
+            ok = json.loads(line).get("ok") if line else None
+        except (OSError, ValueError, AttributeError):
+            ok = None
+        if not isinstance(ok, bool):
+            if _falcon_proc is not None and _falcon_proc.poll() is None:
+                _falcon_proc.kill()
+            _falcon_proc = None
+            return None
+        return ok
 
 
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
@@ -331,8 +399,9 @@ def generate_keypair(algorithm=None) -> dict:
             f"liboqs-python is not importable: {_OQS_IMPORT_ERROR}.")
     import oqs as _oqs  # type: ignore
     alg = algorithm or custody.configured_algorithm()
-    if alg not in ACCEPTED_ALGORITHMS:
-        raise ValueError(f"{alg!r} is not an accepted algorithm ({', '.join(ACCEPTED_ALGORITHMS)})")
+    if not _signs_under(alg):
+        raise ValueError(f"{alg!r} is not a set this process signs under ({', '.join(ACCEPTED_ALGORITHMS)}; "
+                         f"experimental sets need {custody._EXPERIMENTAL_ENV} outside production)")
     with _oqs.Signature(alg) as signer:
         public_key = signer.generate_keypair()
         secret_key = signer.export_secret_key()
@@ -479,7 +548,7 @@ def migration_signature(token_value: str, algorithm: str, agency_id=None) -> Cre
     the same bytes over the token value, which the verify path recomputes, and no key.
     Refuses (SigningError) a target nothing here signs under, or one custody holds no key for.
     """
-    if algorithm not in ACCEPTED_ALGORITHMS:
+    if not _signs_under(algorithm):
         raise SigningError(
             "nothing here signs with %s (the signers are %s), so no signature can be recorded "
             "under it" % (algorithm, ", ".join(ACCEPTED_ALGORITHMS)))
@@ -610,7 +679,7 @@ def signature_for_migration(token_value: str, algorithm: str, agency_id=None) ->
     Refuses (NotACredentialSerial) a token_value that is not a credential serial, and
     (SigningError) a set no signer here produces, in every profile."""
     require_credential_serial(token_value)
-    if algorithm not in ACCEPTED_ALGORITHMS:
+    if not _signs_under(algorithm):
         raise SigningError(
             f"nothing here signs with {algorithm!r} (the signers are "
             f"{', '.join(ACCEPTED_ALGORITHMS)}); refusing a migration signature under it")
@@ -720,7 +789,7 @@ def verify(
         return False
 
     alg = algorithm or custody.algorithm_for_public_key(public_key)
-    if not isinstance(alg, str) or alg not in ACCEPTED_ALGORITHMS:
+    if not _verifies_under(alg):
         return False
     try:
         with _oqs.Signature(alg) as verifier:
@@ -741,15 +810,19 @@ def _verify_second_witness(message: bytes, signature_hex: str, public_key_hex: s
     run (library too old, or it cannot even load the key) so the caller falls back
     to the lone primary. Verifies the SAME SHA3-256 digest the signer signs.
     """
-    if not _WITNESS_AVAILABLE:
-        return None
     try:
         pk_bytes = unhex(public_key_hex)
         sig_bytes = unhex(signature_hex)
     except (ValueError, TypeError):
         return False
+    alg = algorithm or custody.algorithm_for_public_key(pk_bytes)
+    if isinstance(alg, str) and alg in custody.EXPERIMENTAL_ALGORITHM_SIZES:
+        # Its witness is @noble/post-quantum, not cryptography, so cryptography's absence
+        # says nothing about whether this one can run.
+        return _falcon_witness(hashlib.sha3_256(message).digest(), sig_bytes, pk_bytes)
+    if not _WITNESS_AVAILABLE:
+        return None
     try:
-        alg = algorithm or custody.algorithm_for_public_key(pk_bytes)
         cls = getattr(_mldsa, _WITNESS_CLASSES.get(alg, "") if isinstance(alg, str) else "", None)
         if cls is None:
             return None  # no witness implements this parameter set
@@ -869,7 +942,7 @@ def verify_token_signature(
       proof (there is no key); it only confirms the bytes match `token_value`.
     - anything else — False (unknown signature scheme).
     """
-    if algorithm_label in ACCEPTED_ALGORITHMS:
+    if _verifies_under(algorithm_label):
         anchors = trust_anchor_public_keys()
         if not anchors:
             return False

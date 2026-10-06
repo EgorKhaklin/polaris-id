@@ -18132,6 +18132,35 @@ class PopulationMigrationTests(PolarisTestCase):
             self.assertGreater(m.deprecate_superseded(conn, target_id, grace_seconds=60), 0)
             self.assertEqual(m.verifiability_report(conn)["unverifiable"], 0)
 
+    def test_a_target_signature_already_set_to_lapse_does_not_count_as_migrated(self):
+        # A credential whose signature under the target already carries a future deprecation
+        # date is not migrated: when that date passes it stands on nothing under the target.
+        # It was counted as migrated (in force today), so closing the window deprecated its
+        # every other signature too and the database refused the write ("zero active
+        # signatures"), an error where the runner owes a refusal naming what to do. Found
+        # 2026-10-06 by MigrationChainPropertyTests once a sixth algorithm row changed which
+        # sequences its seeds explore.
+        m = self._migration()
+        with self._new_conn() as conn:
+            target_id, target_name = m.resolve_target(conn, "ML-DSA-87")
+            m.migrate_population(conn, target_id, target_name, batch_size=50)
+            with conn.cursor() as cur:
+                cur.execute("SELECT token_id FROM TokenSignature WHERE algorithm_id = %s "
+                            "AND deprecation_date IS NULL ORDER BY token_id LIMIT 1", (target_id,))
+                token_id = cur.fetchone()["token_id"]
+                cur.execute("UPDATE TokenSignature SET deprecation_date = CURRENT_TIMESTAMP + INTERVAL '1 day' "
+                            "WHERE token_id = %s AND algorithm_id = %s", (token_id, target_id))
+            conn.commit()
+            self.assertGreater(m.pending_count(conn, target_id), 0,
+                               "a target signature set to lapse leaves its credential pending")
+            with self.assertRaises(m.MigrationRefused) as caught:
+                m.deprecate_superseded(conn, target_id, grace_seconds=60)
+            self.assertIn("Re-issue", str(caught.exception))
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) AS n FROM TokenSignature WHERE token_id = %s "
+                            "AND deprecation_date IS NULL", (token_id,))
+                self.assertGreater(cur.fetchone()["n"], 0, "the refusal left the credential standing")
+
     def test_a_limit_stops_the_run_and_leaves_the_rest_standing(self):
         m = self._migration()
         with self._new_conn() as conn:
