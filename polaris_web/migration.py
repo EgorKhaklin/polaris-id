@@ -63,10 +63,15 @@ class MigrationRefused(Exception):
 # and activating it (a lost card, UC-4) issued a new credential on that algorithm alone.
 LIVE_STATUSES = ("ACTIVE", "RESERVE")
 _POPULATION = "IdentityToken t WHERE t.status IN ('ACTIVE', 'RESERVE')"
+# Migrated means a signature under the target with NO deprecation date: the same "active" the
+# database holds every token to (enforce_token_has_active_signature). A target signature that
+# is in force today but already set to lapse used to count, so closing the window deprecated a
+# token's every other signature as well and the database refused the write (2026-10-06, found
+# by MigrationChainPropertyTests). Such a token is pending, and blocked: it cannot be re-signed
+# under an algorithm it already has a row for.
 _UNMIGRATED = (
     "NOT EXISTS (SELECT 1 FROM TokenSignature s WHERE s.token_id = t.token_id "
-    "AND s.algorithm_id = %s AND (s.deprecation_date IS NULL "
-    "OR s.deprecation_date > CURRENT_TIMESTAMP))")
+    "AND s.algorithm_id = %s AND s.deprecation_date IS NULL)")
 # What a batch can actually sign: no row under the target at all, active or not. The schema
 # allows ONE signature per algorithm per token (one_signature_per_algorithm_per_token) and
 # never lets one change, so a token whose target-algorithm signature was deprecated by an
