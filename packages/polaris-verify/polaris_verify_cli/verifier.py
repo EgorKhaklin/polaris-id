@@ -50,7 +50,17 @@ _ALG = "ML-DSA-65"          # the default parameter set
 # P8.8a: the accepted FIPS 204 parameter sets -> (cryptography witness class, public key
 # bytes, signature bytes). ML-DSA-44 is below the floor and is rejected like any unknown
 # algorithm; a verifier never guesses a parameter set from a key it was not told about.
-_ACCEPTED = {"ML-DSA-65": ("MLDSA65PublicKey", 1952, 3309), "ML-DSA-87": ("MLDSA87PublicKey", 2592, 4627)}
+_ACCEPTED = {"ML-DSA-65": ("MLDSA65PublicKey", 1952, 3309), "ML-DSA-87": ("MLDSA87PublicKey", 2592, 4627),
+             "Falcon-padded-1024": (None, 1793, 1280)}
+# 2026-10-05: verification of the FN-DSA family (draft FIPS 206). The wire name is the scheme
+# liboqs implements, round-3 Falcon-1024 with fixed-length (padded) signatures, because FIPS 206
+# is not final and its encoding may still change; calling these bytes "FN-DSA" would claim a
+# conformance no one can test yet. Only the category-5 set is accepted: Falcon-512 is category 1,
+# below the floor ML-DSA-44 already marks. The fixed length leaves a signature's size telling
+# nothing. cryptography carries no Falcon, so liboqs is the one witness here; the second,
+# independent implementation is @noble/post-quantum in the TypeScript SDK, and the conformance
+# vectors bind the two (conformance/make_fndsa_vectors.py). Verification only: Polaris signs
+# nothing under it (lab/strategy/015, falsifier 2: signing timing not yet cleared).
 
 
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
@@ -506,6 +516,26 @@ def selftest() -> int:
             sig44 = bytes(s44.sign(digest))
         checks.append(("a genuine ML-DSA-44 pack is refused (below the floor)",
                        verify_pack(dict(pack_for(tok, sig44, pk44), algorithm="ML-DSA-44"))["signature_valid"] is False))
+    # The FN-DSA family (draft FIPS 206), verification only: a genuine Falcon-padded-1024 pack
+    # verifies, a flipped byte fails, the same bytes claiming ML-DSA-65 fail, and Falcon-512
+    # (category 1, below the floor) is refused even when genuine.
+    if "Falcon-padded-1024" in enabled:
+        with oqs.Signature("Falcon-padded-1024") as sf:
+            pkf = bytes(sf.generate_keypair())
+            sigf = bytes(sf.sign(digest))
+        pf = dict(pack_for(tok, sigf, pkf), algorithm="Falcon-padded-1024")
+        checks.append(("Falcon-padded-1024 pack verifies (FN-DSA family)", verify_pack(pf)["signature_valid"] is True))
+        badf = bytearray(sigf); badf[len(badf) // 2] ^= 0x01
+        checks.append(("flipped Falcon-padded-1024 signature fails",
+                       verify_pack(dict(pf, signature_hex=bytes(badf).hex()))["signature_valid"] is False))
+        checks.append(("a Falcon signature claiming ML-DSA-65 fails",
+                       verify_pack(dict(pf, algorithm="ML-DSA-65"))["signature_valid"] is False))
+    if "Falcon-padded-512" in enabled:
+        with oqs.Signature("Falcon-padded-512") as s5:
+            pk5 = bytes(s5.generate_keypair())
+            sig5 = bytes(s5.sign(digest))
+        checks.append(("a genuine Falcon-padded-512 pack is refused (below the floor)",
+                       verify_pack(dict(pack_for(tok, sig5, pk5), algorithm="Falcon-padded-512"))["signature_valid"] is False))
     ok = True
     for name, passed in checks:
         print("  [%s] %s" % ("PASS" if passed else "FAIL", name))

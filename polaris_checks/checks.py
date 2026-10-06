@@ -13836,15 +13836,33 @@ def check_algorithm_agility(root: pathlib.Path) -> list[Finding]:
         if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
             return _fail("algorithm_agility", f"the offline verifier imports {mod!r}; it must stay standalone")
     py = _read(root, "sdk/python/polaris_verify/__init__.py")
-    if 'ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey"}' not in py or "def _accepted" not in py:
+    if ('ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey",' not in py
+            or "def _accepted" not in py):
         return _fail("algorithm_agility", "the Python SDK must accept both parameter sets through a total predicate")
     ts = _read(root, "sdk/typescript/src/index.ts")
     for sym in ("ml_dsa87", "ACCEPTED_ALGORITHMS", "verifierFor("):
         if sym not in ts:
             return _fail("algorithm_agility", "the TypeScript SDK must dispatch on the declared algorithm (%s missing)" % sym)
+    # 2026-10-05: the FN-DSA family (draft FIPS 206) is verified, never signed: the same one
+    # category-5 set in the detached verifier and both SDKs, refused below the floor, and bound
+    # by vectors the two independent implementations agreed on when they were made.
+    fal = '"Falcon-padded-1024"'
+    holders = {"the detached verifier": v, "the Python SDK": py, "the TypeScript SDK": ts}
+    missing = [n for n, src in holders.items() if fal not in src]
+    if missing:
+        return _fail("algorithm_agility", "the FN-DSA family must be verified alike everywhere; %s lacks %s" % (", ".join(missing), fal))
+    if "falcon1024padded" not in ts:
+        return _fail("algorithm_agility", "the TypeScript SDK must witness Falcon-padded-1024 with @noble/post-quantum's falcon1024padded")
+    for n, src in holders.items():
+        if re.search(r'"Falcon(?:-padded)?-512"\s*:', src):
+            return _fail("algorithm_agility", "%s accepts Falcon-512, which is category 1, below the floor" % n)
+    if "a genuine Falcon-padded-512 pack is refused" not in v:
+        return _fail("algorithm_agility", "the detached verifier's --selftest must prove Falcon-512 is refused")
+    if re.search(r'oqs\.Signature\("Falcon', _read(root, "polaris_web/custody.py") + _read(root, "polaris_web/pqc_signing.py")):
+        return _fail("algorithm_agility", "Polaris signs nothing under Falcon until lab/strategy/015 clears its signing timing")
     cases = _read(root, "conformance/cases.json")
     for name in ("pack-mldsa87-valid", "pack-mldsa44-unaccepted", "status-assertion-mldsa87-active", "trust-list-migration",
-                 "trust-list-migration-retired-signer"):
+                 "trust-list-migration-retired-signer", "pack-fndsa1024-valid", "pack-fndsa1024-tampered", "pack-fndsa512-unaccepted"):
         if '"name": "%s"' % name not in cases:
             return _fail("algorithm_agility", "conformance/cases.json must carry the two-algorithm cases (%s missing)" % name)
     if '"algorithm": "ML-DSA-87"' not in _read(root, "conformance/vectors/pack-mldsa87-valid.json"):
@@ -13870,7 +13888,9 @@ def check_algorithm_agility(root: pathlib.Path) -> list[Finding]:
         return _fail("algorithm_agility", "PQC-POSTURE.md must carry ML-DSA-87 as an accepted parameter set")
     return _ok("algorithm_agility",
                "algorithm agility: ML-DSA-65 and ML-DSA-87 are accepted by the signer, the detached verifier, both SDKs and the "
-               "app's two witnesses, ML-DSA-44 is refused, no signed body hardcodes its algorithm (the key decides), vectors "
+               "app's two witnesses; the FN-DSA family (Falcon-padded-1024) is verified alike by the detached verifier and both "
+               "SDKs, refused below the floor, and signed by nothing; "
+               "ML-DSA-44 is refused, no signed body hardcodes its algorithm (the key decides), vectors "
                "under both sets are in the conformance suite, the fuzzer runs under both in CI, and a mixed-algorithm "
                "federation is drilled across two instances")
 

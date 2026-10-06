@@ -42,6 +42,7 @@ single boolean in every verdict, and REQUIRES the disagreement to be found. With
   python3 scripts/polaris-sdk-agreement-drill.py --prove-control
 """
 import argparse
+import contextlib
 import importlib.util
 import json
 import os
@@ -179,8 +180,25 @@ def main() -> int:
     constrained, free, unaccounted, errors = [], [], [], []
     compared = 0
 
+    # An OPTIONAL algorithm (a case's optional_algorithm, WIRE-SPEC section 6) is compared only
+    # among the implementations that carry it: the TypeScript SDK always has the FN-DSA family
+    # (@noble/post-quantum); the Python SDK and the detached verifier have it only with liboqs
+    # built with Falcon, so on a runner without liboqs they rightly refuse a genuine Falcon pack.
+    optional = {c["name"]: c["optional_algorithm"] for c in raw_cases.values() if c.get("optional_algorithm")}
+
+    def python_implements(alg):
+        try:
+            with contextlib.redirect_stdout(sys.stderr):
+                import oqs  # type: ignore
+            return alg in oqs.get_enabled_sig_mechanisms()
+        except Exception:
+            return False
+
     for name, payload, expect in cases:
         verdicts, errs = run_all(name, payload)
+        if name in optional and not python_implements(optional[name]):
+            for impl in ("python-sdk", "detached"):
+                verdicts.pop(impl, None)
         for impl, why in errs.items():
             errors.append("%s: %s %s" % (name, impl, why))
         if len(verdicts) < 2:

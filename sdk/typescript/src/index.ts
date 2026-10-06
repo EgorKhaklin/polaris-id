@@ -25,13 +25,20 @@
  * CLI the published conformance suite drives (see conformance/SPEC.md).
  */
 import { ml_dsa65, ml_dsa87 } from "@noble/post-quantum/ml-dsa.js";
+import { falcon1024padded } from "@noble/post-quantum/falcon.js";
 import { sha3_256 } from "@noble/hashes/sha3.js";
 
 export const ALGORITHM = "ML-DSA-65";
 /** P8.8a: the accepted FIPS 204 parameter sets. ML-DSA-44 is below the floor and is rejected
  * like any unknown algorithm; a verifier never guesses a parameter set. */
-export const ACCEPTED_ALGORITHMS: Record<string, typeof ml_dsa65> = { "ML-DSA-65": ml_dsa65, "ML-DSA-87": ml_dsa87 };
-function verifierFor(alg: unknown): typeof ml_dsa65 | null {
+/** What a verifier needs from a signature scheme: the one call every family shares. */
+type SignatureVerifier = { verify(sig: Uint8Array, msg: Uint8Array, publicKey: Uint8Array): boolean };
+/** 2026-10-05: plus the FN-DSA family (draft FIPS 206), verification only. The wire name is the
+ * round-3 scheme implemented here and in liboqs, Falcon-1024 with fixed-length signatures, since
+ * FIPS 206 is not final; Falcon-512 (category 1) is below the floor. */
+export const ACCEPTED_ALGORITHMS: Record<string, SignatureVerifier> = {
+  "ML-DSA-65": ml_dsa65, "ML-DSA-87": ml_dsa87, "Falcon-padded-1024": falcon1024padded };
+function verifierFor(alg: unknown): SignatureVerifier | null {
   return typeof alg === "string" && Object.prototype.hasOwnProperty.call(ACCEPTED_ALGORITHMS, alg)
     ? ACCEPTED_ALGORITHMS[alg] : null;
 }

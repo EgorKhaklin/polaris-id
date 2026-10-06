@@ -155,6 +155,25 @@ def _load_cases():
     return cases
 
 
+def _optional_algorithms():
+    """{case name: algorithm} for the cases that apply only to a verifier implementing an
+    OPTIONAL algorithm (WIRE-SPEC section 6: the FN-DSA family is optional in version 1). Kept
+    apart from _load_cases, whose (name, payload, expect) shape other tools read."""
+    with open(os.path.join(_HERE, "cases.json")) as f:
+        manifest = json.load(f)
+    return {c["name"]: c["optional_algorithm"] for c in manifest["cases"] if c.get("optional_algorithm")}
+
+
+def _self_implements(alg):
+    """Whether the bundled Python SDK can witness `alg` on this machine: the FN-DSA family
+    needs liboqs built with it (cryptography carries no Falcon)."""
+    env = _self_verifier_cmd()[1]
+    probe = ("import sys, polaris_verify as pv\n"
+             "try:\n    ok = %r in pv._import_oqs().get_enabled_sig_mechanisms()\n"
+             "except Exception:\n    ok = False\nsys.exit(0 if ok else 1)\n" % alg)
+    return subprocess.run([sys.executable, "-c", probe], env=env, capture_output=True).returncode == 0
+
+
 def _self_verifier_cmd():
     # Run the bundled Python SDK's conformance CLI with the SDK on the path.
     env = dict(os.environ)
@@ -169,6 +188,9 @@ def main(argv=None):
                    help="run the bundled Python reference SDK")
     g.add_argument("--verifier", help="a verifier command (reads a case on stdin, prints a verdict)")
     ap.add_argument("--json", action="store_true", help="machine-readable summary")
+    ap.add_argument("--algorithm", action="append", default=[], metavar="NAME",
+                    help="an OPTIONAL algorithm this verifier implements (e.g. Falcon-padded-1024); its "
+                         "cases are skipped, and reported as skipped, unless declared. --self detects it.")
     args = ap.parse_args(argv)
 
     if args.use_self:
@@ -178,8 +200,18 @@ def main(argv=None):
         cmd, env, shell = args.verifier, None, True
 
     cases = _load_cases()
+    optional = _optional_algorithms()
+    declared = set(args.algorithm)
+    if args.use_self:
+        declared |= {a for a in set(optional.values()) if _self_implements(a)}
+    skipped = []
     results, failures = [], 0
     for name, payload, expect in cases:
+        if name in optional and optional[name] not in declared:
+            skipped.append(name)
+            print("  [SKIP] %-28s %s is optional and this verifier does not implement it "
+                  "(declare it with --algorithm %s)" % (name, optional[name], optional[name]))
+            continue
         try:
             proc = subprocess.run(cmd, input=json.dumps(payload), capture_output=True,
                                   text=True, env=env, shell=shell, timeout=120)
@@ -236,10 +268,14 @@ def main(argv=None):
         return 2
 
     if args.json:
-        print(json.dumps({"total": len(cases), "failures": failures, "results": results}))
+        print(json.dumps({"total": len(cases), "failures": failures, "results": results, "skipped": skipped}))
     if failures:
-        print("\nFAIL: %d/%d conformance cases did not match." % (failures, len(cases)), file=sys.stderr)
+        print("\nFAIL: %d/%d conformance cases did not match." % (failures, len(results)), file=sys.stderr)
         return 1
+    if skipped:
+        print("\nOK: all %d applicable conformance cases passed -- the verifier is conformant; %d case(s) "
+              "for an optional algorithm it does not implement were skipped." % (len(results), len(skipped)))
+        return 0
     print("\nOK: all %d conformance cases passed -- the verifier is conformant." % len(cases))
     return 0
 

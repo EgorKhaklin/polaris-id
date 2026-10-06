@@ -32,6 +32,38 @@ def _vector(name):
         return json.load(f)
 
 
+def _falcon_available():
+    try:
+        return "Falcon-padded-1024" in pv._import_oqs().get_enabled_sig_mechanisms()
+    except Exception:
+        return False
+
+
+def _conformance_vector(name):
+    with open(os.path.join(_ROOT, "conformance", "vectors", name)) as f:
+        return json.load(f)
+
+
+@unittest.skipUnless(_falcon_available(), "liboqs with Falcon is needed to witness the FN-DSA family")
+class FnDsaFamilyTests(unittest.TestCase):
+    """The FN-DSA family (draft FIPS 206), verification only, on the published vectors that
+    @noble/post-quantum cross-checked when they were made (conformance/make_fndsa_vectors.py)."""
+
+    def test_a_genuine_falcon_padded_1024_pack_is_authentic(self):
+        v = pv.verify_authenticity(_conformance_vector("pack-fndsa1024-valid.json"))
+        self.assertTrue(v.authentic)
+
+    def test_a_flipped_byte_is_not(self):
+        self.assertFalse(pv.verify_authenticity(_conformance_vector("pack-fndsa1024-tampered.json")).authentic)
+
+    def test_category_1_is_below_the_floor_even_when_genuine(self):
+        self.assertFalse(pv.verify_authenticity(_conformance_vector("pack-fndsa512-unaccepted.json")).authentic)
+
+    def test_falcon_bytes_claiming_ml_dsa_are_not_authentic(self):
+        pack = dict(_conformance_vector("pack-fndsa1024-valid.json"), algorithm="ML-DSA-65")
+        self.assertFalse(pv.verify_authenticity(pack).authentic)
+
+
 @unittest.skipUnless(_mldsa_available(), "cryptography lacks ML-DSA-65 (needs cryptography>=48 / OpenSSL 3.5)")
 class AuthenticityTests(unittest.TestCase):
     def test_valid_is_authentic(self):
