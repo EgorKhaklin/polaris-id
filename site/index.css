@@ -120,25 +120,60 @@ h1, h2, h3 { color: var(--ink); margin: 0; font-weight: 600; }
         radial-gradient(1px 1px at 6% 52%, var(--ink-3) 50%, transparent 51%),
         radial-gradient(1px 1px at 46% 6%, var(--ink-3) 50%, transparent 51%),
         radial-gradient(1.2px 1.2px at 58% 96%, var(--ink-2) 50%, transparent 51%);
-    animation: turn 400s linear infinite; }
+    animation: turn 150s linear infinite; will-change: transform; }
+.sky::after { content: ""; position: absolute; inset: -20%; border-radius: 50%; opacity: 0.55;
+    pointer-events: none;
+    background-image:
+        radial-gradient(1.0px 1.0px at 59% 89%, var(--ink-2) 50%, transparent 51%),
+        radial-gradient(1.0px 1.0px at 46% 81%, var(--ink-3) 50%, transparent 51%),
+        radial-gradient(1.2px 1.2px at 31% 82%, var(--ink-3) 50%, transparent 51%),
+        radial-gradient(1.0px 1.0px at 49% 76%, var(--ink-3) 50%, transparent 51%),
+        radial-gradient(1.2px 1.2px at 18% 51%, var(--ink-2) 50%, transparent 51%),
+        radial-gradient(1.0px 1.0px at 57% 66%, var(--ink-2) 50%, transparent 51%),
+        radial-gradient(1.0px 1.0px at 10% 35%, var(--ink-3) 50%, transparent 51%),
+        radial-gradient(0.8px 0.8px at 11% 32%, var(--ink-3) 50%, transparent 51%),
+        radial-gradient(1.2px 1.2px at 27% 71%, var(--ink-3) 50%, transparent 51%),
+        radial-gradient(1.0px 1.0px at 84% 67%, var(--ink-3) 50%, transparent 51%),
+        radial-gradient(1.2px 1.2px at 18% 48%, var(--ink-3) 50%, transparent 51%),
+        radial-gradient(0.8px 0.8px at 20% 67%, var(--ink-3) 50%, transparent 51%),
+        radial-gradient(1.0px 1.0px at 79% 48%, var(--gold) 50%, transparent 51%),
+        radial-gradient(1.0px 1.0px at 85% 25%, var(--ink-3) 50%, transparent 51%),
+        radial-gradient(1.2px 1.2px at 73% 17%, var(--gold) 50%, transparent 51%),
+        radial-gradient(0.8px 0.8px at 48% 70%, var(--ink-2) 50%, transparent 51%),
+        radial-gradient(0.8px 0.8px at 13% 26%, var(--ink-2) 50%, transparent 51%),
+        radial-gradient(0.8px 0.8px at 92% 71%, var(--ink-2) 50%, transparent 51%),
+        radial-gradient(1.0px 1.0px at 74% 29%, var(--ink-3) 50%, transparent 51%),
+        radial-gradient(1.2px 1.2px at 16% 78%, var(--ink-2) 50%, transparent 51%),
+        radial-gradient(1.0px 1.0px at 53% 4%, var(--ink-3) 50%, transparent 51%),
+        radial-gradient(1.0px 1.0px at 15% 51%, var(--ink-3) 50%, transparent 51%);
+    animation: turn 240s linear infinite; will-change: transform; }
 .trail { position: absolute; border-radius: 50%;
     -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 1.6px), #000 calc(100% - 1.2px));
             mask: radial-gradient(farthest-side, transparent calc(100% - 1.6px), #000 calc(100% - 1.2px));
-    animation: turn linear infinite; }
-.t1 { inset: 30%; animation-duration: 90s;
+    animation: turn linear infinite; will-change: transform; }
+.t1 { inset: 30%; animation-duration: 36s;
       background: conic-gradient(from 20deg, transparent 0 52%, rgba(221, 202, 155, 0.55) 74%, transparent 75%); }
-.t2 { inset: 22%; animation-duration: 130s;
+.t2 { inset: 22%; animation-duration: 48s;
       background: conic-gradient(from 160deg, transparent 0 40%, rgba(221, 202, 155, 0.40) 66%, transparent 67%); }
-.t3 { inset: 14%; animation-duration: 170s;
+.t3 { inset: 14%; animation-duration: 62s;
       background: conic-gradient(from 260deg, transparent 0 58%, rgba(244, 244, 245, 0.30) 80%, transparent 81%); }
-.t4 { inset: 7%; animation-duration: 220s;
+.t4 { inset: 7%; animation-duration: 78s;
       background: conic-gradient(from 90deg, transparent 0 46%, rgba(221, 202, 155, 0.30) 70%, transparent 71%); }
-.t5 { inset: 0; animation-duration: 280s;
+.t5 { inset: 0; animation-duration: 96s;
       background: conic-gradient(from 300deg, transparent 0 62%, rgba(143, 179, 232, 0.28) 84%, transparent 85%); }
-.t6 { inset: -7%; animation-duration: 360s;
+.t6 { inset: -7%; animation-duration: 120s;
       background: conic-gradient(from 200deg, transparent 0 50%, rgba(221, 202, 155, 0.20) 68%, transparent 69%); }
-.pole { position: absolute; left: 50%; top: 50%; width: 38%; transform: translate(-50%, -50%);
+.pole { position: absolute; z-index: 1; left: 50%; top: 50%; width: 38%; transform: translate(-50%, -50%);
         filter: drop-shadow(0 0 28px rgba(221, 202, 155, 0.22)) drop-shadow(0 18px 40px rgba(0, 0, 0, 0.6)); }
+/* The glow behind the pole star breathes: brighter, then dying down. Opacity and scale only,
+   so the compositor animates it without repainting. */
+.halo { position: absolute; left: 50%; top: 50%; width: 64%; aspect-ratio: 1; border-radius: 50%;
+        transform: translate(-50%, -50%); pointer-events: none;
+        background: radial-gradient(closest-side, rgba(221, 202, 155, 0.34), rgba(221, 202, 155, 0.12) 55%, transparent);
+        animation: breathe 7s ease-in-out infinite; will-change: opacity, transform; }
+@keyframes breathe {
+    0%, 100% { opacity: 0.35; transform: translate(-50%, -50%) scale(0.9); }
+    50%      { opacity: 1;    transform: translate(-50%, -50%) scale(1.08); } }
 @keyframes turn { to { transform: rotate(360deg); } }
 
 .proof { grid-area: proof; list-style: none; margin: 8px 0 0; padding: 0;
@@ -250,7 +285,7 @@ code, .term code { font-variant-ligatures: none; }
 /* ----- 12 Footer -------------------------------------------------------- */
 .foot { border-top: 1px solid var(--line); padding: 72px 0 56px; background: var(--sunken); }
 .foot-in { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 18px; }
-.maker img { width: 187px; opacity: 0.92; }
+.maker img { width: 192px; opacity: 0.92; }
 .maker:hover img { opacity: 1; }
 .motto { font: 500 12px/1.6 var(--font-display); letter-spacing: 0.24em; text-transform: uppercase; color: var(--ink-3); margin: 0; }
 .fine { font-size: 13px; color: var(--ink-3); margin: 0; }
@@ -301,7 +336,8 @@ code, .term code { font-variant-ligatures: none; }
 }
 @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
-    .trail, .sky::before { animation: none; }
+    .trail, .sky::before, .sky::after, .halo { animation: none; }
+    .halo { opacity: 0.6; }
     .btn, .paths a { transition: none; }
 }
 @media print {
