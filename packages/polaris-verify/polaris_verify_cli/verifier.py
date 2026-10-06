@@ -60,8 +60,8 @@ _ACCEPTED = {"ML-DSA-65": ("MLDSA65PublicKey", 1952, 3309), "ML-DSA-87": ("MLDSA
 # nothing. cryptography carries no Falcon, so liboqs is the one witness here; the second,
 # independent implementation is @noble/post-quantum in the TypeScript SDK, and the conformance
 # vectors bind the two (conformance/make_fndsa_vectors.py). This verifier only verifies; Polaris
-# signs under it only as an experimental signer, outside production (polaris_web/custody.py), until
-# its signing time clears lab/strategy/015's falsifier 2.
+# signs under it only as an experimental signer, outside production (polaris_web/custody.py),
+# while FIPS 206 is a draft (lab/strategy/015).
 
 
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")

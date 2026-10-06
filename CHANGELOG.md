@@ -22,6 +22,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- PQC-POSTURE no longer says Falcon signing time depends on the message: measured natively (record 015, step 4), it does not; the signer stays experimental while FIPS 206 is a draft.
 - A population migration counts a credential as migrated only when its target signature has no deprecation date; one already set to lapse is refused with the re-issue instruction instead of the database's error.
 - The rolling-deploy drill, backup and restore read compose's output whole before matching it; under pipefail an early grep -q exit could SIGPIPE compose and fail a check that had passed.
 - The internal-hop key-exchange drill retries a TLS probe that returned nothing and names one that never ran, instead of reporting an empty measurement.
