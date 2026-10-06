@@ -10178,11 +10178,17 @@ def test_algorithm_agility_check_discriminates(tmp_path):
           'export const ACCEPTED_ALGORITHMS = { "Falcon-padded-1024": falcon1024padded };\nfunction verifierFor(a) { return null; }\n')
     good = {
         'polaris_web/custody.py': ('ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")\nALGORITHM_SIZES = {"ML-DSA-65": (1952, 3309), "ML-DSA-87": (2592, 4627)}\n'
+                                   'EXPERIMENTAL_ALGORITHM_SIZES = {"Falcon-padded-1024": (1793, 1280)}\n'
+                                   'def experimental_signer_allowed(a):\n    if os.environ.get("POLARIS_ENV") == "production": return False\n'
+                                   '    return a in os.environ.get("POLARIS_EXPERIMENTAL_SIGNERS", "")\ndef signing_sizes(a): return None\n'
                                    "def configured_algorithm(): return 'ML-DSA-65'\ndef algorithm_for_public_key(pk): return None\n"
                                    'self.algorithm = data["algorithm"]\noqs.Signature(self.algorithm, secret_key=self._sk)\n'),
         'polaris_web/pqc_signing.py': ('ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")\n_WITNESS_CLASSES = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey"}\n'
                                        "def algorithm_name(agency_id=None): return 'ML-DSA-65'\ndef algorithm_for_public_key_hex(h): return None\n"
-                                       "def generate_keypair(algorithm=None): return {}\n"),
+                                       "def generate_keypair(algorithm=None): return {}\n"
+                                       "def _signs_under(a): return False\ndef _verifies_under(a): return True\n"
+                                       "def _falcon_witness(d, s, p): return None\n    if not _signs_under(alg): raise ValueError\n"),
+        'polaris_web/witness/falcon_witness.mjs': "ok = falcon1024padded.verify(sig, digest, pk);\n",
         'polaris_web/app.py': APP,
         'packages/polaris-verify/polaris_verify_cli/verifier.py': VER,
         'sdk/python/polaris_verify/__init__.py': 'ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey",\n    "Falcon-padded-1024": None}\ndef _accepted(a): return True\n',
@@ -10193,7 +10199,7 @@ def test_algorithm_agility_check_discriminates(tmp_path):
         'scripts/polaris-verifier-fuzz.py': '_FUZZ_ALG = os.environ.get("POLARIS_FUZZ_ALGORITHM", "ML-DSA-65")\n',
         '.github/workflows/ci.yml': "      - run: python scripts/polaris-verifier-fuzz.py\n        env:\n          POLARIS_FUZZ_ALGORITHM: ML-DSA-87\n",
         'scripts/polaris-federation-instances-drill.py': 'ALG_A = os.environ.get("POLARIS_DRILL_ALGORITHM_A", "ML-DSA-87")\n',
-        'polaris_cli/polaris.py': "_KEY_ALGORITHM_BY_HEX_LENGTH = {3904: 'ML-DSA-65', 5184: 'ML-DSA-87'}\np.add_argument('--algorithm')\n",
+        'polaris_cli/polaris.py': "_KEY_ALGORITHM_BY_HEX_LENGTH = {3904: 'ML-DSA-65', 5184: 'ML-DSA-87', 3586: 'Falcon-padded-1024'}\np.add_argument('--algorithm')\ndef _experimental_key_allowed(a): return False\n",
         'docs/reference/WIRE-SPEC.md': "accepted: ML-DSA-65, ML-DSA-87; ML-DSA-44 MUST be rejected\n",
         'docs/design/algorithm-migration.md': "Algorithm migration\n",
         'docs/reference/PQC-POSTURE.md': "| ML-DSA-87 (accepted parameter set) | signing | PQ_SECURE | accepted |\n",
@@ -10220,8 +10226,16 @@ def test_algorithm_agility_check_discriminates(tmp_path):
     assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if one verifier lacks Falcon-padded-1024"
     write({'sdk/typescript/src/index.ts': TS.replace('"Falcon-padded-1024": falcon1024padded', '"Falcon-padded-1024": falcon1024padded, "Falcon-padded-512": falcon512padded')})
     assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if a verifier accepts Falcon-512 (category 1)"
-    write({'polaris_web/pqc_signing.py': good['polaris_web/pqc_signing.py'] + 'oqs.Signature("Falcon-padded-1024", secret_key=sk)\n'})
-    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if Polaris signs under Falcon before 015 clears it"
+    # 2026-10-06: an experimental signer, gated: never in the accepted set, never in production,
+    # two-witnessed, and registered by the CLI only under the same opt-in.
+    write({'polaris_web/custody.py': good['polaris_web/custody.py'].replace('"ML-DSA-87": (2592, 4627)}', '"ML-DSA-87": (2592, 4627), "Falcon-padded-1024": (1793, 1280)}', 1)})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if Falcon joins the accepted set"
+    write({'polaris_web/custody.py': good['polaris_web/custody.py'].replace('== "production"', '== "never"')})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if production can sign under it"
+    write({'polaris_web/witness/falcon_witness.mjs': "ok = true;\n"})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL without the Falcon second witness"
+    write({'polaris_cli/polaris.py': good['polaris_cli/polaris.py'].replace("def _experimental_key_allowed", "def _anything")})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if the CLI registers a Falcon key ungated"
     write({'conformance/cases.json': good['conformance/cases.json'].replace("pack-fndsa512-unaccepted", "pack-other")})
     assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL without the Falcon-512 refusal case"
 

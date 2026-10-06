@@ -82,4 +82,4 @@ sentence stands beside [PRODUCTION-READINESS.md](../PRODUCTION-READINESS.md).
 
 ## FN-DSA (draft FIPS 206)
 
-Verification only, since 1.0.0-rc.71: the detached verifier and both SDKs accept `Falcon-padded-1024`, round-3 Falcon-1024 with fixed-length signatures, the scheme FIPS 206 (a draft) standardises. The wire name is the scheme's, because the standard is not final. Polaris signs nothing under it until lab record 015 clears its signing-time test. Conformance vectors: `pack-fndsa1024-*`, `pack-fndsa512-unaccepted`.
+Since 1.0.0-rc.71: the detached verifier and both SDKs accept `Falcon-padded-1024`, round-3 Falcon-1024 with fixed-length signatures, the scheme FIPS 206 (a draft) standardises. The wire name is the scheme's, because the standard is not final. Polaris signs under it only as an experimental signer (an explicit opt-in, never in production, two-witnessed) until lab record 015 clears its signing-time test. Conformance vectors: `pack-fndsa1024-*`, `pack-fndsa512-unaccepted`.

@@ -676,7 +676,7 @@ family (`run_conformance.py --algorithm Falcon-padded-1024`). The algorithm is r
 not the standard's, because FIPS 206 is not final and its encoding may still change; a final
 FN-DSA would be added under its own name. `"Falcon-512"` and `"Falcon-padded-512"` (category 1)
 are below the floor and MUST be rejected. A verifier that predates this version declines such an
-artifact, as the rule above allows. Polaris verifies the family and signs nothing under it.
+artifact, as the rule above allows. Polaris verifies the family and signs under it only as an experimental signer, never in a production deployment.
 
 A new major is introduced with its own frozen set beside version 1's; a verifier that
 implements both decides per artifact by its `format`, never by guessing.

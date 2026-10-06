@@ -62,20 +62,57 @@ PUBLIC_KEY_LEN, SIGNATURE_LEN = ALGORITHM_SIZES[DEFAULT_ALGORITHM]
 DIGEST_LEN = 32
 _ALGORITHM_ENV = "POLARIS_PQC_ALGORITHM"
 
+# 2026-10-06: EXPERIMENTAL signers, kept apart from ACCEPTED_ALGORITHMS. The FN-DSA family (draft
+# FIPS 206), as round-3 Falcon-1024 with fixed-length signatures. A key file or the configured
+# algorithm may name it only when POLARIS_EXPERIMENTAL_SIGNERS lists it AND the process is not
+# POLARIS_ENV=production: lab record 015 measured its signing time depending on the message,
+# so no production deployment signs under it until a constant-time signer clears that test.
+EXPERIMENTAL_ALGORITHM_SIZES = {"Falcon-padded-1024": (1793, 1280)}
+_EXPERIMENTAL_ENV = "POLARIS_EXPERIMENTAL_SIGNERS"
+
+
+def experimental_signer_allowed(algorithm) -> bool:
+    """True iff `algorithm` is an experimental signer this process may use: named in
+    POLARIS_EXPERIMENTAL_SIGNERS and not a production deployment."""
+    if algorithm not in EXPERIMENTAL_ALGORITHM_SIZES:
+        return False
+    if os.environ.get("POLARIS_ENV", "").strip().lower() == "production":
+        return False
+    named = {a.strip() for a in os.environ.get(_EXPERIMENTAL_ENV, "").split(",") if a.strip()}
+    return algorithm in named
+
+
+def signing_sizes(algorithm):
+    """(public key, signature) byte lengths for an algorithm this process may sign under, or
+    None: an accepted set always, an experimental one only when experimental_signer_allowed."""
+    if algorithm in ALGORITHM_SIZES:
+        return ALGORITHM_SIZES[algorithm]
+    if experimental_signer_allowed(algorithm):
+        return EXPERIMENTAL_ALGORITHM_SIZES[algorithm]
+    return None
+
+
+def _refusal(algorithm) -> str:
+    if algorithm in EXPERIMENTAL_ALGORITHM_SIZES:
+        return (f"{algorithm!r} is an experimental signer: name it in {_EXPERIMENTAL_ENV}, outside "
+                f"POLARIS_ENV=production, to sign under it")
+    return f"{algorithm!r} is not an accepted algorithm ({', '.join(ACCEPTED_ALGORITHMS)})"
+
 
 def configured_algorithm() -> str:
     """The parameter set this process generates keys and ephemeral signatures under:
     POLARIS_PQC_ALGORITHM, default ML-DSA-65. An unaccepted value fails loud."""
     alg = os.environ.get(_ALGORITHM_ENV) or DEFAULT_ALGORITHM
-    if alg not in ALGORITHM_SIZES:
-        raise CustodyError(f"{_ALGORITHM_ENV}={alg!r} is not an accepted algorithm "
-                           f"({', '.join(ACCEPTED_ALGORITHMS)})")
+    if signing_sizes(alg) is None:
+        raise CustodyError(f"{_ALGORITHM_ENV}: {_refusal(alg)}")
     return alg
 
 
 def algorithm_for_public_key(public_key: bytes):
-    """The accepted parameter set a raw public key's length identifies, or None."""
-    for name, (pk_len, _sig_len) in ALGORITHM_SIZES.items():
+    """The parameter set a raw public key's length identifies, or None. Experimental sets are
+    recognised too (Falcon's 1,793 bytes match nothing else): naming a key's algorithm is
+    verification, which never needs the experimental opt-in; signing does."""
+    for name, (pk_len, _sig_len) in {**ALGORITHM_SIZES, **EXPERIMENTAL_ALGORITHM_SIZES}.items():
         if len(public_key) == pk_len:
             return name
     return None
@@ -122,15 +159,21 @@ class KeyCustody:
             raise CustodyError(f"{self.driver}: sign() takes the {DIGEST_LEN}-byte SHA3-256 digest, "
                                f"got {len(digest) if isinstance(digest, (bytes, bytearray)) else type(digest)}")
 
+    def _sizes(self):
+        sizes = signing_sizes(self.algorithm)
+        if sizes is None:
+            raise CustodyError(f"{self.driver}: {_refusal(self.algorithm)}")
+        return sizes
+
     def _check_public_key(self, pk: bytes) -> bytes:
-        if len(pk) != ALGORITHM_SIZES[self.algorithm][0]:
-            raise CustodyError(f"{self.driver}: public key is {len(pk)} bytes, not the {ALGORITHM_SIZES[self.algorithm][0]} of "
+        if len(pk) != self._sizes()[0]:
+            raise CustodyError(f"{self.driver}: public key is {len(pk)} bytes, not the {self._sizes()[0]} of "
                                f"{self.algorithm} (wrong key type or parameter set?)")
         return bytes(pk)
 
     def _check_signature(self, sig: bytes) -> bytes:
-        if len(sig) != ALGORITHM_SIZES[self.algorithm][1]:
-            raise CustodyError(f"{self.driver}: signature is {len(sig)} bytes, not the {ALGORITHM_SIZES[self.algorithm][1]} of "
+        if len(sig) != self._sizes()[1]:
+            raise CustodyError(f"{self.driver}: signature is {len(sig)} bytes, not the {self._sizes()[1]} of "
                                f"{self.algorithm}")
         return bytes(sig)
 
@@ -160,9 +203,8 @@ class FileCustody(KeyCustody):
         try:
             with open(path) as fh:
                 data = json.load(fh)
-            if data.get("algorithm") not in ALGORITHM_SIZES:
-                raise CustodyError(f"file: {path} algorithm {data.get('algorithm')!r} is not accepted "
-                                   f"({', '.join(ACCEPTED_ALGORITHMS)})")
+            if signing_sizes(data.get("algorithm")) is None:
+                raise CustodyError(f"file: {path}: {_refusal(data.get('algorithm'))}")
             self.algorithm = data["algorithm"]
             self._sk = bytes.fromhex(data["secret_key_hex"])
             self._pk = self._check_public_key(bytes.fromhex(data["public_key_hex"]))
@@ -486,9 +528,8 @@ def get_custody_for_algorithm(algorithm: str):
     Searched in order: the migration key file, then the process's own custody driver if its
     parameter set already matches. A configured driver whose algorithm does NOT match raises
     rather than falling back, per AlgorithmUnavailableError."""
-    if algorithm not in ALGORITHM_SIZES:
-        raise CustodyError(f"{algorithm!r} is not an accepted algorithm "
-                           f"({', '.join(ACCEPTED_ALGORITHMS)})")
+    if signing_sizes(algorithm) is None:
+        raise CustodyError(_refusal(algorithm))
     path = os.environ.get(_MIGRATION_KEY_ENV)
     if path and not os.path.isfile(path):
         # Named but absent is a misconfiguration, not an absence: falling through would sign
