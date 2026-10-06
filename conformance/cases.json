@@ -3656,6 +3656,37 @@
       },
       "since": "1.0.0-rc.70",
       "note": "A feed whose signed revoked_root_hex is [R], R being the root of its one leaf. A key or a digest is a hex string; JavaScript's String() read the one-element list as its element, so the TypeScript SDK accepted this and both Python verifiers did not."
+    },
+    {
+      "name": "pack-fndsa1024-valid",
+      "artifact": "authenticity-pack",
+      "pack_file": "conformance/vectors/pack-fndsa1024-valid.json",
+      "expect": {
+        "authentic": true
+      },
+      "note": "A genuine Falcon-padded-1024 pack verifies: the FN-DSA family (draft FIPS 206), category 5. Optional in version 1: a verifier that implements the family MUST pass this; one that does not MUST reject every Falcon artifact (the other two cases).",
+      "optional_algorithm": "Falcon-padded-1024",
+      "since": "1.0.0-rc.71"
+    },
+    {
+      "name": "pack-fndsa1024-tampered",
+      "artifact": "authenticity-pack",
+      "pack_file": "conformance/vectors/pack-fndsa1024-tampered.json",
+      "expect": {
+        "authentic": false
+      },
+      "note": "One flipped signature byte under Falcon-padded-1024.",
+      "since": "1.0.0-rc.71"
+    },
+    {
+      "name": "pack-fndsa512-unaccepted",
+      "artifact": "authenticity-pack",
+      "pack_file": "conformance/vectors/pack-fndsa512-unaccepted.json",
+      "expect": {
+        "authentic": false
+      },
+      "note": "A GENUINE Falcon-padded-512 signature MUST be refused: category 1 is below the floor (wire spec section 6).",
+      "since": "1.0.0-rc.71"
     }
   ]
 }
