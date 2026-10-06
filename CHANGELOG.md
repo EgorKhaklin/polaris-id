@@ -39,6 +39,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- The FN-DSA family (draft FIPS 206) is verified, optionally: the detached verifier and both SDKs accept Falcon-padded-1024 and refuse Falcon-512; conformance runs its genuine case for a verifier that declares it; Polaris signs nothing under it yet.
 - Algorithm migration is tested through arbitrary sequences, and in the lab through seven signature families.
 - polaris-oid4vp asks for a nested claim and its value (`--claim age_equal_or_over.18=true`): one statement of an EUDI PID, not all of them.
 - polaris-oid4vp verifies an issuer `x5c` through the intermediate CAs it carries, link by link in order, as eudi-dev v2.5.0's PID Provider sends.
