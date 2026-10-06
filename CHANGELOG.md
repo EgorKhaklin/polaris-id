@@ -11,6 +11,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- Werkzeug 3.1.9 (GHSA-g6x2-hccm-hh4m: safe_join accepted Windows device names; Polaris runs on Linux and calls it only through Flask's static files).
 - A holder key rotation or revocation is refused unless its signer is still the live key under the per-token lock, closing a read-before-lock race a stolen-but-live key could ride.
 - The Atlas answered a refused parameter with the exception's text, which could carry the request back; it states a fixed sentence.
 - An operator bound to one authority could be served other authorities' Atlas counts from its response cache.
@@ -21,6 +22,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- The rolling-deploy drill, backup and restore read compose's output whole before matching it; under pipefail an early grep -q exit could SIGPIPE compose and fail a check that had passed.
+- The internal-hop key-exchange drill retries a TLS probe that returned nothing and names one that never ran, instead of reporting an empty measurement.
 - The trigger mutation drill credits a mutation only when the tests that failed fail again, so a flaky test can no longer hide an untested refusal.
 - Every documented install reaches the current candidate; a bare `pip install` gets 0.1.0, which predates every fix in SECURITY.md.
 - The plug-and-play matrix tests the SDKs' current candidates on a genuine and a tampered credential, not npm's `latest`.
