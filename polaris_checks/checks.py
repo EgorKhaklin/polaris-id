@@ -169,6 +169,28 @@ def _read_path(p: pathlib.Path) -> str:
     return _cached_text(p, p.name, strip=True)
 
 
+def _tree_rglob(root: pathlib.Path, pattern: str):
+    """`_tree_rglob(root, pattern)` without the files of another checkout nested under the root.
+
+    A directory holding its own `.git` is a different tree: a worktree an agent or a
+    contributor made under `.claude/worktrees/`, a clone in a subdirectory. Its files are a
+    copy of some other revision, so they are not this tree's evidence, and a check that
+    walks into them reports that revision's state (or a stale copy of this one) as this one's.
+    """
+    nested: dict = {}
+
+    def other_checkout(d: pathlib.Path) -> bool:
+        if d == root:
+            return False
+        if d not in nested:
+            nested[d] = (d / ".git").exists() or other_checkout(d.parent)
+        return nested[d]
+
+    for p in root.rglob(pattern):
+        if not other_checkout(p.parent if p.is_file() or not p.is_dir() else p):
+            yield p
+
+
 #: Joined-package text, keyed on the identity of every module in it, so the join is paid
 #: once per run rather than 77 times for 832 KB.
 _PKG_CACHE: dict = {}
@@ -1624,6 +1646,62 @@ def check_signature_self_contained_verify(root: pathlib.Path) -> list[Finding]:
     return _ok("self_contained_verify",
                "the issuer public key is stored with each signature and verification is surfaced "
                "at use (token detail) — self-contained, survives key rotation")
+
+
+def check_possession_requires_registered_key(root: pathlib.Path) -> list[Finding]:
+    """THREAT-MODEL (2026-10-04): the application role may INSERT a TokenSignature row, so a
+    possession proof that trusts the row vouches for a forgery: a keyless row (SHA3-256 of the
+    token value, which anyone computes) or a row under an attacker's own key. Under real signing
+    `_possession_authenticated`, the one function every possession route calls, must refuse a
+    match unless `_issuer_key_facts(...)` says the issuing authority had registered that key at
+    the signature's instant, and must treat None (unknown) as a refusal: the shape is an
+    `if pqc_signing.is_enabled():` holding the `_issuer_key_facts` call and an
+    `if <fact> is not True: return None`, ahead of the function's final `return`. Read from the
+    syntax tree, so a comment naming the gate does not satisfy it. The effect is tested in
+    RelyingPartyApiTests (both plants, made as polaris_app)."""
+    name = "possession_requires_registered_key"
+    src = _read_raw(root, "polaris_web/rp_api.py")
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return _fail(name, "polaris_web/rp_api.py does not parse")
+    fn = next((n for n in tree.body if isinstance(n, ast.FunctionDef)
+               and n.name == "_possession_authenticated"), None)
+    if fn is None:
+        return _fail(name, "rp_api.py defines no _possession_authenticated, the possession proof "
+                           "every vouching route shares")
+
+    def is_enabled_test(node):
+        return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "is_enabled" and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "pqc_signing")
+
+    def refuses_unless_true(stmt):
+        t = stmt.test if isinstance(stmt, ast.If) else None
+        return (t is not None and isinstance(t, ast.Compare) and len(t.ops) == 1
+                and isinstance(t.ops[0], ast.IsNot) and isinstance(t.comparators[0], ast.Constant)
+                and t.comparators[0].value is True and len(stmt.body) == 1
+                and isinstance(stmt.body[0], ast.Return) and isinstance(stmt.body[0].value, ast.Constant)
+                and stmt.body[0].value.value is None)
+
+    gate_at = None
+    for i, stmt in enumerate(fn.body):
+        if isinstance(stmt, ast.If) and is_enabled_test(stmt.test):
+            calls = [c for c in ast.walk(stmt) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                     and c.func.id == "_issuer_key_facts"]
+            if calls and any(refuses_unless_true(b) for b in stmt.body):
+                gate_at = i
+    if gate_at is None:
+        return _fail(name, "_possession_authenticated has no `if pqc_signing.is_enabled():` that asks "
+                           "_issuer_key_facts and refuses (`if ... is not True: return None`) unless the "
+                           "authority had registered the key: a planted TokenSignature row, keyless or "
+                           "under an attacker's key, would be vouched for under real signing")
+    if not (fn.body and isinstance(fn.body[-1], ast.Return) and gate_at < len(fn.body) - 1):
+        return _fail(name, "the registered-key gate in _possession_authenticated is not ahead of its "
+                           "final return, so a match can leave without passing it")
+    return _ok(name, "under real signing every possession proof refuses a signature whose key the "
+                     "issuing authority had not registered at the signature's instant (None fails "
+                     "closed), so a TokenSignature row the application role plants vouches for nothing")
 
 
 # ---------------------------------------------------------------------------
@@ -11146,7 +11224,7 @@ def check_no_citations_to_deleted_apparatus(root: pathlib.Path) -> list[Finding]
     name = "no_deleted_apparatus_citations"
     offenders: list[str] = []
     scanned = 0
-    for path in sorted(root.rglob("*")):
+    for path in sorted(_tree_rglob(root, "*")):
         if not path.is_file() or path.suffix not in (".py", ".sql", ".sh", ".md", ".html"):
             continue
         rel = str(path.relative_to(root))
@@ -13756,15 +13834,33 @@ def check_algorithm_agility(root: pathlib.Path) -> list[Finding]:
         if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
             return _fail("algorithm_agility", f"the offline verifier imports {mod!r}; it must stay standalone")
     py = _read(root, "sdk/python/polaris_verify/__init__.py")
-    if 'ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey"}' not in py or "def _accepted" not in py:
+    if ('ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey",' not in py
+            or "def _accepted" not in py):
         return _fail("algorithm_agility", "the Python SDK must accept both parameter sets through a total predicate")
     ts = _read(root, "sdk/typescript/src/index.ts")
     for sym in ("ml_dsa87", "ACCEPTED_ALGORITHMS", "verifierFor("):
         if sym not in ts:
             return _fail("algorithm_agility", "the TypeScript SDK must dispatch on the declared algorithm (%s missing)" % sym)
+    # 2026-10-05: the FN-DSA family (draft FIPS 206) is verified, never signed: the same one
+    # category-5 set in the detached verifier and both SDKs, refused below the floor, and bound
+    # by vectors the two independent implementations agreed on when they were made.
+    fal = '"Falcon-padded-1024"'
+    holders = {"the detached verifier": v, "the Python SDK": py, "the TypeScript SDK": ts}
+    missing = [n for n, src in holders.items() if fal not in src]
+    if missing:
+        return _fail("algorithm_agility", "the FN-DSA family must be verified alike everywhere; %s lacks %s" % (", ".join(missing), fal))
+    if "falcon1024padded" not in ts:
+        return _fail("algorithm_agility", "the TypeScript SDK must witness Falcon-padded-1024 with @noble/post-quantum's falcon1024padded")
+    for n, src in holders.items():
+        if re.search(r'"Falcon(?:-padded)?-512"\s*:', src):
+            return _fail("algorithm_agility", "%s accepts Falcon-512, which is category 1, below the floor" % n)
+    if "a genuine Falcon-padded-512 pack is refused" not in v:
+        return _fail("algorithm_agility", "the detached verifier's --selftest must prove Falcon-512 is refused")
+    if re.search(r'oqs\.Signature\("Falcon', _read(root, "polaris_web/custody.py") + _read(root, "polaris_web/pqc_signing.py")):
+        return _fail("algorithm_agility", "Polaris signs nothing under Falcon until lab/strategy/015 clears its signing timing")
     cases = _read(root, "conformance/cases.json")
     for name in ("pack-mldsa87-valid", "pack-mldsa44-unaccepted", "status-assertion-mldsa87-active", "trust-list-migration",
-                 "trust-list-migration-retired-signer"):
+                 "trust-list-migration-retired-signer", "pack-fndsa1024-valid", "pack-fndsa1024-tampered", "pack-fndsa512-unaccepted"):
         if '"name": "%s"' % name not in cases:
             return _fail("algorithm_agility", "conformance/cases.json must carry the two-algorithm cases (%s missing)" % name)
     if '"algorithm": "ML-DSA-87"' not in _read(root, "conformance/vectors/pack-mldsa87-valid.json"):
@@ -13790,7 +13886,9 @@ def check_algorithm_agility(root: pathlib.Path) -> list[Finding]:
         return _fail("algorithm_agility", "PQC-POSTURE.md must carry ML-DSA-87 as an accepted parameter set")
     return _ok("algorithm_agility",
                "algorithm agility: ML-DSA-65 and ML-DSA-87 are accepted by the signer, the detached verifier, both SDKs and the "
-               "app's two witnesses, ML-DSA-44 is refused, no signed body hardcodes its algorithm (the key decides), vectors "
+               "app's two witnesses; the FN-DSA family (Falcon-padded-1024) is verified alike by the detached verifier and both "
+               "SDKs, refused below the floor, and signed by nothing; "
+               "ML-DSA-44 is refused, no signed body hardcodes its algorithm (the key decides), vectors "
                "under both sets are in the conformance suite, the fuzzer runs under both in CI, and a mixed-algorithm "
                "federation is drilled across two instances")
 
@@ -14327,7 +14425,7 @@ def check_no_named_reference_systems(root: pathlib.Path) -> list[Finding]:
     because a comparison that hides its subjects is a weaker claim, not a stronger one;
     nowhere else, and not the prose around the table."""
     pats = [re.compile(x, re.I) if mode == "i" else re.compile(x) for mode, x in _NAMED_REFERENCE_SYSTEMS]
-    for f in sorted(root.rglob("*")):
+    for f in sorted(_tree_rglob(root, "*")):
         if not f.is_file() or f.suffix.lower() not in _NAMED_REF_EXTS:
             continue
         parts = f.relative_to(root).parts
@@ -14388,7 +14486,7 @@ def _tracked_files(root: pathlib.Path) -> list[str]:
             return sorted(line for line in out.stdout.splitlines() if line.strip())
     except (OSError, subprocess.SubprocessError):
         pass
-    return sorted("/".join(f.relative_to(root).parts) for f in root.rglob("*") if f.is_file())
+    return sorted("/".join(f.relative_to(root).parts) for f in _tree_rglob(root, "*") if f.is_file())
 
 
 def check_private_keys_only_in_listed_fixtures(root: pathlib.Path) -> list[Finding]:
@@ -15541,7 +15639,7 @@ def check_pairwise_presentation(root: pathlib.Path) -> list[Finding]:
     BAD = 'polaris-pairwise/1" ||'
     CARD_DOC = "docs/design/card-profile.md"
     misspecified = []
-    for md in sorted(root.rglob("*.md")):
+    for md in sorted(_tree_rglob(root, "*.md")):
         rel = md.relative_to(root).as_posix()
         if "/.git/" in str(md) or rel == CARD_DOC:
             continue
@@ -18963,7 +19061,7 @@ def check_documented_symbols_resolve(root: pathlib.Path) -> list[Finding]:
     name = "documented_symbols"
     skip = _POINT_IN_TIME_DOCS
     by_name: dict = {}
-    for p in root.rglob("*.py"):
+    for p in _tree_rglob(root, "*.py"):
         s = str(p)
         if any(x in s for x in ("/.git/", "/venv/", "/node_modules/", "__pycache__")):
             continue
@@ -18973,7 +19071,7 @@ def check_documented_symbols_resolve(root: pathlib.Path) -> list[Finding]:
                            "nothing")
 
     unresolved, cited = [], 0
-    for md in sorted(root.rglob("*.md")):
+    for md in sorted(_tree_rglob(root, "*.md")):
         rel = md.relative_to(root).as_posix()
         if "/.git/" in str(md) or any(rel.startswith(x) or rel == x for x in skip):
             continue
@@ -19100,7 +19198,7 @@ def check_every_test_suite_is_run(root: pathlib.Path) -> list[Finding]:
     That is the same mistake as reading one document and not the one beside it."""
     name = "suites_are_run"
     skip = ("/.git/", "/venv/", "/.venv/", "/node_modules/", "__pycache__", "/build/", "/dist/")
-    suites = sorted({p for p in root.rglob("test_*.py")
+    suites = sorted({p for p in _tree_rglob(root, "test_*.py")
                      if not any(x in str(p) for x in skip)})
     if not suites:
         return _fail(name, "no test_*.py found in the tree; a search that finds nothing is a "
@@ -22241,7 +22339,7 @@ def check_documented_test_citations_resolve(root: pathlib.Path) -> list[Finding]
     name = "documented_test_citations"
     defined: set = set()
     modules: set = set()
-    for p in root.rglob("*.py"):
+    for p in _tree_rglob(root, "*.py"):
         s = str(p)
         if any(x in s for x in ("/.git/", "/venv/", "/node_modules/", "__pycache__", "/archive/")):
             continue
@@ -22254,7 +22352,7 @@ def check_documented_test_citations_resolve(root: pathlib.Path) -> list[Finding]
                            "no evidence")
 
     unresolved, cited = [], 0
-    for md in sorted(root.rglob("*.md")):
+    for md in sorted(_tree_rglob(root, "*.md")):
         rel = md.relative_to(root).as_posix()
         if any(x in str(md) for x in ("/.git/", "/archive/", "/node_modules/")):
             continue
@@ -22420,7 +22518,7 @@ def check_source_path_citations_resolve(root: pathlib.Path) -> list[Finding]:
     skip = ("/.git/", "/venv/", "/node_modules/", "__pycache__", "/build/", "/target/",
             "/archive/", "/.tla/", "/.hypothesis/")
     unresolved, cited = [], 0
-    for p in sorted(root.rglob("*.py")):
+    for p in sorted(_tree_rglob(root, "*.py")):
         if any(x in str(p) for x in skip):
             continue
         src = _read_raw(root, str(p.relative_to(root)))
@@ -22504,7 +22602,7 @@ VACUOUS_IS_CORRECT = {
 def _hollow_tree(root: pathlib.Path, dest: pathlib.Path) -> int:
     """Copy the tree's SHAPE and none of its content: every path present, every file empty."""
     n = 0
-    for p in root.rglob("*"):
+    for p in _tree_rglob(root, "*"):
         rel = p.relative_to(root)
         if any(x in (".git", "node_modules", "__pycache__", ".venv", "target", "dist")
                for x in rel.parts):
@@ -24483,6 +24581,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_pqc_posture,
     check_edge_pq_kex,
     check_signature_self_contained_verify,
+    check_possession_requires_registered_key,
     check_prod_real_pqc,
     check_sql_console_readonly,
     check_prod_image_no_test_deps,

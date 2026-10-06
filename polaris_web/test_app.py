@@ -36,7 +36,7 @@ import sys
 import unittest
 import hashlib
 from unittest.mock import patch
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -200,6 +200,59 @@ def reload_sample_data():
                 f"tables, which polaris_app is correctly not granted). Set "
                 f"POLARIS_TEST_RELOAD_USER to the owner role."
             )
+    _register_custody_keys_under_real_signing()
+
+
+def _deployment_signature(token_value, agency_id=1):
+    """The signature a deployment would store for a credential, as (bytes, public key hex or None):
+    under real signing the custody key's ML-DSA signature with that key, which the key-ceremony
+    fixture registered; under the placeholder profile SHA3-256(token_value) with no key. A
+    fixture that wrote the keyless digest under real signing was presenting what a compromised
+    application can plant, and passed only while possession accepted it."""
+    import pqc_signing
+    if pqc_signing.is_enabled():
+        sig, _algorithm, key_hex = pqc_signing.signature_with_key_for_token(token_value, agency_id=agency_id)
+        return bytes(sig), key_hex
+    return hashlib.sha3_256(token_value.encode('utf-8')).digest(), None
+
+
+def _register_custody_keys_under_real_signing():
+    """Under real signing, the key ceremony a deployment performs before its first issuance:
+    register, for each authority, the custody key it signs with. A possession proof accepts a
+    signature only under a key its authority had registered at the signature's instant
+    (rp_api._possession_authenticated, THREAT-MODEL 2026-10-04), so a suite that issued under an
+    unregistered key would be testing a deployment that skipped the ceremony. The placeholder
+    profile signs with no key and registers nothing; tests about unregistered keys use keys of
+    their own, which this never registers."""
+    import pqc_signing
+    if not pqc_signing.is_enabled():
+        return
+    migration_file = os.environ.get('POLARIS_MIGRATION_SIGNING_KEY_FILE')
+    migration_key = None
+    if migration_file and os.path.isfile(migration_file):
+        with open(migration_file) as f:
+            migration_key = json.load(f)
+    conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT agency_id FROM Agency ORDER BY agency_id")
+            for (agency_id,) in cur.fetchall():
+                _, algorithm, key_hex = pqc_signing.signature_with_key_for_token(
+                    'polaris-test-key-ceremony', agency_id=agency_id)
+                if key_hex:
+                    cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, "
+                                "event, effective_at) VALUES (%s, %s, %s, 'registered', "
+                                "TIMESTAMP '2000-01-01')", (agency_id, key_hex, algorithm))
+                # The migration key too, when one is provisioned: a population migration signs
+                # under it, and its ceremony registers it like any other authority key.
+                if migration_key:
+                    cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, "
+                                "event, effective_at) VALUES (%s, %s, %s, 'registered', "
+                                "TIMESTAMP '2000-01-01')",
+                                (agency_id, migration_key['public_key_hex'], migration_key['algorithm']))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # Test passwords from 10_auth.sql seed data (development credentials)
@@ -598,16 +651,15 @@ class DocumentSigningTests(UnauthenticatedTestCase):
     real-ML-DSA possession and offline validation are proven by the two-instance drill."""
 
     def _credential(self):
-        """An ACTIVE credential issued by agency 1 carrying a signature the test profile's
-        possession check accepts: under the placeholder profile that is SHA3-256(token_value)
-        with no key, so give the token a fresh such row (newest non-deprecated wins)."""
-        import hashlib
+        """An ACTIVE credential issued by agency 1 carrying the signature a deployment would store
+        (_deployment_signature): SHA3-256(token_value) with no key under the placeholder profile,
+        the registered custody key's ML-DSA signature under real signing."""
         import psycopg2
         row = flask_app.query("SELECT token_id, token_value FROM IdentityToken WHERE issuing_agency_id = 1 "
                               "AND status = 'ACTIVE' ORDER BY token_id LIMIT 1", fetch='one', primary=True)
-        placeholder = hashlib.sha3_256(row['token_value'].encode('utf-8')).digest()
+        placeholder, key_hex = _deployment_signature(row['token_value'])
         flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
-                        "VALUES (%s, 1, %s, NULL)", (row['token_id'], psycopg2.Binary(placeholder)), fetch='none')
+                        "VALUES (%s, 1, %s, %s)", (row['token_id'], psycopg2.Binary(placeholder), key_hex), fetch='none')
         return row['token_value'], placeholder.hex()
 
     def test_holder_signing_by_possession(self):
@@ -688,6 +740,19 @@ class DocumentSigningTests(UnauthenticatedTestCase):
         tv, sig = self._credential()
         _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id IN (1, 2)", ('ab' * 16,))
         base = {'token_value': tv, 'signature_hex': sig, 'digest_hex': 'ef' * 32}
+        import tempfile
+        import pqc_signing
+        keys_dir = tempfile.mkdtemp(prefix='polaris-agency-keys-')
+        if pqc_signing.is_enabled():
+            # Under real signing both agencies would sign with the one issuer key, and the route
+            # rightly refuses a timestamp under the signer's own key as independent evidence; the
+            # other agency's time evidence needs its own custodied key (POLARIS_AGENCY_KEYS_DIR).
+            with open(os.path.join(keys_dir, '2.json'), 'w') as f:
+                json.dump(pqc_signing.generate_keypair(), f)
+        with patch.dict(os.environ, {'POLARIS_AGENCY_KEYS_DIR': keys_dir}):
+            self._timestamp_from_agency_2(base)
+
+    def _timestamp_from_agency_2(self, base):
         r = self.client.post('/api/v1/sign/1/holder', json=dict(base, timestamp_agency_id=2))
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         ts = r.get_json()['ltv']['timestamp']
@@ -723,13 +788,12 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         return cid, secret
 
     def _credential(self):
-        import hashlib
         import psycopg2
         row = flask_app.query("SELECT token_id, token_value FROM IdentityToken WHERE issuing_agency_id = 1 "
                               "AND status = 'ACTIVE' ORDER BY token_id LIMIT 1", fetch='one', primary=True)
-        placeholder = hashlib.sha3_256(row['token_value'].encode('utf-8')).digest()
+        placeholder, key_hex = _deployment_signature(row['token_value'])
         flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
-                        "VALUES (%s, 1, %s, NULL)", (row['token_id'], psycopg2.Binary(placeholder)), fetch='none')
+                        "VALUES (%s, 1, %s, %s)", (row['token_id'], psycopg2.Binary(placeholder), key_hex), fetch='none')
         _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,))
         return row['token_id'], row['token_value'], placeholder.hex()
 
@@ -6106,18 +6170,17 @@ class ZKSnarkTests(PolarisTestCase):
             self.assertEqual(row['committed_count'], len(tokens))
 
     def _possession_credential(self):
-        """An ACTIVE credential with a signature the placeholder profile accepts."""
-        import hashlib as _h
+        """An ACTIVE credential with the signature a deployment would store (_deployment_signature)."""
         import psycopg2 as _pg
         row = flask_app.query("SELECT token_id, token_value FROM IdentityToken "
                               "WHERE issuing_agency_id = 1 AND status = 'ACTIVE' "
                               "ORDER BY token_id LIMIT 1", fetch='one', primary=True)
-        ph = _h.sha3_256(row['token_value'].encode('utf-8')).digest()
+        ph, key_hex = _deployment_signature(row['token_value'])
         if not flask_app.query("SELECT 1 FROM TokenSignature WHERE token_id = %s AND algorithm_id = 1",
                                (row['token_id'],), fetch='one', primary=True):
             flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
-                            "signing_public_key_hex) VALUES (%s, 1, %s, NULL)",
-                            (row['token_id'], _pg.Binary(ph)), fetch='none')
+                            "signing_public_key_hex) VALUES (%s, 1, %s, %s)",
+                            (row['token_id'], _pg.Binary(ph), key_hex), fetch='none')
         return row['token_value'], ph.hex()
 
     def _expire(self, token_value):
@@ -6486,16 +6549,15 @@ class ZKSnarkTests(PolarisTestCase):
     def test_a_per_holder_artifact_is_never_cached(self):
         # The other half, and the one that leaks if it is wrong: a status assertion names ONE
         # token value, so a shared cache holding it serves one holder's credential to another.
-        import hashlib as _h
         import psycopg2 as _pg
         row = flask_app.query("SELECT token_id, token_value FROM IdentityToken "
                               "WHERE issuing_agency_id = 1 AND status = 'ACTIVE' "
                               "ORDER BY token_id LIMIT 1", fetch='one', primary=True)
         tv = row['token_value']
-        placeholder = _h.sha3_256(tv.encode('utf-8')).digest()
+        placeholder, key_hex = _deployment_signature(tv)
         flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
-                        "signing_public_key_hex) VALUES (%s, 1, %s, NULL)",
-                        (row['token_id'], _pg.Binary(placeholder)), fetch='none')
+                        "signing_public_key_hex) VALUES (%s, 1, %s, %s)",
+                        (row['token_id'], _pg.Binary(placeholder), key_hex), fetch='none')
         r = self.client.post('/api/v1/status-assertion',
                              json={'token_value': tv, 'signature_hex': placeholder.hex()})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
@@ -13465,9 +13527,11 @@ class FederationInAppTests(PolarisTestCase):
     def _new_conn(self):
         return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
 
-    def _token_signed_by(self, token_value, agency_id, signing_key_hex):
+    def _token_signed_by(self, token_value, agency_id, signing_key_hex, signed_at=None):
         """Insert an ACTIVE token issued by agency_id whose active TokenSignature
-        carries signing_public_key_hex=signing_key_hex; returns token_id."""
+        carries signing_public_key_hex=signing_key_hex; returns token_id. `signed_at` dates
+        the signature, as issuance dates it with its ISSUED row in one transaction; left
+        out, it is the moment of this insert."""
         conn = self._new_conn()
         try:
             with conn.cursor() as cur:
@@ -13488,8 +13552,9 @@ class FederationInAppTests(PolarisTestCase):
                 cur.execute("UPDATE IdentityToken SET status='ACTIVE', activated_date=CURRENT_TIMESTAMP "
                             "WHERE token_id=%s", (tid,))
                 cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
-                            "signing_public_key_hex) VALUES (%s, 1, %s, %s)",
-                            (tid, b'seed-signature-bytes', signing_key_hex))
+                            "signing_public_key_hex, signed_at) "
+                            "VALUES (%s, 1, %s, %s, COALESCE(%s::timestamp, CURRENT_TIMESTAMP))",
+                            (tid, b'seed-signature-bytes', signing_key_hex, signed_at))
                 conn.commit()
                 return tid
         finally:
@@ -13553,7 +13618,8 @@ class FederationInAppTests(PolarisTestCase):
         """The case the old single boolean got wrong. Issued under A, authority rotates to B:
         the credential was properly issued and says so, and the key is simply no longer the
         current one. Nothing about the credential changed."""
-        tid = self._token_signed_by('FED-ROTATE-0001', agency_id=1, signing_key_hex=self.KEY_A)
+        tid = self._token_signed_by('FED-ROTATE-0001', agency_id=1, signing_key_hex=self.KEY_A,
+                                    signed_at='2026-02-01 00:00:00')
         self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
         self._issued_at(tid, 1, '2026-02-01 00:00:00')
         authorized, current = self._facts(tid)
@@ -13579,7 +13645,8 @@ class FederationInAppTests(PolarisTestCase):
 
     def test_G_key_authorized_at_signing_but_retired_later(self):
         """Signed inside the window, retired after it. Authorized then; not current now."""
-        tid = self._token_signed_by('FED-RETIRED-0001', agency_id=1, signing_key_hex=self.KEY_A)
+        tid = self._token_signed_by('FED-RETIRED-0001', agency_id=1, signing_key_hex=self.KEY_A,
+                                    signed_at='2026-02-01 00:00:00')
         self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
         self._key_event(1, self.KEY_A, 'retired', '2026-06-01 00:00:00')
         self._issued_at(tid, 1, '2026-02-01 00:00:00')
@@ -13591,7 +13658,8 @@ class FederationInAppTests(PolarisTestCase):
         """The same history, the other side of the line: a credential whose ISSUED instant
         falls after the retirement was NOT authorized, and this is the one case that must
         actually answer False rather than None."""
-        tid = self._token_signed_by('FED-LATE-0001', agency_id=1, signing_key_hex=self.KEY_A)
+        tid = self._token_signed_by('FED-LATE-0001', agency_id=1, signing_key_hex=self.KEY_A,
+                                    signed_at='2026-07-01 00:00:00')
         self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
         self._key_event(1, self.KEY_A, 'retired', '2026-06-01 00:00:00')
         self._issued_at(tid, 1, '2026-07-01 00:00:00')
@@ -13607,6 +13675,70 @@ class FederationInAppTests(PolarisTestCase):
         authorized, current = self._facts(tid)
         self.assertIsNone(authorized, "no protected instant: unknown")
         self.assertIs(current, True, "but the key's status today is still knowable")
+
+    KEY_M = 'd4' * 32
+
+    def _add_signature(self, token_id, algorithm_id, key_hex, signed_at):
+        """A signature added after issuance, as a migration adds one."""
+        conn = self._new_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+                            "signing_public_key_hex, signed_at) VALUES (%s, %s, %s, %s, %s)",
+                            (token_id, algorithm_id, b'added-signature-bytes', key_hex, signed_at))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _signature_facts(self, token_id):
+        v = self.client.get('/api/tokens/%d/verify' % token_id).get_json()
+        return [(x['algorithm'], x['issuer_authorized_at_signing'], x['issuer_key_current'])
+                for x in v['signatures']]
+
+    def test_I_a_migration_signature_is_dated_by_its_own_signing(self):
+        """CORE-BUG, 2026-10-02. A migration key is registered after issuance and signs after
+        that. Dated by the credential's ISSUED instant it read as unauthorized, and the
+        credential's answer was whichever of its two signatures came back first."""
+        tid = self._token_signed_by('FED-MIGRATED-0001', agency_id=1, signing_key_hex=self.KEY_A,
+                                    signed_at='2026-02-01 00:00:00')
+        self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
+        self._issued_at(tid, 1, '2026-02-01 00:00:00')
+        self._key_event(1, self.KEY_M, 'registered', '2026-08-01 00:00:00')
+        self._add_signature(tid, 2, self.KEY_M, '2026-09-01 00:00:00')
+        self.assertEqual(self._signature_facts(tid),
+                         [('ML-DSA-65', True, True), ('ML-DSA-87', True, True)])
+        self.assertEqual(self._facts(tid), (True, True))
+
+    def test_I2_an_added_signature_is_never_dated_before_the_credential(self):
+        """The instant is the later of the signature's own and the protected ISSUED one. A row
+        dated before the credential existed would otherwise borrow a key window that closed
+        before issuance: KEY_M was retired before this credential was issued, so a signature
+        by it on this credential was not authorized, whatever date its row carries."""
+        tid = self._token_signed_by('FED-BACKDATED-0001', agency_id=1, signing_key_hex=self.KEY_A,
+                                    signed_at='2026-02-01 00:00:00')
+        self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
+        self._issued_at(tid, 1, '2026-02-01 00:00:00')
+        self._key_event(1, self.KEY_M, 'registered', '2025-06-01 00:00:00')
+        self._key_event(1, self.KEY_M, 'retired', '2026-01-15 00:00:00')
+        self._add_signature(tid, 2, self.KEY_M, '2025-12-01 00:00:00')
+        self.assertEqual(self._signature_facts(tid)[0], ('ML-DSA-87', False, False))
+        self.assertEqual(self._facts(tid), (False, False))
+
+    def test_J_the_credential_answers_with_the_weakest_of_its_signatures(self):
+        """Every signature in force must verify, so every key behind them must be authorized:
+        one unregistered key makes the credential's answer unknown, and one signed outside
+        its key's window makes it false, whatever order the rows come back in."""
+        tid = self._token_signed_by('FED-MIXED-0001', agency_id=1, signing_key_hex=self.KEY_A,
+                                    signed_at='2026-02-01 00:00:00')
+        self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
+        self._issued_at(tid, 1, '2026-02-01 00:00:00')
+        self._add_signature(tid, 2, self.KEY_NEVER, '2026-09-01 00:00:00')
+        self.assertEqual(self._signature_facts(tid),
+                         [('ML-DSA-65', True, True), ('ML-DSA-87', None, None)])
+        self.assertEqual(self._facts(tid), (None, None))
+        self._key_event(1, self.KEY_NEVER, 'registered', '2026-10-01 00:00:00')
+        self.assertEqual(self._facts(tid), (False, True),
+                         'registered only after it signed: not authorized when it signed')
 
     def test_H2_placeholder_signature_decides_neither(self):
         """The development placeholder path carries no signing key, so there is nothing to
@@ -16129,6 +16261,22 @@ class AthenaSelfTestTests(PolarisTestCase):
             self.assertNotIn('rule-contradicted', classes)
             self.assertIn('the privilege boundary', card)
 
+    def test_it_is_rate_limited_per_account(self):
+        # Each run attempts every forbidden write, so the route bounds how often an account may ask
+        # (_ATHENA_SELFTEST_PER_MINUTE). Found unexercised by the app mutation drill (2026-10-04).
+        saved = flask_app._ATHENA_SELFTEST_PER_MINUTE
+        flask_app._ATHENA_SELFTEST_PER_MINUTE = 1
+        try:
+            flask_app.security.rate_limiter.reset()
+            self.assertEqual(self._post_selftest().status_code, 200, 'the first run in the minute')
+            self.assertEqual(self._post_selftest().status_code, 429, 'the second is refused')
+            flask_app.security.rate_limiter.reset()
+            self.assertEqual(self._post_selftest().status_code, 200,
+                             'and the refusal was the limiter: cleared, the next run is admitted')
+        finally:
+            flask_app._ATHENA_SELFTEST_PER_MINUTE = saved
+            flask_app.security.rate_limiter.reset()
+
     def test_it_is_for_administrators_and_auditors_on_purpose(self):
         self._login('operator')
         self.assertEqual(self._post_selftest().status_code, 403)
@@ -16331,6 +16479,9 @@ class EndToEndFlowTests(PolarisTestCase):
             _e2e_json.dump(flask_app.pqc_signing.generate_keypair(), f)
         before = os.environ.get("POLARIS_PQC_SIGNING_KEY_FILE")
         os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = path
+        # Its key ceremony: the status assertion is possession-authenticated, and accepts the
+        # credential's signature only under a key the authority registered.
+        _register_custody_keys_under_real_signing()
 
         def restore():
             if before is None:
@@ -16510,6 +16661,177 @@ class RelyingPartyApiTests(PolarisTestCase):
             cur.execute("SELECT token_id FROM IdentityToken WHERE token_value=%s", (token_value,))
             tid = cur.fetchone()['token_id']
         return self.client.get('/api/tokens/%d/authenticity-pack' % tid).get_json()
+
+    def test_the_pack_a_holder_carries_verifies_through_a_migration_window(self):
+        """docs/operator/QUANTUM-EVENT.md section 2: "A credential's old signature keeps
+        verifying until its deprecation_date ... an old verifier accepts the old one, a new
+        verifier the new one". A holder's pack carries the signature it was issued with, and
+        no population can be reached at once to be handed a new one, so the relying-party
+        door has to accept every signature still in force, not only the newest. Under the
+        placeholder profile the two signatures are the same bytes and this cannot tell them
+        apart; the real-signer suite runs it where they differ."""
+        import migration
+        import pqc_signing
+        cid = self._register_rp('window-secret-1', suffix='0201')
+        auth = self._bearer(cid, 'window-secret-1')
+        pack = self._issue_and_pack('RP-WINDOW-1')
+        old = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
+        self.assertEqual(self.client.post('/api/v1/verify', json=old, headers=auth)
+                         .get_json()['decision'], 'accept', 'control: the pack verifies')
+        with self._new_conn() as conn:
+            target_id, target_name = migration.resolve_target(conn, 'ML-DSA-87')
+            migration.migrate_population(conn, target_id, target_name, batch_size=50)
+            with conn.cursor() as cur:
+                cur.execute("SELECT s.signature_bytes FROM TokenSignature s JOIN IdentityToken t "
+                            "  ON t.token_id = s.token_id WHERE t.token_value = %s "
+                            "   AND s.algorithm_id = %s", (pack['token_value'], target_id))
+                new_sig = bytes(cur.fetchone()['signature_bytes']).hex()
+        if pqc_signing.is_enabled():
+            self.assertNotEqual(new_sig, pack['signature_hex'], 'two signatures, two byte strings')
+        during = self.client.post('/api/v1/verify', json=old, headers=auth).get_json()
+        self.assertTrue(during['authentic'], during)
+        self.assertEqual(during['decision'], 'accept', during)
+        new = dict(old, signature_hex=new_sig)
+        self.assertEqual(self.client.post('/api/v1/verify', json=new, headers=auth)
+                         .get_json()['decision'], 'accept', 'the new signature verifies too')
+
+    def test_a_superseded_signature_verifies_until_its_deprecation_date(self):
+        """docs/operator/QUANTUM-EVENT.md section 6: "The grace period is the interval before
+        the superseded signatures stop verifying", as the schema's own comment on the column
+        says: deprecation_date is "no longer accepted after this timestamp". The verify reads
+        took deprecation_date IS NULL, so closing a window with a grace cut every old pack off
+        at once. The operator route's list of signatures shows it under either profile; the
+        pack itself is told apart only under real signing, where old and new differ."""
+        import time
+        import migration
+        import pqc_signing
+        cid = self._register_rp('grace-secret-1', suffix='0202')
+        auth = self._bearer(cid, 'grace-secret-1')
+        pack = self._issue_and_pack('RP-GRACE-1')
+        old = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
+
+        def listed():
+            v = self.client.get('/api/tokens/%d/verify' % pack['token_id']).get_json()
+            return v['signature_valid'], sorted(x['algorithm'] for x in v['signatures'])
+        with self._new_conn() as conn:
+            target_id, target_name = migration.resolve_target(conn, 'ML-DSA-87')
+            migration.migrate_population(conn, target_id, target_name, batch_size=50)
+            migration.deprecate_superseded(conn, target_id, grace_seconds=2)
+        self.assertEqual(listed(), (True, ['ML-DSA-65', target_name]), 'within the grace')
+        within = self.client.post('/api/v1/verify', json=old, headers=auth).get_json()
+        self.assertEqual(within['decision'], 'accept', within)
+        time.sleep(2.5)
+        self.assertEqual(listed(), (True, [target_name]), 'past the deprecation date')
+        after = self.client.post('/api/v1/verify', json=old, headers=auth).get_json()
+        if pqc_signing.is_enabled():
+            self.assertEqual(after['reason'], 'not a verifiable presentation', after)
+
+    def test_the_door_dates_a_migration_signature_by_its_own_signing(self):
+        """CORE-BUG, 2026-10-02. A key registered for a migration after the credential was
+        issued, and before it signed, is authorized for the signature it made; dated by the
+        credential's issuance it read false at the door for every new pack. Real signing only:
+        the placeholder carries no key to ask about."""
+        import migration
+        import pqc_signing
+        if not pqc_signing.is_enabled():
+            self.skipTest('the placeholder carries no key; the real-signer suite runs this')
+        cid = self._register_rp('dated-secret-1', suffix='0203')
+        auth = self._bearer(cid, 'dated-secret-1')
+        pack = self._issue_and_pack('RP-DATED-1')
+        with self._new_conn() as conn:
+            target_id, target_name = migration.resolve_target(conn, 'ML-DSA-87')
+            migration.migrate_population(conn, target_id, target_name, batch_size=50)
+            with conn.cursor() as cur:
+                cur.execute("SELECT s.signing_public_key_hex AS key, s.signed_at, s.signature_bytes, "
+                            "  (SELECT min(e.event_timestamp) FROM TokenLifecycleEvent e "
+                            "    WHERE e.token_id = s.token_id AND e.event_type = 'ISSUED') AS issued_at "
+                            "  FROM TokenSignature s JOIN IdentityToken t ON t.token_id = s.token_id "
+                            " WHERE t.token_value = %s ORDER BY s.signed_at, s.signature_id",
+                            (pack['token_value'],))
+                old, new = cur.fetchall()
+                self.assertLess(old['issued_at'], new['signed_at'])
+                # The issuing key, registered before issuance; the migration's, registered
+                # between issuance and the migration's signing.
+                cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, "
+                            "  event, effective_at) VALUES "
+                            "  (1, %s, 'ML-DSA-65', 'registered', %s - INTERVAL '1 day'), "
+                            "  (1, %s, 'ML-DSA-87', 'registered', %s + (%s - %s) / 2)",
+                            (old['key'], old['issued_at'], new['key'], old['issued_at'],
+                             new['signed_at'], old['issued_at']))
+            conn.commit()
+        for presented in (bytes(new['signature_bytes']).hex(), pack['signature_hex']):
+            r = self.client.post('/api/v1/verify', headers=auth, json={
+                'token_value': pack['token_value'], 'signature_hex': presented}).get_json()
+            self.assertEqual((r['decision'], r['issuer_authorized_at_signing']), ('accept', True), r)
+
+    # -- THREAT-MODEL (2026-10-04): a compromised application role plants a signature row. The
+    # -- role may INSERT into TokenSignature; registration (AuthorityKeyEvent) is closed to it.
+
+    def _plant_as_app(self, token_value, signature, key_hex):
+        """INSERT a TokenSignature row AS polaris_app, under ML-DSA-87, an algorithm the
+        credential (issued under ML-DSA-65) lacks, so the per-algorithm UNIQUE admits it."""
+        import psycopg2 as _pg
+        conn = _pg.connect(**_OWNER_DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET ROLE polaris_app")
+                cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+                            "signing_public_key_hex) SELECT token_id, 2, %s, %s FROM IdentityToken "
+                            "WHERE token_value = %s", (_pg.Binary(signature), key_hex, token_value))
+                self.assertEqual(cur.rowcount, 1, 'control: the application role CAN plant the row')
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _possession_answers(self, auth, token_value, signature_hex):
+        """What the relying-party door and the status assertion (a SIGNED statement over the
+        credential, presentable offline) each make of one presentation."""
+        body = {'token_value': token_value, 'signature_hex': signature_hex}
+        flask_app.security.rate_limiter.reset()
+        verify = self.client.post('/api/v1/verify', json=body, headers=auth).get_json()['decision']
+        assertion = self.client.post('/api/v1/status-assertion', json=body).status_code
+        return verify, assertion
+
+    def test_a_planted_keyless_row_is_not_authentic_under_real_signing(self):
+        """PLANT B. The keyless branch recomputes SHA3-256(token_value), which anyone can, so
+        under real signing a keyless row is no signature at all. The placeholder profile, which
+        never claims real authenticity, still reads it (the control)."""
+        import pqc_signing
+        cid = self._register_rp('plant-b-secret-1', suffix='0301')
+        auth = self._bearer(cid, 'plant-b-secret-1')
+        tv = self._issue_and_pack('RP-PLANT-B-1')['token_value']
+        digest = hashlib.sha3_256(tv.encode('utf-8')).digest()
+        self._plant_as_app(tv, digest, None)
+        with patch.object(pqc_signing, 'is_enabled', return_value=False):
+            self.assertEqual(self._possession_answers(auth, tv, digest.hex()), ('accept', 200),
+                             'control: the placeholder profile reads a keyless row')
+        with patch.object(pqc_signing, 'is_enabled', return_value=True):
+            self.assertEqual(self._possession_answers(auth, tv, digest.hex()), ('reject', 400),
+                             'under real signing a keyless row vouches for nothing')
+
+    def test_a_planted_row_under_an_unregistered_key_is_refused_under_real_signing(self):
+        """PLANT A. The attacker signs with its own ML-DSA-87 key; the signature check is stood
+        in for (it would pass: the bytes are the attacker's genuine signature), so what decides
+        is whether the issuing authority had registered that key. It had not, and the
+        application role cannot register one. Registering it (as the owner) is the control
+        that the refusal is that fact and nothing else."""
+        import pqc_signing
+        cid = self._register_rp('plant-a-secret-1', suffix='0302')
+        auth = self._bearer(cid, 'plant-a-secret-1')
+        tv = self._issue_and_pack('RP-PLANT-A-1')['token_value']
+        attacker_key, forged = 'a7' * 1312, b'\x5a' * 4627
+        self._plant_as_app(tv, forged, attacker_key)
+        with patch.object(pqc_signing, 'is_enabled', return_value=True), \
+                patch.object(pqc_signing, 'verify_stored_signature', return_value=True):
+            self.assertEqual(self._possession_answers(auth, tv, forged.hex()), ('reject', 400),
+                             'a key the authority never registered vouches for nothing')
+            with self._new_conn() as conn, conn.cursor() as cur:
+                cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, "
+                            "event, effective_at) VALUES (1, %s, 'ML-DSA-87', 'registered', "
+                            "now() - INTERVAL '1 day')", (attacker_key,))
+                conn.commit()
+            self.assertEqual(self._possession_answers(auth, tv, forged.hex())[0], 'accept',
+                             'control: the same row, its key registered, is accepted')
 
     # -- a refusal here that the application mutation drill found nothing noticing
     # -- (2026-09-17): the bearer token outlives the relying party's standing to use it.
@@ -17235,7 +17557,9 @@ class FederationManifestTests(PolarisTestCase):
         m = self.client.get('/api/v1/federation-manifest/1').get_json()
         self.assertEqual(m['format'], 'polaris-federation-manifest/1')
         self.assertEqual(m['authority']['agency_id'], 1)
-        self.assertEqual(m['anchors'][0]['public_key_hex'], 'a1' * 32)
+        # Among the anchors, not first: the register's keys come first (under real signing the
+        # key ceremony registered the custody key), and the agency's current key is added after.
+        self.assertIn('a1' * 32, [a['public_key_hex'] for a in m['anchors']])
         self.assertGreater(m['expires_at'], m['issued_at'])
         for f in ('epoch', 'revocation', 'signature_hex', 'algorithm', 'max_window_seconds'):
             self.assertIn(f, m)
@@ -17659,6 +17983,70 @@ class PopulationMigrationTests(PolarisTestCase):
             self.assertEqual(m.pending_count(conn, target_id), 0)
             self.assertEqual(m.verifiability_report(conn)["unverifiable"], 0)
 
+    def _issue_signed(self, conn, token_value, status):
+        """A credential signed the way issuance signs it. The seed's signatures are labelled
+        literals that verify under nothing by design (docs/design/multi-sig-migration.md), so
+        a verdict about migration has to be asked of credentials the signing module made."""
+        import pqc_signing
+        sig, _label, key = pqc_signing.signature_with_key_for_token(token_value, agency_id=1)
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                        "VALUES (%s, '1980-03-03', 'US-OH') RETURNING individual_id",
+                        ('Migration ' + token_value,))
+            iid = cur.fetchone()["individual_id"]
+            cur.execute("INSERT INTO IdentityToken (token_value, physical_serial, hardware_model, "
+                        "  biometric_binding_type, individual_id, issuing_agency_id, algorithm_id, "
+                        "  status, issued_date, expiration_date) "
+                        "VALUES (%s, %s, 'TitanQ-3', 'IRIS', %s, 1, 1, %s, CURRENT_TIMESTAMP, "
+                        "        (polaris_utc_date() + INTERVAL '10 years')::date) RETURNING token_id",
+                        (token_value, 'SN-' + token_value, iid, status))
+            token_id = cur.fetchone()["token_id"]
+            cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+                        "  signing_public_key_hex) VALUES (%s, 1, %s, %s)",
+                        (token_id, psycopg2.Binary(sig), key))
+        conn.commit()
+        return token_id
+
+    def test_a_migrated_credential_verifies_during_the_window_and_after_it(self):
+        """CORE-BUG, 2026-10-02 (docs/operator/QUANTUM-EVENT.md: no holder "ever carrying a
+        credential that verifies under nothing"). The development placeholder for a migration
+        was SHA3-256 over "<algorithm>|<token value>", which the verify path, recomputing
+        SHA3-256 over the token value, never accepts. Under the placeholder profile every
+        migrated credential answered signature_valid false the moment the run wrote its row,
+        since every active signature must verify, while verifiability_report, which counts
+        rows, said nobody was dark. The verify route is the effect, asked twice."""
+        import time
+        m = self._migration()
+        with self._new_conn() as conn:
+            mine = [self._issue_signed(conn, 'TKN-OH-QE-%d' % i, status)
+                    for i, status in enumerate(('ACTIVE', 'RESERVE'))]
+            target_id, target_name = m.resolve_target(conn, "ML-DSA-87")
+
+            def verdicts():
+                out = {}
+                for token_id in mine:
+                    v = self.client.get('/api/tokens/%d/verify' % token_id).get_json()
+                    out[token_id] = (v['signature_valid'],
+                                     sorted(x['algorithm'] for x in v['signatures']))
+                return out
+            before = verdicts()
+            self.assertTrue(all(valid for valid, _ in before.values()),
+                            "the control: each verifies before the migration: %r" % before)
+            m.migrate_population(conn, target_id, target_name, batch_size=50)
+            during = verdicts()
+            for token_id, (valid, algorithms) in during.items():
+                self.assertEqual(algorithms, ['ML-DSA-65', target_name], token_id)
+                self.assertTrue(valid, "credential %d does not verify during the window: %r"
+                                % (token_id, during))
+            # The shortest grace there is; past it, the old signature is no longer in force.
+            m.deprecate_superseded(conn, target_id, grace_seconds=1)
+            time.sleep(1.5)
+            after = verdicts()
+            for token_id, (valid, algorithms) in after.items():
+                self.assertEqual(algorithms, [target_name], token_id)
+                self.assertTrue(valid, "credential %d verifies under nothing once the window "
+                                       "closed: %r" % (token_id, after))
+
     def test_a_second_run_is_a_no_op(self):
         # Resume is the default: the work remaining is a query, so re-running converges
         # rather than double-writing.
@@ -17743,6 +18131,21 @@ class PopulationMigrationTests(PolarisTestCase):
                 self.assertEqual(cur.fetchone()["n"], 0,
                                  "a terminal credential must not be re-signed")
 
+    @contextmanager
+    def _migrating_onto_the_issuer_set(self):
+        """Migrating back onto ML-DSA-65, the issuer key's own set: an operator steps an ML-DSA-87
+        migration key aside so custody signs with the issuer key, since custody refuses a key for
+        the wrong parameter set rather than mislabel a signature. No-op without a migration key."""
+        import custody
+        held = os.environ.pop("POLARIS_MIGRATION_SIGNING_KEY_FILE", None)
+        custody.reset()
+        try:
+            yield
+        finally:
+            if held is not None:
+                os.environ["POLARIS_MIGRATION_SIGNING_KEY_FILE"] = held
+            custody.reset()
+
     def _superseded_then_back(self, m, conn):
         """Migrate to ML-DSA-87, close the window, then target ML-DSA-65 again. The seed's
         token 2 then holds a DEPRECATED ML-DSA-65 signature, and the schema allows one
@@ -17763,7 +18166,8 @@ class PopulationMigrationTests(PolarisTestCase):
         m = self._migration()
         with self._new_conn() as conn:
             t65, n65 = self._superseded_then_back(m, conn)
-            totals = m.migrate_population(conn, t65, n65, batch_size=50)
+            with self._migrating_onto_the_issuer_set():
+                totals = m.migrate_population(conn, t65, n65, batch_size=50)
             # Two since rc.21: the seed's ACTIVE token 2 and its RESERVE spare, token 1, both
             # hold a deprecated ML-DSA-65 signature once the first window closes.
             self.assertEqual(totals["blocked"], 2, totals)
@@ -17910,13 +18314,37 @@ class PopulationMigrationTests(PolarisTestCase):
                 os.environ["POLARIS_MIGRATION_SIGNING_KEY_FILE"] = old
             custody.reset()
 
-    def test_the_placeholder_signature_differs_per_algorithm(self):
-        # A migration whose output was identical for both parameter sets would let a drill
-        # report success while proving nothing changed.
+    def test_a_migration_signature_is_one_the_verify_path_accepts(self):
+        """CORE-BUG, 2026-10-02. This asserted that the placeholder differed per algorithm,
+        which it did by hashing "<algorithm>|<token value>": bytes no verify path accepts, so
+        under the placeholder profile every migrated credential verified false. The row's
+        algorithm, and under real signing the key, tells the sets apart; a migration signature
+        has to verify. A set no signer here produces is refused in every profile."""
         import pqc_signing
-        a, _, _ = pqc_signing.signature_for_migration("TOK-A", "ML-DSA-65")
-        b, _, _ = pqc_signing.signature_for_migration("TOK-A", "ML-DSA-87")
-        self.assertNotEqual(a, b)
+        for algorithm in ("ML-DSA-65", "ML-DSA-87"):
+            with (self._migrating_onto_the_issuer_set() if algorithm == "ML-DSA-65"
+                  else nullcontext()):
+                sig, label, key = pqc_signing.signature_for_migration("TKN-OH-QE-A", algorithm)
+            self.assertTrue(pqc_signing.verify_stored_signature("TKN-OH-QE-A", sig, key), algorithm)
+            if key:
+                self.assertEqual((label, pqc_signing.algorithm_for_public_key_hex(key)),
+                                 (algorithm, algorithm))
+            else:
+                self.assertEqual(label, pqc_signing.PLACEHOLDER_LABEL)
+        for unsigned in ("SLH-DSA-128s", "SLH-DSA-256s"):
+            with self.assertRaises(pqc_signing.SigningError):
+                pqc_signing.signature_for_migration("TKN-OH-QE-A", unsigned)
+
+    def test_a_target_nothing_here_signs_with_is_refused(self):
+        """Registered is not signable: both SLH-DSA sets are rows with no signer here. The run
+        is refused before anything is selected, in every profile; under the placeholder one it
+        used to re-sign the population under SLH-DSA-256s."""
+        m = self._migration()
+        with self._new_conn() as conn:
+            for unsigned in ("SLH-DSA-128s", "SLH-DSA-256s"):
+                with self.assertRaises(m.MigrationRefused) as refused:
+                    m.resolve_target(conn, unsigned)
+                self.assertIn("nothing here signs with %s" % unsigned, str(refused.exception))
 
 
 class CardPersonalizationTests(PolarisTestCase):
@@ -19596,15 +20024,14 @@ class RefusalsTheAppMutationDrillFound(PolarisTestCase):
                      ('ab' * 16, list(agency_ids)))
 
     def _possession_credential(self):
-        """An ACTIVE credential of agency 1 with a signature the placeholder profile accepts."""
-        import hashlib
+        """An ACTIVE credential of agency 1 with the signature a deployment would store (_deployment_signature)."""
         row = flask_app.query("SELECT token_id, token_value FROM IdentityToken "
                               "WHERE issuing_agency_id = 1 AND status = 'ACTIVE' "
                               "ORDER BY token_id LIMIT 1", fetch='one', primary=True)
-        ph = hashlib.sha3_256(row['token_value'].encode('utf-8')).digest()
+        ph, key_hex = _deployment_signature(row['token_value'])
         flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
-                        "signing_public_key_hex) VALUES (%s, 1, %s, NULL)",
-                        (row['token_id'], psycopg2.Binary(ph)), fetch='none')
+                        "signing_public_key_hex) VALUES (%s, 1, %s, %s)",
+                        (row['token_id'], psycopg2.Binary(ph), key_hex), fetch='none')
         return row['token_value'], ph.hex()
 
     def _relying_party(self, scope):
@@ -20612,6 +21039,186 @@ class AtlasCacheScopeTests(PolarisTestCase):
         self._unbind()
         self._login('admin')
         self.assertGreater(len(self._labels()), 1, "an administrator was served a bound operator's answer")
+
+
+class MigrationChainPropertyTests(PolarisTestCase):
+    """Algorithm migration under arbitrary sequences (owner's direction, 2026-10-05: the function
+    must work "perfectly, securely and without problems" across many migrations and algorithms,
+    including the weak ones). A Hypothesis state machine drives the product paths a deployment
+    uses, the operator's /uc6/migrate, the population runner and its grace windows, against a
+    model, and after every step holds each credential to the promises of
+    docs/operator/QUANTUM-EVENT.md and docs/design/multi-sig-migration.md:
+
+      - it keeps at least one signature in force, and its signatures are exactly the model's;
+      - nothing is ever signed under an algorithm nothing here signs with, or twice under one;
+      - the operator's verify answers signature_valid and lists exactly the signatures in force;
+      - at the relying-party door, a pack carrying any signature still in force is accepted,
+        and (under real signing, where the bytes differ) one whose signature is past its
+        deprecation date is not.
+
+    Under the placeholder profile every signature is the same bytes, so the door half is
+    decided only by the real-signer suite, which runs this module as it is."""
+
+    _register_rp = RelyingPartyApiTests._register_rp
+    _basic = staticmethod(RelyingPartyApiTests._basic)
+    _bearer = RelyingPartyApiTests._bearer
+    _issue_and_pack = RelyingPartyApiTests._issue_and_pack
+
+    def setUp(self):
+        super().setUp()
+        self._rp_client_ids = []
+
+    def tearDown(self):
+        if getattr(self, '_rp_client_ids', None):
+            _sql("DELETE FROM RelyingParty WHERE client_id = ANY(%s)", (self._rp_client_ids,),
+                 fetch='none')
+        super().tearDown()
+
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def test_arbitrary_migration_sequences_keep_every_promise(self):
+        """Seeded random sequences rather than a Hypothesis state machine: the population runner
+        changes shared database state, which Hypothesis cannot replay. Each sequence is
+        reproducible from its seed, and a failure prints the steps that led to it."""
+        import random
+        import time
+        import migration
+
+        algos = {r['name']: r['algorithm_id'] for r in _sql(
+            "SELECT algorithm_id, name FROM CryptographicAlgorithm ORDER BY algorithm_id")}
+        signable = set()
+        for name in algos:
+            try:
+                pqc_signing.signature_for_migration('PROBE-SIGNABLE', name)
+                signable.add(name)
+            except Exception:
+                pass
+        self.assertIn('ML-DSA-87', signable, 'control: there is somewhere to migrate to')
+        self.assertTrue(set(algos) - signable, 'control: there are targets that must be refused')
+        cid = self._register_rp('chain-secret-1', suffix='0301')
+        auth = self._bearer(cid, 'chain-secret-1')
+        tag = os.urandom(3).hex()
+        sequences = int(os.environ.get('POLARIS_MIGRATION_SEQUENCES', '6'))
+        steps = int(os.environ.get('POLARIS_MIGRATION_STEPS', '8'))
+
+        def check(creds, trace):
+            for c in creds:
+                rows = _sql(
+                    "SELECT a.name, s.signature_bytes, s.signed_at, t.issued_date, "
+                    "       (s.deprecation_date IS NULL OR s.deprecation_date > now()) AS in_force, "
+                    # A deprecation within a few seconds of now may pass between this read and
+                    # the door's (a CI runner is slow): such a row is at the boundary, and
+                    # nothing is asserted about it in either direction.
+                    "       (s.deprecation_date IS NOT NULL AND s.deprecation_date "
+                    "          BETWEEN now() - interval '5 seconds' AND now() + interval '5 seconds') AS boundary "
+                    "  FROM TokenSignature s JOIN CryptographicAlgorithm a "
+                    "    ON a.algorithm_id = s.algorithm_id "
+                    "  JOIN IdentityToken t ON t.token_id = s.token_id WHERE s.token_id = %s",
+                    (c['tid'],))
+                where = '%s after %s' % (c['tv'], ' -> '.join(trace))
+                names = [r['name'] for r in rows]
+                self.assertEqual(len(names), len(set(names)), 'one signature per algorithm: ' + where)
+                self.assertEqual(set(names), c['model'], 'the database is the model: ' + where)
+                self.assertTrue(set(names) <= signable | {'ML-DSA-65'},
+                                'signed under an algorithm nothing here signs with: ' + where)
+                live = {r['name'] for r in rows if r['in_force']}
+                self.assertTrue(live, 'no signature in force: ' + where)
+                for r in rows:
+                    self.assertGreaterEqual(r['signed_at'], r['issued_date'],
+                                            'a signature predates its credential: ' + where)
+                v = self.client.get('/api/tokens/%d/verify' % c['tid']).get_json()
+                self.assertTrue(v['signature_valid'], '%s: %s' % (where, v))
+                listed = {x['algorithm'] for x in v['signatures']}
+                sure_live = {r['name'] for r in rows if r['in_force'] and not r['boundary']}
+                sure_gone = {r['name'] for r in rows if not r['in_force'] and not r['boundary']}
+                self.assertTrue(sure_live <= listed and not (sure_gone & listed),
+                                'the operator verify lists the signatures in force: %s %s' % (where, listed))
+                for r in rows:
+                    if r['boundary']:
+                        continue
+                    sig = bytes(r['signature_bytes'])
+                    flask_app.security.rate_limiter.reset()   # the door's per-address limit, not the subject
+                    answer = self.client.post('/api/v1/verify', headers=auth, json={
+                        'token_value': c['tv'], 'signature_hex': sig.hex()}).get_json()
+                    if r['in_force']:
+                        self.assertEqual(answer.get('decision'), 'accept',
+                                         'a pack under %s, in force: %s %s' % (r['name'], where, answer))
+                    elif pqc_signing.is_enabled() and not any(
+                            bytes(o['signature_bytes']) == sig for o in rows if o['in_force']):
+                        self.assertNotEqual(answer.get('decision'), 'accept',
+                                            'a pack under %s, past its deprecation date: %s %s'
+                                            % (r['name'], where, answer))
+
+        for seed in range(sequences):
+            rnd = random.Random(seed)
+            creds, trace = [], []
+            for k in range(2):
+                tv = 'CHAIN-%s-%d-%d' % (tag, seed, k)
+                pack = self._issue_and_pack(tv)
+                names = {r['name'] for r in _sql(
+                    "SELECT a.name FROM TokenSignature s JOIN CryptographicAlgorithm a "
+                    "  ON a.algorithm_id = s.algorithm_id WHERE s.token_id = %s", (pack['token_id'],))}
+                creds.append({'tid': pack['token_id'], 'tv': tv, 'model': names})
+            check(creds, ['seed %d: issued' % seed])
+            for _ in range(steps):
+                op = rnd.choice(['one', 'one', 'one', 'population', 'wait'])
+                if op == 'one':
+                    c, name, deprecate = rnd.choice(creds), rnd.choice(sorted(algos)), rnd.random() < 0.5
+                    data = {'token_id': str(c['tid']), 'new_algorithm': str(algos[name])}
+                    if deprecate:
+                        data['deprecate_old'] = '1'
+                    r = self._post('/uc6/migrate', data=data)
+                    allowed = name in signable and name not in c['model']
+                    trace.append('migrate %s to %s%s%s' % (c['tv'][-3:], name,
+                                 ' deprecating' if deprecate else '', '' if allowed else ' (refused)'))
+                    self.assertLess(r.status_code, 500, ' -> '.join(trace))
+                    body = r.get_data(as_text=True)
+                    if allowed and r.status_code not in (302, 303) and (
+                            'migration targets' in body or 'wrong parameter set' in body):
+                        trace[-1] += ' (refused: no key for the target here)'
+                    elif allowed:
+                        self.assertIn(r.status_code, (302, 303), '%s: %s' % (
+                            ' -> '.join(trace), body[:300]))
+                        c['model'].add(name)
+                    else:
+                        self.assertNotIn(r.status_code, (302, 303), ' -> '.join(trace))
+                elif op == 'population':
+                    name, grace = rnd.choice(sorted(algos)), rnd.choice([None, 0, 1])
+                    trace.append('population to %s%s' % (name, '' if grace is None else ' grace %ds' % grace))
+                    with self._new_conn() as conn:
+                        try:
+                            target_id, target_name = migration.resolve_target(conn, name)
+                        except Exception:
+                            self.assertNotIn(name, signable, ' -> '.join(trace))
+                            trace[-1] += ' (refused)'
+                            check(creds, trace)
+                            continue
+                        try:
+                            migration.migrate_population(conn, target_id, target_name, batch_size=200)
+                            if grace is not None:
+                                migration.deprecate_superseded(conn, target_id, grace_seconds=grace)
+                        except custody.AlgorithmUnavailableError:
+                            # This deployment's custody holds no key for the target (CI's real-signer
+                            # job provisions an ML-DSA-87 migration key only): the runner refuses
+                            # before writing anything, which is the drill's "a migration that cannot
+                            # sign stops".
+                            conn.rollback()
+                            trace[-1] += ' (refused: no key for the target here)'
+                            check(creds, trace)
+                            continue
+                        except migration.MigrationRefused:
+                            # A credential that already holds a retired signature under the target
+                            # can never be re-signed under it (one per algorithm, append-only): the
+                            # runner names them and closes nothing, rather than strand them.
+                            conn.rollback()
+                            trace[-1] += ' (refused: some cannot be re-signed)'
+                    for c in creds:
+                        c['model'].add(target_name)
+                else:
+                    trace.append('wait')
+                    time.sleep(1.2)
+                check(creds, trace)
 
 if __name__ == '__main__':
     # Pull in property-based invariant tests (C1, C2, C3) so they run as

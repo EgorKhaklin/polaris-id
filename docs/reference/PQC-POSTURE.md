@@ -173,6 +173,7 @@ Status maps to the NIST IR 8547 timeline (deprecate classical public-key after
 |---|---|---|---|
 | ML-DSA-65 (token signature) | signing | PQ_SECURE | FIPS 204 Cat 3, real signature under the production default, two-witnessed, algorithm pinned per C7. |
 | ML-DSA-87 (accepted parameter set) | signing | PQ_SECURE | v9.329 (P8.8a): NIST level 5, accepted by every verifier (the detached verifier, both SDKs, the app's two witnesses) and signed by the file custody driver when the key file names it. Migration is a key-lifecycle event: register the ML-DSA-87 key (it becomes current), retire the ML-DSA-65 key from an instant; proven by conformance vectors under both sets and a mixed-algorithm two-instance drill. ML-DSA-44 is refused everywhere (below the floor). The PKCS#11 and KMS drivers remain ML-DSA-65 in this version. |
+| Falcon-padded-1024 (FN-DSA family, verification only) | signing | VERIFY_ONLY | 1.0.0-rc.71: round-3 Falcon-1024 with fixed-length signatures, the scheme FN-DSA (draft FIPS 206) standardises: 1,280-byte signatures, 2.6 times smaller than ML-DSA-65's. The detached verifier and both SDKs accept it (liboqs here, @noble/post-quantum in TypeScript, bound by conformance vectors both agreed on); Falcon-512 is refused below the floor. Polaris signs nothing under it: lab record 015 measured Falcon signing time depending on the message signed, a known risk of its floating-point sampler, so the signer waits for a constant-time implementation to clear that test. |
 | SLH-DSA-128s / SLH-DSA-256s (algorithm registry rows) | signing | REGISTERED_NOT_WIRED | FIPS 205 hash-based parameter sets are rows in `CryptographicAlgorithm`, so a rotation away from lattices is a row update (C7). No SLH-DSA signer is wired: `pqc_signing.py` signs ML-DSA-65 or ML-DSA-87 (v9.329), so the seed token filed under SLH-DSA-128s cannot be re-signed (every seed signature row is a placeholder; real signatures appear at issuance). Wiring one is not yet scheduled; it would sit behind the same custody interface as ML-DSA-65. |
 | SHA3-256 (token binding digest) | hashing | PQ_SECURE | FIPS 202; ~128-bit quantum preimage resistance. No deadline. |
 | SHA3-256/512 (blockchain anchor Merkle) | hashing | PQ_SECURE | Server-computed Merkle hashing; the BLAKE3-256 label falls back to SHA3-256. Grover quadratic only. No migration. |
@@ -213,6 +214,40 @@ third-party-gated and are future work, not current defects.
    PostgreSQL 18's `ssl_groups` takes a list and negotiates the hybrid with the
    same client, measured. So the gate is a postgres major upgrade. Lower urgency:
    notional data, inside the trust boundary.
+
+## If every computational assumption fails
+
+The sections above bound one break: a cryptanalytic advance against the assumptions under
+ML-DSA. The general case is worth stating once, because it says what Polaris is when no
+algorithm holds. It covers a quantum computer beyond today's estimates, a classical
+breakthrough, or a model of computation that does not exist; a computer with access to closed
+timelike curves, for one, would solve every problem in PSPACE (Aaronson and Watrous, 2008), which
+no signature, hash or proof system is designed to survive.
+
+**What fails:** everything whose security is "too much work to compute". Credential signatures
+can be forged, so authenticity, the authenticity pack, offline verification and the signed status
+assertion stop meaning anything. The zero-knowledge proof can be forged (soundness fails).
+Transparency-log signatures, witness cosignatures and the Bitcoin anchors of record 013 stop
+binding history. TLS stops protecting anything in transit. Whether a past zero-knowledge
+proof reveals anything depends on the proof system's own zero-knowledge property, which this
+document does not claim.
+
+**What holds:** everything enforced by structure rather than hardness, as long as the database
+and its operators are not otherwise compromised. One ACTIVE credential per person is a unique
+index (C3). The audit of record is append-only by trigger (C1), so a forger cannot erase what was
+recorded. A zero-knowledge verification still stores no credential identifier, because that is
+a CHECK constraint (C2), not a property of the proof. Identity is not money (C10). Disclosure is
+decided by the server (C6). Recovery still needs independent channels, a cool-down and a witness
+from another authority, which are people and institutions, not computation.
+
+**What the authority can do:** detect (the audit and the issuer's own records do not depend on
+the forged signatures), revoke, and re-sign under whatever replaces the failed assumption, which
+is the migration path above and the reason it is drilled on every push. Information-theoretic
+tools (secret sharing, one-time authenticators) survive unbounded computation and are not used
+for signatures here.
+
+So the honest summary is not "Polaris is safe" but "Polaris loses its cryptographic layer and
+keeps its structural one". No sentence in this repository claims more.
 
 ## Closing note
 

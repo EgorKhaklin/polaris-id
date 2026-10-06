@@ -103,7 +103,14 @@ which runs the four refusals and a positive control against a live schema.
 
 ## What a verifier sees during a migration
 
-Verification reads the signatures where `deprecation_date IS NULL`. A verifier
+Verification reads the signatures in force: those not deprecated, and those whose
+deprecation date is still ahead, which is the window's grace (the column's own
+definition: no longer accepted after that timestamp). Any one of them is accepted
+as the signature a holder presents, since a holder's pack carries the one it was
+issued with. Until 2026-10-02 the verify routes read `deprecation_date IS NULL`
+alone and the relying-party door compared the presented signature with the newest
+only, so a population migration refused every holder's pack and closing a window
+ignored its grace. A verifier
 and a migrator racing on the same token is the interesting case, and the
 answer is that the verifier sees its own snapshot. Under PostgreSQL's default
 read-committed isolation each statement sees what was committed when it
@@ -122,9 +129,11 @@ takes effect for the next request.
 ## Why the partial index
 
 `idx_token_signature_active` covers `token_id` where `deprecation_date IS
-NULL`. The active set is one row normally and two during a window, while the
-deprecated history accumulates for ever. Indexing only the active rows keeps
-verification's cost flat as the history grows.
+NULL`: the set the invariant counts on every write, one row normally and two
+during a window, while the deprecated history accumulates for ever. Verification
+reads past it, because a signature in its grace is still in force, through the
+unique index on `(token_id, algorithm_id)`, which holds at most one row per
+algorithm the credential has used; its cost stays flat as the history grows.
 
 ## Where the signatures come from
 

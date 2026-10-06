@@ -119,11 +119,24 @@ docker run -d --name "$PB" --network "$NET" \
     polaris-pgbouncer:kexdrill >/dev/null
 for _ in $(seq 1 30); do docker exec "$PB" nc -z 127.0.0.1 6432 2>/dev/null && break; sleep 1; done
 
-probe() {   # probe <host> <port> [groups] -> the group, or a failure token
+probe_once() {
     docker run --rm --network "$NET" -v "$PWD/scripts:/probe:ro" "$APP_BASE" sh -c "
         pip install --quiet --disable-pip-version-check $PSYCOPG >/dev/null 2>&1
         python /probe/polaris_kex_probe.py $1 $2 ${3:-}" 2>/dev/null \
         | sed -n -E 's/^RESULT TLSv1\.3 //p; s/^RESULT (handshake-failed|refused-tls|client-cannot-offer|no-context).*/\1/p' | head -1
+}
+probe() {   # probe <host> <port> [groups] -> the group, or a failure token
+    # An empty answer is not a measurement: the probe never reached a handshake (the driver
+    # install inside the throwaway container failed, as it did on a degraded runner on
+    # 2026-10-05, where it read as "expected X25519MLKEM768, measured" nothing). Retry, and
+    # if it never answers, say so rather than report a blank.
+    local got=""
+    for _ in 1 2 3; do
+        got="$(probe_once "$@" || true)"
+        [ -n "$got" ] && break
+        sleep 5
+    done
+    echo "${got:-probe-did-not-run}"
 }
 
 echo "hop 1: the app to the pooler (client_tls, pgbouncer terminates)"

@@ -1,23 +1,27 @@
 # polaris-oid4vp
 
+[![PyPI](https://img.shields.io/pypi/v/polaris-oid4vp?include_prereleases&label=PyPI&color=3775a9&labelColor=0a1421&style=flat-square)](https://pypi.org/project/polaris-oid4vp/)
+[![OpenID Certified: polaris-oid4vp verifier](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_verifier-c9a352?labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SPEC-COMPLIANCE.md#openid-certified)
+[![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
+[![GitHub stars](https://img.shields.io/github/stars/EgorKhaklin/polaris-id?label=stars&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id)
+[![Discord](https://img.shields.io/badge/Discord-join_the_server-5865F2?logo=discord&logoColor=white&labelColor=0a1421&style=flat-square)](https://discord.gg/ragewuCKj)
+
 **An OpenID4VP 1.0 verifier under the High Assurance Interoperability Profile.** It checks a
 presentation from a wallet that has never heard of Polaris: an SD-JWT VC signed with ES256, with
 holder key binding, delivered over `direct_post.jwt`.
 
 <a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/docs/assets/openid-certified-mark-on-white.png" alt="OpenID Certified" width="160"></a>
 
-**OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile.**
-`polaris-oid4vp 1.0.0rc7` finished all eleven modules of the Foundation's hosted
-`oid4vp-1final-verifier-haip-test-plan` (`sd_jwt_vc`, `direct_post.jwt`) without failure, and the OpenID
-Foundation [lists the certification](https://openid.net/certification/certified-oid4vp-haip-final/)
-(2026-09-24). It covers that version in that role: not an endorsement, not an audit, and not
-other versions. OpenID® and OpenID® Certified™ are trademarks of the OpenID Foundation, used under
-its [certification terms](https://openid.net/certification/mark/).
+**OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile** at
+version 1.0.0rc7, which passed all eleven modules of the Foundation's hosted HAIP verifier test plan
+(`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/),
+2026-09-24). The certification covers that version in that role. OpenID® and OpenID® Certified™
+are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Status:** 1.0.0rc16, a release candidate, not certified: it carries the fixes made since
-1.0.0rc7. Outside results: the Foundation's hosted suite (0.1.0, then 1.0.0rc7 for
-certification) and the implementations in the table below, re-run weekly. No operator other
-than the author has run it and no independent security review exists. Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
+**Status:** this release, 1.0.0rc16, is the certified rc7 verifier plus the fixes made since; the
+certification names rc7. It is re-run weekly against the outside implementations in the table
+below. No operator other than the author has run it and no independent security review exists.
+Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
 
 **Try it in ten minutes, without cloning anything:**
 [the stranger's path](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md)
@@ -35,17 +39,18 @@ the walks against the newest release on PyPI.
 
 | Implementation | Maintained by | Language | Last walk |
 |---|---|---|---|
-| [walt.id Wallet API v2](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/waltid/README.md) | walt.id | Kotlin | 1.1.1, against 1.0.0rc14 (2026-10-03) |
+| [walt.id Wallet API v2](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/waltid/README.md) | walt.id | Kotlin | 1.1.1, against 1.0.0rc16 (2026-10-04) |
 | [Credo](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/credo/README.md) | OpenWallet Foundation | TypeScript | 0.7.2, against 1.0.0rc14 (2026-10-03) |
-| [`eudi-lib-jvm-openid4vp-kt`](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-kt/README.md), the EUDI Wallet's OpenID4VP library, under a short wallet built for the walk | European Commission | Kotlin | 0.16.2, against 1.0.0rc15 (2026-10-04) |
-| [vck](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/vck/README.md) (`vck-openid-ktor`), under a short wallet built for the walk; vck also issued the credential | A-SIT Plus | Kotlin | 8.0.0, against 1.0.0rc15 (2026-10-04) |
-| [`eudi-lib-ios-openid4vp-swift`](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-ios/README.md), the EUDI Wallet's iOS OpenID4VP library, under a short wallet built for the walk | European Commission | Swift | 0.43.2, against 1.0.0rc15 (2026-10-04) |
-| [irmago](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/irmago/README.md), the library under the Yivi wallet, under a short wallet built for the walk | Privacy by Design Foundation (Yivi) | Go | v1.4.0, against 1.0.0rc15 (2026-10-04) |
-| [SpruceID `openid4vp`](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/spruceid/README.md), its conformance adapter with the test issuer replaced | SpruceID | Rust | e5f29b85, against 1.0.0rc15 (2026-10-04) |
-| [Procivis One Core](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/procivis/README.md) (`core-server`), which also issued the credential | Procivis | Rust | v1.87.2, against 1.0.0rc15 (2026-10-04) |
-| [ProtocolSoup](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/protocolsoup/README.md), its wallet harness (listed as certified) | ParleSec | Go | v4.0.0, against 1.0.0rc15 (2026-10-04) |
-| [The EU reference PID issuer](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-issuer/README.md) (`eudi-srv-pid-issuer`), issuing to a wallet built on the EU's libraries | European Commission | Kotlin | v0.11.1, against 1.0.0rc15 (2026-10-04) |
-| [Multipaz](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/multipaz/README.md), under a short wallet built for the walk | OpenWallet Foundation | Kotlin | 0.101.0, against 1.0.0rc15 (2026-10-04) |
+| [`eudi-lib-jvm-openid4vp-kt`](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-kt/README.md), the EUDI Wallet's OpenID4VP library, under a short wallet built for the walk | European Commission | Kotlin | 0.16.2, against 1.0.0rc16 (2026-10-04) |
+| [vck](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/vck/README.md) (`vck-openid-ktor`), under a short wallet built for the walk; vck also issued the credential | A-SIT Plus | Kotlin | 8.0.0, against 1.0.0rc16 (2026-10-04) |
+| [`eudi-lib-ios-openid4vp-swift`](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-ios/README.md), the EUDI Wallet's iOS OpenID4VP library, under a short wallet built for the walk | European Commission | Swift | 0.43.2, against 1.0.0rc16 (2026-10-04) |
+| [irmago](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/irmago/README.md), the library under the Yivi wallet, under a short wallet built for the walk | Privacy by Design Foundation (Yivi) | Go | v1.4.0, against 1.0.0rc16 (2026-10-04) |
+| [SpruceID `openid4vp`](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/spruceid/README.md), its conformance adapter with the test issuer replaced | SpruceID | Rust | e5f29b85, against 1.0.0rc16 (2026-10-04) |
+| [Procivis One Core](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/procivis/README.md) (`core-server`), which also issued the credential | Procivis | Rust | v1.87.2, against 1.0.0rc16 (2026-10-04) |
+| [ProtocolSoup](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/protocolsoup/README.md), its wallet harness (listed as certified) | ParleSec | Go | v4.0.0, against 1.0.0rc16 (2026-10-04) |
+| [The EU reference PID issuer](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-issuer/README.md) (`eudi-srv-pid-issuer`), issuing to a wallet built on the EU's libraries | European Commission | Kotlin | v0.11.1, against 1.0.0rc16 (2026-10-04) |
+| [Credo on a cheqd ledger](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/cheqd/README.md), the issuer a `did:cheqd` with its status list on the ledger | cheqd, OpenWallet Foundation | TypeScript, Go | cheqd-node 4.2.1 and Credo 0.7.2, against 1.0.0rc15 (2026-10-04) |
+| [Multipaz](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/multipaz/README.md), under a short wallet built for the walk | OpenWallet Foundation | Kotlin | 0.101.0, against 1.0.0rc16 (2026-10-04) |
 | [ERICA](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/erica/README.md), the German EUDI Wallet programme's verifier testing tool, with its negative modes | the German EUDI Wallet programme (opencode.de) | TypeScript | 2c27dc92, against the tree (2026-10-04) |
 | [eudi-dev](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | dominikschlosser | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) |
 | [OID4VCgo](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/oid4vcgo/README.md) | IDFoundry | Go | 0.25.0, against 1.0.0rc14 (2026-10-03) |

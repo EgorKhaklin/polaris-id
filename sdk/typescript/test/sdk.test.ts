@@ -1354,3 +1354,14 @@ test("a long run of slashes inside the issuer URL is trimmed in linear time", ()
   assert.equal((v as any).issuerUrl, url.slice(0, -3));
 });
 
+
+test("the FN-DSA family (draft FIPS 206): a genuine Falcon-padded-1024 pack verifies, and only that", () => {
+  const conf = (n: string) => JSON.parse(readFileSync(join(ROOT, "conformance", "vectors", n), "utf8"));
+  const good = conf("pack-fndsa1024-valid.json");
+  assert.equal(verifyAuthenticity(good).authentic, true);
+  assert.equal(verifyAuthenticity(conf("pack-fndsa1024-tampered.json")).authentic, false);
+  // Category 1 is below the floor even when the signature is genuine.
+  assert.equal(verifyAuthenticity(conf("pack-fndsa512-unaccepted.json")).authentic, false);
+  // The same Falcon bytes claiming a different family must not verify.
+  assert.equal(verifyAuthenticity({ ...good, algorithm: "ML-DSA-65" }).authentic, false);
+});

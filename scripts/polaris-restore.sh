@@ -240,7 +240,9 @@ if [[ "${SKIP_DB}" -eq 0 ]]; then
             echo "  ✗ docker not on PATH (required for --target=docker-stack)" >&2
             exit "${EXIT_DOCKER_MISSING}"
         fi
-        if ! docker compose -f "${COMPOSE_FILE}" ps --status running --quiet 2>/dev/null | grep -q .; then
+        # Capture before matching: under pipefail a grep -q that leaves early can SIGPIPE compose.
+        RUNNING_IDS="$(docker compose -f "${COMPOSE_FILE}" ps --status running --quiet 2>/dev/null || true)"
+        if [[ -z "$RUNNING_IDS" ]]; then
             echo "  ✗ docker stack not running (start with polaris-deploy.sh prod)" >&2
             exit "${EXIT_DOCKER_MISSING}"
         fi

@@ -196,33 +196,10 @@ def api_v1_verify():
                        issuer_key_current=None, status=None, as_of=None,
                        decision='reject', reason='not a verifiable presentation')
 
-    row = query("""
-        SELECT it.token_id, it.issuing_agency_id,
-               it.token_value, it.status, it.expiration_date,
-               ts.signature_bytes, ts.signing_public_key_hex,
-               ag.signing_public_key_hex AS agency_key,
-               now() AS as_of
-        FROM   IdentityToken it
-        JOIN   TokenSignature ts ON ts.token_id = it.token_id AND ts.deprecation_date IS NULL
-        JOIN   Agency ag ON ag.agency_id = it.issuing_agency_id
-        WHERE  it.token_value = %s
-        ORDER BY ts.signed_at DESC
-    """, (token_value,), fetch='one', primary=True)
-    if not row:
-        return _not_verifiable()
-
-    stored_raw = row['signature_bytes']
-    stored_sig = bytes(stored_raw) if stored_raw is not None else b''
-    try:
-        presented_sig = pqc_signing.unhex(presented_sig_hex)
-    except (ValueError, TypeError):
-        return _not_verifiable()
-    # Possession proof: the caller holds the GENUINE issued signature (constant
+    # Possession proof: the caller holds a GENUINE issued signature still in force (constant
     # time), and that signature is cryptographically valid over SHA3-256(value).
-    if not stored_sig or not hmac.compare_digest(presented_sig, stored_sig):
-        return _not_verifiable()
-    if not pqc_signing.verify_stored_signature(
-            token_value, stored_sig, row['signing_public_key_hex'], witnesses='single'):
+    row = _possession_authenticated(token_value, presented_sig_hex)
+    if not row:
         return _not_verifiable()
 
     status = row['status']
@@ -231,7 +208,7 @@ def api_v1_verify():
     currently_authoritative = (status == 'ACTIVE' and _not_expired(row['expiration_date']))
     tkey = row['signing_public_key_hex']
     authorized_at_signing, key_current = _issuer_key_facts(
-        row['token_id'], row['issuing_agency_id'], tkey)
+        row['token_id'], row['issuing_agency_id'], tkey, row['signed_at'])
     return jsonify(
         api_version='v1',
         authentic=True,
@@ -280,32 +257,69 @@ def _effective_status(row):
 
 def _possession_authenticated(token_value, presented_sig_hex):
     """The holder proves POSSESSION of an issued credential by presenting its token_value
-    and the genuine issued signature: the row for that credential if the presented signature
-    equals the stored one (constant time) and verifies against the stored issuer key, else
-    None -- and every failure looks the same, so this is never an existence oracle. Shared by
-    the status assertion (P3.6) and holder-authorized document signing (P8.5)."""
-    row = query("""
+    and a genuine issued signature still in force: the row for that credential and that
+    signature if the presented signature equals one the credential holds (constant time) and
+    verifies against the key stored with it, else None -- and every failure looks the same, so
+    this is never an existence oracle. Shared by /api/v1/verify, the status assertion (P3.6)
+    and holder-authorized document signing (P8.5).
+
+    Every signature in force, not the newest (CORE-BUG, 2026-10-02). During a migration a
+    credential holds one under each algorithm (docs/operator/QUANTUM-EVENT.md, section 2: "an
+    old verifier accepts the old one, a new verifier the new one"), and a holder's pack carries
+    the one it was issued with, since no population can be handed new packs at once. This
+    read only the newest, so the moment a population migration wrote its signatures every
+    holder presenting a pack was refused here, and the window refused the holders it exists
+    for. The issuer facts a caller derives from the row are then the facts of the key that
+    made the signature presented.
+
+    Under real signing, one more refusal, here so every possession route shares it
+    (THREAT-MODEL, a compromised application role, 2026-10-04). The application role can INSERT
+    a TokenSignature row, so the row read above is not by itself the authority's. The key that
+    made the signature must be one the issuing authority had registered at the signature's
+    instant (_issuer_key_facts: issuer_authorized_at_signing IS True); anything else, None
+    included, fails closed. That refuses both plants: a row under an attacker's own key has no
+    recorded history, because registration is closed to the application role; and a KEYLESS
+    row has no key at all, which matters because verify_stored_signature's keyless branch
+    recomputes SHA3-256(token_value), which anyone can ("NOT an authenticity proof").
+    The placeholder profile keeps its behaviour: it never claims real authenticity."""
+    # In force: not deprecated, or deprecated with the date still ahead. The column says a
+    # deprecated signature is "no longer accepted after this timestamp", and the window's grace
+    # (QUANTUM-EVENT.md, section 6) is that interval; reading IS NULL alone cut every superseded
+    # pack off the moment a window was closed, whatever grace the operator gave.
+    rows = query("""
         SELECT it.token_id, it.individual_id, it.token_value, it.status, it.issuing_agency_id,
-               it.expiration_date, ts.signature_bytes, ts.signing_public_key_hex
+               it.expiration_date, ts.signature_bytes, ts.signing_public_key_hex, ts.signed_at,
+               now() AS as_of
         FROM   IdentityToken it
-        JOIN   TokenSignature ts ON ts.token_id = it.token_id AND ts.deprecation_date IS NULL
+        JOIN   TokenSignature ts ON ts.token_id = it.token_id
+                                AND (ts.deprecation_date IS NULL OR ts.deprecation_date > now())
         WHERE  it.token_value = %s
-        ORDER BY ts.signed_at DESC
-    """, (token_value,), fetch='one', primary=True)
-    if not row:
-        return None
-    stored_raw = row['signature_bytes']
-    stored_sig = bytes(stored_raw) if stored_raw is not None else b''
+        ORDER BY ts.signed_at DESC, ts.signature_id DESC
+    """, (token_value,), primary=True)
     try:
         presented_sig = pqc_signing.unhex(presented_sig_hex)
     except (ValueError, TypeError):
         return None
-    if not stored_sig or not hmac.compare_digest(presented_sig, stored_sig):
+    match = None
+    for row in rows or ():
+        stored_raw = row['signature_bytes']
+        stored_sig = bytes(stored_raw) if stored_raw is not None else b''
+        # Every row is compared, so the time taken does not say which one matched.
+        if stored_sig and hmac.compare_digest(presented_sig, stored_sig) and match is None:
+            match = row
+    if match is None:
         return None
     if not pqc_signing.verify_stored_signature(
-            token_value, stored_sig, row['signing_public_key_hex'], witnesses='single'):
+            token_value, bytes(match['signature_bytes']), match['signing_public_key_hex'],
+            witnesses='single'):
         return None
-    return row
+    if pqc_signing.is_enabled():
+        authorized_at_signing, _ = _issuer_key_facts(
+            match['token_id'], match['issuing_agency_id'], match['signing_public_key_hex'],
+            match['signed_at'])
+        if authorized_at_signing is not True:
+            return None
+    return match
 
 
 # --- P9.2 (v9.350): the anonymity set, published ------------------------------------------

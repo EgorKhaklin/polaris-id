@@ -11,15 +11,20 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- Werkzeug 3.1.9 (GHSA-g6x2-hccm-hh4m: safe_join accepted Windows device names; Polaris runs on Linux and calls it only through Flask's static files).
 - A holder key rotation or revocation is refused unless its signer is still the live key under the per-token lock, closing a read-before-lock race a stolen-but-live key could ride.
 - The Atlas answered a refused parameter with the exception's text, which could carry the request back; it states a fixed sentence.
 - An operator bound to one authority could be served other authorities' Atlas counts from its response cache.
 - The database refuses a successful verification of a dead credential, outside its permitted contexts, or across an untrusted edge.
 - An operator bound to one authority can no longer activate a reserve another authority issued (UC-4).
 - The Atlas no longer returns events naming their holders; the access check reads every SQL source.
+- Under real signing, possession routes accept a signature only under a key its authority had registered; a planted signature row vouches for nothing.
 
 ### Fixed
 
+- The rolling-deploy drill, backup and restore read compose's output whole before matching it; under pipefail an early grep -q exit could SIGPIPE compose and fail a check that had passed.
+- The internal-hop key-exchange drill retries a TLS probe that returned nothing and names one that never ran, instead of reporting an empty measurement.
+- The trigger mutation drill credits a mutation only when the tests that failed fail again, so a flaky test can no longer hide an untested refusal.
 - Every documented install reaches the current candidate; a bare `pip install` gets 0.1.0, which predates every fix in SECURITY.md.
 - The plug-and-play matrix tests the SDKs' current candidates on a genuine and a tampered credential, not npm's `latest`.
 - The EU-library lab wallet's lockfile carried nine OSV advisories (Bouncy Castle 1.83, Kotlin 2.2.21); it pins fixed releases.
@@ -28,11 +33,15 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp keygen marks the listener certificate for server authentication; Apple's TLS policy refused it.
 - polaris-oid4vp refuses a presentation disclosing claims the request did not select, which OpenID4VP 1.0 section 6.4 forbids; it accepted one.
 - polaris-oid4vp keygen gives its CA and leaf the key identifiers RFC 5280 asks for; Multipaz's trust manager skipped the CA without them.
+- The checks layer skips other checkouts nested in the tree (agent worktrees); four checks failed on their stale copies.
 - polaris-oid4vp serves the request object with `Cache-Control: no-store`, as the German EUDI wallet guide's request_uri response does.
+- The record 007 Pomerium demo maps `*.localhost.pomerium.io` to loopback itself; public DNS stopped resolving it.
 
 ### Added
 
 - A lab step puts a checkpoint of the three transparency logs into Bitcoin block 969876 through OpenTimestamps; its verifier reads the block from two sources.
+- The FN-DSA family (draft FIPS 206) is verified, optionally: the detached verifier and both SDKs accept Falcon-padded-1024 and refuse Falcon-512; conformance runs its genuine case for a verifier that declares it; Polaris signs nothing under it yet.
+- Algorithm migration is tested through arbitrary sequences, and in the lab through seven signature families.
 - polaris-oid4vp asks for a nested claim and its value (`--claim age_equal_or_over.18=true`): one statement of an EUDI PID, not all of them.
 - polaris-oid4vp verifies an issuer `x5c` through the intermediate CAs it carries, link by link in order, as eudi-dev v2.5.0's PID Provider sends.
 - An issuance tunnel serves only the wallet's OpenID4VCI endpoints over your own tunnel, so a wallet can be issued a demo copy.
@@ -62,12 +71,20 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - ERICA, the German EUDI Wallet programme's verifier testing tool, presents and runs its negative modes; it passes 48 of 49 request checks.
 - Multipaz 0.101.0 (OpenWallet Foundation) presents to the published verifier; re-run weekly.
 - The EU reference PID issuer issues a PID that the published verifier accepts, trusting only the issuer's test root; re-run weekly.
+- A credential issued under a `did:cheqd` on a local cheqd ledger, its status list on the ledger, is accepted and its status decided; re-run weekly.
+- The weekly canary also runs ERICA, and the EU iOS library with the wallet kit's own request-object encryption.
 - polaris-oid4vp encrypts the request object to the wallet's key when its `wallet_metadata` asks, as the EU iOS wallet kit requires.
 - polaris-oid4vp `serve --verifier-info` adds attestations such as a registration certificate to the request, as the German wallet requires.
 
 ### Changed
 
+- The scoreboard records the IETF SD-JWT repository listing polaris-oid4vp among its implementations.
+- The README's badges return in three rows, with a tested-against badge; each package README gets a badge row; the site links Discord.
+- The README is a front page: what it is, a one-minute check, outside evidence, the guarantees and limits; detail moved to the docs.
+- The project site is rebuilt: one claim, the one-minute check, outside evidence first, and the limits; still no script.
 - MISSION.md's second item reads "ML-DSA-65 by default", not "Post-quantum by default", by the owner's direction (2026-10-03).
+- The Khaklin Technologies lockup carries the trademark sign (™) on the site, its social card, the README hero and the console; the mark is applied for at the USPTO.
+- The site's sky turns visibly around the pole star, two star layers at different speeds, and the glow behind it breathes; CSS only, and still under prefers-reduced-motion.
 - The operator console is rethought around what Polaris is now: grouped, role-gated navigation; new sign-in, landing and Overview.
 - The Atlas shows counts only: its map points, event feed, records grid and person focus are withdrawn.
 - The Atlas reads hourly and daily totals, never an event: the page from 6.7 s to 31 ms at ten million verifications.
@@ -103,6 +120,11 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Release SBOMs failed the NTIA minimum elements and four were invalid SPDX; the release checks both before publishing.
 - The advisory-lock check reads locks taken in functions; the holder key register's lock gains contention tests.
 - The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
+- A migration's signature was dated by the credential's issuance, so its key read unauthorized; each is dated by its own.
+- A holder's pack was refused at the relying-party door once a migration added signatures; any in force verifies.
+- Closing a migration window cut superseded signatures off at once, whatever its grace; they verify until the date.
+- Under the placeholder profile a population migration wrote a signature no verify path accepted; now issuance's.
+- A population migration onto a set nothing here signs with (SLH-DSA) is refused before it starts.
 - The warrant audit page no longer says zero-knowledge events come back redacted; they are never returned.
 - The Atlas marked every withheld count "<5", false for one withheld for its whole's sake; it shows a neutral mark.
 - A person's investigation page takes its colours from the theme; a credential value read at 3.48:1 in light.
