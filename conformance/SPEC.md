@@ -208,6 +208,8 @@ the published [`vectors/`](../vectors/), which CI independently re-verifies unde
 liboqs and OpenSSL), an optional anchor set (`"self"` means the pack's own key is
 trusted), and the verdict a conformant verifier MUST return:
 
+A case marked `"optional_algorithm"` applies only to a verifier that implements that algorithm, which it declares with `--algorithm NAME` (`--self` detects it). Since 1.0.0-rc.71 the one such algorithm is `Falcon-padded-1024`, the FN-DSA family: a verifier without it skips the genuine-Falcon case, reported as skipped, and must still reject every Falcon artifact, which the other Falcon cases check. A verifier that declares an algorithm is held to its cases.
+
 | case | authentic | issuer_trusted | why |
 |---|---|---|---|
 | genuine-no-anchors | true | null | a real signature, trust not asked |
