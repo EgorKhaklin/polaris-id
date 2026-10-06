@@ -10174,11 +10174,14 @@ def test_algorithm_agility_check_discriminates(tmp_path):
            "def _algorithm_of_key(h, agency_id=None): return None\n"
            "'algorithms': list(pqc_signing.ACCEPTED_ALGORITHMS), 'signing_algorithm': _signing_algorithm(agency_id)\n"
            + "'algorithm': _signing_algorithm(agency_id),\n" * 10)
-    VER = ('_ACCEPTED = {"ML-DSA-65": ("MLDSA65PublicKey", 1952, 3309), "ML-DSA-87": ("MLDSA87PublicKey", 2592, 4627)}\n'
+    VER = ('_ACCEPTED = {"ML-DSA-65": ("MLDSA65PublicKey", 1952, 3309), "ML-DSA-87": ("MLDSA87PublicKey", 2592, 4627),\n'
+           '             "Falcon-padded-1024": (None, 1793, 1280)}\n'
            "def _accepted_alg(a): return isinstance(a, str) and a in _ACCEPTED\n"
            "def _two_witness_verify(digest, sig, pk, alg=_ALG): return None\n"
-           "selftest: a genuine ML-DSA-44 pack is refused (below the floor)\n")
-    TS = "import { ml_dsa65, ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';\nexport const ACCEPTED_ALGORITHMS = {};\nfunction verifierFor(a) { return null; }\n"
+           "selftest: a genuine ML-DSA-44 pack is refused (below the floor)\n"
+           "selftest: a genuine Falcon-padded-512 pack is refused (below the floor)\n")
+    TS = ("import { ml_dsa65, ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';\nimport { falcon1024padded } from '@noble/post-quantum/falcon.js';\n"
+          'export const ACCEPTED_ALGORITHMS = { "Falcon-padded-1024": falcon1024padded };\nfunction verifierFor(a) { return null; }\n')
     good = {
         'polaris_web/custody.py': ('ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")\nALGORITHM_SIZES = {"ML-DSA-65": (1952, 3309), "ML-DSA-87": (2592, 4627)}\n'
                                    "def configured_algorithm(): return 'ML-DSA-65'\ndef algorithm_for_public_key(pk): return None\n"
@@ -10188,9 +10191,9 @@ def test_algorithm_agility_check_discriminates(tmp_path):
                                        "def generate_keypair(algorithm=None): return {}\n"),
         'polaris_web/app.py': APP,
         'packages/polaris-verify/polaris_verify_cli/verifier.py': VER,
-        'sdk/python/polaris_verify/__init__.py': 'ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey"}\ndef _accepted(a): return True\n',
+        'sdk/python/polaris_verify/__init__.py': 'ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey",\n    "Falcon-padded-1024": None}\ndef _accepted(a): return True\n',
         'sdk/typescript/src/index.ts': TS,
-        'conformance/cases.json': '{"cases": [{"name": "pack-mldsa87-valid"}, {"name": "pack-mldsa44-unaccepted"}, {"name": "status-assertion-mldsa87-active"}, {"name": "trust-list-migration"}, {"name": "trust-list-migration-retired-signer"}]}\n',
+        'conformance/cases.json': '{"cases": [{"name": "pack-mldsa87-valid"}, {"name": "pack-mldsa44-unaccepted"}, {"name": "status-assertion-mldsa87-active"}, {"name": "trust-list-migration"}, {"name": "trust-list-migration-retired-signer"}, {"name": "pack-fndsa1024-valid"}, {"name": "pack-fndsa1024-tampered"}, {"name": "pack-fndsa512-unaccepted"}]}\n',
         'conformance/vectors/pack-mldsa87-valid.json': '{"algorithm": "ML-DSA-87"}\n',
         'conformance/make_algorithm_vectors.py': "generator\n",
         'scripts/polaris-verifier-fuzz.py': '_FUZZ_ALG = os.environ.get("POLARIS_FUZZ_ALGORITHM", "ML-DSA-65")\n',
@@ -10218,6 +10221,15 @@ def test_algorithm_agility_check_discriminates(tmp_path):
     assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if the signer hardcodes its parameter set"
     write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VER.replace("ML-DSA-44 pack is refused", "ML-DSA-44 pack is accepted")})
     assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if the selftest does not prove the floor"
+    # 2026-10-05, the FN-DSA family: verified alike everywhere, never below the floor, never signed.
+    write({'sdk/python/polaris_verify/__init__.py': good['sdk/python/polaris_verify/__init__.py'].replace('"Falcon-padded-1024": None', '')})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if one verifier lacks Falcon-padded-1024"
+    write({'sdk/typescript/src/index.ts': TS.replace('"Falcon-padded-1024": falcon1024padded', '"Falcon-padded-1024": falcon1024padded, "Falcon-padded-512": falcon512padded')})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if a verifier accepts Falcon-512 (category 1)"
+    write({'polaris_web/pqc_signing.py': good['polaris_web/pqc_signing.py'] + 'oqs.Signature("Falcon-padded-1024", secret_key=sk)\n'})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if Polaris signs under Falcon before 015 clears it"
+    write({'conformance/cases.json': good['conformance/cases.json'].replace("pack-fndsa512-unaccepted", "pack-other")})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL without the Falcon-512 refusal case"
 
 
 def test_protocol_versioning_check_discriminates(tmp_path):

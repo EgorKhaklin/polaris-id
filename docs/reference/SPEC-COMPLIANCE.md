@@ -78,3 +78,8 @@ under an audited algorithm-migration path; the algorithm is a row in `Cryptograp
 hardcoded, and ML-DSA-87 is accepted for migration. This names the signer. Whether Module-LWE
 resists a quantum adversary is mathematics, not a property of this software; every post-quantum
 sentence stands beside [PRODUCTION-READINESS.md](../PRODUCTION-READINESS.md).
+
+
+## FN-DSA (draft FIPS 206)
+
+Verification only, since 1.0.0-rc.71: the detached verifier and both SDKs accept `Falcon-padded-1024`, round-3 Falcon-1024 with fixed-length signatures, the scheme FIPS 206 (a draft) standardises. The wire name is the scheme's, because the standard is not final. Polaris signs nothing under it until lab record 015 clears its signing-time test. Conformance vectors: `pack-fndsa1024-*`, `pack-fndsa512-unaccepted`.

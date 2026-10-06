@@ -44,6 +44,17 @@ _spec.loader.exec_module(V)
 #: as the guard would let a real regression skip itself.
 _CAN_VERIFY_MLDSA = any(V._provider_available(p) for p in ("cryptography", "oqs"))
 
+
+def _implements(alg):
+    """Whether this interpreter's detached verifier can witness an OPTIONAL algorithm (a case's
+    `optional_algorithm`, WIRE-SPEC section 6). The FN-DSA family needs liboqs built with it;
+    cryptography carries no Falcon. A case for an algorithm it lacks does not apply here, and
+    the refusal cases for the same family still do."""
+    try:
+        return alg in V._import_oqs().get_enabled_sig_mechanisms()
+    except Exception:
+        return False
+
 # artifact -> (verifier function, the key on its verdict that means "authentic").
 # The names differ per artifact by design: the verifier says `feed_authentic`, not a bare
 # `authentic`, so a caller cannot confuse "this feed is genuine" with "this credential is".
@@ -266,6 +277,8 @@ class ConformanceContractTests(unittest.TestCase):
         cases = _cases()
         self.assertGreater(len(cases), 50, "the published contract should not have shrunk")
         for case in cases:
+            if case.get("optional_algorithm") and not _implements(case["optional_algorithm"]):
+                continue
             with self.subTest(case=case["name"], artifact=case.get("artifact", "authenticity-pack")):
                 got = _verdict_for(case)
                 for key, expected in case["expect"].items():
