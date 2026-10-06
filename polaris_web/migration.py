@@ -104,9 +104,11 @@ def resolve_target(conn, algorithm):
     if row is None:
         raise MigrationRefused(f"no such algorithm: {algorithm!r}")
     row_id, name = row["algorithm_id"], row["name"]
-    if name not in pqc_signing.ACCEPTED_ALGORITHMS:
+    if not pqc_signing._signs_under(name):
         # Registered is not signable: the SLH-DSA rows have no signer here. Under the
         # placeholder profile the run used to record the whole population under one anyway.
+        # An experimental set (the FN-DSA family) is a target only where this process may
+        # sign under it: POLARIS_EXPERIMENTAL_SIGNERS names it, outside production.
         raise MigrationRefused(
             f"nothing here signs with {name}, so no credential can be re-signed under it "
             f"(the signers are {', '.join(pqc_signing.ACCEPTED_ALGORITHMS)})")

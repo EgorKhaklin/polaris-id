@@ -64,6 +64,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 from dataclasses import dataclass
 from typing import Optional
 
@@ -201,27 +202,45 @@ def _noble_dir():
         "sdk", "typescript", "node_modules", "@noble", "post-quantum")
 
 
+_falcon_proc = None
+_falcon_proc_dir = None
+_falcon_lock = threading.Lock()
+
+
 def _falcon_witness(digest: bytes, sig_bytes: bytes, pk_bytes: bytes):
-    """Falcon-padded-1024 verified by @noble/post-quantum in a Node subprocess: True/False, or
-    None when the witness cannot run (no Node, no library, a crash, a timeout). None is "no
-    witness", which issuance turns into a refusal; it is never read as a pass."""
+    """Falcon-padded-1024 verified by @noble/post-quantum in a long-lived Node process: True/False,
+    or None when the witness cannot run (no Node, no library, a crash, a malformed answer). None is
+    "no witness", which issuance turns into a refusal; it is never read as a pass. One process
+    serves every request under a lock; any fault kills it, and the next request starts another."""
+    global _falcon_proc, _falcon_proc_dir
     import subprocess
-    if not os.path.isfile(os.path.join(_noble_dir(), "falcon.js")):
+    noble = _noble_dir()
+    if not os.path.isfile(os.path.join(noble, "falcon.js")):
         return None
-    try:
-        proc = subprocess.run(["node", _FALCON_WITNESS, _noble_dir()],
-                              input=json.dumps({"pk": pk_bytes.hex(), "digest": digest.hex(),
-                                                "sig": sig_bytes.hex()}),
-                              capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if proc.returncode != 0:
-        return None
-    try:
-        ok = json.loads(proc.stdout.strip().splitlines()[-1]).get("ok")
-    except (ValueError, IndexError, AttributeError):
-        return None
-    return ok if isinstance(ok, bool) else None
+    with _falcon_lock:
+        try:
+            if _falcon_proc is None or _falcon_proc.poll() is not None or _falcon_proc_dir != noble:
+                if _falcon_proc is not None and _falcon_proc.poll() is None:
+                    _falcon_proc.kill()
+                _falcon_proc = subprocess.Popen(["node", _FALCON_WITNESS, noble], stdin=subprocess.PIPE,
+                                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                                text=True, bufsize=1)
+                _falcon_proc_dir = noble
+            _falcon_proc.stdin.write(json.dumps({"pk": pk_bytes.hex(), "digest": digest.hex(),
+                                                 "sig": sig_bytes.hex()}) + "\n")
+            _falcon_proc.stdin.flush()
+            import select
+            ready, _, _ = select.select([_falcon_proc.stdout], [], [], 30)
+            line = _falcon_proc.stdout.readline() if ready else ""   # a hung witness is no witness
+            ok = json.loads(line).get("ok") if line else None
+        except (OSError, ValueError, AttributeError):
+            ok = None
+        if not isinstance(ok, bool):
+            if _falcon_proc is not None and _falcon_proc.poll() is None:
+                _falcon_proc.kill()
+            _falcon_proc = None
+            return None
+        return ok
 
 
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")

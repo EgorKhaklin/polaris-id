@@ -2166,6 +2166,24 @@ jobs:
           PGPASSWORD: ci_password
           POLARIS_QE_POPULATION: '2000'
 
+      # 2026-10-06 — the same drill onto the FN-DSA family, the experimental signer: the window,
+      # the refusals and nobody dark, two-witnessed by @noble/post-quantum (installed from the
+      # TypeScript SDK's lockfile). Measured locally at 604 re-signed/s against ML-DSA-87's 319.
+      - name: Quantum event — a population re-signed onto Falcon-padded-1024 (experimental, measured)
+        run: |
+          npm ci --silent --prefix sdk/typescript
+          python scripts/polaris-quantum-event-drill.py
+        env:
+          POLARIS_USE_REAL_PQC: '1'
+          POLARIS_DB_HOST: localhost
+          POLARIS_DB_PORT: '5432'
+          POLARIS_DB_USER: postgres
+          POLARIS_DB_PASSWORD: ci_password
+          PGPASSWORD: ci_password
+          POLARIS_QE_POPULATION: '2000'
+          POLARIS_QE_TARGET: Falcon-padded-1024
+          POLARIS_EXPERIMENTAL_SIGNERS: Falcon-padded-1024
+
       - name: Detached verifier — metamorphic fuzz (fail-closed, no crash)
         run: python scripts/polaris-verifier-fuzz.py
 
