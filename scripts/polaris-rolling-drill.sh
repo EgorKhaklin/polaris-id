@@ -70,7 +70,10 @@ traffic_stop()  { kill -TERM "$TRAFFIC_PID" 2>/dev/null || true; wait "$TRAFFIC_
 cid() { compose ps -q "$1" | head -1; }
 
 echo "== preflight: both colours up and the edge answers =="
-compose config --services | grep -qx app-green || fail "the blue-green overlay is not active (set POLARIS_COMPOSE_EXTRA)"
+# Read the whole list before matching: under pipefail, grep -q leaving at the first match can
+# kill compose with SIGPIPE, and the pipeline then fails although app-green was listed.
+SERVICES="$(compose config --services)"
+grep -qx app-green <<<"$SERVICES" || fail "the blue-green overlay is not active (set POLARIS_COMPOSE_EXTRA)"
 for i in $(seq 1 30); do curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" | grep -q 200 && break; sleep 2; done
 curl -sk -o /dev/null -w '%{http_code}\n' "$URL/api/health" | grep -q 200 || fail "edge not healthy before the drill"
 BLUE0=$(cid app); GREEN0=$(cid app-green); [ -n "$BLUE0" ] && [ -n "$GREEN0" ] || fail "app containers not found"
