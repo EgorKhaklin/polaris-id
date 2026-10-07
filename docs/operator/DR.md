@@ -505,7 +505,10 @@ inside region A's quorum: the lease store would have to be reachable across it,
 and a region going dark would take part of the other region's consensus with it.
 A standby cluster keeps its own lease store, so region B's availability does not
 depend on region A's, and it replicates asynchronously, so region A's write
-latency does not depend on region B either.
+latency does not depend on region B either. Its surfaces authenticate as region
+A's do: the one-shot `dr-etcd-auth` turns its lease store's authentication on,
+and its REST API's writes take the password; `patronictl` on a `dr-postgres`
+member reads both from the rendered configuration.
 
 **The price, stated before the procedure rather than discovered during it.**
 Asynchronous replication means the recovery point is **not zero**. Promoting

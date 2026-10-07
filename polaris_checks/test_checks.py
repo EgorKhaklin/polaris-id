@@ -3082,13 +3082,14 @@ def test_helm_upgrade_migrates_check_discriminates(tmp_path):
 
 
 def test_ha_internal_auth_check_discriminates(tmp_path):
-    files = ("polaris_web/docker-compose.ha.yml", "polaris_web/patroni-entrypoint.sh",
-             "scripts/polaris-generate-secrets.sh", "scripts/polaris-failover-drill.sh")
+    files = ("polaris_web/docker-compose.ha.yml", "polaris_web/docker-compose.dr.yml", "polaris_web/patroni-entrypoint.sh",
+             "scripts/polaris-generate-secrets.sh", "scripts/polaris-failover-drill.sh",
+             "scripts/polaris-region-evacuation-drill.sh")
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text((REPO / rel).read_text())
     assert checks.check_ha_internal_auth(tmp_path)[0].level == "OK", \
-        "must PASS on the real HA overlay, entrypoint, secrets script and failover drill"
+        "must PASS on the real HA and DR overlays, entrypoint, secrets script and drills"
 
     def broken(rel, old, new, why, count=1):
         path = tmp_path / rel

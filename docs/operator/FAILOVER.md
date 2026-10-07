@@ -48,7 +48,9 @@ stack):**
   `retry_timeout` 5 s. It authenticates its clients: the one-shot `etcd-auth`
   makes a root user and a `patroni` user whose role reaches `/service/` alone,
   then turns authentication on, before either member starts (passwords from
-  `polaris_etcd_root_password` and `polaris_etcd_patroni_password`).
+  `polaris_etcd_root_password` and `polaris_etcd_patroni_password`). From then
+  on `etcdctl endpoint health` needs `--user root`; the containers' health
+  check asks `/readyz`, which needs a quorum and no user.
 - Patroni's REST API answers reads to anyone on the stack network (HAProxy's
   role checks below), and its writes (switchover, restart, reload, `PATCH
   /config`, which sets postgresql parameters across the cluster) take the

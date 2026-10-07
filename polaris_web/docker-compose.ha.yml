@@ -133,7 +133,11 @@ services:
       - --initial-cluster-token=polaris-dcs
       - --auto-compaction-retention=1h
     healthcheck:
-      test: ["CMD", "etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
+      # The HTTP readiness endpoint, not `etcdctl endpoint health`: once etcd-auth below turns
+      # authentication on, etcdctl's probe is refused for want of a user, the members read as
+      # unhealthy, and compose will not start a Patroni member again. /readyz still makes a
+      # linearizable read, so it fails without a quorum, and it needs no user.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2379/readyz >/dev/null"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -194,12 +198,24 @@ services:
     command:
       - |
         set -eu
-        E="--endpoints=etcd1:2379,etcd2:2379,etcd3:2379"
+        E="--endpoints=$$POLARIS_ETCD_ENDPOINTS"
         ROOT_PW="$$(cat /run/secrets/polaris_etcd_root_password)"
         PAT_PW="$$(cat /run/secrets/polaris_etcd_patroni_password)"
-        if etcdctl $$E --user="root:$$ROOT_PW" auth status 2>/dev/null | grep -q "Authentication Status: true"; then
-          echo "etcd authentication is already on"; exit 0
-        fi
+        # Whether authentication is on, asked until etcd says: an error is not an answer. This runs
+        # again whenever compose starts a member (it depends on this service), so on a cluster that
+        # already authenticates it must find that out, not take a refused query for "off".
+        state=""; out=""
+        for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+          if out="$$(etcdctl $$E --user="root:$$ROOT_PW" auth status 2>&1)"; then
+            case "$$out" in *"Authentication Status: true"*) state=on ;; *"Authentication Status: false"*) state=off ;; esac
+          elif out="$$(etcdctl $$E auth status 2>&1)"; then
+            case "$$out" in *"Authentication Status: false"*) state=off ;; esac
+          fi
+          [ -n "$$state" ] && break
+          sleep 2
+        done
+        [ -n "$$state" ] || { echo "etcd did not say whether authentication is on: $$out" >&2; exit 1; }
+        if [ "$$state" = on ]; then echo "etcd authentication is already on"; exit 0; fi
         etcdctl $$E user get root >/dev/null 2>&1 || printf '%s\n' "$$ROOT_PW" | etcdctl $$E user add root --interactive=false
         etcdctl $$E user grant-role root root >/dev/null
         etcdctl $$E role get patroni >/dev/null 2>&1 || etcdctl $$E role add patroni
@@ -208,6 +224,8 @@ services:
         etcdctl $$E user grant-role patroni patroni >/dev/null
         etcdctl $$E auth enable
         echo "etcd authentication on: root, and patroni on /service/"
+    environment:
+      POLARIS_ETCD_ENDPOINTS: etcd1:2379,etcd2:2379,etcd3:2379
     secrets:
       - polaris_etcd_root_password
       - polaris_etcd_patroni_password

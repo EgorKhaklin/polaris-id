@@ -6426,7 +6426,8 @@ _REDIS_ACL_FORBIDDEN = ("+@all", "allcommands", "allkeys", "~*", "+flushall", "+
 # writes include PATCH /config, which sets postgresql parameters across the cluster (some run shell
 # commands); etcd, the lease store, took any client. Now the REST API's writes take a password, etcd
 # runs with authentication on and a patroni user fenced to /service/, and the failover drill proves
-# both refusals from the app's network before its failure scenarios.
+# both refusals from the app's network before its failure scenarios. The DR overlay's region B is
+# held to the same, and the region evacuation drill proves its refusals.
 _HA_AUTH_NEEDLES = (
     ("polaris_web/docker-compose.ha.yml", "etcdctl $$E auth enable", "turn etcd authentication on"),
     ("polaris_web/docker-compose.ha.yml", "role grant-permission patroni --prefix=true readwrite /service/",
@@ -6445,6 +6446,20 @@ _HA_AUTH_NEEDLES = (
      "prove an unauthenticated PATCH /config is refused from the app's network"),
     ("scripts/polaris-failover-drill.sh", "etcdctl put /drill/unauthenticated probe",
      "prove etcd refuses a client with no user"),
+    # etcdctl's own health probe is refused once authentication is on, and compose then will not
+    # start a member again; /readyz needs a quorum and no user.
+    ("polaris_web/docker-compose.ha.yml", "wget -qO- http://127.0.0.1:2379/readyz",
+     "check etcd's health in a way authentication does not refuse"),
+    # The DR overlay's region B: its member is on the application network too.
+    ("polaris_web/docker-compose.dr.yml", "POLARIS_PATRONI_RESTAPI_PASSWORD_FILE: /run/secrets/polaris_patroni_restapi_password",
+     "give region B's REST API the password"),
+    ("polaris_web/docker-compose.dr.yml", "service: etcd-auth", "turn region B's etcd authentication on"),
+    ("polaris_web/docker-compose.dr.yml", "wget -qO- http://127.0.0.1:2379/readyz",
+     "check region B's etcd health in a way authentication does not refuse"),
+    ("scripts/polaris-region-evacuation-drill.sh", '"http://dr-postgres:8008/config"',
+     "prove region B refuses an unauthenticated PATCH /config from the app's network"),
+    ("scripts/polaris-region-evacuation-drill.sh", "docker exec polaris-dr-etcd etcdctl put /drill/unauthenticated probe",
+     "prove region B's etcd refuses a client with no user"),
 )
 
 
@@ -6457,7 +6472,8 @@ def check_ha_internal_auth(root: pathlib.Path) -> list[Finding]:
     if not re.search(r"(?m)^restapi:\n  listen: [^\n]+\n  connect_address: [^\n]+\n\$RESTAPI_AUTH", entry):
         return _fail(name, "patroni-entrypoint.sh must render the REST API's authentication inside its restapi block")
     return _ok(name, "the HA profile's REST API takes a password for its writes and etcd authenticates its clients "
-               "(Patroni's user fenced to /service/); the failover drill proves both refusals from the app's network")
+               "(Patroni's user fenced to /service/), in both regions of the DR overlay; the failover and region "
+               "evacuation drills prove the refusals from the app's network")
 
 
 def check_redis_authenticated(root: pathlib.Path) -> list[Finding]:
