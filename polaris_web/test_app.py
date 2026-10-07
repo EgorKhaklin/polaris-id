@@ -9146,6 +9146,48 @@ class RedisAuthenticationTests(unittest.TestCase):
         self.assertEqual(seen, {'url': self.url, 'password': 'a' * 64},
                          "the password must come from the file, stripped, and not from the URL")
 
+    def test_a_worker_that_starts_before_redis_moves_to_it_once_it_answers(self):
+        import security
+
+        class _Redis:
+            name = 'redis'
+            calls = 0
+
+            def allow(self, key, max_events, window_seconds):
+                _Redis.calls += 1
+                return True
+
+            def healthy(self):
+                return True
+
+            def reset(self, key=None):
+                pass
+
+        late = [None, None]  # Redis does not answer the first two asks
+        limiter = security.RedisOnceReachable(lambda: late.pop(0) if late else _Redis())
+        limiter.RETRY_SECONDS = 0.0
+        limiter._next_try = 0.0
+        self.assertEqual(limiter.name, 'memory')
+        limiter.allow('k', 5, 60)
+        limiter.allow('k', 5, 60)
+        self.assertEqual(limiter.name, 'memory', "two asks, two refusals: still counting in memory")
+        limiter.allow('k', 5, 60)
+        self.assertEqual(limiter.name, 'redis', "the third ask found Redis")
+        before = _Redis.calls
+        limiter.allow('k', 5, 60)
+        self.assertEqual(_Redis.calls, before + 1, "once Redis has answered, every call goes to it")
+
+    def test_the_selector_keeps_asking_when_redis_is_late(self):
+        from unittest import mock
+        import security
+        env = {'POLARIS_REDIS_URL': 'redis://polaris@127.0.0.1:1/0',
+               'POLARIS_REDIS_PASSWORD_FILE': self.pwfile, 'POLARIS_RATE_LIMIT_BACKEND': 'auto'}
+        with mock.patch.dict(os.environ, env):
+            limiter = security._make_rate_limiter()
+        self.assertIsInstance(limiter, security.RedisOnceReachable,
+                              "an unreachable Redis at start must not mean memory for good")
+        self.assertEqual(limiter.name, 'memory')
+
     def test_a_fallback_from_configured_redis_is_degraded(self):
         from unittest import mock
         import security

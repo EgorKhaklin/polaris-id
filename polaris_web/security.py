@@ -341,6 +341,51 @@ class RedisRateLimiter(_BaseRateLimiter):
             return False
 
 
+class RedisOnceReachable(_BaseRateLimiter):
+    """Lab record 017, phase 4a: POLARIS_REDIS_URL is set but Redis did not answer when this
+    worker started. On Kubernetes that is the normal order of things (the app can start before
+    the Redis pod is ready, and a headless service publishes no address until it is), and a
+    worker that decided once kept per-worker memory buckets for its whole life, with nothing
+    saying so. This one counts in memory only until Redis first answers, asks again every
+    RETRY_SECONDS, and from the first answer on sends every call to Redis. /api/health reports
+    it degraded until then."""
+    RETRY_SECONDS = 5.0
+
+    def __init__(self, connect):
+        import threading
+        self._connect = connect          # returns a RedisRateLimiter, or None
+        self._memory = InMemoryRateLimiter()
+        self._redis = None
+        self._next_try = time.monotonic() + self.RETRY_SECONDS
+        self._lock = threading.Lock()
+
+    @property
+    def name(self):
+        return 'redis' if self._redis is not None else 'memory'
+
+    def _backend(self):
+        if self._redis is None and time.monotonic() >= self._next_try:
+            with self._lock:
+                if self._redis is None and time.monotonic() >= self._next_try:
+                    self._redis = self._connect()
+                    self._next_try = time.monotonic() + self.RETRY_SECONDS
+                    if self._redis is not None:
+                        sys.stderr.write("[security] Redis answered; this worker's rate "
+                                         "limiter now counts in Redis.\n")
+        return self._redis if self._redis is not None else self._memory
+
+    def allow(self, key, max_events, window_seconds):
+        return self._backend().allow(key, max_events, window_seconds)
+
+    def reset(self, key=None):
+        self._memory.reset(key)
+        if self._redis is not None:
+            self._redis.reset(key)
+
+    def healthy(self):
+        return self._backend().healthy()
+
+
 # Back-compat alias: pre-v7.5 code referenced security.RateLimiter() directly.
 RateLimiter = InMemoryRateLimiter
 
@@ -373,15 +418,22 @@ def _make_rate_limiter():
             # (config_schema); elsewhere the connection below fails and says so.
             sys.stderr.write(f"[security] POLARIS_REDIS_PASSWORD_FILE unreadable ({e.strerror or e}).\n")
 
+    def _connect():
+        try:
+            return RedisRateLimiter(redis_url, password=password)
+        except Exception:
+            return None
+
     def _try_redis():
+        # Redis now, or a limiter that moves to Redis once it answers (lab record 017, 4a).
         try:
             return RedisRateLimiter(redis_url, password=password)
         except Exception as e:
             sys.stderr.write(
-                f"[security] Redis rate limiter unavailable ({e!r}); "
-                f"falling back to in-memory.\n"
+                f"[security] Redis rate limiter unavailable ({e!r}); counting in memory "
+                f"until it answers (asking every {RedisOnceReachable.RETRY_SECONDS:g} s).\n"
             )
-            return None
+            return RedisOnceReachable(_connect)
 
     if backend == 'memory':
         chosen = InMemoryRateLimiter()
@@ -393,14 +445,14 @@ def _make_rate_limiter():
             )
             chosen = InMemoryRateLimiter()
         else:
-            chosen = _try_redis() or InMemoryRateLimiter()
+            chosen = _try_redis()
     else:  # 'auto' or anything unrecognized
         if redis_url:
-            chosen = _try_redis() or InMemoryRateLimiter()
+            chosen = _try_redis()
         else:
             chosen = InMemoryRateLimiter()
 
-    if chosen.name == 'memory' and workers > 1:
+    if chosen.name == 'memory' and workers > 1 and not isinstance(chosen, RedisOnceReachable):
         sys.stderr.write(
             f"[security] WARNING: POLARIS_WORKERS={workers} with in-memory "
             f"rate limiter — actual per-IP limits will be ~{workers}× "
