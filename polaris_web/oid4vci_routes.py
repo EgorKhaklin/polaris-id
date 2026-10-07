@@ -159,12 +159,12 @@ def oid4vci_token(agency_id):
     if request.form.get('tx_code'):
         return jsonify(error='invalid_request', error_description='this issuer offers no tx_code'), 400, _NO_STORE
     code = request.form.get('pre-authorized_code')
-    offer = rp_auth.open_vci_value(app.secret_key, 'code', code)
+    offer = rp_auth.open_vci_value(rp_auth.keys_of(app), 'code', code)
     if offer is None or offer.get('ag') != agency_id:
         return jsonify(error='invalid_grant'), 400, _NO_STORE
     if not _spend('code', code):
         return jsonify(error='invalid_grant', error_description='the code was already used'), 400, _NO_STORE
-    token = rp_auth.issue_vci_value(app.secret_key, 'token', {'ag': agency_id, 'tv': offer['tv']})
+    token = rp_auth.issue_vci_value(rp_auth.keys_of(app), 'token', {'ag': agency_id, 'tv': offer['tv']})
     return jsonify(access_token=token, token_type='Bearer', expires_in=rp_auth.VCI_TTL['token']), 200, _NO_STORE
 
 
@@ -176,7 +176,7 @@ def oid4vci_nonce(agency_id):
         return refused
     if not security.rate_limiter.allow('vci:%d:%s' % (agency_id, security.client_ip()), _RATE_PER_MIN, 60):
         return jsonify(error='slow_down'), 429, _NO_STORE
-    nonce = rp_auth.issue_vci_value(app.secret_key, 'nonce', {'ag': agency_id})
+    nonce = rp_auth.issue_vci_value(rp_auth.keys_of(app), 'nonce', {'ag': agency_id})
     return jsonify(c_nonce=nonce), 200, _NO_STORE
 
 
@@ -192,7 +192,7 @@ def oid4vci_credential(agency_id):
     if not security.rate_limiter.allow('vci:%d:%s' % (agency_id, security.client_ip()), _RATE_PER_MIN, 60):
         return jsonify(error='slow_down'), 429, _NO_STORE
     token = rp_auth.parse_bearer(request.headers.get('Authorization'))
-    grant = rp_auth.open_vci_value(app.secret_key, 'token', token)
+    grant = rp_auth.open_vci_value(rp_auth.keys_of(app), 'token', token)
     if grant is None or grant.get('ag') != agency_id:
         return jsonify(error='invalid_token',
                        error_description="the access token is not this issuer's, or has expired"), 401, _BEARER
@@ -209,7 +209,7 @@ def oid4vci_credential(agency_id):
         holder, nonce = wallet_copy.verify_proof(proofs['jwt'][0], issuer)
     except wallet_copy.ProofRefused as exc:
         return jsonify(error='invalid_proof', error_description=str(exc)), 400, _NO_STORE
-    minted = rp_auth.open_vci_value(app.secret_key, 'nonce', nonce)
+    minted = rp_auth.open_vci_value(rp_auth.keys_of(app), 'nonce', nonce)
     if minted is None or minted.get('ag') != agency_id or not _spend('nonce', nonce):
         return jsonify(error='invalid_nonce', error_description="the proof's nonce was not issued here, "
                        'has expired, or was already used'), 400, _NO_STORE
@@ -286,7 +286,7 @@ def tokens_wallet_offer(tok_id):
     if row['status'] != 'ACTIVE':
         return jsonify(error='conflict', error_description='a wallet copy is offered only for an ACTIVE '
                        'credential; this one is %s' % row['status']), 409
-    code = rp_auth.issue_vci_value(app.secret_key, 'code', {'ag': agency_id, 'tv': row['token_value']})
+    code = rp_auth.issue_vci_value(rp_auth.keys_of(app), 'code', {'ag': agency_id, 'tv': row['token_value']})
     # C1: a coerced operator's actions leave evidence. The offer is recorded under the operator's
     # account before it is returned, with the code's hash as the token endpoint spends it, so a
     # redeemed code links back to whoever offered it; an offer that cannot be recorded is not made.

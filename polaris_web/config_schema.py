@@ -54,6 +54,8 @@ SETTINGS: tuple[Setting, ...] = (
        "Root secret for sessions and derived tokens. Prefer POLARIS_SECRET_KEY_FILE.",
        prod_forbidden_values=("dev-key-change-in-production", "dev-secret-rotate-in-production")),
     _s("POLARIS_SECRET_KEY_FILE", "secret_file", None, "core", "File holding POLARIS_SECRET_KEY."),
+    _s("POLARIS_SECRET_KEY_FALLBACKS_FILE", "secret_file", None, "core",
+       "Keys a rotation retired, one per line: they verify what they signed and sign nothing."),
     _s("POLARIS_DOMAIN", group="core", doc="Public domain: the TLS edge's site and the WebAuthn relying-party id."),
     _s("POLARIS_DEPLOYMENT_LABEL", group="core", doc="Provenance label shown by the Atlas."),
     _s("POLARIS_SECURITY_CONTACT", default="mailto:security@example.invalid", group="core",

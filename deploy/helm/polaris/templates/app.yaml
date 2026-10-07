@@ -53,6 +53,7 @@ spec:
             - {name: POLARIS_DB_SSLMODE, value: verify-ca}
             - {name: POLARIS_DB_SSLROOTCERT, value: /etc/polaris-pgb-certs/pgbouncer.crt}
             - {name: POLARIS_SECRET_KEY_FILE, value: /run/secrets/polaris_secret_key}
+            - {name: POLARIS_SECRET_KEY_FALLBACKS_FILE, value: /run/secrets/polaris_secret_key_fallbacks}
             - {name: POLARIS_REDIS_HOST, value: {{ include "polaris.fullname" . }}-redis}
             - {name: POLARIS_REDIS_PORT, value: "6379"}
             - {name: POLARIS_REDIS_URL, value: redis://polaris@{{ include "polaris.fullname" . }}-redis:6379/0}

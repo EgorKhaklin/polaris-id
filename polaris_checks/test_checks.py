@@ -2925,6 +2925,48 @@ def test_redis_authenticated_check_discriminates(tmp_path):
            "must FAIL when CI no longer asserts an unauthenticated client is refused")
 
 
+def test_session_key_rotation_check_discriminates(tmp_path):
+    files = ("polaris_web/app.py", "polaris_web/rp_auth.py", "polaris_web/rp_api.py",
+             "polaris_web/oid4vci_routes.py", "scripts/polaris-rotate-secret.sh",
+             "scripts/polaris-generate-secrets.sh", "polaris_web/docker-compose.prod.yml",
+             "deploy/helm/polaris/templates/app.yaml", "polaris_web/test_app.py")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_session_key_rotation(tmp_path)[0].level == "OK", \
+        "must PASS on the real app, rp_auth, call sites, scripts, compose, chart and tests"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_session_key_rotation(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    broken("polaris_web/app.py", "'POLARIS_SECRET_KEY_FALLBACKS_FILE'", "'POLARIS_UNREAD_FILE'",
+           "must FAIL when the app does not load the retired keys")
+    broken("polaris_web/rp_auth.py", "URLSafeTimedSerializer(_keys(secret_key)", "URLSafeTimedSerializer((secret_key)",
+           "must FAIL when relying-party tokens verify under the current key alone")
+    broken("polaris_web/rp_auth.py", "for k in reversed(_keys(secret_key))])", "for k in _keys(secret_key)])",
+           "must FAIL when codes would be encrypted under a retired key")
+    broken("polaris_web/rp_api.py", "rp_auth.issue_access_token(rp_auth.keys_of(app),",
+           "rp_auth.issue_access_token(app.secret_key,", "must FAIL when a call site uses the current key alone")
+    broken("scripts/polaris-rotate-secret.sh", "tr -d '\\r\\n ' < \"${TARGET}\" > \"${FALLBACKS}.new\"", "true",
+           "must FAIL when rotation does not keep the retired key")
+    broken("scripts/polaris-rotate-secret.sh", 'gen_hex > "${FALLBACKS}.new"', "true",
+           "must FAIL when --drop-old cannot end every session")
+    broken("scripts/polaris-generate-secrets.sh", "write_secret_if_missing polaris_secret_key_fallbacks", "true",
+           "must FAIL when the generator does not create the fallbacks file")
+    broken("polaris_web/docker-compose.prod.yml",
+           "      POLARIS_SECRET_KEY_FALLBACKS_FILE: /run/secrets/polaris_secret_key_fallbacks\n", "",
+           "must FAIL when the compose app is not given the retired keys")
+    broken("deploy/helm/polaris/templates/app.yaml", "POLARIS_SECRET_KEY_FALLBACKS_FILE", "POLARIS_UNREAD_FILE",
+           "must FAIL when the Helm app is not given the retired keys")
+    broken("polaris_web/test_app.py", "def test_a_signed_in_operator_stays_signed_in_across_a_rotation(",
+           "def test_renamed(", "must FAIL when no test shows a session surviving a rotation")
+
+
 def test_npm_publish_is_staged_check_discriminates(tmp_path):
     # The control has two halves and this tree owns one: the npm job must STAGE, so that a
     # maintainer's 2FA approval stands between a workflow run and an installer. The other

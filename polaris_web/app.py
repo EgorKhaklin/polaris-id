@@ -341,6 +341,12 @@ app.secret_key = _read_secret_file(
     fallback_env_name='POLARIS_SECRET_KEY',
     default='dev-key-change-in-production',
 )
+# Lab record 017, phase 4b: the keys a rotation retired, one per line. They verify what they
+# signed (sessions, relying-party tokens, codes) and sign nothing, so rotating the key logs
+# nobody out; polaris-rotate-secret.sh polaris_secret_key keeps the key it retires here.
+app.config['SECRET_KEY_FALLBACKS'] = [
+    k.strip() for k in (_read_secret_file('POLARIS_SECRET_KEY_FALLBACKS_FILE', default='') or '').splitlines()
+    if k.strip() and k.strip() != app.secret_key]
 
 # Session lifetime: 8 hours of inactivity then re-login required.
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=security.SESSION_LIFETIME_HOURS)

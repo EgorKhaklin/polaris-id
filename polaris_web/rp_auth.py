@@ -40,15 +40,37 @@ def has_scope(scope_value, needed):
     return needed in str(scope_value or "").split()
 
 
+def _keys(secret_key):
+    """The keys, oldest first and the current one last, as itsdangerous takes them (lab record
+    017, phase 4b). A string is the current key alone; a list ends with it and carries before it
+    the keys a rotation retired, which verify what they signed and sign nothing."""
+    keys = [k for k in secret_key if k] if isinstance(secret_key, (list, tuple)) else [secret_key]
+    if not keys or not keys[-1]:
+        raise ValueError("no current signing key")
+    return keys
+
+
+def keys_of(app):
+    """A Flask app's keys: SECRET_KEY_FALLBACKS (retired), then secret_key (current), the order
+    Flask's own session signer uses."""
+    return [*(app.config.get("SECRET_KEY_FALLBACKS") or ()), app.secret_key]
+
+
+def _fernet(salt, secret_key):
+    """A MultiFernet over every key, the current first: it encrypts under the current key and
+    decrypts under any of them."""
+    from cryptography.fernet import Fernet, MultiFernet
+    return MultiFernet([Fernet(base64.urlsafe_b64encode(hashlib.sha3_256(
+        ("%s:%s" % (salt, k)).encode("utf-8")).digest())) for k in reversed(_keys(secret_key))])
+
+
 def _code_fernet(secret_key):
     """The authorization code is ENCRYPTED, not merely signed (v9.336): its payload names the
     subject (a credential hash), the relying party, the context, the assurance reached and the
     instant, none of which a bearer of the code needs to read. Fernet (AES-128-CBC + HMAC-SHA256,
     timestamped) under a key derived from the instance secret and a salt distinct from every
     other signer, so a code can never pass as an access token and an access token never as a code."""
-    from cryptography.fernet import Fernet
-    key = base64.urlsafe_b64encode(hashlib.sha3_256(("%s:%s" % (_CODE_SALT, secret_key)).encode("utf-8")).digest())
-    return Fernet(key)
+    return _fernet(_CODE_SALT, secret_key)
 
 
 def issue_auth_code(secret_key, payload):
@@ -73,7 +95,7 @@ def validate_auth_code(secret_key, code, max_age=CODE_TTL):
 
 
 def _serializer(secret_key):
-    return itsdangerous.URLSafeTimedSerializer(secret_key, salt=_SALT)
+    return itsdangerous.URLSafeTimedSerializer(_keys(secret_key), salt=_SALT)
 
 
 def issue_access_token(secret_key, rp_id, client_id, scope=SCOPE_VERIFY):
@@ -115,10 +137,7 @@ VCI_TTL = {"code": 600, "token": 300, "nonce": 300}
 
 
 def _vci_fernet(secret_key, kind):
-    from cryptography.fernet import Fernet
-    salt = _VCI_SALTS[kind]
-    key = base64.urlsafe_b64encode(hashlib.sha3_256(("%s:%s" % (salt, secret_key)).encode("utf-8")).digest())
-    return Fernet(key)
+    return _fernet(_VCI_SALTS[kind], secret_key)
 
 
 def issue_vci_value(secret_key, kind, payload):

@@ -9394,6 +9394,79 @@ class RedisAuthenticationTests(unittest.TestCase):
         self.assertEqual(unconfigured['status'], 'healthy')
 
 
+class SecretKeyRotationTests(PolarisTestCase):
+    """Lab record 017, phase 4b: rotating the session key logs nobody out. The retired key, kept
+    in POLARIS_SECRET_KEY_FALLBACKS_FILE, verifies what it signed and signs nothing."""
+
+    def setUp(self):
+        super().setUp()
+        self._saved = (flask_app.app.secret_key,
+                       list(flask_app.app.config.get('SECRET_KEY_FALLBACKS') or []))
+
+    def tearDown(self):
+        flask_app.app.secret_key, flask_app.app.config['SECRET_KEY_FALLBACKS'] = self._saved
+        super().tearDown()
+
+    def _rotate(self, keep_old):
+        old = flask_app.app.secret_key
+        flask_app.app.secret_key = 'rotated-' + 'b' * 56
+        flask_app.app.config['SECRET_KEY_FALLBACKS'] = [old] if keep_old else []
+        return old
+
+    def test_a_signed_in_operator_stays_signed_in_across_a_rotation(self):
+        self._login('admin')
+        self.assertEqual(self.client.get('/dashboard').status_code, 200)
+        self._rotate(keep_old=True)
+        self.assertEqual(self.client.get('/dashboard').status_code, 200,
+                         "the retired key must still verify the session it signed")
+
+    def test_dropping_the_old_key_ends_every_session(self):
+        self._login('admin')
+        self._rotate(keep_old=False)
+        self.assertNotEqual(self.client.get('/dashboard').status_code, 200,
+                            "with no retired key kept, a session signed before the rotation must not verify")
+
+    def test_relying_party_values_survive_and_new_ones_use_only_the_new_key(self):
+        import rp_auth
+        keys = rp_auth.keys_of(flask_app.app)
+        token = rp_auth.issue_access_token(keys, 7, 'cid')
+        code = rp_auth.issue_auth_code(keys, {'x': 1})
+        nonce = rp_auth.issue_vci_value(keys, 'nonce', {'ag': 1})
+        old = self._rotate(keep_old=True)
+        keys = rp_auth.keys_of(flask_app.app)
+        self.assertIsNotNone(rp_auth.validate_access_token(keys, token))
+        self.assertIsNotNone(rp_auth.validate_auth_code(keys, code))
+        self.assertIsNotNone(rp_auth.open_vci_value(keys, 'nonce', nonce))
+        self.assertIsNone(rp_auth.validate_access_token(old, rp_auth.issue_access_token(keys, 7, 'cid')),
+                          "a value made after the rotation must be signed with the current key only")
+        self.assertIsNone(rp_auth.validate_auth_code(old, rp_auth.issue_auth_code(keys, {'x': 1})),
+                          "a code made after the rotation must be encrypted under the current key only")
+        self.assertIsNone(rp_auth.open_vci_value(old, 'nonce', rp_auth.issue_vci_value(keys, 'nonce', {'ag': 1})),
+                          "a VCI value made after the rotation must be encrypted under the current key only")
+        flask_app.app.config['SECRET_KEY_FALLBACKS'] = []
+        keys = rp_auth.keys_of(flask_app.app)
+        self.assertIsNone(rp_auth.validate_access_token(keys, token))
+        self.assertIsNone(rp_auth.validate_auth_code(keys, code))
+        self.assertIsNone(rp_auth.open_vci_value(keys, 'nonce', nonce))
+
+    def test_the_app_reads_retired_keys_from_the_file(self):
+        import subprocess
+        import tempfile
+        with tempfile.NamedTemporaryFile('w', suffix='-fallbacks', delete=False) as fh:
+            fh.write('retired-one\nretired-two\n\ncurrent-key\n')
+        try:
+            proc = subprocess.run(
+                [sys.executable, '-c', 'import app; print(app.app.config["SECRET_KEY_FALLBACKS"])'],
+                cwd=os.path.dirname(os.path.abspath(__file__)), capture_output=True, text=True,
+                timeout=30, env=dict(os.environ, POLARIS_SECRET_KEY='current-key',
+                                     POLARIS_SECRET_KEY_FALLBACKS_FILE=fh.name))
+        finally:
+            os.unlink(fh.name)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-500:])
+        self.assertEqual(proc.stdout.strip().splitlines()[-1], "['retired-one', 'retired-two']",
+                         "every retired line, in order, blank lines and the current key left out")
+
+
 class F06_CookieHardeningTests(PolarisTestCase):
     """F-07: Cookie attributes Secure / HttpOnly / SameSite. CWE-614, CWE-1004."""
 

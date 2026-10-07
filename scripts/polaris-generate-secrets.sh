@@ -12,6 +12,7 @@
 # containers cannot read host-owned 0600 bind-mounts on Linux, so the dir,
 # not the file mode, is the host-side boundary; see v9.140 notes below):
 #   secrets/polaris_secret_key            Flask session signing key, 64 hex (0644)
+#   secrets/polaris_secret_key_fallbacks  keys a rotation retired; starts as one never-used key (0644)
 #   secrets/polaris_db_password           Postgres polaris_app password (0644)
 #   secrets/polaris_db_root_password      Postgres superuser password (0600; root-read only)
 #   secrets/polaris_replicator_password   streaming-replication role password (0644)
@@ -282,6 +283,9 @@ BANNER
 # 0600 (postgres reads it as root during init); the replicator password is
 # 0644 because docker-init.sh reads it as the non-root postgres user (v9.140).
 write_secret_if_missing polaris_secret_key       32 0644
+# Lab record 017, phase 4b: the keys polaris-rotate-secret.sh retires, which verify sessions
+# and tokens they signed. It starts with one random key that never signed anything.
+write_secret_if_missing polaris_secret_key_fallbacks 32 0644
 write_secret_if_missing polaris_db_password      24 0644
 write_secret_if_missing polaris_db_root_password 24
 # v9.126 — the streaming-replication role password. Mounted at the postgres

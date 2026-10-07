@@ -11,6 +11,7 @@ A secret is read from its `*_FILE` companion in production. In production a `*_F
 | `POLARIS_ENV` | str |  |  | `production` turns on every production guard, this contract included. |
 | `POLARIS_SECRET_KEY` | secret | `dev-key-change-in-production` | refuses `dev-key-change-in-production`, `dev-secret-rotate-in-production` | Root secret for sessions and derived tokens. Prefer POLARIS_SECRET_KEY_FILE. |
 | `POLARIS_SECRET_KEY_FILE` | secret_file |  | readable, non-empty | File holding POLARIS_SECRET_KEY. |
+| `POLARIS_SECRET_KEY_FALLBACKS_FILE` | secret_file |  | readable, non-empty | Keys a rotation retired, one per line: they verify what they signed and sign nothing. |
 | `POLARIS_DOMAIN` | str |  |  | Public domain: the TLS edge's site and the WebAuthn relying-party id. |
 | `POLARIS_DEPLOYMENT_LABEL` | str |  |  | Provenance label shown by the Atlas. |
 | `POLARIS_SECURITY_CONTACT` | str | `mailto:security@example.invalid` | refuses `mailto:security@example.invalid` | security.txt Contact. Unset, it is security@ POLARIS_DOMAIN; production refuses the placeholder. |
