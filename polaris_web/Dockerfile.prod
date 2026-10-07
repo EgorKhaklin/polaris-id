@@ -184,8 +184,8 @@ EXPOSE 8000
 # Container HEALTHCHECK uses the LIVENESS probe (v9.108), not readiness: it
 # answers "is this process alive?", so a transient DB/redis outage does not mark
 # the container unhealthy and trigger a restart that cannot bring the dependency
-# back. Readiness (the dependency roll-up) lives at /api/health/ready for the
-# reverse proxy / orchestrator to gate traffic on.
+# back. Readiness for this instance (custody, the second witness, local disk) lives
+# at /api/health/ready for the reverse proxy and the orchestrator to route on.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl --fail --silent http://localhost:8000/api/health/live | grep -q '"status":"alive"' || exit 1
 
