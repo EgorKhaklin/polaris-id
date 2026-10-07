@@ -85,7 +85,7 @@ spec:
             periodSeconds: 5
             failureThreshold: 36
           readinessProbe:
-            httpGet: {path: /api/health/live, port: http}
+            httpGet: {path: /api/health/ready, port: http}
             periodSeconds: 5
           livenessProbe:
             httpGet: {path: /api/health/live, port: http}
