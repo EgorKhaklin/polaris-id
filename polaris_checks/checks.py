@@ -4523,10 +4523,13 @@ def check_prod_compose_trusts_edge(root: pathlib.Path) -> list[Finding]:
     caddy = _read(root, "polaris_web/Caddyfile")
     if not compose or not caddy:
         return _fail("compose_trusts_edge", "docker-compose.prod.yml or Caddyfile is missing")
-    if not re.search(r"header_up X-Forwarded-For \{remote_host\}", caddy):
+    # 2026-10-07 (lab record 017, OP-26): {client_ip} replaces the header as {remote_host} did; it is
+    # the TCP peer unless that peer is a proxy the operator named (check_client_ip_behind_proxies).
+    if not re.search(r"header_up X-Forwarded-For \{(?:remote_host|client_ip)\}\s*$", caddy, re.M):
         return _fail("compose_trusts_edge",
-                     "Caddyfile must rewrite X-Forwarded-For to {remote_host} (replace, not append) "
-                     "so the leftmost address is the edge's, not the client's")
+                     "Caddyfile must rewrite X-Forwarded-For to the address the edge decided ({client_ip} "
+                     "or {remote_host}; replace, not append) so the leftmost address is the edge's, not "
+                     "the client's")
     app = re.search(r"^  app:\n(.*?)(?=^  \w[\w-]*:$)", compose, re.M | re.S)
     if not app or not re.search(r"POLARIS_TRUST_PROXY:\s*[\"']?(1|true|yes)", app.group(1)):
         return _fail("compose_trusts_edge",
@@ -6500,6 +6503,51 @@ def check_doctor_names_failures(root: pathlib.Path) -> list[Finding]:
                "the app's roll-up and the key register, and names the failing ones, the first one first; CI "
                "breaks Redis, PostgreSQL, a secret and a setting on the try.sh stack and requires "
                "each named first, and a clean bill after each repair")
+
+
+# 2026-10-07 (lab record 017, gate row OP-26): the client address behind a load balancer. The rate
+# limiter, AuthAuditLog and the access policies key on the address the edge passes upstream. Behind
+# a balancer the TCP peer is the balancer: every client shares one bucket. Each edge trusts exactly
+# the proxies the operator names (POLARIS_TRUSTED_PROXIES / edge.trustedProxies; none by default)
+# and reads X-Forwarded-For right to left past them only (strict), so a forged first entry is never
+# believed; the chart's LoadBalancer Service keeps the client's source address (Local). CI asks
+# through an appending balancer, with and without the trust, and with forgeries both ways.
+def check_client_ip_behind_proxies(root: pathlib.Path) -> list[Finding]:
+    name = "client_ip_proxies"
+    for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"):
+        conf = _read(root, rel)
+        if not re.search(r"trusted_proxies static \{\$POLARIS_TRUSTED_PROXIES:0\.0\.0\.0/32\}", conf):
+            return _fail(name, f"{rel} must trust only the proxies POLARIS_TRUSTED_PROXIES names, "
+                         "none by default (0.0.0.0/32)")
+        if "trusted_proxies_strict" not in conf:
+            return _fail(name, f"{rel} must read X-Forwarded-For right to left (trusted_proxies_strict), "
+                         "or a client names its own address through the balancer")
+        if ("header_up X-Forwarded-For {client_ip}" not in conf or "header_up X-Real-IP {client_ip}" not in conf
+                or re.search(r"header_up X-(?:Forwarded-For|Real-IP) \{remote_host\}", conf)):
+            return _fail(name, f"{rel} must pass the client address ({{client_ip}}), not the TCP peer, upstream")
+    helm = _read(root, "deploy/helm/polaris/templates/configmap-caddy.yaml")
+    if ('trusted_proxies static {{ .Values.edge.trustedProxies | default "0.0.0.0/32" }}' not in helm
+            or "trusted_proxies_strict" not in helm or "header_up X-Forwarded-For {client_ip}" not in helm):
+        return _fail(name, "the chart's edge must trust only edge.trustedProxies (none by default), read "
+                     "X-Forwarded-For strictly and pass {client_ip} upstream")
+    svc = _read(root, "deploy/helm/polaris/templates/caddy.yaml")
+    values = _read(root, "deploy/helm/polaris/values.yaml")
+    if ('externalTrafficPolicy: {{ .Values.edge.service.externalTrafficPolicy | default "Local" }}' not in svc
+            or not re.search(r"^\s*externalTrafficPolicy:\s*Local\s*$", values, re.M)):
+        return _fail(name, "the chart's LoadBalancer or NodePort Service must keep the client's source "
+                     "address (externalTrafficPolicy: Local)")
+    if "bash scripts/polaris-client-ip-drill.sh" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail(name, "ci.yml must run scripts/polaris-client-ip-drill.sh")
+    drill = _read(root, "scripts/polaris-client-ip-drill.sh")
+    for needle in ("polaris_web/Caddyfile.citest", 'expect "via the balancer, not trusted"',
+                   'expect "via the balancer, forging', 'expect "straight to the edge, forging'):
+        if needle not in drill:
+            return _fail(name, f"scripts/polaris-client-ip-drill.sh no longer covers {needle!r}")
+    return _ok(name,
+               "every edge trusts only the proxies the operator names (none by default), reads "
+               "X-Forwarded-For right to left past them and passes the client address upstream; the "
+               "chart keeps source addresses (Local); CI proves it behind an appending balancer, with "
+               "forgeries refused both ways")
 
 
 # 2026-09-16 — the npm job STAGES; it must not publish. `npm stage publish` uploads the
@@ -25416,6 +25464,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_sbom_trivy_matches_scan,
     check_supply_chain_pins,
     check_release_provenance,
+    check_client_ip_behind_proxies,
     check_doctor_names_failures,
     check_session_key_rotation,
     check_release_images_signed,

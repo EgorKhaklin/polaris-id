@@ -3001,6 +3001,40 @@ def test_doctor_names_failures_check_discriminates(tmp_path):
            "must FAIL when the runbook does not start an operator at the doctor")
 
 
+def test_client_ip_behind_proxies_check_discriminates(tmp_path):
+    files = ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest",
+             "deploy/helm/polaris/templates/configmap-caddy.yaml", "deploy/helm/polaris/templates/caddy.yaml",
+             "deploy/helm/polaris/values.yaml", ".github/workflows/ci.yml", "scripts/polaris-client-ip-drill.sh")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_client_ip_behind_proxies(tmp_path)[0].level == "OK", \
+        "must PASS on the real edges, chart, CI and drill"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_client_ip_behind_proxies(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    broken("polaris_web/Caddyfile", "        trusted_proxies_strict\n", "",
+           "must FAIL when X-Forwarded-For is read left to right, so a client names its own address")
+    broken("polaris_web/Caddyfile", "{$POLARIS_TRUSTED_PROXIES:0.0.0.0/32}", "{$POLARIS_TRUSTED_PROXIES:0.0.0.0/0}",
+           "must FAIL when every peer is trusted by default")
+    broken("polaris_web/Caddyfile.citest", "header_up X-Forwarded-For {client_ip}", "header_up X-Forwarded-For {remote_host}",
+           "must FAIL when the CI edge passes the TCP peer upstream")
+    broken("deploy/helm/polaris/templates/configmap-caddy.yaml", "            trusted_proxies_strict\n", "",
+           "must FAIL when the chart's edge reads X-Forwarded-For left to right")
+    broken("deploy/helm/polaris/values.yaml", "externalTrafficPolicy: Local", "externalTrafficPolicy: Cluster",
+           "must FAIL when the chart's Service rewrites every client's source address")
+    broken(".github/workflows/ci.yml", "bash scripts/polaris-client-ip-drill.sh", "true",
+           "must FAIL when CI does not run the drill")
+    broken("scripts/polaris-client-ip-drill.sh", 'expect "via the balancer, forging', 'echo "via the balancer, forging',
+           "must FAIL when the drill no longer forges through the balancer")
+
+
 def test_npm_publish_is_staged_check_discriminates(tmp_path):
     # The control has two halves and this tree owns one: the npm job must STAGE, so that a
     # maintainer's 2FA approval stands between a workflow run and an installer. The other
@@ -7171,6 +7205,11 @@ def test_compose_trusts_edge_check_fails_without_trust_proxy(tmp_path):
     (tmp_path / "polaris_web/docker-compose.prod.yml").write_text(compose)
     (tmp_path / "polaris_web/Caddyfile").write_text("reverse_proxy app:8000\n")
     assert checks.check_prod_compose_trusts_edge(tmp_path)[0].level == "FAIL", "must FAIL when the edge does not rewrite X-Forwarded-For"
+    # 2026-10-07: {client_ip} replaces the header too; appending the client's own value does not.
+    (tmp_path / "polaris_web/Caddyfile").write_text(caddy.replace("{remote_host}", "{client_ip}"))
+    assert checks.check_prod_compose_trusts_edge(tmp_path)[0].level == "OK", "must PASS when the edge rewrites to {client_ip}"
+    (tmp_path / "polaris_web/Caddyfile").write_text(caddy.replace("{remote_host}", "{http.request.header.X-Forwarded-For}, {remote_host}"))
+    assert checks.check_prod_compose_trusts_edge(tmp_path)[0].level == "FAIL", "must FAIL when the edge appends to the client's header"
 
 
 def test_docs_index_coverage_check_fails_on_an_unlisted_document(tmp_path):

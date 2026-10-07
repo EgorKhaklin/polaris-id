@@ -40,6 +40,13 @@
         protocols h1 h2 h3
         # Hide Caddy version from Server header
         metrics
+        # Lab record 017 (OP-26): the load balancer in front of this edge, if any, named by
+        # address range in POLARIS_TRUSTED_PROXIES. Behind it {client_ip} is read from
+        # X-Forwarded-For right to left, past the named hops only (strict), so a client
+        # cannot name its own address. Unset, no proxy is trusted (0.0.0.0/32) and
+        # {client_ip} is the TCP peer.
+        trusted_proxies static {$POLARIS_TRUSTED_PROXIES:0.0.0.0/32}
+        trusted_proxies_strict
     }
 }
 
@@ -65,8 +72,8 @@
 
     # Reverse proxy to the Polaris app (gunicorn :8000 inside the network)
     reverse_proxy {$POLARIS_UPSTREAMS:app:8000} {
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-For {remote_host}
+        header_up X-Real-IP {client_ip}
+        header_up X-Forwarded-For {client_ip}
         header_up X-Forwarded-Proto {scheme}
         header_up X-Forwarded-Host {host}
 

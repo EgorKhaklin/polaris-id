@@ -60,6 +60,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-helm-drill.sh` | The Kubernetes profile boots healthy with policies enforced | `ci.yml` |
 | `polaris-page-drill.sh` | A duress event reaches the pager webhook | `ci.yml` |
 | `polaris-metrics-edge-drill.sh` | The shipped edge rule refuses the duress-carrying metrics surfaces in-network and through an SNAT hop unless the monitoring network is named | `ci.yml` |
+| `polaris-client-ip-drill.sh` | Behind an appending load balancer the app is told the client's own address only when the balancer is named, and no forged X-Forwarded-For gets through | `ci.yml` |
 | `polaris-chaos-drill.sh` | Induced failures against the booted stack under traffic: one colour killed, both stopped until the outage pages, redis and postgres killed, pgbouncer partitioned, every recovery measured against a ceiling | `chaos.yml`, weekly and on demand |
 | `polaris-abuse-drill.sh` | The per-agency quotas refuse writes under real load | `ci.yml` |
 | `polaris-retention-drill.sh` | The archive and purge chain, per retention class, end to end | `ci.yml` |

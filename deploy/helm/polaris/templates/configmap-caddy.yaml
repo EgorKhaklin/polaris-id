@@ -28,6 +28,11 @@ data:
         servers {
             protocols h1 h2 h3
             metrics
+            # Lab record 017 (OP-26): the load balancer in front of the edge, if any, by
+            # address range (edge.trustedProxies); behind it the client address is read from
+            # X-Forwarded-For right to left, past those hops only. Empty: none is trusted.
+            trusted_proxies static {{ .Values.edge.trustedProxies | default "0.0.0.0/32" }}
+            trusted_proxies_strict
         }
     }
 
@@ -49,8 +54,8 @@ data:
         respond @metrics_from_outside 404
 
         reverse_proxy {{ include "polaris.fullname" . }}-app:8000 {
-            header_up X-Real-IP {remote_host}
-            header_up X-Forwarded-For {remote_host}
+            header_up X-Real-IP {client_ip}
+            header_up X-Forwarded-For {client_ip}
             header_up X-Forwarded-Proto {scheme}
             header_up X-Forwarded-Host {host}
             lb_policy round_robin

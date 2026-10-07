@@ -73,6 +73,9 @@ metadata:
     app.kubernetes.io/component: caddy
 spec:
   type: {{ .Values.edge.service.type }}
+  {{- if has .Values.edge.service.type (list "LoadBalancer" "NodePort") }}
+  externalTrafficPolicy: {{ .Values.edge.service.externalTrafficPolicy | default "Local" }}
+  {{- end }}
   selector:
     {{- include "polaris.selector" . | nindent 4 }}
     app.kubernetes.io/component: caddy
