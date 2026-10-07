@@ -127,10 +127,13 @@ Kubernetes liveness probe use this route.
 ### `GET /api/health/ready`
 
 **No authentication required.** The readiness probe: can this instance
-serve traffic now? Runs the same dependency checks as `/api/health` and
-returns the same payload; `503` when a critical dependency is down, so an
-orchestrator stops routing to this instance without restarting it. The
-Kubernetes readiness probe uses this route.
+serve traffic now? It judges what is particular to the instance, its
+custody, its second ML-DSA witness and its local disk, and returns `503`
+when one of those is unhealthy, so the edge or an orchestrator stops routing
+to it without restarting it. The shared database and redis are not part of
+it: they fail for every replica at once, and they are reported by
+`/api/health`. The payload carries `"scope": "instance"`. The TLS edge's
+upstream check and the Kubernetes readiness probe route on this route.
 
 ---
 
