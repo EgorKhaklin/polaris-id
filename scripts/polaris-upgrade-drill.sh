@@ -71,6 +71,13 @@ mig=$(cd "${TREE}" && bash scripts/polaris-migrate.sh --target=docker-stack --dr
 grep -q "no pending migrations" <<< "${mig}" \
     || fail "$(grep -c 'would apply' <<< "${mig}") migration(s) still pending after the upgrade"
 ok "no migration pending"
+# Lab record 017 (gate row OP-14): archiving is on by default, and the deploy turns it on for a cluster
+# that ran without it and takes the first full backup, so the upgraded deployment has a point to restore to.
+[[ "$("${COMPOSE[@]}" exec -T postgres psql -X -t -A -U postgres -d polaris -c 'SHOW archive_mode' < /dev/null \
+      | tr -d '[:space:]')" == on ]] || fail "WAL archiving is not on after the upgrade"
+"${COMPOSE[@]}" exec -T -u postgres postgres pgbackrest --stanza=polaris --output=json info < /dev/null 2> /dev/null \
+    | grep -q '"type": *"full"' || fail "the repository holds no full base backup after the upgrade"
+ok "WAL archiving is on and the repository holds a full base backup"
 # Build this commit's image set the one supported way; where the upgrade already built an image
 # this is a cache hit. A service whose running image differs in content (its layers or its
 # config) was not rebuilt. Content, not the image ID: with Docker's containerd image store two

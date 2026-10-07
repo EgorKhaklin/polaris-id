@@ -61,7 +61,16 @@ restore_archive() {  # the stack's own archive settings, whatever this drill cha
 }
 cleanup() {
     docker rm -f "${PROM}" "${BB}" > /dev/null 2>&1
-    [[ -n "${ARCHIVE_TOUCHED:-}" ]] && { restore_archive; "${COMPOSE[@]}" restart postgres > /dev/null 2>&1; }
+    if [[ -n "${ARCHIVE_TOUCHED:-}" ]]; then
+        restore_archive
+        "${COMPOSE[@]}" restart postgres > /dev/null 2>&1
+        # Hand the next step a stack, not a database still starting: wait until the app answers through
+        # the edge try.sh serves (a sign-in straight after this restart was refused, 2026-10-07).
+        for _ in $(seq 1 90); do
+            [[ "$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health 2>/dev/null)" == 200 ]] && break
+            sleep 1
+        done
+    fi
     rm -rf "${WORK}"
 }
 trap cleanup EXIT
