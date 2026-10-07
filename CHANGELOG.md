@@ -20,9 +20,12 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - An operator bound to one authority can no longer activate a reserve another authority issued (UC-4).
 - The Atlas no longer returns events naming their holders; the access check reads every SQL source.
 - Under real signing, possession routes accept a signature only under a key its authority had registered; a planted signature row vouches for nothing.
+- The application role can no longer insert, update or delete a credential's signatures; `polaris migrate-population` runs as the schema owner.
 
 ### Fixed
 
+- PQC-POSTURE no longer says Falcon signing time depends on the message: measured natively (record 015, step 4), it does not; the signer stays experimental while FIPS 206 is a draft.
+- A population migration counts a credential as migrated only when its target signature has no deprecation date; one already set to lapse is refused with the re-issue instruction instead of the database's error.
 - The rolling-deploy drill, backup and restore read compose's output whole before matching it; under pipefail an early grep -q exit could SIGPIPE compose and fail a check that had passed.
 - The internal-hop key-exchange drill retries a TLS probe that returned nothing and names one that never ran, instead of reporting an empty measurement.
 - The trigger mutation drill credits a mutation only when the tests that failed fail again, so a flaky test can no longer hide an untested refusal.
@@ -40,7 +43,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
-- The FN-DSA family (draft FIPS 206) is verified, optionally: the detached verifier and both SDKs accept Falcon-padded-1024 and refuse Falcon-512; conformance runs its genuine case for a verifier that declares it; Polaris signs nothing under it yet.
+- An experimental FN-DSA signer: Falcon-padded-1024 keys sign only under POLARIS_EXPERIMENTAL_SIGNERS, never in production, two-witnessed (liboqs, then @noble/post-quantum under Node); migration 2026-10-06-001.
+- A population migrates onto the FN-DSA family where its opt-in holds: 2,000 credentials re-signed at 604/s against ML-DSA-87's 319/s, nobody dark (quantum-event drill, POLARIS_QE_TARGET).
+- A lab step puts a checkpoint of the three transparency logs into Bitcoin block 969876 through OpenTimestamps; its verifier reads the block from two sources.
+- The FN-DSA family (draft FIPS 206) is verified, optionally: the detached verifier and both SDKs accept Falcon-padded-1024 and refuse Falcon-512; conformance runs its genuine case for a verifier that declares it.
 - Algorithm migration is tested through arbitrary sequences, and in the lab through seven signature families.
 - polaris-oid4vp asks for a nested claim and its value (`--claim age_equal_or_over.18=true`): one statement of an EUDI PID, not all of them.
 - polaris-oid4vp verifies an issuer `x5c` through the intermediate CAs it carries, link by link in order, as eudi-dev v2.5.0's PID Provider sends.

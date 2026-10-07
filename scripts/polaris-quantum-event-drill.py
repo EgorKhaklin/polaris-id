@@ -58,6 +58,10 @@ sys.path.insert(0, os.path.join(ROOT, "polaris_web"))
 DB = os.environ.get("POLARIS_QE_DB", "polaris_qe_drill")
 POPULATION = int(os.environ.get("POLARIS_QE_POPULATION", "2000"))
 BATCH = int(os.environ.get("POLARIS_QE_BATCH", "250"))
+# The set the population moves onto. ML-DSA-87 by default; Falcon-padded-1024 (the FN-DSA family,
+# an experimental signer) when POLARIS_EXPERIMENTAL_SIGNERS names it, which measures the same
+# window, refusals and cost under the smaller, faster signature (2026-10-06).
+TARGET = os.environ.get("POLARIS_QE_TARGET", "ML-DSA-87")
 # The roadmap's planning target. Stated here so the extrapolation is against a published
 # number rather than one chosen to make the result look good.
 NATIONAL = 350_000_000
@@ -172,10 +176,10 @@ def _migration_key():
     import json
     import tempfile
     import pqc_signing
-    kp = pqc_signing.generate_keypair("ML-DSA-87")
+    kp = pqc_signing.generate_keypair(TARGET)
     fd, path = tempfile.mkstemp(prefix="polaris-qe-key-", suffix=".json")
     with os.fdopen(fd, "w") as fh:
-        json.dump({"algorithm": "ML-DSA-87",
+        json.dump({"algorithm": TARGET,
                    "secret_key_hex": kp["secret_key_hex"],
                    "public_key_hex": kp["public_key_hex"]}, fh)
     os.chmod(path, 0o600)
@@ -219,7 +223,7 @@ def main():
         import migration
 
         seeded = _seed_population(conn, POPULATION)
-        target_id, target_name = migration.resolve_target(conn, "ML-DSA-87")
+        target_id, target_name = migration.resolve_target(conn, TARGET)
         print("  %-62s %-12s %-12s %s" % ("case", "got", "expected", "ok"))
         # Every subject holds an ACTIVE credential, and every tenth a RESERVE spare as well.
         _row("a population is standing under the falling algorithm", seeded,
@@ -298,7 +302,7 @@ def main():
         # A MIGRATION THAT CANNOT SIGN STOPS.
         import custody
         try:
-            custody.get_custody_for_algorithm("ML-DSA-87")
+            custody.get_custody_for_algorithm(TARGET)
             mismatch_refused = None      # no custody configured: nothing to mismatch
         except custody.AlgorithmUnavailableError:
             mismatch_refused = True
@@ -312,7 +316,7 @@ def main():
             os.environ["POLARIS_MIGRATION_SIGNING_KEY_FILE"] = key
             custody.reset()
             try:
-                custody.get_custody_for_algorithm("ML-DSA-87")
+                custody.get_custody_for_algorithm(TARGET)
                 mismatch_refused = False
             except custody.AlgorithmUnavailableError:
                 mismatch_refused = True
