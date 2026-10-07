@@ -15,6 +15,7 @@ fails otherwise.
 | [`HARDENING.md`](HARDENING.md) | The operating system around Polaris: SSH, updates, firewall and Docker, time, daemon, permissions, auditing |
 | [`PILOT.md`](PILOT.md) | Running a pilot and ending one: what you may truthfully tell a participant, why a wind-down needs a second authority to co-sign, and the schema-derived report of what is still in there afterwards |
 | [`OPERATIONS.md`](OPERATIONS.md) | Day 2: backup and restore, the running stack, scaling, monitoring, archive and purge, certificate transparency, incidents, common errors, upgrades, decommissioning |
+| [`VERIFY-RELEASE.md`](VERIFY-RELEASE.md) | Checking that a released image or the chart was built and signed by this repository's release workflow |
 | [`SECRETS.md`](SECRETS.md) | Every secret the stack uses, how each is generated, read and rotated, and the sealed store |
 | [`KEY-CEREMONY.md`](KEY-CEREMONY.md) | The issuer signing key: custody drivers (file, PKCS#11, AWS KMS), the witnessed ceremony, rotation with trust anchors |
 | [`WEBAUTHN-ROLLOUT.md`](WEBAUTHN-ROLLOUT.md) | Rolling WebAuthn MFA out to operators in phases, the attestation policy, enrollment and recovery |

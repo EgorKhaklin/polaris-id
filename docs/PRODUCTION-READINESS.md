@@ -119,7 +119,7 @@ Whether an operator who is not the author can install, run, upgrade and recover 
 
 | ID | Criterion | Status | Evidence |
 |---|---|---|---|
-| OP-1 | Installed from published, signed release artifacts, with no source build | FAIL | No images or chart are published yet. |
+| OP-1 | Installed from published, signed release artifacts, with no source build | FAIL | The signed release workflow exists (`check:release_images_signed`); no image or chart is published yet. |
 | OP-2 | A fresh host reaches HTTPS and a verified credential in 15 minutes or less, with five operator inputs or fewer | PARTIAL | `drill:lab/strategy/006/try.sh` reaches a verified credential, building from source on localhost. |
 | OP-3 | Every setting is validated at boot, and a wrong one stops it by name | PARTIAL | Production refuses a default secret key and weak database TLS; an unreadable secret file still falls back. |
 | OP-4 | Readiness reflects what this instance can serve, and a shared failure does not empty the pool | FAIL | Compose, the edge and Helm route on liveness. |

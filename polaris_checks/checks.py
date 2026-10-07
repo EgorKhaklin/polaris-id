@@ -5880,6 +5880,158 @@ def check_release_provenance(root: pathlib.Path) -> list[Finding]:
                "documents the verify command")
 
 
+# 2026-10-07 (lab record 017, phase 3): the server images and the chart as a signed product.
+# release-images.yml is the one path by which an image or the chart reaches a registry, and this
+# holds what makes its output worth pulling. It runs only when dispatched by hand; a publish needs
+# PUBLISH, a version tag, and the maintainer's approval at the `ghcr` environment, and no job that
+# can write to the registry or mint a signing identity runs before that approval (a job that also
+# runs for a dry run may push only when the approval succeeded). Each image index and the chart
+# are signed keyless, so there is no key to leak; provenance is attached to the index and an
+# NTIA-checked SBOM to each architecture's image, at the registry; the chart names its images by
+# the signed digests; the token is read-only at the top; every action is pinned by commit; the
+# SBOM generator is the Trivy sbom.yml pins; and the operator's commands bind the signature to
+# this workflow at the release tag.
+def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
+    name = "release_images"
+    rel = ".github/workflows/release-images.yml"
+    wf = _read(root, rel)
+    if not wf:
+        return _fail(name, f"{rel} is missing; the server images and the chart have no signed "
+                     "release path")
+    code = "\n".join(l for l in wf.splitlines() if not l.lstrip().startswith("#")) + "\n"
+    on = re.search(r"^on:[ \t]*\n((?:[ \t]+[^\n]*\n|[ \t]*\n)*)", code, re.M)
+    triggers = set(re.findall(r"^  ([a-z_]+):", on.group(1), re.M)) if on else set()
+    if triggers != {"workflow_dispatch"}:
+        return _fail(name, f"{rel} must run only when dispatched by hand (workflow_dispatch), "
+                     f"found {sorted(triggers) or 'no trigger'}; a publish is the maintainer's call")
+    top = re.search(r"^permissions:[ \t]*\n((?:[ \t]+[^\n]*\n)*)", code, re.M)
+    if not top or "contents: read" not in top.group(1) or "write" in top.group(1):
+        return _fail(name, f"{rel} must set a read-only token at the top (permissions: contents: "
+                     "read) and grant writes per job")
+    unpinned = [u for u in re.findall(r"^\s*(?:-\s*)?uses:\s*(\S+)", code, re.M)
+                if not re.search(r"@[0-9a-f]{40}$", u)]
+    if unpinned:
+        return _fail(name, f"{rel} uses action(s) not pinned to a commit: "
+                     + ", ".join(unpinned[:3]))
+    jm = re.search(r"^jobs:[ \t]*\n", code, re.M)
+    body = code[jm.end():] if jm else ""
+    heads = list(re.finditer(r"^  ([A-Za-z0-9_-]+):[ \t]*$", body, re.M))
+    jobs = {m.group(1): body[m.end(): heads[i + 1].start() if i + 1 < len(heads) else len(body)]
+            for i, m in enumerate(heads)}
+
+    def needs(job: str) -> set[str]:
+        m = re.search(r"^    needs:\s*(\[[^\]\n]*\]|[A-Za-z0-9_-]+)\s*$", job, re.M)
+        return set(re.findall(r"[A-Za-z0-9_-]+", m.group(1))) if m else set()
+
+    def cond(job: str) -> str:
+        m = re.search(r"^    if:\s*(.+?)\s*$", job, re.M)
+        return m.group(1) if m else ""
+
+    publish_only = re.compile(r"^(?:\$\{\{\s*)?inputs\.confirm\s*==\s*'PUBLISH'(?:\s*\}\})?$")
+    gates = [n for n, j in jobs.items()
+             if re.search(r"^    environment:\s*ghcr\s*$", j, re.M) and publish_only.match(cond(j))]
+    if len(gates) != 1:
+        return _fail(name, f"{rel} must have one approval job, in the `ghcr` environment and run "
+                     "only for `inputs.confirm == 'PUBLISH'`, that every registry write waits on")
+    gate = gates[0]
+    if not any(re.search(r'"\$REF_TYPE"\s*=\s*tag', jobs.get(n, "")) for n in needs(jobs[gate])):
+        return _fail(name, f"{rel}: the approval job must wait on a job that refuses a publish "
+                     "from anything but a version tag, so the signature names a release")
+    for job_name, job in jobs.items():
+        perms = re.search(r"^    permissions:[ \t]*\n((?:      [^\n]*\n)*)", job, re.M)
+        writes = set(re.findall(r"^      ([a-z-]+):\s*write", perms.group(1), re.M)) if perms else set()
+        signs = "cosign sign" in job or "actions/attest-" in job
+        if not (writes or signs):
+            continue
+        if gate not in needs(job):
+            return _fail(name, f"{rel}: job `{job_name}` can write to the registry but does not "
+                         f"wait on the approval job `{gate}`")
+        c = cond(job)
+        if re.search(r"\b(?:always|cancelled|failure)\(\)", c):
+            # It runs for a dry run too, so it may hold no signing identity, and it may push only
+            # once the approval has succeeded.
+            if "id-token" in writes or signs:
+                return _fail(name, f"{rel}: job `{job_name}` mints a signing identity but its "
+                             "`if:` overrides the approval's result")
+            push = re.search(r"^    env:[ \t]*\n(?:      [^\n]*\n)*?      PUSH:\s*([^\n]+)\n", job, re.M)
+            if not (f"needs.{gate}.result == 'success'" in c and push
+                    and "inputs.confirm == 'PUBLISH'" in push.group(1)
+                    and f"needs.{gate}.result == 'success'" in push.group(1)
+                    and re.search(r"^\s*outputs:\s*\$\{\{\s*env\.PUSH == 'true' &&", job, re.M)
+                    and all(re.search(r"^\s*if:\s*env\.PUSH == 'true'\s*$", step, re.M)
+                            for step in re.split(r"\n      - ", job) if "docker/login-action@" in step)):
+                return _fail(name, f"{rel}: job `{job_name}` runs for a dry run too, so it must "
+                             f"push only when PUSH requires PUBLISH and `{gate}` succeeded, with "
+                             "its registry login and output conditioned on PUSH")
+        elif not publish_only.match(c):
+            return _fail(name, f"{rel}: job `{job_name}` writes to the registry; its `if:` must be "
+                         "`inputs.confirm == 'PUBLISH'`, so it runs only after the approval succeeds")
+        for line in re.findall(r"^[^\n]*\bcosign sign\b[^\n]*$", job, re.M):
+            if "--key" in line:
+                return _fail(name, f"{rel}: job `{job_name}` signs with a key; the release is "
+                             "signed keyless, so no key exists to leak")
+    index = [j for j in jobs.values() if "imagetools create" in j]
+    chart = [j for j in jobs.values() if "helm push" in j]
+    if not (index and chart):
+        return _fail(name, f"{rel} must join and sign each image index and push and sign the "
+                     "chart; one of the two jobs is missing")
+    i = index[0]
+    if not re.search(r"cosign sign --yes \"\$REF\"", i):
+        return _fail(name, f"{rel}: the publish job does not sign the image index it creates")
+    steps = {}
+    for m in re.finditer(r"uses:\s*(actions/attest-[a-z-]+)@[^\n]*\n((?:\s{8,}[^\n]*\n)*)", i):
+        steps.setdefault(m.group(1), []).append(m.group(2))
+    prov = steps.get("actions/attest-build-provenance", [])
+    sboms = steps.get("actions/attest-sbom", [])
+    if not (prov and all(re.search(r"push-to-registry:\s*true", w) for w in prov + sboms)
+            and any("outputs.digest" in w for w in prov)):
+        return _fail(name, f"{rel}: the publish job must attach the build provenance to the index "
+                     "at the registry (push-to-registry: true)")
+    if not ({"amd64", "arm64"} <= {a for w in sboms
+                                   for a in re.findall(r"subject-digest:[^\n]*\b(amd64|arm64)\b", w)}):
+        return _fail(name, f"{rel}: the publish job must attach an SBOM to each architecture's "
+                     "image (amd64 and arm64), each describing the image it is attached to")
+    first_sbom = i.find("actions/attest-sbom@")
+    if not all(0 <= i.find(s) < first_sbom for s in (
+            "--require-hashes -r .github/sbom/requirements.txt", "scripts/polaris-sbom-enrich.py",
+            "ntia-checker", ".isConformant == true")):
+        return _fail(name, f"{rel}: the registry SBOMs must be brought to the NTIA minimum "
+                     "elements and judged by the SPDX project's checker before they are "
+                     "attested, as sbom.yml's are")
+    c = chart[0]
+    pin = c.find("scripts/polaris-pin-chart-images.py")
+    package = c.find("helm package")
+    if pin < 0 or package < pin or not (root / "scripts/polaris-pin-chart-images.py").is_file():
+        return _fail(name, f"{rel}: the chart job must pin the chart's images to the signed "
+                     "digests (scripts/polaris-pin-chart-images.py) before it packages the chart")
+    if "cosign sign --yes" not in c:
+        return _fail(name, f"{rel}: the chart job does not sign the chart it pushes")
+    trivy = set(re.findall(r"aquasec/trivy:([\w.-]+)", wf))
+    sbom_trivy = set(re.findall(r"aquasec/trivy:([\w.-]+)", _read(root, ".github/workflows/sbom.yml")))
+    if not trivy or trivy != sbom_trivy:
+        return _fail(name, f"{rel} generates the registry SBOMs with Trivy {sorted(trivy)}, "
+                     f"sbom.yml with {sorted(sbom_trivy)}; the two must be one version")
+    doc = _read(root, "docs/operator/VERIFY-RELEASE.md")
+    if not (re.search(r"^cosign verify\b", doc, re.M)
+            and re.search(r"--certificate-identity\s+\"?https://github\.com/EgorKhaklin/polaris-id/"
+                          r"\.github/workflows/release-images\.yml@refs/tags/", doc)
+            and "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in doc
+            and re.search(r"--signer-workflow\s+EgorKhaklin/polaris-id/\.github/workflows/"
+                          r"release-images\.yml", doc)
+            and "--source-ref" in doc):
+        return _fail(name, "docs/operator/VERIFY-RELEASE.md must bind cosign verify to "
+                     "release-images.yml at the release tag and GitHub's OIDC issuer, and "
+                     "gh attestation verify to the same workflow and tag; a signature checked "
+                     "against any identity is decoration")
+    return _ok(name,
+               "release-images.yml runs only by hand; a publish needs PUBLISH, a version tag and "
+               "the maintainer's approval at the ghcr environment before any job can write to the "
+               "registry; each image index and the chart are signed keyless, provenance and "
+               "NTIA-checked per-architecture SBOMs are attached at the registry, the chart is "
+               "pinned to the signed digests, every action is pinned by commit, and "
+               "VERIFY-RELEASE.md binds verification to the workflow at the tag")
+
+
 # 2026-09-16 — the npm job STAGES; it must not publish. `npm stage publish` uploads the
 # tarball and stops, and a maintainer with 2FA approves it before anyone can install it, so
 # a workflow that is compromised or merely run by mistake cannot put code in front of an
@@ -24740,6 +24892,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_workflows_reach_the_app_role,
     check_sbom_trivy_matches_scan,
     check_release_provenance,
+    check_release_images_signed,
     check_npm_publish_is_staged,
     check_admin_mfa_deadline,
     check_duress_timing_ballast,
