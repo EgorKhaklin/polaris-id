@@ -11073,8 +11073,14 @@ class ConcurrencyTests(PolarisTestCase):
         is deleting and wait on them, which the short lock_timeout turns into a failure; without
         the fold's, the same. The control folds every change once nobody holds the lock."""
         with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("UPDATE Individual SET jurisdiction = 'US-CA' "
-                        "WHERE individual_id = (SELECT min(individual_id) FROM Individual)")
+            # A delta is written only for a person with an EnrollmentCurrent row, and only on a real
+            # change of jurisdiction. The control picked min(Individual) and set it to US-CA, so it
+            # depended on that person being enrolled and not already in US-CA: in the real-signer
+            # suite's whole-module run (CI, 2026-10-05, 986 of 987 passed) the update wrote no
+            # delta. Pick an enrolled person and flip the value, so the update always changes one.
+            cur.execute("UPDATE Individual SET jurisdiction = CASE WHEN jurisdiction = 'US-CA' "
+                        "THEN 'US-NY' ELSE 'US-CA' END "
+                        "WHERE individual_id = (SELECT min(individual_id) FROM EnrollmentCurrent)")
             cur.execute("SELECT count(*) AS n FROM EnrollmentCountDelta")
             self.assertGreater(cur.fetchone()['n'], 0, 'control: there are changes to fold')
             conn.commit()
