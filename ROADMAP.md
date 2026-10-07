@@ -9,7 +9,7 @@ have done with it is [the scoreboard](lab/EXTERNAL-NOUNS.md).
 
 **Have, working, CI-proven:**
 
-- A 57-table constraint-enforced schema (64 in a migrated deployment) with append-only audit and 344 invariant checks (v1.0.0-rc.70), each with a detection test.
+- A 57-table constraint-enforced schema (64 in a migrated deployment) with append-only audit and 346 invariant checks (v1.0.0-rc.70), each with a detection test.
 - A 130-route application with WebAuthn operator MFA, per-agency quotas and the Atlas; an operator CLI.
 - ML-DSA-65 signing checked by two implementations, behind a custody interface (file, PKCS#11, KMS).
 - A Plonky2 ZK membership proof with an independent Python second witness.

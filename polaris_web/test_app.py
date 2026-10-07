@@ -8954,6 +8954,144 @@ class F05_ProductionSecretGuardTests(unittest.TestCase):
         self.assertIn('POLARIS_DB_SSLMODE', proc.stderr)
 
 
+    def test_unreadable_secret_file_rejected_in_production(self):
+        """Lab record 017: a secret file that is set but unreadable stops a production boot by
+        name, instead of falling back to an environment variable or a default."""
+        proc = self._prod_import({'POLARIS_DB_SSLMODE': 'require',
+                                  'POLARIS_SECRET_KEY_FILE': '/nonexistent/polaris_secret_key'})
+        self.assertEqual(proc.returncode, 2, f"stderr: {proc.stderr[:400]}")
+        # The contract's own report, not the old fallback's warning, which names the file too.
+        self.assertIn('setting(s) are wrong', proc.stderr)
+        self.assertRegex(proc.stderr, r"- POLARIS_SECRET_KEY_FILE: .* is unreadable")
+
+    def test_dev_db_password_rejected_in_production(self):
+        """Lab record 017: the development database password stops a production boot."""
+        proc = self._prod_import({'POLARIS_DB_SSLMODE': 'require',
+                                  'POLARIS_DB_PASSWORD': 'polaris_dev_password'})
+        self.assertEqual(proc.returncode, 2, f"stderr: {proc.stderr[:400]}")
+        self.assertIn('setting(s) are wrong', proc.stderr)
+        self.assertIn("- POLARIS_DB_PASSWORD: 'polaris_dev_password'", proc.stderr)
+
+    def test_complete_production_settings_pass_the_contract(self):
+        """The contract is not over-eager: a complete production configuration draws no
+        configuration report (the process may still stop later, on PQC or the database)."""
+        proc = self._prod_import({'POLARIS_DB_SSLMODE': 'require',
+                                  'POLARIS_DB_PASSWORD': 'a-real-password',
+                                  'POLARIS_USE_REAL_PQC': '1',
+                                  'POLARIS_DOMAIN': 'polaris.example.org'})
+        self.assertNotIn('setting(s) are wrong', proc.stderr)
+
+
+class ConfigSchemaTests(unittest.TestCase):
+    """Lab record 017, phase 1: config_schema declares every setting and judges an environment."""
+
+    def setUp(self):
+        import config_schema
+        self.cs = config_schema
+        self.tmp = __import__('tempfile').mkdtemp()
+        self.key = os.path.join(self.tmp, 'k'); open(self.key, 'w').write('x' * 64)
+        self.pw = os.path.join(self.tmp, 'p'); open(self.pw, 'w').write('real-password')
+        self.good = {'POLARIS_ENV': 'production', 'POLARIS_SECRET_KEY_FILE': self.key,
+                     'POLARIS_DB_PASSWORD_FILE': self.pw, 'POLARIS_DB_SSLMODE': 'require',
+                     'POLARIS_USE_REAL_PQC': '1', 'POLARIS_DOMAIN': 'polaris.example.org'}
+
+    def _p(self, **changes):
+        env = dict(self.good)
+        for k, v in changes.items():
+            if v is None:
+                env.pop(k, None)
+            else:
+                env[k] = v
+        return self.cs.problems(env, production=True)
+
+    def test_a_complete_production_environment_has_no_problems(self):
+        self.assertEqual(self._p(), [])
+
+    def test_each_production_rule_names_its_setting(self):
+        for change, name in ((dict(POLARIS_SECRET_KEY_FILE='/nope'), 'POLARIS_SECRET_KEY_FILE'),
+                             (dict(POLARIS_DB_PASSWORD_FILE=None, POLARIS_DB_PASSWORD='polaris_dev_password'),
+                              'POLARIS_DB_PASSWORD'),
+                             (dict(POLARIS_DB_SSLMODE='prefer'), 'POLARIS_DB_SSLMODE'),
+                             (dict(POLARIS_DB_SSLMODE='verify-full'), 'POLARIS_DB_SSLROOTCERT'),
+                             (dict(POLARIS_USE_REAL_PQC=None), 'POLARIS_USE_REAL_PQC'),
+                             (dict(POLARIS_DOMAIN=None), 'POLARIS_SECURITY_CONTACT'),
+                             (dict(POLARIS_SECRET_KEY_FILE=None), 'POLARIS_SECRET_KEY'),
+                             (dict(POLARIS_DURESS_SYNC='1'), 'POLARIS_DURESS_SYNC'),
+                             (dict(POLARIS_CUSTODY_PKCS11_PIN='1234'), 'POLARIS_CUSTODY_PKCS11_PIN'),
+                             (dict(POLARIS_WORKERS='four'), 'POLARIS_WORKERS'),
+                             (dict(POLARIS_TRUST_PROXY='maybe'), 'POLARIS_TRUST_PROXY'),
+                             (dict(POLARIS_CUSTODY_DRIVER='hsm'), 'POLARIS_CUSTODY_DRIVER')):
+            found = self._p(**change)
+            self.assertTrue(any(p.startswith(name + ':') for p in found), (change, found))
+
+    def test_a_secret_file_is_judged_by_what_it_holds(self):
+        open(self.pw, 'w').write('polaris_dev_password')
+        self.assertTrue(any(p.startswith('POLARIS_DB_PASSWORD:') for p in self._p()))
+
+    def test_outside_production_only_malformed_values_count(self):
+        self.assertEqual(self.cs.problems({'POLARIS_DB_SSLMODE': 'prefer'}, production=False), [])
+        self.assertEqual(len(self.cs.problems({'POLARIS_WORKERS': 'x'}, production=False)), 1)
+
+    def test_security_contact_defaults_to_the_domain(self):
+        self.assertEqual(self.cs.security_contact({'POLARIS_DOMAIN': 'a.org'}), 'mailto:security@a.org')
+        self.assertEqual(self.cs.security_contact({'POLARIS_SECURITY_CONTACT': 'mailto:x@y.org',
+                                                   'POLARIS_DOMAIN': 'a.org'}), 'mailto:x@y.org')
+        self.assertEqual(self.cs.security_contact({}), 'mailto:security@example.invalid')
+
+    def test_role_families_resolve(self):
+        self.assertEqual(self.cs.lookup('POLARIS_SESSION_MAX_ADMIN').name, 'POLARIS_SESSION_MAX_<ROLE>')
+        self.assertIsNone(self.cs.lookup('POLARIS_NO_SUCH_SETTING'))
+
+    def test_declarations_are_well_formed(self):
+        names = [s.name for s in self.cs.SETTINGS]
+        self.assertEqual(len(names), len(set(names)))
+        groups = {g for g, _ in self.cs._GROUP_TITLES}
+        for s in self.cs.SETTINGS:
+            self.assertIn(s.group, groups, s.name)
+            if s.kind == 'enum' and s.default is not None:
+                self.assertIn(s.default, s.choices, s.name)
+
+    def test_empty_numbers_mean_unset(self):
+        """Compose passes optional numbers as "${X:-}"; the application reads empty as its default."""
+        self.assertEqual(self._p(POLARIS_SESSION_MAX_ADMIN='', POLARIS_DB_STATEMENT_TIMEOUT_MS=''), [])
+
+    def test_the_shipped_production_compose_passes_the_contract(self):
+        """The app service's environment in docker-compose.prod.yml, with every ${X:-default}
+        resolved to its default and the operator's required values supplied, draws no problem.
+        Secret files are judged by stand-ins, since the compose mounts them at boot."""
+        import yaml
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'docker-compose.prod.yml')
+        app_env = yaml.safe_load(open(path))['services']['app']['environment']
+        operator = {'POLARIS_DOMAIN': 'polaris.example.org'}
+
+        def resolve(value):
+            value = str(value)
+            for _ in range(3):
+                value = re.sub(r'\$\{([A-Z0-9_]+):-([^${}]*)\}',
+                               lambda m: operator.get(m.group(1), m.group(2)), value)
+                value = re.sub(r'\$\{([A-Z0-9_]+)(?::\?[^}]*)?\}',
+                               lambda m: operator.get(m.group(1), ''), value)
+            return value
+        env = {k: resolve(v) for k, v in app_env.items()}
+        for k, v in list(env.items()):
+            if k.endswith('_FILE') and v.startswith('/run/secrets/'):
+                env[k] = self.key  # the mount, judged by a readable stand-in
+        if env.get('POLARIS_DB_SSLROOTCERT'):
+            env['POLARIS_DB_SSLROOTCERT'] = self.key
+        found = self.cs.problems(env, production=True)
+        self.assertEqual(found, [], found)
+
+    def test_the_command_refuses_a_bad_env_file(self):
+        import subprocess
+        env_file = os.path.join(self.tmp, 'env')
+        open(env_file, 'w').write('POLARIS_ENV=production\nPOLARIS_DB_SSLMODE=prefer\n')
+        proc = subprocess.run([sys.executable, 'config_schema.py', 'check', '--env-file', env_file],
+                              cwd=os.path.dirname(os.path.abspath(__file__)),
+                              capture_output=True, text=True, timeout=30,
+                              env={k: v for k, v in os.environ.items() if not k.startswith('POLARIS_')})
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn('POLARIS_DB_SSLMODE', proc.stderr)
+
 class F06_CookieHardeningTests(PolarisTestCase):
     """F-07: Cookie attributes Secure / HttpOnly / SameSite. CWE-614, CWE-1004."""
 
