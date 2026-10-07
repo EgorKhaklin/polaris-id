@@ -596,9 +596,16 @@ COMPOSE="docker compose -f polaris_web/docker-compose.prod.yml"
 $COMPOSE exec -u postgres postgres pgbackrest --stanza=polaris stanza-create
 $COMPOSE exec -u postgres postgres pgbackrest --stanza=polaris check
 # schedule a base backup (daily is typical); the repo keeps two full backups
-$COMPOSE exec -u postgres postgres pgbackrest --stanza=polaris --type=full backup
+$COMPOSE exec -u postgres postgres pgbackrest --stanza=polaris --type=full backup \
+  && $COMPOSE exec -T postgres psql -U postgres -d polaris -v ON_ERROR_STOP=1 \
+       -c "INSERT INTO BackupEvent (kind, location) VALUES ('pgbackrest', 'stanza polaris, full')"
 $COMPOSE exec -u postgres postgres pgbackrest --stanza=polaris info
 ```
+
+The `INSERT` records the backup in `BackupEvent`, the database's record of completed backups
+(lab record 017, gate row OP-15): `/metrics` reports the newest one's age and
+PolarisBackupStale pages when neither a dump nor a pgBackRest backup has completed for 26
+hours. `polaris-backup.sh` records its dumps itself.
 
 Run `pgbackrest --stanza=polaris check` daily; a failing check means WAL is
 piling up on the primary and the recovery point is drifting (SEV-2).

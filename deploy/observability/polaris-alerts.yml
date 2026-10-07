@@ -238,3 +238,31 @@ groups:
         annotations:
           summary: "The edge does not answer its own domain"
           description: "The blackbox exporter's request to the edge, under the deployment's domain, has failed for 5 minutes; the certificate's expiry cannot be read while it fails."
+
+      # SEV-2: no backup has completed for 26 hours: neither a pg_dump tarball (polaris-backup.sh,
+      # daily by timer on a host install) nor a pgBackRest backup, by the database's own record
+      # (BackupEvent, written by the scripts after each backup succeeded). A deployment that has
+      # never completed one fires too: it has nothing to restore.
+      - alert: PolarisBackupStale
+        expr: |
+          time() - max by (job) (polaris_backup_last_success_timestamp_seconds{kind=~"dump|pgbackrest"}) > 26 * 3600
+        for: 30m
+        labels:
+          severity: sev2
+        annotations:
+          summary: "No backup has completed for 26 hours"
+          description: "Neither a pg_dump tarball nor a pgBackRest backup has been recorded as completed for 26 hours (BackupEvent). A restore now would lose everything since the last one."
+
+      # SEV-3: dumps are being taken but the newest has not been extracted and checked against its
+      # manifest for 8 days (polaris-backup.sh --verify-latest, weekly by timer on a host install).
+      # A deployment that takes no dumps never fires.
+      - alert: PolarisBackupUnverified
+        expr: |
+          (time() - max by (job) (polaris_backup_last_success_timestamp_seconds{kind="dump-verified"}) > 8 * 86400)
+          and on (job) max by (job) (polaris_backup_last_success_timestamp_seconds{kind="dump"}) > 0
+        for: 1h
+        labels:
+          severity: sev3
+        annotations:
+          summary: "No dump has been verified for 8 days"
+          description: "Dumps are being taken, but none has been extracted and checked against its manifest for 8 days (polaris-backup.sh --verify-latest)."

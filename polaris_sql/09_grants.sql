@@ -202,6 +202,11 @@ REVOKE INSERT ON CredentialCopy FROM polaris_app;
 -- could publish an anchor no one verified beside the heads.
 REVOKE INSERT ON ChainAnchor FROM polaris_app;
 
+-- Lab record 017 (2026-10-07). A backup is recorded by the backup scripts, as the schema owner,
+-- after it completed. The application reads the newest per kind for /metrics; with INSERT it could
+-- record a backup that never ran and silence PolarisBackupStale.
+REVOKE INSERT ON BackupEvent FROM polaris_app;
+
 -- 2026-09-25. The credential tables. A credential, its permissions, a revocation-list entry, a
 -- device binding and a recovery request are each created only by a use-case procedure, all
 -- SECURITY DEFINER: uc1_issue_and_activate and uc_bulk_issue (issuance: two-witness signing, the

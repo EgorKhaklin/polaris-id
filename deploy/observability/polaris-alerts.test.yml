@@ -301,3 +301,63 @@ tests:
             exp_annotations:
               summary: "The edge does not answer its own domain"
               description: "The blackbox exporter's request to the edge, under the deployment's domain, has failed for 5 minutes; the certificate's expiry cannot be read while it fails."
+
+  # Lab record 017 (gate row OP-15): backups. Times are seconds from the test's start. Job polaris
+  # took its last dump at 1h and nothing since: stale once 26 hours have passed (27h), firing at the
+  # evaluation 30 minutes after it is first seen. Job fresh has a pgBackRest backup at 25h, newer
+  # than its old dump: silent. Job never has none at all: firing too.
+  - interval: 5m
+    input_series:
+      - series: 'polaris_backup_last_success_timestamp_seconds{kind="dump",job="polaris"}'
+        values: '3600x336'
+      - series: 'polaris_backup_last_success_timestamp_seconds{kind="pgbackrest",job="polaris"}'
+        values: '0x336'
+      - series: 'polaris_backup_last_success_timestamp_seconds{kind="dump",job="fresh"}'
+        values: '3600x336'
+      - series: 'polaris_backup_last_success_timestamp_seconds{kind="pgbackrest",job="fresh"}'
+        values: '90000x336'
+      - series: 'polaris_backup_last_success_timestamp_seconds{kind="dump",job="never"}'
+        values: '0x336'
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: PolarisBackupStale
+        exp_alerts:
+          - exp_labels: {severity: sev2, job: never}
+            exp_annotations:
+              summary: "No backup has completed for 26 hours"
+              description: "Neither a pg_dump tarball nor a pgBackRest backup has been recorded as completed for 26 hours (BackupEvent). A restore now would lose everything since the last one."
+      - eval_time: 27h40m
+        alertname: PolarisBackupStale
+        exp_alerts:
+          - exp_labels: {severity: sev2, job: polaris}
+            exp_annotations:
+              summary: "No backup has completed for 26 hours"
+              description: "Neither a pg_dump tarball nor a pgBackRest backup has been recorded as completed for 26 hours (BackupEvent). A restore now would lose everything since the last one."
+          - exp_labels: {severity: sev2, job: never}
+            exp_annotations:
+              summary: "No backup has completed for 26 hours"
+              description: "Neither a pg_dump tarball nor a pgBackRest backup has been recorded as completed for 26 hours (BackupEvent). A restore now would lose everything since the last one."
+
+  # Verification: job polaris takes dumps and verified one at 1h, never again: unverified once 8
+  # days have passed, firing an hour after it is first seen. Job dumpless takes no dumps: never.
+  - interval: 5m
+    input_series:
+      - series: 'polaris_backup_last_success_timestamp_seconds{kind="dump",job="polaris"}'
+        values: '3600+300x2592'
+      - series: 'polaris_backup_last_success_timestamp_seconds{kind="dump-verified",job="polaris"}'
+        values: '3600x2592'
+      - series: 'polaris_backup_last_success_timestamp_seconds{kind="dump",job="dumpless"}'
+        values: '0x2592'
+      - series: 'polaris_backup_last_success_timestamp_seconds{kind="dump-verified",job="dumpless"}'
+        values: '0x2592'
+    alert_rule_test:
+      - eval_time: 193h
+        alertname: PolarisBackupUnverified
+        exp_alerts: []
+      - eval_time: 194h10m
+        alertname: PolarisBackupUnverified
+        exp_alerts:
+          - exp_labels: {severity: sev3, job: polaris}
+            exp_annotations:
+              summary: "No dump has been verified for 8 days"
+              description: "Dumps are being taken, but none has been extracted and checked against its manifest for 8 days (polaris-backup.sh --verify-latest)."

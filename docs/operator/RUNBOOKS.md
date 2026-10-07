@@ -43,8 +43,10 @@ edit either file.
 14. [PolarisDiskFilling](#polarisdiskfilling)
 15. [PolarisCertificateExpiring](#polariscertificateexpiring)
 16. [PolarisEdgeProbeFailing](#polarisedgeprobefailing)
-17. [Paging: wiring the receiver](#paging-wiring-the-receiver)
-18. [Cross-references](#cross-references)
+17. [PolarisBackupStale](#polarisbackupstale)
+18. [PolarisBackupUnverified](#polarisbackupunverified)
+19. [Paging: wiring the receiver](#paging-wiring-the-receiver)
+20. [Cross-references](#cross-references)
 
 ---
 
@@ -609,6 +611,52 @@ route to the app.
 **Remediation.** Restart or reload the edge once the cause is fixed (a
 Caddyfile change reloads live through the admin socket). The alert clears 5
 minutes after the probe succeeds.
+
+---
+
+## PolarisBackupStale
+
+**Severity:** SEV-2 · **Expression:** `time() - max by (job) (polaris_backup_last_success_timestamp_seconds{kind=~"dump|pgbackrest"}) > 26 * 3600` · **For:** 30m
+
+Neither a pg_dump tarball nor a pgBackRest backup has been recorded as
+completed for 26 hours (lab record 017, gate row OP-15). The record is
+`BackupEvent`, which `polaris-backup.sh` writes after each dump that holds a
+database (and which the pgBackRest command in [DR.md](DR.md) section 5 writes
+after a pgBackRest backup). A restore now would lose everything since the last
+backup. A deployment that has never recorded one fires too.
+
+**Diagnosis.**
+1. On a host install: `systemctl status polaris-backup.timer polaris-backup.service`
+   and `journalctl -u polaris-backup.service -n 50`. The script says when a
+   backup completed but could not be recorded, and when a tarball held no dump.
+2. `ls -lt /var/backups/polaris | head` for the newest tarball.
+3. `SELECT kind, max(completed_at) FROM BackupEvent GROUP BY kind;` on the database.
+
+**Remediation.** Run `./scripts/polaris-backup.sh --dest /var/backups/polaris`
+by hand and read its output; fix what stopped the timer (the stack down at
+03:00, a full destination disk, an unreadable `POLARIS_BACKUP_KEY_FILE`). The
+alert clears 30 minutes after a backup is recorded.
+
+---
+
+## PolarisBackupUnverified
+
+**Severity:** SEV-3 · **Expression:** `(time() - max by (job) (polaris_backup_last_success_timestamp_seconds{kind="dump-verified"}) > 8 * 86400) and on (job) max by (job) (polaris_backup_last_success_timestamp_seconds{kind="dump"}) > 0` · **For:** 1h
+
+Dumps are being taken, but none has been extracted and checked against its
+manifest for 8 days (lab record 017). `polaris-backup.sh --verify-latest`,
+weekly by timer on a host install, records each verified dump. An unverified
+backup is a backup nobody knows will restore. A deployment that takes no dumps
+never fires.
+
+**Diagnosis.** `systemctl status polaris-backup-verify.timer` and
+`journalctl -u polaris-backup-verify.service -n 50`: a verification that ran
+and failed names the file whose hash did not match.
+
+**Remediation.** Run `./scripts/polaris-backup.sh --dest /var/backups/polaris --verify-latest`.
+A hash mismatch means that tarball is damaged: take a fresh backup, verify it,
+and find what corrupts the destination. The alert clears an hour after a
+verification is recorded.
 
 ---
 

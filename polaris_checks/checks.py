@@ -589,7 +589,7 @@ _AOR_TABLES = (
     "RefereeVouching", "AgencyEvent", "AppUserEvent", "RelyingPartyEvent",
     "AuthorityKeyEvent", "HolderKeyEvent", "ExchangeReceiptLog", "TimestampLog",
     "AuthCodeConsumed", "ExchangeNonce", "AgencyQuota", "IssuerDiscretionPolicy",
-    "RetentionPolicy", "CredentialCopy", "ChainAnchor",
+    "RetentionPolicy", "CredentialCopy", "ChainAnchor", "BackupEvent",
 )
 
 

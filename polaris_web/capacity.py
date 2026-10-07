@@ -297,6 +297,7 @@ BOUNDED = {
     "BlockchainAnchor": "one anchor per anchoring interval",
     "AnchorBatch": "one batch per anchoring interval",
     "ChainAnchor": "one row per checkpoint committed to a public chain, at the operator's cadence",
+    "BackupEvent": "one row per backup and per verified dump, daily or at the operator's cadence",
     "IssuerDiscretionPolicy": "one row per policy an authority sets",
     "AgencyQuota": "one row per authority quota",
     "AgencyTrustAttestation": "one row per trust edge between authorities",

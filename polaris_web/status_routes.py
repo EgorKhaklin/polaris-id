@@ -515,6 +515,7 @@ def metrics():
       - polaris_db_archive_last_timestamp_seconds{outcome}: WAL archiving's last success and failure
       - polaris_db_replica_lag_seconds, polaris_db_replica_lag_limit_seconds: a configured replica
       - polaris_state_filesystem_bytes{kind}: the size and free space of the state directory's filesystem
+      - polaris_backup_last_success_timestamp_seconds{kind}: the newest backup on record per kind
 
     ACCESS: unauthenticated, and carrying the duress signal
     (`polaris_duress_events_total`), so this route and `/api/metrics` must both
@@ -558,6 +559,21 @@ def metrics():
     try:
         _app._METRICS_ARCHIVE_LAST.labels(outcome='archived').set(archived)
         _app._METRICS_ARCHIVE_LAST.labels(outcome='failed').set(failed)
+    except Exception:
+        pass
+    # The newest backup of each kind on record (PolarisBackupStale pages on it); 0 for none, NaN when
+    # the database did not answer.
+    kinds = ('dump', 'pgbackrest', 'dump-verified')
+    try:
+        rows = query("SELECT kind, EXTRACT(EPOCH FROM max(completed_at)::timestamptz) AS t "
+                     "FROM BackupEvent GROUP BY kind", fetch='all')
+        newest = {r['kind']: float(r['t']) for r in rows}
+        backups = {k: newest.get(k, 0.0) for k in kinds}
+    except Exception:
+        backups = {k: float('nan') for k in kinds}
+    try:
+        for kind, t in backups.items():
+            _app._METRICS_BACKUP_LAST.labels(kind=kind).set(t)
     except Exception:
         pass
     # The filesystem holding the state directory (PolarisDiskFilling pages on it); NaN unreadable.

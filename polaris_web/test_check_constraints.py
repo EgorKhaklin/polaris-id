@@ -1515,6 +1515,8 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         "CredentialCopy",
         # 013 (2026-10-04): the logs' public-chain anchors, written only by the schema owner.
         "ChainAnchor",
+        # Lab record 017 (2026-10-07): the backup record, written only by the backup scripts.
+        "BackupEvent",
     )
 
     def _app_conn(self):
@@ -1569,12 +1571,14 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             # register, card personalization and retention policy only by the owner; since
             # 2026-09-28 the wallet copy record only by uc_issue_credential_copy; since the contract
             # migration 2026-10-01-003, the holder key register only by uc_record_holder_key_event;
-            # and since 2026-10-04 the chain anchors only by the schema owner.
+            # since 2026-10-04 the chain anchors only by the schema owner; and since 2026-10-07 the
+            # backup record only by the backup scripts, as the schema owner.
             self.assertEqual(bool(row["ins"]),
                              tbl.lower() not in ("tokenlifecycleevent", "tokenstateepochleaf",
                                                  "anchorbatch", "duressevent", "authoritykeyevent",
                                                  "cardpersonalization", "retentionpolicy",
-                                                 "credentialcopy", "holderkeyevent", "chainanchor"),
+                                                 "credentialcopy", "holderkeyevent", "chainanchor",
+                                                 "backupevent"),
                              f"append-only is insert-allowed except the lifecycle log, the epoch "
                              f"leaves, the anchor batches and the owner's registers: {tbl}")
             conn.rollback()
@@ -3694,6 +3698,11 @@ APPEND_ONLY_FIXTURES = {
     # 013 (2026-10-04): the logs' public-chain anchors. Written in production only by the schema
     # owner after the proof verifies; the fixture is the owner, and its checkpoint is any bytes
     # whose SHA-256 the database can derive.
+    # Lab record 017 (2026-10-07): the backup record, written by the backup scripts as the
+    # schema owner; the fixture is the owner.
+    'backupevent': ('event_id',
+        "INSERT INTO BackupEvent (kind, location) VALUES ('dump', '/var/backups/polaris/fixture.tar.gz') "
+        "RETURNING event_id"),
     'chainanchor': ('anchor_id',
         "WITH c AS (SELECT convert_to('{\"format\":\"polaris-chain-checkpoint/1\",\"heads\":[]}', 'UTF8') AS b) "
         "INSERT INTO ChainAnchor (checkpoint, checkpoint_sha256, chain, method, proof, block_height, "

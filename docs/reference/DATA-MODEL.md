@@ -7,11 +7,11 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **58 tables** in `01_schema.sql` (v9.443; the 46th, CredentialCopy, 2026-09-28; the 47th
+The Polaris schema is **59 tables** in `01_schema.sql` (v9.443; the 46th, CredentialCopy, 2026-09-28; the 47th
 and 48th, PopulationCount and PopulationCountDelta, 2026-10-01; the 49th to 51st, EnrollmentCurrent,
 EnrollmentCount and EnrollmentCountDelta, 2026-10-02; the 52nd to 57th, the activity rollups,
-2026-10-02; the 58th, ChainAnchor, 2026-10-04), organized
-into six functional groups. A migrated deployment holds **65 tables**: those,
+2026-10-02; the 58th, ChainAnchor, 2026-10-04; the 59th, BackupEvent, 2026-10-07), organized
+into six functional groups. A migrated deployment holds **66 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -305,6 +305,17 @@ header), `recorded_at`, `recorded_by`. Written only by the schema owner (`polari
 anchor-record`, after the proof verifies); the application role reads it and publishes it at
 `/api/v1/transparency/anchors`. The row is not the evidence: a verifier rereads the proof against
 block headers it reads itself. No personal data. Migration 2026-10-04-001.
+
+### `BackupEvent` (constraint C1: append-only; lab record 017)
+
+The record of backups that completed and of dumps whose contents were verified (2026-10-07). `event_id
+BIGSERIAL PRIMARY KEY`, `kind` (`dump`: a pg_dump tarball from `polaris-backup.sh`; `pgbackrest`: a
+pgBackRest backup; `dump-verified`: `polaris-backup.sh --verify-latest` extracted the newest dump and
+checked it against its manifest), `completed_at`, `location` (where it went, a path or a repository label, never a credential),
+`detail`, `recorded_by`. Written by the schema owner from the backup scripts, after the backup
+itself succeeded; the application role reads the newest per kind for `/metrics`, where
+PolarisBackupStale pages when no backup has completed for 26 hours. No personal data. Migration
+2026-10-07-001.
 
 ### `ExchangeNonce` (constraint C1: append-only; roadmap P8.2d)
 

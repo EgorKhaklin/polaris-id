@@ -226,6 +226,16 @@ try:
         registry=_METRICS_REGISTRY,
         **({'multiprocess_mode': 'livemostrecent'} if _PROM_MULTIPROC_DIR else {}),
     )
+    # The newest backup of each kind the database has a record of (BackupEvent, written by the backup
+    # scripts), as Unix time at scrape time; 0 when none has completed, NaN when the database did not
+    # answer. PolarisBackupStale fires when no dump or pgBackRest backup completed for 26 hours.
+    _METRICS_BACKUP_LAST = _PromGauge(
+        'polaris_backup_last_success_timestamp_seconds',
+        'When the newest backup of each kind completed, as Unix time; 0 when none has',
+        labelnames=('kind',),
+        registry=_METRICS_REGISTRY,
+        **({'multiprocess_mode': 'livemostrecent'} if _PROM_MULTIPROC_DIR else {}),
+    )
     _METRICS_ARCHIVE_LAST = _PromGauge(
         'polaris_db_archive_last_timestamp_seconds',
         'When the database last archived a WAL segment (outcome="archived") or last failed to '

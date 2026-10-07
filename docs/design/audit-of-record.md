@@ -82,6 +82,7 @@ inconsistently the fourteenth.
 | `AuthCodeConsumed` | Authorization codes spent, so a code is single-use across workers | None; fully append-only | `trg_auth_code_append_only` |
 | `CredentialCopy` | Every wallet copy issued over OpenID4VCI: which credential, which status-list position, when, until when; never where it went | None; fully append-only | `trg_credential_copy_append_only` |
 | `ChainAnchor` | Each checkpoint of the transparency logs committed to a public chain: the checkpoint, the proof, the block | None; fully append-only | `trg_chain_anchor_append_only` |
+| `BackupEvent` | Each backup that completed and each dump whose contents were verified: what kind, when, where it went | None; fully append-only | `trg_backup_event_append_only` |
 | `ExchangeNonce` | Exchange nonces consumed, so a replay is refused | None; fully append-only | `trg_exchange_nonce_append_only` |
 | `AgencyQuota` | Per-authority caps, and who set each one, from what, when, and why | Supersession only: a new cap appends a row and retires the live one | `trg_agency_quota_immutable` |
 | `IssuerDiscretionPolicy` | Per-authority revocation-share bounds, so a LOOSENING is auditable in fact | Supersession only, as above | `trg_discretion_policy_immutable` |

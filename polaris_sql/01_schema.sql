@@ -112,6 +112,7 @@ DROP TABLE IF EXISTS CredentialCopy         CASCADE;
 DROP TABLE IF EXISTS HolderKeyEvent CASCADE;
 DROP TABLE IF EXISTS TimestampLog           CASCADE;
 DROP TABLE IF EXISTS ChainAnchor            CASCADE;
+DROP TABLE IF EXISTS BackupEvent            CASCADE;
 DROP TABLE IF EXISTS ExchangeNonce          CASCADE;
 DROP TABLE IF EXISTS AuthCodeConsumed       CASCADE;
 DROP TABLE IF EXISTS AuthorityKeyEvent      CASCADE;
@@ -540,6 +541,27 @@ COMMENT ON TABLE ChainAnchor IS
   'block. Published at /api/v1/transparency/anchors; verified by polaris-verify against block '
   'headers the verifier reads itself, never against this row. Append-only by trigger; written '
   'only by the schema owner (polaris anchor-record).';
+
+-- Lab record 017 (gate row OP-15, 2026-10-07): the record of backups that completed and dumps
+-- whose contents were verified, so the application can say how old the newest one is and page when it is too
+-- old. Written by the schema owner from the backup scripts, after the backup itself succeeded.
+CREATE TABLE BackupEvent (
+    event_id       BIGSERIAL    PRIMARY KEY,
+    kind           VARCHAR(20)  NOT NULL
+        CONSTRAINT chk_backup_event_kind CHECK (kind IN ('dump', 'pgbackrest', 'dump-verified')),
+    completed_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    location       VARCHAR(300) NOT NULL
+        CONSTRAINT chk_backup_event_location CHECK (length(btrim(location)) BETWEEN 1 AND 300),
+    detail         VARCHAR(300),
+    recorded_by    VARCHAR(100) NOT NULL DEFAULT session_user
+);
+
+COMMENT ON TABLE BackupEvent IS
+  'Lab record 017 (gate row OP-15): each backup that completed, and each dump whose contents were '
+  'verified: a pg_dump tarball (polaris-backup.sh), a pgBackRest backup, a dump extracted and '
+  'checked against its manifest (polaris-backup.sh --verify-latest). Recorded by the schema owner '
+  'after the backup itself succeeded; where it went, never a credential. The application reads '
+  'the newest time per kind for /metrics (PolarisBackupStale). Append-only by trigger.';
 
 -- P8.2d (v9.324): the exchange gateway's REPLAY REGISTER. A requester's signed exchange
 -- envelope carries a nonce; the gateway consumes (requester key, nonce) here BEFORE
