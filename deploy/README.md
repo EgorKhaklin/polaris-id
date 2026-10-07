@@ -11,7 +11,7 @@ and every substrate below builds on it or reproduces it.
 | Directory | Substrate | Status |
 |---|---|---|
 | [`linux/`](linux/) | A single Linux host under systemd | Supported. One script installs it; CI runs it on Debian 12 and Rocky 9 on every push. |
-| [`helm/`](helm/) | A Kubernetes cluster | Reference profile. It boots healthy on kind in CI with policies enforced, and it runs one PostgreSQL replica: high availability is roadmap work, not a shipped feature. |
+| [`helm/`](helm/) | A Kubernetes cluster | Reference profile. It boots healthy on kind in CI with policies enforced and runs two PostgreSQL members under Patroni, which CI fails over and switches over. The members are not yet spread across nodes, so it is not yet tolerant of a node's loss ([operability gate](../docs/PRODUCTION-READINESS.md#operability-gate)). |
 | [`observability/`](observability/) | Prometheus, Alertmanager, Grafana and Tempo | Supported configuration, not a deployment. Polaris ships the rules, the routing and the dashboards; the pager product and the on-call rotation are yours. |
 
 ## linux/
