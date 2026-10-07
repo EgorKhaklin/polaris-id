@@ -12,6 +12,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Security
 
 - ZK proofs are built with Plonky2's zero-knowledge configuration; earlier binaries built sound but non-hiding proofs, which no longer verify.
+- The access log records method, path and protocol, no longer the query string or the referrer (lab record 017).
 - Werkzeug 3.1.9 (GHSA-g6x2-hccm-hh4m: safe_join accepted Windows device names; Polaris runs on Linux and calls it only through Flask's static files).
 - A holder key rotation or revocation is refused unless its signer is still the live key under the per-token lock, closing a read-before-lock race a stolen-but-live key could ride.
 - The Atlas answered a refused parameter with the exception's text, which could carry the request back; it states a fixed sentence.
@@ -45,6 +46,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- `/api/health` compares this instance's clock with the database's and reports `clock` degraded beyond 2 s of skew.
 - Production boot validates every POLARIS_* setting against a declared schema and refuses to start, naming each wrong one: an unreadable secret file, the development database password, a placeholder security contact (lab record 017). docs/operator/CONFIG.md is generated from it.
 - An operability gate in PRODUCTION-READINESS: 28 criteria for running Polaris without its author, each PASS citing evidence a check resolves (lab record 017).
 - An experimental FN-DSA signer: Falcon-padded-1024 keys sign only under POLARIS_EXPERIMENTAL_SIGNERS, never in production, two-witnessed (liboqs, then @noble/post-quantum under Node); migration 2026-10-06-001.

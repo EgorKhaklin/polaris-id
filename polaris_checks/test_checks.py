@@ -2351,6 +2351,22 @@ def test_zk_hiding_check_discriminates(tmp_path):
         "must FAIL when the Rust zero_knowledge test is gone"
 
 
+def test_access_log_check_discriminates(tmp_path):
+    web = tmp_path / "polaris_web"
+    web.mkdir()
+    conf = web / "gunicorn.conf.py"
+    conf.write_text("access_log_format = '%(h)s %(t)s \"%(m)s %(U)s %(H)s\" %(s)s %(a)s'\n")
+    assert checks.check_access_log_omits_queries(tmp_path)[0].level == "OK", \
+        "must PASS when the log records method, path and protocol only"
+    for leak in ("%(r)s", "%(q)s", "%(f)s"):
+        conf.write_text("access_log_format = '%(h)s \"" + leak + "\" %(U)s'\n")
+        assert checks.check_access_log_omits_queries(tmp_path)[0].level == "FAIL", \
+            f"must FAIL when the format carries {leak}"
+    conf.write_text("workers = 2\n")
+    assert checks.check_access_log_omits_queries(tmp_path)[0].level == "FAIL", \
+        "must FAIL when no format is set (gunicorn's default logs the request line)"
+
+
 def test_config_schema_coverage_check_discriminates(tmp_path):
     web = tmp_path / "polaris_web"
     web.mkdir()

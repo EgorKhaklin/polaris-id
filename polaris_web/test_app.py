@@ -9128,6 +9128,47 @@ class DuressDurabilityTests(unittest.TestCase):
         self.assertGreaterEqual(_t.time() - started, 0.5)
 
 
+class AccessLogAndClockTests(unittest.TestCase):
+    """Lab record 017, phase 2c: the access log omits query strings; the clock is compared."""
+
+    def test_the_access_log_line_carries_no_query_string(self):
+        """Render the configured format with gunicorn's atoms for a request carrying a secret in
+        its query and a referrer: neither may reach the line."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            'gunicorn_conf_for_test', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'gunicorn.conf.py'))
+        conf = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(conf)
+        atoms = {'h': '203.0.113.7', 'l': '-', 'u': '-', 't': '[07/Oct/2026:04:00:00 +0000]',
+                 'r': 'GET /api/v1/epoch/7/leaves?token=TKN-SECRET HTTP/1.1', 'm': 'GET',
+                 'U': '/api/v1/epoch/7/leaves', 'q': 'token=TKN-SECRET', 'H': 'HTTP/1.1',
+                 's': '200', 'b': '512', 'f': 'https://x.example/?code=CODE-SECRET',
+                 'a': 'curl/8', 'L': '0.01'}
+        line = conf.access_log_format % atoms
+        self.assertIn('/api/v1/epoch/7/leaves', line)
+        self.assertNotIn('TKN-SECRET', line)
+        self.assertNotIn('CODE-SECRET', line)
+
+    def test_the_clock_is_compared_with_the_database(self):
+        from unittest import mock
+        import status_routes
+        now = __import__('time').time()
+        with mock.patch('status_routes.query', return_value={'t': now + 5.0}):
+            skewed = status_routes._health_check_clock()
+        with mock.patch('status_routes.query', return_value={'t': now}):
+            fine = status_routes._health_check_clock()
+        self.assertEqual(skewed['status'], 'degraded')
+        self.assertGreater(skewed['skew_seconds'], 4.0)
+        self.assertEqual(fine['status'], 'healthy')
+
+    def test_a_skewed_clock_never_drains_the_instance(self):
+        """Skew is reported, not routed on: the database's clock being wrong is a shared fault."""
+        from unittest import mock
+        import status_routes
+        with mock.patch('status_routes.query', side_effect=RuntimeError('down')):
+            self.assertNotEqual(status_routes._health_check_clock()['status'], 'unhealthy')
+
+
 class F06_CookieHardeningTests(PolarisTestCase):
     """F-07: Cookie attributes Secure / HttpOnly / SameSite. CWE-614, CWE-1004."""
 
