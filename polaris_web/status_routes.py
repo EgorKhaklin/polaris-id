@@ -324,14 +324,48 @@ def _compute_readiness():
     return body, code
 
 
+def _compute_instance_readiness():
+    """Readiness for THIS instance (lab record 017, phase 2): can this process serve right now?
+
+    Only what is particular to the instance counts: its custody (an HSM session or a mounted
+    key), its second ML-DSA witness, its local disk. A shared dependency, the database or redis,
+    is left to /api/health: when it fails it fails for every replica at once, and taking them
+    all out of rotation would turn a failover the application rides through with retries into
+    an outage at the edge. Returns ``(body, code)``; 503 when an instance check is unhealthy.
+    """
+    checks = {
+        'custody': _health_check_custody(),
+        'disk':    _health_check_disk(),
+    }
+    if os.environ.get('POLARIS_USE_REAL_PQC', '0') == '1':
+        import pqc_signing  # type: ignore
+        checks['second_witness'] = (
+            {'status': 'healthy'} if pqc_signing.second_witness_available()
+            else {'status': 'unhealthy', 'note': 'the second ML-DSA witness is unavailable; issuance would refuse'})
+    overall = 'healthy'
+    for component in checks.values():
+        component_status = component.get('status', 'unhealthy')
+        if _HEALTH_SEVERITY.get(component_status, 2) > _HEALTH_SEVERITY[overall]:
+            overall = component_status
+    body = {
+        'status': overall,
+        'scope': 'instance',
+        'version': POLARIS_VERSION,
+        'uptime_seconds': int(_time.time() - _APP_STARTED_AT),
+        'checks': _sanitize_health_checks(checks),
+        'timestamp': datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z'),
+    }
+    return body, (503 if overall == 'unhealthy' else 200)
+
+
 @app.route('/api/health')
 def api_health():
     """Structured health endpoint (G29 / v8.77) — the dependency roll-up.
 
-    No auth required (load balancers, Caddy upstream probes, uptime monitors).
-    Kept unchanged for backwards compatibility. Semantically this is the
-    READINESS probe; /api/health/ready is its canonical alias and
-    /api/health/live is the cheap liveness counterpart (v9.108).
+    No auth required (uptime monitors, dashboards, an operator's curl). The
+    dependency roll-up: database, redis, zk binary, disk and custody. It is for
+    watching the deployment, not for routing: /api/health/ready answers for one
+    instance and /api/health/live for one process (v9.108, lab record 017).
 
     Status codes:
         200 — healthy or degraded
@@ -343,14 +377,14 @@ def api_health():
 
 @app.route('/api/health/ready')
 def api_health_ready():
-    """Readiness probe (v9.108): can THIS instance serve traffic right now?
+    """Readiness probe (v9.108; per-instance since lab record 017): can THIS instance serve?
 
-    Runs the dependency checks (database, redis, zk binary, disk). Returns 503
-    if a critical dependency is down, so an orchestrator stops routing traffic
-    to this instance WITHOUT restarting it (a restart would not bring the
-    dependency back). Same payload as /api/health.
+    Judges what is particular to this instance (custody, the second witness, local disk) and
+    returns 503 when one of those fails, so the edge or the orchestrator stops routing to it
+    WITHOUT restarting it. The shared database is deliberately not part of it: see
+    _compute_instance_readiness. The edge and the Kubernetes readiness probe route on this.
     """
-    body, code = _compute_readiness()
+    body, code = _compute_instance_readiness()
     return jsonify(body), code
 
 
