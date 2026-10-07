@@ -19,6 +19,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-secrets.sh` | The sealed secret store: put, get, list, seal | An operator; `polaris_web/secretstore.py` documents the format |
 | `polaris-rotate-secret.sh` | Rotates one secret in place, without a redeploy | An operator |
 | `polaris-backup.sh` | Atomic full-system backup, encrypted, with a manifest | An operator; the cron wiring |
+| `polaris-reconcile-restore.py` | After a restore to an earlier point, re-applies through their own paths the withdrawals made after it, retires the identifiers the archive's end issued, and records the run in RestoreRecord | An operator (DR.md 4.3); `polaris-pitr-drill.sh --reconcile` |
 | `polaris-restore.sh` | Recovery from a backup, verifying the manifest first | An operator, under `DR.md` |
 | `polaris-archive.sh` | Selective export of audit rows to cold storage; `--from-policy` takes a cutoff per retention class | `polaris-rotate-logs.sh` |
 | `polaris-purge.sh` | Archive-then-delete for aged audit rows; verifies the archive against its manifest and honours per-class cutoffs | `polaris-rotate-logs.sh` |
@@ -63,7 +64,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-client-ip-drill.sh` | Behind an appending load balancer the app is told the client's own address only when the balancer is named, and no forged X-Forwarded-For gets through | `ci.yml` |
 | `polaris-edge-limits-drill.sh` | In front of an upstream that serves one request at a time, the shipped edge keeps a trickled body off it, ends the slow client, refuses a 2 MiB body and cuts off trickled headers | `ci.yml` |
 | `polaris-upgrade-drill.sh` | The previous release's own try.sh stack, upgraded to this commit as OPERATIONS.md says: no migration pending, every image rebuilt, a credential issued before the upgrade still verifies | `upgrade.yml` |
-| `polaris-pitr-drill.sh` | A restore to a moment read off the database's clock brings back exactly what was committed by then and nothing after; `--prove-control` restores to the archive's end and must be told apart | `ci.yml` |
+| `polaris-pitr-drill.sh` | A restore to a moment read off the database's clock brings back exactly what was committed by then and nothing after; `--prove-control` restores to the archive's end and must be told apart; `--reconcile` withdraws trust on either side of the moment and requires the reconciliation to leave nothing looser than the archive's end | `ci.yml` |
 | `polaris-chaos-drill.sh` | Induced failures against the booted stack under traffic: one colour killed, both stopped until the outage pages, redis and postgres killed, pgbouncer partitioned, every recovery measured against a ceiling | `chaos.yml`, weekly and on demand |
 | `polaris-abuse-drill.sh` | The per-agency quotas refuse writes under real load | `ci.yml` |
 | `polaris-retention-drill.sh` | The archive and purge chain, per retention class, end to end | `ci.yml` |

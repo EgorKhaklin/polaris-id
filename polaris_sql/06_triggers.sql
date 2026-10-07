@@ -448,6 +448,14 @@ CREATE TRIGGER trg_backup_event_append_only
     FOR EACH ROW
     EXECUTE FUNCTION reject_audit_modification();
 
+-- Lab record 017 (2026-10-07): a reconciliation after a restore is history. Editing one would
+-- hide a withdrawal it could not re-apply; deleting one would hide that the database was rewound.
+DROP TRIGGER IF EXISTS trg_restore_record_append_only ON RestoreRecord;
+CREATE TRIGGER trg_restore_record_append_only
+    BEFORE UPDATE OR DELETE ON RestoreRecord
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_audit_modification();
+
 -- P8.7b (v9.328): a key event is history; it is never edited or removed.
 CREATE OR REPLACE FUNCTION reject_authority_key_event_modification()
 RETURNS TRIGGER

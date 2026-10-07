@@ -7,11 +7,12 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **59 tables** in `01_schema.sql` (v9.443; the 46th, CredentialCopy, 2026-09-28; the 47th
+The Polaris schema is **60 tables** in `01_schema.sql` (v9.443; the 46th, CredentialCopy, 2026-09-28; the 47th
 and 48th, PopulationCount and PopulationCountDelta, 2026-10-01; the 49th to 51st, EnrollmentCurrent,
 EnrollmentCount and EnrollmentCountDelta, 2026-10-02; the 52nd to 57th, the activity rollups,
-2026-10-02; the 58th, ChainAnchor, 2026-10-04; the 59th, BackupEvent, 2026-10-07), organized
-into six functional groups. A migrated deployment holds **66 tables**: those,
+2026-10-02; the 58th, ChainAnchor, 2026-10-04; the 59th, BackupEvent, 2026-10-07; the 60th,
+RestoreRecord, 2026-10-07), organized
+into six functional groups. A migrated deployment holds **67 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -316,6 +317,18 @@ checked it against its manifest), `completed_at`, `location` (where it went, a p
 itself succeeded; the application role reads the newest per kind for `/metrics`, where
 PolarisBackupStale pages when no backup has completed for 26 hours. No personal data. Migration
 2026-10-07-001.
+
+### `RestoreRecord` (constraint C1: append-only; lab record 017)
+
+Each reconciliation after a restore to an earlier point (2026-10-07). `restore_id BIGSERIAL PRIMARY
+KEY`, `target_time` (the point restored to), `archive_end` (the newest change the copy of the archive's
+end held; later than `target_time` by CHECK), `recorded_at`, `operator`, `outcome` (`reconciled`:
+nothing its registry calls a withdrawal is looser than at the archive's end, apart from what was
+excluded; `incomplete`: something still is), `report` (JSONB: the identifiers retired, the withdrawals
+re-applied, excluded with the reason, or still open with their remedy, the grants not re-made, the
+records lost per table), `recorded_by`. Written by the schema owner from
+`scripts/polaris-reconcile-restore.py`; the application role reads it and cannot write it. No personal
+data. Migration 2026-10-07-002.
 
 ### `ExchangeNonce` (constraint C1: append-only; roadmap P8.2d)
 

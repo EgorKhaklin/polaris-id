@@ -590,6 +590,7 @@ _AOR_TABLES = (
     "AuthorityKeyEvent", "HolderKeyEvent", "ExchangeReceiptLog", "TimestampLog",
     "AuthCodeConsumed", "ExchangeNonce", "AgencyQuota", "IssuerDiscretionPolicy",
     "RetentionPolicy", "CredentialCopy", "ChainAnchor", "BackupEvent",
+    "RestoreRecord",
 )
 
 
@@ -776,6 +777,9 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         "holderkeyevent",
         # 013 (2026-10-04): the logs' public-chain anchors.
         "chainanchor",
+        # Lab record 017 (2026-10-07): the backup record and the record of reconciliations
+        # after a restore.
+        "backupevent", "restorerecord",
     ]
     if not re.search(r"REVOKE\s+UPDATE\s*,\s*DELETE", grants, re.I):
         return _fail("c1_aor_priv",
@@ -4291,10 +4295,10 @@ _TABLE_COUNT_PATTERNS = (
 )
 
 
-def _schema_table_counts(root: pathlib.Path) -> tuple[int, int]:
+def _schema_table_names(root: pathlib.Path) -> tuple[set, set]:
     """(tables created by 01_schema.sql, tables a migrated deployment holds).
 
-    The second number adds every table the loader's other files create (the
+    The second set adds every table the loader's other files create (the
     schema_version registry from 00_migrations_table.sql) and every table a
     migration adds to a running database."""
     # v9.245: a "CREATE TABLE X PARTITION OF Y" is a partition of Y, not a
@@ -4310,6 +4314,12 @@ def _schema_table_counts(root: pathlib.Path) -> tuple[int, int]:
             deployed |= set(re.findall(pat, _read_path(p), re.M))
         for p in sorted((sql_dir / "migrations").glob("*.up.sql")) if (sql_dir / "migrations").is_dir() else []:
             deployed |= set(re.findall(pat, _read_path(p), re.M))
+    return base, deployed
+
+
+def _schema_table_counts(root: pathlib.Path) -> tuple[int, int]:
+    """(tables created by 01_schema.sql, tables a migrated deployment holds)."""
+    base, deployed = _schema_table_names(root)
     return len(base), len(deployed)
 
 
@@ -8258,6 +8268,72 @@ def check_pitr_drilled(root: pathlib.Path) -> list[Finding]:
                "CI restores to a moment read off the database's clock and requires exactly what was committed by "
                "then, nothing after; its control restores to the archive's end and is told apart")
 
+
+
+# Lab record 017 (gate row OP-13): a restore to an earlier point loses every change made after it,
+# including the ones that withdrew trust or access, and rewinds the sequences that hand out
+# identifiers. scripts/polaris-reconcile-restore.py re-applies those withdrawals from the archive's
+# end, through the paths that made them, and retires the identifiers, before the app takes traffic.
+# Its REGISTRY says for every table what a restore means there, so a table added later cannot be
+# lost by a restore without that being decided; the PITR drill's --reconcile run proves the rest,
+# the hazard first.
+_RECONCILE_PATHS = (
+    ("CALL uc8_revoke_token(", "re-apply a revocation through uc8_revoke_token"),
+    ("uc4_activate_reserve(", "re-apply a loss with its reserve through uc4_activate_reserve"),
+    ("uc_record_holder_key_event(", "revoke a holder key through uc_record_holder_key_event"),
+    ("INSERT INTO AuthorityKeyEvent", "record a key retired or compromised in the authority register"),
+    ("CALL uc10_revoke_attestation(", "re-apply an attestation revocation"),
+    ("CALL uc_pseudonymize_individual(", "re-apply an erasure"),
+    ("SELECT setval(", "move each sequence past the archive's end"),
+    ("tables this script does not know", "refuse a database holding a table REGISTRY does not name"),
+    ("something used it before", "refuse a restored database something already wrote to"),
+    ("INSERT INTO RestoreRecord", "record each run"),
+)
+_RECONCILE_DRILL = (
+    ("--reconcile) RECONCILE=1", "run the reconciliation at all"),
+    ("grep -qx 'credential 10 ACTIVE'", "see the restore read a credential revoked after T as active (the hazard)"),
+    ('[[ "$left" == "< authority-key 1 cccccccc registered" ]]',
+     "require the reconciled state to equal the archive's end, apart from the one grant"),
+    ('[[ "$behind" == 0 ]]', "require every sequence past the archive's end"),
+    ('! grep -q "^re-applied" "$WORK/second.txt"', "require a second run to re-apply nothing"),
+)
+
+
+def check_restore_reconciled(root: pathlib.Path) -> list[Finding]:
+    name = "restore_reconciled"
+    tool = _read(root, "scripts/polaris-reconcile-restore.py")
+    if not tool:
+        return _fail(name, "scripts/polaris-reconcile-restore.py is missing: a restore to an earlier point brings "
+                     "back as granted what was withdrawn after it")
+    for needle, what in _RECONCILE_PATHS:
+        if needle not in tool:
+            return _fail(name, f"scripts/polaris-reconcile-restore.py no longer does this: {what}")
+    m = re.search(r"^REGISTRY = \{(.*?)^\}", tool, re.S | re.M)
+    named = set(re.findall(r'^\s+"(\w+)":\s*\("(?:reapplied|listed|counted|derived|reference)"',
+                           m.group(1) if m else "", re.M))
+    tables = {t.lower() for t in _schema_table_names(root)[1]}
+    if not tables:
+        return _fail(name, "no tables found in polaris_sql/ to hold REGISTRY to")
+    if tables - named:
+        return _fail(name, "REGISTRY in scripts/polaris-reconcile-restore.py does not say what a restore to an "
+                     "earlier point means for: " + ", ".join(sorted(tables - named)))
+    if named - tables:
+        return _fail(name, "REGISTRY names tables the schema no longer creates: " + ", ".join(sorted(named - tables)))
+    drill = _read(root, "scripts/polaris-pitr-drill.sh")
+    for needle, what in _RECONCILE_DRILL:
+        if needle not in drill:
+            return _fail(name, f"scripts/polaris-pitr-drill.sh no longer does this: {what}")
+    if "bash scripts/polaris-pitr-drill.sh --no-build --reconcile" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail(name, "CI must run the point-in-time restore drill with --reconcile")
+    dr = _read_raw(root, "docs/operator/DR.md")
+    sec = re.search(r"^### 4\.3 .*?(?=^### |\Z)", dr, re.S | re.M)
+    body = sec.group(0) if sec else ""
+    tool_at, app_at = body.find("polaris-reconcile-restore.py"), body.find("$COMPOSE up -d app")
+    if tool_at < 0 or app_at < 0 or tool_at > app_at:
+        return _fail(name, "DR.md section 4.3 must run scripts/polaris-reconcile-restore.py before the app comes back")
+    return _ok(name, f"a restore to an earlier point re-applies what was withdrawn after it, through the paths that "
+               f"made it, before the app returns; REGISTRY decides all {len(tables)} tables; CI sees the hazard, "
+               "then nothing looser than the archive's end")
 
 def check_chaos_program(root: pathlib.Path) -> list[Finding]:
     """Roadmap P2.11 (v9.242): the fail-closed harness runs on every push, and
@@ -25734,6 +25810,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_performance_baseline,
     check_dr_drill_scheduled,
     check_pitr_drilled,
+    check_restore_reconciled,
     check_chaos_program,
     check_ha_automation,
     check_event_table_partitioning,

@@ -124,7 +124,11 @@ DECLARE
         -- 2026-09-28: the wallet copy record (docs/design/oid4vci-issuer.md).
         'credentialcopy',
         -- 013 (2026-10-04): the logs' public-chain anchors.
-        'chainanchor'
+        'chainanchor',
+        -- Lab record 017 (2026-10-07): the backup record and the record of reconciliations after
+        -- a restore. Their migrations revoked UPDATE and DELETE; a fresh load now does too.
+        'backupevent',
+        'restorerecord'
     ];
 BEGIN
     FOREACH v_tbl IN ARRAY v_append_only_tables LOOP
@@ -206,6 +210,11 @@ REVOKE INSERT ON ChainAnchor FROM polaris_app;
 -- after it completed. The application reads the newest per kind for /metrics; with INSERT it could
 -- record a backup that never ran and silence PolarisBackupStale.
 REVOKE INSERT ON BackupEvent FROM polaris_app;
+
+-- Lab record 017 (2026-10-07). A reconciliation after a restore is recorded by
+-- scripts/polaris-reconcile-restore.py, as the schema owner. With INSERT the application could
+-- record a restore as reconciled that never was.
+REVOKE INSERT ON RestoreRecord FROM polaris_app;
 
 -- 2026-09-25. The credential tables. A credential, its permissions, a revocation-list entry, a
 -- device binding and a recovery request are each created only by a use-case procedure, all

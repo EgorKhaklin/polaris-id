@@ -260,7 +260,41 @@ $COMPOSE up -d postgres
 $COMPOSE logs --follow postgres | grep -m1 "database system is ready to accept connections"
 $COMPOSE exec postgres psql -U postgres -d polaris -c "SELECT pg_is_in_recovery();"   # f
 
-# 5. Verify integrity (the drill compares the IdentityToken and schema_version
+# 5. Restore the archive's end beside it, into a scratch volume, with archiving
+#    off (a second timeline must never reach the shared repo). The restore to the
+#    target lost everything after it; this copy still holds it.
+docker volume create polaris_archive_end
+$COMPOSE run -d --no-deps --name polaris-archive-end --user postgres --entrypoint sh \
+    -v polaris_archive_end:/var/lib/postgresql/archive-end postgres -c \
+    "pgbackrest --stanza=polaris --pg1-path=/var/lib/postgresql/archive-end restore && \
+     exec postgres -D /var/lib/postgresql/archive-end -c archive_mode=off"
+until docker exec polaris-archive-end psql -U postgres -d polaris -tAc "SELECT NOT pg_is_in_recovery()" | grep -q t; do sleep 2; done
+
+# 6. Re-apply what withdrew trust after the target (gate row OP-13), before the
+#    app takes traffic. scripts/polaris-reconcile-restore.py moves every
+#    sequence past the archive's end, then re-applies each withdrawal made after
+#    the target through the path that made it: revocations, losses and expiries,
+#    holder and authority keys, attestation revocations, erasures, consumed
+#    nonces and codes, operator accounts, sessions and hardware keys, relying
+#    parties, agencies, algorithms, contexts and permissions. It lists the grants
+#    it does not re-make and counts the records it cannot, and records the run in
+#    RestoreRecord. --dry-run first: each withdrawal is printed with a key, and one
+#    made by the actor whose damage this restore undoes is skipped with
+#    --exclude KEY --exclusion-reason "...".
+reconcile() {   # the app image carries Python and psycopg2; the script comes from this checkout
+    $COMPOSE run --rm --no-deps \
+        -e PGPASSWORD="$(cat "${POLARIS_SECRETS_DIR:-polaris_web/secrets}/polaris_db_root_password")" \
+        -v "$(pwd)/scripts:/opt/polaris-scripts:ro" --entrypoint python app \
+        /opt/polaris-scripts/polaris-reconcile-restore.py \
+        --restored "host=postgres dbname=polaris user=postgres" \
+        --archive-end "host=polaris-archive-end dbname=polaris user=postgres" \
+        --target-time "$TARGET_TIME" --operator "$(whoami)" --acting-admin ADMIN_USERNAME "$@"
+}
+reconcile --dry-run
+reconcile           # exit 0, or each withdrawal still open is printed with its remedy
+docker rm -f polaris-archive-end && docker volume rm polaris_archive_end
+
+# 7. Verify integrity (the drill compares the IdentityToken and schema_version
 #    counts with their pre-failure values; the audit tables date the recovery point).
 $COMPOSE exec postgres psql -U postgres -d polaris -c "
     SELECT count(*) FROM IdentityToken;
@@ -268,9 +302,10 @@ $COMPOSE exec postgres psql -U postgres -d polaris -c "
     SELECT count(*) FROM TokenLifecycleEvent;
     SELECT count(*) FROM VerificationEvent;
     SELECT max(event_timestamp) FROM TokenLifecycleEvent;
+    SELECT restore_id, outcome FROM RestoreRecord ORDER BY restore_id DESC LIMIT 1;
 "
 
-# 6. Bring the app back and smoke-test.
+# 8. Only when step 6 exited 0: bring the app back and smoke-test.
 $COMPOSE up -d app
 curl -sf https://${POLARIS_DOMAIN}/api/health | jq .
 ```
@@ -281,31 +316,23 @@ same command reads it from S3; the one-off container needs the same
 `POLARIS_PGBACKREST_S3_*` env and the mounted credential fragment, which the
 compose service definition supplies.
 
-**Everything after the target time is lost with it, including what withdrew
-trust or access.** The database comes back as it stood at `TARGET_TIME`: a
-credential revoked after that moment reads as active again, a holder key
-revoked after it is bound again, an authority key declared compromised or
-retired after it is trusted again, an operator account, relying party or
-agency deactivated after it is active again, and duress records made after it
-are gone. Polaris does not yet re-apply these itself (gate row OP-13). Until
-it does, before step 6: restore the archive's end into a scratch instance (the
-same restore without `--type=time`), list there what changed after the target
-(`psql -U postgres -d polaris -v t="$TARGET_TIME"` with the query below), and
-repeat each withdrawal on the restored database before the app takes traffic.
-
-```sql
-SELECT at, kind, what FROM (
-    SELECT revocation_timestamp AS at, 'credential revoked (' || reason_code || ')' AS kind, token_id::text AS what FROM RevocationList
-    UNION ALL SELECT event_timestamp, 'credential ' || event_type, token_id::text FROM TokenLifecycleEvent
-    UNION ALL SELECT recorded_at, 'holder key ' || event, token_id::text FROM HolderKeyEvent
-    UNION ALL SELECT recorded_at, 'authority key ' || event, agency_id::text FROM AuthorityKeyEvent
-    UNION ALL SELECT recorded_at, 'operator account ' || event_type, username FROM AppUserEvent
-    UNION ALL SELECT recorded_at, 'relying party ' || event_type, client_id FROM RelyingPartyEvent
-    UNION ALL SELECT recorded_at, 'agency ' || event_type, name FROM AgencyEvent
-    UNION ALL SELECT event_timestamp, 'enrolment ' || status, individual_id::text FROM EnrollmentStatusEvent
-    UNION ALL SELECT event_timestamp, 'duress record', token_id::text FROM DuressEvent
-) AS changed WHERE at > :'t' ORDER BY at;
-```
+**What the restore loses, and what step 6 puts back.** The database comes back
+as it stood at `TARGET_TIME`. Without step 6 a credential revoked after that
+moment reads as active again, a key declared compromised is trusted again, an
+operator account switched off is on again, a consumed nonce can be replayed,
+and the sequences hand out again identifiers already issued (a new wallet copy
+could take the status-list slot of a lost one). Step 6 re-applies the
+withdrawals and retires the identifiers; `scripts/polaris-pitr-drill.sh
+--reconcile` makes 23 withdrawals on either side of a target, restores both
+points and requires the reconciled state to equal the archive's end. What it
+does not re-make it names: grants made after the target (credentials issued,
+keys registered, accounts and relying parties created), policies set after it,
+and records of what happened (verifications, duress records, epochs, anchors),
+counted per table. A withdrawal its path now refuses (a revocation the rate
+bound holds for a co-signer: `--cosigner AGENCY_ID`) is printed with its
+remedy and the run exits 1; resolve it and run it again (a second run re-applies
+only what is still missing). Writes in WAL the archive never received
+(`archive_timeout`, 60 s) are lost like any other.
 
 **Audit-of-record continuity:** WAL replay preserves every event up to the
 target timestamp. Events between the target time and the moment of corruption

@@ -1517,6 +1517,9 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         "ChainAnchor",
         # Lab record 017 (2026-10-07): the backup record, written only by the backup scripts.
         "BackupEvent",
+        # Lab record 017 (2026-10-07): the record of reconciliations after a restore, written
+        # only by scripts/polaris-reconcile-restore.py.
+        "RestoreRecord",
     )
 
     def _app_conn(self):
@@ -1572,13 +1575,14 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             # 2026-09-28 the wallet copy record only by uc_issue_credential_copy; since the contract
             # migration 2026-10-01-003, the holder key register only by uc_record_holder_key_event;
             # since 2026-10-04 the chain anchors only by the schema owner; and since 2026-10-07 the
-            # backup record only by the backup scripts, as the schema owner.
+            # backup record only by the backup scripts and the record of reconciliations after a
+            # restore only by its script, as the schema owner.
             self.assertEqual(bool(row["ins"]),
                              tbl.lower() not in ("tokenlifecycleevent", "tokenstateepochleaf",
                                                  "anchorbatch", "duressevent", "authoritykeyevent",
                                                  "cardpersonalization", "retentionpolicy",
                                                  "credentialcopy", "holderkeyevent", "chainanchor",
-                                                 "backupevent"),
+                                                 "backupevent", "restorerecord"),
                              f"append-only is insert-allowed except the lifecycle log, the epoch "
                              f"leaves, the anchor batches and the owner's registers: {tbl}")
             conn.rollback()
@@ -3750,6 +3754,12 @@ APPEND_ONLY_FIXTURES = {
         "INSERT INTO RefereeVouching (proofing_id, referee_individual_id, applicant_individual_id, "
         "referee_ial, relationship, vouched_ial) "
         "SELECT p.proofing_id, 2, 1, 'IAL2', 'EMPLOYER', 'IAL2' FROM p RETURNING vouching_id"),
+    # Lab record 017 (2026-10-07): the record of reconciliations after a restore, written by
+    # scripts/polaris-reconcile-restore.py as the schema owner; the fixture is the owner.
+    'restorerecord': ('restore_id',
+        "INSERT INTO RestoreRecord (target_time, archive_end, operator, outcome, report) "
+        "VALUES (now() - interval '2 hours', now() - interval '1 hour', 'fixture', 'reconciled', '{}') "
+        "RETURNING restore_id"),
     'schema_version': ('event_id',
         "INSERT INTO schema_version (name, event_type, file_sha256) "
         "VALUES ('2026-09-11-999-append-only-fixture', 'applied', repeat('a', 64)) RETURNING event_id"),

@@ -1527,10 +1527,14 @@ jobs:
       # DR.md section 4.3 uses, brings back exactly what was committed by then: the same markers,
       # digest equal, none committed after it. The control restores to the archive's end and
       # must be told apart. Reuses the image the DR drill built. Pinned by check_pitr_drilled.
+      # Gate row OP-13: --reconcile withdraws trust on either side of T, sees the restore read it
+      # back as granted, and requires scripts/polaris-reconcile-restore.py to leave nothing looser
+      # than the archive's end. Pinned by check_restore_reconciled.
       - name: Point-in-time restore drill (scripts/polaris-pitr-drill.sh)
         run: |
           bash scripts/polaris-pitr-drill.sh --no-build
           bash scripts/polaris-pitr-drill.sh --no-build --prove-control
+          bash scripts/polaris-pitr-drill.sh --no-build --reconcile
 
       - name: Upload the drill JSON
         if: always()

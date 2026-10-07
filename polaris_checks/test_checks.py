@@ -1771,7 +1771,8 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     mig.mkdir(parents=True)
     base_tables = ("tokenlifecycleevent verificationevent enrollmentstatusevent "
                    "anchorbatch tokenstateepochleaf duressevent authauditlog "
-                   "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed", "authoritykeyevent", "timestamplog", "holderkeyevent", "chainanchor")
+                   "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed", "authoritykeyevent", "timestamplog", "holderkeyevent", "chainanchor",
+                   "backupevent", "restorerecord")
 
     def write(grants, mig_revoke, proc_definer, uc11_definer=True, uc10_definer=True, uc9r_definer=True,
               hk_definer=True, hk_path=True, uc9r_standing=True):
@@ -3016,11 +3017,11 @@ def test_pitr_drilled_check_discriminates(tmp_path):
     assert checks.check_pitr_drilled(tmp_path)[0].level == "OK", \
         "must PASS on the real drill, its CI steps and the runbook"
 
-    def broken(rel, old, new, why):
+    def broken(rel, old, new, why, count=1):
         path = tmp_path / rel
         good = path.read_text()
         assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
-        path.write_text(good.replace(old, new, 1))
+        path.write_text(good.replace(old, new, count))
         assert checks.check_pitr_drilled(tmp_path)[0].level == "FAIL", why
         path.write_text(good)
 
@@ -3034,7 +3035,46 @@ def test_pitr_drilled_check_discriminates(tmp_path):
     broken(".github/workflows/ci.yml", "bash scripts/polaris-pitr-drill.sh --no-build\n", "true\n",
            "must FAIL when CI does not run the drill")
     broken("docs/operator/DR.md", "polaris-pitr-drill.sh", "polaris-other-drill.sh",
-           "must FAIL when the runbook does not cite the drill")
+           "must FAIL when the runbook does not cite the drill", count=-1)
+
+
+def test_restore_reconciled_check_discriminates(tmp_path):
+    files = {"scripts/polaris-reconcile-restore.py", "scripts/polaris-pitr-drill.sh", ".github/workflows/ci.yml",
+             "docs/operator/DR.md"}
+    files |= {str(p.relative_to(REPO)) for p in (REPO / "polaris_sql").glob("[0-9]*.sql")}
+    files |= {str(p.relative_to(REPO)) for p in (REPO / "polaris_sql" / "migrations").glob("*.up.sql")}
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_restore_reconciled(tmp_path)[0].level == "OK", \
+        "must PASS on the real tool, its registry against the schema, the drill, CI and the runbook"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_restore_reconciled(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    tool = "scripts/polaris-reconcile-restore.py"
+    broken(tool, '    "duressevent": ', '    "duress_event_gone": ', "must FAIL when REGISTRY leaves a table undecided")
+    broken("polaris_sql/01_schema.sql", "CREATE TABLE RestoreRecord (",
+           "CREATE TABLE ShadowRecord (id INTEGER);\n\nCREATE TABLE RestoreRecord (",
+           "must FAIL when the schema gains a table REGISTRY does not decide")
+    broken(tool, "CALL uc8_revoke_token(", "CALL uc8_forget(", "must FAIL when revocations skip uc8_revoke_token",
+           count=-1)
+    broken(tool, "SELECT setval(", "SELECT nextval(", "must FAIL when the sequences stay where the restore left them")
+    broken(tool, "tables this script does not know", "tables", "must FAIL when an unknown table is not refused")
+    drill = "scripts/polaris-pitr-drill.sh"
+    broken(drill, "grep -qx 'credential 10 ACTIVE'", "true", "must FAIL when the drill does not see the hazard first")
+    broken(drill, '[[ "$left" == "< authority-key 1 cccccccc registered" ]]', '[[ -n "$left" || -z "$left" ]]',
+           "must FAIL when the reconciled state is not compared with the archive's end")
+    broken(".github/workflows/ci.yml", "bash scripts/polaris-pitr-drill.sh --no-build --reconcile", "true",
+           "must FAIL when CI does not run the reconciliation")
+    broken("docs/operator/DR.md", "# 5. Restore the archive's end beside it",
+           "$COMPOSE up -d app\n# 5. Restore the archive's end beside it",
+           "must FAIL when the runbook brings the app back before reconciling")
 
 
 def test_infra_alerts_check_discriminates(tmp_path):

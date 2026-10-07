@@ -113,6 +113,7 @@ DROP TABLE IF EXISTS HolderKeyEvent CASCADE;
 DROP TABLE IF EXISTS TimestampLog           CASCADE;
 DROP TABLE IF EXISTS ChainAnchor            CASCADE;
 DROP TABLE IF EXISTS BackupEvent            CASCADE;
+DROP TABLE IF EXISTS RestoreRecord          CASCADE;
 DROP TABLE IF EXISTS ExchangeNonce          CASCADE;
 DROP TABLE IF EXISTS AuthCodeConsumed       CASCADE;
 DROP TABLE IF EXISTS AuthorityKeyEvent      CASCADE;
@@ -562,6 +563,31 @@ COMMENT ON TABLE BackupEvent IS
   'checked against its manifest (polaris-backup.sh --verify-latest). Recorded by the schema owner '
   'after the backup itself succeeded; where it went, never a credential. The application reads '
   'the newest time per kind for /metrics (PolarisBackupStale). Append-only by trigger.';
+
+-- Lab record 017 (gate row OP-13, 2026-10-07): each reconciliation after a restore to an earlier
+-- point. A restore to T loses every change made after T, including the ones that withdrew trust or
+-- access; scripts/polaris-reconcile-restore.py re-applies those from a copy of the archive's end,
+-- through the procedures that made them, and records here what it did and what it could not.
+-- Written by the schema owner from that script.
+CREATE TABLE RestoreRecord (
+    restore_id     BIGSERIAL    PRIMARY KEY,
+    target_time    TIMESTAMPTZ  NOT NULL,
+    archive_end    TIMESTAMPTZ  NOT NULL,
+    recorded_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    operator       VARCHAR(100) NOT NULL
+        CONSTRAINT chk_restore_record_operator CHECK (length(btrim(operator)) BETWEEN 1 AND 100),
+    outcome        VARCHAR(20)  NOT NULL
+        CONSTRAINT chk_restore_record_outcome CHECK (outcome IN ('reconciled', 'incomplete')),
+    report         JSONB        NOT NULL,
+    recorded_by    VARCHAR(100) NOT NULL DEFAULT session_user,
+    CONSTRAINT chk_restore_record_window CHECK (archive_end > target_time)
+);
+
+COMMENT ON TABLE RestoreRecord IS
+  'Lab record 017 (gate row OP-13): each reconciliation after a restore to an earlier point: the '
+  'point restored to, the archive''s end it was reconciled against, the withdrawals re-applied, '
+  'the ones excluded or still open and why, the grants and records not re-made. Written by the '
+  'schema owner (scripts/polaris-reconcile-restore.py). Append-only by trigger.';
 
 -- P8.2d (v9.324): the exchange gateway's REPLAY REGISTER. A requester's signed exchange
 -- envelope carries a nonce; the gateway consumes (requester key, nonce) here BEFORE
