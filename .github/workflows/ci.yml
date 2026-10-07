@@ -493,6 +493,10 @@ jobs:
       # polaris_app. First run: the Atlas simulation tick used COPY FROM on a row-level-secured
       # table, refused for the real role, green in all 873 tests.
       - name: The web suite with the application connected as polaris_app
+        # With the connection pool on (lab record 017, phase 2d): the role-sensitive suite is
+        # where a pooled connection crossing roles would show.
+        env:
+          POLARIS_DB_POOL_SIZE: "1"
         run: python scripts/polaris-app-role-suite.py
 
       - name: Constraint mutation drill (drop each named constraint, the suite must notice)

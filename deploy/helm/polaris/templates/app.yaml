@@ -55,6 +55,7 @@ spec:
             - {name: PROMETHEUS_MULTIPROC_DIR, value: /tmp/prometheus-multiproc}
             - {name: POLARIS_ZK_BINARY, value: /opt/polaris/zk}
             - {name: WEB_CONCURRENCY, value: {{ .Values.app.webConcurrency | quote }}}
+            - {name: POLARIS_DB_POOL_SIZE, value: {{ .Values.app.dbPoolSize | quote }}}
             - {name: POLARIS_USE_REAL_PQC, value: {{ ternary "1" "0" .Values.app.realPqc | quote }}}
             - {name: POLARIS_PQC_SIGNING_KEY_FILE, value: /run/secrets/polaris_signing_key}
             - {name: POLARIS_TRUST_PROXY, value: "1"}

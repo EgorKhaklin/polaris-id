@@ -8954,6 +8954,122 @@ class F05_ProductionSecretGuardTests(unittest.TestCase):
         self.assertIn('POLARIS_DB_SSLMODE', proc.stderr)
 
 
+class ConnectionPoolTests(PolarisTestCase):
+    """Lab record 017, phase 2d: a pooled connection carries nothing from one request to the next."""
+
+    def _pool(self, size=2):
+        return flask_app._ConnectionPool(size, flask_app.DB_CONFIG)
+
+    def test_a_reused_connection_carries_no_operator_scope(self):
+        pool = self._pool()
+        c1 = pool.getconn()
+        pid = c1.info.backend_pid
+        with c1.cursor() as cur:
+            cur.execute("SELECT set_config('polaris.operator_agency_id', '2', false)")
+        c1.commit()  # as a request does: committed, the setting lives as long as the session
+        c1.close()
+        c2 = pool.getconn()
+        try:
+            self.assertEqual(c2.info.backend_pid, pid, "the pool must reuse the connection")
+            with c2.cursor() as cur:
+                cur.execute("SELECT current_setting('polaris.operator_agency_id', true) AS v")
+                self.assertIn(cur.fetchone()['v'], (None, ''),
+                              "a reused connection carried the previous operator's scope")
+        finally:
+            c2.close()
+
+    def test_session_and_transaction_state_do_not_survive_a_return(self):
+        pool = self._pool()
+        c1 = pool.getconn()
+        with c1.cursor() as cur:
+            cur.execute("CREATE TEMP TABLE pool_probe_temp (x int)")
+        c1.commit()  # a committed temp table lives as long as the session
+        with c1.cursor() as cur:
+            cur.execute("CREATE TEMP TABLE pool_probe_uncommitted (x int)")
+        c1.close()  # this one never committed: only the rollback on return removes it
+        c2 = pool.getconn()
+        try:
+            with c2.cursor() as cur:
+                cur.execute("SELECT to_regclass('pg_temp.pool_probe_temp') AS t, "
+                            "to_regclass('pg_temp.pool_probe_uncommitted') AS u")
+                row = cur.fetchone()
+            self.assertIsNone(row['t'], "a session's temp table survived the return")
+            self.assertIsNone(row['u'], "an uncommitted transaction survived the return")
+        finally:
+            c2.close()
+
+    def test_a_broken_connection_is_replaced(self):
+        pool = self._pool()
+        c1 = pool.getconn()
+        pid = c1.info.backend_pid
+        c1.close()
+        killer = psycopg2.connect(**flask_app.DB_CONFIG)
+        try:
+            with killer.cursor() as cur:
+                cur.execute("SELECT pg_terminate_backend(%s)", (pid,))
+            killer.commit()
+        finally:
+            killer.close()
+        c2 = pool.getconn()
+        try:
+            with c2.cursor() as cur:
+                cur.execute("SELECT 1 AS one")
+                self.assertEqual(cur.fetchone()['one'], 1)
+            self.assertNotEqual(c2.info.backend_pid, pid)
+        finally:
+            c2.close()
+
+    def test_a_pool_inherited_across_a_fork_is_not_used(self):
+        pool = self._pool()
+        c1 = pool.getconn()
+        pid = c1.info.backend_pid
+        c1.close()
+        pool._pid = -1  # as if this process were a fork of the one that filled the pool
+        c2 = pool.getconn()
+        try:
+            self.assertNotEqual(c2.info.backend_pid, pid, "a forked worker reused its parent's socket")
+        finally:
+            c2.close()
+
+    def test_a_changed_configuration_never_reuses_another_roles_connection(self):
+        """The role a connection was opened as is the role row-level security applies to: when
+        the configuration names polaris_app, no connection opened as the owner may serve it."""
+        from unittest import mock
+        with mock.patch.object(flask_app, 'DB_POOL_SIZE', 2):
+            flask_app._DB_POOLS.clear()
+            owner = flask_app.get_db()
+            with owner.cursor() as cur:
+                cur.execute("SELECT current_user AS u")
+                owner_role = cur.fetchone()['u']
+            owner.close()  # idle in the owner's pool
+            if owner_role == 'polaris_app':
+                flask_app._DB_POOLS.clear()
+                self.skipTest("this run is already polaris_app; the owner-to-app direction runs "
+                              "in the owner suite")
+            app_cfg = dict(user='polaris_app',
+                           password=os.environ.get('POLARIS_APP_TEST_PASSWORD', 'polaris_dev_password'))
+            try:
+                psycopg2.connect(**dict(flask_app.DB_CONFIG, **app_cfg)).close()
+            except psycopg2.OperationalError as exc:
+                self.skipTest('polaris_app unreachable: %s' % exc)
+            with mock.patch.dict(flask_app.DB_CONFIG, app_cfg):
+                conn = flask_app.get_db()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT current_user AS u")
+                        role = cur.fetchone()['u']
+                finally:
+                    conn.close()
+            flask_app._DB_POOLS.clear()
+        self.assertNotEqual(owner_role, 'polaris_app')
+        self.assertEqual(role, 'polaris_app', "a request configured as polaris_app was served as %s" % role)
+
+    def test_the_pool_is_off_by_default(self):
+        self.assertEqual(flask_app._db_pool_size({}), 0)
+        self.assertEqual(flask_app._db_pool_size({'POLARIS_DB_POOL_SIZE': ''}), 0)
+        self.assertEqual(flask_app._db_pool_size({'POLARIS_DB_POOL_SIZE': '4'}), 4)
+
+
 class F06_CookieHardeningTests(PolarisTestCase):
     """F-07: Cookie attributes Secure / HttpOnly / SameSite. CWE-614, CWE-1004."""
 

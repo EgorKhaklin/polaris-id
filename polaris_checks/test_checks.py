@@ -14571,6 +14571,25 @@ def test_per_authority_isolation_check_discriminates(tmp_path):
     assert checks.check_per_authority_isolation(tmp_path)[0].level == "OK", \
         "the well-formed tree must PASS"
 
+    # A POOL (lab record 017): allowed only when every checkout resets the session and the
+    # scope and role leak tests exist.
+    POOLED = ("class _ConnectionPool:\n    def getconn(self):\n"
+              "        cur.execute(\"DISCARD ALL\")\n\n\n" + APP.replace(
+                  '"""Open a fresh connection per request."""', '"""Pooled; reset on checkout."""'))
+    LEAK_TESTS = ("def test_a_reused_connection_carries_no_operator_scope(self): pass\n"
+                  "def test_a_changed_configuration_never_reuses_another_roles_connection(self): pass\n")
+    write({'polaris_web/app.py': POOLED, 'polaris_web/test_app.py': LEAK_TESTS})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "OK", \
+        "a pool that resets on checkout, with its leak tests, must PASS"
+    write({'polaris_web/app.py': POOLED.replace("DISCARD ALL", "SELECT 1"),
+           'polaris_web/test_app.py': LEAK_TESTS})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
+        "a pool that does not reset the session on checkout must be refused"
+    write({'polaris_web/app.py': POOLED, 'polaris_web/test_app.py': "def unrelated(): pass\n"})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
+        "a pool without its scope and role leak tests must be refused"
+    write()
+
     # THE TRAP THAT ACTUALLY HAPPENED. `setting = '' OR col = setting::int` looks like it
     # short-circuits and does not: the cast runs on an unscoped session and every query
     # against the table raises. This is the shape the drill caught before it shipped.

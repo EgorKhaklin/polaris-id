@@ -42,6 +42,9 @@ edge:
 app:
   replicas: 2
   webConcurrency: 4
+  # Idle database connections each worker keeps (lab record 017, phase 2d); pgbouncer is in
+  # session mode, so replicas x webConcurrency x dbPoolSize must fit its pool.
+  dbPoolSize: 1
   # Real ML-DSA-65 signing needs the signing key in the secret (see secrets).
   realPqc: true
   # Extra environment for the app pods: the v9.189 session and origin knobs
