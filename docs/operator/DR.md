@@ -560,7 +560,9 @@ The postgres image carries pgBackRest
 `wal_level = replica`, and `archive_timeout = '60s'`, and creates the stanza.
 Archiving is on by default since lab record 017 (gate row OP-14), because a
 restore to a point in time needs the archive from before the failure;
-`POLARIS_PGBACKREST_ENABLED=0` turns it off. `docker-init.sh` is an initdb
+`POLARIS_PGBACKREST_ENABLED=0` turns it off. The HA profile
+(`docker-compose.ha.yml`) keeps it opt-in: its Patroni path creates no stanza,
+so set the variable and create the stanza against the leader. `docker-init.sh` is an initdb
 script: it runs only when the postgres container boots with an empty data
 volume. On a cluster initialised before that, or with archiving off,
 [`scripts/polaris-deploy.sh`](../../scripts/polaris-deploy.sh) applies the same

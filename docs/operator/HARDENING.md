@@ -6,7 +6,8 @@ it carries real identity data. [`deploy/linux/install.sh`](../../deploy/linux/in
 configures Polaris itself; this page is what to do on a fresh Debian, Ubuntu,
 or RHEL-family server around it. Polaris's own container hardening (capabilities dropped,
 `no-new-privileges`, read-only roots for the edge, app, pooler and Redis, an edge that
-reads each request body whole before the app sees it and ends slow clients, digest-pinned
+reads each request body whole, up to 1 MiB, before the app sees it, answers a larger one 413
+and ends slow clients, digest-pinned
 images, TLS on every hop, secrets as mounted files) is already in the compose file and
 the chart; nothing here duplicates it. `lab/strategy/006/posture.sh` reads it back from
 the kernel on a running stack.

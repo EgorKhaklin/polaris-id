@@ -45,7 +45,15 @@ stack):**
 - A three-member etcd (`etcd1`, `etcd2`, `etcd3`, self-built from Alpine's
   package, non-root) on an internal network only the database members join.
   It holds the leader lease: `ttl` 20 s, renewed every `loop_wait` 5 s, with
-  `retry_timeout` 5 s.
+  `retry_timeout` 5 s. It authenticates its clients: the one-shot `etcd-auth`
+  makes a root user and a `patroni` user whose role reaches `/service/` alone,
+  then turns authentication on, before either member starts (passwords from
+  `polaris_etcd_root_password` and `polaris_etcd_patroni_password`).
+- Patroni's REST API answers reads to anyone on the stack network (HAProxy's
+  role checks below), and its writes (switchover, restart, reload, `PATCH
+  /config`, which sets postgresql parameters across the cluster) take the
+  password in `polaris_patroni_restapi_password`; `patronictl` reads it from
+  the same rendered configuration.
 - HAProxy (`pg-router`) forwarding 5432 to whichever member answers
   Patroni's `/primary` and 5433 to a member answering `/replica`, checking
   every half second, cutting sessions to a member the moment it is marked
