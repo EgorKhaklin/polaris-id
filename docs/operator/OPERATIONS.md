@@ -1067,26 +1067,12 @@ complementing `/api/health`'s point-in-time view. No authentication; it
 carries the duress signal, so it must be reachable only by the operator's
 monitoring, never the public internet ([HARDENING.md, section 10](HARDENING.md)).
 
-**Edge exposure (operator-supplied until the software ship lands).** The
-shipped [polaris_web/Caddyfile](../../polaris_web/Caddyfile) reverse-proxies
-every path of the public site to the app, including `/metrics` and
-`/api/metrics`, with no source-IP ACL; the app applies none either. A
-production operator must add a Caddy matcher restricting both paths to the
-monitoring network before the site goes public:
-
-```caddyfile
-{$POLARIS_DOMAIN} {
-    @metrics {
-        path /metrics /api/metrics
-        not remote_ip 10.0.0.0/8      # your monitoring CIDR
-    }
-    respond @metrics 404
-
-    reverse_proxy {$POLARIS_UPSTREAMS:app:8000} {
-        # ... shipped block unchanged ...
-    }
-}
-```
+**Edge exposure.** The shipped [polaris_web/Caddyfile](../../polaris_web/Caddyfile) answers
+`/metrics` and `/api/metrics` with 404 unless the client address is in `POLARIS_METRICS_ALLOW`
+(default: private ranges), so an in-network Prometheus scrapes and the public internet does not.
+Set it to your monitoring network's range. The rule keys on the address the edge sees; behind a
+load balancer or NAT that can be a private address, so confirm it on your topology
+([operability gate](../PRODUCTION-READINESS.md#operability-gate), OP-26).
 
 **Scrape config example** (Prometheus `prometheus.yml`; the shipped one is
 [deploy/observability/prometheus.yml](../../deploy/observability/prometheus.yml)).
