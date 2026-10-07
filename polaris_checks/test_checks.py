@@ -1773,7 +1773,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                    "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed", "authoritykeyevent", "timestamplog", "holderkeyevent")
 
     def write(grants, mig_revoke, proc_definer, uc11_definer=True, uc10_definer=True, uc9r_definer=True,
-              hk_definer=True, hk_path=True):
+              hk_definer=True, hk_path=True, uc9r_standing=True):
         (sql / "09_grants.sql").write_text(grants)
         (mig / "2026-05-15-003-audit-access-log.up.sql").write_text(
             "REVOKE UPDATE, DELETE ON AuditAccessLog FROM polaris_app;\n"
@@ -1792,7 +1792,10 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                       for r in ("uc10_attest_trust", "uc10_revoke_attestation", "uc_pseudonymize_individual"))
             + "CREATE OR REPLACE PROCEDURE uc9_record_recovery_channel(p INTEGER)\nLANGUAGE plpgsql\n"
             + ("SECURITY DEFINER\nSET search_path = public, pg_temp\n" if uc9r_definer else "")
-            + "AS $$ BEGIN NULL; END; $$;\n"
+            + "AS $$ BEGIN SELECT 1 FROM IdentityToken t ORDER BY t.issued_date DESC;\n"
+            + ("IF v_standing IS NOT TRUE AND v_agency IS DISTINCT FROM v_original THEN RAISE; END IF;\n"
+               if uc9r_standing else "")
+            + "END; $$;\n"
             + "CREATE OR REPLACE FUNCTION uc_record_holder_key_event(p INTEGER) RETURNS BIGINT\n"
             + "LANGUAGE plpgsql\n" + ("SECURITY DEFINER\n" if hk_definer else "")
             + ("SET search_path = public, pg_temp\n" if hk_path else "")
@@ -1915,6 +1918,9 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     write(full, True, True, uc9r_definer=False)
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
         "must FAIL when uc9_record_recovery_channel runs with the caller's rights (rc.60)"
+    write(full, True, True, uc9r_standing=False)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a requester without standing may take any third authority as witness (2026-10-05)"
 
     # 8. 2026-09-25: the federation trust graph.
     write(full.replace("REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;\n", ""), True, True)

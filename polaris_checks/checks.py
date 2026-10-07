@@ -846,6 +846,16 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
                                     "with search_path pinned: it is the product's only path to record "
                                     "a recovery channel once the application role holds no UPDATE on "
                                     "RecoveryRequest (C1)")
+    # 2026-10-05. Its WITNESS branch: a requester without standing over the person is witnessed by
+    # the person's original issuer, or any two authorities recover a stranger's credential.
+    body = re.search(r"PROCEDURE\s+uc9_record_recovery_channel\b.*?\$\$(.*?)\$\$", proc, re.I | re.S)
+    if not body or not (
+            re.search(r"ORDER\s+BY\s+t\.issued_date\s+DESC", body.group(1), re.I)
+            and re.search(r"v_standing\s+IS\s+NOT\s+TRUE\s+AND\s+v_agency\s+IS\s+DISTINCT\s+FROM\s+v_original",
+                          body.group(1), re.I)):
+        return _fail("c1_aor_priv", "uc9_record_recovery_channel must refuse a WITNESS not bound to the "
+                                    "original issuer when the requester has no standing over the person: "
+                                    "without it, two authorities recover a credential for a stranger")
     # 2026-09-25. The federation trust graph: recorded only by uc10_attest_trust, revoked only by
     # uc10_revoke_attestation, whose ownership the immutability trigger asks for.
     if not re.search(r"REVOKE\s+INSERT\s+ON\s+AgencyTrustAttestation\s+FROM\s+polaris_app", grants, re.I):
