@@ -2588,9 +2588,27 @@ def check_health_liveness_readiness_split(root: pathlib.Path) -> list[Finding]:
         return _fail("health_probes",
                      "the prod HEALTHCHECK should use the liveness probe (/api/health/live), not "
                      "the dependency roll-up, so a transient outage does not restart the container")
+    # Lab record 017: readiness answers for THIS instance. A shared dependency (the database)
+    # failing for every replica at once must not take them all out of rotation, so the
+    # readiness handler may not run the shared roll-up, and the edge and Kubernetes route on it.
+    m = re.search(r"def api_health_ready\(.*?\n(?=@app\.route|def [a-z])", app, re.S)
+    ready_body = m.group(0) if m else ""
+    if ready_body and ("_compute_readiness(" in ready_body or "_health_check_database(" in ready_body):
+        return _fail("health_probes",
+                     "the readiness probe runs the shared dependency roll-up; a database failover "
+                     "would then take every instance out of rotation at once")
+    caddy = _read(root, "polaris_web/Caddyfile")
+    if caddy and "health_uri /api/health/ready" not in caddy:
+        return _fail("health_probes",
+                     "the edge (polaris_web/Caddyfile health_uri) must route on /api/health/ready")
+    helm = _read(root, "deploy/helm/polaris/templates/app.yaml")
+    if helm and not re.search(r"readinessProbe:\s*\n\s*httpGet:\s*\{path:\s*/api/health/ready", helm):
+        return _fail("health_probes",
+                     "the Helm readinessProbe must use /api/health/ready")
     return _ok("health_probes",
-               "liveness (/api/health/live, cheap) and readiness (/api/health/ready, deps) are "
-               "split; the container HEALTHCHECK uses liveness")
+               "liveness (/api/health/live, cheap) and per-instance readiness (/api/health/ready) "
+               "are split; the container HEALTHCHECK uses liveness and the edge and Helm route on "
+               "readiness, which never runs the shared dependency roll-up")
 
 
 # ---------------------------------------------------------------------------
@@ -6791,9 +6809,12 @@ def check_zero_downtime_deploy(root: pathlib.Path) -> list[Finding]:
         return _fail("zero_downtime", "a zero-downtime file is missing (Caddyfile(s), compose, bluegreen overlay, "
                      "deploy, rotate-secret, rolling drill, ci.yml)")
     for name, cf in (("Caddyfile", caddy), ("Caddyfile.citest", citest)):
-        if "{$POLARIS_UPSTREAMS" not in cf or "lb_try_duration" not in cf or "/api/health/live" not in cf:
+        # The active check polls per-instance readiness (lab record 017): it still drops a colour
+        # that is stopped mid-roll, and also one that cannot sign, while a shared database
+        # failover leaves both colours in rotation.
+        if "{$POLARIS_UPSTREAMS" not in cf or "lb_try_duration" not in cf or "health_uri /api/health/ready" not in cf:
             return _fail("zero_downtime", f"{name} must take upstreams from POLARIS_UPSTREAMS, retry onto the other "
-                         "colour (lb_try_duration), and poll /api/health/live")
+                         "colour (lb_try_duration), and poll /api/health/ready")
     if "healthcheck:" not in compose.split("container_name: polaris-app\n")[1].split("\n  pgbouncer:")[0] \
             or "stop_grace_period" not in compose or "POLARIS_UPSTREAMS" not in compose:
         return _fail("zero_downtime", "the app service needs a healthcheck (the roll waits on it), a stop_grace_period "
