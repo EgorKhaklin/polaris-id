@@ -1,0 +1,20 @@
+# Blackbox exporter modules for the observability overlay (lab record 017, gate row OP-15).
+#
+# edge_tls asks the TLS edge for its own site, from inside the stack's network: the TLS server name
+# and the Host header are the deployment's domain, filled in from POLARIS_DOMAIN when the container
+# starts (the overlay renders __POLARIS_DOMAIN__). It measures the certificate the edge serves
+# (probe_ssl_earliest_cert_expiry); it does not judge trust, which is a browser's job, so it does
+# not verify the chain: a stack on Caddy's internal authority (try.sh, CI) reports its expiry too.
+modules:
+  edge_tls:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      valid_status_codes: [200]
+      fail_if_not_ssl: true
+      headers:
+        Host: __POLARIS_DOMAIN__
+      tls_config:
+        server_name: __POLARIS_DOMAIN__
+        insecure_skip_verify: true

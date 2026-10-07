@@ -268,3 +268,36 @@ tests:
             exp_annotations:
               summary: "The disk under app:8000 is over 90% full"
               description: "The filesystem holding the state directory (and, on a single host, the database's volume) has been more than 90% used for 10 minutes. The database stops writing when it is full."
+
+  # Lab record 017 (gate row OP-15): the edge's certificate. Times are seconds from the test's
+  # start. One edge's certificate has 30 days left and never fires; another's has 10 days and fires
+  # at the evaluation 10 minutes after it is first seen; a third probe fails throughout and fires
+  # PolarisEdgeProbeFailing once 5 minutes have passed.
+  - interval: 1m
+    input_series:
+      - series: 'probe_ssl_earliest_cert_expiry{job="polaris-edge-tls",target="https://caddy:8443/ok"}'
+        values: '2592000x30'
+      - series: 'probe_ssl_earliest_cert_expiry{job="polaris-edge-tls",target="https://caddy:8443/soon"}'
+        values: '864000x30'
+      - series: 'probe_success{job="polaris-edge-tls",target="https://caddy:8443/ok"}'
+        values: '1x30'
+      - series: 'probe_success{job="polaris-edge-tls",target="https://caddy:8443/down"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: PolarisCertificateExpiring
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: PolarisCertificateExpiring
+        exp_alerts:
+          - exp_labels: {severity: sev2, job: polaris-edge-tls, target: "https://caddy:8443/soon"}
+            exp_annotations:
+              summary: "The edge's certificate expires in under 14 days"
+              description: "The certificate the TLS edge serves for this deployment's domain expires in under 14 days. Caddy renews about 30 days ahead, so renewal has been failing."
+      - eval_time: 6m
+        alertname: PolarisEdgeProbeFailing
+        exp_alerts:
+          - exp_labels: {severity: sev2, job: polaris-edge-tls, target: "https://caddy:8443/down"}
+            exp_annotations:
+              summary: "The edge does not answer its own domain"
+              description: "The blackbox exporter's request to the edge, under the deployment's domain, has failed for 5 minutes; the certificate's expiry cannot be read while it fails."

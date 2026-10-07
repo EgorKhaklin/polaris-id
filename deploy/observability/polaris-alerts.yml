@@ -213,3 +213,28 @@ groups:
         annotations:
           summary: "The disk under {{ $labels.instance }} is over 90% full"
           description: "The filesystem holding the state directory (and, on a single host, the database's volume) has been more than 90% used for 10 minutes. The database stops writing when it is full."
+
+      # SEV-2: the certificate the TLS edge serves for the deployment's domain expires in under 14
+      # days, for 10 minutes. Caddy renews about 30 days ahead, so this close to expiry renewal has
+      # been failing for two weeks (ACME blocked, DNS moved, port 80 closed). The blackbox exporter
+      # reads it from inside the network (job polaris-edge-tls).
+      - alert: PolarisCertificateExpiring
+        expr: probe_ssl_earliest_cert_expiry{job="polaris-edge-tls"} - time() < 14 * 86400
+        for: 10m
+        labels:
+          severity: sev2
+        annotations:
+          summary: "The edge's certificate expires in under 14 days"
+          description: "The certificate the TLS edge serves for this deployment's domain expires in under 14 days. Caddy renews about 30 days ahead, so renewal has been failing."
+
+      # SEV-2: the edge has not answered its own domain from inside the network for 5 minutes,
+      # though the probe reaches it on the stack's network: the site, its certificate or its
+      # upstream is broken where the app's own target may still look healthy.
+      - alert: PolarisEdgeProbeFailing
+        expr: probe_success{job="polaris-edge-tls"} == 0
+        for: 5m
+        labels:
+          severity: sev2
+        annotations:
+          summary: "The edge does not answer its own domain"
+          description: "The blackbox exporter's request to the edge, under the deployment's domain, has failed for 5 minutes; the certificate's expiry cannot be read while it fails."

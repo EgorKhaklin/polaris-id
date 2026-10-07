@@ -53,6 +53,35 @@ services:
       driver: json-file
       options: { max-size: 10m, max-file: '3' }
 
+  # Lab record 017 (gate row OP-15): reads the certificate the edge serves, under the deployment's
+  # domain, for PolarisCertificateExpiring. The image's own shell fills POLARIS_DOMAIN into
+  # blackbox.yml at start; it runs as nobody on a read-only root.
+  blackbox:
+    image: prom/blackbox-exporter@sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc  # v0.28.0
+    container_name: polaris-blackbox
+    restart: unless-stopped
+    user: "65534:65534"
+    environment:
+      POLARIS_DOMAIN: ${POLARIS_DOMAIN:?POLARIS_DOMAIN must be set in shell env}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - sed "s|__POLARIS_DOMAIN__|$${POLARIS_DOMAIN}|g" /etc/blackbox/blackbox.yml > /tmp/blackbox.yml
+        && exec /bin/blackbox_exporter --config.file=/tmp/blackbox.yml
+    volumes:
+      - ../deploy/observability/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - polaris-net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: '3' }
+
   alertmanager:
     image: prom/alertmanager@sha256:690c7b525f4367aa91f73e2f91c632206d32e97c6384bdbf2fb7a861b420340d
     container_name: polaris-alertmanager

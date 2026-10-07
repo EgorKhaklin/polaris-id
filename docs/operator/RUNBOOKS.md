@@ -41,8 +41,10 @@ edit either file.
 12. [PolarisArchiveFailing](#polarisarchivefailing)
 13. [PolarisReplicaBehind](#polarisreplicabehind)
 14. [PolarisDiskFilling](#polarisdiskfilling)
-15. [Paging: wiring the receiver](#paging-wiring-the-receiver)
-16. [Cross-references](#cross-references)
+15. [PolarisCertificateExpiring](#polariscertificateexpiring)
+16. [PolarisEdgeProbeFailing](#polarisedgeprobefailing)
+17. [Paging: wiring the receiver](#paging-wiring-the-receiver)
+18. [Cross-references](#cross-references)
 
 ---
 
@@ -554,6 +556,59 @@ under 5 GB free) and unhealthy under 500 MB.
 expired backups kept elsewhere), fix a failing archive so Postgres can recycle
 WAL, or grow the volume. Never delete files under the database's data
 directory by hand. The alert clears 10 minutes after use falls below 90%.
+
+---
+
+## PolarisCertificateExpiring
+
+**Severity:** SEV-2 · **Expression:** `probe_ssl_earliest_cert_expiry{job="polaris-edge-tls"} - time() < 14 * 86400` · **For:** 10m
+
+The certificate the TLS edge serves for this deployment's domain expires in
+under 14 days (lab record 017, gate row OP-15). The observability overlay's
+blackbox exporter asks the edge for its own site from inside the network,
+with the domain as the TLS server name and Host header, and reads the
+certificate it is given. Caddy renews about 30 days before expiry, so a
+certificate this close means renewal has been failing for about two weeks.
+
+**Trigger.** Under 14 days left, held 10 minutes. A stack on Caddy's internal
+authority (`lab/strategy/006/try.sh`, CI) gets 12-hour certificates and fires
+this by design; production with ACME does not.
+
+**Diagnosis.**
+1. `docker compose logs caddy | grep -i -E "renew|obtain|acme|error"`: Caddy
+   logs each renewal attempt and why it failed.
+2. The usual causes: port 80 or 443 closed to the internet (the ACME
+   challenge cannot reach the edge), the domain's DNS no longer pointing at
+   this host, an ACME rate limit after repeated failures, a `caddy_data`
+   volume that is not writable.
+3. From outside: `echo | openssl s_client -connect $POLARIS_DOMAIN:443 -servername $POLARIS_DOMAIN 2>/dev/null | openssl x509 -noout -enddate`.
+
+**Remediation.** Fix the cause Caddy logs (open the ports, correct DNS, wait
+out a rate limit); Caddy retries on its own and the alert clears once the new
+certificate is served. Do not delete `caddy_data`: it holds the ACME account
+and the current certificate.
+
+---
+
+## PolarisEdgeProbeFailing
+
+**Severity:** SEV-2 · **Expression:** `probe_success{job="polaris-edge-tls"} == 0` · **For:** 5m
+
+The edge has not answered a request for its own domain from inside the
+network for 5 minutes (lab record 017, gate row OP-15), so the certificate's
+expiry cannot be read either. The app's own target can still look healthy:
+the fault is in the edge, its site configuration, its certificate or its
+route to the app.
+
+**Diagnosis.**
+1. `docker compose ps caddy` and `docker compose logs --tail 50 caddy`.
+2. From the observability network, the probe's own detail:
+   `curl -s "http://blackbox:9115/probe?module=edge_tls&target=https://caddy:8443/api/health/live&debug=true"`.
+3. `scripts/polaris-doctor.sh` names the failing component of the stack.
+
+**Remediation.** Restart or reload the edge once the cause is fixed (a
+Caddyfile change reloads live through the admin socket). The alert clears 5
+minutes after the probe succeeds.
 
 ---
 

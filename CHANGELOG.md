@@ -62,6 +62,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `/metrics` reports the database's WAL archiving as `pg_stat_archiver` sees it; PolarisArchiveFailing pages when the newest attempt failed and none succeeded since.
 - `/metrics` reports a configured read replica's lag against the deployment's staleness limit; PolarisReplicaBehind pages when it stays beyond it, or unreachable, for 10 minutes.
 - `/metrics` reports the size and free space of the state directory's filesystem, the database's on a single host; PolarisDiskFilling pages above 90% used for 10 minutes.
+- The observability overlay reads the certificate the edge serves under the deployment's domain; PolarisCertificateExpiring pages under 14 days, PolarisEdgeProbeFailing when it stops answering.
 - A point-in-time restore drill: a restore to a chosen moment brings back exactly what was committed by then, and nothing after.
 - `/api/health` compares this instance's clock with the database's and reports `clock` degraded beyond 2 s of skew.
 - A per-process database connection pool (`POLARIS_DB_POOL_SIZE`, 1 in the production compose file and the Helm chart): each checkout resets the session and the pool is keyed on the exact connection settings; verification went from about 300 to at least 800 requests/s on one host (lab record 017).
