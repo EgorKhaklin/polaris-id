@@ -140,7 +140,7 @@ def _migration_target(agency_id, requested=None):
     if requested is None:
         return _signer_algorithm(agency_id)
     name = _registry_name(requested)
-    if name not in pqc_signing.ACCEPTED_ALGORITHMS:
+    if not pqc_signing._signs_under(name):
         raise _AlgorithmRefused(_nothing_signs_with(name))
     return requested, name
 
@@ -818,7 +818,8 @@ def uc6_migrate():
             WHERE name = ANY(%s)
               AND (deprecation_date IS NULL OR deprecation_date > polaris_utc_date())
             ORDER BY algorithm_id
-        """, (list(pqc_signing.ACCEPTED_ALGORITHMS),))
+        """, ([a for a in list(pqc_signing.ACCEPTED_ALGORITHMS) + list(pqc_signing.custody.EXPERIMENTAL_ALGORITHM_SIZES)
+               if pqc_signing._signs_under(a)],))
     return render_template('uc6_migrate.html',
                            credential=credential, missing=missing,
                            signatures=signatures,

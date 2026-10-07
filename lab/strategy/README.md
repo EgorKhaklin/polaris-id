@@ -62,6 +62,7 @@ arguing with it. A decision that only reverses the one before it has not finishe
 | [014-precession.md](014-precession.md) | Precession: re-signing a credential as often as it must move (rollback, key rotation, a compromised key, continuous migration) as append-only generations forked from its genesis signature | OPEN, 2026-10-05: falsifiers written first; nothing built. Started from a property test and the quantum-event drill: migration holds, but only once per algorithm |
 | [015-three-signature-standards.md](015-three-signature-standards.md) | SLH-DSA as a product signer and FN-DSA opt-in beside ML-DSA, with `@noble/post-quantum` as the second witness: the rotation away from lattices that the posture claim describes, made runnable | OPEN, 2026-10-05: falsifiers written first; nothing built. Follows 014 |
 | [016-batch-wallet-copies.md](016-batch-wallet-copies.md) | OpenID4VCI batch issuance of wallet copies, each presented once, so verifiers cannot link one holder by holder key, status index, signature or timestamp | OPEN, 2026-10-05: falsifiers written first; nothing built |
+| [017-production-operability.md](017-production-operability.md) | An operator who is not the author installs Polaris from signed artifacts, configures, upgrades, restores and diagnoses it, measured by an operability gate whose every PASS cites evidence | OPEN, 2026-10-07: falsifiers written first. Step 0: the gate in PRODUCTION-READINESS.md and two operator documents corrected |
 
 ## Candidates generated, not admitted
 

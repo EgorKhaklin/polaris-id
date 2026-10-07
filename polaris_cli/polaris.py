@@ -787,8 +787,17 @@ def cmd_migrate_population(args):
         elif not totals["blocked"]:
             print(dim("  Next: close the window with --deprecate-old once fielded verifiers "
                       f"accept {target_name}."))
+    except psycopg2.errors.InsufficientPrivilege:
+        conn.rollback()
+        sys.stderr.write(red(_MIGRATE_OWNER_ONLY))
+        sys.exit(3)
     finally:
         conn.close()
+
+
+_MIGRATE_OWNER_ONLY = ("Refused: re-signing a population writes credential signatures, which only the "
+                       "schema owner may write (2026-10-04: the application role can no longer insert a "
+                       "TokenSignature row). Run migrate-population as the owner.\n")
 
 
 def cmd_migrate_algorithm(args):
@@ -2691,8 +2700,10 @@ def build_parser():
         p_k.add_argument('public_key_hex', help='The key (hex)')
         p_k.add_argument('--effective-at', default=None, help='ISO-8601 instant the event takes effect (default: now)')
         p_k.add_argument('--note', default=None, help='A short note recorded with the event (no personal data)')
-        p_k.add_argument('--algorithm', default=None, choices=('ML-DSA-65', 'ML-DSA-87'),
-                         help='The key\'s parameter set (default: inferred from the key length, else ML-DSA-65)')
+        p_k.add_argument('--algorithm', default=None, choices=('ML-DSA-65', 'ML-DSA-87', 'Falcon-padded-1024'),
+                         help='The key\'s parameter set (default: inferred from the key length, else ML-DSA-65). '
+                              'Falcon-padded-1024 (the FN-DSA family) is experimental: it needs '
+                              'POLARIS_EXPERIMENTAL_SIGNERS to name it, outside POLARIS_ENV=production')
 
     # the logs' public-chain anchors (decision 013)
     p_ar = sub.add_parser('anchor-record',
@@ -2750,14 +2761,32 @@ def build_parser():
     return p
 
 
-_KEY_ALGORITHM_BY_HEX_LENGTH = {3904: 'ML-DSA-65', 5184: 'ML-DSA-87'}
+_KEY_ALGORITHM_BY_HEX_LENGTH = {3904: 'ML-DSA-65', 5184: 'ML-DSA-87', 3586: 'Falcon-padded-1024'}
+# 2026-10-06: an experimental signer's key is registered only where the same opt-in that lets the
+# application sign under it holds (polaris_web/custody.py, experimental_signer_allowed): a
+# 'registered' event makes the key the agency's current one, so registering one the signer
+# refuses would leave the agency with a current key nothing here may sign with.
+_EXPERIMENTAL_KEY_ALGORITHMS = ('Falcon-padded-1024',)
+
+
+def _experimental_key_allowed(algorithm):
+    if os.environ.get('POLARIS_ENV', '').strip().lower() == 'production':
+        return False
+    named = {a.strip() for a in os.environ.get('POLARIS_EXPERIMENTAL_SIGNERS', '').split(',') if a.strip()}
+    return algorithm in named
 
 
 def _key_algorithm(args):
     """The parameter set recorded with a key event (P8.8a): --algorithm, else the one the
-    key's length identifies, else the default."""
+    key's length identifies, else the default. An experimental set is refused (SystemExit 2)
+    unless its opt-in holds."""
     explicit = getattr(args, 'algorithm', None)
-    return explicit or _KEY_ALGORITHM_BY_HEX_LENGTH.get(len(args.public_key_hex), 'ML-DSA-65')
+    alg = explicit or _KEY_ALGORITHM_BY_HEX_LENGTH.get(len(args.public_key_hex), 'ML-DSA-65')
+    if alg in _EXPERIMENTAL_KEY_ALGORITHMS and not _experimental_key_allowed(alg):
+        sys.stderr.write('%s is an experimental signer: set POLARIS_EXPERIMENTAL_SIGNERS=%s, outside '
+                         'POLARIS_ENV=production, to register a key under it\n' % (alg, alg))
+        raise SystemExit(2)
+    return alg
 
 
 def _cmd_key_event(args, event):

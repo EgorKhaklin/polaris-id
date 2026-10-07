@@ -1,0 +1,44 @@
+name: Lab, FN-DSA signing timing
+
+# Record 015, lab step 4: the dudect-style timing test of Falcon-padded-1024 signing
+# (lab/strategy/015/timing/), on the platform the deployment profile names (Linux x86_64),
+# against liboqs built from the release commit and flags of polaris_web/Dockerfile.prod.
+# Evidence for the record, never a gate: it runs when the harness changes, and on demand.
+
+on:
+  pull_request:
+    paths:
+      - "lab/strategy/015/timing/**"
+      - ".github/workflows/lab-falcon-timing.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  timing:
+    name: Falcon-padded-1024 signing, fixed vs random key and message
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Build liboqs as the production image does
+        env:
+          LIBOQS_TAG: "0.16.0"
+          LIBOQS_COMMIT: 5a1a854b0dc9f2141bdc771c555ee60c37950183
+        run: |
+          git clone --depth 1 --branch "$LIBOQS_TAG" https://github.com/open-quantum-safe/liboqs /tmp/liboqs
+          test "$(git -C /tmp/liboqs rev-parse HEAD)" = "$LIBOQS_COMMIT"
+          cmake -S /tmp/liboqs -B /tmp/liboqs/build \
+            -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON \
+            -DOQS_ENABLE_SIG_STFL_LMS=ON -DOQS_ENABLE_SIG_STFL_XMSS=ON \
+            -DOQS_HAZARDOUS_EXPERIMENTAL_ENABLE_SIG_STFL_KEY_SIG_GEN=ON \
+            -DCMAKE_INSTALL_PREFIX="$HOME/_oqs"
+          cmake --build /tmp/liboqs/build --parallel 4
+          cmake --build /tmp/liboqs/build --target install
+
+      - name: Run the four tests
+        run: OQS="$HOME/_oqs" bash lab/strategy/015/timing/run.sh | tee -a "$GITHUB_STEP_SUMMARY"

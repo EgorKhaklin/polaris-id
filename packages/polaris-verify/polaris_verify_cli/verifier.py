@@ -59,8 +59,9 @@ _ACCEPTED = {"ML-DSA-65": ("MLDSA65PublicKey", 1952, 3309), "ML-DSA-87": ("MLDSA
 # below the floor ML-DSA-44 already marks. The fixed length leaves a signature's size telling
 # nothing. cryptography carries no Falcon, so liboqs is the one witness here; the second,
 # independent implementation is @noble/post-quantum in the TypeScript SDK, and the conformance
-# vectors bind the two (conformance/make_fndsa_vectors.py). Verification only: Polaris signs
-# nothing under it (lab/strategy/015, falsifier 2: signing timing not yet cleared).
+# vectors bind the two (conformance/make_fndsa_vectors.py). This verifier only verifies; Polaris
+# signs under it only as an experimental signer, outside production (polaris_web/custody.py),
+# while FIPS 206 is a draft (lab/strategy/015).
 
 
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")

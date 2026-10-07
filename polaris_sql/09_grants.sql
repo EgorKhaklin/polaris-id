@@ -165,6 +165,14 @@ REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;
 -- (migration 2026-10-01-003).
 REVOKE INSERT ON HolderKeyEvent FROM polaris_app;
 
+-- 2026-10-04 (THREAT-MODEL). A credential's signatures are written only by the issuance,
+-- recovery, bulk and migration procedures (SECURITY DEFINER) and by the population migration,
+-- which is the schema owner's (polaris migrate-population). With INSERT the application role
+-- could plant a signature row for a credential, keyless or under a key of its own; with UPDATE
+-- it could move a deprecation date. Possession under real signing already refuses a key the
+-- authority never registered; this closes the write itself.
+REVOKE INSERT, UPDATE, DELETE ON TokenSignature FROM polaris_app;
+
 -- 2026-09-25. The anchoring layer is written only by close_anchor_batch (SECURITY DEFINER) and by
 -- the sample data. With INSERT on AnchorBatch the application role could record a batch whose
 -- size no leaves bear out, or under a deprecated algorithm; with UPDATE on BlockchainAnchor,

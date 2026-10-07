@@ -1835,6 +1835,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
               "REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;\n"
               "REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;\n"
               "REVOKE INSERT ON HolderKeyEvent FROM polaris_app;\n"
+              "REVOKE INSERT, UPDATE, DELETE ON TokenSignature FROM polaris_app;\n"
               "REVOKE INSERT ON AnchorBatch FROM polaris_app;\n"
               "REVOKE INSERT, UPDATE, DELETE ON BlockchainAnchor FROM polaris_app;\n"
               "REVOKE INSERT ON DuressEvent FROM polaris_app;\n"
@@ -1892,8 +1893,11 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
         "must FAIL when the partition manager leaves a new partition unlocked"
 
-    # 6. Everything present -> OK.
+    # 6. The application keeps the write on TokenSignature -> FAIL; everything present -> OK.
     (sql / "01_schema.sql").write_text(lock + ensure)
+    write(full.replace("REVOKE INSERT, UPDATE, DELETE ON TokenSignature FROM polaris_app;\n", ""), True, True)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the application role can still write a credential's signatures"
     write(full, True, True)
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "OK", \
         "must PASS when the parents, the partitions, the lifecycle log and the epochs are all locked"
@@ -2299,6 +2303,97 @@ def test_rust_toolchain_pin_check_discriminates(tmp_path):
     assert checks.check_rust_toolchain_pinned(tmp_path)[0].level == "OK", \
         "must PASS on a dated pin that CI derives from the file"
 
+
+
+def test_config_schema_coverage_check_discriminates(tmp_path):
+    web = tmp_path / "polaris_web"
+    web.mkdir()
+    schema = web / "config_schema.py"
+    app = web / "app.py"
+    schema.write_text('S = (\n    _s("POLARIS_A"),\n    _s("POLARIS_B_<ROLE>", family=True),\n)\n')
+    app.write_text("import os\nA = os.environ.get('POLARIS_A')\nB = os.environ.get(f'POLARIS_B_{role}')\n")
+    assert checks.check_config_schema_covers_env(tmp_path)[0].level == "OK", \
+        "must PASS when every read setting is declared and every declaration is read"
+
+    app.write_text(app.read_text() + "C = os.environ.get('POLARIS_C')\n")
+    assert checks.check_config_schema_covers_env(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a setting the application reads that the schema does not declare"
+
+    app.write_text("import os\nA = os.environ.get('POLARIS_A')\nB = os.environ.get(f'POLARIS_B_{role}')\n")
+    schema.write_text(schema.read_text().replace('    _s("POLARIS_A"),\n', '    _s("POLARIS_A"),\n    _s("POLARIS_D"),\n'))
+    assert checks.check_config_schema_covers_env(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a declaration nothing reads"
+
+    (web / "test_app.py").write_text("X = 'POLARIS_TEST_ONLY'\n")
+    schema.write_text('S = (\n    _s("POLARIS_A"),\n    _s("POLARIS_B_<ROLE>", family=True),\n)\n')
+    assert checks.check_config_schema_covers_env(tmp_path)[0].level == "OK", \
+        "test files are not the application and do not count"
+
+
+def test_config_doc_check_discriminates(tmp_path):
+    web = tmp_path / "polaris_web"
+    web.mkdir()
+    (web / "config_schema.py").write_text("def render_doc():\n    return '# Configuration reference\\n'\n")
+    ops = tmp_path / "docs" / "operator"
+    ops.mkdir(parents=True)
+    doc = ops / "CONFIG.md"
+    doc.write_text("# Configuration reference\n")
+    assert checks.check_config_doc_current(tmp_path)[0].level == "OK", \
+        "must PASS when the committed reference is the schema's rendering"
+    doc.write_text("# Configuration reference\n| a stale row |\n")
+    assert checks.check_config_doc_current(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the committed reference drifts from the schema"
+    doc.unlink()
+    assert checks.check_config_doc_current(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the reference is missing"
+
+
+def test_operability_gate_check_discriminates(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "drill.sh").write_text("#!/bin/sh\n")
+    ready = docs / "PRODUCTION-READINESS.md"
+    rows = ["| OP-%d | Criterion %d | FAIL | not built |" % (i, i) for i in range(1, 9)]
+    rows += ["| OP-9 | A crash costs no request | PASS | `drill:scripts/drill.sh` |",
+             "| OP-10 | Rules in the schema | PASS | `check:aor_append_only_triggers` |",
+             "| OP-11 | Real identity data | FAIL | external review, DPIA, pilot |"]
+
+    def doc(rows, totals="11 criteria: 2 PASS, 0 PARTIAL, 9 FAIL, 0 UNKNOWN."):
+        return ("**Status: not production-ready for real identity data.**\n\n"
+                "## Operability gate\n\nIt is not readiness for real identity data.\n\n"
+                + totals + "\n\n| ID | Criterion | Status | Evidence |\n|---|---|---|---|\n"
+                + "\n".join(rows) + "\n\n## The rule\n")
+
+    ready.write_text(doc(rows))
+    assert checks.check_operability_gate(tmp_path)[0].level == "OK", \
+        "must PASS on a gate whose PASS rows cite resolvable evidence and whose totals match"
+
+    ready.write_text(doc([r.replace("`drill:scripts/drill.sh`", "measured") for r in rows]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a PASS row with no citation"
+
+    ready.write_text(doc([r.replace("scripts/drill.sh", "scripts/gone.sh") for r in rows]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a citation that does not resolve"
+
+    ready.write_text(doc([r.replace("check:aor_append_only_triggers", "check:no_such_check") for r in rows]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a check citation that names no check"
+
+    ready.write_text(doc([r.replace("| OP-1 | Criterion 1 | FAIL |", "| OP-1 | Criterion 1 | DONE |") for r in rows]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a status outside PASS, PARTIAL, FAIL, UNKNOWN, N/A"
+
+    ready.write_text(doc(rows, totals="11 criteria: 3 PASS, 0 PARTIAL, 8 FAIL, 0 UNKNOWN."))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the stated totals disagree with the rows"
+
+    ready.write_text(doc([r.replace("| Real identity data | FAIL | external review, DPIA, pilot |",
+                                    "| Real identity data | PASS | `file:docs/PRODUCTION-READINESS.md` |")
+                          for r in rows], totals="11 criteria: 3 PASS, 0 PARTIAL, 8 FAIL, 0 UNKNOWN."))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL when real identity data is PASS while the status line says it is not"
 
 def test_ci_atlas_e2e_check_discriminates(tmp_path):
     wf = tmp_path / ".github" / "workflows"
@@ -10178,11 +10273,17 @@ def test_algorithm_agility_check_discriminates(tmp_path):
           'export const ACCEPTED_ALGORITHMS = { "Falcon-padded-1024": falcon1024padded };\nfunction verifierFor(a) { return null; }\n')
     good = {
         'polaris_web/custody.py': ('ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")\nALGORITHM_SIZES = {"ML-DSA-65": (1952, 3309), "ML-DSA-87": (2592, 4627)}\n'
+                                   'EXPERIMENTAL_ALGORITHM_SIZES = {"Falcon-padded-1024": (1793, 1280)}\n'
+                                   'def experimental_signer_allowed(a):\n    if os.environ.get("POLARIS_ENV") == "production": return False\n'
+                                   '    return a in os.environ.get("POLARIS_EXPERIMENTAL_SIGNERS", "")\ndef signing_sizes(a): return None\n'
                                    "def configured_algorithm(): return 'ML-DSA-65'\ndef algorithm_for_public_key(pk): return None\n"
                                    'self.algorithm = data["algorithm"]\noqs.Signature(self.algorithm, secret_key=self._sk)\n'),
         'polaris_web/pqc_signing.py': ('ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")\n_WITNESS_CLASSES = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey"}\n'
                                        "def algorithm_name(agency_id=None): return 'ML-DSA-65'\ndef algorithm_for_public_key_hex(h): return None\n"
-                                       "def generate_keypair(algorithm=None): return {}\n"),
+                                       "def generate_keypair(algorithm=None): return {}\n"
+                                       "def _signs_under(a): return False\ndef _verifies_under(a): return True\n"
+                                       "def _falcon_witness(d, s, p): return None\n    if not _signs_under(alg): raise ValueError\n"),
+        'polaris_web/witness/falcon_witness.mjs': "ok = falcon1024padded.verify(sig, digest, pk);\n",
         'polaris_web/app.py': APP,
         'packages/polaris-verify/polaris_verify_cli/verifier.py': VER,
         'sdk/python/polaris_verify/__init__.py': 'ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey",\n    "Falcon-padded-1024": None}\ndef _accepted(a): return True\n',
@@ -10193,7 +10294,7 @@ def test_algorithm_agility_check_discriminates(tmp_path):
         'scripts/polaris-verifier-fuzz.py': '_FUZZ_ALG = os.environ.get("POLARIS_FUZZ_ALGORITHM", "ML-DSA-65")\n',
         '.github/workflows/ci.yml': "      - run: python scripts/polaris-verifier-fuzz.py\n        env:\n          POLARIS_FUZZ_ALGORITHM: ML-DSA-87\n",
         'scripts/polaris-federation-instances-drill.py': 'ALG_A = os.environ.get("POLARIS_DRILL_ALGORITHM_A", "ML-DSA-87")\n',
-        'polaris_cli/polaris.py': "_KEY_ALGORITHM_BY_HEX_LENGTH = {3904: 'ML-DSA-65', 5184: 'ML-DSA-87'}\np.add_argument('--algorithm')\n",
+        'polaris_cli/polaris.py': "_KEY_ALGORITHM_BY_HEX_LENGTH = {3904: 'ML-DSA-65', 5184: 'ML-DSA-87', 3586: 'Falcon-padded-1024'}\np.add_argument('--algorithm')\ndef _experimental_key_allowed(a): return False\n",
         'docs/reference/WIRE-SPEC.md': "accepted: ML-DSA-65, ML-DSA-87; ML-DSA-44 MUST be rejected\n",
         'docs/design/algorithm-migration.md': "Algorithm migration\n",
         'docs/reference/PQC-POSTURE.md': "| ML-DSA-87 (accepted parameter set) | signing | PQ_SECURE | accepted |\n",
@@ -10220,8 +10321,16 @@ def test_algorithm_agility_check_discriminates(tmp_path):
     assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if one verifier lacks Falcon-padded-1024"
     write({'sdk/typescript/src/index.ts': TS.replace('"Falcon-padded-1024": falcon1024padded', '"Falcon-padded-1024": falcon1024padded, "Falcon-padded-512": falcon512padded')})
     assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if a verifier accepts Falcon-512 (category 1)"
-    write({'polaris_web/pqc_signing.py': good['polaris_web/pqc_signing.py'] + 'oqs.Signature("Falcon-padded-1024", secret_key=sk)\n'})
-    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if Polaris signs under Falcon before 015 clears it"
+    # 2026-10-06: an experimental signer, gated: never in the accepted set, never in production,
+    # two-witnessed, and registered by the CLI only under the same opt-in.
+    write({'polaris_web/custody.py': good['polaris_web/custody.py'].replace('"ML-DSA-87": (2592, 4627)}', '"ML-DSA-87": (2592, 4627), "Falcon-padded-1024": (1793, 1280)}', 1)})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if Falcon joins the accepted set"
+    write({'polaris_web/custody.py': good['polaris_web/custody.py'].replace('== "production"', '== "never"')})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if production can sign under it"
+    write({'polaris_web/witness/falcon_witness.mjs': "ok = true;\n"})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL without the Falcon second witness"
+    write({'polaris_cli/polaris.py': good['polaris_cli/polaris.py'].replace("def _experimental_key_allowed", "def _anything")})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if the CLI registers a Falcon key ungated"
     write({'conformance/cases.json': good['conformance/cases.json'].replace("pack-fndsa512-unaccepted", "pack-other")})
     assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL without the Falcon-512 refusal case"
 

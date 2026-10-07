@@ -658,8 +658,8 @@ class DocumentSigningTests(UnauthenticatedTestCase):
         row = flask_app.query("SELECT token_id, token_value FROM IdentityToken WHERE issuing_agency_id = 1 "
                               "AND status = 'ACTIVE' ORDER BY token_id LIMIT 1", fetch='one', primary=True)
         placeholder, key_hex = _deployment_signature(row['token_value'])
-        flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
-                        "VALUES (%s, 1, %s, %s)", (row['token_id'], psycopg2.Binary(placeholder), key_hex), fetch='none')
+        _owner_write("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
+                        "VALUES (%s, 1, %s, %s)", (row['token_id'], psycopg2.Binary(placeholder), key_hex))
         return row['token_value'], placeholder.hex()
 
     def test_holder_signing_by_possession(self):
@@ -792,8 +792,8 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         row = flask_app.query("SELECT token_id, token_value FROM IdentityToken WHERE issuing_agency_id = 1 "
                               "AND status = 'ACTIVE' ORDER BY token_id LIMIT 1", fetch='one', primary=True)
         placeholder, key_hex = _deployment_signature(row['token_value'])
-        flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
-                        "VALUES (%s, 1, %s, %s)", (row['token_id'], psycopg2.Binary(placeholder), key_hex), fetch='none')
+        _owner_write("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
+                        "VALUES (%s, 1, %s, %s)", (row['token_id'], psycopg2.Binary(placeholder), key_hex))
         _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,))
         return row['token_id'], row['token_value'], placeholder.hex()
 
@@ -6178,9 +6178,9 @@ class ZKSnarkTests(PolarisTestCase):
         ph, key_hex = _deployment_signature(row['token_value'])
         if not flask_app.query("SELECT 1 FROM TokenSignature WHERE token_id = %s AND algorithm_id = 1",
                                (row['token_id'],), fetch='one', primary=True):
-            flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+            _owner_write("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
                             "signing_public_key_hex) VALUES (%s, 1, %s, %s)",
-                            (row['token_id'], _pg.Binary(ph), key_hex), fetch='none')
+                            (row['token_id'], _pg.Binary(ph), key_hex))
         return row['token_value'], ph.hex()
 
     def _expire(self, token_value):
@@ -6555,9 +6555,9 @@ class ZKSnarkTests(PolarisTestCase):
                               "ORDER BY token_id LIMIT 1", fetch='one', primary=True)
         tv = row['token_value']
         placeholder, key_hex = _deployment_signature(tv)
-        flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+        _owner_write("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
                         "signing_public_key_hex) VALUES (%s, 1, %s, %s)",
-                        (row['token_id'], _pg.Binary(placeholder), key_hex), fetch='none')
+                        (row['token_id'], _pg.Binary(placeholder), key_hex))
         r = self.client.post('/api/v1/status-assertion',
                              json={'token_value': tv, 'signature_hex': placeholder.hex()})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
@@ -9011,6 +9011,144 @@ class F05_ProductionSecretGuardTests(unittest.TestCase):
         self.assertIn('FATAL', proc.stderr)
         self.assertIn('POLARIS_DB_SSLMODE', proc.stderr)
 
+
+    def test_unreadable_secret_file_rejected_in_production(self):
+        """Lab record 017: a secret file that is set but unreadable stops a production boot by
+        name, instead of falling back to an environment variable or a default."""
+        proc = self._prod_import({'POLARIS_DB_SSLMODE': 'require',
+                                  'POLARIS_SECRET_KEY_FILE': '/nonexistent/polaris_secret_key'})
+        self.assertEqual(proc.returncode, 2, f"stderr: {proc.stderr[:400]}")
+        # The contract's own report, not the old fallback's warning, which names the file too.
+        self.assertIn('setting(s) are wrong', proc.stderr)
+        self.assertRegex(proc.stderr, r"- POLARIS_SECRET_KEY_FILE: .* is unreadable")
+
+    def test_dev_db_password_rejected_in_production(self):
+        """Lab record 017: the development database password stops a production boot."""
+        proc = self._prod_import({'POLARIS_DB_SSLMODE': 'require',
+                                  'POLARIS_DB_PASSWORD': 'polaris_dev_password'})
+        self.assertEqual(proc.returncode, 2, f"stderr: {proc.stderr[:400]}")
+        self.assertIn('setting(s) are wrong', proc.stderr)
+        self.assertIn("- POLARIS_DB_PASSWORD: 'polaris_dev_password'", proc.stderr)
+
+    def test_complete_production_settings_pass_the_contract(self):
+        """The contract is not over-eager: a complete production configuration draws no
+        configuration report (the process may still stop later, on PQC or the database)."""
+        proc = self._prod_import({'POLARIS_DB_SSLMODE': 'require',
+                                  'POLARIS_DB_PASSWORD': 'a-real-password',
+                                  'POLARIS_USE_REAL_PQC': '1',
+                                  'POLARIS_DOMAIN': 'polaris.example.org'})
+        self.assertNotIn('setting(s) are wrong', proc.stderr)
+
+
+class ConfigSchemaTests(unittest.TestCase):
+    """Lab record 017, phase 1: config_schema declares every setting and judges an environment."""
+
+    def setUp(self):
+        import config_schema
+        self.cs = config_schema
+        self.tmp = __import__('tempfile').mkdtemp()
+        self.key = os.path.join(self.tmp, 'k'); open(self.key, 'w').write('x' * 64)
+        self.pw = os.path.join(self.tmp, 'p'); open(self.pw, 'w').write('real-password')
+        self.good = {'POLARIS_ENV': 'production', 'POLARIS_SECRET_KEY_FILE': self.key,
+                     'POLARIS_DB_PASSWORD_FILE': self.pw, 'POLARIS_DB_SSLMODE': 'require',
+                     'POLARIS_USE_REAL_PQC': '1', 'POLARIS_DOMAIN': 'polaris.example.org'}
+
+    def _p(self, **changes):
+        env = dict(self.good)
+        for k, v in changes.items():
+            if v is None:
+                env.pop(k, None)
+            else:
+                env[k] = v
+        return self.cs.problems(env, production=True)
+
+    def test_a_complete_production_environment_has_no_problems(self):
+        self.assertEqual(self._p(), [])
+
+    def test_each_production_rule_names_its_setting(self):
+        for change, name in ((dict(POLARIS_SECRET_KEY_FILE='/nope'), 'POLARIS_SECRET_KEY_FILE'),
+                             (dict(POLARIS_DB_PASSWORD_FILE=None, POLARIS_DB_PASSWORD='polaris_dev_password'),
+                              'POLARIS_DB_PASSWORD'),
+                             (dict(POLARIS_DB_SSLMODE='prefer'), 'POLARIS_DB_SSLMODE'),
+                             (dict(POLARIS_DB_SSLMODE='verify-full'), 'POLARIS_DB_SSLROOTCERT'),
+                             (dict(POLARIS_USE_REAL_PQC=None), 'POLARIS_USE_REAL_PQC'),
+                             (dict(POLARIS_DOMAIN=None), 'POLARIS_SECURITY_CONTACT'),
+                             (dict(POLARIS_SECRET_KEY_FILE=None), 'POLARIS_SECRET_KEY'),
+                             (dict(POLARIS_DURESS_SYNC='1'), 'POLARIS_DURESS_SYNC'),
+                             (dict(POLARIS_CUSTODY_PKCS11_PIN='1234'), 'POLARIS_CUSTODY_PKCS11_PIN'),
+                             (dict(POLARIS_WORKERS='four'), 'POLARIS_WORKERS'),
+                             (dict(POLARIS_TRUST_PROXY='maybe'), 'POLARIS_TRUST_PROXY'),
+                             (dict(POLARIS_CUSTODY_DRIVER='hsm'), 'POLARIS_CUSTODY_DRIVER')):
+            found = self._p(**change)
+            self.assertTrue(any(p.startswith(name + ':') for p in found), (change, found))
+
+    def test_a_secret_file_is_judged_by_what_it_holds(self):
+        open(self.pw, 'w').write('polaris_dev_password')
+        self.assertTrue(any(p.startswith('POLARIS_DB_PASSWORD:') for p in self._p()))
+
+    def test_outside_production_only_malformed_values_count(self):
+        self.assertEqual(self.cs.problems({'POLARIS_DB_SSLMODE': 'prefer'}, production=False), [])
+        self.assertEqual(len(self.cs.problems({'POLARIS_WORKERS': 'x'}, production=False)), 1)
+
+    def test_security_contact_defaults_to_the_domain(self):
+        self.assertEqual(self.cs.security_contact({'POLARIS_DOMAIN': 'a.org'}), 'mailto:security@a.org')
+        self.assertEqual(self.cs.security_contact({'POLARIS_SECURITY_CONTACT': 'mailto:x@y.org',
+                                                   'POLARIS_DOMAIN': 'a.org'}), 'mailto:x@y.org')
+        self.assertEqual(self.cs.security_contact({}), 'mailto:security@example.invalid')
+
+    def test_role_families_resolve(self):
+        self.assertEqual(self.cs.lookup('POLARIS_SESSION_MAX_ADMIN').name, 'POLARIS_SESSION_MAX_<ROLE>')
+        self.assertIsNone(self.cs.lookup('POLARIS_NO_SUCH_SETTING'))
+
+    def test_declarations_are_well_formed(self):
+        names = [s.name for s in self.cs.SETTINGS]
+        self.assertEqual(len(names), len(set(names)))
+        groups = {g for g, _ in self.cs._GROUP_TITLES}
+        for s in self.cs.SETTINGS:
+            self.assertIn(s.group, groups, s.name)
+            if s.kind == 'enum' and s.default is not None:
+                self.assertIn(s.default, s.choices, s.name)
+
+    def test_empty_numbers_mean_unset(self):
+        """Compose passes optional numbers as "${X:-}"; the application reads empty as its default."""
+        self.assertEqual(self._p(POLARIS_SESSION_MAX_ADMIN='', POLARIS_DB_STATEMENT_TIMEOUT_MS=''), [])
+
+    def test_the_shipped_production_compose_passes_the_contract(self):
+        """The app service's environment in docker-compose.prod.yml, with every ${X:-default}
+        resolved to its default and the operator's required values supplied, draws no problem.
+        Secret files are judged by stand-ins, since the compose mounts them at boot."""
+        import yaml
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'docker-compose.prod.yml')
+        app_env = yaml.safe_load(open(path))['services']['app']['environment']
+        operator = {'POLARIS_DOMAIN': 'polaris.example.org'}
+
+        def resolve(value):
+            value = str(value)
+            for _ in range(3):
+                value = re.sub(r'\$\{([A-Z0-9_]+):-([^${}]*)\}',
+                               lambda m: operator.get(m.group(1), m.group(2)), value)
+                value = re.sub(r'\$\{([A-Z0-9_]+)(?::\?[^}]*)?\}',
+                               lambda m: operator.get(m.group(1), ''), value)
+            return value
+        env = {k: resolve(v) for k, v in app_env.items()}
+        for k, v in list(env.items()):
+            if k.endswith('_FILE') and v.startswith('/run/secrets/'):
+                env[k] = self.key  # the mount, judged by a readable stand-in
+        if env.get('POLARIS_DB_SSLROOTCERT'):
+            env['POLARIS_DB_SSLROOTCERT'] = self.key
+        found = self.cs.problems(env, production=True)
+        self.assertEqual(found, [], found)
+
+    def test_the_command_refuses_a_bad_env_file(self):
+        import subprocess
+        env_file = os.path.join(self.tmp, 'env')
+        open(env_file, 'w').write('POLARIS_ENV=production\nPOLARIS_DB_SSLMODE=prefer\n')
+        proc = subprocess.run([sys.executable, 'config_schema.py', 'check', '--env-file', env_file],
+                              cwd=os.path.dirname(os.path.abspath(__file__)),
+                              capture_output=True, text=True, timeout=30,
+                              env={k: v for k, v in os.environ.items() if not k.startswith('POLARIS_')})
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn('POLARIS_DB_SSLMODE', proc.stderr)
 
 class F06_CookieHardeningTests(PolarisTestCase):
     """F-07: Cookie attributes Secure / HttpOnly / SameSite. CWE-614, CWE-1004."""
@@ -13524,13 +13662,28 @@ class RealPqcDefaultBootTests(unittest.TestCase):
             env.pop(k, None)
         env["POLARIS_SECRET_KEY"] = "x" * 64
         env["POLARIS_DB_SSLMODE"] = "require"  # pass the production SSL guard to reach the PQC guard
+        # Lab record 017: a production boot first meets the configuration contract. A real
+        # database password and a domain (the security contact derives from it) let execution
+        # past it, so each test reaches the guard it is about.
+        env["POLARIS_DB_PASSWORD"] = "a-real-password"
+        env.pop("POLARIS_DB_PASSWORD_FILE", None)
+        env["POLARIS_DOMAIN"] = "polaris.example.org"
         env.update(extra_env)
         cwd = _os.path.dirname(_os.path.abspath(flask_app.__file__))
         return _sp.run([_sys.executable, "-c", (preamble or "") + "import app"], cwd=cwd,
                        capture_output=True, text=True, env=env)
 
     def test_production_refuses_boot_without_real_pqc(self):
+        """Real signing not requested: the configuration contract refuses and names it."""
         r = self._boot({"POLARIS_ENV": "production"})
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("- POLARIS_USE_REAL_PQC:", r.stderr)
+
+    def test_production_refuses_boot_when_real_pqc_is_requested_but_unavailable(self):
+        """Real signing requested but liboqs not usable: the boot guard refuses."""
+        r = self._boot({"POLARIS_ENV": "production", "POLARIS_USE_REAL_PQC": "1"}, preamble=(
+            "import pqc_signing;"
+            "pqc_signing.is_enabled=lambda: False;"))
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("real ML-DSA-65 signing is not available", r.stderr)
 
@@ -13547,7 +13700,7 @@ class RealPqcDefaultBootTests(unittest.TestCase):
         Driven by forcing pqc_signing to report a real primary and no second witness, so
         reaching the branch does not need a broken OpenSSL.
         """
-        r = self._boot({"POLARIS_ENV": "production"}, preamble=(
+        r = self._boot({"POLARIS_ENV": "production", "POLARIS_USE_REAL_PQC": "1"}, preamble=(
             "import pqc_signing;"
             "pqc_signing.is_enabled=lambda: True;"
             "pqc_signing.second_witness_available=lambda: False;"))
@@ -13556,12 +13709,13 @@ class RealPqcDefaultBootTests(unittest.TestCase):
 
     def test_production_boots_when_both_witnesses_are_present(self):
         """The positive control: the new guard must not refuse a correct deployment."""
-        r = self._boot({"POLARIS_ENV": "production"}, preamble=(
+        r = self._boot({"POLARIS_ENV": "production", "POLARIS_USE_REAL_PQC": "1"}, preamble=(
             "import pqc_signing;"
             "pqc_signing.is_enabled=lambda: True;"
             "pqc_signing.second_witness_available=lambda: True;"))
         self.assertNotIn("SECOND WITNESS", r.stderr)
         self.assertNotIn("real ML-DSA-65 signing is not available", r.stderr)
+        self.assertNotIn("setting(s) are wrong", r.stderr)
 
     def test_unnamed_placeholder_warns(self):
         # Non-production, placeholder in use, dev profile not named: boot, but loudly.
@@ -16826,18 +16980,51 @@ class RelyingPartyApiTests(PolarisTestCase):
     # -- role may INSERT into TokenSignature; registration (AuthorityKeyEvent) is closed to it.
 
     def _plant_as_app(self, token_value, signature, key_hex):
-        """INSERT a TokenSignature row AS polaris_app, under ML-DSA-87, an algorithm the
-        credential (issued under ML-DSA-65) lacks, so the per-algorithm UNIQUE admits it."""
+        """Plant a TokenSignature row under ML-DSA-87, an algorithm the credential (issued under
+        ML-DSA-65) lacks, so the per-algorithm UNIQUE admits it. The application role is refused
+        the write since 2026-10-04 (test_the_application_role_cannot_write_a_signature_row), so
+        the row is written as the owner: what is tested here is that possession still refuses a
+        row whose key the authority never registered, whoever wrote it."""
         import psycopg2 as _pg
         conn = _pg.connect(**_OWNER_DB_CONFIG)
         try:
             with conn.cursor() as cur:
-                cur.execute("SET ROLE polaris_app")
                 cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
                             "signing_public_key_hex) SELECT token_id, 2, %s, %s FROM IdentityToken "
                             "WHERE token_value = %s", (_pg.Binary(signature), key_hex, token_value))
-                self.assertEqual(cur.rowcount, 1, 'control: the application role CAN plant the row')
+                self.assertEqual(cur.rowcount, 1)
             conn.commit()
+        finally:
+            conn.close()
+
+    def test_the_application_role_cannot_write_a_signature_row(self):
+        """THREAT-MODEL (2026-10-04): a compromised application cannot plant, move or remove a
+        credential's signature. Each write is refused by PRIVILEGE (InsufficientPrivilege), not by
+        the immutability trigger, which a reordered or dropped trigger would not show; the read is
+        the control that the role is the one the application runs as."""
+        import psycopg2 as _pg
+        tv = self._issue_and_pack('RP-NO-WRITE-1')['token_value']
+        writes = (
+            ("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
+             "SELECT token_id, 2, '\\x00'::bytea, NULL FROM IdentityToken WHERE token_value = %s", (tv,)),
+            ("UPDATE TokenSignature SET deprecation_date = now() WHERE token_id = "
+             "(SELECT token_id FROM IdentityToken WHERE token_value = %s)", (tv,)),
+            ("DELETE FROM TokenSignature WHERE token_id = "
+             "(SELECT token_id FROM IdentityToken WHERE token_value = %s)", (tv,)),
+        )
+        conn = _pg.connect(**_OWNER_DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET ROLE polaris_app")
+                cur.execute("SELECT count(*) FROM TokenSignature s JOIN IdentityToken t USING (token_id) "
+                            "WHERE t.token_value = %s", (tv,))
+                self.assertEqual(cur.fetchone()[0], 1, 'control: the application role reads the signature')
+                conn.commit()
+                for sql, params in writes:
+                    cur.execute("SET ROLE polaris_app")
+                    with self.assertRaises(_pg.errors.InsufficientPrivilege, msg=sql.split()[0]):
+                        cur.execute(sql, params)
+                    conn.rollback()
         finally:
             conn.close()
 
@@ -18156,6 +18343,35 @@ class PopulationMigrationTests(PolarisTestCase):
             m.migrate_population(conn, target_id, target_name, batch_size=50)
             self.assertGreater(m.deprecate_superseded(conn, target_id, grace_seconds=60), 0)
             self.assertEqual(m.verifiability_report(conn)["unverifiable"], 0)
+
+    def test_a_target_signature_already_set_to_lapse_does_not_count_as_migrated(self):
+        # A credential whose signature under the target already carries a future deprecation
+        # date is not migrated: when that date passes it stands on nothing under the target.
+        # It was counted as migrated (in force today), so closing the window deprecated its
+        # every other signature too and the database refused the write ("zero active
+        # signatures"), an error where the runner owes a refusal naming what to do. Found
+        # 2026-10-06 by MigrationChainPropertyTests once a sixth algorithm row changed which
+        # sequences its seeds explore.
+        m = self._migration()
+        with self._new_conn() as conn:
+            target_id, target_name = m.resolve_target(conn, "ML-DSA-87")
+            m.migrate_population(conn, target_id, target_name, batch_size=50)
+            with conn.cursor() as cur:
+                cur.execute("SELECT token_id FROM TokenSignature WHERE algorithm_id = %s "
+                            "AND deprecation_date IS NULL ORDER BY token_id LIMIT 1", (target_id,))
+                token_id = cur.fetchone()["token_id"]
+                cur.execute("UPDATE TokenSignature SET deprecation_date = CURRENT_TIMESTAMP + INTERVAL '1 day' "
+                            "WHERE token_id = %s AND algorithm_id = %s", (token_id, target_id))
+            conn.commit()
+            self.assertGreater(m.pending_count(conn, target_id), 0,
+                               "a target signature set to lapse leaves its credential pending")
+            with self.assertRaises(m.MigrationRefused) as caught:
+                m.deprecate_superseded(conn, target_id, grace_seconds=60)
+            self.assertIn("Re-issue", str(caught.exception))
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) AS n FROM TokenSignature WHERE token_id = %s "
+                            "AND deprecation_date IS NULL", (token_id,))
+                self.assertGreater(cur.fetchone()["n"], 0, "the refusal left the credential standing")
 
     def test_a_limit_stops_the_run_and_leaves_the_rest_standing(self):
         m = self._migration()
@@ -20087,9 +20303,9 @@ class RefusalsTheAppMutationDrillFound(PolarisTestCase):
                               "WHERE issuing_agency_id = 1 AND status = 'ACTIVE' "
                               "ORDER BY token_id LIMIT 1", fetch='one', primary=True)
         ph, key_hex = _deployment_signature(row['token_value'])
-        flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+        _owner_write("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
                         "signing_public_key_hex) VALUES (%s, 1, %s, %s)",
-                        (row['token_id'], psycopg2.Binary(ph), key_hex), fetch='none')
+                        (row['token_id'], psycopg2.Binary(ph), key_hex))
         return row['token_value'], ph.hex()
 
     def _relying_party(self, scope):

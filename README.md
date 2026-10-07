@@ -11,6 +11,7 @@
 [![Tested against 14 outside implementations](https://img.shields.io/badge/tested_against-14_outside_implementations-2b5797?labelColor=0a1421&style=flat-square)](#status)
 [![License](https://img.shields.io/badge/license-Apache--2.0-2b5797?labelColor=0a1421&style=flat-square)](LICENSE)
 [![OpenSSF Best Practices](https://img.shields.io/cii/level/15004?label=OpenSSF%20best%20practices&labelColor=0a1421&style=flat-square)](https://www.bestpractices.dev/projects/15004)
+[![OpenSSF Baseline](https://www.bestpractices.dev/projects/15004/baseline)](https://www.bestpractices.dev/projects/15004)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/EgorKhaklin/polaris-id/badge)](https://scorecard.dev/viewer/?uri=github.com/EgorKhaklin/polaris-id)
 
 [![OpenID4VP 1.0](https://img.shields.io/badge/OpenID4VP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid4vp-10)
@@ -19,6 +20,7 @@
 [![OpenID4VCI 1.0](https://img.shields.io/badge/OpenID4VCI-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid4vci-10)
 [![Token Status List](https://img.shields.io/badge/Token_Status_List-IETF_draft-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#token-status-list)
 [![ML-DSA-65](https://img.shields.io/badge/ML--DSA--65-FIPS_204-5b4b8a?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#ml-dsa-65)
+[![FN-DSA: Falcon-1024](https://img.shields.io/badge/FN--DSA-Falcon--1024_(FIPS_206_draft)-5b4b8a?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#fn-dsa-draft-fips-206)
 
 [![PyPI](https://img.shields.io/badge/PyPI-polaris--verify-3775a9?labelColor=0a1421&style=flat-square)](https://pypi.org/project/polaris-verify/)
 [![npm](https://img.shields.io/badge/npm-polaris--sdk--ts-cb3837?labelColor=0a1421&style=flat-square)](https://www.npmjs.com/package/polaris-sdk-ts)
@@ -40,7 +42,7 @@ An authority issues a credential signed with **ML-DSA-65**; the person holds it;
 
 - **Authenticity, offline.** A standalone verifier checks the signature against published keys, with no database and no network.
 - **Authorization, fresh.** A relying-party API, or a short-lived signed status assertion, says whether the credential counts right now.
-- **The rules live in the database.** A 58-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client; 344 machine-checked invariants and 23 CI jobs gate every change.
+- **The rules live in the database.** A 58-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client; 347 machine-checked invariants and 23 CI jobs gate every change.
 - **Wallets speak to it.** `polaris-oid4vp` is an OpenID4VP 1.0 + HAIP 1.0 verifier for SD-JWT VC, as a library or a server.
 
 It is **pre-pilot software on notional data**: it has never held real identity data, and nobody but the author has operated it.
@@ -116,12 +118,12 @@ The claim is **algorithm agility under an audited migration path**, not settled 
 |---|---|:---:|---|:---:|---:|---:|---|
 | ML-DSA-65 | ML-DSA | ✓ | FIPS 204 | 192 | 1,952 B | 3,309 B | default |
 | ML-DSA-87 | ML-DSA | ✓ | FIPS 204 | 256 | 2,592 B | 4,627 B | accepted; migration is a key event |
-| Falcon-padded-1024 | FN-DSA | ✓ | FIPS 206 (draft) | 256 | 1,793 B | 1,280 B | verified; no signer yet |
+| Falcon-padded-1024 | FN-DSA | ✓ | FIPS 206 (draft) | 256 | 1,793 B | 1,280 B | verified; experimental signer |
 | SLH-DSA-128s | SLH-DSA | ✓ | FIPS 205 | 128 | 32 B | 7,856 B | registered, no signer |
 | SLH-DSA-256s | SLH-DSA | ✓ | FIPS 205 | 256 | 64 B | 29,792 B | registered, no signer |
 | ECDSA-P256 | ECDSA | | FIPS 186-4 | 128 | 64 B | 72 B | legacy, sunset 2027 |
 
-Two ML-DSA implementations must agree at issuance or it fails closed; the TLS edge negotiates X25519MLKEM768. The detached verifier and both SDKs also check the FN-DSA family (draft FIPS 206): signatures 2.6 times smaller than ML-DSA-65's, with two independent implementations (liboqs, @noble/post-quantum) agreeing on its conformance vectors. Polaris signs nothing under it yet: its signing time has not passed Polaris's side-channel test.
+Two ML-DSA implementations must agree at issuance or it fails closed; the TLS edge negotiates X25519MLKEM768. The detached verifier and both SDKs also check the FN-DSA family (draft FIPS 206): signatures 2.6 times smaller than ML-DSA-65's, with two independent implementations (liboqs, @noble/post-quantum) agreeing on its conformance vectors. Polaris signs under it only as an experimental signer, opted into and never in production, two-witnessed like ML-DSA, until its signing time passes Polaris's side-channel test.
 
 The migration path is tested beyond these: in the lab, one population moved through seven signature families (ML-DSA, FN-DSA, SLH-DSA, MAYO, UOV, SNOVA, CROSS) and 136 liboqs signature variants, never left without a valid signature ([CANDIDATES.md](lab/crypto-migration/CANDIDATES.md)). Lab results admit no algorithm to the product.
 
