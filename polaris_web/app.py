@@ -352,6 +352,17 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=security.SESSION_LIFE
 # mirroring the secret-key guard below.
 _PRODUCTION = os.environ.get('POLARIS_ENV', '').lower() == 'production'
 
+# Lab record 017, phase 1: the configuration contract. Under production every POLARIS_*
+# setting is checked against config_schema.py at boot, and one report names each wrong one,
+# so a misconfigured instance stops here rather than failing later on traffic. The specific
+# guards below stay as a second line.
+if _PRODUCTION:
+    import config_schema
+    _config_problems = config_schema.production_problems()
+    if _config_problems:
+        sys.stderr.write(config_schema.report(_config_problems))
+        sys.exit(2)
+
 
 def _env_flag(name, default):
     raw = os.environ.get(name)
