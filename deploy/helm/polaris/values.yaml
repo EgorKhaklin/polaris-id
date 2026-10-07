@@ -85,7 +85,8 @@ secrets:
   # An existing Secret holding the files polaris-generate-secrets.sh writes
   # (polaris_secret_key, polaris_db_password, polaris_db_root_password,
   # polaris_replicator_password, polaris_signing_key, postgres_server.crt/.key,
-  # pgbouncer_server.crt/.key, pgbackrest_repo_creds.conf). Recommended:
+  # pgbouncer_server.crt/.key, pgbackrest_repo_creds.conf, polaris_redis_password,
+  # redis_users.acl). Recommended:
   #   kubectl -n polaris create secret generic polaris-secrets --from-file=polaris_web/secrets/
   existingSecret: ""
   # Otherwise the chart creates one: random passwords and self-signed

@@ -271,13 +271,16 @@ class RedisRateLimiter(_BaseRateLimiter):
     return 1
     """
 
-    def __init__(self, url, socket_timeout=2.0):
+    def __init__(self, url, socket_timeout=2.0, password=None):
         import redis as _redis  # imported lazily; package is optional
         from redis.retry import Retry
         from redis.backoff import NoBackoff
         self._url = url
+        # Lab record 017, phase 4a: the password comes from POLARIS_REDIS_PASSWORD_FILE, never
+        # the URL; the user (`polaris`, key- and command-scoped by the ACL) is in the URL.
+        extra = {'password': password} if password else {}
         self._client = _redis.from_url(
-            url, socket_timeout=socket_timeout,
+            url, socket_timeout=socket_timeout, **extra,
             socket_connect_timeout=socket_timeout,
             decode_responses=False,
             # v9.190 (redis-py 8.x, roadmap P1.8): since redis-py 6.0 a
@@ -359,9 +362,20 @@ def _make_rate_limiter():
 
     import sys
 
+    password = None
+    pw_file = os.environ.get('POLARIS_REDIS_PASSWORD_FILE', '').strip()
+    if pw_file:
+        try:
+            with open(pw_file, 'r') as fh:
+                password = fh.read().strip() or None
+        except OSError as e:
+            # Production boot refuses an unreadable secret file before this runs
+            # (config_schema); elsewhere the connection below fails and says so.
+            sys.stderr.write(f"[security] POLARIS_REDIS_PASSWORD_FILE unreadable ({e.strerror or e}).\n")
+
     def _try_redis():
         try:
-            return RedisRateLimiter(redis_url)
+            return RedisRateLimiter(redis_url, password=password)
         except Exception as e:
             sys.stderr.write(
                 f"[security] Redis rate limiter unavailable ({e!r}); "

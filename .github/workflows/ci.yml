@@ -1710,6 +1710,21 @@ jobs:
           [ "$code" = 200 ] || { docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml -f docker-compose.bluegreen.yml ps; docker logs polaris-app 2>&1 | tail -30; exit 1; }
           docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml -f docker-compose.bluegreen.yml ps --format 'table {{.Service}}\t{{.Status}}'
 
+      # Lab record 017, phase 4a: the rate limiter reaches Redis as its ACL user, and
+      # Redis refuses everyone else: an unauthenticated client, and the healthcheck's
+      # user asking for more than PING. Pinned by check_redis_authenticated.
+      - name: Redis authenticates (the app as its ACL user; others refused)
+        run: |
+          set -euo pipefail
+          health=$(curl -sk https://localhost:8443/api/health)
+          echo "$health" | jq -e '.checks.redis.backend == "redis" and .checks.redis.status == "healthy"' > /dev/null \
+            || { echo "::error::the rate limiter is not on Redis"; echo "$health" | jq .checks.redis; exit 1; }
+          out=$(docker exec polaris-redis redis-cli ping 2>&1 || true)
+          echo "$out" | grep -q NOAUTH || { echo "::error::an unauthenticated client was answered: $out"; exit 1; }
+          out=$(docker exec polaris-redis redis-cli --no-auth-warning --user health --pass x flushall 2>&1 || true)
+          echo "$out" | grep -q NOPERM || { echo "::error::the health user ran FLUSHALL: $out"; exit 1; }
+          echo "Redis: the app authenticated as polaris; an unauthenticated client and the health user's FLUSHALL refused"
+
       - name: Rolling deploy under traffic, then the negative control
         run: bash scripts/polaris-rolling-drill.sh
 

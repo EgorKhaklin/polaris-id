@@ -2685,6 +2685,53 @@ def test_release_provenance_check_discriminates(tmp_path):
         "must PASS with attestation, permissions, and a documented verify command"
 
 
+def test_redis_authenticated_check_discriminates(tmp_path):
+    files = ("scripts/polaris-generate-secrets.sh", "scripts/polaris-rotate-secret.sh",
+             "deploy/helm/polaris/templates/secret.yaml", "deploy/helm/polaris/templates/redis.yaml",
+             "deploy/helm/polaris/templates/app.yaml", "polaris_web/docker-compose.prod.yml",
+             "polaris_web/config_schema.py", ".github/workflows/ci.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_redis_authenticated(tmp_path)[0].level == "OK", \
+        "must PASS on the real generator, rotation, compose, chart, schema and CI"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_redis_authenticated(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    gen, rot = "scripts/polaris-generate-secrets.sh", "scripts/polaris-rotate-secret.sh"
+    compose = "polaris_web/docker-compose.prod.yml"
+    broken(gen, "resetchannels -@all +ping +client|setinfo", "resetchannels -@all +@all +ping +client|setinfo",
+           "must FAIL when the app's Redis user may run every command")
+    broken(gen, "printf 'user default off", "printf 'user default on nopass",
+           "must FAIL when an unauthenticated client is the default user, enabled")
+    broken(gen, "write_secret_if_missing polaris_redis_password", "true",
+           "must FAIL when no Redis password is generated")
+    broken(rot, "+scan +del'", "+scan +del +get'",
+           "must FAIL when rotation writes different ACL rules from the generator")
+    broken(rot, 'write_redis_acl "${NEW_HASH}" "${OLD_HASH}"', 'write_redis_acl "${NEW_HASH}"',
+           "must FAIL when rotation refuses the app's old password before the app has moved")
+    broken("deploy/helm/polaris/templates/secret.yaml", "+scan +del\\n", "+scan +del +get\\n",
+           "must FAIL when the Helm ACL drifts from the generator's rules")
+    broken("deploy/helm/polaris/templates/redis.yaml", '"--aclfile", ', "",
+           "must FAIL when the Helm Redis loads no ACL")
+    broken(compose, "      --aclfile /run/secrets/redis_users_acl\n", "",
+           "must FAIL when the compose Redis loads no ACL")
+    broken(compose, '"--user", "health", ', "",
+           "must FAIL when the compose healthcheck does not use the PING-only user")
+    broken(compose, "POLARIS_REDIS_URL: redis://polaris@redis", "POLARIS_REDIS_URL: redis://redis",
+           "must FAIL when the compose app does not connect as its ACL user")
+    broken("polaris_web/config_schema.py", "POLARIS_REDIS_URL: carries a password", "POLARIS_REDIS_URL: noted",
+           "must FAIL when production accepts a password in the Redis URL")
+    broken(".github/workflows/ci.yml", "grep -q NOAUTH", "grep -q .",
+           "must FAIL when CI no longer asserts an unauthenticated client is refused")
+
+
 def test_npm_publish_is_staged_check_discriminates(tmp_path):
     # The control has two halves and this tree owns one: the npm job must STAGE, so that a
     # maintainer's 2FA approval stands between a workflow run and an installer. The other

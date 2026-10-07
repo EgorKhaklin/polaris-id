@@ -15,6 +15,8 @@
 #   secrets/polaris_db_password           Postgres polaris_app password (0644)
 #   secrets/polaris_db_root_password      Postgres superuser password (0600; root-read only)
 #   secrets/polaris_replicator_password   streaming-replication role password (0644)
+#   secrets/polaris_redis_password        the rate limiter's Redis password, 64 hex (0644)
+#   secrets/redis_users.acl               Redis users: only that password's SHA-256 (0644)
 #   secrets/polaris_signing_key           ML-DSA-65 signing keypair JSON (0644)
 #   secrets/postgres_server.crt/.key      Postgres TLS cert + key (0644 mount; live copy 0600)
 #   secrets/pgbouncer_server.crt/.key     pinnable pgbouncer TLS cert + key (0644)
@@ -95,6 +97,36 @@ write_secret_if_missing() {
 # polaris-app:prod image (which ships liboqs). If neither is available, skip with
 # a clear message — operators custodying key material in an HSM/KMS supply their
 # own loader instead (that custody is operator-gated).
+# Lab record 017, phase 4a: the rate limiter's Redis authenticates. The app reads
+# polaris_redis_password (0644: the non-root app user reads it); redis_users.acl holds
+# only that password's SHA-256 (0644: the redis user reads it), so the plaintext never
+# reaches the Redis container. The default user is off, so a client that has not
+# authenticated can do nothing; `health` may only PING (the container healthcheck);
+# `polaris` may run only the limiter's commands, only on its own keys.
+REDIS_ACL_POLARIS_RULES='~polaris:rl:* resetchannels -@all +ping +client|setinfo +script|load +evalsha +zremrangebyscore +zcard +zadd +pexpire +scan +del'
+write_redis_acl_if_missing() {
+    local pw="${SECRETS_DIR}/polaris_redis_password"
+    local target="${SECRETS_DIR}/redis_users.acl"
+    if [[ -s "${target}" ]]; then
+        echo "  ✓ redis_users.acl  (exists; not overwriting — use polaris-rotate-secret.sh to rotate)"
+        return 0
+    fi
+    if [[ ! -s "${pw}" ]]; then
+        echo "  ✗ redis_users.acl  (polaris_redis_password is missing; nothing to derive it from)" >&2
+        return 1
+    fi
+    local hash
+    hash=$(tr -d '\r\n ' < "${pw}" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1)
+    if [[ ! "${hash}" =~ ^[0-9a-f]{64}$ ]]; then
+        echo "  ✗ redis_users.acl  (could not hash polaris_redis_password)" >&2
+        return 1
+    fi
+    ( umask 0133 && printf 'user default off resetkeys resetchannels -@all\nuser health on nopass resetkeys resetchannels -@all +ping\nuser polaris on #%s %s\n' \
+        "${hash}" "${REDIS_ACL_POLARIS_RULES}" > "${target}" )
+    chmod 0644 "${target}"
+    echo "  ✓ redis_users.acl  (generated from polaris_redis_password; mode 0644, holds only its SHA-256)"
+}
+
 write_signing_key_if_missing() {
     local name="polaris_signing_key"
     local target="${SECRETS_DIR}/${name}"
@@ -259,6 +291,8 @@ write_secret_if_missing polaris_db_root_password 24
 # postgres user; a 0600 host-owned mount source is unreadable on Linux, so the
 # replication-readiness block was silently skipped (the `-r` guard fails closed).
 write_secret_if_missing polaris_replicator_password 24 0644
+write_secret_if_missing polaris_redis_password   32 0644
+write_redis_acl_if_missing
 write_signing_key_if_missing
 write_postgres_cert_if_missing
 write_pgbouncer_cert_if_missing

@@ -50,7 +50,8 @@ spec:
             - {name: POLARIS_SECRET_KEY_FILE, value: /run/secrets/polaris_secret_key}
             - {name: POLARIS_REDIS_HOST, value: {{ include "polaris.fullname" . }}-redis}
             - {name: POLARIS_REDIS_PORT, value: "6379"}
-            - {name: POLARIS_REDIS_URL, value: redis://{{ include "polaris.fullname" . }}-redis:6379/0}
+            - {name: POLARIS_REDIS_URL, value: redis://polaris@{{ include "polaris.fullname" . }}-redis:6379/0}
+            - {name: POLARIS_REDIS_PASSWORD_FILE, value: /run/secrets/polaris_redis_password}
             - {name: POLARIS_STATE_DIR, value: /var/lib/polaris/state}
             - {name: PROMETHEUS_MULTIPROC_DIR, value: /tmp/prometheus-multiproc}
             - {name: POLARIS_ZK_BINARY, value: /opt/polaris/zk}

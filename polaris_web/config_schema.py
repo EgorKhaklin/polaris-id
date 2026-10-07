@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import urllib.parse
 from dataclasses import dataclass
 
 _TRUE = ("1", "true", "yes", "on")
@@ -141,7 +142,10 @@ SETTINGS: tuple[Setting, ...] = (
     _s("POLARIS_WEBAUTHN_ALLOWED_AAGUIDS", "csv", "", "access"),
     # --- rate limiting
     _s("POLARIS_RATE_LIMIT_BACKEND", "enum", "auto", "limits", choices=("auto", "redis", "memory")),
-    _s("POLARIS_REDIS_URL", group="limits", doc="Shared rate-limit state; needed when more than one process serves."),
+    _s("POLARIS_REDIS_URL", group="limits", doc="Shared rate-limit state; needed when more than one process serves. "
+       "Names the user (redis://polaris@host:6379/0), never the password."),
+    _s("POLARIS_REDIS_PASSWORD_FILE", "secret_file", None, "limits",
+       "File holding the Redis user's password; production requires it when POLARIS_REDIS_URL is set."),
     _s("POLARIS_RATE_LIMIT_LOGIN_MAX", "int", None, "limits"),
     _s("POLARIS_RATE_LIMIT_WRITE_MAX", "int", None, "limits"),
     _s("POLARIS_RATE_LIMIT_WRITE_WINDOW", "int", None, "limits"),
@@ -278,6 +282,21 @@ def problems(env, production: bool) -> list[str]:
                    f"and {rootcert or '(unset)'!r} is not one")
     if (env.get("POLARIS_CUSTODY_PKCS11_PIN") or "").strip():
         out.append("POLARIS_CUSTODY_PKCS11_PIN: the PIN must come from POLARIS_CUSTODY_PKCS11_PIN_FILE")
+    # Lab record 017, phase 4a: the rate limiter's Redis authenticates, with a password that
+    # lives in a file. One in the URL would sit in the environment, where `docker inspect`
+    # and /proc/<pid>/environ show it.
+    redis_url = (env.get("POLARIS_REDIS_URL") or "").strip()
+    if redis_url:
+        try:
+            url_password = urllib.parse.urlsplit(redis_url).password
+        except ValueError:
+            url_password = None
+        if url_password:
+            out.append("POLARIS_REDIS_URL: carries a password; the password must come from "
+                       "POLARIS_REDIS_PASSWORD_FILE")
+        elif not (env.get("POLARIS_REDIS_PASSWORD_FILE") or "").strip():
+            out.append("POLARIS_REDIS_PASSWORD_FILE: POLARIS_REDIS_URL is set, so production "
+                       "requires the Redis user's password file")
     return sorted(set(out))
 
 

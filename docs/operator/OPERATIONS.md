@@ -1043,7 +1043,9 @@ on:
 - `checks.disk.free_gb` and `checks.disk.used_pct`: below 5 GB free or above
   85% used is `degraded`; below 0.5 GB free is `unhealthy`
 - `checks.redis.status`: an unreachable Redis backend is `degraded` (the
-  limiter fails closed)
+  limiter fails closed), and so is a limiter that fell back to per-worker memory
+  while `POLARIS_REDIS_URL` is set (Redis unreachable, or refusing the
+  credentials, at start)
 - `checks.zk_binary.status`: the prover binary present and executable
 
 `/api/health/live` and `/api/health/ready` are the cheap probes Caddy, Compose
@@ -1570,6 +1572,15 @@ for v in polaris_web_caddy_data polaris_web_caddy_config; do
     docker run --rm -v "$v:/v" alpine:3.24 chown -R 1000:1000 /v
 done
 ```
+
+**Upgrading across the Redis ACL (lab record 017, phase 4a).** Redis now loads
+its users from `redis_users.acl`, and the app authenticates as `polaris` with
+`polaris_redis_password`; production refuses to start without the password
+file. A deployment created earlier has neither file. Run
+`./scripts/polaris-generate-secrets.sh` once before the upgrade: it writes the
+two missing files and leaves every existing one as it is. A Helm release adds
+both keys to its generated Secret on upgrade; an `existingSecret` must gain
+them (`kubectl create secret ... --from-file=polaris_web/secrets/` again).
 
 ### Postgres version upgrade
 

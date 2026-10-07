@@ -160,7 +160,10 @@ services:
       # in-memory buckets — and prod runs 4 gunicorn workers, so per-IP limits
       # fragment 4x (a real brute-force weakening). Point it at the redis service
       # so the atomic cross-worker Redis limiter is actually used.
-      POLARIS_REDIS_URL: redis://redis:6379/0
+      # Lab record 017, phase 4a: as the ACL user `polaris` (its keys and the
+      # limiter's commands only), its password read from a file, never the URL.
+      POLARIS_REDIS_URL: redis://polaris@redis:6379/0
+      POLARIS_REDIS_PASSWORD_FILE: /run/secrets/polaris_redis_password
       # Caddy is the only ingress and rewrites X-Forwarded-For to the real peer
       # (header_up ... {remote_host}), so the app may trust it. Without this every
       # client shared Caddy's container address: one rate-limit bucket, one
@@ -223,6 +226,7 @@ services:
       - polaris_secret_key
       - polaris_db_password
       - polaris_signing_key
+      - polaris_redis_password
     volumes:
       - polaris_state:/var/lib/polaris/state
       - ./logs:/var/log/polaris
@@ -487,10 +491,17 @@ services:
       --appendfsync everysec
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
+      --aclfile /run/secrets/redis_users_acl
+    # Lab record 017, phase 4a: users come from redis_users.acl (only the app
+    # password's SHA-256 is in it). `default` is off, so an unauthenticated
+    # client can run nothing; `health` may only PING, which is all this
+    # healthcheck does (nopass: any password is accepted for it).
+    secrets:
+      - redis_users_acl
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "--user", "health", "--pass", "health", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -519,6 +530,12 @@ secrets:
   # minted by polaris-generate-secrets.sh. The public key is the trust anchor.
   polaris_signing_key:
     file: ${POLARIS_SECRETS_DIR:-./secrets}/polaris_signing_key
+  # Lab record 017, phase 4a: the rate limiter's Redis password (the app) and the
+  # Redis users file holding only its SHA-256 (redis). polaris-generate-secrets.sh.
+  polaris_redis_password:
+    file: ${POLARIS_SECRETS_DIR:-./secrets}/polaris_redis_password
+  redis_users_acl:
+    file: ${POLARIS_SECRETS_DIR:-./secrets}/redis_users.acl
 
 # ----------------------------------------------------------------------------
 # Volumes (named; survive `down`, destroyed by `down -v`)
