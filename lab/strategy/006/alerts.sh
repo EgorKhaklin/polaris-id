@@ -32,6 +32,10 @@ PROM_IMAGE="prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115
 BB_IMAGE="prom/blackbox-exporter@sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc"
 PROM=polaris-alerts-drill-prometheus BB=polaris-alerts-drill-blackbox
 WORK="$(mktemp -d)"
+# Read by the Prometheus and exporter containers, which run as nobody: mktemp makes the directory
+# 0700, which Linux enforces through the bind mount (CI: "permission denied") and Docker Desktop
+# does not. It holds the rendered configs, no secret.
+chmod 0755 "${WORK}"
 T0=$(date +%s)
 step() { printf '\n[%3ds] %s\n' "$(( $(date +%s) - T0 ))" "$1"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
