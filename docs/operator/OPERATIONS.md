@@ -1045,6 +1045,7 @@ on:
 - `checks.redis.status`: an unreachable Redis backend is `degraded` (the
   limiter fails closed)
 - `checks.zk_binary.status`: the prover binary present and executable
+- `checks.clock.status`: this instance's clock against the database's (`skew_seconds`); `degraded` beyond 2 s, never `unhealthy`, since a wrong database clock skews every instance at once
 
 `/api/health/live` and `/api/health/ready` are the cheap probes Caddy, Compose
 and Kubernetes use. The contract is enforced by `HealthEndpointTests` in

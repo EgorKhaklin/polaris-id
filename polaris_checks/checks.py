@@ -5516,6 +5516,27 @@ def check_rust_toolchain_pinned(root: pathlib.Path) -> list[Finding]:
                f"the ZK toolchain is pinned to {chan} and CI derives it from the file")
 
 
+
+# 2026-10-07 (lab record 017, phase 2c) — the access log records method, path and protocol,
+# never the query string or the referrer: a query can carry an identifier, a code or a state
+# value, and an access log is retained and copied more widely than the database.
+def check_access_log_omits_queries(root: pathlib.Path) -> list[Finding]:
+    name = "access_log"
+    conf = _read(root, "polaris_web/gunicorn.conf.py")
+    m = re.search(r"^access_log_format\s*=\s*'([^']*)'", conf, re.M)
+    if not m:
+        return _fail(name, "polaris_web/gunicorn.conf.py sets no access_log_format, so gunicorn's "
+                           "default (which logs the request line, query string included) applies")
+    fmt = m.group(1)
+    leaks = [atom for atom in ("%(r)s", "%(q)s", "%(f)s", "{query_string}") if atom in fmt]
+    if leaks:
+        return _fail(name, f"the access log format carries {', '.join(leaks)}: the request line, "
+                           f"query string or referrer can hold an identifier or a code")
+    if "%(U)s" not in fmt:
+        return _fail(name, "the access log should still record the path (%(U)s)")
+    return _ok(name, "the access log records method, path and protocol, never a query string or "
+                     "the referrer")
+
 # P0.2 — the Atlas e2e suite must RUN in CI with the skip escape hatch closed.
 # From v9.33 the suite existed but was wired to no job; it skipped everywhere,
 # read as green, and rotted (the v9.146 MapLibre rewrite renamed every element
@@ -24665,6 +24686,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_ci_ssl_probe_aggregated,
     check_migrate_docker_stdin_safe,
     check_rust_toolchain_pinned,
+    check_access_log_omits_queries,
     check_ci_runs_atlas_e2e,
     check_load_gen_single_ledger,
     check_chaos_probe_reaches_wrapper,

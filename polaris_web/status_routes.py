@@ -85,6 +85,28 @@ def _health_check_database():
         return {'status': 'unhealthy', 'error': str(exc)[:160]}
 
 
+#: Disagreement between this instance's clock and the database's beyond which /api/health
+#: reports the clock degraded. Expiry, OpenID4VP iat/exp and nonces mix the two clocks.
+_CLOCK_SKEW_MAX_S = 2.0
+
+
+def _health_check_clock():
+    """This instance's clock against the database's (lab record 017, phase 2c).
+
+    Degraded beyond _CLOCK_SKEW_MAX_S, never unhealthy: when the database's clock is the wrong
+    one every instance reports the same skew, and a shared fault must not drain the rotation.
+    """
+    try:
+        t0 = _time.time()
+        row = query("SELECT EXTRACT(EPOCH FROM clock_timestamp()) AS t", fetch='one')
+        t1 = _time.time()
+        skew = round(float(row['t']) - (t0 + t1) / 2.0, 3)
+        return {'status': 'degraded' if abs(skew) > _CLOCK_SKEW_MAX_S else 'healthy',
+                'skew_seconds': skew}
+    except Exception:
+        return {'status': 'degraded', 'note': 'not measured: the database did not answer'}
+
+
 def _health_check_replica():
     """v9.246 (roadmap P2.2) — the read replica's reachability and lag against
     the staleness contract. Present only when a replica is configured. A replica
@@ -281,6 +303,7 @@ def _compute_readiness():
         'zk_binary': _health_check_zk_binary(),
         'disk':      _health_check_disk(),
         'custody':   _health_check_custody(),
+        'clock':     _health_check_clock(),
     }
 
     # Roll up worst-of per-component status as the overall status.
