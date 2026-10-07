@@ -132,7 +132,7 @@ Whether an operator who is not the author can install, run, upgrade and recover 
 | OP-11 | Restores are verified on a schedule and the evidence is current | PARTIAL | `drill:scripts/polaris-dr-drill.sh`; its ledger's last row is 2026-09-02. |
 | OP-12 | A restore to a chosen point in time is tested | PASS | `drill:scripts/polaris-pitr-drill.sh`, `check:pitr_drilled` |
 | OP-13 | Revocations made after a restore point are re-applied after the restore | PASS | `drill:scripts/polaris-pitr-drill.sh` (`--reconcile`), `file:scripts/polaris-reconcile-restore.py`, `check:restore_reconciled` |
-| OP-14 | Continuous archiving is on by default, with an offsite copy | PARTIAL | `drill:scripts/polaris-offsite-drill.sh` round-trips the offsite repository; archiving is off until enabled. |
+| OP-14 | Continuous archiving is on by default, with an offsite copy | PARTIAL | `check:pgbackrest_scaffolding`: archiving on by default, the stanza made at the first init, a first full backup at deploy and scheduled ones after; `drill:scripts/polaris-offsite-drill.sh` round-trips the offsite repository, which needs the operator's bucket: by default the repository is local. |
 | OP-15 | Backup age, archive failure, replication lag, disk, certificate expiry and clock skew alert | PASS | `drill:lab/strategy/006/alerts.sh` fires the certificate, backup and archive alerts on their real conditions and clears them on repair; `check:infra_alerts` pins all six rules and their promtool tests. |
 | OP-16 | Application metrics, alerts and traces are tested | PASS | `drill:scripts/polaris-page-drill.sh`, `drill:scripts/polaris-trace-drill.sh` |
 | OP-17 | One command names the failing component | PASS | `drill:lab/strategy/006/doctor.sh`, `check:doctor_names_failures` |

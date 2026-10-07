@@ -4900,20 +4900,24 @@ def test_pgbackrest_scaffolding_check_discriminates(tmp_path):
                  "# S3 keys via a 0600 file mounted at /etc/pgbackrest/conf.d/, not env\n"
                  "[polaris]\npg1-path=/var/lib/postgresql/data\n")
     GOOD_COMPOSE = ("services:\n  postgres:\n    build:\n      dockerfile: Dockerfile.postgres\n"
-                    "    environment:\n      POLARIS_PGBACKREST_ENABLED: \"0\"\n"
+                    "    environment:\n      POLARIS_PGBACKREST_ENABLED: \"${POLARIS_PGBACKREST_ENABLED:-1}\"\n"
                     "    volumes:\n      - ./pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro\n")
     GOOD_INIT = ("if [ \"$POLARIS_PGBACKREST_ENABLED\" = \"1\" ]; then\n"
                  "  psql -c \"ALTER SYSTEM SET archive_mode = on;\"\n"
                  "  psql -c \"ALTER SYSTEM SET archive_command = 'pgbackrest --stanza=polaris archive-push %p';\"\n"
                  "  if ! grep -qE 'repo1-type[[:space:]]*=[[:space:]]*s3' /etc/pgbackrest/pgbackrest.conf; then\n"
-                 "    echo 'WARNING: archiving to a LOCAL repo (no repo1-type=s3)' >&2\n  fi\nfi\n")
+                 "    echo 'WARNING: archiving to a LOCAL repo (no repo1-type=s3)' >&2\n  fi\n"
+                 "  pgbackrest --stanza=polaris stanza-create\nfi\n")
     GOOD_DR = "Bootstrap: pgbackrest --stanza=polaris stanza-create\n"
     GOOD_CI = "docker build Dockerfile.postgres\npgbackrest --stanza=polaris restore\n"
     GOOD_DEPLOY = ("if [ \"$POLARIS_PGBACKREST_ENABLED\" = \"1\" ]; then\n"
-                   "  docker compose exec postgres pgbackrest --stanza=polaris stanza-create\nfi\n")
+                   "  docker compose exec postgres pgbackrest --stanza=polaris stanza-create\n"
+                   "  docker compose exec postgres pgbackrest --stanza=polaris --type=full backup\nfi\n")
+    GOOD_BACKUP = ('docker compose exec postgres pgbackrest --stanza=polaris --type="${PGBR_TYPE}" backup\n'
+                   'record_backup pgbackrest "repo1" "${PGBR_TYPE}"\n')
 
     def write(df=GOOD_DF, conf=GOOD_CONF, compose=GOOD_COMPOSE, init=GOOD_INIT, dr=GOOD_DR,
-              ci=GOOD_CI, deploy=GOOD_DEPLOY):
+              ci=GOOD_CI, deploy=GOOD_DEPLOY, backup=GOOD_BACKUP):
         (web / "Dockerfile.postgres").write_text(df)
         (web / "pgbackrest.conf").write_text(conf)
         (web / "docker-compose.prod.yml").write_text(compose)
@@ -4921,6 +4925,7 @@ def test_pgbackrest_scaffolding_check_discriminates(tmp_path):
         (op / "DR.md").write_text(dr)
         (gh / "ci.yml").write_text(ci)
         (scripts / "polaris-deploy.sh").write_text(deploy)
+        (scripts / "polaris-backup.sh").write_text(backup)
 
     # 1. fully wired -> OK.
     write()
@@ -4942,10 +4947,28 @@ def test_pgbackrest_scaffolding_check_discriminates(tmp_path):
     assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "FAIL", \
         "must FAIL when pgbackrest.conf does not document the offsite repo"
 
-    # 5. archiving is not opt-in (no POLARIS_PGBACKREST_ENABLED gate) -> FAIL.
+    # 5. archiving has no POLARIS_PGBACKREST_ENABLED switch -> FAIL.
     write(init="psql -c \"ALTER SYSTEM SET archive_mode = on; archive-push\"\n")
     assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "FAIL", \
-        "must FAIL when archiving is not gated behind POLARIS_PGBACKREST_ENABLED"
+        "must FAIL when archiving has no POLARIS_PGBACKREST_ENABLED switch"
+
+    # 5b. archiving off by default -> FAIL (lab record 017, gate row OP-14).
+    write(compose=GOOD_COMPOSE.replace("${POLARIS_PGBACKREST_ENABLED:-1}", "${POLARIS_PGBACKREST_ENABLED:-0}"))
+    assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "FAIL", \
+        "must FAIL when archiving is off by default"
+
+    # 5c. the first init does not create the stanza -> FAIL.
+    write(init=GOOD_INIT.replace("  pgbackrest --stanza=polaris stanza-create\n", ""))
+    assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "FAIL", \
+        "must FAIL when docker-init does not create the stanza"
+
+    # 5d. no first full backup at deploy, or no scheduled pgBackRest backup -> FAIL.
+    write(deploy=GOOD_DEPLOY.replace("--type=full backup", "info"))
+    assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the deploy takes no first full backup"
+    write(backup="echo dump only\n")
+    assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "FAIL", \
+        "must FAIL when polaris-backup.sh takes no pgBackRest backup"
 
     # 6. DR.md does not document stanza-create -> FAIL.
     write(dr="just restore somehow\n")

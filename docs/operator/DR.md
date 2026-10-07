@@ -37,7 +37,7 @@ for the case where a standby survives the primary.
 
 | Target | Value | How it is met | How it is measured |
 |---|---|---|---|
-| **RPO** (recovery point objective) | **300 s** | Continuous WAL archiving through pgBackRest with `archive_timeout = '60s'`, applied by [`polaris_web/docker-init.sh`](../../polaris_web/docker-init.sh) when `POLARIS_PGBACKREST_ENABLED=1` at the first init of the data volume; an existing cluster needs the same `ALTER SYSTEM` statements by hand (section 5). A partially filled WAL segment is pushed within 60 s, so the recovery point is bounded by the archive interval, not by the backup schedule. | [`scripts/polaris-dr-drill.sh`](../../scripts/polaris-dr-drill.sh): the age of the newest recovered marker at the moment the primary is killed. `RPO_TARGET=300`. |
+| **RPO** (recovery point objective) | **300 s** | Continuous WAL archiving through pgBackRest with `archive_timeout = '60s'`, applied by [`polaris_web/docker-init.sh`](../../polaris_web/docker-init.sh) at the first init of the data volume, on by default; `polaris-deploy.sh` applies the same settings to an existing cluster (section 5). A partially filled WAL segment is pushed within 60 s, so the recovery point is bounded by the archive interval, not by the backup schedule. | [`scripts/polaris-dr-drill.sh`](../../scripts/polaris-dr-drill.sh): the age of the newest recovered marker at the moment the primary is killed. `RPO_TARGET=300`. |
 | **RTO** (recovery time objective) | **14400 s** (4 h) | `pgbackrest --stanza=polaris restore`, archive replay, promotion, and the application brought up against the restored database (section 4.3). | The same drill: time from the kill to `/api/health` reporting the database healthy. `RTO_TARGET=14400`. |
 
 The drill runs on every push to `main` (job `dr-drill` in
@@ -54,7 +54,7 @@ rows dated 2026-09-02 (v9.192) measure RPO 41.6 s and 36.0 s and RTO to
 service 4.7 s and 4.4 s on a clean stack with the sample data. A larger
 repository restores more slowly; `pgbackrest info` reports its size.
 
-**Without WAL archiving** (`POLARIS_PGBACKREST_ENABLED` unset), the recovery
+**Without WAL archiving** (`POLARIS_PGBACKREST_ENABLED=0`), the recovery
 point is the most recent encrypted `pg_dump` from
 [`scripts/polaris-backup.sh`](../../scripts/polaris-backup.sh). The shipped
 schedule is daily at 03:00 UTC (`polaris-backup.timer`, or the cron line
@@ -557,13 +557,14 @@ The postgres image carries pgBackRest
 (`repo1-bundle=y`), zstd compression), and
 [`polaris_web/docker-init.sh`](../../polaris_web/docker-init.sh) sets
 `archive_mode = on`, `archive_command = 'pgbackrest --stanza=polaris archive-push %p'`,
-`wal_level = replica`, and `archive_timeout = '60s'` when
-`POLARIS_PGBACKREST_ENABLED=1`. Archiving is off by default so a deployment
-with no repo does not accumulate unarchivable WAL. `docker-init.sh` is an
-initdb script: it runs only when the postgres container boots with an empty
-data volume, so the flag alone changes nothing on an existing cluster. On an
-existing cluster apply the same settings by hand and restart postgres
-(`archive_mode` is restart-only):
+`wal_level = replica`, and `archive_timeout = '60s'`, and creates the stanza.
+Archiving is on by default since lab record 017 (gate row OP-14), because a
+restore to a point in time needs the archive from before the failure;
+`POLARIS_PGBACKREST_ENABLED=0` turns it off. `docker-init.sh` is an initdb
+script: it runs only when the postgres container boots with an empty data
+volume. On a cluster initialised before that, or with archiving off,
+[`scripts/polaris-deploy.sh`](../../scripts/polaris-deploy.sh) applies the same
+settings and restarts postgres once (`archive_mode` is restart-only). By hand:
 
 ```bash
 COMPOSE="docker compose -f polaris_web/docker-compose.prod.yml"
@@ -590,7 +591,6 @@ export POLARIS_PGBACKREST_S3_ENDPOINT=s3.<region>.amazonaws.com   # any S3-compa
 export POLARIS_PGBACKREST_S3_REGION=<region>
 # optional: _PATH (default /polaris), _PORT, _URI_STYLE=path (MinIO, Ceph),
 #           _CA_FILE (a private endpoint's CA bundle), _VERIFY_TLS=n (tests only)
-export POLARIS_PGBACKREST_ENABLED=1
 ```
 
 **The S3 key pair** is a root-level secret: it can read, write, and delete
@@ -614,9 +614,16 @@ An operator with a different repo type (Azure, GCS, SFTP) mounts their own
 read-only `/etc/pgbackrest/conf.d/repo.conf`; the renderer leaves a mounted
 file alone.
 
-**Enable it.** [`scripts/polaris-deploy.sh`](../../scripts/polaris-deploy.sh)
-runs `stanza-create` and `check` when `POLARIS_PGBACKREST_ENABLED=1` and
-prints the fix-up command if either fails. By hand, inside the postgres
+**The base backups.** A point-in-time restore starts from a base backup; the
+archive alone cannot. [`scripts/polaris-deploy.sh`](../../scripts/polaris-deploy.sh)
+runs `stanza-create` and `check`, prints the fix-up command if either fails, and
+takes the first full backup when the repository holds none.
+[`scripts/polaris-backup.sh`](../../scripts/polaris-backup.sh), on its daily
+schedule, takes one after its dump: a full when the newest full is a week old,
+a differential otherwise, each recorded in `BackupEvent`. Taking them is also
+what expires old WAL (the repository keeps two fulls and the archive they
+need); a deployment that never runs `polaris-backup.sh` keeps every segment,
+and PolarisBackupStale pages after 26 hours. By hand, inside the postgres
 container as the `postgres` user:
 
 ```bash

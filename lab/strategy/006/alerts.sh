@@ -41,8 +41,23 @@ psql_owner() {  # psql_owner <statement>...: each statement in its own transacti
     for st in "$@"; do args+=(-c "${st}"); done
     "${COMPOSE[@]}" exec -T postgres psql -U postgres -d polaris -X -qtA -v ON_ERROR_STOP=1 "${args[@]}"
 }
+# The stack's own archive settings, as ALTER SYSTEM left them before this drill (archiving is on by
+# default since gate row OP-14, so RESET would switch it off). Read from the file, not from SHOW:
+# with archive_mode off, SHOW archive_command prints "(disabled)".
+auto_conf() {  # auto_conf <name>: the value postgresql.auto.conf holds for it, or nothing
+    psql_owner "SELECT setting FROM pg_file_settings WHERE name = '$1' AND sourcefile LIKE '%postgresql.auto.conf' ORDER BY seqno DESC LIMIT 1"
+}
+set_or_reset() {  # set_or_reset <name> <value>: ALTER SYSTEM SET it, or RESET it when the value is empty
+    if [[ -n "$2" ]]; then
+        "${COMPOSE[@]}" exec -T postgres psql -U postgres -d polaris -X -qtA -v ON_ERROR_STOP=1 -v v="$2" \
+            <<<"ALTER SYSTEM SET $1 = :'v';"
+    else
+        psql_owner "ALTER SYSTEM RESET $1"
+    fi
+}
 restore_archive() {  # the stack's own archive settings, whatever this drill changed
-    psql_owner "ALTER SYSTEM RESET archive_command" "ALTER SYSTEM RESET archive_mode" > /dev/null 2>&1
+    set_or_reset archive_mode "${SAVED_ARCHIVE_MODE:-}" > /dev/null 2>&1
+    set_or_reset archive_command "${SAVED_ARCHIVE_COMMAND:-}" > /dev/null 2>&1
 }
 cleanup() {
     docker rm -f "${PROM}" "${BB}" > /dev/null 2>&1
@@ -116,6 +131,7 @@ wait_for PolarisBackupStale inactive 60 || fail "PolarisBackupStale did not clea
 ok "a recorded backup cleared it"
 
 step "4/4 WAL archiving: failing, then succeeding"
+SAVED_ARCHIVE_MODE=$(auto_conf archive_mode) SAVED_ARCHIVE_COMMAND=$(auto_conf archive_command)
 ARCHIVE_TOUCHED=1
 psql_owner "ALTER SYSTEM SET archive_mode = 'on'" "ALTER SYSTEM SET archive_command = '/bin/false'" > /dev/null \
     || fail "configuring a failing archive_command"

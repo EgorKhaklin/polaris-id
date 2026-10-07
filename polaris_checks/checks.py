@@ -3241,11 +3241,20 @@ def check_pgbackrest_scaffolding(root: pathlib.Path) -> list[Finding]:
                      "the prod compose must build Dockerfile.postgres and mount pgbackrest.conf")
     if "POLARIS_PGBACKREST_ENABLED" not in compose or "POLARIS_PGBACKREST_ENABLED" not in init:
         return _fail("pgbackrest",
-                     "archiving must be opt-in via POLARIS_PGBACKREST_ENABLED (wired in compose + "
-                     "docker-init) so a no-repo deployment does not accumulate WAL")
+                     "archiving must be switchable by POLARIS_PGBACKREST_ENABLED (wired in compose + "
+                     "docker-init)")
+    # Lab record 017 (gate row OP-14): on by default, because a restore to a point in time needs the
+    # archive from before the failure, and an operator who never opted in has none.
+    if "${POLARIS_PGBACKREST_ENABLED:-1}" not in compose:
+        return _fail("pgbackrest",
+                     "the prod compose must default POLARIS_PGBACKREST_ENABLED to 1: archiving on by default")
     if "archive_mode" not in init or "archive-push" not in init:
         return _fail("pgbackrest",
                      "docker-init.sh must set archive_mode + the pgbackrest archive_command when enabled")
+    if "stanza-create" not in init:
+        return _fail("pgbackrest",
+                     "docker-init.sh must create the stanza at the first init, or WAL piles up until a deploy "
+                     "creates it")
     # The runbook documents stanza-create; the CI round-trip restores.
     if "stanza-create" not in dr:
         return _fail("pgbackrest", "DR.md must document `pgbackrest --stanza=polaris stanza-create`")
@@ -3260,6 +3269,17 @@ def check_pgbackrest_scaffolding(root: pathlib.Path) -> list[Finding]:
         return _fail("pgbackrest",
                      "polaris-deploy.sh must run stanza-create when POLARIS_PGBACKREST_ENABLED=1 (so "
                      "archiving enabled-but-unbootstrapped does not fill the disk with WAL)")
+    # Lab record 017: a point-in-time restore starts from a base backup; the archive alone cannot.
+    # The deploy takes the first, the scheduled backup the rest (which is also what expires old WAL).
+    if "--type=full backup" not in deploy:
+        return _fail("pgbackrest",
+                     "polaris-deploy.sh must take the first full pgBackRest backup when the repository holds none")
+    backup = _read(root, "scripts/polaris-backup.sh")
+    if 'pgbackrest --stanza=polaris --type="${PGBR_TYPE}" backup' not in backup \
+            or "record_backup pgbackrest" not in backup:
+        return _fail("pgbackrest",
+                     "polaris-backup.sh must take a pgBackRest backup when archiving is on and record it in "
+                     "BackupEvent (without scheduled base backups the archive is never expired)")
     # docker-init warns loudly if archiving runs against a LOCAL (non-offsite) repo.
     if not re.search(r"repo1-type.{0,40}s3", init) or "WARNING" not in init:
         return _fail("pgbackrest",
@@ -3272,7 +3292,8 @@ def check_pgbackrest_scaffolding(root: pathlib.Path) -> list[Finding]:
                      "env literals which leak via docker inspect")
     return _ok("pgbackrest",
                "continuous WAL archiving ships: pgbackrest in the DB image (digest-pinned base) + the "
-               "[polaris] stanza, opt-in archive_mode/archive_command, a documented stanza-create + "
+               "[polaris] stanza, archive_mode/archive_command on by default with the stanza made at the first "
+               "init, a first full backup at deploy and scheduled ones after, a documented stanza-create + "
                "restore, a CI backup+restore round-trip, deploy auto-bootstrap, a local-repo warning, "
                "and file-mounted S3-credential guidance; the offsite S3 repo stays operator-supplied")
 

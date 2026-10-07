@@ -207,22 +207,51 @@ done
 "${SCRIPT_DIR}/polaris-migrate.sh" --sync-objects --target=docker-stack
 
 # ---------------------------------------------------------------------------
-# 5c. Bootstrap pgBackRest when continuous WAL archiving is enabled. docker-init
-#     turned archive_mode on (POLARIS_PGBACKREST_ENABLED=1), but the stanza must
-#     be created once against the running server or archive-push fails on every
-#     WAL segment and they pile up on disk. stanza-create is idempotent, so this
-#     is safe to re-run. Best-effort: a failure (e.g. an unreachable S3 repo)
-#     WARNS loudly but does NOT block the deploy — the app is fine; the operator
-#     must fix the repo before archiving works. This closes the "enabled but
-#     never bootstrapped -> WAL fills the disk" gap (v9.130).
+# 5c. Continuous WAL archiving, on by default (lab record 017, gate row OP-14;
+#     POLARIS_PGBACKREST_ENABLED=0 turns it off). docker-init.sh turns archive_mode
+#     on and creates the stanza at a cluster's first init; a cluster initialised
+#     before that, or with it off, is turned on here the same way (archive_mode
+#     needs one restart). Then stanza-create and check, idempotent, and the first
+#     full backup when the repository holds none: a point-in-time restore starts
+#     from a base backup, and the archive alone cannot. polaris-backup.sh takes
+#     the scheduled ones. Best-effort: a failure (an unreachable offsite
+#     repository) WARNS loudly but does not block the deploy; the operator fixes
+#     the repository before archiving works.
 # ---------------------------------------------------------------------------
-if [[ "${POLARIS_PGBACKREST_ENABLED:-0}" == "1" ]]; then
-    echo "  [5c]  Bootstrapping pgBackRest stanza (WAL archiving is enabled)…"
+if [[ "${POLARIS_PGBACKREST_ENABLED:-1}" == "1" ]]; then
+    echo "  [5c]  WAL archiving (on by default; POLARIS_PGBACKREST_ENABLED=0 turns it off)…"
+    pg_sql() { compose exec -T postgres psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres -d polaris "$@"; }
+    if [[ "$(pg_sql -c 'SHOW archive_mode' 2>/dev/null | tr -d '[:space:]')" == "off" ]]; then
+        echo "        archive_mode is off on this cluster: turning it on (PostgreSQL restarts once)…"
+        pg_sql -c "ALTER SYSTEM SET archive_mode = on;" \
+               -c "ALTER SYSTEM SET archive_command = 'pgbackrest --stanza=polaris archive-push %p';" \
+               -c "ALTER SYSTEM SET wal_level = replica;" \
+               -c "ALTER SYSTEM SET max_wal_senders = 10;" \
+               -c "ALTER SYSTEM SET archive_timeout = '60s';" > /dev/null
+        compose restart postgres > /dev/null
+        for _ in $(seq 1 60); do
+            compose exec -T postgres pg_isready -h 127.0.0.1 -U postgres -d polaris > /dev/null 2>&1 && break
+            sleep 2
+        done
+    fi
     # As the postgres user: the server archives WAL as postgres, so a repo
     # created by root here would refuse every later archive-push.
     if compose exec -T -u postgres postgres pgbackrest --stanza=polaris stanza-create >/dev/null 2>&1 \
        && compose exec -T -u postgres postgres pgbackrest --stanza=polaris check >/dev/null 2>&1; then
         echo "  ✓ pgBackRest stanza ready (archive-push validated)"
+        if ! compose exec -T -u postgres postgres pgbackrest --stanza=polaris --output=json info 2>/dev/null \
+                | grep -q '"type": *"full"'; then
+            echo "        no base backup yet: taking the first full one…"
+            if compose exec -T -u postgres postgres pgbackrest --stanza=polaris --type=full backup >/dev/null 2>&1; then
+                pg_sql -c "INSERT INTO BackupEvent (kind, location, detail) VALUES ('pgbackrest', 'pgBackRest repo1, stanza polaris', 'full, the first, by polaris-deploy.sh')" > /dev/null \
+                    || echo "  ⚠  the first full backup is complete but was not recorded in BackupEvent" >&2
+                echo "  ✓ first full backup taken (a point-in-time restore can start from it)"
+            else
+                echo "  ⚠  the first full backup FAILED; a point-in-time restore has nothing to start from" >&2
+                echo "     until one completes: docker compose -f ${COMPOSE_FILE} exec -u postgres postgres \\" >&2
+                echo "       pgbackrest --stanza=polaris --type=full backup" >&2
+            fi
+        fi
     else
         echo "  ⚠  pgBackRest stanza-create/check FAILED. Archiving is enabled but the" >&2
         echo "     repo is not ready — WAL will accumulate on disk until this is fixed." >&2

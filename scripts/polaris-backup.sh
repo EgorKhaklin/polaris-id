@@ -265,3 +265,32 @@ if [[ -s "${STAGE}/polaris.dump" ]]; then
 else
     echo "  ! this tarball holds no database dump; it is not recorded as a backup" >&2
 fi
+
+# 3. A pgBackRest base backup, when the database archives its WAL (on by default since lab record 017,
+#    gate row OP-14). A point-in-time restore starts from one of these, and taking them is also what
+#    expires old WAL: the repository keeps two fulls and the archive they need (pgbackrest.conf). A
+#    full when the newest is a week old or there is none, a differential otherwise; each recorded in
+#    BackupEvent as kind pgbackrest, the age PolarisBackupStale reads.
+if grep -qx postgres <<<"$RUNNING_SERVICES" \
+   && [[ "$(docker compose -f "${COMPOSE_FILE}" exec -T postgres psql -X -t -A -U postgres -d polaris \
+            -c 'SHOW archive_mode' 2>/dev/null | tr -d '[:space:]')" == "on" ]]; then
+    FULL_AGE=$(docker compose -f "${COMPOSE_FILE}" exec -T -u postgres postgres \
+                   pgbackrest --stanza=polaris --output=json info 2>/dev/null \
+               | python3 -c 'import json, sys, time
+stops = [b["timestamp"]["stop"] for s in json.load(sys.stdin) for b in s.get("backup", []) if b.get("type") == "full"]
+print(int(time.time() - max(stops)) if stops else -1)' 2>/dev/null || echo -1)
+    PGBR_TYPE=diff
+    if [[ "${FULL_AGE}" -lt 0 || "${FULL_AGE}" -gt 604800 ]]; then PGBR_TYPE=full; fi
+    echo "  → pgBackRest ${PGBR_TYPE} backup (WAL archiving is on)…"
+    if docker compose -f "${COMPOSE_FILE}" exec -T -u postgres postgres \
+            pgbackrest --stanza=polaris --type="${PGBR_TYPE}" backup > /dev/null; then
+        if record_backup pgbackrest "pgBackRest repo1, stanza polaris" "${PGBR_TYPE}" > /dev/null; then
+            echo "  ✓ pgBackRest ${PGBR_TYPE} backup complete; recorded in BackupEvent (pgbackrest)"
+        else
+            echo "  ! the pgBackRest backup is complete but was not recorded in BackupEvent" >&2
+        fi
+    else
+        echo "  ✗ the pgBackRest ${PGBR_TYPE} backup FAILED: a point-in-time restore starts from the last good one" >&2
+        exit 4
+    fi
+fi

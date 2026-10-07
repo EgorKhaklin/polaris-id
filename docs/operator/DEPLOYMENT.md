@@ -76,8 +76,11 @@ plus whatever overlays `POLARIS_COMPOSE_EXTRA` names. In order:
    touching the app containers, so the running app keeps serving.
 6. Migrations applied and database objects synced against the running server
    (`polaris-migrate.sh --up` and `--sync-objects`, both piped over stdin into
-   the postgres container). When `POLARIS_PGBACKREST_ENABLED=1`, the pgBackRest
-   stanza is created and checked; a failure there warns and does not block.
+   the postgres container). WAL archiving is on by default
+   (`POLARIS_PGBACKREST_ENABLED=0` turns it off): on a cluster initialised with
+   it off it is turned on (postgres restarts once), the pgBackRest stanza is
+   created and checked, and the first full backup is taken when the repository
+   holds none; a failure there warns and does not block.
 7. The app rolled: with the blue-green profile, `app-green` is recreated and
    waited on until its healthcheck passes, then `app`; without it, the single
    `app` is recreated.

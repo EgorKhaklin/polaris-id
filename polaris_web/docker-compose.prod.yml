@@ -435,12 +435,15 @@ services:
       # docs/operator/FAILOVER.md); POLARIS_REPLICATION_CIDR (default 'samenet')
       # scopes pg_hba for a remote standby.
       POLARIS_REPLICATOR_PASSWORD_FILE: /run/secrets/polaris_replicator_password
-      # v9.126+ — continuous WAL archiving (pgBackRest). OFF by default so a
-      # deployment without a provisioned repo does not accumulate WAL. Set to '1'
-      # AFTER configuring the offsite repo below; polaris-deploy.sh then runs
-      # stanza-create + check, and docker-init.sh enables archive_mode + the
-      # archive_command. See docs/operator/DR.md.
-      POLARIS_PGBACKREST_ENABLED: "${POLARIS_PGBACKREST_ENABLED:-0}"
+      # Continuous WAL archiving (pgBackRest), ON by default since lab record 017
+      # (gate row OP-14): a restore to a point in time needs the archive from
+      # before the failure. docker-init.sh turns archive_mode on and creates the
+      # stanza at the first init; polaris-deploy.sh turns it on for an existing
+      # cluster and takes the first full backup; polaris-backup.sh takes the
+      # scheduled ones, which also expire old WAL (pgbackrest.conf keeps two
+      # fulls). The repository is the local pgbackrest_repo volume until the
+      # offsite settings below name a bucket. '0' turns archiving off.
+      POLARIS_PGBACKREST_ENABLED: "${POLARIS_PGBACKREST_ENABLED:-1}"
       # v9.173 (P0.9) — the OFFSITE repo, by env alone. The image entrypoint
       # renders these into /etc/pgbackrest/conf.d/repo.conf at every start; unset
       # BUCKET means a LOCAL repo (not offsite). The S3 key pair is NOT env: it is
