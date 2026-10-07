@@ -3,7 +3,7 @@
 # Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
 # polaris-metrics-edge-drill.sh: who can read /metrics and /api/metrics through the edge?
-# (lab record 017, gate rows OP-26 and G13)
+# (lab record 017, gate row OP-26)
 #
 # Both surfaces carry polaris_duress_events_total and neither authenticates, so whoever reads
 # them can see that, and roughly when, a duress alarm fired. The edge is the control. This

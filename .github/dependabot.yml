@@ -163,7 +163,7 @@ updates:
 
   # The compose files' third-party images (redis, the observability stack): the
   # docker ecosystem above does not read compose files, so until 2026-10-07 their
-  # digests moved only by hand (lab record 017, G15).
+  # digests moved only by hand (lab record 017).
   - package-ecosystem: docker-compose
     directory: /polaris_web
     schedule:
