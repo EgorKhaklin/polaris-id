@@ -823,14 +823,32 @@ and the concrete recipe to apply.
 **Inflection:** roughly 30-50 concurrent operators, 100 concurrent sessions,
 or sustained 100+ verifications/sec. Without pgbouncer, Polaris's per-request
 connection pattern saturates Postgres's `max_connections` ceiling (default
-100). With pgbouncer in transaction-pooling mode, thousands of short-lived app
-connections multiplex onto a small handful of long-lived backend connections.
+100). pgbouncer runs in session-pooling mode (transaction mode would leak the
+operator's row-level-security scope from one client to the next; see
+[per-authority-isolation.md](../design/per-authority-isolation.md)), so each
+client connection holds one backend connection while it is open.
 
 **Already shipped:** the production stack (`docker-compose.prod.yml`) places
 pgbouncer between the app and Postgres by default. The app reads
 `POLARIS_DB_HOST=pgbouncer` and `POLARIS_DB_PORT=6432`; pgbouncer forwards to
 `postgres:5432` over TLS (`verify-ca`). No operator action needed for standard
 deployments.
+
+**The application's own pool** (`POLARIS_DB_POOL_SIZE`, lab record 017 phase 2d). Each
+gunicorn worker keeps up to this many idle connections and hands one back to the next
+request instead of opening a new one; every checkout resets the session (`DISCARD ALL`)
+before the statement timeout and the operator's scope are applied again, and a pool is
+keyed on the exact connection settings, so a connection opened as one role never serves a
+request configured as another. The production compose file and the Helm chart set it to 1,
+which is what a sync worker needs (it serves one request at a time); unset, the code opens a
+connection per request as before. Measured on one host (below, and
+[PERFORMANCE-BASELINE.md](../reference/PERFORMANCE-BASELINE.md#the-connection-pool)): 300 to
+at least 800 verifications/s, p50 37 ms to 1.6 ms.
+
+Because pgbouncer is in session mode, every idle pooled connection holds a backend
+connection. Size it so that colours x workers x `POLARIS_DB_POOL_SIZE` plus the busy
+connections stay within `PGBOUNCER_DEFAULT_POOL_SIZE`: the shipped 2 colours x 4 workers x 1
+is 8 idle plus at most 8 busy, inside the default 20.
 
 **Tuning knobs** (defaults in `docker-compose.prod.yml`):
 

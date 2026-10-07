@@ -21312,7 +21312,22 @@ def check_per_authority_isolation(root: pathlib.Path) -> list[Finding]:
                      "every connection get_db hands out must carry the operator scope, the "
                      "read replica included; a scope applied on one path only means the same "
                      "operator sees different rows depending on which route they hit")
-    if "fresh connection per request" not in get_db:
+    # Lab record 017, phase 2d: a pool is allowed, on two conditions. Every checkout resets the
+    # session (DISCARD ALL), so the is_local=false scope cannot be inherited, and the tests that
+    # prove it, for the scope and for the role, exist.
+    if "class _ConnectionPool" in app:
+        pool_src = app.split("class _ConnectionPool")[1].split("\ndef get_db")[0]
+        if "DISCARD ALL" not in pool_src:
+            return _fail(name,
+                         "the connection pool must reset the session (DISCARD ALL) on checkout: "
+                         "the scope is set with is_local=false, and a pooled connection would "
+                         "otherwise carry one operator's authority into the next request")
+        tests = _read(root, "polaris_web/test_app.py")
+        for t in ("test_a_reused_connection_carries_no_operator_scope",
+                  "test_a_changed_configuration_never_reuses_another_roles_connection"):
+            if f"def {t}" not in tests:
+                return _fail(name, f"{t} must prove the pool carries no scope or role across requests")
+    elif "fresh connection per request" not in get_db:
         return _fail(name,
                      "the scope is set with is_local=false, which is safe ONLY because get_db "
                      "opens a fresh connection per request. Behind a pool the setting is "

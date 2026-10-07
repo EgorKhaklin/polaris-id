@@ -212,6 +212,9 @@ services:
       POLARIS_WEBAUTHN_RP_NAME: "${POLARIS_WEBAUTHN_RP_NAME:-Polaris}"
       POLARIS_ZK_BINARY: /opt/polaris/zk
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-4}
+      # One pooled connection per sync worker (lab record 017, phase 2d). pgbouncer is in session
+      # mode, so idle pooled connections hold backends: colours x workers x this <= its pool size.
+      POLARIS_DB_POOL_SIZE: "${POLARIS_DB_POOL_SIZE:-1}"
       # v9.116: real ML-DSA-65 signing is the production default (liboqs ships in
       # the prod image). The signing keypair is the file-mounted secret below; its
       # public key is the stable trust anchor verify_token_signature checks

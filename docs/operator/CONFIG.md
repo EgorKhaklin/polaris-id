@@ -42,6 +42,7 @@ A secret is read from its `*_FILE` companion in production. In production a `*_F
 | `POLARIS_DB_SSLMODE` | enum (disable, allow, prefer, require, verify-ca, verify-full) | `prefer` | one of require, verify-ca, verify-full | libpq sslmode. Production requires an encrypting mode. |
 | `POLARIS_DB_SSLROOTCERT` | str |  |  | CA for verify-ca and verify-full; production requires a readable file in those modes. |
 | `POLARIS_DB_STATEMENT_TIMEOUT_MS` | int |  |  | Statement timeout; default derives from POLARIS_TIMEOUT. |
+| `POLARIS_DB_POOL_SIZE` | int | `0` |  | Connections each worker keeps and reuses, reset on checkout; 0 opens one per request. Behind pgbouncer (session mode), colours x workers x size must fit its pool. |
 | `POLARIS_DB_REPLICA_HOST` | str |  |  | Read replica host (optional). |
 | `POLARIS_DB_REPLICA_NAME` | str |  |  | Read replica database name (optional). |
 | `POLARIS_DB_REPLICA_PORT` | int |  |  | Read replica port (optional). |

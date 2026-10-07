@@ -26,6 +26,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Fixed
 
 - A duress record still being written when a worker stopped was abandoned with its daemon thread; the worker now waits for it (a killed worker can still lose one in flight). Kubernetes pods pause before draining.
+- OPERATIONS described pgbouncer in transaction mode; it runs in session mode, which keeps each operator's row-level-security scope to its own connection.
 - deploy/README described a single-PostgreSQL Helm chart and OPERATIONS an unrestricted metrics edge; both now match the code.
 - PQC-POSTURE no longer says Falcon signing time depends on the message: measured natively (record 015, step 4), it does not; the signer stays experimental while FIPS 206 is a draft.
 - A population migration counts a credential as migrated only when its target signature has no deprecation date; one already set to lapse is refused with the re-issue instruction instead of the database's error.
@@ -47,6 +48,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Added
 
 - `/api/health` compares this instance's clock with the database's and reports `clock` degraded beyond 2 s of skew.
+- A per-process database connection pool (`POLARIS_DB_POOL_SIZE`, 1 in the production compose file and the Helm chart): each checkout resets the session and the pool is keyed on the exact connection settings; verification went from about 300 to at least 800 requests/s on one host (lab record 017).
 - Production boot validates every POLARIS_* setting against a declared schema and refuses to start, naming each wrong one: an unreadable secret file, the development database password, a placeholder security contact (lab record 017). docs/operator/CONFIG.md is generated from it.
 - An operability gate in PRODUCTION-READINESS: 28 criteria for running Polaris without its author, each PASS citing evidence a check resolves (lab record 017).
 - An experimental FN-DSA signer: Falcon-padded-1024 keys sign only under POLARIS_EXPERIMENTAL_SIGNERS, never in production, two-witnessed (liboqs, then @noble/post-quantum under Node); migration 2026-10-06-001.

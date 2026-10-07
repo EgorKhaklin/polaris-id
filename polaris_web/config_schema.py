@@ -84,6 +84,9 @@ SETTINGS: tuple[Setting, ...] = (
        prod_choices=("require", "verify-ca", "verify-full")),
     _s("POLARIS_DB_SSLROOTCERT", group="database", doc="CA for verify-ca and verify-full; production requires a readable file in those modes."),
     _s("POLARIS_DB_STATEMENT_TIMEOUT_MS", "int", None, "database", "Statement timeout; default derives from POLARIS_TIMEOUT."),
+    _s("POLARIS_DB_POOL_SIZE", "int", "0", "database",
+       "Connections each worker keeps and reuses, reset on checkout; 0 opens one per request. "
+       "Behind pgbouncer (session mode), colours x workers x size must fit its pool."),
     _s("POLARIS_DB_REPLICA_HOST", group="database", doc="Read replica host (optional)."),
     _s("POLARIS_DB_REPLICA_NAME", group="database", doc="Read replica database name (optional)."),
     _s("POLARIS_DB_REPLICA_PORT", "int", None, "database", "Read replica port (optional)."),
