@@ -27,7 +27,8 @@ reviewed it, or that it is fit to hold real identity data
 ## Verify an image
 
 Pull by digest, never by tag alone: a tag can move, a digest cannot. Pin the identity to the
-exact release you are installing.
+exact release you are installing. Use cosign 3 or later: the signatures are Sigstore bundles
+stored as OCI 1.1 referrers, which cosign 2.6 reads only with `--new-bundle-format=true`.
 
 ```bash
 TAG=v1.0.0-rc.71        # the release you are installing

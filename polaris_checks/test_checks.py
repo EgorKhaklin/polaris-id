@@ -2709,6 +2709,16 @@ def test_release_images_signed_check_discriminates(tmp_path):
            "must FAIL when the chart is pushed unsigned")
     broken(wf, "TRIVY_IMAGE: aquasec/trivy:0.58.1", "TRIVY_IMAGE: aquasec/trivy:0.59.0",
            "must FAIL when the registry SBOMs and sbom.yml use different Trivy versions")
+    broken(wf, "    needs: [approve, publish, chart]\n", "    needs: [approve, publish]\n",
+           "must FAIL when nothing verifies the release once the chart is out")
+    broken(wf, 'cosign verify-attestation "$REF" --type https://sigstore.dev/cosign/sign/v1',
+           'cosign verify-attestation "$REF" --type slsaprovenance',
+           "must FAIL when the index's signature is not checked by its own predicate type")
+    broken(wf, 'refused cosign verify "$REF" --certificate-identity "$OTHER"',
+           'cosign verify "$REF" --certificate-identity "$ID"',
+           "must FAIL when no control shows another tag's identity refused")
+    broken(wf, 'refused gh attestation verify "oci://$IMAGE@$D"', 'gh attestation verify "oci://$IMAGE@$D"',
+           "must FAIL when no control shows provenance refused for an architecture's digest")
     broken(doc, "release-images.yml@refs/tags/", "release-images.yml@",
            "must FAIL when the runbook accepts a signature made from any ref")
     broken(doc, "--signer-workflow EgorKhaklin/polaris-id/.github/workflows/release-images.yml",

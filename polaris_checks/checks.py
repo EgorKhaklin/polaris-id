@@ -6006,6 +6006,19 @@ def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
                      "digests (scripts/polaris-pin-chart-images.py) before it packages the chart")
     if "cosign sign --yes" not in c:
         return _fail(name, f"{rel}: the chart job does not sign the chart it pushes")
+    chart_job = next(n for n, j in jobs.items() if "helm push" in j)
+    v = next((j for j in jobs.values() if chart_job in needs(j) and "cosign verify" in j), "")
+    if not (re.search(r'cosign verify "\$REF" --certificate-identity "\$ID"', v)
+            and re.search(r'cosign verify-attestation "\$REF" --type https://sigstore\.dev/cosign/sign/v1', v)
+            and re.search(r"--predicate-type https://spdx\.dev/Document/v2\.3", v)
+            and re.search(r'cosign verify "\$REGISTRY/charts/polaris@\$CHART" --certificate-identity "\$ID"', v)
+            and re.search(r'^\s*refused cosign verify "\$REF"[^\n]*"\$OTHER"', v, re.M)
+            and re.search(r"^\s*refused gh attestation verify\b", v, re.M)):
+        return _fail(name, f"{rel}: once the chart is out, a job must verify every published "
+                     "digest as VERIFY-RELEASE.md says (the signature by identity and by its "
+                     "predicate type, the provenance, each architecture's SBOM, the chart) and "
+                     "see two controls refused: another tag's identity, and provenance asked of "
+                     "an architecture's digest")
     trivy = set(re.findall(r"aquasec/trivy:([\w.-]+)", wf))
     sbom_trivy = set(re.findall(r"aquasec/trivy:([\w.-]+)", _read(root, ".github/workflows/sbom.yml")))
     if not trivy or trivy != sbom_trivy:
@@ -6028,7 +6041,8 @@ def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
                "the maintainer's approval at the ghcr environment before any job can write to the "
                "registry; each image index and the chart are signed keyless, provenance and "
                "NTIA-checked per-architecture SBOMs are attached at the registry, the chart is "
-               "pinned to the signed digests, every action is pinned by commit, and "
+               "pinned to the signed digests and everything published is verified with two "
+               "negative controls refused, every action is pinned by commit, and "
                "VERIFY-RELEASE.md binds verification to the workflow at the tag")
 
 
