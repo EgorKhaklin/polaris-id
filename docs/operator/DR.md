@@ -281,19 +281,30 @@ same command reads it from S3; the one-off container needs the same
 `POLARIS_PGBACKREST_S3_*` env and the mounted credential fragment, which the
 compose service definition supplies.
 
-**Revocations made after the target time are lost with it.** The database
-comes back as it stood at `TARGET_TIME`, so a credential revoked after that
-moment reads as active again, and an authority key declared compromised or
-retired after it is trusted again. Polaris does not yet re-apply them itself
-(gate row OP-13). Until it does, before step 6: restore the archive's end into
-a scratch instance (the same restore without `--type=time`), list what changed
-after the target there, and repeat each of those revocations and key events on
-the restored database before the app takes traffic:
+**Everything after the target time is lost with it, including what withdrew
+trust or access.** The database comes back as it stood at `TARGET_TIME`: a
+credential revoked after that moment reads as active again, a holder key
+revoked after it is bound again, an authority key declared compromised or
+retired after it is trusted again, an operator account, relying party or
+agency deactivated after it is active again, and duress records made after it
+are gone. Polaris does not yet re-apply these itself (gate row OP-13). Until
+it does, before step 6: restore the archive's end into a scratch instance (the
+same restore without `--type=time`), list there what changed after the target
+(`psql -U postgres -d polaris -v t="$TARGET_TIME"` with the query below), and
+repeat each withdrawal on the restored database before the app takes traffic.
 
 ```sql
-SELECT token_id, revoked_by_agency_id, reason_code, revocation_timestamp
-  FROM RevocationList WHERE revocation_timestamp > '<TARGET_TIME>' ORDER BY revocation_timestamp;
-SELECT * FROM AuthorityKeyEvent WHERE recorded_at > '<TARGET_TIME>' ORDER BY recorded_at;
+SELECT at, kind, what FROM (
+    SELECT revocation_timestamp AS at, 'credential revoked (' || reason_code || ')' AS kind, token_id::text AS what FROM RevocationList
+    UNION ALL SELECT event_timestamp, 'credential ' || event_type, token_id::text FROM TokenLifecycleEvent
+    UNION ALL SELECT recorded_at, 'holder key ' || event, token_id::text FROM HolderKeyEvent
+    UNION ALL SELECT recorded_at, 'authority key ' || event, agency_id::text FROM AuthorityKeyEvent
+    UNION ALL SELECT recorded_at, 'operator account ' || event_type, username FROM AppUserEvent
+    UNION ALL SELECT recorded_at, 'relying party ' || event_type, client_id FROM RelyingPartyEvent
+    UNION ALL SELECT recorded_at, 'agency ' || event_type, name FROM AgencyEvent
+    UNION ALL SELECT event_timestamp, 'enrolment ' || status, individual_id::text FROM EnrollmentStatusEvent
+    UNION ALL SELECT event_timestamp, 'duress record', token_id::text FROM DuressEvent
+) AS changed WHERE at > :'t' ORDER BY at;
 ```
 
 **Audit-of-record continuity:** WAL replay preserves every event up to the

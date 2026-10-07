@@ -31,7 +31,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
-- DR.md's point-in-time restore brought the app back without the revocations and key events made after the target; it now says so and lists them to repeat first.
+- DR.md's point-in-time restore brought the app back without the revocations, key events and other withdrawals made after the target; it now lists them to repeat first.
 - A duress record still being written when a worker stopped was abandoned with its daemon thread; the worker now waits for it (a killed worker can still lose one in flight). Kubernetes pods pause before draining.
 - OPERATIONS described pgbouncer in transaction mode; it runs in session mode, which keeps each operator's row-level-security scope to its own connection.
 - On Kubernetes, a worker that started before Redis counted rate limits alone for its whole life, reported healthy; it now moves to Redis once Redis answers.
