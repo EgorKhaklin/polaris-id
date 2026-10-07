@@ -646,7 +646,7 @@ jobs:
 
       - name: Upload the smoke baseline JSON
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: perf-baseline-smoke
           path: /tmp/perf-baseline.json
@@ -846,7 +846,7 @@ jobs:
 
       - name: Upload UI drill screenshots
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ui-drill-screenshots
           path: ui-drill-out/
@@ -1538,7 +1538,7 @@ jobs:
 
       - name: Upload the drill JSON
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dr-drill-ci
           path: /tmp/dr-drill.json
@@ -1748,7 +1748,7 @@ jobs:
 
       - name: Upload the RTO/RPO ledger
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: region-evacuation
           path: /tmp/evacuation.json
@@ -1801,7 +1801,7 @@ jobs:
 
       - name: Upload the drill summary
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: failover-drill
           path: /tmp/failover.json
