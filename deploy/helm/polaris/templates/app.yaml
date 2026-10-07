@@ -54,6 +54,7 @@ spec:
             - {name: POLARIS_STATE_DIR, value: /var/lib/polaris/state}
             - {name: PROMETHEUS_MULTIPROC_DIR, value: /tmp/prometheus-multiproc}
             - {name: POLARIS_ZK_BINARY, value: /opt/polaris/zk}
+            - {name: POLARIS_SECURITY_CONTACT, value: {{ .Values.securityContact | default (printf "mailto:security@%s" .Values.domain) | quote }}}
             - {name: WEB_CONCURRENCY, value: {{ .Values.app.webConcurrency | quote }}}
             - {name: POLARIS_DB_POOL_SIZE, value: {{ .Values.app.dbPoolSize | quote }}}
             - {name: POLARIS_USE_REAL_PQC, value: {{ ternary "1" "0" .Values.app.realPqc | quote }}}

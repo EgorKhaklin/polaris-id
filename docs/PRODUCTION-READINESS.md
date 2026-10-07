@@ -115,13 +115,13 @@ This ledger covers one authority on one host or one cluster. [ROADMAP.md](../ROA
 
 Whether an operator who is not the author can install, run, upgrade and recover Polaris, one criterion per row ([lab record 017](../lab/strategy/017-production-operability.md)). A PASS row cites evidence that `check_operability_gate` resolves: a check, a test, a drill or a file. This gate is about operating the software; it is not readiness for real identity data, which the status line above and the last row keep separate.
 
-28 criteria: 6 PASS, 9 PARTIAL, 10 FAIL, 3 UNKNOWN.
+28 criteria: 7 PASS, 8 PARTIAL, 10 FAIL, 3 UNKNOWN.
 
 | ID | Criterion | Status | Evidence |
 |---|---|---|---|
 | OP-1 | Installed from published, signed release artifacts, with no source build | FAIL | No images or chart are published yet. |
 | OP-2 | A fresh host reaches HTTPS and a verified credential in 15 minutes or less, with five operator inputs or fewer | PARTIAL | `drill:lab/strategy/006/try.sh` reaches a verified credential, building from source on localhost. |
-| OP-3 | Every setting is validated at boot, and a wrong one stops it by name | PARTIAL | Production refuses a default secret key and weak database TLS; an unreadable secret file still falls back. |
+| OP-3 | Every setting is validated at boot, and a wrong one stops it by name | PASS | `check:config_schema_covers_env`, `test:polaris_web/test_app.py::ConfigSchemaTests`, `test:polaris_web/test_app.py::F05_ProductionSecretGuardTests` |
 | OP-4 | Readiness reflects what this instance can serve, and a shared failure does not empty the pool | FAIL | Compose, the edge and Helm route on liveness. |
 | OP-5 | An instance crash costs no request | PASS | `drill:scripts/polaris-rolling-drill.sh` |
 | OP-6 | A database failover loses no acknowledged write | PARTIAL | `drill:scripts/polaris-failover-drill.sh` measures a 3.3 to 20 s write outage; replication is asynchronous by default. |

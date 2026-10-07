@@ -195,6 +195,9 @@ services:
       POLARIS_NETWORK_POLICY_ADMIN: "${POLARIS_NETWORK_POLICY_ADMIN:-}"
       POLARIS_NETWORK_POLICY_OPERATOR: "${POLARIS_NETWORK_POLICY_OPERATOR:-}"
       POLARIS_NETWORK_POLICY_AUDITOR: "${POLARIS_NETWORK_POLICY_AUDITOR:-}"
+      # security.txt's Contact: unset means security@ the domain (config_schema.security_contact);
+      # the domain reaches only the edge, so the app is handed the derived value here.
+      POLARIS_SECURITY_CONTACT: "${POLARIS_SECURITY_CONTACT:-mailto:security@${POLARIS_DOMAIN}}"
       POLARIS_SESSION_MAX_ADMIN: "${POLARIS_SESSION_MAX_ADMIN:-}"
       POLARIS_SESSION_MAX_OPERATOR: "${POLARIS_SESSION_MAX_OPERATOR:-}"
       POLARIS_SESSION_MAX_AUDITOR: "${POLARIS_SESSION_MAX_AUDITOR:-}"
