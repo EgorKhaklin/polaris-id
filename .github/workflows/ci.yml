@@ -673,13 +673,18 @@ jobs:
         with:
           tool: cargo-llvm-cov
           fallback: none
+      # The suite runs once, instrumented in the release profile, and both reports read that run.
+      # Under the zero-knowledge circuit configuration the debug profile took two hours to prove
+      # under instrumentation, and the step ran the suite twice, pushing this job toward its
+      # six-hour limit; the release profile measures the same lines in about two minutes.
       - name: ZK library coverage floor
         working-directory: polaris_zk
         run: |
-          cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs' \
+          cargo llvm-cov --release --no-report
+          cargo llvm-cov report --release --summary-only --ignore-filename-regex 'main\.rs' \
             --fail-under-lines 85
           echo "### ZK library coverage" >> "$GITHUB_STEP_SUMMARY"
-          cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs' 2>/dev/null \
+          cargo llvm-cov report --release --summary-only --ignore-filename-regex 'main\.rs' 2>/dev/null \
             | grep -E 'lib.rs|TOTAL' >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: ZK prove-verify roundtrip + two-witness differential
