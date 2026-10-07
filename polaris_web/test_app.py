@@ -11928,18 +11928,43 @@ class HealthEndpointTests(PolarisTestCase):
         self.assertNotIn('checks', data,
             "liveness must be cheap — it must not run the dependency checks")
 
-    def test_readiness_probe_runs_dependency_checks(self):
-        """v9.108: /api/health/ready is the readiness probe — it runs the
-        dependency roll-up (200 when serviceable, 503 when a critical dependency
-        is down) so an orchestrator can stop routing without restarting."""
+    def test_readiness_probe_judges_this_instance(self):
+        """Lab record 017: /api/health/ready answers for this instance (custody, local disk)
+        and leaves the shared database to /api/health."""
         from app import app as polaris_app
         with polaris_app.test_client() as c:
             r = c.get('/api/health/ready')
         self.assertIn(r.status_code, (200, 503))
         data = r.get_json()
-        self.assertIn('checks', data)
-        self.assertIn('database', data['checks'])
+        self.assertEqual(data['scope'], 'instance')
+        self.assertIn('custody', data['checks'])
+        self.assertIn('disk', data['checks'])
+        self.assertNotIn('database', data['checks'])
         self.assertIn(data['status'], ('healthy', 'degraded', 'unhealthy'))
+
+    def test_a_database_outage_does_not_empty_the_rotation(self):
+        """The database failing fails every replica at once; readiness must stay 200 so the
+        application's own retries ride a failover, while /api/health reports the outage."""
+        from unittest import mock
+        from app import app as polaris_app
+        down = {'status': 'unhealthy', 'error': 'connection refused'}
+        with mock.patch('status_routes._health_check_database', return_value=down):
+            with polaris_app.test_client() as c:
+                ready = c.get('/api/health/ready')
+                health = c.get('/api/health')
+        self.assertEqual(health.status_code, 503, "the roll-up must report the outage")
+        self.assertEqual(ready.status_code, 200, "readiness must not drain on a shared failure")
+
+    def test_an_instance_that_cannot_sign_leaves_the_rotation(self):
+        """Custody is particular to the instance (an HSM session, a mounted key): when it fails
+        here, readiness is 503 so the edge routes to the other instances."""
+        from unittest import mock
+        from app import app as polaris_app
+        broken = {'status': 'unhealthy', 'note': 'custody backend failed to load'}
+        with mock.patch('status_routes._health_check_custody', return_value=broken):
+            with polaris_app.test_client() as c:
+                ready = c.get('/api/health/ready')
+        self.assertEqual(ready.status_code, 503)
 
     def test_health_does_not_require_login(self):
         from app import app as polaris_app
