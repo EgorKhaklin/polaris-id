@@ -6048,7 +6048,7 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
                f"({versions.pop()})")
 
 
-# 2026-10-07 (lab record 017, G15): the supply-chain stragglers stay closed. Everything the
+# 2026-10-07 (lab record 017): the supply-chain stragglers stay closed. Everything the
 # build or CI pulls is named exactly, or held to a series on purpose: the Caddy plugin by its
 # release, etcd by apk's `~3.6`, the Calico manifest by its SHA-256 before kubectl sees it, every
 # workflow image and the Trivy scanner by digest (the wallet canary excepted: it walks the

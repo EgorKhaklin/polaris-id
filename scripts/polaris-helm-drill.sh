@@ -35,7 +35,7 @@ NS=polaris
 REL=polaris
 CALICO_VERSION=v3.32.2
 CALICO_MANIFEST="https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/calico.yaml"
-# The manifest's SHA-256 at that tag: it is applied only if the download matches (lab record 017, G15).
+# The manifest's SHA-256 at that tag: it is applied only if the download matches (lab record 017).
 CALICO_SHA256=a8c828a06a87c629a282ebbc424895b77f3a030251993e41ea400a743675bb02
 PF_PID=""
 fail() { echo "::error::$*" >&2; exit 1; }
