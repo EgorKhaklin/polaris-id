@@ -23,6 +23,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- deploy/README described a single-PostgreSQL Helm chart and OPERATIONS an unrestricted metrics edge; both now match the code.
 - PQC-POSTURE no longer says Falcon signing time depends on the message: measured natively (record 015, step 4), it does not; the signer stays experimental while FIPS 206 is a draft.
 - A population migration counts a credential as migrated only when its target signature has no deprecation date; one already set to lapse is refused with the re-issue instruction instead of the database's error.
 - The rolling-deploy drill, backup and restore read compose's output whole before matching it; under pipefail an early grep -q exit could SIGPIPE compose and fail a check that had passed.
@@ -43,6 +44,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Added
 
 - Production boot validates every POLARIS_* setting against a declared schema and refuses to start, naming each wrong one: an unreadable secret file, the development database password, a placeholder security contact (lab record 017). docs/operator/CONFIG.md is generated from it.
+- An operability gate in PRODUCTION-READINESS: 28 criteria for running Polaris without its author, each PASS citing evidence a check resolves (lab record 017).
 - An experimental FN-DSA signer: Falcon-padded-1024 keys sign only under POLARIS_EXPERIMENTAL_SIGNERS, never in production, two-witnessed (liboqs, then @noble/post-quantum under Node); migration 2026-10-06-001.
 - A population migrates onto the FN-DSA family where its opt-in holds: 2,000 credentials re-signed at 604/s against ML-DSA-87's 319/s, nobody dark (quantum-event drill, POLARIS_QE_TARGET).
 - A lab step puts a checkpoint of the three transparency logs into Bitcoin block 969876 through OpenTimestamps; its verifier reads the block from two sources.
