@@ -57,7 +57,7 @@ A secret is read from its `*_FILE` companion in production. In production a `*_F
 | `POLARIS_PQC_PROFILE` | str |  |  | `placeholder` names the development signer and silences its warning. |
 | `POLARIS_PQC_ALGORITHM` | str |  |  | Issuer signing algorithm (default ML-DSA-65). |
 | `POLARIS_PQC_SIGNING_KEY_FILE` | file |  | must exist if set | File custody: the issuer key. |
-| `POLARIS_PQC_TRUST_ANCHORS_FILE` | file |  | must exist if set | Earlier issuer public keys that still verify. |
+| `POLARIS_PQC_TRUST_ANCHORS_FILE` | file |  | must exist if set | Earlier public keys pqc_signing.verify_token_signature accepts; a rotation uses the key register instead (KEY-CEREMONY.md). |
 | `POLARIS_MIGRATION_SIGNING_KEY_FILE` | file |  | must exist if set | Key for a signature migration's target algorithm. |
 | `POLARIS_AGENCY_KEYS_DIR` | dir |  |  | Per-agency federation keys. |
 | `POLARIS_CREDENTIAL_COPY_KEYS_DIR` | dir |  |  | ES256 wallet-copy keys. |

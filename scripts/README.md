@@ -25,6 +25,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-rotate-logs.sh` | The yearly archive-and-purge wrapper | `polaris-cron-install.sh` |
 | `polaris-cron-install.sh` | Installs the operator crontab wiring | An operator, once |
 | `polaris-create-operator.sh` | Onboards an operator account | An operator; `polaris_web/docker-init.sh` bootstraps the first admin |
+| `polaris-key-event.sh` | Registers, retires or declares compromised an authority signing key on the Docker stack, as the schema owner | An operator during a key ceremony (KEY-CEREMONY.md); `lab/strategy/006/rotate.sh` |
 | `polaris-recover-admin.sh` | Emergency password-only login for a locked-out admin | An operator, under `RUNBOOKS.md` |
 | `polaris-generate-recovery-code.sh` | Mints a printed-mnemonic recovery code | An operator, at enrolment |
 | `polaris-set-webauthn-deadline.sh` | Sets `webauthn_required_after` for an account | An operator, during the MFA rollout |

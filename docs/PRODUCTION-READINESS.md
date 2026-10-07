@@ -115,7 +115,7 @@ This ledger covers one authority on one host or one cluster. [ROADMAP.md](../ROA
 
 Whether an operator who is not the author can install, run, upgrade and recover Polaris, one criterion per row ([lab record 017](../lab/strategy/017-production-operability.md)). A PASS row cites evidence that `check_operability_gate` resolves: a check, a test, a drill or a file. This gate is about operating the software; it is not readiness for real identity data, which the status line above and the last row keep separate.
 
-28 criteria: 8 PASS, 9 PARTIAL, 8 FAIL, 3 UNKNOWN.
+28 criteria: 9 PASS, 9 PARTIAL, 8 FAIL, 2 UNKNOWN.
 
 | ID | Criterion | Status | Evidence |
 |---|---|---|---|
@@ -141,7 +141,7 @@ Whether an operator who is not the author can install, run, upgrade and recover 
 | OP-20 | The data-integrity rules (C1 to C10) are enforced in the schema and mutation-tested | PASS | `check:aor_append_only_triggers`, `check:one_active_token_index`, `drill:scripts/polaris-constraint-mutation-drill.py` |
 | OP-21 | Two independent ML-DSA implementations agree at issuance | PASS | `check:pqc_second_witness` |
 | OP-22 | A signature-algorithm migration is drilled | PASS | `drill:scripts/polaris-quantum-event-drill.py` |
-| OP-23 | A same-algorithm signing-key rotation is drilled end to end | UNKNOWN | Documented as a ceremony; no drill found. |
+| OP-23 | A same-algorithm signing-key rotation is drilled end to end | PASS | `drill:lab/strategy/006/rotate.sh`, `check:key_rotation_drilled` |
 | OP-24 | Throughput is measured and a sizing guide is published | PARTIAL | `file:docs/reference/BENCHMARK.md` measures one host; host sizing is unmeasured. |
 | OP-25 | Horizontal scaling is measured | UNKNOWN | No multi-replica throughput figures. |
 | OP-26 | The client address is correct behind load balancers and NAT | UNKNOWN | Not tested on such a topology. |

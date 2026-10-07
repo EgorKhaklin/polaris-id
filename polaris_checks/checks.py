@@ -12706,9 +12706,37 @@ def check_key_rotation_drilled(root: pathlib.Path) -> list[Finding]:
     if "polaris-custody-pkcs11-drill.sh" not in ci:
         return _fail("key_rotation_drilled",
                      "ci.yml must run the PKCS#11 custody drill so in-token rotation is exercised every release")
+    # 2026-10-07 (lab record 017, phase 4c): the rotation an operator performs, end to end, on the
+    # stack try.sh starts: the authority key register (what the running app consults), the app's own
+    # answers, the signed trust list and polaris-verify from PyPI, with a compromise as the control.
+    rot = _read(root, "lab/strategy/006/rotate.sh")
+    needs = (("key_event register", "registers the new key"),
+             ("key_event retire", "retires the old key"),
+             ("key_event compromise", "declares the old key compromised as its control"),
+             ('== "True True False" ]]', "asserts the old credential stays authorized at signing after the rotation"),
+             ('== "True False False" ]]', "asserts the old credential is not authorized once its key is compromised"),
+             ("if verify_offline anchors-k2.json pack-A.json; then fail",
+              "refuses the old credential offline when only the new key is published"))
+    missing = [why for needle, why in needs if needle not in rot]
+    if missing:
+        return _fail("key_rotation_drilled",
+                     "lab/strategy/006/rotate.sh does not drill the operator's rotation end to end; it "
+                     "no longer " + "; ".join(missing))
+    oc = _read(root, ".github/workflows/one-command.yml")
+    t, r = oc.find("bash lab/strategy/006/try.sh\n"), oc.find("bash lab/strategy/006/rotate.sh")
+    if t < 0 or r < t:
+        return _fail("key_rotation_drilled",
+                     "one-command.yml must run lab/strategy/006/rotate.sh after try.sh, on the stack it starts")
+    ke = _read(root, "scripts/polaris-key-event.sh")
+    if "INSERT INTO AuthorityKeyEvent" not in ke or "UPDATE Agency SET signing_public_key_hex" not in ke:
+        return _fail("key_rotation_drilled",
+                     "scripts/polaris-key-event.sh must record the event and, for a registration, make the "
+                     "key current, as polaris key-register does")
     return _ok("key_rotation_drilled",
                "HSM key rotation is drilled in-token: a test mints two distinct in-token keys and proves the old "
-               "token still verifies after rotation while the new key signs, run against a real Kryoptic token in CI")
+               "token still verifies after rotation while the new key signs, run against a real Kryoptic token in CI; "
+               "and the operator's rotation is drilled end to end on the try.sh stack: register, switch, retire, "
+               "then compromise, checked by the app, the signed trust list and polaris-verify from PyPI")
 
 
 # ---------------------------------------------------------------------------

@@ -29,6 +29,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A duress record still being written when a worker stopped was abandoned with its daemon thread; the worker now waits for it (a killed worker can still lose one in flight). Kubernetes pods pause before draining.
 - OPERATIONS described pgbouncer in transaction mode; it runs in session mode, which keeps each operator's row-level-security scope to its own connection.
 - On Kubernetes, a worker that started before Redis counted rate limits alone for its whole life, reported healthy; it now moves to Redis once Redis answers.
+- KEY-CEREMONY.md rotated keys with a trust-anchors file the running app never reads; it now rotates through the key register.
 - deploy/README described a single-PostgreSQL Helm chart and OPERATIONS an unrestricted metrics edge; both now match the code.
 - PQC-POSTURE no longer says Falcon signing time depends on the message: measured natively (record 015, step 4), it does not; the signer stays experimental while FIPS 206 is a draft.
 - A population migration counts a credential as migrated only when its target signature has no deprecation date; one already set to lapse is refused with the re-issue instruction instead of the database's error.
@@ -56,6 +57,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A signed release path for the server: from a tag, with PUBLISH and the maintainer's approval, the five images and the chart go to ghcr.io signed keyless with provenance and SBOMs; none is published yet.
 - Supply-chain pins: the Caddy plugin at its release, etcd to the 3.6 series, the Calico manifest by SHA-256, CI images and Trivy by digest; Dependabot reads the compose files, npm lockfiles and published packages.
 - Rotating the session key logs nobody out: the retired key verifies what it signed and signs nothing; --drop-old ends every session.
+- A drill rotates the issuer key on the try.sh stack and then declares the old one compromised; CI runs it after try.sh.
+- scripts/polaris-key-event.sh registers, retires or declares compromised an authority key on the Docker stack, as the schema owner.
 - An experimental FN-DSA signer: Falcon-padded-1024 keys sign only under POLARIS_EXPERIMENTAL_SIGNERS, never in production, two-witnessed (liboqs, then @noble/post-quantum under Node); migration 2026-10-06-001.
 - A population migrates onto the FN-DSA family where its opt-in holds: 2,000 credentials re-signed at 604/s against ML-DSA-87's 319/s, nobody dark (quantum-event drill, POLARIS_QE_TARGET).
 - A lab step puts a checkpoint of the three transparency logs into Bitcoin block 969876 through OpenTimestamps; its verifier reads the block from two sources.

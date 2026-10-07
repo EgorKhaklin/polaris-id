@@ -8439,10 +8439,24 @@ def test_key_rotation_drilled_check_discriminates(tmp_path):
     TC = "class Pkcs11CustodyTests(unittest.TestCase):\n" + ROT
     DRILL = "#!/usr/bin/env bash\npython3 -m unittest test_custody.Pkcs11CustodyTests -v\n"
     CI = "jobs:\n  custody-pkcs11:\n    steps:\n      - run: bash scripts/polaris-custody-pkcs11-drill.sh\n"
+    ROTATE = (
+        'key_event register 1 "${K2}"\nkey_event retire 1 "${K1}"\n'
+        '[[ "$(facts "${A}")" == "True True False" ]] || fail x\n'
+        'if verify_offline anchors-k2.json pack-A.json; then fail "A verified"; fi\n'
+        'key_event compromise 1 "${K1}" --effective-at "${AT}"\n'
+        '[[ "$(facts "${A}")" == "True False False" ]] || fail y\n'
+    )
+    ONE = ("jobs:\n  one-command:\n    steps:\n      - run: bash lab/strategy/006/try.sh\n"
+           "      - run: bash lab/strategy/006/rotate.sh\n")
+    EVENT = ("INSERT INTO AuthorityKeyEvent (agency_id) VALUES (:agency);\n"
+             "UPDATE Agency SET signing_public_key_hex = :'pk' WHERE agency_id = :agency;\n")
     good = {
         "polaris_web/test_custody.py": TC,
         "scripts/polaris-custody-pkcs11-drill.sh": DRILL,
         ".github/workflows/ci.yml": CI,
+        "lab/strategy/006/rotate.sh": ROTATE,
+        ".github/workflows/one-command.yml": ONE,
+        "scripts/polaris-key-event.sh": EVENT,
     }
 
     def write(overrides=None):
@@ -8466,6 +8480,16 @@ def test_key_rotation_drilled_check_discriminates(tmp_path):
     # 4. CI does not run the custody drill
     write({".github/workflows/ci.yml": "jobs:\n  test:\n    steps: []\n"})
     assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the drill"
+    # 5-8 (2026-10-07): the operator's rotation, end to end
+    write()
+    write({"lab/strategy/006/rotate.sh": ROTATE.replace('key_event compromise 1 "${K1}" --effective-at "${AT}"\n', "")})
+    assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL without the compromise control"
+    write({"lab/strategy/006/rotate.sh": ROTATE.replace('if verify_offline anchors-k2.json pack-A.json; then fail "A verified"; fi\n', "")})
+    assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL without the offline refusal"
+    write({".github/workflows/one-command.yml": "jobs:\n  one-command:\n    steps:\n      - run: bash lab/strategy/006/try.sh\n"})
+    assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run rotate.sh"
+    write({"scripts/polaris-key-event.sh": "INSERT INTO AuthorityKeyEvent (agency_id) VALUES (:agency);\n"})
+    assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL when a registration does not make the key current"
 
 
 def test_holder_wallet_check_discriminates(tmp_path):
