@@ -62,6 +62,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-metrics-edge-drill.sh` | The shipped edge rule refuses the duress-carrying metrics surfaces in-network and through an SNAT hop unless the monitoring network is named | `ci.yml` |
 | `polaris-client-ip-drill.sh` | Behind an appending load balancer the app is told the client's own address only when the balancer is named, and no forged X-Forwarded-For gets through | `ci.yml` |
 | `polaris-edge-limits-drill.sh` | In front of an upstream that serves one request at a time, the shipped edge keeps a trickled body off it, ends the slow client, refuses a 2 MiB body and cuts off trickled headers | `ci.yml` |
+| `polaris-upgrade-drill.sh` | The previous release's own try.sh stack, upgraded to this commit as OPERATIONS.md says: no migration pending, every image rebuilt, a credential issued before the upgrade still verifies | `upgrade.yml` |
 | `polaris-chaos-drill.sh` | Induced failures against the booted stack under traffic: one colour killed, both stopped until the outage pages, redis and postgres killed, pgbouncer partitioned, every recovery measured against a ceiling | `chaos.yml`, weekly and on demand |
 | `polaris-abuse-drill.sh` | The per-agency quotas refuse writes under real load | `ci.yml` |
 | `polaris-retention-drill.sh` | The archive and purge chain, per retention class, end to end | `ci.yml` |
