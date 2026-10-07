@@ -507,6 +507,7 @@ def metrics():
     Liveness signals refreshed at scrape time:
       - polaris_app_info: version metadata
       - polaris_clock_skew_seconds: this instance's clock minus the database's (NaN unmeasured)
+      - polaris_db_archive_last_timestamp_seconds{outcome}: WAL archiving's last success and failure
 
     ACCESS: unauthenticated, and carrying the duress signal
     (`polaris_duress_events_total`), so this route and `/api/metrics` must both
@@ -536,6 +537,20 @@ def metrics():
     # database did not answer, so a stale reading is never reported as current.
     try:
         _app._METRICS_CLOCK_SKEW.set(_health_check_clock().get('skew_seconds', float('nan')))
+    except Exception:
+        pass
+    # WAL archiving as the database reports it (PolarisArchiveFailing pages on it). Unanswered:
+    # NaN, so an old reading is never passed off as current.
+    try:
+        row = query("SELECT coalesce(EXTRACT(EPOCH FROM last_archived_time), 0) AS archived, "
+                    "coalesce(EXTRACT(EPOCH FROM last_failed_time), 0) AS failed FROM pg_stat_archiver",
+                    fetch='one')
+        archived, failed = float(row['archived']), float(row['failed'])
+    except Exception:
+        archived = failed = float('nan')
+    try:
+        _app._METRICS_ARCHIVE_LAST.labels(outcome='archived').set(archived)
+        _app._METRICS_ARCHIVE_LAST.labels(outcome='failed').set(failed)
     except Exception:
         pass
 

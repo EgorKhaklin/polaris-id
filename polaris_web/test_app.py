@@ -13445,6 +13445,44 @@ class ClockSkewMetricTests(unittest.TestCase):
         self.assertNotEqual(skew, skew, 'unmeasured must be NaN, not the previous reading')
 
 
+class ArchiveMetricTests(unittest.TestCase):
+    """Lab record 017 (gate row OP-15): /metrics carries the database's WAL archiving as
+    pg_stat_archiver reports it at scrape time, 0 for never, NaN when the database did not answer."""
+
+    def _archive(self):
+        from app import app as polaris_app
+        with polaris_app.test_client() as c:
+            r = c.get('/metrics')
+        if r.status_code != 200:
+            self.skipTest('prometheus_client is not installed')
+        got = dict(re.findall(r'^polaris_db_archive_last_timestamp_seconds\{outcome="(\w+)"\} (\S+)$',
+                              r.data.decode(), re.M))
+        self.assertEqual(set(got), {'archived', 'failed'}, 'both outcomes must be exposed')
+        return float(got['archived']), float(got['failed'])
+
+    def test_the_database_report_is_read_at_scrape_time(self):
+        import status_routes
+        real = status_routes.query
+
+        def failing_archive(sql, *a, **kw):
+            if 'pg_stat_archiver' in sql:
+                return {'archived': 1900.0, 'failed': 1960.0}
+            return real(sql, *a, **kw)
+
+        with patch.object(status_routes, 'query', side_effect=failing_archive):
+            self.assertEqual(self._archive(), (1900.0, 1960.0))
+        archived, failed = self._archive()
+        self.assertGreaterEqual(archived, 0.0)
+        self.assertGreaterEqual(failed, 0.0)
+        self.assertNotEqual((archived, failed), (1900.0, 1960.0), 'the real report replaces the old one')
+
+    def test_an_unanswered_database_reads_nan(self):
+        import status_routes
+        with patch.object(status_routes, 'query', side_effect=RuntimeError('the database is down')):
+            archived, failed = self._archive()
+        self.assertTrue(archived != archived and failed != failed, 'unmeasured must be NaN')
+
+
 class CorrelationIdTests(UnauthenticatedTestCase):
     """v9.122 — the X-Request-ID contract and its vocation guarantee.
 

@@ -195,6 +195,17 @@ try:
         registry=_METRICS_REGISTRY,
         **({'multiprocess_mode': 'livemostrecent'} if _PROM_MULTIPROC_DIR else {}),
     )
+    # Lab record 017 (gate row OP-15): the database's WAL archiving, read off pg_stat_archiver at
+    # scrape time (readable by the app's role; no exporter, no added privilege). 0 means never.
+    # PolarisArchiveFailing fires when the newest attempt failed and nothing archived since.
+    _METRICS_ARCHIVE_LAST = _PromGauge(
+        'polaris_db_archive_last_timestamp_seconds',
+        'When the database last archived a WAL segment (outcome="archived") or last failed to '
+        '(outcome="failed"), as Unix time; 0 when it never has',
+        labelnames=('outcome',),
+        registry=_METRICS_REGISTRY,
+        **({'multiprocess_mode': 'livemostrecent'} if _PROM_MULTIPROC_DIR else {}),
+    )
 except ImportError:
     _PROM_AVAILABLE = False
     _PROM_MULTIPROC_DIR = None

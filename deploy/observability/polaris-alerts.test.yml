@@ -161,3 +161,39 @@ tests:
             exp_annotations:
               summary: "Clock skew on app-green:8000"
               description: "This instance's clock and the database's have disagreed by more than 2 s for 10 minutes; credential expiry, OpenID4VP iat/exp and nonces mix the two. /api/health reports the clock degraded."
+
+  # Lab record 017 (gate row OP-15): WAL archiving. Two app instances report the same database. It
+  # archives every minute for 15 minutes, then every attempt fails. Rules are evaluated every 5
+  # minutes here, so the failure is first seen at 20m (pending) and fires at the 25m evaluation,
+  # once per job. An old failure followed by successes never fires (the second job).
+  - interval: 1m
+    input_series:
+      - series: 'polaris_db_archive_last_timestamp_seconds{outcome="archived",instance="app:8000",job="polaris"}'
+        values: '1000+60x15 1900x15'
+      - series: 'polaris_db_archive_last_timestamp_seconds{outcome="failed",instance="app:8000",job="polaris"}'
+        values: '0x15 1960+60x15'
+      - series: 'polaris_db_archive_last_timestamp_seconds{outcome="archived",instance="app-green:8000",job="polaris"}'
+        values: '1000+60x15 1900x15'
+      - series: 'polaris_db_archive_last_timestamp_seconds{outcome="failed",instance="app-green:8000",job="polaris"}'
+        values: '0x15 1960+60x15'
+      - series: 'polaris_db_archive_last_timestamp_seconds{outcome="archived",instance="app:8000",job="other"}'
+        values: '1000+60x30'
+      - series: 'polaris_db_archive_last_timestamp_seconds{outcome="failed",instance="app:8000",job="other"}'
+        values: '500x30'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: PolarisArchiveFailing
+        exp_alerts: []
+      - eval_time: 19m
+        alertname: PolarisArchiveFailing
+        exp_alerts: []
+      - eval_time: 24m
+        alertname: PolarisArchiveFailing
+        exp_alerts: []
+      - eval_time: 26m
+        alertname: PolarisArchiveFailing
+        exp_alerts:
+          - exp_labels: {severity: sev2, job: polaris}
+            exp_annotations:
+              summary: "WAL archiving is failing"
+              description: "The database's newest WAL archive attempt failed and none has succeeded since, for 5 minutes. Until it recovers, point-in-time restore cannot reach past the last archived segment and the RPO grows."

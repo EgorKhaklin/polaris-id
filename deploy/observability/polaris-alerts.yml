@@ -168,3 +168,18 @@ groups:
         annotations:
           summary: "Clock skew on {{ $labels.instance }}"
           description: "This instance's clock and the database's have disagreed by more than 2 s for 10 minutes; credential expiry, OpenID4VP iat/exp and nonces mix the two. /api/health reports the clock degraded."
+
+      # SEV-2: WAL archiving is failing: the database's newest archive attempt failed and nothing
+      # has been archived since, for 5 minutes. Point-in-time restore (DR.md section 4.3) and the
+      # DR drill's RPO rest on the archive. Every app instance reports the same database, so the
+      # rule takes one value per job. Archiving switched off reads 0 for both and never fires.
+      - alert: PolarisArchiveFailing
+        expr: |
+          max by (job) (polaris_db_archive_last_timestamp_seconds{outcome="failed"})
+            > max by (job) (polaris_db_archive_last_timestamp_seconds{outcome="archived"})
+        for: 5m
+        labels:
+          severity: sev2
+        annotations:
+          summary: "WAL archiving is failing"
+          description: "The database's newest WAL archive attempt failed and none has succeeded since, for 5 minutes. Until it recovers, point-in-time restore cannot reach past the last archived segment and the RPO grows."

@@ -38,8 +38,9 @@ edit either file.
 9. [PolarisVerificationVelocity](#polarisverificationvelocity)
 10. [PolarisQuotaRefusals](#polarisquotarefusals)
 11. [PolarisClockSkew](#polarisclockskew)
-12. [Paging: wiring the receiver](#paging-wiring-the-receiver)
-13. [Cross-references](#cross-references)
+12. [PolarisArchiveFailing](#polarisarchivefailing)
+13. [Paging: wiring the receiver](#paging-wiring-the-receiver)
+14. [Cross-references](#cross-references)
 
 ---
 
@@ -462,6 +463,36 @@ never fires this alert.
 `chronyd` or `systemd-timesyncd`, point it at a reachable NTP source). Do not
 set the clock back by hand on a running database host; let NTP slew it. The
 alert clears 10 minutes after the skew returns within 2 s.
+
+---
+
+## PolarisArchiveFailing
+
+**Severity:** SEV-2 · **Expression:** `max by (job) (polaris_db_archive_last_timestamp_seconds{outcome="failed"}) > max by (job) (polaris_db_archive_last_timestamp_seconds{outcome="archived"})` · **For:** 5m
+
+The database's newest WAL archive attempt failed and none has succeeded since,
+for 5 minutes (lab record 017, gate row OP-15). The app reads
+`pg_stat_archiver` at every scrape. While archiving fails, WAL accumulates on
+the database's disk, a point-in-time restore cannot reach past the last
+archived segment, and the RPO the DR drill measures grows.
+
+**Trigger.** The last failure is newer than the last success. Archiving that was
+never switched on reports 0 for both and does not fire.
+
+**Diagnosis.**
+1. On the database: `SELECT * FROM pg_stat_archiver;` for the failed WAL file
+   and the times.
+2. The postgres container's log: the `archive_command` (pgBackRest
+   `archive-push`) prints why it failed: an unreachable or full repository,
+   expired object-store credentials, a stanza mismatch after a major upgrade.
+3. `pgbackrest --stanza=polaris check` inside the postgres container exercises
+   the whole path.
+
+**Remediation.** Fix the repository or its credentials, then confirm
+`pgbackrest check` passes; Postgres retries the failed segment on its own and
+the alert clears once a newer segment archives. Watch the database disk
+meanwhile: unarchived WAL is kept until it archives. See
+[DR.md](DR.md) section 5.
 
 ---
 
