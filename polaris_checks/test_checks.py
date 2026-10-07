@@ -3037,6 +3037,43 @@ def test_pitr_drilled_check_discriminates(tmp_path):
            "must FAIL when the runbook does not cite the drill")
 
 
+def test_infra_alerts_check_discriminates(tmp_path):
+    obs = "deploy/observability/"
+    files = (obs + "polaris-alerts.yml", obs + "polaris-alerts.test.yml", obs + "prometheus.yml",
+             "polaris_web/app.py", "polaris_web/status_routes.py", "polaris_web/docker-compose.observability.yml",
+             "scripts/polaris-backup.sh", "lab/strategy/006/alerts.sh", ".github/workflows/one-command.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_infra_alerts(tmp_path)[0].level == "OK", \
+        "must PASS on the real rules, their tests, the app, the overlay, the backup script, the drill and CI"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_infra_alerts(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    broken(obs + "polaris-alerts.yml", "- alert: PolarisBackupStale", "- alert: PolarisBackupOld",
+           "must FAIL when a signal has no rule")
+    broken(obs + "polaris-alerts.test.yml", "alertname: PolarisDiskFilling", "alertname: PolarisDiskFull",
+           "must FAIL when a rule has no promtool test", count=-1)
+    broken("polaris_web/app.py", "'polaris_clock_skew_seconds'", "'polaris_clock_offset_seconds'",
+           "must FAIL when the app no longer exposes a signal")
+    broken("polaris_web/docker-compose.observability.yml", "image: prom/blackbox-exporter@sha256:",
+           "image: prom/blackbox-exporter:latest #", "must FAIL when the blackbox exporter is not digest-pinned")
+    broken(obs + "prometheus.yml", "job_name: polaris-edge-tls", "job_name: polaris-edge",
+           "must FAIL when nothing scrapes the edge's certificate")
+    broken("scripts/polaris-backup.sh", "record_backup dump-verified ", "true dump-verified ",
+           "must FAIL when a verified dump is no longer recorded")
+    broken("lab/strategy/006/alerts.sh", "wait_for PolarisArchiveFailing inactive", "true",
+           "must FAIL when the drill no longer requires the archive alert to clear")
+    broken(".github/workflows/one-command.yml", "bash lab/strategy/006/alerts.sh", "true",
+           "must FAIL when CI does not run the drill")
+
+
 def test_upgrade_drilled_check_discriminates(tmp_path):
     files = ("scripts/polaris-deploy.sh", "scripts/polaris-upgrade-drill.sh", ".github/workflows/upgrade.yml")
     for rel in files:

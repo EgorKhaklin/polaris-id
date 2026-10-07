@@ -115,7 +115,7 @@ This ledger covers one authority on one host or one cluster. [ROADMAP.md](../ROA
 
 Whether an operator who is not the author can install, run, upgrade and recover Polaris, one criterion per row ([lab record 017](../lab/strategy/017-production-operability.md)). A PASS row cites evidence that `check_operability_gate` resolves: a check, a test, a drill or a file. This gate is about operating the software; it is not readiness for real identity data, which the status line above and the last row keep separate.
 
-28 criteria: 11 PASS, 11 PARTIAL, 5 FAIL, 1 UNKNOWN.
+28 criteria: 12 PASS, 11 PARTIAL, 4 FAIL, 1 UNKNOWN.
 
 | ID | Criterion | Status | Evidence |
 |---|---|---|---|
@@ -133,7 +133,7 @@ Whether an operator who is not the author can install, run, upgrade and recover 
 | OP-12 | A restore to a chosen point in time is tested | PASS | `drill:scripts/polaris-pitr-drill.sh`, `check:pitr_drilled` |
 | OP-13 | Revocations made after a restore point are re-applied after the restore | FAIL | Not designed yet. |
 | OP-14 | Continuous archiving is on by default, with an offsite copy | PARTIAL | `drill:scripts/polaris-offsite-drill.sh` round-trips the offsite repository; archiving is off until enabled. |
-| OP-15 | Backup age, archive failure, replication lag, disk, certificate expiry and clock skew alert | FAIL | Only application metrics are scraped. |
+| OP-15 | Backup age, archive failure, replication lag, disk, certificate expiry and clock skew alert | PASS | `drill:lab/strategy/006/alerts.sh` fires the certificate, backup and archive alerts on their real conditions and clears them on repair; `check:infra_alerts` pins all six rules and their promtool tests. |
 | OP-16 | Application metrics, alerts and traces are tested | PASS | `drill:scripts/polaris-page-drill.sh`, `drill:scripts/polaris-trace-drill.sh` |
 | OP-17 | One command names the failing component | PASS | `drill:lab/strategy/006/doctor.sh`, `check:doctor_names_failures` |
 | OP-18 | Schema migrations run on every upgrade path | PARTIAL | The host deploy script runs them; the Helm chart has no migration step. |

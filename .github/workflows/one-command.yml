@@ -37,6 +37,7 @@ on:
       - "scripts/polaris-create-operator.sh"
       - "scripts/polaris-key-event.sh"
       - "scripts/polaris-doctor.sh"
+      - "scripts/polaris-backup.sh"
       - ".github/workflows/one-command.yml"
   schedule:
     - cron: "41 3 * * *"
@@ -70,6 +71,14 @@ jobs:
       # check_read_only_roots.
       - name: The containers hold their declared posture (lab/strategy/006/posture.sh)
         run: bash lab/strategy/006/posture.sh
+
+      # Lab record 017 (gate row OP-15): on the same stack, Prometheus with the shipped rules and the
+      # blackbox exporter with the shipped module; the edge's 12-hour internal certificate, a stack
+      # with no backup on record and a failing archive_command must each fire their alert, and a
+      # recorded backup and a succeeding archive_command must clear them. Pinned by
+      # check_infra_alerts.
+      - name: Infrastructure alerts fire on real conditions and clear on repair (lab/strategy/006/alerts.sh)
+        run: bash lab/strategy/006/alerts.sh
 
       # Lab record 017, phase 4c (gate row OP-23): on the same stack, the issuer key is rotated
       # the way the authority key register expects, then the old one is declared compromised;

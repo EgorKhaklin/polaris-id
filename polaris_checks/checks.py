@@ -6570,6 +6570,65 @@ def check_doctor_names_failures(root: pathlib.Path) -> list[Finding]:
 # migration pending, every Polaris container on the image this commit builds, and credentials from
 # before and after the upgrade verifying. Its first run found polaris-deploy.sh rebuilding the app's
 # image alone: the edge, pooler and database kept the images the first install built.
+# 2026-10-07 (lab record 017, gate row OP-15): backup age, archive failure, replication lag, disk,
+# certificate expiry and clock skew alert. The app reports five of them at every scrape of /metrics
+# (no exporter and no added privilege; the backup record is BackupEvent, written by the backup
+# script); the overlay's blackbox exporter reads the certificate the edge serves, under the
+# deployment's domain. Each rule has promtool unit tests and a runbook (check_alert_runbooks), and
+# lab/strategy/006/alerts.sh fires the certificate, backup and archive alerts on their real
+# conditions on the try.sh stack and clears them on repair. CI runs it after try.sh.
+_INFRA_ALERTS = {
+    "PolarisClockSkew": "polaris_clock_skew_seconds",
+    "PolarisArchiveFailing": "polaris_db_archive_last_timestamp_seconds",
+    "PolarisReplicaBehind": "polaris_db_replica_lag_seconds",
+    "PolarisDiskFilling": "polaris_state_filesystem_bytes",
+    "PolarisCertificateExpiring": "probe_ssl_earliest_cert_expiry",
+    "PolarisBackupStale": "polaris_backup_last_success_timestamp_seconds",
+}
+
+
+def check_infra_alerts(root: pathlib.Path) -> list[Finding]:
+    name = "infra_alerts"
+    rules = _read(root, "deploy/observability/polaris-alerts.yml")
+    tests = _read(root, "deploy/observability/polaris-alerts.test.yml")
+    app = _read_app(root)
+    problems = []
+    for alert, metric in _INFRA_ALERTS.items():
+        m = re.search(rf"(?ms)^\s*- alert: {alert}\n(.*?)(?=^\s*- alert: |\Z)", rules)
+        if not m or metric not in m.group(1):
+            problems.append(f"no {alert} rule on {metric}")
+        if not re.search(rf"(?m)^\s*alertname: {alert}$", tests):
+            problems.append(f"{alert} has no promtool unit test")
+        if metric.startswith("polaris_") and f"'{metric}'" not in app:
+            problems.append(f"the app does not expose {metric}")
+    overlay = _read(root, "polaris_web/docker-compose.observability.yml")
+    if not re.search(r"(?m)^\s*image: prom/blackbox-exporter@sha256:[0-9a-f]{64}", overlay):
+        problems.append("the observability overlay runs no digest-pinned blackbox exporter")
+    prom = _read(root, "deploy/observability/prometheus.yml")
+    if "job_name: polaris-edge-tls" not in prom or not re.search(r"names: \['app', 'app-green'\]", prom):
+        problems.append("prometheus.yml must scrape the app on the stack's network and the edge's certificate")
+    backup = _read(root, "scripts/polaris-backup.sh")
+    for kind in ("dump", "dump-verified"):
+        if not re.search(rf"(?m)^\s*(?:if )?record_backup {kind} ", backup):
+            problems.append(f"polaris-backup.sh no longer records {kind} in BackupEvent")
+    drill = _read(root, "lab/strategy/006/alerts.sh")
+    for needle in ("wait_for PolarisCertificateExpiring firing", "wait_for PolarisBackupStale firing",
+                   "wait_for PolarisBackupStale inactive", "wait_for PolarisArchiveFailing firing",
+                   "wait_for PolarisArchiveFailing inactive"):
+        if needle not in drill:
+            problems.append(f"lab/strategy/006/alerts.sh no longer does: {needle}")
+    oc = _read(root, ".github/workflows/one-command.yml")
+    t, a = oc.find("bash lab/strategy/006/try.sh\n"), oc.find("bash lab/strategy/006/alerts.sh")
+    if t < 0 or a < t:
+        problems.append("one-command.yml must run lab/strategy/006/alerts.sh after try.sh, on its stack")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else f" (+{len(problems) - 4} more)"))
+    return _ok(name,
+               "backup age, archive failure, replica lag, disk, certificate expiry and clock skew each have a "
+               "rule with promtool tests; CI fires the certificate, backup and archive alerts on their real "
+               "conditions and clears them on repair")
+
+
 def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
     name = "upgrade_drilled"
     dep = _read(root, "scripts/polaris-deploy.sh")
@@ -25636,6 +25695,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_edge_limits,
     check_doctor_names_failures,
     check_upgrade_drilled,
+    check_infra_alerts,
     check_session_key_rotation,
     check_release_images_signed,
     check_redis_authenticated,
