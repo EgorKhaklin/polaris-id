@@ -216,6 +216,16 @@ try:
         registry=_METRICS_REGISTRY,
         **({'multiprocess_mode': 'livemostrecent'} if _PROM_MULTIPROC_DIR else {}),
     )
+    # The filesystem holding the state directory: its size and free bytes at scrape time (NaN when
+    # unreadable). In the default single-host install Docker keeps every named volume, the
+    # database's included, on that filesystem. PolarisDiskFilling fires above 90 % used.
+    _METRICS_STATE_FS = _PromGauge(
+        'polaris_state_filesystem_bytes',
+        'The size (kind="size") and free space (kind="free") of the filesystem holding the state directory',
+        labelnames=('kind',),
+        registry=_METRICS_REGISTRY,
+        **({'multiprocess_mode': 'livemostrecent'} if _PROM_MULTIPROC_DIR else {}),
+    )
     _METRICS_ARCHIVE_LAST = _PromGauge(
         'polaris_db_archive_last_timestamp_seconds',
         'When the database last archived a WAL segment (outcome="archived") or last failed to '

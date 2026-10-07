@@ -209,21 +209,26 @@ def _health_check_zk_binary():
         return {'status': 'degraded', 'path': path, 'error': str(exc)[:160]}
 
 
-def _health_check_disk():
-    """Check free disk space at the application's state-dir mountpoint.
-
-    Returns degraded < 5GB free OR > 85% used; unhealthy < 500MB free.
-    """
-    target = os.environ.get('POLARIS_STATE_DIR', '/tmp/polaris-state')
-    # Probe the deepest existing ancestor (state-dir may not exist yet).
-    probe = target
+def _state_dir_probe():
+    """The state directory, or its deepest existing ancestor (it may not exist yet): the path
+    whose filesystem the disk check and the disk metrics measure."""
+    probe = os.environ.get('POLARIS_STATE_DIR', '/tmp/polaris-state')
     while probe and not os.path.exists(probe):
         parent = os.path.dirname(probe)
         if parent == probe:
             break
         probe = parent
+    return probe or '/'
+
+
+def _health_check_disk():
+    """Check free disk space at the application's state-dir mountpoint.
+
+    Returns degraded < 5GB free OR > 85% used; unhealthy < 500MB free.
+    """
+    probe = _state_dir_probe()
     try:
-        usage = shutil.disk_usage(probe or '/')
+        usage = shutil.disk_usage(probe)
         free_gb = round(usage.free / (1024 ** 3), 2)
         used_pct = round((usage.used / usage.total) * 100.0, 1) if usage.total else 0.0
         status = 'healthy'
@@ -509,6 +514,7 @@ def metrics():
       - polaris_clock_skew_seconds: this instance's clock minus the database's (NaN unmeasured)
       - polaris_db_archive_last_timestamp_seconds{outcome}: WAL archiving's last success and failure
       - polaris_db_replica_lag_seconds, polaris_db_replica_lag_limit_seconds: a configured replica
+      - polaris_state_filesystem_bytes{kind}: the size and free space of the state directory's filesystem
 
     ACCESS: unauthenticated, and carrying the duress signal
     (`polaris_duress_events_total`), so this route and `/api/metrics` must both
@@ -552,6 +558,17 @@ def metrics():
     try:
         _app._METRICS_ARCHIVE_LAST.labels(outcome='archived').set(archived)
         _app._METRICS_ARCHIVE_LAST.labels(outcome='failed').set(failed)
+    except Exception:
+        pass
+    # The filesystem holding the state directory (PolarisDiskFilling pages on it); NaN unreadable.
+    try:
+        usage = shutil.disk_usage(_state_dir_probe())
+        size, free = float(usage.total), float(usage.free)
+    except Exception:
+        size = free = float('nan')
+    try:
+        _app._METRICS_STATE_FS.labels(kind='size').set(size)
+        _app._METRICS_STATE_FS.labels(kind='free').set(free)
     except Exception:
         pass
     # The read replica, where one is configured (PolarisReplicaBehind pages on it).

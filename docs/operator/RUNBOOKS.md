@@ -40,8 +40,9 @@ edit either file.
 11. [PolarisClockSkew](#polarisclockskew)
 12. [PolarisArchiveFailing](#polarisarchivefailing)
 13. [PolarisReplicaBehind](#polarisreplicabehind)
-14. [Paging: wiring the receiver](#paging-wiring-the-receiver)
-15. [Cross-references](#cross-references)
+14. [PolarisDiskFilling](#polarisdiskfilling)
+15. [Paging: wiring the receiver](#paging-wiring-the-receiver)
+16. [Cross-references](#cross-references)
 
 ---
 
@@ -524,6 +525,35 @@ write burst passes or its I/O recovers; one that stopped (network, disk full,
 a broken slot) is rebuilt from a fresh base backup per
 [FAILOVER.md](FAILOVER.md). The alert clears 10 minutes after the lag is back
 within the limit.
+
+---
+
+## PolarisDiskFilling
+
+**Severity:** SEV-2 · **Expression:** `1 - polaris_state_filesystem_bytes{kind="free"} / ignoring(kind) polaris_state_filesystem_bytes{kind="size"} > 0.90` · **For:** 10m
+
+The filesystem holding the app's state directory has been more than 90% used
+for 10 minutes (lab record 017, gate row OP-15). In the default single-host
+install Docker keeps every named volume on that filesystem, the database's
+included, so this is also the database's disk. When it fills, the database
+stops accepting writes, WAL can no longer be archived or kept, and the app
+fails every write. `/api/health` already reports `disk` degraded at 85% (or
+under 5 GB free) and unhealthy under 500 MB.
+
+**Trigger.** Used space above 90% of the filesystem, held 10 minutes.
+
+**Diagnosis.**
+1. `df -h` on the host, and `docker system df` for Docker's share.
+2. The usual growers: the database volume (`SELECT pg_size_pretty(pg_database_size('polaris'));`),
+   WAL kept because archiving fails (check PolarisArchiveFailing and
+   `pg_stat_archiver`), container logs (capped by the json-file driver in the
+   production compose file), old images (`docker image prune`), backup
+   tarballs written to the same disk.
+
+**Remediation.** Free space by removing what is safe to remove (unused images,
+expired backups kept elsewhere), fix a failing archive so Postgres can recycle
+WAL, or grow the volume. Never delete files under the database's data
+directory by hand. The alert clears 10 minutes after use falls below 90%.
 
 ---
 

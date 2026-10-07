@@ -13526,6 +13526,38 @@ class ReplicaLagMetricTests(unittest.TestCase):
                          'with no replica configured nothing may be set')
 
 
+class StateFilesystemMetricTests(unittest.TestCase):
+    """Lab record 017 (gate row OP-15): /metrics carries the size and free space of the filesystem
+    holding the state directory, measured at scrape time, NaN when it cannot be read."""
+
+    def _fs(self):
+        from app import app as polaris_app
+        with polaris_app.test_client() as c:
+            r = c.get('/metrics')
+        if r.status_code != 200:
+            self.skipTest('prometheus_client is not installed')
+        got = dict(re.findall(r'^polaris_state_filesystem_bytes\{kind="(\w+)"\} (\S+)$', r.data.decode(), re.M))
+        self.assertEqual(set(got), {'size', 'free'}, 'both size and free must be exposed')
+        return float(got['size']), float(got['free'])
+
+    def test_the_filesystem_is_measured_at_scrape_time(self):
+        import shutil
+        import status_routes
+        size, free = self._fs()
+        real = shutil.disk_usage(status_routes._state_dir_probe())
+        self.assertEqual(size, float(real.total))
+        self.assertGreater(free, 0.0)
+        fake = shutil._ntuple_diskusage(100 * 10 ** 9, 95 * 10 ** 9, 5 * 10 ** 9)
+        with patch.object(status_routes.shutil, 'disk_usage', return_value=fake):
+            self.assertEqual(self._fs(), (100e9, 5e9))
+
+    def test_an_unreadable_filesystem_reads_nan(self):
+        import status_routes
+        with patch.object(status_routes.shutil, 'disk_usage', side_effect=OSError('gone')):
+            size, free = self._fs()
+        self.assertTrue(size != size and free != free, 'unreadable must be NaN, not the last reading')
+
+
 class CorrelationIdTests(UnauthenticatedTestCase):
     """v9.122 — the X-Request-ID contract and its vocation guarantee.
 

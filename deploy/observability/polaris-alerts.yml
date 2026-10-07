@@ -199,3 +199,17 @@ groups:
         annotations:
           summary: "The read replica is behind or unreachable"
           description: "The read replica has trailed the primary beyond its staleness limit, or could not be measured, for 10 minutes. Reads fall back to the primary meanwhile; the replica's redundancy is gone until it catches up."
+
+      # SEV-2: the filesystem holding the app's state directory is more than 90 % used, for 10
+      # minutes. In the default single-host install Docker keeps every named volume on it, the
+      # database's included: a full disk stops the database writing, then the archive, then the
+      # app. /api/health degrades at 85 % (or under 5 GB free) and goes unhealthy under 500 MB.
+      - alert: PolarisDiskFilling
+        expr: |
+          1 - polaris_state_filesystem_bytes{kind="free"} / ignoring(kind) polaris_state_filesystem_bytes{kind="size"} > 0.90
+        for: 10m
+        labels:
+          severity: sev2
+        annotations:
+          summary: "The disk under {{ $labels.instance }} is over 90% full"
+          description: "The filesystem holding the state directory (and, on a single host, the database's volume) has been more than 90% used for 10 minutes. The database stops writing when it is full."

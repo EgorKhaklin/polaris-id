@@ -244,3 +244,27 @@ tests:
             exp_annotations:
               summary: "The read replica is behind or unreachable"
               description: "The read replica has trailed the primary beyond its staleness limit, or could not be measured, for 10 minutes. Reads fall back to the primary meanwhile; the replica's redundancy is gone until it catches up."
+
+  # Lab record 017 (gate row OP-15): the disk. A 100 GB filesystem 70 % used for 15 minutes, then
+  # 95 %: silent at first, first seen at the 20m evaluation, firing at 30m. Another at 89 % never.
+  - interval: 1m
+    input_series:
+      - series: 'polaris_state_filesystem_bytes{kind="size",instance="app:8000",job="polaris"}'
+        values: '100000000000x40'
+      - series: 'polaris_state_filesystem_bytes{kind="free",instance="app:8000",job="polaris"}'
+        values: '30000000000x15 5000000000x25'
+      - series: 'polaris_state_filesystem_bytes{kind="size",instance="app-green:8000",job="polaris"}'
+        values: '100000000000x40'
+      - series: 'polaris_state_filesystem_bytes{kind="free",instance="app-green:8000",job="polaris"}'
+        values: '11000000000x40'
+    alert_rule_test:
+      - eval_time: 26m
+        alertname: PolarisDiskFilling
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: PolarisDiskFilling
+        exp_alerts:
+          - exp_labels: {severity: sev2, instance: "app:8000", job: polaris}
+            exp_annotations:
+              summary: "The disk under app:8000 is over 90% full"
+              description: "The filesystem holding the state directory (and, on a single host, the database's volume) has been more than 90% used for 10 minutes. The database stops writing when it is full."
