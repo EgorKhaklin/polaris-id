@@ -5534,6 +5534,70 @@ def check_rust_toolchain_pinned(root: pathlib.Path) -> list[Finding]:
                f"the ZK toolchain is pinned to {chan} and CI derives it from the file")
 
 
+
+# 2026-10-07 (lab record 017, phase 1) — the configuration contract. polaris_web/config_schema.py
+# declares every POLARIS_* setting the application reads; production boot validates against it.
+# A setting the code reads but the schema does not declare is a setting the contract cannot
+# validate or document, and a declaration nothing reads is a reference that lies.
+_CFG_DECL = re.compile(r'_s\(\s*"(POLARIS_[A-Z0-9_]+(?:<ROLE>)?)"')
+_CFG_LIT = re.compile(r"""['"](POLARIS_[A-Z0-9_]+)['"]|f['"](POLARIS_[A-Z0-9_]*)\{""")
+
+
+def check_config_schema_covers_env(root: pathlib.Path) -> list[Finding]:
+    name = "config_schema"
+    schema = _read(root, "polaris_web/config_schema.py")
+    if not schema:
+        return _fail(name, "polaris_web/config_schema.py (the configuration contract) is missing")
+    declared = set(_CFG_DECL.findall(schema))
+    families = [d.split("<")[0] for d in declared if d.endswith("<ROLE>")]
+    plain = {d for d in declared if not d.endswith("<ROLE>")}
+    read, undeclared = set(), []
+    for f in sorted((root / "polaris_web").glob("*.py")):
+        if f.name.startswith("test_"):
+            continue
+        for line in f.read_text().splitlines():
+            if f.name == "config_schema.py" and '_s("' in line:
+                continue
+            for exact, prefix in _CFG_LIT.findall(line):
+                if exact:
+                    read.add(exact)
+                    if exact not in plain and not any(exact.startswith(p) for p in families):
+                        undeclared.append(f"{exact} ({f.name})")
+                elif prefix and not any(prefix.startswith(p) or p.startswith(prefix) for p in families):
+                    undeclared.append(f"{prefix}... ({f.name})")
+    if undeclared:
+        return _fail(name, "read by the application but not declared in config_schema.py: "
+                           + ", ".join(sorted(set(undeclared))[:6]))
+    stale = sorted(plain - read)
+    if stale:
+        return _fail(name, "declared in config_schema.py but read nowhere: " + ", ".join(stale[:6]))
+    return _ok(name, f"config_schema.py declares the {len(plain)} settings and {len(families)} role "
+                     f"families the application reads, and nothing it does not")
+
+
+def check_config_doc_current(root: pathlib.Path) -> list[Finding]:
+    name = "config_doc"
+    path = root / "polaris_web" / "config_schema.py"
+    if not path.is_file():
+        return _fail(name, "polaris_web/config_schema.py is missing")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_polaris_config_schema_for_check", path)
+    mod = importlib.util.module_from_spec(spec)
+    import sys as _sys
+    _sys.modules[spec.name] = mod  # dataclasses resolve postponed annotations through it
+    try:
+        spec.loader.exec_module(mod)
+        rendered = mod.render_doc()
+    except Exception as exc:  # noqa: BLE001
+        return _fail(name, f"config_schema.render_doc() failed: {exc}")
+    finally:
+        _sys.modules.pop(spec.name, None)
+    doc = _read(root, "docs/operator/CONFIG.md")
+    if doc != rendered:
+        return _fail(name, "docs/operator/CONFIG.md differs from the schema's rendering; regenerate it "
+                           "with `python3 polaris_web/config_schema.py doc > docs/operator/CONFIG.md`")
+    return _ok(name, "docs/operator/CONFIG.md is the schema's own rendering")
+
 # P0.2 — the Atlas e2e suite must RUN in CI with the skip escape hatch closed.
 # From v9.33 the suite existed but was wired to no job; it skipped everywhere,
 # read as green, and rotted (the v9.146 MapLibre rewrite renamed every element
@@ -24749,6 +24813,8 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_ci_ssl_probe_aggregated,
     check_migrate_docker_stdin_safe,
     check_rust_toolchain_pinned,
+    check_config_schema_covers_env,
+    check_config_doc_current,
     check_operability_gate,
     check_ci_runs_atlas_e2e,
     check_load_gen_single_ledger,
