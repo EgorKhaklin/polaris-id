@@ -2967,6 +2967,40 @@ def test_session_key_rotation_check_discriminates(tmp_path):
            "def test_renamed(", "must FAIL when no test shows a session surviving a rotation")
 
 
+def test_doctor_names_failures_check_discriminates(tmp_path):
+    files = ("scripts/polaris-doctor.sh", "lab/strategy/006/doctor.sh",
+             ".github/workflows/one-command.yml", "docs/operator/OPERATIONS.md")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_doctor_names_failures(tmp_path)[0].level == "OK", \
+        "must PASS on the real doctor, its fault drill, the CI step and the runbook"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_doctor_names_failures(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    doc, drill = "scripts/polaris-doctor.sh", "lab/strategy/006/doctor.sh"
+    broken(doc, "config_schema.py check --production", "config_schema.py doc",
+           "must FAIL when the doctor no longer judges the configuration contract")
+    broken(doc, "compose run --rm --no-deps -T --entrypoint python app", "compose exec -T app python",
+           "must FAIL when the configuration is judged only inside a running app")
+    broken(doc, "AuthorityKeyCurrent", "Agency", "must FAIL when the doctor no longer reads the key register")
+    broken(doc, "(start with ${FAILING[0]})", "", "must FAIL when the last line names no component")
+    broken(drill, "stop redis", "restart redis", "must FAIL when the drill no longer stops Redis")
+    broken(drill, 'expect_named secrets', 'expect_clean secrets', "must FAIL when an emptied secret need not be named")
+    broken(drill, "POLARIS_DB_SSLMODE: disable", "POLARIS_DB_SSLMODE: require",
+           "must FAIL when the drill no longer injects a refused setting")
+    broken(".github/workflows/one-command.yml", "bash lab/strategy/006/doctor.sh", "true",
+           "must FAIL when CI does not run the fault drill")
+    broken("docs/operator/OPERATIONS.md", "polaris-doctor.sh        # exit 0", "polaris-other        # exit 0",
+           "must FAIL when the runbook does not start an operator at the doctor")
+
+
 def test_npm_publish_is_staged_check_discriminates(tmp_path):
     # The control has two halves and this tree owns one: the npm job must STAGE, so that a
     # maintainer's 2FA approval stands between a workflow run and an installer. The other

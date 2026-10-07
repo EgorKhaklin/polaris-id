@@ -36,6 +36,7 @@ on:
       - "scripts/polaris-generate-secrets.sh"
       - "scripts/polaris-create-operator.sh"
       - "scripts/polaris-key-event.sh"
+      - "scripts/polaris-doctor.sh"
       - ".github/workflows/one-command.yml"
   schedule:
     - cron: "41 3 * * *"
@@ -70,6 +71,11 @@ jobs:
       # register implies. Pinned by check_key_rotation_drilled.
       - name: Rotate the issuer key, then declare the old one compromised (lab/strategy/006/rotate.sh)
         run: bash lab/strategy/006/rotate.sh
+      # Lab record 017 (gate row OP-17): on the same stack, scripts/polaris-doctor.sh must name each
+      # fault first (Redis stopped, PostgreSQL stopped, a secret emptied, a setting production
+      # refuses) and report nothing failing after each repair. Pinned by check_doctor_names_failures.
+      - name: The doctor names what is broken (lab/strategy/006/doctor.sh)
+        run: bash lab/strategy/006/doctor.sh
 
       - name: Tear down
         if: always()

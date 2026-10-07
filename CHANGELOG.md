@@ -59,6 +59,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Rotating the session key logs nobody out: the retired key verifies what it signed and signs nothing; --drop-old ends every session.
 - A drill rotates the issuer key on the try.sh stack and then declares the old one compromised; CI runs it after try.sh.
 - scripts/polaris-key-event.sh registers, retires or declares compromised an authority key on the Docker stack, as the schema owner.
+- scripts/polaris-doctor.sh judges every component of the Docker stack and names the failing ones; a drill breaks four and requires each named.
 - An experimental FN-DSA signer: Falcon-padded-1024 keys sign only under POLARIS_EXPERIMENTAL_SIGNERS, never in production, two-witnessed (liboqs, then @noble/post-quantum under Node); migration 2026-10-06-001.
 - A population migrates onto the FN-DSA family where its opt-in holds: 2,000 credentials re-signed at 604/s against ML-DSA-87's 319/s, nobody dark (quantum-event drill, POLARIS_QE_TARGET).
 - A lab step puts a checkpoint of the three transparency logs into Bitcoin block 969876 through OpenTimestamps; its verifier reads the block from two sources.
