@@ -2747,6 +2747,89 @@ def test_release_provenance_check_discriminates(tmp_path):
         "must PASS with attestation, permissions, and a documented verify command"
 
 
+def test_release_images_signed_check_discriminates(tmp_path):
+    files = (".github/workflows/release-images.yml", ".github/workflows/sbom.yml",
+             "docs/operator/VERIFY-RELEASE.md", "scripts/polaris-pin-chart-images.py")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_release_images_signed(tmp_path)[0].level == "OK", \
+        "must PASS on the real workflow, its runbook and the pin script"
+    wf = tmp_path / ".github/workflows/release-images.yml"
+    doc = tmp_path / "docs/operator/VERIFY-RELEASE.md"
+    good = {wf: wf.read_text(), doc: doc.read_text()}
+
+    def broken(path, old, new, why):
+        assert old in good[path], f"the fixture drifted: {old!r} is no longer in {path.name}"
+        path.write_text(good[path].replace(old, new))
+        assert checks.check_release_images_signed(tmp_path)[0].level == "FAIL", why
+        path.write_text(good[path])
+
+    broken(wf, "on:\n  workflow_dispatch:", "on:\n  push:\n    tags: ['v*']\n  workflow_dispatch:",
+           "must FAIL when a pushed tag publishes with no one dispatching it")
+    broken(wf, "permissions:\n  contents: read\n\nconcurrency",
+           "permissions:\n  contents: write\n\nconcurrency",
+           "must FAIL when the token is writable at the top")
+    broken(wf, "actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e",
+           "actions/attest-sbom@v4", "must FAIL when an action is pinned by a movable tag")
+    broken(wf, "    environment: ghcr\n", "",
+           "must FAIL when no job waits for the maintainer's approval")
+    broken(wf, "    name: The maintainer approves the publish\n    needs: validate\n",
+           "    name: The maintainer approves the publish\n",
+           "must FAIL when the approval does not wait on the version-tag refusal")
+    broken(wf, '[ "$REF_TYPE" = tag ]', '[ -n "$REF_TYPE" ]',
+           "must FAIL when a publish from a branch is not refused")
+    broken(wf, "    needs: [approve, build]\n", "    needs: build\n",
+           "must FAIL when a job that signs does not wait on the approval")
+    broken(wf, "    needs: [approve, build]\n    if: inputs.confirm == 'PUBLISH'\n",
+           "    needs: [approve, build]\n    if: ${{ always() && inputs.confirm == 'PUBLISH' }}\n",
+           "must FAIL when a signing job's `if:` overrides a refused approval")
+    broken(wf, "      PUSH: ${{ inputs.confirm == 'PUBLISH' && needs.approve.result == 'success' }}",
+           "      PUSH: ${{ inputs.confirm == 'PUBLISH' }}",
+           "must FAIL when the build pushes on PUBLISH without the approval")
+    broken(wf, "      - name: Log in to ghcr.io\n        if: env.PUSH == 'true'\n",
+           "      - name: Log in to ghcr.io\n",
+           "must FAIL when the build logs in to the registry on a dry run")
+    broken(wf, "      packages: write   # push by digest, only on an approved publish\n",
+           "      packages: write   # push by digest, only on an approved publish\n"
+           "      id-token: write\n",
+           "must FAIL when the job that also runs dry can mint a signing identity")
+    broken(wf, 'cosign sign --yes "$REF"', 'cosign sign --yes --key env://COSIGN_KEY "$REF"',
+           "must FAIL when the index is signed with a key instead of keyless")
+    broken(wf, "          subject-digest: ${{ steps.index.outputs.digest }}\n"
+               "          push-to-registry: true\n",
+           "          subject-digest: ${{ steps.index.outputs.digest }}\n",
+           "must FAIL when the provenance is not attached at the registry")
+    broken(wf, "      - uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0\n"
+               "        with:\n          subject-name: ${{ steps.index.outputs.image }}\n"
+               "          subject-digest: ${{ steps.index.outputs.arm64 }}\n"
+               "          sbom-path: sbom-arm64.spdx.json\n          push-to-registry: true\n", "",
+           "must FAIL when one architecture's image carries no SBOM")
+    broken(wf, '"$RUNNER_TEMP/sbom-check/bin/ntia-checker" -r json "sbom-$arch.spdx.json" > verdict.json || true',
+           "true", "must FAIL when the registry SBOMs are attested unchecked")
+    broken(wf, "        run: python3 scripts/polaris-pin-chart-images.py deploy/helm/polaris/values.yaml index\n",
+           "        run: echo skip\n",
+           "must FAIL when the chart is published with its images unpinned")
+    broken(wf, 'cosign sign --yes "$REGISTRY/charts/polaris@$DIGEST"', "echo unsigned",
+           "must FAIL when the chart is pushed unsigned")
+    broken(wf, "TRIVY_IMAGE: aquasec/trivy:0.58.1", "TRIVY_IMAGE: aquasec/trivy:0.59.0",
+           "must FAIL when the registry SBOMs and sbom.yml use different Trivy versions")
+    broken(wf, "    needs: [approve, publish, chart]\n", "    needs: [approve, publish]\n",
+           "must FAIL when nothing verifies the release once the chart is out")
+    broken(wf, 'cosign verify-attestation "$REF" --type https://sigstore.dev/cosign/sign/v1',
+           'cosign verify-attestation "$REF" --type slsaprovenance',
+           "must FAIL when the index's signature is not checked by its own predicate type")
+    broken(wf, 'refused cosign verify "$REF" --certificate-identity "$OTHER"',
+           'cosign verify "$REF" --certificate-identity "$ID"',
+           "must FAIL when no control shows another tag's identity refused")
+    broken(wf, 'refused gh attestation verify "oci://$IMAGE@$D"', 'gh attestation verify "oci://$IMAGE@$D"',
+           "must FAIL when no control shows provenance refused for an architecture's digest")
+    broken(doc, "release-images.yml@refs/tags/", "release-images.yml@",
+           "must FAIL when the runbook accepts a signature made from any ref")
+    broken(doc, "--signer-workflow EgorKhaklin/polaris-id/.github/workflows/release-images.yml",
+           "--repo-only", "must FAIL when the attestation check is not bound to the workflow")
+
+
 def test_npm_publish_is_staged_check_discriminates(tmp_path):
     # The control has two halves and this tree owns one: the npm job must STAGE, so that a
     # maintainer's 2FA approval stands between a workflow run and an installer. The other
