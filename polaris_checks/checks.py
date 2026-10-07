@@ -5962,6 +5962,54 @@ def check_release_provenance(root: pathlib.Path) -> list[Finding]:
                "documents the verify command")
 
 
+# 2026-10-07 (lab record 017, gate row OP-17): one command names the failing component. An operator
+# who is not the author meets a broken stack with docker ps and a log; scripts/polaris-doctor.sh
+# judges every component in the order a failure propagates and names the failing ones, first one
+# first, and lab/strategy/006/doctor.sh breaks one thing at a time on the try.sh stack and requires
+# it to be named first, with a clean bill after each repair. CI runs that after try.sh.
+def check_doctor_names_failures(root: pathlib.Path) -> list[Finding]:
+    name = "doctor_names_failures"
+    doc = _read(root, "scripts/polaris-doctor.sh")
+    if not doc:
+        return _fail(name, "scripts/polaris-doctor.sh is missing; nothing names a failing component")
+    judges = (("compose ps -a --format json", "the services and their healthchecks"),
+              ('"secrets"', "the secret files"),
+              ("config_schema.py check --production", "the production configuration contract"),
+              ("/api/health/live", "the TLS edge"),
+              ("http://127.0.0.1:8000/api/health", "the app's own roll-up"),
+              ("AuthorityKeyCurrent", "the key register"))
+    missing = [what for needle, what in judges if needle not in doc]
+    if missing:
+        return _fail(name, "scripts/polaris-doctor.sh no longer judges " + ", ".join(missing))
+    if not re.search(r'compose run --rm --no-deps -T --entrypoint python app config_schema\.py', doc):
+        return _fail(name, "the doctor must judge the configuration in a one-off container, so it "
+                     "answers when the app cannot start")
+    if not re.search(r'failing: \$\{FAILING\[\*\]\} \(start with \$\{FAILING\[0\]\}\)', doc) or "exit 1" not in doc:
+        return _fail(name, "the doctor's last line must name the failing components, the first one "
+                     "first, and exit 1")
+    drill = _read(root, "lab/strategy/006/doctor.sh")
+    faults = (("stop redis", "expect_named redis"), ("stop postgres", "expect_named postgres"),
+              (': > "${SECRET}"', "expect_named secrets"), ("POLARIS_DB_SSLMODE: disable", "POLARIS_DB_SSLMODE\""))
+    for inject, named in faults:
+        if inject not in drill or named not in drill:
+            return _fail(name, f"lab/strategy/006/doctor.sh no longer injects '{inject}' and requires "
+                         "the doctor to name it")
+    if drill.count("expect_clean") < 5:
+        return _fail(name, "lab/strategy/006/doctor.sh must require a clean bill before the faults and "
+                     "after each repair")
+    oc = _read(root, ".github/workflows/one-command.yml")
+    t, d = oc.find("bash lab/strategy/006/try.sh\n"), oc.find("bash lab/strategy/006/doctor.sh")
+    if t < 0 or d < t:
+        return _fail(name, "one-command.yml must run lab/strategy/006/doctor.sh after try.sh, on its stack")
+    if "scripts/polaris-doctor.sh" not in _read_raw(root, "docs/operator/OPERATIONS.md"):
+        return _fail(name, "OPERATIONS.md's Common errors must start an operator at the doctor")
+    return _ok(name,
+               "scripts/polaris-doctor.sh judges the services, secrets, configuration contract, edge, "
+               "the app's roll-up and the key register, and names the failing ones, the first one first; CI "
+               "breaks Redis, PostgreSQL, a secret and a setting on the try.sh stack and requires "
+               "each named first, and a clean bill after each repair")
+
+
 # 2026-09-16 — the npm job STAGES; it must not publish. `npm stage publish` uploads the
 # tarball and stops, and a maintainer with 2FA approves it before anyone can install it, so
 # a workflow that is compromised or merely run by mistake cannot put code in front of an
@@ -24827,6 +24875,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_workflows_reach_the_app_role,
     check_sbom_trivy_matches_scan,
     check_release_provenance,
+    check_doctor_names_failures,
     check_npm_publish_is_staged,
     check_admin_mfa_deadline,
     check_duress_timing_ballast,

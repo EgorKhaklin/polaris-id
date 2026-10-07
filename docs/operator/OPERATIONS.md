@@ -1463,6 +1463,19 @@ Symptom: gunicorn workers hung; CPU 100%; atlas API slow.
 
 ## Common errors
 
+Start with the doctor. It judges every component of the Docker stack in the order a failure
+propagates (each service and its healthcheck, the secret files, the production configuration
+contract in a one-off container, the TLS edge, the app's own roll-up, the key register) and its
+last line names the failing components, the first one first:
+
+```bash
+./scripts/polaris-doctor.sh        # exit 0: nothing failing; 1: something is, and it says which
+```
+
+`lab/strategy/006/doctor.sh` holds it to that in CI: with Redis stopped, PostgreSQL stopped, a
+secret file emptied, or a setting production refuses, it names that first, and nothing after
+each repair.
+
 ### "Caddy could not get certificate"
 
 Cause: Let's Encrypt HTTP-01 challenge failed. Most often DNS has not
