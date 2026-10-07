@@ -15,6 +15,9 @@
 # never came up. This builds Caddy from source with the plugin compiled in (the
 # standard xcaddy pattern), exactly like the self-built pgbouncer (v9.110): no
 # third-party prebuilt image, and every directive the Caddyfile uses is backed.
+# The plugin is pinned to its release (v0.1.0, which the unversioned --with
+# resolved to; lab record 017, G15), so a new upstream tag changes nothing here
+# until it is taken on purpose; Go's checksum database verifies the module.
 #
 # Both stages are digest-pinned (v9.114 discipline); Dependabot's docker
 # ecosystem tracks the FROM digests. The runtime stage is the SAME image the
@@ -52,7 +55,7 @@ FROM caddy:2.11.4-builder-alpine@sha256:b6a94e74b72261bd536b35acdd22f3577d4e466a
 # before the image (and every CI job that boots the stack) is declared broken.
 RUN for attempt in 1 2 3 4; do \
         xcaddy build \
-            --with github.com/mholt/caddy-ratelimit \
+            --with github.com/mholt/caddy-ratelimit@v0.1.0 \
             --replace golang.org/x/crypto=golang.org/x/crypto@v0.55.0 \
         && break; \
         if [ "$attempt" = 4 ]; then echo "xcaddy build failed 4 times; giving up" >&2; exit 1; fi; \

@@ -2650,6 +2650,54 @@ def test_sbom_trivy_match_check_discriminates(tmp_path):
         "must PASS when both use the same Trivy version"
 
 
+def test_supply_chain_pins_check_discriminates(tmp_path):
+    files = ["polaris_web/Dockerfile.caddy", "polaris_web/Dockerfile.etcd",
+             "polaris_web/docker-compose.prod.yml", "polaris_web/docker-compose.yml",
+             "scripts/polaris-helm-drill.sh",
+             ".github/dependabot.yml", "sdk/typescript/package-lock.json",
+             "packages/polaris-verify/pyproject.toml"]
+    files += [str(p.relative_to(REPO)) for p in sorted((REPO / ".github/workflows").glob("*.yml"))]
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
+        "must PASS on the real Dockerfiles, drill, workflows and Dependabot config"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new))
+        assert checks.check_supply_chain_pins(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    broken("polaris_web/Dockerfile.caddy", "caddy-ratelimit@v0.1.0", "caddy-ratelimit",
+           "must FAIL when the Caddy plugin builds at whatever version resolves that day")
+    broken("polaris_web/Dockerfile.etcd", '"etcd~3.6" "etcd-ctl~3.6"', "etcd etcd-ctl",
+           "must FAIL when etcd is installed with no version constraint")
+    broken("scripts/polaris-helm-drill.sh", 'kubectl apply -f "$CALICO_FILE"',
+           'kubectl apply -f "$CALICO_MANIFEST"',
+           "must FAIL when the Calico manifest is applied straight from its URL")
+    broken(".github/workflows/ci.yml",
+           "redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+           "redis:7-alpine", "must FAIL when a CI service image runs by tag")
+    broken(".github/workflows/sbom.yml",
+           "aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7",
+           "aquasec/trivy:0.58.1", "must FAIL when the SBOM generator runs by tag")
+    broken("polaris_web/docker-compose.yml",
+           "postgres:16@sha256:65b16a8b326e0cfbdf33fa7e783f2a0cb352a61448616ccccfd616ef42aa0f65",
+           "postgres:16", "must FAIL when a compose file runs a third-party image by tag")
+    broken(".github/dependabot.yml", "  - package-ecosystem: docker-compose\n",
+           "  - package-ecosystem: docker-compose-unread\n",
+           "must FAIL when Dependabot reads no compose file")
+    broken(".github/dependabot.yml", "      - /packages/polaris-verify\n", "",
+           "must FAIL when a published Python package's manifest is unread")
+    (tmp_path / "tools/newtool").mkdir(parents=True)
+    (tmp_path / "tools/newtool/package-lock.json").write_text("{}\n")
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a new npm lockfile appears that Dependabot does not read"
+
+
 def test_release_provenance_check_discriminates(tmp_path):
     wf = tmp_path / ".github" / "workflows"
     wf.mkdir(parents=True)

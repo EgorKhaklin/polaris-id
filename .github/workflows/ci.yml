@@ -61,7 +61,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: ci_password
           POSTGRES_DB: polaris_test
@@ -76,7 +76,7 @@ jobs:
       # tests RUN here (they skipped for want of a server since v9.40) and the
       # abuse drill exercises the Lua sliding window under redis-py 8.x.
       redis:
-        image: redis:7-alpine
+        image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
         ports:
           - 6379:6379
         options: >-
@@ -749,7 +749,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: ci_password
           POSTGRES_DB: polaris_test
@@ -1870,7 +1870,7 @@ jobs:
     # service is only a server to create it in.
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: ci_password
         ports:
@@ -1881,7 +1881,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: redis:7-alpine
+        image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
         ports:
           - 6379:6379
         options: >-
@@ -2448,7 +2448,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: ci_password
           POSTGRES_DB: polaris_test
@@ -2797,7 +2797,7 @@ jobs:
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v "$PWD/.trivyignore:/.trivyignore:ro" \
-              aquasec/trivy:0.58.1 image \
+              aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7 image \
                 --scanners vuln --severity CRITICAL --ignore-unfixed \
                 --ignorefile /.trivyignore --exit-code 1 --no-progress "$img" \
               || { echo "::error::$img has a fixable CRITICAL CVE not covered by .trivyignore"; exit 1; }
@@ -2813,7 +2813,7 @@ jobs:
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v "$PWD/.trivyignore:/.trivyignore:ro" \
-              aquasec/trivy:0.58.1 image \
+              aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7 image \
                 --scanners vuln --severity HIGH --ignore-unfixed \
                 --ignorefile /.trivyignore --exit-code 0 --no-progress "$img" || true
           done

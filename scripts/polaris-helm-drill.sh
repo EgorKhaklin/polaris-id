@@ -35,6 +35,8 @@ NS=polaris
 REL=polaris
 CALICO_VERSION=v3.32.2
 CALICO_MANIFEST="https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/calico.yaml"
+# The manifest's SHA-256 at that tag: it is applied only if the download matches (lab record 017, G15).
+CALICO_SHA256=a8c828a06a87c629a282ebbc424895b77f3a030251993e41ea400a743675bb02
 PF_PID=""
 fail() { echo "::error::$*" >&2; exit 1; }
 FROZEN=""
@@ -52,7 +54,12 @@ done
 echo "== 1. kind cluster (no default CNI) + Calico =="
 kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
 kind create cluster --name "$CLUSTER" --config "$ROOT/deploy/helm/kind-config.yaml" --wait 60s >/dev/null
-kubectl apply -f "$CALICO_MANIFEST" >/dev/null
+CALICO_FILE="$(mktemp)"
+curl -sSfL --retry 3 "$CALICO_MANIFEST" -o "$CALICO_FILE" || fail "could not download $CALICO_MANIFEST"
+GOT="$( (sha256sum "$CALICO_FILE" 2>/dev/null || shasum -a 256 "$CALICO_FILE") | cut -d' ' -f1)"
+[ "$GOT" = "$CALICO_SHA256" ] || fail "calico ${CALICO_VERSION} manifest is $GOT, not the pinned $CALICO_SHA256"
+kubectl apply -f "$CALICO_FILE" >/dev/null
+rm -f "$CALICO_FILE"
 kubectl -n kube-system rollout status ds/calico-node --timeout=300s >/dev/null
 kubectl -n kube-system rollout status deploy/coredns --timeout=300s >/dev/null
 kubectl wait --for=condition=Ready node --all --timeout=120s >/dev/null
