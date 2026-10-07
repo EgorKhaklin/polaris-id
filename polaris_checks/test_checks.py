@@ -1835,6 +1835,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
               "REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;\n"
               "REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;\n"
               "REVOKE INSERT ON HolderKeyEvent FROM polaris_app;\n"
+              "REVOKE INSERT, UPDATE, DELETE ON TokenSignature FROM polaris_app;\n"
               "REVOKE INSERT ON AnchorBatch FROM polaris_app;\n"
               "REVOKE INSERT, UPDATE, DELETE ON BlockchainAnchor FROM polaris_app;\n"
               "REVOKE INSERT ON DuressEvent FROM polaris_app;\n"
@@ -1892,8 +1893,11 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
         "must FAIL when the partition manager leaves a new partition unlocked"
 
-    # 6. Everything present -> OK.
+    # 6. The application keeps the write on TokenSignature -> FAIL; everything present -> OK.
     (sql / "01_schema.sql").write_text(lock + ensure)
+    write(full.replace("REVOKE INSERT, UPDATE, DELETE ON TokenSignature FROM polaris_app;\n", ""), True, True)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the application role can still write a credential's signatures"
     write(full, True, True)
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "OK", \
         "must PASS when the parents, the partitions, the lifecycle log and the epochs are all locked"

@@ -784,8 +784,17 @@ def cmd_migrate_population(args):
         elif not totals["blocked"]:
             print(dim("  Next: close the window with --deprecate-old once fielded verifiers "
                       f"accept {target_name}."))
+    except psycopg2.errors.InsufficientPrivilege:
+        conn.rollback()
+        sys.stderr.write(red(_MIGRATE_OWNER_ONLY))
+        sys.exit(3)
     finally:
         conn.close()
+
+
+_MIGRATE_OWNER_ONLY = ("Refused: re-signing a population writes credential signatures, which only the "
+                       "schema owner may write (2026-10-04: the application role can no longer insert a "
+                       "TokenSignature row). Run migrate-population as the owner.\n")
 
 
 def cmd_migrate_algorithm(args):

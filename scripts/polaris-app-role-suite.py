@@ -90,7 +90,7 @@ def run_cli_phase(app_role):
     # refused for each; here they keep the owner, as they would in a deployment.
     owner_only = {"quota-set", "discretion-set", "user-create", "user-passwd", "user-deactivate",
                   "key-register", "key-retire", "key-compromise", "rp-register", "rp-policy",
-                  "retention-set"}
+                  "retention-set", "migrate-population"}
 
     def run_as_app(cmd, *a, **kw):
         if (isinstance(cmd, list) and len(cmd) > 2 and str(cmd[1]).endswith("polaris.py")

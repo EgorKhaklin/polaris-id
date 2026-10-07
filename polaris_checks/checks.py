@@ -866,6 +866,14 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT ON HolderKeyEvent, and "
                                     "uc_record_holder_key_event must be SECURITY DEFINER with search_path "
                                     "pinned: it is the holder key register's only writer (C1)")
+    # 2026-10-04 (THREAT-MODEL). Credential signatures are written by the issuance, recovery, bulk and
+    # migration procedures (SECURITY DEFINER) and by the owner's population migration. With the write,
+    # a compromised application plants a signature row, keyless or under a key of its own.
+    if not re.search(r"REVOKE\s+INSERT\s*,\s*UPDATE\s*,\s*DELETE\s+ON\s+TokenSignature\s+FROM\s+polaris_app",
+                     grants, re.I):
+        return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT, UPDATE, DELETE ON TokenSignature from "
+                                    "polaris_app: with the write, a compromised application plants a signature "
+                                    "row for any credential (C1)")
     # 2026-09-25. The anchoring layer: written by close_anchor_batch and the sample data only.
     if not (re.search(r"REVOKE\s+INSERT\s+ON\s+AnchorBatch\s+FROM\s+polaris_app", grants, re.I)
             and re.search(r"REVOKE\s+INSERT\s*,\s*UPDATE\s*,\s*DELETE\s+ON\s+BlockchainAnchor\s+FROM\s+polaris_app",
