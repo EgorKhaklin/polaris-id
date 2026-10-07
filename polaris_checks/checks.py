@@ -4669,27 +4669,59 @@ def check_cli_help_lists_every_command(root: pathlib.Path) -> list[Finding]:
 # an ACL that existed only in prose.
 # ---------------------------------------------------------------------------
 def check_metrics_edge_acl(root: pathlib.Path) -> list[Finding]:
+    name = "metrics_edge_acl"
     edges = (("polaris_web/Caddyfile", "POLARIS_METRICS_ALLOW"),
+             ("polaris_web/Caddyfile.citest", "POLARIS_METRICS_ALLOW"),
              ("deploy/helm/polaris/templates/configmap-caddy.yaml", "metricsAllow"))
+    blocks = {}
     for rel, knob in edges:
         conf = _read(root, rel)
         if not conf:
-            return _fail("metrics_edge_acl", f"{rel} is missing")
+            return _fail(name, f"{rel} is missing")
         if "@metrics_from_outside" not in conf or "respond @metrics_from_outside 404" not in conf:
-            return _fail("metrics_edge_acl",
+            return _fail(name,
                          f"{rel} must refuse /metrics and /api/metrics from outside the monitoring "
                          "network (a named matcher plus `respond ... 404`)")
         matcher = conf[conf.index("@metrics_from_outside"):]
-        matcher = matcher[:matcher.index("}")]
+        matcher = matcher[:matcher.index("}\n") + 1] if "}\n" in matcher else matcher[:matcher.index("}")]
         for needle in ("/metrics", "/api/metrics", "not remote_ip"):
             if needle not in matcher:
-                return _fail("metrics_edge_acl", f"{rel}'s matcher does not cover {needle}")
+                return _fail(name, f"{rel}'s matcher does not cover {needle}")
         if knob not in conf:
-            return _fail("metrics_edge_acl", f"{rel} must let the operator name the allowed range ({knob})")
+            return _fail(name, f"{rel} must let the operator name the allowed range ({knob})")
+        blocks[rel] = matcher
+    # 2026-10-07 (lab record 017): unset, the allow-list names no client. Until then it defaulted to
+    # private ranges, and behind an L4 load balancer, Kubernetes' default externalTrafficPolicy,
+    # rootless Docker or Docker's IPv6 userland proxy every internet client reaches the edge from
+    # a private address: the duress counter was public (scripts/polaris-metrics-edge-drill.sh).
+    for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"):
+        m = re.search(r"not remote_ip \{\$POLARIS_METRICS_ALLOW:([^}]*)\}", blocks[rel])
+        if not m or m.group(1).strip() != "0.0.0.0/32":
+            return _fail(name, f"{rel}: with POLARIS_METRICS_ALLOW unset the edge must allow no client "
+                         f"(0.0.0.0/32), not {m.group(1).strip() if m else 'nothing'}; behind SNAT "
+                         "every internet client is a private address")
+    helm = blocks["deploy/helm/polaris/templates/configmap-caddy.yaml"]
+    values = re.search(r'^\s*metricsAllow:\s*"([^"]*)"', _read(root, "deploy/helm/polaris/values.yaml"), re.M)
+    if '| default "0.0.0.0/32"' not in helm or not values or values.group(1) != "":
+        return _fail(name, "the chart must allow no client unless edge.metricsAllow names one "
+                     '(values metricsAllow "" and the template default "0.0.0.0/32")')
+    norm = lambda t: [line.strip() for line in t.splitlines() if line.strip()]
+    if norm(blocks["polaris_web/Caddyfile"]) != norm(blocks["polaris_web/Caddyfile.citest"]):
+        return _fail(name, "Caddyfile.citest's metrics rule differs from the production Caddyfile's; "
+                     "the stack CI and try.sh boot must refuse the metrics the way production does")
     ci = _read(root, ".github/workflows/ci.yml")
-    if "metrics surfaces are refused from outside" not in ci:
-        return _fail("metrics_edge_acl", "ci.yml must exercise the ACL, not just validate the config")
-    return _ok("metrics_edge_acl", "both edges refuse the metrics surfaces from outside the monitoring network, proven in CI")
+    if ("metrics surfaces are refused from outside" not in ci
+            or "bash scripts/polaris-metrics-edge-drill.sh" not in ci):
+        return _fail(name, "ci.yml must exercise the rule with scripts/polaris-metrics-edge-drill.sh, "
+                     "not just validate the config")
+    drill = _read(root, "scripts/polaris-metrics-edge-drill.sh")
+    if "/polaris_web/Caddyfile" not in drill or 'probe 404 "${where}" /metrics' not in drill or "via SNAT" not in drill:
+        return _fail(name, "scripts/polaris-metrics-edge-drill.sh must take the rule from the shipped "
+                     "Caddyfile and ask through an SNAT hop as well as in-network")
+    return _ok(name,
+               "all three edges refuse the metrics surfaces unless the monitoring network is named "
+               "(no client by default), the CI edge's rule is production's, and CI asks in-network "
+               "and through an SNAT hop against the shipped rule")
 
 
 # ---------------------------------------------------------------------------

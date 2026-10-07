@@ -1092,11 +1092,12 @@ carries the duress signal, so it must be reachable only by the operator's
 monitoring, never the public internet ([HARDENING.md, section 10](HARDENING.md)).
 
 **Edge exposure.** The shipped [polaris_web/Caddyfile](../../polaris_web/Caddyfile) answers
-`/metrics` and `/api/metrics` with 404 unless the client address is in `POLARIS_METRICS_ALLOW`
-(default: private ranges), so an in-network Prometheus scrapes and the public internet does not.
-Set it to your monitoring network's range. The rule keys on the address the edge sees; behind a
-load balancer or NAT that can be a private address, so confirm it on your topology
-([operability gate](../PRODUCTION-READINESS.md#operability-gate), OP-26).
+`/metrics` and `/api/metrics` with 404 unless the client address is in `POLARIS_METRICS_ALLOW`,
+and unset it names no client. The rule keys on the address the edge sees, and behind a load
+balancer or NAT that is a private address for every client on the internet, so a private-ranges
+default would serve them all; `scripts/polaris-metrics-edge-drill.sh` asks through such a hop in
+CI. A Prometheus on the stack's network scrapes `app:8000` directly; name a monitoring network
+elsewhere in `POLARIS_METRICS_ALLOW` ([operability gate](../PRODUCTION-READINESS.md#operability-gate), OP-26).
 
 **Scrape config example** (Prometheus `prometheus.yml`; the shipped one is
 [deploy/observability/prometheus.yml](../../deploy/observability/prometheus.yml)).
