@@ -2893,10 +2893,24 @@ def check_duress_alertable(root: pathlib.Path) -> list[Finding]:
     if "PolarisDuressEvent" not in alerts or "polaris_duress_events_total" not in alerts:
         return _fail("duress_alert",
                      "polaris-alerts.yml must alert (PolarisDuressEvent) on polaris_duress_events_total")
+    # Lab record 017, phase 2b: the record survives a worker's exit. A daemon thread is
+    # abandoned when the interpreter exits; a non-daemon one is joined, so a record still being
+    # written when a worker stops is finished rather than lost.
+    spawn = re.search(r"threading\.Thread\(\s*target=_record_duress_async.*?\)\.start\(\)", app, re.S)
+    if not spawn or "daemon=False" not in spawn.group(0):
+        return _fail("duress_alert",
+                     "the duress record must be written on a non-daemon thread (daemon=False): a "
+                     "daemon thread is abandoned when a worker exits, losing a record in flight")
+    tests = _read(root, "polaris_web/test_app.py")
+    if "def test_a_duress_record_survives_a_worker_exit" not in tests:
+        return _fail("duress_alert",
+                     "test_a_duress_record_survives_a_worker_exit must prove the record outlives the "
+                     "request's worker")
     return _ok("duress_alert",
                "the duress signal is alertable: polaris_duress_events_total is on /metrics, incremented "
                "at the DuressEvent record site, and PolarisDuressEvent pages on it (runbook enforced by "
-               "check_alert_runbooks)")
+               "check_alert_runbooks); the record is written on a non-daemon thread that a worker's "
+               "exit waits for")
 
 
 # ---------------------------------------------------------------------------

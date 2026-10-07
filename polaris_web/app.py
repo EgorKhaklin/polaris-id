@@ -2611,10 +2611,14 @@ def _check_and_record_duress(token_id, context_id, requesting_agency_id, duress_
     if os.environ.get('POLARIS_DURESS_SYNC') == '1':
         _record_duress_async(token_id, context_id, requesting_agency_id)
     else:
+        # Not a daemon (lab record 017, phase 2b): the interpreter abandons a daemon thread at
+        # exit, so a record still being written when a worker stopped (a deploy, a recycle) was
+        # lost. A non-daemon thread is joined at a normal exit, bounded by gunicorn's graceful
+        # timeout; the request still returns after the same thread spawn either way.
         threading.Thread(
             target=_record_duress_async,
             args=(token_id, context_id, requesting_agency_id),
-            daemon=True,
+            daemon=False,
         ).start()
 
 

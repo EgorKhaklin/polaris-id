@@ -4449,7 +4449,10 @@ def test_duress_alertable_check_discriminates(tmp_path):
         "    _METRICS_DURESS.inc()\n"
         "\n\n"
         "def other():\n    pass\n"
+        "    threading.Thread(\n        target=_record_duress_async,\n        args=(t, c, a),\n"
+        "        daemon=False,\n    ).start()\n"
     )
+    (web / "test_app.py").write_text("def test_a_duress_record_survives_a_worker_exit(self):\n    pass\n")
     GOOD_ALERTS = ("- alert: PolarisDuressEvent\n"
                    "  expr: increase(polaris_duress_events_total[5m]) > 0\n")
 
@@ -4476,6 +4479,17 @@ def test_duress_alertable_check_discriminates(tmp_path):
     write(alerts="- alert: PolarisAppDown\n  expr: up == 0\n")
     assert checks.check_duress_alertable(tmp_path)[0].level == "FAIL", \
         "must FAIL when no PolarisDuressEvent alert references the counter"
+
+    # 5. the record is written on a daemon thread, abandoned when the worker exits -> FAIL.
+    write(app=GOOD_APP.replace("daemon=False", "daemon=True"))
+    assert checks.check_duress_alertable(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the duress record is written on a daemon thread"
+
+    # 6. the effect test is gone -> FAIL.
+    write()
+    (web / "test_app.py").write_text("def unrelated():\n    pass\n")
+    assert checks.check_duress_alertable(tmp_path)[0].level == "FAIL", \
+        "must FAIL when nothing proves the record outlives the worker"
 
 
 def test_prod_fail_closed_check_discriminates(tmp_path):
