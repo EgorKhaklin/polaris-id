@@ -112,7 +112,8 @@ A secret is read from its `*_FILE` companion in production. In production a `*_F
 | Setting | Type | Default | Production | Meaning |
 |---|---|---|---|---|
 | `POLARIS_RATE_LIMIT_BACKEND` | enum (auto, redis, memory) | `auto` |  |  |
-| `POLARIS_REDIS_URL` | str |  |  | Shared rate-limit state; needed when more than one process serves. |
+| `POLARIS_REDIS_URL` | str |  |  | Shared rate-limit state; needed when more than one process serves. Names the user (redis://polaris@host:6379/0), never the password. |
+| `POLARIS_REDIS_PASSWORD_FILE` | secret_file |  | readable, non-empty | File holding the Redis user's password; production requires it when POLARIS_REDIS_URL is set. |
 | `POLARIS_RATE_LIMIT_LOGIN_MAX` | int |  |  |  |
 | `POLARIS_RATE_LIMIT_WRITE_MAX` | int |  |  |  |
 | `POLARIS_RATE_LIMIT_WRITE_WINDOW` | int |  |  |  |

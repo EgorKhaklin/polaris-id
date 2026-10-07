@@ -9284,6 +9284,116 @@ class AccessLogAndClockTests(unittest.TestCase):
             self.assertNotEqual(status_routes._health_check_clock()['status'], 'unhealthy')
 
 
+class RedisAuthenticationTests(unittest.TestCase):
+    """Lab record 017, phase 4a: the rate limiter's Redis authenticates as an ACL user whose
+    password comes from a file; production refuses anything less, and a fallback shows."""
+
+    def setUp(self):
+        import config_schema
+        self.cs = config_schema
+        self.tmp = __import__('tempfile').mkdtemp()
+        self.pwfile = os.path.join(self.tmp, 'redis_password')
+        with open(self.pwfile, 'w') as fh:
+            fh.write('a' * 64 + '\n')
+        self.url = 'redis://polaris@redis:6379/0'
+
+    def _redis_problems(self, env):
+        return [p for p in self.cs.problems(env, production=True) if 'REDIS' in p]
+
+    def test_production_requires_the_password_file(self):
+        self.assertEqual(self._redis_problems(
+            {'POLARIS_REDIS_URL': self.url, 'POLARIS_REDIS_PASSWORD_FILE': self.pwfile}), [])
+        found = self._redis_problems({'POLARIS_REDIS_URL': self.url})
+        self.assertTrue(any(p.startswith('POLARIS_REDIS_PASSWORD_FILE:') for p in found), found)
+
+    def test_production_refuses_a_password_in_the_url(self):
+        found = self._redis_problems({'POLARIS_REDIS_URL': 'redis://polaris:s3cret@redis:6379/0',
+                                      'POLARIS_REDIS_PASSWORD_FILE': self.pwfile})
+        self.assertTrue(any(p.startswith('POLARIS_REDIS_URL: carries a password') for p in found),
+                        found)
+
+    def test_the_limiter_authenticates_with_the_file(self):
+        from unittest import mock
+        import redis as redis_py
+        import security
+        seen = {}
+
+        class _Client:
+            def ping(self):
+                return True
+
+            def register_script(self, script):
+                return lambda **kw: 1
+
+        def _from_url(url, **kw):
+            seen.update(url=url, password=kw.get('password'))
+            return _Client()
+
+        env = {'POLARIS_REDIS_URL': self.url, 'POLARIS_REDIS_PASSWORD_FILE': self.pwfile,
+               'POLARIS_RATE_LIMIT_BACKEND': 'auto'}
+        with mock.patch.dict(os.environ, env), mock.patch.object(redis_py, 'from_url', _from_url):
+            limiter = security._make_rate_limiter()
+        self.assertEqual(limiter.name, 'redis')
+        self.assertEqual(seen, {'url': self.url, 'password': 'a' * 64},
+                         "the password must come from the file, stripped, and not from the URL")
+
+    def test_a_worker_that_starts_before_redis_moves_to_it_once_it_answers(self):
+        import security
+
+        class _Redis:
+            name = 'redis'
+            calls = 0
+
+            def allow(self, key, max_events, window_seconds):
+                _Redis.calls += 1
+                return True
+
+            def healthy(self):
+                return True
+
+            def reset(self, key=None):
+                pass
+
+        late = [None, None]  # Redis does not answer the first two asks
+        limiter = security.RedisOnceReachable(lambda: late.pop(0) if late else _Redis())
+        limiter.RETRY_SECONDS = 0.0
+        limiter._next_try = 0.0
+        self.assertEqual(limiter.name, 'memory')
+        limiter.allow('k', 5, 60)
+        limiter.allow('k', 5, 60)
+        self.assertEqual(limiter.name, 'memory', "two asks, two refusals: still counting in memory")
+        limiter.allow('k', 5, 60)
+        self.assertEqual(limiter.name, 'redis', "the third ask found Redis")
+        before = _Redis.calls
+        limiter.allow('k', 5, 60)
+        self.assertEqual(_Redis.calls, before + 1, "once Redis has answered, every call goes to it")
+
+    def test_the_selector_keeps_asking_when_redis_is_late(self):
+        from unittest import mock
+        import security
+        env = {'POLARIS_REDIS_URL': 'redis://polaris@127.0.0.1:1/0',
+               'POLARIS_REDIS_PASSWORD_FILE': self.pwfile, 'POLARIS_RATE_LIMIT_BACKEND': 'auto'}
+        with mock.patch.dict(os.environ, env):
+            limiter = security._make_rate_limiter()
+        self.assertIsInstance(limiter, security.RedisOnceReachable,
+                              "an unreachable Redis at start must not mean memory for good")
+        self.assertEqual(limiter.name, 'memory')
+
+    def test_a_fallback_from_configured_redis_is_degraded(self):
+        from unittest import mock
+        import security
+        import status_routes
+        memory = security.InMemoryRateLimiter()
+        with mock.patch.object(security, 'rate_limiter', memory):
+            with mock.patch.dict(os.environ, {'POLARIS_REDIS_URL': self.url}):
+                configured = status_routes._health_check_redis()
+            with mock.patch.dict(os.environ, {'POLARIS_REDIS_URL': ''}):
+                unconfigured = status_routes._health_check_redis()
+        self.assertEqual(configured['status'], 'degraded',
+                         "Redis configured but unused must not read as healthy")
+        self.assertEqual(unconfigured['status'], 'healthy')
+
+
 class F06_CookieHardeningTests(PolarisTestCase):
     """F-07: Cookie attributes Secure / HttpOnly / SameSite. CWE-614, CWE-1004."""
 

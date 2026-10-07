@@ -13,6 +13,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - ZK proofs are built with Plonky2's zero-knowledge configuration; earlier binaries built sound but non-hiding proofs, which no longer verify.
 - The access log records method, path and protocol, no longer the query string or the referrer (lab record 017).
+- The rate limiter's Redis authenticates: an ACL user per role, the default user off, the password from a file; production refuses Redis without one (lab record 017).
 - Werkzeug 3.1.9 (GHSA-g6x2-hccm-hh4m: safe_join accepted Windows device names; Polaris runs on Linux and calls it only through Flask's static files).
 - A holder key rotation or revocation is refused unless its signer is still the live key under the per-token lock, closing a read-before-lock race a stolen-but-live key could ride.
 - The Atlas answered a refused parameter with the exception's text, which could carry the request back; it states a fixed sentence.
@@ -27,6 +28,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - A duress record still being written when a worker stopped was abandoned with its daemon thread; the worker now waits for it (a killed worker can still lose one in flight). Kubernetes pods pause before draining.
 - OPERATIONS described pgbouncer in transaction mode; it runs in session mode, which keeps each operator's row-level-security scope to its own connection.
+- On Kubernetes, a worker that started before Redis counted rate limits alone for its whole life, reported healthy; it now moves to Redis once Redis answers.
 - deploy/README described a single-PostgreSQL Helm chart and OPERATIONS an unrestricted metrics edge; both now match the code.
 - PQC-POSTURE no longer says Falcon signing time depends on the message: measured natively (record 015, step 4), it does not; the signer stays experimental while FIPS 206 is a draft.
 - A population migration counts a credential as migrated only when its target signature has no deprecation date; one already set to lapse is refused with the re-issue instruction instead of the database's error.

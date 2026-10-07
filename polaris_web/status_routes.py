@@ -149,6 +149,13 @@ def _health_check_redis():
         ok = rl.healthy()
         latency_ms = round((_time.time() - t0) * 1000.0, 1)
         if rl.name == 'memory':
+            if os.environ.get('POLARIS_REDIS_URL', '').strip():
+                # Lab record 017, phase 4a: Redis was configured and the limiter could not use
+                # it at start (unreachable, or it refused the credentials), so every worker
+                # counts alone. Visible here rather than only in the startup log.
+                return {'status': 'degraded', 'backend': 'memory', 'latency_ms': 0.0,
+                        'note': 'POLARIS_REDIS_URL is set but the rate limiter fell back to '
+                                'per-worker memory'}
             # In-memory limiter is always up; report as healthy + 0ms.
             return {'status': 'healthy', 'backend': 'memory', 'latency_ms': 0.0}
         if not ok:

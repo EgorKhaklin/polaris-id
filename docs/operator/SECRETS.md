@@ -31,6 +31,8 @@ mounts each file through `${POLARIS_SECRETS_DIR:-./secrets}/<name>`.
 | `polaris_db_password` | random hex (24 bytes at generation, 32 at rotation) | 0644 | the app and pgbouncer as the `polaris_app` role; `docker-init.sh` syncs the role to it | `polaris-rotate-secret.sh` |
 | `polaris_db_root_password` | random hex | 0600 | the postgres entrypoint as root, before it drops privileges | `polaris-rotate-secret.sh` |
 | `polaris_replicator_password` | random hex | 0644 | `docker-init.sh` as the postgres user; creates the `polaris_replicator` role for a standby ([FAILOVER.md](FAILOVER.md)) | by hand; not covered by the rotation script |
+| `polaris_redis_password` | 32 random bytes as 64 hex chars | 0644 | the app, via `POLARIS_REDIS_PASSWORD_FILE`, as the Redis user `polaris` (production refuses a Redis URL without it, or with a password in the URL) | `polaris-rotate-secret.sh` |
+| `redis_users.acl` | the Redis users: `default` off, `health` limited to PING, `polaris` limited to the rate limiter's commands on its own keys; only the SHA-256 of `polaris_redis_password` | 0644 | Redis, via `--aclfile` | rewritten from the password by the generator and the rotation script |
 | `polaris_signing_key` | ML-DSA-65 keypair JSON | 0644 | the app, via `POLARIS_PQC_SIGNING_KEY_FILE` (the issuer trust anchor) | the key ceremony ([KEY-CEREMONY.md](KEY-CEREMONY.md)) |
 | `postgres_server.crt` / `.key` | self-signed TLS cert, CN=postgres, 825 days | 0644 | the postgres container copies them into its data dir at init | regenerate with `polaris-generate-secrets.sh` after deleting the pair, or supply a CA-issued pair |
 | `pgbouncer_server.crt` / `.key` | self-signed TLS cert, 825 days; the app pins it with `sslmode=verify-ca` | 0644 | pgbouncer and the app | same as the postgres pair |
@@ -120,12 +122,13 @@ there.
 ## 4. Rotation
 
 [`scripts/polaris-rotate-secret.sh`](../../scripts/polaris-rotate-secret.sh)
-rotates one secret at a time and accepts exactly three names:
+rotates one secret at a time and accepts exactly four names:
 
 ```bash
 ./scripts/polaris-rotate-secret.sh polaris_secret_key
 ./scripts/polaris-rotate-secret.sh polaris_db_password
 ./scripts/polaris-rotate-secret.sh polaris_db_root_password
+./scripts/polaris-rotate-secret.sh polaris_redis_password
 ```
 
 Common steps, in order:
@@ -162,6 +165,12 @@ Per-secret step 6:
   pins the order. If you rotate by hand, do the same.
 - `polaris_db_root_password`: (the `ALTER USER postgres` ran at step 3) recreates the
   postgres container.
+- `polaris_redis_password`: before the file is rewritten, `redis_users.acl` is rewritten to
+  accept the old and the new password and Redis is recreated; then the app container(s) move
+  to the new password; then the ACL keeps only the new one and Redis is recreated again. No
+  moment exists in which Redis refuses the password the app holds. Each Redis recreation drops
+  its connections, and a rate-limited request that meets the drop is refused (the limiter
+  fails closed). With the stack stopped, only the new password's ACL is written.
 
 The database role is altered before the file is rewritten. Until 2026-09-23 it was the other
 way round, and a stack the script mistook for stopped (one empty `compose ps`, CI run

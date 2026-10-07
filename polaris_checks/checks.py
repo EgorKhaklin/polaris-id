@@ -6284,6 +6284,91 @@ def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
                "VERIFY-RELEASE.md binds verification to the workflow at the tag")
 
 
+# 2026-10-07 (lab record 017, phase 4a): the rate limiter's Redis authenticates. An attacker on
+# the stack network who could reach Redis could clear the limiter's counters (FLUSHALL) and
+# brute-force the operator logins at full speed. Users come from redis_users.acl: `default` off,
+# so an unauthenticated client can run nothing; `health` may only PING; `polaris`, the app, may
+# run only the limiter's commands on its own keys. The ACL holds only the password's SHA-256, its
+# rules are one string in the generator, the rotation script and the Helm Secret, production
+# refuses a Redis URL without the password file (or with a password in it), rotation never has
+# a moment in which Redis refuses the app's password, and CI asserts the refusals on the live stack.
+_REDIS_ACL_FORBIDDEN = ("+@all", "allcommands", "allkeys", "~*", "+flushall", "+flushdb",
+                        "+config", "+acl", "+keys", "+debug", "+eval ", "+module", "+@dangerous")
+
+
+def check_redis_authenticated(root: pathlib.Path) -> list[Finding]:
+    name = "redis_authenticated"
+    problems = []
+    gen = _read(root, "scripts/polaris-generate-secrets.sh")
+    rot = _read(root, "scripts/polaris-rotate-secret.sh")
+    helm_secret = _read(root, "deploy/helm/polaris/templates/secret.yaml")
+    rules = re.findall(r"REDIS_ACL_POLARIS_RULES='([^']+)'", gen)
+    rules_rot = re.findall(r"REDIS_ACL_POLARIS_RULES='([^']+)'", rot)
+    if not rules:
+        problems.append("polaris-generate-secrets.sh writes no Redis ACL (REDIS_ACL_POLARIS_RULES)")
+    else:
+        r = rules[0] + " "
+        if not r.startswith("~polaris:rl:* ") or "-@all" not in r:
+            problems.append("the polaris Redis user is not confined to ~polaris:rl:* after -@all")
+        bad = [f for f in _REDIS_ACL_FORBIDDEN if f in r]
+        if bad:
+            problems.append(f"the polaris Redis user may run {', '.join(bad)}")
+        if rules_rot != rules:
+            problems.append("polaris-rotate-secret.sh writes different Redis ACL rules from the generator")
+        helm_rules = re.findall(r'user polaris on #%s (.+?)\\n"', helm_secret)
+        if helm_rules != rules:
+            problems.append("the Helm Secret's redis_users.acl has different rules from the generator")
+    for where, text in (("polaris-generate-secrets.sh", gen), ("polaris-rotate-secret.sh", rot),
+                        ("the Helm Secret", helm_secret)):
+        if "user default off" not in text or not re.search(r"user health on nopass[^\n]*-@all \+ping\\n", text):
+            problems.append(f"{where}: `default` must be off and `health` limited to PING")
+    if "write_secret_if_missing polaris_redis_password" not in gen:
+        problems.append("polaris-generate-secrets.sh does not generate polaris_redis_password")
+    if not re.search(r'write_redis_acl "\$\{NEW_HASH\}" "\$\{OLD_HASH\}"[\s\S]*recreate_apps'
+                     r'[\s\S]*write_redis_acl "\$\{NEW_HASH\}"\n', rot):
+        problems.append("polaris-rotate-secret.sh does not accept the old and the new Redis password "
+                        "until the app has moved, so a rotation refuses the app's password")
+    compose = _read(root, "polaris_web/docker-compose.prod.yml")
+    # The section ends at the next service or top-level key; _read leaves a bare `#` where a
+    # comment line was, which is neither.
+    redis_svc = re.search(r"(?ms)^  redis:\n(.*?)(?=^  [^\s#]|^[^\s#])", compose)
+    app_env = compose
+    rs = redis_svc.group(1) if redis_svc else ""
+    if "--aclfile /run/secrets/redis_users_acl" not in rs or "- redis_users_acl" not in rs:
+        problems.append("the compose redis service does not load its users from the redis_users_acl secret")
+    if '"--user", "health"' not in rs:
+        problems.append("the compose redis healthcheck does not use the PING-only health user")
+    if ("POLARIS_REDIS_URL: redis://polaris@" not in app_env
+            or "POLARIS_REDIS_PASSWORD_FILE: /run/secrets/polaris_redis_password" not in app_env
+            or "      - polaris_redis_password\n" not in app_env):
+        problems.append("the compose app does not connect as `polaris` with the mounted password file")
+    helm_redis = _read(root, "deploy/helm/polaris/templates/redis.yaml")
+    helm_app = _read(root, "deploy/helm/polaris/templates/app.yaml")
+    if '"--aclfile"' not in helm_redis or '"--user", "health"' not in helm_redis:
+        problems.append("the Helm redis does not load the ACL or probe as the health user")
+    if "redis://polaris@" not in helm_app or "POLARIS_REDIS_PASSWORD_FILE" not in helm_app:
+        problems.append("the Helm app does not connect as `polaris` with the password file")
+    schema = _read(root, "polaris_web/config_schema.py")
+    if ("POLARIS_REDIS_URL: carries a password" not in schema
+            or "POLARIS_REDIS_URL is set, so production" not in schema):
+        problems.append("config_schema.py does not refuse, in production, a Redis URL without the "
+                        "password file or with a password in it")
+    ci = _read(root, ".github/workflows/ci.yml")
+    if not (re.search(r"redis-cli ping 2>&1[^\n]*\n[^\n]*grep -q NOAUTH", ci)
+            and re.search(r"--user health --pass x flushall[^\n]*\n[^\n]*grep -q NOPERM", ci)):
+        problems.append("CI does not assert, on the live stack, that Redis refuses an unauthenticated "
+                        "client and the health user's FLUSHALL")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else
+                                                       f" (+{len(problems) - 4} more)"))
+    return _ok(name,
+               "Redis loads its users from an ACL holding only the app password's SHA-256: default "
+               "off, health PING-only, polaris confined to the limiter's commands on its own keys, "
+               "one rule string in the generator, rotation and Helm; production refuses an "
+               "unauthenticated URL; rotation accepts both passwords until the app has moved; CI "
+               "asserts the refusals on the live stack")
+
+
 # 2026-09-16 — the npm job STAGES; it must not publish. `npm stage publish` uploads the
 # tarball and stops, and a maintainer with 2FA approves it before anyone can install it, so
 # a workflow that is compromised or merely run by mistake cannot put code in front of an
@@ -25171,6 +25256,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_supply_chain_pins,
     check_release_provenance,
     check_release_images_signed,
+    check_redis_authenticated,
     check_npm_publish_is_staged,
     check_admin_mfa_deadline,
     check_duress_timing_ballast,
