@@ -1047,8 +1047,12 @@ on:
 - `checks.zk_binary.status`: the prover binary present and executable
 - `checks.clock.status`: this instance's clock against the database's (`skew_seconds`); `degraded` beyond 2 s, never `unhealthy`, since a wrong database clock skews every instance at once
 
-`/api/health/live` and `/api/health/ready` are the cheap probes Caddy, Compose
-and Kubernetes use. The contract is enforced by `HealthEndpointTests` in
+`/api/health/live` (is the process alive) is what the container healthcheck and
+the Kubernetes liveness and startup probes use. `/api/health/ready` (can this
+instance serve: custody, the second witness, local disk) is what Caddy and the
+Kubernetes readiness probe route on; it leaves the shared database to
+`/api/health`, so a database failover does not take every instance out of
+rotation. The contract is enforced by `HealthEndpointTests` in
 `polaris_web/test_app.py`.
 
 ### Alerts and thresholds
