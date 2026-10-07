@@ -427,8 +427,10 @@ def security_txt():
     The contact + signature policy is read from environment variables so
     operators do not need to edit code to publish their own contact info.
     """
-    contact = os.environ.get('POLARIS_SECURITY_CONTACT',
-                             'mailto:security@example.invalid')
+    # Unset, the contact is security@ the deployment's domain (config_schema.security_contact),
+    # so a production instance never publishes the placeholder, which its boot refuses.
+    import config_schema
+    contact = config_schema.security_contact()
     # RFC 9116 mandates that expiration_iso be in the future; default to 1 year out.
     from datetime import datetime as _dt, timedelta as _td, timezone as _tz
     expires_default = (_dt.now(_tz.utc) + _td(days=365)).strftime('%Y-%m-%dT%H:%M:%SZ')
