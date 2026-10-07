@@ -22,6 +22,10 @@ images:
 # edge Service's external address before the first start.
 domain: polaris.example.org
 
+# security.txt's Contact. Empty means security@ the domain above (RFC 2142's mailbox for it);
+# the application refuses to start in production with the placeholder.
+securityContact: ""
+
 edge:
   # Who may scrape /metrics and /api/metrics. They carry the duress signal
   # and do not authenticate, so the edge answers 404 to anyone else.
