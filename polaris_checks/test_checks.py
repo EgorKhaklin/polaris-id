@@ -2350,6 +2350,54 @@ def test_zk_hiding_check_discriminates(tmp_path):
     assert checks.check_zk_circuit_is_zero_knowledge(tmp_path)[0].level == "FAIL", \
         "must FAIL when the Rust zero_knowledge test is gone"
 
+
+def test_operability_gate_check_discriminates(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "drill.sh").write_text("#!/bin/sh\n")
+    ready = docs / "PRODUCTION-READINESS.md"
+    rows = ["| OP-%d | Criterion %d | FAIL | not built |" % (i, i) for i in range(1, 9)]
+    rows += ["| OP-9 | A crash costs no request | PASS | `drill:scripts/drill.sh` |",
+             "| OP-10 | Rules in the schema | PASS | `check:aor_append_only_triggers` |",
+             "| OP-11 | Real identity data | FAIL | external review, DPIA, pilot |"]
+
+    def doc(rows, totals="11 criteria: 2 PASS, 0 PARTIAL, 9 FAIL, 0 UNKNOWN."):
+        return ("**Status: not production-ready for real identity data.**\n\n"
+                "## Operability gate\n\nIt is not readiness for real identity data.\n\n"
+                + totals + "\n\n| ID | Criterion | Status | Evidence |\n|---|---|---|---|\n"
+                + "\n".join(rows) + "\n\n## The rule\n")
+
+    ready.write_text(doc(rows))
+    assert checks.check_operability_gate(tmp_path)[0].level == "OK", \
+        "must PASS on a gate whose PASS rows cite resolvable evidence and whose totals match"
+
+    ready.write_text(doc([r.replace("`drill:scripts/drill.sh`", "measured") for r in rows]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a PASS row with no citation"
+
+    ready.write_text(doc([r.replace("scripts/drill.sh", "scripts/gone.sh") for r in rows]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a citation that does not resolve"
+
+    ready.write_text(doc([r.replace("check:aor_append_only_triggers", "check:no_such_check") for r in rows]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a check citation that names no check"
+
+    ready.write_text(doc([r.replace("| OP-1 | Criterion 1 | FAIL |", "| OP-1 | Criterion 1 | DONE |") for r in rows]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a status outside PASS, PARTIAL, FAIL, UNKNOWN, N/A"
+
+    ready.write_text(doc(rows, totals="11 criteria: 3 PASS, 0 PARTIAL, 8 FAIL, 0 UNKNOWN."))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the stated totals disagree with the rows"
+
+    ready.write_text(doc([r.replace("| Real identity data | FAIL | external review, DPIA, pilot |",
+                                    "| Real identity data | PASS | `file:docs/PRODUCTION-READINESS.md` |")
+                          for r in rows], totals="11 criteria: 3 PASS, 0 PARTIAL, 8 FAIL, 0 UNKNOWN."))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL when real identity data is PASS while the status line says it is not"
+
 def test_ci_atlas_e2e_check_discriminates(tmp_path):
     wf = tmp_path / ".github" / "workflows"
     wf.mkdir(parents=True)

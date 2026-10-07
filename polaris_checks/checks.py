@@ -19837,6 +19837,69 @@ def check_accessibility(root: pathlib.Path) -> list[Finding]:
                "covers, and leaves the outward claim unchanged")
 
 
+
+# 2026-10-07 (lab record 017) — the operability gate is a table of claims about deploying and
+# running Polaris. It is executable the way the assurance mapping is: every PASS cites evidence,
+# every citation in any row resolves (a check that exists, a test file and name, a drill or file
+# path), the stated totals are recomputed from the rows, and the last word on real identity data
+# cannot turn PASS while the status line still says otherwise.
+_GATE_STATUSES = ("PASS", "PARTIAL", "FAIL", "UNKNOWN", "N/A")
+
+
+def _gate_citation_resolves(root: pathlib.Path, kind: str, target: str) -> bool:
+    if kind == "check":
+        fn = globals().get(target if target.startswith("check_") else "check_" + target)
+        return callable(fn)
+    if kind == "test":
+        path, _, name = target.partition("::")
+        f = root / path
+        if not f.is_file():
+            return False
+        return not name or re.search(r"(class|def)\s+%s\b" % re.escape(name), f.read_text()) is not None
+    return (root / target).exists()
+
+
+def check_operability_gate(root: pathlib.Path) -> list[Finding]:
+    name = "operability_gate"
+    doc = _read(root, "docs/PRODUCTION-READINESS.md")
+    if "## Operability gate" not in doc:
+        return _fail(name, "docs/PRODUCTION-READINESS.md has no '## Operability gate' section")
+    section = doc.split("## Operability gate", 1)[1].split("\n## ", 1)[0]
+    if "not readiness for real identity data" not in " ".join(section.split()):
+        return _fail(name, "the gate must say it is not readiness for real identity data")
+    rows = []
+    for line in section.splitlines():
+        if line.startswith("| OP-"):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) != 4:
+                return _fail(name, f"gate row is not ID | criterion | status | evidence: {line[:60]}")
+            rows.append(cells)
+    if len(rows) < 10:
+        return _fail(name, f"the gate has {len(rows)} rows; it must actually cover operation")
+    for rid, crit, status, evidence in rows:
+        if status not in _GATE_STATUSES:
+            return _fail(name, f"{rid} has status {status!r}; it must be one of {', '.join(_GATE_STATUSES)}")
+        cites = re.findall(r"`(check|test|drill|file):([^`]+)`", evidence)
+        if status == "PASS" and not cites:
+            return _fail(name, f"{rid} is PASS with no citation; a PASS must cite a check, test, drill or file")
+        for kind, target in cites:
+            if not _gate_citation_resolves(root, kind, target):
+                return _fail(name, f"{rid} cites {kind}:{target}, which does not resolve")
+    real = [r for r in rows if "real identity data" in r[1].lower()]
+    if not real:
+        return _fail(name, "the gate must carry the real-identity-data row")
+    if ("not production-ready for real identity data" in doc
+            and any(r[2] == "PASS" for r in real)):
+        return _fail(name, "the real-identity-data row is PASS while the status line says it is not")
+    m = re.search(r"(\d+) criteria: (\d+) PASS, (\d+) PARTIAL, (\d+) FAIL, (\d+) UNKNOWN", section)
+    if not m:
+        return _fail(name, "the gate must state its totals ('N criteria: a PASS, b PARTIAL, c FAIL, d UNKNOWN')")
+    counted = (len(rows), *(sum(1 for r in rows if r[2] == st) for st in ("PASS", "PARTIAL", "FAIL", "UNKNOWN")))
+    if tuple(int(g) for g in m.groups()) != counted:
+        return _fail(name, f"the stated totals {m.group(0)!r} disagree with the rows {counted}")
+    return _ok(name, f"the operability gate's {len(rows)} rows have known statuses, every PASS cites "
+                     f"evidence, every citation resolves and the totals match the rows")
+
 def check_assurance_mapping(root: pathlib.Path) -> list[Finding]:
     """The 800-63 mapping cites evidence that exists, and does not claim conformance (P6.2).
 
@@ -24702,6 +24765,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_migrate_docker_stdin_safe,
     check_rust_toolchain_pinned,
     check_zk_circuit_is_zero_knowledge,
+    check_operability_gate,
     check_ci_runs_atlas_e2e,
     check_load_gen_single_ledger,
     check_chaos_probe_reaches_wrapper,
