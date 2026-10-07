@@ -2311,6 +2311,49 @@ def test_rust_toolchain_pin_check_discriminates(tmp_path):
 
 
 
+def test_config_schema_coverage_check_discriminates(tmp_path):
+    web = tmp_path / "polaris_web"
+    web.mkdir()
+    schema = web / "config_schema.py"
+    app = web / "app.py"
+    schema.write_text('S = (\n    _s("POLARIS_A"),\n    _s("POLARIS_B_<ROLE>", family=True),\n)\n')
+    app.write_text("import os\nA = os.environ.get('POLARIS_A')\nB = os.environ.get(f'POLARIS_B_{role}')\n")
+    assert checks.check_config_schema_covers_env(tmp_path)[0].level == "OK", \
+        "must PASS when every read setting is declared and every declaration is read"
+
+    app.write_text(app.read_text() + "C = os.environ.get('POLARIS_C')\n")
+    assert checks.check_config_schema_covers_env(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a setting the application reads that the schema does not declare"
+
+    app.write_text("import os\nA = os.environ.get('POLARIS_A')\nB = os.environ.get(f'POLARIS_B_{role}')\n")
+    schema.write_text(schema.read_text().replace('    _s("POLARIS_A"),\n', '    _s("POLARIS_A"),\n    _s("POLARIS_D"),\n'))
+    assert checks.check_config_schema_covers_env(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a declaration nothing reads"
+
+    (web / "test_app.py").write_text("X = 'POLARIS_TEST_ONLY'\n")
+    schema.write_text('S = (\n    _s("POLARIS_A"),\n    _s("POLARIS_B_<ROLE>", family=True),\n)\n')
+    assert checks.check_config_schema_covers_env(tmp_path)[0].level == "OK", \
+        "test files are not the application and do not count"
+
+
+def test_config_doc_check_discriminates(tmp_path):
+    web = tmp_path / "polaris_web"
+    web.mkdir()
+    (web / "config_schema.py").write_text("def render_doc():\n    return '# Configuration reference\\n'\n")
+    ops = tmp_path / "docs" / "operator"
+    ops.mkdir(parents=True)
+    doc = ops / "CONFIG.md"
+    doc.write_text("# Configuration reference\n")
+    assert checks.check_config_doc_current(tmp_path)[0].level == "OK", \
+        "must PASS when the committed reference is the schema's rendering"
+    doc.write_text("# Configuration reference\n| a stale row |\n")
+    assert checks.check_config_doc_current(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the committed reference drifts from the schema"
+    doc.unlink()
+    assert checks.check_config_doc_current(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the reference is missing"
+
+
 def test_operability_gate_check_discriminates(tmp_path):
     docs = tmp_path / "docs"
     docs.mkdir()
