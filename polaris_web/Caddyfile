@@ -49,13 +49,17 @@
     # The two metrics surfaces carry the duress signal, and neither
     # authenticates: whoever can scrape them can observe that, and roughly
     # when, a duress alarm fired. Restrict them here, at the edge, to the
-    # monitoring network. The default allows private ranges only (an
-    # in-network Prometheus scrapes; the public internet gets 404, which
-    # does not even confirm the surface exists). Override with
-    # POLARIS_METRICS_ALLOW, for example "10.20.0.0/16".
+    # monitoring network, which has to be named: POLARIS_METRICS_ALLOW, for
+    # example "10.20.0.0/16". Unset, no client is allowed (0.0.0.0/32 is the
+    # unspecified address, which no peer has). Until lab record 017 the
+    # default was private ranges, and behind an L4 load balancer, Kubernetes'
+    # default externalTrafficPolicy, rootless Docker or Docker's IPv6 userland
+    # proxy every client on the internet reaches the edge from a private
+    # address (scripts/polaris-metrics-edge-drill.sh). An in-network
+    # Prometheus scrapes app:8000 directly and needs no edge route at all.
     @metrics_from_outside {
         path /metrics /api/metrics
-        not remote_ip {$POLARIS_METRICS_ALLOW:private_ranges}
+        not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}
     }
     respond @metrics_from_outside 404
 

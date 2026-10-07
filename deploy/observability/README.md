@@ -75,9 +75,13 @@ suppression of the metric.
 
 **The shipped edges enforce it.** Both the compose `Caddyfile` and the Helm
 chart's Caddy config answer `404` on those two paths to any client outside the
-allowed range, and serve every other route normally. The default range is
-Caddy's `private_ranges`, so an in-network Prometheus scrapes and the public
-internet does not. Narrow it to your monitoring host:
+allowed range, and serve every other route normally. Unset, the range names no
+client: behind an L4 load balancer, Kubernetes' default `externalTrafficPolicy`,
+rootless Docker or Docker's IPv6 userland proxy every internet client reaches the
+edge from a private address, so a private-ranges default would serve them all
+(`scripts/polaris-metrics-edge-drill.sh` asks through such a hop). A Prometheus
+on the stack's network scrapes `app:8000` directly and needs no edge route; one
+elsewhere is named:
 
 ```bash
 POLARIS_METRICS_ALLOW=10.20.0.0/16      # compose

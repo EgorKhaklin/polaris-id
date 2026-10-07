@@ -6922,27 +6922,44 @@ def test_metrics_edge_acl_check_fails_when_an_edge_leaves_metrics_open(tmp_path)
         for rel, body in files.items():
             p = tmp_path / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(body)
     matcher = ("@metrics_from_outside {\n    path /metrics /api/metrics\n"
-               "    not remote_ip {$POLARIS_METRICS_ALLOW:private_ranges}\n}\n"
+               "    not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}\n}\n"
                "respond @metrics_from_outside 404\n")
-    helm = matcher.replace("{$POLARIS_METRICS_ALLOW:private_ranges}", '{{ .Values.edge.metricsAllow }}')
+    helm = matcher.replace("{$POLARIS_METRICS_ALLOW:0.0.0.0/32}",
+                           '{{ .Values.edge.metricsAllow | default "0.0.0.0/32" }}')
+    drill = ('sed -n x "${ROOT}/polaris_web/Caddyfile"\nfor where in "in-network" "via SNAT"; do\n'
+             '    probe 404 "${where}" /metrics\ndone\n')
     good = {
         "polaris_web/Caddyfile": "site {\n" + matcher + "reverse_proxy app:8000\n}\n",
+        "polaris_web/Caddyfile.citest": "localhost:8443 {\n" + matcher + "reverse_proxy app:8000\n}\n",
         "deploy/helm/polaris/templates/configmap-caddy.yaml": "data:\n  Caddyfile: |\n" + helm,
-        ".github/workflows/ci.yml": "jobs:\n  caddy-edge:\n    steps:\n      - name: The metrics surfaces are refused from outside the monitoring network\n",
+        "deploy/helm/polaris/values.yaml": 'edge:\n  metricsAllow: ""\n',
+        "scripts/polaris-metrics-edge-drill.sh": drill,
+        ".github/workflows/ci.yml": ("jobs:\n  caddy-edge:\n    steps:\n"
+                                     "      - name: The metrics surfaces are refused from outside the monitoring network\n"
+                                     "        run: bash scripts/polaris-metrics-edge-drill.sh polaris-caddy:ci\n"),
     }
     write(good)
-    assert checks.check_metrics_edge_acl(tmp_path)[0].level == "OK", "must PASS when both edges refuse and CI proves it"
+    assert checks.check_metrics_edge_acl(tmp_path)[0].level == "OK", "must PASS when every edge refuses and CI proves it"
 
-    write({"polaris_web/Caddyfile": "site {\nreverse_proxy app:8000\n}\n"})
-    assert checks.check_metrics_edge_acl(tmp_path)[0].level == "FAIL", "must FAIL when the compose edge leaves metrics open"
+    def broken(rel, body, why):
+        write({rel: body})
+        assert checks.check_metrics_edge_acl(tmp_path)[0].level == "FAIL", why
+        write({rel: good[rel]})
 
-    write({"polaris_web/Caddyfile": good["polaris_web/Caddyfile"],
-           "deploy/helm/polaris/templates/configmap-caddy.yaml": "data:\n  Caddyfile: |\n    reverse_proxy app:8000\n"})
-    assert checks.check_metrics_edge_acl(tmp_path)[0].level == "FAIL", "must FAIL when the chart leaves metrics open"
-
-    write({"deploy/helm/polaris/templates/configmap-caddy.yaml": good["deploy/helm/polaris/templates/configmap-caddy.yaml"],
-           ".github/workflows/ci.yml": "jobs:\n  caddy-edge:\n    steps: []\n"})
-    assert checks.check_metrics_edge_acl(tmp_path)[0].level == "FAIL", "must FAIL when CI does not exercise the ACL"
+    broken("polaris_web/Caddyfile", "site {\nreverse_proxy app:8000\n}\n",
+           "must FAIL when the compose edge leaves metrics open")
+    broken("deploy/helm/polaris/templates/configmap-caddy.yaml", "data:\n  Caddyfile: |\n    reverse_proxy app:8000\n",
+           "must FAIL when the chart leaves metrics open")
+    broken(".github/workflows/ci.yml", "jobs:\n  caddy-edge:\n    steps: []\n",
+           "must FAIL when CI does not exercise the rule")
+    broken("polaris_web/Caddyfile", good["polaris_web/Caddyfile"].replace("0.0.0.0/32", "private_ranges"),
+           "must FAIL when an unset allow-list lets every private address in, as SNAT makes every client")
+    broken("polaris_web/Caddyfile.citest", "localhost:8443 {\nreverse_proxy app:8000\n}\n",
+           "must FAIL when the CI edge does not carry production's rule")
+    broken("deploy/helm/polaris/values.yaml", 'edge:\n  metricsAllow: "private_ranges"\n',
+           "must FAIL when the chart's default lets private addresses in")
+    broken("scripts/polaris-metrics-edge-drill.sh", drill.replace('"via SNAT"', ""),
+           "must FAIL when the drill no longer asks through an SNAT hop")
 
 
 def test_image_builds_are_retried_check_fails_when_a_build_bypasses_the_helper(tmp_path):

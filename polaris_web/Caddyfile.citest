@@ -2,9 +2,9 @@
 #
 # The production Caddyfile provisions a Let's Encrypt cert for POLARIS_DOMAIN,
 # which cannot run in CI (no public domain / ACME). This mirrors the prod edge's
-# reverse-proxy + the rate_limit plugin directive (so it still exercises the
-# self-built image's plugin), but terminates TLS with Caddy's internal CA so the
-# full prod stack can be booted and proven end-to-end without ACME.
+# metrics rule, reverse-proxy and the rate_limit plugin directive (so it still
+# exercises the self-built image's plugin), but terminates TLS with Caddy's internal
+# CA so the full prod stack can be booted and proven end-to-end without ACME.
 {
     admin unix//config/admin.sock             # live reloads (v9.240), see Caddyfile
     auto_https disable_redirects
@@ -18,6 +18,15 @@
 
 localhost:8443 {
     tls internal
+
+    # Lab record 017: the production edge's metrics rule, line for line (check_metrics_edge_acl
+    # holds the two identical), so the stack CI and try.sh boot refuses the duress-carrying
+    # surfaces the way production does.
+    @metrics_from_outside {
+        path /metrics /api/metrics
+        not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}
+    }
+    respond @metrics_from_outside 404
 
     reverse_proxy {$POLARIS_UPSTREAMS:app:8000} {
         # v9.183 (roadmap P1.4) — the upstream list comes from POLARIS_UPSTREAMS

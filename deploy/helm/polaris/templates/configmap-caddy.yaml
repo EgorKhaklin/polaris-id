@@ -37,12 +37,14 @@ data:
         {{- end }}
 
         # The metrics surfaces carry the duress signal and do not
-        # authenticate: restrict them to the monitoring network at the edge.
-        # The chart's default allows private ranges only; set
-        # edge.metricsAllow to the Prometheus CIDR to narrow it.
+        # authenticate: restrict them to the monitoring network at the edge,
+        # which edge.metricsAllow names. Unset, no client is allowed
+        # (0.0.0.0/32): behind a LoadBalancer Service with the default
+        # externalTrafficPolicy every client arrives from a node's private
+        # address. An in-cluster Prometheus scrapes the app Service directly.
         @metrics_from_outside {
             path /metrics /api/metrics
-            not remote_ip {{ .Values.edge.metricsAllow | default "private_ranges" }}
+            not remote_ip {{ .Values.edge.metricsAllow | default "0.0.0.0/32" }}
         }
         respond @metrics_from_outside 404
 

@@ -144,7 +144,7 @@ Whether an operator who is not the author can install, run, upgrade and recover 
 | OP-23 | A same-algorithm signing-key rotation is drilled end to end | UNKNOWN | Documented as a ceremony; no drill found. |
 | OP-24 | Throughput is measured and a sizing guide is published | PARTIAL | `file:docs/reference/BENCHMARK.md` measures one host; host sizing is unmeasured. |
 | OP-25 | Horizontal scaling is measured | UNKNOWN | No multi-replica throughput figures. |
-| OP-26 | The client address is correct behind load balancers and NAT | UNKNOWN | Not tested on such a topology. |
+| OP-26 | The client address is correct behind load balancers and NAT | UNKNOWN | Through an SNAT hop the metrics surfaces are refused (`drill:scripts/polaris-metrics-edge-drill.sh`); per-client rate limits behind a load balancer are not established. |
 | OP-27 | Contributors need no Kubernetes | PASS | `file:Polaris.command` |
 | OP-28 | Real identity data | FAIL | Needs an external security review, the operator's DPIA and a pilot (above). |
 
