@@ -27,12 +27,12 @@ python3 scripts/polaris-dyno.py --json          # machine-readable
 | ML-DSA-65 sign | ~2,080 /s | the signing cost of issuance (persistent key; keygen is once, not per-sign) |
 | ML-DSA-65 verify, single-witness | ~7,950 /s | the verify-at-use path (liboqs alone) |
 | ML-DSA-65 verify, two-witness | ~740 /s | the issuance-grade check (liboqs **and** OpenSSL must agree) |
-| ZK membership **prove**, depth 14 | ~25 ms/proof (~40 /s) | one Plonky2 membership proof over a 16,384-leaf anonymity set, median of 7 |
-| ZK membership **verify**, depth 14 | ~12 ms/proof | verifying that proof, median of 7 |
+| ZK membership **prove**, depth 14 | ~1,990 ms/proof (~0.5 /s) | one Plonky2 membership proof over a 16,384-leaf anonymity set, zero-knowledge configuration, median of 7 (2026-10-07) |
+| ZK membership **verify**, depth 14 | ~570 ms/proof | verifying that proof, median of 7; about 0.5 s of it is rebuilding the circuit per call |
 
 Every sampled ML-DSA signature verified (2,000/2,000). Two further runs the same hour
 gave sign 2,112 to 2,157 /s, single verify 7,936 to 7,942 /s, two-witness 723 to 742 /s,
-prove 24.8 to 27.4 ms and verify 12.2 to 14.0 ms. The single- and two-witness figures
+prove 24.8 to 27.4 ms and verify 12.2 to 14.0 ms (those two before 2026-10-07, when proofs were built without zero-knowledge; see [zk-soundness.md](../design/zk-soundness.md)). The single- and two-witness figures
 line up with the national-simulation run in [BENCHMARK.md](BENCHMARK.md) (~7,848 and
 ~745 /s per core), measured by a different harness.
 

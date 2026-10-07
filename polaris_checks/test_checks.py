@@ -2304,6 +2304,52 @@ def test_rust_toolchain_pin_check_discriminates(tmp_path):
         "must PASS on a dated pin that CI derives from the file"
 
 
+
+def test_zk_hiding_check_discriminates(tmp_path):
+    zk = tmp_path / "polaris_zk" / "src"
+    zk.mkdir(parents=True)
+    lib = zk / "lib.rs"
+    rust_test = ("#[cfg(test)]\nmod tests {\n    use super::*;\n"
+                 "    #[test]\n    fn the_circuit_is_built_zero_knowledge() {\n"
+                 "        let (builder, _) = build_circuit();\n"
+                 "        let circuit = builder.build::<C>();\n"
+                 "        assert!(circuit.common.config.zero_knowledge);\n    }\n}\n")
+    good = ("pub fn build_circuit() -> (CircuitBuilder<F, D>, CircuitTargets) {\n"
+            "    // standard_recursion_config() is without zero-knowledge.\n"
+            "    let config = CircuitConfig::standard_recursion_zk_config();\n"
+            "    let mut builder = CircuitBuilder::<F, D>::new(config);\n"
+            "}\n")
+    lib.write_text(good + rust_test)
+    assert checks.check_zk_circuit_is_zero_knowledge(tmp_path)[0].level == "OK", \
+        "must PASS on the zero-knowledge configuration with its Rust test"
+
+    # The defect: a sound but non-hiding configuration.
+    lib.write_text(good.replace("standard_recursion_zk_config", "standard_recursion_config")
+                   + rust_test)
+    assert checks.check_zk_circuit_is_zero_knowledge(tmp_path)[0].level == "FAIL", \
+        "must FAIL on standard_recursion_config()"
+
+    # The flag switched off explicitly, even with the zk constructor named.
+    lib.write_text(good.replace(
+        "CircuitConfig::standard_recursion_zk_config();",
+        "CircuitConfig { zero_knowledge: false, ..CircuitConfig::standard_recursion_zk_config() };")
+        + rust_test)
+    assert checks.check_zk_circuit_is_zero_knowledge(tmp_path)[0].level == "FAIL", \
+        "must FAIL on zero_knowledge: false"
+
+    # A comment cannot satisfy it.
+    lib.write_text(good.replace("standard_recursion_zk_config", "standard_recursion_config")
+                   .replace("// standard_recursion_config() is without zero-knowledge.",
+                            "// zero_knowledge: true")
+                   + rust_test)
+    assert checks.check_zk_circuit_is_zero_knowledge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when only a comment mentions zero_knowledge: true"
+
+    # The Rust test that asserts the flag on the built circuit is removed.
+    lib.write_text(good)
+    assert checks.check_zk_circuit_is_zero_knowledge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the Rust zero_knowledge test is gone"
+
 def test_ci_atlas_e2e_check_discriminates(tmp_path):
     wf = tmp_path / ".github" / "workflows"
     wf.mkdir(parents=True)
@@ -11596,7 +11642,7 @@ def test_plonky3_evaluation_check_discriminates(tmp_path):
     # nobody sourced.
     DOC = ("# Plonky2 to Plonky3\n"
            "**Decision: KEEP Plonky2.**\n"
-           "Proof size 77,840 bytes, measured at depth 24. Pinned at 1.1.0.\n"
+           "Proof size 148,900 bytes, measured at depth 24. Pinned at 1.1.0.\n"
            "## What was NOT verified\nPlonky3's current version and audit status.\n"
            "The two-witness model would largely survive.\n"
            "## What would change the decision\nA stable Plonky3 release.\n")
@@ -11643,9 +11689,16 @@ def test_plonky3_evaluation_check_discriminates(tmp_path):
 
     # A measured number becomes an adjective, which nobody can re-run.
     write({'docs/design/plonky2-to-plonky3.md': DOC.replace(
-        "Proof size 77,840 bytes, measured at depth 24.", "Proof size is small.")})
+        "Proof size 148,900 bytes, measured at depth 24.", "Proof size is small.")})
     assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
         "must FAIL when the proof size is described rather than measured"
+
+    # The stale measurement: only the non-hiding configuration's size, which no longer ships.
+    write({'docs/design/plonky2-to-plonky3.md': DOC.replace(
+        "Proof size 148,900 bytes, measured at depth 24.",
+        "Proof size 77,840 bytes, measured at depth 24.")})
+    assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the record carries only the non-hiding configuration's proof size"
 
     # THE DRIFT CASE: the lockfile moves and the record still evaluates the old version, so
     # the decision was made about code that is no longer what ships.

@@ -441,7 +441,11 @@ pub struct CircuitTargets {
 /// proves something and one that proves nothing: an opaque leaf lets a prover
 /// pair any leaf with any nullifier.
 pub fn build_circuit() -> (CircuitBuilder<F, D>, CircuitTargets) {
-    let config = CircuitConfig::standard_recursion_config();
+    // The zero-knowledge configuration. standard_recursion_config() is, in the crate's own
+    // words, "without zero-knowledge"; this statement's secret, siblings and index are
+    // private inputs, so the proof must hide them, not only be sound.
+    // check_zk_circuit_is_zero_knowledge pins this line.
+    let config = CircuitConfig::standard_recursion_zk_config();
     let mut builder = CircuitBuilder::<F, D>::new(config);
 
     // Private: the holder's secret.
@@ -669,6 +673,15 @@ pub fn verify(bundle: &ProofBundle) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The circuit hides its private inputs: built with zero_knowledge set, the property
+    /// the ZK disclosure mode relies on. A sound but non-hiding proof would still verify.
+    #[test]
+    fn the_circuit_is_built_zero_knowledge() {
+        let (builder, _) = build_circuit();
+        let circuit = builder.build::<C>();
+        assert!(circuit.common.config.zero_knowledge, "the ZK circuit must be built with zero_knowledge");
+    }
 
     /// The context every test epoch is built for. A leaf commits to it, so a
     /// witness and a `prove` call must agree on it or the leaf will not open.

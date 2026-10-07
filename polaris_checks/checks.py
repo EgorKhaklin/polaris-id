@@ -5516,6 +5516,39 @@ def check_rust_toolchain_pinned(root: pathlib.Path) -> list[Finding]:
                f"the ZK toolchain is pinned to {chan} and CI derives it from the file")
 
 
+
+# 2026-10-07 — the ZK disclosure mode promises a proof that hides its private inputs (the
+# holder's secret, the Merkle siblings, the leaf index), not only one that is sound. Plonky2's
+# standard_recursion_config() is, in the crate's own words, "without zero-knowledge". The
+# circuit must be built with the zero-knowledge configuration, and the Rust test that asserts
+# it on the built circuit must stay.
+def check_zk_circuit_is_zero_knowledge(root: pathlib.Path) -> list[Finding]:
+    src = _read(root, "polaris_zk/src/lib.rs")
+    if not src:
+        return _fail("zk_hiding", "polaris_zk/src/lib.rs is missing")
+    m = re.search(r"pub fn build_circuit\(\)[^\n]*\n(.*?)\n\}\n", src, re.S)
+    if not m:
+        return _fail("zk_hiding", "polaris_zk/src/lib.rs defines no build_circuit()")
+    body = "\n".join(line for line in m.group(1).splitlines()
+                     if not line.strip().startswith("//"))
+    if re.search(r"zero_knowledge\s*:\s*false", body):
+        return _fail("zk_hiding", "build_circuit() sets zero_knowledge: false; the proof would "
+                                  "be sound but would not hide its private inputs")
+    hiding = ("CircuitConfig::standard_recursion_zk_config()" in body
+              or re.search(r"zero_knowledge\s*:\s*true", body))
+    if not hiding:
+        named = re.findall(r"CircuitConfig::(\w+)\(", body)
+        return _fail("zk_hiding",
+                     f"build_circuit() builds with {', '.join(named) or 'no named'} config, "
+                     f"not a zero-knowledge one (standard_recursion_zk_config or "
+                     f"zero_knowledge: true)")
+    if not re.search(r"fn the_circuit_is_built_zero_knowledge\(\)[\s\S]*?"
+                     r"common\.config\.zero_knowledge", src):
+        return _fail("zk_hiding", "the Rust test asserting the built circuit's zero_knowledge "
+                                  "flag (the_circuit_is_built_zero_knowledge) is missing")
+    return _ok("zk_hiding", "the ZK circuit is built with the zero-knowledge configuration, "
+                            "and a Rust test asserts it on the built circuit")
+
 # P0.2 — the Atlas e2e suite must RUN in CI with the skip escape hatch closed.
 # From v9.33 the suite existed but was wired to no job; it skipped everywhere,
 # read as green, and rotted (the v9.146 MapLibre rewrite renamed every element
@@ -16347,10 +16380,13 @@ def check_plonky3_evaluation(root: pathlib.Path) -> list[Finding]:
         if needed not in doc:
             return _fail(name, f"the record must cover {why} ({needed!r})")
     # The measured half must be real numbers from this tree, not adjectives.
-    if not re.search(r"\b77,?840\b", doc):
+    # 148,900 bytes since 2026-10-07: the zero-knowledge configuration. The earlier 77,840
+    # was the non-hiding configuration's size and is history, not the current measurement.
+    if not re.search(r"\b148,?900\b", doc):
         return _fail(name,
-                     "the record must carry the MEASURED proof size; 'small' is not a comparison "
-                     "anyone can check or re-run")
+                     "the record must carry the MEASURED proof size of the shipped (zero-knowledge) "
+                     "configuration, 148,900 bytes; 'small', or the non-hiding 77,840, is not the "
+                     "comparison the next decision needs")
     if "1.1.0" not in doc:
         return _fail(name, "the record must name the pinned Plonky2 version it evaluated")
     lock = _read(root, "polaris_zk/Cargo.lock")
@@ -24665,6 +24701,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_ci_ssl_probe_aggregated,
     check_migrate_docker_stdin_safe,
     check_rust_toolchain_pinned,
+    check_zk_circuit_is_zero_knowledge,
     check_ci_runs_atlas_e2e,
     check_load_gen_single_ledger,
     check_chaos_probe_reaches_wrapper,

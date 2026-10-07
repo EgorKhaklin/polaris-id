@@ -11,7 +11,8 @@ The short version, up front:
 
 > **The ZK layer is a Merkle-inclusion SNARK built on the audited
 > `plonky2` 1.x crate (Merkle roots were verified bit-identical across the
-> major-version bump). The membership statement and its verdict are
+> major-version bump), with the crate's zero-knowledge configuration. The crate
+> is deprecated upstream and receives no further updates. The membership statement and its verdict are
 > two-witnessed by an independent implementation. The tree depth is
 > runtime-parameterized (`POLARIS_ZK_TREE_DEPTH`, default 14 = 16,384 leaves),
 > which covers the schema's 10,000-leaf epoch cap, so the default anonymity set
@@ -70,42 +71,37 @@ it. The honest caveats:
 | **Statement** | "I know a leaf `L` and a path `P` such that `L` hashes up to the public root `R`, bound to `(epoch_id, context_id, nonce)`." Correct and now two-witnessed. | The binding fields are registered as public inputs but not otherwise constrained (see the public-input registration in `lib.rs`); they prevent proof *substitution* by commitment, not by an in-circuit predicate, and do not by themselves prevent bundle replay (the single-use nonce store is deferred, threat-model T-T2). |
 | **Tree size** | Depth is runtime-parameterized (P0.7): `POLARIS_ZK_TREE_DEPTH`, default 14 (16,384 leaves), settable 4..=32. | The default covers the schema's 10,000-leaf epoch cap, so the anonymity set is a full epoch, not a 16-leaf demo. Plonky2 is transparent, so a depth change is a config change, not a ceremony. Larger anonymity sets are viable for verify/size but bounded by prover cost (see benchmarks). |
 | **Hash** | Poseidon over Goldilocks, Plonky2-native, vector-matched. | Standard primitive, but the in-circuit security margin is Plonky2's default config, not a parameter set audited for this deployment. |
-| **FRI parameters** | `CircuitConfig::standard_recursion_config()` defaults. | The concrete bit-security of the shipped config is **still not independently derived here** (it depends on the FRI rate + query count, which this ledger does not re-derive); treat any specific bit number as aspirational. What IS now measured is the *performance* profile below. |
+| **Hiding (zero-knowledge)** | Since 2026-10-07 the circuit is built with `CircuitConfig::standard_recursion_zk_config()` (`zero_knowledge: true`), so the proof is meant to hide its private inputs (the secret, the siblings, the leaf index), not only to be sound. `check_zk_circuit_is_zero_knowledge` and a Rust test on the built circuit pin it. | Before that date the circuit used `standard_recursion_config()`, which the crate documents as without zero-knowledge: sound, but not hiding. Plonky2's zero-knowledge mode has not been independently analysed for this circuit. |
+| **Upstream status** | `plonky2` 1.1.0, pinned by the lockfile. | The crate's README deprecates it: no further updates or support. Moving to a maintained backend needs the replacement shown hiding for this statement first. |
+| **FRI parameters** | `CircuitConfig::standard_recursion_zk_config()`: the standard recursion parameters with zero-knowledge on. | The concrete bit-security of the shipped config is **still not independently derived here** (it depends on the FRI rate + query count, which this ledger does not re-derive); treat any specific bit number as aspirational. What IS now measured is the *performance* profile below. |
 | **Token-signing PQC** | Real ML-DSA-65 through liboqs (`pqc_signing.py`, `POLARIS_USE_REAL_PQC`), two-witnessed on the verify path, and set by both shipped production paths. | The code default is off, so a development run signs a labelled deterministic placeholder and property tests stay reproducible. This is a separate primitive from the Merkle SNARK above; the two are often conflated and should not be. |
 
-### Measured performance (P0.7, v9.169)
+### Measured performance (2026-10-07, zero-knowledge configuration)
 
-Benchmarked on the reference dev machine (Apple Silicon, `--release`), 64 real
-leaves, averaged over repeated runs; each timing includes process start and a
-full circuit rebuild, so it is an upper bound on the compute.
+Apple M3, `--release`, 64 real leaves, median of three runs. Each timing includes process
+start and a full circuit rebuild (about 0.5 s of every call, measured separately), so it is an
+upper bound on the compute.
 
 | depth | max leaves | prove | verify | proof size |
 |------:|-----------:|------:|-------:|-----------:|
-| 10 (demo) | 1,024 | ~24 ms | ~9 ms | 72 KB |
-| **14 (default)** | **16,384** | **~36 ms** | **~10 ms** | **76 KB** |
-| 20 | 1,048,576 | ~580 ms | ~10 ms | 76 KB |
-| 24 (national) | 16,777,216 | ~11 s | ~11 ms | 76 KB |
+| 10 | 1,024 | 2.00 s | 0.58 s | 148,900 B |
+| **14 (default)** | **16,384** | **1.99 s** | **0.58 s** | **148,900 B** |
+| 20 | 1,048,576 | 2.00 s | 0.58 s | 148,900 B |
+| 24 | 16,777,216 | 2.08 s | 0.59 s | 148,900 B |
 
-Two facts fall straight out of the numbers, and they set the production profile:
+- **Hiding has a fixed price.** Plonky2 adds a random element for each value a proof opens
+  (at the out-of-domain point and at every FRI query), and those blinding gates set the circuit
+  size: 2^14 rows with zero-knowledge against 2^5 without, at every depth measured. Prove,
+  verify and size are therefore flat across depth.
+- **Most of a verification is the circuit build.** A verifier that builds the circuit once and
+  keeps it would pay the 0.5 s once instead of per call. That is the named next step.
+- **Before 2026-10-07** the same machine and build gave 15 ms, 8 ms and 77,840 B at depth 14
+  (P0.7, v9.169, recorded 36 ms, 10 ms and 76 KB). Those proofs were sound but not hiding (the
+  hiding row above), so the cheaper figures are not a configuration to return to.
 
-- **Verify and proof size are effectively constant** across depth (~10 ms,
-  ~76 KB). That is the FRI succinctness property doing exactly what it should: a
-  verifier's cost does not grow with the anonymity set. Verification is
-  production-viable at any depth.
-- **Prove cost grows superlinearly** and is dominated NOT by the SNARK (which is
-  `O(depth)` hashes in-circuit) but by `pad_leaves_to_full_depth` +
-  `build_merkle_tree` reconstructing and hashing the entire `2^depth`-leaf tree
-  on every proof. `lib.rs` already flags this as a v1 shortcut ("in a production
-  deployment only the leaf's siblings would be needed"). So depth 14 is
-  comfortably production-ready (36 ms), and larger anonymity sets are gated on a
-  sibling-path-only witness, not on the proof system.
-
-**Production profile:** depth 14 is the shipped default and is production-ready
-for the per-epoch anonymity model the schema already enforces (10k-leaf epoch
-cap). Depths up to ~20 are usable today at a sub-second prove cost. A
-national-scale single-tree anonymity set (depth 24+) is verify- and
-size-viable but needs the sibling-path witness optimization before its prover
-cost is practical; that optimization is the named next step for this layer.
+**Profile:** the anonymity set no longer bounds the cost; the blinding does. At about 2 s per
+proof and 0.6 s per verification with a per-call build, the ZK path suits low-volume
+presentations, and higher volume needs the build amortized first.
 
 ---
 
