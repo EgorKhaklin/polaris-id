@@ -36,8 +36,15 @@ edge:
   # internal: Caddy's internal CA (evaluation, kind, private networks).
   tls: internal
   replicas: 1
+  # The load balancer in front of the edge, if any, by address range ("10.0.0.0/8"); its
+  # X-Forwarded-For then carries the client address. Empty: no proxy is trusted.
+  trustedProxies: ""
   service:
     type: ClusterIP        # LoadBalancer on a real cluster
+    # With a LoadBalancer or NodePort Service, Local keeps the client's own source address
+    # (Cluster, Kubernetes' default, rewrites it to a node's, merging every client's
+    # rate-limit bucket); Local sends traffic only to nodes running an edge pod.
+    externalTrafficPolicy: Local
     httpPort: 80
     httpsPort: 443
   # Requests per minute per client IP at the edge (the prod Caddyfile's value).

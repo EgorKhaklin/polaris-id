@@ -1424,6 +1424,13 @@ jobs:
           docker network rm aclnet >/dev/null 2>&1 || true
           echo "the metrics ACL is enforced at the edge, and normal routes are unaffected"
 
+      # Lab record 017 (gate row OP-26): behind an L7 load balancer named in
+      # POLARIS_TRUSTED_PROXIES, the app is told the client's own address; unnamed, the
+      # balancer's; and a forged X-Forwarded-For, through the balancer or straight to the
+      # edge, is never believed. Pinned by check_client_ip_behind_proxies.
+      - name: The client address behind a load balancer (scripts/polaris-client-ip-drill.sh)
+        run: bash scripts/polaris-client-ip-drill.sh polaris-caddy:ci
+
       - name: Prove the edge negotiates X25519MLKEM768 (post-quantum hybrid KEX)
         run: |
           set -e

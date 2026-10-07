@@ -14,12 +14,24 @@
     # host 8443 onto 8443.
     http_port 8080
     https_port 8443
+    # Production's client-address rule, line for line (check_client_ip_behind_proxies).
+    servers {
+        # Lab record 017 (OP-26): the load balancer in front of this edge, if any, named by
+        # address range in POLARIS_TRUSTED_PROXIES. Behind it {client_ip} is read from
+        # X-Forwarded-For right to left, past the named hops only (strict), so a client
+        # cannot name its own address. Unset, no proxy is trusted (0.0.0.0/32) and
+        # {client_ip} is the TCP peer.
+        trusted_proxies static {$POLARIS_TRUSTED_PROXIES:0.0.0.0/32}
+        trusted_proxies_strict
+    }
 }
 
 localhost:8443 {
     tls internal
 
     reverse_proxy {$POLARIS_UPSTREAMS:app:8000} {
+        header_up X-Real-IP {client_ip}
+        header_up X-Forwarded-For {client_ip}
         # v9.183 (roadmap P1.4) — the upstream list comes from POLARIS_UPSTREAMS
         # (one app by default; "app:8000 app-green:8000" under the blue-green
         # overlay). A request that hits an upstream being recreated is retried

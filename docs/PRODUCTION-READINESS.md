@@ -115,7 +115,7 @@ This ledger covers one authority on one host or one cluster. [ROADMAP.md](../ROA
 
 Whether an operator who is not the author can install, run, upgrade and recover Polaris, one criterion per row ([lab record 017](../lab/strategy/017-production-operability.md)). A PASS row cites evidence that `check_operability_gate` resolves: a check, a test, a drill or a file. This gate is about operating the software; it is not readiness for real identity data, which the status line above and the last row keep separate.
 
-28 criteria: 8 PASS, 8 PARTIAL, 9 FAIL, 3 UNKNOWN.
+28 criteria: 8 PASS, 9 PARTIAL, 9 FAIL, 2 UNKNOWN.
 
 | ID | Criterion | Status | Evidence |
 |---|---|---|---|
@@ -144,7 +144,7 @@ Whether an operator who is not the author can install, run, upgrade and recover 
 | OP-23 | A same-algorithm signing-key rotation is drilled end to end | UNKNOWN | Documented as a ceremony; no drill found. |
 | OP-24 | Throughput is measured and a sizing guide is published | PARTIAL | `file:docs/reference/BENCHMARK.md` measures one host; host sizing is unmeasured. |
 | OP-25 | Horizontal scaling is measured | UNKNOWN | No multi-replica throughput figures. |
-| OP-26 | The client address is correct behind load balancers and NAT | UNKNOWN | Not tested on such a topology. |
+| OP-26 | The client address is correct behind load balancers and NAT | PARTIAL | `drill:scripts/polaris-client-ip-drill.sh`, `check:client_ip_behind_proxies`: correct behind an L7 balancer the operator names, forgeries refused; behind an L4 balancer that rewrites source addresses it is lost unless the balancer keeps it (the edge does not speak PROXY protocol). |
 | OP-27 | Contributors need no Kubernetes | PASS | `file:Polaris.command` |
 | OP-28 | Real identity data | FAIL | Needs an external security review, the operator's DPIA and a pilot (above). |
 
