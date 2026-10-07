@@ -13604,13 +13604,28 @@ class RealPqcDefaultBootTests(unittest.TestCase):
             env.pop(k, None)
         env["POLARIS_SECRET_KEY"] = "x" * 64
         env["POLARIS_DB_SSLMODE"] = "require"  # pass the production SSL guard to reach the PQC guard
+        # Lab record 017: a production boot first meets the configuration contract. A real
+        # database password and a domain (the security contact derives from it) let execution
+        # past it, so each test reaches the guard it is about.
+        env["POLARIS_DB_PASSWORD"] = "a-real-password"
+        env.pop("POLARIS_DB_PASSWORD_FILE", None)
+        env["POLARIS_DOMAIN"] = "polaris.example.org"
         env.update(extra_env)
         cwd = _os.path.dirname(_os.path.abspath(flask_app.__file__))
         return _sp.run([_sys.executable, "-c", (preamble or "") + "import app"], cwd=cwd,
                        capture_output=True, text=True, env=env)
 
     def test_production_refuses_boot_without_real_pqc(self):
+        """Real signing not requested: the configuration contract refuses and names it."""
         r = self._boot({"POLARIS_ENV": "production"})
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("- POLARIS_USE_REAL_PQC:", r.stderr)
+
+    def test_production_refuses_boot_when_real_pqc_is_requested_but_unavailable(self):
+        """Real signing requested but liboqs not usable: the boot guard refuses."""
+        r = self._boot({"POLARIS_ENV": "production", "POLARIS_USE_REAL_PQC": "1"}, preamble=(
+            "import pqc_signing;"
+            "pqc_signing.is_enabled=lambda: False;"))
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("real ML-DSA-65 signing is not available", r.stderr)
 
@@ -13627,7 +13642,7 @@ class RealPqcDefaultBootTests(unittest.TestCase):
         Driven by forcing pqc_signing to report a real primary and no second witness, so
         reaching the branch does not need a broken OpenSSL.
         """
-        r = self._boot({"POLARIS_ENV": "production"}, preamble=(
+        r = self._boot({"POLARIS_ENV": "production", "POLARIS_USE_REAL_PQC": "1"}, preamble=(
             "import pqc_signing;"
             "pqc_signing.is_enabled=lambda: True;"
             "pqc_signing.second_witness_available=lambda: False;"))
@@ -13636,12 +13651,13 @@ class RealPqcDefaultBootTests(unittest.TestCase):
 
     def test_production_boots_when_both_witnesses_are_present(self):
         """The positive control: the new guard must not refuse a correct deployment."""
-        r = self._boot({"POLARIS_ENV": "production"}, preamble=(
+        r = self._boot({"POLARIS_ENV": "production", "POLARIS_USE_REAL_PQC": "1"}, preamble=(
             "import pqc_signing;"
             "pqc_signing.is_enabled=lambda: True;"
             "pqc_signing.second_witness_available=lambda: True;"))
         self.assertNotIn("SECOND WITNESS", r.stderr)
         self.assertNotIn("real ML-DSA-65 signing is not available", r.stderr)
+        self.assertNotIn("setting(s) are wrong", r.stderr)
 
     def test_unnamed_placeholder_warns(self):
         # Non-production, placeholder in use, dev profile not named: boot, but loudly.
