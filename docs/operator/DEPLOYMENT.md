@@ -69,8 +69,9 @@ plus whatever overlays `POLARIS_COMPOSE_EXTRA` names. In order:
    `awskms` the sealed store is unsealed into `POLARIS_SECRETS_DIR` first.
 2. `git pull --ff-only` (skipped with `--no-pull` or outside a git checkout).
 3. The running app image id is recorded for rollback.
-4. `docker compose pull` for postgres, redis, and caddy; `docker compose build
-   app` (multi-stage `Dockerfile.prod`).
+4. `docker compose pull` for the upstream images, then every Polaris image
+   (app, edge, pooler, database, etcd) built by
+   [`scripts/polaris-image-build.sh`](../../scripts/polaris-image-build.sh) `--stack prod`.
 5. Infrastructure up (`postgres`, `pgbouncer`, `redis`, `caddy`) without
    touching the app containers, so the running app keeps serving.
 6. Migrations applied and database objects synced against the running server

@@ -1625,9 +1625,13 @@ The Plonky2 prover is CPU-bound. To improve:
 ./scripts/polaris-deploy.sh prod
 ```
 
-This pulls the latest commit, rebuilds the app image, applies schema
-migrations idempotently, and recreates the app container(s) with the new
-code. The DB volume is preserved. With the
+This pulls the latest commit, rebuilds every Polaris image (the app, the
+edge, the pooler and the database), applies schema migrations idempotently,
+recreates the infrastructure containers whose image changed, and then the app
+container(s). The DB volume is preserved.
+[`scripts/polaris-upgrade-drill.sh`](../../scripts/polaris-upgrade-drill.sh)
+runs this path from the previous release's own stack: nothing pending, every
+image rebuilt, and a credential issued before the upgrade still verifies. With the
 [blue-green profile](DEPLOYMENT.md#zero-downtime-deploys-blue-green-profile)
 (`polaris_web/docker-compose.bluegreen.yml`, proven by
 `scripts/polaris-rolling-drill.sh`) the roll is measured at zero dropped

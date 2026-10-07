@@ -16,7 +16,7 @@
 # standard xcaddy pattern), exactly like the self-built pgbouncer (v9.110): no
 # third-party prebuilt image, and every directive the Caddyfile uses is backed.
 # The plugin is pinned to its release (v0.1.0, which the unversioned --with
-# resolved to; lab record 017, G15), so a new upstream tag changes nothing here
+# resolved to; lab record 017), so a new upstream tag changes nothing here
 # until it is taken on purpose; Go's checksum database verifies the module.
 #
 # Both stages are digest-pinned (v9.114 discipline); Dependabot's docker

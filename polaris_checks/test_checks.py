@@ -3008,6 +3008,41 @@ def test_doctor_names_failures_check_discriminates(tmp_path):
            "must FAIL when the runbook does not start an operator at the doctor")
 
 
+def test_upgrade_drilled_check_discriminates(tmp_path):
+    files = ("scripts/polaris-deploy.sh", "scripts/polaris-upgrade-drill.sh", ".github/workflows/upgrade.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "OK", \
+        "must PASS on the real deploy script, the drill and its workflow"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    broken("scripts/polaris-deploy.sh", 'bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod', "compose build app",
+           "must FAIL when the deploy script rebuilds the app's image alone")
+    drill = "scripts/polaris-upgrade-drill.sh"
+    broken(drill, "describe --tags --abbrev=0", "rev-parse", "must FAIL when the drill does not start from a release")
+    broken(drill, "checkout --detach", "status", "must FAIL when the drill never moves to this commit")
+    broken(drill, 'scripts/polaris-deploy.sh" prod', 'scripts/polaris-other.sh" prod',
+           "must FAIL when the drill does not upgrade with the deploy script")
+    broken(drill, '"no pending migrations"', '"migrations"', "must FAIL when pending migrations pass")
+    broken(drill, "{{json .RootFS.Layers}}{{json .Config}}", "{{.Id}}",
+           "must FAIL when the running images are not compared by content with this commit's build")
+    broken(drill, "/api/tokens/${A}/verify", "/api/health", "must FAIL when the old credential is not asked about")
+    broken(drill, "--pack pack-A-after.json", "--pack pack.json",
+           "must FAIL when the old credential's pack is not fetched again")
+    broken(".github/workflows/upgrade.yml", "bash scripts/polaris-upgrade-drill.sh", "true",
+           "must FAIL when CI does not run the drill")
+    broken(".github/workflows/upgrade.yml", "fetch-depth: 0", "fetch-depth: 1",
+           "must FAIL when CI checks out without the release tags")
+
+
 def test_client_ip_behind_proxies_check_discriminates(tmp_path):
     files = ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest",
              "deploy/helm/polaris/templates/configmap-caddy.yaml", "deploy/helm/polaris/templates/caddy.yaml",

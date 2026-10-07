@@ -6564,6 +6564,39 @@ def check_doctor_names_failures(root: pathlib.Path) -> list[Finding]:
                "each named first, and a clean bill after each repair")
 
 
+# 2026-10-07 (lab record 017, gate row OP-19): an upgrade from the previous release is drilled. The
+# drill runs the previous release's own try.sh, moves that checkout to this commit and upgrades it
+# the way OPERATIONS.md says (polaris-generate-secrets.sh, polaris-deploy.sh prod), then requires no
+# migration pending, every Polaris container on the image this commit builds, and credentials from
+# before and after the upgrade verifying. Its first run found polaris-deploy.sh rebuilding the app's
+# image alone: the edge, pooler and database kept the images the first install built.
+def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
+    name = "upgrade_drilled"
+    dep = _read(root, "scripts/polaris-deploy.sh")
+    if not re.search(r'(?m)^bash "\$\{SCRIPT_DIR\}/polaris-image-build\.sh" --stack prod$', dep):
+        return _fail(name, "polaris-deploy.sh must build every Polaris image (polaris-image-build.sh --stack prod), "
+                     "not the app's alone, or an upgrade keeps the edge, pooler and database it first built")
+    drill = _read(root, "scripts/polaris-upgrade-drill.sh")
+    for needle, what in (("describe --tags --abbrev=0", "start from the previous release"),
+                         ('lab/strategy/006/try.sh" > "${WORK}/try-before.log"', "run that release's own try.sh"),
+                         ("checkout --detach", "move the same checkout to this commit"),
+                         ("scripts/polaris-generate-secrets.sh", "write the secrets a new release adds"),
+                         ("scripts/polaris-deploy.sh\" prod", "upgrade with the deploy script"),
+                         ("no pending migrations", "require no migration pending"),
+                         ("{{json .RootFS.Layers}}{{json .Config}}", "compare each running image's content with this commit's build"),
+                         ("/api/tokens/${A}/verify", "ask the upgraded app about the old credential"),
+                         ("--pack pack-A-after.json", "verify the old credential's pack fetched again")):
+        if needle not in drill:
+            return _fail(name, f"scripts/polaris-upgrade-drill.sh no longer does this: {what}")
+    wf = _read(root, ".github/workflows/upgrade.yml")
+    if "bash scripts/polaris-upgrade-drill.sh" not in wf or not re.search(r"(?m)^\s*fetch-depth: 0$", wf):
+        return _fail(name, "upgrade.yml must run scripts/polaris-upgrade-drill.sh on a checkout with the "
+                     "release tags (fetch-depth: 0)")
+    return _ok(name,
+               "CI upgrades the previous release's own try.sh stack to this commit the documented way and "
+               "requires nothing pending, every image rebuilt, and credentials from before and after verifying")
+
+
 # 2026-10-07 (lab record 017, gate row OP-26): the client address behind a load balancer. The rate
 # limiter, AuthAuditLog and the access policies key on the address the edge passes upstream. Behind
 # a balancer the TCP peer is the balancer: every client shares one bucket. Each edge trusts exactly
@@ -25576,6 +25609,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_client_ip_behind_proxies,
     check_edge_limits,
     check_doctor_names_failures,
+    check_upgrade_drilled,
     check_session_key_rotation,
     check_release_images_signed,
     check_redis_authenticated,

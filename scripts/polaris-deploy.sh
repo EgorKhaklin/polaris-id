@@ -14,8 +14,8 @@
 # Flow (prod):
 #   1. Pre-flight: docker present, secrets present, POLARIS_DOMAIN set
 #   2. git pull (skipped if --no-pull)
-#   3. docker compose pull (refresh upstream images)
-#   4. docker compose build app (multi-stage Dockerfile.prod)
+#   3. docker compose pull (refresh the upstream images)
+#   4. build Polaris's own images, all of them (polaris-image-build.sh --stack)
 #   5. Bring stack up
 #   6. Smoke test: /api/health overall status must be 'healthy'
 #   7. If smoke fails: rollback to previous app image tag, exit non-zero
@@ -128,11 +128,15 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Pull upstream images + build app
+# 4. Pull the upstream images, build Polaris's own
 # ---------------------------------------------------------------------------
-echo "  [4/7] Pulling upstream images + building app…"
-compose pull --ignore-pull-failures postgres redis caddy
-compose build app
+# Lab record 017 (gate row OP-19): every image built from this tree is rebuilt, not the app's
+# alone. The edge, the pooler and the database carry this tree's Dockerfiles and entrypoints;
+# until scripts/polaris-upgrade-drill.sh, an upgraded deployment kept running the ones its first
+# install had built, since a pull of a locally built image fails and was ignored.
+echo "  [4/7] Pulling upstream images + building Polaris's images…"
+compose pull --ignore-buildable --ignore-pull-failures
+bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod
 
 # ---------------------------------------------------------------------------
 # 5. Bring stack up
@@ -140,7 +144,7 @@ compose build app
 # v9.183 (P1.4) — infrastructure first, WITHOUT touching the app containers:
 # the running app keeps serving while migrations (the expand phase) apply
 # below; the app colours are then rolled one at a time. Recreating caddy or
-# postgres here (only when their config changed) is not zero-downtime.
+# postgres here (only when their image or config changed) is not zero-downtime.
 # v9.239 — the edge runs as uid 1000. A deployment created before this change
 # has caddy_data and caddy_config volumes seeded root-owned by the old image,
 # which the non-root edge could neither read (the ACME account and
