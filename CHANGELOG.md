@@ -57,6 +57,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- `/metrics` reports this instance's clock against the database's (`polaris_clock_skew_seconds`); PolarisClockSkew pages when they disagree by more than 2 s for 10 minutes.
 - A point-in-time restore drill: a restore to a chosen moment brings back exactly what was committed by then, and nothing after.
 - `/api/health` compares this instance's clock with the database's and reports `clock` degraded beyond 2 s of skew.
 - A per-process database connection pool (`POLARIS_DB_POOL_SIZE`, 1 in the production compose file and the Helm chart): each checkout resets the session and the pool is keyed on the exact connection settings; verification went from about 300 to at least 800 requests/s on one host (lab record 017).

@@ -123,3 +123,41 @@ tests:
         exp_samples:
           - labels: '{__name__="polaris:error_budget_spent:ratio_30d"}'
             value: 0
+
+  # Lab record 017 (gate row OP-15): clock skew. app runs 0.4 s for half an hour, then 3 s: silent
+  # at first, still pending 9 minutes into the drift, firing once it has held for 10. app-green
+  # runs 3 s behind throughout and fires; app-blue is unmeasured (NaN) and never does.
+  - interval: 1m
+    input_series:
+      - series: 'polaris_clock_skew_seconds{instance="app:8000",job="polaris"}'
+        values: '0.4x30 3x20'
+      - series: 'polaris_clock_skew_seconds{instance="app-green:8000",job="polaris"}'
+        values: '-3x50'
+      - series: 'polaris_clock_skew_seconds{instance="app-blue:8000",job="polaris"}'
+        values: 'NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: PolarisClockSkew
+        exp_alerts:
+          - exp_labels: {severity: sev3, instance: "app-green:8000", job: polaris}
+            exp_annotations:
+              summary: "Clock skew on app-green:8000"
+              description: "This instance's clock and the database's have disagreed by more than 2 s for 10 minutes; credential expiry, OpenID4VP iat/exp and nonces mix the two. /api/health reports the clock degraded."
+      - eval_time: 40m
+        alertname: PolarisClockSkew
+        exp_alerts:
+          - exp_labels: {severity: sev3, instance: "app-green:8000", job: polaris}
+            exp_annotations:
+              summary: "Clock skew on app-green:8000"
+              description: "This instance's clock and the database's have disagreed by more than 2 s for 10 minutes; credential expiry, OpenID4VP iat/exp and nonces mix the two. /api/health reports the clock degraded."
+      - eval_time: 45m
+        alertname: PolarisClockSkew
+        exp_alerts:
+          - exp_labels: {severity: sev3, instance: "app:8000", job: polaris}
+            exp_annotations:
+              summary: "Clock skew on app:8000"
+              description: "This instance's clock and the database's have disagreed by more than 2 s for 10 minutes; credential expiry, OpenID4VP iat/exp and nonces mix the two. /api/health reports the clock degraded."
+          - exp_labels: {severity: sev3, instance: "app-green:8000", job: polaris}
+            exp_annotations:
+              summary: "Clock skew on app-green:8000"
+              description: "This instance's clock and the database's have disagreed by more than 2 s for 10 minutes; credential expiry, OpenID4VP iat/exp and nonces mix the two. /api/health reports the clock degraded."

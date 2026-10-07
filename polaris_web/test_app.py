@@ -13408,6 +13408,43 @@ class ResourceBoundTests(unittest.TestCase):
                              'the raw 404 path must not appear as a metric label')
 
 
+class ClockSkewMetricTests(unittest.TestCase):
+    """Lab record 017 (gate row OP-15): /metrics carries this instance's clock against the
+    database's, measured when it is scraped (PolarisClockSkew pages on it), and NaN, never the
+    last reading, when the database did not answer."""
+
+    def _skew(self):
+        from app import app as polaris_app
+        with polaris_app.test_client() as c:
+            r = c.get('/metrics')
+        if r.status_code != 200:
+            self.skipTest('prometheus_client is not installed')
+        m = re.search(r'^polaris_clock_skew_seconds(?:\{[^}]*\})? (\S+)$', r.data.decode(), re.M)
+        self.assertIsNotNone(m, 'polaris_clock_skew_seconds is not exposed')
+        return float(m.group(1))
+
+    def test_the_skew_is_measured_at_scrape_time(self):
+        self.assertLess(abs(self._skew()), 1.0, 'this process and the local database share a clock')
+        import status_routes
+        real = status_routes._time
+
+        class TenSecondsAhead:
+            @staticmethod
+            def time():
+                return real.time() + 10.0
+
+        with patch.object(status_routes, '_time', TenSecondsAhead):
+            self.assertAlmostEqual(self._skew(), -10.0, delta=1.0,
+                                   msg='a clock 10 s ahead of the database must read about -10 s')
+
+    def test_an_unanswered_database_reads_nan_not_the_last_value(self):
+        self.assertLess(abs(self._skew()), 1.0)
+        import status_routes
+        with patch.object(status_routes, 'query', side_effect=RuntimeError('the database is down')):
+            skew = self._skew()
+        self.assertNotEqual(skew, skew, 'unmeasured must be NaN, not the previous reading')
+
+
 class CorrelationIdTests(UnauthenticatedTestCase):
     """v9.122 — the X-Request-ID contract and its vocation guarantee.
 

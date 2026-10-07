@@ -186,6 +186,15 @@ try:
         'Sampled verify-at-use checks where the second witness disagreed with the single-witness result',
         registry=_METRICS_REGISTRY,
     )
+    # Lab record 017 (gate row OP-15): this instance's clock minus the database's, measured when
+    # /metrics is scraped (expiry, OpenID4VP iat/exp and nonces mix the two clocks). NaN when the
+    # database did not answer. Across workers the most recent live measurement is the value.
+    _METRICS_CLOCK_SKEW = _PromGauge(
+        'polaris_clock_skew_seconds',
+        'This instance clock minus the database clock, in seconds, measured at scrape time',
+        registry=_METRICS_REGISTRY,
+        **({'multiprocess_mode': 'livemostrecent'} if _PROM_MULTIPROC_DIR else {}),
+    )
 except ImportError:
     _PROM_AVAILABLE = False
     _PROM_MULTIPROC_DIR = None

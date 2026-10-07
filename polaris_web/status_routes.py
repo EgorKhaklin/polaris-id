@@ -506,6 +506,7 @@ def metrics():
 
     Liveness signals refreshed at scrape time:
       - polaris_app_info: version metadata
+      - polaris_clock_skew_seconds: this instance's clock minus the database's (NaN unmeasured)
 
     ACCESS: unauthenticated, and carrying the duress signal
     (`polaris_duress_events_total`), so this route and `/api/metrics` must both
@@ -529,6 +530,12 @@ def metrics():
     # Refresh dynamic gauges at scrape time.
     try:
         _app._METRICS_APP_INFO.labels(version=POLARIS_VERSION).set(1)
+    except Exception:
+        pass
+    # The clock against the database's, measured now (PolarisClockSkew pages on it). NaN when the
+    # database did not answer, so a stale reading is never reported as current.
+    try:
+        _app._METRICS_CLOCK_SKEW.set(_health_check_clock().get('skew_seconds', float('nan')))
     except Exception:
         pass
 

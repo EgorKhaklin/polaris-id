@@ -37,8 +37,9 @@ edit either file.
 8. [PolarisRevocationVelocity](#polarisrevocationvelocity)
 9. [PolarisVerificationVelocity](#polarisverificationvelocity)
 10. [PolarisQuotaRefusals](#polarisquotarefusals)
-11. [Paging: wiring the receiver](#paging-wiring-the-receiver)
-12. [Cross-references](#cross-references)
+11. [PolarisClockSkew](#polarisclockskew)
+12. [Paging: wiring the receiver](#paging-wiring-the-receiver)
+13. [Cross-references](#cross-references)
 
 ---
 
@@ -432,6 +433,35 @@ agency and the kind (`issue`, `revoke`, `verify`).
 a new justification). Abuse: leave the cap, work the matching velocity runbook,
 and end the operator sessions involved. The alert clears 15 minutes after the
 last refusal; refused writes were never recorded and are not replayed.
+
+---
+
+## PolarisClockSkew
+
+**Severity:** SEV-3 · **Expression:** `abs(polaris_clock_skew_seconds) > 2` · **For:** 10m
+
+This instance's clock and the database's have disagreed by more than 2 seconds
+for 10 minutes (lab record 017, gate row OP-15). The app measures it at every
+scrape of `/metrics`, the same way `/api/health` reports its `clock` component
+degraded. Credential expiry, OpenID4VP `iat` and `exp`, and nonces mix the two
+clocks, so a skew shortens or lengthens validity windows without any error.
+
+**Trigger.** `polaris_clock_skew_seconds` (this instance minus the database) above
+2 s or below -2 s, held for 10 minutes. An unanswered database reads NaN and
+never fires this alert.
+
+**Diagnosis.**
+1. One instance or all? If every instance shows the same skew, the database's
+   host clock is the wrong one; if one does, that instance's host is.
+2. On the suspect host: `timedatectl` (or `chronyc tracking`) for the NTP sync
+   state and offset. A container shares its host's clock.
+3. `curl -fsS http://<target>/api/health` and read the `clock` component's
+   `skew_seconds`.
+
+**Remediation.** Fix time sync on the host that drifted (enable and start
+`chronyd` or `systemd-timesyncd`, point it at a reachable NTP source). Do not
+set the clock back by hand on a running database host; let NTP slew it. The
+alert clears 10 minutes after the skew returns within 2 s.
 
 ---
 
