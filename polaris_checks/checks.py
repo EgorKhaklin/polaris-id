@@ -8174,6 +8174,32 @@ def check_dr_drill_scheduled(root: pathlib.Path) -> list[Finding]:
                "committed to the ledger, on every push in CI, and monthly on a Linux host by timer")
 
 
+# 2026-10-07 (lab record 017, gate row OP-12): a restore to a chosen point in time is tested. DR.md
+# section 4.3 restores with pgbackrest --type=time; scripts/polaris-pitr-drill.sh runs that restore
+# to a moment it read off the database's own clock and requires exactly the markers committed by
+# then (count and digest), none after, and that moment's token count. Its control restores to the
+# archive's end and must be told apart, or the checks would pass a restore that never stopped.
+def check_pitr_drilled(root: pathlib.Path) -> list[Finding]:
+    name = "pitr_drilled"
+    drill = _read(root, "scripts/polaris-pitr-drill.sh")
+    for needle, what in (('--type=time \\"--target=$T\\"', "restore to T with pgbackrest --type=time"),
+                         ("SELECT clock_timestamp()", "take T from the database's own clock"),
+                         ('[[ "$GOT" == "$AT_T" ]]', "require T's markers, count and digest"),
+                         ('[[ "$after" == 0 ]]', "require nothing committed after T"),
+                         ("--prove-control) CONTROL=1", "carry a control that restores to the archive's end")):
+        if needle not in drill:
+            return _fail(name, f"scripts/polaris-pitr-drill.sh no longer does this: {what}")
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "bash scripts/polaris-pitr-drill.sh --no-build\n" not in ci \
+            or "bash scripts/polaris-pitr-drill.sh --no-build --prove-control" not in ci:
+        return _fail(name, "CI must run the point-in-time restore drill and its control")
+    if "polaris-pitr-drill.sh" not in _read_raw(root, "docs/operator/DR.md"):
+        return _fail(name, "DR.md's point-in-time restore must cite the drill that tests it")
+    return _ok(name,
+               "CI restores to a moment read off the database's clock and requires exactly what was committed by "
+               "then, nothing after; its control restores to the archive's end and is told apart")
+
+
 def check_chaos_program(root: pathlib.Path) -> list[Finding]:
     """Roadmap P2.11 (v9.242): the fail-closed harness runs on every push, and
     a weekly drill induces failures against the booted stack under traffic
@@ -25647,6 +25673,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_abuse_controls,
     check_performance_baseline,
     check_dr_drill_scheduled,
+    check_pitr_drilled,
     check_chaos_program,
     check_ha_automation,
     check_event_table_partitioning,

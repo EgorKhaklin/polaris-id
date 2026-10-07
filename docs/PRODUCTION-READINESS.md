@@ -115,7 +115,7 @@ This ledger covers one authority on one host or one cluster. [ROADMAP.md](../ROA
 
 Whether an operator who is not the author can install, run, upgrade and recover Polaris, one criterion per row ([lab record 017](../lab/strategy/017-production-operability.md)). A PASS row cites evidence that `check_operability_gate` resolves: a check, a test, a drill or a file. This gate is about operating the software; it is not readiness for real identity data, which the status line above and the last row keep separate.
 
-28 criteria: 10 PASS, 11 PARTIAL, 6 FAIL, 1 UNKNOWN.
+28 criteria: 11 PASS, 11 PARTIAL, 5 FAIL, 1 UNKNOWN.
 
 | ID | Criterion | Status | Evidence |
 |---|---|---|---|
@@ -130,7 +130,7 @@ Whether an operator who is not the author can install, run, upgrade and recover 
 | OP-9 | Secrets are least-privilege and sealed at rest | PARTIAL | `check:secrets_lifecycle_sealed`; generated secret files are wider than the reader needs. |
 | OP-10 | Signing keys can live in hardware or a KMS, shown on a real device | PARTIAL | `test:polaris_web/test_custody.py` runs PKCS#11 against a software token and KMS against a stand-in. |
 | OP-11 | Restores are verified on a schedule and the evidence is current | PARTIAL | `drill:scripts/polaris-dr-drill.sh`; its ledger's last row is 2026-09-02. |
-| OP-12 | A restore to a chosen point in time is tested | FAIL | The drill replays to the end of the archive only. |
+| OP-12 | A restore to a chosen point in time is tested | PASS | `drill:scripts/polaris-pitr-drill.sh`, `check:pitr_drilled` |
 | OP-13 | Revocations made after a restore point are re-applied after the restore | FAIL | Not designed yet. |
 | OP-14 | Continuous archiving is on by default, with an offsite copy | PARTIAL | `drill:scripts/polaris-offsite-drill.sh` round-trips the offsite repository; archiving is off until enabled. |
 | OP-15 | Backup age, archive failure, replication lag, disk, certificate expiry and clock skew alert | FAIL | Only application metrics are scraped. |

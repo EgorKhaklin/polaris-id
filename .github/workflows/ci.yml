@@ -1523,6 +1523,15 @@ jobs:
           POLARIS_DR_OUT: /tmp/dr-drill.json
         run: bash scripts/polaris-dr-drill.sh
 
+      # Lab record 017 (gate row OP-12): a restore to a chosen moment, the --type=time restore
+      # DR.md section 4.3 uses, brings back exactly what was committed by then: the same markers,
+      # digest equal, none committed after it. The control restores to the archive's end and
+      # must be told apart. Reuses the image the DR drill built. Pinned by check_pitr_drilled.
+      - name: Point-in-time restore drill (scripts/polaris-pitr-drill.sh)
+        run: |
+          bash scripts/polaris-pitr-drill.sh --no-build
+          bash scripts/polaris-pitr-drill.sh --no-build --prove-control
+
       - name: Upload the drill JSON
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

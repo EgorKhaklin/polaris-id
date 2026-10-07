@@ -31,6 +31,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- DR.md's point-in-time restore brought the app back without the revocations and key events made after the target; it now says so and lists them to repeat first.
 - A duress record still being written when a worker stopped was abandoned with its daemon thread; the worker now waits for it (a killed worker can still lose one in flight). Kubernetes pods pause before draining.
 - OPERATIONS described pgbouncer in transaction mode; it runs in session mode, which keeps each operator's row-level-security scope to its own connection.
 - On Kubernetes, a worker that started before Redis counted rate limits alone for its whole life, reported healthy; it now moves to Redis once Redis answers.
@@ -56,6 +57,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- A point-in-time restore drill: a restore to a chosen moment brings back exactly what was committed by then, and nothing after.
 - `/api/health` compares this instance's clock with the database's and reports `clock` degraded beyond 2 s of skew.
 - A per-process database connection pool (`POLARIS_DB_POOL_SIZE`, 1 in the production compose file and the Helm chart): each checkout resets the session and the pool is keyed on the exact connection settings; verification went from about 300 to at least 800 requests/s on one host (lab record 017).
 - A lab step puts a checkpoint of the three transparency logs into Bitcoin block 969876 through OpenTimestamps; its verifier reads the block from two sources.

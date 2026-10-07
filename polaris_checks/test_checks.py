@@ -3008,6 +3008,35 @@ def test_doctor_names_failures_check_discriminates(tmp_path):
            "must FAIL when the runbook does not start an operator at the doctor")
 
 
+def test_pitr_drilled_check_discriminates(tmp_path):
+    files = ("scripts/polaris-pitr-drill.sh", ".github/workflows/ci.yml", "docs/operator/DR.md")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_pitr_drilled(tmp_path)[0].level == "OK", \
+        "must PASS on the real drill, its CI steps and the runbook"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_pitr_drilled(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    drill = "scripts/polaris-pitr-drill.sh"
+    broken(drill, '--type=time \\"--target=$T\\"', '--type=default', "must FAIL when the restore does not stop at T")
+    broken(drill, '[[ "$GOT" == "$AT_T" ]]', '[[ -n "$GOT" ]]', "must FAIL when T's markers are not compared")
+    broken(drill, '[[ "$after" == 0 ]]', '[[ -n "$after" ]]', "must FAIL when later markers coming back would pass")
+    broken(drill, "--prove-control) CONTROL=1", "--prove-control) CONTROL=0", "must FAIL without a working control")
+    broken(".github/workflows/ci.yml", "bash scripts/polaris-pitr-drill.sh --no-build --prove-control", "true",
+           "must FAIL when CI does not run the control")
+    broken(".github/workflows/ci.yml", "bash scripts/polaris-pitr-drill.sh --no-build\n", "true\n",
+           "must FAIL when CI does not run the drill")
+    broken("docs/operator/DR.md", "polaris-pitr-drill.sh", "polaris-other-drill.sh",
+           "must FAIL when the runbook does not cite the drill")
+
+
 def test_upgrade_drilled_check_discriminates(tmp_path):
     files = ("scripts/polaris-deploy.sh", "scripts/polaris-upgrade-drill.sh", ".github/workflows/upgrade.yml")
     for rel in files:

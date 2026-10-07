@@ -245,8 +245,10 @@ docker run --rm -v "$PG_VOLUME":/data -v "$(pwd)":/snap busybox \
 # 3. Point-in-time restore from the pgBackRest repo, targeting the last
 #    known-good moment (just before the corruption window). The one-off
 #    container reuses the service definition (repo mount, rendered
-#    conf.d/repo.conf, credential fragment) and runs as postgres; the drill
-#    runs the same command without --type=time.
+#    conf.d/repo.conf, credential fragment) and runs as postgres; the DR
+#    drill runs the same command without --type=time, and
+#    scripts/polaris-pitr-drill.sh runs it with --type=time and checks that
+#    exactly what was committed by the target came back.
 TARGET_TIME="2026-05-14 03:14:00 UTC"
 $COMPOSE stop postgres
 $COMPOSE run --rm --no-deps --user postgres postgres sh -c \
@@ -278,6 +280,21 @@ segment, which is the drill's path. If the repo is offsite (section 5) the
 same command reads it from S3; the one-off container needs the same
 `POLARIS_PGBACKREST_S3_*` env and the mounted credential fragment, which the
 compose service definition supplies.
+
+**Revocations made after the target time are lost with it.** The database
+comes back as it stood at `TARGET_TIME`, so a credential revoked after that
+moment reads as active again, and an authority key declared compromised or
+retired after it is trusted again. Polaris does not yet re-apply them itself
+(gate row OP-13). Until it does, before step 6: restore the archive's end into
+a scratch instance (the same restore without `--type=time`), list what changed
+after the target there, and repeat each of those revocations and key events on
+the restored database before the app takes traffic:
+
+```sql
+SELECT token_id, revoked_by_agency_id, reason_code, revocation_timestamp
+  FROM RevocationList WHERE revocation_timestamp > '<TARGET_TIME>' ORDER BY revocation_timestamp;
+SELECT * FROM AuthorityKeyEvent WHERE recorded_at > '<TARGET_TIME>' ORDER BY recorded_at;
+```
 
 **Audit-of-record continuity:** WAL replay preserves every event up to the
 target timestamp. Events between the target time and the moment of corruption
