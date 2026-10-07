@@ -39,8 +39,9 @@ edit either file.
 10. [PolarisQuotaRefusals](#polarisquotarefusals)
 11. [PolarisClockSkew](#polarisclockskew)
 12. [PolarisArchiveFailing](#polarisarchivefailing)
-13. [Paging: wiring the receiver](#paging-wiring-the-receiver)
-14. [Cross-references](#cross-references)
+13. [PolarisReplicaBehind](#polarisreplicabehind)
+14. [Paging: wiring the receiver](#paging-wiring-the-receiver)
+15. [Cross-references](#cross-references)
 
 ---
 
@@ -493,6 +494,36 @@ never switched on reports 0 for both and does not fire.
 the alert clears once a newer segment archives. Watch the database disk
 meanwhile: unarchived WAL is kept until it archives. See
 [DR.md](DR.md) section 5.
+
+---
+
+## PolarisReplicaBehind
+
+**Severity:** SEV-3 · **Expression:** `max by (job) (polaris_db_replica_lag_seconds) > max by (job) (polaris_db_replica_lag_limit_seconds) or max by (job) (polaris_db_replica_lag_seconds) != max by (job) (polaris_db_replica_lag_seconds)` · **For:** 10m
+
+The read replica has trailed the primary beyond the staleness limit this
+deployment set (`POLARIS_REPLICA_MAX_LAG_S`, 10 s by default), or could not be
+measured at all, for 10 minutes (lab record 017, gate row OP-15). The app
+measures it at every scrape, the way `/api/health` reports its `replica`
+component. Reads already fall back to the primary while the replica is out
+of contract, so nothing is served stale; what is lost is the redundancy and
+the read capacity the replica carried.
+
+**Trigger.** Lag above the limit, or NaN (the replica did not answer).
+Deployments without a replica report no series and never fire.
+
+**Diagnosis.**
+1. `curl -fsS http://<target>/api/health` and read the `replica` component:
+   `lag_seconds`, `max_lag_seconds`, and `error` when it is unreachable.
+2. On the replica: `SELECT pg_is_in_recovery(), now() - pg_last_xact_replay_timestamp();`
+3. On the primary: `SELECT client_addr, state, sent_lsn, replay_lsn FROM pg_stat_replication;`
+   (as a role with `pg_read_all_stats`) for a stalled or missing standby.
+
+**Remediation.** A replica that is merely slow catches up once the primary's
+write burst passes or its I/O recovers; one that stopped (network, disk full,
+a broken slot) is rebuilt from a fresh base backup per
+[FAILOVER.md](FAILOVER.md). The alert clears 10 minutes after the lag is back
+within the limit.
 
 ---
 

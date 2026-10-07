@@ -508,6 +508,7 @@ def metrics():
       - polaris_app_info: version metadata
       - polaris_clock_skew_seconds: this instance's clock minus the database's (NaN unmeasured)
       - polaris_db_archive_last_timestamp_seconds{outcome}: WAL archiving's last success and failure
+      - polaris_db_replica_lag_seconds, polaris_db_replica_lag_limit_seconds: a configured replica
 
     ACCESS: unauthenticated, and carrying the duress signal
     (`polaris_duress_events_total`), so this route and `/api/metrics` must both
@@ -551,6 +552,15 @@ def metrics():
     try:
         _app._METRICS_ARCHIVE_LAST.labels(outcome='archived').set(archived)
         _app._METRICS_ARCHIVE_LAST.labels(outcome='failed').set(failed)
+    except Exception:
+        pass
+    # The read replica, where one is configured (PolarisReplicaBehind pages on it).
+    try:
+        replica = _health_check_replica()
+        if replica is not None:
+            lag = replica.get('lag_seconds')
+            _app._METRICS_REPLICA_LAG.labels(replica='read').set(float('nan') if lag is None else float(lag))
+            _app._METRICS_REPLICA_LAG_LIMIT.labels(replica='read').set(REPLICA_MAX_LAG_S)
     except Exception:
         pass
 

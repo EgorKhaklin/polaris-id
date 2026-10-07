@@ -198,6 +198,24 @@ try:
     # Lab record 017 (gate row OP-15): the database's WAL archiving, read off pg_stat_archiver at
     # scrape time (readable by the app's role; no exporter, no added privilege). 0 means never.
     # PolarisArchiveFailing fires when the newest attempt failed and nothing archived since.
+    # The read replica's lag and the staleness limit this deployment set (POLARIS_REPLICA_MAX_LAG_S),
+    # measured at scrape time; a series exists only where a replica is configured (replica="read"),
+    # and lag is NaN when the replica did not answer. PolarisReplicaBehind fires on lag beyond the
+    # limit, or none measured.
+    _METRICS_REPLICA_LAG = _PromGauge(
+        'polaris_db_replica_lag_seconds',
+        'How far the read replica trails the primary, in seconds, measured at scrape time; NaN unreachable',
+        labelnames=('replica',),
+        registry=_METRICS_REGISTRY,
+        **({'multiprocess_mode': 'livemostrecent'} if _PROM_MULTIPROC_DIR else {}),
+    )
+    _METRICS_REPLICA_LAG_LIMIT = _PromGauge(
+        'polaris_db_replica_lag_limit_seconds',
+        'The staleness limit beyond which reads fall back to the primary (POLARIS_REPLICA_MAX_LAG_S)',
+        labelnames=('replica',),
+        registry=_METRICS_REGISTRY,
+        **({'multiprocess_mode': 'livemostrecent'} if _PROM_MULTIPROC_DIR else {}),
+    )
     _METRICS_ARCHIVE_LAST = _PromGauge(
         'polaris_db_archive_last_timestamp_seconds',
         'When the database last archived a WAL segment (outcome="archived") or last failed to '

@@ -183,3 +183,19 @@ groups:
         annotations:
           summary: "WAL archiving is failing"
           description: "The database's newest WAL archive attempt failed and none has succeeded since, for 5 minutes. Until it recovers, point-in-time restore cannot reach past the last archived segment and the RPO grows."
+
+      # SEV-3: the read replica trails the primary by more than the staleness limit this deployment
+      # set (POLARIS_REPLICA_MAX_LAG_S), or could not be measured at all, for 10 minutes. Reads fall
+      # back to the primary meanwhile, so nothing is served stale; what is lost is the redundancy.
+      # One alert per job however many instances measure the same replica; a deployment without a
+      # replica reports no series and never fires.
+      - alert: PolarisReplicaBehind
+        expr: |
+          max by (job) (polaris_db_replica_lag_seconds) > max by (job) (polaris_db_replica_lag_limit_seconds)
+          or max by (job) (polaris_db_replica_lag_seconds) != max by (job) (polaris_db_replica_lag_seconds)
+        for: 10m
+        labels:
+          severity: sev3
+        annotations:
+          summary: "The read replica is behind or unreachable"
+          description: "The read replica has trailed the primary beyond its staleness limit, or could not be measured, for 10 minutes. Reads fall back to the primary meanwhile; the replica's redundancy is gone until it catches up."

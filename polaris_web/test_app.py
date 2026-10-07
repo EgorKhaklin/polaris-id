@@ -13483,6 +13483,49 @@ class ArchiveMetricTests(unittest.TestCase):
         self.assertTrue(archived != archived and failed != failed, 'unmeasured must be NaN')
 
 
+class ReplicaLagMetricTests(unittest.TestCase):
+    """Lab record 017 (gate row OP-15): /metrics carries a configured read replica's lag and the
+    deployment's staleness limit at scrape time, NaN for an unreachable replica, and no series at
+    all where no replica is configured."""
+
+    def _scrape(self):
+        from app import app as polaris_app
+        with polaris_app.test_client() as c:
+            r = c.get('/metrics')
+        if r.status_code != 200:
+            self.skipTest('prometheus_client is not installed')
+        text = r.data.decode()
+        lag = re.search(r'^polaris_db_replica_lag_seconds\{replica="read"\} (\S+)$', text, re.M)
+        limit = re.search(r'^polaris_db_replica_lag_limit_seconds\{replica="read"\} (\S+)$', text, re.M)
+        return (None if lag is None else float(lag.group(1)),
+                None if limit is None else float(limit.group(1)))
+
+    def test_a_configured_replica_reports_its_lag_and_the_limit(self):
+        import status_routes
+        with patch.object(status_routes, '_health_check_replica',
+                          return_value={'status': 'degraded', 'lag_seconds': 42.0}):
+            lag, limit = self._scrape()
+        self.assertEqual(lag, 42.0)
+        self.assertEqual(limit, flask_app.REPLICA_MAX_LAG_S)
+
+    def test_an_unreachable_replica_reads_nan(self):
+        import status_routes
+        with patch.object(status_routes, '_health_check_replica',
+                          return_value={'status': 'degraded', 'serving_reads': False, 'error': 'x'}):
+            lag, _ = self._scrape()
+        self.assertTrue(lag is not None and lag != lag, 'an unreachable replica must read NaN')
+
+    def test_no_replica_no_series_from_a_fresh_registry(self):
+        import status_routes
+        fresh = flask_app._PromGauge('polaris_test_replica_probe', 'probe', labelnames=('replica',),
+                                     registry=flask_app._PromRegistry())
+        with patch.object(status_routes, '_health_check_replica', return_value=None), \
+                patch.object(flask_app, '_METRICS_REPLICA_LAG', fresh):
+            self._scrape()
+        self.assertEqual(list(fresh.collect())[0].samples, [],
+                         'with no replica configured nothing may be set')
+
+
 class CorrelationIdTests(UnauthenticatedTestCase):
     """v9.122 — the X-Request-ID contract and its vocation guarantee.
 

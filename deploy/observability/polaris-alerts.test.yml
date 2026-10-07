@@ -197,3 +197,50 @@ tests:
             exp_annotations:
               summary: "WAL archiving is failing"
               description: "The database's newest WAL archive attempt failed and none has succeeded since, for 5 minutes. Until it recovers, point-in-time restore cannot reach past the last archived segment and the RPO grows."
+
+  # Lab record 017 (gate row OP-15): the read replica. Job polaris: within its 10 s limit for 15
+  # minutes, then 40 s behind; first seen at the 20m evaluation, firing at 30m. Job lost: the
+  # replica unreachable (NaN) throughout, firing once 10 minutes have passed. Job single: no
+  # replica, no series, never.
+  - interval: 1m
+    input_series:
+      - series: 'polaris_db_replica_lag_seconds{replica="read",instance="app:8000",job="polaris"}'
+        values: '2x15 40x25'
+      - series: 'polaris_db_replica_lag_seconds{replica="read",instance="app-green:8000",job="polaris"}'
+        values: '3x15 41x25'
+      - series: 'polaris_db_replica_lag_limit_seconds{replica="read",instance="app:8000",job="polaris"}'
+        values: '10x40'
+      - series: 'polaris_db_replica_lag_limit_seconds{replica="read",instance="app-green:8000",job="polaris"}'
+        values: '10x40'
+      - series: 'polaris_db_replica_lag_seconds{replica="read",instance="app:8000",job="lost"}'
+        values: 'NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN'
+      - series: 'polaris_db_replica_lag_limit_seconds{replica="read",instance="app:8000",job="lost"}'
+        values: '10x40'
+      - series: 'polaris_app_info{instance="app:8000",job="single",version="x"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: PolarisReplicaBehind
+        exp_alerts:
+          - exp_labels: {severity: sev3, job: lost}
+            exp_annotations:
+              summary: "The read replica is behind or unreachable"
+              description: "The read replica has trailed the primary beyond its staleness limit, or could not be measured, for 10 minutes. Reads fall back to the primary meanwhile; the replica's redundancy is gone until it catches up."
+      - eval_time: 26m
+        alertname: PolarisReplicaBehind
+        exp_alerts:
+          - exp_labels: {severity: sev3, job: lost}
+            exp_annotations:
+              summary: "The read replica is behind or unreachable"
+              description: "The read replica has trailed the primary beyond its staleness limit, or could not be measured, for 10 minutes. Reads fall back to the primary meanwhile; the replica's redundancy is gone until it catches up."
+      - eval_time: 31m
+        alertname: PolarisReplicaBehind
+        exp_alerts:
+          - exp_labels: {severity: sev3, job: polaris}
+            exp_annotations:
+              summary: "The read replica is behind or unreachable"
+              description: "The read replica has trailed the primary beyond its staleness limit, or could not be measured, for 10 minutes. Reads fall back to the primary meanwhile; the replica's redundancy is gone until it catches up."
+          - exp_labels: {severity: sev3, job: lost}
+            exp_annotations:
+              summary: "The read replica is behind or unreachable"
+              description: "The read replica has trailed the primary beyond its staleness limit, or could not be measured, for 10 minutes. Reads fall back to the primary meanwhile; the replica's redundancy is gone until it catches up."
