@@ -255,17 +255,18 @@ $COMPOSE run --rm --no-deps --user postgres postgres sh -c \
     "rm -rf /var/lib/postgresql/data/* && \
      pgbackrest --stanza=polaris --type=time --target=\"$TARGET_TIME\" --target-action=promote restore"
 
-# 4. Start postgres; it replays the archive to the target and promotes.
+# 4. Start postgres; it replays the archive to the target and promotes. (Wait on
+#    the database itself: the container's log still holds the previous run's
+#    "ready to accept connections".)
 $COMPOSE up -d postgres
-$COMPOSE logs --follow postgres | grep -m1 "database system is ready to accept connections"
-$COMPOSE exec postgres psql -U postgres -d polaris -c "SELECT pg_is_in_recovery();"   # f
+until $COMPOSE exec postgres psql -U postgres -d polaris -tAc "SELECT NOT pg_is_in_recovery()" | grep -q t; do sleep 2; done
 
-# 5. Restore the archive's end beside it, into a scratch volume, with archiving
-#    off (a second timeline must never reach the shared repo). The restore to the
-#    target lost everything after it; this copy still holds it.
-docker volume create polaris_archive_end
-$COMPOSE run -d --no-deps --name polaris-archive-end --user postgres --entrypoint sh \
-    -v polaris_archive_end:/var/lib/postgresql/archive-end postgres -c \
+# 5. Restore the archive's end beside it, inside a scratch container (its own
+#    filesystem, never pg_data: a new volume would be root's and refuse the
+#    postgres user), with archiving off (a second timeline must never reach the
+#    shared repo). The restore to the target lost everything after it; this copy
+#    still holds it.
+$COMPOSE run -d --no-deps --name polaris-archive-end --user postgres --entrypoint sh postgres -c \
     "pgbackrest --stanza=polaris --pg1-path=/var/lib/postgresql/archive-end restore && \
      exec postgres -D /var/lib/postgresql/archive-end -c archive_mode=off"
 until docker exec polaris-archive-end psql -U postgres -d polaris -tAc "SELECT NOT pg_is_in_recovery()" | grep -q t; do sleep 2; done
@@ -292,7 +293,7 @@ reconcile() {   # the app image carries Python and psycopg2; the script comes fr
 }
 reconcile --dry-run
 reconcile           # exit 0, or each withdrawal still open is printed with its remedy
-docker rm -f polaris-archive-end && docker volume rm polaris_archive_end
+docker rm -f polaris-archive-end
 
 # 7. Verify integrity (the drill compares the IdentityToken and schema_version
 #    counts with their pre-failure values; the audit tables date the recovery point).
@@ -323,7 +324,7 @@ operator account switched off is on again, a consumed nonce can be replayed,
 and the sequences hand out again identifiers already issued (a new wallet copy
 could take the status-list slot of a lost one). Step 6 re-applies the
 withdrawals and retires the identifiers; `scripts/polaris-pitr-drill.sh
---reconcile` makes 23 withdrawals on either side of a target, restores both
+--reconcile` makes 24 withdrawals on either side of a target, restores both
 points and requires the reconciled state to equal the archive's end. What it
 does not re-make it names: grants made after the target (credentials issued,
 keys registered, accounts and relying parties created), policies set after it,

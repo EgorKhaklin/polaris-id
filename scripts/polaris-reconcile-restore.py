@@ -39,6 +39,7 @@ Exit: 0 nothing REGISTRY calls a withdrawal is looser than at the archive's end,
       already used, a table this script does not know).
 """
 import argparse
+import datetime
 import json
 import re
 import sys
@@ -171,6 +172,11 @@ def short(hex_value):
 
 def ts(value):
     return value.isoformat(sep=" ", timespec="seconds") if hasattr(value, "isoformat") else str(value)
+
+
+def utc(value):
+    """An aware datetime for ordering: TIMESTAMP columns hold UTC (every session is pinned to UTC)."""
+    return value.replace(tzinfo=datetime.timezone.utc) if value.tzinfo is None else value
 
 
 # ---------------------------------------------------------------------------------------------
@@ -393,7 +399,7 @@ def plan_holder_keys(ce, cr, ctx, listed):
         def apply(cur, tid=tid, r=r):
             cur.execute("SELECT uc_record_holder_key_event(%s, %s, %s, 'revoked', %s)",
                         (tid, r["public_key_hex"], r["algorithm"], r["public_key_hex"]))
-        items.append(Item("holder-key:%d" % tid, "holder-key", e["recorded_at"] if e else ctx["t"],
+        items.append(Item("holder-key:%d" % tid, "holder-key", e["recorded_at"] if e else ctx["t_at"],
                           "holder key %s of credential %d: %s after T; revoked (uc_record_holder_key_event)"
                           % (short(r["public_key_hex"]), tid, "rotated away" if e and e["event"] != "revoked"
                              else "revoked"), apply, "revoke it by hand, then run this again"))
@@ -495,7 +501,7 @@ def plan_accounts(ce, cr, ctx, listed):
         if not one(cr, "SELECT 1 AS x FROM AppUser WHERE user_id = %(u)s", {"u": uid}):
             listed.setdefault("account:%s" % e["username"],
                               "operator account %s created after T: create it again" % e["username"])
-    now = one(cr, "SELECT now() AS n")["n"]
+    now = one(cr, "SELECT LOCALTIMESTAMP AS n")["n"]   # locked_until is TIMESTAMP: compare naive with naive
     items = []
     for r in rows(cr, "SELECT %s FROM AppUser" % cols):
         e, sets, said = at_end.get(r["user_id"]), {}, []
@@ -531,7 +537,7 @@ def plan_accounts(ce, cr, ctx, listed):
             provenance(cur, ctx, what)
             cur.execute("UPDATE AppUser SET %s WHERE user_id = %%s" % ", ".join("%s = %%s" % c for c in sets),
                         tuple(sets.values()) + (uid,))
-        items.append(Item("account:%s" % r["username"], "account", when.get(r["user_id"], t), what, apply,
+        items.append(Item("account:%s" % r["username"], "account", when.get(r["user_id"], ctx["t_at"]), what, apply,
                           "make the change by hand (polaris user-update), then run this again"))
     return items
 
@@ -578,7 +584,7 @@ def plan_relying_parties(ce, cr, ctx, listed):
             provenance(cur, ctx, what)
             cur.execute("UPDATE RelyingParty SET %s WHERE rp_id = %%s" % ", ".join("%s = %%s" % c for c in sets),
                         tuple(sets.values()) + (rp,))
-        items.append(Item("relying-party:%s" % r["client_id"], "relying-party", when.get(rp, t), what, apply,
+        items.append(Item("relying-party:%s" % r["client_id"], "relying-party", when.get(rp, ctx["t_at"]), what, apply,
                           "make the change by hand (polaris rp-update), then run this again"))
     return items
 
@@ -605,7 +611,7 @@ def plan_agencies(ce, cr, ctx, listed):
         def apply(cur, aid=r["agency_id"], level=e["authorization_level"], what=what):
             provenance(cur, ctx, what)
             cur.execute("UPDATE Agency SET authorization_level = %s WHERE agency_id = %s", (level, aid))
-        items.append(Item("agency:%d" % r["agency_id"], "agency", when.get(r["agency_id"], t), what, apply,
+        items.append(Item("agency:%d" % r["agency_id"], "agency", when.get(r["agency_id"], ctx["t_at"]), what, apply,
                           "lower it by hand, then run this again"))
     return items
 
@@ -624,7 +630,7 @@ def plan_algorithms(ce, cr, ctx, listed):
         def apply(cur, aid=r["algorithm_id"], d=e["deprecation_date"], what=what):
             provenance(cur, ctx, what)
             cur.execute("UPDATE CryptographicAlgorithm SET deprecation_date = %s WHERE algorithm_id = %s", (d, aid))
-        items.append(Item("algorithm:%s" % r["name"], "algorithm", ctx["t"], what, apply,
+        items.append(Item("algorithm:%s" % r["name"], "algorithm", ctx["t_at"], what, apply,
                           "set the deprecation date by hand, then run this again"))
     for aid, e in at_end.items():
         if not one(cr, "SELECT 1 AS x FROM CryptographicAlgorithm WHERE algorithm_id = %(a)s", {"a": aid}):
@@ -654,7 +660,7 @@ def plan_contexts(ce, cr, ctx, listed):
             provenance(cur, ctx, what)
             cur.execute("UPDATE VerificationContext SET %s WHERE context_id = %%s" % ", ".join(
                 "%s = %%s" % c for c in sets), tuple(sets.values()) + (cid,))
-        items.append(Item("context:%d" % r["context_id"], "context", ctx["t"], what, apply,
+        items.append(Item("context:%d" % r["context_id"], "context", ctx["t_at"], what, apply,
                           "raise it by hand, then run this again"))
     return items
 
@@ -683,7 +689,7 @@ def plan_agency_algorithms(ce, cr, ctx, listed):
             else:
                 cur.execute("UPDATE AgencyAlgorithmAuth SET authorization_type = %s "
                             "WHERE agency_id = %s AND algorithm_id = %s", (e,) + k)
-        items.append(Item("agency-algorithm:%d:%d" % k, "agency-algorithm", ctx["t"], what, apply,
+        items.append(Item("agency-algorithm:%d:%d" % k, "agency-algorithm", ctx["t_at"], what, apply,
                           "change it by hand, then run this again"))
     for k in at_end:
         if k not in here:
@@ -710,7 +716,7 @@ def plan_permissions(ce, cr, ctx, listed):
             else:
                 cur.execute("UPDATE TokenPermission SET permission_level = %s WHERE token_id = %s AND context_id = %s",
                             (e,) + k)
-        items.append(Item("permission:%d:%d" % k, "permission", ctx["t"], what, apply,
+        items.append(Item("permission:%d:%d" % k, "permission", ctx["t_at"], what, apply,
                           "change it by hand, then run this again"))
     return items
 
@@ -731,7 +737,7 @@ def plan_sessions(ce, cr, ctx, listed):
         def apply(cur, sid=r["session_id"], when=when, why=why):
             cur.execute("UPDATE OperatorSession SET revoked_at = coalesce(%s, now()), revoke_reason = %s "
                         "WHERE session_id = %s AND revoked_at IS NULL", (when, why, sid))
-        items.append(Item("session:%s" % r["session_id"][:12], "session", when or ctx["t"], what, apply,
+        items.append(Item("session:%s" % r["session_id"][:12], "session", when or ctx["t_at"], what, apply,
                           "revoke it by hand, then run this again"))
     return items
 
@@ -749,7 +755,7 @@ def plan_hardware_keys(ce, cr, ctx, listed):
 
         def apply(cur, cid=cid, uid=r["user_id"]):
             cur.execute("DELETE FROM OperatorWebauthnCredential WHERE credential_id = %s AND user_id = %s", (cid, uid))
-        items.append(Item("hardware-key:%s" % cid[:12], "hardware-key", ctx["t"], what, apply,
+        items.append(Item("hardware-key:%s" % cid[:12], "hardware-key", ctx["t_at"], what, apply,
                           "remove it by hand, then run this again"))
     for cid, e in at_end.items():
         if cid not in here:
@@ -815,7 +821,7 @@ def plan(ce, cr, ctx, listed):
     events = []
     for p in EVENT_PLANNERS:
         events.extend(p(ce, cr, ctx, listed))
-    events.sort(key=lambda i: (str(i.at), i.key))
+    events.sort(key=lambda i: (utc(i.at), i.key))
     state = []
     for p in STATE_PLANNERS:
         state.extend(p(ce, cr, ctx, listed))
@@ -893,7 +899,8 @@ def main(argv=None):
 
     end = preflight(ce, cr, args.target_time)
     t = one(cr, "SELECT %(t)s::timestamptz AS t", {"t": args.target_time})["t"]
-    ctx = {"t": args.target_time, "operator": args.operator, "cosigner": args.cosigner, "acting_admin_id": None}
+    ctx = {"t": args.target_time, "t_at": t, "operator": args.operator, "cosigner": args.cosigner,
+           "acting_admin_id": None}
     if args.acting_admin:
         a = one(cr, "SELECT user_id FROM AppUser WHERE username = %(u)s AND role = 'admin' AND is_active",
                 {"u": args.acting_admin})

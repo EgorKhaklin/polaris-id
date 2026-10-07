@@ -128,6 +128,7 @@ INSERT INTO AuthCodeConsumed (code_hash) VALUES (repeat('b', 64));
 UPDATE AppUser SET is_active = false WHERE username = 'operator';
 UPDATE AppUser SET role = 'auditor' WHERE username = 'admin2';
 UPDATE AppUser SET password_hash = 'hash-auditor-rotated' WHERE username = 'auditor';
+UPDATE AppUser SET locked_until = LOCALTIMESTAMP + interval '2 hours' WHERE username = 'auditor';
 UPDATE OperatorSession SET revoked_at = now(), revoke_reason = 'logout' WHERE session_id = repeat('5e', 32);
 DELETE FROM OperatorWebauthnCredential WHERE credential_id = 'drill-hw-1';
 UPDATE RelyingParty SET enabled = false, client_secret_hash = 'secret-rotated' WHERE client_id = 'rp_pitrdrillreconcile';
@@ -148,7 +149,7 @@ SELECT 'attestation-revoked', attestation_id FROM AgencyTrustAttestation WHERE r
 SELECT 'erased', individual_id FROM IndividualErasureEvent ORDER BY 2;
 SELECT 'nonce', nonce FROM ExchangeNonce ORDER BY 2;
 SELECT 'code', left(code_hash, 8) FROM AuthCodeConsumed ORDER BY 2;
-SELECT 'account', username, role, is_active, password_hash, coalesce(recovery_code_hash, '-') FROM AppUser ORDER BY 2;
+SELECT 'account', username, role, is_active, password_hash, coalesce(recovery_code_hash, '-'), coalesce(locked_until > LOCALTIMESTAMP, false) FROM AppUser ORDER BY 2;
 SELECT 'session', left(session_id, 8), revoked_at IS NOT NULL FROM OperatorSession ORDER BY 2;
 SELECT 'hardware-key', credential_id FROM OperatorWebauthnCredential ORDER BY 2;
 SELECT 'relying-party', client_id, enabled, scope, client_secret_hash, require_zk, rate_limit_per_min FROM RelyingParty ORDER BY 2;

@@ -16785,8 +16785,8 @@ class AthenaConstraintBoardTests(PolarisTestCase):
         self.assertEqual(failing, [], 'a freshly loaded database holds every mechanism it names')
         self.assertEqual(board['summary']['not_in_force'], 0)
         c1 = self._rule(board, 'C1')
-        self.assertEqual(len(c1['guards']), 34, 'C1 lists the audit of record table by table')
-        self.assertEqual(c1['guards_held'], 34)
+        self.assertEqual(len(c1['guards']), 35, 'C1 lists the audit of record table by table')
+        self.assertEqual(c1['guards_held'], 35)
         self.assertEqual(c1['state'], 'in_force')
         for g in c1['guards']:
             self.assertIn('BEFORE UPDATE OR DELETE, each row on ', g['detail'], g['name'])
@@ -16810,7 +16810,7 @@ class AthenaConstraintBoardTests(PolarisTestCase):
 
     def test_the_page_is_the_board(self):
         body = self.client.get('/athena').get_data(as_text=True)
-        for text in ('not in force', 'in force in this database', '34 of 34 tables',
+        for text in ('not in force', 'in force in this database', '35 of 35 tables',
                      'Definition in this database', 'Read from', "script-src &#39;self&#39;"):
             self.assertIn(text, body)
 
@@ -16821,13 +16821,13 @@ class AthenaConstraintBoardTests(PolarisTestCase):
                 board = self._board()
                 c1 = self._rule(board, 'C1')
                 self.assertEqual(c1['state'], 'not_in_force')
-                self.assertEqual(c1['guards_held'], 33)
+                self.assertEqual(c1['guards_held'], 34)
                 off = c1['guards'][0]
                 self.assertEqual((off['name'], off['status']), ('trg_anchor_batch_append_only', 'not_in_force'))
                 self.assertIn('switched off on anchorbatch', off['reason'])
                 self.assertGreaterEqual(board['summary']['not_in_force'], 1)
                 body = self.client.get('/athena').get_data(as_text=True)
-                self.assertIn('33 of 34 tables', body)
+                self.assertIn('34 of 35 tables', body)
                 self.assertIn('Switched off on anchorbatch', body)
             finally:
                 cur.execute("ALTER TABLE AnchorBatch ENABLE TRIGGER trg_anchor_batch_append_only")

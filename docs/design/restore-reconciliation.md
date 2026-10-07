@@ -69,7 +69,7 @@ scratch instance (DR.md 4.3, steps 5 and 6).
 
 ## How it is tested
 
-`scripts/polaris-pitr-drill.sh --reconcile`, in CI's DR job, makes 23 withdrawals of every kind on
+`scripts/polaris-pitr-drill.sh --reconcile`, in CI's DR job, makes 24 withdrawals of every kind on
 either side of a target on a real archiving primary and restores both points. The restored database
 must first read looser (credential 10, revoked after the target, reads ACTIVE), then, once
 reconciled, equal the archive's end apart from the one grant made after the target, which is listed.
