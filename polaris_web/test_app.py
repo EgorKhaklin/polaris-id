@@ -8953,6 +8953,33 @@ class F05_ProductionSecretGuardTests(unittest.TestCase):
         self.assertIn('FATAL', proc.stderr)
         self.assertIn('POLARIS_DB_SSLMODE', proc.stderr)
 
+    def test_unreadable_secret_file_rejected_in_production(self):
+        """Lab record 017: a secret file that is set but unreadable stops a production boot by
+        name, instead of falling back to an environment variable or a default."""
+        proc = self._prod_import({'POLARIS_DB_SSLMODE': 'require',
+                                  'POLARIS_SECRET_KEY_FILE': '/nonexistent/polaris_secret_key'})
+        self.assertEqual(proc.returncode, 2, f"stderr: {proc.stderr[:400]}")
+        # The contract's own report, not the old fallback's warning, which names the file too.
+        self.assertIn('setting(s) are wrong', proc.stderr)
+        self.assertRegex(proc.stderr, r"- POLARIS_SECRET_KEY_FILE: .* is unreadable")
+
+    def test_dev_db_password_rejected_in_production(self):
+        """Lab record 017: the development database password stops a production boot."""
+        proc = self._prod_import({'POLARIS_DB_SSLMODE': 'require',
+                                  'POLARIS_DB_PASSWORD': 'polaris_dev_password'})
+        self.assertEqual(proc.returncode, 2, f"stderr: {proc.stderr[:400]}")
+        self.assertIn('setting(s) are wrong', proc.stderr)
+        self.assertIn("- POLARIS_DB_PASSWORD: 'polaris_dev_password'", proc.stderr)
+
+    def test_complete_production_settings_pass_the_contract(self):
+        """The contract is not over-eager: a complete production configuration draws no
+        configuration report (the process may still stop later, on PQC or the database)."""
+        proc = self._prod_import({'POLARIS_DB_SSLMODE': 'require',
+                                  'POLARIS_DB_PASSWORD': 'a-real-password',
+                                  'POLARIS_USE_REAL_PQC': '1',
+                                  'POLARIS_DOMAIN': 'polaris.example.org'})
+        self.assertNotIn('setting(s) are wrong', proc.stderr)
+
 
 class ConnectionPoolTests(PolarisTestCase):
     """Lab record 017, phase 2d: a pooled connection carries nothing from one request to the next."""
@@ -9068,34 +9095,6 @@ class ConnectionPoolTests(PolarisTestCase):
         self.assertEqual(flask_app._db_pool_size({}), 0)
         self.assertEqual(flask_app._db_pool_size({'POLARIS_DB_POOL_SIZE': ''}), 0)
         self.assertEqual(flask_app._db_pool_size({'POLARIS_DB_POOL_SIZE': '4'}), 4)
-
-
-    def test_unreadable_secret_file_rejected_in_production(self):
-        """Lab record 017: a secret file that is set but unreadable stops a production boot by
-        name, instead of falling back to an environment variable or a default."""
-        proc = self._prod_import({'POLARIS_DB_SSLMODE': 'require',
-                                  'POLARIS_SECRET_KEY_FILE': '/nonexistent/polaris_secret_key'})
-        self.assertEqual(proc.returncode, 2, f"stderr: {proc.stderr[:400]}")
-        # The contract's own report, not the old fallback's warning, which names the file too.
-        self.assertIn('setting(s) are wrong', proc.stderr)
-        self.assertRegex(proc.stderr, r"- POLARIS_SECRET_KEY_FILE: .* is unreadable")
-
-    def test_dev_db_password_rejected_in_production(self):
-        """Lab record 017: the development database password stops a production boot."""
-        proc = self._prod_import({'POLARIS_DB_SSLMODE': 'require',
-                                  'POLARIS_DB_PASSWORD': 'polaris_dev_password'})
-        self.assertEqual(proc.returncode, 2, f"stderr: {proc.stderr[:400]}")
-        self.assertIn('setting(s) are wrong', proc.stderr)
-        self.assertIn("- POLARIS_DB_PASSWORD: 'polaris_dev_password'", proc.stderr)
-
-    def test_complete_production_settings_pass_the_contract(self):
-        """The contract is not over-eager: a complete production configuration draws no
-        configuration report (the process may still stop later, on PQC or the database)."""
-        proc = self._prod_import({'POLARIS_DB_SSLMODE': 'require',
-                                  'POLARIS_DB_PASSWORD': 'a-real-password',
-                                  'POLARIS_USE_REAL_PQC': '1',
-                                  'POLARIS_DOMAIN': 'polaris.example.org'})
-        self.assertNotIn('setting(s) are wrong', proc.stderr)
 
 
 class ConfigSchemaTests(unittest.TestCase):
