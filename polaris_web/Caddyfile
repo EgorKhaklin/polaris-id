@@ -47,6 +47,13 @@
         # {client_ip} is the TCP peer.
         trusted_proxies static {$POLARIS_TRUSTED_PROXIES:0.0.0.0/32}
         trusted_proxies_strict
+        # Lab record 017, phase 5: a client that sends its request slowly is cut off here, not
+        # left holding a connection (scripts/polaris-edge-limits-drill.sh).
+        timeouts {
+            read_header 10s
+            read_body 30s
+            idle 2m
+        }
     }
 }
 
@@ -70,12 +77,21 @@
     }
     respond @metrics_from_outside 404
 
+    # Lab record 017, phase 5: the app's own body limit (1 MiB), refused here, before the app.
+    request_body {
+        max_size 1MiB
+    }
+
     # Reverse proxy to the Polaris app (gunicorn :8000 inside the network)
     reverse_proxy {$POLARIS_UPSTREAMS:app:8000} {
         header_up X-Real-IP {client_ip}
         header_up X-Forwarded-For {client_ip}
         header_up X-Forwarded-Proto {scheme}
         header_up X-Forwarded-Host {host}
+        # Lab record 017, phase 5: the edge reads the whole body before the app sees the request.
+        # The app's workers are synchronous, four to an instance: a body passed through as it
+        # arrives held one for as long as its client took to send it.
+        request_buffers 1MiB
 
         # v9.183 (roadmap P1.4) — the upstream list comes from POLARIS_UPSTREAMS
         # (one app by default; "app:8000 app-green:8000" under the blue-green
@@ -144,6 +160,7 @@
     handle @static {
         header Cache-Control "public, max-age=31536000, immutable"
         reverse_proxy {$POLARIS_UPSTREAMS:app:8000} {
+            request_buffers 1MiB
             lb_try_duration 15s
             lb_try_interval 250ms
             fail_duration 10s

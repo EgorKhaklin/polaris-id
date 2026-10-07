@@ -5,8 +5,11 @@ harden the operating system around the stack, as copy-paste commands, before
 it carries real identity data. [`deploy/linux/install.sh`](../../deploy/linux/install.sh)
 configures Polaris itself; this page is what to do on a fresh Debian, Ubuntu,
 or RHEL-family server around it. Polaris's own container hardening (capabilities dropped,
-`no-new-privileges`, digest-pinned images, TLS on every hop, secrets as mounted
-files) is already in the compose file; nothing here duplicates it.
+`no-new-privileges`, read-only roots for the edge, app, pooler and Redis, an edge that
+reads each request body whole before the app sees it and ends slow clients, digest-pinned
+images, TLS on every hop, secrets as mounted files) is already in the compose file and
+the chart; nothing here duplicates it. `lab/strategy/006/posture.sh` reads it back from
+the kernel on a running stack.
 
 Do these in order. Each block has a Debian/Ubuntu form and a RHEL form where
 they differ.

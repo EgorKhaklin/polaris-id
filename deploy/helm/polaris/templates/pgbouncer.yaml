@@ -28,7 +28,7 @@ spec:
           image: {{ .Values.images.pgbouncer }}
           imagePullPolicy: {{ .Values.images.pullPolicy }}
           securityContext:
-            {{- include "polaris.containerSecurity" . | nindent 12 }}
+            {{- include "polaris.containerSecurityReadOnly" . | nindent 12 }}
           env:
             - {name: POLARIS_DB_HOST, value: {{ include "polaris.fullname" . }}-pg-router}
             - {name: POLARIS_DB_PORT, value: "5432"}
@@ -62,6 +62,9 @@ spec:
             - {name: secrets, mountPath: /etc/polaris-pg-certs/postgres.crt, subPath: postgres_server.crt, readOnly: true}
             - {name: secrets, mountPath: /etc/polaris-pgb-certs/pgbouncer.crt, subPath: pgbouncer_server.crt, readOnly: true}
             - {name: secrets, mountPath: /etc/polaris-pgb-certs/pgbouncer.key, subPath: pgbouncer_server.key, readOnly: true}
+            # The entrypoint writes pgbouncer.ini and userlist.txt (the database password) here.
+            - {name: conf, mountPath: /etc/pgbouncer}
+            - {name: tmp, mountPath: /tmp}
           readinessProbe:
             tcpSocket:
               port: pgbouncer
@@ -74,6 +77,10 @@ spec:
           secret:
             secretName: {{ include "polaris.secretName" . }}
             defaultMode: 0444
+        - name: conf
+          emptyDir: {medium: Memory}
+        - name: tmp
+          emptyDir: {medium: Memory}
 ---
 apiVersion: v1
 kind: Service

@@ -45,7 +45,7 @@ spec:
           image: {{ .Values.images.redis }}
           imagePullPolicy: {{ .Values.images.redisPullPolicy }}
           securityContext:
-            {{- include "polaris.containerSecurity" . | nindent 12 }}
+            {{- include "polaris.containerSecurityReadOnly" . | nindent 12 }}
           # Lab record 017, phase 4a: users come from the Secret's redis_users.acl, which holds
           # only the app password's SHA-256. `default` is off; `health` may only PING.
           args: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--aclfile", "/run/secrets/redis/users.acl"]

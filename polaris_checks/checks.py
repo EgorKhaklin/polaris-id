@@ -2717,6 +2717,53 @@ def check_container_hardening(root: pathlib.Path) -> list[Finding]:
                "entrypoint needs) + forbid privilege escalation; proven to still serve by CI")
 
 
+# 2026-10-07 (lab record 017, phase 5): the services that never write to their image run on a
+# read-only root, so code execution in one cannot replace the program it runs. The edge, the app,
+# the pooler and Redis write only to volumes and memory (pgbouncer's generated config, which holds
+# the database password, included); postgres prepares its data directory as root and is not among
+# them. The chart says the same of their pods, and lab/strategy/006/posture.sh asks the kernel on
+# the stack try.sh started: a write to / refused, no effective capability, no privilege gain.
+READ_ONLY_SERVICES = ("caddy", "app", "pgbouncer", "redis")
+
+
+def check_read_only_roots(root: pathlib.Path) -> list[Finding]:
+    name = "read_only_roots"
+    compose = _read(root, "polaris_web/docker-compose.prod.yml")
+    if not compose:
+        return _fail(name, "polaris_web/docker-compose.prod.yml is missing")
+    problems = []
+    for svc in READ_ONLY_SERVICES:
+        m = re.search(rf"(?ms)^  {svc}:\n(.*?)(?=^  [a-z_]+:\n|^[a-z]|\Z)", compose)
+        if not m or not re.search(r"(?m)^    read_only:\s*true\s*$", m.group(1)):
+            problems.append(f"the {svc} service does not run on a read-only root (read_only: true)")
+        elif svc == "pgbouncer" and not re.search(r"(?m)^      - /etc/pgbouncer:[^\n]*uid=1000", m.group(1)):
+            problems.append("pgbouncer's generated config (the database password) must go to a tmpfs "
+                            "/etc/pgbouncer owned by its user")
+    helpers = _read(root, "deploy/helm/polaris/templates/_helpers.tpl")
+    ro = re.search(r'(?s)define "polaris\.containerSecurityReadOnly".*?\{\{-? end', helpers)
+    if not ro or not re.search(r"(?m)^readOnlyRootFilesystem: true$", ro.group(0)):
+        problems.append("the chart's polaris.containerSecurityReadOnly must set readOnlyRootFilesystem: true")
+    for svc in READ_ONLY_SERVICES:
+        if 'include "polaris.containerSecurityReadOnly"' not in _read(root, f"deploy/helm/polaris/templates/{svc}.yaml"):
+            problems.append(f"the chart's {svc} container is not read-only")
+    drill = _read(root, "lab/strategy/006/posture.sh")
+    for needle, what in (("{{.HostConfig.ReadonlyRootfs}}", "Docker's own answer"),
+                         ("*\"Read-only file system\"*", "a refused write to /"),
+                         ('status_of "${c}" CapEff', "the effective capabilities"),
+                         ('status_of "${c}" NoNewPrivs', "the no-new-privileges bit")):
+        if needle not in drill:
+            problems.append(f"lab/strategy/006/posture.sh no longer checks {what}")
+    oc = _read(root, ".github/workflows/one-command.yml")
+    t, p = oc.find("bash lab/strategy/006/try.sh\n"), oc.find("bash lab/strategy/006/posture.sh")
+    if t < 0 or p < t:
+        problems.append("one-command.yml must run lab/strategy/006/posture.sh after try.sh, on its stack")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else f" (+{len(problems) - 4} more)"))
+    return _ok(name,
+               "caddy, app, pgbouncer and redis run on read-only roots in the compose file and the chart; "
+               "CI asks the kernel on the try.sh stack: writes to / refused, no capability, no privilege gain")
+
+
 # ---------------------------------------------------------------------------
 # Third-party images in the PROD compose must be pinned by digest (@sha256), not
 # just a mutable tag. A tag can be repointed at different content upstream (or, as
@@ -6560,6 +6607,55 @@ def check_client_ip_behind_proxies(root: pathlib.Path) -> list[Finding]:
                "X-Forwarded-For right to left past them and passes the client address upstream; the "
                "chart keeps source addresses (Local); CI proves it behind an appending balancer, with "
                "forgeries refused both ways")
+
+
+# 2026-10-07 (lab record 017, phase 5): a slow or oversized client is ended at the edge. The app's
+# gunicorn workers are synchronous, four to an instance, and assume a proxy that buffers slow clients;
+# Caddy passes a body upstream as it arrives unless told otherwise, so one client trickling a body
+# held one worker for as long as it took (scripts/polaris-edge-limits-drill.sh reproduced it). Every
+# edge reads the whole body (up to the app's own 1 MiB) before the app sees the request, refuses a
+# larger one, and ends a client that sends its headers or its body too slowly. CI runs the drill.
+EDGE_CONFIGS = ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest",
+                "deploy/helm/polaris/templates/configmap-caddy.yaml")
+
+
+def check_edge_limits(root: pathlib.Path) -> list[Finding]:
+    name = "edge_limits"
+    problems = []
+    for rel in EDGE_CONFIGS:
+        conf = _read(root, rel)
+        if not conf:
+            problems.append(f"{rel} is missing")
+            continue
+        t = re.search(r"(?ms)^\s*timeouts \{\n(.*?)^\s*\}", conf)
+        if not t or not re.search(r"(?m)^\s*read_header \d+s$", t.group(1)) \
+                or not re.search(r"(?m)^\s*read_body \d+s$", t.group(1)):
+            problems.append(f"{rel}: no read_header and read_body timeouts, so a slow client keeps its connection")
+        if not re.search(r"(?m)^\s*request_body \{\n\s*max_size 1MiB\n\s*\}", conf):
+            problems.append(f"{rel}: a body over the app's 1 MiB is not refused at the edge")
+        proxies = len(re.findall(r"(?m)^\s*reverse_proxy \S", conf))
+        buffered = len(re.findall(r"(?m)^\s*request_buffers 1MiB$", conf))
+        if proxies == 0 or buffered < proxies:
+            problems.append(f"{rel}: {proxies - buffered} of {proxies} reverse_proxy blocks pass a body to the "
+                            "app as it arrives (request_buffers 1MiB)")
+    if not re.search(r"(?m)^MAX_REQUEST_BODY_BYTES\s*=\s*1 \* 1024 \* 1024$", _read(root, "polaris_web/security.py")):
+        problems.append("the app's body limit is no longer 1 MiB: the edges' max_size and request_buffers move with it")
+    drill = _read(root, "scripts/polaris-edge-limits-drill.sh")
+    for needle, what in (("polaris_web/Caddyfile.citest", "the shipped edge"),
+                         ("probe slow-body", "a trickled body"), ("probe oversize", "an oversized body"),
+                         ("probe slow-header", "trickled headers")):
+        if needle not in drill:
+            problems.append(f"scripts/polaris-edge-limits-drill.sh no longer covers {what}")
+    if not re.search(r"(?m)^HTTPServer\(", drill):
+        problems.append("scripts/polaris-edge-limits-drill.sh's upstream no longer serves one request at a time")
+    if "bash scripts/polaris-edge-limits-drill.sh" not in _read(root, ".github/workflows/ci.yml"):
+        problems.append("CI does not run scripts/polaris-edge-limits-drill.sh")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else f" (+{len(problems) - 4} more)"))
+    return _ok(name,
+               "every edge reads a whole body (up to the app's 1 MiB) before the app sees it, refuses a larger "
+               "one, and ends clients that send headers or bodies too slowly; CI drills it against an upstream "
+               "that serves one request at a time")
 
 
 # 2026-09-16 — the npm job STAGES; it must not publish. `npm stage publish` uploads the
@@ -25431,6 +25527,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_caddy_self_built,
     check_prod_stack_boot,
     check_container_hardening,
+    check_read_only_roots,
     check_app_db_tls,
     check_correlation_id,
     check_dockerfile_copies_app_modules,
@@ -25477,6 +25574,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_supply_chain_pins,
     check_release_provenance,
     check_client_ip_behind_proxies,
+    check_edge_limits,
     check_doctor_names_failures,
     check_session_key_rotation,
     check_release_images_signed,

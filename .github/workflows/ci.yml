@@ -1373,6 +1373,14 @@ jobs:
       - name: The client address behind a load balancer (scripts/polaris-client-ip-drill.sh)
         run: bash scripts/polaris-client-ip-drill.sh polaris-caddy:ci
 
+      # Lab record 017, phase 5: the app's workers are synchronous, so the edge must keep a slow
+      # client off them. In front of an upstream that serves one request at a time, a body
+      # trickled at a byte a second must not delay a GET sent after it, and is ended by the edge;
+      # a 2 MiB body is refused 413 before the upstream; trickled headers are cut off. Pinned by
+      # check_edge_limits.
+      - name: A slow or oversized client is ended at the edge (scripts/polaris-edge-limits-drill.sh)
+        run: bash scripts/polaris-edge-limits-drill.sh polaris-caddy:ci
+
       - name: Prove the edge negotiates X25519MLKEM768 (post-quantum hybrid KEX)
         run: |
           set -e

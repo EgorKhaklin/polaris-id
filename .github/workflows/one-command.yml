@@ -65,6 +65,12 @@ jobs:
       - name: Run lab/strategy/006/try.sh
         run: bash lab/strategy/006/try.sh
 
+      # Lab record 017, phase 5: the stack that just issued and verified a credential runs on
+      # read-only roots with no capabilities, as the kernel reports it. Pinned by
+      # check_read_only_roots.
+      - name: The containers hold their declared posture (lab/strategy/006/posture.sh)
+        run: bash lab/strategy/006/posture.sh
+
       # Lab record 017, phase 4c (gate row OP-23): on the same stack, the issuer key is rotated
       # the way the authority key register expects, then the old one is declared compromised;
       # the app, the signed trust list and polaris-verify from PyPI must each give the answer the

@@ -32,7 +32,10 @@ services:
       resources:
         limits:
           cpus: '0.50'
-          memory: 128M
+          # Lab record 017, phase 5: the edge holds each request body (up to 1 MiB) until
+          # it is complete. 100 concurrent 1 MB uploads reached 126 MiB, the old limit; at
+          # this one, with GOMEMLIMIT below, 200 reached 242 MiB and the edge kept running.
+          memory: 256M
         reservations:
           memory: 32M
     logging:
@@ -51,6 +54,12 @@ services:
       - ALL
     # v9.239 — no capability added back: the image runs as uid 1000 and Caddy
     # listens on the unprivileged 8080/8443; the host publishes 80/443 onto them.
+    # Lab record 017, phase 5: the image's own filesystem is read-only. Caddy
+    # writes its certificates and state to /data and /config (volumes) and
+    # nothing else; /tmp is memory.
+    read_only: true
+    tmpfs:
+      - /tmp
     ports:
       - "80:8080"
       - "443:8443"
@@ -60,6 +69,8 @@ services:
       # v9.183 (P1.4) — upstream list for the Caddyfile; the blue-green overlay
       # sets "app:8000 app-green:8000".
       POLARIS_UPSTREAMS: "${POLARIS_UPSTREAMS:-app:8000}"
+      # The Go runtime collects harder as it nears this, below the container's limit.
+      GOMEMLIMIT: 200MiB
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -118,6 +129,13 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Lab record 017, phase 5: the image's own filesystem is read-only, so a
+    # process that gets code execution cannot replace the application it runs.
+    # The app writes its state and logs to the mounts below and the metrics of
+    # its workers to PROMETHEUS_MULTIPROC_DIR under /tmp, which is memory.
+    read_only: true
+    tmpfs:
+      - /tmp
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -285,6 +303,14 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Lab record 017, phase 5: the image's own filesystem is read-only. The
+    # entrypoint writes pgbouncer.ini and userlist.txt, which holds the database
+    # password, into /etc/pgbouncer: memory owned by the pgbouncer user (uid
+    # 1000), so the password no longer lands in the container's layer on disk.
+    read_only: true
+    tmpfs:
+      - /etc/pgbouncer:uid=1000,gid=1000,mode=0700
+      - /tmp
     depends_on:
       postgres:
         condition: service_healthy
@@ -490,6 +516,9 @@ services:
       - FOWNER
       - SETGID
       - SETUID
+    # Lab record 017, phase 5: the image's own filesystem is read-only; Redis
+    # writes its append-only file and snapshots to /data (a volume) only.
+    read_only: true
     command: >
       redis-server
       --appendonly yes

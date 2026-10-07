@@ -41,7 +41,7 @@ spec:
             preStop:
               exec: {command: ["sleep", "5"]}
           securityContext:
-            {{- include "polaris.containerSecurity" . | nindent 12 }}
+            {{- include "polaris.containerSecurityReadOnly" . | nindent 12 }}
           env:
             - {name: POLARIS_ENV, value: production}
             - {name: POLARIS_PORT, value: "8000"}

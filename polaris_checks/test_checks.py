@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 
 import pytest
 
@@ -3041,6 +3042,43 @@ def test_client_ip_behind_proxies_check_discriminates(tmp_path):
            "must FAIL when the drill no longer forges through the balancer")
 
 
+def test_edge_limits_check_discriminates(tmp_path):
+    caddy, citest = "polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"
+    helm = "deploy/helm/polaris/templates/configmap-caddy.yaml"
+    files = (caddy, citest, helm, "polaris_web/security.py", "scripts/polaris-edge-limits-drill.sh",
+             ".github/workflows/ci.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_edge_limits(tmp_path)[0].level == "OK", \
+        "must PASS on the three shipped edges, the app's limit, the drill and the CI step"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_edge_limits(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    for rel in (caddy, citest, helm):
+        broken(rel, "read_header 10s", "write 10s", f"must FAIL when {rel} lets headers trickle")
+        broken(rel, "read_body 30s", "write 30s", f"must FAIL when {rel} lets a body trickle")
+        broken(rel, "max_size 1MiB", "max_size 100MiB", f"must FAIL when {rel} passes bodies over the app's limit")
+        broken(rel, "request_buffers 1MiB", "flush_interval -1", f"must FAIL when {rel} streams a body to the app")
+    broken(caddy, "request_buffers 1MiB\n            lb_try_duration",
+           "lb_try_duration", "must FAIL when the static assets' proxy streams a body to the app")
+    broken(citest, "request_buffers 1MiB", "# request_buffers 1MiB", "must FAIL when the buffering is commented out")
+    broken("polaris_web/security.py", "MAX_REQUEST_BODY_BYTES    = 1 * 1024 * 1024",
+           "MAX_REQUEST_BODY_BYTES    = 4 * 1024 * 1024", "must FAIL when the app's limit moves without the edges'")
+    broken(".github/workflows/ci.yml", "bash scripts/polaris-edge-limits-drill.sh", "true",
+           "must FAIL when CI does not run the drill")
+    broken("scripts/polaris-edge-limits-drill.sh", "HTTPServer(", "ThreadingHTTPServer(",
+           "must FAIL when the drill's upstream no longer serves one request at a time")
+    broken("scripts/polaris-edge-limits-drill.sh", "probe slow-body", "probe ready",
+           "must FAIL when the drill no longer trickles a body")
+
+
 def test_npm_publish_is_staged_check_discriminates(tmp_path):
     # The control has two halves and this tree owns one: the npm job must STAGE, so that a
     # maintainer's 2FA approval stands between a workflow run and an installer. The other
@@ -4110,6 +4148,54 @@ def test_container_hardening_check_discriminates(tmp_path):
     (web / "Dockerfile.caddy").write_text("FROM caddy:2\n")
     assert checks.check_container_hardening(tmp_path)[0].level == "FAIL", \
         "must FAIL when Dockerfile.caddy sets no USER at all"
+
+
+def test_read_only_roots_check_discriminates(tmp_path):
+    t = "deploy/helm/polaris/templates/"
+    files = ("polaris_web/docker-compose.prod.yml", t + "_helpers.tpl", t + "app.yaml", t + "caddy.yaml",
+             t + "pgbouncer.yaml", t + "redis.yaml", "lab/strategy/006/posture.sh",
+             ".github/workflows/one-command.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_read_only_roots(tmp_path)[0].level == "OK", \
+        "must PASS on the real compose file, chart, posture drill and CI step"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_read_only_roots(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    compose = "polaris_web/docker-compose.prod.yml"
+    good = (tmp_path / compose).read_text()
+    for svc in ("caddy", "app", "pgbouncer", "redis"):
+        block = re.search(rf"(?ms)^  {svc}:\n.*?(?=^  [a-z_]+:\n|^[a-z]|\Z)", good).group(0)
+        (tmp_path / compose).write_text(good.replace(block, block.replace("    read_only: true\n", "", 1), 1))
+        assert checks.check_read_only_roots(tmp_path)[0].level == "FAIL", \
+            f"must FAIL when the {svc} service runs on a writable root"
+    (tmp_path / compose).write_text(good)
+    broken(compose, "      - /etc/pgbouncer:uid=1000", "      - /var/tmp/pgbouncer:uid=1000",
+           "must FAIL when pgbouncer's config (the database password) is not written to its tmpfs")
+    broken(compose, "    read_only: true\n", "    # read_only: true\n",
+           "must FAIL when the setting is commented out")
+    broken(t + "_helpers.tpl", "readOnlyRootFilesystem: true", "readOnlyRootFilesystem: false",
+           "must FAIL when the chart's read-only helper allows writes")
+    for svc in ("app", "caddy", "pgbouncer", "redis"):
+        broken(t + svc + ".yaml", '"polaris.containerSecurityReadOnly"', '"polaris.containerSecurity"',
+               f"must FAIL when the chart's {svc} container is writable")
+    broken("lab/strategy/006/posture.sh", '*"Read-only file system"*', '*"denied"*',
+           "must FAIL when the drill no longer requires the kernel's read-only refusal")
+    broken("lab/strategy/006/posture.sh", 'status_of "${c}" CapEff', 'status_of "${c}" CapPrm',
+           "must FAIL when the drill no longer reads CapEff")
+    broken("lab/strategy/006/posture.sh", 'status_of "${c}" NoNewPrivs', 'status_of "${c}" Seccomp',
+           "must FAIL when the drill no longer reads NoNewPrivs")
+    broken("lab/strategy/006/posture.sh", "{{.HostConfig.ReadonlyRootfs}}", "{{.HostConfig.Privileged}}",
+           "must FAIL when the drill no longer asks Docker whether the root is read-only")
+    broken(".github/workflows/one-command.yml", "bash lab/strategy/006/posture.sh", "true",
+           "must FAIL when CI does not run the posture drill")
 
 
 def test_edge_pq_kex_check_discriminates(tmp_path):

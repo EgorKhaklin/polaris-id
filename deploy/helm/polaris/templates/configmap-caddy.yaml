@@ -33,6 +33,13 @@ data:
             # X-Forwarded-For right to left, past those hops only. Empty: none is trusted.
             trusted_proxies static {{ .Values.edge.trustedProxies | default "0.0.0.0/32" }}
             trusted_proxies_strict
+            # Lab record 017, phase 5: a client that sends its request slowly is cut off here, not
+            # left holding a connection (scripts/polaris-edge-limits-drill.sh).
+            timeouts {
+                read_header 10s
+                read_body 30s
+                idle 2m
+            }
         }
     }
 
@@ -53,11 +60,20 @@ data:
         }
         respond @metrics_from_outside 404
 
+        # Lab record 017, phase 5: the app's own body limit (1 MiB), refused here, before the app.
+        request_body {
+            max_size 1MiB
+        }
+
         reverse_proxy {{ include "polaris.fullname" . }}-app:8000 {
             header_up X-Real-IP {client_ip}
             header_up X-Forwarded-For {client_ip}
             header_up X-Forwarded-Proto {scheme}
             header_up X-Forwarded-Host {host}
+            # Lab record 017, phase 5: the edge reads the whole body before the app sees the request.
+            # The app's workers are synchronous, four to an instance: a body passed through as it
+            # arrives held one for as long as its client took to send it.
+            request_buffers 1MiB
             lb_policy round_robin
             lb_try_duration 15s
             lb_try_interval 250ms

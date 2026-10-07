@@ -30,10 +30,14 @@ spec:
           image: {{ .Values.images.caddy }}
           imagePullPolicy: {{ .Values.images.pullPolicy }}
           securityContext:
-            {{- include "polaris.containerSecurity" . | nindent 12 }}
+            {{- include "polaris.containerSecurityReadOnly" . | nindent 12 }}
           env:
             - name: POLARIS_DOMAIN
               value: {{ .Values.domain | quote }}
+            # The edge holds each request body (up to 1 MiB) until it is complete; the Go
+            # runtime collects harder as it nears this, below the 256Mi limit.
+            - name: GOMEMLIMIT
+              value: 200MiB
           ports:
             - name: http
               containerPort: 8080
@@ -48,6 +52,8 @@ spec:
               mountPath: /data
             - name: config
               mountPath: /config
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             tcpSocket:
               port: https
@@ -63,6 +69,8 @@ spec:
           emptyDir: {}
         - name: config
           emptyDir: {}
+        - name: tmp
+          emptyDir: {medium: Memory}
 ---
 apiVersion: v1
 kind: Service
