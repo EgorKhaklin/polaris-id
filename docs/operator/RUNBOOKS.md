@@ -213,9 +213,11 @@ budget an order of magnitude faster than the 0.1% monthly budget allows.
    `sum by (route, status) (rate(polaris_requests_total{status=~"5.."}[5m]))`.
    A single route points at a code path; broad spread points at a shared
    dependency.
-2. Check dependency health: `curl -fsS http://<target>/api/health/ready` and
-   read the `checks` block (`database`, `redis`, `zk_binary`, `disk`). A
-   `503` with one unhealthy check localizes the cause.
+2. Check dependency health: `curl -fsS http://<target>/api/health` and
+   read the `checks` block (`database`, `redis`, `zk_binary`, `disk`,
+   `custody`). A `503` with one unhealthy check localizes the cause.
+   `/api/health/ready` answers for one instance only (custody, second witness,
+   disk).
 3. Correlate with `PolarisHighDBLatency`: if both are firing, the database is
    the likely root cause.
 4. Pull recent error log lines by `X-Request-ID` (every response carries one;

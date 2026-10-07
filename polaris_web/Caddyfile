@@ -76,7 +76,7 @@
         lb_try_duration 15s
         lb_try_interval 250ms
         fail_duration 10s
-        health_uri /api/health/live
+        health_uri /api/health/ready
         health_interval 2s
         health_timeout 2s
 

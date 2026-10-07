@@ -3408,7 +3408,7 @@ def test_health_liveness_readiness_split_check_discriminates(tmp_path):
     web.mkdir()
     GOOD_LIVE = (
         "@app.route('/api/health/ready')\n"
-        "def api_health_ready():\n    body, code = _compute_readiness()\n    return body, code\n\n"
+        "def api_health_ready():\n    body, code = _compute_instance_readiness()\n    return body, code\n\n"
         "@app.route('/api/health/live')\n"
         "def api_health_live():\n    return {'status': 'alive'}, 200\n\n"
         "def next_route():\n    pass\n"
@@ -3443,6 +3443,30 @@ def test_health_liveness_readiness_split_check_discriminates(tmp_path):
     write(GOOD_LIVE, df="HEALTHCHECK CMD curl http://localhost:8000/api/health | grep healthy\n")
     assert checks.check_health_liveness_readiness_split(tmp_path)[0].level == "FAIL", \
         "must FAIL when the container HEALTHCHECK does not use the liveness probe"
+
+    # 5. Readiness runs the shared roll-up: a database failover would empty the rotation.
+    write(GOOD_LIVE.replace("_compute_instance_readiness()", "_compute_readiness()"))
+    assert checks.check_health_liveness_readiness_split(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the readiness probe runs the shared dependency roll-up"
+
+    # 6. The edge routes on liveness, not readiness.
+    write(GOOD_LIVE)
+    (web / "Caddyfile").write_text("reverse_proxy app:8000 {\n    health_uri /api/health/live\n}\n")
+    assert checks.check_health_liveness_readiness_split(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the edge routes on liveness"
+    (web / "Caddyfile").write_text("reverse_proxy app:8000 {\n    health_uri /api/health/ready\n}\n")
+    assert checks.check_health_liveness_readiness_split(tmp_path)[0].level == "OK", \
+        "must PASS when the edge routes on readiness"
+
+    # 7. Kubernetes routes on liveness.
+    helm = tmp_path / "deploy" / "helm" / "polaris" / "templates"
+    helm.mkdir(parents=True)
+    (helm / "app.yaml").write_text("          readinessProbe:\n            httpGet: {path: /api/health/live, port: http}\n")
+    assert checks.check_health_liveness_readiness_split(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the Helm readinessProbe uses liveness"
+    (helm / "app.yaml").write_text("          readinessProbe:\n            httpGet: {path: /api/health/ready, port: http}\n")
+    assert checks.check_health_liveness_readiness_split(tmp_path)[0].level == "OK", \
+        "must PASS when the Helm readinessProbe uses readiness"
 
 
 def test_compose_resource_limits_check_discriminates(tmp_path):
@@ -5563,7 +5587,7 @@ def test_migrations_expand_contract_check_discriminates(tmp_path):
 
 def test_zero_downtime_deploy_check_discriminates(tmp_path):
     CADDY = ("admin unix//config/admin.sock\n"
-             "reverse_proxy {$POLARIS_UPSTREAMS:app:8000} {\n  lb_try_duration 15s\n  health_uri /api/health/live\n}\n")
+             "reverse_proxy {$POLARIS_UPSTREAMS:app:8000} {\n  lb_try_duration 15s\n  health_uri /api/health/ready\n}\n")
     COMPOSE = ("services:\n  app:\n    container_name: polaris-app\n    healthcheck:\n      test: x\n    stop_grace_period: 35s\n"
                "  pgbouncer:\n    image: y\n  caddy:\n    environment:\n      POLARIS_UPSTREAMS: \"${POLARIS_UPSTREAMS:-app:8000}\"\n")
     DEPLOY = ("read -r -a COMPOSE_EXTRA <<< \"${POLARIS_COMPOSE_EXTRA:-}\"\ncompose up -d --no-deps postgres pgbouncer redis caddy\n"
@@ -5608,6 +5632,10 @@ def test_zero_downtime_deploy_check_discriminates(tmp_path):
     # A drill with no negative control.
     write({"scripts/polaris-rolling-drill.sh": "bash scripts/polaris-deploy.sh prod --no-pull\nassert s[\"drops\"] == 0\n"})
     assert checks.check_zero_downtime_deploy(tmp_path)[0].level == "FAIL", "must FAIL when zero drops is not validated by a control"
+
+    # The edge polls liveness, so a colour that cannot sign stays in rotation.
+    write({"polaris_web/Caddyfile": CADDY.replace("/api/health/ready", "/api/health/live")})
+    assert checks.check_zero_downtime_deploy(tmp_path)[0].level == "FAIL", "must FAIL when the edge polls liveness, not readiness"
 
     # Rotation that only recreates one colour.
     write({"scripts/polaris-rotate-secret.sh": "compose up -d --no-deps --force-recreate app\n"})
