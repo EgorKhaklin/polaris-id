@@ -54,6 +54,11 @@ export POLARIS_DOMAIN=polaris.example.org
 curl -fsS https://${POLARIS_DOMAIN}/api/health | jq .
 ```
 
+Under `POLARIS_ENV=production` the application checks every setting against the
+[configuration reference](CONFIG.md) at boot and refuses to start, naming each one that is
+wrong. `python3 polaris_web/config_schema.py check --production --env-file FILE` runs the same
+validation before a deploy.
+
 [`scripts/polaris-deploy.sh`](../../scripts/polaris-deploy.sh) is idempotent
 and runs every compose command against
 [`polaris_web/docker-compose.prod.yml`](../../polaris_web/docker-compose.prod.yml)

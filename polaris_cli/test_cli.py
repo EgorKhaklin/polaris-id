@@ -1076,6 +1076,13 @@ class GovernanceCommandsRefuseTheAppRole(unittest.TestCase):
         self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
         self.assertIn("schema owner", r.stderr)
 
+    def test_the_app_role_cannot_re_sign_the_population(self):
+        """2026-10-04 (THREAT-MODEL): the application role can no longer write TokenSignature, so a
+        population migration is the owner's; as the application role it is refused before it writes."""
+        r = self._as_app('migrate-population', '--to', 'ML-DSA-87')
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn("schema owner", r.stderr)
+
     def test_the_app_role_cannot_register_or_reshape_a_relying_party(self):
         """2026-09-27: relying-party registration and policy are the owner's."""
         why = 'a relying party the application tried to register for itself'

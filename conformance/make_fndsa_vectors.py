@@ -6,7 +6,7 @@
 
 FN-DSA is FIPS 206, still a draft; its scheme is round-3 Falcon, which liboqs implements under
 the name Polaris puts on the wire, Falcon-padded-1024 (category 5, fixed-length signatures).
-Polaris verifies it and signs nothing under it (lab/strategy/015). Three vectors:
+Polaris verifies it, and signs under it only as an experimental signer (lab/strategy/015). Three vectors:
 
   - a genuine Falcon-padded-1024 pack, which must verify;
   - the same pack with one flipped signature byte, which must not;

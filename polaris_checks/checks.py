@@ -866,6 +866,14 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT ON HolderKeyEvent, and "
                                     "uc_record_holder_key_event must be SECURITY DEFINER with search_path "
                                     "pinned: it is the holder key register's only writer (C1)")
+    # 2026-10-04 (THREAT-MODEL). Credential signatures are written by the issuance, recovery, bulk and
+    # migration procedures (SECURITY DEFINER) and by the owner's population migration. With the write,
+    # a compromised application plants a signature row, keyless or under a key of its own.
+    if not re.search(r"REVOKE\s+INSERT\s*,\s*UPDATE\s*,\s*DELETE\s+ON\s+TokenSignature\s+FROM\s+polaris_app",
+                     grants, re.I):
+        return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT, UPDATE, DELETE ON TokenSignature from "
+                                    "polaris_app: with the write, a compromised application plants a signature "
+                                    "row for any credential (C1)")
     # 2026-09-25. The anchoring layer: written by close_anchor_batch and the sample data only.
     if not (re.search(r"REVOKE\s+INSERT\s+ON\s+AnchorBatch\s+FROM\s+polaris_app", grants, re.I)
             and re.search(r"REVOKE\s+INSERT\s*,\s*UPDATE\s*,\s*DELETE\s+ON\s+BlockchainAnchor\s+FROM\s+polaris_app",
@@ -5507,6 +5515,70 @@ def check_rust_toolchain_pinned(root: pathlib.Path) -> list[Finding]:
     return _ok("rust_pin",
                f"the ZK toolchain is pinned to {chan} and CI derives it from the file")
 
+
+
+# 2026-10-07 (lab record 017, phase 1) — the configuration contract. polaris_web/config_schema.py
+# declares every POLARIS_* setting the application reads; production boot validates against it.
+# A setting the code reads but the schema does not declare is a setting the contract cannot
+# validate or document, and a declaration nothing reads is a reference that lies.
+_CFG_DECL = re.compile(r'_s\(\s*"(POLARIS_[A-Z0-9_]+(?:<ROLE>)?)"')
+_CFG_LIT = re.compile(r"""['"](POLARIS_[A-Z0-9_]+)['"]|f['"](POLARIS_[A-Z0-9_]*)\{""")
+
+
+def check_config_schema_covers_env(root: pathlib.Path) -> list[Finding]:
+    name = "config_schema"
+    schema = _read(root, "polaris_web/config_schema.py")
+    if not schema:
+        return _fail(name, "polaris_web/config_schema.py (the configuration contract) is missing")
+    declared = set(_CFG_DECL.findall(schema))
+    families = [d.split("<")[0] for d in declared if d.endswith("<ROLE>")]
+    plain = {d for d in declared if not d.endswith("<ROLE>")}
+    read, undeclared = set(), []
+    for f in sorted((root / "polaris_web").glob("*.py")):
+        if f.name.startswith("test_"):
+            continue
+        for line in f.read_text().splitlines():
+            if f.name == "config_schema.py" and '_s("' in line:
+                continue
+            for exact, prefix in _CFG_LIT.findall(line):
+                if exact:
+                    read.add(exact)
+                    if exact not in plain and not any(exact.startswith(p) for p in families):
+                        undeclared.append(f"{exact} ({f.name})")
+                elif prefix and not any(prefix.startswith(p) or p.startswith(prefix) for p in families):
+                    undeclared.append(f"{prefix}... ({f.name})")
+    if undeclared:
+        return _fail(name, "read by the application but not declared in config_schema.py: "
+                           + ", ".join(sorted(set(undeclared))[:6]))
+    stale = sorted(plain - read)
+    if stale:
+        return _fail(name, "declared in config_schema.py but read nowhere: " + ", ".join(stale[:6]))
+    return _ok(name, f"config_schema.py declares the {len(plain)} settings and {len(families)} role "
+                     f"families the application reads, and nothing it does not")
+
+
+def check_config_doc_current(root: pathlib.Path) -> list[Finding]:
+    name = "config_doc"
+    path = root / "polaris_web" / "config_schema.py"
+    if not path.is_file():
+        return _fail(name, "polaris_web/config_schema.py is missing")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_polaris_config_schema_for_check", path)
+    mod = importlib.util.module_from_spec(spec)
+    import sys as _sys
+    _sys.modules[spec.name] = mod  # dataclasses resolve postponed annotations through it
+    try:
+        spec.loader.exec_module(mod)
+        rendered = mod.render_doc()
+    except Exception as exc:  # noqa: BLE001
+        return _fail(name, f"config_schema.render_doc() failed: {exc}")
+    finally:
+        _sys.modules.pop(spec.name, None)
+    doc = _read(root, "docs/operator/CONFIG.md")
+    if doc != rendered:
+        return _fail(name, "docs/operator/CONFIG.md differs from the schema's rendering; regenerate it "
+                           "with `python3 polaris_web/config_schema.py doc > docs/operator/CONFIG.md`")
+    return _ok(name, "docs/operator/CONFIG.md is the schema's own rendering")
 
 # P0.2 — the Atlas e2e suite must RUN in CI with the skip escape hatch closed.
 # From v9.33 the suite existed but was wired to no job; it skipped everywhere,
@@ -13856,8 +13928,24 @@ def check_algorithm_agility(root: pathlib.Path) -> list[Finding]:
             return _fail("algorithm_agility", "%s accepts Falcon-512, which is category 1, below the floor" % n)
     if "a genuine Falcon-padded-512 pack is refused" not in v:
         return _fail("algorithm_agility", "the detached verifier's --selftest must prove Falcon-512 is refused")
-    if re.search(r'oqs\.Signature\("Falcon', _read(root, "polaris_web/custody.py") + _read(root, "polaris_web/pqc_signing.py")):
-        return _fail("algorithm_agility", "Polaris signs nothing under Falcon until lab/strategy/015 clears its signing timing")
+    # 2026-10-06: Polaris signs under it only as an EXPERIMENTAL signer: named in
+    # POLARIS_EXPERIMENTAL_SIGNERS, never under POLARIS_ENV=production, and two-witnessed by a
+    # second implementation (@noble/post-quantum under Node), as ML-DSA is by cryptography.
+    cust_src = _read(root, "polaris_web/custody.py")
+    if re.search(r'^ALGORITHM_SIZES = \{[^}]*Falcon', cust_src, re.M):
+        return _fail("algorithm_agility", "Falcon belongs in custody.EXPERIMENTAL_ALGORITHM_SIZES, not the accepted set")
+    for sym in ('EXPERIMENTAL_ALGORITHM_SIZES = {"Falcon-padded-1024": (1793, 1280)}', "def experimental_signer_allowed",
+                '== "production":', "POLARIS_EXPERIMENTAL_SIGNERS", "def signing_sizes"):
+        if sym not in cust_src:
+            return _fail("algorithm_agility", "custody.py must gate the experimental signer (%s missing)" % sym)
+    for sym in ("def _signs_under", "def _verifies_under", "def _falcon_witness", "not _signs_under(alg)"):
+        if sym not in pq:
+            return _fail("algorithm_agility", "pqc_signing.py must sign Falcon only through the gate, two-witnessed (%s missing)" % sym)
+    if "falcon1024padded.verify" not in _read(root, "polaris_web/witness/falcon_witness.mjs"):
+        return _fail("algorithm_agility", "polaris_web/witness/falcon_witness.mjs must be the Falcon second witness")
+    cli_src = _read(root, "polaris_cli/polaris.py")
+    if "def _experimental_key_allowed" not in cli_src or "3586: 'Falcon-padded-1024'" not in cli_src:
+        return _fail("algorithm_agility", "the CLI must register a Falcon key only under the experimental opt-in")
     cases = _read(root, "conformance/cases.json")
     for name in ("pack-mldsa87-valid", "pack-mldsa44-unaccepted", "status-assertion-mldsa87-active", "trust-list-migration",
                  "trust-list-migration-retired-signer", "pack-fndsa1024-valid", "pack-fndsa1024-tampered", "pack-fndsa512-unaccepted"):
@@ -19777,6 +19865,69 @@ def check_accessibility(root: pathlib.Path) -> list[Finding]:
                "covers, and leaves the outward claim unchanged")
 
 
+
+# 2026-10-07 (lab record 017) — the operability gate is a table of claims about deploying and
+# running Polaris. It is executable the way the assurance mapping is: every PASS cites evidence,
+# every citation in any row resolves (a check that exists, a test file and name, a drill or file
+# path), the stated totals are recomputed from the rows, and the last word on real identity data
+# cannot turn PASS while the status line still says otherwise.
+_GATE_STATUSES = ("PASS", "PARTIAL", "FAIL", "UNKNOWN", "N/A")
+
+
+def _gate_citation_resolves(root: pathlib.Path, kind: str, target: str) -> bool:
+    if kind == "check":
+        fn = globals().get(target if target.startswith("check_") else "check_" + target)
+        return callable(fn)
+    if kind == "test":
+        path, _, name = target.partition("::")
+        f = root / path
+        if not f.is_file():
+            return False
+        return not name or re.search(r"(class|def)\s+%s\b" % re.escape(name), f.read_text()) is not None
+    return (root / target).exists()
+
+
+def check_operability_gate(root: pathlib.Path) -> list[Finding]:
+    name = "operability_gate"
+    doc = _read(root, "docs/PRODUCTION-READINESS.md")
+    if "## Operability gate" not in doc:
+        return _fail(name, "docs/PRODUCTION-READINESS.md has no '## Operability gate' section")
+    section = doc.split("## Operability gate", 1)[1].split("\n## ", 1)[0]
+    if "not readiness for real identity data" not in " ".join(section.split()):
+        return _fail(name, "the gate must say it is not readiness for real identity data")
+    rows = []
+    for line in section.splitlines():
+        if line.startswith("| OP-"):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) != 4:
+                return _fail(name, f"gate row is not ID | criterion | status | evidence: {line[:60]}")
+            rows.append(cells)
+    if len(rows) < 10:
+        return _fail(name, f"the gate has {len(rows)} rows; it must actually cover operation")
+    for rid, crit, status, evidence in rows:
+        if status not in _GATE_STATUSES:
+            return _fail(name, f"{rid} has status {status!r}; it must be one of {', '.join(_GATE_STATUSES)}")
+        cites = re.findall(r"`(check|test|drill|file):([^`]+)`", evidence)
+        if status == "PASS" and not cites:
+            return _fail(name, f"{rid} is PASS with no citation; a PASS must cite a check, test, drill or file")
+        for kind, target in cites:
+            if not _gate_citation_resolves(root, kind, target):
+                return _fail(name, f"{rid} cites {kind}:{target}, which does not resolve")
+    real = [r for r in rows if "real identity data" in r[1].lower()]
+    if not real:
+        return _fail(name, "the gate must carry the real-identity-data row")
+    if ("not production-ready for real identity data" in doc
+            and any(r[2] == "PASS" for r in real)):
+        return _fail(name, "the real-identity-data row is PASS while the status line says it is not")
+    m = re.search(r"(\d+) criteria: (\d+) PASS, (\d+) PARTIAL, (\d+) FAIL, (\d+) UNKNOWN", section)
+    if not m:
+        return _fail(name, "the gate must state its totals ('N criteria: a PASS, b PARTIAL, c FAIL, d UNKNOWN')")
+    counted = (len(rows), *(sum(1 for r in rows if r[2] == st) for st in ("PASS", "PARTIAL", "FAIL", "UNKNOWN")))
+    if tuple(int(g) for g in m.groups()) != counted:
+        return _fail(name, f"the stated totals {m.group(0)!r} disagree with the rows {counted}")
+    return _ok(name, f"the operability gate's {len(rows)} rows have known statuses, every PASS cites "
+                     f"evidence, every citation resolves and the totals match the rows")
+
 def check_assurance_mapping(root: pathlib.Path) -> list[Finding]:
     """The 800-63 mapping cites evidence that exists, and does not claim conformance (P6.2).
 
@@ -24641,6 +24792,9 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_ci_ssl_probe_aggregated,
     check_migrate_docker_stdin_safe,
     check_rust_toolchain_pinned,
+    check_config_schema_covers_env,
+    check_config_doc_current,
+    check_operability_gate,
     check_ci_runs_atlas_e2e,
     check_load_gen_single_ledger,
     check_chaos_probe_reaches_wrapper,
