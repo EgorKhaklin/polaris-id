@@ -86,6 +86,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- `/api/health/ready` answers for one instance (custody, the second witness, local disk) and leaves the shared database to `/api/health`; the edge and the Helm readiness probe route on it, so a database failover no longer takes every instance out of rotation (lab record 017).
 - security.txt's contact defaults to security@ the deployment's domain when none is set.
 - The scoreboard records the IETF SD-JWT repository listing polaris-oid4vp among its implementations.
 - The README's badges return in three rows, with a tested-against badge; each package README gets a badge row; the site links Discord.
