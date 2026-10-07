@@ -28,6 +28,7 @@ mounts each file through `${POLARIS_SECRETS_DIR:-./secrets}/<name>`.
 | File | Contents | Mode | Read by | Rotated by |
 |---|---|---|---|---|
 | `polaris_secret_key` | 32 random bytes as 64 hex chars | 0644 | the app, via `POLARIS_SECRET_KEY_FILE=/run/secrets/polaris_secret_key` (Flask session signing) | `polaris-rotate-secret.sh` |
+| `polaris_secret_key_fallbacks` | the session key the last rotation retired; at generation, one random key that never signed anything | 0644 | the app, via `POLARIS_SECRET_KEY_FALLBACKS_FILE`: it verifies the sessions, relying-party tokens and codes the retired key signed, and signs nothing | `polaris-rotate-secret.sh polaris_secret_key` |
 | `polaris_db_password` | random hex (24 bytes at generation, 32 at rotation) | 0644 | the app and pgbouncer as the `polaris_app` role; `docker-init.sh` syncs the role to it | `polaris-rotate-secret.sh` |
 | `polaris_db_root_password` | random hex | 0600 | the postgres entrypoint as root, before it drops privileges | `polaris-rotate-secret.sh` |
 | `polaris_replicator_password` | random hex | 0644 | `docker-init.sh` as the postgres user; creates the `polaris_replicator` role for a standby ([FAILOVER.md](FAILOVER.md)) | by hand; not covered by the rotation script |
@@ -152,9 +153,13 @@ Common steps, in order:
 
 Per-secret step 6:
 
-- `polaris_secret_key`: recreates the app container(s) one at a time,
-  waiting for each to report healthy. Every user session is invalidated;
-  schedule the rotation for a low-traffic window.
+- `polaris_secret_key`: before the new key is written, the retiring key goes to
+  `polaris_secret_key_fallbacks`; then the app container(s) are recreated one at a time,
+  waiting for each to report healthy. Sessions continue: the retired key verifies the
+  sessions, relying-party tokens and codes it signed, and signs nothing new; only the key
+  retired last is kept, so a session older than two rotations ends. For a key that may have
+  leaked, `polaris-rotate-secret.sh polaris_secret_key --drop-old` keeps no retired key, and
+  every session ends.
 - `polaris_db_password`: (the `ALTER USER polaris_app` ran at step 3) recreates pgbouncer
   BEFORE the app. pgbouncer builds its `userlist.txt` from the secret at
   container start, so recreating only the app leaves every connection

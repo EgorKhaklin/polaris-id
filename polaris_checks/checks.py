@@ -5944,6 +5944,59 @@ def check_release_provenance(root: pathlib.Path) -> list[Finding]:
                "documents the verify command")
 
 
+# 2026-10-07 (lab record 017, phase 4b): rotating the session key logs nobody out. Before it,
+# every rotation ended every operator session, so a key was rotated rarely or never. The key a
+# rotation retires is kept in polaris_secret_key_fallbacks: Flask's SECRET_KEY_FALLBACKS verifies
+# sessions it signed, and every relying-party token, authorization code and OpenID4VCI value is
+# verified under all the keys and made under the current one only. --drop-old, for a key that may
+# have leaked, keeps none of them.
+def check_session_key_rotation(root: pathlib.Path) -> list[Finding]:
+    name = "session_key_rotation"
+    problems = []
+    app_src = _read_app(root)
+    if not re.search(r"app\.config\['SECRET_KEY_FALLBACKS'\]\s*=\s*\[[\s\S]{0,200}"
+                     r"POLARIS_SECRET_KEY_FALLBACKS_FILE", app_src):
+        problems.append("app.py does not load SECRET_KEY_FALLBACKS from POLARIS_SECRET_KEY_FALLBACKS_FILE")
+    rp = _read(root, "polaris_web/rp_auth.py")
+    if not re.search(r"URLSafeTimedSerializer\(_keys\(secret_key\)", rp):
+        problems.append("rp_auth's token serializer is not given every key")
+    if not re.search(r"MultiFernet\(\[[\s\S]{0,200}for k in reversed\(_keys\(secret_key\)\)\]\)", rp):
+        problems.append("rp_auth's codes and VCI values are not a MultiFernet over every key, the current first")
+    for rel in ("polaris_web/rp_api.py", "polaris_web/oid4vci_routes.py"):
+        src = _read(root, rel)
+        stale = re.findall(r"rp_auth\.\w+\(app\.secret_key", src)
+        if stale:
+            problems.append(f"{rel} signs or verifies with the current key alone ({stale[0]}...)")
+        if "rp_auth.keys_of(app)" not in src:
+            problems.append(f"{rel} does not pass the app's keys (rp_auth.keys_of(app))")
+    rot = _read(root, "scripts/polaris-rotate-secret.sh")
+    keep = rot.find('tr -d \'\\r\\n \' < "${TARGET}" > "${FALLBACKS}.new"')
+    write_new = rot.find('printf \'%s\\n\' "${NEW_VALUE}" > "${TARGET}.new"')
+    if keep < 0 or write_new < 0 or keep > write_new:
+        problems.append("polaris-rotate-secret.sh does not keep the retired key in "
+                        "polaris_secret_key_fallbacks before writing the new one")
+    if not re.search(r'DROP_OLD.*==\s*1[\s\S]{0,120}gen_hex > "\$\{FALLBACKS\}\.new"', rot):
+        problems.append("polaris-rotate-secret.sh has no --drop-old that keeps no retired key")
+    if "write_secret_if_missing polaris_secret_key_fallbacks" not in _read(root, "scripts/polaris-generate-secrets.sh"):
+        problems.append("polaris-generate-secrets.sh does not create polaris_secret_key_fallbacks")
+    compose = _read(root, "polaris_web/docker-compose.prod.yml")
+    if ("POLARIS_SECRET_KEY_FALLBACKS_FILE: /run/secrets/polaris_secret_key_fallbacks" not in compose
+            or "      - polaris_secret_key_fallbacks\n" not in compose):
+        problems.append("the compose app is not given polaris_secret_key_fallbacks")
+    if "POLARIS_SECRET_KEY_FALLBACKS_FILE" not in _read(root, "deploy/helm/polaris/templates/app.yaml"):
+        problems.append("the Helm app is not given POLARIS_SECRET_KEY_FALLBACKS_FILE")
+    tests = _read(root, "polaris_web/test_app.py")
+    if not re.search(r"def test_a_signed_in_operator_stays_signed_in_across_a_rotation\(", tests):
+        problems.append("no test shows a signed-in operator staying signed in across a rotation")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else
+                                                       f" (+{len(problems) - 4} more)"))
+    return _ok(name,
+               "a rotation keeps the retired session key in polaris_secret_key_fallbacks: sessions, "
+               "relying-party tokens, codes and VCI values it signed still verify, new ones use the "
+               "current key only, and --drop-old keeps none")
+
+
 # 2026-09-16 — the npm job STAGES; it must not publish. `npm stage publish` uploads the
 # tarball and stops, and a maintainer with 2FA approves it before anyone can install it, so
 # a workflow that is compromised or merely run by mistake cannot put code in front of an
@@ -24806,6 +24859,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_workflows_reach_the_app_role,
     check_sbom_trivy_matches_scan,
     check_release_provenance,
+    check_session_key_rotation,
     check_npm_publish_is_staged,
     check_admin_mfa_deadline,
     check_duress_timing_ballast,

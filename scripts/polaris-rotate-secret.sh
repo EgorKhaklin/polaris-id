@@ -10,12 +10,15 @@
 # bumps the affected component(s).
 #
 # Usage:
-#     ./scripts/polaris-rotate-secret.sh polaris_secret_key
+#     ./scripts/polaris-rotate-secret.sh polaris_secret_key [--drop-old]
 #     ./scripts/polaris-rotate-secret.sh polaris_db_password
 #     ./scripts/polaris-rotate-secret.sh polaris_db_root_password
 #
 # Effects per secret:
-#   polaris_secret_key           — recreates app container (sessions invalidated)
+#   polaris_secret_key           — keeps the retired key in polaris_secret_key_fallbacks, so
+#                                  sessions and tokens it signed still verify, then recreates
+#                                  the app; --drop-old (a suspected leak) keeps no old key and
+#                                  every session ends
 #   polaris_db_password          — rotates polaris_app password in DB, recreates pgbouncer then app
 #   polaris_db_root_password     — rotates postgres superuser password, recreates postgres
 #
@@ -47,8 +50,13 @@ recreate_apps() {
     done
 }
 
+DROP_OLD=0
+if [[ $# -eq 2 && "$1" == polaris_secret_key && "$2" == --drop-old ]]; then
+    DROP_OLD=1
+    set -- "$1"
+fi
 if [[ $# -ne 1 ]]; then
-    echo "usage: $(basename "$0") <secret-name>" >&2
+    echo "usage: $(basename "$0") <secret-name>   (polaris_secret_key also takes --drop-old)" >&2
     echo "       valid names: polaris_secret_key | polaris_db_password | polaris_db_root_password" >&2
     exit 2
 fi
@@ -144,6 +152,26 @@ esac
 # report, so `stat -f ... || stat -c ...` never fell through on Linux and chmod
 # got garbage (found by the first CI run of the rotation drill, v9.181). Pick
 # the dialect by capability instead.
+# Lab record 017, phase 4b: the retired session key goes to polaris_secret_key_fallbacks before
+# the new one is written, so what it signed (sessions, relying-party tokens, codes) still
+# verifies after the app restarts, and nothing new is signed with it. Only the key retired last
+# is kept: a session older than two rotations ends. --drop-old, for a key that may have leaked,
+# keeps a random key that never signed anything instead, and every session ends.
+if [[ "${SECRET}" == polaris_secret_key ]]; then
+    FALLBACKS="${SECRETS_DIR}/polaris_secret_key_fallbacks"
+    if [[ "${DROP_OLD}" == 1 ]]; then
+        ( umask 0133 && gen_hex > "${FALLBACKS}.new" )
+        echo "  • --drop-old: the retired key is not kept; every session ends"
+    else
+        ( umask 0133 && tr -d '\r\n ' < "${TARGET}" > "${FALLBACKS}.new" && echo >> "${FALLBACKS}.new" )
+    fi
+    chmod 0644 "${FALLBACKS}.new"
+    mv "${FALLBACKS}.new" "${FALLBACKS}"
+    if [[ "${POLARIS_SECRETS_BACKEND:-file}" != "file" ]]; then
+        POLARIS_SECRETS_PLAIN_DIR="${SECRETS_DIR}" "${SCRIPT_DIR}/polaris-secrets.sh" seal --only polaris_secret_key_fallbacks >/dev/null
+    fi
+fi
+
 if stat --version >/dev/null 2>&1; then
     CUR_MODE=$(stat -c '%a' "${TARGET}")          # GNU coreutils
 else
@@ -172,7 +200,11 @@ fi
 
 case "${SECRET}" in
     polaris_secret_key)
-        echo "  → recreating app container (all sessions invalidated)…"
+        if [[ "${DROP_OLD}" == 1 ]]; then
+            echo "  → recreating app container (every session ends)…"
+        else
+            echo "  → recreating app container (sessions continue under the retired key)…"
+        fi
         recreate_apps
         ;;
 

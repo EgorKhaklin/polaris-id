@@ -136,7 +136,7 @@ def api_v1_oauth_token():
     row, client_id, err = _rp_authenticate_client(request)
     if err:
         return err
-    token = rp_auth.issue_access_token(app.secret_key, row['rp_id'], client_id, row['scope'])
+    token = rp_auth.issue_access_token(rp_auth.keys_of(app), row['rp_id'], client_id, row['scope'])
     # Coarse liveness only — NOT a log of what was verified.
     query("UPDATE RelyingParty SET last_used_at = now() WHERE rp_id = %s",
           (row['rp_id'],), fetch='none')
@@ -148,7 +148,7 @@ def _rp_require_token():
     """Validate the Bearer access token on an /api/v1 request. Returns the token
     payload, or (None, error_response) so the caller can `return` it."""
     token = rp_auth.parse_bearer(request.headers.get('Authorization'))
-    payload = rp_auth.validate_access_token(app.secret_key, token)
+    payload = rp_auth.validate_access_token(rp_auth.keys_of(app), token)
     if payload is None:
         return None, (jsonify(error='invalid_token',
                               error_description='a valid, unexpired, verify-scoped bearer token is required'), 401)
@@ -2396,7 +2396,7 @@ def api_v1_auth_authorize():
         acr = _AUTH_ACR_ZK
     from datetime import datetime, timezone
     auth_time = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
-    code = rp_auth.issue_auth_code(app.secret_key, {
+    code = rp_auth.issue_auth_code(rp_auth.keys_of(app), {
         'rp': int(rp['rp_id']), 'cid': rp['client_id'], 'sub': _pairwise_subject(token_value, rp['client_id']),
         'ag': int(row['issuing_agency_id']), 'ctx': context_id, 'dl': disclosure_level, 'acr': acr,
         'enr': enrollment, 'nonce': nonce, 'cc': challenge, 'at': auth_time,
@@ -2420,7 +2420,7 @@ def api_v1_auth_token():
     if not rp_auth.has_scope(rp['scope'], rp_auth.SCOPE_AUTHENTICATE):
         return jsonify(error='invalid_client'), 401
     code, verifier = request.form.get('code'), request.form.get('code_verifier')
-    payload = rp_auth.validate_auth_code(app.secret_key, code)
+    payload = rp_auth.validate_auth_code(rp_auth.keys_of(app), code)
     if not payload or payload.get('cid') != client_id or not isinstance(verifier, str) or not (43 <= len(verifier) <= 128) \
             or not hmac.compare_digest(_pkce_challenge(verifier), str(payload.get('cc') or '')):
         return jsonify(error='invalid_grant'), 400

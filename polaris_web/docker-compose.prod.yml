@@ -153,6 +153,7 @@ services:
       POLARIS_DB_SSLMODE: verify-ca
       POLARIS_DB_SSLROOTCERT: /etc/polaris-pgb-certs/pgbouncer.crt
       POLARIS_SECRET_KEY_FILE: /run/secrets/polaris_secret_key
+      POLARIS_SECRET_KEY_FALLBACKS_FILE: /run/secrets/polaris_secret_key_fallbacks
       POLARIS_REDIS_HOST: redis
       POLARIS_REDIS_PORT: '6379'
       # security.py's rate-limiter auto-selector keys on POLARIS_REDIS_URL, not
@@ -221,6 +222,7 @@ services:
       POLARIS_PQC_SIGNING_KEY_FILE: /run/secrets/polaris_signing_key
     secrets:
       - polaris_secret_key
+      - polaris_secret_key_fallbacks
       - polaris_db_password
       - polaris_signing_key
     volumes:
@@ -509,6 +511,9 @@ services:
 secrets:
   polaris_secret_key:
     file: ${POLARIS_SECRETS_DIR:-./secrets}/polaris_secret_key
+  # Lab record 017, phase 4b: the keys a rotation retired (polaris-rotate-secret.sh).
+  polaris_secret_key_fallbacks:
+    file: ${POLARIS_SECRETS_DIR:-./secrets}/polaris_secret_key_fallbacks
   polaris_db_password:
     file: ${POLARIS_SECRETS_DIR:-./secrets}/polaris_db_password
   polaris_db_root_password:
