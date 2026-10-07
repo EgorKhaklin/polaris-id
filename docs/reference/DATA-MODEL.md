@@ -7,11 +7,11 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **57 tables** in `01_schema.sql` (v9.443; the 46th, CredentialCopy, 2026-09-28; the 47th
+The Polaris schema is **58 tables** in `01_schema.sql` (v9.443; the 46th, CredentialCopy, 2026-09-28; the 47th
 and 48th, PopulationCount and PopulationCountDelta, 2026-10-01; the 49th to 51st, EnrollmentCurrent,
 EnrollmentCount and EnrollmentCountDelta, 2026-10-02; the 52nd to 57th, the activity rollups,
-2026-10-02), organized
-into six functional groups. A migrated deployment holds **64 tables**: those,
+2026-10-02; the 58th, ChainAnchor, 2026-10-04), organized
+into six functional groups. A migrated deployment holds **65 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -293,6 +293,18 @@ never retained; no document, no requester). Published as an RFC-6962 log
 (`/api/v1/transparency/timestamps/*`), strictly append-only by trigger and by privilege, so a
 timestamp backdated under a stolen authority key is one absent from every witnessed head of its
 claimed era. Migration 007.
+
+### `ChainAnchor` (constraint C1: append-only; decision 013)
+
+The record of each checkpoint of the transparency logs committed to a public chain (2026-10-04).
+`anchor_id SERIAL PRIMARY KEY`, `checkpoint BYTEA` (the canonical JSON of the three logs' signed
+tree heads, exactly the bytes hashed), `checkpoint_sha256 CHAR(64) UNIQUE` (derived by
+`chk_chain_anchor_digest`, never asserted), `chain` (`BITCOIN`) and `method` (`OPENTIMESTAMPS`),
+`proof BYTEA` (the OpenTimestamps proof), `block_height`, `block_header_hex` (the raw 80-byte
+header), `recorded_at`, `recorded_by`. Written only by the schema owner (`polaris-id
+anchor-record`, after the proof verifies); the application role reads it and publishes it at
+`/api/v1/transparency/anchors`. The row is not the evidence: a verifier rereads the proof against
+block headers it reads itself. No personal data. Migration 2026-10-04-001.
 
 ### `ExchangeNonce` (constraint C1: append-only; roadmap P8.2d)
 

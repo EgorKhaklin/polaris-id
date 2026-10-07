@@ -7919,6 +7919,64 @@ class TransparencyProofBoundsTests(UnauthenticatedTestCase):
             self.assertEqual(r.get_json()['log_size'], size)
 
 
+class ChainAnchorPublicationTests(UnauthenticatedTestCase):
+    """013: the chain anchors are published beside the heads, and what is served verifies. The
+    real step-1 anchor (sdk/testdata/chain-anchor-969876.json) is recorded as the schema owner,
+    served unauthenticated by /api/v1/transparency/anchors, and decided by the detached
+    verifier's verify_chain_anchor against block 969876's header. The served checkpoint and proof
+    are the recorded bytes, so the endpoint adds nothing a verifier has to trust."""
+
+    ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(ROOT, "sdk", "testdata", "chain-anchor-969876.json")) as _f:
+        FIXTURE = json.load(_f)
+
+    def _record(self):
+        a = self.FIXTURE["anchor"]
+        cp = a["checkpoint"].encode("utf-8")
+        _owner_write("INSERT INTO ChainAnchor (checkpoint, checkpoint_sha256, chain, method, proof, "
+                     "block_height, block_header_hex, recorded_by) VALUES (%s, %s, 'BITCOIN', "
+                     "'OPENTIMESTAMPS', %s, 969876, %s, 'test') ON CONFLICT (checkpoint_sha256) DO NOTHING",
+                     (cp, hashlib.sha256(cp).hexdigest(), bytes.fromhex(a["proof_hex"]),
+                      self.FIXTURE["headers"]["969876"]))
+        return hashlib.sha256(cp).hexdigest()
+
+    @staticmethod
+    def _verifier():
+        import importlib.util
+        path = os.path.join(ChainAnchorPublicationTests.ROOT, "scripts", "polaris-verify.py")
+        spec = importlib.util.spec_from_file_location("polaris_verify_chain_anchor", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_served_anchor_is_the_recorded_one_and_verifies(self):
+        digest = self._record()
+        r = self.client.get('/api/v1/transparency/anchors')
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:200])
+        served = [a for a in r.get_json()['anchors'] if a['checkpoint_sha256'] == digest]
+        self.assertEqual(len(served), 1)
+        a = served[0]
+        self.assertEqual((a['format'], a['chain'], a['method'], a['block_height']),
+                         ('polaris-chain-anchor/1', 'BITCOIN', 'OPENTIMESTAMPS', 969876))
+        self.assertEqual(a['checkpoint'], self.FIXTURE['anchor']['checkpoint'])
+        self.assertEqual(a['proof_hex'], self.FIXTURE['anchor']['proof_hex'])
+        headers = {s: {969876: self.FIXTURE['headers']['969876']} for s in ('source-a', 'source-b')}
+        v = self._verifier().verify_chain_anchor(a, headers)
+        self.assertTrue(v['anchored'], v)
+        self.assertEqual(v['block_hash'], self.FIXTURE['block_hash'])
+
+    def test_the_list_is_bounded_and_a_bad_range_is_refused(self):
+        self._record()
+        one = self.client.get('/api/v1/transparency/anchors?start=0&end=1').get_json()
+        self.assertEqual(len(one['anchors']), 1)
+        self.assertEqual(self.client.get('/api/v1/transparency/anchors?start=2&end=1').status_code, 400)
+        self.assertEqual(self.client.get('/api/v1/transparency/anchors?start=-1').status_code, 400)
+        with patch.object(rp_api, '_CHAIN_ANCHORS_CAP', 0):
+            capped = self.client.get('/api/v1/transparency/anchors').get_json()
+        self.assertEqual(capped['anchors'], [])
+        self.assertGreaterEqual(capped['count'], 1)
+
+
 class BoundOperatorRouteIsolationTests(PolarisTestCase):
     """The routes themselves, run AS the application role by an operator bound to authority 1,
     asked for authority 3's credential (2026-09-25). Every other test in this file connects as
@@ -16535,8 +16593,8 @@ class AthenaConstraintBoardTests(PolarisTestCase):
         self.assertEqual(failing, [], 'a freshly loaded database holds every mechanism it names')
         self.assertEqual(board['summary']['not_in_force'], 0)
         c1 = self._rule(board, 'C1')
-        self.assertEqual(len(c1['guards']), 32, 'C1 lists the audit of record table by table')
-        self.assertEqual(c1['guards_held'], 32)
+        self.assertEqual(len(c1['guards']), 33, 'C1 lists the audit of record table by table')
+        self.assertEqual(c1['guards_held'], 33)
         self.assertEqual(c1['state'], 'in_force')
         for g in c1['guards']:
             self.assertIn('BEFORE UPDATE OR DELETE, each row on ', g['detail'], g['name'])
@@ -16560,7 +16618,7 @@ class AthenaConstraintBoardTests(PolarisTestCase):
 
     def test_the_page_is_the_board(self):
         body = self.client.get('/athena').get_data(as_text=True)
-        for text in ('not in force', 'in force in this database', '32 of 32 tables',
+        for text in ('not in force', 'in force in this database', '33 of 33 tables',
                      'Definition in this database', 'Read from', "script-src &#39;self&#39;"):
             self.assertIn(text, body)
 
@@ -16571,13 +16629,13 @@ class AthenaConstraintBoardTests(PolarisTestCase):
                 board = self._board()
                 c1 = self._rule(board, 'C1')
                 self.assertEqual(c1['state'], 'not_in_force')
-                self.assertEqual(c1['guards_held'], 31)
+                self.assertEqual(c1['guards_held'], 32)
                 off = c1['guards'][0]
                 self.assertEqual((off['name'], off['status']), ('trg_anchor_batch_append_only', 'not_in_force'))
                 self.assertIn('switched off on anchorbatch', off['reason'])
                 self.assertGreaterEqual(board['summary']['not_in_force'], 1)
                 body = self.client.get('/athena').get_data(as_text=True)
-                self.assertIn('31 of 32 tables', body)
+                self.assertIn('32 of 33 tables', body)
                 self.assertIn('Switched off on anchorbatch', body)
             finally:
                 cur.execute("ALTER TABLE AnchorBatch ENABLE TRIGGER trg_anchor_batch_append_only")

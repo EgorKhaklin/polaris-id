@@ -27,6 +27,7 @@ import pathlib
 import stat
 import tempfile
 import unittest
+import unittest.mock
 from datetime import datetime, timedelta, timezone
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -1810,6 +1811,213 @@ class ReceiptInclusionDecisions(unittest.TestCase):
         v = V.verify_receipt_inclusion("receipt", self.proof(3), self.head())
         self.assertFalse(v["included"])
         self.assertIn("must be objects", v["note"])
+
+
+# --------------------------------------------------------------------------- the chain anchor
+
+class ChainAnchorDecisions(unittest.TestCase):
+    """013: a checkpoint of the transparency logs committed in a Bitcoin block. The fixture is
+    the real one (sdk/testdata/chain-anchor-969876.json): lab/strategy/013's checkpoint, its
+    OpenTimestamps proof, and the raw headers of blocks 969876 (the attested block) and 969877,
+    as blockstream.info and mempool.space both returned them on 2026-10-04."""
+
+    FIXTURE = json.loads((ROOT / "sdk" / "testdata" / "chain-anchor-969876.json").read_text())
+    CHECKPOINT = FIXTURE["anchor"]["checkpoint"]
+    PROOF_HEX = FIXTURE["anchor"]["proof_hex"]
+    HEADER = {int(h): x for h, x in FIXTURE["headers"].items()}
+    BLOCK_HASH = FIXTURE["block_hash"]
+    FIRST_APPEND = "3ebbefd5c20718220b3c7641d87febb2"   # the proof's first operation's argument
+
+    def anchor(self, **changes):
+        a = {"format": "polaris-chain-anchor/1", "checkpoint": self.CHECKPOINT, "proof_hex": self.PROOF_HEX}
+        a.update(changes)
+        return a
+
+    def sources(self, header=None, n=2):
+        return {"source-%d" % i: {969876: header or self.HEADER[969876]} for i in range(n)}
+
+    def digest(self, text=None):
+        return hashlib.sha256((text or self.CHECKPOINT).encode("utf-8")).digest()
+
+    @staticmethod
+    def proof(digest, body):
+        """A proof over `digest` whose timestamp is `body`, built from the format directly."""
+        return (V._OTS_MAGIC + b"\x01" + b"\x08" + digest + body).hex()
+
+    @staticmethod
+    def bitcoin(height, extra=b""):
+        payload = bytes([height]) + extra if height < 128 else None
+        return b"\x00" + V._OTS_BITCOIN + bytes([len(payload)]) + payload
+
+    def refused(self, anchor, sources=None, why="", **kw):
+        v = V.verify_chain_anchor(anchor, self.sources() if sources is None else sources, **kw)
+        self.assertFalse(v["anchored"], v)
+        self.assertIn(why, v["note"])
+        return v
+
+    # The genuine anchor, and the one decision it needs from the caller.
+    def test_the_genuine_anchor_holds_from_two_sources(self):
+        v = V.verify_chain_anchor(self.anchor(), self.sources())
+        self.assertTrue(v["anchored"], v)
+        self.assertEqual((v["block_height"], v["block_hash"], v["block_time"]),
+                         (969876, self.BLOCK_HASH, 1791133260))
+        self.assertEqual([h["tree_size"] for h in v["heads"]], [2, 2, 194])
+        self.assertEqual(V.chain_anchor_heights(self.anchor()), [969876])
+
+    def test_the_record_s_own_block_fields_are_never_read(self):
+        """013 falsifier 2: the record is not evidence. A published anchor carries the block it
+        was recorded against; the verdict comes from the proof and the caller's sources alone."""
+        lying = self.anchor(block_height=1, block_header_hex=self.HEADER[969877], anchor_id=7)
+        v = V.verify_chain_anchor(lying, self.sources())
+        self.assertTrue(v["anchored"], v)
+        self.assertEqual(v["block_height"], 969876)
+        self.refused(self.anchor(block_height=969876, block_header_hex=self.HEADER[969876]),
+                     self.sources(self.HEADER[969877]), "Merkle root is")
+
+    def test_the_lab_checkpoint_is_the_canonical_form(self):
+        heads = json.loads(self.CHECKPOINT)["heads"]
+        self.assertEqual(V.chain_checkpoint(list(reversed(heads))), self.CHECKPOINT.encode("utf-8"))
+
+    def test_one_source_holds_only_when_the_caller_says_one_is_enough(self):
+        self.refused(self.anchor(), self.sources(n=1), "1 of 2 sources")
+        self.assertTrue(V.verify_chain_anchor(self.anchor(), self.sources(n=1), min_sources=1)["anchored"])
+        self.refused(self.anchor(), self.sources(), "positive integer", min_sources=0)
+
+    def test_sources_that_disagree_are_refused_even_when_one_matches(self):
+        mixed = {"a": {969876: self.HEADER[969876]}, "b": {969876: self.HEADER[969877]},
+                 "c": {969876: self.HEADER[969876]}}
+        self.refused(self.anchor(), mixed, "disagree about block 969876")
+
+    def test_a_height_key_read_from_json_text_is_the_same_height(self):
+        v = V.verify_chain_anchor(self.anchor(), {s: {"969876": self.HEADER[969876]} for s in "ab"})
+        self.assertTrue(v["anchored"], v)
+
+    # The checkpoint.
+    def test_a_changed_checkpoint_is_refused(self):
+        changed = self.CHECKPOINT.replace('"tree_size":194', '"tree_size":195')
+        self.assertNotEqual(changed, self.CHECKPOINT)
+        self.refused(self.anchor(checkpoint=changed), why="for another digest")
+
+    def test_a_stated_digest_that_is_not_the_checkpoint_s_is_refused(self):
+        self.refused(self.anchor(checkpoint_sha256="00" * 32), why="not the digest of its checkpoint")
+        self.assertTrue(V.verify_chain_anchor(self.anchor(checkpoint_sha256=self.digest().hex()),
+                                              self.sources())["anchored"])
+
+    def test_a_checkpoint_not_in_canonical_form_is_refused(self):
+        spaced = json.dumps(json.loads(self.CHECKPOINT), sort_keys=True)
+        self.refused(self.anchor(checkpoint=spaced), why="canonical form")
+
+    def test_a_checkpoint_naming_one_log_twice_is_refused(self):
+        heads = json.loads(self.CHECKPOINT)["heads"]
+        twice = V.chain_checkpoint([heads[0], dict(heads[0], tree_size=3)]).decode()
+        self.refused(self.anchor(checkpoint=twice), why="one log twice")
+
+    def test_a_head_that_is_not_a_statement_is_refused(self):
+        heads = json.loads(self.CHECKPOINT)["heads"]
+        for bad in (dict(heads[0], tree_size=True), dict(heads[0], tree_size=-1),
+                    dict(heads[0], format="other"), dict(heads[0], root_hash_hex=7)):
+            with self.subTest(bad=bad):
+                text = V.chain_checkpoint([bad]).decode()
+                self.refused(self.anchor(checkpoint=text), why="not a tree-head statement")
+
+    def test_anything_but_an_anchor_with_checkpoint_text_is_refused(self):
+        self.refused({"format": "other"}, why="not a polaris-chain-anchor/1")
+        self.refused(self.anchor(checkpoint=None), why="no checkpoint text")
+        self.refused(self.anchor(checkpoint="[]"), why="not a polaris-chain-checkpoint/1")
+        self.refused(self.anchor(checkpoint="{"), why="not JSON")
+        self.refused(self.anchor(checkpoint='{"format":"polaris-chain-checkpoint/1","heads":[]}'), why="lists no heads")
+
+    # The proof.
+    def test_a_changed_operation_is_refused(self):
+        self.assertEqual(self.PROOF_HEX.count(self.FIRST_APPEND), 1)
+        flipped = self.PROOF_HEX.replace(self.FIRST_APPEND, "3f" + self.FIRST_APPEND[2:])
+        self.refused(self.anchor(proof_hex=flipped), why="Merkle root is")
+
+    def test_the_wrong_block_is_refused(self):
+        self.refused(self.anchor(), self.sources(self.HEADER[969877]), "Merkle root is")
+
+    def test_a_pending_proof_is_refused(self):
+        pending = b"\x00" + bytes.fromhex("83dfe30d2ef90c8e") + b"\x06\x05https"
+        self.refused(self.anchor(proof_hex=self.proof(self.digest(), pending)), why="pending")
+        self.assertEqual(V.chain_anchor_heights(self.anchor(proof_hex=self.proof(self.digest(), pending))), [])
+
+    def test_a_proof_that_ends_early_or_runs_on_is_refused(self):
+        self.refused(self.anchor(proof_hex=self.PROOF_HEX[:-10]), why="ends early")
+        self.refused(self.anchor(proof_hex=self.PROOF_HEX + "00"), why="bytes after its timestamp")
+
+    def test_a_proof_that_is_not_one_is_refused(self):
+        self.refused(self.anchor(proof_hex="00" * 40), why="not an OpenTimestamps proof")
+        self.refused(self.anchor(proof_hex="zz"), why="does not open")
+        self.refused(self.anchor(proof_hex=None), why="does not open")
+        self.refused(self.anchor(proof_hex="00" * (V._OTS_MAX_PROOF + 1)), why="at most")
+        v2 = (V._OTS_MAGIC + b"\x02\x08" + self.digest()).hex()
+        self.refused(self.anchor(proof_hex=v2), why="major version")
+        sha1 = (V._OTS_MAGIC + b"\x01\x02" + self.digest()).hex()
+        self.refused(self.anchor(proof_hex=sha1), why="not over a SHA-256 digest")
+
+    def test_an_operation_this_verifier_does_not_know_is_refused(self):
+        self.refused(self.anchor(proof_hex=self.proof(self.digest(), b"\x67" + self.bitcoin(5))),
+                     why="does not know: 0x67")
+
+    def test_an_operation_this_python_cannot_compute_is_refused(self):
+        real = hashlib.new
+
+        def no_ripemd(name, *a):
+            if name == "ripemd160":
+                raise ValueError("unsupported hash type")
+            return real(name, *a)
+        body = b"\x03" + self.bitcoin(5)
+        with unittest.mock.patch.object(V.hashlib, "new", no_ripemd):
+            self.refused(self.anchor(proof_hex=self.proof(self.digest(), body)), why="cannot compute operation 0x03")
+        try:                                               # OpenSSL 3 without its legacy provider
+            real("ripemd160", b"")
+        except ValueError:
+            return
+        self.assertEqual(len(V.ots_bitcoin_attestations(bytes.fromhex(self.proof(self.digest(), body)), self.digest())), 1)
+
+    def test_an_append_with_no_argument_is_refused(self):
+        self.refused(self.anchor(proof_hex=self.proof(self.digest(), b"\xf0\x00" + self.bitcoin(5))),
+                     why="outside 1..4096")
+
+    def test_a_result_longer_than_the_format_allows_is_refused(self):
+        big = b"\xf0" + bytes([0x80, 0x20]) + b"\x00" * 4096   # varuint 4096
+        self.refused(self.anchor(proof_hex=self.proof(self.digest(), big + self.bitcoin(5))),
+                     why="exceeds 4096")
+
+    def test_a_proof_nested_deeper_than_the_format_allows_is_refused(self):
+        deep = b"\x08" * 300 + self.bitcoin(5)
+        self.refused(self.anchor(proof_hex=self.proof(self.digest(), deep)), why="nests deeper")
+        shallow = b"\x08" * 200 + self.bitcoin(5)
+        self.assertEqual(len(V.ots_bitcoin_attestations(bytes.fromhex(self.proof(self.digest(), shallow)),
+                                                        self.digest())), 1)
+
+    def test_a_length_past_64_bits_is_refused(self):
+        self.refused(self.anchor(proof_hex=(V._OTS_MAGIC + b"\x80" * 10 + b"\x01").hex()), why="64 bits")
+
+    def test_a_bitcoin_attestation_with_bytes_after_its_height_is_refused(self):
+        self.refused(self.anchor(proof_hex=self.proof(self.digest(), self.bitcoin(5, extra=b"\x00"))),
+                     why="bytes after its height")
+
+    # The block header.
+    def test_a_header_whose_hash_misses_its_target_is_refused(self):
+        raw = bytearray(bytes.fromhex(self.HEADER[969876]))
+        raw[76] ^= 0x01                                    # the nonce: same Merkle root, new hash
+        self.refused(self.anchor(), self.sources(raw.hex()), "proof of work")
+
+    def test_a_header_declaring_an_easier_target_than_mainnet_is_refused(self):
+        raw = bytearray(bytes.fromhex(self.HEADER[969876]))
+        raw[72:76] = (0x207FFFFF).to_bytes(4, "little")    # a test network's target
+        for nonce in range(1 << 16):                       # half of all hashes meet it
+            raw[76:80] = nonce.to_bytes(4, "little")
+            h = hashlib.sha256(hashlib.sha256(bytes(raw)).digest()).digest()
+            if int.from_bytes(h, "little") <= 0x7FFFFF << 232:
+                break
+        self.assertFalse(V.bitcoin_header(raw.hex())["pow_ok"])
+        self.refused(self.anchor(), self.sources(raw.hex()), "proof of work")
+
+    def test_a_header_that_is_not_80_bytes_is_refused(self):
+        self.refused(self.anchor(), self.sources(self.HEADER[969876][:-2]), "80 bytes")
+        self.refused(self.anchor(), self.sources("zz" * 80), "malformed")
 
 
 if __name__ == "__main__":

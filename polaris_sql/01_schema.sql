@@ -111,6 +111,7 @@ DROP TABLE IF EXISTS ExchangeReceiptLog     CASCADE;
 DROP TABLE IF EXISTS CredentialCopy         CASCADE;
 DROP TABLE IF EXISTS HolderKeyEvent CASCADE;
 DROP TABLE IF EXISTS TimestampLog           CASCADE;
+DROP TABLE IF EXISTS ChainAnchor            CASCADE;
 DROP TABLE IF EXISTS ExchangeNonce          CASCADE;
 DROP TABLE IF EXISTS AuthCodeConsumed       CASCADE;
 DROP TABLE IF EXISTS AuthorityKeyEvent      CASCADE;
@@ -505,6 +506,40 @@ COMMENT ON TABLE TimestampLog IS
   'one row per anchored timestamp holding ONLY its SHA3-256 (the timestamp is never '
   'retained; unanchored timestamps leave no row). Published as an RFC-6962 log; '
   'strictly append-only by trigger and by privilege.';
+
+-- 013 (2026-10-04): the logs' public-chain anchors (lab/strategy/013, docs/design/transparency-log.md).
+-- At the operator's cadence one checkpoint, the canonical JSON of the three logs' signed tree
+-- heads, is committed to Bitcoin through OpenTimestamps, and a row records it once the proof
+-- reaches a block: the checkpoint's exact bytes, the proof, and the block's height and raw
+-- header. The row is not the evidence; a verifier rereads the proof against block headers it
+-- reads itself. It is what the instance publishes beside its heads, so it is append-only and
+-- only the schema owner writes it. No personal data: the heads are already public.
+CREATE TABLE ChainAnchor (
+    anchor_id          SERIAL       PRIMARY KEY,
+    checkpoint         BYTEA        NOT NULL
+        CONSTRAINT chk_chain_anchor_checkpoint_size CHECK (octet_length(checkpoint) BETWEEN 2 AND 262144),
+    checkpoint_sha256  CHAR(64)     NOT NULL UNIQUE
+        CONSTRAINT chk_chain_anchor_digest CHECK (checkpoint_sha256 = encode(sha256(checkpoint), 'hex')),
+    chain              VARCHAR(20)  NOT NULL
+        CONSTRAINT chk_chain_anchor_chain CHECK (chain = 'BITCOIN'),
+    method             VARCHAR(20)  NOT NULL
+        CONSTRAINT chk_chain_anchor_method CHECK (method = 'OPENTIMESTAMPS'),
+    proof              BYTEA        NOT NULL
+        CONSTRAINT chk_chain_anchor_proof_size CHECK (octet_length(proof) BETWEEN 1 AND 65536),
+    block_height       INTEGER      NOT NULL
+        CONSTRAINT chk_chain_anchor_height CHECK (block_height >= 0),
+    block_header_hex   CHAR(160)    NOT NULL
+        CONSTRAINT chk_chain_anchor_header CHECK (block_header_hex ~ '^[0-9a-f]{160}$'),
+    recorded_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    recorded_by        VARCHAR(50)  NOT NULL
+);
+
+COMMENT ON TABLE ChainAnchor IS
+  '013: each checkpoint of the transparency logs committed to a public chain (Bitcoin, through '
+  'OpenTimestamps): the checkpoint bytes, whose SHA-256 the database derives, the proof and the '
+  'block. Published at /api/v1/transparency/anchors; verified by polaris-verify against block '
+  'headers the verifier reads itself, never against this row. Append-only by trigger; written '
+  'only by the schema owner (polaris anchor-record).';
 
 -- P8.2d (v9.324): the exchange gateway's REPLAY REGISTER. A requester's signed exchange
 -- envelope carries a nonce; the gateway consumes (requester key, nonce) here BEFORE

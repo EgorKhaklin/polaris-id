@@ -142,6 +142,7 @@ A secret is read from its `*_FILE` companion in production. In production a `*_F
 | `POLARIS_MDOC_TTL` | int | `86400` |  |  |
 | `POLARIS_VC_TTL` | int | `3600` |  |  |
 | `POLARIS_TRANSPARENCY_ENTRIES_CAP` | int | `1000` |  |  |
+| `POLARIS_CHAIN_ANCHORS_CAP` | int | `50` |  | Most Bitcoin anchor records one /api/v1/transparency/anchors call returns. |
 | `POLARIS_EXCHANGE_UPSTREAMS` | str |  |  |  |
 | `POLARIS_ATLAS_BASEMAP_STYLE_URL` | str |  |  |  |
 | `POLARIS_ATLAS_CACHE_TTL` | int | `30` |  |  |
