@@ -21,9 +21,8 @@
 # Before first up:
 #   echo -n '<a strong password>' > "${POLARIS_SECRETS_DIR:-./secrets}/grafana_admin_password"
 #   echo -n '<your pager webhook url>' > "${POLARIS_SECRETS_DIR:-./secrets}/pager_webhook_url"
-#   and point deploy/observability/prometheus.yml's scrape target at this
-#   stack's app (targets: ['app:8000'], scheme: http — inside polaris-net the
-#   scrape does not cross the TLS edge).
+# Prometheus finds the app on polaris-net by its service name (app, and
+# app-green under the blue-green overlay) and scrapes it there; nothing to edit.
 #
 # Grafana listens on 127.0.0.1:3000 only (operator-internal, like /metrics:
 # it can display the duress signal, so it must never face the public

@@ -1,9 +1,13 @@
 # Polaris: Prometheus scrape + rules config (v9.115)
 #
 # A ready-to-use Prometheus config: scrape the app's /metrics and load the
-# Polaris alerting rules. Point `static_configs.targets` at your deployment and
-# `alerting` targets the shipped alertmanager.yml (v9.175); the pager URL it
-# notifies is operator-supplied (see README.md). Validate with: promtool check config prometheus.yml
+# Polaris alerting rules. As shipped it is the observability overlay's
+# (polaris_web/docker-compose.observability.yml): Prometheus runs on the stack's
+# own network and scrapes the app there, never through the public edge, which
+# refuses /metrics to anyone not named in POLARIS_METRICS_ALLOW. A Prometheus
+# elsewhere replaces the discovery block with its own targets. `alerting`
+# targets the shipped alertmanager.yml (v9.175); the pager URL it notifies is
+# operator-supplied (see README.md). Validate with: promtool check config prometheus.yml
 global:
   scrape_interval: 30s
   evaluation_interval: 30s
@@ -23,7 +27,15 @@ alerting:
 scrape_configs:
   - job_name: polaris
     metrics_path: /metrics
-    scheme: https
-    static_configs:
-      # Replace with your deployment's host:port (the app behind Caddy).
-      - targets: ['polaris.example.com:443']
+    scheme: http
+    # Lab record 017 (gate row OP-15): every app container on the network, found by its compose
+    # service name, blue-green colour included. A name that does not resolve (no app-green
+    # without the blue-green overlay) yields no target, so it never reads as an app that is down.
+    dns_sd_configs:
+      - names: ['app', 'app-green']
+        type: A
+        port: 8000
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [__meta_dns_name]
+        target_label: service

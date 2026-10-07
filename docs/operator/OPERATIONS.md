@@ -1151,10 +1151,14 @@ scrape_configs:
   - job_name: polaris
     metrics_path: /metrics
     scheme: http
-    scrape_interval: 30s
-    static_configs:
-      - targets: ['app:8000']
+    dns_sd_configs:
+      - names: ['app', 'app-green']   # every app container, blue-green included
+        type: A
+        port: 8000
 ```
+
+The shipped `deploy/observability/prometheus.yml` is exactly this, so the
+overlay scrapes the stack it joins with no edit.
 
 **Exposed metrics:**
 
