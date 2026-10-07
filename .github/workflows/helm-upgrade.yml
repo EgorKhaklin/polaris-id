@@ -1,0 +1,68 @@
+# ============================================================================
+# helm-upgrade.yml - the Helm upgrade path: the previous release installed on kind with its own
+# chart, upgraded to this commit (scripts/polaris-helm-upgrade-drill.sh; lab record 017, gate rows
+# OP-18 and OP-19).
+#
+# The drill builds the newest release tag's four images and this commit's, installs the release's
+# chart under the restricted Pod Security Standard with Calico enforcing the NetworkPolicies, and
+# writes a marker. It then runs `helm upgrade` with this chart: the pre-upgrade Job
+# (deploy/helm/polaris/templates/migrate-job.yaml) applies the migrations the release lacks. It
+# requires no migration pending, more migrations recorded than before, the marker intact, and
+# /api/health answering through the edge.
+#
+# It builds two releases' images and a cluster, so pull requests run it only when a path it
+# exercises changed. It also runs on every push to main, nightly, and by hand.
+# ============================================================================
+name: Helm upgrade path (the previous release's chart, upgraded on kind)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/helm/**"
+      - "polaris_sql/**"
+      - "polaris_web/Dockerfile*"
+      - "polaris_web/patroni-entrypoint.sh"
+      - "polaris_web/docker-init.sh"
+      - "scripts/polaris-migrate.sh"
+      - "scripts/polaris-image-build.sh"
+      - "scripts/polaris-helm-upgrade-drill.sh"
+      - "scripts/polaris-helm-drill.sh"
+      - ".dockerignore"
+      - ".github/workflows/helm-upgrade.yml"
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: helm-upgrade-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  helm-upgrade:
+    name: The previous release's chart on kind, upgraded to this commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout, with the release tags the drill starts from
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Install kind (kubectl + helm are on the runner)
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          install_only: true
+          version: v0.33.0
+
+      - name: Upgrade the previous release with Helm (scripts/polaris-helm-upgrade-drill.sh)
+        run: bash scripts/polaris-helm-upgrade-drill.sh

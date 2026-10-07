@@ -6687,6 +6687,62 @@ def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
                "requires nothing pending, every image rebuilt, and credentials from before and after verifying")
 
 
+# Lab record 017 (gate rows OP-18 and OP-19): a Helm upgrade runs the migrations. The postgres image
+# applies them at a cluster's first init and nowhere else, so an upgrade brought a new app up against
+# the old schema. The chart's pre-upgrade Job runs the runner the image now carries, behind hook
+# NetworkPolicies created first; the runner refuses a registry it cannot read (it used to read that
+# as nothing applied); and CI upgrades the previous release's chart on kind and requires nothing pending.
+_HELM_MIGRATE_JOB = (
+    ('"helm.sh/hook": pre-upgrade', "run as a pre-upgrade hook"),
+    ('"helm.sh/hook-weight": "-5"', "create its NetworkPolicies before the Job"),
+    ("kind: Job", "run as a Job"),
+    ("/opt/polaris/scripts/polaris-migrate.sh --up", "apply the pending migrations"),
+    ("/opt/polaris/scripts/polaris-migrate.sh --sync-objects", "sync the database objects"),
+    ('PGPASSWORD="$(cat /run/secrets/polaris_db_root_password)"', "read the owner's password from the mounted file"),
+)
+_HELM_UPGRADE_DRILL = (
+    ("describe --tags --abbrev=0", "start from the previous release"),
+    ('helm install "${REL}" "${WORK}/from/deploy/helm/polaris"', "install that release with its own chart"),
+    ('helm upgrade "${REL}" "${ROOT}/deploy/helm/polaris"', "upgrade with this chart"),
+    ("no pending migrations", "require no migration pending"),
+    ('[[ "${AFTER}" -gt "${BEFORE}" ]]', "require the upgrade to have applied migrations"),
+    ("drill.marker", "require data written before the upgrade to survive it"),
+)
+
+
+def check_helm_upgrade_migrates(root: pathlib.Path) -> list[Finding]:
+    name = "helm_upgrade_migrates"
+    job = _read(root, "deploy/helm/polaris/templates/migrate-job.yaml")
+    if not job:
+        return _fail(name, "deploy/helm/polaris/templates/migrate-job.yaml is missing: a Helm upgrade would bring the "
+                     "new app up against the old schema")
+    for needle, what in _HELM_MIGRATE_JOB:
+        if needle not in job:
+            return _fail(name, f"the chart's migration Job no longer does this: {what}")
+    if not re.search(r"(?m)^migrations:\n\s+enabled: true$", _read(root, "deploy/helm/polaris/values.yaml")):
+        return _fail(name, "values.yaml must enable the migration Job by default")
+    df = _read(root, "polaris_web/Dockerfile.postgres")
+    if "scripts/polaris-migrate.sh /opt/polaris/scripts/polaris-migrate.sh" not in df \
+            or "/opt/polaris/polaris_sql" not in df:
+        return _fail(name, "the postgres image must carry the migration runner beside the migrations it applies")
+    if "!scripts/polaris-migrate.sh" not in _read_raw(root, ".dockerignore"):
+        return _fail(name, ".dockerignore must let scripts/polaris-migrate.sh into the image build")
+    runner = _read(root, "scripts/polaris-migrate.sh")
+    if len(re.findall(r"(?m)^\s+require_readable_registry$", runner)) < 2:
+        return _fail(name, "polaris-migrate.sh must refuse an unreadable registry before planning --up and --down")
+    drill = _read(root, "scripts/polaris-helm-upgrade-drill.sh")
+    for needle, what in _HELM_UPGRADE_DRILL:
+        if needle not in drill:
+            return _fail(name, f"scripts/polaris-helm-upgrade-drill.sh no longer does this: {what}")
+    wf = _read(root, ".github/workflows/helm-upgrade.yml")
+    if "bash scripts/polaris-helm-upgrade-drill.sh" not in wf or not re.search(r"(?m)^\s*fetch-depth: 0$", wf):
+        return _fail(name, "helm-upgrade.yml must run scripts/polaris-helm-upgrade-drill.sh on a checkout with the "
+                     "release tags (fetch-depth: 0)")
+    return _ok(name, "a Helm upgrade migrates first: a pre-upgrade Job runs the runner the postgres image carries, "
+               "the runner refuses a registry it cannot read, and CI upgrades the previous release's chart on kind "
+               "and requires nothing pending")
+
+
 # 2026-10-07 (lab record 017, gate row OP-26): the client address behind a load balancer. The rate
 # limiter, AuthAuditLog and the access policies key on the address the edge passes upstream. Behind
 # a balancer the TCP peer is the balancer: every client shares one bucket. Each edge trusts exactly
@@ -25792,6 +25848,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_edge_limits,
     check_doctor_names_failures,
     check_upgrade_drilled,
+    check_helm_upgrade_migrates,
     check_infra_alerts,
     check_session_key_rotation,
     check_release_images_signed,

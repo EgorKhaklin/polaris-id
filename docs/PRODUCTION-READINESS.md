@@ -115,7 +115,7 @@ This ledger covers one authority on one host or one cluster. [ROADMAP.md](../ROA
 
 Whether an operator who is not the author can install, run, upgrade and recover Polaris, one criterion per row ([lab record 017](../lab/strategy/017-production-operability.md)). A PASS row cites evidence that `check_operability_gate` resolves: a check, a test, a drill or a file. This gate is about operating the software; it is not readiness for real identity data, which the status line above and the last row keep separate.
 
-28 criteria: 13 PASS, 11 PARTIAL, 3 FAIL, 1 UNKNOWN.
+28 criteria: 15 PASS, 9 PARTIAL, 3 FAIL, 1 UNKNOWN.
 
 | ID | Criterion | Status | Evidence |
 |---|---|---|---|
@@ -136,8 +136,8 @@ Whether an operator who is not the author can install, run, upgrade and recover 
 | OP-15 | Backup age, archive failure, replication lag, disk, certificate expiry and clock skew alert | PASS | `drill:lab/strategy/006/alerts.sh` fires the certificate, backup and archive alerts on their real conditions and clears them on repair; `check:infra_alerts` pins all six rules and their promtool tests. |
 | OP-16 | Application metrics, alerts and traces are tested | PASS | `drill:scripts/polaris-page-drill.sh`, `drill:scripts/polaris-trace-drill.sh` |
 | OP-17 | One command names the failing component | PASS | `drill:lab/strategy/006/doctor.sh`, `check:doctor_names_failures` |
-| OP-18 | Schema migrations run on every upgrade path | PARTIAL | The host deploy script runs them; the Helm chart has no migration step. |
-| OP-19 | An upgrade from the previous release is drilled | PARTIAL | `drill:scripts/polaris-upgrade-drill.sh` upgrades the previous release's Compose stack as OPERATIONS.md says (`check:upgrade_drilled`); a Helm upgrade is not drilled. |
+| OP-18 | Schema migrations run on every upgrade path | PASS | The host deploy script runs them (`check:upgrade_drilled`); a Helm upgrade runs them in a pre-upgrade Job (`check:helm_upgrade_migrates`, `drill:scripts/polaris-helm-upgrade-drill.sh`). |
+| OP-19 | An upgrade from the previous release is drilled | PASS | `drill:scripts/polaris-upgrade-drill.sh` upgrades the previous release's Compose stack as OPERATIONS.md says (`check:upgrade_drilled`); `drill:scripts/polaris-helm-upgrade-drill.sh` upgrades its chart on kind (`check:helm_upgrade_migrates`). |
 | OP-20 | The data-integrity rules (C1 to C10) are enforced in the schema and mutation-tested | PASS | `check:aor_append_only_triggers`, `check:one_active_token_index`, `drill:scripts/polaris-constraint-mutation-drill.py` |
 | OP-21 | Two independent ML-DSA implementations agree at issuance | PASS | `check:pqc_second_witness` |
 | OP-22 | A signature-algorithm migration is drilled | PASS | `drill:scripts/polaris-quantum-event-drill.py` |

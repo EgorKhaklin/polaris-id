@@ -3038,6 +3038,49 @@ def test_pitr_drilled_check_discriminates(tmp_path):
            "must FAIL when the runbook does not cite the drill", count=-1)
 
 
+def test_helm_upgrade_migrates_check_discriminates(tmp_path):
+    files = ("deploy/helm/polaris/templates/migrate-job.yaml", "deploy/helm/polaris/values.yaml",
+             "polaris_web/Dockerfile.postgres", ".dockerignore", "scripts/polaris-migrate.sh",
+             "scripts/polaris-helm-upgrade-drill.sh", ".github/workflows/helm-upgrade.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_helm_upgrade_migrates(tmp_path)[0].level == "OK", \
+        "must PASS on the real chart Job, image, runner, drill and workflow"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_helm_upgrade_migrates(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    job = "deploy/helm/polaris/templates/migrate-job.yaml"
+    broken(job, '"helm.sh/hook": pre-upgrade', '"helm.sh/hook": post-upgrade', "must FAIL when the Job runs after the "
+           "upgrade rather than before it", count=-1)
+    broken(job, '"helm.sh/hook-weight": "-5"', '"helm.sh/hook-weight": "5"', "must FAIL when the Job's network "
+           "policies are not created before it", count=-1)
+    broken(job, "/opt/polaris/scripts/polaris-migrate.sh --sync-objects", "true", "must FAIL without the object sync")
+    broken(job, 'PGPASSWORD="$(cat /run/secrets/polaris_db_root_password)"', 'PGPASSWORD="$PGPASSWORD_ENV"',
+           "must FAIL when the password is not read from the mounted file")
+    broken("deploy/helm/polaris/values.yaml", "migrations:\n  enabled: true", "migrations:\n  enabled: false",
+           "must FAIL when the Job is off by default")
+    broken("polaris_web/Dockerfile.postgres", "scripts/polaris-migrate.sh /opt/polaris/scripts/polaris-migrate.sh",
+           "scripts/polaris-migrate.sh /usr/local/bin/polaris-migrate.sh", "must FAIL when the runner is not beside "
+           "the migrations in the image")
+    broken(".dockerignore", "!scripts/polaris-migrate.sh", "", "must FAIL when the build context leaves the runner out")
+    broken("scripts/polaris-migrate.sh", "    validate_filenames\n    require_readable_registry\n\n    local pending=()",
+           "    validate_filenames\n\n    local pending=()", "must FAIL when --up plans without reading the registry")
+    drill = "scripts/polaris-helm-upgrade-drill.sh"
+    broken(drill, 'helm upgrade "${REL}" "${ROOT}/deploy/helm/polaris"', 'helm install "${REL}" "${ROOT}/deploy/helm/polaris"',
+           "must FAIL when the drill does not upgrade")
+    broken(drill, '[[ "${AFTER}" -gt "${BEFORE}" ]]', '[[ -n "${AFTER}" ]]', "must FAIL when an upgrade that "
+           "applied nothing would pass")
+    broken(".github/workflows/helm-upgrade.yml", "bash scripts/polaris-helm-upgrade-drill.sh", "true",
+           "must FAIL when CI does not run the drill")
+
+
 def test_restore_reconciled_check_discriminates(tmp_path):
     files = {"scripts/polaris-reconcile-restore.py", "scripts/polaris-pitr-drill.sh", ".github/workflows/ci.yml",
              "docs/operator/DR.md"}
