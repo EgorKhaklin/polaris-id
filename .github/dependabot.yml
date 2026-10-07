@@ -141,9 +141,10 @@ updates:
     commit-message:
       prefix: deps
 
-  # Docker base images and the prod compose's digest-pinned images: a PR
-  # bumps a pinned digest when the upstream tag moves, so a frozen digest
-  # still receives security updates.
+  # Docker base images (the FROM lines of every Dockerfile here): a PR bumps a
+  # pinned digest when the upstream tag moves, so a frozen digest still receives
+  # security updates. This ecosystem reads Dockerfiles only; the compose files'
+  # images are the docker-compose entry below.
   - package-ecosystem: docker
     directory: /polaris_web
     schedule:
@@ -159,3 +160,89 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "python"
         update-types: ["version-update:semver-major"]
+
+  # The compose files' third-party images (redis, the observability stack): the
+  # docker ecosystem above does not read compose files, so until 2026-10-07 their
+  # digests moved only by hand (lab record 017, G15).
+  - package-ecosystem: docker-compose
+    directory: /polaris_web
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    commit-message:
+      prefix: docker
+    ignore:
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
+
+  # The lab's demo image (lab/strategy/007).
+  - package-ecosystem: docker
+    directory: /lab/strategy/007
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 1
+    labels:
+      - dependencies
+    commit-message:
+      prefix: docker
+
+  # The TypeScript SDK (published to npm): its lockfile and, when a release falls
+  # outside a declared range, the range.
+  - package-ecosystem: npm
+    directory: /sdk/typescript
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+
+  # The npm tools the lab and the accessibility drill install from their lockfiles,
+  # one grouped PR across the four directories.
+  - package-ecosystem: npm
+    directories:
+      - /scripts/accessibility
+      - /lab/interop/cheqd
+      - /lab/interop/credo
+      - /lab/interop/status-list/owf
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 1
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+    groups:
+      lab-npm:
+        patterns:
+          - "*"
+
+  # The published Python packages declare open ranges, so only a release outside a
+  # range (polaris-id-cli's psycopg2-binary <3.0, for one) is proposed.
+  - package-ecosystem: pip
+    directories:
+      - /packages/polaris-verify
+      - /packages/polaris-oid4vp
+      - /sdk/python
+      - /polaris_cli
+    versioning-strategy: increase-if-necessary
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps

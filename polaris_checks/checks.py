@@ -6001,6 +6001,94 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
                f"({versions.pop()})")
 
 
+# 2026-10-07 (lab record 017, G15): the supply-chain stragglers stay closed. Everything the
+# build or CI pulls is named exactly, or held to a series on purpose: the Caddy plugin by its
+# release, etcd by apk's `~3.6`, the Calico manifest by its SHA-256 before kubectl sees it, every
+# workflow image and the Trivy scanner by digest (the wallet canary excepted: it walks the
+# wallets' latest builds by design). And Dependabot reads every manifest that pins something
+# (each npm lockfile, each published Python package, each Dockerfile directory, the compose
+# files), since a pin nothing refreshes stops receiving security updates.
+_UNPINNED_BY_DESIGN = {"wallet-canary.yml"}
+_PUBLISHED_PY = ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python", "polaris_cli")
+_WALK_PRUNE = {".git", "node_modules", "target", ".venv", "venv", "__pycache__", "dist", "build"}
+
+
+def _dependabot_coverage(text: str) -> set[tuple[str, str]]:
+    covered = set()
+    for entry in re.split(r"(?m)^  - (?=package-ecosystem:)", text)[1:]:
+        eco = re.match(r"package-ecosystem:\s*(\S+)", entry)
+        dirs = re.findall(r"(?m)^    directory:\s*(\S+)", entry)
+        block = re.search(r"(?m)^    directories:\s*\n((?:      - \S+\s*\n)+)", entry)
+        if block:
+            dirs += re.findall(r"- (\S+)", block.group(1))
+        covered |= {(eco.group(1).strip('"'), d.strip('"').rstrip("/") or "/") for d in dirs} if eco else set()
+    return covered
+
+
+def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
+    name = "supply_chain_pins"
+    problems = []
+    caddy = "\n".join(l for l in _read(root, "polaris_web/Dockerfile.caddy").splitlines()
+                      if not l.lstrip().startswith("#"))
+    mods = re.findall(r"--with\s+(\S+)", caddy)
+    if not mods:
+        problems.append("Dockerfile.caddy builds no --with module, so nothing backs rate_limit")
+    problems += [f"Dockerfile.caddy builds {m} at whatever version resolves that day"
+                 for m in mods if not re.search(r"@v\d", m)]
+    add = " ".join(re.findall(r"apk add[^\n]*", "\n".join(
+        l for l in _read(root, "polaris_web/Dockerfile.etcd").splitlines() if not l.lstrip().startswith("#"))))
+    problems += [f"Dockerfile.etcd installs {pkg} with no version constraint"
+                 for pkg in ("etcd", "etcd-ctl") if not re.search(rf'"?\b{pkg}[~=]\d', add)]
+    drill = _read(root, "scripts/polaris-helm-drill.sh")
+    if "CALICO_MANIFEST" in drill and not (
+            re.search(r"(?m)^CALICO_SHA256=[0-9a-f]{64}$", drill)
+            and re.search(r'\[ "\$GOT" = "\$CALICO_SHA256" \]', drill)
+            and not re.search(r'kubectl apply -f "\$CALICO_MANIFEST"', drill)):
+        problems.append("polaris-helm-drill.sh applies the Calico manifest without checking it "
+                        "against a pinned SHA-256 first")
+    wfdir = root / ".github" / "workflows"
+    for wf in sorted(wfdir.glob("*.yml")) if wfdir.is_dir() else ():
+        text = "\n".join(l for l in wf.read_text().splitlines() if not l.lstrip().startswith("#"))
+        if wf.name not in _UNPINNED_BY_DESIGN:
+            problems += [f"{wf.name} runs {img} by tag" for img in
+                         re.findall(r"(?m)^\s*image:\s*(\S+)\s*$", text)
+                         if "@sha256:" not in img and "${{" not in img]
+        problems += [f"{wf.name} runs Trivy by tag ({ref})" for ref in
+                     re.findall(r"aquasec/trivy:[^\s\"']+", text) if "@sha256:" not in ref]
+    for compose in sorted((root / "polaris_web").glob("docker-compose*.yml")):
+        problems += [f"{compose.name} runs {img} by tag" for img in
+                     re.findall(r"(?m)^\s*image:\s*(\S+)", compose.read_text())
+                     if not img.startswith("polaris-") and "@sha256:" not in img]
+    dep = _read(root, ".github/dependabot.yml")
+    covered = _dependabot_coverage(dep)
+    required = set()
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in _WALK_PRUNE]
+        r = os.path.relpath(dirpath, root)
+        rel = "/" if r == "." else "/" + r.replace(os.sep, "/")
+        if rel.startswith(("/polaris_checks", "/.github")):
+            continue
+        if "package-lock.json" in filenames:
+            required.add(("npm", rel))
+        if any(f == "Dockerfile" or f.startswith("Dockerfile.") for f in filenames):
+            required.add(("docker", rel))
+        if any(re.fullmatch(r"docker-compose(?:\.[\w-]+)?\.ya?ml", f) for f in filenames):
+            required.add(("docker-compose", rel))
+    required |= {("pip", "/" + d) for d in _PUBLISHED_PY if (root / d / "pyproject.toml").is_file()}
+    missing = sorted(required - covered)
+    if missing:
+        problems.append("Dependabot reads no " + ", ".join(f"{e} manifest in {d}" for e, d in missing[:4])
+                        + ("" if len(missing) <= 4 else f" (+{len(missing) - 4} more)"))
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else
+                                                       f" (+{len(problems) - 4} more)"))
+    return _ok(name,
+               f"the Caddy plugin is pinned to its release, etcd to the 3.6 series, the Calico "
+               f"manifest to its SHA-256; every workflow and compose image and Trivy run by "
+               f"digest (the wallet canary excepted by design); Dependabot reads all {len(required)} "
+               f"manifests that pin something")
+
+
 # P0.6 — every release artifact carries a signed SLSA provenance attestation,
 # and the docs carry a verify command. Keyless Sigstore signing (GitHub OIDC)
 # means no long-lived key; the attestation binds each SBOM's digest to this
@@ -25080,6 +25168,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_sbom_workflow,
     check_workflows_reach_the_app_role,
     check_sbom_trivy_matches_scan,
+    check_supply_chain_pins,
     check_release_provenance,
     check_release_images_signed,
     check_npm_publish_is_staged,
