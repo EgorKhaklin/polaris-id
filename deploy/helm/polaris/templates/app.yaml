@@ -30,11 +30,16 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         {{- include "polaris.podSecurity" (dict "uid" 1000 "gid" 1000) | nindent 8 }}
-      terminationGracePeriodSeconds: 35
+      # The preStop pause lets the endpoint leave the Service before gunicorn starts draining,
+      # then gunicorn's 30 s graceful timeout; 40 s covers both.
+      terminationGracePeriodSeconds: 40
       containers:
         - name: app
           image: {{ .Values.images.app }}
           imagePullPolicy: {{ .Values.images.pullPolicy }}
+          lifecycle:
+            preStop:
+              exec: {command: ["sleep", "5"]}
           securityContext:
             {{- include "polaris.containerSecurity" . | nindent 12 }}
           env:

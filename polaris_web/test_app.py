@@ -8954,6 +8954,41 @@ class F05_ProductionSecretGuardTests(unittest.TestCase):
         self.assertIn('POLARIS_DB_SSLMODE', proc.stderr)
 
 
+class DuressDurabilityTests(unittest.TestCase):
+    """Lab record 017, phase 2b: a duress record still being written when the worker exits is
+    finished, not abandoned. The recording runs off the request thread so the response time
+    says nothing about a match; it must still land if the worker stops right after."""
+
+    def test_a_duress_record_survives_a_worker_exit(self):
+        import subprocess, tempfile, time as _t
+        tmp = tempfile.mkdtemp()
+        marker = os.path.join(tmp, 'recorded')
+        script = os.path.join(tmp, 'worker.py')
+        with open(script, 'w') as fh:
+            fh.write(
+                "import os, sys, time\n"
+                "sys.path.insert(0, os.getcwd())\n"
+                "os.environ.pop('POLARIS_DURESS_SYNC', None)\n"
+                "os.environ.pop('POLARIS_ENV', None)\n"
+                "import app\n"
+                "app.query = lambda *a, **k: {'duress_code_hash': 'enrolled'}\n"
+                "app.check_password_hash = lambda h, v: True\n"
+                "def slow_record(*args):\n"
+                "    time.sleep(0.5)\n"
+                "    open(sys.argv[1], 'w').write('recorded')\n"
+                "app._record_duress_async = slow_record\n"
+                "app._check_and_record_duress(1, 1, 1, 'the-duress-code')\n"
+                "sys.exit(0)  # the worker exits as soon as the request has returned\n")
+        started = _t.time()
+        proc = subprocess.run([sys.executable, script, marker],
+                              cwd=os.path.dirname(os.path.abspath(__file__)),
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
+        self.assertTrue(os.path.exists(marker),
+                        "the duress record was abandoned when the worker exited")
+        self.assertGreaterEqual(_t.time() - started, 0.5)
+
+
 class F06_CookieHardeningTests(PolarisTestCase):
     """F-07: Cookie attributes Secure / HttpOnly / SameSite. CWE-614, CWE-1004."""
 
