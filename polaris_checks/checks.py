@@ -6421,6 +6421,45 @@ _REDIS_ACL_FORBIDDEN = ("+@all", "allcommands", "allkeys", "~*", "+flushall", "+
                         "+config", "+acl", "+keys", "+debug", "+eval ", "+module", "+@dangerous")
 
 
+# Lab record 017 (gate row OP-8): the HA profile's internal surfaces authenticate. Patroni's REST API
+# listened on every interface with no password, on the members' network where the app runs, and its
+# writes include PATCH /config, which sets postgresql parameters across the cluster (some run shell
+# commands); etcd, the lease store, took any client. Now the REST API's writes take a password, etcd
+# runs with authentication on and a patroni user fenced to /service/, and the failover drill proves
+# both refusals from the app's network before its failure scenarios.
+_HA_AUTH_NEEDLES = (
+    ("polaris_web/docker-compose.ha.yml", "etcdctl $$E auth enable", "turn etcd authentication on"),
+    ("polaris_web/docker-compose.ha.yml", "role grant-permission patroni --prefix=true readwrite /service/",
+     "fence Patroni's etcd user to /service/"),
+    ("polaris_web/docker-compose.ha.yml", "POLARIS_PATRONI_RESTAPI_PASSWORD_FILE: /run/secrets/polaris_patroni_restapi_password",
+     "give the members the REST API password"),
+    ("polaris_web/docker-compose.ha.yml", "condition: service_completed_successfully",
+     "start the members only after etcd authentication is on"),
+    ("polaris_web/patroni-entrypoint.sh", 'RESTAPI_AUTH="  authentication:', "render the REST API's authentication"),
+    ("polaris_web/patroni-entrypoint.sh", '$ETCD_YAML$ETCD_AUTH"', "render Patroni's etcd user"),
+    ("scripts/polaris-generate-secrets.sh", "write_secret_if_missing polaris_patroni_restapi_password",
+     "mint the REST API password"),
+    ("scripts/polaris-generate-secrets.sh", "write_secret_if_missing polaris_etcd_patroni_password",
+     "mint Patroni's etcd password"),
+    ("scripts/polaris-failover-drill.sh", '[[ "$code" == 401 ]]',
+     "prove an unauthenticated PATCH /config is refused from the app's network"),
+    ("scripts/polaris-failover-drill.sh", "etcdctl put /drill/unauthenticated probe",
+     "prove etcd refuses a client with no user"),
+)
+
+
+def check_ha_internal_auth(root: pathlib.Path) -> list[Finding]:
+    name = "ha_internal_auth"
+    for rel, needle, what in _HA_AUTH_NEEDLES:
+        if needle not in _read(root, rel):
+            return _fail(name, f"{rel} no longer does this: {what}")
+    entry = _read(root, "polaris_web/patroni-entrypoint.sh")
+    if not re.search(r"(?m)^restapi:\n  listen: [^\n]+\n  connect_address: [^\n]+\n\$RESTAPI_AUTH", entry):
+        return _fail(name, "patroni-entrypoint.sh must render the REST API's authentication inside its restapi block")
+    return _ok(name, "the HA profile's REST API takes a password for its writes and etcd authenticates its clients "
+               "(Patroni's user fenced to /service/); the failover drill proves both refusals from the app's network")
+
+
 def check_redis_authenticated(root: pathlib.Path) -> list[Finding]:
     name = "redis_authenticated"
     problems = []
@@ -25796,6 +25835,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_session_key_rotation,
     check_release_images_signed,
     check_redis_authenticated,
+    check_ha_internal_auth,
     check_npm_publish_is_staged,
     check_admin_mfa_deadline,
     check_duress_timing_ballast,

@@ -3038,6 +3038,29 @@ def test_pitr_drilled_check_discriminates(tmp_path):
            "must FAIL when the runbook does not cite the drill", count=-1)
 
 
+def test_ha_internal_auth_check_discriminates(tmp_path):
+    files = ("polaris_web/docker-compose.ha.yml", "polaris_web/patroni-entrypoint.sh",
+             "scripts/polaris-generate-secrets.sh", "scripts/polaris-failover-drill.sh")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_ha_internal_auth(tmp_path)[0].level == "OK", \
+        "must PASS on the real HA overlay, entrypoint, secrets script and failover drill"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_ha_internal_auth(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    for rel, needle, what in checks._HA_AUTH_NEEDLES:
+        broken(rel, needle, "true", f"must FAIL when it no longer does this: {what}", count=-1)
+    broken("polaris_web/patroni-entrypoint.sh", "  connect_address: $HOST:8008\n$RESTAPI_AUTH",
+           "  connect_address: $HOST:8008\n", "must FAIL when the authentication is not inside the restapi block")
+
+
 def test_restore_reconciled_check_discriminates(tmp_path):
     files = {"scripts/polaris-reconcile-restore.py", "scripts/polaris-pitr-drill.sh", ".github/workflows/ci.yml",
              "docs/operator/DR.md"}

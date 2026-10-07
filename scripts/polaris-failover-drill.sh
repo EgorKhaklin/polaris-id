@@ -252,6 +252,21 @@ wait_for 30 replica_streaming "$R0" "$L0" >/dev/null \
     || fail "$R0 is not a streaming replica of $L0 before the drill, after 30s ($(cluster_field "$L0" role "$R0")/$(cluster_field "$L0" state "$R0"))"
 echo "  leader $L0, replica $R0 streaming, timeline $(cluster_field "$L0" timeline "$L0")"
 
+# Lab record 017 (gate row OP-8): the cluster's internal surfaces authenticate. From the members'
+# network, where the app runs, an unauthenticated write to Patroni's REST API (PATCH /config sets
+# postgresql parameters across the cluster) is refused, while its reads stay open for the router's
+# role checks; and etcd refuses a client with no user.
+code=$(docker run --rm --network "$NET" curlimages/curl:8.11.1 -s -o /dev/null -w '%{http_code}' \
+       -X PATCH -H 'Content-Type: application/json' -d '{"ttl": 20}' "http://$L0:8008/config" 2> /dev/null || echo err)
+[[ "$code" == 401 ]] || fail "Patroni's REST API answered an unauthenticated PATCH /config from the app's network with $code, not 401"
+code=$(docker run --rm --network "$NET" curlimages/curl:8.11.1 -s -o /dev/null -w '%{http_code}' \
+       "http://$L0:8008/patroni" 2> /dev/null || echo err)
+[[ "$code" == 200 ]] || fail "Patroni's REST API refused a read ($code); the router's role checks need reads open"
+if docker exec polaris-etcd1 etcdctl put /drill/unauthenticated probe > /dev/null 2>&1; then
+    fail "etcd accepted a write from a client with no user"
+fi
+echo "  Patroni refuses an unauthenticated PATCH /config (401) and still serves reads; etcd refuses a client with no user"
+
 # v9.246 (roadmap P2.2): the app routes its read-only surfaces to the replica
 # through the pooler's polaris_ro database -> pg-router:5433. /api/health reports
 # the replica's reachability and lag; assert the app is actually serving reads
