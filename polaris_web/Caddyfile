@@ -47,6 +47,19 @@
         # {client_ip} is the TCP peer.
         trusted_proxies static {$POLARIS_TRUSTED_PROXIES:0.0.0.0/32}
         trusted_proxies_strict
+        # Lab record 017 (OP-26): an L4 balancer that rewrites source addresses can pass the client's
+        # own in a PROXY protocol header. Only the balancers POLARIS_EDGE_PROXY_PROTOCOL_FROM names
+        # are read; from any other source the header is not parsed at all (skip), so a client that
+        # sends one fails its TLS handshake instead of choosing its address. Unset, it names an
+        # address no connection comes from, and the edge is as it was.
+        listener_wrappers {
+            proxy_protocol {
+                timeout 5s
+                allow {$POLARIS_EDGE_PROXY_PROTOCOL_FROM:255.255.255.255/32}
+                fallback_policy skip
+            }
+            tls
+        }
         # Lab record 017, phase 5: a client that sends its request slowly is cut off here, not
         # left holding a connection (scripts/polaris-edge-limits-drill.sh).
         timeouts {

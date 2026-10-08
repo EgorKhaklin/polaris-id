@@ -77,8 +77,24 @@ diagnose() {
 }
 COMMON=(--set domain=localhost --set edge.tls=internal --set secrets.existingSecret=polaris-secrets
         --set images.pullPolicy=Never --wait --timeout 12m)
-psql_db() {  # psql_db <sql>: as the owner, inside the database pod, over its socket
-    kubectl -n "${NS}" exec "${REL}-postgres-0" -c postgres -- psql -h /var/run/postgresql -U postgres -d polaris -tAqc "$1"
+leader_pod() {  # the member that is not recovering: either pod can win Patroni's first election, and a write
+               # sent to the replica is refused ("cannot execute CREATE SCHEMA in a read-only transaction").
+               # Asked of each pod rather than read from a label, so both releases' charts answer the same way.
+    local p
+    for _ in $(seq 1 60); do
+        for p in "${REL}-postgres-0" "${REL}-postgres-1"; do
+            if [[ "$(kubectl -n "${NS}" exec "$p" -c postgres -- psql -h /var/run/postgresql -U postgres -d polaris \
+                     -tAqc 'SELECT pg_is_in_recovery()' 2> /dev/null)" == f ]]; then
+                echo "$p"; return 0
+            fi
+        done
+        sleep 2
+    done
+    return 1
+}
+psql_db() {  # psql_db <sql>: as the owner, inside the member that leads, over its socket
+    local pod; pod=$(leader_pod) || fail "no member left recovery within 120s"
+    kubectl -n "${NS}" exec "$pod" -c postgres -- psql -h /var/run/postgresql -U postgres -d polaris -tAqc "$1"
 }
 
 echo "== 3. ${FROM}, installed with its own chart =="
@@ -98,7 +114,8 @@ helm upgrade "${REL}" "${ROOT}/deploy/helm/polaris" -n "${NS}" "${COMMON[@]}" > 
 ok "helm upgrade finished; its pre-upgrade migration Job succeeded"
 
 echo "== 5. what the operator has now =="
-pending=$(kubectl -n "${NS}" exec "${REL}-postgres-0" -c postgres -- env POLARIS_DB_HOST=/var/run/postgresql \
+LEADER=$(leader_pod) || fail "no member left recovery within 120s after the upgrade"
+pending=$(kubectl -n "${NS}" exec "${LEADER}" -c postgres -- env POLARIS_DB_HOST=/var/run/postgresql \
           POLARIS_DB_USER=postgres /opt/polaris/scripts/polaris-migrate.sh --dry-run --up 2>&1) \
     || { echo "${pending}" | tail -10 >&2; fail "the migration runner could not read the upgraded database"; }
 grep -q "no pending migrations" <<< "${pending}" || { echo "${pending}" | tail -10 >&2; fail "migrations still pending"; }

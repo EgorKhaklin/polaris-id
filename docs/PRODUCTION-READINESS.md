@@ -115,7 +115,7 @@ This ledger covers one authority on one host or one cluster. [ROADMAP.md](../ROA
 
 Whether an operator who is not the author can install, run, upgrade and recover Polaris, one criterion per row ([lab record 017](../lab/strategy/017-production-operability.md)). A PASS row cites evidence that `check_operability_gate` resolves: a check, a test, a drill or a file. This gate is about operating the software; it is not readiness for real identity data, which the status line above and the last row keep separate.
 
-28 criteria: 17 PASS, 7 PARTIAL, 3 FAIL, 1 UNKNOWN.
+28 criteria: 18 PASS, 6 PARTIAL, 3 FAIL, 1 UNKNOWN.
 
 | ID | Criterion | Status | Evidence |
 |---|---|---|---|
@@ -144,7 +144,7 @@ Whether an operator who is not the author can install, run, upgrade and recover 
 | OP-23 | A same-algorithm signing-key rotation is drilled end to end | PASS | `drill:lab/strategy/006/rotate.sh`, `check:key_rotation_drilled` |
 | OP-24 | Throughput is measured and a sizing guide is published | PARTIAL | `file:docs/reference/BENCHMARK.md` measures one host; host sizing is unmeasured. |
 | OP-25 | Horizontal scaling is measured | UNKNOWN | No multi-replica throughput figures. |
-| OP-26 | The client address is correct behind load balancers and NAT | PARTIAL | `drill:scripts/polaris-client-ip-drill.sh`, `check:client_ip_behind_proxies`: correct behind an L7 balancer the operator names, forgeries refused; the metrics surfaces are refused through an SNAT hop (`drill:scripts/polaris-metrics-edge-drill.sh`); behind an L4 balancer that rewrites source addresses the client address is lost unless the balancer keeps it (the edge does not speak PROXY protocol). |
+| OP-26 | The client address is correct behind load balancers and NAT | PASS | `drill:scripts/polaris-client-ip-drill.sh`, `check:client_ip_behind_proxies`, `check:edge_settings_reach_the_edge`: the client's own address behind an L7 balancer the operator names, and behind an L4 balancer that rewrites source addresses and sends a PROXY protocol header; forged headers and forged PROXY lines refused, directly and through the balancer. The metrics surfaces are refused through an SNAT hop (`drill:scripts/polaris-metrics-edge-drill.sh`). |
 | OP-27 | Contributors need no Kubernetes | PASS | `file:Polaris.command` |
 | OP-28 | Real identity data | FAIL | Needs an external security review, the operator's DPIA and a pilot (above). |
 
