@@ -25898,6 +25898,84 @@ def check_openapi_covers_api_v1(root: pathlib.Path) -> list[Finding]:
                f"openapi.yaml covers all {len(documented)} /api/v1 routes in API.md, with no phantom")
 
 
+def _job_parts(block: str) -> tuple[str, dict[str, str]]:
+    """A job block as (its header without the name line, {step name: step text}), blank and
+    stripped-comment lines dropped so two copies that differ only in a comment compare equal."""
+    head, _, steps = block.partition("\n    steps:\n")
+    keep = lambda text: "\n".join(l for l in text.splitlines() if l.strip() not in ("", "#"))
+    head = keep("\n".join(l for l in head.splitlines() if not re.match(r"^    name:", l)))
+    out = {}
+    for chunk in re.split(r"(?m)^(?=      - name:)", steps):
+        m = re.match(r'      - name:\s*"?(.+?)"?\s*$', chunk.split("\n", 1)[0])
+        if m:
+            out[m.group(1)] = keep(chunk)
+    return head, out
+
+
+def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
+    """The product suite's parallel parts carry one setup, and its required job gates on each.
+
+    Since 2026-10-08 the job the main ruleset requires ("Polaris product test suite") runs no
+    tests itself: it waits for parts that run in parallel, each with its own copy of the
+    services, environment and setup steps. Two things can then go wrong without any test
+    noticing. A change to one copy misses the others: the first merge of main after the
+    split carried the new digest-pinned service images into one part only. And a gate that
+    does not run when a part fails is SKIPPED, which GitHub reports to a required check as
+    success, so a red part could merge.
+
+    So: the gate needs every `Product suite:` job, runs `if: always()`, and judges each part's
+    result; every part has the same runner, services and environment; and every step a part
+    shares by name with another is the same step. A setup step added to one part only is not
+    caught by name (nothing marks a step as setup); its absence fails that part's own run.
+    A suite still run as one job has no copies and passes.
+    """
+    name = "product_suite_parts_share_setup"
+    jobs = _ci_jobs(_read(root, ".github/workflows/ci.yml"))
+    gate = next((j for j, b in jobs.items()
+                 if re.search(r'(?m)^    name:\s*"?Polaris product test suite"?\s*$', b)), None)
+    if gate is None:
+        return _fail(name, "ci.yml has no job named \"Polaris product test suite\", the check the main "
+                           "ruleset requires")
+    block = jobs[gate]
+    m = re.search(r"(?m)^    needs:\s*\[([^\]]*)\]", block)
+    if m:
+        needs = [n.strip().strip("'\"") for n in m.group(1).split(",") if n.strip()]
+    else:
+        m = re.search(r"(?m)^    needs:\s*\n((?:      - \S+\s*\n?)+)", block)
+        needs = re.findall(r"- (\S+)", m.group(1)) if m else []
+    labelled = [j for j, b in jobs.items() if re.search(r'(?m)^    name:\s*"?Product suite:', b)]
+    if not needs:
+        if labelled:
+            return _fail(name, f"{', '.join(labelled)} run as parts of the product suite, but its required job "
+                               "needs none of them, so a red part cannot block a merge")
+        return _ok(name, "the product suite runs as one job; there are no copies to keep in step")
+    problems = [f"{j} is a part of the product suite the required job does not need" for j in labelled
+                if j not in needs]
+    problems += [f"the required job needs {j}, which ci.yml does not define" for j in needs if j not in jobs]
+    if not re.search(r"(?m)^    if:\s*\$?\{?\{?\s*always\(\)", block):
+        problems.append("the required job does not run `if: always()`: when a part fails it is skipped, and "
+                        "GitHub reports a skipped required check as passing")
+    if "needs" not in block.split("\n    steps:\n", 1)[-1] or "success" not in block:
+        problems.append("the required job does not judge its parts' results (needs.*.result == success)")
+    parts = [j for j in needs if j in jobs]
+    split = {j: _job_parts(jobs[j]) for j in parts}
+    shared = 0
+    for a, b in zip(parts, parts[1:]):
+        (ha, sa), (hb, sb) = split[a], split[b]
+        if ha != hb:
+            problems.append(f"{a} and {b} differ in their runner, services or environment")
+        common = [s for s in sa if s in sb]
+        if not common:
+            problems.append(f"{a} and {b} share no setup step")
+        problems += [f"the step \"{s}\" differs between {a} and {b}" for s in common if sa[s] != sb[s]]
+        shared = max(shared, len(common))
+    if problems:
+        return _fail(name, "; ".join(problems))
+    return _ok(name, f"the required job gates on {len(parts)} parallel parts ({', '.join(parts)}), runs "
+                     f"always and judges each result; they share runner, services, environment and "
+                     f"{shared} setup steps verbatim")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_pooler_keeps_the_operator_scope,
     check_publishable_packages_keep_their_dependency_budget,
@@ -26265,6 +26343,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_no_session_date_in_sql,
     check_product_sessions_pin_utc,
     check_openapi_covers_api_v1,
+    check_product_suite_parts_share_setup,
 ]
 
 

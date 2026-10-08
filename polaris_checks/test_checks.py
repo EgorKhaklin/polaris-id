@@ -21760,3 +21760,51 @@ def test_license_headers_check_discriminates(tmp_path):
     assert checks.check_source_files_carry_license_header(tmp_path)[0].level == "FAIL", \
         "must FAIL when it finds no source file at all, so a broken filter cannot pass"
 
+
+
+def test_product_suite_parts_share_setup_check_discriminates(tmp_path):
+    gh = tmp_path / ".github" / "workflows"
+    gh.mkdir(parents=True)
+
+    def part(jid, label, image="postgres:16-alpine@sha256:aa", deps="pip install -r req.txt",
+             comment="# a note", last="run tests"):
+        return (f"  {jid}:\n    name: \"Product suite: {label}\"\n    runs-on: ubuntu-latest\n"
+                f"    services:\n      postgres:\n        image: {image}\n    env:\n      A: '1'\n"
+                f"    steps:\n      - name: Checkout\n        uses: actions/checkout@abc\n\n"
+                f"      - name: Install deps\n        run: |\n          {comment}\n          {deps}\n\n"
+                f"      - name: {label} only\n        run: {last}\n")
+
+    gate_ok = ("  test:\n    name: Polaris product test suite\n    needs: [test-core, test-coverage]\n"
+               "    if: always()\n    runs-on: ubuntu-latest\n    steps:\n"
+               "      - name: Every part passed\n        env:\n          RESULTS: ${{ toJSON(needs) }}\n"
+               "        run: echo \"$RESULTS\" | grep -q success\n")
+
+    def write(core=None, cov=None, gate=gate_ok, extra=""):
+        (gh / "ci.yml").write_text("on: push\njobs:\n" + (core or part("test-core", "core"))
+                                   + (cov or part("test-coverage", "coverage")) + extra + gate)
+        return checks.check_product_suite_parts_share_setup(tmp_path)[0]
+
+    assert write().level == "OK", "two parts with one setup and a gate that judges them must pass"
+    assert write(cov=part("test-coverage", "coverage", comment="# another note")).level == "OK", \
+        "copies that differ only in a comment must pass"
+    extra_comment = part("test-coverage", "coverage").replace(
+        "    runs-on:", "    # Split out of the product suite.\n    runs-on:")
+    assert write(cov=extra_comment).level == "OK", \
+        "a part with an extra comment line in its header (as every split part has) must pass"
+    assert write(cov=part("test-coverage", "coverage", image="postgres:16-alpine")).level == "FAIL", \
+        "a part left on an unpinned service image (the 2026-10-08 merge) must FAIL"
+    assert write(cov=part("test-coverage", "coverage", deps="pip install -r other.txt")).level == "FAIL", \
+        "a shared setup step changed in one part only must FAIL"
+    assert write(gate=gate_ok.replace("    if: always()\n", "")).level == "FAIL", \
+        "a gate without if: always() is skipped when a part fails, and skipped reads as passing"
+    assert write(gate=gate_ok.replace(" | grep -q success", "")).level == "FAIL", \
+        "a gate that never judges its parts' results must FAIL"
+    assert write(extra=part("test-extra", "extra")).level == "FAIL", \
+        "a Product suite part the gate does not need must FAIL"
+    assert write(gate=gate_ok.replace("Polaris product test suite", "Something else")).level == "FAIL", \
+        "with no job carrying the required check's name, the check must FAIL"
+    mono = ("  test:\n    name: Polaris product test suite\n    runs-on: ubuntu-latest\n    steps:\n"
+            "      - name: Checkout\n        run: echo\n")
+    (gh / "ci.yml").write_text("on: push\njobs:\n" + mono)
+    assert checks.check_product_suite_parts_share_setup(tmp_path)[0].level == "OK", \
+        "a suite still run as one job has no copies to compare"
