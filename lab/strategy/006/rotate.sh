@@ -69,7 +69,9 @@ anchors() { python3 -c 'import json,sys; json.dump({"public_keys_hex": sys.argv[
 step "1/6 register K1 (the key try.sh minted) for agency 1, then issue credential A under it"
 K1=$(pub "${SECRETS}/polaris_signing_key")
 if [[ -z "$(sql "SELECT 1 FROM AuthorityKeyCurrent WHERE agency_id = 1 AND public_key_hex = '${K1}'")" ]]; then
-    key_event register 1 "${K1}" --note "rotate.sh: the key try.sh minted"
+    # --current: the key the running app signs with, read from its custody, which is K1 (checked below:
+    # credential A verifies under the registered key).
+    key_event register 1 --current --note "rotate.sh: the key try.sh minted, read from the app's custody"
 fi
 issue A
 A=$(field "${OUT}/pack-A.json" token_id)

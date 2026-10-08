@@ -6853,6 +6853,8 @@ _FRESH_HOST_NEEDLES = (
     ("scripts/polaris-rp-register.sh", "polaris.justification", "a relying party's registration must record its reason"),
     ("deploy/linux/install.sh", "polaris-key-event.sh register 1 --current", "install.sh must name the key registration"),
     ("deploy/linux/install.sh", "polaris-create-operator.sh --username NAME --role admin", "install.sh must name the first administrator"),
+    ("lab/strategy/006/try.sh", "polaris-key-event.sh register 1 --current", "the one-command path must say how to verify online"),
+    ("lab/strategy/006/rotate.sh", "key_event register 1 --current", "the one-command drill must register through --current"),
     ("scripts/polaris-deploy.sh", "polaris-key-event.sh register ${agency} --current", "a deploy must name the registration an issuing authority lacks"),
     ("scripts/polaris-doctor.sh", "register <agency> --current", "the doctor must name the command that fixes its key-register failure"),
     ("docs/operator/LINUX-SERVER.md", "## After the install", "LINUX-SERVER.md must say what follows the install"),
