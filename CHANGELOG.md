@@ -11,6 +11,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- The chart mounted every key of its Secret into the app's pod, the superuser's and the replicator's passwords, both servers' TLS keys and the backup repository's credentials among them; each pod now mounts only the keys it reads, at 0440 (lab record 017).
 - The HA and DR profiles' etcd authenticates its clients, and Patroni's REST API refuses unauthenticated writes; both accepted any container on their networks (lab record 017).
 - ZK proofs are built with Plonky2's zero-knowledge configuration; earlier binaries built sound but non-hiding proofs, which no longer verify.
 - The access log records method, path and protocol, no longer the query string or the referrer (lab record 017).
@@ -33,6 +34,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- SECRETS.md still said Redis runs without a password.
 - A host install archives WAL by default, as a Compose stack does; its env template turned archiving off.
 - `polaris-migrate.sh` read a schema registry it could not read as nothing applied and planned every migration; it now stops.
 - The observability overlay's Prometheus scraped the app through the public edge, which refuses `/metrics` by default; it now finds the app on the stack's network by name, blue-green included.

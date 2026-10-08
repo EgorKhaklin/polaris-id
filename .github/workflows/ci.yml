@@ -3193,6 +3193,13 @@ jobs:
           docker exec -u postgres polaris-postgres psql -U postgres -d polaris -tAc "SHOW ssl" 2>/dev/null | grep -qx on \
             || { echo "::error::postgres is not running with ssl=on (prod init did not enable TLS)"; exit 1; }
           echo "postgres ssl=on confirmed"
+          # Lab record 017 (OP-9): each container mounts only the secrets it reads.
+          got=$(docker exec polaris-app ls /run/secrets | sort | tr '\n' ' ')
+          [ "$got" = "polaris_db_password polaris_redis_password polaris_secret_key polaris_secret_key_fallbacks polaris_signing_key " ] \
+            || { echo "::error::the app container mounts [$got], not exactly its five secrets"; exit 1; }
+          got=$(docker exec polaris-pgbouncer ls /run/secrets | tr '\n' ' ')
+          [ "$got" = "polaris_db_password " ] || { echo "::error::pgbouncer mounts [$got], not only polaris_db_password"; exit 1; }
+          echo "the app and pgbouncer containers mount only the secrets they read"
 
       # v9.180 (roadmap P1.3) — the ROTATION DRILL on the live stack: rotate the
       # DB password and the session key with polaris-rotate-secret.sh, which
