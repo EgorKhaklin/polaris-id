@@ -11,6 +11,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- The chart mounted every key of its Secret into the app's pod, the superuser's and the replicator's passwords, both servers' TLS keys and the backup repository's credentials among them; each pod now mounts only the keys it reads, at 0440 (lab record 017).
 - The HA and DR profiles' etcd authenticates its clients, and Patroni's REST API refuses unauthenticated writes; both accepted any container on their networks (lab record 017).
 - ZK proofs are built with Plonky2's zero-knowledge configuration; earlier binaries built sound but non-hiding proofs, which no longer verify.
 - The access log records method, path and protocol, no longer the query string or the referrer (lab record 017).
@@ -33,6 +34,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- A caught-up replica of an idle HA cluster no longer reads as lagging; reads stayed on the primary (lab record 017).
+- SECRETS.md still said Redis runs without a password.
 - The production compose file passes `POLARIS_TRUSTED_PROXIES` and `POLARIS_METRICS_ALLOW` to the edge; both were documented and never arrived.
 - A host install archives WAL by default, as a Compose stack does; its env template turned archiving off.
 - `polaris-migrate.sh` read a schema registry it could not read as nothing applied and planned every migration; it now stops.
@@ -61,6 +64,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The checks layer skips other checkouts nested in the tree (agent worktrees); four checks failed on their stale copies.
 - polaris-oid4vp serves the request object with `Cache-Control: no-store`, as the German EUDI wallet guide's request_uri response does.
 - The record 007 Pomerium demo maps `*.localhost.pomerium.io` to loopback itself; public DNS stopped resolving it.
+- CI's coverage floors are enforced again: since 2026-09-30 a failed coverage export left them comparing nothing, and passing.
+- The trigger refusal drill no longer reports a refusal untested when the test that caught it failed inside a subtest beside a flaky one.
+- Two C1 privilege-boundary tests no longer fail when a trigger's random fold runs inside them.
 
 ### Added
 
@@ -136,6 +142,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Changed
 
 - The chart spreads its replicated pods across nodes and zones, runs two edge, router and pgbouncer pods, and moves Redis.
+- The HA profile and the chart replicate synchronously by default; a failover loses no acknowledged write (lab record 017).
 - Dependabot groups each directory's minor and patch updates into one pull request per run.
 - CI runs the product suite as three parallel jobs behind its one required check, so the slowest part alone sets the wait.
 - `/api/health/ready` answers for one instance (custody, the second witness, local disk) and leaves the shared database to `/api/health`; the edge and the Helm readiness probe route on it, so a database failover no longer takes every instance out of rotation (lab record 017).
@@ -172,6 +179,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A web request's statements end two seconds before its worker's timeout, so no query outlives its request.
 - The landing emblem has no ring; a soft gold halo sits behind it.
 - `polaris-id migrate-algorithm` signs as the route does; `--signature-hex` and `--signature-file` are withdrawn.
+- The coverage step stops re-running suites the product suite's other steps run.
 
 ### Fixed
 

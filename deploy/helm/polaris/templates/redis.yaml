@@ -74,7 +74,7 @@ spec:
         - name: acl
           secret:
             secretName: {{ include "polaris.secretName" . }}
-            defaultMode: 0444
+            defaultMode: 0440
             items:
               - {key: redis_users.acl, path: users.acl}
         - name: data
