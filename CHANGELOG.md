@@ -60,6 +60,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The checks layer skips other checkouts nested in the tree (agent worktrees); four checks failed on their stale copies.
 - polaris-oid4vp serves the request object with `Cache-Control: no-store`, as the German EUDI wallet guide's request_uri response does.
 - The record 007 Pomerium demo maps `*.localhost.pomerium.io` to loopback itself; public DNS stopped resolving it.
+- CI's coverage floors are enforced again: since 2026-09-30 a failed coverage export left them comparing nothing, and passing.
 
 ### Added
 
@@ -170,6 +171,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The landing emblem has no ring; a soft gold halo sits behind it.
 - `polaris-id migrate-algorithm` signs as the route does; `--signature-hex` and `--signature-file` are withdrawn.
 - CI runs the product suite's app-role suite and ZK steps, and Real PQC's web suite, as jobs of their own.
+- The coverage step stops re-running suites the product suite's other steps run.
 
 ### Fixed
 
