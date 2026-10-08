@@ -38,6 +38,16 @@ omit =
     */scripts/polaris-verify-load.py
     */scripts/polaris-credential-copy-test-pki.py
 
+[paths]
+# polaris_cli/test_cli.py's PackageInstallTests runs a COPY of polaris_cli from a temporary
+# directory, as an installed package runs. Its lines are polaris_cli's own, so they are folded back
+# into polaris_cli/ here. Left unmapped, the copy is gone by the time the data is combined, and
+# `coverage json` fails with "No source for code": from 2026-09-30 to 2026-10-08 that left CI's
+# floors comparing empty numbers, and passing.
+polaris_cli =
+    polaris_cli/
+    */polaris-cli-pkg-*/site/polaris_cli/
+
 [report]
 # The CLI entrypoints are exercised end to end (the app shells into the ZK
 # binary; polaris_checks.run gates CI) rather than by unit tests, so counting
