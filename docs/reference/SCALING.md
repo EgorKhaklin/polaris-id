@@ -7,8 +7,8 @@ hardening that ships alongside. The headline measurement is the Atlas on its
 activity rollups at ten million verifications (step 4 of lab/strategy/009); the
 event-table measurements of v9.150 and the 2-million-event era follow it, kept as
 taken.
-Production deployments with tuned Postgres, connection pooling and edge
-caching are faster than these developer-laptop numbers.
+These are developer-laptop numbers; tuned PostgreSQL, pooling and edge caching
+have not been measured against them.
 
 **Since 2026-10-02** the Atlas returns counts only
 ([lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md), step A0):
@@ -328,8 +328,9 @@ Expect ~90 seconds for the INSERT (pure CPU; no I/O bottleneck).
 The atlas numbers above are SQL-function timings at ten million events. The
 application-path numbers (issuance/s, verification/s, and atlas p95 through
 gunicorn, on stated hardware, with stamps) are the published baseline in
-[`PERFORMANCE-BASELINE.md`](PERFORMANCE-BASELINE.md), re-run by CI on every
-push (v9.191, roadmap P1.9).
+[`PERFORMANCE-BASELINE.md`](PERFORMANCE-BASELINE.md), measured by hand on stated
+hardware. CI runs the same script's five-second smoke on every push, a check of
+the procedure rather than a baseline (v9.191, roadmap P1.9).
 
 ## What's not yet covered
 

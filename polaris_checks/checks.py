@@ -17534,8 +17534,9 @@ def check_cost_model(root: pathlib.Path) -> list[Finding]:
                      "and roadmap P2.9 already say in their own words")
     if "not the cost driver" not in doc:
         return _fail(name,
-                     "the document must state the finding plainly: verification throughput is not "
-                     "the cost driver at national scale, and availability and retention are. A cost "
+                     "the document must state the finding plainly: the cryptographic cost of "
+                     "verification is not the cost driver at national scale, and availability and "
+                     "retention are. A cost "
                      "model whose conclusion a reader has to derive is a table again")
     return _ok(name,
                "infrastructure cost is a model that runs rather than a table that asserts: every "

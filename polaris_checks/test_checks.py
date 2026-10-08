@@ -12447,7 +12447,7 @@ def test_cost_model_check_discriminates(tmp_path):
               "ap.add_argument('--persons')\nap.add_argument('--verifications-per-person')\n"
               "ap.add_argument('--retention-years')\nap.add_argument('--price-vcpu-hour')\n")
     BENCH = "| single-witness | ~7,848 verifications/s per core |\n"
-    DOC = ("Verification throughput is not the cost driver.\n"
+    DOC = ("The cryptographic cost of verification is not the cost driver.\n"
            "Excluded: Staff and on-call; a hardware security module; the physical token.\n"
            "The throughput is a single-node measurement.\n")
     good = {
@@ -12506,7 +12506,7 @@ def test_cost_model_check_discriminates(tmp_path):
 
     # The finding stops being stated, so the reader has to derive the conclusion.
     write({'docs/reference/COST-MODEL.md': DOC.replace(
-        "Verification throughput is not the cost driver.\n", "")})
+        "The cryptographic cost of verification is not the cost driver.\n", "")})
     assert checks.check_cost_model(tmp_path)[0].level == "FAIL", \
         "must FAIL when the document does not state its own finding"
 

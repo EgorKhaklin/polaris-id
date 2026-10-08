@@ -46,7 +46,7 @@ Redis rate-limiter backend (each adds its own overhead; measure through
 | Stage | Offered req/s | Achieved req/s | Success req/s | p50 ms | p95 ms | p99 ms | Success/total |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Issuance (`POST /uc1/issue`, full uc1 procedure + signature) | 40 | 40.0 | 40.0 | 29.9 | 34.4 | 57.5 | 2400/2400 |
-| Verification (`POST /verifications/new`) | 80 | 80.0 | 80.0 | 15.0 | 18.3 | 41.1 | 4800/4800 |
+| Verification event (`POST /verifications/new`, no signature check) | 80 | 80.0 | 80.0 | 15.0 | 18.3 | 41.1 | 4800/4800 |
 | Atlas breakdown, warm (`/api/atlas/breakdown`, cached) | 100 | 100.0 | 100.0 | 8.9 | 10.6 | 13.3 | 6000/6000 |
 | Atlas breakdown, cold (a new question every request) | 100 | 100.0 | 100.0 | 16.6 | 19.0 | 23.5 | 6000/6000 |
 | Atlas all-time stats, warm (`/api/atlas/stats`) | 100 | 100.0 | 100.0 | 9.0 | 11.9 | 16.2 | 6000/6000 |
@@ -59,7 +59,7 @@ no pgbouncer, gunicorn x4, the SHA3-256 placeholder signer), the verification st
 more than the stack could serve, before and after `POLARIS_DB_POOL_SIZE` (lab record 017,
 phase 2d):
 
-| Verification stage | Offered req/s | Achieved req/s | Success | p50 ms | p95 ms |
+| Verification-event stage | Offered req/s | Achieved req/s | Success | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|
 | A connection per request | 400 | 301.4 | 12000/12000 | 36.6 | 56.2 |
 | A connection per request | 1200 | 300.1 | 23999/23999 | 36.9 | 58.5 |
@@ -74,11 +74,10 @@ no server error). Without TLS or pgbouncer a new connection is cheap here; throu
 production path each avoided connection also avoids a TLS handshake.
 
 Read the table with the topology line: one developer machine running both the
-application and PostgreSQL, so the two compete for the same cores. A
-dedicated database host moves the issuance and verification numbers up, and
-the atlas numbers are bounded by the hours a window spans, not by the table
-size: the Atlas sums the activity rollups and reads no event table
-([`SCALING.md`](SCALING.md)).
+application and PostgreSQL, so the two compete for the same cores; a dedicated
+database host has not been measured. The atlas numbers are bounded by the hours
+a window spans, not by the table size: the Atlas sums the activity rollups and
+reads no event table ([`SCALING.md`](SCALING.md)).
 
 ## Floors, and the CI re-run
 
