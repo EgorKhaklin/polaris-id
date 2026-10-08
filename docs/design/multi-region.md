@@ -5,8 +5,9 @@ second one actually guarantees. **Job:** state the shape, the reason it is that 
 the recovery point it does not eliminate.
 
 The HA profile survives a node dying: Patroni's lease moves and another member in the same
-region takes over, with no data loss, because the members are close enough to replicate
-promptly and share a lease store. It does not survive the region.
+region takes over, losing no acknowledged write, because the members are close enough to
+replicate synchronously ([synchronous-replication.md](synchronous-replication.md)) and share a
+lease store. It does not survive the region.
 
 ## Why not simply add a third member "in region B"
 

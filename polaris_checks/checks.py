@@ -6476,6 +6476,45 @@ def check_ha_internal_auth(root: pathlib.Path) -> list[Finding]:
                "evacuation drills prove the refusals from the app's network")
 
 
+# Lab record 017 (gate row OP-6): a failover loses no acknowledged write. Under asynchronous
+# replication it could (the failover drill counted two acknowledged inserts missing after a leader
+# loss on CI), and in Polaris an acknowledged write can be a revocation. The HA profile and the
+# chart run Patroni's synchronous_mode by default, not strict; a standby cluster stays asynchronous;
+# the failover drill reads the mode from the cluster and, with it on, fails on any acknowledged
+# insert the surviving history lacks. docs/design/synchronous-replication.md records the price.
+_SYNC_REPLICATION_NEEDLES = (
+    ("polaris_web/patroni-entrypoint.sh", 'SYNC_MODE="${POLARIS_PATRONI_SYNCHRONOUS_MODE:-on}"',
+     "replicate synchronously unless told otherwise"),
+    ("polaris_web/patroni-entrypoint.sh", "    synchronous_mode: $SYNC_MODE\n    synchronous_mode_strict: false\n",
+     "write synchronous_mode, not strict, into the cluster's configuration"),
+    ("polaris_web/patroni-entrypoint.sh", '[ -z "$STANDBY_HOST" ] || SYNC_MODE=false',
+     "keep a standby cluster asynchronous"),
+    ("polaris_web/docker-compose.ha.yml", 'POLARIS_PATRONI_SYNCHRONOUS_MODE: "${POLARIS_PATRONI_SYNCHRONOUS_MODE:-on}"',
+     "pass the HA profile's default to its members"),
+    ("deploy/helm/polaris/values.yaml", "    synchronousMode: true\n", "default the chart to synchronous replication"),
+    ("deploy/helm/polaris/templates/postgres.yaml", "POLARIS_PATRONI_SYNCHRONOUS_MODE",
+     "pass the chart's setting to its members"),
+    ("scripts/polaris-failover-drill.sh", ".get('synchronous_mode')", "read the mode from the cluster"),
+    ("scripts/polaris-failover-drill.sh", "with synchronous_mode on, a failover must lose none",
+     "fail on an acknowledged insert lost with synchronous_mode on"),
+    ("scripts/polaris-failover-drill.sh", 'wait_for 60 sync_standby_is "$r" "$l"',
+     "start each scenario with the replica as the synchronous standby"),
+    ("scripts/polaris-failover-drill.sh", '== 5. the replica ($R5) is lost',
+     "drill the replica's loss, where synchronous replication costs a stall"),
+    ("docs/design/synchronous-replication.md", "## What it costs", "record the price"),
+)
+
+
+def check_failover_keeps_acknowledged_writes(root: pathlib.Path) -> list[Finding]:
+    name = "failover_keeps_acknowledged_writes"
+    for rel, needle, what in _SYNC_REPLICATION_NEEDLES:
+        if needle not in _read(root, rel):
+            return _fail(name, f"{rel} no longer does this: {what}")
+    return _ok(name, "the HA profile and the chart replicate synchronously by default (not strict; a standby "
+               "cluster stays asynchronous), and the failover drill fails on any acknowledged write a failover "
+               "loses with it on")
+
+
 def check_redis_authenticated(root: pathlib.Path) -> list[Finding]:
     name = "redis_authenticated"
     problems = []
@@ -25968,6 +26007,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_release_images_signed,
     check_redis_authenticated,
     check_ha_internal_auth,
+    check_failover_keeps_acknowledged_writes,
     check_npm_publish_is_staged,
     check_admin_mfa_deadline,
     check_duress_timing_ballast,

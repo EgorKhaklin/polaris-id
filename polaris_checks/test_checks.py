@@ -3134,6 +3134,29 @@ def test_restore_verified_on_schedule_check_discriminates(tmp_path):
     (tmp_path / rel).write_text(good)
 
 
+def test_failover_keeps_acknowledged_writes_check_discriminates(tmp_path):
+    for rel in sorted({rel for rel, _, _ in checks._SYNC_REPLICATION_NEEDLES}):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_failover_keeps_acknowledged_writes(tmp_path)[0].level == "OK", \
+        "must PASS on the real entrypoint, overlay, chart, failover drill and design record"
+    for rel, needle, what in checks._SYNC_REPLICATION_NEEDLES:
+        path = tmp_path / rel
+        good = path.read_text()
+        assert needle in good, f"the fixture drifted: {needle!r} is no longer in {rel}"
+        path.write_text(good.replace(needle, "true"))
+        assert checks.check_failover_keeps_acknowledged_writes(tmp_path)[0].level == "FAIL", \
+            f"must FAIL when it no longer does this: {what}"
+        path.write_text(good)
+    # The default flipped to asynchronous is the regression this exists for.
+    rel = "polaris_web/patroni-entrypoint.sh"
+    good = (tmp_path / rel).read_text()
+    (tmp_path / rel).write_text(good.replace("POLARIS_PATRONI_SYNCHRONOUS_MODE:-on}", "POLARIS_PATRONI_SYNCHRONOUS_MODE:-off}"))
+    assert checks.check_failover_keeps_acknowledged_writes(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the entrypoint defaults to asynchronous replication"
+    (tmp_path / rel).write_text(good)
+
+
 def test_restore_reconciled_check_discriminates(tmp_path):
     files = {"scripts/polaris-reconcile-restore.py", "scripts/polaris-pitr-drill.sh", ".github/workflows/ci.yml",
              "docs/operator/DR.md"}

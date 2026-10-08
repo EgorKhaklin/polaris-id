@@ -181,7 +181,7 @@ replica_streaming() {  # replica_streaming POD: Patroni's /cluster, asked of the
     kubectl -n "$NS" exec "$l" -- wget -qO- http://127.0.0.1:8008/cluster 2>/dev/null | python3 -c "
 import json, sys
 d = json.load(sys.stdin); m = next((m for m in d['members'] if m['name'] == sys.argv[1]), None)
-sys.exit(0 if m and m['role'] == 'replica' and m['state'] == 'streaming' and m.get('lag', 1) == 0 else 1)" "$1"
+sys.exit(0 if m and m['role'] in ('replica', 'sync_standby') and m['state'] == 'streaming' and m.get('lag', 1) == 0 else 1)" "$1"
 }
 cluster_healthy() { local l r; l=$(lease_holder); [[ -n "$l" ]] || return 1; r=$(other_member "$l"); replica_streaming "$r"; }
 wait_for() { local limit="$1"; shift; local t0 i; t0=$(date +%s); for i in $(seq 1 "$limit"); do if "$@"; then echo $(( $(date +%s) - t0 )); return 0; fi; sleep 1; done; echo "$limit"; return 1; }
