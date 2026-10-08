@@ -189,6 +189,24 @@ The seeded credentials themselves live in the SQL seed
 ([`polaris_sql/10_auth.sql`](../../polaris_sql/10_auth.sql)) and in
 [`INSTALL.md`](INSTALL.md), where they belong: the evaluation launcher.
 
+### The signing key's registration
+
+The stack signs for real, with the ML-DSA-65 key `polaris-generate-secrets.sh` minted on this
+host. Every route that takes a presented credential, `POST /api/v1/verify` among them, accepts a
+signature only under a key its authority had registered when it signed, so until the key is
+registered a relying party's verification of every credential the stack issues answers "not a
+verifiable presentation". Register it before the first credential is issued, for each authority
+that issues under it; the registration ends the key ceremony ([`KEY-CEREMONY.md`](KEY-CEREMONY.md)):
+
+```bash
+PK=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["public_key_hex"])' \
+       "${POLARIS_SECRETS_DIR:-polaris_web/secrets}/polaris_signing_key")
+./scripts/polaris-key-event.sh register <agency id> "$PK"
+```
+
+[`scripts/polaris-doctor.sh`](../../scripts/polaris-doctor.sh) fails when an authority holds
+credentials signed for real under no registered key.
+
 ## Environment variables
 
 Every row is read by [`polaris_web/app.py`](../../polaris_web/app.py),

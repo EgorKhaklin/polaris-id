@@ -39,6 +39,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - SECRETS.md said a sealed store's key is not on its disk; an age identity kept on the host is. The doctor and every start now say when the secrets are plaintext on disk.
 - DEPLOYMENT.md's first-operator command omitted the `--reason` the script requires.
 - SECRETS.md still said Redis runs without a password.
+- The install guides did not say to register the signing key, without which every relying-party verification is refused; the doctor now fails when credentials signed for real belong to an authority with no registered key.
+- The scaling documents no longer present the signature check's rate per core as the verification route's capacity, nor unmeasured worker, replica and host scaling as measured.
 - The production compose file passes `POLARIS_TRUSTED_PROXIES` and `POLARIS_METRICS_ALLOW` to the edge; both were documented and never arrived.
 - A host install archives WAL by default, as a Compose stack does; its env template turned archiving off.
 - `polaris-migrate.sh` read a schema registry it could not read as nothing applied and planned every migration; it now stops.
@@ -70,6 +72,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- `scripts/polaris-throughput-measure.sh` measures online verifications a second through the production path, per app vCPU and across two replicas, weekly; SCALING.md sizes a deployment from it.
 - The edge reads a client's address from a PROXY protocol header sent by an L4 balancer the operator names.
 - `lab/strategy/006/alerts.sh` fires the certificate, backup and archive alerts on their real conditions and clears them on repair; CI runs it after try.sh.
 - `/metrics` reports this instance's clock against the database's (`polaris_clock_skew_seconds`); PolarisClockSkew pages when they disagree by more than 2 s for 10 minutes.
