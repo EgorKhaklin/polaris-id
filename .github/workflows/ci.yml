@@ -1944,10 +1944,12 @@ jobs:
           sudo scripts/polaris-key-event.sh register 1 --current
           sudo scripts/polaris-key-event.sh register 1 --current | grep -q "already registered" \
             || { echo "::error::a second register --current was not a no-op"; exit 1; }
-          sudo docker cp polaris-caddy:/data/caddy/pki/authorities/local/root.crt /tmp/caddy-root.crt
+          # The runner's own copy of the edge's CA certificate (public): a root-owned copy is unreadable to
+          # curl run as the runner, which exits 77.
+          sudo docker exec polaris-caddy cat /data/caddy/pki/authorities/local/root.crt > /tmp/op2-ca.crt
           base=https://localhost:8443
           # The key reached the public trust list, signed by the authority it lists as active.
-          curl -sf --cacert /tmp/caddy-root.crt "$base/api/v1/trust-list/1" -o /tmp/op2-trust.json
+          curl -sf --cacert /tmp/op2-ca.crt "$base/api/v1/trust-list/1" -o /tmp/op2-trust.json
           pk=$(sudo python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["public_key_hex"])' \
                  polaris_web/secrets/polaris_signing_key)       # the key this install minted
           python3 - "$pk" /tmp/op2-trust.json <<'EOF'
@@ -1957,17 +1959,17 @@ jobs:
           sys.exit(0 if ok else "the trust list does not list agency 1's key as active: %s" % [(k.get("agency_id"), k.get("status")) for k in keys])
           EOF
           # The first administrator issues one credential through the operator console.
-          mkdir -p /tmp/op2 && cp /tmp/caddy-root.crt /tmp/op2/caddy-root.crt && cp /tmp/ci-operator.pw /tmp/op2/operator-password
+          mkdir -p /tmp/op2 && cp /tmp/op2-ca.crt /tmp/op2/caddy-root.crt && cp /tmp/ci-operator.pw /tmp/op2/operator-password
           sudo python3 lab/strategy/006/issue_and_pack.py /tmp/op2 /opt/polaris/polaris_web/secrets ci-admin
           # A relying party, registered as the operator registers one, verifies it online.
           sudo scripts/polaris-rp-register.sh "Fresh-host drill relying party" \
             --justification "the relying party of the fresh-host drill (lab record 017, gate row OP-2)" | tee /tmp/op2-rp.out
           cid=$(sed -n 's/^  client_id: *//p' /tmp/op2-rp.out); secret=$(sed -n 's/^  client_secret: *//p' /tmp/op2-rp.out)
-          token=$(curl -sf --cacert /tmp/caddy-root.crt -u "$cid:$secret" -d grant_type=client_credentials \
+          token=$(curl -sf --cacert /tmp/op2-ca.crt -u "$cid:$secret" -d grant_type=client_credentials \
                     "$base/api/v1/oauth/token" | python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])')
           sudo python3 -c 'import json, sys; p = json.load(open(sys.argv[1])); print(json.dumps({"token_value": p["token_value"], "signature_hex": p["signature_hex"]}))' \
             /tmp/op2/pack.json > /tmp/op2-body.json
-          answer=$(curl -s --cacert /tmp/caddy-root.crt -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+          answer=$(curl -s --cacert /tmp/op2-ca.crt -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
                      --data-binary @/tmp/op2-body.json "$base/api/v1/verify")
           echo "POST /api/v1/verify: $answer"
           python3 -c 'import json, sys; v = json.loads(sys.argv[1]); sys.exit(0 if v.get("decision") == "accept" and v.get("usable") is True else 1)' "$answer" \
