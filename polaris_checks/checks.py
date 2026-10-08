@@ -6863,7 +6863,16 @@ def check_client_ip_behind_proxies(root: pathlib.Path) -> list[Finding]:
         if ("header_up X-Forwarded-For {client_ip}" not in conf or "header_up X-Real-IP {client_ip}" not in conf
                 or re.search(r"header_up X-(?:Forwarded-For|Real-IP) \{remote_host\}", conf)):
             return _fail(name, f"{rel} must pass the client address ({{client_ip}}), not the TCP peer, upstream")
+        # Lab record 017 (OP-26): behind an L4 balancer the client's address arrives in a PROXY protocol
+        # header, read only from the sources the operator names and never parsed from anyone else.
+        if not _PROXY_PROTOCOL_BLOCK.search(conf):
+            return _fail(name, f"{rel} must read PROXY protocol headers only from the sources "
+                         "POLARIS_EDGE_PROXY_PROTOCOL_FROM names (none by default) and skip them from any other")
     helm = _read(root, "deploy/helm/polaris/templates/configmap-caddy.yaml")
+    if ('allow {{ .Values.edge.proxyProtocolFrom | default "255.255.255.255/32" }}' not in helm
+            or "fallback_policy skip" not in helm):
+        return _fail(name, "the chart's edge must read PROXY protocol headers only from edge.proxyProtocolFrom "
+                     "(none by default) and skip them from any other source")
     if ('trusted_proxies static {{ .Values.edge.trustedProxies | default "0.0.0.0/32" }}' not in helm
             or "trusted_proxies_strict" not in helm or "header_up X-Forwarded-For {client_ip}" not in helm):
         return _fail(name, "the chart's edge must trust only edge.trustedProxies (none by default), read "
@@ -6878,14 +6887,43 @@ def check_client_ip_behind_proxies(root: pathlib.Path) -> list[Finding]:
         return _fail(name, "ci.yml must run scripts/polaris-client-ip-drill.sh")
     drill = _read(root, "scripts/polaris-client-ip-drill.sh")
     for needle in ("polaris_web/Caddyfile.citest", 'expect "via the balancer, not trusted"',
-                   'expect "via the balancer, forging', 'expect "straight to the edge, forging'):
+                   'expect "via the balancer, forging', 'expect "straight to the edge, forging',
+                   'expect "via the L4 balancer, PROXY v2"', 'refused "straight to the edge"', 'refused "via l4"'):
         if needle not in drill:
             return _fail(name, f"scripts/polaris-client-ip-drill.sh no longer covers {needle!r}")
     return _ok(name,
                "every edge trusts only the proxies the operator names (none by default), reads "
-               "X-Forwarded-For right to left past them and passes the client address upstream; the "
-               "chart keeps source addresses (Local); CI proves it behind an appending balancer, with "
-               "forgeries refused both ways")
+               "X-Forwarded-For right to left past them and passes the client address upstream, and reads "
+               "PROXY protocol only from the L4 balancers named; the chart keeps source addresses (Local); "
+               "CI proves it behind an appending L7 and an address-rewriting L4 balancer, forgeries refused")
+
+
+# Lab record 017 (OP-26): the PROXY protocol listener, in production's form (a check holds the CI
+# edge to the same lines).
+_PROXY_PROTOCOL_BLOCK = re.compile(
+    r"listener_wrappers \{\s*proxy_protocol \{\s*timeout \d+s\s*"
+    r"allow \{\$POLARIS_EDGE_PROXY_PROTOCOL_FROM:255\.255\.255\.255/32\}\s*fallback_policy skip\s*\}\s*tls\s*\}")
+
+
+# Lab record 017 (OP-26): an edge setting the Caddyfile reads must reach the edge. The production
+# compose file passed the edge only POLARIS_DOMAIN and POLARIS_UPSTREAMS, so POLARIS_TRUSTED_PROXIES
+# and POLARIS_METRICS_ALLOW, documented in DEPLOYMENT.md, were read from an environment that never
+# held them: behind a load balancer every client shared its address.
+def check_edge_settings_reach_the_edge(root: pathlib.Path) -> list[Finding]:
+    name = "edge_settings_reach_the_edge"
+    names = sorted(set(re.findall(r"\{\$(POLARIS_[A-Z0-9_]+)", _read(root, "polaris_web/Caddyfile"))))
+    if not names:
+        return _fail(name, "polaris_web/Caddyfile reads no POLARIS_ setting; the check would pass vacuously")
+    compose = _read(root, "polaris_web/docker-compose.prod.yml")
+    m = re.search(r"(?ms)^  caddy:\n(.*?)(?=^  \S)", compose)
+    env = m.group(1) if m else ""
+    env = env[env.find("    environment:"):] if "    environment:" in env else ""
+    missing = [n for n in names if not re.search(rf"(?m)^\s+{n}:", env)]
+    if missing:
+        return _fail(name, "polaris_web/Caddyfile reads " + ", ".join(missing) + " but the production compose "
+                     "file does not pass it to the edge: set by the operator, it would never arrive")
+    return _ok(name, f"every setting the edge's Caddyfile reads ({len(names)}) reaches it through the production "
+               "compose file")
 
 
 # 2026-10-07 (lab record 017, phase 5): a slow or oversized client is ended at the edge. The app's
@@ -26017,6 +26055,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_redis_authenticated,
     check_ha_internal_auth,
     check_failover_keeps_acknowledged_writes,
+    check_edge_settings_reach_the_edge,
     check_npm_publish_is_staged,
     check_admin_mfa_deadline,
     check_duress_timing_ballast,

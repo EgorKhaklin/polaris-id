@@ -3300,6 +3300,39 @@ def test_client_ip_behind_proxies_check_discriminates(tmp_path):
            "must FAIL when CI does not run the drill")
     broken("scripts/polaris-client-ip-drill.sh", 'expect "via the balancer, forging', 'echo "via the balancer, forging',
            "must FAIL when the drill no longer forges through the balancer")
+    # Lab record 017 (OP-26): the PROXY protocol listener.
+    broken("polaris_web/Caddyfile", "                fallback_policy skip\n", "                fallback_policy use\n",
+           "must FAIL when the edge reads a PROXY header from any source, so a client names its own address")
+    broken("polaris_web/Caddyfile.citest", "{$POLARIS_EDGE_PROXY_PROTOCOL_FROM:255.255.255.255/32}",
+           "{$POLARIS_EDGE_PROXY_PROTOCOL_FROM:0.0.0.0/0}",
+           "must FAIL when every source is trusted with a PROXY header by default")
+    broken("deploy/helm/polaris/templates/configmap-caddy.yaml", "                    fallback_policy skip\n", "",
+           "must FAIL when the chart's edge parses PROXY headers from sources nobody named")
+    broken("scripts/polaris-client-ip-drill.sh", 'refused "straight to the edge"', 'echo "straight to the edge"',
+           "must FAIL when the drill no longer sends a client's own PROXY header to the edge")
+
+
+def test_edge_settings_reach_the_edge_check_discriminates(tmp_path):
+    files = ("polaris_web/Caddyfile", "polaris_web/docker-compose.prod.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_edge_settings_reach_the_edge(tmp_path)[0].level == "OK", \
+        "must PASS on the real Caddyfile and production compose file"
+    compose = tmp_path / "polaris_web/docker-compose.prod.yml"
+    good = compose.read_text()
+    line = '      POLARIS_TRUSTED_PROXIES: "${POLARIS_TRUSTED_PROXIES:-0.0.0.0/32}"\n'
+    assert line in good, "the fixture drifted"
+    compose.write_text(good.replace(line, ""))
+    assert checks.check_edge_settings_reach_the_edge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the compose file no longer passes a setting the Caddyfile reads (the 2026-10-08 defect)"
+    compose.write_text(good)
+    caddy = tmp_path / "polaris_web/Caddyfile"
+    conf = caddy.read_text()
+    caddy.write_text(conf.replace("    http_port 8080\n", "    http_port {$POLARIS_EDGE_HTTP_PORT:8080}\n", 1))
+    assert checks.check_edge_settings_reach_the_edge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the Caddyfile starts reading a setting nothing passes"
+    caddy.write_text(conf)
 
 
 def test_edge_limits_check_discriminates(tmp_path):

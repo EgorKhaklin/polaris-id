@@ -42,6 +42,10 @@ edge:
   # The load balancer in front of the edge, if any, by address range ("10.0.0.0/8"); its
   # X-Forwarded-For then carries the client address. Empty: no proxy is trusted.
   trustedProxies: ""
+  # An L4 balancer that sends a PROXY protocol header (v1 or v2) with each connection, by
+  # address range: the edge reads the client's address from it. Turn PROXY protocol on at the
+  # balancer first (for example the network load balancer's annotation). Empty: none is read.
+  proxyProtocolFrom: ""
   service:
     type: ClusterIP        # LoadBalancer on a real cluster
     # With a LoadBalancer or NodePort Service, Local keeps the client's own source address
