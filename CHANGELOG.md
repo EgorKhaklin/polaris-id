@@ -62,6 +62,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The record 007 Pomerium demo maps `*.localhost.pomerium.io` to loopback itself; public DNS stopped resolving it.
 - CI's coverage floors are enforced again: since 2026-09-30 a failed coverage export left them comparing nothing, and passing.
 - The trigger refusal drill no longer reports a refusal untested when the test that caught it failed inside a subtest beside a flaky one.
+- Two C1 privilege-boundary tests no longer fail when a trigger's random fold runs inside them.
 
 ### Added
 
