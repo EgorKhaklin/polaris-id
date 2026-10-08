@@ -6794,13 +6794,20 @@ def check_operator_scripts_read_the_unit_env(root: pathlib.Path) -> list[Finding
                 break
     # An image that ships an operator script ships the loader it sources: the Helm migration Job runs
     # polaris-migrate.sh from the postgres image, and without the loader it stopped at `source`.
+    # And the build context holds each of them: .dockerignore drops scripts/ and lets back in only what
+    # it names, so a COPY of a script it does not name fails the build (#311's second run, every image).
+    ignore = [ln.strip() for ln in _read(root, ".dockerignore").splitlines()]
     for dockerfile in sorted((root / "polaris_web").glob("Dockerfile*")):
         text = dockerfile.read_text()
-        for copied in re.findall(r"(?m)^COPY\b[^\n]*\bscripts/(polaris-[\w-]+\.sh)\b", text):
+        copied_all = re.findall(r"(?m)^COPY\b[^\n]*\bscripts/(polaris-[\w-]+\.sh)\b", text)
+        for copied in copied_all:
             script = "\n".join(_code_lines(_read(root, "scripts/" + copied)))
-            if _SOURCES_OPERATOR_ENV.search(script) and not re.search(r"(?m)^COPY\b[^\n]*\bscripts/polaris-env\.sh\b", text):
+            if _SOURCES_OPERATOR_ENV.search(script) and "polaris-env.sh" not in copied_all:
                 problems.append(f"{dockerfile.relative_to(root)} copies scripts/{copied}, which sources polaris-env.sh, "
                                 "and not the loader")
+            if "scripts/" in ignore and f"!scripts/{copied}" not in ignore:
+                problems.append(f"{dockerfile.relative_to(root)} copies scripts/{copied}, which .dockerignore keeps out "
+                                "of the build context (add !scripts/" + copied + ")")
     for rel in _OPERATOR_SECRETS_DIR_USERS:
         body = "\n".join(_code_lines(_read(root, rel)))
         if "polaris_secrets_dir" not in body:

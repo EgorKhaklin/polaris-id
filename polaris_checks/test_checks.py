@@ -6340,7 +6340,7 @@ def test_secrets_reach_only_their_readers_check_discriminates(tmp_path):
 def test_operator_scripts_read_the_unit_env_check_discriminates(tmp_path):
     files = [str(p.relative_to(REPO)) for p in (REPO / "scripts").glob("polaris-*.sh")]
     files += [".github/workflows/ci.yml", "deploy/linux/polaris.env.example", "docs/operator/SECRETS.md"]
-    files += [str(p.relative_to(REPO)) for p in (REPO / "polaris_web").glob("Dockerfile*")]
+    files += [str(p.relative_to(REPO)) for p in (REPO / "polaris_web").glob("Dockerfile*")] + [".dockerignore"]
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text((REPO / rel).read_text())
@@ -6398,6 +6398,10 @@ def test_operator_scripts_read_the_unit_env_check_discriminates(tmp_path):
     f = broken("polaris_web/Dockerfile.postgres", "COPY --chmod=0644 scripts/polaris-env.sh /opt/polaris/scripts/polaris-env.sh\n", "",
                "must FAIL when an image ships a loader-sourcing script without the loader")
     assert "Dockerfile.postgres" in f.message and "polaris-migrate.sh" in f.message, f.message
+    # #311's second run: the loader copied, but .dockerignore kept it out of the build context.
+    f = broken(".dockerignore", "!scripts/polaris-env.sh\n", "",
+               "must FAIL when an image copies a script the build context does not hold")
+    assert "!scripts/polaris-env.sh" in f.message, f.message
     # A drill that takes the production host's configuration.
     broken("scripts/polaris-chaos-drill.sh", "set -euo pipefail\n",
            'set -euo pipefail\nsource "${SCRIPT_DIR}/polaris-env.sh"\n', "must FAIL when a drill sources the loader")
