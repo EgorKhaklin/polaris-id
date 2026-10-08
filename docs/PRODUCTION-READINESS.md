@@ -115,7 +115,7 @@ This ledger covers one authority on one host or one cluster. [ROADMAP.md](../ROA
 
 Whether an operator who is not the author can install, run, upgrade and recover Polaris, one criterion per row ([lab record 017](../lab/strategy/017-production-operability.md)). A PASS row cites evidence that `check_operability_gate` resolves: a check, a test, a drill or a file. This gate is about operating the software; it is not readiness for real identity data, which the status line above and the last row keep separate.
 
-28 criteria: 18 PASS, 6 PARTIAL, 3 FAIL, 1 UNKNOWN.
+28 criteria: 18 PASS, 7 PARTIAL, 2 FAIL, 1 UNKNOWN.
 
 | ID | Criterion | Status | Evidence |
 |---|---|---|---|
@@ -125,7 +125,7 @@ Whether an operator who is not the author can install, run, upgrade and recover 
 | OP-4 | Readiness reflects what this instance can serve, and a shared failure does not empty the pool | PASS | `check:health_liveness_readiness_split`, `test:polaris_web/test_app.py::HealthEndpointTests` |
 | OP-5 | An instance crash costs no request | PASS | `drill:scripts/polaris-rolling-drill.sh` |
 | OP-6 | A database failover loses no acknowledged write | PARTIAL | `drill:scripts/polaris-failover-drill.sh` measures a 3.3 to 20 s write outage; replication is asynchronous by default. |
-| OP-7 | The loss of a host or zone is tolerated | FAIL | Members are not spread across failure domains. |
+| OP-7 | The loss of a host or zone is tolerated | PARTIAL | `check:failure_domains`: on Kubernetes the chart spreads every replicated component across nodes and zones, runs two pods of each hop on the data path, moves pods off an unanswering node after 30 s and Redis with them; `drill:scripts/polaris-zone-loss-drill.sh` kills the leader's node, then Redis's, on a three-zone kind cluster, and has yet to pass in CI. The Compose profiles run on one host, where a host's loss is a restore (DR.md section 4.3). |
 | OP-8 | Internal services authenticate one another | PASS | `check:redis_authenticated`: the cache refuses unauthenticated clients and scopes the app's user; `check:ha_internal_auth`, `drill:scripts/polaris-failover-drill.sh`, `drill:scripts/polaris-region-evacuation-drill.sh`: the HA lease store (etcd) authenticates its clients and fences Patroni's user to its keys, and Patroni's REST API refuses unauthenticated writes from the app's network, in both regions of the DR overlay. The database, its pooler and replication take passwords. |
 | OP-9 | Secrets are least-privilege and sealed at rest | PARTIAL | `check:secrets_reach_only_their_readers`, `drill:scripts/polaris-helm-drill.sh`: each container and pod mounts only the secrets it reads, the chart's at 0440; `check:secrets_lifecycle_sealed`: an age or KMS sealed store, unsealed into a tmpfs at start, is drilled in CI, but the default backend keeps the secrets in a 0700 directory on disk. |
 | OP-10 | Signing keys can live in hardware or a KMS, shown on a real device | PARTIAL | `test:polaris_web/test_custody.py` runs PKCS#11 against a software token and KMS against a stand-in. |

@@ -3134,6 +3134,37 @@ def test_restore_verified_on_schedule_check_discriminates(tmp_path):
     (tmp_path / rel).write_text(good)
 
 
+def test_failure_domains_check_discriminates(tmp_path):
+    rels = {rel for rel, _, _ in checks._FAILURE_DOMAIN_NEEDLES} | {
+        "deploy/helm/polaris/values.yaml", "deploy/helm/polaris/templates/app.yaml",
+        "deploy/helm/polaris/templates/caddy.yaml", "deploy/helm/polaris/templates/pg-router.yaml",
+        "deploy/helm/polaris/templates/pgbouncer.yaml", "deploy/helm/polaris/templates/redis.yaml"}
+    for rel in sorted(rels):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_failure_domains(tmp_path)[0].level == "OK", "must PASS on the real chart, drill and workflow"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new))
+        assert checks.check_failure_domains(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    for rel, needle, what in checks._FAILURE_DOMAIN_NEEDLES:
+        broken(rel, needle, "true", f"must FAIL when it no longer does this: {what}")
+    broken("deploy/helm/polaris/templates/caddy.yaml", 'include "polaris.fastEviction" .', "true",
+           "must FAIL when the edge waits 300 s for a dead node")
+    broken("deploy/helm/polaris/templates/pg-router.yaml", 'include "polaris.pdb" (list "pg-router" .)', "true",
+           "must FAIL when a drain can take the router's last pod")
+    broken("deploy/helm/polaris/values.yaml", "  # Two, spread across nodes (lab record 017, gate row OP-7). Each pools for the app pods that reach it.\n  replicas: 2",
+           "  replicas: 1", "must FAIL when pgbouncer runs one pod")
+    broken("deploy/helm/polaris/templates/redis.yaml", "        - name: data\n          emptyDir: {}",
+           "        - name: data\n          emptyDir: {}\n  volumeClaimTemplates: []",
+           "must FAIL when Redis holds a node-local volume again")
+
+
 def test_failover_keeps_acknowledged_writes_check_discriminates(tmp_path):
     for rel in sorted({rel for rel, _, _ in checks._SYNC_REPLICATION_NEEDLES}):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)

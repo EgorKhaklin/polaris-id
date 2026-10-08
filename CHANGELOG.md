@@ -70,6 +70,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- `scripts/polaris-zone-loss-drill.sh` kills the database leader's node, then Redis's, on a three-zone kind cluster.
 - The edge reads a client's address from a PROXY protocol header sent by an L4 balancer the operator names.
 - `lab/strategy/006/alerts.sh` fires the certificate, backup and archive alerts on their real conditions and clears them on repair; CI runs it after try.sh.
 - `/metrics` reports this instance's clock against the database's (`polaris_clock_skew_seconds`); PolarisClockSkew pages when they disagree by more than 2 s for 10 minutes.
@@ -140,6 +141,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- The chart spreads its replicated pods across nodes and zones, runs two edge, router and pgbouncer pods, and moves Redis.
 - The HA profile and the chart replicate synchronously by default; a failover loses no acknowledged write (lab record 017).
 - Dependabot groups each directory's minor and patch updates into one pull request per run.
 - CI runs the product suite as three parallel jobs behind its one required check, so the slowest part alone sets the wait.
