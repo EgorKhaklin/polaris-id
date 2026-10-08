@@ -50,6 +50,15 @@ class Boundary(unittest.TestCase):
 '''
 
 
+def _env(**extra):
+    """The child's environment, without coverage's subprocess hook: the throwaway suite lives in a
+    temporary directory, and data recorded for it outlives the directory, which makes CI's
+    `coverage json` fail with "No source for code" (and polaris-coverage.sh fail closed)."""
+    env = {k: v for k, v in os.environ.items() if k != "COVERAGE_PROCESS_START"}
+    env.update(extra)
+    return env
+
+
 class TheDrillReadsSubtestFailures(unittest.TestCase):
 
     def setUp(self):
@@ -63,12 +72,12 @@ class TheDrillReadsSubtestFailures(unittest.TestCase):
 
     def catches(self, **env):
         with contextlib.redirect_stdout(io.StringIO()):     # its "(flaky: ...)" note
-            return drill._suite_catches("fake_suite", dict(os.environ, **env))
+            return drill._suite_catches("fake_suite", _env(**env))
 
     def test_a_subtest_failure_is_named(self):
         r = drill.polaris_bounded_run.run(
             [sys.executable, "-m", "unittest", "fake_suite"], cwd=str(self.root / "polaris_web"),
-            env=dict(os.environ, DELETED_REFUSAL="cannot be moved earlier", FLAKY="1"),
+            env=_env(DELETED_REFUSAL="cannot be moved earlier", FLAKY="1"),
             capture_output=True, text=True)
         expected = ["fake_suite.Boundary.test_counts",
                     "fake_suite.Refusals.test_a_revocation_cannot_be_backdated"]
