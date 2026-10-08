@@ -71,6 +71,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A point-in-time restore drill: a restore to a chosen moment brings back exactly what was committed by then, and nothing after.
 - `scripts/polaris-reconcile-restore.py` re-applies withdrawals made after a restore point through their own paths; `RestoreRecord` records each run.
 - `polaris-pitr-drill.sh --reconcile` withdraws trust on both sides of a restore point and requires nothing looser afterwards.
+- `scripts/polaris-restore-verify.sh` restores the newest backup into a scratch copy and proves it against the live database.
+- A weekly timer and the first deploy verify a restore; `PolarisRestoreUnverified` pages when none is 8 days old.
 - WAL archiving is on by default to a local pgBackRest repository; the deploy takes the first full backup, `polaris-backup.sh` the scheduled ones.
 - A Helm upgrade runs the pending migrations in a pre-upgrade Job; `polaris-helm-upgrade-drill.sh` upgrades the previous release's chart on kind.
 - `/api/health` compares this instance's clock with the database's and reports `clock` degraded beyond 2 s of skew.

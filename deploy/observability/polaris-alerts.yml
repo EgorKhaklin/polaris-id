@@ -266,3 +266,18 @@ groups:
         annotations:
           summary: "No dump has been verified for 8 days"
           description: "Dumps are being taken, but none has been extracted and checked against its manifest for 8 days (polaris-backup.sh --verify-latest)."
+
+      # SEV-3: pgBackRest backups are being taken, but none has been restored and the copy proven
+      # against the live database for 8 days (scripts/polaris-restore-verify.sh: weekly by timer on a
+      # host install, and once by the deploy after a stack's first full backup). A deployment that
+      # takes no pgBackRest backups never fires.
+      - alert: PolarisRestoreUnverified
+        expr: |
+          (time() - max by (job) (polaris_backup_last_success_timestamp_seconds{kind="restore-verified"}) > 8 * 86400)
+          and on (job) max by (job) (polaris_backup_last_success_timestamp_seconds{kind="pgbackrest"}) > 0
+        for: 1h
+        labels:
+          severity: sev3
+        annotations:
+          summary: "No restore has been verified for 8 days"
+          description: "pgBackRest backups are being taken, but none has been restored and the copy proven against the live database for 8 days (scripts/polaris-restore-verify.sh)."

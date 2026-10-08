@@ -45,8 +45,9 @@ edit either file.
 16. [PolarisEdgeProbeFailing](#polarisedgeprobefailing)
 17. [PolarisBackupStale](#polarisbackupstale)
 18. [PolarisBackupUnverified](#polarisbackupunverified)
-19. [Paging: wiring the receiver](#paging-wiring-the-receiver)
-20. [Cross-references](#cross-references)
+19. [PolarisRestoreUnverified](#polarisrestoreunverified)
+20. [Paging: wiring the receiver](#paging-wiring-the-receiver)
+21. [Cross-references](#cross-references)
 
 ---
 
@@ -657,6 +658,51 @@ and failed names the file whose hash did not match.
 A hash mismatch means that tarball is damaged: take a fresh backup, verify it,
 and find what corrupts the destination. The alert clears an hour after a
 verification is recorded.
+
+---
+
+## PolarisRestoreUnverified
+
+**Severity:** SEV-3 · **Expression:** `(time() - max by (job) (polaris_backup_last_success_timestamp_seconds{kind="restore-verified"}) > 8 * 86400) and on (job) max by (job) (polaris_backup_last_success_timestamp_seconds{kind="pgbackrest"}) > 0` · **For:** 1h
+
+pgBackRest backups are being taken, but none has been restored and the copy
+proven for 8 days (lab record 017, gate row OP-11).
+`scripts/polaris-restore-verify.sh` restores the newest backup and the archive
+after it into a scratch copy, with archiving off and no TCP listener, and
+proves the copy against the live database:
+- the same cluster;
+- replay past a WAL switch it made at the start;
+- the same schema history;
+- `pg_amcheck` clean;
+- the append-only tables row for row over the last week.
+
+It runs weekly by timer on a host install, and the deploy runs it once after a
+stack's first full backup. A deployment that takes no pgBackRest backups never
+fires.
+
+**Diagnosis.** `systemctl status polaris-restore-verify.timer` and
+`journalctl -u polaris-restore-verify.service -n 80`. A run that failed says
+which proof failed:
+- **the repository verification:** a damaged file in the repository;
+- **the archive wait:** WAL archiving is failing (PolarisArchiveFailing);
+- **the replay:** the archive is missing WAL;
+- **pg_amcheck, or a table that differs:** the backup does not hold what the
+  live database holds.
+
+A run that exited 3 found nothing to verify: archiving off, no backup yet, or
+no room for the copy.
+
+**Remediation.**
+1. Run `./scripts/polaris-restore-verify.sh --keep` to keep the copy up for a
+   look, then `--compare-only` after a fix, and `--discard` when done.
+2. For a damaged repository or a gap in the archive, take a fresh full backup
+   (`pgbackrest --stanza=polaris --type=full backup` in the postgres
+   container), then verify again.
+3. A difference in one append-only table can be a row whose time a caller
+   supplied rather than the server: compare that table's newest rows on both
+   sides before treating it as lost data.
+
+The alert clears an hour after a verified restore is recorded.
 
 ---
 

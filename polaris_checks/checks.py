@@ -8467,6 +8467,65 @@ def check_restore_reconciled(root: pathlib.Path) -> list[Finding]:
                f"made it, before the app returns; REGISTRY decides all {len(tables)} tables; CI sees the hazard, "
                "then nothing looser than the archive's end")
 
+# Lab record 017 (gate row OP-11): restores are verified on a schedule, on the deployment's own
+# backups, and the evidence is current. A one-off container of the postgres image restores the newest
+# pgBackRest backup and the archive after it into a scratch copy that never archives and never
+# listens, and proves it against the live database: the repository verifies (by pgBackRest's status
+# line: `verify` exits 0 on a damaged file), a WAL switch made at the start is replayed, pg_amcheck is
+# clean, and the append-only tables match row for row. Only then is a restore-verified BackupEvent
+# recorded; PolarisRestoreUnverified pages at 8 days; the deploy verifies its first backup and a
+# weekly timer the rest; CI proves each refusal on the one-command stack.
+_RESTORE_VERIFY_NEEDLES = (
+    ("scripts/polaris-restore-check.sh", "grep -Eq '^status: ok$'",
+     "take pgbackrest verify's status line as the verdict (it exits 0 on a damaged file)"),
+    ("scripts/polaris-restore-check.sh", 'probe="$(live "SELECT pg_switch_wal()")"', "switch WAL on the live database"),
+    ("scripts/polaris-restore-check.sh", "pg_last_wal_replay_lsn() >= '$SWITCH_LSN'::pg_lsn",
+     "require the copy to replay past that switch"),
+    ("scripts/polaris-restore-check.sh", "--archive-mode=off", "restore the copy with archiving off"),
+    ("scripts/polaris-restore-check.sh", "-c archive_mode=off -c listen_addresses=''",
+     "start the copy with archiving off and no TCP listener"),
+    ("scripts/polaris-restore-check.sh", "pg_amcheck -h \"$SOCKDIR\"", "run pg_amcheck on the copy"),
+    ("scripts/polaris-restore-check.sh", "p.proname ~ '^reject_.*_modification$'",
+     "find the append-only tables by the triggers that refuse their changes"),
+    ("scripts/polaris-restore-check.sh", "backend_type = 'client backend'",
+     "end the compared window before any transaction a client holds open"),
+    ("scripts/polaris-restore-verify.sh", "/opt/polaris/scripts/polaris-restore-check.sh",
+     "run the check the postgres image carries"),
+    ("polaris_web/Dockerfile.postgres",
+     "COPY --chmod=0755 scripts/polaris-restore-check.sh /opt/polaris/scripts/polaris-restore-check.sh",
+     "carry the check in the postgres image"),
+    (".dockerignore", "!scripts/polaris-restore-check.sh", "let the check into the image's build context"),
+    ("polaris_sql/01_schema.sql", "'dump-verified', 'restore-verified')", "admit a restore-verified BackupEvent"),
+    ("polaris_web/status_routes.py", "'dump-verified', 'restore-verified')", "expose the newest verified restore"),
+    ("deploy/observability/polaris-alerts.yml", "alert: PolarisRestoreUnverified", "page when none is 8 days old"),
+    ("deploy/observability/polaris-alerts.test.yml", "alertname: PolarisRestoreUnverified", "test that alert"),
+    ("deploy/linux/polaris-restore-verify.timer", "OnCalendar=Sun", "verify weekly on a host install"),
+    ("deploy/linux/install.sh", "polaris-restore-verify.timer polaris-dr-drill.timer", "enable that timer"),
+    ("scripts/polaris-deploy.sh", '"${SCRIPT_DIR}/polaris-restore-verify.sh"', "verify the first backup at deploy"),
+    ("scripts/polaris-upgrade-drill.sh", "kind = 'restore-verified'", "require the deploy's verified restore"),
+    (".github/workflows/one-command.yml", "bash lab/strategy/006/restore.sh", "run the restore drill in CI"),
+    ("lab/strategy/006/restore.sh", "archive_command = '/bin/false'", "prove an archive that is not current refused"),
+    ("lab/strategy/006/restore.sh", "--compare-only", "prove a copy that differs is named"),
+    ("lab/strategy/006/restore.sh", "pgbackrest verify found the repository damaged",
+     "prove a damaged repository refused"),
+)
+
+
+def check_restore_verified_on_schedule(root: pathlib.Path) -> list[Finding]:
+    name = "restore_verified_on_schedule"
+    for rel, needle, what in _RESTORE_VERIFY_NEEDLES:
+        if needle not in _read(root, rel):
+            return _fail(name, f"{rel} no longer does this: {what}")
+    check = _read(root, "scripts/polaris-restore-check.sh")
+    proved = check.rfind("\nprove_copy\n")
+    recorded = check.find("VALUES ('restore-verified'")
+    if proved < 0 or recorded < 0 or recorded < proved:
+        return _fail(name, "scripts/polaris-restore-check.sh must record a verified restore only after the copy is proven")
+    return _ok(name, "the newest backup is restored into a copy that never archives or listens and proven against the "
+               "live database before a verified restore is recorded; weekly by timer and at the first deploy, "
+               "PolarisRestoreUnverified at 8 days, each refusal drilled in CI")
+
+
 def check_chaos_program(root: pathlib.Path) -> list[Finding]:
     """Roadmap P2.11 (v9.242): the fail-closed harness runs on every push, and
     a weekly drill induces failures against the booted stack under traffic
@@ -25945,6 +26004,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_dr_drill_scheduled,
     check_pitr_drilled,
     check_restore_reconciled,
+    check_restore_verified_on_schedule,
     check_chaos_program,
     check_ha_automation,
     check_event_table_partitioning,

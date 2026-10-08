@@ -3105,6 +3105,35 @@ def test_ha_internal_auth_check_discriminates(tmp_path):
            "  connect_address: $HOST:8008\n", "must FAIL when the authentication is not inside the restapi block")
 
 
+def test_restore_verified_on_schedule_check_discriminates(tmp_path):
+    files = sorted({rel for rel, _, _ in checks._RESTORE_VERIFY_NEEDLES})
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_restore_verified_on_schedule(tmp_path)[0].level == "OK", \
+        "must PASS on the real check, wrapper, image, schema, metrics, alert, timer, deploy and drills"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_restore_verified_on_schedule(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    for rel, needle, what in checks._RESTORE_VERIFY_NEEDLES:
+        broken(rel, needle, "true", f"must FAIL when it no longer does this: {what}", count=-1)
+    # Recording before the proof: the INSERT moved above the run's call to prove_copy.
+    rel = "scripts/polaris-restore-check.sh"
+    good = (tmp_path / rel).read_text()
+    record = good[good.index("# --- record"):good.index('say "verified, and recorded')]
+    moved = good.replace(record, "").replace("\nprove_copy\n", "\n" + record + "\nprove_copy\n")
+    (tmp_path / rel).write_text(moved)
+    assert checks.check_restore_verified_on_schedule(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a verified restore is recorded before the copy is proven"
+    (tmp_path / rel).write_text(good)
+
+
 def test_restore_reconciled_check_discriminates(tmp_path):
     files = {"scripts/polaris-reconcile-restore.py", "scripts/polaris-pitr-drill.sh", ".github/workflows/ci.yml",
              "docs/operator/DR.md"}

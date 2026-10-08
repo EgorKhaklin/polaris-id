@@ -115,7 +115,7 @@ This ledger covers one authority on one host or one cluster. [ROADMAP.md](../ROA
 
 Whether an operator who is not the author can install, run, upgrade and recover Polaris, one criterion per row ([lab record 017](../lab/strategy/017-production-operability.md)). A PASS row cites evidence that `check_operability_gate` resolves: a check, a test, a drill or a file. This gate is about operating the software; it is not readiness for real identity data, which the status line above and the last row keep separate.
 
-28 criteria: 16 PASS, 8 PARTIAL, 3 FAIL, 1 UNKNOWN.
+28 criteria: 17 PASS, 7 PARTIAL, 3 FAIL, 1 UNKNOWN.
 
 | ID | Criterion | Status | Evidence |
 |---|---|---|---|
@@ -129,7 +129,7 @@ Whether an operator who is not the author can install, run, upgrade and recover 
 | OP-8 | Internal services authenticate one another | PASS | `check:redis_authenticated`: the cache refuses unauthenticated clients and scopes the app's user; `check:ha_internal_auth`, `drill:scripts/polaris-failover-drill.sh`, `drill:scripts/polaris-region-evacuation-drill.sh`: the HA lease store (etcd) authenticates its clients and fences Patroni's user to its keys, and Patroni's REST API refuses unauthenticated writes from the app's network, in both regions of the DR overlay. The database, its pooler and replication take passwords. |
 | OP-9 | Secrets are least-privilege and sealed at rest | PARTIAL | `check:secrets_lifecycle_sealed`; generated secret files are wider than the reader needs. |
 | OP-10 | Signing keys can live in hardware or a KMS, shown on a real device | PARTIAL | `test:polaris_web/test_custody.py` runs PKCS#11 against a software token and KMS against a stand-in. |
-| OP-11 | Restores are verified on a schedule and the evidence is current | PARTIAL | `drill:scripts/polaris-dr-drill.sh`; its ledger reaches `main` only through a pull request, so it lags the monthly run (last row 2026-10-01). |
+| OP-11 | Restores are verified on a schedule and the evidence is current | PASS | `check:restore_verified_on_schedule`, `drill:lab/strategy/006/restore.sh`: on a Compose or host install, the deployment's newest backup is restored into a scratch copy and proven against the live database, at the first deploy and weekly by timer. Each verified restore is recorded, and `PolarisRestoreUnverified` pages at 8 days. CI proves the refusals: an archive that is not current, a copy that differs, a damaged repository. The chart schedules no such check yet (its archiving is opt-in, OP-14). `drill:scripts/polaris-dr-drill.sh` measures RPO and RTO monthly; its ledger reaches `main` by pull request. |
 | OP-12 | A restore to a chosen point in time is tested | PASS | `drill:scripts/polaris-pitr-drill.sh`, `check:pitr_drilled` |
 | OP-13 | Revocations made after a restore point are re-applied after the restore | PASS | `drill:scripts/polaris-pitr-drill.sh` (`--reconcile`), `file:scripts/polaris-reconcile-restore.py`, `check:restore_reconciled` |
 | OP-14 | Continuous archiving is on by default, with an offsite copy | PARTIAL | `check:pgbackrest_scaffolding`: archiving on by default, the stanza made at the first init, a first full backup at deploy and scheduled ones after; `drill:scripts/polaris-offsite-drill.sh` round-trips the offsite repository, which needs the operator's bucket: by default the repository is local. |

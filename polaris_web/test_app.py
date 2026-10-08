@@ -13570,7 +13570,7 @@ class BackupMetricTests(PolarisTestCase):
             self.skipTest('prometheus_client is not installed')
         got = dict(re.findall(r'^polaris_backup_last_success_timestamp_seconds\{kind="([\w-]+)"\} (\S+)$',
                               r.data.decode(), re.M))
-        self.assertEqual(set(got), {'dump', 'pgbackrest', 'dump-verified'})
+        self.assertEqual(set(got), {'dump', 'pgbackrest', 'dump-verified', 'restore-verified'})
         return {k: float(v) for k, v in got.items()}
 
     def test_a_recorded_backup_reads_as_its_completion_time(self):

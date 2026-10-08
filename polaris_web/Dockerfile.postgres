@@ -85,5 +85,8 @@ COPY --chown=postgres:postgres polaris_web/pgbackrest.conf /etc/pgbackrest/pgbac
 # itself, at /opt/polaris/polaris_sql: the same files the init loads.
 COPY --chmod=0755 scripts/polaris-migrate.sh /opt/polaris/scripts/polaris-migrate.sh
 RUN ln -s /docker-entrypoint-initdb.d/sql /opt/polaris/polaris_sql
+# Lab record 017 (gate row OP-11): the restore check, which a one-off container of this image runs
+# against the deployment's own repository (scripts/polaris-restore-verify.sh).
+COPY --chmod=0755 scripts/polaris-restore-check.sh /opt/polaris/scripts/polaris-restore-check.sh
 ENTRYPOINT ["/usr/local/bin/polaris-pg-entrypoint.sh"]
 CMD ["postgres"]

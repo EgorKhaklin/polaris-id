@@ -69,9 +69,10 @@ CITATION.cff
 **/test_*.py
 polaris_checks/
 scripts/
-# Lab record 017 (gate row OP-18): the one script an image runs, the migration runner the postgres
-# image carries for the Kubernetes upgrade Job.
+# Lab record 017: the scripts the postgres image carries, the migration runner for the Kubernetes
+# upgrade Job (gate row OP-18) and the restore check (gate row OP-11).
 !scripts/polaris-migrate.sh
+!scripts/polaris-restore-check.sh
 deploy/
 polaris_cli/
 polaris_zk/witness2/

@@ -19,6 +19,8 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-secrets.sh` | The sealed secret store: put, get, list, seal | An operator; `polaris_web/secretstore.py` documents the format |
 | `polaris-rotate-secret.sh` | Rotates one secret in place, without a redeploy | An operator |
 | `polaris-backup.sh` | Atomic full-system backup, encrypted, with a manifest | An operator; the cron wiring |
+| `polaris-restore-verify.sh` | Restores the newest pgBackRest backup and the archive after it into a scratch copy that never archives or listens, proves it against the live database, and records a verified restore; `--keep`, `--compare-only`, `--discard` | An operator; `polaris-restore-verify.timer`; `polaris-deploy.sh` after the first full backup |
+| `polaris-restore-check.sh` | What `polaris-restore-verify.sh` runs inside a one-off container of the postgres image, which carries it at `/opt/polaris/scripts` | `polaris-restore-verify.sh` |
 | `polaris-reconcile-restore.py` | After a restore to an earlier point, re-applies through their own paths the withdrawals made after it, retires the identifiers the archive's end issued, and records the run in RestoreRecord | An operator (DR.md 4.3); `polaris-pitr-drill.sh --reconcile` |
 | `polaris-restore.sh` | Recovery from a backup, verifying the manifest first | An operator, under `DR.md` |
 | `polaris-archive.sh` | Selective export of audit rows to cold storage; `--from-policy` takes a cutoff per retention class | `polaris-rotate-logs.sh` |
