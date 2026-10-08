@@ -3248,6 +3248,12 @@ def check_pgbackrest_scaffolding(root: pathlib.Path) -> list[Finding]:
     if "${POLARIS_PGBACKREST_ENABLED:-1}" not in compose:
         return _fail("pgbackrest",
                      "the prod compose must default POLARIS_PGBACKREST_ENABLED to 1: archiving on by default")
+    # A host install starts from the Linux env template (deploy/linux/install.sh writes it to
+    # /etc/polaris/polaris.env), and until 2026-10-08 the template turned archiving off.
+    if not re.search(r"(?m)^POLARIS_PGBACKREST_ENABLED=1\s*$", _read(root, "deploy/linux/polaris.env.example")):
+        return _fail("pgbackrest",
+                     "deploy/linux/polaris.env.example must set POLARIS_PGBACKREST_ENABLED=1: a host install "
+                     "starts from it, and archiving is on by default")
     if "archive_mode" not in init or "archive-push" not in init:
         return _fail("pgbackrest",
                      "docker-init.sh must set archive_mode + the pgbackrest archive_command when enabled")

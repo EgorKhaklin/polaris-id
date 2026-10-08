@@ -5034,9 +5034,12 @@ def test_pgbackrest_scaffolding_check_discriminates(tmp_path):
                    "  docker compose exec postgres pgbackrest --stanza=polaris --type=full backup\nfi\n")
     GOOD_BACKUP = ('docker compose exec postgres pgbackrest --stanza=polaris --type="${PGBR_TYPE}" backup\n'
                    'record_backup pgbackrest "repo1" "${PGBR_TYPE}"\n')
+    GOOD_ENV = "# archiving on by default\nPOLARIS_PGBACKREST_ENABLED=1\n"
+    (tmp_path / "deploy" / "linux").mkdir(parents=True)
 
     def write(df=GOOD_DF, conf=GOOD_CONF, compose=GOOD_COMPOSE, init=GOOD_INIT, dr=GOOD_DR,
-              ci=GOOD_CI, deploy=GOOD_DEPLOY, backup=GOOD_BACKUP):
+              ci=GOOD_CI, deploy=GOOD_DEPLOY, backup=GOOD_BACKUP, env=GOOD_ENV):
+        (tmp_path / "deploy" / "linux" / "polaris.env.example").write_text(env)
         (web / "Dockerfile.postgres").write_text(df)
         (web / "pgbackrest.conf").write_text(conf)
         (web / "docker-compose.prod.yml").write_text(compose)
@@ -5050,6 +5053,11 @@ def test_pgbackrest_scaffolding_check_discriminates(tmp_path):
     write()
     assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "OK", \
         "must PASS the complete pgBackRest scaffolding"
+    # 1b. the host-install env template turns archiving off -> FAIL (the 2026-10-08 defect).
+    write(env="POLARIS_PGBACKREST_ENABLED=0\n")
+    assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a host install starts with archiving off"
+    write()
 
     # 2. image does not install pgbackrest -> FAIL.
     write(df="FROM postgres:16-alpine@sha256:abc\nRUN echo hi\n")
