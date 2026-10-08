@@ -115,36 +115,36 @@ This ledger covers one authority on one host or one cluster. [ROADMAP.md](../ROA
 
 Whether an operator who is not the author can install, run, upgrade and recover Polaris, one criterion per row ([lab record 017](../lab/strategy/017-production-operability.md)). A PASS row cites evidence that `check_operability_gate` resolves: a check, a test, a drill or a file. This gate is about operating the software; it is not readiness for real identity data, which the status line above and the last row keep separate.
 
-28 criteria: 8 PASS, 8 PARTIAL, 9 FAIL, 3 UNKNOWN.
+28 criteria: 13 PASS, 11 PARTIAL, 3 FAIL, 1 UNKNOWN.
 
 | ID | Criterion | Status | Evidence |
 |---|---|---|---|
-| OP-1 | Installed from published, signed release artifacts, with no source build | FAIL | No images or chart are published yet. |
+| OP-1 | Installed from published, signed release artifacts, with no source build | FAIL | The signed release workflow exists (`check:release_images_signed`); no image or chart is published yet. |
 | OP-2 | A fresh host reaches HTTPS and a verified credential in 15 minutes or less, with five operator inputs or fewer | PARTIAL | `drill:lab/strategy/006/try.sh` reaches a verified credential, building from source on localhost. |
 | OP-3 | Every setting is validated at boot, and a wrong one stops it by name | PASS | `check:config_schema_covers_env`, `test:polaris_web/test_app.py::ConfigSchemaTests`, `test:polaris_web/test_app.py::F05_ProductionSecretGuardTests` |
 | OP-4 | Readiness reflects what this instance can serve, and a shared failure does not empty the pool | PASS | `check:health_liveness_readiness_split`, `test:polaris_web/test_app.py::HealthEndpointTests` |
 | OP-5 | An instance crash costs no request | PASS | `drill:scripts/polaris-rolling-drill.sh` |
 | OP-6 | A database failover loses no acknowledged write | PARTIAL | `drill:scripts/polaris-failover-drill.sh` measures a 3.3 to 20 s write outage; replication is asynchronous by default. |
 | OP-7 | The loss of a host or zone is tolerated | FAIL | Members are not spread across failure domains. |
-| OP-8 | Internal services authenticate one another | FAIL | The cache and the HA lease store accept unauthenticated clients on the stack network. |
+| OP-8 | Internal services authenticate one another | PARTIAL | `check:redis_authenticated`: the cache refuses unauthenticated clients and scopes the app's user; the HA lease store (etcd) still accepts unauthenticated clients. |
 | OP-9 | Secrets are least-privilege and sealed at rest | PARTIAL | `check:secrets_lifecycle_sealed`; generated secret files are wider than the reader needs. |
 | OP-10 | Signing keys can live in hardware or a KMS, shown on a real device | PARTIAL | `test:polaris_web/test_custody.py` runs PKCS#11 against a software token and KMS against a stand-in. |
 | OP-11 | Restores are verified on a schedule and the evidence is current | PARTIAL | `drill:scripts/polaris-dr-drill.sh`; its ledger's last row is 2026-09-02. |
-| OP-12 | A restore to a chosen point in time is tested | FAIL | The drill replays to the end of the archive only. |
-| OP-13 | Revocations made after a restore point are re-applied after the restore | FAIL | Not designed yet. |
-| OP-14 | Continuous archiving is on by default, with an offsite copy | PARTIAL | `drill:scripts/polaris-offsite-drill.sh` round-trips the offsite repository; archiving is off until enabled. |
-| OP-15 | Backup age, archive failure, replication lag, disk, certificate expiry and clock skew alert | FAIL | Only application metrics are scraped. |
+| OP-12 | A restore to a chosen point in time is tested | PASS | `drill:scripts/polaris-pitr-drill.sh`, `check:pitr_drilled` |
+| OP-13 | Revocations made after a restore point are re-applied after the restore | PASS | `drill:scripts/polaris-pitr-drill.sh` (`--reconcile`), `file:scripts/polaris-reconcile-restore.py`, `check:restore_reconciled` |
+| OP-14 | Continuous archiving is on by default, with an offsite copy | PARTIAL | `check:pgbackrest_scaffolding`: archiving on by default, the stanza made at the first init, a first full backup at deploy and scheduled ones after; `drill:scripts/polaris-offsite-drill.sh` round-trips the offsite repository, which needs the operator's bucket: by default the repository is local. |
+| OP-15 | Backup age, archive failure, replication lag, disk, certificate expiry and clock skew alert | PASS | `drill:lab/strategy/006/alerts.sh` fires the certificate, backup and archive alerts on their real conditions and clears them on repair; `check:infra_alerts` pins all six rules and their promtool tests. |
 | OP-16 | Application metrics, alerts and traces are tested | PASS | `drill:scripts/polaris-page-drill.sh`, `drill:scripts/polaris-trace-drill.sh` |
-| OP-17 | One command names the failing component | FAIL | Not built. |
+| OP-17 | One command names the failing component | PASS | `drill:lab/strategy/006/doctor.sh`, `check:doctor_names_failures` |
 | OP-18 | Schema migrations run on every upgrade path | PARTIAL | The host deploy script runs them; the Helm chart has no migration step. |
-| OP-19 | An upgrade from the previous release is drilled | FAIL | Not drilled. |
+| OP-19 | An upgrade from the previous release is drilled | PARTIAL | `drill:scripts/polaris-upgrade-drill.sh` upgrades the previous release's Compose stack as OPERATIONS.md says (`check:upgrade_drilled`); a Helm upgrade is not drilled. |
 | OP-20 | The data-integrity rules (C1 to C10) are enforced in the schema and mutation-tested | PASS | `check:aor_append_only_triggers`, `check:one_active_token_index`, `drill:scripts/polaris-constraint-mutation-drill.py` |
 | OP-21 | Two independent ML-DSA implementations agree at issuance | PASS | `check:pqc_second_witness` |
 | OP-22 | A signature-algorithm migration is drilled | PASS | `drill:scripts/polaris-quantum-event-drill.py` |
-| OP-23 | A same-algorithm signing-key rotation is drilled end to end | UNKNOWN | Documented as a ceremony; no drill found. |
+| OP-23 | A same-algorithm signing-key rotation is drilled end to end | PASS | `drill:lab/strategy/006/rotate.sh`, `check:key_rotation_drilled` |
 | OP-24 | Throughput is measured and a sizing guide is published | PARTIAL | `file:docs/reference/BENCHMARK.md` measures one host; host sizing is unmeasured. |
 | OP-25 | Horizontal scaling is measured | UNKNOWN | No multi-replica throughput figures. |
-| OP-26 | The client address is correct behind load balancers and NAT | UNKNOWN | Not tested on such a topology. |
+| OP-26 | The client address is correct behind load balancers and NAT | PARTIAL | `drill:scripts/polaris-client-ip-drill.sh`, `check:client_ip_behind_proxies`: correct behind an L7 balancer the operator names, forgeries refused; the metrics surfaces are refused through an SNAT hop (`drill:scripts/polaris-metrics-edge-drill.sh`); behind an L4 balancer that rewrites source addresses the client address is lost unless the balancer keeps it (the edge does not speak PROXY protocol). |
 | OP-27 | Contributors need no Kubernetes | PASS | `file:Polaris.command` |
 | OP-28 | Real identity data | FAIL | Needs an external security review, the operator's DPIA and a pilot (above). |
 

@@ -818,7 +818,12 @@ COMMENT ON PROCEDURE uc9_initiate_recovery(INTEGER, INTEGER, INTEGER, INTEGER) I
 --   BIOMETRIC  an active operator or admin, not the requester, attests the biometric check;
 --   SWORN      an active operator or admin, not the requester, records the statement's SHA-256;
 --   WITNESS    the witness co-signs as themselves: an active operator or admin bound to an
---              authority other than the requesting one (the independent institution).
+--              authority other than the requesting one (the independent institution). Since
+--              2026-10-05, when the requester has no STANDING over the person, the witness must
+--              be bound to the person's ORIGINAL ISSUER (the issuer of their most recent
+--              credential). Standing: that original issuer, or a public authority whose
+--              jurisdiction is the person's or the person's country. Without it, any two
+--              authorities could recover a credential for a person neither had a tie to.
 -- Each channel is recorded once. uc9_complete_recovery still requires all three, the cool-down,
 -- and an admin approver who is neither the requester nor the witness.
 -- SECURITY DEFINER because the application role holds no UPDATE on RecoveryRequest; the actor is
@@ -839,6 +844,8 @@ DECLARE
     v_role     VARCHAR(20);
     v_active   BOOLEAN;
     v_agency   INTEGER;
+    v_original INTEGER;
+    v_standing BOOLEAN;
 BEGIN
     SELECT role, is_active, agency_id INTO v_role, v_active, v_agency
       FROM AppUser WHERE user_id = p_recording_user;
@@ -888,6 +895,25 @@ BEGIN
         IF v_agency IS NULL OR v_agency = v_req.requesting_agency_id THEN
             RAISE EXCEPTION 'A witness co-signs for an authority other than the requesting one (user % is bound to %)',
                 p_recording_user, COALESCE(v_agency::TEXT, 'no authority')
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+        SELECT t.issuing_agency_id INTO v_original
+          FROM IdentityToken t
+         WHERE t.individual_id = v_req.claimed_individual_id
+         ORDER BY t.issued_date DESC, t.token_id DESC
+         LIMIT 1;
+        SELECT v_req.requesting_agency_id = v_original
+               OR (a.agency_type <> 'PRIVATE'
+                   AND (a.jurisdiction = i.jurisdiction
+                        OR a.jurisdiction = split_part(i.jurisdiction, '-', 1)))
+          INTO v_standing
+          FROM Agency a, Individual i
+         WHERE a.agency_id = v_req.requesting_agency_id
+           AND i.individual_id = v_req.claimed_individual_id;
+        IF v_standing IS NOT TRUE AND v_agency IS DISTINCT FROM v_original THEN
+            RAISE EXCEPTION 'Authority % has no standing over individual %, so the witness must be bound to the original issuer (%), not %',
+                v_req.requesting_agency_id, v_req.claimed_individual_id,
+                COALESCE(v_original::TEXT, 'none: no credential was ever issued'), v_agency
                 USING ERRCODE = 'insufficient_privilege';
         END IF;
         UPDATE RecoveryRequest

@@ -28,6 +28,18 @@ data:
         servers {
             protocols h1 h2 h3
             metrics
+            # Lab record 017 (OP-26): the load balancer in front of the edge, if any, by
+            # address range (edge.trustedProxies); behind it the client address is read from
+            # X-Forwarded-For right to left, past those hops only. Empty: none is trusted.
+            trusted_proxies static {{ .Values.edge.trustedProxies | default "0.0.0.0/32" }}
+            trusted_proxies_strict
+            # Lab record 017, phase 5: a client that sends its request slowly is cut off here, not
+            # left holding a connection (scripts/polaris-edge-limits-drill.sh).
+            timeouts {
+                read_header 10s
+                read_body 30s
+                idle 2m
+            }
         }
     }
 
@@ -37,20 +49,31 @@ data:
         {{- end }}
 
         # The metrics surfaces carry the duress signal and do not
-        # authenticate: restrict them to the monitoring network at the edge.
-        # The chart's default allows private ranges only; set
-        # edge.metricsAllow to the Prometheus CIDR to narrow it.
+        # authenticate: restrict them to the monitoring network at the edge,
+        # which edge.metricsAllow names. Unset, no client is allowed
+        # (0.0.0.0/32): behind a LoadBalancer Service with the default
+        # externalTrafficPolicy every client arrives from a node's private
+        # address. An in-cluster Prometheus scrapes the app Service directly.
         @metrics_from_outside {
             path /metrics /api/metrics
-            not remote_ip {{ .Values.edge.metricsAllow | default "private_ranges" }}
+            not remote_ip {{ .Values.edge.metricsAllow | default "0.0.0.0/32" }}
         }
         respond @metrics_from_outside 404
 
+        # Lab record 017, phase 5: the app's own body limit (1 MiB), refused here, before the app.
+        request_body {
+            max_size 1MiB
+        }
+
         reverse_proxy {{ include "polaris.fullname" . }}-app:8000 {
-            header_up X-Real-IP {remote_host}
-            header_up X-Forwarded-For {remote_host}
+            header_up X-Real-IP {client_ip}
+            header_up X-Forwarded-For {client_ip}
             header_up X-Forwarded-Proto {scheme}
             header_up X-Forwarded-Host {host}
+            # Lab record 017, phase 5: the edge reads the whole body before the app sees the request.
+            # The app's workers are synchronous, four to an instance: a body passed through as it
+            # arrives held one for as long as its client took to send it.
+            request_buffers 1MiB
             lb_policy round_robin
             lb_try_duration 15s
             lb_try_interval 250ms

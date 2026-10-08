@@ -45,21 +45,33 @@ spec:
           image: {{ .Values.images.redis }}
           imagePullPolicy: {{ .Values.images.redisPullPolicy }}
           securityContext:
-            {{- include "polaris.containerSecurity" . | nindent 12 }}
-          args: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+            {{- include "polaris.containerSecurityReadOnly" . | nindent 12 }}
+          # Lab record 017, phase 4a: users come from the Secret's redis_users.acl, which holds
+          # only the app password's SHA-256. `default` is off; `health` may only PING.
+          args: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--aclfile", "/run/secrets/redis/users.acl"]
           ports:
             - name: redis
               containerPort: 6379
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: acl
+              mountPath: /run/secrets/redis
+              readOnly: true
           readinessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["redis-cli", "--no-auth-warning", "--user", "health", "--pass", "health", "ping"]
             periodSeconds: 5
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {memory: 320Mi}
+      volumes:
+        - name: acl
+          secret:
+            secretName: {{ include "polaris.secretName" . }}
+            defaultMode: 0444
+            items:
+              - {key: redis_users.acl, path: users.acl}
   volumeClaimTemplates:
     - metadata:
         name: data

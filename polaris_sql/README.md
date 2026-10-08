@@ -6,7 +6,7 @@ Ubuntu 24.04 and macOS 15; compatible with PostgreSQL 14 or later.
 
 | Part | Count |
 |------|-------|
-| Tables | **57 tables** (the 47th and 48th, PopulationCount and PopulationCountDelta, 2026-10-01; the 49th to 51st, EnrollmentCurrent, EnrollmentCount and EnrollmentCountDelta, 2026-10-02; the 52nd to 57th, the six activity rollups the Atlas reads, 2026-10-02; a migrated deployment holds 64, with the `schema_version` registry, the three migration-added tables, and the three Athena curated tables) |
+| Tables | **60 tables** (the 47th and 48th, PopulationCount and PopulationCountDelta, 2026-10-01; the 49th to 51st, EnrollmentCurrent, EnrollmentCount and EnrollmentCountDelta, 2026-10-02; the 52nd to 57th, the six activity rollups the Atlas reads, 2026-10-02; the 58th, ChainAnchor, 2026-10-04; the 59th, BackupEvent, 2026-10-07; the 60th, RestoreRecord, 2026-10-07; a migrated deployment holds 67, with the `schema_version` registry, the three migration-added tables, and the three Athena curated tables) |
 | Stored procedures and functions | **32 stored procedures and functions** (with the two wallet-copy functions, 2026-09-28, the holder key register's writer, 2026-10-01, the population counts' fold and recount, 2026-10-01, the enrolment counts' fold and rebuild, 2026-10-02, and the activity rollups' fold and recount, 2026-10-02) in `05_procedures.sql` |
 | Self-tests | `08_tests.sql` reports 91 checks, all PASS on a fresh load (v1.0.0-rc.62) |
 | Substrate manifest | 27 rows in `SystemDependency` |
@@ -53,7 +53,7 @@ Dependencies when loading by hand:
 |------|---------|
 | `00_load_all.sql` | Driver that runs every file in order |
 | `00_migrations_table.sql` | `schema_version` migration registry (append-only) |
-| `01_schema.sql` | DDL: 57 tables (incl. VerificationRollup, VerificationRollupDaily, VerificationRollupDelta, LifecycleRollup, LifecycleRollupDaily, LifecycleRollupDelta, EnrollmentCurrent, EnrollmentCount, EnrollmentCountDelta, PopulationCount, PopulationCountDelta, CardPersonalization, HolderKeyEvent, CredentialCopy, TimestampLog, AuthorityKeyEvent, AuthCodeConsumed, ExchangeNonce, ExchangeReceiptLog, RelyingParty, IssuerDiscretionPolicy, EnrollmentStatusEvent, RecoveryRequest, TokenSignature, AnchorBatch, AgencyTrustAttestation, TokenStateEpoch, TokenStateEpochLeaf, DuressEvent, LifecycleArchiveCheckpoint, AppUser, AuthAuditLog, RetentionPolicy) |
+| `01_schema.sql` | DDL: 60 tables (incl. RestoreRecord, BackupEvent, ChainAnchor, VerificationRollup, VerificationRollupDaily, VerificationRollupDelta, LifecycleRollup, LifecycleRollupDaily, LifecycleRollupDelta, EnrollmentCurrent, EnrollmentCount, EnrollmentCountDelta, PopulationCount, PopulationCountDelta, CardPersonalization, HolderKeyEvent, CredentialCopy, TimestampLog, AuthorityKeyEvent, AuthCodeConsumed, ExchangeNonce, ExchangeReceiptLog, RelyingParty, IssuerDiscretionPolicy, EnrollmentStatusEvent, RecoveryRequest, TokenSignature, AnchorBatch, AgencyTrustAttestation, TokenStateEpoch, TokenStateEpochLeaf, DuressEvent, LifecycleArchiveCheckpoint, AppUser, AuthAuditLog, RetentionPolicy) |
 | `02_indexes.sql` | Partial unique indexes, spatial index on `VerificationEvent(latitude, longitude)`, revocation-rate (R11-6), enrollment-event (R11-4), recovery-queue, active-signature (R11-1), anchor batch/pending (R10-2), secondary indexes |
 | `03_view.sql` | `ActiveTokens` and `IndividualCurrentEnrollment` views |
 | `04_data.sql` | Sample data across all five enrollment states, TokenSignature backfill, two closed `AnchorBatch` rows |

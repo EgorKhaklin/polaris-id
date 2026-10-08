@@ -111,6 +111,9 @@ DROP TABLE IF EXISTS ExchangeReceiptLog     CASCADE;
 DROP TABLE IF EXISTS CredentialCopy         CASCADE;
 DROP TABLE IF EXISTS HolderKeyEvent CASCADE;
 DROP TABLE IF EXISTS TimestampLog           CASCADE;
+DROP TABLE IF EXISTS ChainAnchor            CASCADE;
+DROP TABLE IF EXISTS BackupEvent            CASCADE;
+DROP TABLE IF EXISTS RestoreRecord          CASCADE;
 DROP TABLE IF EXISTS ExchangeNonce          CASCADE;
 DROP TABLE IF EXISTS AuthCodeConsumed       CASCADE;
 DROP TABLE IF EXISTS AuthorityKeyEvent      CASCADE;
@@ -505,6 +508,86 @@ COMMENT ON TABLE TimestampLog IS
   'one row per anchored timestamp holding ONLY its SHA3-256 (the timestamp is never '
   'retained; unanchored timestamps leave no row). Published as an RFC-6962 log; '
   'strictly append-only by trigger and by privilege.';
+
+-- 013 (2026-10-04): the logs' public-chain anchors (lab/strategy/013, docs/design/transparency-log.md).
+-- At the operator's cadence one checkpoint, the canonical JSON of the three logs' signed tree
+-- heads, is committed to Bitcoin through OpenTimestamps, and a row records it once the proof
+-- reaches a block: the checkpoint's exact bytes, the proof, and the block's height and raw
+-- header. The row is not the evidence; a verifier rereads the proof against block headers it
+-- reads itself. It is what the instance publishes beside its heads, so it is append-only and
+-- only the schema owner writes it. No personal data: the heads are already public.
+CREATE TABLE ChainAnchor (
+    anchor_id          SERIAL       PRIMARY KEY,
+    checkpoint         BYTEA        NOT NULL
+        CONSTRAINT chk_chain_anchor_checkpoint_size CHECK (octet_length(checkpoint) BETWEEN 2 AND 262144),
+    checkpoint_sha256  CHAR(64)     NOT NULL UNIQUE
+        CONSTRAINT chk_chain_anchor_digest CHECK (checkpoint_sha256 = encode(sha256(checkpoint), 'hex')),
+    chain              VARCHAR(20)  NOT NULL
+        CONSTRAINT chk_chain_anchor_chain CHECK (chain = 'BITCOIN'),
+    method             VARCHAR(20)  NOT NULL
+        CONSTRAINT chk_chain_anchor_method CHECK (method = 'OPENTIMESTAMPS'),
+    proof              BYTEA        NOT NULL
+        CONSTRAINT chk_chain_anchor_proof_size CHECK (octet_length(proof) BETWEEN 1 AND 65536),
+    block_height       INTEGER      NOT NULL
+        CONSTRAINT chk_chain_anchor_height CHECK (block_height >= 0),
+    block_header_hex   CHAR(160)    NOT NULL
+        CONSTRAINT chk_chain_anchor_header CHECK (block_header_hex ~ '^[0-9a-f]{160}$'),
+    recorded_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    recorded_by        VARCHAR(50)  NOT NULL
+);
+
+COMMENT ON TABLE ChainAnchor IS
+  '013: each checkpoint of the transparency logs committed to a public chain (Bitcoin, through '
+  'OpenTimestamps): the checkpoint bytes, whose SHA-256 the database derives, the proof and the '
+  'block. Published at /api/v1/transparency/anchors; verified by polaris-verify against block '
+  'headers the verifier reads itself, never against this row. Append-only by trigger; written '
+  'only by the schema owner (polaris anchor-record).';
+
+-- Lab record 017 (gate row OP-15, 2026-10-07): the record of backups that completed and dumps
+-- whose contents were verified, so the application can say how old the newest one is and page when it is too
+-- old. Written by the schema owner from the backup scripts, after the backup itself succeeded.
+CREATE TABLE BackupEvent (
+    event_id       BIGSERIAL    PRIMARY KEY,
+    kind           VARCHAR(20)  NOT NULL
+        CONSTRAINT chk_backup_event_kind CHECK (kind IN ('dump', 'pgbackrest', 'dump-verified')),
+    completed_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    location       VARCHAR(300) NOT NULL
+        CONSTRAINT chk_backup_event_location CHECK (length(btrim(location)) BETWEEN 1 AND 300),
+    detail         VARCHAR(300),
+    recorded_by    VARCHAR(100) NOT NULL DEFAULT session_user
+);
+
+COMMENT ON TABLE BackupEvent IS
+  'Lab record 017 (gate row OP-15): each backup that completed, and each dump whose contents were '
+  'verified: a pg_dump tarball (polaris-backup.sh), a pgBackRest backup, a dump extracted and '
+  'checked against its manifest (polaris-backup.sh --verify-latest). Recorded by the schema owner '
+  'after the backup itself succeeded; where it went, never a credential. The application reads '
+  'the newest time per kind for /metrics (PolarisBackupStale). Append-only by trigger.';
+
+-- Lab record 017 (gate row OP-13, 2026-10-07): each reconciliation after a restore to an earlier
+-- point. A restore to T loses every change made after T, including the ones that withdrew trust or
+-- access; scripts/polaris-reconcile-restore.py re-applies those from a copy of the archive's end,
+-- through the procedures that made them, and records here what it did and what it could not.
+-- Written by the schema owner from that script.
+CREATE TABLE RestoreRecord (
+    restore_id     BIGSERIAL    PRIMARY KEY,
+    target_time    TIMESTAMPTZ  NOT NULL,
+    archive_end    TIMESTAMPTZ  NOT NULL,
+    recorded_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    operator       VARCHAR(100) NOT NULL
+        CONSTRAINT chk_restore_record_operator CHECK (length(btrim(operator)) BETWEEN 1 AND 100),
+    outcome        VARCHAR(20)  NOT NULL
+        CONSTRAINT chk_restore_record_outcome CHECK (outcome IN ('reconciled', 'incomplete')),
+    report         JSONB        NOT NULL,
+    recorded_by    VARCHAR(100) NOT NULL DEFAULT session_user,
+    CONSTRAINT chk_restore_record_window CHECK (archive_end > target_time)
+);
+
+COMMENT ON TABLE RestoreRecord IS
+  'Lab record 017 (gate row OP-13): each reconciliation after a restore to an earlier point: the '
+  'point restored to, the archive''s end it was reconciled against, the withdrawals re-applied, '
+  'the ones excluded or still open and why, the grants and records not re-made. Written by the '
+  'schema owner (scripts/polaris-reconcile-restore.py). Append-only by trigger.';
 
 -- P8.2d (v9.324): the exchange gateway's REPLAY REGISTER. A requester's signed exchange
 -- envelope carries a nonce; the gateway consumes (requester key, nonce) here BEFORE

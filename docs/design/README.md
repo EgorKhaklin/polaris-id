@@ -32,6 +32,7 @@ and the posture documents see [reference/](../reference/README.md).
 | [athena.md](athena.md) | The read-only authority-and-constitution layer: why an agency may issue, what enforces each rule, what breaks if a key is retired, and why person-legibility is structurally impossible |
 | [retention.md](retention.md) | How long the record is kept, who decided that, and why the purge obeys it |
 | [partitioning.md](partitioning.md) | Why the event tables are monthly-partitioned, how C1 holds across attach and detach, and the online conversion |
+| [restore-reconciliation.md](restore-reconciliation.md) | What a restore to an earlier point takes back, what is put back before the app returns, and what is left for a person to decide |
 | [bulk-enrollment.md](bulk-enrollment.md) | How a whole population is issued set-based in one atomic transaction, every row still through the full constraint set |
 | [verification-scaling.md](verification-scaling.md) | Taking real ML-DSA-65 verification from hundreds to thousands/sec: single-witness verify-at-use, why it is sound, and how it fans out across workers and HA replicas |
 | [offline-verification.md](offline-verification.md) | Verifying authorization with no connectivity (P3.6): the short-lived signed status assertion, what a verifier MUST check, and the freshness and replay bounds |

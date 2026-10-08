@@ -1,0 +1,61 @@
+# ============================================================================
+# upgrade.yml - the upgrade path: the previous release's own stack, upgraded to this commit the
+# way docs/operator/OPERATIONS.md says (scripts/polaris-upgrade-drill.sh; lab record 017, gate
+# row OP-19).
+#
+# The drill checks out the newest release tag before this commit, runs that release's own
+# lab/strategy/006/try.sh (its images, its secrets and key, a credential issued), moves the
+# checkout to this commit, and runs polaris-generate-secrets.sh and polaris-deploy.sh prod. It
+# then requires no migration pending, every Polaris container on the image this commit builds,
+# a credential issued after the upgrade verifying, and the one issued before still valid, its
+# pack unchanged and verifying against the old key.
+#
+# It builds two releases' images, so pull requests run it only when a path it exercises
+# changed. It also runs on every push to main, nightly, and by hand.
+# ============================================================================
+name: Upgrade path (the previous release's stack, upgraded the documented way)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "lab/strategy/006/**"
+      - "polaris_web/**"
+      - "polaris_sql/**"
+      - "scripts/polaris-deploy.sh"
+      - "scripts/polaris-migrate.sh"
+      - "scripts/polaris-generate-secrets.sh"
+      - "scripts/polaris-image-build.sh"
+      - "scripts/polaris-create-operator.sh"
+      - "scripts/polaris-upgrade-drill.sh"
+      - ".github/workflows/upgrade.yml"
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upgrade-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  upgrade:
+    name: The previous release's stack, upgraded to this commit as OPERATIONS.md says
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout, with the release tags the drill starts from
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Upgrade the previous release (scripts/polaris-upgrade-drill.sh)
+        run: bash scripts/polaris-upgrade-drill.sh

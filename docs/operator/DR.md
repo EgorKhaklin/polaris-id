@@ -37,7 +37,7 @@ for the case where a standby survives the primary.
 
 | Target | Value | How it is met | How it is measured |
 |---|---|---|---|
-| **RPO** (recovery point objective) | **300 s** | Continuous WAL archiving through pgBackRest with `archive_timeout = '60s'`, applied by [`polaris_web/docker-init.sh`](../../polaris_web/docker-init.sh) when `POLARIS_PGBACKREST_ENABLED=1` at the first init of the data volume; an existing cluster needs the same `ALTER SYSTEM` statements by hand (section 5). A partially filled WAL segment is pushed within 60 s, so the recovery point is bounded by the archive interval, not by the backup schedule. | [`scripts/polaris-dr-drill.sh`](../../scripts/polaris-dr-drill.sh): the age of the newest recovered marker at the moment the primary is killed. `RPO_TARGET=300`. |
+| **RPO** (recovery point objective) | **300 s** | Continuous WAL archiving through pgBackRest with `archive_timeout = '60s'`, applied by [`polaris_web/docker-init.sh`](../../polaris_web/docker-init.sh) at the first init of the data volume, on by default; `polaris-deploy.sh` applies the same settings to an existing cluster (section 5). A partially filled WAL segment is pushed within 60 s, so the recovery point is bounded by the archive interval, not by the backup schedule. | [`scripts/polaris-dr-drill.sh`](../../scripts/polaris-dr-drill.sh): the age of the newest recovered marker at the moment the primary is killed. `RPO_TARGET=300`. |
 | **RTO** (recovery time objective) | **14400 s** (4 h) | `pgbackrest --stanza=polaris restore`, archive replay, promotion, and the application brought up against the restored database (section 4.3). | The same drill: time from the kill to `/api/health` reporting the database healthy. `RTO_TARGET=14400`. |
 
 The drill runs on every push to `main` (job `dr-drill` in
@@ -54,7 +54,7 @@ rows dated 2026-09-02 (v9.192) measure RPO 41.6 s and 36.0 s and RTO to
 service 4.7 s and 4.4 s on a clean stack with the sample data. A larger
 repository restores more slowly; `pgbackrest info` reports its size.
 
-**Without WAL archiving** (`POLARIS_PGBACKREST_ENABLED` unset), the recovery
+**Without WAL archiving** (`POLARIS_PGBACKREST_ENABLED=0`), the recovery
 point is the most recent encrypted `pg_dump` from
 [`scripts/polaris-backup.sh`](../../scripts/polaris-backup.sh). The shipped
 schedule is daily at 03:00 UTC (`polaris-backup.timer`, or the cron line
@@ -245,20 +245,57 @@ docker run --rm -v "$PG_VOLUME":/data -v "$(pwd)":/snap busybox \
 # 3. Point-in-time restore from the pgBackRest repo, targeting the last
 #    known-good moment (just before the corruption window). The one-off
 #    container reuses the service definition (repo mount, rendered
-#    conf.d/repo.conf, credential fragment) and runs as postgres; the drill
-#    runs the same command without --type=time.
+#    conf.d/repo.conf, credential fragment) and runs as postgres; the DR
+#    drill runs the same command without --type=time, and
+#    scripts/polaris-pitr-drill.sh runs it with --type=time and checks that
+#    exactly what was committed by the target came back.
 TARGET_TIME="2026-05-14 03:14:00 UTC"
 $COMPOSE stop postgres
 $COMPOSE run --rm --no-deps --user postgres postgres sh -c \
     "rm -rf /var/lib/postgresql/data/* && \
      pgbackrest --stanza=polaris --type=time --target=\"$TARGET_TIME\" --target-action=promote restore"
 
-# 4. Start postgres; it replays the archive to the target and promotes.
+# 4. Start postgres; it replays the archive to the target and promotes. (Wait on
+#    the database itself: the container's log still holds the previous run's
+#    "ready to accept connections".)
 $COMPOSE up -d postgres
-$COMPOSE logs --follow postgres | grep -m1 "database system is ready to accept connections"
-$COMPOSE exec postgres psql -U postgres -d polaris -c "SELECT pg_is_in_recovery();"   # f
+until $COMPOSE exec postgres psql -U postgres -d polaris -tAc "SELECT NOT pg_is_in_recovery()" | grep -q t; do sleep 2; done
 
-# 5. Verify integrity (the drill compares the IdentityToken and schema_version
+# 5. Restore the archive's end beside it, inside a scratch container (its own
+#    filesystem, never pg_data: a new volume would be root's and refuse the
+#    postgres user), with archiving off (a second timeline must never reach the
+#    shared repo). The restore to the target lost everything after it; this copy
+#    still holds it.
+$COMPOSE run -d --no-deps --name polaris-archive-end --user postgres --entrypoint sh postgres -c \
+    "pgbackrest --stanza=polaris --pg1-path=/var/lib/postgresql/archive-end restore && \
+     exec postgres -D /var/lib/postgresql/archive-end -c archive_mode=off"
+until docker exec polaris-archive-end psql -U postgres -d polaris -tAc "SELECT NOT pg_is_in_recovery()" | grep -q t; do sleep 2; done
+
+# 6. Re-apply what withdrew trust after the target (gate row OP-13), before the
+#    app takes traffic. scripts/polaris-reconcile-restore.py moves every
+#    sequence past the archive's end, then re-applies each withdrawal made after
+#    the target through the path that made it: revocations, losses and expiries,
+#    holder and authority keys, attestation revocations, erasures, consumed
+#    nonces and codes, operator accounts, sessions and hardware keys, relying
+#    parties, agencies, algorithms, contexts and permissions. It lists the grants
+#    it does not re-make and counts the records it cannot, and records the run in
+#    RestoreRecord. --dry-run first: each withdrawal is printed with a key, and one
+#    made by the actor whose damage this restore undoes is skipped with
+#    --exclude KEY --exclusion-reason "...".
+reconcile() {   # the app image carries Python and psycopg2; the script comes from this checkout
+    $COMPOSE run --rm --no-deps \
+        -e PGPASSWORD="$(cat "${POLARIS_SECRETS_DIR:-polaris_web/secrets}/polaris_db_root_password")" \
+        -v "$(pwd)/scripts:/opt/polaris-scripts:ro" --entrypoint python app \
+        /opt/polaris-scripts/polaris-reconcile-restore.py \
+        --restored "host=postgres dbname=polaris user=postgres" \
+        --archive-end "host=polaris-archive-end dbname=polaris user=postgres" \
+        --target-time "$TARGET_TIME" --operator "$(whoami)" --acting-admin ADMIN_USERNAME "$@"
+}
+reconcile --dry-run
+reconcile           # exit 0, or each withdrawal still open is printed with its remedy
+docker rm -f polaris-archive-end
+
+# 7. Verify integrity (the drill compares the IdentityToken and schema_version
 #    counts with their pre-failure values; the audit tables date the recovery point).
 $COMPOSE exec postgres psql -U postgres -d polaris -c "
     SELECT count(*) FROM IdentityToken;
@@ -266,9 +303,10 @@ $COMPOSE exec postgres psql -U postgres -d polaris -c "
     SELECT count(*) FROM TokenLifecycleEvent;
     SELECT count(*) FROM VerificationEvent;
     SELECT max(event_timestamp) FROM TokenLifecycleEvent;
+    SELECT restore_id, outcome FROM RestoreRecord ORDER BY restore_id DESC LIMIT 1;
 "
 
-# 6. Bring the app back and smoke-test.
+# 8. Only when step 6 exited 0: bring the app back and smoke-test.
 $COMPOSE up -d app
 curl -sf https://${POLARIS_DOMAIN}/api/health | jq .
 ```
@@ -278,6 +316,24 @@ segment, which is the drill's path. If the repo is offsite (section 5) the
 same command reads it from S3; the one-off container needs the same
 `POLARIS_PGBACKREST_S3_*` env and the mounted credential fragment, which the
 compose service definition supplies.
+
+**What the restore loses, and what step 6 puts back.** The database comes back
+as it stood at `TARGET_TIME`. Without step 6 a credential revoked after that
+moment reads as active again, a key declared compromised is trusted again, an
+operator account switched off is on again, a consumed nonce can be replayed,
+and the sequences hand out again identifiers already issued (a new wallet copy
+could take the status-list slot of a lost one). Step 6 re-applies the
+withdrawals and retires the identifiers; `scripts/polaris-pitr-drill.sh
+--reconcile` makes 24 withdrawals on either side of a target, restores both
+points and requires the reconciled state to equal the archive's end. What it
+does not re-make it names: grants made after the target (credentials issued,
+keys registered, accounts and relying parties created), policies set after it,
+and records of what happened (verifications, duress records, epochs, anchors),
+counted per table. A withdrawal its path now refuses (a revocation the rate
+bound holds for a co-signer: `--cosigner AGENCY_ID`) is printed with its
+remedy and the run exits 1; resolve it and run it again (a second run re-applies
+only what is still missing). Writes in WAL the archive never received
+(`archive_timeout`, 60 s) are lost like any other.
 
 **Audit-of-record continuity:** WAL replay preserves every event up to the
 target timestamp. Events between the target time and the moment of corruption
@@ -501,13 +557,16 @@ The postgres image carries pgBackRest
 (`repo1-bundle=y`), zstd compression), and
 [`polaris_web/docker-init.sh`](../../polaris_web/docker-init.sh) sets
 `archive_mode = on`, `archive_command = 'pgbackrest --stanza=polaris archive-push %p'`,
-`wal_level = replica`, and `archive_timeout = '60s'` when
-`POLARIS_PGBACKREST_ENABLED=1`. Archiving is off by default so a deployment
-with no repo does not accumulate unarchivable WAL. `docker-init.sh` is an
-initdb script: it runs only when the postgres container boots with an empty
-data volume, so the flag alone changes nothing on an existing cluster. On an
-existing cluster apply the same settings by hand and restart postgres
-(`archive_mode` is restart-only):
+`wal_level = replica`, and `archive_timeout = '60s'`, and creates the stanza.
+Archiving is on by default since lab record 017 (gate row OP-14), because a
+restore to a point in time needs the archive from before the failure;
+`POLARIS_PGBACKREST_ENABLED=0` turns it off. The HA profile
+(`docker-compose.ha.yml`) keeps it opt-in: its Patroni path creates no stanza,
+so set the variable and create the stanza against the leader. `docker-init.sh` is an initdb
+script: it runs only when the postgres container boots with an empty data
+volume. On a cluster initialised before that, or with archiving off,
+[`scripts/polaris-deploy.sh`](../../scripts/polaris-deploy.sh) applies the same
+settings and restarts postgres once (`archive_mode` is restart-only). By hand:
 
 ```bash
 COMPOSE="docker compose -f polaris_web/docker-compose.prod.yml"
@@ -534,7 +593,6 @@ export POLARIS_PGBACKREST_S3_ENDPOINT=s3.<region>.amazonaws.com   # any S3-compa
 export POLARIS_PGBACKREST_S3_REGION=<region>
 # optional: _PATH (default /polaris), _PORT, _URI_STYLE=path (MinIO, Ceph),
 #           _CA_FILE (a private endpoint's CA bundle), _VERIFY_TLS=n (tests only)
-export POLARIS_PGBACKREST_ENABLED=1
 ```
 
 **The S3 key pair** is a root-level secret: it can read, write, and delete
@@ -558,9 +616,16 @@ An operator with a different repo type (Azure, GCS, SFTP) mounts their own
 read-only `/etc/pgbackrest/conf.d/repo.conf`; the renderer leaves a mounted
 file alone.
 
-**Enable it.** [`scripts/polaris-deploy.sh`](../../scripts/polaris-deploy.sh)
-runs `stanza-create` and `check` when `POLARIS_PGBACKREST_ENABLED=1` and
-prints the fix-up command if either fails. By hand, inside the postgres
+**The base backups.** A point-in-time restore starts from a base backup; the
+archive alone cannot. [`scripts/polaris-deploy.sh`](../../scripts/polaris-deploy.sh)
+runs `stanza-create` and `check`, prints the fix-up command if either fails, and
+takes the first full backup when the repository holds none.
+[`scripts/polaris-backup.sh`](../../scripts/polaris-backup.sh), on its daily
+schedule, takes one after its dump: a full when the newest full is a week old,
+a differential otherwise, each recorded in `BackupEvent`. Taking them is also
+what expires old WAL (the repository keeps two fulls and the archive they
+need); a deployment that never runs `polaris-backup.sh` keeps every segment,
+and PolarisBackupStale pages after 26 hours. By hand, inside the postgres
 container as the `postgres` user:
 
 ```bash
@@ -568,9 +633,16 @@ COMPOSE="docker compose -f polaris_web/docker-compose.prod.yml"
 $COMPOSE exec -u postgres postgres pgbackrest --stanza=polaris stanza-create
 $COMPOSE exec -u postgres postgres pgbackrest --stanza=polaris check
 # schedule a base backup (daily is typical); the repo keeps two full backups
-$COMPOSE exec -u postgres postgres pgbackrest --stanza=polaris --type=full backup
+$COMPOSE exec -u postgres postgres pgbackrest --stanza=polaris --type=full backup \
+  && $COMPOSE exec -T postgres psql -U postgres -d polaris -v ON_ERROR_STOP=1 \
+       -c "INSERT INTO BackupEvent (kind, location) VALUES ('pgbackrest', 'stanza polaris, full')"
 $COMPOSE exec -u postgres postgres pgbackrest --stanza=polaris info
 ```
+
+The `INSERT` records the backup in `BackupEvent`, the database's record of completed backups
+(lab record 017, gate row OP-15): `/metrics` reports the newest one's age and
+PolarisBackupStale pages when neither a dump nor a pgBackRest backup has completed for 26
+hours. `polaris-backup.sh` records its dumps itself.
 
 Run `pgbackrest --stanza=polaris check` daily; a failing check means WAL is
 piling up on the primary and the recovery point is drifting (SEV-2).

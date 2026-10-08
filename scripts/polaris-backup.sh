@@ -25,6 +25,25 @@ DEFAULT_DEST="/var/backups"
 
 DEST="${DEFAULT_DEST}"
 VERIFY_LATEST=0
+# Lab record 017 (gate row OP-15): the database's record that a backup completed (BackupEvent,
+# append-only, written as the schema owner), from which /metrics reports its age and
+# PolarisBackupStale pages. Values go in as psql variables, quoted by psql. Returns non-zero when
+# nothing could be recorded; the caller says so and the backup itself stands.
+record_backup() {  # record_backup <kind> <location> <detail>
+    local sql="INSERT INTO BackupEvent (kind, location, detail) VALUES (:'kind', :'location', :'detail');"
+    local services
+    services="$(docker compose -f "${COMPOSE_FILE}" ps --services 2>/dev/null || true)"
+    if grep -qx postgres <<<"${services}"; then
+        docker compose -f "${COMPOSE_FILE}" exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U postgres \
+            -d polaris -v kind="$1" -v location="$2" -v detail="$3" <<<"${sql}"
+    elif command -v psql >/dev/null 2>&1; then
+        psql -X -q -v ON_ERROR_STOP=1 -h "${POLARIS_DB_HOST:-localhost}" -U "${POLARIS_DB_USER:-postgres}" \
+            -d "${POLARIS_DB_NAME:-polaris}" -v kind="$1" -v location="$2" -v detail="$3" <<<"${sql}"
+    else
+        return 1
+    fi
+}
+
 # while-loop form: supports both `--dest=/path` and `--dest /path`.
 # (Pre-v8.82 used `for arg in "$@"; do shift; done` which couldn't
 # advance the iterator and only handled the `--dest=` form correctly.)
@@ -123,6 +142,14 @@ if not ok:
     sys.exit(1)
 print("  ✓ MANIFEST verified")
 PY
+    # Recorded only when the verified tarball holds a database dump (not the zero-byte sentinel).
+    DUMP_BYTES=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["size_bytes"].get("polaris.dump", 0))' \
+                 "${EXTRACTED}/MANIFEST.json" 2>/dev/null || echo 0)
+    if [[ "${DUMP_BYTES}" -gt 0 ]]; then
+        record_backup dump-verified "${LATEST}" "the dump (${DUMP_BYTES} bytes) matched its manifest" > /dev/null \
+            && echo "  → recorded in BackupEvent (dump-verified)" \
+            || echo "  ! verified, but not recorded in BackupEvent: PolarisBackupUnverified will not see it" >&2
+    fi
     exit 0
 fi
 
@@ -225,3 +252,45 @@ SIZE=$(du -h "${OUT}" | awk '{print $1}')
 echo
 echo "  ✓ backup complete:  ${OUT}  (${SIZE})"
 echo "  → verify with:       $(basename "$0") --verify-latest --dest ${DEST}"
+# The record PolarisBackupStale reads: only for a backup that holds a database dump. A tarball with
+# the zero-byte sentinel (no stack, no pg_dump) is not a backup of the database and is not recorded.
+if [[ -s "${STAGE}/polaris.dump" ]]; then
+    MANIFEST_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' \
+                   "${STAGE}/MANIFEST.json")
+    if record_backup dump "${OUT}" "${SIZE}; manifest sha256 ${MANIFEST_SHA}" > /dev/null; then
+        echo "  → recorded in BackupEvent (dump), the age /metrics reports"
+    else
+        echo "  ! the backup is complete but was not recorded in BackupEvent: PolarisBackupStale will not see it" >&2
+    fi
+else
+    echo "  ! this tarball holds no database dump; it is not recorded as a backup" >&2
+fi
+
+# 3. A pgBackRest base backup, when the database archives its WAL (on by default since lab record 017,
+#    gate row OP-14). A point-in-time restore starts from one of these, and taking them is also what
+#    expires old WAL: the repository keeps two fulls and the archive they need (pgbackrest.conf). A
+#    full when the newest is a week old or there is none, a differential otherwise; each recorded in
+#    BackupEvent as kind pgbackrest, the age PolarisBackupStale reads.
+if grep -qx postgres <<<"$RUNNING_SERVICES" \
+   && [[ "$(docker compose -f "${COMPOSE_FILE}" exec -T postgres psql -X -t -A -U postgres -d polaris \
+            -c 'SHOW archive_mode' 2>/dev/null | tr -d '[:space:]')" == "on" ]]; then
+    FULL_AGE=$(docker compose -f "${COMPOSE_FILE}" exec -T -u postgres postgres \
+                   pgbackrest --stanza=polaris --output=json info 2>/dev/null \
+               | python3 -c 'import json, sys, time
+stops = [b["timestamp"]["stop"] for s in json.load(sys.stdin) for b in s.get("backup", []) if b.get("type") == "full"]
+print(int(time.time() - max(stops)) if stops else -1)' 2>/dev/null || echo -1)
+    PGBR_TYPE=diff
+    if [[ "${FULL_AGE}" -lt 0 || "${FULL_AGE}" -gt 604800 ]]; then PGBR_TYPE=full; fi
+    echo "  → pgBackRest ${PGBR_TYPE} backup (WAL archiving is on)…"
+    if docker compose -f "${COMPOSE_FILE}" exec -T -u postgres postgres \
+            pgbackrest --stanza=polaris --type="${PGBR_TYPE}" backup > /dev/null; then
+        if record_backup pgbackrest "pgBackRest repo1, stanza polaris" "${PGBR_TYPE}" > /dev/null; then
+            echo "  ✓ pgBackRest ${PGBR_TYPE} backup complete; recorded in BackupEvent (pgbackrest)"
+        else
+            echo "  ! the pgBackRest backup is complete but was not recorded in BackupEvent" >&2
+        fi
+    else
+        echo "  ✗ the pgBackRest ${PGBR_TYPE} backup FAILED: a point-in-time restore starts from the last good one" >&2
+        exit 4
+    fi
+fi

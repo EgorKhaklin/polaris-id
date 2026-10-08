@@ -369,6 +369,34 @@ performance; the table names what each run built so that cannot happen by readin
 
 ---
 
+## The server images and the Helm chart
+
+Actions → **Release images and chart** → Run workflow, from the release tag
+([`release-images.yml`](../.github/workflows/release-images.yml)); from a terminal,
+`gh workflow run release-images.yml --ref <tag> -f confirm=PUBLISH`.
+
+- **Dry run** (the default, `confirm` empty), from any branch or tag: all five images build on
+  amd64 and arm64. Nothing is pushed, signed or attested.
+- **Real publish**: from a version tag, with `PUBLISH` typed into `confirm`. The run waits at the
+  `ghcr` environment for the maintainer's approval before anything builds. Then each image is
+  pushed to `ghcr.io/egorkhaklin/polaris-<name>` by digest, its two architectures are joined into
+  one index, the index is signed keyless with cosign and given SLSA build provenance, and each
+  architecture's image an SPDX SBOM that meets the NTIA minimum elements, all at the registry.
+  The chart is then pinned to those digests
+  ([`scripts/polaris-pin-chart-images.py`](../scripts/polaris-pin-chart-images.py)), pushed to
+  `oci://ghcr.io/egorkhaklin/charts/polaris` and signed.
+
+A published digest cannot be withdrawn, so each publish is the maintainer's decision. One-time
+setup: create the `ghcr` environment with the maintainer as its required reviewer, deployments
+limited to tags matching `v*`; after the first publish, make the six packages public (GitHub →
+Packages → each package → visibility), since a new package starts private. The workflow runs from
+the tag, so the first tag it can publish is the first one cut after it reached `main`. Operators
+verify with [docs/operator/VERIFY-RELEASE.md](operator/VERIFY-RELEASE.md).
+
+**The record:** no publish yet.
+
+---
+
 ## After publishing
 
 Record it in [`lab/EXTERNAL-NOUNS.md`](../lab/EXTERNAL-NOUNS.md). Being installable is not

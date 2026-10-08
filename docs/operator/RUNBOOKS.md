@@ -37,8 +37,16 @@ edit either file.
 8. [PolarisRevocationVelocity](#polarisrevocationvelocity)
 9. [PolarisVerificationVelocity](#polarisverificationvelocity)
 10. [PolarisQuotaRefusals](#polarisquotarefusals)
-11. [Paging: wiring the receiver](#paging-wiring-the-receiver)
-12. [Cross-references](#cross-references)
+11. [PolarisClockSkew](#polarisclockskew)
+12. [PolarisArchiveFailing](#polarisarchivefailing)
+13. [PolarisReplicaBehind](#polarisreplicabehind)
+14. [PolarisDiskFilling](#polarisdiskfilling)
+15. [PolarisCertificateExpiring](#polariscertificateexpiring)
+16. [PolarisEdgeProbeFailing](#polarisedgeprobefailing)
+17. [PolarisBackupStale](#polarisbackupstale)
+18. [PolarisBackupUnverified](#polarisbackupunverified)
+19. [Paging: wiring the receiver](#paging-wiring-the-receiver)
+20. [Cross-references](#cross-references)
 
 ---
 
@@ -432,6 +440,223 @@ agency and the kind (`issue`, `revoke`, `verify`).
 a new justification). Abuse: leave the cap, work the matching velocity runbook,
 and end the operator sessions involved. The alert clears 15 minutes after the
 last refusal; refused writes were never recorded and are not replayed.
+
+---
+
+## PolarisClockSkew
+
+**Severity:** SEV-3 · **Expression:** `abs(polaris_clock_skew_seconds) > 2` · **For:** 10m
+
+This instance's clock and the database's have disagreed by more than 2 seconds
+for 10 minutes (lab record 017, gate row OP-15). The app measures it at every
+scrape of `/metrics`, the same way `/api/health` reports its `clock` component
+degraded. Credential expiry, OpenID4VP `iat` and `exp`, and nonces mix the two
+clocks, so a skew shortens or lengthens validity windows without any error.
+
+**Trigger.** `polaris_clock_skew_seconds` (this instance minus the database) above
+2 s or below -2 s, held for 10 minutes. An unanswered database reads NaN and
+never fires this alert.
+
+**Diagnosis.**
+1. One instance or all? If every instance shows the same skew, the database's
+   host clock is the wrong one; if one does, that instance's host is.
+2. On the suspect host: `timedatectl` (or `chronyc tracking`) for the NTP sync
+   state and offset. A container shares its host's clock.
+3. `curl -fsS http://<target>/api/health` and read the `clock` component's
+   `skew_seconds`.
+
+**Remediation.** Fix time sync on the host that drifted (enable and start
+`chronyd` or `systemd-timesyncd`, point it at a reachable NTP source). Do not
+set the clock back by hand on a running database host; let NTP slew it. The
+alert clears 10 minutes after the skew returns within 2 s.
+
+---
+
+## PolarisArchiveFailing
+
+**Severity:** SEV-2 · **Expression:** `max by (job) (polaris_db_archive_last_timestamp_seconds{outcome="failed"}) > max by (job) (polaris_db_archive_last_timestamp_seconds{outcome="archived"})` · **For:** 5m
+
+The database's newest WAL archive attempt failed and none has succeeded since,
+for 5 minutes (lab record 017, gate row OP-15). The app reads
+`pg_stat_archiver` at every scrape. While archiving fails, WAL accumulates on
+the database's disk, a point-in-time restore cannot reach past the last
+archived segment, and the RPO the DR drill measures grows.
+
+**Trigger.** The last failure is newer than the last success. Archiving that was
+never switched on reports 0 for both and does not fire.
+
+**Diagnosis.**
+1. On the database: `SELECT * FROM pg_stat_archiver;` for the failed WAL file
+   and the times.
+2. The postgres container's log: the `archive_command` (pgBackRest
+   `archive-push`) prints why it failed: an unreachable or full repository,
+   expired object-store credentials, a stanza mismatch after a major upgrade.
+3. `pgbackrest --stanza=polaris check` inside the postgres container exercises
+   the whole path.
+
+**Remediation.** Fix the repository or its credentials, then confirm
+`pgbackrest check` passes; Postgres retries the failed segment on its own and
+the alert clears once a newer segment archives. Watch the database disk
+meanwhile: unarchived WAL is kept until it archives. See
+[DR.md](DR.md) section 5.
+
+---
+
+## PolarisReplicaBehind
+
+**Severity:** SEV-3 · **Expression:** `max by (job) (polaris_db_replica_lag_seconds) > max by (job) (polaris_db_replica_lag_limit_seconds) or max by (job) (polaris_db_replica_lag_seconds) != max by (job) (polaris_db_replica_lag_seconds)` · **For:** 10m
+
+The read replica has trailed the primary beyond the staleness limit this
+deployment set (`POLARIS_REPLICA_MAX_LAG_S`, 10 s by default), or could not be
+measured at all, for 10 minutes (lab record 017, gate row OP-15). The app
+measures it at every scrape, the way `/api/health` reports its `replica`
+component. Reads already fall back to the primary while the replica is out
+of contract, so nothing is served stale; what is lost is the redundancy and
+the read capacity the replica carried.
+
+**Trigger.** Lag above the limit, or NaN (the replica did not answer).
+Deployments without a replica report no series and never fire.
+
+**Diagnosis.**
+1. `curl -fsS http://<target>/api/health` and read the `replica` component:
+   `lag_seconds`, `max_lag_seconds`, and `error` when it is unreachable.
+2. On the replica: `SELECT pg_is_in_recovery(), now() - pg_last_xact_replay_timestamp();`
+3. On the primary: `SELECT client_addr, state, sent_lsn, replay_lsn FROM pg_stat_replication;`
+   (as a role with `pg_read_all_stats`) for a stalled or missing standby.
+
+**Remediation.** A replica that is merely slow catches up once the primary's
+write burst passes or its I/O recovers; one that stopped (network, disk full,
+a broken slot) is rebuilt from a fresh base backup per
+[FAILOVER.md](FAILOVER.md). The alert clears 10 minutes after the lag is back
+within the limit.
+
+---
+
+## PolarisDiskFilling
+
+**Severity:** SEV-2 · **Expression:** `1 - polaris_state_filesystem_bytes{kind="free"} / ignoring(kind) polaris_state_filesystem_bytes{kind="size"} > 0.90` · **For:** 10m
+
+The filesystem holding the app's state directory has been more than 90% used
+for 10 minutes (lab record 017, gate row OP-15). In the default single-host
+install Docker keeps every named volume on that filesystem, the database's
+included, so this is also the database's disk. When it fills, the database
+stops accepting writes, WAL can no longer be archived or kept, and the app
+fails every write. `/api/health` already reports `disk` degraded at 85% (or
+under 5 GB free) and unhealthy under 500 MB.
+
+**Trigger.** Used space above 90% of the filesystem, held 10 minutes.
+
+**Diagnosis.**
+1. `df -h` on the host, and `docker system df` for Docker's share.
+2. The usual growers: the database volume (`SELECT pg_size_pretty(pg_database_size('polaris'));`),
+   WAL kept because archiving fails (check PolarisArchiveFailing and
+   `pg_stat_archiver`), container logs (capped by the json-file driver in the
+   production compose file), old images (`docker image prune`), backup
+   tarballs written to the same disk.
+
+**Remediation.** Free space by removing what is safe to remove (unused images,
+expired backups kept elsewhere), fix a failing archive so Postgres can recycle
+WAL, or grow the volume. Never delete files under the database's data
+directory by hand. The alert clears 10 minutes after use falls below 90%.
+
+---
+
+## PolarisCertificateExpiring
+
+**Severity:** SEV-2 · **Expression:** `probe_ssl_earliest_cert_expiry{job="polaris-edge-tls"} - time() < 14 * 86400` · **For:** 10m
+
+The certificate the TLS edge serves for this deployment's domain expires in
+under 14 days (lab record 017, gate row OP-15). The observability overlay's
+blackbox exporter asks the edge for its own site from inside the network,
+with the domain as the TLS server name and Host header, and reads the
+certificate it is given. Caddy renews about 30 days before expiry, so a
+certificate this close means renewal has been failing for about two weeks.
+
+**Trigger.** Under 14 days left, held 10 minutes. A stack on Caddy's internal
+authority (`lab/strategy/006/try.sh`, CI) gets 12-hour certificates and fires
+this by design; production with ACME does not.
+
+**Diagnosis.**
+1. `docker compose logs caddy | grep -i -E "renew|obtain|acme|error"`: Caddy
+   logs each renewal attempt and why it failed.
+2. The usual causes: port 80 or 443 closed to the internet (the ACME
+   challenge cannot reach the edge), the domain's DNS no longer pointing at
+   this host, an ACME rate limit after repeated failures, a `caddy_data`
+   volume that is not writable.
+3. From outside: `echo | openssl s_client -connect $POLARIS_DOMAIN:443 -servername $POLARIS_DOMAIN 2>/dev/null | openssl x509 -noout -enddate`.
+
+**Remediation.** Fix the cause Caddy logs (open the ports, correct DNS, wait
+out a rate limit); Caddy retries on its own and the alert clears once the new
+certificate is served. Do not delete `caddy_data`: it holds the ACME account
+and the current certificate.
+
+---
+
+## PolarisEdgeProbeFailing
+
+**Severity:** SEV-2 · **Expression:** `probe_success{job="polaris-edge-tls"} == 0` · **For:** 5m
+
+The edge has not answered a request for its own domain from inside the
+network for 5 minutes (lab record 017, gate row OP-15), so the certificate's
+expiry cannot be read either. The app's own target can still look healthy:
+the fault is in the edge, its site configuration, its certificate or its
+route to the app.
+
+**Diagnosis.**
+1. `docker compose ps caddy` and `docker compose logs --tail 50 caddy`.
+2. From the observability network, the probe's own detail:
+   `curl -s "http://blackbox:9115/probe?module=edge_tls&target=https://caddy:8443/api/health/live&debug=true"`.
+3. `scripts/polaris-doctor.sh` names the failing component of the stack.
+
+**Remediation.** Restart or reload the edge once the cause is fixed (a
+Caddyfile change reloads live through the admin socket). The alert clears 5
+minutes after the probe succeeds.
+
+---
+
+## PolarisBackupStale
+
+**Severity:** SEV-2 · **Expression:** `time() - max by (job) (polaris_backup_last_success_timestamp_seconds{kind=~"dump|pgbackrest"}) > 26 * 3600` · **For:** 30m
+
+Neither a pg_dump tarball nor a pgBackRest backup has been recorded as
+completed for 26 hours (lab record 017, gate row OP-15). The record is
+`BackupEvent`, which `polaris-backup.sh` writes after each dump that holds a
+database (and which the pgBackRest command in [DR.md](DR.md) section 5 writes
+after a pgBackRest backup). A restore now would lose everything since the last
+backup. A deployment that has never recorded one fires too.
+
+**Diagnosis.**
+1. On a host install: `systemctl status polaris-backup.timer polaris-backup.service`
+   and `journalctl -u polaris-backup.service -n 50`. The script says when a
+   backup completed but could not be recorded, and when a tarball held no dump.
+2. `ls -lt /var/backups/polaris | head` for the newest tarball.
+3. `SELECT kind, max(completed_at) FROM BackupEvent GROUP BY kind;` on the database.
+
+**Remediation.** Run `./scripts/polaris-backup.sh --dest /var/backups/polaris`
+by hand and read its output; fix what stopped the timer (the stack down at
+03:00, a full destination disk, an unreadable `POLARIS_BACKUP_KEY_FILE`). The
+alert clears 30 minutes after a backup is recorded.
+
+---
+
+## PolarisBackupUnverified
+
+**Severity:** SEV-3 · **Expression:** `(time() - max by (job) (polaris_backup_last_success_timestamp_seconds{kind="dump-verified"}) > 8 * 86400) and on (job) max by (job) (polaris_backup_last_success_timestamp_seconds{kind="dump"}) > 0` · **For:** 1h
+
+Dumps are being taken, but none has been extracted and checked against its
+manifest for 8 days (lab record 017). `polaris-backup.sh --verify-latest`,
+weekly by timer on a host install, records each verified dump. An unverified
+backup is a backup nobody knows will restore. A deployment that takes no dumps
+never fires.
+
+**Diagnosis.** `systemctl status polaris-backup-verify.timer` and
+`journalctl -u polaris-backup-verify.service -n 50`: a verification that ran
+and failed names the file whose hash did not match.
+
+**Remediation.** Run `./scripts/polaris-backup.sh --dest /var/backups/polaris --verify-latest`.
+A hash mismatch means that tarball is damaged: take a fresh backup, verify it,
+and find what corrupts the destination. The alert clears an hour after a
+verification is recorded.
 
 ---
 

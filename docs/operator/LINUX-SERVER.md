@@ -85,10 +85,11 @@ pulls, rebuilds the app image, applies migrations, smoke-tests `/api/health`,
 and rolls back the app image if the smoke test fails. It operates on the same
 compose project systemd started, so `systemctl status polaris` stays accurate.
 
-**Offsite backups**: set `POLARIS_PGBACKREST_S3_*` in `polaris.env`, put the
-key pair in `polaris_web/secrets/pgbackrest_repo_creds.conf`, set
-`POLARIS_PGBACKREST_ENABLED=1`, then `scripts/polaris-deploy.sh prod`
-([`DR.md`](DR.md)).
+**Offsite backups**: WAL archiving and the base backups are on by default, to
+a local repository that does not survive the host. Set `POLARIS_PGBACKREST_S3_*`
+in `polaris.env`, put the key pair in
+`polaris_web/secrets/pgbackrest_repo_creds.conf`, then
+`scripts/polaris-deploy.sh prod` ([`DR.md`](DR.md)).
 
 **Zero-downtime deploys**: add `-f docker-compose.bluegreen.yml` to
 `POLARIS_COMPOSE_EXTRA` in `polaris.env` and deploy once; from then on

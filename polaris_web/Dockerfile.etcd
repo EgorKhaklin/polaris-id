@@ -12,7 +12,10 @@
 # registries the rest of the stack does not use, while this one runs as a
 # dedicated user, is rebuilt by scripts/polaris-image-build.sh with every other
 # image, and is scanned by the same CVE job. Only the HA profile
-# (docker-compose.ha.yml) uses it.
+# (docker-compose.ha.yml) uses it. The package is held to the etcd 3.6 series
+# (apk's `~3.6`): Alpine's signed patch releases for it still arrive with the
+# base, and a new series stops the build until it is taken on purpose (lab
+# record 017).
 # ============================================================================
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 LABEL org.opencontainers.image.title="Polaris (etcd)"
@@ -22,7 +25,7 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 ARG POLARIS_VERSION=0.0-unstamped
 LABEL org.opencontainers.image.version="${POLARIS_VERSION}"
 RUN apk upgrade --no-cache \
-    && apk add --no-cache etcd etcd-ctl \
+    && apk add --no-cache "etcd~3.6" "etcd-ctl~3.6" \
     && (id etcd >/dev/null 2>&1 || adduser -D -H -s /sbin/nologin etcd) \
     && mkdir -p /var/lib/etcd \
     && chown etcd:etcd /var/lib/etcd \

@@ -52,6 +52,11 @@ credential is issued under it:
 
     polaris key-register AGENCY_ID PUBLIC_KEY_HEX --effective-at <the ceremony's instant>
 
+On the Docker stack the database answers only on the stack's network, so run the same statements
+as the schema owner through the postgres container with
+`scripts/polaris-key-event.sh register AGENCY_ID PUBLIC_KEY_HEX --effective-at <instant>` (it also
+takes `retire` and `compromise`).
+
 Under real signing this is not optional. Every possession route (`/api/v1/verify`, the status
 assertion, holder signing, the verifiable credential, the mdoc, sign-in) accepts a signature only
 under a key its authority had registered at the instant the signature was made, and refuses one
@@ -192,34 +197,44 @@ refusal, and switches each one off in turn to show that a test notices.
 
 ## Rotation
 
-Rotation is safe because every stored signature carries its public key.
-Verification of existing tokens does not depend on the current key; what
-depends on the current key is the trust-anchor check `verify_token_signature`
-performs when a verifier asks "is this signature from a key the authority
-still stands behind".
+The running application decides whether a credential's issuer key was authorized from the
+authority key register: a key is registered, then retired or declared compromised, each from an
+instant. `GET /api/tokens/<id>/verify` reports `issuer_authorized_at_signing` (the key was
+registered, and not yet retired or compromised, when it signed) and `issuer_key_current`, and
+`/api/v1/trust-list/<agency>` publishes every key with its status, signed. Every stored
+signature carries its public key, so a credential signed under a retired key keeps verifying.
 
-1. Perform a ceremony for the NEW key (new file, new token label, or a new KMS
-   key). Do not overwrite or delete the old one yet.
-2. Add the OLD public key to the trust anchors file and point
-   `POLARIS_PQC_TRUST_ANCHORS_FILE` at it:
-   ```json
-   {"anchors": [{"public_key_hex": "<old public key>", "label": "issuer-2026", "retired": "2026-09-01"}]}
-   ```
-   `verify_token_signature` accepts the current key first, then every listed
-   anchor; a missing or malformed anchors file fails loud rather than silently
-   shrinking trust.
-3. Switch the driver configuration to the new key and deploy. New tokens sign
-   under the new key; old tokens keep verifying.
-4. Publish the new public key wherever verifiers fetch trust anchors, with the
-   old one marked retired and its date.
-5. Retire the old key only after every token signed under it has expired or
-   been re-issued, then remove its anchor entry and destroy the old key
-   material (shred the file; delete the token object; schedule KMS deletion
+1. Perform a ceremony for the NEW key (new file, new token label, or a new KMS key). Keep the
+   old one.
+2. Register the new key: `polaris key-register <agency> <new public key hex>`, or on the Docker
+   stack `scripts/polaris-key-event.sh register <agency> <new public key hex>`. It becomes the
+   agency's current key, and issuance for that agency refuses any other key's signature, so do
+   this and step 3 together.
+3. Switch the driver configuration to the new key and restart the application (on the Docker
+   stack: replace `polaris_web/secrets/polaris_signing_key`, then recreate the `app` service).
+4. Retire the old key: `polaris key-retire <agency> <old public key hex>` (or
+   `polaris-key-event.sh retire ...`). What it signed before the retirement stays authorized at
+   signing; it signs nothing new. Publish both public keys to verifiers that check offline
+   (`polaris-verify --issuer-anchor`), or point them at the trust list.
+5. Once every credential under the old key has expired or been re-issued, stop publishing it and
+   destroy the old key material (shred the file; delete the token object; schedule KMS deletion
    with the waiting period).
 
-Compromise is the same procedure without the waiting: rotate at once, and
-remove the compromised anchor immediately so its signatures stop verifying
-(they will then read as invalid, which is the correct outcome).
+Compromise: rotate at once, then `polaris key-compromise <agency> <old public key hex>
+--effective-at <the earliest instant someone else may have used it>`. Credentials it signed from
+that instant on read `issuer_authorized_at_signing: false`, and the trust list says compromised.
+
+[`lab/strategy/006/rotate.sh`](../../lab/strategy/006/rotate.sh) runs all of this on the stack
+[`try.sh`](../../lab/strategy/006/try.sh) starts, and CI runs it after try.sh
+(`one-command.yml`): a credential under the old key and one under the new both verify, in the
+application and with `polaris-verify` from PyPI against both published keys; with only one key
+published, the other credential is refused; the signed trust list says retired and active; and
+after the old key is declared compromised from before the first credential, that credential is
+no longer authorized at signing while the second is untouched.
+
+`POLARIS_PQC_TRUST_ANCHORS_FILE` lists earlier public keys that
+`pqc_signing.verify_token_signature` accepts, which the custody tests below use. No route of
+the running application reads it, so it plays no part in a rotation; the register does.
 
 ## How this is tested
 

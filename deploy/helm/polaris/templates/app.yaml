@@ -30,13 +30,18 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         {{- include "polaris.podSecurity" (dict "uid" 1000 "gid" 1000) | nindent 8 }}
-      terminationGracePeriodSeconds: 35
+      # The preStop pause lets the endpoint leave the Service before gunicorn starts draining,
+      # then gunicorn's 30 s graceful timeout; 40 s covers both.
+      terminationGracePeriodSeconds: 40
       containers:
         - name: app
           image: {{ .Values.images.app }}
           imagePullPolicy: {{ .Values.images.pullPolicy }}
+          lifecycle:
+            preStop:
+              exec: {command: ["sleep", "5"]}
           securityContext:
-            {{- include "polaris.containerSecurity" . | nindent 12 }}
+            {{- include "polaris.containerSecurityReadOnly" . | nindent 12 }}
           env:
             - {name: POLARIS_ENV, value: production}
             - {name: POLARIS_PORT, value: "8000"}
@@ -48,14 +53,17 @@ spec:
             - {name: POLARIS_DB_SSLMODE, value: verify-ca}
             - {name: POLARIS_DB_SSLROOTCERT, value: /etc/polaris-pgb-certs/pgbouncer.crt}
             - {name: POLARIS_SECRET_KEY_FILE, value: /run/secrets/polaris_secret_key}
+            - {name: POLARIS_SECRET_KEY_FALLBACKS_FILE, value: /run/secrets/polaris_secret_key_fallbacks}
             - {name: POLARIS_REDIS_HOST, value: {{ include "polaris.fullname" . }}-redis}
             - {name: POLARIS_REDIS_PORT, value: "6379"}
-            - {name: POLARIS_REDIS_URL, value: redis://{{ include "polaris.fullname" . }}-redis:6379/0}
+            - {name: POLARIS_REDIS_URL, value: redis://polaris@{{ include "polaris.fullname" . }}-redis:6379/0}
+            - {name: POLARIS_REDIS_PASSWORD_FILE, value: /run/secrets/polaris_redis_password}
             - {name: POLARIS_STATE_DIR, value: /var/lib/polaris/state}
             - {name: PROMETHEUS_MULTIPROC_DIR, value: /tmp/prometheus-multiproc}
             - {name: POLARIS_ZK_BINARY, value: /opt/polaris/zk}
             - {name: POLARIS_SECURITY_CONTACT, value: {{ .Values.securityContact | default (printf "mailto:security@%s" .Values.domain) | quote }}}
             - {name: WEB_CONCURRENCY, value: {{ .Values.app.webConcurrency | quote }}}
+            - {name: POLARIS_DB_POOL_SIZE, value: {{ .Values.app.dbPoolSize | quote }}}
             - {name: POLARIS_USE_REAL_PQC, value: {{ ternary "1" "0" .Values.app.realPqc | quote }}}
             - {name: POLARIS_PQC_SIGNING_KEY_FILE, value: /run/secrets/polaris_signing_key}
             - {name: POLARIS_TRUST_PROXY, value: "1"}

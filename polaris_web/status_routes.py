@@ -85,6 +85,28 @@ def _health_check_database():
         return {'status': 'unhealthy', 'error': str(exc)[:160]}
 
 
+#: Disagreement between this instance's clock and the database's beyond which /api/health
+#: reports the clock degraded. Expiry, OpenID4VP iat/exp and nonces mix the two clocks.
+_CLOCK_SKEW_MAX_S = 2.0
+
+
+def _health_check_clock():
+    """This instance's clock against the database's (lab record 017, phase 2c).
+
+    Degraded beyond _CLOCK_SKEW_MAX_S, never unhealthy: when the database's clock is the wrong
+    one every instance reports the same skew, and a shared fault must not drain the rotation.
+    """
+    try:
+        t0 = _time.time()
+        row = query("SELECT EXTRACT(EPOCH FROM clock_timestamp()) AS t", fetch='one')
+        t1 = _time.time()
+        skew = round(float(row['t']) - (t0 + t1) / 2.0, 3)
+        return {'status': 'degraded' if abs(skew) > _CLOCK_SKEW_MAX_S else 'healthy',
+                'skew_seconds': skew}
+    except Exception:
+        return {'status': 'degraded', 'note': 'not measured: the database did not answer'}
+
+
 def _health_check_replica():
     """v9.246 (roadmap P2.2) — the read replica's reachability and lag against
     the staleness contract. Present only when a replica is configured. A replica
@@ -127,6 +149,13 @@ def _health_check_redis():
         ok = rl.healthy()
         latency_ms = round((_time.time() - t0) * 1000.0, 1)
         if rl.name == 'memory':
+            if os.environ.get('POLARIS_REDIS_URL', '').strip():
+                # Lab record 017, phase 4a: Redis was configured and the limiter could not use
+                # it at start (unreachable, or it refused the credentials), so every worker
+                # counts alone. Visible here rather than only in the startup log.
+                return {'status': 'degraded', 'backend': 'memory', 'latency_ms': 0.0,
+                        'note': 'POLARIS_REDIS_URL is set but the rate limiter fell back to '
+                                'per-worker memory'}
             # In-memory limiter is always up; report as healthy + 0ms.
             return {'status': 'healthy', 'backend': 'memory', 'latency_ms': 0.0}
         if not ok:
@@ -180,21 +209,26 @@ def _health_check_zk_binary():
         return {'status': 'degraded', 'path': path, 'error': str(exc)[:160]}
 
 
-def _health_check_disk():
-    """Check free disk space at the application's state-dir mountpoint.
-
-    Returns degraded < 5GB free OR > 85% used; unhealthy < 500MB free.
-    """
-    target = os.environ.get('POLARIS_STATE_DIR', '/tmp/polaris-state')
-    # Probe the deepest existing ancestor (state-dir may not exist yet).
-    probe = target
+def _state_dir_probe():
+    """The state directory, or its deepest existing ancestor (it may not exist yet): the path
+    whose filesystem the disk check and the disk metrics measure."""
+    probe = os.environ.get('POLARIS_STATE_DIR', '/tmp/polaris-state')
     while probe and not os.path.exists(probe):
         parent = os.path.dirname(probe)
         if parent == probe:
             break
         probe = parent
+    return probe or '/'
+
+
+def _health_check_disk():
+    """Check free disk space at the application's state-dir mountpoint.
+
+    Returns degraded < 5GB free OR > 85% used; unhealthy < 500MB free.
+    """
+    probe = _state_dir_probe()
     try:
-        usage = shutil.disk_usage(probe or '/')
+        usage = shutil.disk_usage(probe)
         free_gb = round(usage.free / (1024 ** 3), 2)
         used_pct = round((usage.used / usage.total) * 100.0, 1) if usage.total else 0.0
         status = 'healthy'
@@ -281,6 +315,7 @@ def _compute_readiness():
         'zk_binary': _health_check_zk_binary(),
         'disk':      _health_check_disk(),
         'custody':   _health_check_custody(),
+        'clock':     _health_check_clock(),
     }
 
     # Roll up worst-of per-component status as the overall status.
@@ -476,6 +511,11 @@ def metrics():
 
     Liveness signals refreshed at scrape time:
       - polaris_app_info: version metadata
+      - polaris_clock_skew_seconds: this instance's clock minus the database's (NaN unmeasured)
+      - polaris_db_archive_last_timestamp_seconds{outcome}: WAL archiving's last success and failure
+      - polaris_db_replica_lag_seconds, polaris_db_replica_lag_limit_seconds: a configured replica
+      - polaris_state_filesystem_bytes{kind}: the size and free space of the state directory's filesystem
+      - polaris_backup_last_success_timestamp_seconds{kind}: the newest backup on record per kind
 
     ACCESS: unauthenticated, and carrying the duress signal
     (`polaris_duress_events_total`), so this route and `/api/metrics` must both
@@ -499,6 +539,61 @@ def metrics():
     # Refresh dynamic gauges at scrape time.
     try:
         _app._METRICS_APP_INFO.labels(version=POLARIS_VERSION).set(1)
+    except Exception:
+        pass
+    # The clock against the database's, measured now (PolarisClockSkew pages on it). NaN when the
+    # database did not answer, so a stale reading is never reported as current.
+    try:
+        _app._METRICS_CLOCK_SKEW.set(_health_check_clock().get('skew_seconds', float('nan')))
+    except Exception:
+        pass
+    # WAL archiving as the database reports it (PolarisArchiveFailing pages on it). Unanswered:
+    # NaN, so an old reading is never passed off as current.
+    try:
+        row = query("SELECT coalesce(EXTRACT(EPOCH FROM last_archived_time), 0) AS archived, "
+                    "coalesce(EXTRACT(EPOCH FROM last_failed_time), 0) AS failed FROM pg_stat_archiver",
+                    fetch='one')
+        archived, failed = float(row['archived']), float(row['failed'])
+    except Exception:
+        archived = failed = float('nan')
+    try:
+        _app._METRICS_ARCHIVE_LAST.labels(outcome='archived').set(archived)
+        _app._METRICS_ARCHIVE_LAST.labels(outcome='failed').set(failed)
+    except Exception:
+        pass
+    # The newest backup of each kind on record (PolarisBackupStale pages on it); 0 for none, NaN when
+    # the database did not answer.
+    kinds = ('dump', 'pgbackrest', 'dump-verified')
+    try:
+        rows = query("SELECT kind, EXTRACT(EPOCH FROM max(completed_at)::timestamptz) AS t "
+                     "FROM BackupEvent GROUP BY kind", fetch='all')
+        newest = {r['kind']: float(r['t']) for r in rows}
+        backups = {k: newest.get(k, 0.0) for k in kinds}
+    except Exception:
+        backups = {k: float('nan') for k in kinds}
+    try:
+        for kind, t in backups.items():
+            _app._METRICS_BACKUP_LAST.labels(kind=kind).set(t)
+    except Exception:
+        pass
+    # The filesystem holding the state directory (PolarisDiskFilling pages on it); NaN unreadable.
+    try:
+        usage = shutil.disk_usage(_state_dir_probe())
+        size, free = float(usage.total), float(usage.free)
+    except Exception:
+        size = free = float('nan')
+    try:
+        _app._METRICS_STATE_FS.labels(kind='size').set(size)
+        _app._METRICS_STATE_FS.labels(kind='free').set(free)
+    except Exception:
+        pass
+    # The read replica, where one is configured (PolarisReplicaBehind pages on it).
+    try:
+        replica = _health_check_replica()
+        if replica is not None:
+            lag = replica.get('lag_seconds')
+            _app._METRICS_REPLICA_LAG.labels(replica='read').set(float('nan') if lag is None else float(lag))
+            _app._METRICS_REPLICA_LAG_LIMIT.labels(replica='read').set(REPLICA_MAX_LAG_S)
     except Exception:
         pass
 

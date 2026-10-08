@@ -115,6 +115,7 @@ Volumes:
 | Verify archive integrity | Quarterly | `./scripts/polaris-archive.sh --verify-latest --dest=DIR` |
 | Audit-log purge | Operator-driven, after archive verify | `./scripts/polaris-purge.sh --archive=TARBALL --actor-user-id=N` |
 | Audit-log archive, per class | Yearly, when retention differs by class | `./scripts/polaris-archive.sh --from-policy` then the purge above |
+| Anchor the transparency logs in Bitcoin | Daily, or at the cadence you choose | `./scripts/polaris-chain-anchor.py checkpoint`, `ots stamp`, later `ots upgrade`, `verify`, `polaris-id anchor-record`; see [Anchoring the logs in Bitcoin](#anchoring-the-logs-in-bitcoin) |
 | Certificate transparency check | Daily (cron) | `./scripts/polaris-ct-monitor.sh`: alerts on unexpected cert issuance for `${POLARIS_DOMAIN}`; see [Certificate transparency monitoring](#certificate-transparency-monitoring) |
 | Audit-log rotation | Yearly (cron) | `./scripts/polaris-rotate-logs.sh --actor-user-id=N`: archive from the retention policy, verify, purge, in one cron-ready pipeline (`--cutoff-days` overrides the policy with one fixed cutoff) |
 | Operator onboarding | As needed | `./scripts/polaris-create-operator.sh --username NAME --role admin\|operator\|auditor --password-file PATH`: scrypt-hashed AppUser + AuthAuditLog entry |
@@ -499,6 +500,46 @@ attacker who controls a different CA path or the operator's DNS.
 | 5    | Anomaly: UNKNOWN cert detected; investigate immediately |
 | 6    | Malformed allowlist file |
 
+### Anchoring the logs in Bitcoin
+
+Decision 013 ([transparency-log.md](../design/transparency-log.md#public-chain-anchoring-decision-013)).
+A checkpoint is the canonical JSON of the three logs' signed tree heads at one moment. Its
+SHA-256 goes to public OpenTimestamps calendars, which commit many digests at once in a Bitcoin
+transaction. Only the digest leaves the machine, and there is no key, account or fee. Once a
+block holds it, anyone with the checkpoint and its proof can show what the logs held by that
+block's time, and any later head of the same logs must extend it. The OpenTimestamps client is
+your tool, not a Polaris dependency: `pip install opentimestamps-client`.
+
+```bash
+./scripts/polaris-chain-anchor.py checkpoint --url https://$POLARIS_DOMAIN --out anchors/$(date -u +%F)
+ots stamp anchors/$(date -u +%F)/checkpoint.json
+# Usually one to three hours later, once the calendars' transaction has six confirmations:
+ots upgrade anchors/<day>/checkpoint.json.ots
+./scripts/polaris-chain-anchor.py verify anchors/<day>/checkpoint.json anchors/<day>/checkpoint.json.ots \
+    --out anchors/<day>/anchor.json
+POLARIS_DB_USER=<schema owner> polaris-id anchor-record anchors/<day>/anchor.json
+```
+
+`verify` reads each block header from two public Esplora services, which must return the same
+80 bytes, or from your own node: `--header HEIGHT=$(bitcoin-cli getblockheader $(bitcoin-cli
+getblockhash HEIGHT) false)`. Exit 0 is anchored, 1 is still pending (upgrade again later), 2 is
+refused. `anchor-record` decides the anchor again from the file before writing; it runs as the
+schema owner, and the application role is refused with exit 3. The instance then publishes it at
+`/api/v1/transparency/anchors`.
+
+Anyone can check an instance against its anchors, with no account and no Polaris code beyond the
+script and the detached verifier:
+
+```bash
+./scripts/polaris-chain-anchor.py check --url https://$POLARIS_DOMAIN
+```
+
+Every published anchor must verify, and each anchored head must be a prefix of that log today
+(an RFC 6962 consistency proof). Exit 2 means an anchor does not verify or a log no longer
+extends what was anchored. The second is the finding anchoring exists for: history was
+rewritten after it was committed. `check` does not authenticate today's heads;
+`polaris-transparency-monitor.py` does that against the log's key.
+
 ---
 
 ## Backup & restore
@@ -823,14 +864,32 @@ and the concrete recipe to apply.
 **Inflection:** roughly 30-50 concurrent operators, 100 concurrent sessions,
 or sustained 100+ verifications/sec. Without pgbouncer, Polaris's per-request
 connection pattern saturates Postgres's `max_connections` ceiling (default
-100). With pgbouncer in transaction-pooling mode, thousands of short-lived app
-connections multiplex onto a small handful of long-lived backend connections.
+100). pgbouncer runs in session-pooling mode (transaction mode would leak the
+operator's row-level-security scope from one client to the next; see
+[per-authority-isolation.md](../design/per-authority-isolation.md)), so each
+client connection holds one backend connection while it is open.
 
 **Already shipped:** the production stack (`docker-compose.prod.yml`) places
 pgbouncer between the app and Postgres by default. The app reads
 `POLARIS_DB_HOST=pgbouncer` and `POLARIS_DB_PORT=6432`; pgbouncer forwards to
 `postgres:5432` over TLS (`verify-ca`). No operator action needed for standard
 deployments.
+
+**The application's own pool** (`POLARIS_DB_POOL_SIZE`, lab record 017 phase 2d). Each
+gunicorn worker keeps up to this many idle connections and hands one back to the next
+request instead of opening a new one; every checkout resets the session (`DISCARD ALL`)
+before the statement timeout and the operator's scope are applied again, and a pool is
+keyed on the exact connection settings, so a connection opened as one role never serves a
+request configured as another. The production compose file and the Helm chart set it to 1,
+which is what a sync worker needs (it serves one request at a time); unset, the code opens a
+connection per request as before. Measured on one host (below, and
+[PERFORMANCE-BASELINE.md](../reference/PERFORMANCE-BASELINE.md#the-connection-pool)): 300 to
+at least 800 verifications/s, p50 37 ms to 1.6 ms.
+
+Because pgbouncer is in session mode, every idle pooled connection holds a backend
+connection. Size it so that colours x workers x `POLARIS_DB_POOL_SIZE` plus the busy
+connections stay within `PGBOUNCER_DEFAULT_POOL_SIZE`: the shipped 2 colours x 4 workers x 1
+is 8 idle plus at most 8 busy, inside the default 20.
 
 **Tuning knobs** (defaults in `docker-compose.prod.yml`):
 
@@ -1043,8 +1102,11 @@ on:
 - `checks.disk.free_gb` and `checks.disk.used_pct`: below 5 GB free or above
   85% used is `degraded`; below 0.5 GB free is `unhealthy`
 - `checks.redis.status`: an unreachable Redis backend is `degraded` (the
-  limiter fails closed)
+  limiter fails closed), and so is a limiter that fell back to per-worker memory
+  while `POLARIS_REDIS_URL` is set (Redis unreachable, or refusing the
+  credentials, at start)
 - `checks.zk_binary.status`: the prover binary present and executable
+- `checks.clock.status`: this instance's clock against the database's (`skew_seconds`); `degraded` beyond 2 s, never `unhealthy`, since a wrong database clock skews every instance at once
 
 `/api/health/live` (is the process alive) is what the container healthcheck and
 the Kubernetes liveness and startup probes use. `/api/health/ready` (can this
@@ -1071,11 +1133,12 @@ carries the duress signal, so it must be reachable only by the operator's
 monitoring, never the public internet ([HARDENING.md, section 10](HARDENING.md)).
 
 **Edge exposure.** The shipped [polaris_web/Caddyfile](../../polaris_web/Caddyfile) answers
-`/metrics` and `/api/metrics` with 404 unless the client address is in `POLARIS_METRICS_ALLOW`
-(default: private ranges), so an in-network Prometheus scrapes and the public internet does not.
-Set it to your monitoring network's range. The rule keys on the address the edge sees; behind a
-load balancer or NAT that can be a private address, so confirm it on your topology
-([operability gate](../PRODUCTION-READINESS.md#operability-gate), OP-26).
+`/metrics` and `/api/metrics` with 404 unless the client address is in `POLARIS_METRICS_ALLOW`,
+and unset it names no client. The rule keys on the address the edge sees, and behind a load
+balancer or NAT that is a private address for every client on the internet, so a private-ranges
+default would serve them all; `scripts/polaris-metrics-edge-drill.sh` asks through such a hop in
+CI. A Prometheus on the stack's network scrapes `app:8000` directly; name a monitoring network
+elsewhere in `POLARIS_METRICS_ALLOW` ([operability gate](../PRODUCTION-READINESS.md#operability-gate), OP-26).
 
 **Scrape config example** (Prometheus `prometheus.yml`; the shipped one is
 [deploy/observability/prometheus.yml](../../deploy/observability/prometheus.yml)).
@@ -1088,10 +1151,14 @@ scrape_configs:
   - job_name: polaris
     metrics_path: /metrics
     scheme: http
-    scrape_interval: 30s
-    static_configs:
-      - targets: ['app:8000']
+    dns_sd_configs:
+      - names: ['app', 'app-green']   # every app container, blue-green included
+        type: A
+        port: 8000
 ```
+
+The shipped `deploy/observability/prometheus.yml` is exactly this, so the
+overlay scrapes the stack it joins with no edit.
 
 **Exposed metrics:**
 
@@ -1463,6 +1530,19 @@ Symptom: gunicorn workers hung; CPU 100%; atlas API slow.
 
 ## Common errors
 
+Start with the doctor. It judges every component of the Docker stack in the order a failure
+propagates (each service and its healthcheck, the secret files, the production configuration
+contract in a one-off container, the TLS edge, the app's own roll-up, the key register) and its
+last line names the failing components, the first one first:
+
+```bash
+./scripts/polaris-doctor.sh        # exit 0: nothing failing; 1: something is, and it says which
+```
+
+`lab/strategy/006/doctor.sh` holds it to that in CI: with Redis stopped, PostgreSQL stopped, a
+secret file emptied, or a setting production refuses, it names that first, and nothing after
+each repair.
+
 ### "Caddy could not get certificate"
 
 Cause: Let's Encrypt HTTP-01 challenge failed. Most often DNS has not
@@ -1549,9 +1629,13 @@ The Plonky2 prover is CPU-bound. To improve:
 ./scripts/polaris-deploy.sh prod
 ```
 
-This pulls the latest commit, rebuilds the app image, applies schema
-migrations idempotently, and recreates the app container(s) with the new
-code. The DB volume is preserved. With the
+This pulls the latest commit, rebuilds every Polaris image (the app, the
+edge, the pooler and the database), applies schema migrations idempotently,
+recreates the infrastructure containers whose image changed, and then the app
+container(s). The DB volume is preserved.
+[`scripts/polaris-upgrade-drill.sh`](../../scripts/polaris-upgrade-drill.sh)
+runs this path from the previous release's own stack: nothing pending, every
+image rebuilt, and a credential issued before the upgrade still verifies. With the
 [blue-green profile](DEPLOYMENT.md#zero-downtime-deploys-blue-green-profile)
 (`polaris_web/docker-compose.bluegreen.yml`, proven by
 `scripts/polaris-rolling-drill.sh`) the roll is measured at zero dropped
@@ -1574,6 +1658,15 @@ for v in polaris_web_caddy_data polaris_web_caddy_config; do
     docker run --rm -v "$v:/v" alpine:3.24 chown -R 1000:1000 /v
 done
 ```
+
+**Upgrading across the Redis ACL (lab record 017, phase 4a).** Redis now loads
+its users from `redis_users.acl`, and the app authenticates as `polaris` with
+`polaris_redis_password`; production refuses to start without the password
+file. A deployment created earlier has neither file. Run
+`./scripts/polaris-generate-secrets.sh` once before the upgrade: it writes the
+two missing files and leaves every existing one as it is. A Helm release adds
+both keys to its generated Secret on upgrade; an `existingSecret` must gain
+them (`kubectl create secret ... --from-file=polaris_web/secrets/` again).
 
 ### Postgres version upgrade
 

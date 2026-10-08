@@ -39,6 +39,11 @@ services:
       POLARIS_PATRONI_NAME: postgres
       POLARIS_PATRONI_SCOPE: polaris
       POLARIS_PATRONI_ETCD_HOSTS: etcd1:2379,etcd2:2379,etcd3:2379
+      # WAL archiving stays opt-in here (lab record 017): the single node turns it on by default
+      # and creates the stanza at its first init, but the Patroni path creates no stanza, and a
+      # leader archiving to a repository without one fails every push. Setting the variable turns
+      # it on for both profiles.
+      POLARIS_PGBACKREST_ENABLED: "${POLARIS_PGBACKREST_ENABLED:-0}"
       # The lease: a leader that cannot renew within ttl seconds demotes itself.
       POLARIS_PATRONI_TTL: "20"
       POLARIS_PATRONI_LOOP_WAIT: "5"
@@ -69,6 +74,7 @@ services:
     environment:
       POLARIS_PATRONI_NAME: postgres2
       POLARIS_PATRONI_SCOPE: polaris
+      POLARIS_PGBACKREST_ENABLED: "${POLARIS_PGBACKREST_ENABLED:-0}"
       POLARIS_PATRONI_ETCD_HOSTS: etcd1:2379,etcd2:2379,etcd3:2379
       POLARIS_PATRONI_TTL: "20"
       POLARIS_PATRONI_LOOP_WAIT: "5"

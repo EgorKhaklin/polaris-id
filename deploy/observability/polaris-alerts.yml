@@ -151,3 +151,118 @@ groups:
         annotations:
           summary: "Agency {{ $labels.agency_id }} is hitting its {{ $labels.kind }} quota"
           description: "polaris_quota_refusals_total increased: {{ $labels.kind }} writes by agency {{ $labels.agency_id }} were refused by an AgencyQuota cap in the last 15 minutes."
+
+  # Lab record 017 (gate row OP-15): the conditions under the application that an operator who is
+  # not the author must hear about before a user does.
+  - name: polaris-infrastructure
+    rules:
+      # SEV-3: this instance's clock and the database's disagree beyond /api/health's own threshold
+      # (_CLOCK_SKEW_MAX_S, 2 s), for long enough not to be a single slow scrape. Expiry, OpenID4VP
+      # iat/exp and nonces mix the two clocks. NaN (the database did not answer) never fires here;
+      # the database alerts cover that.
+      - alert: PolarisClockSkew
+        expr: abs(polaris_clock_skew_seconds) > 2
+        for: 10m
+        labels:
+          severity: sev3
+        annotations:
+          summary: "Clock skew on {{ $labels.instance }}"
+          description: "This instance's clock and the database's have disagreed by more than 2 s for 10 minutes; credential expiry, OpenID4VP iat/exp and nonces mix the two. /api/health reports the clock degraded."
+
+      # SEV-2: WAL archiving is failing: the database's newest archive attempt failed and nothing
+      # has been archived since, for 5 minutes. Point-in-time restore (DR.md section 4.3) and the
+      # DR drill's RPO rest on the archive. Every app instance reports the same database, so the
+      # rule takes one value per job. Archiving switched off reads 0 for both and never fires.
+      - alert: PolarisArchiveFailing
+        expr: |
+          max by (job) (polaris_db_archive_last_timestamp_seconds{outcome="failed"})
+            > max by (job) (polaris_db_archive_last_timestamp_seconds{outcome="archived"})
+        for: 5m
+        labels:
+          severity: sev2
+        annotations:
+          summary: "WAL archiving is failing"
+          description: "The database's newest WAL archive attempt failed and none has succeeded since, for 5 minutes. Until it recovers, point-in-time restore cannot reach past the last archived segment and the RPO grows."
+
+      # SEV-3: the read replica trails the primary by more than the staleness limit this deployment
+      # set (POLARIS_REPLICA_MAX_LAG_S), or could not be measured at all, for 10 minutes. Reads fall
+      # back to the primary meanwhile, so nothing is served stale; what is lost is the redundancy.
+      # One alert per job however many instances measure the same replica; a deployment without a
+      # replica reports no series and never fires.
+      - alert: PolarisReplicaBehind
+        expr: |
+          max by (job) (polaris_db_replica_lag_seconds) > max by (job) (polaris_db_replica_lag_limit_seconds)
+          or max by (job) (polaris_db_replica_lag_seconds) != max by (job) (polaris_db_replica_lag_seconds)
+        for: 10m
+        labels:
+          severity: sev3
+        annotations:
+          summary: "The read replica is behind or unreachable"
+          description: "The read replica has trailed the primary beyond its staleness limit, or could not be measured, for 10 minutes. Reads fall back to the primary meanwhile; the replica's redundancy is gone until it catches up."
+
+      # SEV-2: the filesystem holding the app's state directory is more than 90 % used, for 10
+      # minutes. In the default single-host install Docker keeps every named volume on it, the
+      # database's included: a full disk stops the database writing, then the archive, then the
+      # app. /api/health degrades at 85 % (or under 5 GB free) and goes unhealthy under 500 MB.
+      - alert: PolarisDiskFilling
+        expr: |
+          1 - polaris_state_filesystem_bytes{kind="free"} / ignoring(kind) polaris_state_filesystem_bytes{kind="size"} > 0.90
+        for: 10m
+        labels:
+          severity: sev2
+        annotations:
+          summary: "The disk under {{ $labels.instance }} is over 90% full"
+          description: "The filesystem holding the state directory (and, on a single host, the database's volume) has been more than 90% used for 10 minutes. The database stops writing when it is full."
+
+      # SEV-2: the certificate the TLS edge serves for the deployment's domain expires in under 14
+      # days, for 10 minutes. Caddy renews about 30 days ahead, so this close to expiry renewal has
+      # been failing for two weeks (ACME blocked, DNS moved, port 80 closed). The blackbox exporter
+      # reads it from inside the network (job polaris-edge-tls).
+      - alert: PolarisCertificateExpiring
+        expr: probe_ssl_earliest_cert_expiry{job="polaris-edge-tls"} - time() < 14 * 86400
+        for: 10m
+        labels:
+          severity: sev2
+        annotations:
+          summary: "The edge's certificate expires in under 14 days"
+          description: "The certificate the TLS edge serves for this deployment's domain expires in under 14 days. Caddy renews about 30 days ahead, so renewal has been failing."
+
+      # SEV-2: the edge has not answered its own domain from inside the network for 5 minutes,
+      # though the probe reaches it on the stack's network: the site, its certificate or its
+      # upstream is broken where the app's own target may still look healthy.
+      - alert: PolarisEdgeProbeFailing
+        expr: probe_success{job="polaris-edge-tls"} == 0
+        for: 5m
+        labels:
+          severity: sev2
+        annotations:
+          summary: "The edge does not answer its own domain"
+          description: "The blackbox exporter's request to the edge, under the deployment's domain, has failed for 5 minutes; the certificate's expiry cannot be read while it fails."
+
+      # SEV-2: no backup has completed for 26 hours: neither a pg_dump tarball (polaris-backup.sh,
+      # daily by timer on a host install) nor a pgBackRest backup, by the database's own record
+      # (BackupEvent, written by the scripts after each backup succeeded). A deployment that has
+      # never completed one fires too: it has nothing to restore.
+      - alert: PolarisBackupStale
+        expr: |
+          time() - max by (job) (polaris_backup_last_success_timestamp_seconds{kind=~"dump|pgbackrest"}) > 26 * 3600
+        for: 30m
+        labels:
+          severity: sev2
+        annotations:
+          summary: "No backup has completed for 26 hours"
+          description: "Neither a pg_dump tarball nor a pgBackRest backup has been recorded as completed for 26 hours (BackupEvent). A restore now would lose everything since the last one."
+
+      # SEV-3: dumps are being taken but the newest has not been extracted and checked against its
+      # manifest for 8 days (polaris-backup.sh --verify-latest, weekly by timer on a host install).
+      # A deployment that takes no dumps never fires.
+      - alert: PolarisBackupUnverified
+        expr: |
+          (time() - max by (job) (polaris_backup_last_success_timestamp_seconds{kind="dump-verified"}) > 8 * 86400)
+          and on (job) max by (job) (polaris_backup_last_success_timestamp_seconds{kind="dump"}) > 0
+        for: 1h
+        labels:
+          severity: sev3
+        annotations:
+          summary: "No dump has been verified for 8 days"
+          description: "Dumps are being taken, but none has been extracted and checked against its manifest for 8 days (polaris-backup.sh --verify-latest)."

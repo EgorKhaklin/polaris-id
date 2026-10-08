@@ -589,7 +589,8 @@ _AOR_TABLES = (
     "RefereeVouching", "AgencyEvent", "AppUserEvent", "RelyingPartyEvent",
     "AuthorityKeyEvent", "HolderKeyEvent", "ExchangeReceiptLog", "TimestampLog",
     "AuthCodeConsumed", "ExchangeNonce", "AgencyQuota", "IssuerDiscretionPolicy",
-    "RetentionPolicy", "CredentialCopy",
+    "RetentionPolicy", "CredentialCopy", "ChainAnchor", "BackupEvent",
+    "RestoreRecord",
 )
 
 
@@ -774,6 +775,11 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         "timestamplog",
         # v9.349 (P9.1): the holder key register.
         "holderkeyevent",
+        # 013 (2026-10-04): the logs' public-chain anchors.
+        "chainanchor",
+        # Lab record 017 (2026-10-07): the backup record and the record of reconciliations
+        # after a restore.
+        "backupevent", "restorerecord",
     ]
     if not re.search(r"REVOKE\s+UPDATE\s*,\s*DELETE", grants, re.I):
         return _fail("c1_aor_priv",
@@ -846,6 +852,16 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
                                     "with search_path pinned: it is the product's only path to record "
                                     "a recovery channel once the application role holds no UPDATE on "
                                     "RecoveryRequest (C1)")
+    # 2026-10-05. Its WITNESS branch: a requester without standing over the person is witnessed by
+    # the person's original issuer, or any two authorities recover a stranger's credential.
+    body = re.search(r"PROCEDURE\s+uc9_record_recovery_channel\b.*?\$\$(.*?)\$\$", proc, re.I | re.S)
+    if not body or not (
+            re.search(r"ORDER\s+BY\s+t\.issued_date\s+DESC", body.group(1), re.I)
+            and re.search(r"v_standing\s+IS\s+NOT\s+TRUE\s+AND\s+v_agency\s+IS\s+DISTINCT\s+FROM\s+v_original",
+                          body.group(1), re.I)):
+        return _fail("c1_aor_priv", "uc9_record_recovery_channel must refuse a WITNESS not bound to the "
+                                    "original issuer when the requester has no standing over the person: "
+                                    "without it, two authorities recover a credential for a stranger")
     # 2026-09-25. The federation trust graph: recorded only by uc10_attest_trust, revoked only by
     # uc10_revoke_attestation, whose ownership the immutability trigger asks for.
     if not re.search(r"REVOKE\s+INSERT\s+ON\s+AgencyTrustAttestation\s+FROM\s+polaris_app", grants, re.I):
@@ -2705,6 +2721,53 @@ def check_container_hardening(root: pathlib.Path) -> list[Finding]:
                "entrypoint needs) + forbid privilege escalation; proven to still serve by CI")
 
 
+# 2026-10-07 (lab record 017, phase 5): the services that never write to their image run on a
+# read-only root, so code execution in one cannot replace the program it runs. The edge, the app,
+# the pooler and Redis write only to volumes and memory (pgbouncer's generated config, which holds
+# the database password, included); postgres prepares its data directory as root and is not among
+# them. The chart says the same of their pods, and lab/strategy/006/posture.sh asks the kernel on
+# the stack try.sh started: a write to / refused, no effective capability, no privilege gain.
+READ_ONLY_SERVICES = ("caddy", "app", "pgbouncer", "redis")
+
+
+def check_read_only_roots(root: pathlib.Path) -> list[Finding]:
+    name = "read_only_roots"
+    compose = _read(root, "polaris_web/docker-compose.prod.yml")
+    if not compose:
+        return _fail(name, "polaris_web/docker-compose.prod.yml is missing")
+    problems = []
+    for svc in READ_ONLY_SERVICES:
+        m = re.search(rf"(?ms)^  {svc}:\n(.*?)(?=^  [a-z_]+:\n|^[a-z]|\Z)", compose)
+        if not m or not re.search(r"(?m)^    read_only:\s*true\s*$", m.group(1)):
+            problems.append(f"the {svc} service does not run on a read-only root (read_only: true)")
+        elif svc == "pgbouncer" and not re.search(r"(?m)^      - /etc/pgbouncer:[^\n]*uid=1000", m.group(1)):
+            problems.append("pgbouncer's generated config (the database password) must go to a tmpfs "
+                            "/etc/pgbouncer owned by its user")
+    helpers = _read(root, "deploy/helm/polaris/templates/_helpers.tpl")
+    ro = re.search(r'(?s)define "polaris\.containerSecurityReadOnly".*?\{\{-? end', helpers)
+    if not ro or not re.search(r"(?m)^readOnlyRootFilesystem: true$", ro.group(0)):
+        problems.append("the chart's polaris.containerSecurityReadOnly must set readOnlyRootFilesystem: true")
+    for svc in READ_ONLY_SERVICES:
+        if 'include "polaris.containerSecurityReadOnly"' not in _read(root, f"deploy/helm/polaris/templates/{svc}.yaml"):
+            problems.append(f"the chart's {svc} container is not read-only")
+    drill = _read(root, "lab/strategy/006/posture.sh")
+    for needle, what in (("{{.HostConfig.ReadonlyRootfs}}", "Docker's own answer"),
+                         ("*\"Read-only file system\"*", "a refused write to /"),
+                         ('status_of "${c}" CapEff', "the effective capabilities"),
+                         ('status_of "${c}" NoNewPrivs', "the no-new-privileges bit")):
+        if needle not in drill:
+            problems.append(f"lab/strategy/006/posture.sh no longer checks {what}")
+    oc = _read(root, ".github/workflows/one-command.yml")
+    t, p = oc.find("bash lab/strategy/006/try.sh\n"), oc.find("bash lab/strategy/006/posture.sh")
+    if t < 0 or p < t:
+        problems.append("one-command.yml must run lab/strategy/006/posture.sh after try.sh, on its stack")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else f" (+{len(problems) - 4} more)"))
+    return _ok(name,
+               "caddy, app, pgbouncer and redis run on read-only roots in the compose file and the chart; "
+               "CI asks the kernel on the try.sh stack: writes to / refused, no capability, no privilege gain")
+
+
 # ---------------------------------------------------------------------------
 # Third-party images in the PROD compose must be pinned by digest (@sha256), not
 # just a mutable tag. A tag can be repointed at different content upstream (or, as
@@ -2893,10 +2956,24 @@ def check_duress_alertable(root: pathlib.Path) -> list[Finding]:
     if "PolarisDuressEvent" not in alerts or "polaris_duress_events_total" not in alerts:
         return _fail("duress_alert",
                      "polaris-alerts.yml must alert (PolarisDuressEvent) on polaris_duress_events_total")
+    # Lab record 017, phase 2b: the record survives a worker's exit. A daemon thread is
+    # abandoned when the interpreter exits; a non-daemon one is joined, so a record still being
+    # written when a worker stops is finished rather than lost.
+    spawn = re.search(r"threading\.Thread\(\s*target=_record_duress_async.*?\)\.start\(\)", app, re.S)
+    if not spawn or "daemon=False" not in spawn.group(0):
+        return _fail("duress_alert",
+                     "the duress record must be written on a non-daemon thread (daemon=False): a "
+                     "daemon thread is abandoned when a worker exits, losing a record in flight")
+    tests = _read(root, "polaris_web/test_app.py")
+    if "def test_a_duress_record_survives_a_worker_exit" not in tests:
+        return _fail("duress_alert",
+                     "test_a_duress_record_survives_a_worker_exit must prove the record outlives the "
+                     "request's worker")
     return _ok("duress_alert",
                "the duress signal is alertable: polaris_duress_events_total is on /metrics, incremented "
                "at the DuressEvent record site, and PolarisDuressEvent pages on it (runbook enforced by "
-               "check_alert_runbooks)")
+               "check_alert_runbooks); the record is written on a non-daemon thread that a worker's "
+               "exit waits for")
 
 
 # ---------------------------------------------------------------------------
@@ -3164,11 +3241,20 @@ def check_pgbackrest_scaffolding(root: pathlib.Path) -> list[Finding]:
                      "the prod compose must build Dockerfile.postgres and mount pgbackrest.conf")
     if "POLARIS_PGBACKREST_ENABLED" not in compose or "POLARIS_PGBACKREST_ENABLED" not in init:
         return _fail("pgbackrest",
-                     "archiving must be opt-in via POLARIS_PGBACKREST_ENABLED (wired in compose + "
-                     "docker-init) so a no-repo deployment does not accumulate WAL")
+                     "archiving must be switchable by POLARIS_PGBACKREST_ENABLED (wired in compose + "
+                     "docker-init)")
+    # Lab record 017 (gate row OP-14): on by default, because a restore to a point in time needs the
+    # archive from before the failure, and an operator who never opted in has none.
+    if "${POLARIS_PGBACKREST_ENABLED:-1}" not in compose:
+        return _fail("pgbackrest",
+                     "the prod compose must default POLARIS_PGBACKREST_ENABLED to 1: archiving on by default")
     if "archive_mode" not in init or "archive-push" not in init:
         return _fail("pgbackrest",
                      "docker-init.sh must set archive_mode + the pgbackrest archive_command when enabled")
+    if "stanza-create" not in init:
+        return _fail("pgbackrest",
+                     "docker-init.sh must create the stanza at the first init, or WAL piles up until a deploy "
+                     "creates it")
     # The runbook documents stanza-create; the CI round-trip restores.
     if "stanza-create" not in dr:
         return _fail("pgbackrest", "DR.md must document `pgbackrest --stanza=polaris stanza-create`")
@@ -3183,6 +3269,17 @@ def check_pgbackrest_scaffolding(root: pathlib.Path) -> list[Finding]:
         return _fail("pgbackrest",
                      "polaris-deploy.sh must run stanza-create when POLARIS_PGBACKREST_ENABLED=1 (so "
                      "archiving enabled-but-unbootstrapped does not fill the disk with WAL)")
+    # Lab record 017: a point-in-time restore starts from a base backup; the archive alone cannot.
+    # The deploy takes the first, the scheduled backup the rest (which is also what expires old WAL).
+    if "--type=full backup" not in deploy:
+        return _fail("pgbackrest",
+                     "polaris-deploy.sh must take the first full pgBackRest backup when the repository holds none")
+    backup = _read(root, "scripts/polaris-backup.sh")
+    if 'pgbackrest --stanza=polaris --type="${PGBR_TYPE}" backup' not in backup \
+            or "record_backup pgbackrest" not in backup:
+        return _fail("pgbackrest",
+                     "polaris-backup.sh must take a pgBackRest backup when archiving is on and record it in "
+                     "BackupEvent (without scheduled base backups the archive is never expired)")
     # docker-init warns loudly if archiving runs against a LOCAL (non-offsite) repo.
     if not re.search(r"repo1-type.{0,40}s3", init) or "WARNING" not in init:
         return _fail("pgbackrest",
@@ -3195,7 +3292,8 @@ def check_pgbackrest_scaffolding(root: pathlib.Path) -> list[Finding]:
                      "env literals which leak via docker inspect")
     return _ok("pgbackrest",
                "continuous WAL archiving ships: pgbackrest in the DB image (digest-pinned base) + the "
-               "[polaris] stanza, opt-in archive_mode/archive_command, a documented stanza-create + "
+               "[polaris] stanza, archive_mode/archive_command on by default with the stanza made at the first "
+               "init, a first full backup at deploy and scheduled ones after, a documented stanza-create + "
                "restore, a CI backup+restore round-trip, deploy auto-bootstrap, a local-repo warning, "
                "and file-mounted S3-credential guidance; the offsite S3 repo stays operator-supplied")
 
@@ -4218,10 +4316,10 @@ _TABLE_COUNT_PATTERNS = (
 )
 
 
-def _schema_table_counts(root: pathlib.Path) -> tuple[int, int]:
+def _schema_table_names(root: pathlib.Path) -> tuple[set, set]:
     """(tables created by 01_schema.sql, tables a migrated deployment holds).
 
-    The second number adds every table the loader's other files create (the
+    The second set adds every table the loader's other files create (the
     schema_version registry from 00_migrations_table.sql) and every table a
     migration adds to a running database."""
     # v9.245: a "CREATE TABLE X PARTITION OF Y" is a partition of Y, not a
@@ -4237,6 +4335,12 @@ def _schema_table_counts(root: pathlib.Path) -> tuple[int, int]:
             deployed |= set(re.findall(pat, _read_path(p), re.M))
         for p in sorted((sql_dir / "migrations").glob("*.up.sql")) if (sql_dir / "migrations").is_dir() else []:
             deployed |= set(re.findall(pat, _read_path(p), re.M))
+    return base, deployed
+
+
+def _schema_table_counts(root: pathlib.Path) -> tuple[int, int]:
+    """(tables created by 01_schema.sql, tables a migrated deployment holds)."""
+    base, deployed = _schema_table_names(root)
     return len(base), len(deployed)
 
 
@@ -4509,10 +4613,13 @@ def check_prod_compose_trusts_edge(root: pathlib.Path) -> list[Finding]:
     caddy = _read(root, "polaris_web/Caddyfile")
     if not compose or not caddy:
         return _fail("compose_trusts_edge", "docker-compose.prod.yml or Caddyfile is missing")
-    if not re.search(r"header_up X-Forwarded-For \{remote_host\}", caddy):
+    # 2026-10-07 (lab record 017, OP-26): {client_ip} replaces the header as {remote_host} did; it is
+    # the TCP peer unless that peer is a proxy the operator named (check_client_ip_behind_proxies).
+    if not re.search(r"header_up X-Forwarded-For \{(?:remote_host|client_ip)\}\s*$", caddy, re.M):
         return _fail("compose_trusts_edge",
-                     "Caddyfile must rewrite X-Forwarded-For to {remote_host} (replace, not append) "
-                     "so the leftmost address is the edge's, not the client's")
+                     "Caddyfile must rewrite X-Forwarded-For to the address the edge decided ({client_ip} "
+                     "or {remote_host}; replace, not append) so the leftmost address is the edge's, not "
+                     "the client's")
     app = re.search(r"^  app:\n(.*?)(?=^  \w[\w-]*:$)", compose, re.M | re.S)
     if not app or not re.search(r"POLARIS_TRUST_PROXY:\s*[\"']?(1|true|yes)", app.group(1)):
         return _fail("compose_trusts_edge",
@@ -4655,27 +4762,59 @@ def check_cli_help_lists_every_command(root: pathlib.Path) -> list[Finding]:
 # an ACL that existed only in prose.
 # ---------------------------------------------------------------------------
 def check_metrics_edge_acl(root: pathlib.Path) -> list[Finding]:
+    name = "metrics_edge_acl"
     edges = (("polaris_web/Caddyfile", "POLARIS_METRICS_ALLOW"),
+             ("polaris_web/Caddyfile.citest", "POLARIS_METRICS_ALLOW"),
              ("deploy/helm/polaris/templates/configmap-caddy.yaml", "metricsAllow"))
+    blocks = {}
     for rel, knob in edges:
         conf = _read(root, rel)
         if not conf:
-            return _fail("metrics_edge_acl", f"{rel} is missing")
+            return _fail(name, f"{rel} is missing")
         if "@metrics_from_outside" not in conf or "respond @metrics_from_outside 404" not in conf:
-            return _fail("metrics_edge_acl",
+            return _fail(name,
                          f"{rel} must refuse /metrics and /api/metrics from outside the monitoring "
                          "network (a named matcher plus `respond ... 404`)")
         matcher = conf[conf.index("@metrics_from_outside"):]
-        matcher = matcher[:matcher.index("}")]
+        matcher = matcher[:matcher.index("}\n") + 1] if "}\n" in matcher else matcher[:matcher.index("}")]
         for needle in ("/metrics", "/api/metrics", "not remote_ip"):
             if needle not in matcher:
-                return _fail("metrics_edge_acl", f"{rel}'s matcher does not cover {needle}")
+                return _fail(name, f"{rel}'s matcher does not cover {needle}")
         if knob not in conf:
-            return _fail("metrics_edge_acl", f"{rel} must let the operator name the allowed range ({knob})")
+            return _fail(name, f"{rel} must let the operator name the allowed range ({knob})")
+        blocks[rel] = matcher
+    # 2026-10-07 (lab record 017): unset, the allow-list names no client. Until then it defaulted to
+    # private ranges, and behind an L4 load balancer, Kubernetes' default externalTrafficPolicy,
+    # rootless Docker or Docker's IPv6 userland proxy every internet client reaches the edge from
+    # a private address: the duress counter was public (scripts/polaris-metrics-edge-drill.sh).
+    for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"):
+        m = re.search(r"not remote_ip \{\$POLARIS_METRICS_ALLOW:([^}]*)\}", blocks[rel])
+        if not m or m.group(1).strip() != "0.0.0.0/32":
+            return _fail(name, f"{rel}: with POLARIS_METRICS_ALLOW unset the edge must allow no client "
+                         f"(0.0.0.0/32), not {m.group(1).strip() if m else 'nothing'}; behind SNAT "
+                         "every internet client is a private address")
+    helm = blocks["deploy/helm/polaris/templates/configmap-caddy.yaml"]
+    values = re.search(r'^\s*metricsAllow:\s*"([^"]*)"', _read(root, "deploy/helm/polaris/values.yaml"), re.M)
+    if '| default "0.0.0.0/32"' not in helm or not values or values.group(1) != "":
+        return _fail(name, "the chart must allow no client unless edge.metricsAllow names one "
+                     '(values metricsAllow "" and the template default "0.0.0.0/32")')
+    norm = lambda t: [line.strip() for line in t.splitlines() if line.strip()]
+    if norm(blocks["polaris_web/Caddyfile"]) != norm(blocks["polaris_web/Caddyfile.citest"]):
+        return _fail(name, "Caddyfile.citest's metrics rule differs from the production Caddyfile's; "
+                     "the stack CI and try.sh boot must refuse the metrics the way production does")
     ci = _read(root, ".github/workflows/ci.yml")
-    if "metrics surfaces are refused from outside" not in ci:
-        return _fail("metrics_edge_acl", "ci.yml must exercise the ACL, not just validate the config")
-    return _ok("metrics_edge_acl", "both edges refuse the metrics surfaces from outside the monitoring network, proven in CI")
+    if ("metrics surfaces are refused from outside" not in ci
+            or "bash scripts/polaris-metrics-edge-drill.sh" not in ci):
+        return _fail(name, "ci.yml must exercise the rule with scripts/polaris-metrics-edge-drill.sh, "
+                     "not just validate the config")
+    drill = _read(root, "scripts/polaris-metrics-edge-drill.sh")
+    if "/polaris_web/Caddyfile" not in drill or 'probe 404 "${where}" /metrics' not in drill or "via SNAT" not in drill:
+        return _fail(name, "scripts/polaris-metrics-edge-drill.sh must take the rule from the shipped "
+                     "Caddyfile and ask through an SNAT hop as well as in-network")
+    return _ok(name,
+               "all three edges refuse the metrics surfaces unless the monitoring network is named "
+               "(no client by default), the CI edge's rule is production's, and CI asks in-network "
+               "and through an SNAT hop against the shipped rule")
 
 
 # ---------------------------------------------------------------------------
@@ -5535,6 +5674,60 @@ def check_rust_toolchain_pinned(root: pathlib.Path) -> list[Finding]:
 
 
 
+# 2026-10-07 — the ZK disclosure mode promises a proof that hides its private inputs (the
+# holder's secret, the Merkle siblings, the leaf index), not only one that is sound. Plonky2's
+# standard_recursion_config() is, in the crate's own words, "without zero-knowledge". The
+# circuit must be built with the zero-knowledge configuration, and the Rust test that asserts
+# it on the built circuit must stay.
+def check_zk_circuit_is_zero_knowledge(root: pathlib.Path) -> list[Finding]:
+    src = _read(root, "polaris_zk/src/lib.rs")
+    if not src:
+        return _fail("zk_hiding", "polaris_zk/src/lib.rs is missing")
+    m = re.search(r"pub fn build_circuit\(\)[^\n]*\n(.*?)\n\}\n", src, re.S)
+    if not m:
+        return _fail("zk_hiding", "polaris_zk/src/lib.rs defines no build_circuit()")
+    body = "\n".join(line for line in m.group(1).splitlines()
+                     if not line.strip().startswith("//"))
+    if re.search(r"zero_knowledge\s*:\s*false", body):
+        return _fail("zk_hiding", "build_circuit() sets zero_knowledge: false; the proof would "
+                                  "be sound but would not hide its private inputs")
+    hiding = ("CircuitConfig::standard_recursion_zk_config()" in body
+              or re.search(r"zero_knowledge\s*:\s*true", body))
+    if not hiding:
+        named = re.findall(r"CircuitConfig::(\w+)\(", body)
+        return _fail("zk_hiding",
+                     f"build_circuit() builds with {', '.join(named) or 'no named'} config, "
+                     f"not a zero-knowledge one (standard_recursion_zk_config or "
+                     f"zero_knowledge: true)")
+    if not re.search(r"fn the_circuit_is_built_zero_knowledge\(\)[\s\S]*?"
+                     r"common\.config\.zero_knowledge", src):
+        return _fail("zk_hiding", "the Rust test asserting the built circuit's zero_knowledge "
+                                  "flag (the_circuit_is_built_zero_knowledge) is missing")
+    return _ok("zk_hiding", "the ZK circuit is built with the zero-knowledge configuration, "
+                            "and a Rust test asserts it on the built circuit")
+
+
+# 2026-10-07 (lab record 017, phase 2c) — the access log records method, path and protocol,
+# never the query string or the referrer: a query can carry an identifier, a code or a state
+# value, and an access log is retained and copied more widely than the database.
+def check_access_log_omits_queries(root: pathlib.Path) -> list[Finding]:
+    name = "access_log"
+    conf = _read(root, "polaris_web/gunicorn.conf.py")
+    m = re.search(r"^access_log_format\s*=\s*'([^']*)'", conf, re.M)
+    if not m:
+        return _fail(name, "polaris_web/gunicorn.conf.py sets no access_log_format, so gunicorn's "
+                           "default (which logs the request line, query string included) applies")
+    fmt = m.group(1)
+    leaks = [atom for atom in ("%(r)s", "%(q)s", "%(f)s", "{query_string}") if atom in fmt]
+    if leaks:
+        return _fail(name, f"the access log format carries {', '.join(leaks)}: the request line, "
+                           f"query string or referrer can hold an identifier or a code")
+    if "%(U)s" not in fmt:
+        return _fail(name, "the access log should still record the path (%(U)s)")
+    return _ok(name, "the access log records method, path and protocol, never a query string or "
+                     "the referrer")
+
+
 # 2026-10-07 (lab record 017, phase 1) — the configuration contract. polaris_web/config_schema.py
 # declares every POLARIS_* setting the application reads; production boot validates against it.
 # A setting the code reads but the schema does not declare is a setting the contract cannot
@@ -5933,6 +6126,94 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
                f"({versions.pop()})")
 
 
+# 2026-10-07 (lab record 017): the supply-chain stragglers stay closed. Everything the
+# build or CI pulls is named exactly, or held to a series on purpose: the Caddy plugin by its
+# release, etcd by apk's `~3.6`, the Calico manifest by its SHA-256 before kubectl sees it, every
+# workflow image and the Trivy scanner by digest (the wallet canary excepted: it walks the
+# wallets' latest builds by design). And Dependabot reads every manifest that pins something
+# (each npm lockfile, each published Python package, each Dockerfile directory, the compose
+# files), since a pin nothing refreshes stops receiving security updates.
+_UNPINNED_BY_DESIGN = {"wallet-canary.yml"}
+_PUBLISHED_PY = ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python", "polaris_cli")
+_WALK_PRUNE = {".git", "node_modules", "target", ".venv", "venv", "__pycache__", "dist", "build"}
+
+
+def _dependabot_coverage(text: str) -> set[tuple[str, str]]:
+    covered = set()
+    for entry in re.split(r"(?m)^  - (?=package-ecosystem:)", text)[1:]:
+        eco = re.match(r"package-ecosystem:\s*(\S+)", entry)
+        dirs = re.findall(r"(?m)^    directory:\s*(\S+)", entry)
+        block = re.search(r"(?m)^    directories:\s*\n((?:      - \S+\s*\n)+)", entry)
+        if block:
+            dirs += re.findall(r"- (\S+)", block.group(1))
+        covered |= {(eco.group(1).strip('"'), d.strip('"').rstrip("/") or "/") for d in dirs} if eco else set()
+    return covered
+
+
+def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
+    name = "supply_chain_pins"
+    problems = []
+    caddy = "\n".join(l for l in _read(root, "polaris_web/Dockerfile.caddy").splitlines()
+                      if not l.lstrip().startswith("#"))
+    mods = re.findall(r"--with\s+(\S+)", caddy)
+    if not mods:
+        problems.append("Dockerfile.caddy builds no --with module, so nothing backs rate_limit")
+    problems += [f"Dockerfile.caddy builds {m} at whatever version resolves that day"
+                 for m in mods if not re.search(r"@v\d", m)]
+    add = " ".join(re.findall(r"apk add[^\n]*", "\n".join(
+        l for l in _read(root, "polaris_web/Dockerfile.etcd").splitlines() if not l.lstrip().startswith("#"))))
+    problems += [f"Dockerfile.etcd installs {pkg} with no version constraint"
+                 for pkg in ("etcd", "etcd-ctl") if not re.search(rf'"?\b{pkg}[~=]\d', add)]
+    drill = _read(root, "scripts/polaris-helm-drill.sh")
+    if "CALICO_MANIFEST" in drill and not (
+            re.search(r"(?m)^CALICO_SHA256=[0-9a-f]{64}$", drill)
+            and re.search(r'\[ "\$GOT" = "\$CALICO_SHA256" \]', drill)
+            and not re.search(r'kubectl apply -f "\$CALICO_MANIFEST"', drill)):
+        problems.append("polaris-helm-drill.sh applies the Calico manifest without checking it "
+                        "against a pinned SHA-256 first")
+    wfdir = root / ".github" / "workflows"
+    for wf in sorted(wfdir.glob("*.yml")) if wfdir.is_dir() else ():
+        text = "\n".join(l for l in wf.read_text().splitlines() if not l.lstrip().startswith("#"))
+        if wf.name not in _UNPINNED_BY_DESIGN:
+            problems += [f"{wf.name} runs {img} by tag" for img in
+                         re.findall(r"(?m)^\s*image:\s*(\S+)\s*$", text)
+                         if "@sha256:" not in img and "${{" not in img]
+        problems += [f"{wf.name} runs Trivy by tag ({ref})" for ref in
+                     re.findall(r"aquasec/trivy:[^\s\"']+", text) if "@sha256:" not in ref]
+    for compose in sorted((root / "polaris_web").glob("docker-compose*.yml")):
+        problems += [f"{compose.name} runs {img} by tag" for img in
+                     re.findall(r"(?m)^\s*image:\s*(\S+)", compose.read_text())
+                     if not img.startswith("polaris-") and "@sha256:" not in img]
+    dep = _read(root, ".github/dependabot.yml")
+    covered = _dependabot_coverage(dep)
+    required = set()
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in _WALK_PRUNE]
+        r = os.path.relpath(dirpath, root)
+        rel = "/" if r == "." else "/" + r.replace(os.sep, "/")
+        if rel.startswith(("/polaris_checks", "/.github")):
+            continue
+        if "package-lock.json" in filenames:
+            required.add(("npm", rel))
+        if any(f == "Dockerfile" or f.startswith("Dockerfile.") for f in filenames):
+            required.add(("docker", rel))
+        if any(re.fullmatch(r"docker-compose(?:\.[\w-]+)?\.ya?ml", f) for f in filenames):
+            required.add(("docker-compose", rel))
+    required |= {("pip", "/" + d) for d in _PUBLISHED_PY if (root / d / "pyproject.toml").is_file()}
+    missing = sorted(required - covered)
+    if missing:
+        problems.append("Dependabot reads no " + ", ".join(f"{e} manifest in {d}" for e, d in missing[:4])
+                        + ("" if len(missing) <= 4 else f" (+{len(missing) - 4} more)"))
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else
+                                                       f" (+{len(problems) - 4} more)"))
+    return _ok(name,
+               f"the Caddy plugin is pinned to its release, etcd to the 3.6 series, the Calico "
+               f"manifest to its SHA-256; every workflow and compose image and Trivy run by "
+               f"digest (the wallet canary excepted by design); Dependabot reads all {len(required)} "
+               f"manifests that pin something")
+
+
 # P0.6 — every release artifact carries a signed SLSA provenance attestation,
 # and the docs carry a verify command. Keyless Sigstore signing (GitHub OIDC)
 # means no long-lived key; the attestation binds each SBOM's digest to this
@@ -5960,6 +6241,544 @@ def check_release_provenance(root: pathlib.Path) -> list[Finding]:
     return _ok("provenance",
                "release SBOMs get a keyless SLSA provenance attestation and SECURITY.md "
                "documents the verify command")
+
+
+# 2026-10-07 (lab record 017, phase 3): the server images and the chart as a signed product.
+# release-images.yml is the one path by which an image or the chart reaches a registry, and this
+# holds what makes its output worth pulling. It runs only when dispatched by hand; a publish needs
+# PUBLISH, a version tag, and the maintainer's approval at the `ghcr` environment, and no job that
+# can write to the registry or mint a signing identity runs before that approval (a job that also
+# runs for a dry run may push only when the approval succeeded). Each image index and the chart
+# are signed keyless, so there is no key to leak; provenance is attached to the index and an
+# NTIA-checked SBOM to each architecture's image, at the registry; the chart names its images by
+# the signed digests; the token is read-only at the top; every action is pinned by commit; the
+# SBOM generator is the Trivy sbom.yml pins; and the operator's commands bind the signature to
+# this workflow at the release tag.
+def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
+    name = "release_images"
+    rel = ".github/workflows/release-images.yml"
+    wf = _read(root, rel)
+    if not wf:
+        return _fail(name, f"{rel} is missing; the server images and the chart have no signed "
+                     "release path")
+    code = "\n".join(l for l in wf.splitlines() if not l.lstrip().startswith("#")) + "\n"
+    on = re.search(r"^on:[ \t]*\n((?:[ \t]+[^\n]*\n|[ \t]*\n)*)", code, re.M)
+    triggers = set(re.findall(r"^  ([a-z_]+):", on.group(1), re.M)) if on else set()
+    if triggers != {"workflow_dispatch"}:
+        return _fail(name, f"{rel} must run only when dispatched by hand (workflow_dispatch), "
+                     f"found {sorted(triggers) or 'no trigger'}; a publish is the maintainer's call")
+    top = re.search(r"^permissions:[ \t]*\n((?:[ \t]+[^\n]*\n)*)", code, re.M)
+    if not top or "contents: read" not in top.group(1) or "write" in top.group(1):
+        return _fail(name, f"{rel} must set a read-only token at the top (permissions: contents: "
+                     "read) and grant writes per job")
+    unpinned = [u for u in re.findall(r"^\s*(?:-\s*)?uses:\s*(\S+)", code, re.M)
+                if not re.search(r"@[0-9a-f]{40}$", u)]
+    if unpinned:
+        return _fail(name, f"{rel} uses action(s) not pinned to a commit: "
+                     + ", ".join(unpinned[:3]))
+    jm = re.search(r"^jobs:[ \t]*\n", code, re.M)
+    body = code[jm.end():] if jm else ""
+    heads = list(re.finditer(r"^  ([A-Za-z0-9_-]+):[ \t]*$", body, re.M))
+    jobs = {m.group(1): body[m.end(): heads[i + 1].start() if i + 1 < len(heads) else len(body)]
+            for i, m in enumerate(heads)}
+
+    def needs(job: str) -> set[str]:
+        m = re.search(r"^    needs:\s*(\[[^\]\n]*\]|[A-Za-z0-9_-]+)\s*$", job, re.M)
+        return set(re.findall(r"[A-Za-z0-9_-]+", m.group(1))) if m else set()
+
+    def cond(job: str) -> str:
+        m = re.search(r"^    if:\s*(.+?)\s*$", job, re.M)
+        return m.group(1) if m else ""
+
+    publish_only = re.compile(r"^(?:\$\{\{\s*)?inputs\.confirm\s*==\s*'PUBLISH'(?:\s*\}\})?$")
+    gates = [n for n, j in jobs.items()
+             if re.search(r"^    environment:\s*ghcr\s*$", j, re.M) and publish_only.match(cond(j))]
+    if len(gates) != 1:
+        return _fail(name, f"{rel} must have one approval job, in the `ghcr` environment and run "
+                     "only for `inputs.confirm == 'PUBLISH'`, that every registry write waits on")
+    gate = gates[0]
+    if not any(re.search(r'"\$REF_TYPE"\s*=\s*tag', jobs.get(n, "")) for n in needs(jobs[gate])):
+        return _fail(name, f"{rel}: the approval job must wait on a job that refuses a publish "
+                     "from anything but a version tag, so the signature names a release")
+    for job_name, job in jobs.items():
+        perms = re.search(r"^    permissions:[ \t]*\n((?:      [^\n]*\n)*)", job, re.M)
+        writes = set(re.findall(r"^      ([a-z-]+):\s*write", perms.group(1), re.M)) if perms else set()
+        signs = "cosign sign" in job or "actions/attest-" in job
+        if not (writes or signs):
+            continue
+        if gate not in needs(job):
+            return _fail(name, f"{rel}: job `{job_name}` can write to the registry but does not "
+                         f"wait on the approval job `{gate}`")
+        c = cond(job)
+        if re.search(r"\b(?:always|cancelled|failure)\(\)", c):
+            # It runs for a dry run too, so it may hold no signing identity, and it may push only
+            # once the approval has succeeded.
+            if "id-token" in writes or signs:
+                return _fail(name, f"{rel}: job `{job_name}` mints a signing identity but its "
+                             "`if:` overrides the approval's result")
+            push = re.search(r"^    env:[ \t]*\n(?:      [^\n]*\n)*?      PUSH:\s*([^\n]+)\n", job, re.M)
+            if not (f"needs.{gate}.result == 'success'" in c and push
+                    and "inputs.confirm == 'PUBLISH'" in push.group(1)
+                    and f"needs.{gate}.result == 'success'" in push.group(1)
+                    and re.search(r"^\s*outputs:\s*\$\{\{\s*env\.PUSH == 'true' &&", job, re.M)
+                    and all(re.search(r"^\s*if:\s*env\.PUSH == 'true'\s*$", step, re.M)
+                            for step in re.split(r"\n      - ", job) if "docker/login-action@" in step)):
+                return _fail(name, f"{rel}: job `{job_name}` runs for a dry run too, so it must "
+                             f"push only when PUSH requires PUBLISH and `{gate}` succeeded, with "
+                             "its registry login and output conditioned on PUSH")
+        elif not publish_only.match(c):
+            return _fail(name, f"{rel}: job `{job_name}` writes to the registry; its `if:` must be "
+                         "`inputs.confirm == 'PUBLISH'`, so it runs only after the approval succeeds")
+        for line in re.findall(r"^[^\n]*\bcosign sign\b[^\n]*$", job, re.M):
+            if "--key" in line:
+                return _fail(name, f"{rel}: job `{job_name}` signs with a key; the release is "
+                             "signed keyless, so no key exists to leak")
+    index = [j for j in jobs.values() if "imagetools create" in j]
+    chart = [j for j in jobs.values() if "helm push" in j]
+    if not (index and chart):
+        return _fail(name, f"{rel} must join and sign each image index and push and sign the "
+                     "chart; one of the two jobs is missing")
+    i = index[0]
+    if not re.search(r"cosign sign --yes \"\$REF\"", i):
+        return _fail(name, f"{rel}: the publish job does not sign the image index it creates")
+    steps = {}
+    for m in re.finditer(r"uses:\s*(actions/attest-[a-z-]+)@[^\n]*\n((?:\s{8,}[^\n]*\n)*)", i):
+        steps.setdefault(m.group(1), []).append(m.group(2))
+    prov = steps.get("actions/attest-build-provenance", [])
+    sboms = steps.get("actions/attest-sbom", [])
+    if not (prov and all(re.search(r"push-to-registry:\s*true", w) for w in prov + sboms)
+            and any("outputs.digest" in w for w in prov)):
+        return _fail(name, f"{rel}: the publish job must attach the build provenance to the index "
+                     "at the registry (push-to-registry: true)")
+    if not ({"amd64", "arm64"} <= {a for w in sboms
+                                   for a in re.findall(r"subject-digest:[^\n]*\b(amd64|arm64)\b", w)}):
+        return _fail(name, f"{rel}: the publish job must attach an SBOM to each architecture's "
+                     "image (amd64 and arm64), each describing the image it is attached to")
+    first_sbom = i.find("actions/attest-sbom@")
+    if not all(0 <= i.find(s) < first_sbom for s in (
+            "--require-hashes -r .github/sbom/requirements.txt", "scripts/polaris-sbom-enrich.py",
+            "ntia-checker", ".isConformant == true")):
+        return _fail(name, f"{rel}: the registry SBOMs must be brought to the NTIA minimum "
+                     "elements and judged by the SPDX project's checker before they are "
+                     "attested, as sbom.yml's are")
+    c = chart[0]
+    pin = c.find("scripts/polaris-pin-chart-images.py")
+    package = c.find("helm package")
+    if pin < 0 or package < pin or not (root / "scripts/polaris-pin-chart-images.py").is_file():
+        return _fail(name, f"{rel}: the chart job must pin the chart's images to the signed "
+                     "digests (scripts/polaris-pin-chart-images.py) before it packages the chart")
+    if "cosign sign --yes" not in c:
+        return _fail(name, f"{rel}: the chart job does not sign the chart it pushes")
+    chart_job = next(n for n, j in jobs.items() if "helm push" in j)
+    v = next((j for j in jobs.values() if chart_job in needs(j) and "cosign verify" in j), "")
+    if not (re.search(r'cosign verify "\$REF" --certificate-identity "\$ID"', v)
+            and re.search(r'cosign verify-attestation "\$REF" --type https://sigstore\.dev/cosign/sign/v1', v)
+            and re.search(r"--predicate-type https://spdx\.dev/Document/v2\.3", v)
+            and re.search(r'cosign verify "\$REGISTRY/charts/polaris@\$CHART" --certificate-identity "\$ID"', v)
+            and re.search(r'^\s*refused cosign verify "\$REF"[^\n]*"\$OTHER"', v, re.M)
+            and re.search(r"^\s*refused gh attestation verify\b", v, re.M)):
+        return _fail(name, f"{rel}: once the chart is out, a job must verify every published "
+                     "digest as VERIFY-RELEASE.md says (the signature by identity and by its "
+                     "predicate type, the provenance, each architecture's SBOM, the chart) and "
+                     "see two controls refused: another tag's identity, and provenance asked of "
+                     "an architecture's digest")
+    trivy = set(re.findall(r"aquasec/trivy:([\w.-]+)", wf))
+    sbom_trivy = set(re.findall(r"aquasec/trivy:([\w.-]+)", _read(root, ".github/workflows/sbom.yml")))
+    if not trivy or trivy != sbom_trivy:
+        return _fail(name, f"{rel} generates the registry SBOMs with Trivy {sorted(trivy)}, "
+                     f"sbom.yml with {sorted(sbom_trivy)}; the two must be one version")
+    doc = _read(root, "docs/operator/VERIFY-RELEASE.md")
+    if not (re.search(r"^cosign verify\b", doc, re.M)
+            and re.search(r"--certificate-identity\s+\"?https://github\.com/EgorKhaklin/polaris-id/"
+                          r"\.github/workflows/release-images\.yml@refs/tags/", doc)
+            and "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in doc
+            and re.search(r"--signer-workflow\s+EgorKhaklin/polaris-id/\.github/workflows/"
+                          r"release-images\.yml", doc)
+            and "--source-ref" in doc):
+        return _fail(name, "docs/operator/VERIFY-RELEASE.md must bind cosign verify to "
+                     "release-images.yml at the release tag and GitHub's OIDC issuer, and "
+                     "gh attestation verify to the same workflow and tag; a signature checked "
+                     "against any identity is decoration")
+    return _ok(name,
+               "release-images.yml runs only by hand; a publish needs PUBLISH, a version tag and "
+               "the maintainer's approval at the ghcr environment before any job can write to the "
+               "registry; each image index and the chart are signed keyless, provenance and "
+               "NTIA-checked per-architecture SBOMs are attached at the registry, the chart is "
+               "pinned to the signed digests and everything published is verified with two "
+               "negative controls refused, every action is pinned by commit, and "
+               "VERIFY-RELEASE.md binds verification to the workflow at the tag")
+
+
+# 2026-10-07 (lab record 017, phase 4a): the rate limiter's Redis authenticates. An attacker on
+# the stack network who could reach Redis could clear the limiter's counters (FLUSHALL) and
+# brute-force the operator logins at full speed. Users come from redis_users.acl: `default` off,
+# so an unauthenticated client can run nothing; `health` may only PING; `polaris`, the app, may
+# run only the limiter's commands on its own keys. The ACL holds only the password's SHA-256, its
+# rules are one string in the generator, the rotation script and the Helm Secret, production
+# refuses a Redis URL without the password file (or with a password in it), rotation never has
+# a moment in which Redis refuses the app's password, and CI asserts the refusals on the live stack.
+_REDIS_ACL_FORBIDDEN = ("+@all", "allcommands", "allkeys", "~*", "+flushall", "+flushdb",
+                        "+config", "+acl", "+keys", "+debug", "+eval ", "+module", "+@dangerous")
+
+
+def check_redis_authenticated(root: pathlib.Path) -> list[Finding]:
+    name = "redis_authenticated"
+    problems = []
+    gen = _read(root, "scripts/polaris-generate-secrets.sh")
+    rot = _read(root, "scripts/polaris-rotate-secret.sh")
+    helm_secret = _read(root, "deploy/helm/polaris/templates/secret.yaml")
+    rules = re.findall(r"REDIS_ACL_POLARIS_RULES='([^']+)'", gen)
+    rules_rot = re.findall(r"REDIS_ACL_POLARIS_RULES='([^']+)'", rot)
+    if not rules:
+        problems.append("polaris-generate-secrets.sh writes no Redis ACL (REDIS_ACL_POLARIS_RULES)")
+    else:
+        r = rules[0] + " "
+        if not r.startswith("~polaris:rl:* ") or "-@all" not in r:
+            problems.append("the polaris Redis user is not confined to ~polaris:rl:* after -@all")
+        bad = [f for f in _REDIS_ACL_FORBIDDEN if f in r]
+        if bad:
+            problems.append(f"the polaris Redis user may run {', '.join(bad)}")
+        if rules_rot != rules:
+            problems.append("polaris-rotate-secret.sh writes different Redis ACL rules from the generator")
+        helm_rules = re.findall(r'user polaris on #%s (.+?)\\n"', helm_secret)
+        if helm_rules != rules:
+            problems.append("the Helm Secret's redis_users.acl has different rules from the generator")
+    for where, text in (("polaris-generate-secrets.sh", gen), ("polaris-rotate-secret.sh", rot),
+                        ("the Helm Secret", helm_secret)):
+        if "user default off" not in text or not re.search(r"user health on nopass[^\n]*-@all \+ping\\n", text):
+            problems.append(f"{where}: `default` must be off and `health` limited to PING")
+    if "write_secret_if_missing polaris_redis_password" not in gen:
+        problems.append("polaris-generate-secrets.sh does not generate polaris_redis_password")
+    if not re.search(r'write_redis_acl "\$\{NEW_HASH\}" "\$\{OLD_HASH\}"[\s\S]*recreate_apps'
+                     r'[\s\S]*write_redis_acl "\$\{NEW_HASH\}"\n', rot):
+        problems.append("polaris-rotate-secret.sh does not accept the old and the new Redis password "
+                        "until the app has moved, so a rotation refuses the app's password")
+    compose = _read(root, "polaris_web/docker-compose.prod.yml")
+    # The section ends at the next service or top-level key; _read leaves a bare `#` where a
+    # comment line was, which is neither.
+    redis_svc = re.search(r"(?ms)^  redis:\n(.*?)(?=^  [^\s#]|^[^\s#])", compose)
+    app_env = compose
+    rs = redis_svc.group(1) if redis_svc else ""
+    if "--aclfile /run/secrets/redis_users_acl" not in rs or "- redis_users_acl" not in rs:
+        problems.append("the compose redis service does not load its users from the redis_users_acl secret")
+    if '"--user", "health"' not in rs:
+        problems.append("the compose redis healthcheck does not use the PING-only health user")
+    if ("POLARIS_REDIS_URL: redis://polaris@" not in app_env
+            or "POLARIS_REDIS_PASSWORD_FILE: /run/secrets/polaris_redis_password" not in app_env
+            or "      - polaris_redis_password\n" not in app_env):
+        problems.append("the compose app does not connect as `polaris` with the mounted password file")
+    helm_redis = _read(root, "deploy/helm/polaris/templates/redis.yaml")
+    helm_app = _read(root, "deploy/helm/polaris/templates/app.yaml")
+    if '"--aclfile"' not in helm_redis or '"--user", "health"' not in helm_redis:
+        problems.append("the Helm redis does not load the ACL or probe as the health user")
+    if "redis://polaris@" not in helm_app or "POLARIS_REDIS_PASSWORD_FILE" not in helm_app:
+        problems.append("the Helm app does not connect as `polaris` with the password file")
+    schema = _read(root, "polaris_web/config_schema.py")
+    if ("POLARIS_REDIS_URL: carries a password" not in schema
+            or "POLARIS_REDIS_URL is set, so production" not in schema):
+        problems.append("config_schema.py does not refuse, in production, a Redis URL without the "
+                        "password file or with a password in it")
+    ci = _read(root, ".github/workflows/ci.yml")
+    if not (re.search(r"redis-cli ping 2>&1[^\n]*\n[^\n]*grep -q NOAUTH", ci)
+            and re.search(r"--user health --pass x flushall[^\n]*\n[^\n]*grep -q NOPERM", ci)):
+        problems.append("CI does not assert, on the live stack, that Redis refuses an unauthenticated "
+                        "client and the health user's FLUSHALL")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else
+                                                       f" (+{len(problems) - 4} more)"))
+    return _ok(name,
+               "Redis loads its users from an ACL holding only the app password's SHA-256: default "
+               "off, health PING-only, polaris confined to the limiter's commands on its own keys, "
+               "one rule string in the generator, rotation and Helm; production refuses an "
+               "unauthenticated URL; rotation accepts both passwords until the app has moved; CI "
+               "asserts the refusals on the live stack")
+
+
+# 2026-10-07 (lab record 017, phase 4b): rotating the session key logs nobody out. Before it,
+# every rotation ended every operator session, so a key was rotated rarely or never. The key a
+# rotation retires is kept in polaris_secret_key_fallbacks: Flask's SECRET_KEY_FALLBACKS verifies
+# sessions it signed, and every relying-party token, authorization code and OpenID4VCI value is
+# verified under all the keys and made under the current one only. --drop-old, for a key that may
+# have leaked, keeps none of them.
+def check_session_key_rotation(root: pathlib.Path) -> list[Finding]:
+    name = "session_key_rotation"
+    problems = []
+    app_src = _read_app(root)
+    if not re.search(r"app\.config\['SECRET_KEY_FALLBACKS'\]\s*=\s*\[[\s\S]{0,200}"
+                     r"POLARIS_SECRET_KEY_FALLBACKS_FILE", app_src):
+        problems.append("app.py does not load SECRET_KEY_FALLBACKS from POLARIS_SECRET_KEY_FALLBACKS_FILE")
+    rp = _read(root, "polaris_web/rp_auth.py")
+    if not re.search(r"URLSafeTimedSerializer\(_keys\(secret_key\)", rp):
+        problems.append("rp_auth's token serializer is not given every key")
+    if not re.search(r"MultiFernet\(\[[\s\S]{0,200}for k in reversed\(_keys\(secret_key\)\)\]\)", rp):
+        problems.append("rp_auth's codes and VCI values are not a MultiFernet over every key, the current first")
+    for rel in ("polaris_web/rp_api.py", "polaris_web/oid4vci_routes.py"):
+        src = _read(root, rel)
+        stale = re.findall(r"rp_auth\.\w+\(app\.secret_key", src)
+        if stale:
+            problems.append(f"{rel} signs or verifies with the current key alone ({stale[0]}...)")
+        if "rp_auth.keys_of(app)" not in src:
+            problems.append(f"{rel} does not pass the app's keys (rp_auth.keys_of(app))")
+    rot = _read(root, "scripts/polaris-rotate-secret.sh")
+    keep = rot.find('tr -d \'\\r\\n \' < "${TARGET}" > "${FALLBACKS}.new"')
+    write_new = rot.find('printf \'%s\\n\' "${NEW_VALUE}" > "${TARGET}.new"')
+    if keep < 0 or write_new < 0 or keep > write_new:
+        problems.append("polaris-rotate-secret.sh does not keep the retired key in "
+                        "polaris_secret_key_fallbacks before writing the new one")
+    if not re.search(r'DROP_OLD.*==\s*1[\s\S]{0,120}gen_hex > "\$\{FALLBACKS\}\.new"', rot):
+        problems.append("polaris-rotate-secret.sh has no --drop-old that keeps no retired key")
+    if "write_secret_if_missing polaris_secret_key_fallbacks" not in _read(root, "scripts/polaris-generate-secrets.sh"):
+        problems.append("polaris-generate-secrets.sh does not create polaris_secret_key_fallbacks")
+    compose = _read(root, "polaris_web/docker-compose.prod.yml")
+    if ("POLARIS_SECRET_KEY_FALLBACKS_FILE: /run/secrets/polaris_secret_key_fallbacks" not in compose
+            or "      - polaris_secret_key_fallbacks\n" not in compose):
+        problems.append("the compose app is not given polaris_secret_key_fallbacks")
+    if "POLARIS_SECRET_KEY_FALLBACKS_FILE" not in _read(root, "deploy/helm/polaris/templates/app.yaml"):
+        problems.append("the Helm app is not given POLARIS_SECRET_KEY_FALLBACKS_FILE")
+    tests = _read(root, "polaris_web/test_app.py")
+    if not re.search(r"def test_a_signed_in_operator_stays_signed_in_across_a_rotation\(", tests):
+        problems.append("no test shows a signed-in operator staying signed in across a rotation")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else
+                                                       f" (+{len(problems) - 4} more)"))
+    return _ok(name,
+               "a rotation keeps the retired session key in polaris_secret_key_fallbacks: sessions, "
+               "relying-party tokens, codes and VCI values it signed still verify, new ones use the "
+               "current key only, and --drop-old keeps none")
+
+
+# 2026-10-07 (lab record 017, gate row OP-17): one command names the failing component. An operator
+# who is not the author meets a broken stack with docker ps and a log; scripts/polaris-doctor.sh
+# judges every component in the order a failure propagates and names the failing ones, first one
+# first, and lab/strategy/006/doctor.sh breaks one thing at a time on the try.sh stack and requires
+# it to be named first, with a clean bill after each repair. CI runs that after try.sh.
+def check_doctor_names_failures(root: pathlib.Path) -> list[Finding]:
+    name = "doctor_names_failures"
+    doc = _read(root, "scripts/polaris-doctor.sh")
+    if not doc:
+        return _fail(name, "scripts/polaris-doctor.sh is missing; nothing names a failing component")
+    judges = (("compose ps -a --format json", "the services and their healthchecks"),
+              ('"secrets"', "the secret files"),
+              ("config_schema.py check --production", "the production configuration contract"),
+              ("/api/health/live", "the TLS edge"),
+              ("http://127.0.0.1:8000/api/health", "the app's own roll-up"),
+              ("AuthorityKeyCurrent", "the key register"))
+    missing = [what for needle, what in judges if needle not in doc]
+    if missing:
+        return _fail(name, "scripts/polaris-doctor.sh no longer judges " + ", ".join(missing))
+    if not re.search(r'compose run --rm --no-deps -T --entrypoint python app config_schema\.py', doc):
+        return _fail(name, "the doctor must judge the configuration in a one-off container, so it "
+                     "answers when the app cannot start")
+    if not re.search(r'failing: \$\{FAILING\[\*\]\} \(start with \$\{FAILING\[0\]\}\)', doc) or "exit 1" not in doc:
+        return _fail(name, "the doctor's last line must name the failing components, the first one "
+                     "first, and exit 1")
+    drill = _read(root, "lab/strategy/006/doctor.sh")
+    faults = (("stop redis", "expect_named redis"), ("stop postgres", "expect_named postgres"),
+              (': > "${SECRET}"', "expect_named secrets"), ("POLARIS_DB_SSLMODE: disable", "POLARIS_DB_SSLMODE\""))
+    for inject, named in faults:
+        if inject not in drill or named not in drill:
+            return _fail(name, f"lab/strategy/006/doctor.sh no longer injects '{inject}' and requires "
+                         "the doctor to name it")
+    if drill.count("expect_clean") < 5:
+        return _fail(name, "lab/strategy/006/doctor.sh must require a clean bill before the faults and "
+                     "after each repair")
+    oc = _read(root, ".github/workflows/one-command.yml")
+    t, d = oc.find("bash lab/strategy/006/try.sh\n"), oc.find("bash lab/strategy/006/doctor.sh")
+    if t < 0 or d < t:
+        return _fail(name, "one-command.yml must run lab/strategy/006/doctor.sh after try.sh, on its stack")
+    if "scripts/polaris-doctor.sh" not in _read_raw(root, "docs/operator/OPERATIONS.md"):
+        return _fail(name, "OPERATIONS.md's Common errors must start an operator at the doctor")
+    return _ok(name,
+               "scripts/polaris-doctor.sh judges the services, secrets, configuration contract, edge, "
+               "the app's roll-up and the key register, and names the failing ones, the first one first; CI "
+               "breaks Redis, PostgreSQL, a secret and a setting on the try.sh stack and requires "
+               "each named first, and a clean bill after each repair")
+
+
+# 2026-10-07 (lab record 017, gate row OP-19): an upgrade from the previous release is drilled. The
+# drill runs the previous release's own try.sh, moves that checkout to this commit and upgrades it
+# the way OPERATIONS.md says (polaris-generate-secrets.sh, polaris-deploy.sh prod), then requires no
+# migration pending, every Polaris container on the image this commit builds, and credentials from
+# before and after the upgrade verifying. Its first run found polaris-deploy.sh rebuilding the app's
+# image alone: the edge, pooler and database kept the images the first install built.
+# 2026-10-07 (lab record 017, gate row OP-15): backup age, archive failure, replication lag, disk,
+# certificate expiry and clock skew alert. The app reports five of them at every scrape of /metrics
+# (no exporter and no added privilege; the backup record is BackupEvent, written by the backup
+# script); the overlay's blackbox exporter reads the certificate the edge serves, under the
+# deployment's domain. Each rule has promtool unit tests and a runbook (check_alert_runbooks), and
+# lab/strategy/006/alerts.sh fires the certificate, backup and archive alerts on their real
+# conditions on the try.sh stack and clears them on repair. CI runs it after try.sh.
+_INFRA_ALERTS = {
+    "PolarisClockSkew": "polaris_clock_skew_seconds",
+    "PolarisArchiveFailing": "polaris_db_archive_last_timestamp_seconds",
+    "PolarisReplicaBehind": "polaris_db_replica_lag_seconds",
+    "PolarisDiskFilling": "polaris_state_filesystem_bytes",
+    "PolarisCertificateExpiring": "probe_ssl_earliest_cert_expiry",
+    "PolarisBackupStale": "polaris_backup_last_success_timestamp_seconds",
+}
+
+
+def check_infra_alerts(root: pathlib.Path) -> list[Finding]:
+    name = "infra_alerts"
+    rules = _read(root, "deploy/observability/polaris-alerts.yml")
+    tests = _read(root, "deploy/observability/polaris-alerts.test.yml")
+    app = _read_app(root)
+    problems = []
+    for alert, metric in _INFRA_ALERTS.items():
+        m = re.search(rf"(?ms)^\s*- alert: {alert}\n(.*?)(?=^\s*- alert: |\Z)", rules)
+        if not m or metric not in m.group(1):
+            problems.append(f"no {alert} rule on {metric}")
+        if not re.search(rf"(?m)^\s*alertname: {alert}$", tests):
+            problems.append(f"{alert} has no promtool unit test")
+        if metric.startswith("polaris_") and f"'{metric}'" not in app:
+            problems.append(f"the app does not expose {metric}")
+    overlay = _read(root, "polaris_web/docker-compose.observability.yml")
+    if not re.search(r"(?m)^\s*image: prom/blackbox-exporter@sha256:[0-9a-f]{64}", overlay):
+        problems.append("the observability overlay runs no digest-pinned blackbox exporter")
+    prom = _read(root, "deploy/observability/prometheus.yml")
+    if "job_name: polaris-edge-tls" not in prom or not re.search(r"names: \['app', 'app-green'\]", prom):
+        problems.append("prometheus.yml must scrape the app on the stack's network and the edge's certificate")
+    backup = _read(root, "scripts/polaris-backup.sh")
+    for kind in ("dump", "dump-verified"):
+        if not re.search(rf"(?m)^\s*(?:if )?record_backup {kind} ", backup):
+            problems.append(f"polaris-backup.sh no longer records {kind} in BackupEvent")
+    drill = _read(root, "lab/strategy/006/alerts.sh")
+    for needle in ("wait_for PolarisCertificateExpiring firing", "wait_for PolarisBackupStale firing",
+                   "wait_for PolarisBackupStale inactive", "wait_for PolarisArchiveFailing firing",
+                   "wait_for PolarisArchiveFailing inactive"):
+        if needle not in drill:
+            problems.append(f"lab/strategy/006/alerts.sh no longer does: {needle}")
+    oc = _read(root, ".github/workflows/one-command.yml")
+    t, a = oc.find("bash lab/strategy/006/try.sh\n"), oc.find("bash lab/strategy/006/alerts.sh")
+    if t < 0 or a < t:
+        problems.append("one-command.yml must run lab/strategy/006/alerts.sh after try.sh, on its stack")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else f" (+{len(problems) - 4} more)"))
+    return _ok(name,
+               "backup age, archive failure, replica lag, disk, certificate expiry and clock skew each have a "
+               "rule with promtool tests; CI fires the certificate, backup and archive alerts on their real "
+               "conditions and clears them on repair")
+
+
+def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
+    name = "upgrade_drilled"
+    dep = _read(root, "scripts/polaris-deploy.sh")
+    if not re.search(r'(?m)^bash "\$\{SCRIPT_DIR\}/polaris-image-build\.sh" --stack prod$', dep):
+        return _fail(name, "polaris-deploy.sh must build every Polaris image (polaris-image-build.sh --stack prod), "
+                     "not the app's alone, or an upgrade keeps the edge, pooler and database it first built")
+    drill = _read(root, "scripts/polaris-upgrade-drill.sh")
+    for needle, what in (("describe --tags --abbrev=0", "start from the previous release"),
+                         ('lab/strategy/006/try.sh" > "${WORK}/try-before.log"', "run that release's own try.sh"),
+                         ("checkout --detach", "move the same checkout to this commit"),
+                         ("scripts/polaris-generate-secrets.sh", "write the secrets a new release adds"),
+                         ("scripts/polaris-deploy.sh\" prod", "upgrade with the deploy script"),
+                         ("no pending migrations", "require no migration pending"),
+                         ("{{json .RootFS.Layers}}{{json .Config}}", "compare each running image's content with this commit's build"),
+                         ("/api/tokens/${A}/verify", "ask the upgraded app about the old credential"),
+                         ("--pack pack-A-after.json", "verify the old credential's pack fetched again")):
+        if needle not in drill:
+            return _fail(name, f"scripts/polaris-upgrade-drill.sh no longer does this: {what}")
+    wf = _read(root, ".github/workflows/upgrade.yml")
+    if "bash scripts/polaris-upgrade-drill.sh" not in wf or not re.search(r"(?m)^\s*fetch-depth: 0$", wf):
+        return _fail(name, "upgrade.yml must run scripts/polaris-upgrade-drill.sh on a checkout with the "
+                     "release tags (fetch-depth: 0)")
+    return _ok(name,
+               "CI upgrades the previous release's own try.sh stack to this commit the documented way and "
+               "requires nothing pending, every image rebuilt, and credentials from before and after verifying")
+
+
+# 2026-10-07 (lab record 017, gate row OP-26): the client address behind a load balancer. The rate
+# limiter, AuthAuditLog and the access policies key on the address the edge passes upstream. Behind
+# a balancer the TCP peer is the balancer: every client shares one bucket. Each edge trusts exactly
+# the proxies the operator names (POLARIS_TRUSTED_PROXIES / edge.trustedProxies; none by default)
+# and reads X-Forwarded-For right to left past them only (strict), so a forged first entry is never
+# believed; the chart's LoadBalancer Service keeps the client's source address (Local). CI asks
+# through an appending balancer, with and without the trust, and with forgeries both ways.
+def check_client_ip_behind_proxies(root: pathlib.Path) -> list[Finding]:
+    name = "client_ip_proxies"
+    for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"):
+        conf = _read(root, rel)
+        if not re.search(r"trusted_proxies static \{\$POLARIS_TRUSTED_PROXIES:0\.0\.0\.0/32\}", conf):
+            return _fail(name, f"{rel} must trust only the proxies POLARIS_TRUSTED_PROXIES names, "
+                         "none by default (0.0.0.0/32)")
+        if "trusted_proxies_strict" not in conf:
+            return _fail(name, f"{rel} must read X-Forwarded-For right to left (trusted_proxies_strict), "
+                         "or a client names its own address through the balancer")
+        if ("header_up X-Forwarded-For {client_ip}" not in conf or "header_up X-Real-IP {client_ip}" not in conf
+                or re.search(r"header_up X-(?:Forwarded-For|Real-IP) \{remote_host\}", conf)):
+            return _fail(name, f"{rel} must pass the client address ({{client_ip}}), not the TCP peer, upstream")
+    helm = _read(root, "deploy/helm/polaris/templates/configmap-caddy.yaml")
+    if ('trusted_proxies static {{ .Values.edge.trustedProxies | default "0.0.0.0/32" }}' not in helm
+            or "trusted_proxies_strict" not in helm or "header_up X-Forwarded-For {client_ip}" not in helm):
+        return _fail(name, "the chart's edge must trust only edge.trustedProxies (none by default), read "
+                     "X-Forwarded-For strictly and pass {client_ip} upstream")
+    svc = _read(root, "deploy/helm/polaris/templates/caddy.yaml")
+    values = _read(root, "deploy/helm/polaris/values.yaml")
+    if ('externalTrafficPolicy: {{ .Values.edge.service.externalTrafficPolicy | default "Local" }}' not in svc
+            or not re.search(r"^\s*externalTrafficPolicy:\s*Local\s*$", values, re.M)):
+        return _fail(name, "the chart's LoadBalancer or NodePort Service must keep the client's source "
+                     "address (externalTrafficPolicy: Local)")
+    if "bash scripts/polaris-client-ip-drill.sh" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail(name, "ci.yml must run scripts/polaris-client-ip-drill.sh")
+    drill = _read(root, "scripts/polaris-client-ip-drill.sh")
+    for needle in ("polaris_web/Caddyfile.citest", 'expect "via the balancer, not trusted"',
+                   'expect "via the balancer, forging', 'expect "straight to the edge, forging'):
+        if needle not in drill:
+            return _fail(name, f"scripts/polaris-client-ip-drill.sh no longer covers {needle!r}")
+    return _ok(name,
+               "every edge trusts only the proxies the operator names (none by default), reads "
+               "X-Forwarded-For right to left past them and passes the client address upstream; the "
+               "chart keeps source addresses (Local); CI proves it behind an appending balancer, with "
+               "forgeries refused both ways")
+
+
+# 2026-10-07 (lab record 017, phase 5): a slow or oversized client is ended at the edge. The app's
+# gunicorn workers are synchronous, four to an instance, and assume a proxy that buffers slow clients;
+# Caddy passes a body upstream as it arrives unless told otherwise, so one client trickling a body
+# held one worker for as long as it took (scripts/polaris-edge-limits-drill.sh reproduced it). Every
+# edge reads the whole body (up to the app's own 1 MiB) before the app sees the request, refuses a
+# larger one, and ends a client that sends its headers or its body too slowly. CI runs the drill.
+EDGE_CONFIGS = ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest",
+                "deploy/helm/polaris/templates/configmap-caddy.yaml")
+
+
+def check_edge_limits(root: pathlib.Path) -> list[Finding]:
+    name = "edge_limits"
+    problems = []
+    for rel in EDGE_CONFIGS:
+        conf = _read(root, rel)
+        if not conf:
+            problems.append(f"{rel} is missing")
+            continue
+        t = re.search(r"(?ms)^\s*timeouts \{\n(.*?)^\s*\}", conf)
+        if not t or not re.search(r"(?m)^\s*read_header \d+s$", t.group(1)) \
+                or not re.search(r"(?m)^\s*read_body \d+s$", t.group(1)):
+            problems.append(f"{rel}: no read_header and read_body timeouts, so a slow client keeps its connection")
+        if not re.search(r"(?m)^\s*request_body \{\n\s*max_size 1MiB\n\s*\}", conf):
+            problems.append(f"{rel}: a body over the app's 1 MiB is not refused at the edge")
+        proxies = len(re.findall(r"(?m)^\s*reverse_proxy \S", conf))
+        buffered = len(re.findall(r"(?m)^\s*request_buffers 1MiB$", conf))
+        if proxies == 0 or buffered < proxies:
+            problems.append(f"{rel}: {proxies - buffered} of {proxies} reverse_proxy blocks pass a body to the "
+                            "app as it arrives (request_buffers 1MiB)")
+    if not re.search(r"(?m)^MAX_REQUEST_BODY_BYTES\s*=\s*1 \* 1024 \* 1024$", _read(root, "polaris_web/security.py")):
+        problems.append("the app's body limit is no longer 1 MiB: the edges' max_size and request_buffers move with it")
+    drill = _read(root, "scripts/polaris-edge-limits-drill.sh")
+    for needle, what in (("polaris_web/Caddyfile.citest", "the shipped edge"),
+                         ("probe slow-body", "a trickled body"), ("probe oversize", "an oversized body"),
+                         ("probe slow-header", "trickled headers")):
+        if needle not in drill:
+            problems.append(f"scripts/polaris-edge-limits-drill.sh no longer covers {what}")
+    if not re.search(r"(?m)^HTTPServer\(", drill):
+        problems.append("scripts/polaris-edge-limits-drill.sh's upstream no longer serves one request at a time")
+    if "bash scripts/polaris-edge-limits-drill.sh" not in _read(root, ".github/workflows/ci.yml"):
+        problems.append("CI does not run scripts/polaris-edge-limits-drill.sh")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else f" (+{len(problems) - 4} more)"))
+    return _ok(name,
+               "every edge reads a whole body (up to the app's 1 MiB) before the app sees it, refuses a larger "
+               "one, and ends clients that send headers or bodies too slowly; CI drills it against an upstream "
+               "that serves one request at a time")
 
 
 # 2026-09-16 — the npm job STAGES; it must not publish. `npm stage publish` uploads the
@@ -7444,6 +8263,98 @@ def check_dr_drill_scheduled(root: pathlib.Path) -> list[Finding]:
                "brings the app up, and measures RPO/RTO against 300 s / 14400 s; monthly by workflow with the row "
                "committed to the ledger, on every push in CI, and monthly on a Linux host by timer")
 
+
+# 2026-10-07 (lab record 017, gate row OP-12): a restore to a chosen point in time is tested. DR.md
+# section 4.3 restores with pgbackrest --type=time; scripts/polaris-pitr-drill.sh runs that restore
+# to a moment it read off the database's own clock and requires exactly the markers committed by
+# then (count and digest), none after, and that moment's token count. Its control restores to the
+# archive's end and must be told apart, or the checks would pass a restore that never stopped.
+def check_pitr_drilled(root: pathlib.Path) -> list[Finding]:
+    name = "pitr_drilled"
+    drill = _read(root, "scripts/polaris-pitr-drill.sh")
+    for needle, what in (('--type=time \\"--target=$T\\"', "restore to T with pgbackrest --type=time"),
+                         ("SELECT clock_timestamp()", "take T from the database's own clock"),
+                         ('[[ "$GOT" == "$AT_T" ]]', "require T's markers, count and digest"),
+                         ('[[ "$after" == 0 ]]', "require nothing committed after T"),
+                         ("--prove-control) CONTROL=1", "carry a control that restores to the archive's end")):
+        if needle not in drill:
+            return _fail(name, f"scripts/polaris-pitr-drill.sh no longer does this: {what}")
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "bash scripts/polaris-pitr-drill.sh --no-build\n" not in ci \
+            or "bash scripts/polaris-pitr-drill.sh --no-build --prove-control" not in ci:
+        return _fail(name, "CI must run the point-in-time restore drill and its control")
+    if "polaris-pitr-drill.sh" not in _read_raw(root, "docs/operator/DR.md"):
+        return _fail(name, "DR.md's point-in-time restore must cite the drill that tests it")
+    return _ok(name,
+               "CI restores to a moment read off the database's clock and requires exactly what was committed by "
+               "then, nothing after; its control restores to the archive's end and is told apart")
+
+
+
+# Lab record 017 (gate row OP-13): a restore to an earlier point loses every change made after it,
+# including the ones that withdrew trust or access, and rewinds the sequences that hand out
+# identifiers. scripts/polaris-reconcile-restore.py re-applies those withdrawals from the archive's
+# end, through the paths that made them, and retires the identifiers, before the app takes traffic.
+# Its REGISTRY says for every table what a restore means there, so a table added later cannot be
+# lost by a restore without that being decided; the PITR drill's --reconcile run proves the rest,
+# the hazard first.
+_RECONCILE_PATHS = (
+    ("CALL uc8_revoke_token(", "re-apply a revocation through uc8_revoke_token"),
+    ("uc4_activate_reserve(", "re-apply a loss with its reserve through uc4_activate_reserve"),
+    ("uc_record_holder_key_event(", "revoke a holder key through uc_record_holder_key_event"),
+    ("INSERT INTO AuthorityKeyEvent", "record a key retired or compromised in the authority register"),
+    ("CALL uc10_revoke_attestation(", "re-apply an attestation revocation"),
+    ("CALL uc_pseudonymize_individual(", "re-apply an erasure"),
+    ("SELECT setval(", "move each sequence past the archive's end"),
+    ("tables this script does not know", "refuse a database holding a table REGISTRY does not name"),
+    ("something used it before", "refuse a restored database something already wrote to"),
+    ("INSERT INTO RestoreRecord", "record each run"),
+)
+_RECONCILE_DRILL = (
+    ("--reconcile) RECONCILE=1", "run the reconciliation at all"),
+    ("grep -qx 'credential 10 ACTIVE'", "see the restore read a credential revoked after T as active (the hazard)"),
+    ('[[ "$left" == "< authority-key 1 cccccccc registered" ]]',
+     "require the reconciled state to equal the archive's end, apart from the one grant"),
+    ('[[ "$behind" == 0 ]]', "require every sequence past the archive's end"),
+    ('! grep -q "^re-applied" "$WORK/second.txt"', "require a second run to re-apply nothing"),
+)
+
+
+def check_restore_reconciled(root: pathlib.Path) -> list[Finding]:
+    name = "restore_reconciled"
+    tool = _read(root, "scripts/polaris-reconcile-restore.py")
+    if not tool:
+        return _fail(name, "scripts/polaris-reconcile-restore.py is missing: a restore to an earlier point brings "
+                     "back as granted what was withdrawn after it")
+    for needle, what in _RECONCILE_PATHS:
+        if needle not in tool:
+            return _fail(name, f"scripts/polaris-reconcile-restore.py no longer does this: {what}")
+    m = re.search(r"^REGISTRY = \{(.*?)^\}", tool, re.S | re.M)
+    named = set(re.findall(r'^\s+"(\w+)":\s*\("(?:reapplied|listed|counted|derived|reference)"',
+                           m.group(1) if m else "", re.M))
+    tables = {t.lower() for t in _schema_table_names(root)[1]}
+    if not tables:
+        return _fail(name, "no tables found in polaris_sql/ to hold REGISTRY to")
+    if tables - named:
+        return _fail(name, "REGISTRY in scripts/polaris-reconcile-restore.py does not say what a restore to an "
+                     "earlier point means for: " + ", ".join(sorted(tables - named)))
+    if named - tables:
+        return _fail(name, "REGISTRY names tables the schema no longer creates: " + ", ".join(sorted(named - tables)))
+    drill = _read(root, "scripts/polaris-pitr-drill.sh")
+    for needle, what in _RECONCILE_DRILL:
+        if needle not in drill:
+            return _fail(name, f"scripts/polaris-pitr-drill.sh no longer does this: {what}")
+    if "bash scripts/polaris-pitr-drill.sh --no-build --reconcile" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail(name, "CI must run the point-in-time restore drill with --reconcile")
+    dr = _read_raw(root, "docs/operator/DR.md")
+    sec = re.search(r"^### 4\.3 .*?(?=^### |\Z)", dr, re.S | re.M)
+    body = sec.group(0) if sec else ""
+    tool_at, app_at = body.find("polaris-reconcile-restore.py"), body.find("$COMPOSE up -d app")
+    if tool_at < 0 or app_at < 0 or tool_at > app_at:
+        return _fail(name, "DR.md section 4.3 must run scripts/polaris-reconcile-restore.py before the app comes back")
+    return _ok(name, f"a restore to an earlier point re-applies what was withdrawn after it, through the paths that "
+               f"made it, before the app returns; REGISTRY decides all {len(tables)} tables; CI sees the hazard, "
+               "then nothing looser than the archive's end")
 
 def check_chaos_program(root: pathlib.Path) -> list[Finding]:
     """Roadmap P2.11 (v9.242): the fail-closed harness runs on every push, and
@@ -12246,9 +13157,37 @@ def check_key_rotation_drilled(root: pathlib.Path) -> list[Finding]:
     if "polaris-custody-pkcs11-drill.sh" not in ci:
         return _fail("key_rotation_drilled",
                      "ci.yml must run the PKCS#11 custody drill so in-token rotation is exercised every release")
+    # 2026-10-07 (lab record 017, phase 4c): the rotation an operator performs, end to end, on the
+    # stack try.sh starts: the authority key register (what the running app consults), the app's own
+    # answers, the signed trust list and polaris-verify from PyPI, with a compromise as the control.
+    rot = _read(root, "lab/strategy/006/rotate.sh")
+    needs = (("key_event register", "registers the new key"),
+             ("key_event retire", "retires the old key"),
+             ("key_event compromise", "declares the old key compromised as its control"),
+             ('== "True True False" ]]', "asserts the old credential stays authorized at signing after the rotation"),
+             ('== "True False False" ]]', "asserts the old credential is not authorized once its key is compromised"),
+             ("if verify_offline anchors-k2.json pack-A.json; then fail",
+              "refuses the old credential offline when only the new key is published"))
+    missing = [why for needle, why in needs if needle not in rot]
+    if missing:
+        return _fail("key_rotation_drilled",
+                     "lab/strategy/006/rotate.sh does not drill the operator's rotation end to end; it "
+                     "no longer " + "; ".join(missing))
+    oc = _read(root, ".github/workflows/one-command.yml")
+    t, r = oc.find("bash lab/strategy/006/try.sh\n"), oc.find("bash lab/strategy/006/rotate.sh")
+    if t < 0 or r < t:
+        return _fail("key_rotation_drilled",
+                     "one-command.yml must run lab/strategy/006/rotate.sh after try.sh, on the stack it starts")
+    ke = _read(root, "scripts/polaris-key-event.sh")
+    if "INSERT INTO AuthorityKeyEvent" not in ke or "UPDATE Agency SET signing_public_key_hex" not in ke:
+        return _fail("key_rotation_drilled",
+                     "scripts/polaris-key-event.sh must record the event and, for a registration, make the "
+                     "key current, as polaris key-register does")
     return _ok("key_rotation_drilled",
                "HSM key rotation is drilled in-token: a test mints two distinct in-token keys and proves the old "
-               "token still verifies after rotation while the new key signs, run against a real Kryoptic token in CI")
+               "token still verifies after rotation while the new key signs, run against a real Kryoptic token in CI; "
+               "and the operator's rotation is drilled end to end on the try.sh stack: register, switch, retire, "
+               "then compromise, checked by the app, the signed trust list and polaris-verify from PyPI")
 
 
 # ---------------------------------------------------------------------------
@@ -16432,10 +17371,13 @@ def check_plonky3_evaluation(root: pathlib.Path) -> list[Finding]:
         if needed not in doc:
             return _fail(name, f"the record must cover {why} ({needed!r})")
     # The measured half must be real numbers from this tree, not adjectives.
-    if not re.search(r"\b77,?840\b", doc):
+    # 148,900 bytes since 2026-10-07: the zero-knowledge configuration. The earlier 77,840
+    # was the non-hiding configuration's size and is history, not the current measurement.
+    if not re.search(r"\b148,?900\b", doc):
         return _fail(name,
-                     "the record must carry the MEASURED proof size; 'small' is not a comparison "
-                     "anyone can check or re-run")
+                     "the record must carry the MEASURED proof size of the shipped (zero-knowledge) "
+                     "configuration, 148,900 bytes; 'small', or the non-hiding 77,840, is not the "
+                     "comparison the next decision needs")
     if "1.1.0" not in doc:
         return _fail(name, "the record must name the pinned Plonky2 version it evaluated")
     lock = _read(root, "polaris_zk/Cargo.lock")
@@ -21241,7 +22183,22 @@ def check_per_authority_isolation(root: pathlib.Path) -> list[Finding]:
                      "every connection get_db hands out must carry the operator scope, the "
                      "read replica included; a scope applied on one path only means the same "
                      "operator sees different rows depending on which route they hit")
-    if "fresh connection per request" not in get_db:
+    # Lab record 017, phase 2d: a pool is allowed, on two conditions. Every checkout resets the
+    # session (DISCARD ALL), so the is_local=false scope cannot be inherited, and the tests that
+    # prove it, for the scope and for the role, exist.
+    if "class _ConnectionPool" in app:
+        pool_src = app.split("class _ConnectionPool")[1].split("\ndef get_db")[0]
+        if "DISCARD ALL" not in pool_src:
+            return _fail(name,
+                         "the connection pool must reset the session (DISCARD ALL) on checkout: "
+                         "the scope is set with is_local=false, and a pooled connection would "
+                         "otherwise carry one operator's authority into the next request")
+        tests = _read(root, "polaris_web/test_app.py")
+        for t in ("test_a_reused_connection_carries_no_operator_scope",
+                  "test_a_changed_configuration_never_reuses_another_roles_connection"):
+            if f"def {t}" not in tests:
+                return _fail(name, f"{t} must prove the pool carries no scope or role across requests")
+    elif "fresh connection per request" not in get_db:
         return _fail(name,
                      "the scope is set with is_local=false, which is safe ONLY because get_db "
                      "opens a fresh connection per request. Behind a pool the setting is "
@@ -23937,7 +24894,7 @@ def check_append_only_guards_are_classified(root: pathlib.Path) -> list[Finding]
                 guards.setdefault(fn_name, set()).add(table)
     if not guards:
         return _fail(name, "no BEFORE UPDATE OR DELETE trigger was found in the SQL; the schema "
-                           "has thirty-two, so the parse has drifted and this measured nothing")
+                           "has thirty-three, so the parse has drifted and this measured nothing")
     suite = _read(root, "polaris_web/test_check_constraints.py")
     m = re.search(r"APPEND_ONLY_GUARDS\s*=\s*\((.*?)\)", suite, re.S)
     if not m:
@@ -24785,6 +25742,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_caddy_self_built,
     check_prod_stack_boot,
     check_container_hardening,
+    check_read_only_roots,
     check_app_db_tls,
     check_correlation_id,
     check_dockerfile_copies_app_modules,
@@ -24813,6 +25771,8 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_ci_ssl_probe_aggregated,
     check_migrate_docker_stdin_safe,
     check_rust_toolchain_pinned,
+    check_zk_circuit_is_zero_knowledge,
+    check_access_log_omits_queries,
     check_config_schema_covers_env,
     check_config_doc_current,
     check_operability_gate,
@@ -24826,7 +25786,16 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_sbom_workflow,
     check_workflows_reach_the_app_role,
     check_sbom_trivy_matches_scan,
+    check_supply_chain_pins,
     check_release_provenance,
+    check_client_ip_behind_proxies,
+    check_edge_limits,
+    check_doctor_names_failures,
+    check_upgrade_drilled,
+    check_infra_alerts,
+    check_session_key_rotation,
+    check_release_images_signed,
+    check_redis_authenticated,
     check_npm_publish_is_staged,
     check_admin_mfa_deadline,
     check_duress_timing_ballast,
@@ -24861,6 +25830,8 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_abuse_controls,
     check_performance_baseline,
     check_dr_drill_scheduled,
+    check_pitr_drilled,
+    check_restore_reconciled,
     check_chaos_program,
     check_ha_automation,
     check_event_table_partitioning,

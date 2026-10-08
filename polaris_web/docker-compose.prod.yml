@@ -32,7 +32,10 @@ services:
       resources:
         limits:
           cpus: '0.50'
-          memory: 128M
+          # Lab record 017, phase 5: the edge holds each request body (up to 1 MiB) until
+          # it is complete. 100 concurrent 1 MB uploads reached 126 MiB, the old limit; at
+          # this one, with GOMEMLIMIT below, 200 reached 242 MiB and the edge kept running.
+          memory: 256M
         reservations:
           memory: 32M
     logging:
@@ -51,6 +54,12 @@ services:
       - ALL
     # v9.239 — no capability added back: the image runs as uid 1000 and Caddy
     # listens on the unprivileged 8080/8443; the host publishes 80/443 onto them.
+    # Lab record 017, phase 5: the image's own filesystem is read-only. Caddy
+    # writes its certificates and state to /data and /config (volumes) and
+    # nothing else; /tmp is memory.
+    read_only: true
+    tmpfs:
+      - /tmp
     ports:
       - "80:8080"
       - "443:8443"
@@ -60,6 +69,8 @@ services:
       # v9.183 (P1.4) — upstream list for the Caddyfile; the blue-green overlay
       # sets "app:8000 app-green:8000".
       POLARIS_UPSTREAMS: "${POLARIS_UPSTREAMS:-app:8000}"
+      # The Go runtime collects harder as it nears this, below the container's limit.
+      GOMEMLIMIT: 200MiB
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -118,6 +129,13 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Lab record 017, phase 5: the image's own filesystem is read-only, so a
+    # process that gets code execution cannot replace the application it runs.
+    # The app writes its state and logs to the mounts below and the metrics of
+    # its workers to PROMETHEUS_MULTIPROC_DIR under /tmp, which is memory.
+    read_only: true
+    tmpfs:
+      - /tmp
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -153,6 +171,7 @@ services:
       POLARIS_DB_SSLMODE: verify-ca
       POLARIS_DB_SSLROOTCERT: /etc/polaris-pgb-certs/pgbouncer.crt
       POLARIS_SECRET_KEY_FILE: /run/secrets/polaris_secret_key
+      POLARIS_SECRET_KEY_FALLBACKS_FILE: /run/secrets/polaris_secret_key_fallbacks
       POLARIS_REDIS_HOST: redis
       POLARIS_REDIS_PORT: '6379'
       # security.py's rate-limiter auto-selector keys on POLARIS_REDIS_URL, not
@@ -160,7 +179,10 @@ services:
       # in-memory buckets — and prod runs 4 gunicorn workers, so per-IP limits
       # fragment 4x (a real brute-force weakening). Point it at the redis service
       # so the atomic cross-worker Redis limiter is actually used.
-      POLARIS_REDIS_URL: redis://redis:6379/0
+      # Lab record 017, phase 4a: as the ACL user `polaris` (its keys and the
+      # limiter's commands only), its password read from a file, never the URL.
+      POLARIS_REDIS_URL: redis://polaris@redis:6379/0
+      POLARIS_REDIS_PASSWORD_FILE: /run/secrets/polaris_redis_password
       # Caddy is the only ingress and rewrites X-Forwarded-For to the real peer
       # (header_up ... {remote_host}), so the app may trust it. Without this every
       # client shared Caddy's container address: one rate-limit bucket, one
@@ -212,6 +234,9 @@ services:
       POLARIS_WEBAUTHN_RP_NAME: "${POLARIS_WEBAUTHN_RP_NAME:-Polaris}"
       POLARIS_ZK_BINARY: /opt/polaris/zk
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-4}
+      # One pooled connection per sync worker (lab record 017, phase 2d). pgbouncer is in session
+      # mode, so idle pooled connections hold backends: colours x workers x this <= its pool size.
+      POLARIS_DB_POOL_SIZE: "${POLARIS_DB_POOL_SIZE:-1}"
       # v9.116: real ML-DSA-65 signing is the production default (liboqs ships in
       # the prod image). The signing keypair is the file-mounted secret below; its
       # public key is the stable trust anchor verify_token_signature checks
@@ -221,8 +246,10 @@ services:
       POLARIS_PQC_SIGNING_KEY_FILE: /run/secrets/polaris_signing_key
     secrets:
       - polaris_secret_key
+      - polaris_secret_key_fallbacks
       - polaris_db_password
       - polaris_signing_key
+      - polaris_redis_password
     volumes:
       - polaris_state:/var/lib/polaris/state
       - ./logs:/var/log/polaris
@@ -276,6 +303,14 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Lab record 017, phase 5: the image's own filesystem is read-only. The
+    # entrypoint writes pgbouncer.ini and userlist.txt, which holds the database
+    # password, into /etc/pgbouncer: memory owned by the pgbouncer user (uid
+    # 1000), so the password no longer lands in the container's layer on disk.
+    read_only: true
+    tmpfs:
+      - /etc/pgbouncer:uid=1000,gid=1000,mode=0700
+      - /tmp
     depends_on:
       postgres:
         condition: service_healthy
@@ -400,12 +435,15 @@ services:
       # docs/operator/FAILOVER.md); POLARIS_REPLICATION_CIDR (default 'samenet')
       # scopes pg_hba for a remote standby.
       POLARIS_REPLICATOR_PASSWORD_FILE: /run/secrets/polaris_replicator_password
-      # v9.126+ — continuous WAL archiving (pgBackRest). OFF by default so a
-      # deployment without a provisioned repo does not accumulate WAL. Set to '1'
-      # AFTER configuring the offsite repo below; polaris-deploy.sh then runs
-      # stanza-create + check, and docker-init.sh enables archive_mode + the
-      # archive_command. See docs/operator/DR.md.
-      POLARIS_PGBACKREST_ENABLED: "${POLARIS_PGBACKREST_ENABLED:-0}"
+      # Continuous WAL archiving (pgBackRest), ON by default since lab record 017
+      # (gate row OP-14): a restore to a point in time needs the archive from
+      # before the failure. docker-init.sh turns archive_mode on and creates the
+      # stanza at the first init; polaris-deploy.sh turns it on for an existing
+      # cluster and takes the first full backup; polaris-backup.sh takes the
+      # scheduled ones, which also expire old WAL (pgbackrest.conf keeps two
+      # fulls). The repository is the local pgbackrest_repo volume until the
+      # offsite settings below name a bucket. '0' turns archiving off.
+      POLARIS_PGBACKREST_ENABLED: "${POLARIS_PGBACKREST_ENABLED:-1}"
       # v9.173 (P0.9) — the OFFSITE repo, by env alone. The image entrypoint
       # renders these into /etc/pgbackrest/conf.d/repo.conf at every start; unset
       # BUCKET means a LOCAL repo (not offsite). The S3 key pair is NOT env: it is
@@ -481,16 +519,26 @@ services:
       - FOWNER
       - SETGID
       - SETUID
+    # Lab record 017, phase 5: the image's own filesystem is read-only; Redis
+    # writes its append-only file and snapshots to /data (a volume) only.
+    read_only: true
     command: >
       redis-server
       --appendonly yes
       --appendfsync everysec
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
+      --aclfile /run/secrets/redis_users_acl
+    # Lab record 017, phase 4a: users come from redis_users.acl (only the app
+    # password's SHA-256 is in it). `default` is off, so an unauthenticated
+    # client can run nothing; `health` may only PING, which is all this
+    # healthcheck does (nopass: any password is accepted for it).
+    secrets:
+      - redis_users_acl
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "--user", "health", "--pass", "health", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -509,6 +557,9 @@ services:
 secrets:
   polaris_secret_key:
     file: ${POLARIS_SECRETS_DIR:-./secrets}/polaris_secret_key
+  # Lab record 017, phase 4b: the keys a rotation retired (polaris-rotate-secret.sh).
+  polaris_secret_key_fallbacks:
+    file: ${POLARIS_SECRETS_DIR:-./secrets}/polaris_secret_key_fallbacks
   polaris_db_password:
     file: ${POLARIS_SECRETS_DIR:-./secrets}/polaris_db_password
   polaris_db_root_password:
@@ -519,6 +570,12 @@ secrets:
   # minted by polaris-generate-secrets.sh. The public key is the trust anchor.
   polaris_signing_key:
     file: ${POLARIS_SECRETS_DIR:-./secrets}/polaris_signing_key
+  # Lab record 017, phase 4a: the rate limiter's Redis password (the app) and the
+  # Redis users file holding only its SHA-256 (redis). polaris-generate-secrets.sh.
+  polaris_redis_password:
+    file: ${POLARIS_SECRETS_DIR:-./secrets}/polaris_redis_password
+  redis_users_acl:
+    file: ${POLARIS_SECRETS_DIR:-./secrets}/redis_users.acl
 
 # ----------------------------------------------------------------------------
 # Volumes (named; survive `down`, destroyed by `down -v`)

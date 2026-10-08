@@ -52,6 +52,27 @@ Redis rate-limiter backend (each adds its own overhead; measure through
 | Atlas all-time stats, warm (`/api/atlas/stats`) | 100 | 100.0 | 100.0 | 9.0 | 11.9 | 16.2 | 6000/6000 |
 <!-- baseline:end -->
 
+### The connection pool
+
+Measured 2026-10-07 on the same machine and topology (app and PostgreSQL on one host, no TLS,
+no pgbouncer, gunicorn x4, the SHA3-256 placeholder signer), the verification stage offered
+more than the stack could serve, before and after `POLARIS_DB_POOL_SIZE` (lab record 017,
+phase 2d):
+
+| Verification stage | Offered req/s | Achieved req/s | Success | p50 ms | p95 ms |
+|---|---:|---:|---:|---:|---:|
+| A connection per request | 400 | 301.4 | 12000/12000 | 36.6 | 56.2 |
+| A connection per request | 1200 | 300.1 | 23999/23999 | 36.9 | 58.5 |
+| Pool of 1 per worker | 800 | 799.6 | 16000/16000 | 1.6 | 2.3 |
+| Pool of 4 per worker | 800 | 799.6 | 16000/16000 | 1.6 | 2.3 |
+
+Without the pool the stage saturates at about 300 req/s; with it, 800 req/s is served in
+full, so the pool's ceiling is above 800 and the gain at least 2.7 times. 800 is where the
+measurement stops, not the stack: the load generator opens a new TCP connection per request,
+and at 1200 req/s this machine ran out of ephemeral ports (7190 client-side network errors,
+no server error). Without TLS or pgbouncer a new connection is cheap here; through the
+production path each avoided connection also avoids a TLS handshake.
+
 Read the table with the topology line: one developer machine running both the
 application and PostgreSQL, so the two compete for the same cores. A
 dedicated database host moves the issuance and verification numbers up, and

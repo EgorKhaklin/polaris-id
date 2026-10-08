@@ -432,6 +432,30 @@ CREATE TRIGGER trg_credential_copy_append_only
     FOR EACH ROW
     EXECUTE FUNCTION reject_audit_modification();
 
+-- 013 (2026-10-04): a recorded chain anchor is history. Editing one would point the published
+-- record at another block or proof; deleting one would hide that a checkpoint was ever committed.
+DROP TRIGGER IF EXISTS trg_chain_anchor_append_only ON ChainAnchor;
+CREATE TRIGGER trg_chain_anchor_append_only
+    BEFORE UPDATE OR DELETE ON ChainAnchor
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_audit_modification();
+
+-- Lab record 017 (2026-10-07): a recorded backup is history. Editing one would make a stale backup
+-- read as fresh; deleting one would hide that a backup the operator relies on ever ran.
+DROP TRIGGER IF EXISTS trg_backup_event_append_only ON BackupEvent;
+CREATE TRIGGER trg_backup_event_append_only
+    BEFORE UPDATE OR DELETE ON BackupEvent
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_audit_modification();
+
+-- Lab record 017 (2026-10-07): a reconciliation after a restore is history. Editing one would
+-- hide a withdrawal it could not re-apply; deleting one would hide that the database was rewound.
+DROP TRIGGER IF EXISTS trg_restore_record_append_only ON RestoreRecord;
+CREATE TRIGGER trg_restore_record_append_only
+    BEFORE UPDATE OR DELETE ON RestoreRecord
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_audit_modification();
+
 -- P8.7b (v9.328): a key event is history; it is never edited or removed.
 CREATE OR REPLACE FUNCTION reject_authority_key_event_modification()
 RETURNS TRIGGER

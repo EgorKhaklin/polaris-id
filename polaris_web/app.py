@@ -186,6 +186,64 @@ try:
         'Sampled verify-at-use checks where the second witness disagreed with the single-witness result',
         registry=_METRICS_REGISTRY,
     )
+    # Lab record 017 (gate row OP-15): this instance's clock minus the database's, measured when
+    # /metrics is scraped (expiry, OpenID4VP iat/exp and nonces mix the two clocks). NaN when the
+    # database did not answer. Across workers the most recent live measurement is the value.
+    _METRICS_CLOCK_SKEW = _PromGauge(
+        'polaris_clock_skew_seconds',
+        'This instance clock minus the database clock, in seconds, measured at scrape time',
+        registry=_METRICS_REGISTRY,
+        **({'multiprocess_mode': 'livemostrecent'} if _PROM_MULTIPROC_DIR else {}),
+    )
+    # Lab record 017 (gate row OP-15): the database's WAL archiving, read off pg_stat_archiver at
+    # scrape time (readable by the app's role; no exporter, no added privilege). 0 means never.
+    # PolarisArchiveFailing fires when the newest attempt failed and nothing archived since.
+    # The read replica's lag and the staleness limit this deployment set (POLARIS_REPLICA_MAX_LAG_S),
+    # measured at scrape time; a series exists only where a replica is configured (replica="read"),
+    # and lag is NaN when the replica did not answer. PolarisReplicaBehind fires on lag beyond the
+    # limit, or none measured.
+    _METRICS_REPLICA_LAG = _PromGauge(
+        'polaris_db_replica_lag_seconds',
+        'How far the read replica trails the primary, in seconds, measured at scrape time; NaN unreachable',
+        labelnames=('replica',),
+        registry=_METRICS_REGISTRY,
+        **({'multiprocess_mode': 'livemostrecent'} if _PROM_MULTIPROC_DIR else {}),
+    )
+    _METRICS_REPLICA_LAG_LIMIT = _PromGauge(
+        'polaris_db_replica_lag_limit_seconds',
+        'The staleness limit beyond which reads fall back to the primary (POLARIS_REPLICA_MAX_LAG_S)',
+        labelnames=('replica',),
+        registry=_METRICS_REGISTRY,
+        **({'multiprocess_mode': 'livemostrecent'} if _PROM_MULTIPROC_DIR else {}),
+    )
+    # The filesystem holding the state directory: its size and free bytes at scrape time (NaN when
+    # unreadable). In the default single-host install Docker keeps every named volume, the
+    # database's included, on that filesystem. PolarisDiskFilling fires above 90 % used.
+    _METRICS_STATE_FS = _PromGauge(
+        'polaris_state_filesystem_bytes',
+        'The size (kind="size") and free space (kind="free") of the filesystem holding the state directory',
+        labelnames=('kind',),
+        registry=_METRICS_REGISTRY,
+        **({'multiprocess_mode': 'livemostrecent'} if _PROM_MULTIPROC_DIR else {}),
+    )
+    # The newest backup of each kind the database has a record of (BackupEvent, written by the backup
+    # scripts), as Unix time at scrape time; 0 when none has completed, NaN when the database did not
+    # answer. PolarisBackupStale fires when no dump or pgBackRest backup completed for 26 hours.
+    _METRICS_BACKUP_LAST = _PromGauge(
+        'polaris_backup_last_success_timestamp_seconds',
+        'When the newest backup of each kind completed, as Unix time; 0 when none has',
+        labelnames=('kind',),
+        registry=_METRICS_REGISTRY,
+        **({'multiprocess_mode': 'livemostrecent'} if _PROM_MULTIPROC_DIR else {}),
+    )
+    _METRICS_ARCHIVE_LAST = _PromGauge(
+        'polaris_db_archive_last_timestamp_seconds',
+        'When the database last archived a WAL segment (outcome="archived") or last failed to '
+        '(outcome="failed"), as Unix time; 0 when it never has',
+        labelnames=('outcome',),
+        registry=_METRICS_REGISTRY,
+        **({'multiprocess_mode': 'livemostrecent'} if _PROM_MULTIPROC_DIR else {}),
+    )
 except ImportError:
     _PROM_AVAILABLE = False
     _PROM_MULTIPROC_DIR = None
@@ -341,6 +399,12 @@ app.secret_key = _read_secret_file(
     fallback_env_name='POLARIS_SECRET_KEY',
     default='dev-key-change-in-production',
 )
+# Lab record 017, phase 4b: the keys a rotation retired, one per line. They verify what they
+# signed (sessions, relying-party tokens, codes) and sign nothing, so rotating the key logs
+# nobody out; polaris-rotate-secret.sh polaris_secret_key keeps the key it retires here.
+app.config['SECRET_KEY_FALLBACKS'] = [
+    k.strip() for k in (_read_secret_file('POLARIS_SECRET_KEY_FALLBACKS_FILE', default='') or '').splitlines()
+    if k.strip() and k.strip() != app.secret_key]
 
 # Session lifetime: 8 hours of inactivity then re-login required.
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=security.SESSION_LIFETIME_HOURS)
@@ -751,20 +815,137 @@ def _apply_web_statement_timeout(conn):
                     (str(int(WEB_STATEMENT_TIMEOUT_MS)),))
 
 
+# Lab record 017, phase 2d: a per-process connection pool. Off by default (POLARIS_DB_POOL_SIZE=0
+# keeps a fresh connection per request, as before); with a size, close() hands a connection back
+# instead of closing it, and the next checkout resets it with DISCARD ALL before the statement
+# timeout and the operator's scope are applied again. The reset matters: the operator's scope is a
+# session-level setting, and without it a request would inherit the previous one's.
+import threading as _pool_threading
+
+
+def _db_pool_size(environ=os.environ):
+    raw = (environ.get('POLARIS_DB_POOL_SIZE') or '').strip()
+    try:
+        return max(0, int(raw)) if raw else 0
+    except ValueError:
+        return 0
+
+
+DB_POOL_SIZE = _db_pool_size()
+
+
+class _PooledConnection(psycopg2.extensions.connection):
+    """A connection whose close() returns it to its pool, rolled back. Really closed when it
+    belongs to no pool, is already closed, or cannot be rolled back."""
+    _polaris_pool = None
+
+    def close(self):
+        pool = self._polaris_pool
+        if pool is None or self.closed:
+            return psycopg2.extensions.connection.close(self)
+        try:
+            self.rollback()
+        except psycopg2.Error:
+            return psycopg2.extensions.connection.close(self)
+        pool.putconn(self)
+
+
+class _ConnectionPool:
+    """Idle connections kept per process, at most `size`; nothing waits for one. A checkout
+    resets the session (DISCARD ALL) and replaces a connection that fails the reset. A pool
+    inherited across a fork is emptied, never used: a worker must not share a parent's socket."""
+
+    def __init__(self, size, config, readonly=False):
+        self.size, self.config, self.readonly = size, config, readonly
+        self._lock = _pool_threading.Lock()
+        self._idle = []
+        self._pid = os.getpid()
+
+    def _connect(self):
+        conn = psycopg2.connect(connection_factory=_PooledConnection,
+                                cursor_factory=RealDictCursor, **self.config)
+        conn._polaris_pool = self
+        if self.readonly:
+            conn.set_session(readonly=True)
+        return conn
+
+    def getconn(self):
+        with self._lock:
+            if self._pid != os.getpid():
+                self._idle, self._pid = [], os.getpid()
+            conn = self._idle.pop() if self._idle else None
+        if conn is None or conn.closed:
+            return self._connect()
+        try:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute("DISCARD ALL")
+            conn.autocommit = False
+            if self.readonly:
+                conn.set_session(readonly=True)
+            return conn
+        except psycopg2.Error:
+            conn._polaris_pool = None
+            psycopg2.extensions.connection.close(conn)
+            return self._connect()
+
+    def putconn(self, conn):
+        with self._lock:
+            if self._pid == os.getpid() and len(self._idle) < self.size:
+                self._idle.append(conn)
+                return
+        conn._polaris_pool = None
+        psycopg2.extensions.connection.close(conn)
+
+
+_DB_POOLS = {}
+_DB_POOLS_LOCK = _pool_threading.Lock()
+_DB_POOLS_MAX = 8
+
+
+def _pool_for(config, readonly):
+    """The pool for exactly this configuration. Keyed on every connection parameter (the role
+    above all: a connection opened as the schema owner bypasses row-level security, so it must
+    never serve a request configured as polaris_app) and on psycopg2.connect itself, so a
+    connection made before tracing instrumented connect() is not handed out after. Pools for
+    configurations no longer in use are closed beyond _DB_POOLS_MAX."""
+    key = (readonly, id(psycopg2.connect),
+           tuple(sorted((k, str(v)) for k, v in config.items())))
+    with _DB_POOLS_LOCK:
+        pool = _DB_POOLS.get(key)
+        if pool is None:
+            pool = _DB_POOLS[key] = _ConnectionPool(DB_POOL_SIZE, dict(config), readonly)
+            while len(_DB_POOLS) > _DB_POOLS_MAX:
+                old_key = next(iter(_DB_POOLS))
+                old = _DB_POOLS.pop(old_key)
+                with old._lock:
+                    idle, old._idle = old._idle, []
+                for conn in idle:
+                    conn._polaris_pool = None
+                    psycopg2.extensions.connection.close(conn)
+    return pool
+
+
 def get_db(readonly=False):
     """
-    Open a fresh connection per request. `readonly=True` connects to the
-    configured read replica (a read-only session, so a stray write fails loudly)
-    when one exists; otherwise it is the primary. For production we would use a
-    connection pool but a per-request connection is simpler and adequate here.
+    A connection for one request. `readonly=True` connects to the configured read replica (a
+    read-only session, so a stray write fails loudly) when one exists; otherwise the primary.
+    Fresh per request unless POLARIS_DB_POOL_SIZE is set (see _ConnectionPool); either way the
+    caller closes it when done.
     """
     if readonly and DB_CONFIG_REPLICA is not None:
-        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG_REPLICA)
-        conn.set_session(readonly=True)
+        if DB_POOL_SIZE:
+            conn = _pool_for(DB_CONFIG_REPLICA, True).getconn()
+        else:
+            conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG_REPLICA)
+            conn.set_session(readonly=True)
         _apply_web_statement_timeout(conn)
         _apply_operator_scope(conn)
         return conn
-    conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+    if DB_POOL_SIZE:
+        conn = _pool_for(DB_CONFIG, False).getconn()
+    else:
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
     _apply_web_statement_timeout(conn)
     _apply_operator_scope(conn)
     return conn
@@ -2611,10 +2792,14 @@ def _check_and_record_duress(token_id, context_id, requesting_agency_id, duress_
     if os.environ.get('POLARIS_DURESS_SYNC') == '1':
         _record_duress_async(token_id, context_id, requesting_agency_id)
     else:
+        # Not a daemon (lab record 017, phase 2b): the interpreter abandons a daemon thread at
+        # exit, so a record still being written when a worker stopped (a deploy, a recycle) was
+        # lost. A non-daemon thread is joined at a normal exit, bounded by gunicorn's graceful
+        # timeout; the request still returns after the same thread spawn either way.
         threading.Thread(
             target=_record_duress_async,
             args=(token_id, context_id, requesting_agency_id),
-            daemon=True,
+            daemon=False,
         ).start()
 
 

@@ -7919,6 +7919,64 @@ class TransparencyProofBoundsTests(UnauthenticatedTestCase):
             self.assertEqual(r.get_json()['log_size'], size)
 
 
+class ChainAnchorPublicationTests(UnauthenticatedTestCase):
+    """013: the chain anchors are published beside the heads, and what is served verifies. The
+    real step-1 anchor (sdk/testdata/chain-anchor-969876.json) is recorded as the schema owner,
+    served unauthenticated by /api/v1/transparency/anchors, and decided by the detached
+    verifier's verify_chain_anchor against block 969876's header. The served checkpoint and proof
+    are the recorded bytes, so the endpoint adds nothing a verifier has to trust."""
+
+    ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(ROOT, "sdk", "testdata", "chain-anchor-969876.json")) as _f:
+        FIXTURE = json.load(_f)
+
+    def _record(self):
+        a = self.FIXTURE["anchor"]
+        cp = a["checkpoint"].encode("utf-8")
+        _owner_write("INSERT INTO ChainAnchor (checkpoint, checkpoint_sha256, chain, method, proof, "
+                     "block_height, block_header_hex, recorded_by) VALUES (%s, %s, 'BITCOIN', "
+                     "'OPENTIMESTAMPS', %s, 969876, %s, 'test') ON CONFLICT (checkpoint_sha256) DO NOTHING",
+                     (cp, hashlib.sha256(cp).hexdigest(), bytes.fromhex(a["proof_hex"]),
+                      self.FIXTURE["headers"]["969876"]))
+        return hashlib.sha256(cp).hexdigest()
+
+    @staticmethod
+    def _verifier():
+        import importlib.util
+        path = os.path.join(ChainAnchorPublicationTests.ROOT, "scripts", "polaris-verify.py")
+        spec = importlib.util.spec_from_file_location("polaris_verify_chain_anchor", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_served_anchor_is_the_recorded_one_and_verifies(self):
+        digest = self._record()
+        r = self.client.get('/api/v1/transparency/anchors')
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:200])
+        served = [a for a in r.get_json()['anchors'] if a['checkpoint_sha256'] == digest]
+        self.assertEqual(len(served), 1)
+        a = served[0]
+        self.assertEqual((a['format'], a['chain'], a['method'], a['block_height']),
+                         ('polaris-chain-anchor/1', 'BITCOIN', 'OPENTIMESTAMPS', 969876))
+        self.assertEqual(a['checkpoint'], self.FIXTURE['anchor']['checkpoint'])
+        self.assertEqual(a['proof_hex'], self.FIXTURE['anchor']['proof_hex'])
+        headers = {s: {969876: self.FIXTURE['headers']['969876']} for s in ('source-a', 'source-b')}
+        v = self._verifier().verify_chain_anchor(a, headers)
+        self.assertTrue(v['anchored'], v)
+        self.assertEqual(v['block_hash'], self.FIXTURE['block_hash'])
+
+    def test_the_list_is_bounded_and_a_bad_range_is_refused(self):
+        self._record()
+        one = self.client.get('/api/v1/transparency/anchors?start=0&end=1').get_json()
+        self.assertEqual(len(one['anchors']), 1)
+        self.assertEqual(self.client.get('/api/v1/transparency/anchors?start=2&end=1').status_code, 400)
+        self.assertEqual(self.client.get('/api/v1/transparency/anchors?start=-1').status_code, 400)
+        with patch.object(rp_api, '_CHAIN_ANCHORS_CAP', 0):
+            capped = self.client.get('/api/v1/transparency/anchors').get_json()
+        self.assertEqual(capped['anchors'], [])
+        self.assertGreaterEqual(capped['count'], 1)
+
+
 class BoundOperatorRouteIsolationTests(PolarisTestCase):
     """The routes themselves, run AS the application role by an operator bound to authority 1,
     asked for authority 3's credential (2026-09-25). Every other test in this file connects as
@@ -8953,7 +9011,6 @@ class F05_ProductionSecretGuardTests(unittest.TestCase):
         self.assertIn('FATAL', proc.stderr)
         self.assertIn('POLARIS_DB_SSLMODE', proc.stderr)
 
-
     def test_unreadable_secret_file_rejected_in_production(self):
         """Lab record 017: a secret file that is set but unreadable stops a production boot by
         name, instead of falling back to an environment variable or a default."""
@@ -8980,6 +9037,122 @@ class F05_ProductionSecretGuardTests(unittest.TestCase):
                                   'POLARIS_USE_REAL_PQC': '1',
                                   'POLARIS_DOMAIN': 'polaris.example.org'})
         self.assertNotIn('setting(s) are wrong', proc.stderr)
+
+
+class ConnectionPoolTests(PolarisTestCase):
+    """Lab record 017, phase 2d: a pooled connection carries nothing from one request to the next."""
+
+    def _pool(self, size=2):
+        return flask_app._ConnectionPool(size, flask_app.DB_CONFIG)
+
+    def test_a_reused_connection_carries_no_operator_scope(self):
+        pool = self._pool()
+        c1 = pool.getconn()
+        pid = c1.info.backend_pid
+        with c1.cursor() as cur:
+            cur.execute("SELECT set_config('polaris.operator_agency_id', '2', false)")
+        c1.commit()  # as a request does: committed, the setting lives as long as the session
+        c1.close()
+        c2 = pool.getconn()
+        try:
+            self.assertEqual(c2.info.backend_pid, pid, "the pool must reuse the connection")
+            with c2.cursor() as cur:
+                cur.execute("SELECT current_setting('polaris.operator_agency_id', true) AS v")
+                self.assertIn(cur.fetchone()['v'], (None, ''),
+                              "a reused connection carried the previous operator's scope")
+        finally:
+            c2.close()
+
+    def test_session_and_transaction_state_do_not_survive_a_return(self):
+        pool = self._pool()
+        c1 = pool.getconn()
+        with c1.cursor() as cur:
+            cur.execute("CREATE TEMP TABLE pool_probe_temp (x int)")
+        c1.commit()  # a committed temp table lives as long as the session
+        with c1.cursor() as cur:
+            cur.execute("CREATE TEMP TABLE pool_probe_uncommitted (x int)")
+        c1.close()  # this one never committed: only the rollback on return removes it
+        c2 = pool.getconn()
+        try:
+            with c2.cursor() as cur:
+                cur.execute("SELECT to_regclass('pg_temp.pool_probe_temp') AS t, "
+                            "to_regclass('pg_temp.pool_probe_uncommitted') AS u")
+                row = cur.fetchone()
+            self.assertIsNone(row['t'], "a session's temp table survived the return")
+            self.assertIsNone(row['u'], "an uncommitted transaction survived the return")
+        finally:
+            c2.close()
+
+    def test_a_broken_connection_is_replaced(self):
+        pool = self._pool()
+        c1 = pool.getconn()
+        pid = c1.info.backend_pid
+        c1.close()
+        killer = psycopg2.connect(**flask_app.DB_CONFIG)
+        try:
+            with killer.cursor() as cur:
+                cur.execute("SELECT pg_terminate_backend(%s)", (pid,))
+            killer.commit()
+        finally:
+            killer.close()
+        c2 = pool.getconn()
+        try:
+            with c2.cursor() as cur:
+                cur.execute("SELECT 1 AS one")
+                self.assertEqual(cur.fetchone()['one'], 1)
+            self.assertNotEqual(c2.info.backend_pid, pid)
+        finally:
+            c2.close()
+
+    def test_a_pool_inherited_across_a_fork_is_not_used(self):
+        pool = self._pool()
+        c1 = pool.getconn()
+        pid = c1.info.backend_pid
+        c1.close()
+        pool._pid = -1  # as if this process were a fork of the one that filled the pool
+        c2 = pool.getconn()
+        try:
+            self.assertNotEqual(c2.info.backend_pid, pid, "a forked worker reused its parent's socket")
+        finally:
+            c2.close()
+
+    def test_a_changed_configuration_never_reuses_another_roles_connection(self):
+        """The role a connection was opened as is the role row-level security applies to: when
+        the configuration names polaris_app, no connection opened as the owner may serve it."""
+        from unittest import mock
+        with mock.patch.object(flask_app, 'DB_POOL_SIZE', 2):
+            flask_app._DB_POOLS.clear()
+            owner = flask_app.get_db()
+            with owner.cursor() as cur:
+                cur.execute("SELECT current_user AS u")
+                owner_role = cur.fetchone()['u']
+            owner.close()  # idle in the owner's pool
+            if owner_role == 'polaris_app':
+                flask_app._DB_POOLS.clear()
+                self.skipTest("this run is already polaris_app; the owner-to-app direction runs "
+                              "in the owner suite")
+            app_cfg = dict(user='polaris_app',
+                           password=os.environ.get('POLARIS_APP_TEST_PASSWORD', 'polaris_dev_password'))
+            try:
+                psycopg2.connect(**dict(flask_app.DB_CONFIG, **app_cfg)).close()
+            except psycopg2.OperationalError as exc:
+                self.skipTest('polaris_app unreachable: %s' % exc)
+            with mock.patch.dict(flask_app.DB_CONFIG, app_cfg):
+                conn = flask_app.get_db()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT current_user AS u")
+                        role = cur.fetchone()['u']
+                finally:
+                    conn.close()
+            flask_app._DB_POOLS.clear()
+        self.assertNotEqual(owner_role, 'polaris_app')
+        self.assertEqual(role, 'polaris_app', "a request configured as polaris_app was served as %s" % role)
+
+    def test_the_pool_is_off_by_default(self):
+        self.assertEqual(flask_app._db_pool_size({}), 0)
+        self.assertEqual(flask_app._db_pool_size({'POLARIS_DB_POOL_SIZE': ''}), 0)
+        self.assertEqual(flask_app._db_pool_size({'POLARIS_DB_POOL_SIZE': '4'}), 4)
 
 
 class ConfigSchemaTests(unittest.TestCase):
@@ -9091,6 +9264,266 @@ class ConfigSchemaTests(unittest.TestCase):
                               env={k: v for k, v in os.environ.items() if not k.startswith('POLARIS_')})
         self.assertEqual(proc.returncode, 2, proc.stderr)
         self.assertIn('POLARIS_DB_SSLMODE', proc.stderr)
+
+
+class DuressDurabilityTests(unittest.TestCase):
+    """Lab record 017, phase 2b: a duress record still being written when the worker exits is
+    finished, not abandoned. The recording runs off the request thread so the response time
+    says nothing about a match; it must still land if the worker stops right after."""
+
+    def test_a_duress_record_survives_a_worker_exit(self):
+        import subprocess, tempfile, time as _t
+        tmp = tempfile.mkdtemp()
+        marker = os.path.join(tmp, 'recorded')
+        script = os.path.join(tmp, 'worker.py')
+        with open(script, 'w') as fh:
+            fh.write(
+                "import os, sys, time\n"
+                "sys.path.insert(0, os.getcwd())\n"
+                "os.environ.pop('POLARIS_DURESS_SYNC', None)\n"
+                "os.environ.pop('POLARIS_ENV', None)\n"
+                "import app\n"
+                "app.query = lambda *a, **k: {'duress_code_hash': 'enrolled'}\n"
+                "app.check_password_hash = lambda h, v: True\n"
+                "def slow_record(*args):\n"
+                "    time.sleep(0.5)\n"
+                "    open(sys.argv[1], 'w').write('recorded')\n"
+                "app._record_duress_async = slow_record\n"
+                "app._check_and_record_duress(1, 1, 1, 'the-duress-code')\n"
+                "sys.exit(0)  # the worker exits as soon as the request has returned\n")
+        started = _t.time()
+        proc = subprocess.run([sys.executable, script, marker],
+                              cwd=os.path.dirname(os.path.abspath(__file__)),
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
+        self.assertTrue(os.path.exists(marker),
+                        "the duress record was abandoned when the worker exited")
+        self.assertGreaterEqual(_t.time() - started, 0.5)
+
+
+class AccessLogAndClockTests(unittest.TestCase):
+    """Lab record 017, phase 2c: the access log omits query strings; the clock is compared."""
+
+    def test_the_access_log_line_carries_no_query_string(self):
+        """Render the configured format with gunicorn's atoms for a request carrying a secret in
+        its query and a referrer: neither may reach the line."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            'gunicorn_conf_for_test', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'gunicorn.conf.py'))
+        conf = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(conf)
+        atoms = {'h': '203.0.113.7', 'l': '-', 'u': '-', 't': '[07/Oct/2026:04:00:00 +0000]',
+                 'r': 'GET /api/v1/epoch/7/leaves?token=TKN-SECRET HTTP/1.1', 'm': 'GET',
+                 'U': '/api/v1/epoch/7/leaves', 'q': 'token=TKN-SECRET', 'H': 'HTTP/1.1',
+                 's': '200', 'b': '512', 'f': 'https://x.example/?code=CODE-SECRET',
+                 'a': 'curl/8', 'L': '0.01'}
+        line = conf.access_log_format % atoms
+        self.assertIn('/api/v1/epoch/7/leaves', line)
+        self.assertNotIn('TKN-SECRET', line)
+        self.assertNotIn('CODE-SECRET', line)
+
+    def test_the_clock_is_compared_with_the_database(self):
+        from unittest import mock
+        import status_routes
+        now = __import__('time').time()
+        with mock.patch('status_routes.query', return_value={'t': now + 5.0}):
+            skewed = status_routes._health_check_clock()
+        with mock.patch('status_routes.query', return_value={'t': now}):
+            fine = status_routes._health_check_clock()
+        self.assertEqual(skewed['status'], 'degraded')
+        self.assertGreater(skewed['skew_seconds'], 4.0)
+        self.assertEqual(fine['status'], 'healthy')
+
+    def test_a_skewed_clock_never_drains_the_instance(self):
+        """Skew is reported, not routed on: the database's clock being wrong is a shared fault."""
+        from unittest import mock
+        import status_routes
+        with mock.patch('status_routes.query', side_effect=RuntimeError('down')):
+            self.assertNotEqual(status_routes._health_check_clock()['status'], 'unhealthy')
+
+
+class RedisAuthenticationTests(unittest.TestCase):
+    """Lab record 017, phase 4a: the rate limiter's Redis authenticates as an ACL user whose
+    password comes from a file; production refuses anything less, and a fallback shows."""
+
+    def setUp(self):
+        import config_schema
+        self.cs = config_schema
+        self.tmp = __import__('tempfile').mkdtemp()
+        self.pwfile = os.path.join(self.tmp, 'redis_password')
+        with open(self.pwfile, 'w') as fh:
+            fh.write('a' * 64 + '\n')
+        self.url = 'redis://polaris@redis:6379/0'
+
+    def _redis_problems(self, env):
+        return [p for p in self.cs.problems(env, production=True) if 'REDIS' in p]
+
+    def test_production_requires_the_password_file(self):
+        self.assertEqual(self._redis_problems(
+            {'POLARIS_REDIS_URL': self.url, 'POLARIS_REDIS_PASSWORD_FILE': self.pwfile}), [])
+        found = self._redis_problems({'POLARIS_REDIS_URL': self.url})
+        self.assertTrue(any(p.startswith('POLARIS_REDIS_PASSWORD_FILE:') for p in found), found)
+
+    def test_production_refuses_a_password_in_the_url(self):
+        found = self._redis_problems({'POLARIS_REDIS_URL': 'redis://polaris:s3cret@redis:6379/0',
+                                      'POLARIS_REDIS_PASSWORD_FILE': self.pwfile})
+        self.assertTrue(any(p.startswith('POLARIS_REDIS_URL: carries a password') for p in found),
+                        found)
+
+    def test_the_limiter_authenticates_with_the_file(self):
+        from unittest import mock
+        import redis as redis_py
+        import security
+        seen = {}
+
+        class _Client:
+            def ping(self):
+                return True
+
+            def register_script(self, script):
+                return lambda **kw: 1
+
+        def _from_url(url, **kw):
+            seen.update(url=url, password=kw.get('password'))
+            return _Client()
+
+        env = {'POLARIS_REDIS_URL': self.url, 'POLARIS_REDIS_PASSWORD_FILE': self.pwfile,
+               'POLARIS_RATE_LIMIT_BACKEND': 'auto'}
+        with mock.patch.dict(os.environ, env), mock.patch.object(redis_py, 'from_url', _from_url):
+            limiter = security._make_rate_limiter()
+        self.assertEqual(limiter.name, 'redis')
+        self.assertEqual(seen, {'url': self.url, 'password': 'a' * 64},
+                         "the password must come from the file, stripped, and not from the URL")
+
+    def test_a_worker_that_starts_before_redis_moves_to_it_once_it_answers(self):
+        import security
+
+        class _Redis:
+            name = 'redis'
+            calls = 0
+
+            def allow(self, key, max_events, window_seconds):
+                _Redis.calls += 1
+                return True
+
+            def healthy(self):
+                return True
+
+            def reset(self, key=None):
+                pass
+
+        late = [None, None]  # Redis does not answer the first two asks
+        limiter = security.RedisOnceReachable(lambda: late.pop(0) if late else _Redis())
+        limiter.RETRY_SECONDS = 0.0
+        limiter._next_try = 0.0
+        self.assertEqual(limiter.name, 'memory')
+        limiter.allow('k', 5, 60)
+        limiter.allow('k', 5, 60)
+        self.assertEqual(limiter.name, 'memory', "two asks, two refusals: still counting in memory")
+        limiter.allow('k', 5, 60)
+        self.assertEqual(limiter.name, 'redis', "the third ask found Redis")
+        before = _Redis.calls
+        limiter.allow('k', 5, 60)
+        self.assertEqual(_Redis.calls, before + 1, "once Redis has answered, every call goes to it")
+
+    def test_the_selector_keeps_asking_when_redis_is_late(self):
+        from unittest import mock
+        import security
+        env = {'POLARIS_REDIS_URL': 'redis://polaris@127.0.0.1:1/0',
+               'POLARIS_REDIS_PASSWORD_FILE': self.pwfile, 'POLARIS_RATE_LIMIT_BACKEND': 'auto'}
+        with mock.patch.dict(os.environ, env):
+            limiter = security._make_rate_limiter()
+        self.assertIsInstance(limiter, security.RedisOnceReachable,
+                              "an unreachable Redis at start must not mean memory for good")
+        self.assertEqual(limiter.name, 'memory')
+
+    def test_a_fallback_from_configured_redis_is_degraded(self):
+        from unittest import mock
+        import security
+        import status_routes
+        memory = security.InMemoryRateLimiter()
+        with mock.patch.object(security, 'rate_limiter', memory):
+            with mock.patch.dict(os.environ, {'POLARIS_REDIS_URL': self.url}):
+                configured = status_routes._health_check_redis()
+            with mock.patch.dict(os.environ, {'POLARIS_REDIS_URL': ''}):
+                unconfigured = status_routes._health_check_redis()
+        self.assertEqual(configured['status'], 'degraded',
+                         "Redis configured but unused must not read as healthy")
+        self.assertEqual(unconfigured['status'], 'healthy')
+
+
+class SecretKeyRotationTests(PolarisTestCase):
+    """Lab record 017, phase 4b: rotating the session key logs nobody out. The retired key, kept
+    in POLARIS_SECRET_KEY_FALLBACKS_FILE, verifies what it signed and signs nothing."""
+
+    def setUp(self):
+        super().setUp()
+        self._saved = (flask_app.app.secret_key,
+                       list(flask_app.app.config.get('SECRET_KEY_FALLBACKS') or []))
+
+    def tearDown(self):
+        flask_app.app.secret_key, flask_app.app.config['SECRET_KEY_FALLBACKS'] = self._saved
+        super().tearDown()
+
+    def _rotate(self, keep_old):
+        old = flask_app.app.secret_key
+        flask_app.app.secret_key = 'rotated-' + 'b' * 56
+        flask_app.app.config['SECRET_KEY_FALLBACKS'] = [old] if keep_old else []
+        return old
+
+    def test_a_signed_in_operator_stays_signed_in_across_a_rotation(self):
+        self._login('admin')
+        self.assertEqual(self.client.get('/dashboard').status_code, 200)
+        self._rotate(keep_old=True)
+        self.assertEqual(self.client.get('/dashboard').status_code, 200,
+                         "the retired key must still verify the session it signed")
+
+    def test_dropping_the_old_key_ends_every_session(self):
+        self._login('admin')
+        self._rotate(keep_old=False)
+        self.assertNotEqual(self.client.get('/dashboard').status_code, 200,
+                            "with no retired key kept, a session signed before the rotation must not verify")
+
+    def test_relying_party_values_survive_and_new_ones_use_only_the_new_key(self):
+        import rp_auth
+        keys = rp_auth.keys_of(flask_app.app)
+        token = rp_auth.issue_access_token(keys, 7, 'cid')
+        code = rp_auth.issue_auth_code(keys, {'x': 1})
+        nonce = rp_auth.issue_vci_value(keys, 'nonce', {'ag': 1})
+        old = self._rotate(keep_old=True)
+        keys = rp_auth.keys_of(flask_app.app)
+        self.assertIsNotNone(rp_auth.validate_access_token(keys, token))
+        self.assertIsNotNone(rp_auth.validate_auth_code(keys, code))
+        self.assertIsNotNone(rp_auth.open_vci_value(keys, 'nonce', nonce))
+        self.assertIsNone(rp_auth.validate_access_token(old, rp_auth.issue_access_token(keys, 7, 'cid')),
+                          "a value made after the rotation must be signed with the current key only")
+        self.assertIsNone(rp_auth.validate_auth_code(old, rp_auth.issue_auth_code(keys, {'x': 1})),
+                          "a code made after the rotation must be encrypted under the current key only")
+        self.assertIsNone(rp_auth.open_vci_value(old, 'nonce', rp_auth.issue_vci_value(keys, 'nonce', {'ag': 1})),
+                          "a VCI value made after the rotation must be encrypted under the current key only")
+        flask_app.app.config['SECRET_KEY_FALLBACKS'] = []
+        keys = rp_auth.keys_of(flask_app.app)
+        self.assertIsNone(rp_auth.validate_access_token(keys, token))
+        self.assertIsNone(rp_auth.validate_auth_code(keys, code))
+        self.assertIsNone(rp_auth.open_vci_value(keys, 'nonce', nonce))
+
+    def test_the_app_reads_retired_keys_from_the_file(self):
+        import subprocess
+        import tempfile
+        with tempfile.NamedTemporaryFile('w', suffix='-fallbacks', delete=False) as fh:
+            fh.write('retired-one\nretired-two\n\ncurrent-key\n')
+        try:
+            proc = subprocess.run(
+                [sys.executable, '-c', 'import app; print(app.app.config["SECRET_KEY_FALLBACKS"])'],
+                cwd=os.path.dirname(os.path.abspath(__file__)), capture_output=True, text=True,
+                timeout=30, env=dict(os.environ, POLARIS_SECRET_KEY='current-key',
+                                     POLARIS_SECRET_KEY_FALLBACKS_FILE=fh.name))
+        finally:
+            os.unlink(fh.name)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-500:])
+        self.assertEqual(proc.stdout.strip().splitlines()[-1], "['retired-one', 'retired-two']",
+                         "every retired line, in order, blank lines and the current key left out")
+
 
 class F06_CookieHardeningTests(PolarisTestCase):
     """F-07: Cookie attributes Secure / HttpOnly / SameSite. CWE-614, CWE-1004."""
@@ -10640,8 +11073,14 @@ class ConcurrencyTests(PolarisTestCase):
         is deleting and wait on them, which the short lock_timeout turns into a failure; without
         the fold's, the same. The control folds every change once nobody holds the lock."""
         with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("UPDATE Individual SET jurisdiction = 'US-CA' "
-                        "WHERE individual_id = (SELECT min(individual_id) FROM Individual)")
+            # A delta is written only for a person with an EnrollmentCurrent row, and only on a real
+            # change of jurisdiction. The control picked min(Individual) and set it to US-CA, so it
+            # depended on that person being enrolled and not already in US-CA: in the real-signer
+            # suite's whole-module run (CI, 2026-10-05, 986 of 987 passed) the update wrote no
+            # delta. Pick an enrolled person and flip the value, so the update always changes one.
+            cur.execute("UPDATE Individual SET jurisdiction = CASE WHEN jurisdiction = 'US-CA' "
+                        "THEN 'US-NY' ELSE 'US-CA' END "
+                        "WHERE individual_id = (SELECT min(individual_id) FROM EnrollmentCurrent)")
             cur.execute("SELECT count(*) AS n FROM EnrollmentCountDelta")
             self.assertGreater(cur.fetchone()['n'], 0, 'control: there are changes to fold')
             conn.commit()
@@ -12967,6 +13406,192 @@ class ResourceBoundTests(unittest.TestCase):
         if r.status_code == 200:  # prometheus_client present
             self.assertNotIn(marker, r.data.decode(),
                              'the raw 404 path must not appear as a metric label')
+
+
+class ClockSkewMetricTests(unittest.TestCase):
+    """Lab record 017 (gate row OP-15): /metrics carries this instance's clock against the
+    database's, measured when it is scraped (PolarisClockSkew pages on it), and NaN, never the
+    last reading, when the database did not answer."""
+
+    def _skew(self):
+        from app import app as polaris_app
+        with polaris_app.test_client() as c:
+            r = c.get('/metrics')
+        if r.status_code != 200:
+            self.skipTest('prometheus_client is not installed')
+        m = re.search(r'^polaris_clock_skew_seconds(?:\{[^}]*\})? (\S+)$', r.data.decode(), re.M)
+        self.assertIsNotNone(m, 'polaris_clock_skew_seconds is not exposed')
+        return float(m.group(1))
+
+    def test_the_skew_is_measured_at_scrape_time(self):
+        self.assertLess(abs(self._skew()), 1.0, 'this process and the local database share a clock')
+        import status_routes
+        real = status_routes._time
+
+        class TenSecondsAhead:
+            @staticmethod
+            def time():
+                return real.time() + 10.0
+
+        with patch.object(status_routes, '_time', TenSecondsAhead):
+            self.assertAlmostEqual(self._skew(), -10.0, delta=1.0,
+                                   msg='a clock 10 s ahead of the database must read about -10 s')
+
+    def test_an_unanswered_database_reads_nan_not_the_last_value(self):
+        self.assertLess(abs(self._skew()), 1.0)
+        import status_routes
+        with patch.object(status_routes, 'query', side_effect=RuntimeError('the database is down')):
+            skew = self._skew()
+        self.assertNotEqual(skew, skew, 'unmeasured must be NaN, not the previous reading')
+
+
+class ArchiveMetricTests(unittest.TestCase):
+    """Lab record 017 (gate row OP-15): /metrics carries the database's WAL archiving as
+    pg_stat_archiver reports it at scrape time, 0 for never, NaN when the database did not answer."""
+
+    def _archive(self):
+        from app import app as polaris_app
+        with polaris_app.test_client() as c:
+            r = c.get('/metrics')
+        if r.status_code != 200:
+            self.skipTest('prometheus_client is not installed')
+        got = dict(re.findall(r'^polaris_db_archive_last_timestamp_seconds\{outcome="(\w+)"\} (\S+)$',
+                              r.data.decode(), re.M))
+        self.assertEqual(set(got), {'archived', 'failed'}, 'both outcomes must be exposed')
+        return float(got['archived']), float(got['failed'])
+
+    def test_the_database_report_is_read_at_scrape_time(self):
+        import status_routes
+        real = status_routes.query
+
+        def failing_archive(sql, *a, **kw):
+            if 'pg_stat_archiver' in sql:
+                return {'archived': 1900.0, 'failed': 1960.0}
+            return real(sql, *a, **kw)
+
+        with patch.object(status_routes, 'query', side_effect=failing_archive):
+            self.assertEqual(self._archive(), (1900.0, 1960.0))
+        archived, failed = self._archive()
+        self.assertGreaterEqual(archived, 0.0)
+        self.assertGreaterEqual(failed, 0.0)
+        self.assertNotEqual((archived, failed), (1900.0, 1960.0), 'the real report replaces the old one')
+
+    def test_an_unanswered_database_reads_nan(self):
+        import status_routes
+        with patch.object(status_routes, 'query', side_effect=RuntimeError('the database is down')):
+            archived, failed = self._archive()
+        self.assertTrue(archived != archived and failed != failed, 'unmeasured must be NaN')
+
+
+class ReplicaLagMetricTests(unittest.TestCase):
+    """Lab record 017 (gate row OP-15): /metrics carries a configured read replica's lag and the
+    deployment's staleness limit at scrape time, NaN for an unreachable replica, and no series at
+    all where no replica is configured."""
+
+    def _scrape(self):
+        from app import app as polaris_app
+        with polaris_app.test_client() as c:
+            r = c.get('/metrics')
+        if r.status_code != 200:
+            self.skipTest('prometheus_client is not installed')
+        text = r.data.decode()
+        lag = re.search(r'^polaris_db_replica_lag_seconds\{replica="read"\} (\S+)$', text, re.M)
+        limit = re.search(r'^polaris_db_replica_lag_limit_seconds\{replica="read"\} (\S+)$', text, re.M)
+        return (None if lag is None else float(lag.group(1)),
+                None if limit is None else float(limit.group(1)))
+
+    def test_a_configured_replica_reports_its_lag_and_the_limit(self):
+        import status_routes
+        with patch.object(status_routes, '_health_check_replica',
+                          return_value={'status': 'degraded', 'lag_seconds': 42.0}):
+            lag, limit = self._scrape()
+        self.assertEqual(lag, 42.0)
+        self.assertEqual(limit, flask_app.REPLICA_MAX_LAG_S)
+
+    def test_an_unreachable_replica_reads_nan(self):
+        import status_routes
+        with patch.object(status_routes, '_health_check_replica',
+                          return_value={'status': 'degraded', 'serving_reads': False, 'error': 'x'}):
+            lag, _ = self._scrape()
+        self.assertTrue(lag is not None and lag != lag, 'an unreachable replica must read NaN')
+
+    def test_no_replica_no_series_from_a_fresh_registry(self):
+        import status_routes
+        fresh = flask_app._PromGauge('polaris_test_replica_probe', 'probe', labelnames=('replica',),
+                                     registry=flask_app._PromRegistry())
+        with patch.object(status_routes, '_health_check_replica', return_value=None), \
+                patch.object(flask_app, '_METRICS_REPLICA_LAG', fresh):
+            self._scrape()
+        self.assertEqual(list(fresh.collect())[0].samples, [],
+                         'with no replica configured nothing may be set')
+
+
+class StateFilesystemMetricTests(unittest.TestCase):
+    """Lab record 017 (gate row OP-15): /metrics carries the size and free space of the filesystem
+    holding the state directory, measured at scrape time, NaN when it cannot be read."""
+
+    def _fs(self):
+        from app import app as polaris_app
+        with polaris_app.test_client() as c:
+            r = c.get('/metrics')
+        if r.status_code != 200:
+            self.skipTest('prometheus_client is not installed')
+        got = dict(re.findall(r'^polaris_state_filesystem_bytes\{kind="(\w+)"\} (\S+)$', r.data.decode(), re.M))
+        self.assertEqual(set(got), {'size', 'free'}, 'both size and free must be exposed')
+        return float(got['size']), float(got['free'])
+
+    def test_the_filesystem_is_measured_at_scrape_time(self):
+        import shutil
+        import status_routes
+        size, free = self._fs()
+        real = shutil.disk_usage(status_routes._state_dir_probe())
+        self.assertEqual(size, float(real.total))
+        self.assertGreater(free, 0.0)
+        fake = shutil._ntuple_diskusage(100 * 10 ** 9, 95 * 10 ** 9, 5 * 10 ** 9)
+        with patch.object(status_routes.shutil, 'disk_usage', return_value=fake):
+            self.assertEqual(self._fs(), (100e9, 5e9))
+
+    def test_an_unreadable_filesystem_reads_nan(self):
+        import status_routes
+        with patch.object(status_routes.shutil, 'disk_usage', side_effect=OSError('gone')):
+            size, free = self._fs()
+        self.assertTrue(size != size and free != free, 'unreadable must be NaN, not the last reading')
+
+
+class BackupMetricTests(PolarisTestCase):
+    """Lab record 017 (gate row OP-15): /metrics carries the newest backup of each kind the database
+    has a record of (BackupEvent), 0 for a kind never recorded, NaN when the database did not answer."""
+
+    def _backups(self):
+        from app import app as polaris_app
+        with polaris_app.test_client() as c:
+            r = c.get('/metrics')
+        if r.status_code != 200:
+            self.skipTest('prometheus_client is not installed')
+        got = dict(re.findall(r'^polaris_backup_last_success_timestamp_seconds\{kind="([\w-]+)"\} (\S+)$',
+                              r.data.decode(), re.M))
+        self.assertEqual(set(got), {'dump', 'pgbackrest', 'dump-verified'})
+        return {k: float(v) for k, v in got.items()}
+
+    def test_a_recorded_backup_reads_as_its_completion_time(self):
+        conn = psycopg2.connect(**DB_CONFIG)
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute("INSERT INTO BackupEvent (kind, location, completed_at) VALUES "
+                            "('dump', '/var/backups/polaris/test.tar.gz', CURRENT_TIMESTAMP - interval '2 hours')")
+        finally:
+            conn.close()
+        got = self._backups()
+        import time as _t
+        self.assertAlmostEqual(_t.time() - got['dump'], 7200, delta=120,
+                               msg='a dump completed two hours ago must read as two hours old')
+        self.assertEqual(got['pgbackrest'], 0.0, 'a kind never recorded reads 0')
+
+    def test_an_unanswered_database_reads_nan(self):
+        import status_routes
+        with patch.object(status_routes, 'query', side_effect=RuntimeError('the database is down')):
+            got = self._backups()
+        self.assertTrue(all(v != v for v in got.values()), 'unmeasured must be NaN')
 
 
 class CorrelationIdTests(UnauthenticatedTestCase):
@@ -16160,8 +16785,8 @@ class AthenaConstraintBoardTests(PolarisTestCase):
         self.assertEqual(failing, [], 'a freshly loaded database holds every mechanism it names')
         self.assertEqual(board['summary']['not_in_force'], 0)
         c1 = self._rule(board, 'C1')
-        self.assertEqual(len(c1['guards']), 32, 'C1 lists the audit of record table by table')
-        self.assertEqual(c1['guards_held'], 32)
+        self.assertEqual(len(c1['guards']), 35, 'C1 lists the audit of record table by table')
+        self.assertEqual(c1['guards_held'], 35)
         self.assertEqual(c1['state'], 'in_force')
         for g in c1['guards']:
             self.assertIn('BEFORE UPDATE OR DELETE, each row on ', g['detail'], g['name'])
@@ -16185,7 +16810,7 @@ class AthenaConstraintBoardTests(PolarisTestCase):
 
     def test_the_page_is_the_board(self):
         body = self.client.get('/athena').get_data(as_text=True)
-        for text in ('not in force', 'in force in this database', '32 of 32 tables',
+        for text in ('not in force', 'in force in this database', '35 of 35 tables',
                      'Definition in this database', 'Read from', "script-src &#39;self&#39;"):
             self.assertIn(text, body)
 
@@ -16196,13 +16821,13 @@ class AthenaConstraintBoardTests(PolarisTestCase):
                 board = self._board()
                 c1 = self._rule(board, 'C1')
                 self.assertEqual(c1['state'], 'not_in_force')
-                self.assertEqual(c1['guards_held'], 31)
+                self.assertEqual(c1['guards_held'], 34)
                 off = c1['guards'][0]
                 self.assertEqual((off['name'], off['status']), ('trg_anchor_batch_append_only', 'not_in_force'))
                 self.assertIn('switched off on anchorbatch', off['reason'])
                 self.assertGreaterEqual(board['summary']['not_in_force'], 1)
                 body = self.client.get('/athena').get_data(as_text=True)
-                self.assertIn('31 of 32 tables', body)
+                self.assertIn('34 of 35 tables', body)
                 self.assertIn('Switched off on anchorbatch', body)
             finally:
                 cur.execute("ALTER TABLE AnchorBatch ENABLE TRIGGER trg_anchor_batch_append_only")

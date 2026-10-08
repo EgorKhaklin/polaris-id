@@ -8,6 +8,10 @@
 # configuration) at ./custody/pkcs11/ on the host, and the user PIN in
 # secrets/pkcs11_pin (0600-class, one line, NEVER env). The app image needs the
 # python-pkcs11 driver: build with --build-arg POLARIS_CUSTODY_EXTRAS=1.
+#
+# The app's root filesystem is read-only (lab record 017, phase 5); /tmp is memory. A
+# module that writes anywhere else (a software token's object store, a vendor client's
+# log or lock files) needs that path mounted writable here.
 services:
   app:
     build:

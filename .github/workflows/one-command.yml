@@ -35,6 +35,9 @@ on:
       - "scripts/polaris-image-build.sh"
       - "scripts/polaris-generate-secrets.sh"
       - "scripts/polaris-create-operator.sh"
+      - "scripts/polaris-key-event.sh"
+      - "scripts/polaris-doctor.sh"
+      - "scripts/polaris-backup.sh"
       - ".github/workflows/one-command.yml"
   schedule:
     - cron: "41 3 * * *"
@@ -62,6 +65,32 @@ jobs:
 
       - name: Run lab/strategy/006/try.sh
         run: bash lab/strategy/006/try.sh
+
+      # Lab record 017, phase 5: the stack that just issued and verified a credential runs on
+      # read-only roots with no capabilities, as the kernel reports it. Pinned by
+      # check_read_only_roots.
+      - name: The containers hold their declared posture (lab/strategy/006/posture.sh)
+        run: bash lab/strategy/006/posture.sh
+
+      # Lab record 017 (gate row OP-15): on the same stack, Prometheus with the shipped rules and the
+      # blackbox exporter with the shipped module; the edge's 12-hour internal certificate, a stack
+      # with no backup on record and a failing archive_command must each fire their alert, and a
+      # recorded backup and a succeeding archive_command must clear them. Pinned by
+      # check_infra_alerts.
+      - name: Infrastructure alerts fire on real conditions and clear on repair (lab/strategy/006/alerts.sh)
+        run: bash lab/strategy/006/alerts.sh
+
+      # Lab record 017, phase 4c (gate row OP-23): on the same stack, the issuer key is rotated
+      # the way the authority key register expects, then the old one is declared compromised;
+      # the app, the signed trust list and polaris-verify from PyPI must each give the answer the
+      # register implies. Pinned by check_key_rotation_drilled.
+      - name: Rotate the issuer key, then declare the old one compromised (lab/strategy/006/rotate.sh)
+        run: bash lab/strategy/006/rotate.sh
+      # Lab record 017 (gate row OP-17): on the same stack, scripts/polaris-doctor.sh must name each
+      # fault first (Redis stopped, PostgreSQL stopped, a secret emptied, a setting production
+      # refuses) and report nothing failing after each repair. Pinned by check_doctor_names_failures.
+      - name: The doctor names what is broken (lab/strategy/006/doctor.sh)
+        run: bash lab/strategy/006/doctor.sh
 
       - name: Tear down
         if: always()

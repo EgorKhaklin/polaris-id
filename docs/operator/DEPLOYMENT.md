@@ -69,14 +69,18 @@ plus whatever overlays `POLARIS_COMPOSE_EXTRA` names. In order:
    `awskms` the sealed store is unsealed into `POLARIS_SECRETS_DIR` first.
 2. `git pull --ff-only` (skipped with `--no-pull` or outside a git checkout).
 3. The running app image id is recorded for rollback.
-4. `docker compose pull` for postgres, redis, and caddy; `docker compose build
-   app` (multi-stage `Dockerfile.prod`).
+4. `docker compose pull` for the upstream images, then every Polaris image
+   (app, edge, pooler, database, etcd) built by
+   [`scripts/polaris-image-build.sh`](../../scripts/polaris-image-build.sh) `--stack prod`.
 5. Infrastructure up (`postgres`, `pgbouncer`, `redis`, `caddy`) without
    touching the app containers, so the running app keeps serving.
 6. Migrations applied and database objects synced against the running server
    (`polaris-migrate.sh --up` and `--sync-objects`, both piped over stdin into
-   the postgres container). When `POLARIS_PGBACKREST_ENABLED=1`, the pgBackRest
-   stanza is created and checked; a failure there warns and does not block.
+   the postgres container). WAL archiving is on by default
+   (`POLARIS_PGBACKREST_ENABLED=0` turns it off): on a cluster initialised with
+   it off it is turned on (postgres restarts once), the pgBackRest stanza is
+   created and checked, and the first full backup is taken when the repository
+   holds none; a failure there warns and does not block.
 7. The app rolled: with the blue-green profile, `app-green` is recreated and
    waited on until its healthcheck passes, then `app`; without it, the single
    `app` is recreated.
@@ -201,10 +205,11 @@ the remaining variables come from the shell or `polaris.env`.
 | `POLARIS_COOKIE_SECURE` | `1` sends the session cookie only over HTTPS. Implied by `POLARIS_ENV=production`. | unset |
 | `POLARIS_HSTS` | `1` makes the app send `Strict-Transport-Security` and add `upgrade-insecure-requests` to its CSP. In the compose stack Caddy sends HSTS itself (`max-age=63072000; includeSubDomains; preload`). | unset |
 | `POLARIS_TRUST_PROXY` | `1` honours `X-Forwarded-For` for the client address the rate limiter, `AuthAuditLog`, and the network policies see, and `X-Request-ID` for correlation. Set to `1` by the prod compose file and by the Helm chart, because Caddy rewrites the header to the real peer; set it yourself only on a hand-rolled deployment behind a proxy that does the same. | unset (compose and Helm set `1`) |
+| `POLARIS_TRUSTED_PROXIES` | The edge's: the load balancer in front of it, by address range (`10.0.0.0/8`, or several separated by spaces). Its `X-Forwarded-For` is then read right to left past those hops only, so the app is told the client's own address and a client cannot forge it (`scripts/polaris-client-ip-drill.sh`). Behind an L4 balancer that rewrites source addresses (SNAT) nothing recovers the client's address: keep it on the balancer (on Kubernetes the chart's Service uses `externalTrafficPolicy: Local`). | unset: no proxy trusted |
 | `POLARIS_DEMO_MODE` | Serves the public synthetic walkthrough at `/demo` and the landing page's demo call to action. Defaults to on outside production and is ignored under `POLARIS_ENV=production`, so real records are never advertised as notional. | on outside production, off in production |
 | `POLARIS_LAUNCHER_WATCH` | Turns on the macOS launcher's browser-presence beacon and its two control routes (`/api/heartbeat`, `/api/quit`). Set by the launcher and the dev compose; a server deployment leaves it off and the routes answer 404. | off |
 | `POLARIS_DEPLOYMENT_LABEL` | The provenance label a production Atlas shows (an operator-chosen deployment name, for example `COUNTY OF EXAMPLE`). Outside production the Atlas labels itself `NOTIONAL DATA`; in production with no label it shows none. | unset |
-| `POLARIS_METRICS_ALLOW` | Which clients the edge lets reach `/metrics` and `/api/metrics`; everyone else gets 404. Both surfaces carry the duress signal and neither authenticates. Caddy syntax, so `private_ranges` or a CIDR. | `private_ranges` |
+| `POLARIS_METRICS_ALLOW` | Which clients the edge lets reach `/metrics` and `/api/metrics`; everyone else gets 404. Both surfaces carry the duress signal and neither authenticates. Caddy syntax, a CIDR such as `10.20.0.0/16`; a Prometheus on the stack's network scrapes `app:8000` directly instead. | unset: no client (behind a load balancer or NAT every internet client is a private address) |
 | `POLARIS_DB_PASSWORD` / `POLARIS_DB_PASSWORD_FILE` | `polaris_app` role password. The file form wins. | dev fallback; prod compose mounts `/run/secrets/polaris_db_password` |
 | `POLARIS_APP_PASSWORD` / `POLARIS_APP_PASSWORD_FILE` | `docker-init.sh` only, first boot: rotates the `polaris_app` role to this value. Refused under 16 characters; under 24 it must also carry a digit, a letter, and a symbol. | unset; prod compose points the file form at the same DB-password secret |
 | `POLARIS_RATE_LIMIT_BACKEND` | `auto` / `memory` / `redis`. `auto` picks Redis when `POLARIS_REDIS_URL` is set, otherwise in-memory. | `auto` |
