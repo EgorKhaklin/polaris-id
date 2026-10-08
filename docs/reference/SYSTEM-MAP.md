@@ -86,7 +86,7 @@ polaris/
 ├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks; the detached verifier polaris-verify.py, its vector generator, and the holder wallet polaris-wallet.py live here too
 ├── site/               ← the published project page (Cloudflare, wrangler.jsonc) and its logo
 │
-├── .github/workflows/  ← ci.yml (23 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the old GitHub Pages address, now a redirect to the site)
+├── .github/workflows/  ← ci.yml (26 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the old GitHub Pages address, now a redirect to the site)
 ├── .github/dependabot.yml, .pre-commit-config.yaml, .gitignore, .coveragerc, .trivyignore, ruff.toml
 ├── osv-scanner.toml   ← declared exceptions for the malicious-package and vulnerability scan (none today)
 ├── vex.openvex.json   ← scanner findings that do not affect Polaris, and why (OpenVEX)
@@ -98,7 +98,10 @@ polaris/
 
 **CI jobs** ([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)):
 
-- `test`: the product suite against Postgres 16 and Redis; the checks layer, the DB suites, the ZK build and prove-verify round trip, the encrypted backup and restore round trip, the abuse drill, the performance smoke.
+- `test`: the required product-suite check; it passes only when its three parallel parts did.
+- `test-core`: the product suite against Postgres 16 and Redis; the checks layer, the app-role suite, the constraint and trigger drills, the ZK build and prove-verify round trip, the encrypted backup and restore round trip, the abuse drill, the performance smoke.
+- `test-coverage`: the DB suites under coverage, with the floor gate.
+- `test-procedures`: the procedure mutation drill (the procedures a change touches).
 - `docker-image`: builds and smoke-boots the dev and prod images; PgBouncer, verify-ca pinning, streaming replication and pgBackRest round trips, including the off-site S3 drill.
 - `caddy-edge`: builds the self-built Caddy image, validates the real prod Caddyfile, proves the X25519MLKEM768 post-quantum hybrid KEX.
 - `page-drill`: the duress page path, Prometheus rules through Alertmanager to the pager webhook.
