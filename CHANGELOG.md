@@ -129,6 +129,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The weekly canary also runs ERICA, and the EU iOS library with the wallet kit's own request-object encryption.
 - polaris-oid4vp encrypts the request object to the wallet's key when its `wallet_metadata` asks, as the EU iOS wallet kit requires.
 - polaris-oid4vp `serve --verifier-info` adds attestations such as a registration certificate to the request, as the German wallet requires.
+- A check that the product suite's parallel CI parts share one setup and that its required job gates on each.
 
 ### Changed
 
