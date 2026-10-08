@@ -16,8 +16,9 @@
 #   edge           the TLS edge serves /api/health/live
 #   health         the app's own roll-up (/api/health, from inside the app container): every
 #                  component it judges
-#   key register   every agency that has issued holds a registered signing key; without one its
-#                  trust list is refused and its credentials' issuer facts read unknown (a WARN)
+#   key register   every agency that has issued holds a registered signing key; without one the
+#                  stack, which signs for real, refuses every relying-party verification of its
+#                  credentials, its trust list and its issuer facts (KEY-CEREMONY.md)
 #
 # Usage:  polaris-doctor.sh
 # Environment: COMPOSE_PROJECT_NAME and POLARIS_COMPOSE_EXTRA, as the other stack scripts;
@@ -151,7 +152,7 @@ UNREGISTERED=$(compose exec -T postgres psql -U postgres -d polaris -qtA -c "
 if [[ $? -ne 0 ]]; then
     warn "key register" "not reached: the database did not answer"
 elif [[ -n "${UNREGISTERED}" ]]; then
-    warn "key register" "agency ${UNREGISTERED} issued with no registered signing key: its trust list is refused and issuer facts read unknown (register it: docs/operator/KEY-CEREMONY.md)"
+    bad "key register" "agency ${UNREGISTERED} issued with no registered signing key: every relying-party verification of its credentials answers \"not a verifiable presentation\", and its trust list and issuer facts are refused (register the key: scripts/polaris-key-event.sh register <agency> <public key hex>, docs/operator/KEY-CEREMONY.md)"
 else
     ok "key register" "every agency that has issued holds a registered key"
 fi

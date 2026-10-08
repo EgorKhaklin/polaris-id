@@ -53,7 +53,9 @@ It ends with:
 ```
 
 Then log in and rotate the seeded accounts immediately
-([`DEPLOYMENT.md`](DEPLOYMENT.md#the-first-operator-account)).
+([`DEPLOYMENT.md`](DEPLOYMENT.md#the-first-operator-account)), and register the signing key before
+the first credential is issued ([`DEPLOYMENT.md`](DEPLOYMENT.md#the-signing-keys-registration)):
+until then a relying party's verification of every credential answers "not a verifiable presentation".
 
 ## What is installed
 
