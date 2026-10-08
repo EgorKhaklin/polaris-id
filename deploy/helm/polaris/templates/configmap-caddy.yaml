@@ -33,6 +33,19 @@ data:
             # X-Forwarded-For right to left, past those hops only. Empty: none is trusted.
             trusted_proxies static {{ .Values.edge.trustedProxies | default "0.0.0.0/32" }}
             trusted_proxies_strict
+            # Lab record 017 (OP-26): an L4 balancer that rewrites source addresses (a cloud network
+            # load balancer with PROXY protocol v2 turned on) can pass the client's own in a PROXY
+            # header. Only the sources edge.proxyProtocolFrom names are read; from any other the
+            # header is not parsed (skip), so a client sending one fails its TLS handshake. Empty, it
+            # names an address no connection comes from.
+            listener_wrappers {
+                proxy_protocol {
+                    timeout 5s
+                    allow {{ .Values.edge.proxyProtocolFrom | default "255.255.255.255/32" }}
+                    fallback_policy skip
+                }
+                tls
+            }
             # Lab record 017, phase 5: a client that sends its request slowly is cut off here, not
             # left holding a connection (scripts/polaris-edge-limits-drill.sh).
             timeouts {

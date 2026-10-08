@@ -69,6 +69,13 @@ services:
       # v9.183 (P1.4) — upstream list for the Caddyfile; the blue-green overlay
       # sets "app:8000 app-green:8000".
       POLARIS_UPSTREAMS: "${POLARIS_UPSTREAMS:-app:8000}"
+      # Lab record 017 (gate row OP-26): the edge settings the Caddyfile reads
+      # (docs/operator/DEPLOYMENT.md). Set in the shell or polaris.env, they reach the edge only
+      # through here; until 2026-10-08 the first two did not, and the edge ran with neither.
+      # The defaults are the Caddyfile's own.
+      POLARIS_TRUSTED_PROXIES: "${POLARIS_TRUSTED_PROXIES:-0.0.0.0/32}"
+      POLARIS_METRICS_ALLOW: "${POLARIS_METRICS_ALLOW:-0.0.0.0/32}"
+      POLARIS_EDGE_PROXY_PROTOCOL_FROM: "${POLARIS_EDGE_PROXY_PROTOCOL_FROM:-255.255.255.255/32}"
       # The Go runtime collects harder as it nears this, below the container's limit.
       GOMEMLIMIT: 200MiB
     volumes:
