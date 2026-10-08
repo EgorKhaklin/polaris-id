@@ -169,6 +169,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A web request's statements end two seconds before its worker's timeout, so no query outlives its request.
 - The landing emblem has no ring; a soft gold halo sits behind it.
 - `polaris-id migrate-algorithm` signs as the route does; `--signature-hex` and `--signature-file` are withdrawn.
+- CI runs the product suite's app-role suite and ZK steps, and Real PQC's web suite, as jobs of their own.
 
 ### Fixed
 
