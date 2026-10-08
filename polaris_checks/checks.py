@@ -6708,6 +6708,9 @@ def check_secrets_reach_only_their_readers(root: pathlib.Path) -> list[Finding]:
 #: The scripts that must read the unit's configuration: every operator script that drives the
 #: production compose file, and the secrets wrapper, which reads the backend from it.
 _OPERATOR_ENV_EXTRA = ("scripts/polaris-secrets.sh",)
+# Harnesses that build a stack of their own, under their own compose project, as the drills do: run by
+# hand on a production host they must not take its configuration either.
+_OWN_STACK_HARNESSES = ("scripts/polaris-throughput-measure.sh",)
 #: The ones that resolve the secrets directory, and so must take it from polaris_secrets_dir.
 _OPERATOR_SECRETS_DIR_USERS = ("scripts/polaris-deploy.sh", "scripts/polaris-rotate-secret.sh",
                                "scripts/polaris-secrets.sh", "scripts/polaris-doctor.sh")
@@ -6732,8 +6735,8 @@ def check_operator_scripts_read_the_unit_env(root: pathlib.Path) -> list[Finding
     command), only for the checkout the unit runs, and lets a variable the caller set win;
     polaris_secrets_dir refuses a sealed backend with no directory. Every scripts/polaris-*.sh that
     drives docker-compose.prod.yml, and the secrets wrapper, sources it before it reads its
-    configuration or calls compose; no drill does (a drill run by hand on a production host must not
-    pick up its configuration). Deploy, rotation, the secrets wrapper and the doctor take the directory
+    configuration or calls compose; no drill, and no harness that builds a stack of its own, does (run
+    by hand on a production host it must not pick up that host's configuration). Deploy, rotation, the secrets wrapper and the doctor take the directory
     from polaris_secrets_dir and default it nowhere. The linux-install job runs the documented commands
     with sudo and asserts the refusal on a sealed host."""
     name = "operator_env"
@@ -6765,10 +6768,10 @@ def check_operator_scripts_read_the_unit_env(root: pathlib.Path) -> list[Finding
         lines = _code_lines(text)
         body = "\n".join(lines)
         sources = _SOURCES_OPERATOR_ENV.search(body)
-        if rel.endswith("-drill.sh"):
+        if rel.endswith("-drill.sh") or rel in _OWN_STACK_HARNESSES:
             if sources:
-                problems.append(f"{rel} is a drill and sources polaris-env.sh: run by hand on a production host "
-                                "it would take that host's configuration")
+                problems.append(f"{rel} builds a stack of its own and sources polaris-env.sh: run by hand on a "
+                                "production host it would take that host's configuration")
             continue
         if "docker-compose.prod.yml" not in body and rel not in _OPERATOR_ENV_EXTRA:
             continue

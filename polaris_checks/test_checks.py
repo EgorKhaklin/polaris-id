@@ -6389,6 +6389,19 @@ def test_operator_scripts_read_the_unit_env_check_discriminates(tmp_path):
     # A drill that takes the production host's configuration.
     broken("scripts/polaris-chaos-drill.sh", "set -euo pipefail\n",
            'set -euo pipefail\nsource "${SCRIPT_DIR}/polaris-env.sh"\n', "must FAIL when a drill sources the loader")
+    # A harness that builds its own stack (the throughput measurement) is held to the drills' rule: driving
+    # the production compose file without the loader passes, sourcing it fails.
+    harness = tmp_path / "scripts/polaris-throughput-measure.sh"
+    real = harness.read_text() if harness.exists() else None
+    harness.write_text("#!/usr/bin/env bash\nset -euo pipefail\n"
+                       "docker compose -p polaris-measure -f polaris_web/docker-compose.prod.yml up -d\n")
+    assert checks.check_operator_scripts_read_the_unit_env(tmp_path)[0].level == "OK", \
+        "must PASS when a harness that builds its own stack does not source the loader"
+    f = broken("scripts/polaris-throughput-measure.sh", "set -euo pipefail\n",
+               'set -euo pipefail\nsource "${SCRIPT_DIR}/polaris-env.sh"\n',
+               "must FAIL when a harness that builds its own stack sources the loader")
+    assert "builds a stack of its own" in f.message, f.message
+    harness.write_text(real) if real is not None else harness.unlink()
     # A new operator script that forgets the loader.
     (tmp_path / "scripts/polaris-new-tool.sh").write_text(
         "#!/usr/bin/env bash\nset -euo pipefail\ndocker compose -f polaris_web/docker-compose.prod.yml ps\n")
