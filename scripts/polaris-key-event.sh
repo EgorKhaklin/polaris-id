@@ -37,17 +37,16 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 POLARIS_ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
 # Run by hand (sudo resets the environment), read the configuration polaris.service runs with.
 source "${SCRIPT_DIR}/polaris-env.sh"
-COMPOSE_FILE="${POLARIS_ROOT}/polaris_web/docker-compose.prod.yml"
 read -r -a COMPOSE_EXTRA <<< "${POLARIS_COMPOSE_EXTRA:-}"
+# From polaris_web, as polaris.service runs it: an overlay polaris.env names is relative to that
+# directory. (The guarded array form: an empty array under set -u is an error in bash before 4.4.)
+compose() { (cd "${POLARIS_ROOT}/polaris_web" && docker compose -f docker-compose.prod.yml ${COMPOSE_EXTRA[@]+"${COMPOSE_EXTRA[@]}"} "$@"); }
 
 usage() {
     echo "usage: $(basename "$0") register|retire|compromise AGENCY_ID PUBLIC_KEY_HEX [--effective-at ISO-8601] [--note TEXT]" >&2
     echo "       $(basename "$0") register AGENCY_ID --current [--note TEXT]   (the key the running app signs with)" >&2
     exit 2
 }
-
-# The guarded form: an empty array under set -u is an error in bash before 4.4.
-compose() { docker compose -f "${COMPOSE_FILE}" ${COMPOSE_EXTRA[@]+"${COMPOSE_EXTRA[@]}"} "$@"; }
 
 [[ $# -ge 3 ]] || usage
 ACTION="$1"

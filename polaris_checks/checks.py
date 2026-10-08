@@ -6784,6 +6784,23 @@ def check_operator_scripts_read_the_unit_env(root: pathlib.Path) -> list[Finding
         if first is not None and first < at:
             problems.append(f"{rel} reads its configuration (line {first + 1} of its code) before it sources "
                             "polaris-env.sh")
+        # The overlays polaris.env names are relative to polaris_web, where polaris.service runs compose:
+        # passed to compose run from anywhere else, `-f docker-compose.citest.yml` is not found and a
+        # running stack reads as stopped (#311's first CI run: the rotation refused, "not running").
+        for line in lines:
+            if "docker compose" in line and "COMPOSE_EXTRA" in line and "polaris_web" not in line:
+                problems.append(f"{rel} passes polaris.env's overlays to compose run outside polaris_web: "
+                                "an overlay is relative to it (`cd .../polaris_web` first, as the unit does)")
+                break
+    # An image that ships an operator script ships the loader it sources: the Helm migration Job runs
+    # polaris-migrate.sh from the postgres image, and without the loader it stopped at `source`.
+    for dockerfile in sorted((root / "polaris_web").glob("Dockerfile*")):
+        text = dockerfile.read_text()
+        for copied in re.findall(r"(?m)^COPY\b[^\n]*\bscripts/(polaris-[\w-]+\.sh)\b", text):
+            script = "\n".join(_code_lines(_read(root, "scripts/" + copied)))
+            if _SOURCES_OPERATOR_ENV.search(script) and not re.search(r"(?m)^COPY\b[^\n]*\bscripts/polaris-env\.sh\b", text):
+                problems.append(f"{dockerfile.relative_to(root)} copies scripts/{copied}, which sources polaris-env.sh, "
+                                "and not the loader")
     for rel in _OPERATOR_SECRETS_DIR_USERS:
         body = "\n".join(_code_lines(_read(root, rel)))
         if "polaris_secrets_dir" not in body:

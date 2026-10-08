@@ -6340,11 +6340,12 @@ def test_secrets_reach_only_their_readers_check_discriminates(tmp_path):
 def test_operator_scripts_read_the_unit_env_check_discriminates(tmp_path):
     files = [str(p.relative_to(REPO)) for p in (REPO / "scripts").glob("polaris-*.sh")]
     files += [".github/workflows/ci.yml", "deploy/linux/polaris.env.example", "docs/operator/SECRETS.md"]
+    files += [str(p.relative_to(REPO)) for p in (REPO / "polaris_web").glob("Dockerfile*")]
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text((REPO / rel).read_text())
     assert checks.check_operator_scripts_read_the_unit_env(tmp_path)[0].level == "OK", \
-        "must PASS on the real scripts, the linux-install job, the env example and SECRETS.md"
+        "must PASS on the real scripts, images, the linux-install job, the env example and SECRETS.md"
 
     def broken(rel, old, new, why, every=False):
         path = tmp_path / rel
@@ -6386,6 +6387,17 @@ def test_operator_scripts_read_the_unit_env_check_discriminates(tmp_path):
     broken("scripts/polaris-env.sh", "        return 1\n    fi\n    printf '%s\\n' \"${POLARIS_SECRETS_DIR}\"",
            "        printf '%s\\n' /run/polaris/secrets\n        return 0\n    fi\n    printf '%s\\n' \"${POLARIS_SECRETS_DIR}\"",
            "must FAIL when a sealed backend with no directory gets a default instead of a refusal")
+    # #311's first CI run: compose given polaris.env's overlays from the caller's directory, where a
+    # relative overlay is not found and a running stack reads as stopped.
+    f = broken("scripts/polaris-doctor.sh",
+               'compose() { (cd "${POLARIS_ROOT}/polaris_web" && docker compose -f docker-compose.prod.yml ${COMPOSE_EXTRA[@]+"${COMPOSE_EXTRA[@]}"} "$@"); }',
+               'compose() { docker compose -f "${COMPOSE_FILE}" "${COMPOSE_EXTRA[@]}" "$@"; }',
+               "must FAIL when a script passes the overlays to compose run outside polaris_web")
+    assert "outside polaris_web" in f.message, f.message
+    # The Helm migration Job's image ships the migration script without the loader it sources.
+    f = broken("polaris_web/Dockerfile.postgres", "COPY --chmod=0644 scripts/polaris-env.sh /opt/polaris/scripts/polaris-env.sh\n", "",
+               "must FAIL when an image ships a loader-sourcing script without the loader")
+    assert "Dockerfile.postgres" in f.message and "polaris-migrate.sh" in f.message, f.message
     # A drill that takes the production host's configuration.
     broken("scripts/polaris-chaos-drill.sh", "set -euo pipefail\n",
            'set -euo pipefail\nsource "${SCRIPT_DIR}/polaris-env.sh"\n', "must FAIL when a drill sources the loader")
