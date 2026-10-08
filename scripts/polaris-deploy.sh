@@ -124,7 +124,14 @@ fi
 # containerd image store, the default on a clean install of Docker Engine 29 and later, keeps no
 # record of an image once its last tag moves, even while a container still runs it: the bare ID
 # recorded here could not be re-tagged when a rollback needed it, and the deploy stopped there.
-PREV_IMAGE_ID=$(docker inspect --format='{{.Image}}' polaris-app 2>/dev/null || echo "")
+# The running app is found through compose, in this deploy's own project: a stack layered with
+# lab/strategy/006/names.yml (try.sh's) has no container named polaris-app, and where the laptop
+# stack also runs, that name is the other stack's app.
+PREV_IMAGE_ID=""
+PREV_APP=$(compose ps -q app 2>/dev/null | head -n1 || true)
+if [[ -n "${PREV_APP}" ]]; then
+    PREV_IMAGE_ID=$(docker inspect --format='{{.Image}}' "${PREV_APP}" 2>/dev/null || echo "")
+fi
 ROLLBACK_IMAGE=""
 if [[ -n "${PREV_IMAGE_ID}" ]]; then
     if docker tag "${PREV_IMAGE_ID}" polaris-app:rollback 2>/dev/null; then

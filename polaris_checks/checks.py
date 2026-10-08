@@ -7002,6 +7002,10 @@ def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
         return _fail(name, "polaris-deploy.sh must pin the running app image as polaris-app:rollback before it "
                      "builds and roll back from that tag: under the containerd image store the bare ID no "
                      "longer resolves once the build moves polaris-app:prod")
+    if "PREV_APP=$(compose ps -q app" not in dep or "--format='{{.Image}}' polaris-app" in dep:
+        return _fail(name, "polaris-deploy.sh must find the running app through compose, in its own project: a "
+                     "stack layered with names.yml has no container named polaris-app, and where the laptop "
+                     "stack runs that name is the other stack's app")
     drill = _read(root, "scripts/polaris-upgrade-drill.sh")
     for needle, what in (("describe --tags --abbrev=0", "start from the previous release"),
                          ('lab/strategy/006/try.sh" > "${WORK}/try-before.log"', "run that release's own try.sh"),

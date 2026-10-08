@@ -3303,6 +3303,10 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
            "must FAIL when the deploy no longer pins the running image")
     broken(dep, 'docker tag "${ROLLBACK_IMAGE}" polaris-app:prod', 'docker tag "${PREV_IMAGE_ID}" polaris-app:prod',
            "must FAIL when the rollback re-tags the bare image ID again")
+    broken(dep, "PREV_APP=$(compose ps -q app 2>/dev/null | head -n1 || true)", "PREV_APP=polaris-app",
+           "must FAIL when the deploy finds the running app by a fixed container name")
+    broken(dep, """docker inspect --format='{{.Image}}' "${PREV_APP}\"""", "docker inspect --format='{{.Image}}' polaris-app",
+           "must FAIL when the image is read from the container named polaris-app")
     path = tmp_path / dep
     good = path.read_text()
     pin = '    if docker tag "${PREV_IMAGE_ID}" polaris-app:rollback 2>/dev/null; then\n'

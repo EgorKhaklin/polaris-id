@@ -205,7 +205,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - An Atlas series could carry one bucket more than asked, and its authority filter took non-ASCII digits.
 - The simulator stamped events on the host's clock, so on a host off UTC the Atlas's hour windows missed them.
 - The UI drill and the performance baseline refuse a port another server holds; the drill's app no longer outlives it.
-- A deploy whose smoke test failed did not roll back under Docker's containerd image store, the default on a clean install of Docker Engine 29: the old image's ID no longer resolved once the build moved its tag. The deploy pins it as `polaris-app:rollback` first.
+- A failed deploy did not roll back on Docker's containerd image store (Engine 29's default) or on a stack whose app is not `polaris-app`.
 - In the Atlas, a hovered tab keeps its label and a lone interval is drawn; a stacked chart no longer reads a withheld value as zero.
 - Public pages: no empty band above the first line, a visible secondary action, a four-column feature grid.
 - Every page showing the OpenID® Certified™ mark names the OpenID Foundation as its owner, as its trademark policy (2.2) asks.
