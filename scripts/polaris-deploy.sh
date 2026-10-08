@@ -120,9 +120,20 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Capture previous image tag (for rollback)
 # ---------------------------------------------------------------------------
+# The running image is pinned under a tag of its own before step 4 moves polaris-app:prod. Docker's
+# containerd image store, the default on a clean install of Docker Engine 29 and later, keeps no
+# record of an image once its last tag moves, even while a container still runs it: the bare ID
+# recorded here could not be re-tagged when a rollback needed it, and the deploy stopped there.
 PREV_IMAGE_ID=$(docker inspect --format='{{.Image}}' polaris-app 2>/dev/null || echo "")
+ROLLBACK_IMAGE=""
 if [[ -n "${PREV_IMAGE_ID}" ]]; then
-    echo "  [3/7] Previous app image: ${PREV_IMAGE_ID:0:18}"
+    if docker tag "${PREV_IMAGE_ID}" polaris-app:rollback 2>/dev/null; then
+        ROLLBACK_IMAGE=polaris-app:rollback
+        echo "  [3/7] Previous app image: ${PREV_IMAGE_ID:0:18}, pinned as ${ROLLBACK_IMAGE}"
+    else
+        echo "  [3/7] Previous app image ${PREV_IMAGE_ID:0:18} has no record left to pin (its tag moved before"
+        echo "        this deploy, under the containerd image store): a failed smoke test cannot roll back"
+    fi
 else
     echo "  [3/7] No previous app image (fresh deploy)"
 fi
@@ -334,9 +345,9 @@ done
 
 if [[ "${SMOKE_OK}" -ne 1 || "${ROLL_OK}" -ne 1 ]]; then
     echo "  ✗ Smoke test failed after 60s"
-    if [[ -n "${PREV_IMAGE_ID}" ]]; then
+    if [[ -n "${ROLLBACK_IMAGE}" ]]; then
         echo "  → Rolling back to previous app image…"
-        docker tag "${PREV_IMAGE_ID}" polaris-app:prod
+        docker tag "${ROLLBACK_IMAGE}" polaris-app:prod
         for svc in "${APP_SERVICES[@]+"${APP_SERVICES[@]}"}"; do compose up -d --no-deps --force-recreate "${svc}"; wait_healthy "${svc}" || true; done
         echo "  ✓ Rolled back. Investigate logs:"
         echo "    docker compose -f polaris_web/docker-compose.prod.yml logs --tail=200 app"

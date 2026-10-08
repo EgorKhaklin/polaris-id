@@ -3297,6 +3297,29 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
            "must FAIL when CI does not run the drill")
     broken(".github/workflows/upgrade.yml", "fetch-depth: 0", "fetch-depth: 1",
            "must FAIL when CI checks out without the release tags")
+    # The rollback: pinned before the build, re-tagged from the pin, drilled on the containerd store.
+    dep = "scripts/polaris-deploy.sh"
+    broken(dep, 'docker tag "${PREV_IMAGE_ID}" polaris-app:rollback', 'echo "${PREV_IMAGE_ID}"',
+           "must FAIL when the deploy no longer pins the running image")
+    broken(dep, 'docker tag "${ROLLBACK_IMAGE}" polaris-app:prod', 'docker tag "${PREV_IMAGE_ID}" polaris-app:prod',
+           "must FAIL when the rollback re-tags the bare image ID again")
+    path = tmp_path / dep
+    good = path.read_text()
+    pin = '    if docker tag "${PREV_IMAGE_ID}" polaris-app:rollback 2>/dev/null; then\n'
+    build = 'bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod\n'
+    assert pin in good and build in good, "the fixture drifted"
+    path.write_text(good.replace(pin, "    if true; then\n").replace(build, build + pin.replace("    if", "if") + "fi\n"))
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the image is pinned only after the build has moved the tag"
+    path.write_text(good)
+    broken(drill, 'raise SystemExit("the upgrade drill: a release that does not start")', "true",
+           "must FAIL when the drill never deploys a release that cannot start")
+    broken(drill, 'grep -q "Rolled back"', 'grep -q "Deploy complete"',
+           "must FAIL when the drill does not require the rollback")
+    broken(drill, '[[ "${after}" == "${before}" ]]', "true",
+           "must FAIL when the drill does not require the app back on the image it replaced")
+    broken(".github/workflows/upgrade.yml", '["containerd-snapshotter"] = True', '["containerd-snapshotter"] = False',
+           "must FAIL when CI drills on the classic image store, where the bare ID still resolves")
 
 
 def test_client_ip_behind_proxies_check_discriminates(tmp_path):

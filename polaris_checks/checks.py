@@ -6992,25 +6992,43 @@ def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
     if not re.search(r'(?m)^bash "\$\{SCRIPT_DIR\}/polaris-image-build\.sh" --stack prod$', dep):
         return _fail(name, "polaris-deploy.sh must build every Polaris image (polaris-image-build.sh --stack prod), "
                      "not the app's alone, or an upgrade keeps the edge, pooler and database it first built")
+    # A rollback by bare image ID found no image under Docker's containerd image store (the default on
+    # a clean install of Engine 29) once the build had moved polaris-app:prod: the running image is
+    # pinned under a tag of its own before the build, and the rollback re-tags the pin.
+    pin = dep.find('docker tag "${PREV_IMAGE_ID}" polaris-app:rollback')
+    build = dep.find('bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod')
+    if pin < 0 or pin > build or 'docker tag "${ROLLBACK_IMAGE}" polaris-app:prod' not in dep \
+            or 'docker tag "${PREV_IMAGE_ID}" polaris-app:prod' in dep:
+        return _fail(name, "polaris-deploy.sh must pin the running app image as polaris-app:rollback before it "
+                     "builds and roll back from that tag: under the containerd image store the bare ID no "
+                     "longer resolves once the build moves polaris-app:prod")
     drill = _read(root, "scripts/polaris-upgrade-drill.sh")
     for needle, what in (("describe --tags --abbrev=0", "start from the previous release"),
                          ('lab/strategy/006/try.sh" > "${WORK}/try-before.log"', "run that release's own try.sh"),
                          ("checkout --detach", "move the same checkout to this commit"),
                          ("scripts/polaris-generate-secrets.sh", "write the secrets a new release adds"),
-                         ("scripts/polaris-deploy.sh\" prod", "upgrade with the deploy script"),
+                         ('scripts/polaris-deploy.sh" prod --no-pull > "${WORK}/deploy.log"', "upgrade with the deploy script"),
                          ("no pending migrations", "require no migration pending"),
                          ("{{json .RootFS.Layers}}{{json .Config}}", "compare each running image's content with this commit's build"),
                          ("/api/tokens/${A}/verify", "ask the upgraded app about the old credential"),
-                         ("--pack pack-A-after.json", "verify the old credential's pack fetched again")):
+                         ("--pack pack-A-after.json", "verify the old credential's pack fetched again"),
+                         ('raise SystemExit("the upgrade drill: a release that does not start")',
+                          "deploy a release that cannot start"),
+                         ('grep -q "Rolled back"', "require the deploy to roll it back"),
+                         ('[[ "${after}" == "${before}" ]]', "require the app back on the image it replaced")):
         if needle not in drill:
             return _fail(name, f"scripts/polaris-upgrade-drill.sh no longer does this: {what}")
     wf = _read(root, ".github/workflows/upgrade.yml")
     if "bash scripts/polaris-upgrade-drill.sh" not in wf or not re.search(r"(?m)^\s*fetch-depth: 0$", wf):
         return _fail(name, "upgrade.yml must run scripts/polaris-upgrade-drill.sh on a checkout with the "
                      "release tags (fetch-depth: 0)")
+    if '["containerd-snapshotter"] = True' not in wf or "io.containerd.snapshotter.v1" not in wf:
+        return _fail(name, "upgrade.yml must run the drill on Docker's containerd image store (the default on a "
+                     "clean install of Engine 29), where a rollback by image ID found no image")
     return _ok(name,
                "CI upgrades the previous release's own try.sh stack to this commit the documented way and "
-               "requires nothing pending, every image rebuilt, and credentials from before and after verifying")
+               "requires nothing pending, every image rebuilt, and credentials from before and after verifying; "
+               "a release that cannot start is rolled back, on the containerd image store")
 
 
 # Lab record 017 (gate rows OP-18 and OP-19): a Helm upgrade runs the migrations. The postgres image

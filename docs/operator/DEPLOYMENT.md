@@ -85,8 +85,12 @@ plus whatever overlays `POLARIS_COMPOSE_EXTRA` names. In order:
    waited on until its healthcheck passes, then `app`; without it, the single
    `app` is recreated.
 8. Smoke test from inside the network: `/api/health` must report `healthy`
-   (`degraded` is accepted). On failure the previous app image is re-tagged
-   and every app colour recreated from it; the script exits non-zero.
+   (`degraded` is accepted). On failure the previous app image, pinned as
+   `polaris-app:rollback` before step 4's build, is the app image again and every
+   app colour is recreated from it; the script exits non-zero. The pin is a tag:
+   under Docker's containerd image store, the default on a clean install of Docker
+   Engine 29 and later, an image whose last tag has moved has no record left to
+   re-tag.
 
 `staging` runs the identical flow; point `POLARIS_DOMAIN` at the staging
 hostname yourself, the script does not derive it; `dev` delegates
