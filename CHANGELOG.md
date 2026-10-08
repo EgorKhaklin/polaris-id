@@ -131,6 +131,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Changed
 
 - The HA profile and the chart replicate synchronously by default; a failover loses no acknowledged write (lab record 017).
+- CI runs the product suite as three parallel jobs behind its one required check, so the slowest part alone sets the wait.
 - `/api/health/ready` answers for one instance (custody, the second witness, local disk) and leaves the shared database to `/api/health`; the edge and the Helm readiness probe route on it, so a database failover no longer takes every instance out of rotation (lab record 017).
 - security.txt's contact defaults to security@ the deployment's domain when none is set.
 - The scoreboard records the IETF SD-JWT repository listing polaris-oid4vp among its implementations.

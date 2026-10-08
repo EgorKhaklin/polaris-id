@@ -255,7 +255,7 @@ if [[ "${POLARIS_PGBACKREST_ENABLED:-1}" == "1" ]]; then
                     echo "  ✓ the first backup restores: a scratch copy was proven against the live database"
                 else
                     echo "  ⚠  the first backup did NOT verify; the weekly check and PolarisRestoreUnverified will say so too:" >&2
-                    tail -5 "$rv_log" | sed 's/^/       /' >&2
+                    tail -12 "$rv_log" | sed 's/^/       /' >&2
                 fi
                 rm -f "$rv_log"
             else

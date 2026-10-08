@@ -12,7 +12,8 @@
 # the secrets; it reaches the live database over the service's network, as postgres.
 #
 # What a run proves, in order (the first that fails ends the run, and nothing is recorded):
-#   1. the repository is intact (`pgbackrest verify`);
+#   1. the newest backup and the WAL that makes it consistent are intact (`pgbackrest verify --set`);
+#      damage elsewhere in the repository is reported and noted, not fatal;
 #   2. the archive is current: the live database switches WAL, and the file it completes is
 #      archived within --archive-timeout;
 #   3. the newest backup and the archive after it restore, and PostgreSQL starts on them and
@@ -179,16 +180,29 @@ free_kb="$(df -Pk "$parent" | awk 'NR==2 {print $4}')"
     || na "the copy needs about $((need_kb / 1024)) MiB and $parent has $((free_kb / 1024)) MiB free (POLARIS_RESTORE_DIR)"
 
 # --- 1. the repository ------------------------------------------------------------------------
-t0=$(date +%s)
 # verify reports what it found and exits 0 either way (2.58: "status: error", "checksum invalid: 1",
-# "completed successfully"), so its status line is the verdict, not its exit code.
-report="$("${AS_PG[@]}" pgbackrest --stanza="$STANZA" --output=text --log-level-console=warn verify 2>&1)" \
-    || fail "pgbackrest verify could not run: $(printf '%s' "$report" | tail -3)"
-if ! grep -Eq '^status: ok$' <<< "$report"; then
-    printf '%s\n' "$report" >&2
-    fail "pgbackrest verify found the repository damaged"
+# "completed successfully"), so its status line is the verdict, not its exit code; and without
+# --verbose it prints no report at all for a clean repository. The newest backup
+# and the WAL that makes it consistent must verify: that is what this run restores. Damage elsewhere
+# in the repository (an older backup, or a gap a past archiving failure left) costs the restore
+# points it covers, not this one, so it is reported and noted in the record, and does not fail it.
+t0=$(date +%s)
+verify() {  # verify [--set=LABEL] -> the report; returns 1 unless its status line says ok
+    VERIFY_REPORT="$("${AS_PG[@]}" pgbackrest --stanza="$STANZA" --output=text --verbose=y --log-level-console=warn "$@" verify 2>&1)" \
+        || fail "pgbackrest verify could not run: $(printf '%s' "$VERIFY_REPORT" | tail -3)"
+    grep -Eq '^status: ok$' <<< "$VERIFY_REPORT"
+}
+if ! verify --set="$label" || ! grep -Fq "backup: $label, status: valid" <<< "$VERIFY_REPORT"; then
+    printf '%s\n' "$VERIFY_REPORT" >&2
+    fail "pgbackrest verify found the newest backup ($label) or the WAL it needs damaged"
 fi
-say "the repository verifies (newest backup $label)"
+OLDER_DAMAGE=""
+if ! verify; then
+    OLDER_DAMAGE="$(grep -E 'invalid|missing|error' <<< "$VERIFY_REPORT" | tr -s ' ' | head -3 | paste -sd ';' -)"
+    printf '%s\n' "$VERIFY_REPORT" >&2
+    say "WARNING: the repository holds damage outside the newest backup (restore points it covers are lost): $OLDER_DAMAGE"
+fi
+say "the newest backup ($label) and the WAL it needs verify"
 
 # --- 2. the archive is current ----------------------------------------------------------------
 # The window is fixed first and ends before the oldest transaction a client still has open: such a
@@ -246,6 +260,7 @@ prove_copy
 
 # --- record -----------------------------------------------------------------------------------
 detail="restored and replayed past the switch at $probe in ${restored_s}s; system id, schema history and pg_amcheck clean; $COMPARED append-only tables equal ($ROWS rows) from $lo to $hi"
+[[ -z "$OLDER_DAMAGE" ]] || detail="$detail; older damage in the repository: $OLDER_DAMAGE"
 psql -X -q -v ON_ERROR_STOP=1 -h "$LIVE_HOST" -p "$LIVE_PORT" -U postgres -d "$DB" \
      -v location="pgBackRest stanza $STANZA, backup $label" -v detail="${detail:0:300}" \
      <<< "INSERT INTO BackupEvent (kind, location, detail) VALUES ('restore-verified', :'location', :'detail');" \
