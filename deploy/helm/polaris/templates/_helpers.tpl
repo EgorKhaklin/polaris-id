@@ -25,3 +25,9 @@ allowPrivilegeEscalation: false
 capabilities:
   drop: ["ALL"]
 {{- end -}}
+{{/* the same, and the image's own filesystem read-only (lab record 017, phase 5): the
+     container writes only to the volumes it mounts */}}
+{{- define "polaris.containerSecurityReadOnly" -}}
+{{ include "polaris.containerSecurity" . }}
+readOnlyRootFilesystem: true
+{{- end -}}

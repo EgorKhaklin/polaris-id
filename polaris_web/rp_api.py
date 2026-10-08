@@ -136,7 +136,7 @@ def api_v1_oauth_token():
     row, client_id, err = _rp_authenticate_client(request)
     if err:
         return err
-    token = rp_auth.issue_access_token(app.secret_key, row['rp_id'], client_id, row['scope'])
+    token = rp_auth.issue_access_token(rp_auth.keys_of(app), row['rp_id'], client_id, row['scope'])
     # Coarse liveness only — NOT a log of what was verified.
     query("UPDATE RelyingParty SET last_used_at = now() WHERE rp_id = %s",
           (row['rp_id'],), fetch='none')
@@ -148,7 +148,7 @@ def _rp_require_token():
     """Validate the Bearer access token on an /api/v1 request. Returns the token
     payload, or (None, error_response) so the caller can `return` it."""
     token = rp_auth.parse_bearer(request.headers.get('Authorization'))
-    payload = rp_auth.validate_access_token(app.secret_key, token)
+    payload = rp_auth.validate_access_token(rp_auth.keys_of(app), token)
     if payload is None:
         return None, (jsonify(error='invalid_token',
                               error_description='a valid, unexpired, verify-scoped bearer token is required'), 401)
@@ -2396,7 +2396,7 @@ def api_v1_auth_authorize():
         acr = _AUTH_ACR_ZK
     from datetime import datetime, timezone
     auth_time = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
-    code = rp_auth.issue_auth_code(app.secret_key, {
+    code = rp_auth.issue_auth_code(rp_auth.keys_of(app), {
         'rp': int(rp['rp_id']), 'cid': rp['client_id'], 'sub': _pairwise_subject(token_value, rp['client_id']),
         'ag': int(row['issuing_agency_id']), 'ctx': context_id, 'dl': disclosure_level, 'acr': acr,
         'enr': enrollment, 'nonce': nonce, 'cc': challenge, 'at': auth_time,
@@ -2420,7 +2420,7 @@ def api_v1_auth_token():
     if not rp_auth.has_scope(rp['scope'], rp_auth.SCOPE_AUTHENTICATE):
         return jsonify(error='invalid_client'), 401
     code, verifier = request.form.get('code'), request.form.get('code_verifier')
-    payload = rp_auth.validate_auth_code(app.secret_key, code)
+    payload = rp_auth.validate_auth_code(rp_auth.keys_of(app), code)
     if not payload or payload.get('cid') != client_id or not isinstance(verifier, str) or not (43 <= len(verifier) <= 128) \
             or not hmac.compare_digest(_pkce_challenge(verifier), str(payload.get('cc') or '')):
         return jsonify(error='invalid_grant'), 400
@@ -2621,6 +2621,51 @@ def api_v1_transparency_entries():
     replicate. Bounded result set (C8): at most POLARIS_TRANSPARENCY_ENTRIES_CAP per call."""
     body, err = _entries_body(_LOG_ID, _transparency_entries())
     return err if err else jsonify(body)
+
+
+# --- 013: the logs' public-chain anchors ------------------------------------------------------
+#
+# At the operator's cadence one checkpoint over the three logs' signed tree heads is committed to
+# Bitcoin through OpenTimestamps, and the operator records it (ChainAnchor, which only the schema
+# owner writes) once the proof reaches a block. They are published here beside the heads as
+# polaris-chain-anchor/1 objects, which polaris-verify's verify_chain_anchor decides against block
+# headers the verifier reads itself, so nothing here is taken on trust; a monitor that keeps them
+# can later prove what the logs held at each anchored moment.
+_CHAIN_ANCHOR_FORMAT = 'polaris-chain-anchor/1'
+_CHAIN_ANCHORS_CAP = int(os.environ.get('POLARIS_CHAIN_ANCHORS_CAP', '50'))
+
+
+def _chain_anchor_body(row):
+    return {
+        'format': _CHAIN_ANCHOR_FORMAT,
+        'anchor_id': row['anchor_id'],
+        'chain': row['chain'],
+        'method': row['method'],
+        'checkpoint': bytes(row['checkpoint']).decode('utf-8'),
+        'checkpoint_sha256': row['checkpoint_sha256'],
+        'proof_hex': bytes(row['proof']).hex(),
+        'block_height': row['block_height'],
+        'block_header_hex': row['block_header_hex'],
+        'recorded_at': row['recorded_at'].isoformat(),
+    }
+
+
+@app.route('/api/v1/transparency/anchors')
+def api_v1_transparency_anchors():
+    """013: the checkpoints of the three logs committed to Bitcoin, positions [start, end) in the
+    order they were recorded, for a monitor to verify with verify_chain_anchor and keep. Bounded
+    result set (C8): at most POLARIS_CHAIN_ANCHORS_CAP per call. Public; no personal data."""
+    total = query("SELECT count(*) AS n FROM ChainAnchor", fetch='one', primary=True)['n']
+    start = request.args.get('start', 0, type=int)
+    end = request.args.get('end', total, type=int)
+    if start is None or end is None or start < 0 or end < start:
+        return jsonify(error='invalid range', count=total), 400
+    end = min(end, total, start + _CHAIN_ANCHORS_CAP)
+    rows = query("SELECT anchor_id, chain, method, checkpoint, checkpoint_sha256, proof, block_height, "
+                 "block_header_hex, recorded_at FROM ChainAnchor ORDER BY anchor_id OFFSET %s LIMIT %s",
+                 (start, max(end - start, 0)), primary=True) if end > start else []
+    return jsonify({'count': total, 'start': start, 'end': max(end, start),
+                    'anchors': [_chain_anchor_body(r) for r in rows]})
 
 
 # --- P8.2c: the RECEIPT log -- a second transparency log, same machinery ----------------

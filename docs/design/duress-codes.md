@@ -26,6 +26,12 @@ alert goes out through a channel the watcher cannot see.
 4. **The verification flow**, which accepts an optional code, checks it, and
    writes the event silently when it matches.
 
+The event is written off the request thread, so the response time does not depend on whether
+the code matched. That thread is not a daemon: a worker that stops (a deploy, a recycle) waits
+for a record still being written, up to gunicorn's 30-second graceful timeout. A worker killed
+outright (an out-of-memory kill, SIGKILL) can still lose a record in the few milliseconds it
+takes to write.
+
 ## What the coercer sees
 
 Four branches exist: no code enrolled and none supplied; no code enrolled and

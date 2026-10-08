@@ -3441,6 +3441,280 @@ def verify_publication(log_sth, receipt, ledger_key):
     return v
 
 
+# --- 013: a checkpoint of the transparency logs, anchored in Bitcoin -----------------------
+#
+# A checkpoint is the canonical JSON of the instance's tree heads. Its SHA-256 goes to public
+# OpenTimestamps calendars, which commit many digests at once in a Bitcoin transaction, and the
+# proof that comes back is a path of operations from the digest to the Merkle root in a block
+# header. Nothing here trusts the OpenTimestamps client, a calendar, a block explorer's JSON or
+# the record that served the anchor: the proof is parsed and every operation replayed here, and
+# each block header is read from the 80 raw bytes a source the caller names returned, hashed
+# here, and checked against the proof of work it declares. Sources must agree byte for byte, and
+# by default two are required (the caller's own node may stand alone if it says so).
+
+_CHAIN_CHECKPOINT_FORMAT = "polaris-chain-checkpoint/1"
+_CHAIN_ANCHOR_FORMAT = "polaris-chain-anchor/1"
+_STH_STATEMENT = ("format", "log_id", "tree_size", "root_hash_hex", "timestamp")
+_OTS_MAGIC = b"\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94"
+_OTS_BITCOIN = bytes.fromhex("0588960d73d71901")   # BitcoinBlockHeaderAttestation
+_OTS_MAX_PROOF = 64 * 1024                         # bytes; a Bitcoin proof is about 2 KiB
+_OTS_MAX_MSG = 4096                                # the format's own bound on a message
+_OTS_MAX_DEPTH = 256                               # the format's own bound on nesting
+_BITCOIN_POW_LIMIT = 0x00000000FFFF << 208         # mainnet's easiest target (bits 0x1d00ffff)
+
+
+def chain_checkpoint(heads):
+    """The checkpoint bytes over a list of tree heads (013): the canonical JSON (sorted keys,
+    no spaces, UTF-8) of {format, heads}, the heads in log_id order. A head is a signed tree
+    head as the log serves it, so the anchor covers the instance's signature too; a head of
+    only the five statement fields is a checkpoint as well (013 step 1 anchored one)."""
+    heads = sorted((dict(h) for h in heads), key=lambda h: str(h.get("log_id")))
+    return json.dumps({"format": _CHAIN_CHECKPOINT_FORMAT, "heads": heads},
+                      sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+class _OtsReader:
+    """The OpenTimestamps serialization, read from the format alone: no client code."""
+
+    def __init__(self, data):
+        self.data, self.pos = data, 0
+
+    def take(self, n):
+        if n < 0 or self.pos + n > len(self.data):
+            raise ValueError("the proof ends early")
+        out = self.data[self.pos:self.pos + n]
+        self.pos += n
+        return out
+
+    def varuint(self):
+        value, shift = 0, 0
+        while True:
+            b = self.take(1)[0]
+            value |= (b & 0x7F) << shift
+            if not b & 0x80:
+                return value
+            shift += 7
+            if shift > 63:
+                raise ValueError("a length in the proof does not fit 64 bits")
+
+    def varbytes(self, max_len, min_len=0):
+        n = self.varuint()
+        if not min_len <= n <= max_len:
+            raise ValueError("a field of %d bytes is outside %d..%d" % (n, min_len, max_len))
+        return self.take(n)
+
+
+def _ots_unary(tag):
+    """The hash a unary operation tag names, or None for a tag that is not one."""
+    name = {0x08: "sha256", 0x02: "sha1", 0x03: "ripemd160"}.get(tag)
+    if name is None:
+        return None
+    return lambda msg: hashlib.new(name, msg).digest()
+
+
+def _ots_walk(r, msg, depth, found):
+    """Read one timestamp node for `msg`, appending (height, message) for each Bitcoin block
+    attestation beneath it. Every operation is applied here as it is read."""
+    if depth > _OTS_MAX_DEPTH:
+        raise ValueError("the proof nests deeper than %d" % _OTS_MAX_DEPTH)
+
+    def branch(tag):
+        if tag == 0x00:
+            kind = r.take(8)
+            payload = _OtsReader(r.varbytes(8192))
+            if kind == _OTS_BITCOIN:
+                height = payload.varuint()
+                if payload.pos != len(payload.data):
+                    raise ValueError("a Bitcoin attestation carries bytes after its height")
+                found.append((height, msg))
+            return                                  # pending and other chains: not evidence here
+        if tag in (0xF0, 0xF1):                     # append, prepend
+            arg = r.varbytes(_OTS_MAX_MSG, min_len=1)
+            nxt = msg + arg if tag == 0xF0 else arg + msg
+        elif tag == 0xF2:                           # reverse (deprecated)
+            nxt = msg[::-1]
+        elif tag == 0xF3:                           # hexlify
+            nxt = msg.hex().encode("ascii")
+        else:
+            fn = _ots_unary(tag)
+            if fn is None:
+                raise ValueError("the proof uses an operation this verifier does not know: 0x%02x" % tag)
+            try:
+                nxt = fn(msg)
+            except ValueError:
+                raise ValueError("this Python cannot compute operation 0x%02x" % tag) from None
+        if len(nxt) > _OTS_MAX_MSG:
+            raise ValueError("an operation's result exceeds %d bytes" % _OTS_MAX_MSG)
+        _ots_walk(r, nxt, depth + 1, found)
+
+    tag = r.take(1)[0]
+    while tag == 0xFF:
+        branch(r.take(1)[0])
+        tag = r.take(1)[0]
+    branch(tag)
+
+
+def ots_bitcoin_attestations(proof, digest):
+    """[(height, message)]: each Bitcoin block attestation in an OpenTimestamps proof of
+    `digest` (SHA-256), with the message the path computes there, which is the block's Merkle
+    root in header byte order when the proof is genuine. Raises ValueError for a proof that is
+    not for this digest or does not parse; an empty list means it is still pending."""
+    if not isinstance(proof, (bytes, bytearray)) or len(proof) > _OTS_MAX_PROOF:
+        raise ValueError("the proof is not bytes of at most %d" % _OTS_MAX_PROOF)
+    r = _OtsReader(bytes(proof))
+    if r.take(len(_OTS_MAGIC)) != _OTS_MAGIC:
+        raise ValueError("not an OpenTimestamps proof")
+    if r.varuint() != 1:
+        raise ValueError("an OpenTimestamps proof of a major version this verifier does not read")
+    if r.take(1)[0] != 0x08:
+        raise ValueError("the proof is not over a SHA-256 digest")
+    if r.take(32) != digest:
+        raise ValueError("the proof is for another digest")
+    found = []
+    _ots_walk(r, digest, 0, found)
+    if r.pos != len(r.data):
+        raise ValueError("the proof carries bytes after its timestamp")
+    return found
+
+
+def bitcoin_header(header_hex):
+    """The fields of an 80-byte Bitcoin block header, given as hex: its hash (as explorers
+    display it), the Merkle root in header byte order, its time, and whether its hash meets the
+    target its own bits declare, a target no easier than mainnet allows. Raises ValueError for
+    anything that is not 80 bytes of hex."""
+    raw = _unhex(header_hex)
+    if len(raw) != 80:
+        raise ValueError("a block header is 80 bytes")
+    h = hashlib.sha256(hashlib.sha256(raw).digest()).digest()
+    bits = int.from_bytes(raw[72:76], "little")
+    exponent, mantissa = bits >> 24, bits & 0x007FFFFF
+    target = mantissa >> 8 * (3 - exponent) if exponent <= 3 else mantissa << 8 * (exponent - 3)
+    pow_ok = (not bits & 0x00800000 and 0 < target <= _BITCOIN_POW_LIMIT
+              and int.from_bytes(h, "little") <= target)
+    return {"block_hash": h[::-1].hex(), "merkle_root": raw[36:68],
+            "time": int.from_bytes(raw[68:72], "little"), "pow_ok": pow_ok}
+
+
+def _checkpoint_heads(text):
+    """The heads of a checkpoint given as text, or (None, why). The text must be exactly the
+    canonical bytes, so the heads read back are the ones that were hashed."""
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return None, "the checkpoint is not JSON"
+    if not isinstance(doc, dict) or doc.get("format") != _CHAIN_CHECKPOINT_FORMAT:
+        return None, "the checkpoint is not a %s" % _CHAIN_CHECKPOINT_FORMAT
+    heads = doc.get("heads")
+    if not isinstance(heads, list) or not heads or not all(isinstance(h, dict) for h in heads):
+        return None, "the checkpoint lists no heads"
+    if chain_checkpoint(heads) != text.encode("utf-8") or set(doc) != {"format", "heads"}:
+        return None, "the checkpoint is not in canonical form"
+    out = []
+    for h in heads:
+        if (h.get("format") != _STH_FORMAT or not isinstance(h.get("log_id"), str)
+                or not _safe_int(h.get("tree_size")) or h["tree_size"] < 0
+                or _hex_text(h.get("root_hash_hex")) is None or not isinstance(h.get("timestamp"), str)):
+            return None, "a head in the checkpoint is not a tree-head statement"
+        # The algorithm a head names when it carries a signature: reported, not verified here
+        # (verify_sth decides a head's signature against the log key).
+        alg = h.get("algorithm") if isinstance(h.get("signature_hex"), str) else None
+        out.append({"log_id": h["log_id"], "tree_size": h["tree_size"],
+                    "root_hash_hex": h["root_hash_hex"], "timestamp": h["timestamp"],
+                    "signature_algorithm": alg if isinstance(alg, str) else None})
+    if len({h["log_id"] for h in out}) != len(out):
+        return None, "the checkpoint names one log twice"
+    return out, None
+
+
+def chain_anchor_heights(anchor):
+    """The block heights an anchor's proof attests, so a caller knows which headers to read
+    before calling verify_chain_anchor. Empty when the anchor cannot be read or is pending."""
+    try:
+        data = anchor["checkpoint"].encode("utf-8")
+        found = ots_bitcoin_attestations(_unhex(anchor["proof_hex"]), hashlib.sha256(data).digest())
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return []
+    return sorted({height for height, _ in found})
+
+
+def verify_chain_anchor(anchor, headers_by_source, min_sources=2):
+    """Decide whether an anchor's checkpoint is committed in a Bitcoin block (013).
+
+    `anchor` is a polaris-chain-anchor/1 object: the checkpoint text and the OpenTimestamps
+    proof as hex (any block fields it also carries are not read). `headers_by_source` maps each
+    source the caller chose to {height: header hex} as that source returned it. The anchor holds
+    when, for a height the proof attests, at least `min_sources` sources returned the same
+    header, that header meets its declared proof of work, and its Merkle root is what the path
+    computes. Any two sources disagreeing about a header is a refusal, not a vote. The earliest
+    such block is reported. Returns {anchored, block_height, block_hash, block_time, sources,
+    heads, checkpoint_sha256, note}."""
+    anchor = anchor if isinstance(anchor, dict) else {}
+    v = {"anchored": False, "block_height": None, "block_hash": None, "block_time": None,
+         "sources": [], "heads": [], "checkpoint_sha256": None, "note": None}
+    if anchor.get("format") != _CHAIN_ANCHOR_FORMAT:
+        v["note"] = "not a %s" % _CHAIN_ANCHOR_FORMAT
+        return v
+    text = anchor.get("checkpoint")
+    if not isinstance(text, str):
+        v["note"] = "the anchor carries no checkpoint text"
+        return v
+    digest = hashlib.sha256(text.encode("utf-8")).digest()
+    v["checkpoint_sha256"] = digest.hex()
+    if "checkpoint_sha256" in anchor and not _same_hex(anchor["checkpoint_sha256"], digest.hex()):
+        v["note"] = "the anchor's checkpoint_sha256 is not the digest of its checkpoint"
+        return v
+    heads, why = _checkpoint_heads(text)
+    if heads is None:
+        v["note"] = why
+        return v
+    v["heads"] = heads
+    try:
+        found = ots_bitcoin_attestations(_unhex(anchor.get("proof_hex")), digest)
+    except (TypeError, ValueError) as exc:
+        v["note"] = "the proof does not open: %s" % exc
+        return v
+    if not found:
+        v["note"] = "pending: no Bitcoin block holds this checkpoint yet"
+        return v
+    if not isinstance(headers_by_source, dict):
+        headers_by_source = {}
+    if not _safe_int(min_sources) or min_sources < 1:
+        v["note"] = "min_sources must be a positive integer"
+        return v
+    misses = []
+    for height, msg in sorted(found, key=lambda f: f[0]):
+        seen = {}
+        for source, headers in sorted(headers_by_source.items(), key=lambda s: str(s[0])):
+            # A height key may be an integer or, from a JSON file, its decimal text.
+            hx = headers.get(height, headers.get(str(height))) if isinstance(headers, dict) else None
+            if hx is not None:
+                seen[source] = hx.lower() if isinstance(hx, str) else hx
+        if len({repr(x) for x in seen.values()}) > 1:
+            v["note"] = "the sources disagree about block %d: %s" % (height, ", ".join(sorted(map(str, seen))))
+            return v
+        if len(seen) < min_sources:
+            misses.append("block %d: %d of %d sources" % (height, len(seen), min_sources))
+            continue
+        try:
+            header = bitcoin_header(next(iter(seen.values())))
+        except (TypeError, ValueError) as exc:
+            v["note"] = "the header for block %d is malformed: %s" % (height, exc)
+            return v
+        if not header["pow_ok"]:
+            v["note"] = "the header for block %d does not meet its proof of work" % height
+            return v
+        if header["merkle_root"] != msg:
+            v["note"] = ("block %d's Merkle root is %s; the proof computes %s"
+                         % (height, header["merkle_root"][::-1].hex(), msg[::-1].hex()))
+            return v
+        v.update(anchored=True, block_height=height, block_hash=header["block_hash"],
+                 block_time=header["time"], sources=sorted(map(str, seen)),
+                 note="in Bitcoin block %d, read from %d source(s)" % (height, len(seen)))
+        return v
+    v["note"] = "too few sources for any attested block (%s)" % "; ".join(misses)
+    return v
+
+
 def _pack_exit(verdict, signature_only):
     """The exit status for a pack verification, as one rule in one place.
 

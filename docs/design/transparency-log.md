@@ -111,6 +111,52 @@ bulletin implemented in `scripts/polaris-transparency-ledger.py`, and the CI def
 declared chain driver (`algorand-pq`, `hyperledger-indy`) that waits on its API. The receipt
 shape does not change with the backend.
 
+## Public-chain anchoring (decision 013)
+
+A witness has to be recruited and trusted; a public chain is a witness nobody has to recruit.
+At the operator's cadence one **checkpoint** is made over the three logs: the canonical JSON
+(`polaris-chain-checkpoint/1`, sorted keys, no spaces) of their signed tree heads at one
+moment, each head with its signature. Its SHA-256 goes to public OpenTimestamps calendars,
+which commit many digests at once in a Bitcoin transaction; there is no key, account or fee,
+and nothing but the digest leaves the instance. The proof that comes back is a path of
+operations from the digest to the Merkle root in a block header.
+
+Once a block holds it, anyone holding the checkpoint and its proof can show what the logs
+held by that block's time. The operator can no longer present a different history for that
+moment: a later head of the same log must extend the anchored one by an RFC 6962 consistency
+proof, and a log rewritten after the anchor fails that proof against a root that is in
+Bitcoin.
+
+- **The record.** `ChainAnchor` holds each anchor whose proof reached a block: the checkpoint
+  bytes (their SHA-256 derived by the database), the proof, the block height and its raw
+  header. It is audit of record (append-only by trigger), and only the schema owner writes it
+  (`polaris-id anchor-record`, which decides the anchor again before writing); the application
+  role publishes it at `GET /api/v1/transparency/anchors` and cannot write it.
+- **The verifier.** `verify_chain_anchor` in the detached verifier trusts none of the
+  OpenTimestamps client, a calendar, an explorer's JSON or the record. It parses the proof
+  with the standard library and replays every operation; it reads each block header as the
+  80 raw bytes a source returned, hashes them itself and checks the proof of work against the
+  target the header declares, no easier than mainnet allows; and it holds only when at least
+  two sources returned the same header (or the caller's own node, if the caller says one is
+  enough). Sources that disagree are a refusal, not a vote.
+- **The tool.** `scripts/polaris-chain-anchor.py` builds a checkpoint from a running instance,
+  decides a proof (`verify`), and runs a monitor's `check`: every published anchor must verify,
+  and each anchored head must be a prefix of its log today.
+
+What it does not establish: that what was logged is true; that today's heads are the
+instance's (the monitor's signature check does that); or that two observers saw the same head
+between anchors (the witnesses do that). It adds nothing to verifying a credential, which stays
+offline against published keys, and no chain enters a credential's trust path. The digest is
+SHA-256 because OpenTimestamps operates on SHA-256; the heads stay SHA3-256 under the
+instance's signature, and what secures the commitment is Bitcoin's accumulated work, not a
+quantum property it does not have.
+
+Measured: [lab/strategy/013/STEP1.md](../../lab/strategy/013/STEP1.md) put a checkpoint of a
+test instance's logs into block 969876. Recorded, published and checked through the product
+path, the logs held their anchored heads, a timestamp log appended to 195 entries extended the
+anchored 194 by its consistency proof, and the same log with one old entry rewritten (the
+owner disabling its trigger) was reported as no longer extending the anchor.
+
 ## How this is tested
 
 `scripts/polaris-transparency-drill.py` proves the guarantee end to end under real

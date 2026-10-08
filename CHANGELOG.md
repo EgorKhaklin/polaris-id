@@ -11,6 +11,15 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- ZK proofs are built with Plonky2's zero-knowledge configuration; earlier binaries built sound but non-hiding proofs, which no longer verify.
+- The access log records method, path and protocol, no longer the query string or the referrer (lab record 017).
+- A restore to an earlier point no longer revives what was withdrawn after it, nor reissues identifiers already issued (lab record 017).
+- The rate limiter's Redis authenticates: an ACL user per role, the default user off, the password from a file; production refuses Redis without one (lab record 017).
+- Behind a load balancer or NAT the edge served /metrics and /api/metrics, which carry the duress counter, to every client; unset, it now serves them to no one.
+- Behind a load balancer every client shared one rate-limit bucket; the edge now trusts the balancer the operator names and refuses forged X-Forwarded-For.
+- The edge, app, pooler and Redis containers run on read-only roots; pgbouncer writes its generated config, which holds the database password, to memory rather than the container's disk layer.
+- A client sending its request slowly held one of the app's synchronous workers until it finished; the edge now reads each body whole (up to 1 MiB) before the app sees it, and ends slow clients.
+- A recovery requested by an authority with no standing over the person must be witnessed by the person's original issuer (UC-9).
 - Werkzeug 3.1.9 (GHSA-g6x2-hccm-hh4m: safe_join accepted Windows device names; Polaris runs on Linux and calls it only through Flask's static files).
 - A holder key rotation or revocation is refused unless its signer is still the live key under the per-token lock, closing a read-before-lock race a stolen-but-live key could ride.
 - The Atlas answered a refused parameter with the exception's text, which could carry the request back; it states a fixed sentence.
@@ -23,6 +32,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- The observability overlay's Prometheus scraped the app through the public edge, which refuses `/metrics` by default; it now finds the app on the stack's network by name, blue-green included.
+- DR.md's point-in-time restore brought the app back without the revocations, key events and other withdrawals made after the target; it now re-applies them first.
+- A duress record still being written when a worker stopped was abandoned with its daemon thread; the worker now waits for it (a killed worker can still lose one in flight). Kubernetes pods pause before draining.
+- OPERATIONS described pgbouncer in transaction mode; it runs in session mode, which keeps each operator's row-level-security scope to its own connection.
+- On Kubernetes, a worker that started before Redis counted rate limits alone for its whole life, reported healthy; it now moves to Redis once Redis answers.
+- KEY-CEREMONY.md rotated keys with a trust-anchors file the running app never reads; it now rotates through the key register.
+- The enrolment-fold concurrency test's control changes an enrolled person's jurisdiction for real, so earlier tests cannot leave it with nothing to fold.
 - deploy/README described a single-PostgreSQL Helm chart and OPERATIONS an unrestricted metrics edge; both now match the code.
 - PQC-POSTURE no longer says Falcon signing time depends on the message: measured natively (record 015, step 4), it does not; the signer stays experimental while FIPS 206 is a draft.
 - A population migration counts a credential as migrated only when its target signature has no deprecation date; one already set to lapse is refused with the re-issue instruction instead of the database's error.
@@ -43,8 +59,30 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- `lab/strategy/006/alerts.sh` fires the certificate, backup and archive alerts on their real conditions and clears them on repair; CI runs it after try.sh.
+- `/metrics` reports this instance's clock against the database's (`polaris_clock_skew_seconds`); PolarisClockSkew pages when they disagree by more than 2 s for 10 minutes.
+- `/metrics` reports the database's WAL archiving as `pg_stat_archiver` sees it; PolarisArchiveFailing pages when the newest attempt failed and none succeeded since.
+- `/metrics` reports a configured read replica's lag against the deployment's staleness limit; PolarisReplicaBehind pages when it stays beyond it, or unreachable, for 10 minutes.
+- `/metrics` reports the size and free space of the state directory's filesystem, the database's on a single host; PolarisDiskFilling pages above 90% used for 10 minutes.
+- The observability overlay reads the certificate the edge serves under the deployment's domain; PolarisCertificateExpiring pages under 14 days, PolarisEdgeProbeFailing when it stops answering.
+- `BackupEvent` records each completed backup and verified dump; `/metrics` reports the newest per kind, and PolarisBackupStale pages when none has completed for 26 hours.
+- A point-in-time restore drill: a restore to a chosen moment brings back exactly what was committed by then, and nothing after.
+- `scripts/polaris-reconcile-restore.py` re-applies withdrawals made after a restore point through their own paths; `RestoreRecord` records each run.
+- `polaris-pitr-drill.sh --reconcile` withdraws trust on both sides of a restore point and requires nothing looser afterwards.
+- WAL archiving is on by default to a local pgBackRest repository; the deploy takes the first full backup, `polaris-backup.sh` the scheduled ones.
+- `/api/health` compares this instance's clock with the database's and reports `clock` degraded beyond 2 s of skew.
+- A per-process database connection pool (`POLARIS_DB_POOL_SIZE`, 1 in the production compose file and the Helm chart): each checkout resets the session and the pool is keyed on the exact connection settings; verification went from about 300 to at least 800 requests/s on one host (lab record 017).
+- The transparency logs can be anchored in Bitcoin: `ChainAnchor` records each checkpoint, published at `/api/v1/transparency/anchors`.
+- polaris-verify `verify_chain_anchor` decides an anchor against block headers it reads itself, from a node or two agreeing sources.
+- `polaris-chain-anchor.py` builds, verifies and checks anchors; `polaris-id anchor-record` records one as the schema owner.
 - Production boot validates every POLARIS_* setting against a declared schema and refuses to start, naming each wrong one: an unreadable secret file, the development database password, a placeholder security contact (lab record 017). docs/operator/CONFIG.md is generated from it.
 - An operability gate in PRODUCTION-READINESS: 28 criteria for running Polaris without its author, each PASS citing evidence a check resolves (lab record 017).
+- A signed release path for the server: from a tag, with PUBLISH and the maintainer's approval, the five images and the chart go to ghcr.io signed keyless with provenance and SBOMs; none is published yet.
+- Supply-chain pins: the Caddy plugin at its release, etcd to the 3.6 series, the Calico manifest by SHA-256, CI images and Trivy by digest; Dependabot reads the compose files, npm lockfiles and published packages.
+- Rotating the session key logs nobody out: the retired key verifies what it signed and signs nothing; --drop-old ends every session.
+- A drill rotates the issuer key on the try.sh stack and then declares the old one compromised; CI runs it after try.sh.
+- scripts/polaris-key-event.sh registers, retires or declares compromised an authority key on the Docker stack, as the schema owner.
+- scripts/polaris-doctor.sh judges every component of the Docker stack and names the failing ones; a drill breaks four and requires each named.
 - An experimental FN-DSA signer: Falcon-padded-1024 keys sign only under POLARIS_EXPERIMENTAL_SIGNERS, never in production, two-witnessed (liboqs, then @noble/post-quantum under Node); migration 2026-10-06-001.
 - A population migrates onto the FN-DSA family where its opt-in holds: 2,000 credentials re-signed at 604/s against ML-DSA-87's 319/s, nobody dark (quantum-event drill, POLARIS_QE_TARGET).
 - A lab step puts a checkpoint of the three transparency logs into Bitcoin block 969876 through OpenTimestamps; its verifier reads the block from two sources.

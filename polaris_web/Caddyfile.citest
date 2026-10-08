@@ -2,9 +2,9 @@
 #
 # The production Caddyfile provisions a Let's Encrypt cert for POLARIS_DOMAIN,
 # which cannot run in CI (no public domain / ACME). This mirrors the prod edge's
-# reverse-proxy + the rate_limit plugin directive (so it still exercises the
-# self-built image's plugin), but terminates TLS with Caddy's internal CA so the
-# full prod stack can be booted and proven end-to-end without ACME.
+# metrics rule, reverse-proxy and the rate_limit plugin directive (so it still
+# exercises the self-built image's plugin), but terminates TLS with Caddy's internal
+# CA so the full prod stack can be booted and proven end-to-end without ACME.
 {
     admin unix//config/admin.sock             # live reloads (v9.240), see Caddyfile
     auto_https disable_redirects
@@ -14,12 +14,49 @@
     # host 8443 onto 8443.
     http_port 8080
     https_port 8443
+    # Production's client-address rule, line for line (check_client_ip_behind_proxies).
+    servers {
+        # Lab record 017 (OP-26): the load balancer in front of this edge, if any, named by
+        # address range in POLARIS_TRUSTED_PROXIES. Behind it {client_ip} is read from
+        # X-Forwarded-For right to left, past the named hops only (strict), so a client
+        # cannot name its own address. Unset, no proxy is trusted (0.0.0.0/32) and
+        # {client_ip} is the TCP peer.
+        trusted_proxies static {$POLARIS_TRUSTED_PROXIES:0.0.0.0/32}
+        trusted_proxies_strict
+        # Lab record 017, phase 5: a client that sends its request slowly is cut off here, not
+        # left holding a connection (scripts/polaris-edge-limits-drill.sh).
+        timeouts {
+            read_header 10s
+            read_body 30s
+            idle 2m
+        }
+    }
 }
 
 localhost:8443 {
     tls internal
 
+    # Lab record 017: the production edge's metrics rule, line for line (check_metrics_edge_acl
+    # holds the two identical), so the stack CI and try.sh boot refuses the duress-carrying
+    # surfaces the way production does.
+    @metrics_from_outside {
+        path /metrics /api/metrics
+        not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}
+    }
+    respond @metrics_from_outside 404
+
+    # Lab record 017, phase 5: the app's own body limit (1 MiB), refused here, before the app.
+    request_body {
+        max_size 1MiB
+    }
+
     reverse_proxy {$POLARIS_UPSTREAMS:app:8000} {
+        header_up X-Real-IP {client_ip}
+        header_up X-Forwarded-For {client_ip}
+        # Lab record 017, phase 5: the edge reads the whole body before the app sees the request.
+        # The app's workers are synchronous, four to an instance: a body passed through as it
+        # arrives held one for as long as its client took to send it.
+        request_buffers 1MiB
         # v9.183 (roadmap P1.4) — the upstream list comes from POLARIS_UPSTREAMS
         # (one app by default; "app:8000 app-green:8000" under the blue-green
         # overlay). A request that hits an upstream being recreated is retried

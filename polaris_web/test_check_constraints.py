@@ -31,6 +31,7 @@ Run:
 Coverage map: see the class docstrings. Each class is one schema table.
 """
 
+import hashlib
 import os
 import sys
 import unittest
@@ -592,8 +593,10 @@ class TestRecoveryRequestChecks(_CheckBase):
     def test_identity_fields_are_immutable(self):
         with self.conn.cursor() as cur:
             rid = self._open_request(cur, 1)
-        self._expect_refusal("UPDATE RecoveryRequest SET claimed_individual_id = 2 WHERE recovery_id = %s",
-                             (rid,), "append-only except for")
+        # Always a different person: a constant can equal the person the fixture picked, and an
+        # UPDATE that changes nothing is not a rewrite.
+        self._expect_refusal("UPDATE RecoveryRequest SET claimed_individual_id = claimed_individual_id + 1 "
+                             "WHERE recovery_id = %s", (rid,), "append-only except for")
 
     def test_delete_is_refused(self):
         with self.conn.cursor() as cur:
@@ -1510,6 +1513,13 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         # 2026-09-28: the wallet copy record (docs/design/oid4vci-issuer.md). Editing a row
         # would move a copy's status index onto another copy.
         "CredentialCopy",
+        # 013 (2026-10-04): the logs' public-chain anchors, written only by the schema owner.
+        "ChainAnchor",
+        # Lab record 017 (2026-10-07): the backup record, written only by the backup scripts.
+        "BackupEvent",
+        # Lab record 017 (2026-10-07): the record of reconciliations after a restore, written
+        # only by scripts/polaris-reconcile-restore.py.
+        "RestoreRecord",
     )
 
     def _app_conn(self):
@@ -1562,13 +1572,17 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             # Since rc.40 the lifecycle log, and since 2026-09-25 the epoch leaves and the anchor
             # batches, are written only by SECURITY DEFINER routines; since 2026-09-27 the key
             # register, card personalization and retention policy only by the owner; since
-            # 2026-09-28 the wallet copy record only by uc_issue_credential_copy; and, since the contract
-            # migration 2026-10-01-003, the holder key register only by uc_record_holder_key_event.
+            # 2026-09-28 the wallet copy record only by uc_issue_credential_copy; since the contract
+            # migration 2026-10-01-003, the holder key register only by uc_record_holder_key_event;
+            # since 2026-10-04 the chain anchors only by the schema owner; and since 2026-10-07 the
+            # backup record only by the backup scripts and the record of reconciliations after a
+            # restore only by its script, as the schema owner.
             self.assertEqual(bool(row["ins"]),
                              tbl.lower() not in ("tokenlifecycleevent", "tokenstateepochleaf",
                                                  "anchorbatch", "duressevent", "authoritykeyevent",
                                                  "cardpersonalization", "retentionpolicy",
-                                                 "credentialcopy", "holderkeyevent"),
+                                                 "credentialcopy", "holderkeyevent", "chainanchor",
+                                                 "backupevent", "restorerecord"),
                              f"append-only is insert-allowed except the lifecycle log, the epoch "
                              f"leaves, the anchor batches and the owner's registers: {tbl}")
             conn.rollback()
@@ -1934,6 +1948,97 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             with self.assertRaises(pg_errors.CheckViolation):
                 cur.execute(rec, (rid, admin, "SWORN", "cd" * 32))
         app.rollback()
+        app.close()
+
+    def test_a_recovery_without_standing_is_witnessed_by_the_original_issuer(self):
+        """2026-10-05, THREAT-MODEL. The requesting authority was tied to nothing about the person
+        and the witness only had to be another authority, so two authorities could recover a
+        credential for a person neither ever issued to. Now a requester without standing (not
+        the original issuer, not a public authority of the person's jurisdiction or country)
+        needs a witness bound to the original issuer. Runs as polaris_app; fixtures as the owner."""
+        import secrets
+        owner = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        tag = secrets.token_hex(4)
+        try:
+            with owner, owner.cursor() as cur:
+                cur.execute("SELECT user_id FROM AppUser WHERE username = 'operator'")
+                operator = cur.fetchone()["user_id"]
+                # A person with credentials, no pending recovery, and an original issuer that is
+                # not the bank (agency 5, PRIVATE: never standing by jurisdiction).
+                cur.execute("""
+                    SELECT i.individual_id, (SELECT t.issuing_agency_id FROM IdentityToken t
+                                              WHERE t.individual_id = i.individual_id
+                                              ORDER BY t.issued_date DESC, t.token_id DESC LIMIT 1) AS original
+                      FROM Individual i
+                     WHERE EXISTS (SELECT 1 FROM IdentityToken t WHERE t.individual_id = i.individual_id)
+                       AND NOT EXISTS (SELECT 1 FROM RecoveryRequest r
+                                        WHERE r.claimed_individual_id = i.individual_id
+                                          AND r.status = 'PENDING')
+                     ORDER BY i.individual_id LIMIT 50""")
+                person = next(r for r in cur.fetchall() if r["original"] != 5)
+                original = person["original"]
+                stranger_agency = next(a for a in (1, 2, 3, 4, 6) if a != original)
+                cur.execute("SELECT set_config('polaris.justification', "
+                            "'UC-9 standing fixture: witnesses bound to named authorities', true)")
+                witnesses = {}
+                for agency in {original, stranger_agency, 2, 3, 6}:
+                    cur.execute("INSERT INTO AppUser (username, password_hash, role, agency_id) "
+                                "VALUES (%s, 'x', 'operator', %s) RETURNING user_id",
+                                ("std%d-%s" % (agency, tag), agency))
+                    witnesses[agency] = cur.fetchone()["user_id"]
+                cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                            "VALUES (%s, '1990-01-01', 'US-PA') RETURNING individual_id", ("STD " + tag,))
+                tokenless = cur.fetchone()["individual_id"]
+
+                def request(individual, agency):
+                    cur.execute("INSERT INTO RecoveryRequest (claimed_individual_id, requested_at, "
+                                "requesting_agency_id, requesting_user_id, cooldown_expires_at) VALUES "
+                                "(%s, now() - interval '50 hours', %s, %s, now() - interval '2 hours') "
+                                "RETURNING recovery_id", (individual, agency, operator))
+                    return cur.fetchone()["recovery_id"]
+                by_bank = request(person["individual_id"], 5)
+                by_california = request(tokenless, 3)
+        finally:
+            owner.close()
+
+        app = self._app_conn()
+        rec = "CALL uc9_record_recovery_channel(%s, %s, %s, %s)"
+        refusals = (
+            ("no standing, a third authority witnesses", (by_bank, witnesses[stranger_agency]), "original issuer"),
+            ("no standing, no credential ever issued", (by_california, witnesses[6]), "no credential was ever issued"),
+        )
+        for label, (rid, witness), words in refusals:
+            with self.subTest(label), app.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege) as c:
+                    cur.execute(rec, (rid, witness, "WITNESS", None))
+                self.assertIn(words, str(c.exception))
+            app.rollback()
+
+        with app.cursor() as cur:
+            cur.execute(rec, (by_bank, witnesses[original], "WITNESS", None))
+            cur.execute("SELECT witness_agency_id FROM RecoveryRequest WHERE recovery_id = %s", (by_bank,))
+            self.assertEqual(cur.fetchone()["witness_agency_id"], original,
+                             "the original issuer witnesses a request made without standing")
+        app.commit()
+
+        # Standing by jurisdiction: Pennsylvania requests for a Pennsylvanian, California witnesses.
+        owner = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with owner, owner.cursor() as cur:
+                cur.execute("SELECT set_config('polaris.justification', 'UC-9 standing fixture', true)")
+                cur.execute("UPDATE RecoveryRequest SET status = 'REJECTED', decided_at = now(), "
+                            "decided_by_user_id = (SELECT user_id FROM AppUser WHERE username = 'admin'), "
+                            "decision_reason = 'fixture' WHERE recovery_id = %s", (by_california,))
+                cur.execute("INSERT INTO RecoveryRequest (claimed_individual_id, requested_at, "
+                            "requesting_agency_id, requesting_user_id, cooldown_expires_at) VALUES "
+                            "(%s, now() - interval '50 hours', 2, %s, now() - interval '2 hours') "
+                            "RETURNING recovery_id", (tokenless, operator))
+                by_pennsylvania = cur.fetchone()["recovery_id"]
+        finally:
+            owner.close()
+        with app.cursor() as cur:
+            cur.execute(rec, (by_pennsylvania, witnesses[3], "WITNESS", None))
+        app.commit()
         app.close()
 
     def test_each_recovery_channel_refusal_is_its_own(self):
@@ -3007,6 +3112,62 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             owner.close()
 
 
+class TestChainAnchorRecord(unittest.TestCase):
+    """013: the record of each checkpoint committed to a public chain (ChainAnchor).
+
+    The row is not the evidence: polaris-verify rereads the proof against block headers it reads
+    itself. What the database holds to is that the record is the operator's and says one thing:
+    the digest is derived from the checkpoint bytes rather than asserted beside them, a checkpoint
+    is recorded once, the chain and method are the one the verifier reads, and the application
+    role, which publishes the record, cannot write it."""
+
+    CHECKPOINT = b'{"format":"polaris-chain-checkpoint/1","heads":["test"]}'
+
+    def _owner(self):
+        return TestCredentialCopyRecord._owner(self)
+
+    def _insert(self, cur, checkpoint=None, digest=None, chain="BITCOIN", header="0" * 160):
+        checkpoint = self.CHECKPOINT if checkpoint is None else checkpoint
+        cur.execute(
+            "INSERT INTO ChainAnchor (checkpoint, checkpoint_sha256, chain, method, proof, block_height, "
+            "block_header_hex, recorded_by) VALUES (%s, %s, %s, 'OPENTIMESTAMPS', %s, 969876, %s, 'test') "
+            "RETURNING anchor_id",
+            (checkpoint, digest or hashlib.sha256(checkpoint).hexdigest(), chain, b"\x00", header))
+        return cur.fetchone()["anchor_id"]
+
+    def test_the_owner_records_an_anchor_whose_digest_is_its_checkpoint_s(self):
+        conn = self._owner()
+        with conn.cursor() as cur:
+            self.assertIsNotNone(self._insert(cur))
+
+    def test_a_digest_that_is_not_the_checkpoint_s_is_refused(self):
+        conn = self._owner()
+        with conn.cursor() as cur:
+            with self.assertRaises(pg_errors.CheckViolation) as caught:
+                self._insert(cur, digest="0" * 64)
+            self.assertIn("chk_chain_anchor_digest", str(caught.exception))
+
+    def test_a_chain_or_header_the_verifier_does_not_read_is_refused(self):
+        for kw, rule in (({"chain": "ETHEREUM"}, "chk_chain_anchor_chain"),
+                         ({"header": "Z" * 160}, "chk_chain_anchor_header"),
+                         ({"header": "0" * 158}, "chk_chain_anchor_header")):
+            with self.subTest(rule=rule, kw=kw):
+                conn = self._owner()
+                with conn.cursor() as cur:
+                    with self.assertRaises(pg_errors.CheckViolation) as caught:
+                        self._insert(cur, **kw)
+                    self.assertIn(rule, str(caught.exception))
+
+    def test_the_application_role_reads_the_record_and_cannot_write_it(self):
+        conn = TestC1PrivilegeBoundary._app_conn(self)
+        self.addCleanup(conn.rollback)
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM ChainAnchor")
+            self.assertGreaterEqual(cur.fetchone()["n"], 0)
+            with self.assertRaises(pg_errors.InsufficientPrivilege):
+                self._insert(cur)
+
+
 class TestCredentialCopyRecord(unittest.TestCase):
     """The wallet copy record obeys the credential record (docs/design/oid4vci-issuer.md).
 
@@ -3538,6 +3699,19 @@ APPEND_ONLY_FIXTURES = {
         "profile_version, normal_public_key, duress_public_key, card_object_sha3_256) "
         "VALUES (1, 1, decode(repeat('00',32),'hex'), 1, decode(repeat('11',32),'hex'), "
         "decode(repeat('22',32),'hex'), decode(repeat('33',32),'hex')) RETURNING personalization_id"),
+    # 013 (2026-10-04): the logs' public-chain anchors. Written in production only by the schema
+    # owner after the proof verifies; the fixture is the owner, and its checkpoint is any bytes
+    # whose SHA-256 the database can derive.
+    # Lab record 017 (2026-10-07): the backup record, written by the backup scripts as the
+    # schema owner; the fixture is the owner.
+    'backupevent': ('event_id',
+        "INSERT INTO BackupEvent (kind, location) VALUES ('dump', '/var/backups/polaris/fixture.tar.gz') "
+        "RETURNING event_id"),
+    'chainanchor': ('anchor_id',
+        "WITH c AS (SELECT convert_to('{\"format\":\"polaris-chain-checkpoint/1\",\"heads\":[]}', 'UTF8') AS b) "
+        "INSERT INTO ChainAnchor (checkpoint, checkpoint_sha256, chain, method, proof, block_height, "
+        "block_header_hex, recorded_by) SELECT c.b, encode(sha256(c.b), 'hex'), 'BITCOIN', "
+        "'OPENTIMESTAMPS', decode('00', 'hex'), 0, repeat('0', 160), 'fixture' FROM c RETURNING anchor_id"),
     # 2026-09-28: the wallet copy record. Written in production only by
     # uc_issue_credential_copy; the fixture is the owner, so it writes a legal row directly
     # (a copy id drawn first, because the list number is derived from it).
@@ -3580,6 +3754,12 @@ APPEND_ONLY_FIXTURES = {
         "INSERT INTO RefereeVouching (proofing_id, referee_individual_id, applicant_individual_id, "
         "referee_ial, relationship, vouched_ial) "
         "SELECT p.proofing_id, 2, 1, 'IAL2', 'EMPLOYER', 'IAL2' FROM p RETURNING vouching_id"),
+    # Lab record 017 (2026-10-07): the record of reconciliations after a restore, written by
+    # scripts/polaris-reconcile-restore.py as the schema owner; the fixture is the owner.
+    'restorerecord': ('restore_id',
+        "INSERT INTO RestoreRecord (target_time, archive_end, operator, outcome, report) "
+        "VALUES (now() - interval '2 hours', now() - interval '1 hour', 'fixture', 'reconciled', '{}') "
+        "RETURNING restore_id"),
     'schema_version': ('event_id',
         "INSERT INTO schema_version (name, event_type, file_sha256) "
         "VALUES ('2026-09-11-999-append-only-fixture', 'applied', repeat('a', 64)) RETURNING event_id"),
@@ -4778,6 +4958,13 @@ UNIQUE_RULE_FIXTURES = {
         "profile_version, normal_public_key, duress_public_key, card_object_sha3_256) "
         "VALUES (1, 1, decode(repeat('00',32),'hex'), 1, decode(repeat('11',32),'hex'), "
         "decode(repeat('22',32),'hex'), decode(repeat('33',32),'hex'))", {}),
+    # 013 (2026-10-04): one checkpoint is recorded once. A second row for the same checkpoint
+    # bytes is a copy the database refuses, whatever block it names.
+    'chainanchor_checkpoint_sha256_key': (
+        "WITH c AS (SELECT convert_to('{\"format\":\"polaris-chain-checkpoint/1\",\"heads\":[1]}', 'UTF8') AS b) "
+        "INSERT INTO ChainAnchor (checkpoint, checkpoint_sha256, chain, method, proof, block_height, "
+        "block_header_hex, recorded_by) SELECT c.b, encode(sha256(c.b), 'hex'), 'BITCOIN', "
+        "'OPENTIMESTAMPS', decode('00', 'hex'), 0, repeat('0', 160), 'fixture' FROM c", {}),
     # 2026-09-28: a wallet copy's place in a status list is unique per agency, day and list.
     # The copy of this seeded row keeps its list number because its new copy_id falls in the
     # same list (copy_id / 2^19), so the only rule it can break is this one.

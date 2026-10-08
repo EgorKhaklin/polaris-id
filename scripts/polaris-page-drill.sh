@@ -108,10 +108,11 @@ PYEOF
 echo "http://sink:8080/webhook" > "$WORK/pager_webhook_url"
 chmod 0644 "$WORK/pager_webhook_url" "$WORK/sink.py"; chmod 0777 "$WORK/state"
 # The drill copy of prometheus.yml: same file, second-scale intervals, the stub target.
-sed -e 's/scheme: https/scheme: http/' \
-    -e "s/targets: \['polaris.example.com:443'\]/targets: ['sink:8080']/" \
+sed -e "s/names: \['app', 'app-green'\]/names: ['sink']/" \
+    -e 's/port: 8000/port: 8080/' \
     -e 's/30s/1s/g' "$OBS/prometheus.yml" > "$WORK/prometheus.yml"
-grep -q "sink:8080" "$WORK/prometheus.yml" || fail "drill prometheus.yml did not take the stub target"
+grep -q "names: \['sink'\]" "$WORK/prometheus.yml" && grep -q "port: 8080" "$WORK/prometheus.yml" \
+    || fail "drill prometheus.yml did not take the stub target"
 
 docker network create "$NET" >/dev/null 2>&1 || true
 echo "== 2. sink (/metrics stub + webhook receiver), Alertmanager, Prometheus =="

@@ -27,17 +27,27 @@ domain: polaris.example.org
 securityContact: ""
 
 edge:
-  # Who may scrape /metrics and /api/metrics. They carry the duress signal
-  # and do not authenticate, so the edge answers 404 to anyone else.
-  # "private_ranges" is Caddy's own token; narrow it to the Prometheus
-  # CIDR in a real deployment, for example "10.20.0.0/16".
-  metricsAllow: "private_ranges"
+  # Who may scrape /metrics and /api/metrics through the edge. They carry the
+  # duress signal and do not authenticate, so the edge answers 404 to anyone
+  # else. Empty: no client (behind a LoadBalancer Service with the default
+  # externalTrafficPolicy, internet clients arrive from private node
+  # addresses, so "private_ranges" would let them in). Name the monitoring
+  # network's CIDR, for example "10.20.0.0/16", or scrape the app Service
+  # from inside the cluster, which needs no edge route.
+  metricsAllow: ""
   # acme: Let's Encrypt for `domain` (needs a reachable LoadBalancer on 80/443).
   # internal: Caddy's internal CA (evaluation, kind, private networks).
   tls: internal
   replicas: 1
+  # The load balancer in front of the edge, if any, by address range ("10.0.0.0/8"); its
+  # X-Forwarded-For then carries the client address. Empty: no proxy is trusted.
+  trustedProxies: ""
   service:
     type: ClusterIP        # LoadBalancer on a real cluster
+    # With a LoadBalancer or NodePort Service, Local keeps the client's own source address
+    # (Cluster, Kubernetes' default, rewrites it to a node's, merging every client's
+    # rate-limit bucket); Local sends traffic only to nodes running an edge pod.
+    externalTrafficPolicy: Local
     httpPort: 80
     httpsPort: 443
   # Requests per minute per client IP at the edge (the prod Caddyfile's value).
@@ -46,6 +56,9 @@ edge:
 app:
   replicas: 2
   webConcurrency: 4
+  # Idle database connections each worker keeps (lab record 017, phase 2d); pgbouncer is in
+  # session mode, so replicas x webConcurrency x dbPoolSize must fit its pool.
+  dbPoolSize: 1
   # Real ML-DSA-65 signing needs the signing key in the secret (see secrets).
   realPqc: true
   # Extra environment for the app pods: the v9.189 session and origin knobs
@@ -83,9 +96,10 @@ postgres:
 
 secrets:
   # An existing Secret holding the files polaris-generate-secrets.sh writes
-  # (polaris_secret_key, polaris_db_password, polaris_db_root_password,
+  # (polaris_secret_key, polaris_secret_key_fallbacks, polaris_db_password, polaris_db_root_password,
   # polaris_replicator_password, polaris_signing_key, postgres_server.crt/.key,
-  # pgbouncer_server.crt/.key, pgbackrest_repo_creds.conf). Recommended:
+  # pgbouncer_server.crt/.key, pgbackrest_repo_creds.conf, polaris_redis_password,
+  # redis_users.acl). Recommended:
   #   kubectl -n polaris create secret generic polaris-secrets --from-file=polaris_web/secrets/
   existingSecret: ""
   # Otherwise the chart creates one: random passwords and self-signed

@@ -193,14 +193,15 @@ if [ "$MANAGED" != "patroni" ] && [ -n "$REPL_PWFILE" ] && [ -r "$REPL_PWFILE" ]
     echo "Streaming-replication readiness enabled (standby host is operator-supplied; see FAILOVER.md)."
 fi
 
-# v9.126+ — continuous WAL archiving (pgBackRest). OFF unless the operator opts
-# in (after provisioning the repo + running stanza-create), so a deployment with
-# no repo does not pile up unarchivable WAL. Sets archive_mode (restart-only;
-# persisted via ALTER SYSTEM and applied on the real server start, like the TLS
-# block) + the archive_command that pushes WAL through the stanza config mounted
-# at /etc/pgbackrest/pgbackrest.conf. The stanza-create + scheduled backups are
-# the operator's steps (docs/operator/DR.md); the CI round-trip proves the path.
-if [ "$MANAGED" != "patroni" ] && [ "${POLARIS_PGBACKREST_ENABLED:-0}" = "1" ]; then
+# v9.126+ — continuous WAL archiving (pgBackRest). ON by default since lab record
+# 017 (gate row OP-14; POLARIS_PGBACKREST_ENABLED=0 turns it off). Sets
+# archive_mode (restart-only; persisted via ALTER SYSTEM and applied on the real
+# server start, like the TLS block) + the archive_command that pushes WAL through
+# the stanza config mounted at /etc/pgbackrest/pgbackrest.conf, and creates the
+# stanza here, against this init server, so the first real start archives rather
+# than piling up WAL. The base backups are polaris-deploy.sh's (the first) and
+# polaris-backup.sh's (the scheduled ones); the CI round-trip proves the path.
+if [ "$MANAGED" != "patroni" ] && [ "${POLARIS_PGBACKREST_ENABLED:-1}" = "1" ]; then
     echo "Enabling continuous WAL archiving via pgBackRest (archive_mode=on)..."
     psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" >/dev/null \
         -c "ALTER SYSTEM SET archive_mode = on;" \
@@ -213,7 +214,15 @@ if [ "$MANAGED" != "patroni" ] && [ "${POLARIS_PGBACKREST_ENABLED:-0}" = "1" ]; 
     # small authority can be hours; with it, any partially filled segment is
     # switched and pushed within 60 s, so the recovery point is never more than
     # about a minute behind. scripts/polaris-dr-drill.sh measures it monthly.
-    echo "WAL archiving enabled. Run 'pgbackrest --stanza=polaris stanza-create' + schedule backups (DR.md)."
+    # The stanza, now: stanza-create reads this server's identity over its socket and does not
+    # need archiving to be active yet. Best effort: an unreachable offsite repository must not
+    # stop the database from initialising; polaris-deploy.sh runs stanza-create and check again.
+    if pgbackrest --stanza=polaris stanza-create >/dev/null 2>&1; then
+        echo "WAL archiving enabled; pgBackRest stanza created."
+    else
+        echo "WARNING: WAL archiving is enabled but stanza-create failed; WAL will accumulate until" >&2
+        echo "         'pgbackrest --stanza=polaris stanza-create' succeeds (polaris-deploy.sh retries it)." >&2
+    fi
     # v9.130 — warn loudly if the repo is LOCAL (no repo1-type=s3). A local repo
     # on the DB host does not survive host loss, so it is not the offsite
     # durability an operator enabling archiving usually expects.

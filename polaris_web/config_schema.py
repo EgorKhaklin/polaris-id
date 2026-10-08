@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import urllib.parse
 from dataclasses import dataclass
 
 _TRUE = ("1", "true", "yes", "on")
@@ -53,6 +54,8 @@ SETTINGS: tuple[Setting, ...] = (
        "Root secret for sessions and derived tokens. Prefer POLARIS_SECRET_KEY_FILE.",
        prod_forbidden_values=("dev-key-change-in-production", "dev-secret-rotate-in-production")),
     _s("POLARIS_SECRET_KEY_FILE", "secret_file", None, "core", "File holding POLARIS_SECRET_KEY."),
+    _s("POLARIS_SECRET_KEY_FALLBACKS_FILE", "secret_file", None, "core",
+       "Keys a rotation retired, one per line: they verify what they signed and sign nothing."),
     _s("POLARIS_DOMAIN", group="core", doc="Public domain: the TLS edge's site and the WebAuthn relying-party id."),
     _s("POLARIS_DEPLOYMENT_LABEL", group="core", doc="Provenance label shown by the Atlas."),
     _s("POLARIS_SECURITY_CONTACT", default="mailto:security@example.invalid", group="core",
@@ -84,6 +87,9 @@ SETTINGS: tuple[Setting, ...] = (
        prod_choices=("require", "verify-ca", "verify-full")),
     _s("POLARIS_DB_SSLROOTCERT", group="database", doc="CA for verify-ca and verify-full; production requires a readable file in those modes."),
     _s("POLARIS_DB_STATEMENT_TIMEOUT_MS", "int", None, "database", "Statement timeout; default derives from POLARIS_TIMEOUT."),
+    _s("POLARIS_DB_POOL_SIZE", "int", "0", "database",
+       "Connections each worker keeps and reuses, reset on checkout; 0 opens one per request. "
+       "Behind pgbouncer (session mode), colours x workers x size must fit its pool."),
     _s("POLARIS_DB_REPLICA_HOST", group="database", doc="Read replica host (optional)."),
     _s("POLARIS_DB_REPLICA_NAME", group="database", doc="Read replica database name (optional)."),
     _s("POLARIS_DB_REPLICA_PORT", "int", None, "database", "Read replica port (optional)."),
@@ -94,7 +100,7 @@ SETTINGS: tuple[Setting, ...] = (
     _s("POLARIS_PQC_PROFILE", group="signing", doc="`placeholder` names the development signer and silences its warning."),
     _s("POLARIS_PQC_ALGORITHM", group="signing", doc="Issuer signing algorithm (default ML-DSA-65)."),
     _s("POLARIS_PQC_SIGNING_KEY_FILE", "file", None, "signing", "File custody: the issuer key."),
-    _s("POLARIS_PQC_TRUST_ANCHORS_FILE", "file", None, "signing", "Earlier issuer public keys that still verify."),
+    _s("POLARIS_PQC_TRUST_ANCHORS_FILE", "file", None, "signing", "Earlier public keys pqc_signing.verify_token_signature accepts; a rotation uses the key register instead (KEY-CEREMONY.md)."),
     _s("POLARIS_MIGRATION_SIGNING_KEY_FILE", "file", None, "signing", "Key for a signature migration's target algorithm."),
     _s("POLARIS_AGENCY_KEYS_DIR", "dir", None, "signing", "Per-agency federation keys."),
     _s("POLARIS_CREDENTIAL_COPY_KEYS_DIR", "dir", None, "signing", "ES256 wallet-copy keys."),
@@ -141,7 +147,10 @@ SETTINGS: tuple[Setting, ...] = (
     _s("POLARIS_WEBAUTHN_ALLOWED_AAGUIDS", "csv", "", "access"),
     # --- rate limiting
     _s("POLARIS_RATE_LIMIT_BACKEND", "enum", "auto", "limits", choices=("auto", "redis", "memory")),
-    _s("POLARIS_REDIS_URL", group="limits", doc="Shared rate-limit state; needed when more than one process serves."),
+    _s("POLARIS_REDIS_URL", group="limits", doc="Shared rate-limit state; needed when more than one process serves. "
+       "Names the user (redis://polaris@host:6379/0), never the password."),
+    _s("POLARIS_REDIS_PASSWORD_FILE", "secret_file", None, "limits",
+       "File holding the Redis user's password; production requires it when POLARIS_REDIS_URL is set."),
     _s("POLARIS_RATE_LIMIT_LOGIN_MAX", "int", None, "limits"),
     _s("POLARIS_RATE_LIMIT_WRITE_MAX", "int", None, "limits"),
     _s("POLARIS_RATE_LIMIT_WRITE_WINDOW", "int", None, "limits"),
@@ -162,6 +171,8 @@ SETTINGS: tuple[Setting, ...] = (
     _s("POLARIS_MDOC_TTL", "int", "86400", "documents"),
     _s("POLARIS_VC_TTL", "int", "3600", "documents"),
     _s("POLARIS_TRANSPARENCY_ENTRIES_CAP", "int", "1000", "documents"),
+    _s("POLARIS_CHAIN_ANCHORS_CAP", "int", "50", "documents",
+       "Most Bitcoin anchor records one /api/v1/transparency/anchors call returns."),
     _s("POLARIS_EXCHANGE_UPSTREAMS", group="documents"),
     _s("POLARIS_ATLAS_BASEMAP_STYLE_URL", default="", group="documents"),
     _s("POLARIS_ATLAS_CACHE_TTL", "int", "30", "documents"),
@@ -278,6 +289,21 @@ def problems(env, production: bool) -> list[str]:
                    f"and {rootcert or '(unset)'!r} is not one")
     if (env.get("POLARIS_CUSTODY_PKCS11_PIN") or "").strip():
         out.append("POLARIS_CUSTODY_PKCS11_PIN: the PIN must come from POLARIS_CUSTODY_PKCS11_PIN_FILE")
+    # Lab record 017, phase 4a: the rate limiter's Redis authenticates, with a password that
+    # lives in a file. One in the URL would sit in the environment, where `docker inspect`
+    # and /proc/<pid>/environ show it.
+    redis_url = (env.get("POLARIS_REDIS_URL") or "").strip()
+    if redis_url:
+        try:
+            url_password = urllib.parse.urlsplit(redis_url).password
+        except ValueError:
+            url_password = None
+        if url_password:
+            out.append("POLARIS_REDIS_URL: carries a password; the password must come from "
+                       "POLARIS_REDIS_PASSWORD_FILE")
+        elif not (env.get("POLARIS_REDIS_PASSWORD_FILE") or "").strip():
+            out.append("POLARIS_REDIS_PASSWORD_FILE: POLARIS_REDIS_URL is set, so production "
+                       "requires the Redis user's password file")
     return sorted(set(out))
 
 

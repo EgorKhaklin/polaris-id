@@ -55,7 +55,11 @@ keepalive = 5
 accesslog = '-'   # stdout
 errorlog = '-'    # stderr
 loglevel = os.environ.get('POLARIS_LOG_LEVEL', 'info')
-access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(L)s'
+# The request is logged as method, path and protocol, never the query string (%(r)s and %(q)s
+# carry it) or the referrer (%(f)s carries the previous page's query string): a query can hold
+# an identifier, a code or a state value, and an access log is kept and copied more widely than
+# the database. Lab record 017, phase 2c; check_access_log_omits_queries pins it.
+access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(m)s %(U)s %(H)s" %(s)s %(b)s "%(a)s" %(L)s'
 
 # Process naming (helpful in `ps` output)
 proc_name = 'polaris-web'

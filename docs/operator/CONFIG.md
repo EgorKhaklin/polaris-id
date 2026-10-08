@@ -11,6 +11,7 @@ A secret is read from its `*_FILE` companion in production. In production a `*_F
 | `POLARIS_ENV` | str |  |  | `production` turns on every production guard, this contract included. |
 | `POLARIS_SECRET_KEY` | secret | `dev-key-change-in-production` | refuses `dev-key-change-in-production`, `dev-secret-rotate-in-production` | Root secret for sessions and derived tokens. Prefer POLARIS_SECRET_KEY_FILE. |
 | `POLARIS_SECRET_KEY_FILE` | secret_file |  | readable, non-empty | File holding POLARIS_SECRET_KEY. |
+| `POLARIS_SECRET_KEY_FALLBACKS_FILE` | secret_file |  | readable, non-empty | Keys a rotation retired, one per line: they verify what they signed and sign nothing. |
 | `POLARIS_DOMAIN` | str |  |  | Public domain: the TLS edge's site and the WebAuthn relying-party id. |
 | `POLARIS_DEPLOYMENT_LABEL` | str |  |  | Provenance label shown by the Atlas. |
 | `POLARIS_SECURITY_CONTACT` | str | `mailto:security@example.invalid` | refuses `mailto:security@example.invalid` | security.txt Contact. Unset, it is security@ POLARIS_DOMAIN; production refuses the placeholder. |
@@ -42,6 +43,7 @@ A secret is read from its `*_FILE` companion in production. In production a `*_F
 | `POLARIS_DB_SSLMODE` | enum (disable, allow, prefer, require, verify-ca, verify-full) | `prefer` | one of require, verify-ca, verify-full | libpq sslmode. Production requires an encrypting mode. |
 | `POLARIS_DB_SSLROOTCERT` | str |  |  | CA for verify-ca and verify-full; production requires a readable file in those modes. |
 | `POLARIS_DB_STATEMENT_TIMEOUT_MS` | int |  |  | Statement timeout; default derives from POLARIS_TIMEOUT. |
+| `POLARIS_DB_POOL_SIZE` | int | `0` |  | Connections each worker keeps and reuses, reset on checkout; 0 opens one per request. Behind pgbouncer (session mode), colours x workers x size must fit its pool. |
 | `POLARIS_DB_REPLICA_HOST` | str |  |  | Read replica host (optional). |
 | `POLARIS_DB_REPLICA_NAME` | str |  |  | Read replica database name (optional). |
 | `POLARIS_DB_REPLICA_PORT` | int |  |  | Read replica port (optional). |
@@ -55,7 +57,7 @@ A secret is read from its `*_FILE` companion in production. In production a `*_F
 | `POLARIS_PQC_PROFILE` | str |  |  | `placeholder` names the development signer and silences its warning. |
 | `POLARIS_PQC_ALGORITHM` | str |  |  | Issuer signing algorithm (default ML-DSA-65). |
 | `POLARIS_PQC_SIGNING_KEY_FILE` | file |  | must exist if set | File custody: the issuer key. |
-| `POLARIS_PQC_TRUST_ANCHORS_FILE` | file |  | must exist if set | Earlier issuer public keys that still verify. |
+| `POLARIS_PQC_TRUST_ANCHORS_FILE` | file |  | must exist if set | Earlier public keys pqc_signing.verify_token_signature accepts; a rotation uses the key register instead (KEY-CEREMONY.md). |
 | `POLARIS_MIGRATION_SIGNING_KEY_FILE` | file |  | must exist if set | Key for a signature migration's target algorithm. |
 | `POLARIS_AGENCY_KEYS_DIR` | dir |  |  | Per-agency federation keys. |
 | `POLARIS_CREDENTIAL_COPY_KEYS_DIR` | dir |  |  | ES256 wallet-copy keys. |
@@ -111,7 +113,8 @@ A secret is read from its `*_FILE` companion in production. In production a `*_F
 | Setting | Type | Default | Production | Meaning |
 |---|---|---|---|---|
 | `POLARIS_RATE_LIMIT_BACKEND` | enum (auto, redis, memory) | `auto` |  |  |
-| `POLARIS_REDIS_URL` | str |  |  | Shared rate-limit state; needed when more than one process serves. |
+| `POLARIS_REDIS_URL` | str |  |  | Shared rate-limit state; needed when more than one process serves. Names the user (redis://polaris@host:6379/0), never the password. |
+| `POLARIS_REDIS_PASSWORD_FILE` | secret_file |  | readable, non-empty | File holding the Redis user's password; production requires it when POLARIS_REDIS_URL is set. |
 | `POLARIS_RATE_LIMIT_LOGIN_MAX` | int |  |  |  |
 | `POLARIS_RATE_LIMIT_WRITE_MAX` | int |  |  |  |
 | `POLARIS_RATE_LIMIT_WRITE_WINDOW` | int |  |  |  |
@@ -139,6 +142,7 @@ A secret is read from its `*_FILE` companion in production. In production a `*_F
 | `POLARIS_MDOC_TTL` | int | `86400` |  |  |
 | `POLARIS_VC_TTL` | int | `3600` |  |  |
 | `POLARIS_TRANSPARENCY_ENTRIES_CAP` | int | `1000` |  |  |
+| `POLARIS_CHAIN_ANCHORS_CAP` | int | `50` |  | Most Bitcoin anchor records one /api/v1/transparency/anchors call returns. |
 | `POLARIS_EXCHANGE_UPSTREAMS` | str |  |  |  |
 | `POLARIS_ATLAS_BASEMAP_STYLE_URL` | str |  |  |  |
 | `POLARIS_ATLAS_CACHE_TTL` | int | `30` |  |  |

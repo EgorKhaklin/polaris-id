@@ -61,7 +61,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: ci_password
           POSTGRES_DB: polaris_test
@@ -76,7 +76,7 @@ jobs:
       # tests RUN here (they skipped for want of a server since v9.40) and the
       # abuse drill exercises the Lua sliding window under redis-py 8.x.
       redis:
-        image: redis:7-alpine
+        image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
         ports:
           - 6379:6379
         options: >-
@@ -487,6 +487,10 @@ jobs:
       # polaris_app. First run: the Atlas simulation tick used COPY FROM on a row-level-secured
       # table, refused for the real role, green in all 873 tests.
       - name: The web suite with the application connected as polaris_app
+        # With the connection pool on (lab record 017, phase 2d): the role-sensitive suite is
+        # where a pooled connection crossing roles would show.
+        env:
+          POLARIS_DB_POOL_SIZE: "1"
         run: python scripts/polaris-app-role-suite.py
 
       - name: Constraint mutation drill (drop each named constraint, the suite must notice)
@@ -611,7 +615,7 @@ jobs:
 
       - name: Upload the smoke baseline JSON
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: perf-baseline-smoke
           path: /tmp/perf-baseline.json
@@ -638,13 +642,18 @@ jobs:
         with:
           tool: cargo-llvm-cov
           fallback: none
+      # The suite runs once, instrumented in the release profile, and both reports read that run.
+      # Under the zero-knowledge circuit configuration the debug profile took two hours to prove
+      # under instrumentation, and the step ran the suite twice, pushing this job toward its
+      # six-hour limit; the release profile measures the same lines in about two minutes.
       - name: ZK library coverage floor
         working-directory: polaris_zk
         run: |
-          cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs' \
+          cargo llvm-cov --release --no-report
+          cargo llvm-cov report --release --summary-only --ignore-filename-regex 'main\.rs' \
             --fail-under-lines 85
           echo "### ZK library coverage" >> "$GITHUB_STEP_SUMMARY"
-          cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs' 2>/dev/null \
+          cargo llvm-cov report --release --summary-only --ignore-filename-regex 'main\.rs' 2>/dev/null \
             | grep -E 'lib.rs|TOTAL' >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: ZK prove-verify roundtrip + two-witness differential
@@ -720,7 +729,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: ci_password
           POSTGRES_DB: polaris_test
@@ -735,7 +744,7 @@ jobs:
       # tests RUN here (they skipped for want of a server since v9.40) and the
       # abuse drill exercises the Lua sliding window under redis-py 8.x.
       redis:
-        image: redis:7-alpine
+        image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
         ports:
           - 6379:6379
         options: >-
@@ -855,7 +864,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: ci_password
           POSTGRES_DB: polaris_test
@@ -870,7 +879,7 @@ jobs:
       # tests RUN here (they skipped for want of a server since v9.40) and the
       # abuse drill exercises the Lua sliding window under redis-py 8.x.
       redis:
-        image: redis:7-alpine
+        image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
         ports:
           - 6379:6379
         options: >-
@@ -1022,7 +1031,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: ci_password
           POSTGRES_DB: polaris_test
@@ -1115,7 +1124,7 @@ jobs:
 
       - name: Upload UI drill screenshots
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ui-drill-screenshots
           path: ui-drill-out/
@@ -1628,74 +1637,27 @@ jobs:
       # (so a modern browser gets PQ with no special config), and a classical
       # client must still connect (graceful fallback).
       - name: The metrics surfaces are refused from outside the monitoring network
-        run: |
-          set -e
-          # The duress signal rides on /metrics and /api/metrics and neither
-          # route authenticates, so the edge is the control. Prove both cases.
-          cat > /tmp/acl.Caddyfile <<'EOF'
-          {
-              admin off
-              auto_https off
-          }
-          :8080 {
-              @metrics_from_outside {
-                  path /metrics /api/metrics
-                  not remote_ip {$POLARIS_METRICS_ALLOW:private_ranges}
-              }
-              respond @metrics_from_outside 404
-              reverse_proxy aclup:8000
-          }
-          EOF
-          cat > /tmp/acl-upstream.py <<'EOF'
-          from http.server import BaseHTTPRequestHandler, HTTPServer
-          class H(BaseHTTPRequestHandler):
-              def do_GET(self):
-                  body = b'polaris_duress_events_total 0\n'
-                  self.send_response(200); self.send_header('Content-Type', 'text/plain')
-                  self.send_header('Content-Length', str(len(body))); self.end_headers()
-                  self.wfile.write(body)
-              def log_message(self, *a): pass
-          HTTPServer(('0.0.0.0', 8000), H).serve_forever()
-          EOF
-          docker network create aclnet >/dev/null 2>&1 || true
-          docker rm -f aclup acledge >/dev/null 2>&1 || true
-          docker run -d --rm --name aclup --network aclnet \
-            -v /tmp/acl-upstream.py:/u.py:ro python:3.12-alpine python /u.py >/dev/null
-          # The stub has to be answering before the edge is asked to proxy to
-          # it, or the first probe reads a 502 from a cold upstream and says
-          # the ACL is broken when it is not.
-          for i in $(seq 1 30); do
-            docker run --rm --network aclnet curlimages/curl:8.11.1 \
-              -fsS -o /dev/null http://aclup:8000/metrics && break
-            sleep 1
-          done
-          probe() {  # $1 = expected code, $2 = path, $3 = case
-            for i in $(seq 1 10); do
-              code=$(docker run --rm --network aclnet curlimages/curl:8.11.1 \
-                       -s -o /dev/null -w '%{http_code}' "http://acledge:8080$2")
-              [ "$code" = "$1" ] && { echo "  $3 $2 -> $code"; return 0; }
-              sleep 1
-            done
-            echo "::error::$3: $2 answered $code, expected $1"
-            docker logs acledge 2>&1 | tail -20
-            exit 1
-          }
-          docker run -d --rm --name acledge --network aclnet \
-            -v /tmp/acl.Caddyfile:/etc/caddy/Caddyfile:ro polaris-caddy:ci >/dev/null
-          sleep 3
-          probe 200 /metrics      "in-network"
-          probe 200 /api/metrics  "in-network"
-          probe 200 /             "in-network"
-          docker rm -f acledge >/dev/null
-          docker run -d --rm --name acledge --network aclnet -e POLARIS_METRICS_ALLOW=203.0.113.0/24 \
-            -v /tmp/acl.Caddyfile:/etc/caddy/Caddyfile:ro polaris-caddy:ci >/dev/null
-          sleep 3
-          probe 404 /metrics      "outside"
-          probe 404 /api/metrics  "outside"
-          probe 200 /             "outside"
-          docker rm -f acledge aclup >/dev/null 2>&1 || true
-          docker network rm aclnet >/dev/null 2>&1 || true
-          echo "the metrics ACL is enforced at the edge, and normal routes are unaffected"
+        # The duress signal rides on /metrics and /api/metrics and neither route
+        # authenticates, so the edge is the control. The drill takes the rule out of the
+        # SHIPPED Caddyfile and asks in-network and through a TCP forwarder (what an
+        # internet client looks like behind an L4 load balancer or NAT): refused unless the
+        # monitoring network is named (lab record 017). Pinned by check_metrics_edge_acl.
+        run: bash scripts/polaris-metrics-edge-drill.sh polaris-caddy:ci
+
+      # Lab record 017 (gate row OP-26): behind an L7 load balancer named in
+      # POLARIS_TRUSTED_PROXIES, the app is told the client's own address; unnamed, the
+      # balancer's; and a forged X-Forwarded-For, through the balancer or straight to the
+      # edge, is never believed. Pinned by check_client_ip_behind_proxies.
+      - name: The client address behind a load balancer (scripts/polaris-client-ip-drill.sh)
+        run: bash scripts/polaris-client-ip-drill.sh polaris-caddy:ci
+
+      # Lab record 017, phase 5: the app's workers are synchronous, so the edge must keep a slow
+      # client off them. In front of an upstream that serves one request at a time, a body
+      # trickled at a byte a second must not delay a GET sent after it, and is ended by the edge;
+      # a 2 MiB body is refused 413 before the upstream; trickled headers are cut off. Pinned by
+      # check_edge_limits.
+      - name: A slow or oversized client is ended at the edge (scripts/polaris-edge-limits-drill.sh)
+        run: bash scripts/polaris-edge-limits-drill.sh polaris-caddy:ci
 
       - name: Prove the edge negotiates X25519MLKEM768 (post-quantum hybrid KEX)
         run: |
@@ -1839,9 +1801,22 @@ jobs:
           POLARIS_DR_OUT: /tmp/dr-drill.json
         run: bash scripts/polaris-dr-drill.sh
 
+      # Lab record 017 (gate row OP-12): a restore to a chosen moment, the --type=time restore
+      # DR.md section 4.3 uses, brings back exactly what was committed by then: the same markers,
+      # digest equal, none committed after it. The control restores to the archive's end and
+      # must be told apart. Reuses the image the DR drill built. Pinned by check_pitr_drilled.
+      # Gate row OP-13: --reconcile withdraws trust on either side of T, sees the restore read it
+      # back as granted, and requires scripts/polaris-reconcile-restore.py to leave nothing looser
+      # than the archive's end. Pinned by check_restore_reconciled.
+      - name: Point-in-time restore drill (scripts/polaris-pitr-drill.sh)
+        run: |
+          bash scripts/polaris-pitr-drill.sh --no-build
+          bash scripts/polaris-pitr-drill.sh --no-build --prove-control
+          bash scripts/polaris-pitr-drill.sh --no-build --reconcile
+
       - name: Upload the drill JSON
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dr-drill-ci
           path: /tmp/dr-drill.json
@@ -1983,6 +1958,21 @@ jobs:
           [ "$code" = 200 ] || { docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml -f docker-compose.bluegreen.yml ps; docker logs polaris-app 2>&1 | tail -30; exit 1; }
           docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml -f docker-compose.bluegreen.yml ps --format 'table {{.Service}}\t{{.Status}}'
 
+      # Lab record 017, phase 4a: the rate limiter reaches Redis as its ACL user, and
+      # Redis refuses everyone else: an unauthenticated client, and the healthcheck's
+      # user asking for more than PING. Pinned by check_redis_authenticated.
+      - name: Redis authenticates (the app as its ACL user; others refused)
+        run: |
+          set -euo pipefail
+          health=$(curl -sk https://localhost:8443/api/health)
+          echo "$health" | jq -e '.checks.redis.backend == "redis" and .checks.redis.status == "healthy"' > /dev/null \
+            || { echo "::error::the rate limiter is not on Redis"; echo "$health" | jq .checks.redis; exit 1; }
+          out=$(docker exec polaris-redis redis-cli ping 2>&1 || true)
+          echo "$out" | grep -q NOAUTH || { echo "::error::an unauthenticated client was answered: $out"; exit 1; }
+          out=$(docker exec polaris-redis redis-cli --no-auth-warning --user health --pass x flushall 2>&1 || true)
+          echo "$out" | grep -q NOPERM || { echo "::error::the health user ran FLUSHALL: $out"; exit 1; }
+          echo "Redis: the app authenticated as polaris; an unauthenticated client and the health user's FLUSHALL refused"
+
       - name: Rolling deploy under traffic, then the negative control
         run: bash scripts/polaris-rolling-drill.sh
 
@@ -2036,7 +2026,7 @@ jobs:
 
       - name: Upload the RTO/RPO ledger
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: region-evacuation
           path: /tmp/evacuation.json
@@ -2089,7 +2079,7 @@ jobs:
 
       - name: Upload the drill summary
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: failover-drill
           path: /tmp/failover.json
@@ -2143,7 +2133,7 @@ jobs:
     # service is only a server to create it in.
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: ci_password
         ports:
@@ -2154,7 +2144,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: redis:7-alpine
+        image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
         ports:
           - 6379:6379
         options: >-
@@ -2721,7 +2711,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: ci_password
           POSTGRES_DB: polaris_test
@@ -3070,7 +3060,7 @@ jobs:
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v "$PWD/.trivyignore:/.trivyignore:ro" \
-              aquasec/trivy:0.58.1 image \
+              aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7 image \
                 --scanners vuln --severity CRITICAL --ignore-unfixed \
                 --ignorefile /.trivyignore --exit-code 1 --no-progress "$img" \
               || { echo "::error::$img has a fixable CRITICAL CVE not covered by .trivyignore"; exit 1; }
@@ -3086,7 +3076,7 @@ jobs:
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v "$PWD/.trivyignore:/.trivyignore:ro" \
-              aquasec/trivy:0.58.1 image \
+              aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7 image \
                 --scanners vuln --severity HIGH --ignore-unfixed \
                 --ignorefile /.trivyignore --exit-code 0 --no-progress "$img" || true
           done

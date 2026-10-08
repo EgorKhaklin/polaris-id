@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 
 import pytest
 
@@ -1770,10 +1771,11 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     mig.mkdir(parents=True)
     base_tables = ("tokenlifecycleevent verificationevent enrollmentstatusevent "
                    "anchorbatch tokenstateepochleaf duressevent authauditlog "
-                   "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed", "authoritykeyevent", "timestamplog", "holderkeyevent")
+                   "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed", "authoritykeyevent", "timestamplog", "holderkeyevent", "chainanchor",
+                   "backupevent", "restorerecord")
 
     def write(grants, mig_revoke, proc_definer, uc11_definer=True, uc10_definer=True, uc9r_definer=True,
-              hk_definer=True, hk_path=True):
+              hk_definer=True, hk_path=True, uc9r_standing=True):
         (sql / "09_grants.sql").write_text(grants)
         (mig / "2026-05-15-003-audit-access-log.up.sql").write_text(
             "REVOKE UPDATE, DELETE ON AuditAccessLog FROM polaris_app;\n"
@@ -1792,7 +1794,10 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                       for r in ("uc10_attest_trust", "uc10_revoke_attestation", "uc_pseudonymize_individual"))
             + "CREATE OR REPLACE PROCEDURE uc9_record_recovery_channel(p INTEGER)\nLANGUAGE plpgsql\n"
             + ("SECURITY DEFINER\nSET search_path = public, pg_temp\n" if uc9r_definer else "")
-            + "AS $$ BEGIN NULL; END; $$;\n"
+            + "AS $$ BEGIN SELECT 1 FROM IdentityToken t ORDER BY t.issued_date DESC;\n"
+            + ("IF v_standing IS NOT TRUE AND v_agency IS DISTINCT FROM v_original THEN RAISE; END IF;\n"
+               if uc9r_standing else "")
+            + "END; $$;\n"
             + "CREATE OR REPLACE FUNCTION uc_record_holder_key_event(p INTEGER) RETURNS BIGINT\n"
             + "LANGUAGE plpgsql\n" + ("SECURITY DEFINER\n" if hk_definer else "")
             + ("SET search_path = public, pg_temp\n" if hk_path else "")
@@ -1915,6 +1920,9 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     write(full, True, True, uc9r_definer=False)
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
         "must FAIL when uc9_record_recovery_channel runs with the caller's rights (rc.60)"
+    write(full, True, True, uc9r_standing=False)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a requester without standing may take any third authority as witness (2026-10-05)"
 
     # 8. 2026-09-25: the federation trust graph.
     write(full.replace("REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;\n", ""), True, True)
@@ -2305,6 +2313,68 @@ def test_rust_toolchain_pin_check_discriminates(tmp_path):
 
 
 
+def test_zk_hiding_check_discriminates(tmp_path):
+    zk = tmp_path / "polaris_zk" / "src"
+    zk.mkdir(parents=True)
+    lib = zk / "lib.rs"
+    rust_test = ("#[cfg(test)]\nmod tests {\n    use super::*;\n"
+                 "    #[test]\n    fn the_circuit_is_built_zero_knowledge() {\n"
+                 "        let (builder, _) = build_circuit();\n"
+                 "        let circuit = builder.build::<C>();\n"
+                 "        assert!(circuit.common.config.zero_knowledge);\n    }\n}\n")
+    good = ("pub fn build_circuit() -> (CircuitBuilder<F, D>, CircuitTargets) {\n"
+            "    // standard_recursion_config() is without zero-knowledge.\n"
+            "    let config = CircuitConfig::standard_recursion_zk_config();\n"
+            "    let mut builder = CircuitBuilder::<F, D>::new(config);\n"
+            "}\n")
+    lib.write_text(good + rust_test)
+    assert checks.check_zk_circuit_is_zero_knowledge(tmp_path)[0].level == "OK", \
+        "must PASS on the zero-knowledge configuration with its Rust test"
+
+    # The defect: a sound but non-hiding configuration.
+    lib.write_text(good.replace("standard_recursion_zk_config", "standard_recursion_config")
+                   + rust_test)
+    assert checks.check_zk_circuit_is_zero_knowledge(tmp_path)[0].level == "FAIL", \
+        "must FAIL on standard_recursion_config()"
+
+    # The flag switched off explicitly, even with the zk constructor named.
+    lib.write_text(good.replace(
+        "CircuitConfig::standard_recursion_zk_config();",
+        "CircuitConfig { zero_knowledge: false, ..CircuitConfig::standard_recursion_zk_config() };")
+        + rust_test)
+    assert checks.check_zk_circuit_is_zero_knowledge(tmp_path)[0].level == "FAIL", \
+        "must FAIL on zero_knowledge: false"
+
+    # A comment cannot satisfy it.
+    lib.write_text(good.replace("standard_recursion_zk_config", "standard_recursion_config")
+                   .replace("// standard_recursion_config() is without zero-knowledge.",
+                            "// zero_knowledge: true")
+                   + rust_test)
+    assert checks.check_zk_circuit_is_zero_knowledge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when only a comment mentions zero_knowledge: true"
+
+    # The Rust test that asserts the flag on the built circuit is removed.
+    lib.write_text(good)
+    assert checks.check_zk_circuit_is_zero_knowledge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the Rust zero_knowledge test is gone"
+
+
+def test_access_log_check_discriminates(tmp_path):
+    web = tmp_path / "polaris_web"
+    web.mkdir()
+    conf = web / "gunicorn.conf.py"
+    conf.write_text("access_log_format = '%(h)s %(t)s \"%(m)s %(U)s %(H)s\" %(s)s %(a)s'\n")
+    assert checks.check_access_log_omits_queries(tmp_path)[0].level == "OK", \
+        "must PASS when the log records method, path and protocol only"
+    for leak in ("%(r)s", "%(q)s", "%(f)s"):
+        conf.write_text("access_log_format = '%(h)s \"" + leak + "\" %(U)s'\n")
+        assert checks.check_access_log_omits_queries(tmp_path)[0].level == "FAIL", \
+            f"must FAIL when the format carries {leak}"
+    conf.write_text("workers = 2\n")
+    assert checks.check_access_log_omits_queries(tmp_path)[0].level == "FAIL", \
+        "must FAIL when no format is set (gunicorn's default logs the request line)"
+
+
 def test_config_schema_coverage_check_discriminates(tmp_path):
     web = tmp_path / "polaris_web"
     web.mkdir()
@@ -2650,6 +2720,54 @@ def test_sbom_trivy_match_check_discriminates(tmp_path):
         "must PASS when both use the same Trivy version"
 
 
+def test_supply_chain_pins_check_discriminates(tmp_path):
+    files = ["polaris_web/Dockerfile.caddy", "polaris_web/Dockerfile.etcd",
+             "polaris_web/docker-compose.prod.yml", "polaris_web/docker-compose.yml",
+             "scripts/polaris-helm-drill.sh",
+             ".github/dependabot.yml", "sdk/typescript/package-lock.json",
+             "packages/polaris-verify/pyproject.toml"]
+    files += [str(p.relative_to(REPO)) for p in sorted((REPO / ".github/workflows").glob("*.yml"))]
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
+        "must PASS on the real Dockerfiles, drill, workflows and Dependabot config"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new))
+        assert checks.check_supply_chain_pins(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    broken("polaris_web/Dockerfile.caddy", "caddy-ratelimit@v0.1.0", "caddy-ratelimit",
+           "must FAIL when the Caddy plugin builds at whatever version resolves that day")
+    broken("polaris_web/Dockerfile.etcd", '"etcd~3.6" "etcd-ctl~3.6"', "etcd etcd-ctl",
+           "must FAIL when etcd is installed with no version constraint")
+    broken("scripts/polaris-helm-drill.sh", 'kubectl apply -f "$CALICO_FILE"',
+           'kubectl apply -f "$CALICO_MANIFEST"',
+           "must FAIL when the Calico manifest is applied straight from its URL")
+    broken(".github/workflows/ci.yml",
+           "redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+           "redis:7-alpine", "must FAIL when a CI service image runs by tag")
+    broken(".github/workflows/sbom.yml",
+           "aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7",
+           "aquasec/trivy:0.58.1", "must FAIL when the SBOM generator runs by tag")
+    broken("polaris_web/docker-compose.yml",
+           "postgres:16@sha256:65b16a8b326e0cfbdf33fa7e783f2a0cb352a61448616ccccfd616ef42aa0f65",
+           "postgres:16", "must FAIL when a compose file runs a third-party image by tag")
+    broken(".github/dependabot.yml", "  - package-ecosystem: docker-compose\n",
+           "  - package-ecosystem: docker-compose-unread\n",
+           "must FAIL when Dependabot reads no compose file")
+    broken(".github/dependabot.yml", "      - /packages/polaris-verify\n", "",
+           "must FAIL when a published Python package's manifest is unread")
+    (tmp_path / "tools/newtool").mkdir(parents=True)
+    (tmp_path / "tools/newtool/package-lock.json").write_text("{}\n")
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a new npm lockfile appears that Dependabot does not read"
+
+
 def test_release_provenance_check_discriminates(tmp_path):
     wf = tmp_path / ".github" / "workflows"
     wf.mkdir(parents=True)
@@ -2683,6 +2801,423 @@ def test_release_provenance_check_discriminates(tmp_path):
     sec.write_text("gh attestation verify file --repo x\n")
     assert checks.check_release_provenance(tmp_path)[0].level == "OK", \
         "must PASS with attestation, permissions, and a documented verify command"
+
+
+def test_release_images_signed_check_discriminates(tmp_path):
+    files = (".github/workflows/release-images.yml", ".github/workflows/sbom.yml",
+             "docs/operator/VERIFY-RELEASE.md", "scripts/polaris-pin-chart-images.py")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_release_images_signed(tmp_path)[0].level == "OK", \
+        "must PASS on the real workflow, its runbook and the pin script"
+    wf = tmp_path / ".github/workflows/release-images.yml"
+    doc = tmp_path / "docs/operator/VERIFY-RELEASE.md"
+    good = {wf: wf.read_text(), doc: doc.read_text()}
+
+    def broken(path, old, new, why):
+        assert old in good[path], f"the fixture drifted: {old!r} is no longer in {path.name}"
+        path.write_text(good[path].replace(old, new))
+        assert checks.check_release_images_signed(tmp_path)[0].level == "FAIL", why
+        path.write_text(good[path])
+
+    broken(wf, "on:\n  workflow_dispatch:", "on:\n  push:\n    tags: ['v*']\n  workflow_dispatch:",
+           "must FAIL when a pushed tag publishes with no one dispatching it")
+    broken(wf, "permissions:\n  contents: read\n\nconcurrency",
+           "permissions:\n  contents: write\n\nconcurrency",
+           "must FAIL when the token is writable at the top")
+    broken(wf, "actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e",
+           "actions/attest-sbom@v4", "must FAIL when an action is pinned by a movable tag")
+    broken(wf, "    environment: ghcr\n", "",
+           "must FAIL when no job waits for the maintainer's approval")
+    broken(wf, "    name: The maintainer approves the publish\n    needs: validate\n",
+           "    name: The maintainer approves the publish\n",
+           "must FAIL when the approval does not wait on the version-tag refusal")
+    broken(wf, '[ "$REF_TYPE" = tag ]', '[ -n "$REF_TYPE" ]',
+           "must FAIL when a publish from a branch is not refused")
+    broken(wf, "    needs: [approve, build]\n", "    needs: build\n",
+           "must FAIL when a job that signs does not wait on the approval")
+    broken(wf, "    needs: [approve, build]\n    if: inputs.confirm == 'PUBLISH'\n",
+           "    needs: [approve, build]\n    if: ${{ always() && inputs.confirm == 'PUBLISH' }}\n",
+           "must FAIL when a signing job's `if:` overrides a refused approval")
+    broken(wf, "      PUSH: ${{ inputs.confirm == 'PUBLISH' && needs.approve.result == 'success' }}",
+           "      PUSH: ${{ inputs.confirm == 'PUBLISH' }}",
+           "must FAIL when the build pushes on PUBLISH without the approval")
+    broken(wf, "      - name: Log in to ghcr.io\n        if: env.PUSH == 'true'\n",
+           "      - name: Log in to ghcr.io\n",
+           "must FAIL when the build logs in to the registry on a dry run")
+    broken(wf, "      packages: write   # push by digest, only on an approved publish\n",
+           "      packages: write   # push by digest, only on an approved publish\n"
+           "      id-token: write\n",
+           "must FAIL when the job that also runs dry can mint a signing identity")
+    broken(wf, 'cosign sign --yes "$REF"', 'cosign sign --yes --key env://COSIGN_KEY "$REF"',
+           "must FAIL when the index is signed with a key instead of keyless")
+    broken(wf, "          subject-digest: ${{ steps.index.outputs.digest }}\n"
+               "          push-to-registry: true\n",
+           "          subject-digest: ${{ steps.index.outputs.digest }}\n",
+           "must FAIL when the provenance is not attached at the registry")
+    broken(wf, "      - uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0\n"
+               "        with:\n          subject-name: ${{ steps.index.outputs.image }}\n"
+               "          subject-digest: ${{ steps.index.outputs.arm64 }}\n"
+               "          sbom-path: sbom-arm64.spdx.json\n          push-to-registry: true\n", "",
+           "must FAIL when one architecture's image carries no SBOM")
+    broken(wf, '"$RUNNER_TEMP/sbom-check/bin/ntia-checker" -r json "sbom-$arch.spdx.json" > verdict.json || true',
+           "true", "must FAIL when the registry SBOMs are attested unchecked")
+    broken(wf, "        run: python3 scripts/polaris-pin-chart-images.py deploy/helm/polaris/values.yaml index\n",
+           "        run: echo skip\n",
+           "must FAIL when the chart is published with its images unpinned")
+    broken(wf, 'cosign sign --yes "$REGISTRY/charts/polaris@$DIGEST"', "echo unsigned",
+           "must FAIL when the chart is pushed unsigned")
+    broken(wf, "TRIVY_IMAGE: aquasec/trivy:0.58.1", "TRIVY_IMAGE: aquasec/trivy:0.59.0",
+           "must FAIL when the registry SBOMs and sbom.yml use different Trivy versions")
+    broken(wf, "    needs: [approve, publish, chart]\n", "    needs: [approve, publish]\n",
+           "must FAIL when nothing verifies the release once the chart is out")
+    broken(wf, 'cosign verify-attestation "$REF" --type https://sigstore.dev/cosign/sign/v1',
+           'cosign verify-attestation "$REF" --type slsaprovenance',
+           "must FAIL when the index's signature is not checked by its own predicate type")
+    broken(wf, 'refused cosign verify "$REF" --certificate-identity "$OTHER"',
+           'cosign verify "$REF" --certificate-identity "$ID"',
+           "must FAIL when no control shows another tag's identity refused")
+    broken(wf, 'refused gh attestation verify "oci://$IMAGE@$D"', 'gh attestation verify "oci://$IMAGE@$D"',
+           "must FAIL when no control shows provenance refused for an architecture's digest")
+    broken(doc, "release-images.yml@refs/tags/", "release-images.yml@",
+           "must FAIL when the runbook accepts a signature made from any ref")
+    broken(doc, "--signer-workflow EgorKhaklin/polaris-id/.github/workflows/release-images.yml",
+           "--repo-only", "must FAIL when the attestation check is not bound to the workflow")
+
+
+def test_redis_authenticated_check_discriminates(tmp_path):
+    files = ("scripts/polaris-generate-secrets.sh", "scripts/polaris-rotate-secret.sh",
+             "deploy/helm/polaris/templates/secret.yaml", "deploy/helm/polaris/templates/redis.yaml",
+             "deploy/helm/polaris/templates/app.yaml", "polaris_web/docker-compose.prod.yml",
+             "polaris_web/config_schema.py", ".github/workflows/ci.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_redis_authenticated(tmp_path)[0].level == "OK", \
+        "must PASS on the real generator, rotation, compose, chart, schema and CI"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_redis_authenticated(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    gen, rot = "scripts/polaris-generate-secrets.sh", "scripts/polaris-rotate-secret.sh"
+    compose = "polaris_web/docker-compose.prod.yml"
+    broken(gen, "resetchannels -@all +ping +client|setinfo", "resetchannels -@all +@all +ping +client|setinfo",
+           "must FAIL when the app's Redis user may run every command")
+    broken(gen, "printf 'user default off", "printf 'user default on nopass",
+           "must FAIL when an unauthenticated client is the default user, enabled")
+    broken(gen, "write_secret_if_missing polaris_redis_password", "true",
+           "must FAIL when no Redis password is generated")
+    broken(rot, "+scan +del'", "+scan +del +get'",
+           "must FAIL when rotation writes different ACL rules from the generator")
+    broken(rot, 'write_redis_acl "${NEW_HASH}" "${OLD_HASH}"', 'write_redis_acl "${NEW_HASH}"',
+           "must FAIL when rotation refuses the app's old password before the app has moved")
+    broken("deploy/helm/polaris/templates/secret.yaml", "+scan +del\\n", "+scan +del +get\\n",
+           "must FAIL when the Helm ACL drifts from the generator's rules")
+    broken("deploy/helm/polaris/templates/redis.yaml", '"--aclfile", ', "",
+           "must FAIL when the Helm Redis loads no ACL")
+    broken(compose, "      --aclfile /run/secrets/redis_users_acl\n", "",
+           "must FAIL when the compose Redis loads no ACL")
+    broken(compose, '"--user", "health", ', "",
+           "must FAIL when the compose healthcheck does not use the PING-only user")
+    broken(compose, "POLARIS_REDIS_URL: redis://polaris@redis", "POLARIS_REDIS_URL: redis://redis",
+           "must FAIL when the compose app does not connect as its ACL user")
+    broken("polaris_web/config_schema.py", "POLARIS_REDIS_URL: carries a password", "POLARIS_REDIS_URL: noted",
+           "must FAIL when production accepts a password in the Redis URL")
+    broken(".github/workflows/ci.yml", "grep -q NOAUTH", "grep -q .",
+           "must FAIL when CI no longer asserts an unauthenticated client is refused")
+
+
+def test_session_key_rotation_check_discriminates(tmp_path):
+    files = ("polaris_web/app.py", "polaris_web/rp_auth.py", "polaris_web/rp_api.py",
+             "polaris_web/oid4vci_routes.py", "scripts/polaris-rotate-secret.sh",
+             "scripts/polaris-generate-secrets.sh", "polaris_web/docker-compose.prod.yml",
+             "deploy/helm/polaris/templates/app.yaml", "polaris_web/test_app.py")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_session_key_rotation(tmp_path)[0].level == "OK", \
+        "must PASS on the real app, rp_auth, call sites, scripts, compose, chart and tests"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_session_key_rotation(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    broken("polaris_web/app.py", "'POLARIS_SECRET_KEY_FALLBACKS_FILE'", "'POLARIS_UNREAD_FILE'",
+           "must FAIL when the app does not load the retired keys")
+    broken("polaris_web/rp_auth.py", "URLSafeTimedSerializer(_keys(secret_key)", "URLSafeTimedSerializer((secret_key)",
+           "must FAIL when relying-party tokens verify under the current key alone")
+    broken("polaris_web/rp_auth.py", "for k in reversed(_keys(secret_key))])", "for k in _keys(secret_key)])",
+           "must FAIL when codes would be encrypted under a retired key")
+    broken("polaris_web/rp_api.py", "rp_auth.issue_access_token(rp_auth.keys_of(app),",
+           "rp_auth.issue_access_token(app.secret_key,", "must FAIL when a call site uses the current key alone")
+    broken("scripts/polaris-rotate-secret.sh", "tr -d '\\r\\n ' < \"${TARGET}\" > \"${FALLBACKS}.new\"", "true",
+           "must FAIL when rotation does not keep the retired key")
+    broken("scripts/polaris-rotate-secret.sh", 'gen_hex > "${FALLBACKS}.new"', "true",
+           "must FAIL when --drop-old cannot end every session")
+    broken("scripts/polaris-generate-secrets.sh", "write_secret_if_missing polaris_secret_key_fallbacks", "true",
+           "must FAIL when the generator does not create the fallbacks file")
+    broken("polaris_web/docker-compose.prod.yml",
+           "      POLARIS_SECRET_KEY_FALLBACKS_FILE: /run/secrets/polaris_secret_key_fallbacks\n", "",
+           "must FAIL when the compose app is not given the retired keys")
+    broken("deploy/helm/polaris/templates/app.yaml", "POLARIS_SECRET_KEY_FALLBACKS_FILE", "POLARIS_UNREAD_FILE",
+           "must FAIL when the Helm app is not given the retired keys")
+    broken("polaris_web/test_app.py", "def test_a_signed_in_operator_stays_signed_in_across_a_rotation(",
+           "def test_renamed(", "must FAIL when no test shows a session surviving a rotation")
+
+
+def test_doctor_names_failures_check_discriminates(tmp_path):
+    files = ("scripts/polaris-doctor.sh", "lab/strategy/006/doctor.sh",
+             ".github/workflows/one-command.yml", "docs/operator/OPERATIONS.md")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_doctor_names_failures(tmp_path)[0].level == "OK", \
+        "must PASS on the real doctor, its fault drill, the CI step and the runbook"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_doctor_names_failures(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    doc, drill = "scripts/polaris-doctor.sh", "lab/strategy/006/doctor.sh"
+    broken(doc, "config_schema.py check --production", "config_schema.py doc",
+           "must FAIL when the doctor no longer judges the configuration contract")
+    broken(doc, "compose run --rm --no-deps -T --entrypoint python app", "compose exec -T app python",
+           "must FAIL when the configuration is judged only inside a running app")
+    broken(doc, "AuthorityKeyCurrent", "Agency", "must FAIL when the doctor no longer reads the key register")
+    broken(doc, "(start with ${FAILING[0]})", "", "must FAIL when the last line names no component")
+    broken(drill, "stop redis", "restart redis", "must FAIL when the drill no longer stops Redis")
+    broken(drill, 'expect_named secrets', 'expect_clean secrets', "must FAIL when an emptied secret need not be named")
+    broken(drill, "POLARIS_DB_SSLMODE: disable", "POLARIS_DB_SSLMODE: require",
+           "must FAIL when the drill no longer injects a refused setting")
+    broken(".github/workflows/one-command.yml", "bash lab/strategy/006/doctor.sh", "true",
+           "must FAIL when CI does not run the fault drill")
+    broken("docs/operator/OPERATIONS.md", "polaris-doctor.sh        # exit 0", "polaris-other        # exit 0",
+           "must FAIL when the runbook does not start an operator at the doctor")
+
+
+def test_pitr_drilled_check_discriminates(tmp_path):
+    files = ("scripts/polaris-pitr-drill.sh", ".github/workflows/ci.yml", "docs/operator/DR.md")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_pitr_drilled(tmp_path)[0].level == "OK", \
+        "must PASS on the real drill, its CI steps and the runbook"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_pitr_drilled(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    drill = "scripts/polaris-pitr-drill.sh"
+    broken(drill, '--type=time \\"--target=$T\\"', '--type=default', "must FAIL when the restore does not stop at T")
+    broken(drill, '[[ "$GOT" == "$AT_T" ]]', '[[ -n "$GOT" ]]', "must FAIL when T's markers are not compared")
+    broken(drill, '[[ "$after" == 0 ]]', '[[ -n "$after" ]]', "must FAIL when later markers coming back would pass")
+    broken(drill, "--prove-control) CONTROL=1", "--prove-control) CONTROL=0", "must FAIL without a working control")
+    broken(".github/workflows/ci.yml", "bash scripts/polaris-pitr-drill.sh --no-build --prove-control", "true",
+           "must FAIL when CI does not run the control")
+    broken(".github/workflows/ci.yml", "bash scripts/polaris-pitr-drill.sh --no-build\n", "true\n",
+           "must FAIL when CI does not run the drill")
+    broken("docs/operator/DR.md", "polaris-pitr-drill.sh", "polaris-other-drill.sh",
+           "must FAIL when the runbook does not cite the drill", count=-1)
+
+
+def test_restore_reconciled_check_discriminates(tmp_path):
+    files = {"scripts/polaris-reconcile-restore.py", "scripts/polaris-pitr-drill.sh", ".github/workflows/ci.yml",
+             "docs/operator/DR.md"}
+    files |= {str(p.relative_to(REPO)) for p in (REPO / "polaris_sql").glob("[0-9]*.sql")}
+    files |= {str(p.relative_to(REPO)) for p in (REPO / "polaris_sql" / "migrations").glob("*.up.sql")}
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_restore_reconciled(tmp_path)[0].level == "OK", \
+        "must PASS on the real tool, its registry against the schema, the drill, CI and the runbook"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_restore_reconciled(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    tool = "scripts/polaris-reconcile-restore.py"
+    broken(tool, '    "duressevent": ', '    "duress_event_gone": ', "must FAIL when REGISTRY leaves a table undecided")
+    broken("polaris_sql/01_schema.sql", "CREATE TABLE RestoreRecord (",
+           "CREATE TABLE ShadowRecord (id INTEGER);\n\nCREATE TABLE RestoreRecord (",
+           "must FAIL when the schema gains a table REGISTRY does not decide")
+    broken(tool, "CALL uc8_revoke_token(", "CALL uc8_forget(", "must FAIL when revocations skip uc8_revoke_token",
+           count=-1)
+    broken(tool, "SELECT setval(", "SELECT nextval(", "must FAIL when the sequences stay where the restore left them")
+    broken(tool, "tables this script does not know", "tables", "must FAIL when an unknown table is not refused")
+    drill = "scripts/polaris-pitr-drill.sh"
+    broken(drill, "grep -qx 'credential 10 ACTIVE'", "true", "must FAIL when the drill does not see the hazard first")
+    broken(drill, '[[ "$left" == "< authority-key 1 cccccccc registered" ]]', '[[ -n "$left" || -z "$left" ]]',
+           "must FAIL when the reconciled state is not compared with the archive's end")
+    broken(".github/workflows/ci.yml", "bash scripts/polaris-pitr-drill.sh --no-build --reconcile", "true",
+           "must FAIL when CI does not run the reconciliation")
+    broken("docs/operator/DR.md", "# 5. Restore the archive's end beside it",
+           "$COMPOSE up -d app\n# 5. Restore the archive's end beside it",
+           "must FAIL when the runbook brings the app back before reconciling")
+
+
+def test_infra_alerts_check_discriminates(tmp_path):
+    obs = "deploy/observability/"
+    files = (obs + "polaris-alerts.yml", obs + "polaris-alerts.test.yml", obs + "prometheus.yml",
+             "polaris_web/app.py", "polaris_web/status_routes.py", "polaris_web/docker-compose.observability.yml",
+             "scripts/polaris-backup.sh", "lab/strategy/006/alerts.sh", ".github/workflows/one-command.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_infra_alerts(tmp_path)[0].level == "OK", \
+        "must PASS on the real rules, their tests, the app, the overlay, the backup script, the drill and CI"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_infra_alerts(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    broken(obs + "polaris-alerts.yml", "- alert: PolarisBackupStale", "- alert: PolarisBackupOld",
+           "must FAIL when a signal has no rule")
+    broken(obs + "polaris-alerts.test.yml", "alertname: PolarisDiskFilling", "alertname: PolarisDiskFull",
+           "must FAIL when a rule has no promtool test", count=-1)
+    broken("polaris_web/app.py", "'polaris_clock_skew_seconds'", "'polaris_clock_offset_seconds'",
+           "must FAIL when the app no longer exposes a signal")
+    broken("polaris_web/docker-compose.observability.yml", "image: prom/blackbox-exporter@sha256:",
+           "image: prom/blackbox-exporter:latest #", "must FAIL when the blackbox exporter is not digest-pinned")
+    broken(obs + "prometheus.yml", "job_name: polaris-edge-tls", "job_name: polaris-edge",
+           "must FAIL when nothing scrapes the edge's certificate")
+    broken("scripts/polaris-backup.sh", "record_backup dump-verified ", "true dump-verified ",
+           "must FAIL when a verified dump is no longer recorded")
+    broken("lab/strategy/006/alerts.sh", "wait_for PolarisArchiveFailing inactive", "true",
+           "must FAIL when the drill no longer requires the archive alert to clear")
+    broken(".github/workflows/one-command.yml", "bash lab/strategy/006/alerts.sh", "true",
+           "must FAIL when CI does not run the drill")
+
+
+def test_upgrade_drilled_check_discriminates(tmp_path):
+    files = ("scripts/polaris-deploy.sh", "scripts/polaris-upgrade-drill.sh", ".github/workflows/upgrade.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "OK", \
+        "must PASS on the real deploy script, the drill and its workflow"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    broken("scripts/polaris-deploy.sh", 'bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod', "compose build app",
+           "must FAIL when the deploy script rebuilds the app's image alone")
+    drill = "scripts/polaris-upgrade-drill.sh"
+    broken(drill, "describe --tags --abbrev=0", "rev-parse", "must FAIL when the drill does not start from a release")
+    broken(drill, "checkout --detach", "status", "must FAIL when the drill never moves to this commit")
+    broken(drill, 'scripts/polaris-deploy.sh" prod', 'scripts/polaris-other.sh" prod',
+           "must FAIL when the drill does not upgrade with the deploy script")
+    broken(drill, '"no pending migrations"', '"migrations"', "must FAIL when pending migrations pass")
+    broken(drill, "{{json .RootFS.Layers}}{{json .Config}}", "{{.Id}}",
+           "must FAIL when the running images are not compared by content with this commit's build")
+    broken(drill, "/api/tokens/${A}/verify", "/api/health", "must FAIL when the old credential is not asked about")
+    broken(drill, "--pack pack-A-after.json", "--pack pack.json",
+           "must FAIL when the old credential's pack is not fetched again")
+    broken(".github/workflows/upgrade.yml", "bash scripts/polaris-upgrade-drill.sh", "true",
+           "must FAIL when CI does not run the drill")
+    broken(".github/workflows/upgrade.yml", "fetch-depth: 0", "fetch-depth: 1",
+           "must FAIL when CI checks out without the release tags")
+
+
+def test_client_ip_behind_proxies_check_discriminates(tmp_path):
+    files = ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest",
+             "deploy/helm/polaris/templates/configmap-caddy.yaml", "deploy/helm/polaris/templates/caddy.yaml",
+             "deploy/helm/polaris/values.yaml", ".github/workflows/ci.yml", "scripts/polaris-client-ip-drill.sh")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_client_ip_behind_proxies(tmp_path)[0].level == "OK", \
+        "must PASS on the real edges, chart, CI and drill"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_client_ip_behind_proxies(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    broken("polaris_web/Caddyfile", "        trusted_proxies_strict\n", "",
+           "must FAIL when X-Forwarded-For is read left to right, so a client names its own address")
+    broken("polaris_web/Caddyfile", "{$POLARIS_TRUSTED_PROXIES:0.0.0.0/32}", "{$POLARIS_TRUSTED_PROXIES:0.0.0.0/0}",
+           "must FAIL when every peer is trusted by default")
+    broken("polaris_web/Caddyfile.citest", "header_up X-Forwarded-For {client_ip}", "header_up X-Forwarded-For {remote_host}",
+           "must FAIL when the CI edge passes the TCP peer upstream")
+    broken("deploy/helm/polaris/templates/configmap-caddy.yaml", "            trusted_proxies_strict\n", "",
+           "must FAIL when the chart's edge reads X-Forwarded-For left to right")
+    broken("deploy/helm/polaris/values.yaml", "externalTrafficPolicy: Local", "externalTrafficPolicy: Cluster",
+           "must FAIL when the chart's Service rewrites every client's source address")
+    broken(".github/workflows/ci.yml", "bash scripts/polaris-client-ip-drill.sh", "true",
+           "must FAIL when CI does not run the drill")
+    broken("scripts/polaris-client-ip-drill.sh", 'expect "via the balancer, forging', 'echo "via the balancer, forging',
+           "must FAIL when the drill no longer forges through the balancer")
+
+
+def test_edge_limits_check_discriminates(tmp_path):
+    caddy, citest = "polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"
+    helm = "deploy/helm/polaris/templates/configmap-caddy.yaml"
+    files = (caddy, citest, helm, "polaris_web/security.py", "scripts/polaris-edge-limits-drill.sh",
+             ".github/workflows/ci.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_edge_limits(tmp_path)[0].level == "OK", \
+        "must PASS on the three shipped edges, the app's limit, the drill and the CI step"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_edge_limits(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    for rel in (caddy, citest, helm):
+        broken(rel, "read_header 10s", "write 10s", f"must FAIL when {rel} lets headers trickle")
+        broken(rel, "read_body 30s", "write 30s", f"must FAIL when {rel} lets a body trickle")
+        broken(rel, "max_size 1MiB", "max_size 100MiB", f"must FAIL when {rel} passes bodies over the app's limit")
+        broken(rel, "request_buffers 1MiB", "flush_interval -1", f"must FAIL when {rel} streams a body to the app")
+    broken(caddy, "request_buffers 1MiB\n            lb_try_duration",
+           "lb_try_duration", "must FAIL when the static assets' proxy streams a body to the app")
+    broken(citest, "request_buffers 1MiB", "# request_buffers 1MiB", "must FAIL when the buffering is commented out")
+    broken("polaris_web/security.py", "MAX_REQUEST_BODY_BYTES    = 1 * 1024 * 1024",
+           "MAX_REQUEST_BODY_BYTES    = 4 * 1024 * 1024", "must FAIL when the app's limit moves without the edges'")
+    broken(".github/workflows/ci.yml", "bash scripts/polaris-edge-limits-drill.sh", "true",
+           "must FAIL when CI does not run the drill")
+    broken("scripts/polaris-edge-limits-drill.sh", "HTTPServer(", "ThreadingHTTPServer(",
+           "must FAIL when the drill's upstream no longer serves one request at a time")
+    broken("scripts/polaris-edge-limits-drill.sh", "probe slow-body", "probe ready",
+           "must FAIL when the drill no longer trickles a body")
 
 
 def test_npm_publish_is_staged_check_discriminates(tmp_path):
@@ -3756,6 +4291,54 @@ def test_container_hardening_check_discriminates(tmp_path):
         "must FAIL when Dockerfile.caddy sets no USER at all"
 
 
+def test_read_only_roots_check_discriminates(tmp_path):
+    t = "deploy/helm/polaris/templates/"
+    files = ("polaris_web/docker-compose.prod.yml", t + "_helpers.tpl", t + "app.yaml", t + "caddy.yaml",
+             t + "pgbouncer.yaml", t + "redis.yaml", "lab/strategy/006/posture.sh",
+             ".github/workflows/one-command.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_read_only_roots(tmp_path)[0].level == "OK", \
+        "must PASS on the real compose file, chart, posture drill and CI step"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_read_only_roots(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    compose = "polaris_web/docker-compose.prod.yml"
+    good = (tmp_path / compose).read_text()
+    for svc in ("caddy", "app", "pgbouncer", "redis"):
+        block = re.search(rf"(?ms)^  {svc}:\n.*?(?=^  [a-z_]+:\n|^[a-z]|\Z)", good).group(0)
+        (tmp_path / compose).write_text(good.replace(block, block.replace("    read_only: true\n", "", 1), 1))
+        assert checks.check_read_only_roots(tmp_path)[0].level == "FAIL", \
+            f"must FAIL when the {svc} service runs on a writable root"
+    (tmp_path / compose).write_text(good)
+    broken(compose, "      - /etc/pgbouncer:uid=1000", "      - /var/tmp/pgbouncer:uid=1000",
+           "must FAIL when pgbouncer's config (the database password) is not written to its tmpfs")
+    broken(compose, "    read_only: true\n", "    # read_only: true\n",
+           "must FAIL when the setting is commented out")
+    broken(t + "_helpers.tpl", "readOnlyRootFilesystem: true", "readOnlyRootFilesystem: false",
+           "must FAIL when the chart's read-only helper allows writes")
+    for svc in ("app", "caddy", "pgbouncer", "redis"):
+        broken(t + svc + ".yaml", '"polaris.containerSecurityReadOnly"', '"polaris.containerSecurity"',
+               f"must FAIL when the chart's {svc} container is writable")
+    broken("lab/strategy/006/posture.sh", '*"Read-only file system"*', '*"denied"*',
+           "must FAIL when the drill no longer requires the kernel's read-only refusal")
+    broken("lab/strategy/006/posture.sh", 'status_of "${c}" CapEff', 'status_of "${c}" CapPrm',
+           "must FAIL when the drill no longer reads CapEff")
+    broken("lab/strategy/006/posture.sh", 'status_of "${c}" NoNewPrivs', 'status_of "${c}" Seccomp',
+           "must FAIL when the drill no longer reads NoNewPrivs")
+    broken("lab/strategy/006/posture.sh", "{{.HostConfig.ReadonlyRootfs}}", "{{.HostConfig.Privileged}}",
+           "must FAIL when the drill no longer asks Docker whether the root is read-only")
+    broken(".github/workflows/one-command.yml", "bash lab/strategy/006/posture.sh", "true",
+           "must FAIL when CI does not run the posture drill")
+
+
 def test_edge_pq_kex_check_discriminates(tmp_path):
     ref = tmp_path / "docs" / "reference"
     ref.mkdir(parents=True)
@@ -4317,20 +4900,24 @@ def test_pgbackrest_scaffolding_check_discriminates(tmp_path):
                  "# S3 keys via a 0600 file mounted at /etc/pgbackrest/conf.d/, not env\n"
                  "[polaris]\npg1-path=/var/lib/postgresql/data\n")
     GOOD_COMPOSE = ("services:\n  postgres:\n    build:\n      dockerfile: Dockerfile.postgres\n"
-                    "    environment:\n      POLARIS_PGBACKREST_ENABLED: \"0\"\n"
+                    "    environment:\n      POLARIS_PGBACKREST_ENABLED: \"${POLARIS_PGBACKREST_ENABLED:-1}\"\n"
                     "    volumes:\n      - ./pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro\n")
     GOOD_INIT = ("if [ \"$POLARIS_PGBACKREST_ENABLED\" = \"1\" ]; then\n"
                  "  psql -c \"ALTER SYSTEM SET archive_mode = on;\"\n"
                  "  psql -c \"ALTER SYSTEM SET archive_command = 'pgbackrest --stanza=polaris archive-push %p';\"\n"
                  "  if ! grep -qE 'repo1-type[[:space:]]*=[[:space:]]*s3' /etc/pgbackrest/pgbackrest.conf; then\n"
-                 "    echo 'WARNING: archiving to a LOCAL repo (no repo1-type=s3)' >&2\n  fi\nfi\n")
+                 "    echo 'WARNING: archiving to a LOCAL repo (no repo1-type=s3)' >&2\n  fi\n"
+                 "  pgbackrest --stanza=polaris stanza-create\nfi\n")
     GOOD_DR = "Bootstrap: pgbackrest --stanza=polaris stanza-create\n"
     GOOD_CI = "docker build Dockerfile.postgres\npgbackrest --stanza=polaris restore\n"
     GOOD_DEPLOY = ("if [ \"$POLARIS_PGBACKREST_ENABLED\" = \"1\" ]; then\n"
-                   "  docker compose exec postgres pgbackrest --stanza=polaris stanza-create\nfi\n")
+                   "  docker compose exec postgres pgbackrest --stanza=polaris stanza-create\n"
+                   "  docker compose exec postgres pgbackrest --stanza=polaris --type=full backup\nfi\n")
+    GOOD_BACKUP = ('docker compose exec postgres pgbackrest --stanza=polaris --type="${PGBR_TYPE}" backup\n'
+                   'record_backup pgbackrest "repo1" "${PGBR_TYPE}"\n')
 
     def write(df=GOOD_DF, conf=GOOD_CONF, compose=GOOD_COMPOSE, init=GOOD_INIT, dr=GOOD_DR,
-              ci=GOOD_CI, deploy=GOOD_DEPLOY):
+              ci=GOOD_CI, deploy=GOOD_DEPLOY, backup=GOOD_BACKUP):
         (web / "Dockerfile.postgres").write_text(df)
         (web / "pgbackrest.conf").write_text(conf)
         (web / "docker-compose.prod.yml").write_text(compose)
@@ -4338,6 +4925,7 @@ def test_pgbackrest_scaffolding_check_discriminates(tmp_path):
         (op / "DR.md").write_text(dr)
         (gh / "ci.yml").write_text(ci)
         (scripts / "polaris-deploy.sh").write_text(deploy)
+        (scripts / "polaris-backup.sh").write_text(backup)
 
     # 1. fully wired -> OK.
     write()
@@ -4359,10 +4947,28 @@ def test_pgbackrest_scaffolding_check_discriminates(tmp_path):
     assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "FAIL", \
         "must FAIL when pgbackrest.conf does not document the offsite repo"
 
-    # 5. archiving is not opt-in (no POLARIS_PGBACKREST_ENABLED gate) -> FAIL.
+    # 5. archiving has no POLARIS_PGBACKREST_ENABLED switch -> FAIL.
     write(init="psql -c \"ALTER SYSTEM SET archive_mode = on; archive-push\"\n")
     assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "FAIL", \
-        "must FAIL when archiving is not gated behind POLARIS_PGBACKREST_ENABLED"
+        "must FAIL when archiving has no POLARIS_PGBACKREST_ENABLED switch"
+
+    # 5b. archiving off by default -> FAIL (lab record 017, gate row OP-14).
+    write(compose=GOOD_COMPOSE.replace("${POLARIS_PGBACKREST_ENABLED:-1}", "${POLARIS_PGBACKREST_ENABLED:-0}"))
+    assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "FAIL", \
+        "must FAIL when archiving is off by default"
+
+    # 5c. the first init does not create the stanza -> FAIL.
+    write(init=GOOD_INIT.replace("  pgbackrest --stanza=polaris stanza-create\n", ""))
+    assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "FAIL", \
+        "must FAIL when docker-init does not create the stanza"
+
+    # 5d. no first full backup at deploy, or no scheduled pgBackRest backup -> FAIL.
+    write(deploy=GOOD_DEPLOY.replace("--type=full backup", "info"))
+    assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the deploy takes no first full backup"
+    write(backup="echo dump only\n")
+    assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "FAIL", \
+        "must FAIL when polaris-backup.sh takes no pgBackRest backup"
 
     # 6. DR.md does not document stanza-create -> FAIL.
     write(dr="just restore somehow\n")
@@ -4403,7 +5009,10 @@ def test_duress_alertable_check_discriminates(tmp_path):
         "    _METRICS_DURESS.inc()\n"
         "\n\n"
         "def other():\n    pass\n"
+        "    threading.Thread(\n        target=_record_duress_async,\n        args=(t, c, a),\n"
+        "        daemon=False,\n    ).start()\n"
     )
+    (web / "test_app.py").write_text("def test_a_duress_record_survives_a_worker_exit(self):\n    pass\n")
     GOOD_ALERTS = ("- alert: PolarisDuressEvent\n"
                    "  expr: increase(polaris_duress_events_total[5m]) > 0\n")
 
@@ -4430,6 +5039,17 @@ def test_duress_alertable_check_discriminates(tmp_path):
     write(alerts="- alert: PolarisAppDown\n  expr: up == 0\n")
     assert checks.check_duress_alertable(tmp_path)[0].level == "FAIL", \
         "must FAIL when no PolarisDuressEvent alert references the counter"
+
+    # 5. the record is written on a daemon thread, abandoned when the worker exits -> FAIL.
+    write(app=GOOD_APP.replace("daemon=False", "daemon=True"))
+    assert checks.check_duress_alertable(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the duress record is written on a daemon thread"
+
+    # 6. the effect test is gone -> FAIL.
+    write()
+    (web / "test_app.py").write_text("def unrelated():\n    pass\n")
+    assert checks.check_duress_alertable(tmp_path)[0].level == "FAIL", \
+        "must FAIL when nothing proves the record outlives the worker"
 
 
 def test_prod_fail_closed_check_discriminates(tmp_path):
@@ -6841,6 +7461,11 @@ def test_compose_trusts_edge_check_fails_without_trust_proxy(tmp_path):
     (tmp_path / "polaris_web/docker-compose.prod.yml").write_text(compose)
     (tmp_path / "polaris_web/Caddyfile").write_text("reverse_proxy app:8000\n")
     assert checks.check_prod_compose_trusts_edge(tmp_path)[0].level == "FAIL", "must FAIL when the edge does not rewrite X-Forwarded-For"
+    # 2026-10-07: {client_ip} replaces the header too; appending the client's own value does not.
+    (tmp_path / "polaris_web/Caddyfile").write_text(caddy.replace("{remote_host}", "{client_ip}"))
+    assert checks.check_prod_compose_trusts_edge(tmp_path)[0].level == "OK", "must PASS when the edge rewrites to {client_ip}"
+    (tmp_path / "polaris_web/Caddyfile").write_text(caddy.replace("{remote_host}", "{http.request.header.X-Forwarded-For}, {remote_host}"))
+    assert checks.check_prod_compose_trusts_edge(tmp_path)[0].level == "FAIL", "must FAIL when the edge appends to the client's header"
 
 
 def test_docs_index_coverage_check_fails_on_an_unlisted_document(tmp_path):
@@ -6922,27 +7547,44 @@ def test_metrics_edge_acl_check_fails_when_an_edge_leaves_metrics_open(tmp_path)
         for rel, body in files.items():
             p = tmp_path / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(body)
     matcher = ("@metrics_from_outside {\n    path /metrics /api/metrics\n"
-               "    not remote_ip {$POLARIS_METRICS_ALLOW:private_ranges}\n}\n"
+               "    not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}\n}\n"
                "respond @metrics_from_outside 404\n")
-    helm = matcher.replace("{$POLARIS_METRICS_ALLOW:private_ranges}", '{{ .Values.edge.metricsAllow }}')
+    helm = matcher.replace("{$POLARIS_METRICS_ALLOW:0.0.0.0/32}",
+                           '{{ .Values.edge.metricsAllow | default "0.0.0.0/32" }}')
+    drill = ('sed -n x "${ROOT}/polaris_web/Caddyfile"\nfor where in "in-network" "via SNAT"; do\n'
+             '    probe 404 "${where}" /metrics\ndone\n')
     good = {
         "polaris_web/Caddyfile": "site {\n" + matcher + "reverse_proxy app:8000\n}\n",
+        "polaris_web/Caddyfile.citest": "localhost:8443 {\n" + matcher + "reverse_proxy app:8000\n}\n",
         "deploy/helm/polaris/templates/configmap-caddy.yaml": "data:\n  Caddyfile: |\n" + helm,
-        ".github/workflows/ci.yml": "jobs:\n  caddy-edge:\n    steps:\n      - name: The metrics surfaces are refused from outside the monitoring network\n",
+        "deploy/helm/polaris/values.yaml": 'edge:\n  metricsAllow: ""\n',
+        "scripts/polaris-metrics-edge-drill.sh": drill,
+        ".github/workflows/ci.yml": ("jobs:\n  caddy-edge:\n    steps:\n"
+                                     "      - name: The metrics surfaces are refused from outside the monitoring network\n"
+                                     "        run: bash scripts/polaris-metrics-edge-drill.sh polaris-caddy:ci\n"),
     }
     write(good)
-    assert checks.check_metrics_edge_acl(tmp_path)[0].level == "OK", "must PASS when both edges refuse and CI proves it"
+    assert checks.check_metrics_edge_acl(tmp_path)[0].level == "OK", "must PASS when every edge refuses and CI proves it"
 
-    write({"polaris_web/Caddyfile": "site {\nreverse_proxy app:8000\n}\n"})
-    assert checks.check_metrics_edge_acl(tmp_path)[0].level == "FAIL", "must FAIL when the compose edge leaves metrics open"
+    def broken(rel, body, why):
+        write({rel: body})
+        assert checks.check_metrics_edge_acl(tmp_path)[0].level == "FAIL", why
+        write({rel: good[rel]})
 
-    write({"polaris_web/Caddyfile": good["polaris_web/Caddyfile"],
-           "deploy/helm/polaris/templates/configmap-caddy.yaml": "data:\n  Caddyfile: |\n    reverse_proxy app:8000\n"})
-    assert checks.check_metrics_edge_acl(tmp_path)[0].level == "FAIL", "must FAIL when the chart leaves metrics open"
-
-    write({"deploy/helm/polaris/templates/configmap-caddy.yaml": good["deploy/helm/polaris/templates/configmap-caddy.yaml"],
-           ".github/workflows/ci.yml": "jobs:\n  caddy-edge:\n    steps: []\n"})
-    assert checks.check_metrics_edge_acl(tmp_path)[0].level == "FAIL", "must FAIL when CI does not exercise the ACL"
+    broken("polaris_web/Caddyfile", "site {\nreverse_proxy app:8000\n}\n",
+           "must FAIL when the compose edge leaves metrics open")
+    broken("deploy/helm/polaris/templates/configmap-caddy.yaml", "data:\n  Caddyfile: |\n    reverse_proxy app:8000\n",
+           "must FAIL when the chart leaves metrics open")
+    broken(".github/workflows/ci.yml", "jobs:\n  caddy-edge:\n    steps: []\n",
+           "must FAIL when CI does not exercise the rule")
+    broken("polaris_web/Caddyfile", good["polaris_web/Caddyfile"].replace("0.0.0.0/32", "private_ranges"),
+           "must FAIL when an unset allow-list lets every private address in, as SNAT makes every client")
+    broken("polaris_web/Caddyfile.citest", "localhost:8443 {\nreverse_proxy app:8000\n}\n",
+           "must FAIL when the CI edge does not carry production's rule")
+    broken("deploy/helm/polaris/values.yaml", 'edge:\n  metricsAllow: "private_ranges"\n',
+           "must FAIL when the chart's default lets private addresses in")
+    broken("scripts/polaris-metrics-edge-drill.sh", drill.replace('"via SNAT"', ""),
+           "must FAIL when the drill no longer asks through an SNAT hop")
 
 
 def test_image_builds_are_retried_check_fails_when_a_build_bypasses_the_helper(tmp_path):
@@ -8143,10 +8785,24 @@ def test_key_rotation_drilled_check_discriminates(tmp_path):
     TC = "class Pkcs11CustodyTests(unittest.TestCase):\n" + ROT
     DRILL = "#!/usr/bin/env bash\npython3 -m unittest test_custody.Pkcs11CustodyTests -v\n"
     CI = "jobs:\n  custody-pkcs11:\n    steps:\n      - run: bash scripts/polaris-custody-pkcs11-drill.sh\n"
+    ROTATE = (
+        'key_event register 1 "${K2}"\nkey_event retire 1 "${K1}"\n'
+        '[[ "$(facts "${A}")" == "True True False" ]] || fail x\n'
+        'if verify_offline anchors-k2.json pack-A.json; then fail "A verified"; fi\n'
+        'key_event compromise 1 "${K1}" --effective-at "${AT}"\n'
+        '[[ "$(facts "${A}")" == "True False False" ]] || fail y\n'
+    )
+    ONE = ("jobs:\n  one-command:\n    steps:\n      - run: bash lab/strategy/006/try.sh\n"
+           "      - run: bash lab/strategy/006/rotate.sh\n")
+    EVENT = ("INSERT INTO AuthorityKeyEvent (agency_id) VALUES (:agency);\n"
+             "UPDATE Agency SET signing_public_key_hex = :'pk' WHERE agency_id = :agency;\n")
     good = {
         "polaris_web/test_custody.py": TC,
         "scripts/polaris-custody-pkcs11-drill.sh": DRILL,
         ".github/workflows/ci.yml": CI,
+        "lab/strategy/006/rotate.sh": ROTATE,
+        ".github/workflows/one-command.yml": ONE,
+        "scripts/polaris-key-event.sh": EVENT,
     }
 
     def write(overrides=None):
@@ -8170,6 +8826,16 @@ def test_key_rotation_drilled_check_discriminates(tmp_path):
     # 4. CI does not run the custody drill
     write({".github/workflows/ci.yml": "jobs:\n  test:\n    steps: []\n"})
     assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the drill"
+    # 5-8 (2026-10-07): the operator's rotation, end to end
+    write()
+    write({"lab/strategy/006/rotate.sh": ROTATE.replace('key_event compromise 1 "${K1}" --effective-at "${AT}"\n', "")})
+    assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL without the compromise control"
+    write({"lab/strategy/006/rotate.sh": ROTATE.replace('if verify_offline anchors-k2.json pack-A.json; then fail "A verified"; fi\n', "")})
+    assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL without the offline refusal"
+    write({".github/workflows/one-command.yml": "jobs:\n  one-command:\n    steps:\n      - run: bash lab/strategy/006/try.sh\n"})
+    assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run rotate.sh"
+    write({"scripts/polaris-key-event.sh": "INSERT INTO AuthorityKeyEvent (agency_id) VALUES (:agency);\n"})
+    assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL when a registration does not make the key current"
 
 
 def test_holder_wallet_check_discriminates(tmp_path):
@@ -11715,7 +12381,7 @@ def test_plonky3_evaluation_check_discriminates(tmp_path):
     # nobody sourced.
     DOC = ("# Plonky2 to Plonky3\n"
            "**Decision: KEEP Plonky2.**\n"
-           "Proof size 77,840 bytes, measured at depth 24. Pinned at 1.1.0.\n"
+           "Proof size 148,900 bytes, measured at depth 24. Pinned at 1.1.0.\n"
            "## What was NOT verified\nPlonky3's current version and audit status.\n"
            "The two-witness model would largely survive.\n"
            "## What would change the decision\nA stable Plonky3 release.\n")
@@ -11762,9 +12428,16 @@ def test_plonky3_evaluation_check_discriminates(tmp_path):
 
     # A measured number becomes an adjective, which nobody can re-run.
     write({'docs/design/plonky2-to-plonky3.md': DOC.replace(
-        "Proof size 77,840 bytes, measured at depth 24.", "Proof size is small.")})
+        "Proof size 148,900 bytes, measured at depth 24.", "Proof size is small.")})
     assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
         "must FAIL when the proof size is described rather than measured"
+
+    # The stale measurement: only the non-hiding configuration's size, which no longer ships.
+    write({'docs/design/plonky2-to-plonky3.md': DOC.replace(
+        "Proof size 148,900 bytes, measured at depth 24.",
+        "Proof size 77,840 bytes, measured at depth 24.")})
+    assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the record carries only the non-hiding configuration's proof size"
 
     # THE DRIFT CASE: the lockfile moves and the record still evaluates the old version, so
     # the decision was made about code that is no longer what ships.
@@ -14689,6 +15362,25 @@ def test_per_authority_isolation_check_discriminates(tmp_path):
     write()
     assert checks.check_per_authority_isolation(tmp_path)[0].level == "OK", \
         "the well-formed tree must PASS"
+
+    # A POOL (lab record 017): allowed only when every checkout resets the session and the
+    # scope and role leak tests exist.
+    POOLED = ("class _ConnectionPool:\n    def getconn(self):\n"
+              "        cur.execute(\"DISCARD ALL\")\n\n\n" + APP.replace(
+                  '"""Open a fresh connection per request."""', '"""Pooled; reset on checkout."""'))
+    LEAK_TESTS = ("def test_a_reused_connection_carries_no_operator_scope(self): pass\n"
+                  "def test_a_changed_configuration_never_reuses_another_roles_connection(self): pass\n")
+    write({'polaris_web/app.py': POOLED, 'polaris_web/test_app.py': LEAK_TESTS})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "OK", \
+        "a pool that resets on checkout, with its leak tests, must PASS"
+    write({'polaris_web/app.py': POOLED.replace("DISCARD ALL", "SELECT 1"),
+           'polaris_web/test_app.py': LEAK_TESTS})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
+        "a pool that does not reset the session on checkout must be refused"
+    write({'polaris_web/app.py': POOLED, 'polaris_web/test_app.py': "def unrelated(): pass\n"})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
+        "a pool without its scope and role leak tests must be refused"
+    write()
 
     # THE TRAP THAT ACTUALLY HAPPENED. `setting = '' OR col = setting::int` looks like it
     # short-circuits and does not: the cast runs on an unscoped session and every query

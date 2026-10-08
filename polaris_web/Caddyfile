@@ -40,6 +40,20 @@
         protocols h1 h2 h3
         # Hide Caddy version from Server header
         metrics
+        # Lab record 017 (OP-26): the load balancer in front of this edge, if any, named by
+        # address range in POLARIS_TRUSTED_PROXIES. Behind it {client_ip} is read from
+        # X-Forwarded-For right to left, past the named hops only (strict), so a client
+        # cannot name its own address. Unset, no proxy is trusted (0.0.0.0/32) and
+        # {client_ip} is the TCP peer.
+        trusted_proxies static {$POLARIS_TRUSTED_PROXIES:0.0.0.0/32}
+        trusted_proxies_strict
+        # Lab record 017, phase 5: a client that sends its request slowly is cut off here, not
+        # left holding a connection (scripts/polaris-edge-limits-drill.sh).
+        timeouts {
+            read_header 10s
+            read_body 30s
+            idle 2m
+        }
     }
 }
 
@@ -49,22 +63,35 @@
     # The two metrics surfaces carry the duress signal, and neither
     # authenticates: whoever can scrape them can observe that, and roughly
     # when, a duress alarm fired. Restrict them here, at the edge, to the
-    # monitoring network. The default allows private ranges only (an
-    # in-network Prometheus scrapes; the public internet gets 404, which
-    # does not even confirm the surface exists). Override with
-    # POLARIS_METRICS_ALLOW, for example "10.20.0.0/16".
+    # monitoring network, which has to be named: POLARIS_METRICS_ALLOW, for
+    # example "10.20.0.0/16". Unset, no client is allowed (0.0.0.0/32 is the
+    # unspecified address, which no peer has). Until lab record 017 the
+    # default was private ranges, and behind an L4 load balancer, Kubernetes'
+    # default externalTrafficPolicy, rootless Docker or Docker's IPv6 userland
+    # proxy every client on the internet reaches the edge from a private
+    # address (scripts/polaris-metrics-edge-drill.sh). An in-network
+    # Prometheus scrapes app:8000 directly and needs no edge route at all.
     @metrics_from_outside {
         path /metrics /api/metrics
-        not remote_ip {$POLARIS_METRICS_ALLOW:private_ranges}
+        not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}
     }
     respond @metrics_from_outside 404
 
+    # Lab record 017, phase 5: the app's own body limit (1 MiB), refused here, before the app.
+    request_body {
+        max_size 1MiB
+    }
+
     # Reverse proxy to the Polaris app (gunicorn :8000 inside the network)
     reverse_proxy {$POLARIS_UPSTREAMS:app:8000} {
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-For {remote_host}
+        header_up X-Real-IP {client_ip}
+        header_up X-Forwarded-For {client_ip}
         header_up X-Forwarded-Proto {scheme}
         header_up X-Forwarded-Host {host}
+        # Lab record 017, phase 5: the edge reads the whole body before the app sees the request.
+        # The app's workers are synchronous, four to an instance: a body passed through as it
+        # arrives held one for as long as its client took to send it.
+        request_buffers 1MiB
 
         # v9.183 (roadmap P1.4) — the upstream list comes from POLARIS_UPSTREAMS
         # (one app by default; "app:8000 app-green:8000" under the blue-green
@@ -133,6 +160,7 @@
     handle @static {
         header Cache-Control "public, max-age=31536000, immutable"
         reverse_proxy {$POLARIS_UPSTREAMS:app:8000} {
+            request_buffers 1MiB
             lb_try_duration 15s
             lb_try_interval 250ms
             fail_duration 10s

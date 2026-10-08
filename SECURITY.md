@@ -128,8 +128,13 @@ build behind it; on npm, provenance made in the job that also packs the tarball.
 the registry pages. Build provenance for the packages themselves is
 [lab/strategy/011](lab/strategy/011-slsa-build-provenance.md).
 
-Container images are built and scanned in CI but not published to a registry, so there is no
-image digest to sign yet.
+The container images and the Helm chart publish to `ghcr.io/egorkhaklin` through
+[release-images.yml](.github/workflows/release-images.yml), run on the release tag: each image
+index is signed keyless at its digest and carries SLSA build provenance, each architecture's image
+an SPDX SBOM, all attached at the registry, and the chart is pinned to those digests and signed
+the same way. The verify commands are in
+[docs/operator/VERIFY-RELEASE.md](docs/operator/VERIFY-RELEASE.md). No release has been published
+there yet; until one is, the images are built and scanned in CI only.
 
 ---
 

@@ -7,6 +7,17 @@ is re-opened by evidence rather than by mood.
 **Decision: KEEP Plonky2.** Re-evaluate when one of the triggers at the end fires. This is a
 spike with a decision record, not a migration, which is what roadmap P2.12 asked for.
 
+**2026-10-07: re-opened by its own triggers.** The measurements below were taken with
+`standard_recursion_config()`, which the crate documents as without zero-knowledge. The circuit
+now uses the zero-knowledge configuration ([zk-soundness.md](zk-soundness.md)), and with it
+proving takes about 2 s, verification about 0.6 s, and a proof is 148,900 bytes, flat across
+depth. Two facts this record left unverified are now checked: Plonky2's README deprecates it
+("will no longer receive updates or support"; last commit 2025-07-01), and Plonky3 is at
+v0.8.0 (2026-09-23), still before 1.0, with a hiding FRI commitment (`fri/src/hiding_pcs.rs`),
+stable Rust and a Least Authority audit report in its repository. The decision stays KEEP
+until a lab spike measures this statement on Plonky3 with hiding shown, because a decision to
+move must rest on that measurement, not on these facts alone.
+
 ## Why the question exists at all
 
 It is not performance. It is supply chain. Plonky2 is pinned at `1.1.0` and has been stable
@@ -25,17 +36,21 @@ circuit construction, which is how the application actually pays them):
 
 | | Depth 14 (demo) | Depth 24 (national) |
 |---|---|---|
-| Prove, median of 5 | 20 ms | 33 ms |
-| Verify, median of 5 | 12 ms | 12 ms |
-| Proof size | 77,840 bytes | 77,840 bytes |
+| Prove, median of 5 (non-hiding configuration, before 2026-10-07) | 20 ms | 33 ms |
+| Verify, median of 5 (non-hiding) | 12 ms | 12 ms |
+| Proof size (non-hiding) | 77,840 bytes | 77,840 bytes |
+| Prove, median of 3 (zero-knowledge configuration, 2026-10-07) | 1.99 s | 2.08 s |
+| Verify, median of 3 (zero-knowledge) | 0.58 s | 0.59 s |
+| Proof size (zero-knowledge) | 148,900 bytes | 148,900 bytes |
 
 Two things follow. Proving is barely sensitive to tree depth, because the circuit is dominated
 by fixed FRI parameters rather than by the twenty-four Merkle levels. And the proof size does
 not move at all: 77,840 bytes is a property of the proof system's configuration, not of the
 statement.
 
-**There is no performance case for a rewrite.** A holder proves in 33 milliseconds on their
-own device at national depth. [../reference/COST-MODEL.md](../reference/COST-MODEL.md) found
+**There was no performance case for a rewrite while proofs were not hiding.** A holder proved
+in 33 milliseconds at national depth; with zero-knowledge it is about 2 seconds on the
+reference machine, most of it blinding rather than the statement. [../reference/COST-MODEL.md](../reference/COST-MODEL.md) found
 separately that verification throughput is not the cost driver at any realistic national
 scale. Nothing in the measured behaviour is asking to be faster.
 
@@ -114,7 +129,11 @@ Any one of these re-opens it, and the first is the only one likely soon:
 - **A scale requirement appears that the measurements above cannot meet**, which today would
   mean an epoch pipeline needing recursive aggregation across shards rather than one proof per
   holder.
-- **Proof size becomes a constraint**, for instance a transport that cannot carry 77 KB.
+- **Proof size becomes a constraint**, for instance a transport that cannot carry 149 KB
+  (148,900 bytes with zero-knowledge; it was 77 KB without).
+- **The cost of hiding is the constraint**: about 2 s to prove on the reference machine, which
+  a holder's phone will exceed. The lab spike measures whether another backend hides this
+  statement for less.
 
 Absent one of those, the nearer-term ZK work is the sibling-path witness optimisation named in
 roadmap P0.7, not a change of proof system.

@@ -24,11 +24,10 @@
 # Signing (P0.6): actions/attest-build-provenance signs keyless via GitHub's
 # OIDC identity through Sigstore (Fulcio cert + Rekor transparency log). No
 # long-lived key exists to leak or rotate; the signer identity is the workflow
-# itself. Scope note: this attests the RELEASE ARTIFACTS (the SBOMs). Signing
-# the five container images at a registry digest is deferred until the images
-# are actually published to a registry, which is a separate decision paired
-# with the P1.5 Kubernetes/registry work; there is nothing at a registry ref
-# to sign today.
+# itself. Scope note: this attests the RELEASE ARTIFACTS (the SBOMs). The
+# container images are signed at their registry digests by release-images.yml
+# (lab record 017, phase 3), with provenance and SBOM attestations attached
+# there; see docs/operator/VERIFY-RELEASE.md.
 #
 # Six artifacts: the Python runtime surface (requirements.txt) and the five
 # self-built images (app, caddy, pgbouncer, postgres, etcd). Image SBOMs require the
@@ -54,7 +53,7 @@ permissions:
 env:
   # The one place the SBOM generator's Trivy version lives in THIS file. It
   # must equal the image-cve-scan pin in ci.yml (checked by polaris_checks).
-  TRIVY_IMAGE: aquasec/trivy:0.58.1
+  TRIVY_IMAGE: aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7
 
 jobs:
   sbom:
