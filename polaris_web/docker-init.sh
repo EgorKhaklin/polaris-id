@@ -26,6 +26,11 @@ set -e
 # PGHOST and the other libpq variables. The server's configuration is the provider's, so the
 # same three blocks are skipped.
 MANAGED="${POLARIS_INIT_MANAGED_BY:-}"
+case "$MANAGED" in
+    ""|patroni|external) ;;
+    # An unknown mode would skip the bundled server's TLS, replication and archiving silently.
+    *) echo "FATAL: POLARIS_INIT_MANAGED_BY must be empty, patroni or external (got '$MANAGED')." >&2; exit 2 ;;
+esac
 SQL_DIR="${POLARIS_SQL_DIR:-/docker-entrypoint-initdb.d/sql}"
 
 # The polaris_app password is read and judged before anything is written: a refusal after the
