@@ -34,6 +34,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- Run with `sudo` on a systemd host, the documented upgrade, rotation and first-operator commands failed for want of `POLARIS_DOMAIN`; the scripts now read `polaris.env` as the unit does.
+- A sealed secret store set up as SECRETS.md said left `polaris.service` reading the shredded plaintext directory at its next start; an empty `POLARIS_SECRETS_DIR` is now refused.
+- SECRETS.md said a sealed store's key is not on its disk; an age identity kept on the host is. The doctor and every start now say when the secrets are plaintext on disk.
+- DEPLOYMENT.md's first-operator command omitted the `--reason` the script requires.
 - SECRETS.md still said Redis runs without a password.
 - The production compose file passes `POLARIS_TRUSTED_PROXIES` and `POLARIS_METRICS_ALLOW` to the edge; both were documented and never arrived.
 - A host install archives WAL by default, as a Compose stack does; its env template turned archiving off.

@@ -22,6 +22,8 @@
 # ============================================================================
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Run by hand (sudo resets the environment), read the configuration polaris.service runs with.
+source "${ROOT}/scripts/polaris-env.sh"
 CMD="${1:-}"; shift || true
 PY="${POLARIS_TEST_PYTHON:-$(command -v python3.12 || command -v python3)}"
 

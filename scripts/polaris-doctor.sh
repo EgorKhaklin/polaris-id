@@ -11,6 +11,9 @@
 #   stack          every service of the compose project is running, and healthy where it has
 #                  a healthcheck
 #   secrets        every file the stack mounts as a secret exists and is not empty
+#   secrets at rest
+#                  what a copy of this disk holds: plaintext files with the file backend (a WARN),
+#                  the unsealed copy on a tmpfs with a sealed one, and no plaintext left behind
 #   configuration  the production configuration contract, judged in a one-off app container,
 #                  so it answers when the app itself cannot start
 #   edge           the TLS edge serves /api/health/live
@@ -19,7 +22,8 @@
 #   key register   every agency that has issued holds a registered signing key; without one its
 #                  trust list is refused and its credentials' issuer facts read unknown (a WARN)
 #
-# Usage:  polaris-doctor.sh
+# Usage:  polaris-doctor.sh   (as root on a systemd host: it reads /etc/polaris/polaris.env, as
+#                              polaris.service does; scripts/polaris-env.sh)
 # Environment: COMPOSE_PROJECT_NAME and POLARIS_COMPOSE_EXTRA, as the other stack scripts;
 #   POLARIS_DOCTOR_URL (default https://$POLARIS_DOMAIN, else https://localhost) and
 #   POLARIS_DOCTOR_CACERT (a CA file the edge's certificate chains to, when it is not a public one).
@@ -29,6 +33,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 POLARIS_ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
+# Run by hand (sudo resets the environment), read the configuration polaris.service runs with.
+source "${SCRIPT_DIR}/polaris-env.sh"
 COMPOSE_FILE="${POLARIS_ROOT}/polaris_web/docker-compose.prod.yml"
 read -r -a COMPOSE_EXTRA <<< "${POLARIS_COMPOSE_EXTRA:-}"
 compose() { docker compose -f "${COMPOSE_FILE}" "${COMPOSE_EXTRA[@]}" "$@"; }
@@ -79,6 +85,9 @@ else:
 done <<< "${SERVICES}"
 
 # --- secrets: every mounted file exists and is not empty
+if ! SECRETS_AT=$(polaris_secrets_dir 2> /dev/null); then
+    bad secrets "POLARIS_SECRETS_BACKEND=${POLARIS_SECRETS_BACKEND} without POLARIS_SECRETS_DIR: polaris.service's compose reads polaris_web/secrets, which a sealed install has shredded; set POLARIS_SECRETS_DIR=/run/polaris/secrets in polaris.env (docs/operator/SECRETS.md, section 5.1)"
+fi
 while IFS='|' read -r name path; do
     [[ -z "${name}" ]] && continue
     if [[ ! -e "${path}" ]]; then
@@ -93,6 +102,23 @@ for name, s in (json.load(sys.stdin).get("secrets") or {}).items():
         print("%s|%s" % (name, s["file"]))
 ')
 [[ " ${FAILING[*]-} " == *" secrets "* ]] || ok secrets "every mounted secret file is present and not empty"
+
+# --- secrets at rest: what a copy of this disk holds
+if [[ "${POLARIS_SECRETS_BACKEND:-file}" == file ]]; then
+    warn "secrets at rest" "plaintext files in ${SECRETS_AT} on this disk: a copy of the disk, or a backup holding that directory, reads every password and key; seal them with age or awskms (docs/operator/SECRETS.md, section 5)"
+elif [[ -n "${SECRETS_AT}" ]]; then
+    fs=$(stat -f -c %T "${SECRETS_AT}" 2> /dev/null)
+    case "${fs}" in
+        tmpfs|ramfs) ok "secrets at rest" "sealed (${POLARIS_SECRETS_BACKEND}); the stack reads the unsealed copy from ${SECRETS_AT}, a ${fs}" ;;
+        "") warn "secrets at rest" "sealed (${POLARIS_SECRETS_BACKEND}); whether ${SECRETS_AT} is a tmpfs could not be read (run as root, on Linux)" ;;
+        *) warn "secrets at rest" "sealed (${POLARIS_SECRETS_BACKEND}), but ${SECRETS_AT} is ${fs}, not a tmpfs: the unsealed copy is on disk" ;;
+    esac
+    leftover="${POLARIS_ROOT}/polaris_web/secrets"
+    if [[ "${SECRETS_AT}" != "${leftover}" && -d "${leftover}" ]] \
+            && [[ -n "$(find "${leftover}" -type f 2> /dev/null | head -1)" ]]; then
+        warn "secrets at rest" "a plaintext copy remains in ${leftover}; shred it (docs/operator/SECRETS.md, section 5.1)"
+    fi
+fi
 
 # --- configuration: the production contract, in a one-off container (answers when the app cannot start)
 if echo "${SERVICES}" | grep -qx app; then

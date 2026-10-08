@@ -15,6 +15,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | Script | What it does | Called by |
 |---|---|---|
 | `polaris-deploy.sh` | Idempotent production deploy of the compose stack | An operator; `deploy/linux/install.sh` |
+| `polaris-env.sh` | Sourced, never run: reads the `polaris.env` that `polaris.service` runs with, so a script run by hand with `sudo` has the same configuration; refuses a sealed store with no `POLARIS_SECRETS_DIR` | Every operator script above that drives the production stack; `test_operator_env.py` |
 | `polaris-generate-secrets.sh` | Mints the secret material, including the ML-DSA-65 signing key | An operator, once, before the first deploy |
 | `polaris-secrets.sh` | The sealed secret store: put, get, list, seal | An operator; `polaris_web/secretstore.py` documents the format |
 | `polaris-rotate-secret.sh` | Rotates one secret in place, without a redeploy | An operator |

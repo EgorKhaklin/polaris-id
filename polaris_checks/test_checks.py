@@ -6213,8 +6213,8 @@ def test_secrets_lifecycle_sealed_check_discriminates(tmp_path):
     good = {
         "polaris_web/secretstore.py": ST,
         "scripts/polaris-secrets.sh": "unseal-if-configured) mount -t tmpfs -o mode=0700 tmpfs $d\n",
-        "scripts/polaris-deploy.sh": "polaris-secrets.sh unseal-if-configured\nSECRETS_DIR=${POLARIS_SECRETS_DIR:-x}\n",
-        "scripts/polaris-rotate-secret.sh": ("SECRETS_DIR=${POLARIS_SECRETS_DIR:-x}\npolaris-secrets.sh seal --only $SECRET\n"
+        "scripts/polaris-deploy.sh": "polaris-secrets.sh unseal-if-configured\nSECRETS_DIR=$(polaris_secrets_dir)\n",
+        "scripts/polaris-rotate-secret.sh": ("SECRETS_DIR=$(polaris_secrets_dir)\npolaris-secrets.sh seal --only $SECRET\n"
                                             "case x in\n    polaris_db_password)\n        docker compose up -d --no-deps --force-recreate pgbouncer\n"
                                             "        docker compose up -d --no-deps --force-recreate app\n        ;;\nesac\n"),
         "deploy/linux/polaris.service": "ExecStartPre=polaris-secrets.sh unseal-if-configured\n",
@@ -6252,7 +6252,7 @@ def test_secrets_lifecycle_sealed_check_discriminates(tmp_path):
     assert checks.check_secrets_lifecycle_sealed(tmp_path)[0].level == "FAIL", "must FAIL without KeyId pinned on Decrypt"
 
     # Rotation that recreates only the app (pgbouncer keeps the old password).
-    write({"scripts/polaris-rotate-secret.sh": "SECRETS_DIR=${POLARIS_SECRETS_DIR:-x}\npolaris-secrets.sh seal --only $SECRET\n"
+    write({"scripts/polaris-rotate-secret.sh": "SECRETS_DIR=$(polaris_secrets_dir)\npolaris-secrets.sh seal --only $SECRET\n"
            "case x in\n    polaris_db_password)\n        docker compose up -d --no-deps --force-recreate app\n        ;;\nesac\n"})
     f = checks.check_secrets_lifecycle_sealed(tmp_path)[0]
     assert f.level == "FAIL" and "pgbouncer" in f.message, "must FAIL when rotation skips pgbouncer"
@@ -6264,6 +6264,12 @@ def test_secrets_lifecycle_sealed_check_discriminates(tmp_path):
     # CI that boots from plaintext (no seal / delete / live rotation).
     write({".github/workflows/ci.yml": "run: bash scripts/polaris-generate-secrets.sh; docker compose up -d\n"})
     assert checks.check_secrets_lifecycle_sealed(tmp_path)[0].level == "FAIL", "must FAIL when CI does not drill the sealed boot + rotation"
+
+    # A deploy that defaults the sealed directory itself (a deploy worked; the next restart did not).
+    write({"scripts/polaris-deploy.sh": "polaris-secrets.sh unseal-if-configured\n"
+                                        "export POLARIS_SECRETS_DIR=${POLARIS_SECRETS_DIR:-/run/polaris/secrets}\n"})
+    f = checks.check_secrets_lifecycle_sealed(tmp_path)[0]
+    assert f.level == "FAIL" and "polaris_secrets_dir" in f.message, "must FAIL when the deploy defaults the directory"
 
     # The systemd unit that starts compose without unsealing.
     write({"deploy/linux/polaris.service": "ExecStart=docker compose up -d\n"})
@@ -6329,6 +6335,73 @@ def test_secrets_reach_only_their_readers_check_discriminates(tmp_path):
            "must FAIL when the Helm drill stops listing what the app's pod reads")
     broken(".github/workflows/ci.yml", "the app container mounts", "the app is fine",
            "must FAIL when the prod-stack job stops listing what the app's container reads")
+
+
+def test_operator_scripts_read_the_unit_env_check_discriminates(tmp_path):
+    files = [str(p.relative_to(REPO)) for p in (REPO / "scripts").glob("polaris-*.sh")]
+    files += [".github/workflows/ci.yml", "deploy/linux/polaris.env.example", "docs/operator/SECRETS.md"]
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_operator_scripts_read_the_unit_env(tmp_path)[0].level == "OK", \
+        "must PASS on the real scripts, the linux-install job, the env example and SECRETS.md"
+
+    def broken(rel, old, new, why, every=False):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new) if every else good.replace(old, new, 1))
+        f = checks.check_operator_scripts_read_the_unit_env(tmp_path)[0]
+        assert f.level == "FAIL", why
+        path.write_text(good)
+        return f
+
+    loader = 'source "${SCRIPT_DIR}/polaris-env.sh"\n'
+    # The defect itself: the first operator account, created by hand, without the unit's configuration.
+    f = broken("scripts/polaris-create-operator.sh", loader, "",
+               "must FAIL when an operator script drives the stack without the loader")
+    assert "polaris-create-operator.sh" in f.message, f.message
+    deploy = (tmp_path / "scripts/polaris-deploy.sh").read_text()
+    f = broken("scripts/polaris-deploy.sh", loader, "", "must FAIL when the deploy reads only its caller's shell")
+    # Sourced too late: after the overlays were read from the caller's shell.
+    late = deploy.replace(loader, "", 1).replace("compose() {", loader + "compose() {", 1)
+    (tmp_path / "scripts/polaris-deploy.sh").write_text(late)
+    f = checks.check_operator_scripts_read_the_unit_env(tmp_path)[0]
+    assert f.level == "FAIL" and "before it sources" in f.message, f.message
+    (tmp_path / "scripts/polaris-deploy.sh").write_text(deploy)
+    # The silent default that let a deploy work and the next restart fail.
+    broken("scripts/polaris-deploy.sh", "SECRETS_DIR=$(polaris_secrets_dir) || exit 1\n",
+           'export POLARIS_SECRETS_DIR="${POLARIS_SECRETS_DIR:-/run/polaris/secrets}"\n'
+           'SECRETS_DIR="${POLARIS_SECRETS_DIR}"\n', "must FAIL when the deploy defaults the sealed directory")
+    broken("scripts/polaris-secrets.sh", "DST=$(polaris_secrets_dir) || exit 1\n",
+           'DST="${POLARIS_SECRETS_DIR:-/run/polaris/secrets}"\n',
+           "must FAIL when the unit's unseal defaults the directory compose will not read")
+    # The loader sourcing the file: a shell runs an unquoted value with spaces as a command.
+    f = broken("scripts/polaris-env.sh", '    while IFS= read -r line || [[ -n "${line}" ]]; do\n',
+               '    set -a; . "${file}"; set +a\n    while IFS= read -r line || [[ -n "${line}" ]]; do\n',
+               "must FAIL when the loader sources polaris.env")
+    assert "never source" in f.message, f.message
+    broken("scripts/polaris-env.sh", '        [[ -n "${!key+x}" ]] && continue\n', "",
+           "must FAIL when the file overrides what the caller set")
+    broken("scripts/polaris-env.sh", "        return 1\n    fi\n    printf '%s\\n' \"${POLARIS_SECRETS_DIR}\"",
+           "        printf '%s\\n' /run/polaris/secrets\n        return 0\n    fi\n    printf '%s\\n' \"${POLARIS_SECRETS_DIR}\"",
+           "must FAIL when a sealed backend with no directory gets a default instead of a refusal")
+    # A drill that takes the production host's configuration.
+    broken("scripts/polaris-chaos-drill.sh", "set -euo pipefail\n",
+           'set -euo pipefail\nsource "${SCRIPT_DIR}/polaris-env.sh"\n', "must FAIL when a drill sources the loader")
+    # A new operator script that forgets the loader.
+    (tmp_path / "scripts/polaris-new-tool.sh").write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\ndocker compose -f polaris_web/docker-compose.prod.yml ps\n")
+    f = checks.check_operator_scripts_read_the_unit_env(tmp_path)[0]
+    assert f.level == "FAIL" and "polaris-new-tool.sh" in f.message, f.message
+    (tmp_path / "scripts/polaris-new-tool.sh").unlink()
+    # The CI evidence.
+    broken(".github/workflows/ci.yml", "sudo scripts/polaris-deploy.sh prod", "scripts/polaris-deploy.sh prod",
+           "must FAIL when the linux-install job stops running the upgrade with sudo", every=True)
+    broken(".github/workflows/ci.yml", "needs POLARIS_SECRETS_DIR", "accepted",
+           "must FAIL when the linux-install job stops asserting the refusal", every=True)
+    broken("docs/operator/SECRETS.md", "POLARIS_SECRETS_DIR=/run/polaris/secrets", "POLARIS_SECRETS_DIR=",
+           "must FAIL when SECRETS.md stops telling a sealed install to set the directory", every=True)
 
 def test_migrations_expand_contract_check_discriminates(tmp_path):
     mig = tmp_path / "polaris_sql" / "migrations"

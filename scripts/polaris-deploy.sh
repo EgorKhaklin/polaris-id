@@ -31,6 +31,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 POLARIS_ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
+# Run by hand (sudo resets the environment), read the configuration polaris.service runs with.
+source "${SCRIPT_DIR}/polaris-env.sh"
 COMPOSE_FILE="${POLARIS_ROOT}/polaris_web/docker-compose.prod.yml"
 # v9.183 (P1.4) — the same overlays polaris.service uses (blue-green, the CI
 # internal-CA edge, a custody overlay) apply to every compose call here.
@@ -38,12 +40,13 @@ read -r -a COMPOSE_EXTRA <<< "${POLARIS_COMPOSE_EXTRA:-}"
 compose() { (cd "${POLARIS_ROOT}/polaris_web" && docker compose -f docker-compose.prod.yml "${COMPOSE_EXTRA[@]}" "$@"); }
 # v9.180 (P1.3) — with a sealed store (POLARIS_SECRETS_BACKEND=age|awskms) the
 # plaintext is materialized into POLARIS_SECRETS_DIR (a tmpfs) right before
-# the stack starts; the compose file reads the same variable.
+# the stack starts; the compose file reads the same variable. Lab record 017: it comes from
+# polaris.env and is never defaulted here. polaris.service runs compose with that variable
+# alone, so a deploy that supplied a default worked until the next restart.
+SECRETS_DIR=$(polaris_secrets_dir) || exit 1
 if [[ "${POLARIS_SECRETS_BACKEND:-file}" != "file" ]]; then
-    export POLARIS_SECRETS_DIR="${POLARIS_SECRETS_DIR:-/run/polaris/secrets}"
     "${SCRIPT_DIR}/polaris-secrets.sh" unseal-if-configured
 fi
-SECRETS_DIR="${POLARIS_SECRETS_DIR:-${POLARIS_ROOT}/polaris_web/secrets}"
 
 MODE="${1:-prod}"
 shift || true

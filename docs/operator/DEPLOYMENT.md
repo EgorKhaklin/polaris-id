@@ -35,9 +35,9 @@ review, migrations, certificate monitoring) is
   (`acme-v02.api.letsencrypt.org`) and, if the certificate transparency
   monitor runs here, crt.sh.
 - `POLARIS_DOMAIN` exported in the shell (or in `/etc/polaris/polaris.env` on a
-  systemd host). Its DNS A/AAAA record points at this host and TCP 80/443 plus
-  UDP 443 are reachable before the first start: Caddy provisions the Let's
-  Encrypt certificate on boot.
+  systemd host, which every script reads when run as root). Its DNS A/AAAA
+  record points at this host and TCP 80/443 plus UDP 443 are reachable before
+  the first start: Caddy provisions the Let's Encrypt certificate on boot.
 - Secrets in `polaris_web/secrets/` (or the directory `POLARIS_SECRETS_DIR`
   names). `scripts/polaris-deploy.sh` refuses to start unless
   `polaris_secret_key`, `polaris_db_password`, `polaris_db_root_password`, and
@@ -66,7 +66,8 @@ plus whatever overlays `POLARIS_COMPOSE_EXTRA` names. In order:
 
 1. Pre-flight: docker and the compose plugin present, the four secrets above
    present, `POLARIS_DOMAIN` set. With `POLARIS_SECRETS_BACKEND=age` or
-   `awskms` the sealed store is unsealed into `POLARIS_SECRETS_DIR` first.
+   `awskms` the sealed store is unsealed into `POLARIS_SECRETS_DIR` first; the
+   deploy refuses a sealed backend without one.
 2. `git pull --ff-only` (skipped with `--no-pull` or outside a git checkout).
 3. The running app image id is recorded for rollback.
 4. `docker compose pull` for the upstream images, then every Polaris image
@@ -180,7 +181,8 @@ a real admin exists. Create it with
 [`scripts/polaris-create-operator.sh`](../../scripts/polaris-create-operator.sh):
 
 ```bash
-./scripts/polaris-create-operator.sh --username <name> --role admin --password-file <path> --target=docker-stack
+./scripts/polaris-create-operator.sh --username <name> --role admin --password-file <path> \
+    --reason "<why this person gets an account, at least 20 characters>" --target=docker-stack
 ```
 
 The seeded credentials themselves live in the SQL seed

@@ -81,6 +81,11 @@ systemctl start polaris-backup           # a backup now
 sudo -e /etc/polaris/polaris.env && systemctl restart polaris   # change WEB_CONCURRENCY, point archiving offsite, ...
 ```
 
+**The scripts read `polaris.env`.** Run the scripts under `scripts/` as root
+(`sudo`). Each one reads `/etc/polaris/polaris.env`, as `polaris.service` does,
+so a deploy, a rotation or a new operator account runs with the domain, overlays
+and secrets the unit starts with; a variable set on the command line wins.
+
 **Upgrade**: `cd /opt/polaris && sudo scripts/polaris-deploy.sh prod`. It
 pulls, rebuilds the app image, applies migrations, smoke-tests `/api/health`,
 and rolls back the app image if the smoke test fails. It operates on the same
@@ -103,10 +108,14 @@ HAProxy; a lost leader is replaced within the lease and a returning one
 rejoins as a replica ([`FAILOVER.md`](FAILOVER.md)). On one host this proves
 the mechanism; the members belong on separate hosts, which is your placement.
 
-**Sealed secrets**: set `POLARIS_SECRETS_BACKEND=age` (or `awskms`) plus the
-identity/recipients (or key id) lines in `polaris.env`; `polaris.service`
-unseals into a tmpfs at `/run/polaris/secrets` before every start and the
-plaintext directory can be shredded ([SECRETS.md, section 5](SECRETS.md#5-the-sealed-secret-store)).
+**Sealed secrets**: until you seal them, the secrets are plaintext files in
+`polaris_web/secrets/` on this disk, and `polaris-doctor.sh` and every start say
+so. Set `POLARIS_SECRETS_BACKEND=age` (or `awskms`),
+`POLARIS_SECRETS_DIR=/run/polaris/secrets`, and the identity/recipients (or key
+id) lines in `polaris.env`; `polaris.service` unseals into a tmpfs there before
+every start and the plaintext directory can be shredded
+([SECRETS.md, section 5](SECRETS.md#5-the-sealed-secret-store), which also says
+what a copy of the disk still holds in each setup).
 
 **Paging**: mount your pager URL into Alertmanager per
 [`RUNBOOKS.md`](RUNBOOKS.md) "Paging". The Prometheus and Alertmanager

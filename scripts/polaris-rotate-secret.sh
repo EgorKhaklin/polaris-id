@@ -32,9 +32,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 POLARIS_ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
+# Run by hand (sudo resets the environment), read the configuration polaris.service runs with.
+source "${SCRIPT_DIR}/polaris-env.sh"
 # v9.180 (P1.3) — rotate the MATERIALIZED secret (a tmpfs when a sealed store
-# is in use) and write it through to the sealed store below.
-SECRETS_DIR="${POLARIS_SECRETS_DIR:-${POLARIS_ROOT}/polaris_web/secrets}"
+# is in use, named by POLARIS_SECRETS_DIR, which a sealed store requires) and write
+# it through to the sealed store below.
+SECRETS_DIR=$(polaris_secrets_dir) || exit 1
 ARCHIVE_DIR="${SECRETS_DIR}/.archive"
 COMPOSE_FILE="${POLARIS_ROOT}/polaris_web/docker-compose.prod.yml"
 # v9.183 (P1.4) — honour the same overlays as deploy (blue-green, CI edge), and

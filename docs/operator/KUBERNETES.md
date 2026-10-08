@@ -83,6 +83,12 @@ cannot mint a signing key, so `/api/health` reports custody degraded until you
 add `polaris_signing_key` to the Secret ([`KEY-CEREMONY.md`](KEY-CEREMONY.md);
 the PKCS#11 and KMS custody drivers work here too, through the same env).
 
+Each pod reads only its own keys of that Secret, at 0440. Whether the Secret is
+encrypted at rest is the cluster's setting, not the chart's: on a control plane
+you run, configure an `EncryptionConfiguration` (preferably with a KMS
+provider); on a managed service, read its documentation on encrypting etcd.
+The chart cannot see either.
+
 The v9.189 session and origin controls (`POLARIS_NETWORK_POLICY_<ROLE>`,
 `POLARIS_SESSION_MAX_<ROLE>`, `POLARIS_SESSION_IDLE_MINUTES_<ROLE>`, and the
 `POLARIS_WEBAUTHN_*` attestation policy) go in `app.extraEnv` as
