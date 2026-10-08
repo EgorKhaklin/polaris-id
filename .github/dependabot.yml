@@ -4,7 +4,10 @@
 # pip-audit in the cve-scan CI job gates the build on a known CVE regardless.
 # Merge policy (stated for readers in SECURITY.md): patch and minor bumps are
 # batch-applied to main and validated by one full CI run, after which
-# Dependabot closes its PRs; majors of foundation dependencies (PostgreSQL,
+# Dependabot closes its PRs. Each entry groups them into one PR per run (a
+# docker entry groups every refresh: a digest-only bump has no semver type),
+# so a merge to main re-runs CI for a few grouped PRs, not one per package;
+# majors of foundation dependencies (PostgreSQL,
 # the Python base image, plonky2) are deliberate roadmap work, kept out by the
 # ignore blocks below. Removing an ignore block is the decision record for
 # taking that major.
@@ -31,6 +34,10 @@ updates:
         patterns:
           - "psycopg"
           - "psycopg-binary"
+      pip-polaris_web-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
     ignore:
       # patroni 4.1.5 declares ydiff!=1.4.0,!=1.4.1,<1.5,>=1.2.0. A ydiff at or
       # above 1.5 cannot be installed beside it and makes the postgres/patroni
@@ -53,6 +60,11 @@ updates:
       - dependencies
     commit-message:
       prefix: deps
+    groups:
+      pip-packages-polaris-oid4vp-fuzz-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   # What lab/interop/*/run.sh install beside polaris-oid4vp: its one dependency (requirements.txt,
   # Python 3.9) and, for a run that builds it from the tree, the build backend
@@ -68,6 +80,11 @@ updates:
       - dependencies
     commit-message:
       prefix: deps
+    groups:
+      pip-lab-interop-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   # The dependency-audit tools the CVE-scan job runs (pip-audit, bandit), hash-pinned by
   # pip-compile in .github/ci; Dependabot recompiles the hashes.
@@ -82,6 +99,11 @@ updates:
       - dependencies
     commit-message:
       prefix: deps
+    groups:
+      pip-github-ci-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   # The Rust ZK crate.
   - package-ecosystem: cargo
@@ -100,6 +122,11 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "plonky2_field"
         update-types: ["version-update:semver-major"]
+    groups:
+      cargo-polaris_zk-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   # GitHub Actions used by the CI workflow.
   - package-ecosystem: github-actions
@@ -112,6 +139,11 @@ updates:
       - dependencies
     commit-message:
       prefix: ci
+    groups:
+      github-actions-root-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   # The toolchain publish.yml builds the Python distributions with (build, setuptools,
   # twine), hash-pinned by pip-compile in .github/publish; Dependabot recompiles it.
@@ -126,6 +158,11 @@ updates:
       - dependencies
     commit-message:
       prefix: deps
+    groups:
+      pip-github-publish-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   # The SPDX project's NTIA checker sbom.yml judges every release SBOM with, and the license
   # list polaris-sbom-enrich.py reads from it, hash-pinned by pip-compile in .github/sbom.
@@ -140,6 +177,11 @@ updates:
       - dependencies
     commit-message:
       prefix: deps
+    groups:
+      pip-github-sbom-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   # Docker base images (the FROM lines of every Dockerfile here): a PR bumps a
   # pinned digest when the upstream tag moves, so a frozen digest still receives
@@ -160,6 +202,10 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "python"
         update-types: ["version-update:semver-major"]
+    groups:
+      docker-polaris_web-all:
+        patterns:
+          - "*"
 
   # The compose files' third-party images (redis, the observability stack): the
   # docker ecosystem above does not read compose files, so until 2026-10-07 their
@@ -178,6 +224,10 @@ updates:
     ignore:
       - dependency-name: "postgres"
         update-types: ["version-update:semver-major"]
+    groups:
+      docker-compose-polaris_web-all:
+        patterns:
+          - "*"
 
   # The lab's demo image (lab/strategy/007).
   - package-ecosystem: docker
@@ -191,6 +241,10 @@ updates:
       - dependencies
     commit-message:
       prefix: docker
+    groups:
+      docker-lab-strategy-007-all:
+        patterns:
+          - "*"
 
   # The TypeScript SDK (published to npm): its lockfile and, when a release falls
   # outside a declared range, the range.
@@ -205,6 +259,11 @@ updates:
       - dependencies
     commit-message:
       prefix: deps
+    groups:
+      npm-sdk-typescript-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   # The npm tools the lab and the accessibility drill install from their lockfiles,
   # one grouped PR across the four directories.
@@ -246,3 +305,8 @@ updates:
       - dependencies
     commit-message:
       prefix: deps
+    groups:
+      pip-published-packages-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"

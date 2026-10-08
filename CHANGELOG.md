@@ -131,9 +131,11 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The weekly canary also runs ERICA, and the EU iOS library with the wallet kit's own request-object encryption.
 - polaris-oid4vp encrypts the request object to the wallet's key when its `wallet_metadata` asks, as the EU iOS wallet kit requires.
 - polaris-oid4vp `serve --verifier-info` adds attestations such as a registration certificate to the request, as the German wallet requires.
+- A check that the product suite's parallel CI parts share one setup and that its required job gates on each.
 
 ### Changed
 
+- Dependabot groups each directory's minor and patch updates into one pull request per run.
 - CI runs the product suite as three parallel jobs behind its one required check, so the slowest part alone sets the wait.
 - `/api/health/ready` answers for one instance (custody, the second witness, local disk) and leaves the shared database to `/api/health`; the edge and the Helm readiness probe route on it, so a database failover no longer takes every instance out of rotation (lab record 017).
 - security.txt's contact defaults to security@ the deployment's domain when none is set.
