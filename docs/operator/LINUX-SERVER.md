@@ -78,7 +78,7 @@ cd /opt/polaris/polaris_web && docker compose -f docker-compose.prod.yml ps   # 
 docker logs polaris-app --tail 100       # per container: polaris-app, polaris-caddy, polaris-postgres, polaris-pgbouncer, polaris-redis
 systemctl list-timers 'polaris-*'        # next backup / verify
 systemctl start polaris-backup           # a backup now
-sudo -e /etc/polaris/polaris.env && systemctl restart polaris   # change WEB_CONCURRENCY, enable archiving, ...
+sudo -e /etc/polaris/polaris.env && systemctl restart polaris   # change WEB_CONCURRENCY, point archiving offsite, ...
 ```
 
 **Upgrade**: `cd /opt/polaris && sudo scripts/polaris-deploy.sh prod`. It
