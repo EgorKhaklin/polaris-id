@@ -4253,6 +4253,10 @@ def check_prod_app_password_synced(root: pathlib.Path) -> list[Finding]:
 #   2. The rate limiter silently falls back to per-worker in-memory unless
 #      POLARIS_REDIS_URL is set; prod runs 4 workers, so per-IP limits would
 #      fragment 4x. The prod compose must wire POLARIS_REDIS_URL.
+#   3. The same seed sets the zero-knowledge anonymity floor to ONE (04_data.sql)
+#      so its handful of credentials can close an epoch. Every install loads it,
+#      so production must put the floor back to at least the default of 20, or
+#      uc11_close_epoch closes epochs that identify their members by elimination.
 # (Part of the v9.101+ production-readiness arc; see docs/PRODUCTION-READINESS.md.)
 # ---------------------------------------------------------------------------
 def check_prod_hardening(root: pathlib.Path) -> list[Finding]:
@@ -4272,8 +4276,17 @@ def check_prod_hardening(root: pathlib.Path) -> list[Finding]:
         return _fail("prod_hardening",
                      "docker-compose.prod.yml must set POLARIS_REDIS_URL so the rate limiter uses the "
                      "cross-worker Redis backend (else per-IP limits fragment across the 4 workers)")
+    # 3. The sample's anonymity floor of one does not carry into production.
+    floors = [int(n) for n in re.findall(
+        r"^[^-\n]*SET\s+polaris\.min_epoch_anonymity_set\s*=\s*(\d+)", prod_block.group(0), re.M)]
+    if not floors or min(floors) < 20:
+        return _fail("prod_hardening",
+                     "docker-init.sh must set polaris.min_epoch_anonymity_set to at least 20 when "
+                     "POLARIS_ENV=production: the notional sample sets it to 1, and every install loads "
+                     "the sample, so production would close epochs of one")
     return _ok("prod_hardening",
-               "prod neutralizes demo accounts and wires the Redis rate limiter")
+               "prod neutralizes demo accounts, restores the anonymity floor (%d) and wires the Redis "
+               "rate limiter" % min(floors))
 
 
 # ---------------------------------------------------------------------------
