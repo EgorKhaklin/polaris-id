@@ -11,22 +11,26 @@
 # verification). Every answer is read: a run fails on any status but 200 or any verdict but accept.
 # The generator is wrk: keep-alive TLS connections, a closed loop of CONNS clients.
 #
-# Three configurations, each on a fresh stack:
-#   A  one app replica limited to 1 vCPU, 4 workers;
-#   B  two app replicas, 1 vCPU and 4 workers each (the blue-green overlay's second colour);
-#   C  one app replica limited to 2 vCPU, 8 workers.
+# Four configurations, each on a fresh stack, 4 workers per app replica:
+#   A  one app replica limited to 0.5 vCPU;
+#   B  two app replicas at 0.5 vCPU each (the blue-green overlay's second colour);
+#   C  one app replica at 1 vCPU;
+#   D  two app replicas at 1 vCPU each.
+# A and B are small enough that the app tier binds and the host has room: B over A says whether
+# replicas add up. C and D show where the rest of the host, the database first, takes over.
 # The other services may use what is left: the edge's and pgbouncer's 0.5-CPU caps would bind first
-# and the run would measure them. Each container's CPU is sampled through every measured run.
+# and the run would measure them. Each container's CPU is sampled through every measured run, and
+# the report divides it by the throughput: the CPU one verification costs in each tier.
 # RUNS measured runs of SECONDS per configuration, after a warm-up; the median is reported.
 #
 # Lifted for the measurement, and only here: the edge's per-address limit (one generator address
 # would be held at a few requests a second), the app's per-address write cap, and the relying
 # party's registered limit. What is measured is serving capacity, not the limits.
 #
-# One host: the replicas share the edge, the pooler, the database and the generator's machine. B over
-# A says how the app tier scales across replicas on one host; across hosts is not measured.
+# One host: the replicas share the edge, the pooler, the database and the generator's machine.
+# Across hosts is not measured.
 #
-#   scripts/polaris-throughput-measure.sh [--out FILE] [--configs A,B,C] [--seconds 60] [--runs 3]
+#   scripts/polaris-throughput-measure.sh [--out FILE] [--configs A,B,C,D] [--seconds 60] [--runs 3]
 #   scripts/polaris-throughput-measure.sh --render FILE       # the markdown block for a result file
 #   scripts/polaris-throughput-measure.sh --update-doc FILE   # write it into PERFORMANCE-BASELINE.md
 #
@@ -41,7 +45,7 @@ ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
 WEB="${ROOT}/polaris_web"
 DOC="${ROOT}/docs/reference/PERFORMANCE-BASELINE.md"
 OUT="throughput.json"
-CONFIGS="A,B,C"
+CONFIGS="A,B,C,D"
 SECONDS_RUN=60
 RUNS=3
 WARMUP=10
@@ -61,7 +65,7 @@ print(f"**Measured {s['version']} @ {s['commit']}, {s['date']} ({r['runs']} runs
 print()
 print("| Configuration | Verifications/s | Runs | p50 ms | p95 ms | p99 ms | CPU: app, edge, pgbouncer, PostgreSQL, Redis |")
 print("|---|---:|---|---:|---:|---:|---|")
-for key in ("A", "B", "C"):
+for key in ("A", "B", "C", "D"):
     c = r["configs"].get(key)
     if not c:
         continue
@@ -71,14 +75,28 @@ for key in ("A", "B", "C"):
     each = ", ".join("%.0f" % x["rps"] for x in c["runs"])
     print("| %s: %s | %.0f | %s | %.1f | %.1f | %.1f | %s |"
           % (key, c["label"], med["rps"], each, med["p50_ms"], med["p95_ms"], med["p99_ms"], cpus))
-a = r["configs"].get("A"); b = r["configs"].get("B"); c = r["configs"].get("C")
 print()
-if a and b:
-    print(f"Two replicas served {b['median']['rps'] / a['median']['rps']:.2f} times one replica's verifications on the same host.")
-if a and c:
-    print(f"One replica with twice the CPU served {c['median']['rps'] / a['median']['rps']:.2f} times as many.")
+print("CPU one verification cost, in milliseconds, at each configuration's median run:")
+print()
+print("| Configuration | App | Edge | pgbouncer | PostgreSQL | Redis | All |")
+print("|---|---:|---:|---:|---:|---:|---:|")
+for key in ("A", "B", "C", "D"):
+    c = r["configs"].get(key)
+    if not c:
+        continue
+    med = c["median"]
+    ms = [med["cpu"].get(k, 0) * 10 / med["rps"] for k in ("app", "caddy", "pgbouncer", "postgres", "redis")]
+    print("| %s | %s | %.1f |" % (key, " | ".join("%.1f" % x for x in ms), sum(ms)))
+print()
+rps = {k: v["median"]["rps"] for k, v in r["configs"].items()}
+if "A" in rps and "B" in rps:
+    print("Two replicas at 0.5 vCPU served %.2f times one replica's verifications." % (rps["B"] / rps["A"]))
+if "A" in rps and "C" in rps:
+    print("One replica at 1 vCPU served %.2f times one at 0.5 vCPU." % (rps["C"] / rps["A"]))
+if "C" in rps and "D" in rps:
+    print("Two replicas at 1 vCPU served %.2f times one." % (rps["D"] / rps["C"]))
 print("CPU is the mean over each measured run as `docker stats` reports it, where 100% is one vCPU; "
-      "\"app\" sums the app replicas.")
+      "\"app\" sums the app replicas. The generator's own CPU, on the same host, is not counted.")
 EOF
 }
 
@@ -333,9 +351,10 @@ EOF
 : > "${WORK}/runs.jsonl"
 for cfg in ${CONFIGS//,/ }; do
     case "${cfg}" in
-        A) cpus=1.0; workers=4; replicas=1; label="1 replica, 1 vCPU, 4 workers" ;;
-        B) cpus=1.0; workers=4; replicas=2; label="2 replicas, 1 vCPU and 4 workers each" ;;
-        C) cpus=2.0; workers=8; replicas=1; label="1 replica, 2 vCPU, 8 workers" ;;
+        A) cpus=0.5; workers=4; replicas=1; label="1 replica at 0.5 vCPU" ;;
+        B) cpus=0.5; workers=4; replicas=2; label="2 replicas at 0.5 vCPU each" ;;
+        C) cpus=1.0; workers=4; replicas=1; label="1 replica at 1 vCPU" ;;
+        D) cpus=1.0; workers=4; replicas=2; label="2 replicas at 1 vCPU each" ;;
         *) fail "unknown configuration ${cfg}" ;;
     esac
     echo "== ${cfg}: ${label} =="
@@ -350,8 +369,14 @@ for cfg in ${CONFIGS//,/ }; do
     echo "${cfg}|${label}|${replicas}|${cpus}|${workers}" >> "${WORK}/labels.txt"
 done
 
-VERSION=$(sed -n "s/^__version__ = ['\"]\\(.*\\)['\"]/\\1/p" "${WEB}/__version__.py")
-COMMIT=$(git -C "${ROOT}" rev-parse --short HEAD)$(git -C "${ROOT}" diff --quiet HEAD -- 2> /dev/null || echo "+dirty")
+VERSION=$(python3 -c 'import re, sys; print(re.search(r"^__version__[^=]*=\s*[\x22\x27]([^\x22\x27]+)", open(sys.argv[1]).read(), re.M).group(1))' \
+              "${WEB}/__version__.py")
+# In a pull request CI checks out a merge commit that exists only for the run: it names the branch's.
+if [[ -n "${POLARIS_MEASURE_COMMIT:-}" ]]; then
+    COMMIT="${POLARIS_MEASURE_COMMIT:0:8}"
+else
+    COMMIT=$(git -C "${ROOT}" rev-parse --short HEAD)$(git -C "${ROOT}" diff --quiet HEAD -- 2> /dev/null || echo "+dirty")
+fi
 python3 - "${WORK}/runs.jsonl" "${WORK}/labels.txt" "${OUT}" "${VERSION}" "${COMMIT}" "${SECONDS_RUN}" "${RUNS}" \
     "-t${THREADS} -c${CONNS}" "$(cat "${WORK}/pg-version")" <<'EOF'
 import json, os, platform, sys, time
