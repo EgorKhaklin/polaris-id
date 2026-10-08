@@ -115,7 +115,11 @@ run "$ROOT"            pytest polaris_checks/test_checks.py -q
 # and the single biggest serial block left in this step. It looks unshardable -- one class
 # in the file -- but it BUILDS one TestCase per signed type at import, so the loader finds
 # twenty-two classes and they distribute like any others. 6.9x locally.
-if ! POLARIS_SHIP_COVERAGE=1 "$PY" "$ROOT/scripts/polaris-ship.py" run \
+# --no-unsharded (2026-10-08): `run` goes on to the unsharded suites, the schema-drift drill and the
+# application-role suite, and this step had been running them all: the unsharded suites are the ones
+# this script runs itself below, and the other two are steps of their own in the product suite's
+# core part. That was 37 of this step's 64 minutes, measuring nothing new.
+if ! POLARIS_SHIP_COVERAGE=1 "$PY" "$ROOT/scripts/polaris-ship.py" run --no-unsharded \
         --module test_app --module test_check_constraints \
         --module test_invariants_property --module test_redaction_property \
         --module test_canonical_equivalence; then
@@ -128,7 +132,8 @@ run "$ROOT/polaris_cli" unittest test_cli
 run_standalone "$ROOT/scripts" unittest test_verify_load test_wallet test_relying_party \
                                        test_verify_conformance test_verify_p9 test_verify_refusals test_ship_tool \
                                        test_pgbouncer_entrypoint test_issuance_scope test_sbom_enrich \
-                                       test_conformance_runner test_pin_chart_images test_chain_anchor_tool test_migrate_runner
+                                       test_conformance_runner test_pin_chart_images test_chain_anchor_tool test_migrate_runner \
+                                       test_coverage_script test_trigger_drill
 # polaris_sim's tests import the package (from polaris_sim import ...), so they
 # run from the repo root with the dotted module path, not from inside the dir.
 run "$ROOT" unittest polaris_sim.test_sim
@@ -155,18 +160,33 @@ run_standalone "$ROOT/packages/polaris-oid4vp" unittest test_sdjwt test_jwe test
     || { echo "::error::suite failed: polaris-verify.py --verify-dir vectors" >&2; SUITE_FAIL=1; }
 
 echo "== combining =="
-"$PY" -m coverage combine
+# A gate that cannot read its numbers fails. From 2026-09-30 to 2026-10-08 `coverage json` failed
+# ("No source for code"; see [paths] in .coveragerc), the totals came out empty, the floor
+# comparison crashed, and its empty answer read as "nothing below the floor": CI passed unmeasured.
+# scripts/test_coverage_script.py runs this part against a stub interpreter.
+if ! "$PY" -m coverage combine; then
+    echo "::error::coverage combine failed; the floors cannot be checked" >&2
+    exit 1
+fi
 # Sorted by missed statements, so the tail CI prints is where the gap is: the files missing the
 # most, then TOTAL. Sorted by name, the tail was the last 25 files alphabetically.
 "$PY" -m coverage report --skip-covered --sort=miss | tail -42
 "$PY" -m coverage xml -o "$ROOT/coverage.xml" >/dev/null 2>&1 || true
-"$PY" -m coverage json -q -o "$ROOT/coverage.json"
+rm -f "$ROOT/coverage.json"
+if ! "$PY" -m coverage json -q -o "$ROOT/coverage.json"; then
+    echo "::error::coverage json failed; the floors cannot be checked" >&2
+    exit 1
+fi
 
 # Statements and branches, each out of the JSON totals (coverage.py's TOTAL blends them).
-TOTALS=$("$PY" -c 'import json, sys
+if ! TOTALS=$("$PY" -c 'import json, sys
 t = json.load(open(sys.argv[1]))["totals"]
 print("%.2f %.2f" % (100.0 * t["covered_lines"] / max(t["num_statements"], 1),
-                     100.0 * t["covered_branches"] / max(t["num_branches"], 1)))' "$ROOT/coverage.json")
+                     100.0 * t["covered_branches"] / max(t["num_branches"], 1)))' "$ROOT/coverage.json") \
+        || [ -z "$TOTALS" ]; then
+    echo "::error::the totals could not be read out of coverage.json; the floors cannot be checked" >&2
+    exit 1
+fi
 STMT=${TOTALS% *}
 BRANCH=${TOTALS#* }
 echo "== statements ${STMT}% (floor ${COVERAGE_FLOOR}%), branches ${BRANCH}% (floor ${BRANCH_FLOOR}%) =="
@@ -186,10 +206,13 @@ if [ "$SUITE_FAIL" -ne 0 ]; then
 fi
 
 if [ "$GATE" -eq 1 ]; then
-    BELOW=$("$PY" -c 'import sys
+    if ! BELOW=$("$PY" -c 'import sys
 s, b, fs, fb = map(float, sys.argv[1:])
 print(" ".join(n for n, v, f in (("statements", s, fs), ("branches", b, fb)) if v < f))' \
-        "$STMT" "$BRANCH" "$COVERAGE_FLOOR" "$BRANCH_FLOOR")
+            "$STMT" "$BRANCH" "$COVERAGE_FLOOR" "$BRANCH_FLOOR"); then
+        echo "::error::the floors could not be compared (statements '${STMT}', branches '${BRANCH}')" >&2
+        exit 1
+    fi
     if [ -n "$BELOW" ]; then
         echo "::error::Python coverage is below its floor (${BELOW}): statements ${STMT}% (floor ${COVERAGE_FLOOR}%), branches ${BRANCH}% (floor ${BRANCH_FLOOR}%)" >&2
         exit 1

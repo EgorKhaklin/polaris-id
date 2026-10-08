@@ -125,6 +125,21 @@ bad = [k for k in ('database', 'redis', 'zk_binary', 'custody') if c[k]['status'
 print('  checks:', {k: v.get('status') for k, v in c.items()}); assert not bad, f'unhealthy: {bad}'
 print('  custody:', c['custody'].get('driver'), c['custody'].get('public_key_fingerprint'))" "$health"
 
+echo "== 4b. each pod reads only the secrets it uses =="
+# Lab record 017 (OP-9): the app's pod once mounted the whole Secret, the superuser's and the
+# replicator's passwords, both servers' TLS keys and the backup repository's credentials included.
+want="pgbouncer_server.crt polaris_db_password polaris_redis_password polaris_secret_key polaris_secret_key_fallbacks"
+[ -s "$ROOT/polaris_web/secrets/polaris_signing_key" ] && want="$want polaris_signing_key"
+want=$(printf '%s\n' $want | sort | tr '\n' ' ')
+got=$(kubectl -n "$NS" exec "deploy/${REL}-app" -c app -- ls /run/secrets | sort | tr '\n' ' ')
+[ "$got" = "$want" ] || fail "the app's pod sees secrets [$got], not exactly [$want]"
+mode=$(kubectl -n "$NS" exec "deploy/${REL}-app" -c app -- python3 -c \
+    "import os, stat; print('%o' % stat.S_IMODE(os.stat('/run/secrets/polaris_db_password').st_mode))")
+[ "$mode" = 440 ] || fail "the app's secret files are mode $mode, not mode 440"
+got=$(kubectl -n "$NS" exec "deploy/${REL}-pgbouncer" -- ls /run/secrets | tr '\n' ' ')
+[ "$got" = "polaris_db_password " ] || fail "pgbouncer's pod sees secrets [$got], not only polaris_db_password"
+echo "  the app's pod reads only [${want% }] at 0440; pgbouncer's only the database password"
+
 echo "== 5. NetworkPolicy: a pod outside the topology is denied =="
 cat > /tmp/np-probe.py <<'PYEOF'
 import socket, sys

@@ -73,10 +73,16 @@ spec:
             requests: {cpu: 50m, memory: 32Mi}
             limits: {memory: 128Mi}
       volumes:
+        # Only the keys the pooler reads, 0440 under the pod's group.
         - name: secrets
           secret:
             secretName: {{ include "polaris.secretName" . }}
-            defaultMode: 0444
+            defaultMode: 0440
+            items:
+              - {key: polaris_db_password, path: polaris_db_password}
+              - {key: postgres_server.crt, path: postgres_server.crt}
+              - {key: pgbouncer_server.crt, path: pgbouncer_server.crt}
+              - {key: pgbouncer_server.key, path: pgbouncer_server.key}
         - name: conf
           emptyDir: {medium: Memory}
         - name: tmp
