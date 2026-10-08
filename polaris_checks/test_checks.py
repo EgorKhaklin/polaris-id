@@ -6337,6 +6337,34 @@ def test_secrets_lifecycle_sealed_check_discriminates(tmp_path):
 
 
 
+def test_throughput_measured_check_discriminates(tmp_path):
+    files = sorted({rel for rel, _, _ in checks._THROUGHPUT_NEEDLES}
+                   | {"polaris_web/Caddyfile", "polaris_web/Caddyfile.citest", "docs/reference/PERFORMANCE-BASELINE.md"})
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_throughput_measured(tmp_path)[0].level == "OK", \
+        "must PASS on the real measurement, workflow, edges and published block"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_throughput_measured(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    for rel, needle, what in checks._THROUGHPUT_NEEDLES:
+        broken(rel, needle, "true", f"must FAIL when it no longer does this: {what}", count=-1)
+    broken("polaris_web/Caddyfile", "rate_limit {", "rate_limits {", "must FAIL when the shipped edge loses its limit",
+           count=-1)
+    doc = "docs/reference/PERFORMANCE-BASELINE.md"
+    broken(doc, "**Measured 1.0.0-rc.70 @", "**Measured @", "must FAIL when the block's stamp loses its version")
+    broken(doc, "| D: ", "| E: ", "must FAIL when a configuration's row is missing")
+    broken(doc, "Across hosts is not\nmeasured", "Across hosts is\nmeasured",
+           "must FAIL when the document stops saying the replicas share one host")
+
+
 def test_secrets_reach_only_their_readers_check_discriminates(tmp_path):
     files = [str(p.relative_to(REPO)) for p in (REPO / "deploy/helm/polaris/templates").glob("*.yaml")]
     files += [str(p.relative_to(REPO)) for p in (REPO / "polaris_web").glob("docker-compose*.yml")]
@@ -12573,7 +12601,7 @@ def test_cost_model_check_discriminates(tmp_path):
               "ap.add_argument('--persons')\nap.add_argument('--verifications-per-person')\n"
               "ap.add_argument('--retention-years')\nap.add_argument('--price-vcpu-hour')\n")
     BENCH = "| single-witness | ~7,848 verifications/s per core |\n"
-    DOC = ("Verification throughput is not the cost driver.\n"
+    DOC = ("The cryptographic cost of verification is not the cost driver.\n"
            "Excluded: Staff and on-call; a hardware security module; the physical token.\n"
            "The throughput is a single-node measurement.\n")
     good = {
@@ -12632,7 +12660,7 @@ def test_cost_model_check_discriminates(tmp_path):
 
     # The finding stops being stated, so the reader has to derive the conclusion.
     write({'docs/reference/COST-MODEL.md': DOC.replace(
-        "Verification throughput is not the cost driver.\n", "")})
+        "The cryptographic cost of verification is not the cost driver.\n", "")})
     assert checks.check_cost_model(tmp_path)[0].level == "FAIL", \
         "must FAIL when the document does not state its own finding"
 

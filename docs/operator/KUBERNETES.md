@@ -81,7 +81,10 @@ Without `secrets.existingSecret` the chart generates random passwords and
 self-signed PostgreSQL/pgbouncer certificates (kept across upgrades), but it
 cannot mint a signing key, so `/api/health` reports custody degraded until you
 add `polaris_signing_key` to the Secret ([`KEY-CEREMONY.md`](KEY-CEREMONY.md);
-the PKCS#11 and KMS custody drivers work here too, through the same env).
+the PKCS#11 and KMS custody drivers work here too, through the same env). Register its public
+key for each issuing authority before the first credential is issued, as the schema owner
+(`polaris key-register`, KEY-CEREMONY.md): until then a relying party's verification of every
+credential answers "not a verifiable presentation".
 
 The v9.189 session and origin controls (`POLARIS_NETWORK_POLICY_<ROLE>`,
 `POLARIS_SESSION_MAX_<ROLE>`, `POLARIS_SESSION_IDLE_MINUTES_<ROLE>`, and the
