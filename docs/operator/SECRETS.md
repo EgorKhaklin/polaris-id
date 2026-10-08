@@ -40,8 +40,15 @@ mounts each file through `${POLARIS_SECRETS_DIR:-./secrets}/<name>`.
 | `pgbackrest_repo_creds.conf` | S3 key pair for the offsite backup repo; ships as an empty template | 0644 | pgBackRest as the postgres user | at the object-store provider, then rewrite the file |
 | Caddy ACME account key and certificates | managed by Caddy | n/a | Caddy | automatic (Let's Encrypt renewal) |
 
-Redis runs without AUTH on the private compose network; there is no Redis
-secret. The Let's Encrypt contact address is `admin@$POLARIS_DOMAIN`
+Each container mounts only the files whose "Read by" cell names it, and the Helm chart projects into
+each pod only the keys that pod reads, at 0440 under the pod's group: the app never sees the
+superuser's or the replicator's password, a server's TLS key or the backup repository's credentials.
+Compose cannot set the owner or mode of a file secret (it bind-mounts the file), so on a Compose host
+the files keep the modes above and the 0700 directory is the boundary; each container runs its service
+as one user. `check_secrets_reach_only_their_readers` holds the readers, and the Helm drill and the
+prod-stack CI job list what the app's container can read on a live stack.
+
+The Let's Encrypt contact address is `admin@$POLARIS_DOMAIN`
 ([`Caddyfile`](../../polaris_web/Caddyfile)); no operator-email variable
 exists.
 
@@ -393,6 +400,8 @@ pins the following; `python -m polaris_checks.run` must end with `READY`
   default from `09_grants.sql` is never live in production
   (`check_prod_app_password_synced`).
 - Rotation preserves file modes (`check_rotate_secret_preserves_mode`).
+- Each Compose service and each chart pod mounts only the secrets it reads, the chart's at 0440
+  (`check_secrets_reach_only_their_readers`).
 - `polaris.env` is gitignored (`check_secrets_file_ignored`).
 
 The dev launcher generates `POLARIS_SECRET_KEY` once and persists it in
@@ -423,6 +432,7 @@ For secrets specifically:
 | Postgres statement log leaks a password | `log_statement = 'mod'`, never `'all'`; review log redaction quarterly |
 | Dev secrets promoted to production | Separate directories and generators; `check_prod_app_password_synced` pins that the prod role is altered to the file-mounted secret. Nothing refuses a dev-valued file (`docker-init.sh` skips the `ALTER` when the file holds `polaris_dev_password`), so never copy dev secrets into the prod directory |
 | Caddy compromise leaks the TLS private key | Caddy re-issues; rotate the secrets that crossed TLS-terminated traffic |
+| A compromised application reads the secrets of the services beside it | Each container and pod mounts only its own secrets ([section 1](#1-the-secrets-matrix)); the app's are the session keys, its database and Redis passwords and the signing key |
 | Memory dump of a running gunicorn worker | No shared tenancy on the host; the sealed store keeps plaintext in a root-only tmpfs rather than on disk |
 
 For each threat the response is the same: rotate, audit, postmortem. Speed

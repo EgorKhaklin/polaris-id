@@ -101,11 +101,26 @@ spec:
             requests: {cpu: 250m, memory: 256Mi}
             limits: {memory: 768Mi}
       volumes:
+        # Only the keys the app reads, 0440 under the pod's group: never the superuser's or the
+        # replicator's password, a server's TLS key or the backup repository's credentials.
         - name: secrets
-          secret:
-            secretName: {{ include "polaris.secretName" . }}
-            defaultMode: 0444
-            optional: false
+          projected:
+            defaultMode: 0440
+            sources:
+              - secret:
+                  name: {{ include "polaris.secretName" . }}
+                  items:
+                    - {key: polaris_secret_key, path: polaris_secret_key}
+                    - {key: polaris_secret_key_fallbacks, path: polaris_secret_key_fallbacks}
+                    - {key: polaris_db_password, path: polaris_db_password}
+                    - {key: polaris_redis_password, path: polaris_redis_password}
+                    - {key: pgbouncer_server.crt, path: pgbouncer_server.crt}
+              # The chart cannot mint an ML-DSA-65 key: the operator adds it (values.yaml, secrets).
+              - secret:
+                  name: {{ include "polaris.secretName" . }}
+                  optional: true
+                  items:
+                    - {key: polaris_signing_key, path: polaris_signing_key}
         - name: state
           emptyDir: {}
         - name: tmp
