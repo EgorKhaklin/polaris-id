@@ -2748,8 +2748,11 @@ def check_read_only_roots(root: pathlib.Path) -> list[Finding]:
     if not ro or not re.search(r"(?m)^readOnlyRootFilesystem: true$", ro.group(0)):
         problems.append("the chart's polaris.containerSecurityReadOnly must set readOnlyRootFilesystem: true")
     for svc in READ_ONLY_SERVICES:
-        if 'include "polaris.containerSecurityReadOnly"' not in _read(root, f"deploy/helm/polaris/templates/{svc}.yaml"):
-            problems.append(f"the chart's {svc} container is not read-only")
+        # Every container in the pod, not one of them (G5 put the edge's tls-reload beside caddy).
+        text = _read(root, f"deploy/helm/polaris/templates/{svc}.yaml")
+        images = len(re.findall(r"(?m)^\s+image: ", text))
+        if text.count('include "polaris.containerSecurityReadOnly"') < max(images, 1):
+            problems.append(f"the chart's {svc} pod runs a container that is not read-only")
     drill = _read(root, "lab/strategy/006/posture.sh")
     for needle, what in (("{{.HostConfig.ReadonlyRootfs}}", "Docker's own answer"),
                          ("*\"Read-only file system\"*", "a refused write to /"),
@@ -7863,6 +7866,55 @@ def check_verification_load_certified(root: pathlib.Path) -> list[Finding]:
     return _ok("verify_load", "the HA drills hold an authenticated verify-at-use load: the rolling deploy drops zero "
                "verifications, the failover recovers verification after every scenario and keeps serving under load; "
                "the load generator's strict accounting is unit-tested and run under coverage")
+
+
+# ---------------------------------------------------------------------------
+# G5 (lab record 017). The chart's edge kept its TLS state, the internal CA and Caddy's ACME account
+# and certificates, in each pod's emptyDir: a restart ordered a certificate again until Let's
+# Encrypt's limits refused the domain, and two replicas served chains under different roots, which
+# the drill never saw because it ran curl -k. The internal CA's root is now the chart's (generated
+# once, kept), edge.tls=secret serves a Secret cert-manager keeps and reloads it, and ACME runs one
+# replica on a kept volume; the drill verifies every replica against the root, across a
+# replacement, and a renewal reaching every replica.
+# ---------------------------------------------------------------------------
+def check_edge_tls_state_shared(root: pathlib.Path) -> list[Finding]:
+    tpl = root / "deploy" / "helm" / "polaris" / "templates"
+    caddyfile = _read(root, "deploy/helm/polaris/templates/configmap-caddy.yaml")
+    deploy = _read(root, "deploy/helm/polaris/templates/caddy.yaml")
+    ca = _read(root, "deploy/helm/polaris/templates/edge-ca.yaml")
+    drill = _read(root, "scripts/polaris-helm-drill.sh")
+    doc = _read(root, "docs/operator/KUBERNETES.md")
+    if not (tpl.is_dir() and caddyfile and deploy and ca and drill and doc):
+        return _fail("edge_tls_state", "the chart's edge templates, templates/edge-ca.yaml, the Helm drill or "
+                     "KUBERNETES.md is missing")
+    for needle in ("cert /etc/caddy/ca/ca.crt", "key /etc/caddy/ca/ca.key"):
+        if needle not in caddyfile:
+            return _fail("edge_tls_state", "the Caddyfile's internal CA must use the chart's root "
+                         f"(missing `{needle}`): each replica otherwise mints its own")
+    if "tls /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key" not in caddyfile:
+        return _fail("edge_tls_state", "edge.tls=secret must serve the certificate mounted from edge.tlsSecret")
+    if not ("genCA" in ca and "lookup" in ca and '"helm.sh/resource-policy": keep' in ca):
+        return _fail("edge_tls_state", "templates/edge-ca.yaml must generate the root once and keep it (genCA, "
+                     "lookup, resource-policy keep): a root that changes on upgrade breaks every client's trust")
+    if not re.search(r'eq \.Values\.edge\.tls "acme"\) \(gt \(int \.Values\.edge\.replicas\) 1\)', deploy) \
+            or "{{- fail" not in deploy:
+        return _fail("edge_tls_state", "caddy.yaml must refuse edge.tls=acme with more than one replica: replicas "
+                     "that do not share the ACME state answer only their own challenges")
+    if "claimName: {{ include \"polaris.fullname\" . }}-caddy-acme" not in deploy or "type: Recreate" not in deploy:
+        return _fail("edge_tls_state", "edge.tls=acme must keep its state on a volume (the caddy-acme claim) and "
+                     "replace its pod with Recreate")
+    reload = re.search(r"- name: tls-reload\n(.*?)\n        \{\{- end \}\}", deploy, re.S)
+    if not reload or "caddy reload --force" not in reload.group(1) or 'seen=""' not in reload.group(1):
+        return _fail("edge_tls_state", "edge.tls=secret needs the tls-reload container: `caddy reload --force` when "
+                     "the Secret's files change, starting from nothing recorded so a restarted reloader still reloads")
+    if "--cacert /tmp/polaris-edge-ca.crt" not in drill or 'port-forward "$pod"' not in drill \
+            or "replaced:" not in drill or "after the Secret was renewed" not in drill:
+        return _fail("edge_tls_state", "polaris-helm-drill.sh must verify every edge replica against the chart's "
+                     "root (by pod, without -k) across a replacement, and a renewed Secret reaching every replica")
+    if "edge.tls=secret" not in doc or "-edge-ca" not in doc:
+        return _fail("edge_tls_state", "KUBERNETES.md must name edge.tls=secret and the chart's edge root")
+    return _ok("edge_tls_state", "the edge's TLS state is shared by its replicas: the chart's internal root, a "
+               "Secret reloaded on renewal, ACME on one replica's kept volume; the kind drill verifies every replica")
 
 
 def check_helm_reference_profile(root: pathlib.Path) -> list[Finding]:
@@ -26175,6 +26227,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_sim_mode_gated,
     check_ui_drill,
     check_helm_reference_profile,
+    check_edge_tls_state_shared,
     check_local_clock_convention,
     check_c6_atlas_redacts_zk_location,
     check_c6_app_read_paths_redact,

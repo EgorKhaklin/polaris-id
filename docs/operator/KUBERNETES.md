@@ -43,8 +43,22 @@ are read from the `kubernetes` Endpoints at install time; set
 - Permission to create a Role and RoleBinding in the namespace: Patroni
   keeps the lease in Endpoints and a ConfigMap and labels its own pod, and
   the chart grants exactly those verbs to the postgres ServiceAccount.
-- For `edge.tls=acme`: a LoadBalancer Service reachable on 80/443 and the
-  domain's DNS pointing at it before the first install.
+- The edge's certificate (`edge.tls`). Each edge replica once kept its TLS state
+  in its own emptyDir, so a restart ordered a certificate again and two replicas
+  served different roots; now one of:
+  - `secret` (production): a `kubernetes.io/tls` Secret for the domain, named by
+    `edge.tlsSecret`, which cert-manager's `Certificate` keeps (any issuer;
+    DNS-01 needs no ingress). Every replica serves it and reloads it when it is
+    renewed.
+  - `acme`: Let's Encrypt from Caddy itself, for one edge replica
+    (`edge.replicas=1`) on a volume that keeps the account and certificates
+    (`edge.acmeVolume`), behind a LoadBalancer Service reachable on 80/443 with
+    the domain's DNS pointing at it. The chart refuses it with more replicas:
+    replicas that do not share the ACME state each order a certificate and
+    answer only their own challenges.
+  - `internal` (the default; evaluation, private networks): Caddy's internal CA
+    under a root the chart generates once and keeps, the Secret
+    `<release>-edge-ca`, whose `ca.crt` clients trust.
 - The four images in a registry your nodes can pull from (`images.*` in
   values), or `kind load docker-image` for a local cluster. Polaris publishes
   no registry images yet (P0.6 deferred image signing for that reason), so
@@ -69,8 +83,20 @@ kubectl label namespace polaris pod-security.kubernetes.io/enforce=restricted \
 ./scripts/polaris-generate-secrets.sh
 kubectl -n polaris create secret generic polaris-secrets --from-file=polaris_web/secrets/
 
+# The edge's certificate, kept by cert-manager (here a ClusterIssuer named letsencrypt).
+kubectl -n polaris apply -f - <<'EOF'
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: polaris-edge}
+spec:
+  secretName: polaris-edge-tls
+  dnsNames: [polaris.example.org]
+  issuerRef: {name: letsencrypt, kind: ClusterIssuer}
+EOF
+
 helm install polaris deploy/helm/polaris -n polaris \
-  --set domain=polaris.example.org --set edge.tls=acme --set edge.service.type=LoadBalancer \
+  --set domain=polaris.example.org --set edge.tls=secret --set edge.tlsSecret=polaris-edge-tls \
+  --set edge.service.type=LoadBalancer \
   --set secrets.existingSecret=polaris-secrets \
   --set images.app=REGISTRY/polaris-app:$V --set images.caddy=REGISTRY/polaris-caddy:$V \
   --set images.pgbouncer=REGISTRY/polaris-pgbouncer:$V --set images.postgres=REGISTRY/polaris-postgres:$V \
@@ -94,7 +120,9 @@ startup probe surfaces. [`HARDENING.md`](HARDENING.md) section 13.
 ```bash
 kubectl -n polaris get pods
 kubectl -n polaris port-forward svc/polaris-caddy 8443:443 &
-curl -k https://localhost:8443/api/health | python3 -m json.tool     # database, redis, zk_binary, custody: healthy
+# edge.tls=internal: trust the chart's root rather than skipping verification
+kubectl -n polaris get secret polaris-edge-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > edge-ca.crt
+curl --cacert edge-ca.crt https://localhost:8443/api/health | python3 -m json.tool   # with domain=localhost; database, redis, zk_binary, custody: healthy
 kubectl -n polaris exec polaris-postgres-0 -- patronictl -c /var/lib/postgresql/patroni.yml list   # one Leader, one streaming Replica
 ```
 

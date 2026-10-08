@@ -20,6 +20,21 @@ data:
         {{- if eq .Values.edge.tls "acme" }}
         email admin@{{ .Values.domain }}
         {{- end }}
+        {{- if eq .Values.edge.tls "internal" }}
+        # G5: the internal CA's root is the chart's (Secret <release>-edge-ca), not one each
+        # replica mints into its own emptyDir: every replica and every restart chains to the
+        # root a client was given. Each replica still makes its own intermediate under it.
+        pki {
+            ca local {
+                root {
+                    format pem_file
+                    cert /etc/caddy/ca/ca.crt
+                    key /etc/caddy/ca/ca.key
+                }
+            }
+        }
+        skip_install_trust
+        {{- end }}
         log {
             output stdout
             format json
@@ -57,8 +72,12 @@ data:
     }
 
     {{ .Values.domain }} {
-        {{- if ne .Values.edge.tls "acme" }}
+        {{- if eq .Values.edge.tls "internal" }}
         tls internal
+        {{- else if eq .Values.edge.tls "secret" }}
+        # G5: the certificate edge.tlsSecret holds; the tls-reload container reloads Caddy when
+        # the Secret changes (Caddy reads a certificate file only when it loads its config).
+        tls /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key
         {{- end }}
 
         # The metrics surfaces carry the duress signal and do not

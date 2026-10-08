@@ -21779,3 +21779,55 @@ def test_product_suite_parts_share_setup_check_discriminates(tmp_path):
     (gh / "ci.yml").write_text("on: push\njobs:\n" + mono)
     assert checks.check_product_suite_parts_share_setup(tmp_path)[0].level == "OK", \
         "a suite still run as one job has no copies to compare"
+
+
+def test_edge_tls_state_shared_check_discriminates(tmp_path):
+    tpl = tmp_path / "deploy" / "helm" / "polaris" / "templates"
+    tpl.mkdir(parents=True)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "docs" / "operator").mkdir(parents=True)
+    CADDYFILE = ("pki {\n  ca local {\n    root {\n      cert /etc/caddy/ca/ca.crt\n      key /etc/caddy/ca/ca.key\n"
+                 "    }\n  }\n}\ntls /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key\n")
+    CA = ('{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}\n'
+          '  annotations:\n    "helm.sh/resource-policy": keep\n'
+          '  {{- $ca := genCA "root" 3650 }}\n')
+    DEPLOY = ('{{- if and (eq .Values.edge.tls "acme") (gt (int .Values.edge.replicas) 1) }}\n'
+              '{{- fail "edge.tls=acme serves one replica" }}\n{{- end }}\n'
+              '  strategy:\n    type: Recreate\n'
+              '        - name: tls-reload\n          args:\n            - |\n              seen=""\n'
+              '              caddy reload --force --config /etc/caddy/Caddyfile\n        {{- end }}\n'
+              '            claimName: {{ include "polaris.fullname" . }}-caddy-acme\n')
+    DRILL = ('kubectl -n "$NS" port-forward "$pod" 18444:8443\n'
+             'served "$p" --cacert /tmp/polaris-edge-ca.crt\n'
+             'echo "  ${victim#pod/} replaced: $n replicas still verify"\n'
+             'fail "the edge still served the old certificate 240 s after the Secret was renewed"\n')
+    DOC = "--set edge.tls=secret ... kubectl get secret polaris-edge-ca\n"
+
+    def write(caddyfile=CADDYFILE, ca=CA, deploy=DEPLOY, drill=DRILL, doc=DOC):
+        (tpl / "configmap-caddy.yaml").write_text(caddyfile)
+        (tpl / "edge-ca.yaml").write_text(ca)
+        (tpl / "caddy.yaml").write_text(deploy)
+        (tmp_path / "scripts" / "polaris-helm-drill.sh").write_text(drill)
+        (tmp_path / "docs" / "operator" / "KUBERNETES.md").write_text(doc)
+
+    write()
+    assert checks.check_edge_tls_state_shared(tmp_path)[0].level == "OK", "must PASS on the shared edge state"
+    broken = [
+        dict(caddyfile=CADDYFILE.replace("cert /etc/caddy/ca/ca.crt", "cert /data/root.crt")),
+        dict(caddyfile=CADDYFILE.replace("tls /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key\n", "tls internal\n")),
+        dict(ca=CA.replace("lookup", "nothing")),
+        dict(ca=CA.replace('"helm.sh/resource-policy": keep', "")),
+        dict(deploy=DEPLOY.replace("(gt (int .Values.edge.replicas) 1)", "(gt (int .Values.edge.replicas) 9)")),
+        dict(deploy=DEPLOY.replace("type: Recreate", "type: RollingUpdate")),
+        dict(deploy=DEPLOY.replace("-caddy-acme", "-caddy-data")),
+        dict(deploy=DEPLOY.replace("caddy reload --force", "caddy reload")),
+        dict(deploy=DEPLOY.replace('seen=""', "seen=$(sha256sum /etc/caddy/tls/tls.crt)")),
+        dict(drill=DRILL.replace("--cacert /tmp/polaris-edge-ca.crt", "-k")),
+        dict(drill=DRILL.replace('port-forward "$pod"', 'port-forward "svc/${REL}-caddy"')),
+        dict(drill=DRILL.replace("after the Secret was renewed", "")),
+        dict(doc="--set edge.tls=acme\n"),
+    ]
+    for case in broken:
+        write(**case)
+        assert checks.check_edge_tls_state_shared(tmp_path)[0].level == "FAIL", \
+            "must FAIL when the edge's TLS state is no longer shared: %r" % (case,)

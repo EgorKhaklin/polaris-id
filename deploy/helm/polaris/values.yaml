@@ -35,9 +35,22 @@ edge:
   # network's CIDR, for example "10.20.0.0/16", or scrape the app Service
   # from inside the cluster, which needs no edge route.
   metricsAllow: ""
-  # acme: Let's Encrypt for `domain` (needs a reachable LoadBalancer on 80/443).
-  # internal: Caddy's internal CA (evaluation, kind, private networks).
+  # Where the edge's certificate comes from (G5: each replica kept its TLS state in an emptyDir,
+  # so a restart re-issued and replicas disagreed):
+  # secret: the kubernetes.io/tls Secret edge.tlsSecret names (cert-manager's Certificate writes
+  #   one); any number of replicas, each reloading it when it changes. The production choice.
+  # acme: Let's Encrypt for `domain`, for ONE replica (needs a reachable LoadBalancer on 80/443):
+  #   replicas that do not share the ACME state each order a certificate and answer only their
+  #   own challenges. Its account and certificates live on a volume (edge.acmeVolume).
+  # internal: Caddy's internal CA (evaluation, kind, private networks), under a root the chart
+  #   generates once and keeps: the Secret <release>-edge-ca, whose ca.crt is what clients trust.
   tls: internal
+  # With edge.tls=secret: the kubernetes.io/tls Secret, in the release's namespace.
+  tlsSecret: ""
+  # With edge.tls=acme: the volume that keeps the ACME account and certificates across restarts.
+  acmeVolume:
+    size: 1Gi
+    storageClass: ""
   # Two, spread across nodes, so a host's loss leaves the edge serving (lab record 017, gate row OP-7).
   replicas: 2
   # The load balancer in front of the edge, if any, by address range ("10.0.0.0/8"); its

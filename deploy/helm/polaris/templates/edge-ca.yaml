@@ -1,0 +1,27 @@
+{{- /* G5: the internal CA's root, generated once and kept (lookup, and kept on uninstall): every
+     edge replica and every restart chains to it, and ca.crt is what a client trusts. Without it each
+     replica minted its own root into an emptyDir, so a second replica or a restart served a chain the
+     client's root did not sign. */}}
+{{- if eq .Values.edge.tls "internal" }}
+{{- $name := printf "%s-edge-ca" (include "polaris.fullname" .) }}
+{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "polaris.labels" . | nindent 4 }}
+    app.kubernetes.io/component: caddy
+  annotations:
+    "helm.sh/resource-policy": keep
+type: Opaque
+data:
+  {{- if and $existing (hasKey $existing.data "ca.crt") (hasKey $existing.data "ca.key") }}
+  ca.crt: {{ index $existing.data "ca.crt" }}
+  ca.key: {{ index $existing.data "ca.key" }}
+  {{- else }}
+  {{- $ca := genCA (printf "Polaris edge root (%s)" .Values.domain) 3650 }}
+  ca.crt: {{ $ca.Cert | b64enc }}
+  ca.key: {{ $ca.Key | b64enc }}
+  {{- end }}
+{{- end }}
