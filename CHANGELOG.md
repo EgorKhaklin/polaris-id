@@ -69,6 +69,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp serves the request object with `Cache-Control: no-store`, as the German EUDI wallet guide's request_uri response does.
 - The record 007 Pomerium demo maps `*.localhost.pomerium.io` to loopback itself; public DNS stopped resolving it.
 - CI's coverage floors are enforced again: since 2026-09-30 a failed coverage export left them comparing nothing, and passing.
+- A fresh install named no step to register its signing key, so relying parties refused its credentials; `polaris-key-event.sh register <agency> --current` registers it, and the installer, a deploy and the doctor name it.
 
 ### Added
 
@@ -140,6 +141,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp encrypts the request object to the wallet's key when its `wallet_metadata` asks, as the EU iOS wallet kit requires.
 - polaris-oid4vp `serve --verifier-info` adds attestations such as a registration certificate to the request, as the German wallet requires.
 - A check that the product suite's parallel CI parts share one setup and that its required job gates on each.
+- `scripts/polaris-rp-register.sh` registers a relying party on the Docker stack, where `polaris rp-register` could not reach the database.
+- CI walks a fresh host to a credential a relying party verifies online, counting the operator's inputs and reporting the time.
 
 ### Changed
 

@@ -6417,6 +6417,41 @@ def test_operator_scripts_read_the_unit_env_check_discriminates(tmp_path):
            "must FAIL when SECRETS.md stops telling a sealed install to set the directory", every=True)
 
 
+def test_fresh_host_reaches_online_verification_check_discriminates(tmp_path):
+    files = sorted({rel for rel, _, _ in checks._FRESH_HOST_NEEDLES} | {".github/workflows/ci.yml"})
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_fresh_host_reaches_online_verification(tmp_path)[0].level == "OK", \
+        "must PASS on the real custody, scripts, installer, docs and linux-install job"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new))
+        f = checks.check_fresh_host_reaches_online_verification(tmp_path)[0]
+        assert f.level == "FAIL", why
+        path.write_text(good)
+        return f
+
+    # Every pinned piece, removed in turn, is named.
+    for rel, needle, why in checks._FRESH_HOST_NEEDLES:
+        f = broken(rel, needle, "", f"must FAIL when {why}")
+        assert rel in f.message, f.message
+    # The defect itself: the installer goes quiet about the registration.
+    broken("deploy/linux/install.sh", "polaris-key-event.sh register 1 --current", "polaris-key-event.sh register 1 PUBLIC_KEY_HEX",
+           "must FAIL when the installer stops naming the one-command registration")
+    # The CI walk: each step it must take.
+    for needle, why in checks._FRESH_HOST_CI:
+        f = broken(".github/workflows/ci.yml", needle, "", f"must FAIL when the linux-install job stops: {why}")
+        assert "linux-install" in f.message, f.message
+    # A missing file is a failure, not a pass.
+    (tmp_path / "scripts/polaris-rp-register.sh").unlink()
+    f = checks.check_fresh_host_reaches_online_verification(tmp_path)[0]
+    assert f.level == "FAIL" and "polaris-rp-register.sh is missing" in f.message, f.message
+
+
 def test_throughput_measured_check_discriminates(tmp_path):
     files = sorted({rel for rel, _, _ in checks._THROUGHPUT_NEEDLES}
                    | {"polaris_web/Caddyfile", "polaris_web/Caddyfile.citest", "docs/reference/PERFORMANCE-BASELINE.md"})

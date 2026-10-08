@@ -365,3 +365,17 @@ cat <<EOF
   Rotate key:   ./scripts/polaris-rotate-secret.sh <name>
 
 EOF
+
+# Lab record 017 (gate row OP-2): an authority whose credentials are signed for real under no
+# registered key has every one of them refused by relying parties (the doctor's FAIL, same query).
+# The register is the authority's act, so the deploy only names the one command for each.
+UNREGISTERED=$(compose exec -T postgres psql -U postgres -d polaris -qtA -c "
+    SELECT string_agg(DISTINCT t.issuing_agency_id::text, ' ' ORDER BY t.issuing_agency_id::text)
+      FROM IdentityToken t JOIN TokenSignature s ON s.token_id = t.token_id
+     WHERE s.signing_public_key_hex IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM AuthorityKeyEvent e WHERE e.agency_id = t.issuing_agency_id)" \
+    2> /dev/null || true)
+for agency in ${UNREGISTERED}; do
+    echo "  ! agency ${agency} signs under a key the register does not hold: relying parties refuse its"
+    echo "    credentials until:  sudo scripts/polaris-key-event.sh register ${agency} --current"
+done

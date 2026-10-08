@@ -199,13 +199,29 @@ verifiable presentation". Register it before the first credential is issued, for
 that issues under it; the registration ends the key ceremony ([`KEY-CEREMONY.md`](KEY-CEREMONY.md)):
 
 ```bash
-PK=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["public_key_hex"])' \
-       "${POLARIS_SECRETS_DIR:-polaris_web/secrets}/polaris_signing_key")
-./scripts/polaris-key-event.sh register <agency id> "$PK"
+./scripts/polaris-key-event.sh register <agency id> --current
 ```
 
-[`scripts/polaris-doctor.sh`](../../scripts/polaris-doctor.sh) fails when an authority holds
-credentials signed for real under no registered key.
+`--current` reads the public key from the running app's own key store (a file, PKCS#11 or a KMS
+alike), so nobody copies 3,904 hex characters. It registers the key once (a key already active for
+the authority is left alone) and never rotates: when the authority already holds a different active
+key, it refuses and points to the ceremony. A key registered from another instant, or by a ceremony
+held elsewhere, is named by its hex: `./scripts/polaris-key-event.sh register <agency id> <public key
+hex>`. [`scripts/polaris-doctor.sh`](../../scripts/polaris-doctor.sh) fails when an authority holds
+credentials signed for real under no registered key, and a deploy names the command for each.
+
+### Relying parties
+
+A relying party verifies with `POST /api/v1/verify`, using a token from `/api/v1/oauth/token`.
+Registering one grants it standing to ask about people, so it is the schema owner's act, and the
+database answers only on the stack's own network:
+[`scripts/polaris-rp-register.sh`](../../scripts/polaris-rp-register.sh) runs the statements
+`polaris rp-register` runs, through the postgres container, and prints the client id and the secret
+once (only the secret's scrypt hash is kept):
+
+```bash
+./scripts/polaris-rp-register.sh "<organization>" --justification "<why, at least 20 characters>"
+```
 
 ## Environment variables
 

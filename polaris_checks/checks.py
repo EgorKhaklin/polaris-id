@@ -6812,6 +6812,70 @@ def check_operator_scripts_read_the_unit_env(root: pathlib.Path) -> list[Finding
                      "commands with sudo and the sealed start, refusal included")
 
 
+# 2026-10-08 (lab record 017, gate row OP-2): a fresh install's relying-party API refused its own
+# credentials. Under real signing every possession route accepts a signature only under a key its
+# authority had registered, and no install path registered one or said to: the install, the
+# deploy, LINUX-SERVER.md and the one-command path never routed there, and on the Docker stack the
+# documented `polaris rp-register` could not reach the database as its owner.
+_FRESH_HOST_NEEDLES = (
+    ("polaris_web/custody.py", "def public_key_hex(", "custody must say the public key it signs with"),
+    ("polaris_web/custody.py", 'sub.add_parser("public-key"', "custody must offer `public-key` on its command line"),
+    ("scripts/polaris-key-event.sh", '"$3" == "--current"', "the key event script must take --current"),
+    ("scripts/polaris-key-event.sh", "custody.py public-key --agency", "--current must read the key from the app's custody"),
+    ("scripts/polaris-key-event.sh", "| tail -n 1 |", "--current must take only the key's line (a banner is not the key)"),
+    ("scripts/polaris-key-event.sh", "already registered and active; nothing to do", "--current must leave an active key alone"),
+    ("scripts/polaris-key-event.sh", "Registering it would be a rotation", "--current must refuse to rotate"),
+    ("scripts/polaris-rp-register.sh", "sys.stdin.read()", "the relying party's secret must reach the hash on stdin"),
+    ("scripts/polaris-rp-register.sh", "polaris.justification", "a relying party's registration must record its reason"),
+    ("deploy/linux/install.sh", "polaris-key-event.sh register 1 --current", "install.sh must name the key registration"),
+    ("deploy/linux/install.sh", "polaris-create-operator.sh --username NAME --role admin", "install.sh must name the first administrator"),
+    ("scripts/polaris-deploy.sh", "polaris-key-event.sh register ${agency} --current", "a deploy must name the registration an issuing authority lacks"),
+    ("scripts/polaris-doctor.sh", "register <agency> --current", "the doctor must name the command that fixes its key-register failure"),
+    ("docs/operator/LINUX-SERVER.md", "## After the install", "LINUX-SERVER.md must say what follows the install"),
+    ("docs/operator/LINUX-SERVER.md", "sudo scripts/polaris-key-event.sh register 1 --current", "LINUX-SERVER.md must give the registration"),
+    ("docs/operator/DEPLOYMENT.md", "polaris-rp-register.sh", "DEPLOYMENT.md must say how a relying party is registered on the stack"),
+)
+_FRESH_HOST_CI = (
+    ("sudo scripts/polaris-key-event.sh register 1 --current", "take the registration as the operator would"),
+    ("already registered", "show that a second registration is a no-op"),
+    ("/api/v1/trust-list/1", "read the key back from the published trust list"),
+    ("sudo scripts/polaris-rp-register.sh", "register the relying party as the operator would"),
+    ('v.get("decision") == "accept"', "require the relying party's online verification to accept"),
+    ("operator inputs 5", "report the operator's inputs"),
+    ("/tmp/op2-install-start", "time the fresh host from the install"),
+)
+
+
+def check_fresh_host_reaches_online_verification(root: pathlib.Path) -> list[Finding]:
+    """A fresh install ends one command away from relying parties accepting its credentials, and CI
+    walks that path. Custody says the key it signs with; `polaris-key-event.sh register AGENCY
+    --current` registers it once and never rotates; `polaris-rp-register.sh` registers a relying
+    party on the stack as the schema owner, the secret on stdin; install.sh, a deploy and the doctor
+    name the command; LINUX-SERVER.md and DEPLOYMENT.md give it. The linux-install job's fresh-host
+    drill (gate row OP-2) registers the key, reads it back from the trust list, issues through the
+    console, has a relying party verify online, and reports the inputs and the time."""
+    name = "fresh_host_verification"
+    problems = []
+    for rel, needle, why in _FRESH_HOST_NEEDLES:
+        text = _read(root, rel)
+        if not text:
+            problems.append(f"{rel} is missing")
+        elif needle not in text:
+            problems.append(f"{why} ({rel}: {needle!r} is gone)")
+    ci = _read(root, ".github/workflows/ci.yml")
+    job = ci[ci.find("  linux-install:"):] if "  linux-install:" in ci else ""
+    job = job[:job.find("\n  # ----", 1)] if "\n  # ----" in job else job
+    for needle, why in _FRESH_HOST_CI:
+        if needle not in job:
+            problems.append(f"the linux-install job must {why} ({needle!r})")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + (f" (and {len(problems) - 4} more)" if len(problems) > 4 else ""))
+    return _ok(name, "a fresh install ends one command from relying parties accepting its credentials: custody "
+                     "says its key, `register --current` registers it once and never rotates, relying parties "
+                     "register on the stack as the owner, install/deploy/doctor/docs name the step, and the "
+                     "linux-install job walks it to an online accept with the inputs counted")
+
+
 # 2026-10-07 (lab record 017, phase 4b): rotating the session key logs nobody out. Before it,
 # every rotation ended every operator session, so a key was rotated rarely or never. The key a
 # rotation retires is kept in polaris_secret_key_fallbacks: Flask's SECRET_KEY_FALLBACKS verifies
@@ -26420,6 +26484,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_secrets_lifecycle_sealed,
     check_secrets_reach_only_their_readers,
     check_operator_scripts_read_the_unit_env,
+    check_fresh_host_reaches_online_verification,
     check_migrations_expand_contract,
     check_zero_downtime_deploy,
     check_verification_load_certified,

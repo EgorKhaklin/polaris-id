@@ -55,7 +55,11 @@ credential is issued under it:
 On the Docker stack the database answers only on the stack's network, so run the same statements
 as the schema owner through the postgres container with
 `scripts/polaris-key-event.sh register AGENCY_ID PUBLIC_KEY_HEX --effective-at <instant>` (it also
-takes `retire` and `compromise`).
+takes `retire` and `compromise`). When the key is the one the running app signs with, as on a fresh
+install, `scripts/polaris-key-event.sh register AGENCY_ID --current` reads it from the app's own key
+store and registers it from now; it leaves a key already active alone, and it refuses when the
+authority already holds a different active key, because that is a rotation, which this ceremony
+performs by name.
 
 Under real signing this is not optional. Every possession route (`/api/v1/verify`, the status
 assertion, holder signing, the verifiable credential, the mdoc, sign-in) accepts a signature only

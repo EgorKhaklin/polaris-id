@@ -187,9 +187,9 @@ REFUSED="${KEYQ%%|*}"; UNREGISTERED="${KEYQ#*|}"
 if [[ ${KEYQ_RC} -ne 0 || "${KEYQ}" != *"|"* ]]; then
     warn "key register" "not reached: the database did not answer"
 elif [[ -n "${REFUSED}" ]]; then
-    bad "key register" "agency ${REFUSED} holds credentials signed for real under no registered key: every relying-party verification of them answers \"not a verifiable presentation\" (register the key: scripts/polaris-key-event.sh register <agency> <public key hex>, docs/operator/KEY-CEREMONY.md)"
+    bad "key register" "agency ${REFUSED} holds credentials signed for real under no registered key: every relying-party verification of them answers \"not a verifiable presentation\" (register the key the app signs with, for each: sudo scripts/polaris-key-event.sh register <agency> --current; docs/operator/KEY-CEREMONY.md)"
 elif [[ -n "${UNREGISTERED}" ]]; then
-    warn "key register" "agency ${UNREGISTERED} issued with no registered signing key: its trust list is refused and issuer facts read unknown (register it: docs/operator/KEY-CEREMONY.md)"
+    warn "key register" "agency ${UNREGISTERED} issued with no registered signing key: its trust list is refused and issuer facts read unknown (register it: sudo scripts/polaris-key-event.sh register <agency> --current; docs/operator/KEY-CEREMONY.md)"
 else
     ok "key register" "every agency that has issued holds a registered key"
 fi
