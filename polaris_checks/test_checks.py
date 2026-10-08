@@ -3685,10 +3685,12 @@ def test_dockerfile_copies_app_modules_check_discriminates(tmp_path):
 def test_prod_hardening_check_discriminates(tmp_path):
     web = tmp_path / "polaris_web"
     web.mkdir()
+    FLOOR = "    EXECUTE format('ALTER DATABASE %I SET polaris.min_epoch_anonymity_set = 20', current_database());\n"
     GOOD_INIT = (
         'if [ "${POLARIS_ENV:-}" = "production" ]; then\n'
         "  psql <<'SQL'\n"
         "  UPDATE AppUser SET is_active = FALSE WHERE username IN ('admin', 'operator', 'auditor');\n"
+        + FLOOR +
         "SQL\n"
         "fi\n")
     GOOD_COMPOSE = "services:\n  app:\n    environment:\n      POLARIS_REDIS_URL: redis://redis:6379/0\n"
@@ -3707,10 +3709,20 @@ def test_prod_hardening_check_discriminates(tmp_path):
     assert checks.check_prod_hardening(tmp_path)[0].level == "FAIL", \
         "must FAIL when the prod rate limiter is not wired to Redis"
 
-    # 3. Both present -> OK.
+    # 3. The sample's floor of one carried into production: not restored, restored below 20,
+    #    restored only in a comment, or restored outside the production block -> FAIL.
+    for init in (GOOD_INIT.replace(FLOOR, ""),
+                 GOOD_INIT.replace("= 20'", "= 5'"),
+                 GOOD_INIT.replace(FLOOR, "    -- SET polaris.min_epoch_anonymity_set = 20\n"),
+                 GOOD_INIT.replace(FLOOR, "") + FLOOR):
+        write(init, GOOD_COMPOSE)
+        assert checks.check_prod_hardening(tmp_path)[0].level == "FAIL", \
+            "must FAIL when production keeps the notional sample's anonymity floor:\n" + init
+
+    # 4. All present -> OK.
     write(GOOD_INIT, GOOD_COMPOSE)
     assert checks.check_prod_hardening(tmp_path)[0].level == "OK", \
-        "must PASS when demo accounts are neutralized and Redis is wired"
+        "must PASS when demo accounts are neutralized, the floor restored and Redis wired"
 
 
 def test_backup_encryption_check_discriminates(tmp_path):
