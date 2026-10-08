@@ -257,6 +257,12 @@ no_lost_write() {  # no_lost_write FLOOR: every insert acknowledged before the f
         fail "$lost acknowledged inserts are not in the surviving history: with synchronous_mode on, a failover must lose none"
     fi
 }
+# /patroni says replica for a member that is also the synchronous standby; /cluster says sync_standby.
+member_role_is() {
+    local role; role=$(rest "$1" /patroni | python3 -c "import json,sys; print(json.load(sys.stdin).get('role',''))" 2>/dev/null)
+    [[ "$role" == "$2" || ( "$2" == replica && "$role" == sync_standby ) ]]
+}
+sync_standby_is() { [[ "$(cluster_field "$2" role "$1")" == sync_standby ]]; }  # sync_standby_is MEMBER VIA
 settle() {  # the write stream must be flowing and the replica current before a scenario starts its clock
     local t l r; t=$(now); wait_for 60 writes_ok_since "$t" >/dev/null || fail "writes are not flowing before the next scenario"
     l=$(leader); r=$(other "$l")
