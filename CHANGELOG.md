@@ -35,6 +35,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- A caught-up replica of an idle HA cluster no longer reads as lagging; reads stayed on the primary (lab record 017).
 - SECRETS.md still said Redis runs without a password.
 - The production compose file passes `POLARIS_TRUSTED_PROXIES` and `POLARIS_METRICS_ALLOW` to the edge; both were documented and never arrived.
 - A host install archives WAL by default, as a Compose stack does; its env template turned archiving off.
@@ -139,6 +140,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- The HA profile and the chart replicate synchronously by default; a failover loses no acknowledged write (lab record 017).
 - Dependabot groups each directory's minor and patch updates into one pull request per run.
 - CI runs the product suite as three parallel jobs behind its one required check, so the slowest part alone sets the wait.
 - `/api/health/ready` answers for one instance (custody, the second witness, local disk) and leaves the shared database to `/api/health`; the edge and the Helm readiness probe route on it, so a database failover no longer takes every instance out of rotation (lab record 017).
