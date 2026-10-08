@@ -11,6 +11,7 @@ fails otherwise.
 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | Choosing a deployment path (laptop, single host, Linux under systemd, Kubernetes), the single-host compose procedure, and the environment-variable table |
 | [`CONFIG.md`](CONFIG.md) | Every setting the application reads, its type and default, and what production requires; generated from the schema the production boot validates against |
 | [`LINUX-SERVER.md`](LINUX-SERVER.md) | A fresh Linux server to a healthy production stack under systemd with one script; day-2 commands, upgrades, uninstall |
+| [`EVALUATE.md`](EVALUATE.md) | One command that judges an install and writes a report: what it ran, what a sound install does, what this one did, and what a run does not establish |
 | [`KUBERNETES.md`](KUBERNETES.md) | The Helm reference profile: the production topology on a cluster with enforced network policies and the restricted Pod Security Standard |
 | [`INSTALL.md`](INSTALL.md) | The laptop evaluation install (the macOS launcher) and its troubleshooting |
 | [`HARDENING.md`](HARDENING.md) | The operating system around Polaris: SSH, updates, firewall and Docker, time, daemon, permissions, auditing |

@@ -3011,6 +3011,40 @@ def test_doctor_names_failures_check_discriminates(tmp_path):
            "must FAIL when the runbook does not start an operator at the doctor")
 
 
+def test_evaluate_wired_check_discriminates(tmp_path):
+    files = ("scripts/polaris-evaluate.sh", "scripts/polaris-evaluate.py", "docs/operator/EVALUATE.md",
+             ".github/workflows/ci.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_evaluate_wired(tmp_path)[0].level == "OK", \
+        "must PASS on the real evaluation, its guide and the CI step"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_evaluate_wired(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    ev, ci = "scripts/polaris-evaluate.py", ".github/workflows/ci.yml"
+    broken(ev, "athena_selftest.run(conn)", "athena_selftest.PROBES", "must FAIL when the self-test is not run")
+    broken(ev, 'or "signature_valid" not in v', 'or False', "must FAIL when no verdict counts as a refusal")
+    broken(ev, "def guarded(", "def unguarded(", "must FAIL when a probe that cannot run is not a failure")
+    broken(ev, '"cosigner_agency_id": str(args.witness_agency)', '"cosigner_agency_id": ""',
+           "must FAIL when the notional revocation is not co-signed")
+    broken("docs/operator/EVALUATE.md", "## What a run does not establish", "## Limits",
+           "must FAIL when the guide stops saying what a run does not establish")
+    broken(ci, "GRANT INSERT ON DuressEvent TO polaris_app", "SELECT 1",
+           "must FAIL when CI breaks no rule under the evaluation")
+    broken(ci, 'grep -q "failing: .*A.doctor.edge"', 'true', "must FAIL when CI does not require the edge failure named")
+    broken(ci, 'grep -rqF "$(cat /tmp/ci-operator.pw)"', 'grep -rqF "never"',
+           "must FAIL when CI does not look for the password in the report")
+    (tmp_path / "scripts/polaris-evaluate.sh").unlink()
+    assert checks.check_evaluate_wired(tmp_path)[0].level == "FAIL", "must FAIL when the entry point is gone"
+
+
 def test_pitr_drilled_check_discriminates(tmp_path):
     files = ("scripts/polaris-pitr-drill.sh", ".github/workflows/ci.yml", "docs/operator/DR.md")
     for rel in files:

@@ -1168,6 +1168,11 @@ def db_error_to_message(e):
     msg = str(e).strip()
 
     # Known, intentional, user-friendly mappings -----------------------------
+    if 'co-signer required' in msg:
+        # The revocation rate bound (docs/design/issuer-discretion.md): one authority alone may not
+        # pass it. Named, so the operator knows to add a co-signer; the rate itself stays out.
+        return ("This revocation would take the authority past its revocation rate bound: "
+                "name a co-signing authority from another agency.")
     if QUOTA_EXCEEDED_MARKER in msg:
         # v9.190: the AgencyQuota trigger's own sentence, without SQL context.
         for line in msg.split('\n'):

@@ -9574,6 +9574,22 @@ class F08_ErrorMessageSanitizationTests(PolarisTestCase):
         msg = db_error_to_message(FakeErr())
         self.assertIn('Cannot create a second ACTIVE token', msg)
 
+    def test_revocation_past_the_rate_bound_names_the_co_signer(self):
+        """A revocation the rate bound refuses tells the operator to add a co-signer, not that the
+        database failed; the agency's rate stays out of the message."""
+        from app import db_error_to_message
+        class FakeErr:
+            def __str__(self):
+                return ('ERROR:  Revocation rate for agency 1 would reach 20.0000 percent in 30 day window '
+                        '(bound: 7.00 percent); co-signer required\n'
+                        'CONTEXT:  PL/pgSQL function uc8_revoke_token(integer,integer,character varying,'
+                        'character varying,integer) line 76 at RAISE')
+        msg = db_error_to_message(FakeErr())
+        self.assertIn('co-signing authority', msg)
+        self.assertNotIn('internal database error', msg.lower())
+        self.assertNotIn('percent', msg)
+        self.assertNotIn('uc8_revoke_token', msg)
+
 
 class F11_AuditLoggingTests(PolarisTestCase):
     """F-11: Authentication events recorded in AuthAuditLog."""
