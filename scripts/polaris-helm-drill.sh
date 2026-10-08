@@ -354,6 +354,16 @@ all_serve() {   # every edge replica serves the certificate with this fingerprin
 }
 all_serve "$(fp_of /tmp/polaris-edge1.crt)" || fail "an edge replica does not serve the certificate in edge.tlsSecret"
 echo "  every edge replica serves the Secret's certificate"
+# A certificate clients trust carries HSTS (the internal root's never did).
+kubectl -n "$NS" port-forward "$(edge_pods | head -1)" 18444:8443 >/dev/null 2>&1 & pf=$!
+hsts=""
+for _ in $(seq 1 20); do
+    hsts=$(curl -sk --max-time 10 -D - -o /dev/null https://localhost:18444/api/health | grep -i '^strict-transport-security' || true)
+    [ -n "$hsts" ] && break; sleep 1
+done
+kill "$pf" 2>/dev/null; wait "$pf" 2>/dev/null || true
+[ -n "$hsts" ] || fail "the edge sends no Strict-Transport-Security under edge.tls=secret"
+echo "  and sends Strict-Transport-Security"
 kubectl -n "$NS" create secret tls polaris-edge-tls --cert=/tmp/polaris-edge2.crt --key=/tmp/polaris-edge2.key \
     --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
 t0=$(date +%s); renewed=""

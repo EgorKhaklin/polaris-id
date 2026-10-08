@@ -7893,6 +7893,9 @@ def check_edge_tls_state_shared(root: pathlib.Path) -> list[Finding]:
                          f"(missing `{needle}`): each replica otherwise mints its own")
     if "tls /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key" not in caddyfile:
         return _fail("edge_tls_state", "edge.tls=secret must serve the certificate mounted from edge.tlsSecret")
+    if not re.search(r'has \.Values\.edge\.tls \(list "acme" "secret"\) \}\}\s*\n\s*Strict-Transport-Security', caddyfile):
+        return _fail("edge_tls_state", "the edge must send Strict-Transport-Security with a certificate clients "
+                     "trust, edge.tls=secret (the production choice) as well as acme")
     if not ("genCA" in ca and "lookup" in ca and '"helm.sh/resource-policy": keep' in ca):
         return _fail("edge_tls_state", "templates/edge-ca.yaml must generate the root once and keep it (genCA, "
                      "lookup, resource-policy keep): a root that changes on upgrade breaks every client's trust")

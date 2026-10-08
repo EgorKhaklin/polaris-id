@@ -124,7 +124,9 @@ data:
         encode gzip zstd
 
         header {
-            {{- if eq .Values.edge.tls "acme" }}
+            {{- /* A certificate clients already trust (ACME's, or the Secret's): never under the
+                 internal root, which a browser would refuse for two years. */}}
+            {{- if has .Values.edge.tls (list "acme" "secret") }}
             Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
             {{- end }}
             X-Frame-Options "DENY"

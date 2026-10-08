@@ -21787,7 +21787,9 @@ def test_edge_tls_state_shared_check_discriminates(tmp_path):
     (tmp_path / "scripts").mkdir()
     (tmp_path / "docs" / "operator").mkdir(parents=True)
     CADDYFILE = ("pki {\n  ca local {\n    root {\n      cert /etc/caddy/ca/ca.crt\n      key /etc/caddy/ca/ca.key\n"
-                 "    }\n  }\n}\ntls /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key\n")
+                 "    }\n  }\n}\ntls /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key\n"
+                 '{{- if has .Values.edge.tls (list "acme" "secret") }}\n'
+                 '  Strict-Transport-Security "max-age=63072000"\n')
     CA = ('{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}\n'
           '  annotations:\n    "helm.sh/resource-policy": keep\n'
           '  {{- $ca := genCA "root" 3650 }}\n')
@@ -21815,6 +21817,7 @@ def test_edge_tls_state_shared_check_discriminates(tmp_path):
     broken = [
         dict(caddyfile=CADDYFILE.replace("cert /etc/caddy/ca/ca.crt", "cert /data/root.crt")),
         dict(caddyfile=CADDYFILE.replace("tls /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key\n", "tls internal\n")),
+        dict(caddyfile=CADDYFILE.replace('(list "acme" "secret")', '(list "acme")')),
         dict(ca=CA.replace("lookup", "nothing")),
         dict(ca=CA.replace('"helm.sh/resource-policy": keep', "")),
         dict(deploy=DEPLOY.replace("(gt (int .Values.edge.replicas) 1)", "(gt (int .Values.edge.replicas) 9)")),
