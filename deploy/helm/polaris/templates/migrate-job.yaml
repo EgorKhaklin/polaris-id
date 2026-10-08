@@ -119,5 +119,7 @@ spec:
         - name: secrets
           secret:
             secretName: {{ include "polaris.secretName" . }}
-            defaultMode: 0444
+            defaultMode: 0440
+            items:
+              - {key: polaris_db_root_password, path: polaris_db_root_password}
 {{- end }}

@@ -3193,6 +3193,31 @@ jobs:
           docker exec -u postgres polaris-postgres psql -U postgres -d polaris -tAc "SHOW ssl" 2>/dev/null | grep -qx on \
             || { echo "::error::postgres is not running with ssl=on (prod init did not enable TLS)"; exit 1; }
           echo "postgres ssl=on confirmed"
+          # The notional sample's zero-knowledge anonymity floor of one does not carry into
+          # production: an epoch of two members is refused (the demo admin is reactivated only
+          # inside the transaction, which the refusal aborts).
+          refusal=$(docker exec -i -u postgres polaris-postgres psql -U postgres -d polaris -v ON_ERROR_STOP=1 -qtA 2>&1 <<'EOF' || true
+          BEGIN;
+          SELECT set_config('polaris.actor', 'ci', true) \g /dev/null
+          SELECT set_config('polaris.justification', 'reactivated inside a transaction the floor refusal aborts', true) \g /dev/null
+          UPDATE AppUser SET is_active = TRUE WHERE username = 'admin';
+          SELECT user_id AS admin_id FROM AppUser WHERE username = 'admin' \gset
+          CALL uc11_close_epoch(repeat('ab', 32), (now() + interval '1 day')::timestamp, :admin_id, jsonb_build_array(
+              jsonb_build_object('token_id', 1, 'leaf_hash', repeat('c1', 32), 'proof_path', '[]'::jsonb),
+              jsonb_build_object('token_id', 2, 'leaf_hash', repeat('c2', 32), 'proof_path', '[]'::jsonb)));
+          ROLLBACK;
+          EOF
+          )
+          echo "$refusal" | grep -q "below the minimum anonymity set of 20" \
+            || { echo "::error::a production database closed an epoch of two members: $refusal"; exit 1; }
+          echo "a production database refuses an epoch of two members (anonymity floor 20)"
+          # Lab record 017 (OP-9): each container mounts only the secrets it reads.
+          got=$(docker exec polaris-app ls /run/secrets | sort | tr '\n' ' ')
+          [ "$got" = "polaris_db_password polaris_redis_password polaris_secret_key polaris_secret_key_fallbacks polaris_signing_key " ] \
+            || { echo "::error::the app container mounts [$got], not exactly its five secrets"; exit 1; }
+          got=$(docker exec polaris-pgbouncer ls /run/secrets | tr '\n' ' ')
+          [ "$got" = "polaris_db_password " ] || { echo "::error::pgbouncer mounts [$got], not only polaris_db_password"; exit 1; }
+          echo "the app and pgbouncer containers mount only the secrets they read"
 
       # v9.180 (roadmap P1.3) — the ROTATION DRILL on the live stack: rotate the
       # DB password and the session key with polaris-rotate-secret.sh, which

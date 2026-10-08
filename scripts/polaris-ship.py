@@ -330,7 +330,8 @@ UNSHARDED_SUITES = {
                 "test_verify_conformance", "test_verify_p9", "test_verify_refusals",
                 "test_conformance_runner", "test_ship_tool", "test_pgbouncer_entrypoint",
                 "test_sbom_enrich", "test_issuance_scope", "test_pin_chart_images", "test_chain_anchor_tool",
-                "test_migrate_runner"],
+                "test_migrate_runner", "test_coverage_script",
+                "test_trigger_drill"],
     # The standalone packages. 2026-09-17: none of these was named here, and
     # `check_local_gate_covers_ci` did not notice because it compared this list against
     # `polaris-coverage.sh` instead of against the workflow that gates the push. Nine
@@ -817,8 +818,10 @@ def run(argv, out=None):
                 print("    full log: /tmp/polaris-ship-shard-%d.log" % i, file=out)
 
         # The suites CI runs that this command does not shard. Skipped with --no-unsharded,
-        # which is for a fast inner loop and nothing else: on 2026-09-18 a commit whose local
-        # gate said READY went red in CI on a file none of the sharded modules imports.
+        # which is for a fast inner loop, never for a gate: on 2026-09-18 a commit whose local
+        # gate said READY went red in CI on a file none of the sharded modules imports. The one
+        # other caller is polaris-coverage.sh, which runs the unsharded suites itself and whose
+        # CI job sits beside the steps that run the rest.
         if "--no-unsharded" not in argv:
             print("run: the unsharded suites CI also runs, against %s" % dbs[0], file=out)
             u_groups, u_ran, u_failures, u_skipped = run_unsharded(py, base_env, dbs[0], out)
