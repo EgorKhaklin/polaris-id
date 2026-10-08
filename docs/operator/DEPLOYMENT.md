@@ -202,8 +202,8 @@ PK=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["public_ke
 ./scripts/polaris-key-event.sh register <agency id> "$PK"
 ```
 
-[`scripts/polaris-doctor.sh`](../../scripts/polaris-doctor.sh) fails on an authority that has
-issued without a registered key.
+[`scripts/polaris-doctor.sh`](../../scripts/polaris-doctor.sh) fails when an authority holds
+credentials signed for real under no registered key.
 
 ## Environment variables
 

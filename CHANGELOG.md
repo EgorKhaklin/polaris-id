@@ -33,7 +33,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
-- The install guides did not say to register the signing key, without which every relying-party verification is refused; the doctor now fails on an issuing authority with no registered key, and says so.
+- The install guides did not say to register the signing key, without which every relying-party verification is refused; the doctor now fails when credentials signed for real belong to an authority with no registered key.
 - The scaling documents no longer present the signature check's rate per core as the verification route's capacity, nor unmeasured worker, replica and host scaling as measured.
 - The production compose file passes `POLARIS_TRUSTED_PROXIES` and `POLARIS_METRICS_ALLOW` to the edge; both were documented and never arrived.
 - A host install archives WAL by default, as a Compose stack does; its env template turned archiving off.
