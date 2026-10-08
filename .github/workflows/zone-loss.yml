@@ -7,6 +7,7 @@
 # the other member must lead, inserts through a surviving app pod must resume, /api/health must answer
 # 200 through a surviving edge pod with Redis moved if it was on that node, and the marker written
 # before must be intact. The node then starts again and the old leader must rejoin as a replica.
+# Last, the node holding Redis is killed: Redis must run again elsewhere and the edge answer 200 with it.
 #
 # It builds the images and a four-node cluster, so pull requests run it only when a path it
 # exercises changed. It also runs on every push to main, nightly, and by hand.
