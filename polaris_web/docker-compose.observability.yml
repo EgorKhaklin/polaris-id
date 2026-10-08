@@ -83,7 +83,7 @@ services:
       options: { max-size: 10m, max-file: '3' }
 
   alertmanager:
-    image: prom/alertmanager@sha256:690c7b525f4367aa91f73e2f91c632206d32e97c6384bdbf2fb7a861b420340d
+    image: prom/alertmanager@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
     container_name: polaris-alertmanager
     restart: unless-stopped
     volumes:
