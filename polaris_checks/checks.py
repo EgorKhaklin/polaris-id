@@ -6520,6 +6520,8 @@ _SYNC_REPLICATION_NEEDLES = (
      "start each scenario with the replica as the synchronous standby"),
     ("scripts/polaris-failover-drill.sh", '== 5. the replica ($R5) is lost',
      "drill the replica's loss, where synchronous replication costs a stall"),
+    ("scripts/polaris-failover-drill.sh", 'missing_on "$leader" "$WORK/acked.now"',
+     "compare acknowledged inserts by identity, read before the leader is asked, not two totals taken apart"),
     ("docs/design/synchronous-replication.md", "## What it costs", "record the price"),
 )
 
@@ -8083,12 +8085,14 @@ def check_helm_reference_profile(root: pathlib.Path) -> list[Finding]:
                      "enforce NetworkPolicy, so a green run would prove nothing about the policies")
     for needle in ("pod-security.kubernetes.io/enforce=restricted", "violates PodSecurity", "polaris-postgres\", 5432",
                    "REACHED", "helm install", "/api/health", "rollout restart", "custody",
-                   "annotations.leader", "delete pod", "task pause", "switchover", "ha_marker", "inserts were acknowledged"):
+                   "annotations.leader", "delete pod", "task pause", "switchover", "ha_marker", "inserts were acknowledged",
+                   'missing_on "$L3" /tmp/polaris-acked.now', "with synchronous_mode on, a failover must lose none"):
         if needle not in drill:
             return _fail("helm_profile", f"polaris-helm-drill.sh must contain {needle!r} (restricted PSS enforced, a "
                          "privileged pod rejected, a probe pod denied on postgres, health incl. custody, a rolling "
                          "restart, the leader pod deleted, the leader frozen until the other member holds the lease, "
-                         "a switchover, and every acknowledged insert present afterwards)")
+                         "a switchover, and every acknowledged insert present afterwards, compared by identity, none "
+                         "lost under synchronous replication)")
     if "polaris-helm-drill.sh" not in ci or "helm/kind-action@" not in ci:
         return _fail("helm_profile", "ci.yml must install kind (helm/kind-action, pinned) and run scripts/polaris-helm-drill.sh")
     if "docs/operator/KUBERNETES.md" not in readme or "restricted" not in doc or "Calico" not in doc:

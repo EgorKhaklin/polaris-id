@@ -7040,7 +7040,8 @@ def test_helm_reference_profile_check_discriminates(tmp_path):
              "grep -q \"violates PodSecurity\"\nhelm install polaris\ncurl /api/health custody\n"
              "targets = [(\"polaris-postgres\", 5432)]\nprint(\"REACHED\")\nkubectl rollout restart deploy/polaris-app\n"
              "jsonpath='{.metadata.annotations.leader}'\nkubectl delete pod $L0\nctr -n k8s.io task pause\npatronictl switchover\nCREATE TABLE ha_marker\n"
-             "fail \"inserts were acknowledged\"\n")
+             "fail \"inserts were acknowledged\"\n"
+             "missing_on \"$L3\" /tmp/polaris-acked.now\nfail \"with synchronous_mode on, a failover must lose none\"\n")
     PG = ("automountServiceAccountToken: true\nkind: Role\nkind: RoleBinding\n(dict \"uid\" 70 \"gid\" 70)\n"
           "value: /var/lib/postgresql/data/pgdata\n- {name: POLARIS_PATRONI_DCS, value: kubernetes}\n"
           "replicas: {{ .Values.postgres.replicas }}\nargs: [\"/usr/local/bin/polaris-patroni-entrypoint.sh\"]\n"
@@ -7105,6 +7106,14 @@ def test_helm_reference_profile_check_discriminates(tmp_path):
     # A drill with no negative policy probe.
     write({"scripts/polaris-helm-drill.sh": DRILL.replace("print(\"REACHED\")\n", "")})
     assert checks.check_helm_reference_profile(tmp_path)[0].level == "FAIL", "must FAIL without the policy-denial probe"
+
+    # Acknowledged inserts counted rather than compared by identity, or a loss under synchronous mode tolerated.
+    write({"scripts/polaris-helm-drill.sh": DRILL.replace('missing_on "$L3" /tmp/polaris-acked.now\n', "")})
+    assert checks.check_helm_reference_profile(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the kind drill no longer compares acknowledged inserts by identity"
+    write({"scripts/polaris-helm-drill.sh": DRILL.replace("with synchronous_mode on, a failover must lose none", "reported")})
+    assert checks.check_helm_reference_profile(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the kind drill tolerates a lost write under synchronous replication"
 
     # The SQL not baked into the postgres image.
     write({"polaris_web/Dockerfile.postgres": "FROM postgres\n"})
