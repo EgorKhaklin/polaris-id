@@ -6555,6 +6555,156 @@ def check_redis_authenticated(root: pathlib.Path) -> list[Finding]:
                "asserts the refusals on the live stack")
 
 
+# Lab record 017 (gate row OP-9): each secret reaches only the containers that read it. The chart
+# mounted the whole Secret into the app's pod, so a compromised application could read the database
+# superuser's and the replicator's passwords, both servers' TLS keys and the backup repository's
+# credentials, none of which Compose ever gave it. Every chart volume now projects only its pod's keys,
+# at 0440 under the pod's group; every Compose service mounts only its own; and the Helm drill and the
+# prod-stack job list what the app's container can read on the live stack.
+_SECRET_READERS = {
+    "app": {"polaris_secret_key", "polaris_secret_key_fallbacks", "polaris_db_password", "polaris_redis_password",
+            "polaris_signing_key", "pgbouncer_server.crt", "pkcs11_pin", "aws_credentials"},
+    "pgbouncer": {"polaris_db_password", "postgres_server.crt", "pgbouncer_server.crt", "pgbouncer_server.key"},
+    "postgres": {"polaris_db_password", "polaris_db_root_password", "polaris_replicator_password",
+                 "polaris_patroni_restapi_password", "polaris_etcd_patroni_password", "postgres_server.crt",
+                 "postgres_server.key", "pgbackrest_repo_creds.conf"},
+    "migrate": {"polaris_db_root_password"},
+    "redis": {"redis_users.acl", "redis_users_acl"},
+    "etcd-auth": {"polaris_etcd_root_password", "polaris_etcd_patroni_password"},
+    "alertmanager": {"pager_webhook_url"},
+    "grafana": {"grafana_admin_password"},
+}
+# Compose services and chart templates that are one of the readers above under another name.
+_SECRET_READER_ALIASES = {"postgres2": "postgres", "dr-postgres": "postgres", "dr-etcd-auth": "etcd-auth",
+                          "migrate-job": "migrate"}
+
+
+def _secret_mode_ok(value: str) -> bool:
+    """A file mode no wider than 0440 (an octal literal, or YAML's decimal reading of one)."""
+    try:
+        mode = int(value, 8) if value.startswith("0") and len(value) > 1 else int(value)
+    except ValueError:
+        return False
+    return mode & ~0o440 == 0
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _chart_secret_problems(rel: str, text: str) -> list[str]:
+    """Every use of the chart's Secret in one template: a volume (or projected source) that names its
+    keys, all of them the pod's, at a mode no wider than 0440. No envFrom of the Secret at all."""
+    reader = _SECRET_READER_ALIASES.get(pathlib.Path(rel).stem, pathlib.Path(rel).stem)
+    allowed = _SECRET_READERS.get(reader)
+    lines = text.splitlines()
+    problems = []
+    if re.search(r"secretRef:\s*\n\s*name:\s*\{\{\s*include \"polaris\.secretName\"", text):
+        problems.append(f"{rel} loads the whole Secret into the environment (envFrom)")
+    for i, line in enumerate(lines):
+        m = re.match(r"^(\s*)(?:- )?(secretName|name):\s*\{\{\s*include \"polaris\.secretName\" \. \}\}\s*$", line)
+        if not m:
+            continue
+        if allowed is None:
+            problems.append(f"{rel} mounts the Secret but {reader!r} is not a named reader of any key")
+            continue
+        level = _indent(line) + (2 if line.lstrip().startswith("- ") else 0)
+        start = i
+        while start > 0 and (not lines[start - 1].strip() or _indent(lines[start - 1]) >= level):
+            start -= 1
+        parent = lines[start - 1] if start else ""
+        if m.group(2) == "name" and not parent.strip().startswith(("- secret:", "secret:", "secretKeyRef:")):
+            continue
+        end = i + 1
+        while end < len(lines) and (not lines[end].strip() or _indent(lines[end]) >= level):
+            end += 1
+        block = lines[start:end]
+        if parent.strip() == "secretKeyRef:":
+            keys = set(re.findall(r"^\s*key:\s*([\w.\-]+)", "\n".join(block), re.M))
+            for k in sorted(keys - allowed):
+                problems.append(f"{rel} gives the {reader} pod the key {k!r} in its environment")
+            continue
+        if not any(_indent(b) == level and b.strip() == "items:" for b in block):
+            problems.append(f"{rel}: a volume of the Secret names no items, so the {reader} pod reads every key")
+            continue
+        keys = set(re.findall(r"key:\s*([\w.\-]+)", "\n".join(block)))
+        for k in sorted(keys - allowed):
+            problems.append(f"{rel} projects {k!r} into the {reader} pod, which does not read it")
+        for v in re.findall(r"\bmode:\s*(\d+)", "\n".join(block)):
+            if not _secret_mode_ok(v):
+                problems.append(f"{rel} gives one of the Secret's files mode {v}, wider than 0440")
+        if m.group(2) == "secretName":
+            modes = [b.split(":", 1)[1].strip() for b in block if _indent(b) == level and b.strip().startswith("defaultMode:")]
+        else:  # a projected source: the projected volume holds the mode
+            modes = []
+            for b in reversed(lines[:start]):
+                if b.strip().startswith("defaultMode:"):
+                    modes = [b.split(":", 1)[1].strip()]
+                if b.strip() == "projected:":
+                    break
+        if not modes:
+            problems.append(f"{rel}: a volume of the Secret sets no defaultMode (0644 by default)")
+        elif not _secret_mode_ok(modes[0]):
+            problems.append(f"{rel}: a volume of the Secret has defaultMode {modes[0]}, wider than 0440")
+    return problems
+
+
+def _compose_secret_problems(rel: str, text: str) -> list[str]:
+    """Every Compose service mounts only the secrets its reader uses, by name or from the secrets directory."""
+    problems = []
+    m = re.search(r"(?ms)^services:\n(.*?)(?=^[A-Za-z_][\w-]*:|\Z)", text)
+    if not m:
+        return problems
+    parts = re.split(r"(?m)^  ([\w.-]+):[^\n]*\n", m.group(1))
+    for svc, body in zip(parts[1::2], parts[2::2]):
+        names = set()
+        sm = re.search(r"(?m)^    secrets:[^\n]*\n((?:(?:      [^\n]*|\s*#[^\n]*|)\n)*)", body)
+        if sm:
+            names |= set(re.findall(r"(?m)^      - (?:source:\s*)?([\w.\-]+)\s*$", sm.group(1)))
+        inline = re.search(r"(?m)^    secrets:\s*\[([^\]]*)\]", body)
+        if inline:
+            names |= {x.strip() for x in inline.group(1).split(",") if x.strip()}
+        names |= set(re.findall(r"\$\{POLARIS_SECRETS_DIR:-\./secrets\}/([\w.\-]+):", body))
+        if not names:
+            continue
+        reader = _SECRET_READER_ALIASES.get(svc, svc)
+        allowed = _SECRET_READERS.get(reader)
+        if allowed is None:
+            problems.append(f"{rel}: the service {svc!r} mounts {sorted(names)} but is not a named reader")
+            continue
+        for n in sorted(names - allowed):
+            problems.append(f"{rel}: the service {svc!r} mounts {n!r}, which it does not read")
+    return problems
+
+
+def check_secrets_reach_only_their_readers(root: pathlib.Path) -> list[Finding]:
+    name = "secrets_reach_only_their_readers"
+    problems = []
+    templates = sorted((root / "deploy/helm/polaris/templates").glob("*.yaml"))
+    composes = sorted((root / "polaris_web").glob("docker-compose*.yml"))
+    if not templates or not composes:
+        return _fail(name, "the chart's templates or the Compose files are missing")
+    for t in templates:
+        if t.name == "secret.yaml":
+            continue
+        rel = str(t.relative_to(root))
+        problems += _chart_secret_problems(rel, _read(root, rel))
+    for c in composes:
+        rel = str(c.relative_to(root))
+        problems += _compose_secret_problems(rel, _read(root, rel))
+    drill = _read(root, "scripts/polaris-helm-drill.sh")
+    if "the app's pod sees secrets" not in drill or "not mode 440" not in drill:
+        problems.append("the Helm drill no longer lists the secrets the app's pod can read, and their mode")
+    if "the app container mounts" not in _read(root, ".github/workflows/ci.yml"):
+        problems.append("the prod-stack job no longer lists the secrets the app's container can read")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + (f" (and {len(problems) - 4} more)" if len(problems) > 4 else ""))
+    return _ok(name, "every chart pod projects only the keys it reads, at 0440 under its group, and every Compose "
+               "service mounts only its own secrets; the app never sees the superuser's or the replicator's "
+               "password, a server's TLS key or the backup repository's credentials, and the Helm drill and the "
+               "prod-stack job prove it on the live stacks")
+
+
 # 2026-10-07 (lab record 017, phase 4b): rotating the session key logs nobody out. Before it,
 # every rotation ended every operator session, so a key was rotated rarely or never. The key a
 # rotation retires is kept in polaris_secret_key_fallbacks: Flask's SECRET_KEY_FALLBACKS verifies
@@ -26104,6 +26254,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_linux_server_deployment,
     check_key_custody_abstraction,
     check_secrets_lifecycle_sealed,
+    check_secrets_reach_only_their_readers,
     check_migrations_expand_contract,
     check_zero_downtime_deploy,
     check_verification_load_certified,

@@ -6270,6 +6270,66 @@ def test_secrets_lifecycle_sealed_check_discriminates(tmp_path):
     assert checks.check_secrets_lifecycle_sealed(tmp_path)[0].level == "FAIL", "must FAIL when the unit skips unseal"
 
 
+
+def test_secrets_reach_only_their_readers_check_discriminates(tmp_path):
+    files = [str(p.relative_to(REPO)) for p in (REPO / "deploy/helm/polaris/templates").glob("*.yaml")]
+    files += [str(p.relative_to(REPO)) for p in (REPO / "polaris_web").glob("docker-compose*.yml")]
+    files += ["scripts/polaris-helm-drill.sh", ".github/workflows/ci.yml"]
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_secrets_reach_only_their_readers(tmp_path)[0].level == "OK", \
+        "must PASS on the real chart, Compose files, Helm drill and prod-stack job"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        f = checks.check_secrets_reach_only_their_readers(tmp_path)[0]
+        assert f.level == "FAIL", why
+        path.write_text(good)
+        return f
+
+    app = "deploy/helm/polaris/templates/app.yaml"
+    good = (tmp_path / app).read_text()
+    projected = good[good.index("        - name: secrets\n          projected:"):good.index("        - name: state")]
+    # The defect itself: the app's pod mounting every key of the Secret.
+    f = broken(app, projected, "        - name: secrets\n          secret:\n            secretName: "
+               "{{ include \"polaris.secretName\" . }}\n            defaultMode: 0444\n            optional: false\n",
+               "must FAIL when the app's pod mounts the whole Secret")
+    assert "reads every key" in f.message, f.message
+    f = broken(app, "                    - {key: polaris_db_password, path: polaris_db_password}\n",
+               "                    - {key: polaris_db_password, path: polaris_db_password}\n"
+               "                    - {key: polaris_db_root_password, path: polaris_db_root_password}\n",
+               "must FAIL when the app's pod is given the superuser's password")
+    assert "polaris_db_root_password" in f.message, f.message
+    broken(app, "            defaultMode: 0440\n            sources:", "            defaultMode: 0444\n            sources:",
+           "must FAIL when the app's projected secrets are world-readable")
+    broken(app, "{key: polaris_redis_password, path: polaris_redis_password}",
+           "{key: polaris_redis_password, path: polaris_redis_password, mode: 0644}",
+           "must FAIL when one projected file is given a wider mode")
+    broken("deploy/helm/polaris/templates/pgbouncer.yaml", "            defaultMode: 0440\n",
+           "            defaultMode: 0444\n", "must FAIL when pgbouncer's secrets are world-readable")
+    broken("deploy/helm/polaris/templates/pgbouncer.yaml", "              - {key: pgbouncer_server.key, path: pgbouncer_server.key}\n",
+           "              - {key: pgbouncer_server.key, path: pgbouncer_server.key}\n"
+           "              - {key: pgbackrest_repo_creds.conf, path: pgbackrest_repo_creds.conf}\n",
+           "must FAIL when the pooler is given the backup repository's credentials")
+    broken("deploy/helm/polaris/templates/caddy.yaml", "      containers:\n",
+           "      volumes:\n        - name: s\n          secret:\n            secretName: {{ include \"polaris.secretName\" . }}\n"
+           "            defaultMode: 0440\n            items:\n              - {key: polaris_secret_key, path: k}\n"
+           "      containers:\n", "must FAIL when a pod that reads no secret mounts the Secret")
+    broken("polaris_web/docker-compose.prod.yml", "      - polaris_redis_password\n",
+           "      - polaris_redis_password\n      - polaris_db_root_password\n",
+           "must FAIL when the app's Compose service mounts the superuser's password")
+    broken("polaris_web/docker-compose.prod.yml", "    secrets:\n      - redis_users_acl\n",
+           "    secrets:\n      - redis_users_acl\n      - polaris_signing_key\n",
+           "must FAIL when Redis is given the signing key")
+    broken("scripts/polaris-helm-drill.sh", "the app's pod sees secrets", "the app is fine",
+           "must FAIL when the Helm drill stops listing what the app's pod reads")
+    broken(".github/workflows/ci.yml", "the app container mounts", "the app is fine",
+           "must FAIL when the prod-stack job stops listing what the app's container reads")
+
 def test_migrations_expand_contract_check_discriminates(tmp_path):
     mig = tmp_path / "polaris_sql" / "migrations"
     mig.mkdir(parents=True)

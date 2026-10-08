@@ -137,7 +137,7 @@ spec:
       automountServiceAccountToken: true
       # postgres runs as uid 70 from the start (no root, no gosu): the Patroni
       # entrypoint runs as the user it is started as, the secrets are readable
-      # (defaultMode 0444), and Patroni's initdb owns the data subdirectory.
+      # (0440 under the pod's group), and Patroni's initdb owns the data subdirectory.
       securityContext:
         {{- include "polaris.podSecurity" (dict "uid" 70 "gid" 70) | nindent 8 }}
       terminationGracePeriodSeconds: 60
@@ -212,10 +212,18 @@ spec:
             requests: {cpu: 250m, memory: 512Mi}
             limits: {memory: 1Gi}
       volumes:
+        # Only the keys a member reads, 0440 under the pod's group.
         - name: secrets
           secret:
             secretName: {{ include "polaris.secretName" . }}
-            defaultMode: 0444
+            defaultMode: 0440
+            items:
+              - {key: polaris_db_root_password, path: polaris_db_root_password}
+              - {key: polaris_db_password, path: polaris_db_password}
+              - {key: polaris_replicator_password, path: polaris_replicator_password}
+              - {key: postgres_server.crt, path: postgres_server.crt}
+              - {key: postgres_server.key, path: postgres_server.key}
+              - {key: pgbackrest_repo_creds.conf, path: pgbackrest_repo_creds.conf}
   volumeClaimTemplates:
     - metadata:
         name: data
