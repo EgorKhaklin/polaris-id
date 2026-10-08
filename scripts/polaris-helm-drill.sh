@@ -345,7 +345,13 @@ served() {   # pod curl-args... -> the SHA-256 fingerprint served, after a curl 
     [ "$code" = 200 ] || return 1
     echo "${fp#*=}"
 }
-edge_pods() { kubectl -n "$NS" get pods -l app.kubernetes.io/component=caddy -o name; }
+edge_pods() {   # the edge's pods, less any being deleted: one still terminating serves its old config
+    kubectl -n "$NS" get pods -l app.kubernetes.io/component=caddy -o json | python3 -c '
+import json, sys
+for p in json.load(sys.stdin)["items"]:
+    if not p["metadata"].get("deletionTimestamp"):
+        print("pod/" + p["metadata"]["name"])'
+}
 verify_all() {
     local n=0 p
     for p in $(edge_pods); do
@@ -378,7 +384,12 @@ all_serve() {   # every edge replica serves the certificate with this fingerprin
     local want=$1 p
     for p in $(edge_pods); do [ "$(served "$p" -k || true)" = "$want" ] || return 1; done
 }
-all_serve "$(fp_of /tmp/polaris-edge1.crt)" || fail "an edge replica does not serve the certificate in edge.tlsSecret"
+t0=$(date +%s); serving=""
+while [ $(( $(date +%s) - t0 )) -lt 120 ]; do
+    if all_serve "$(fp_of /tmp/polaris-edge1.crt)"; then serving=1; break; fi
+    sleep 5
+done
+[ -n "$serving" ] || fail "an edge replica does not serve the certificate in edge.tlsSecret 120 s after the upgrade"
 echo "  every edge replica serves the Secret's certificate"
 # A certificate clients trust carries HSTS (the internal root's never did).
 kubectl -n "$NS" port-forward "$(edge_pods | head -1)" 18444:8443 >/dev/null 2>&1 & pf=$!
