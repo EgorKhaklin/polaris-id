@@ -124,6 +124,24 @@ nodes_of() {  # nodes_of <component>: the nodes its running pods are on, one per
 pg() {  # pg <pod> <sql>: as the owner, in that member, over its socket
     kubectl -n "${NS}" exec "$1" -c postgres -- psql -h /var/run/postgresql -U postgres -d polaris -tAqc "$2" 2> /dev/null
 }
+# Under synchronous replication Patroni promotes only the synchronous standby: a node's loss is a failover
+# only once the replica holds that role again (docs/design/synchronous-replication.md), so each kill waits
+# for it. Asynchronous clusters skip the wait.
+patroni() {  # patroni <pod> <path>: the member's own REST API, from inside it
+    kubectl -n "${NS}" exec "$1" -c postgres -- wget -qO- "http://127.0.0.1:8008$2" 2> /dev/null
+}
+wait_sync() {  # wait_sync <leader pod> <replica pod>
+    patroni "$1" /config | python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin).get("synchronous_mode") else 1)' \
+        || return 0
+    for _ in $(seq 1 60); do
+        patroni "$1" /cluster | python3 -c '
+import json, sys
+d = json.load(sys.stdin); m = next((m for m in d["members"] if m["name"] == sys.argv[1]), None)
+sys.exit(0 if m and m["role"] == "sync_standby" and m["state"] == "streaming" else 1)' "$2" && return 0
+        sleep 2
+    done
+    fail "$2 did not become $1's synchronous standby within 120s"
+}
 leader() {  # the member that is not recovering, or nothing
     local p
     for p in "${REL}-postgres-0" "${REL}-postgres-1"; do
@@ -152,6 +170,7 @@ pg "${L0}" "CREATE SCHEMA drill; CREATE TABLE drill.zone_marker (id bigserial PR
             INSERT INTO drill.zone_marker (note) VALUES ('before the node stops')" > /dev/null || fail "writing the marker on ${L0}"
 for _ in $(seq 1 30); do [[ "$(pg "${R0}" 'SELECT count(*) FROM drill.zone_marker')" == 1 ]] && break; sleep 2; done
 [[ "$(pg "${R0}" 'SELECT count(*) FROM drill.zone_marker')" == 1 ]] || fail "the replica ${R0} never received the marker"
+wait_sync "${L0}" "${R0}"
 L0NODE=$(kubectl -n "${NS}" get pod "${L0}" -o jsonpath='{.spec.nodeName}')
 ok "leader ${L0} on ${L0NODE} ($(zone_of "${L0NODE}")); the replica ${R0} holds the marker; Redis on $(nodes_of redis | head -1)"
 
@@ -225,6 +244,7 @@ echo "== 6. the node holding Redis is killed =="
 REDISNODE=$(nodes_of redis | head -1)
 [[ -n "${REDISNODE}" ]] || fail "Redis is not running before step 6"
 LNOW=$(leader) || fail "no member leads before step 6"
+wait_sync "${LNOW}" "$([[ "${LNOW}" == "${REL}-postgres-0" ]] && echo "${REL}-postgres-1" || echo "${REL}-postgres-0")"
 held_leader=false
 [[ "$(kubectl -n "${NS}" get pod "${LNOW}" -o jsonpath='{.spec.nodeName}')" == "${REDISNODE}" ]] && held_leader=true
 EDGEPOD=$(kubectl -n "${NS}" get pods -l app.kubernetes.io/component=caddy --field-selector=status.phase=Running \
