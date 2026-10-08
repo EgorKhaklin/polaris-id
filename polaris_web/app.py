@@ -1028,7 +1028,21 @@ def _replica_lag_seconds(conn):
         r = cur.fetchone()
     if not r or not r['in_rec']:
         return 0.0
-    return 0.0 if r['lag'] is None else float(r['lag'])
+    lag = 0.0 if r['lag'] is None else float(r['lag'])
+    if lag > 0.0:
+        # Lab record 017 (gate row OP-6): received and replayed also differ on a caught-up replica of
+        # an idle primary whose newest WAL page is partly unwritten: the record that straddles the
+        # page boundary cannot be replayed until the rest arrives, and every commit before it already
+        # is. The startup process says which (replica_replay_caught_up()). A schema without the
+        # function keeps this answer; the failed statement is rolled back so the connection serves.
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT replica_replay_caught_up() AS caught_up")
+                if (cur.fetchone() or {}).get('caught_up'):
+                    return 0.0
+        except Exception:
+            conn.rollback()
+    return lag
 
 
 def _note_read_source(source, lag=None):
