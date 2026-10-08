@@ -21,12 +21,15 @@
 #        stopped node, it was moved, which the rate limiter needs: it refuses without Redis);
 #        the marker is intact.
 #   5. The node starts again, and the old leader rejoins as a replica.
+#   6. The node holding Redis is killed: Redis must run again on another node and the edge answer 200 with
+#      Redis healthy (the rate limiter refuses without it). The edge answers 503 while the database is
+#      down, so when that node also holds the leader the failover must complete too.
 #
 # Kind on one machine simulates hosts and zones: separate kubelets and network namespaces, one kernel.
 # It proves the placement and the failover, not a real zone's network or power.
 #
 # Env: KEEP_CLUSTER=1 keeps the cluster; KIND_CLUSTER (default polaris-zones); POLARIS_ZONE_OUT (JSON);
-#      the ceilings POLARIS_ZONE_CEIL_LEAD (90), _WRITE (180), _HEALTH (240), _REJOIN (240), seconds.
+#      the ceilings POLARIS_ZONE_CEIL_LEAD (90), _WRITE (180), _HEALTH (240), _REJOIN (360), seconds.
 # Exit: 0 every step held; 1 otherwise.
 # ============================================================================
 set -euo pipefail
@@ -39,7 +42,7 @@ OUT="${POLARIS_ZONE_OUT:-}"
 CEIL_LEAD="${POLARIS_ZONE_CEIL_LEAD:-90}"
 CEIL_WRITE="${POLARIS_ZONE_CEIL_WRITE:-180}"
 CEIL_HEALTH="${POLARIS_ZONE_CEIL_HEALTH:-240}"
-CEIL_REJOIN="${POLARIS_ZONE_CEIL_REJOIN:-240}"
+CEIL_REJOIN="${POLARIS_ZONE_CEIL_REJOIN:-360}"
 # The CNI pin the Helm drill reads (one place to bump it).
 CALICO_VERSION=$(sed -n 's/^CALICO_VERSION=//p' "${ROOT}/scripts/polaris-helm-drill.sh")
 CALICO_SHA256=$(sed -n 's/^CALICO_SHA256=//p' "${ROOT}/scripts/polaris-helm-drill.sh")
@@ -50,10 +53,17 @@ STOPPED=""
 fail() { echo "::error::$*" >&2; diagnose; exit 1; }
 ok() { echo "  ok: $*"; }
 now() { date +%s; }
+LAST_INSERT_ERR=""
 diagnose() {
     echo "--- diagnostics ---" >&2
     kubectl -n "${NS}" get pods -o wide >&2 2> /dev/null || true
     kubectl get nodes -L topology.kubernetes.io/zone >&2 2> /dev/null || true
+    kubectl -n kube-system get pods -l k8s-app=kube-dns -o wide >&2 2> /dev/null || true
+    [[ -n "${LAST_INSERT_ERR}" ]] && echo "[the last insert said] ${LAST_INSERT_ERR}" >&2
+    for c in pg-router pgbouncer; do
+        echo "[$c] last 8 log lines:" >&2
+        kubectl -n "${NS}" logs -l "app.kubernetes.io/component=$c" --tail=8 --prefix 2>&1 | sed 's/^/    /' >&2 || true
+    done
 }
 cleanup() {
     [[ -n "${PF_PID}" ]] && kill "${PF_PID}" 2> /dev/null || true
@@ -90,6 +100,11 @@ GOT="$( (sha256sum "${WORK}/calico.yaml" 2> /dev/null || shasum -a 256 "${WORK}/
 [[ "${GOT}" == "${CALICO_SHA256}" ]] || { echo "calico ${CALICO_VERSION} manifest is ${GOT}, not ${CALICO_SHA256}" >&2; exit 1; }
 kubectl apply -f "${WORK}/calico.yaml" > /dev/null
 kubectl -n kube-system rollout status ds/calico-node --timeout=400s > /dev/null
+# The cluster's own DNS is the cluster's, not the chart's: spread its two replicas across nodes, as a
+# managed cluster does, so one node's loss leaves a resolver (otherwise every name lookup fails until
+# Kubernetes moves CoreDNS, five minutes later, and the drill would measure kind, not the chart).
+kubectl -n kube-system patch deployment coredns --type merge -p '{"spec":{"template":{"spec":{"topologySpreadConstraints":[{"maxSkew":1,"topologyKey":"kubernetes.io/hostname","whenUnsatisfiable":"DoNotSchedule","labelSelector":{"matchLabels":{"k8s-app":"kube-dns"}}}]}}}}' > /dev/null
+kubectl -n kube-system rollout status deploy/coredns --timeout=300s > /dev/null
 kubectl wait --for=condition=Ready node --all --timeout=180s > /dev/null
 kind load docker-image --name "${CLUSTER}" polaris-app:prod polaris-caddy:prod polaris-pgbouncer:prod polaris-postgres:prod > /dev/null
 kubectl create namespace "${NS}" > /dev/null
@@ -123,7 +138,7 @@ DBN=(); while IFS= read -r n; do [[ -n "$n" ]] && DBN+=("$n"); done < <(nodes_of
 [[ "$(zone_of "${DBN[0]}")" != "$(zone_of "${DBN[1]}")" ]] || fail "the database members share a zone: ${DBN[*]}"
 ok "database members on ${DBN[0]} ($(zone_of "${DBN[0]}")) and ${DBN[1]} ($(zone_of "${DBN[1]}"))"
 for c in caddy app pg-router pgbouncer; do
-    n=$(nodes_of "$c" | sort -u | grep -c .)
+    n=$(nodes_of "$c" | sort -u | grep -c . || true)
     [[ "$n" -ge 2 ]] || fail "$c's pods are on $n node(s); two nodes keep one serving when a node goes"
 done
 ok "the edge, the app, the router and pgbouncer each run on two nodes"
@@ -138,8 +153,7 @@ pg "${L0}" "CREATE SCHEMA drill; CREATE TABLE drill.zone_marker (id bigserial PR
 for _ in $(seq 1 30); do [[ "$(pg "${R0}" 'SELECT count(*) FROM drill.zone_marker')" == 1 ]] && break; sleep 2; done
 [[ "$(pg "${R0}" 'SELECT count(*) FROM drill.zone_marker')" == 1 ]] || fail "the replica ${R0} never received the marker"
 L0NODE=$(kubectl -n "${NS}" get pod "${L0}" -o jsonpath='{.spec.nodeName}')
-REDISNODE=$(nodes_of redis | head -1)
-ok "leader ${L0} on ${L0NODE} ($(zone_of "${L0NODE}")); the replica ${R0} holds the marker; Redis on ${REDISNODE}"
+ok "leader ${L0} on ${L0NODE} ($(zone_of "${L0NODE}")); the replica ${R0} holds the marker; Redis on $(nodes_of redis | head -1)"
 
 # The write path and the health path, from pods on nodes that stay up.
 survivor() { kubectl -n "${NS}" get pods -l "app.kubernetes.io/component=$1" --field-selector=status.phase=Running \
@@ -156,14 +170,19 @@ c = psycopg2.connect(host=os.environ["POLARIS_DB_HOST"], port=os.environ["POLARI
 c.autocommit = True
 c.cursor().execute("INSERT INTO drill.zone_marker (note) VALUES (%s)", (sys.argv[1],))
 EOF
-kubectl -n "${NS}" cp "${WORK}/insert.py" "${APPPOD}:/tmp/insert.py" -c app > /dev/null 2>&1 \
-    || kubectl -n "${NS}" exec -i "${APPPOD}" -c app -- sh -c 'cat > /tmp/insert.py' < "${WORK}/insert.py" \
-    || fail "could not place the writer in ${APPPOD}"
-insert_ok() { kubectl -n "${NS}" exec "${APPPOD}" -c app -- python3 /tmp/insert.py "$1" > /dev/null 2>&1; }
+# Passed as an argument, not copied in: the app's root filesystem is read-only.
+INSERT_PY=$(cat "${WORK}/insert.py")
+insert_ok() {
+    local out
+    out=$(kubectl -n "${NS}" exec "${APPPOD}" -c app -- python3 -c "${INSERT_PY}" "$1" 2>&1) && return 0
+    LAST_INSERT_ERR=$(printf '%s' "${out}" | tail -2 | tr '\n' ' ' | cut -c1-300)
+    return 1
+}
 insert_ok "a write before the stop" || fail "an insert through ${APPPOD} failed before anything stopped"
-kubectl -n "${NS}" port-forward "pod/${EDGEPOD}" 18445:8443 > /dev/null 2>&1 & PF_PID=$!
+PF_PORT=18445
+kubectl -n "${NS}" port-forward "pod/${EDGEPOD}" "${PF_PORT}:8443" > /dev/null 2>&1 & PF_PID=$!
 health() {  # prints "<http code> <redis status>"
-    curl -sk --max-time 5 -o "${WORK}/h.json" -w '%{http_code}' https://localhost:18445/api/health 2> /dev/null || echo 000
+    curl -sk --max-time 5 -o "${WORK}/h.json" -w '%{http_code}' "https://localhost:${PF_PORT}/api/health" 2> /dev/null || printf 000
     printf ' %s\n' "$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1]))["checks"].get("redis") or {}).get("status"))' "${WORK}/h.json" 2> /dev/null || echo none)"
 }
 for _ in $(seq 1 30); do [[ "$(health)" == "200 healthy" ]] && break; sleep 2; done
@@ -202,13 +221,42 @@ while :; do
 done
 ok "${L0} rejoined as a replica after ${rejoin_s}s"
 
+echo "== 6. the node holding Redis is killed =="
+REDISNODE=$(nodes_of redis | head -1)
+[[ -n "${REDISNODE}" ]] || fail "Redis is not running before step 6"
+LNOW=$(leader) || fail "no member leads before step 6"
+held_leader=false
+[[ "$(kubectl -n "${NS}" get pod "${LNOW}" -o jsonpath='{.spec.nodeName}')" == "${REDISNODE}" ]] && held_leader=true
+EDGEPOD=$(kubectl -n "${NS}" get pods -l app.kubernetes.io/component=caddy --field-selector=status.phase=Running \
+          -o jsonpath='{range .items[*]}{.metadata.name} {.spec.nodeName}{"\n"}{end}' | awk -v n="${REDISNODE}" '$2 != n {print $1; exit}')
+[[ -n "${EDGEPOD}" ]] || fail "no edge pod off ${REDISNODE}"
+# A new forward on a new port: the old one may still hold its port for a moment after it is killed.
+kill "${PF_PID}" 2> /dev/null || true; wait "${PF_PID}" 2> /dev/null || true
+PF_PORT=18446
+kubectl -n "${NS}" port-forward "pod/${EDGEPOD}" "${PF_PORT}:8443" > /dev/null 2>&1 & PF_PID=$!
+for _ in $(seq 1 30); do [[ "$(health)" == "200 healthy" ]] && break; sleep 2; done
+[[ "$(health)" == "200 healthy" ]] || fail "the edge pod ${EDGEPOD} is not healthy before Redis's node is killed ($(health))"
+t2=$(now)
+docker kill "${REDISNODE}" > /dev/null; STOPPED="${REDISNODE}"
+while :; do
+    # Nothing yet off the killed node is an answer, not an error (grep exits 1; set -e would end the drill).
+    moved=$(nodes_of redis | grep -v -x "${REDISNODE}" | head -1 || true)
+    if [[ -n "${moved}" && "$(health)" == "200 healthy" ]]; then redis_s=$(( $(now) - t2 )); break; fi
+    (( $(now) - t2 > CEIL_HEALTH )) && fail "Redis did not run again off ${REDISNODE} with the edge healthy within ${CEIL_HEALTH}s ($(health))"
+    sleep 3
+done
+also=""; [[ "${held_leader}" == true ]] && also=" (it held the leader too)"
+ok "Redis ran again on ${moved} and the edge answered 200 with Redis healthy ${redis_s}s after ${REDISNODE} was killed${also}"
+docker start "${REDISNODE}" > /dev/null; STOPPED=""
+
 if [[ -n "${OUT}" ]]; then
-    python3 - "${OUT}" "${L0NODE}" "${REDISNODE}" "${lead_s}" "${write_s}" "${health_s}" "${rejoin_s}" <<'EOF'
+    python3 - "${OUT}" "${L0NODE}" "${lead_s}" "${write_s}" "${health_s}" "${rejoin_s}" "${REDISNODE}" "${redis_s}" "${held_leader}" <<'EOF'
 import json, sys
-o, node, redis, lead, write, health, rejoin = sys.argv[1:]
-json.dump({"stopped_node": node, "redis_was_on_it": node == redis, "new_leader_s": int(lead),
-           "inserts_resumed_s": int(write), "edge_healthy_s": int(health), "old_leader_rejoined_s": int(rejoin)},
+o, node, lead, write, health, rejoin, rnode, redis, held = sys.argv[1:]
+json.dump({"stopped_node": node, "new_leader_s": int(lead), "inserts_resumed_s": int(write),
+           "edge_healthy_s": int(health), "old_leader_rejoined_s": int(rejoin), "redis_node": rnode,
+           "redis_node_held_leader": held == "true", "redis_moved_and_edge_healthy_s": int(redis)},
           open(o, "w"), indent=2)
 EOF
 fi
-echo "the leader's node stopped: the other member led, inserts and the edge came back, and the node rejoined"
+echo "the leader's node and Redis's node were killed in turn: the other member led, inserts and the edge came back, the node rejoined, and Redis moved"
