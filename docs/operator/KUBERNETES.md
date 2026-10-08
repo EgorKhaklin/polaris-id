@@ -106,9 +106,15 @@ kubectl -n polaris exec polaris-postgres-0 -- patronictl -c /var/lib/postgresql/
   Kubernetes-native form of the P1.4 zero-downtime deploy; the edge retries
   onto the remaining pod while one is replaced.
 - **Migrations** follow the expand-contract policy
-  (`polaris_sql/migrations/README.md`); the postgres image applies pending
-  migrations at init and `scripts/polaris-migrate.sh` can be run against the
-  pod (`kubectl exec`).
+  (`polaris_sql/migrations/README.md`). An install's init loads every
+  migration; on `helm upgrade` a pre-upgrade Job
+  (`templates/migrate-job.yaml`, `migrations.enabled`) runs the runner the
+  new postgres image carries, `polaris-migrate.sh --up` then
+  `--sync-objects`, before anything else is applied, so the release still
+  running reads an expanded schema and the new one starts on it. A failed Job
+  fails the upgrade and stays for `kubectl logs job/<release>-migrate`.
+  `scripts/polaris-helm-upgrade-drill.sh` upgrades the previous release's
+  chart on kind and requires nothing pending.
 - **Rotate a secret**: update the Secret (`kubectl create secret ... --dry-run
   -o yaml | kubectl apply -f -`), then `kubectl rollout restart` the consumers
   (app, pgbouncer for the DB password; postgres needs the role updated first,

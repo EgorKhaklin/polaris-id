@@ -78,6 +78,13 @@ ok "no migration pending"
 "${COMPOSE[@]}" exec -T -u postgres postgres pgbackrest --stanza=polaris --output=json info < /dev/null 2> /dev/null \
     | grep -q '"type": *"full"' || fail "the repository holds no full base backup after the upgrade"
 ok "WAL archiving is on and the repository holds a full base backup"
+# Gate row OP-11: the deploy proved that first backup restores (scripts/polaris-restore-verify.sh) and
+# recorded it, so PolarisRestoreUnverified's clock starts at a verified restore.
+verified="$("${COMPOSE[@]}" exec -T postgres psql -X -t -A -U postgres -d polaris \
+    -c "SELECT count(*) FROM BackupEvent WHERE kind = 'restore-verified'" < /dev/null | tr -d '[:space:]')"
+[[ "${verified:-0}" -ge 1 ]] || { grep -A14 'verifying that it restores' "${WORK}/deploy.log" >&2 || true
+                                 fail "the deploy recorded no verified restore of its first backup"; }
+ok "the deploy restored its first backup into a scratch copy and proved it ($verified recorded)"
 # Build this commit's image set the one supported way; where the upgrade already built an image
 # this is a cache hit. A service whose running image differs in content (its layers or its
 # config) was not rebuilt. Content, not the image ID: with Docker's containerd image store two

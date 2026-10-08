@@ -114,6 +114,10 @@ ${MARKER_BEGIN}
 # Weekly backup verification at 04:00 Sun — manifest + SHA-256 cross-check
 0 4 * * 0   ${SCRIPTS_DIR}/polaris-backup.sh --verify-latest --dest ${BACKUP_DEST} 2>&1 | logger -t polaris-backup-verify
 
+# Weekly restore verification at 06:00 Sun: the newest pgBackRest backup restored into a scratch
+# copy and proven against the live database (lab record 017, gate row OP-11)
+0 6 * * 0   ${SCRIPTS_DIR}/polaris-restore-verify.sh 2>&1 | logger -t polaris-restore-verify
+
 # Yearly audit-log archive+purge at 02:00 Jan 1: rotates audit-class rows per the
 # retention policy. --actor-user-id is REQUIRED by the purge (an admin AppUser.user_id);
 # before v9.237 this line omitted it and every yearly run exited with a usage error.

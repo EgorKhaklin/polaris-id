@@ -505,7 +505,10 @@ inside region A's quorum: the lease store would have to be reachable across it,
 and a region going dark would take part of the other region's consensus with it.
 A standby cluster keeps its own lease store, so region B's availability does not
 depend on region A's, and it replicates asynchronously, so region A's write
-latency does not depend on region B either.
+latency does not depend on region B either. Its surfaces authenticate as region
+A's do: the one-shot `dr-etcd-auth` turns its lease store's authentication on,
+and its REST API's writes take the password; `patronictl` on a `dr-postgres`
+member reads both from the rendered configuration.
 
 **The price, stated before the procedure rather than discovered during it.**
 Asynchronous replication means the recovery point is **not zero**. Promoting
@@ -666,6 +669,7 @@ A procedure that is never drilled is not a recovery procedure. The cadence:
 | Drill | Frequency | Procedure | Pass criteria |
 |---|---|---|---|
 | **Backup verify** | Weekly (`polaris-backup-verify.timer`, Sunday 04:00 UTC; or the cron line from `polaris-cron-install.sh`) | `./scripts/polaris-backup.sh --verify-latest` (plaintext or `.enc`; with `POLARIS_BACKUP_KEY_FILE` set it decrypts first) | Every file in `MANIFEST.json` re-hashes clean |
+| **Restore verify** | Weekly (`polaris-restore-verify.timer`, Sunday 06:00 UTC; or the cron line from `polaris-cron-install.sh`), and once by the deploy after a stack's first full backup | `./scripts/polaris-restore-verify.sh`: the newest pgBackRest backup and the archive after it restored into a scratch copy (archiving off, no TCP listener), on the deployment's own repository | `pgbackrest verify` clean; a WAL switch made at the start archived and replayed; the same cluster and schema history; `pg_amcheck` clean; the append-only tables row for row equal to the live database over the last week. Recorded in BackupEvent (`restore-verified`); PolarisRestoreUnverified pages at 8 days. `--keep` leaves the copy up, `--compare-only` checks it again, `--discard` removes it |
 | **RPO/RTO drill (automated)** | Every push (CI) and monthly on the 1st (`dr-drill.yml`, `polaris-dr-drill.timer`) | `./scripts/polaris-dr-drill.sh --record`: scratch archiving primary, full backup, 90 s of marker writes, SIGKILL and volume destroyed, restore and replay, app up | RPO at most 300 s, RTO at most 14400 s, token count and `schema_version` rows equal; the row lands in [`DR-DRILLS.md`](DR-DRILLS.md) pass or fail |
 | **Restore-only drill** | Quarterly (`polaris-cron-install.sh` runs `polaris-restore.sh --dry-run` on the newest plaintext tarball on the 1st of Jan/Apr/Jul/Oct; its glob does not match `.enc`, so an encrypted deployment runs the drill by hand) | Restore the newest tarball into a fresh database: `./scripts/polaris-restore.sh <tarball> --target=polaris_drill`; compare row counts | Row counts within 1% of production; an admin can log in |
 | **PITR drill** | Quarterly | Section 4.3 with `--type=time` targeting one hour ago, on a scratch stack | The recovered database is consistent at the target time |

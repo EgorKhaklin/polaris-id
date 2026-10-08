@@ -3038,6 +3038,102 @@ def test_pitr_drilled_check_discriminates(tmp_path):
            "must FAIL when the runbook does not cite the drill", count=-1)
 
 
+def test_helm_upgrade_migrates_check_discriminates(tmp_path):
+    files = ("deploy/helm/polaris/templates/migrate-job.yaml", "deploy/helm/polaris/values.yaml",
+             "polaris_web/Dockerfile.postgres", ".dockerignore", "scripts/polaris-migrate.sh",
+             "scripts/polaris-helm-upgrade-drill.sh", ".github/workflows/helm-upgrade.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_helm_upgrade_migrates(tmp_path)[0].level == "OK", \
+        "must PASS on the real chart Job, image, runner, drill and workflow"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_helm_upgrade_migrates(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    job = "deploy/helm/polaris/templates/migrate-job.yaml"
+    broken(job, '"helm.sh/hook": pre-upgrade', '"helm.sh/hook": post-upgrade', "must FAIL when the Job runs after the "
+           "upgrade rather than before it", count=-1)
+    broken(job, '"helm.sh/hook-weight": "-5"', '"helm.sh/hook-weight": "5"', "must FAIL when the Job's network "
+           "policies are not created before it", count=-1)
+    broken(job, "/opt/polaris/scripts/polaris-migrate.sh --sync-objects", "true", "must FAIL without the object sync")
+    broken(job, 'PGPASSWORD="$(cat /run/secrets/polaris_db_root_password)"', 'PGPASSWORD="$PGPASSWORD_ENV"',
+           "must FAIL when the password is not read from the mounted file")
+    broken("deploy/helm/polaris/values.yaml", "migrations:\n  enabled: true", "migrations:\n  enabled: false",
+           "must FAIL when the Job is off by default")
+    broken("polaris_web/Dockerfile.postgres", "scripts/polaris-migrate.sh /opt/polaris/scripts/polaris-migrate.sh",
+           "scripts/polaris-migrate.sh /usr/local/bin/polaris-migrate.sh", "must FAIL when the runner is not beside "
+           "the migrations in the image")
+    broken(".dockerignore", "!scripts/polaris-migrate.sh", "", "must FAIL when the build context leaves the runner out")
+    broken("scripts/polaris-migrate.sh", "    validate_filenames\n    require_readable_registry\n\n    local pending=()",
+           "    validate_filenames\n\n    local pending=()", "must FAIL when --up plans without reading the registry")
+    drill = "scripts/polaris-helm-upgrade-drill.sh"
+    broken(drill, 'helm upgrade "${REL}" "${ROOT}/deploy/helm/polaris"', 'helm install "${REL}" "${ROOT}/deploy/helm/polaris"',
+           "must FAIL when the drill does not upgrade")
+    broken(drill, '[[ "${AFTER}" -gt "${BEFORE}" ]]', '[[ -n "${AFTER}" ]]', "must FAIL when an upgrade that "
+           "applied nothing would pass")
+    broken(".github/workflows/helm-upgrade.yml", "bash scripts/polaris-helm-upgrade-drill.sh", "true",
+           "must FAIL when CI does not run the drill")
+
+
+def test_ha_internal_auth_check_discriminates(tmp_path):
+    files = ("polaris_web/docker-compose.ha.yml", "polaris_web/docker-compose.dr.yml", "polaris_web/patroni-entrypoint.sh",
+             "scripts/polaris-generate-secrets.sh", "scripts/polaris-failover-drill.sh",
+             "scripts/polaris-region-evacuation-drill.sh")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_ha_internal_auth(tmp_path)[0].level == "OK", \
+        "must PASS on the real HA and DR overlays, entrypoint, secrets script and drills"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_ha_internal_auth(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    for rel, needle, what in checks._HA_AUTH_NEEDLES:
+        broken(rel, needle, "true", f"must FAIL when it no longer does this: {what}", count=-1)
+    broken("polaris_web/patroni-entrypoint.sh", "  connect_address: $HOST:8008\n$RESTAPI_AUTH",
+           "  connect_address: $HOST:8008\n", "must FAIL when the authentication is not inside the restapi block")
+
+
+def test_restore_verified_on_schedule_check_discriminates(tmp_path):
+    files = sorted({rel for rel, _, _ in checks._RESTORE_VERIFY_NEEDLES})
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_restore_verified_on_schedule(tmp_path)[0].level == "OK", \
+        "must PASS on the real check, wrapper, image, schema, metrics, alert, timer, deploy and drills"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_restore_verified_on_schedule(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    for rel, needle, what in checks._RESTORE_VERIFY_NEEDLES:
+        broken(rel, needle, "true", f"must FAIL when it no longer does this: {what}", count=-1)
+    # Recording before the proof: the INSERT moved above the run's call to prove_copy.
+    rel = "scripts/polaris-restore-check.sh"
+    good = (tmp_path / rel).read_text()
+    record = good[good.index("# --- record"):good.index('say "verified, and recorded')]
+    moved = good.replace(record, "").replace("\nprove_copy\n", "\n" + record + "\nprove_copy\n")
+    (tmp_path / rel).write_text(moved)
+    assert checks.check_restore_verified_on_schedule(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a verified restore is recorded before the copy is proven"
+    (tmp_path / rel).write_text(good)
+
+
 def test_restore_reconciled_check_discriminates(tmp_path):
     files = {"scripts/polaris-reconcile-restore.py", "scripts/polaris-pitr-drill.sh", ".github/workflows/ci.yml",
              "docs/operator/DR.md"}
@@ -4915,9 +5011,12 @@ def test_pgbackrest_scaffolding_check_discriminates(tmp_path):
                    "  docker compose exec postgres pgbackrest --stanza=polaris --type=full backup\nfi\n")
     GOOD_BACKUP = ('docker compose exec postgres pgbackrest --stanza=polaris --type="${PGBR_TYPE}" backup\n'
                    'record_backup pgbackrest "repo1" "${PGBR_TYPE}"\n')
+    GOOD_ENV = "# archiving on by default\nPOLARIS_PGBACKREST_ENABLED=1\n"
+    (tmp_path / "deploy" / "linux").mkdir(parents=True)
 
     def write(df=GOOD_DF, conf=GOOD_CONF, compose=GOOD_COMPOSE, init=GOOD_INIT, dr=GOOD_DR,
-              ci=GOOD_CI, deploy=GOOD_DEPLOY, backup=GOOD_BACKUP):
+              ci=GOOD_CI, deploy=GOOD_DEPLOY, backup=GOOD_BACKUP, env=GOOD_ENV):
+        (tmp_path / "deploy" / "linux" / "polaris.env.example").write_text(env)
         (web / "Dockerfile.postgres").write_text(df)
         (web / "pgbackrest.conf").write_text(conf)
         (web / "docker-compose.prod.yml").write_text(compose)
@@ -4931,6 +5030,11 @@ def test_pgbackrest_scaffolding_check_discriminates(tmp_path):
     write()
     assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "OK", \
         "must PASS the complete pgBackRest scaffolding"
+    # 1b. the host-install env template turns archiving off -> FAIL (the 2026-10-08 defect).
+    write(env="POLARIS_PGBACKREST_ENABLED=0\n")
+    assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a host install starts with archiving off"
+    write()
 
     # 2. image does not install pgbackrest -> FAIL.
     write(df="FROM postgres:16-alpine@sha256:abc\nRUN echo hi\n")

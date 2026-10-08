@@ -3248,6 +3248,12 @@ def check_pgbackrest_scaffolding(root: pathlib.Path) -> list[Finding]:
     if "${POLARIS_PGBACKREST_ENABLED:-1}" not in compose:
         return _fail("pgbackrest",
                      "the prod compose must default POLARIS_PGBACKREST_ENABLED to 1: archiving on by default")
+    # A host install starts from the Linux env template (deploy/linux/install.sh writes it to
+    # /etc/polaris/polaris.env), and until 2026-10-08 the template turned archiving off.
+    if not re.search(r"(?m)^POLARIS_PGBACKREST_ENABLED=1\s*$", _read(root, "deploy/linux/polaris.env.example")):
+        return _fail("pgbackrest",
+                     "deploy/linux/polaris.env.example must set POLARIS_PGBACKREST_ENABLED=1: a host install "
+                     "starts from it, and archiving is on by default")
     if "archive_mode" not in init or "archive-push" not in init:
         return _fail("pgbackrest",
                      "docker-init.sh must set archive_mode + the pgbackrest archive_command when enabled")
@@ -6421,6 +6427,61 @@ _REDIS_ACL_FORBIDDEN = ("+@all", "allcommands", "allkeys", "~*", "+flushall", "+
                         "+config", "+acl", "+keys", "+debug", "+eval ", "+module", "+@dangerous")
 
 
+# Lab record 017 (gate row OP-8): the HA profile's internal surfaces authenticate. Patroni's REST API
+# listened on every interface with no password, on the members' network where the app runs, and its
+# writes include PATCH /config, which sets postgresql parameters across the cluster (some run shell
+# commands); etcd, the lease store, took any client. Now the REST API's writes take a password, etcd
+# runs with authentication on and a patroni user fenced to /service/, and the failover drill proves
+# both refusals from the app's network before its failure scenarios. The DR overlay's region B is
+# held to the same, and the region evacuation drill proves its refusals.
+_HA_AUTH_NEEDLES = (
+    ("polaris_web/docker-compose.ha.yml", "etcdctl $$E auth enable", "turn etcd authentication on"),
+    ("polaris_web/docker-compose.ha.yml", "role grant-permission patroni --prefix=true readwrite /service/",
+     "fence Patroni's etcd user to /service/"),
+    ("polaris_web/docker-compose.ha.yml", "POLARIS_PATRONI_RESTAPI_PASSWORD_FILE: /run/secrets/polaris_patroni_restapi_password",
+     "give the members the REST API password"),
+    ("polaris_web/docker-compose.ha.yml", "condition: service_completed_successfully",
+     "start the members only after etcd authentication is on"),
+    ("polaris_web/patroni-entrypoint.sh", 'RESTAPI_AUTH="  authentication:', "render the REST API's authentication"),
+    ("polaris_web/patroni-entrypoint.sh", '$ETCD_YAML$ETCD_AUTH"', "render Patroni's etcd user"),
+    ("scripts/polaris-generate-secrets.sh", "write_secret_if_missing polaris_patroni_restapi_password",
+     "mint the REST API password"),
+    ("scripts/polaris-generate-secrets.sh", "write_secret_if_missing polaris_etcd_patroni_password",
+     "mint Patroni's etcd password"),
+    ("scripts/polaris-failover-drill.sh", '[[ "$code" == 401 ]]',
+     "prove an unauthenticated PATCH /config is refused from the app's network"),
+    ("scripts/polaris-failover-drill.sh", "etcdctl put /drill/unauthenticated probe",
+     "prove etcd refuses a client with no user"),
+    # etcdctl's own health probe is refused once authentication is on, and compose then will not
+    # start a member again; /readyz needs a quorum and no user.
+    ("polaris_web/docker-compose.ha.yml", "wget -qO- http://127.0.0.1:2379/readyz",
+     "check etcd's health in a way authentication does not refuse"),
+    # The DR overlay's region B: its member is on the application network too.
+    ("polaris_web/docker-compose.dr.yml", "POLARIS_PATRONI_RESTAPI_PASSWORD_FILE: /run/secrets/polaris_patroni_restapi_password",
+     "give region B's REST API the password"),
+    ("polaris_web/docker-compose.dr.yml", "service: etcd-auth", "turn region B's etcd authentication on"),
+    ("polaris_web/docker-compose.dr.yml", "wget -qO- http://127.0.0.1:2379/readyz",
+     "check region B's etcd health in a way authentication does not refuse"),
+    ("scripts/polaris-region-evacuation-drill.sh", '"http://dr-postgres:8008/config"',
+     "prove region B refuses an unauthenticated PATCH /config from the app's network"),
+    ("scripts/polaris-region-evacuation-drill.sh", "docker exec polaris-dr-etcd etcdctl put /drill/unauthenticated probe",
+     "prove region B's etcd refuses a client with no user"),
+)
+
+
+def check_ha_internal_auth(root: pathlib.Path) -> list[Finding]:
+    name = "ha_internal_auth"
+    for rel, needle, what in _HA_AUTH_NEEDLES:
+        if needle not in _read(root, rel):
+            return _fail(name, f"{rel} no longer does this: {what}")
+    entry = _read(root, "polaris_web/patroni-entrypoint.sh")
+    if not re.search(r"(?m)^restapi:\n  listen: [^\n]+\n  connect_address: [^\n]+\n\$RESTAPI_AUTH", entry):
+        return _fail(name, "patroni-entrypoint.sh must render the REST API's authentication inside its restapi block")
+    return _ok(name, "the HA profile's REST API takes a password for its writes and etcd authenticates its clients "
+               "(Patroni's user fenced to /service/), in both regions of the DR overlay; the failover and region "
+               "evacuation drills prove the refusals from the app's network")
+
+
 def check_redis_authenticated(root: pathlib.Path) -> list[Finding]:
     name = "redis_authenticated"
     problems = []
@@ -6685,6 +6746,62 @@ def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
     return _ok(name,
                "CI upgrades the previous release's own try.sh stack to this commit the documented way and "
                "requires nothing pending, every image rebuilt, and credentials from before and after verifying")
+
+
+# Lab record 017 (gate rows OP-18 and OP-19): a Helm upgrade runs the migrations. The postgres image
+# applies them at a cluster's first init and nowhere else, so an upgrade brought a new app up against
+# the old schema. The chart's pre-upgrade Job runs the runner the image now carries, behind hook
+# NetworkPolicies created first; the runner refuses a registry it cannot read (it used to read that
+# as nothing applied); and CI upgrades the previous release's chart on kind and requires nothing pending.
+_HELM_MIGRATE_JOB = (
+    ('"helm.sh/hook": pre-upgrade', "run as a pre-upgrade hook"),
+    ('"helm.sh/hook-weight": "-5"', "create its NetworkPolicies before the Job"),
+    ("kind: Job", "run as a Job"),
+    ("/opt/polaris/scripts/polaris-migrate.sh --up", "apply the pending migrations"),
+    ("/opt/polaris/scripts/polaris-migrate.sh --sync-objects", "sync the database objects"),
+    ('PGPASSWORD="$(cat /run/secrets/polaris_db_root_password)"', "read the owner's password from the mounted file"),
+)
+_HELM_UPGRADE_DRILL = (
+    ("describe --tags --abbrev=0", "start from the previous release"),
+    ('helm install "${REL}" "${WORK}/from/deploy/helm/polaris"', "install that release with its own chart"),
+    ('helm upgrade "${REL}" "${ROOT}/deploy/helm/polaris"', "upgrade with this chart"),
+    ("no pending migrations", "require no migration pending"),
+    ('[[ "${AFTER}" -gt "${BEFORE}" ]]', "require the upgrade to have applied migrations"),
+    ("drill.marker", "require data written before the upgrade to survive it"),
+)
+
+
+def check_helm_upgrade_migrates(root: pathlib.Path) -> list[Finding]:
+    name = "helm_upgrade_migrates"
+    job = _read(root, "deploy/helm/polaris/templates/migrate-job.yaml")
+    if not job:
+        return _fail(name, "deploy/helm/polaris/templates/migrate-job.yaml is missing: a Helm upgrade would bring the "
+                     "new app up against the old schema")
+    for needle, what in _HELM_MIGRATE_JOB:
+        if needle not in job:
+            return _fail(name, f"the chart's migration Job no longer does this: {what}")
+    if not re.search(r"(?m)^migrations:\n\s+enabled: true$", _read(root, "deploy/helm/polaris/values.yaml")):
+        return _fail(name, "values.yaml must enable the migration Job by default")
+    df = _read(root, "polaris_web/Dockerfile.postgres")
+    if "scripts/polaris-migrate.sh /opt/polaris/scripts/polaris-migrate.sh" not in df \
+            or "/opt/polaris/polaris_sql" not in df:
+        return _fail(name, "the postgres image must carry the migration runner beside the migrations it applies")
+    if "!scripts/polaris-migrate.sh" not in _read_raw(root, ".dockerignore"):
+        return _fail(name, ".dockerignore must let scripts/polaris-migrate.sh into the image build")
+    runner = _read(root, "scripts/polaris-migrate.sh")
+    if len(re.findall(r"(?m)^\s+require_readable_registry$", runner)) < 2:
+        return _fail(name, "polaris-migrate.sh must refuse an unreadable registry before planning --up and --down")
+    drill = _read(root, "scripts/polaris-helm-upgrade-drill.sh")
+    for needle, what in _HELM_UPGRADE_DRILL:
+        if needle not in drill:
+            return _fail(name, f"scripts/polaris-helm-upgrade-drill.sh no longer does this: {what}")
+    wf = _read(root, ".github/workflows/helm-upgrade.yml")
+    if "bash scripts/polaris-helm-upgrade-drill.sh" not in wf or not re.search(r"(?m)^\s*fetch-depth: 0$", wf):
+        return _fail(name, "helm-upgrade.yml must run scripts/polaris-helm-upgrade-drill.sh on a checkout with the "
+                     "release tags (fetch-depth: 0)")
+    return _ok(name, "a Helm upgrade migrates first: a pre-upgrade Job runs the runner the postgres image carries, "
+               "the runner refuses a registry it cannot read, and CI upgrades the previous release's chart on kind "
+               "and requires nothing pending")
 
 
 # 2026-10-07 (lab record 017, gate row OP-26): the client address behind a load balancer. The rate
@@ -8355,6 +8472,68 @@ def check_restore_reconciled(root: pathlib.Path) -> list[Finding]:
     return _ok(name, f"a restore to an earlier point re-applies what was withdrawn after it, through the paths that "
                f"made it, before the app returns; REGISTRY decides all {len(tables)} tables; CI sees the hazard, "
                "then nothing looser than the archive's end")
+
+# Lab record 017 (gate row OP-11): restores are verified on a schedule, on the deployment's own
+# backups, and the evidence is current. A one-off container of the postgres image restores the newest
+# pgBackRest backup and the archive after it into a scratch copy that never archives and never
+# listens, and proves it against the live database: the repository verifies (by pgBackRest's status
+# line: `verify` exits 0 on a damaged file), a WAL switch made at the start is replayed, pg_amcheck is
+# clean, and the append-only tables match row for row. Only then is a restore-verified BackupEvent
+# recorded; PolarisRestoreUnverified pages at 8 days; the deploy verifies its first backup and a
+# weekly timer the rest; CI proves each refusal on the one-command stack.
+_RESTORE_VERIFY_NEEDLES = (
+    ("scripts/polaris-restore-check.sh", "grep -Eq '^status: ok$'",
+     "take pgbackrest verify's status line as the verdict (it exits 0 on a damaged file)"),
+    ("scripts/polaris-restore-check.sh", 'probe="$(live "SELECT pg_switch_wal()")"', "switch WAL on the live database"),
+    ("scripts/polaris-restore-check.sh", "pg_last_wal_replay_lsn() >= '$SWITCH_LSN'::pg_lsn",
+     "require the copy to replay past that switch"),
+    ("scripts/polaris-restore-check.sh", "--archive-mode=off", "restore the copy with archiving off"),
+    ("scripts/polaris-restore-check.sh", "-c archive_mode=off -c listen_addresses=''",
+     "start the copy with archiving off and no TCP listener"),
+    ("scripts/polaris-restore-check.sh", "pg_amcheck -h \"$SOCKDIR\"", "run pg_amcheck on the copy"),
+    ("scripts/polaris-restore-check.sh", "p.proname ~ '^reject_.*_modification$'",
+     "find the append-only tables by the triggers that refuse their changes"),
+    ("scripts/polaris-restore-check.sh", "backend_type = 'client backend'",
+     "end the compared window before any transaction a client holds open"),
+    ("scripts/polaris-restore-verify.sh", "/opt/polaris/scripts/polaris-restore-check.sh",
+     "run the check the postgres image carries"),
+    ("polaris_web/Dockerfile.postgres",
+     "COPY --chmod=0755 scripts/polaris-restore-check.sh /opt/polaris/scripts/polaris-restore-check.sh",
+     "carry the check in the postgres image"),
+    (".dockerignore", "!scripts/polaris-restore-check.sh", "let the check into the image's build context"),
+    ("polaris_sql/01_schema.sql", "'dump-verified', 'restore-verified')", "admit a restore-verified BackupEvent"),
+    ("polaris_web/status_routes.py", "'dump-verified', 'restore-verified')", "expose the newest verified restore"),
+    ("deploy/observability/polaris-alerts.yml", "alert: PolarisRestoreUnverified", "page when none is 8 days old"),
+    ("deploy/observability/polaris-alerts.test.yml", "alertname: PolarisRestoreUnverified", "test that alert"),
+    ("deploy/linux/polaris-restore-verify.timer", "OnCalendar=Sun", "verify weekly on a host install"),
+    ("deploy/linux/install.sh", "polaris-restore-verify.timer polaris-dr-drill.timer", "enable that timer"),
+    ("scripts/polaris-deploy.sh", '"${SCRIPT_DIR}/polaris-restore-verify.sh"', "verify the first backup at deploy"),
+    ("scripts/polaris-upgrade-drill.sh", "kind = 'restore-verified'", "require the deploy's verified restore"),
+    (".github/workflows/one-command.yml", "bash lab/strategy/006/restore.sh", "run the restore drill in CI"),
+    ("lab/strategy/006/restore.sh", "archive_command = '/bin/false'", "prove an archive that is not current refused"),
+    ("lab/strategy/006/restore.sh", "--compare-only", "prove a copy that differs is named"),
+    ("lab/strategy/006/restore.sh", "missing from the archive or unreadable",
+     "prove WAL damaged after the newest backup refused at replay"),
+    ("lab/strategy/006/restore.sh", 'verify found the newest backup ($LABEL)',
+     "prove a damaged file of the newest backup refused at verify"),
+    ("scripts/polaris-restore-check.sh", 'verify --set="$label"', "verify the newest backup set before restoring it"),
+)
+
+
+def check_restore_verified_on_schedule(root: pathlib.Path) -> list[Finding]:
+    name = "restore_verified_on_schedule"
+    for rel, needle, what in _RESTORE_VERIFY_NEEDLES:
+        if needle not in _read(root, rel):
+            return _fail(name, f"{rel} no longer does this: {what}")
+    check = _read(root, "scripts/polaris-restore-check.sh")
+    proved = check.rfind("\nprove_copy\n")
+    recorded = check.find("VALUES ('restore-verified'")
+    if proved < 0 or recorded < 0 or recorded < proved:
+        return _fail(name, "scripts/polaris-restore-check.sh must record a verified restore only after the copy is proven")
+    return _ok(name, "the newest backup is restored into a copy that never archives or listens and proven against the "
+               "live database before a verified restore is recorded; weekly by timer and at the first deploy, "
+               "PolarisRestoreUnverified at 8 days, each refusal drilled in CI")
+
 
 def check_chaos_program(root: pathlib.Path) -> list[Finding]:
     """Roadmap P2.11 (v9.242): the fail-closed harness runs on every push, and
@@ -25792,10 +25971,12 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_edge_limits,
     check_doctor_names_failures,
     check_upgrade_drilled,
+    check_helm_upgrade_migrates,
     check_infra_alerts,
     check_session_key_rotation,
     check_release_images_signed,
     check_redis_authenticated,
+    check_ha_internal_auth,
     check_npm_publish_is_staged,
     check_admin_mfa_deadline,
     check_duress_timing_ballast,
@@ -25832,6 +26013,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_dr_drill_scheduled,
     check_pitr_drilled,
     check_restore_reconciled,
+    check_restore_verified_on_schedule,
     check_chaos_program,
     check_ha_automation,
     check_event_table_partitioning,
