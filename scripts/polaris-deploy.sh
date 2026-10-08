@@ -246,6 +246,18 @@ if [[ "${POLARIS_PGBACKREST_ENABLED:-1}" == "1" ]]; then
                 pg_sql -c "INSERT INTO BackupEvent (kind, location, detail) VALUES ('pgbackrest', 'pgBackRest repo1, stanza polaris', 'full, the first, by polaris-deploy.sh')" > /dev/null \
                     || echo "  ⚠  the first full backup is complete but was not recorded in BackupEvent" >&2
                 echo "  ✓ first full backup taken (a point-in-time restore can start from it)"
+                # Lab record 017 (gate row OP-11): prove now that it restores, so the clock
+                # PolarisRestoreUnverified reads starts at a verified restore; the weekly timer
+                # (deploy/linux/polaris-restore-verify.timer) keeps it current.
+                echo "        verifying that it restores (scripts/polaris-restore-verify.sh)…"
+                rv_log="$(mktemp)"
+                if "${SCRIPT_DIR}/polaris-restore-verify.sh" > "$rv_log" 2>&1; then
+                    echo "  ✓ the first backup restores: a scratch copy was proven against the live database"
+                else
+                    echo "  ⚠  the first backup did NOT verify; the weekly check and PolarisRestoreUnverified will say so too:" >&2
+                    tail -12 "$rv_log" | sed 's/^/       /' >&2
+                fi
+                rm -f "$rv_log"
             else
                 echo "  ⚠  the first full backup FAILED; a point-in-time restore has nothing to start from" >&2
                 echo "     until one completes: docker compose -f ${COMPOSE_FILE} exec -u postgres postgres \\" >&2

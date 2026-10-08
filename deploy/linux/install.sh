@@ -229,18 +229,18 @@ stage_app() {
     # 5. systemd units, rendered with the real paths.
     install -m 0755 -d "$SYSTEMD_DIR"
     local u
-    for u in polaris.service polaris-backup.service polaris-backup.timer polaris-backup-verify.service polaris-backup-verify.timer polaris-dr-drill.service polaris-dr-drill.timer polaris-partition-maintenance.service polaris-partition-maintenance.timer; do
+    for u in polaris.service polaris-backup.service polaris-backup.timer polaris-backup-verify.service polaris-backup-verify.timer polaris-restore-verify.service polaris-restore-verify.timer polaris-dr-drill.service polaris-dr-drill.timer polaris-partition-maintenance.service polaris-partition-maintenance.timer; do
         sed -e "s|__INSTALL_DIR__|${INSTALL_DIR}|g" -e "s|__ENV_FILE__|${ENV_FILE}|g" \
             "$INSTALL_DIR/deploy/linux/$u" > "$SYSTEMD_DIR/$u"
         chmod 0644 "$SYSTEMD_DIR/$u"
     done
     install -m 0750 -d /var/backups/polaris 2>/dev/null || true
-    ok "units installed in $SYSTEMD_DIR (polaris, polaris-backup daily, polaris-backup-verify weekly, polaris-dr-drill monthly)"
+    ok "units installed in $SYSTEMD_DIR (polaris, polaris-backup daily, polaris-backup-verify and polaris-restore-verify weekly, polaris-dr-drill monthly)"
     if have systemctl && [ -d /run/systemd/system ]; then
         systemctl daemon-reload
-        systemctl enable polaris.service polaris-backup.timer polaris-backup-verify.timer polaris-dr-drill.timer polaris-partition-maintenance.timer >/dev/null 2>&1
-        systemctl start polaris-backup.timer polaris-backup-verify.timer polaris-dr-drill.timer polaris-partition-maintenance.timer
-        ok "polaris.service enabled at boot; backup + DR-drill + partition-maintenance timers running"
+        systemctl enable polaris.service polaris-backup.timer polaris-backup-verify.timer polaris-restore-verify.timer polaris-dr-drill.timer polaris-partition-maintenance.timer >/dev/null 2>&1
+        systemctl start polaris-backup.timer polaris-backup-verify.timer polaris-restore-verify.timer polaris-dr-drill.timer polaris-partition-maintenance.timer
+        ok "polaris.service enabled at boot; backup, verification, DR-drill and partition-maintenance timers running"
     else
         skip "no systemd here: units rendered, not enabled"
         [ "$NO_START" = 1 ] || die "cannot start the stack without systemd (use --no-start to render only)"

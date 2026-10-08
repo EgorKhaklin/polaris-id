@@ -1,0 +1,123 @@
+{{- if .Values.migrations.enabled }}
+{{- $router := printf "%s-pg-router" (include "polaris.fullname" .) -}}
+{{- $sel := include "polaris.selector" . -}}
+# Lab record 017 (gate row OP-18): schema migrations on a Helm upgrade. The postgres image applies
+# every migration at a cluster's first init and nowhere else, so an upgrade used to bring a new app
+# up against the old schema. This Job runs before the upgrade's resources are applied
+# (pre-upgrade), from the new release's postgres image, which carries the migrations and the runner
+# (scripts/polaris-migrate.sh): pending migrations up, then the database objects synced, as
+# scripts/polaris-deploy.sh does on a host. A migration is expand-only (polaris_sql/migrations/
+# README.md), so the release still running reads the migrated schema. An install needs no Job: the
+# init loads the schema and every migration.
+#
+# Its network policies are hooks too, created first (weight -5): the release's own policies are
+# default-deny, and on the first upgrade that brings this Job they are still the previous
+# release's, which admit only pgbouncer to the router.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "polaris.fullname" . }}-migrate
+  labels:
+    {{- include "polaris.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  podSelector:
+    matchLabels:
+      {{- $sel | nindent 6 }}
+      app.kubernetes.io/component: migrate
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- $sel | nindent 14 }}
+              app.kubernetes.io/component: pg-router
+      ports:
+        - {protocol: TCP, port: 5432}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "polaris.fullname" . }}-pg-router-migrate
+  labels:
+    {{- include "polaris.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  podSelector:
+    matchLabels:
+      {{- $sel | nindent 6 }}
+      app.kubernetes.io/component: pg-router
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- $sel | nindent 14 }}
+              app.kubernetes.io/component: migrate
+      ports:
+        - {protocol: TCP, port: 5432}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "polaris.fullname" . }}-migrate
+  labels:
+    {{- include "polaris.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "0"
+    # Kept when it fails, for `kubectl logs job/...`; replaced by the next upgrade's.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: {{ .Values.migrations.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- $sel | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "polaris.podSecurity" (dict "uid" 70 "gid" 70) | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ .Values.images.postgres }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          securityContext:
+            {{- include "polaris.containerSecurityReadOnly" . | nindent 12 }}
+          # command, not args: the image ENTRYPOINT starts a server; this only runs the client. The
+          # password is read from the mounted file, whose trailing newline $(cat) drops; the same
+          # value through secretKeyRef keeps it, and the server refused it (the first drill run).
+          command: ["/bin/sh", "-c"]
+          args:
+            - export PGPASSWORD="$(cat /run/secrets/polaris_db_root_password)" &&
+              /opt/polaris/scripts/polaris-migrate.sh --up &&
+              /opt/polaris/scripts/polaris-migrate.sh --sync-objects
+          env:
+            - {name: POLARIS_DB_HOST, value: {{ $router }}}
+            - {name: POLARIS_DB_USER, value: postgres}
+            - {name: POLARIS_DB_NAME, value: polaris}
+            - {name: PGCONNECT_TIMEOUT, value: "10"}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: secrets, mountPath: /run/secrets/polaris_db_root_password, subPath: polaris_db_root_password, readOnly: true}
+      volumes:
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 64Mi}
+        - name: secrets
+          secret:
+            secretName: {{ include "polaris.secretName" . }}
+            defaultMode: 0444
+{{- end }}

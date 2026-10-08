@@ -114,6 +114,13 @@ persistence:
   pgbackrest: 10Gi
   redis: 1Gi
 
+# Lab record 017 (gate row OP-18): a Helm upgrade runs the pending migrations, then syncs the database
+# objects, from the new release's postgres image before the upgrade applies anything else
+# (templates/migrate-job.yaml). An install needs no Job: the init loads every migration.
+migrations:
+  enabled: true
+  activeDeadlineSeconds: 900
+
 pgbackrest:
   # Continuous WAL archiving to the S3 repo (docs/operator/DR.md); the key pair
   # is pgbackrest_repo_creds.conf in the secret.

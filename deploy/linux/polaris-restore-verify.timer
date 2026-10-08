@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly Polaris restore verification
+
+[Timer]
+OnCalendar=Sun *-*-* 06:00:00 UTC
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

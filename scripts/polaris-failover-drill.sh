@@ -65,6 +65,7 @@ WRITER=polaris-ha-writer
 SECRETS="${POLARIS_SECRETS_DIR:-$ROOT/polaris_web/secrets}"
 VERSION="$(sed -n 's/^__version__: str = "\(.*\)"/\1/p' "$ROOT/polaris_web/__version__.py")"
 GIT="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+CURL_IMAGE="curlimages/curl@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6"
 DCS_NET=""; PARTITIONED=""; PARTITION_ALIAS_ARGS=()
 
 diagnose() {  # what the cluster looked like when a scenario failed; the CI job tears the stack down afterwards
@@ -252,6 +253,21 @@ wait_for 30 replica_streaming "$R0" "$L0" >/dev/null \
     || fail "$R0 is not a streaming replica of $L0 before the drill, after 30s ($(cluster_field "$L0" role "$R0")/$(cluster_field "$L0" state "$R0"))"
 echo "  leader $L0, replica $R0 streaming, timeline $(cluster_field "$L0" timeline "$L0")"
 
+# Lab record 017 (gate row OP-8): the cluster's internal surfaces authenticate. From the members'
+# network, where the app runs, an unauthenticated write to Patroni's REST API (PATCH /config sets
+# postgresql parameters across the cluster) is refused, while its reads stay open for the router's
+# role checks; and etcd refuses a client with no user.
+code=$(docker run --rm --network "$NET" "$CURL_IMAGE" -s -o /dev/null -w '%{http_code}' \
+       -X PATCH -H 'Content-Type: application/json' -d '{"ttl": 20}' "http://$L0:8008/config" 2> /dev/null || echo err)
+[[ "$code" == 401 ]] || fail "Patroni's REST API answered an unauthenticated PATCH /config from the app's network with $code, not 401"
+code=$(docker run --rm --network "$NET" "$CURL_IMAGE" -s -o /dev/null -w '%{http_code}' \
+       "http://$L0:8008/patroni" 2> /dev/null || echo err)
+[[ "$code" == 200 ]] || fail "Patroni's REST API refused a read ($code); the router's role checks need reads open"
+if docker exec polaris-etcd1 etcdctl put /drill/unauthenticated probe > /dev/null 2>&1; then
+    fail "etcd accepted a write from a client with no user"
+fi
+echo "  Patroni refuses an unauthenticated PATCH /config (401) and still serves reads; etcd refuses a client with no user"
+
 # v9.246 (roadmap P2.2): the app routes its read-only surfaces to the replica
 # through the pooler's polaris_ro database -> pg-router:5433. /api/health reports
 # the replica's reachability and lag; assert the app is actually serving reads
@@ -308,7 +324,7 @@ p1=$(wait_for "$CEIL_FAILOVER" leader_changed_from "$L0" "$R0") || fail "no new 
 L1=$(leader_via "$R0"); [[ "$L1" == "$R0" ]] || fail "the new leader is $L1, not the surviving replica $R0"
 w1=$(wait_for "$CEIL_FAILOVER" writes_ok_since "$t0") || fail "writes did not resume within ${CEIL_FAILOVER}s of losing the leader"
 read -r gap1 fails1 stall1 <<< "$(gap_since "$t0")"; out1=$(outage "$gap1" "$stall1")
-compose start "$L0" >/dev/null 2>&1 || fail "could not start $L0 again"
+started=$(compose start "$L0" 2>&1) || { printf '%s\n' "$started" | tail -15 >&2; fail "could not start $L0 again"; }
 j1=$(wait_for "$CEIL_REJOIN" replica_streaming "$L0" "$L1") || fail "$L0 did not rejoin as a streaming replica within ${CEIL_REJOIN}s of starting again"
 sleep 2; traffic_stop
 tl1=$(cluster_field "$L1" timeline "$L1")

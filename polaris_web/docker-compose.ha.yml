@@ -48,6 +48,13 @@ services:
       POLARIS_PATRONI_TTL: "20"
       POLARIS_PATRONI_LOOP_WAIT: "5"
       POLARIS_PATRONI_RETRY_TIMEOUT: "5"
+      # Lab record 017 (gate row OP-8): the REST API's writes take a password, and etcd takes
+      # Patroni's user (made by etcd-auth below).
+      POLARIS_PATRONI_RESTAPI_PASSWORD_FILE: /run/secrets/polaris_patroni_restapi_password
+      POLARIS_PATRONI_ETCD_PASSWORD_FILE: /run/secrets/polaris_etcd_patroni_password
+    secrets:
+      - polaris_patroni_restapi_password
+      - polaris_etcd_patroni_password
     healthcheck:
       # Patroni's /health answers 200 while Postgres runs, in either role.
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8008/health >/dev/null"]
@@ -56,12 +63,8 @@ services:
       retries: 12
       start_period: 90s
     depends_on:
-      etcd1:
-        condition: service_healthy
-      etcd2:
-        condition: service_healthy
-      etcd3:
-        condition: service_healthy
+      etcd-auth:
+        condition: service_completed_successfully
     networks:
       - polaris-dcs
 
@@ -75,6 +78,8 @@ services:
       POLARIS_PATRONI_NAME: postgres2
       POLARIS_PATRONI_SCOPE: polaris
       POLARIS_PGBACKREST_ENABLED: "${POLARIS_PGBACKREST_ENABLED:-0}"
+      POLARIS_PATRONI_RESTAPI_PASSWORD_FILE: /run/secrets/polaris_patroni_restapi_password
+      POLARIS_PATRONI_ETCD_PASSWORD_FILE: /run/secrets/polaris_etcd_patroni_password
       POLARIS_PATRONI_ETCD_HOSTS: etcd1:2379,etcd2:2379,etcd3:2379
       POLARIS_PATRONI_TTL: "20"
       POLARIS_PATRONI_LOOP_WAIT: "5"
@@ -94,13 +99,15 @@ services:
       - ./pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
       - pgbackrest_repo:/var/lib/pgbackrest
       - ${POLARIS_SECRETS_DIR:-./secrets}/pgbackrest_repo_creds.conf:/etc/pgbackrest/conf.d/repo-creds.conf:ro
+    secrets:
+      - polaris_db_password
+      - polaris_db_root_password
+      - polaris_replicator_password
+      - polaris_patroni_restapi_password
+      - polaris_etcd_patroni_password
     depends_on:
-      etcd1:
-        condition: service_healthy
-      etcd2:
-        condition: service_healthy
-      etcd3:
-        condition: service_healthy
+      etcd-auth:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     networks:
@@ -126,7 +133,11 @@ services:
       - --initial-cluster-token=polaris-dcs
       - --auto-compaction-retention=1h
     healthcheck:
-      test: ["CMD", "etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
+      # The HTTP readiness endpoint, not `etcdctl endpoint health`: once etcd-auth below turns
+      # authentication on, etcdctl's probe is refused for want of a user, the members read as
+      # unhealthy, and compose will not start a Patroni member again. /readyz still makes a
+      # linearizable read, so it fails without a quorum, and it needs no user.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2379/readyz >/dev/null"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -176,6 +187,58 @@ services:
     volumes: !override
       - etcd3_data:/var/lib/etcd
 
+  # Lab record 017 (gate row OP-8): etcd authenticates its clients. Once the three members are
+  # healthy this one-shot makes a root user and a patroni user whose role reaches /service/ alone,
+  # then turns authentication on; a second run finds it on and leaves it. Passwords go in on stdin,
+  # never on a command line.
+  etcd-auth:
+    image: polaris-etcd:prod
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        E="--endpoints=$$POLARIS_ETCD_ENDPOINTS"
+        ROOT_PW="$$(cat /run/secrets/polaris_etcd_root_password)"
+        PAT_PW="$$(cat /run/secrets/polaris_etcd_patroni_password)"
+        # Whether authentication is on, asked until etcd says: an error is not an answer. This runs
+        # again whenever compose starts a member (it depends on this service), so on a cluster that
+        # already authenticates it must find that out, not take a refused query for "off".
+        state=""; out=""
+        for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+          if out="$$(etcdctl $$E --user="root:$$ROOT_PW" auth status 2>&1)"; then
+            case "$$out" in *"Authentication Status: true"*) state=on ;; *"Authentication Status: false"*) state=off ;; esac
+          elif out="$$(etcdctl $$E auth status 2>&1)"; then
+            case "$$out" in *"Authentication Status: false"*) state=off ;; esac
+          fi
+          [ -n "$$state" ] && break
+          sleep 2
+        done
+        [ -n "$$state" ] || { echo "etcd did not say whether authentication is on: $$out" >&2; exit 1; }
+        if [ "$$state" = on ]; then echo "etcd authentication is already on"; exit 0; fi
+        etcdctl $$E user get root >/dev/null 2>&1 || printf '%s\n' "$$ROOT_PW" | etcdctl $$E user add root --interactive=false
+        etcdctl $$E user grant-role root root >/dev/null
+        etcdctl $$E role get patroni >/dev/null 2>&1 || etcdctl $$E role add patroni
+        etcdctl $$E role grant-permission patroni --prefix=true readwrite /service/
+        etcdctl $$E user get patroni >/dev/null 2>&1 || printf '%s\n' "$$PAT_PW" | etcdctl $$E user add patroni --interactive=false
+        etcdctl $$E user grant-role patroni patroni >/dev/null
+        etcdctl $$E auth enable
+        echo "etcd authentication on: root, and patroni on /service/"
+    environment:
+      POLARIS_ETCD_ENDPOINTS: etcd1:2379,etcd2:2379,etcd3:2379
+    secrets:
+      - polaris_etcd_root_password
+      - polaris_etcd_patroni_password
+    depends_on:
+      etcd1:
+        condition: service_healthy
+      etcd2:
+        condition: service_healthy
+      etcd3:
+        condition: service_healthy
+    networks:
+      - polaris-dcs
+
   pg-router:
     image: haproxy:3.1-alpine@sha256:475863a372c92c3dab3d59eafbbf8019dceebcd0c456594551b160ecdba4bdb9
     container_name: polaris-pg-router
@@ -219,6 +282,14 @@ services:
   app-green:
     environment:
       POLARIS_DB_REPLICA_NAME: polaris_ro
+
+secrets:
+  polaris_patroni_restapi_password:
+    file: ${POLARIS_SECRETS_DIR:-./secrets}/polaris_patroni_restapi_password
+  polaris_etcd_root_password:
+    file: ${POLARIS_SECRETS_DIR:-./secrets}/polaris_etcd_root_password
+  polaris_etcd_patroni_password:
+    file: ${POLARIS_SECRETS_DIR:-./secrets}/polaris_etcd_patroni_password
 
 networks:
   polaris-dcs:

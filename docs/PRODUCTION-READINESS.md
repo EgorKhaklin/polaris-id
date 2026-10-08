@@ -115,7 +115,7 @@ This ledger covers one authority on one host or one cluster. [ROADMAP.md](../ROA
 
 Whether an operator who is not the author can install, run, upgrade and recover Polaris, one criterion per row ([lab record 017](../lab/strategy/017-production-operability.md)). A PASS row cites evidence that `check_operability_gate` resolves: a check, a test, a drill or a file. This gate is about operating the software; it is not readiness for real identity data, which the status line above and the last row keep separate.
 
-28 criteria: 13 PASS, 11 PARTIAL, 3 FAIL, 1 UNKNOWN.
+28 criteria: 17 PASS, 7 PARTIAL, 3 FAIL, 1 UNKNOWN.
 
 | ID | Criterion | Status | Evidence |
 |---|---|---|---|
@@ -126,18 +126,18 @@ Whether an operator who is not the author can install, run, upgrade and recover 
 | OP-5 | An instance crash costs no request | PASS | `drill:scripts/polaris-rolling-drill.sh` |
 | OP-6 | A database failover loses no acknowledged write | PARTIAL | `drill:scripts/polaris-failover-drill.sh` measures a 3.3 to 20 s write outage; replication is asynchronous by default. |
 | OP-7 | The loss of a host or zone is tolerated | FAIL | Members are not spread across failure domains. |
-| OP-8 | Internal services authenticate one another | PARTIAL | `check:redis_authenticated`: the cache refuses unauthenticated clients and scopes the app's user; the HA lease store (etcd) still accepts unauthenticated clients. |
+| OP-8 | Internal services authenticate one another | PASS | `check:redis_authenticated`: the cache refuses unauthenticated clients and scopes the app's user; `check:ha_internal_auth`, `drill:scripts/polaris-failover-drill.sh`, `drill:scripts/polaris-region-evacuation-drill.sh`: the HA lease store (etcd) authenticates its clients and fences Patroni's user to its keys, and Patroni's REST API refuses unauthenticated writes from the app's network, in both regions of the DR overlay. The database, its pooler and replication take passwords. |
 | OP-9 | Secrets are least-privilege and sealed at rest | PARTIAL | `check:secrets_lifecycle_sealed`; generated secret files are wider than the reader needs. |
 | OP-10 | Signing keys can live in hardware or a KMS, shown on a real device | PARTIAL | `test:polaris_web/test_custody.py` runs PKCS#11 against a software token and KMS against a stand-in. |
-| OP-11 | Restores are verified on a schedule and the evidence is current | PARTIAL | `drill:scripts/polaris-dr-drill.sh`; its ledger's last row is 2026-09-02. |
+| OP-11 | Restores are verified on a schedule and the evidence is current | PASS | `check:restore_verified_on_schedule`, `drill:lab/strategy/006/restore.sh`: on a Compose or host install, the deployment's newest backup is restored into a scratch copy and proven against the live database, at the first deploy and weekly by timer. Each verified restore is recorded, and `PolarisRestoreUnverified` pages at 8 days. CI proves the refusals: an archive that is not current, a copy that differs, a damaged repository. The chart schedules no such check yet (its archiving is opt-in, OP-14). `drill:scripts/polaris-dr-drill.sh` measures RPO and RTO monthly; its ledger reaches `main` by pull request. |
 | OP-12 | A restore to a chosen point in time is tested | PASS | `drill:scripts/polaris-pitr-drill.sh`, `check:pitr_drilled` |
 | OP-13 | Revocations made after a restore point are re-applied after the restore | PASS | `drill:scripts/polaris-pitr-drill.sh` (`--reconcile`), `file:scripts/polaris-reconcile-restore.py`, `check:restore_reconciled` |
 | OP-14 | Continuous archiving is on by default, with an offsite copy | PARTIAL | `check:pgbackrest_scaffolding`: archiving on by default, the stanza made at the first init, a first full backup at deploy and scheduled ones after; `drill:scripts/polaris-offsite-drill.sh` round-trips the offsite repository, which needs the operator's bucket: by default the repository is local. |
 | OP-15 | Backup age, archive failure, replication lag, disk, certificate expiry and clock skew alert | PASS | `drill:lab/strategy/006/alerts.sh` fires the certificate, backup and archive alerts on their real conditions and clears them on repair; `check:infra_alerts` pins all six rules and their promtool tests. |
 | OP-16 | Application metrics, alerts and traces are tested | PASS | `drill:scripts/polaris-page-drill.sh`, `drill:scripts/polaris-trace-drill.sh` |
 | OP-17 | One command names the failing component | PASS | `drill:lab/strategy/006/doctor.sh`, `check:doctor_names_failures` |
-| OP-18 | Schema migrations run on every upgrade path | PARTIAL | The host deploy script runs them; the Helm chart has no migration step. |
-| OP-19 | An upgrade from the previous release is drilled | PARTIAL | `drill:scripts/polaris-upgrade-drill.sh` upgrades the previous release's Compose stack as OPERATIONS.md says (`check:upgrade_drilled`); a Helm upgrade is not drilled. |
+| OP-18 | Schema migrations run on every upgrade path | PASS | The host deploy script runs them (`check:upgrade_drilled`); a Helm upgrade runs them in a pre-upgrade Job (`check:helm_upgrade_migrates`, `drill:scripts/polaris-helm-upgrade-drill.sh`). |
+| OP-19 | An upgrade from the previous release is drilled | PASS | `drill:scripts/polaris-upgrade-drill.sh` upgrades the previous release's Compose stack as OPERATIONS.md says (`check:upgrade_drilled`); `drill:scripts/polaris-helm-upgrade-drill.sh` upgrades its chart on kind (`check:helm_upgrade_migrates`). |
 | OP-20 | The data-integrity rules (C1 to C10) are enforced in the schema and mutation-tested | PASS | `check:aor_append_only_triggers`, `check:one_active_token_index`, `drill:scripts/polaris-constraint-mutation-drill.py` |
 | OP-21 | Two independent ML-DSA implementations agree at issuance | PASS | `check:pqc_second_witness` |
 | OP-22 | A signature-algorithm migration is drilled | PASS | `drill:scripts/polaris-quantum-event-drill.py` |

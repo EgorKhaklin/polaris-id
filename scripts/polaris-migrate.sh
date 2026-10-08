@@ -197,6 +197,19 @@ sha256_of() {
 }
 
 # Returns 0 if name is currently applied (its last event is 'applied').
+# A registry the runner cannot read is not one with nothing applied. Until 2026-10-07 a failed
+# query here answered "not applied", so an unreadable database put every migration on disk in the
+# pending list and --up set out to apply them all; the Helm upgrade drill found it, with a wrong
+# password, as "Pending: 110" against 93 recorded. The read is checked once before any plan, and
+# each lookup's failure stops the run.
+require_readable_registry() {
+    if ! run_psql -c "SELECT count(*) FROM schema_version" > /dev/null 2>&1; then
+        echo "  ✗ cannot read schema_version (the connection, the credentials, or the registry itself);" >&2
+        echo "    nothing was planned or applied." >&2
+        exit "${EXIT_DB}"
+    fi
+}
+
 is_currently_applied() {
     local name="$1"
     local last_event
@@ -205,7 +218,8 @@ is_currently_applied() {
         WHERE name = '${name}'
         ORDER BY occurred_at DESC, event_id DESC
         LIMIT 1
-    " 2>/dev/null | tr -d '[:space:]')
+    " 2>/dev/null) || { echo "  ✗ cannot read schema_version for ${name}; nothing more was applied." >&2; exit "${EXIT_DB}"; }
+    last_event=$(tr -d '[:space:]' <<< "${last_event}")
     [[ "${last_event}" == "applied" ]]
 }
 
@@ -310,6 +324,7 @@ do_up() {
         exit "${EXIT_OK}"
     fi
     validate_filenames
+    require_readable_registry
 
     local pending=()
     while IFS= read -r name; do
@@ -386,6 +401,7 @@ do_down() {
         exit "${EXIT_ARG}"
     fi
     validate_filenames
+    require_readable_registry
 
     # Get the N most-recently-applied (currently applied) migrations,
     # in reverse order (newest first).

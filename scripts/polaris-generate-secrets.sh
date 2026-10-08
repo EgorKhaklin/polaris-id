@@ -17,6 +17,9 @@
 #   secrets/polaris_db_root_password      Postgres superuser password (0600; root-read only)
 #   secrets/polaris_replicator_password   streaming-replication role password (0644)
 #   secrets/polaris_redis_password        the rate limiter's Redis password, 64 hex (0644)
+#   secrets/polaris_patroni_restapi_password  Patroni REST API writes, HA profile (0644)
+#   secrets/polaris_etcd_root_password    etcd's root user, HA profile (0644)
+#   secrets/polaris_etcd_patroni_password Patroni's etcd user, HA profile (0644)
 #   secrets/redis_users.acl               Redis users: only that password's SHA-256 (0644)
 #   secrets/polaris_signing_key           ML-DSA-65 signing keypair JSON (0644)
 #   secrets/postgres_server.crt/.key      Postgres TLS cert + key (0644 mount; live copy 0600)
@@ -296,6 +299,12 @@ write_secret_if_missing polaris_db_root_password 24
 # replication-readiness block was silently skipped (the `-r` guard fails closed).
 write_secret_if_missing polaris_replicator_password 24 0644
 write_secret_if_missing polaris_redis_password   32 0644
+# Lab record 017 (gate row OP-8): the HA profile's internal credentials. Patroni's REST API takes a
+# password for its writes (switchover, restart, PATCH /config), and etcd, the lease store, takes a
+# root password and a Patroni user's. 0644 for the replicator's reason: non-root containers read them.
+write_secret_if_missing polaris_patroni_restapi_password 24 0644
+write_secret_if_missing polaris_etcd_root_password       24 0644
+write_secret_if_missing polaris_etcd_patroni_password    24 0644
 write_redis_acl_if_missing
 write_signing_key_if_missing
 write_postgres_cert_if_missing

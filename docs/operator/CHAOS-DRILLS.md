@@ -62,3 +62,5 @@ is how long after the outage began that `PolarisAppDown` reached the sink
 | 2026-09-07T10:50Z | v9.259 | 1ce7cd7 | ci | A=6s B=2s C=10s D=1s E=1s | 122 | PASS | one colour: 0 drops; outage paged; postgres crash window 0.0s, partition window 11.2s; no app restart |
 | 2026-09-14T11:07Z | v9.458 | 987c123 | ci | A=6s B=3s C=10s D=1s E=1s | 121 | PASS | one colour: 0 drops; outage paged; postgres crash window 1.1s, partition window 15.2s; no app restart |
 | 2026-09-21T11:14Z | v1.0.0-rc.7 | 4e74376 | ci | A=6s B=2s C=11s D=1s E=1s | 121 | PASS | one colour: 0 drops; outage paged; postgres crash window 0.0s, partition window 15.7s; no app restart |
+| 2026-10-01T12:09Z | v1.0.0-rc.69 | 4e208b5 | ci | A=6s B=3s C=10s D=2s E=1s | 122 | PASS | one colour: 0 drops; outage paged; postgres crash window 0.8s, partition window 16.0s; no app restart |
+| 2026-10-05T12:49Z | v1.0.0-rc.70 | fe2d6bf | ci | A=6s B=3s C=10s D=1s E=1s | 123 | PASS | one colour: 0 drops; outage paged; postgres crash window 0.0s, partition window 15.7s; no app restart |

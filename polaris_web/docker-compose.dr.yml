@@ -58,7 +58,8 @@ services:
       - --initial-cluster-token=polaris-dr-dcs
       - --auto-compaction-retention=1h
     healthcheck:
-      test: ["CMD", "etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
+      # /readyz, as region A's members: it needs no user once dr-etcd-auth turns authentication on.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2379/readyz >/dev/null"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -91,6 +92,15 @@ services:
       # lease, so a failover INSIDE region A does not break replication to B.
       POLARIS_PATRONI_STANDBY_HOST: pg-router
       POLARIS_PATRONI_STANDBY_PORT: "5432"
+      # Lab record 017 (gate row OP-8): region B's REST API is on the application network too, so
+      # its writes take the password, and its lease store takes Patroni's user (made by dr-etcd-auth
+      # below). On one host the regions share the secrets directory; two placements each generate
+      # their own.
+      POLARIS_PATRONI_RESTAPI_PASSWORD_FILE: /run/secrets/polaris_patroni_restapi_password
+      POLARIS_PATRONI_ETCD_PASSWORD_FILE: /run/secrets/polaris_etcd_patroni_password
+    secrets:
+      - polaris_patroni_restapi_password
+      - polaris_etcd_patroni_password
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8008/health >/dev/null"]
       interval: 5s
@@ -106,8 +116,22 @@ services:
       - polaris-dr-dcs
       - default
     depends_on:
+      dr-etcd-auth:
+        condition: service_completed_successfully
+
+  # Lab record 017 (gate row OP-8): region A's one-shot (docker-compose.ha.yml), pointed at
+  # region B's lease store.
+  dr-etcd-auth:
+    extends:
+      file: docker-compose.ha.yml
+      service: etcd-auth
+    environment:
+      POLARIS_ETCD_ENDPOINTS: dr-etcd:2379
+    depends_on: !override
       dr-etcd:
         condition: service_healthy
+    networks: !override
+      - polaris-dr-dcs
 
 networks:
   polaris-dr-dcs:

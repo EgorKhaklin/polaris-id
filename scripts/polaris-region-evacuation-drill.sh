@@ -57,6 +57,7 @@ VERSION="$(sed -n 's/^__version__: str = "\(.*\)"/\1/p' "$ROOT/polaris_web/__ver
 GIT="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 REGION_A=(polaris-postgres polaris-postgres2 polaris-pg-router polaris-etcd1 polaris-etcd2 polaris-etcd3)
 DR=polaris-dr-postgres
+CURL_IMAGE="curlimages/curl@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6"
 
 diagnose() {
     echo "--- diagnostics ---" >&2
@@ -103,6 +104,20 @@ scope_b="$(docker exec "$DR" wget -qO- http://127.0.0.1:8008/cluster 2>/dev/null
     | python3 -c "import json,sys;print(json.load(sys.stdin)['scope'])")"
 [[ "$scope_b" == "polaris-dr" ]] || fail "region B shares region A's cluster scope ($scope_b); it would compete for the same leader key"
 echo "  region B is a separate cluster with its own lease store        OK"
+
+# Lab record 017 (gate row OP-8): region B's internal surfaces authenticate as region A's do. Its
+# member streams from region A's router, so its REST API is on the application network: an
+# unauthenticated write there (PATCH /config sets postgresql parameters) is refused. Its lease
+# store refuses a client with no user.
+NET=$(compose config --format json | python3 -c "import json,sys; print(json.load(sys.stdin)['networks']['polaris-net']['name'])")
+[[ -n "$NET" ]] || fail "could not resolve the application network"
+code=$(docker run --rm --network "$NET" "$CURL_IMAGE" -s -o /dev/null -w '%{http_code}' \
+       -X PATCH -H 'Content-Type: application/json' -d '{"ttl": 20}' "http://dr-postgres:8008/config" 2> /dev/null || echo err)
+[[ "$code" == 401 ]] || fail "region B's REST API answered an unauthenticated PATCH /config from the app's network with $code, not 401"
+if docker exec polaris-dr-etcd etcdctl put /drill/unauthenticated probe > /dev/null 2>&1; then
+    fail "region B's lease store accepted a write from a client with no user"
+fi
+echo "  region B's REST API and lease store refuse unauthenticated writes OK"
 
 # --- 2. Region B refuses writes while it is a standby ------------------------------
 psql_a "CREATE TABLE IF NOT EXISTS dr_marker(n bigint primary key)" >/dev/null || fail "could not create the marker table in region A"

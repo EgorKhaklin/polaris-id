@@ -563,7 +563,7 @@ def metrics():
         pass
     # The newest backup of each kind on record (PolarisBackupStale pages on it); 0 for none, NaN when
     # the database did not answer.
-    kinds = ('dump', 'pgbackrest', 'dump-verified')
+    kinds = ('dump', 'pgbackrest', 'dump-verified', 'restore-verified')
     try:
         rows = query("SELECT kind, EXTRACT(EPOCH FROM max(completed_at)::timestamptz) AS t "
                      "FROM BackupEvent GROUP BY kind", fetch='all')
