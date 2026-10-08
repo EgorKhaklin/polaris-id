@@ -80,6 +80,27 @@ the atlas numbers are bounded by the hours a window spans, not by the table
 size: the Atlas sums the activity rollups and reads no event table
 ([`SCALING.md`](SCALING.md)).
 
+## Through the production path, per vCPU and across replicas
+
+The table above is gunicorn and PostgreSQL alone. This one is the route a relying party calls,
+`POST /api/v1/verify`, through everything production runs: the TLS edge, the app with its
+connection pool, pgbouncer, PostgreSQL and the Redis limiter
+([`scripts/polaris-throughput-measure.sh`](../../scripts/polaris-throughput-measure.sh),
+[`throughput.yml`](../../.github/workflows/throughput.yml); lab record 017, gate rows OP-24 and
+OP-25). One genuine credential is presented again and again, every answer is read, and a run with
+any answer but `200` and `accept` fails. The app tier gets a fixed CPU share; the other services
+may use what is left, and their CPU is shown so the tier that binds is visible. The edge's
+per-address limit, the app's write cap and the relying party's limit are lifted for the run: it
+measures serving capacity, not the limits.
+
+<!-- throughput:begin -->
+Not yet measured: the first run of the workflow fills this block.
+<!-- throughput:end -->
+
+The configurations run on one host, so two replicas share the edge, the pooler, the database and
+the generator's machine. Their ratio to one replica says how the app tier scales across replicas
+on one host; across hosts is not measured.
+
 ## Floors, and the CI re-run
 
 The script gates on floors that mark the SLO boundary, not a performance
