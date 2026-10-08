@@ -191,5 +191,32 @@ class ScriptsRefuseBeforeTouchingTheStack(_Base):
         self.assertIn("seal them", r.stdout)
 
 
+class ComposeRunsWhereTheUnitRunsIt(_Base):
+    """polaris.service runs compose in polaris_web, so an overlay polaris.env names (CI's
+    `-f docker-compose.citest.yml`, an operator's blue-green file) is relative to it. #311's first CI
+    run: the rotation, run by hand from /opt/polaris, passed that overlay to compose there, compose
+    did not find it, and a running stack read as stopped."""
+
+    def test_every_compose_call_runs_in_polaris_web(self):
+        cwd_log = self.tmp / "docker-cwd"
+        # Only compose cares where it runs (`docker info` does not): record its directory, answer the
+        # rest, and fail compose so nothing runs against this machine.
+        (self.bin / "docker").write_text('#!/bin/sh\ncase "$1" in compose) pwd -P >> "%s"; exit 99 ;; esac\nexit 0\n'
+                                         % cwd_log)
+        (self.bin / "docker").chmod(0o755)
+        env_file = self.tmp / "overlay.env"
+        env_file.write_text("POLARIS_DOMAIN=polaris.example.org\nPOLARIS_COMPOSE_EXTRA=-f docker-compose.citest.yml\n")
+        want = str((ROOT / "polaris_web").resolve())
+        for script, args in (("polaris-key-event.sh", "register 1 " + "ab" * 1952),
+                             ("polaris-doctor.sh", "")):
+            with self.subTest(script):
+                cwd_log.unlink(missing_ok=True)
+                self._bash('cd "%s" && bash "%s" %s' % (self.tmp, ROOT / "scripts" / script, args),
+                           POLARIS_ENV_FILE=str(env_file))
+                ran = cwd_log.read_text().split() if cwd_log.exists() else []
+                self.assertTrue(ran, "%s never reached compose" % script)
+                self.assertEqual(set(ran), {want}, "%s ran compose outside polaris_web" % script)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,7 +37,9 @@ POLARIS_ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
 source "${SCRIPT_DIR}/polaris-env.sh"
 COMPOSE_FILE="${POLARIS_ROOT}/polaris_web/docker-compose.prod.yml"
 read -r -a COMPOSE_EXTRA <<< "${POLARIS_COMPOSE_EXTRA:-}"
-compose() { docker compose -f "${COMPOSE_FILE}" "${COMPOSE_EXTRA[@]}" "$@"; }
+# From polaris_web, as polaris.service runs it: an overlay polaris.env names is relative to that
+# directory. (The guarded array form: an empty array under set -u is an error in bash before 4.4.)
+compose() { (cd "${POLARIS_ROOT}/polaris_web" && docker compose -f docker-compose.prod.yml ${COMPOSE_EXTRA[@]+"${COMPOSE_EXTRA[@]}"} "$@"); }
 URL="${POLARIS_DOCTOR_URL:-https://${POLARIS_DOMAIN:-localhost}}"
 CURL_TLS=()
 [[ -n "${POLARIS_DOCTOR_CACERT:-}" ]] && CURL_TLS=(--cacert "${POLARIS_DOCTOR_CACERT}")
