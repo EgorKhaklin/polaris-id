@@ -1,0 +1,16 @@
+# polaris-restore-verify.service: restore the newest pgBackRest backup and the archive after it
+# into a scratch copy and prove the copy against the live database (lab record 017, gate row OP-11).
+# Driven by polaris-restore-verify.timer (weekly). Exit 3 means nothing to verify (archiving off, no
+# backup yet, no room for the copy): the journal says which, and the unit does not fail on it.
+[Unit]
+Description=Polaris restore verification (the newest backup restored and proven against the live database)
+Requires=polaris.service
+After=polaris.service polaris-backup.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=__INSTALL_DIR__
+EnvironmentFile=__ENV_FILE__
+ExecStart=__INSTALL_DIR__/scripts/polaris-restore-verify.sh
+SuccessExitStatus=3
+TimeoutStartSec=6h

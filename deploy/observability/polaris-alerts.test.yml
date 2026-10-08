@@ -361,3 +361,45 @@ tests:
             exp_annotations:
               summary: "No dump has been verified for 8 days"
               description: "Dumps are being taken, but none has been extracted and checked against its manifest for 8 days (polaris-backup.sh --verify-latest)."
+
+  # Restores: job polaris restored and proved a copy at 1h, never again: unverified once 8 days have
+  # passed, firing an hour after it is first seen. Job never takes pgBackRest backups and has never
+  # verified one; its zero reads as 8 days old once promtool's clock, which starts at 1970, passes
+  # 8 days (on a real clock it is decades old, so it fires an hour after the first backup). Job
+  # archiveless takes no pgBackRest backups: never.
+  - interval: 5m
+    input_series:
+      - series: 'polaris_backup_last_success_timestamp_seconds{kind="pgbackrest",job="polaris"}'
+        values: '3600+300x2592'
+      - series: 'polaris_backup_last_success_timestamp_seconds{kind="restore-verified",job="polaris"}'
+        values: '3600x2592'
+      - series: 'polaris_backup_last_success_timestamp_seconds{kind="pgbackrest",job="never"}'
+        values: '3600+300x2592'
+      - series: 'polaris_backup_last_success_timestamp_seconds{kind="restore-verified",job="never"}'
+        values: '0x2592'
+      - series: 'polaris_backup_last_success_timestamp_seconds{kind="pgbackrest",job="archiveless"}'
+        values: '0x2592'
+      - series: 'polaris_backup_last_success_timestamp_seconds{kind="restore-verified",job="archiveless"}'
+        values: '0x2592'
+    alert_rule_test:
+      - eval_time: 193h
+        alertname: PolarisRestoreUnverified
+        exp_alerts: []
+      - eval_time: 193h10m
+        alertname: PolarisRestoreUnverified
+        exp_alerts:
+          - exp_labels: {severity: sev3, job: never}
+            exp_annotations:
+              summary: "No restore has been verified for 8 days"
+              description: "pgBackRest backups are being taken, but none has been restored and the copy proven against the live database for 8 days (scripts/polaris-restore-verify.sh)."
+      - eval_time: 194h10m
+        alertname: PolarisRestoreUnverified
+        exp_alerts:
+          - exp_labels: {severity: sev3, job: polaris}
+            exp_annotations:
+              summary: "No restore has been verified for 8 days"
+              description: "pgBackRest backups are being taken, but none has been restored and the copy proven against the live database for 8 days (scripts/polaris-restore-verify.sh)."
+          - exp_labels: {severity: sev3, job: never}
+            exp_annotations:
+              summary: "No restore has been verified for 8 days"
+              description: "pgBackRest backups are being taken, but none has been restored and the copy proven against the live database for 8 days (scripts/polaris-restore-verify.sh)."

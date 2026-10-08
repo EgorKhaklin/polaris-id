@@ -11,6 +11,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- The HA and DR profiles' etcd authenticates its clients, and Patroni's REST API refuses unauthenticated writes; both accepted any container on their networks (lab record 017).
 - ZK proofs are built with Plonky2's zero-knowledge configuration; earlier binaries built sound but non-hiding proofs, which no longer verify.
 - The access log records method, path and protocol, no longer the query string or the referrer (lab record 017).
 - A restore to an earlier point no longer revives what was withdrawn after it, nor reissues identifiers already issued (lab record 017).
@@ -32,6 +33,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- A host install archives WAL by default, as a Compose stack does; its env template turned archiving off.
+- `polaris-migrate.sh` read a schema registry it could not read as nothing applied and planned every migration; it now stops.
 - The observability overlay's Prometheus scraped the app through the public edge, which refuses `/metrics` by default; it now finds the app on the stack's network by name, blue-green included.
 - DR.md's point-in-time restore brought the app back without the revocations, key events and other withdrawals made after the target; it now re-applies them first.
 - A duress record still being written when a worker stopped was abandoned with its daemon thread; the worker now waits for it (a killed worker can still lose one in flight). Kubernetes pods pause before draining.
@@ -70,7 +73,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A point-in-time restore drill: a restore to a chosen moment brings back exactly what was committed by then, and nothing after.
 - `scripts/polaris-reconcile-restore.py` re-applies withdrawals made after a restore point through their own paths; `RestoreRecord` records each run.
 - `polaris-pitr-drill.sh --reconcile` withdraws trust on both sides of a restore point and requires nothing looser afterwards.
+- `scripts/polaris-restore-verify.sh` restores the newest backup into a scratch copy and proves it against the live database.
+- A weekly timer and the first deploy verify a restore; `PolarisRestoreUnverified` pages when none is 8 days old.
 - WAL archiving is on by default to a local pgBackRest repository; the deploy takes the first full backup, `polaris-backup.sh` the scheduled ones.
+- A Helm upgrade runs the pending migrations in a pre-upgrade Job; `polaris-helm-upgrade-drill.sh` upgrades the previous release's chart on kind.
 - `/api/health` compares this instance's clock with the database's and reports `clock` degraded beyond 2 s of skew.
 - A per-process database connection pool (`POLARIS_DB_POOL_SIZE`, 1 in the production compose file and the Helm chart): each checkout resets the session and the pool is keyed on the exact connection settings; verification went from about 300 to at least 800 requests/s on one host (lab record 017).
 - The transparency logs can be anchored in Bitcoin: `ChainAnchor` records each checkpoint, published at `/api/v1/transparency/anchors`.

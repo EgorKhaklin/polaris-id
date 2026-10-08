@@ -80,5 +80,13 @@ COPY --chmod=0755 polaris_web/pg-entrypoint.sh   /usr/local/bin/polaris-pg-entry
 COPY --chown=postgres:postgres polaris_sql /docker-entrypoint-initdb.d/sql
 COPY --chmod=0755 polaris_web/docker-init.sh /docker-entrypoint-initdb.d/00-init.sh
 COPY --chown=postgres:postgres polaris_web/pgbackrest.conf /etc/pgbackrest/pgbackrest.conf
+# Lab record 017 (gate row OP-18): the migration runner, so a Kubernetes upgrade runs the migrations
+# from this image as a Job (deploy/helm/polaris/templates/migrate-job.yaml). It finds them beside
+# itself, at /opt/polaris/polaris_sql: the same files the init loads.
+COPY --chmod=0755 scripts/polaris-migrate.sh /opt/polaris/scripts/polaris-migrate.sh
+RUN ln -s /docker-entrypoint-initdb.d/sql /opt/polaris/polaris_sql
+# Lab record 017 (gate row OP-11): the restore check, which a one-off container of this image runs
+# against the deployment's own repository (scripts/polaris-restore-verify.sh).
+COPY --chmod=0755 scripts/polaris-restore-check.sh /opt/polaris/scripts/polaris-restore-check.sh
 ENTRYPOINT ["/usr/local/bin/polaris-pg-entrypoint.sh"]
 CMD ["postgres"]
