@@ -97,6 +97,10 @@ postgres:
     ttl: 20
     loopWait: 5
     retryTimeout: 5
+    # A commit waits for a replica, so a failover loses no acknowledged write (gate row OP-6,
+    # docs/design/synchronous-replication.md). false trades that for asynchronous replication.
+    # Written to the cluster at bootstrap; an existing one changes with `patronictl edit-config`.
+    synchronousMode: true
 
 secrets:
   # An existing Secret holding the files polaris-generate-secrets.sh writes

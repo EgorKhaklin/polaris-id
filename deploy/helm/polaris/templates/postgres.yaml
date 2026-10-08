@@ -163,6 +163,7 @@ spec:
             - {name: POLARIS_PATRONI_TTL, value: {{ .Values.postgres.patroni.ttl | quote }}}
             - {name: POLARIS_PATRONI_LOOP_WAIT, value: {{ .Values.postgres.patroni.loopWait | quote }}}
             - {name: POLARIS_PATRONI_RETRY_TIMEOUT, value: {{ .Values.postgres.patroni.retryTimeout | quote }}}
+            - {name: POLARIS_PATRONI_SYNCHRONOUS_MODE, value: {{ ternary "on" "off" .Values.postgres.patroni.synchronousMode | quote }}}
             - {name: POSTGRES_DB, value: polaris}
             - {name: POSTGRES_PASSWORD_FILE, value: /run/secrets/polaris_db_root_password}
             - {name: POLARIS_ENV, value: production}
