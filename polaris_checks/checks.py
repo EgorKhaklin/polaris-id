@@ -6495,6 +6495,69 @@ def check_ha_internal_auth(root: pathlib.Path) -> list[Finding]:
                "evacuation drills prove the refusals from the app's network")
 
 
+# Lab record 017 (gate row OP-7): the loss of a host or a zone is tolerated, on Kubernetes. The chart
+# spread nothing: two database members or both app pods could share a node, the edge, the router and
+# pgbouncer ran one pod each (their node's loss an outage until the default 300 s eviction), and Redis was
+# a StatefulSet on a node-local volume, never moved off a dead node, while the rate limiter refuses
+# without it. Now every replicated component spreads across nodes (hard) and zones (soft), the hops on
+# the data path run two pods, pods Kubernetes may move leave an unanswering node after 30 s, Redis is a
+# Deployment on an emptyDir, and disruption budgets keep a drained node from taking the last pod. The
+# zone-loss drill kills the leader's node on a three-zone kind cluster.
+_FAILURE_DOMAIN_NEEDLES = (
+    ("deploy/helm/polaris/templates/_helpers.tpl", 'define "polaris.spread"', "define the spread"),
+    ("deploy/helm/polaris/templates/_helpers.tpl",
+     "topologyKey: kubernetes.io/hostname\n    whenUnsatisfiable: DoNotSchedule\n    nodeTaintsPolicy: Honor",
+     "keep two pods of a component off one node while another is free"),
+    ("deploy/helm/polaris/templates/_helpers.tpl", "topologyKey: {{ $root.Values.spread.zoneKey }}",
+     "spread across zones too"),
+    ("deploy/helm/polaris/templates/_helpers.tpl", "tolerationSeconds: {{ .Values.spread.evictAfterSeconds }}",
+     "move pods off an unanswering node quickly"),
+    ("deploy/helm/polaris/templates/postgres.yaml", 'include "polaris.spread" (list "postgres" .)',
+     "spread the database members"),
+    ("deploy/helm/polaris/templates/postgres.yaml", 'include "polaris.pdb" (list "postgres" .)',
+     "keep a drain from taking both members"),
+    ("deploy/helm/polaris/templates/app.yaml", 'include "polaris.spread" (list "app" .)', "spread the app"),
+    ("deploy/helm/polaris/templates/caddy.yaml", 'include "polaris.spread" (list "caddy" .)', "spread the edge"),
+    ("deploy/helm/polaris/templates/pg-router.yaml", 'include "polaris.spread" (list "pg-router" .)',
+     "spread the router"),
+    ("deploy/helm/polaris/templates/pgbouncer.yaml", 'include "polaris.spread" (list "pgbouncer" .)',
+     "spread pgbouncer"),
+    ("deploy/helm/polaris/templates/pgbouncer.yaml", "replicas: {{ .Values.pgbouncer.replicas }}",
+     "let pgbouncer run more than one pod"),
+    ("deploy/helm/polaris/templates/redis.yaml", "kind: Deployment", "run Redis as something that can move"),
+    ("deploy/helm/polaris/templates/redis.yaml", "emptyDir: {}", "keep Redis off a node-local volume"),
+    ("deploy/helm/polaris/templates/redis.yaml", 'include "polaris.fastEviction" .', "move Redis quickly"),
+    ("scripts/polaris-zone-loss-drill.sh", 'docker kill "${L0NODE}"', "kill the leader's node"),
+    ("scripts/polaris-zone-loss-drill.sh", "the database members share a zone", "require the members in two zones"),
+    (".github/workflows/zone-loss.yml", "bash scripts/polaris-zone-loss-drill.sh", "run the drill in CI"),
+)
+
+
+def check_failure_domains(root: pathlib.Path) -> list[Finding]:
+    name = "failure_domains"
+    for rel, needle, what in _FAILURE_DOMAIN_NEEDLES:
+        if needle not in _read(root, rel):
+            return _fail(name, f"{rel} no longer does this: {what}")
+    if "volumeClaimTemplates" in _read(root, "deploy/helm/polaris/templates/redis.yaml"):
+        return _fail(name, "Redis must not hold a node-local volume: a StatefulSet's pod waits for its node forever")
+    for f, comp in (("app.yaml", "app"), ("caddy.yaml", "caddy"), ("pg-router.yaml", "pg-router"),
+                    ("pgbouncer.yaml", "pgbouncer")):
+        t = _read(root, f"deploy/helm/polaris/templates/{f}")
+        if 'include "polaris.fastEviction" .' not in t:
+            return _fail(name, f"{f} must leave an unanswering node after spread.evictAfterSeconds, not 300 s")
+        if comp != "app" and f'include "polaris.pdb" (list "{comp}" .)' not in t:
+            return _fail(name, f"{f} needs a disruption budget, or a drain can take its last pod")
+    values = _read(root, "deploy/helm/polaris/values.yaml")
+    for block in ("edge", "pgRouter", "pgbouncer"):
+        # _read leaves a bare "#" where a comment was, so a block ends at the next top-level key.
+        m = re.search(rf"(?ms)^{block}:\n(.*?)(?=^[A-Za-z_])", values)
+        if not (m and re.search(r"(?m)^  replicas: ([2-9]|\d\d+)\s*$", m.group(1))):
+            return _fail(name, f"values.yaml must run at least two {block} pods, or one node's loss stops it")
+    return _ok(name, "every replicated component spreads across nodes and zones, the hops on the data path run "
+               "two pods, movable pods leave a dead node after 30 s, Redis can move, drains keep a pod; the "
+               "zone-loss drill kills the leader's node")
+
+
 # Lab record 017 (gate row OP-6): a failover loses no acknowledged write. Under asynchronous
 # replication it could (the failover drill counted two acknowledged inserts missing after a leader
 # loss on CI), and in Polaris an acknowledged write can be a revocation. The HA profile and the
@@ -26349,6 +26412,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_release_images_signed,
     check_redis_authenticated,
     check_ha_internal_auth,
+    check_failure_domains,
     check_failover_keeps_acknowledged_writes,
     check_edge_settings_reach_the_edge,
     check_npm_publish_is_staged,
