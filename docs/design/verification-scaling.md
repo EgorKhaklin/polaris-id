@@ -3,8 +3,9 @@
 The benchmark (`polaris_sim`, [BENCHMARK.md](../reference/BENCHMARK.md)) measured
 real ML-DSA-65 signature verification at ~745/s on one core. A national
 deployment needs thousands per second, sustained through failover and rolling
-deploys. This is how Polaris gets there without weakening the guarantee that
-matters.
+deploys. This is how the signature check gets there without weakening the
+guarantee that matters. An online verification costs more than its signature;
+what bounds the route is measured at the end of the next section.
 
 ## The two-witness cost, and where it belongs
 
@@ -53,16 +54,22 @@ key, no custody driver, no HSM, no KMS is touched (those are issuance-only). Eac
 verify opens its own liboqs context and holds no shared mutable state. So
 verification is embarrassingly parallel:
 
-- **Across gunicorn workers.** Sync workers each verify in their own process; W
-  workers deliver ~W x the per-core rate. Use long-lived (preloaded) workers,
+- **Across gunicorn workers.** Sync workers each verify in their own process, so
+  the signature check runs on every core. Use long-lived (preloaded) workers,
   not spawn-per-request, or process start-up dominates.
-- **Across HA replicas.** The verify route is replica-routed (a read); add app
-  containers/hosts behind the edge and the capacity adds up, with no shared
-  secret to coordinate.
+- **Across HA replicas.** The verify route is replica-routed (a read) and needs no
+  shared secret, so app replicas can be added behind the edge. How throughput
+  grows with replicas has not been measured (gate row OP-25).
 
-Projected fleet capacity on an 8-core node: ~62,000/s single-witness (measured
-per-core rate x cores), before adding replicas. Thousands per second is reached
-on a single core; tens of thousands per node.
+The per-core rate times the cores, about 62,000 a second on an 8-core node, is a
+ceiling for the signature check, not the route's capacity. Measured on one 8-core
+host ([lab/evaluation](../../lab/evaluation/README.md)), an online verification took
+about 18 ms at p50, under 1% of it in ML-DSA-65, and throughput stopped growing at
+the worker count (about 156 a second at 4 workers, 165 at 8), with the host
+saturated by opening database connections. The connection pool removes most of
+that cost: a database write path went from about 300 a second to at least 800
+([PERFORMANCE-BASELINE.md](../reference/PERFORMANCE-BASELINE.md)). The verification
+route itself has not been measured with the pool.
 
 ## The verify endpoint
 
