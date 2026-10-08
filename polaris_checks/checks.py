@@ -6970,7 +6970,8 @@ def check_doctor_names_failures(root: pathlib.Path) -> list[Finding]:
               ("config_schema.py check --production", "the production configuration contract"),
               ("/api/health/live", "the TLS edge"),
               ("http://127.0.0.1:8000/api/health", "the app's own roll-up"),
-              ("AuthorityKeyCurrent", "the key register"))
+              ("AuthorityKeyCurrent", "the key register"),
+              ("printenv POLARIS_PGBACKREST_S3_BUCKET", "where the backup repository is (OP-14)"))
     missing = [what for needle, what in judges if needle not in doc]
     if missing:
         return _fail(name, "scripts/polaris-doctor.sh no longer judges " + ", ".join(missing))

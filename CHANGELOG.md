@@ -145,6 +145,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A check that the product suite's parallel CI parts share one setup and that its required job gates on each.
 - `scripts/polaris-rp-register.sh` registers a relying party on the Docker stack, where `polaris rp-register` could not reach the database.
 - CI walks a fresh host to a credential a relying party verifies online, counting the operator's inputs and reporting the time.
+- The doctor warns when continuous archiving is off or the backup repository is on the host it protects.
 
 ### Changed
 

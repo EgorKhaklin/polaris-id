@@ -23,6 +23,8 @@
 #                  credentials signed for real under no registered key (every relying-party
 #                  verification of them is refused), a WARN when its credentials carry no real
 #                  signature (its trust list is refused; KEY-CEREMONY.md)
+#   backups        continuous archiving is on, and its repository is offsite: a repository on this
+#                  host is lost with it (a WARN; docs/operator/DR.md section 5)
 #
 # Usage:  polaris-doctor.sh   (as root on a systemd host: it reads /etc/polaris/polaris.env, as
 #                              polaris.service does; scripts/polaris-env.sh)
@@ -194,6 +196,20 @@ elif [[ -n "${UNREGISTERED}" ]]; then
     warn "key register" "agency ${UNREGISTERED} issued with no registered signing key: its trust list is refused and issuer facts read unknown (register it: sudo scripts/polaris-key-event.sh register <agency> --current; docs/operator/KEY-CEREMONY.md)"
 else
     ok "key register" "every agency that has issued holds a registered key"
+fi
+
+# --- backups: continuous archiving is on and its repository survives the host. pgBackRest keeps its
+# repository on this host unless POLARIS_PGBACKREST_S3_BUCKET names an offsite one, and a repository
+# on the host is lost with it: the backups and the WAL the point-in-time restore replays (lab record
+# 017, gate row OP-14). Read from the running database container, which is what pgBackRest runs with.
+ARCHIVING=$(compose exec -T postgres printenv POLARIS_PGBACKREST_ENABLED 2> /dev/null | tr -d '\r' || true)
+BUCKET=$(compose exec -T postgres printenv POLARIS_PGBACKREST_S3_BUCKET 2> /dev/null | tr -d '\r' || true)
+if [[ "${ARCHIVING}" == "0" ]]; then
+    warn "backups" "continuous archiving is off (POLARIS_PGBACKREST_ENABLED=0): a restore can reach only the last dump, and nothing is replayed to a point in time"
+elif [[ -z "${BUCKET}" ]]; then
+    warn "backups" "the backup repository is on this host (no POLARIS_PGBACKREST_S3_BUCKET): a lost host loses its backups and its WAL with it; configure the offsite repository (docs/operator/DR.md section 5)"
+else
+    ok "backups" "continuous archiving on, to the offsite repository s3://${BUCKET}"
 fi
 
 echo

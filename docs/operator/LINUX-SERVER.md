@@ -78,6 +78,10 @@ A relying party is registered with `sudo scripts/polaris-rp-register.sh "<organi
 That makes five operator inputs from a fresh host to a working authority: the domain, the
 administrator's name, password and reason, and the registration.
 
+The backups and the WAL archive start on this host. Point them at an offsite repository
+([`DR.md`](DR.md) section 5): until then `scripts/polaris-doctor.sh` warns that a lost host loses
+its backups with it.
+
 ## What is installed
 
 | Unit | What it does |

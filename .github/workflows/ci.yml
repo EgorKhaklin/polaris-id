@@ -1921,6 +1921,9 @@ jobs:
             scripts/polaris-doctor.sh | tee /tmp/doctor-file.out
           grep -q "WARN  secrets at rest .*plaintext files in /opt/polaris/polaris_web/secrets" /tmp/doctor-file.out \
             || { echo "::error::the doctor did not say the secrets are plaintext on disk"; exit 1; }
+          # Gate row OP-14: this install's backup repository is on the host, and the doctor says so.
+          grep -q "WARN  backups .*the backup repository is on this host" /tmp/doctor-file.out \
+            || { echo "::error::the doctor did not say the backups are on this host only"; exit 1; }
 
       # Lab record 017 (gate row OP-2): a fresh host to a credential a relying party verifies online, by
       # the documented commands only, with the operator's inputs counted and the time measured. Under
