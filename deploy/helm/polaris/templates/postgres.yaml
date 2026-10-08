@@ -131,6 +131,7 @@ spec:
         cluster-name: {{ $scope }}
     spec:
       serviceAccountName: {{ $scope }}
+      {{- include "polaris.spread" (list "postgres" .) | nindent 6 }}
       # The one pod of the topology that talks to the API: the lease store.
       # The projected token lands under /var/run/secrets/kubernetes.io; the
       # Secret files are single-file mounts under /run/secrets and coexist.
@@ -237,3 +238,5 @@ spec:
         resources:
           requests:
             storage: {{ .Values.persistence.pgbackrest }}
+---
+{{ include "polaris.pdb" (list "postgres" .) }}

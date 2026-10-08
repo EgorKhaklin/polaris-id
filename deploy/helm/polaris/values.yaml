@@ -38,7 +38,8 @@ edge:
   # acme: Let's Encrypt for `domain` (needs a reachable LoadBalancer on 80/443).
   # internal: Caddy's internal CA (evaluation, kind, private networks).
   tls: internal
-  replicas: 1
+  # Two, spread across nodes, so a host's loss leaves the edge serving (lab record 017, gate row OP-7).
+  replicas: 2
   # The load balancer in front of the edge, if any, by address range ("10.0.0.0/8"); its
   # X-Forwarded-For then carries the client address. Empty: no proxy is trusted.
   trustedProxies: ""
@@ -83,8 +84,21 @@ clusterDomain: cluster.local
 pgRouter:
   # HAProxy in front of the Patroni members (v9.244): pgbouncer dials it; it
   # routes 5432 to the member answering /primary and 5433 to a replica, and
-  # cuts sessions to a member the moment it is marked down.
-  replicas: 1
+  # cuts sessions to a member the moment it is marked down. Two, spread (OP-7).
+  replicas: 2
+
+pgbouncer:
+  # Two, spread across nodes (lab record 017, gate row OP-7). Each pools for the app pods that reach it.
+  replicas: 2
+
+# Lab record 017 (gate row OP-7): placement for a host or a zone going away. Every replicated component
+# is spread across nodes (never two on one node while another is free) and, where the cluster has zones,
+# across zones; the database members too. A single-node cluster still schedules them.
+spread:
+  # The node label that names a zone (the well-known one).
+  zoneKey: topology.kubernetes.io/zone
+  # How long a pod Kubernetes may move waits for a node that stopped answering (its default is 300 s).
+  evictAfterSeconds: 30
 
 postgres:
   # Patroni members (v9.244, roadmap P2.13): two is a leader and a streaming
@@ -116,7 +130,6 @@ persistence:
   storageClass: ""
   postgres: 10Gi
   pgbackrest: 10Gi
-  redis: 1Gi
 
 # Lab record 017 (gate row OP-18): a Helm upgrade runs the pending migrations, then syncs the database
 # objects, from the new release's postgres image before the upgrade applies anything else

@@ -1,0 +1,72 @@
+# ============================================================================
+# zone-loss.yml - the chart on a kind cluster of three workers in three zones loses the node that
+# holds the database leader (scripts/polaris-zone-loss-drill.sh; lab record 017, gate row OP-7).
+#
+# The drill requires the database members, and the two pods of the edge, the app, the router and
+# pgbouncer, to be spread across nodes and zones; then kills the leader's node. Within its ceilings
+# the other member must lead, inserts through a surviving app pod must resume, /api/health must answer
+# 200 through a surviving edge pod with Redis moved if it was on that node, and the marker written
+# before must be intact. The node then starts again and the old leader must rejoin as a replica.
+#
+# It builds the images and a four-node cluster, so pull requests run it only when a path it
+# exercises changed. It also runs on every push to main, nightly, and by hand.
+# ============================================================================
+name: Zone loss (the leader's node killed on a three-zone kind cluster)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/helm/**"
+      - "polaris_web/Dockerfile*"
+      - "polaris_web/patroni-entrypoint.sh"
+      - "scripts/polaris-zone-loss-drill.sh"
+      - "scripts/polaris-image-build.sh"
+      - ".github/workflows/zone-loss.yml"
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zone-loss-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  zone-loss:
+    name: The leader's node killed on a three-zone kind cluster, and the chart serves on
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install kind (kubectl + helm are on the runner)
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          install_only: true
+          version: v0.33.0
+
+      - name: Build the prod images
+        run: bash scripts/polaris-image-build.sh --stack prod
+
+      - name: Kill the leader's node (scripts/polaris-zone-loss-drill.sh)
+        env:
+          POLARIS_ZONE_OUT: /tmp/zone-loss.json
+        run: bash scripts/polaris-zone-loss-drill.sh
+
+      - name: Upload the drill summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zone-loss
+          path: /tmp/zone-loss.json
+          if-no-files-found: ignore
