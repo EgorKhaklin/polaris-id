@@ -330,7 +330,8 @@ UNSHARDED_SUITES = {
                 "test_verify_conformance", "test_verify_p9", "test_verify_refusals",
                 "test_conformance_runner", "test_ship_tool", "test_pgbouncer_entrypoint",
                 "test_sbom_enrich", "test_issuance_scope", "test_pin_chart_images", "test_chain_anchor_tool",
-                "test_migrate_runner", "test_coverage_script", "test_operator_env"],
+                "test_migrate_runner", "test_coverage_script",
+                "test_trigger_drill", "test_operator_env"],
     # The standalone packages. 2026-09-17: none of these was named here, and
     # `check_local_gate_covers_ci` did not notice because it compared this list against
     # `polaris-coverage.sh` instead of against the workflow that gates the push. Nine

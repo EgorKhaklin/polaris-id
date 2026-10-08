@@ -31,6 +31,7 @@ Run:
 Coverage map: see the class docstrings. Each class is one schema table.
 """
 
+import contextlib
 import hashlib
 import os
 import sys
@@ -45,6 +46,27 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import app as flask_app
 
 DB_CONFIG = flask_app.DB_CONFIG
+
+
+@contextlib.contextmanager
+def _folds_held(*keys):
+    """Hold each fold's lock from a session of its own, as a running fold would hold it.
+
+    The triggers fold pending changes by themselves now and then (random() < 0.002 per
+    statement), and a fold inside a test's own transaction moves the changes the test is about to
+    read out of the delta table. A test that reads a delta table it has just written holds the lock,
+    so that fold returns at once. Without it two TestC1PrivilegeBoundary tests failed whenever the
+    fold landed inside them, and the trigger refusal drill, which runs their module once per
+    refusal, reported caught refusals as untested (four CI runs, 2026-10-08)."""
+    holder = psycopg2.connect(**DB_CONFIG)
+    holder.autocommit = True
+    try:
+        with holder.cursor() as cur:
+            for key in keys:
+                cur.execute("SELECT pg_advisory_lock(hashtext(%s))", (key,))
+        yield
+    finally:
+        holder.close()        # a session's advisory locks end with it
 
 
 # ----------------------------------------------------------------------------
@@ -2853,7 +2875,7 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         rest, makes the pending figure: a folded table has none."""
         conn = self._app_conn()
         try:
-            with conn.cursor() as cur:
+            with _folds_held("polaris.population.fold"), conn.cursor() as cur:
                 cur.execute("SELECT min(agency_id) AS a FROM Agency")
                 agency = cur.fetchone()["a"]
                 cur.execute("SELECT token_id FROM IdentityToken WHERE status = 'ACTIVE' "
@@ -2890,7 +2912,7 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         its NULL is on the event table."""
         conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
         try:
-            with conn.cursor() as cur:
+            with _folds_held("polaris.activity.fold"), conn.cursor() as cur:
                 a1, a2, ctx, tok = TestActivityRollups._fixture(cur)
                 TestActivityRollups._record_events(cur, a1, a2, ctx, tok)
                 cur.execute("SET LOCAL ROLE polaris_app")
