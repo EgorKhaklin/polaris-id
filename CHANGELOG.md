@@ -33,6 +33,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- The production compose file passes `POLARIS_TRUSTED_PROXIES` and `POLARIS_METRICS_ALLOW` to the edge; both were documented and never arrived.
 - A host install archives WAL by default, as a Compose stack does; its env template turned archiving off.
 - `polaris-migrate.sh` read a schema registry it could not read as nothing applied and planned every migration; it now stops.
 - The observability overlay's Prometheus scraped the app through the public edge, which refuses `/metrics` by default; it now finds the app on the stack's network by name, blue-green included.
@@ -62,7 +63,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
-- A check that the product suite's parallel CI parts share one setup and that its required job gates on each.
+- The edge reads a client's address from a PROXY protocol header sent by an L4 balancer the operator names.
 - `lab/strategy/006/alerts.sh` fires the certificate, backup and archive alerts on their real conditions and clears them on repair; CI runs it after try.sh.
 - `/metrics` reports this instance's clock against the database's (`polaris_clock_skew_seconds`); PolarisClockSkew pages when they disagree by more than 2 s for 10 minutes.
 - `/metrics` reports the database's WAL archiving as `pg_stat_archiver` sees it; PolarisArchiveFailing pages when the newest attempt failed and none succeeded since.
@@ -128,6 +129,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The weekly canary also runs ERICA, and the EU iOS library with the wallet kit's own request-object encryption.
 - polaris-oid4vp encrypts the request object to the wallet's key when its `wallet_metadata` asks, as the EU iOS wallet kit requires.
 - polaris-oid4vp `serve --verifier-info` adds attestations such as a registration certificate to the request, as the German wallet requires.
+- A check that the product suite's parallel CI parts share one setup and that its required job gates on each.
 
 ### Changed
 
