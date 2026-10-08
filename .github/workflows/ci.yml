@@ -1591,8 +1591,16 @@ jobs:
           set -e
           systemctl is-active polaris.service
           systemctl list-timers --all | grep -E 'polaris-backup(-verify)?\.timer'
+          systemctl list-timers --all | grep -E 'polaris-restore-verify\.timer'
           sudo systemctl start polaris-backup.service
-          sudo journalctl -u polaris-backup.service --no-pager | tail -8
+          sudo journalctl -u polaris-backup.service --no-pager | tail -12
+          # Lab record 017 (gate row OP-11): the first backups on record are verified at once, so a
+          # fresh install is not paged before its weekly verifications first run.
+          for kind in dump-verified restore-verified; do
+            n=$(sudo docker exec polaris-postgres \
+                  psql -X -tAc "SELECT count(*) FROM BackupEvent WHERE kind = '$kind'" -U postgres -d polaris)
+            [ "${n:-0}" -ge 1 ] || { echo "::error::the first backup left no $kind on record"; exit 1; }
+          done
           # /var/backups/polaris is 0750 root-owned by design (HARDENING.md), so
           # the listing needs root; the v9.176 run failed here on a plain `ls`.
           sudo ls -la /var/backups/polaris/

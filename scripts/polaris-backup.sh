@@ -25,6 +25,12 @@ DEFAULT_DEST="/var/backups"
 
 DEST="${DEFAULT_DEST}"
 VERIFY_LATEST=0
+# How many backups of a kind the database has on record (BackupEvent); empty when it cannot say.
+count_backups() {  # count_backups <kind>
+    local sql="SELECT count(*) FROM BackupEvent WHERE kind = :'kind';"
+    docker compose -f "${COMPOSE_FILE}" exec -T postgres psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres \
+        -d polaris -v kind="$1" <<<"${sql}" 2>/dev/null | tr -d '[:space:]'
+}
 # Lab record 017 (gate row OP-15): the database's record that a backup completed (BackupEvent,
 # append-only, written as the schema owner), from which /metrics reports its age and
 # PolarisBackupStale pages. Values go in as psql variables, quoted by psql. Returns non-zero when
@@ -259,6 +265,16 @@ if [[ -s "${STAGE}/polaris.dump" ]]; then
                    "${STAGE}/MANIFEST.json")
     if record_backup dump "${OUT}" "${SIZE}; manifest sha256 ${MANIFEST_SHA}" > /dev/null; then
         echo "  → recorded in BackupEvent (dump), the age /metrics reports"
+        # Lab record 017 (gate row OP-11): the first dump on record is verified now. The weekly
+        # verification may be days away, and until one is recorded PolarisBackupUnverified reads the
+        # newest as never, so a fresh install would page an hour after its first dump.
+        if [[ "$(count_backups dump-verified)" == 0 ]]; then
+            if "$0" --verify-latest --dest "${DEST}" > /dev/null 2>&1; then
+                echo "  ✓ the first dump on record is verified (dump-verified)"
+            else
+                echo "  ! the first dump on record did not verify: $(basename "$0") --verify-latest --dest ${DEST}" >&2
+            fi
+        fi
     else
         echo "  ! the backup is complete but was not recorded in BackupEvent: PolarisBackupStale will not see it" >&2
     fi
@@ -286,6 +302,15 @@ print(int(time.time() - max(stops)) if stops else -1)' 2>/dev/null || echo -1)
             pgbackrest --stanza=polaris --type="${PGBR_TYPE}" backup > /dev/null; then
         if record_backup pgbackrest "pgBackRest repo1, stanza polaris" "${PGBR_TYPE}" > /dev/null; then
             echo "  ✓ pgBackRest ${PGBR_TYPE} backup complete; recorded in BackupEvent (pgbackrest)"
+            # Gate row OP-11: likewise the first restore. A host install takes its first pgBackRest
+            # backup here, not in polaris-deploy.sh, and its weekly restore check may be days away.
+            if [[ "$(count_backups restore-verified)" == 0 ]]; then
+                if "${SCRIPT_DIR}/polaris-restore-verify.sh" > /dev/null 2>&1; then
+                    echo "  ✓ the first pgBackRest backup restores: a scratch copy was proven (restore-verified)"
+                else
+                    echo "  ! the first pgBackRest backup did not verify: scripts/polaris-restore-verify.sh says why" >&2
+                fi
+            fi
         else
             echo "  ! the pgBackRest backup is complete but was not recorded in BackupEvent" >&2
         fi

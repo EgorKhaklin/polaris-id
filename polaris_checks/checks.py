@@ -8506,8 +8506,11 @@ _RESTORE_VERIFY_NEEDLES = (
     (".github/workflows/one-command.yml", "bash lab/strategy/006/restore.sh", "run the restore drill in CI"),
     ("lab/strategy/006/restore.sh", "archive_command = '/bin/false'", "prove an archive that is not current refused"),
     ("lab/strategy/006/restore.sh", "--compare-only", "prove a copy that differs is named"),
-    ("lab/strategy/006/restore.sh", "pgbackrest verify found the repository damaged",
-     "prove a damaged repository refused"),
+    ("lab/strategy/006/restore.sh", "missing from the archive or unreadable",
+     "prove WAL damaged after the newest backup refused at replay"),
+    ("lab/strategy/006/restore.sh", 'verify found the newest backup ($LABEL)',
+     "prove a damaged file of the newest backup refused at verify"),
+    ("scripts/polaris-restore-check.sh", 'verify --set="$label"', "verify the newest backup set before restoring it"),
 )
 
 
