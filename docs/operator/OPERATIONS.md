@@ -1065,8 +1065,9 @@ it keeps the `geo` columns, unindexed, until the contract step drops them with `
 For most deployments the cheaper move is vertical scaling first, horizontal
 second:
 
-- 2 vCPU to 4 vCPU, with the gunicorn workers raised to match: more app throughput, by an
-  amount not yet measured (gate row OP-24)
+- More vCPU for the app, with the gunicorn workers raised to match: more throughput while the
+  app tier is what binds (one replica at 1 vCPU served 1.96 times one at 0.5), and then the
+  database binds ([SCALING.md](../reference/SCALING.md#sizing-a-deployment))
 - 4 GB to 16 GB: enables larger `shared_buffers` for Postgres
 - SSD to NVMe: cuts atlas p99 at large cardinality
 

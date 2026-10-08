@@ -97,8 +97,10 @@ because database round trips dominate it. Without the connection pool, one 8-cor
 the application and PostgreSQL together served about 165 online verifications a second at
 saturation ([lab/evaluation](../../lab/evaluation/README.md)), below the 381 a second of the
 ten-times peak above. The pool removes most of that cost (a database write path went from about
-300 a second to at least 800, [PERFORMANCE-BASELINE.md](PERFORMANCE-BASELINE.md)), but the pooled
-verification route has not been measured (gate row OP-24): size from your own measurement.
+300 a second to at least 800, [PERFORMANCE-BASELINE.md](PERFORMANCE-BASELINE.md)). Through the
+production path with the pool, one online verification costs about 18 ms of CPU across the stack on
+the CI runner measured, so that peak needs about 7 vCPU of serving capacity before headroom
+([SCALING.md](SCALING.md#sizing-a-deployment)): small beside what availability and retention cost.
 
 ## The honest caveat on all of it
 

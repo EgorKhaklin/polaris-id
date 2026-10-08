@@ -68,8 +68,9 @@ about 18 ms at p50, under 1% of it in ML-DSA-65, and throughput stopped growing 
 the worker count (about 156 a second at 4 workers, 165 at 8), with the host
 saturated by opening database connections. The connection pool removes most of
 that cost: a database write path went from about 300 a second to at least 800
-([PERFORMANCE-BASELINE.md](../reference/PERFORMANCE-BASELINE.md)). The verification
-route itself has not been measured with the pool.
+([PERFORMANCE-BASELINE.md](../reference/PERFORMANCE-BASELINE.md)). Through the production
+path with the pool, a 4-vCPU host served 170 to 195 online verifications a second, about 18 ms of
+CPU each across the stack, 8 of them PostgreSQL's ([SCALING.md](../reference/SCALING.md#sizing-a-deployment)).
 
 ## The verify endpoint
 

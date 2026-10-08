@@ -93,12 +93,37 @@ per-address limit, the app's write cap and the relying party's limit are lifted 
 measures serving capacity, not the limits.
 
 <!-- throughput:begin -->
-Not yet measured: the first run of the workflow fills this block.
+**Measured 1.0.0-rc.70 @ 56c242d1, 2026-10-08T12:36Z (3 runs of 60 s per configuration, the median shown).** AMD EPYC 7763 64-Core Processor, 4 vCPU, 16 GB, Linux 6.17.0-1022-azure. Route: `POST /api/v1/verify` through the TLS edge, the app (pool of 1 per worker), pgbouncer and PostgreSQL 16.15, every answer read; generator wrk -t2 -c32, on the same host.
+
+| Configuration | Verifications/s | Runs | p50 ms | p95 ms | p99 ms | CPU: app, edge, pgbouncer, PostgreSQL, Redis |
+|---|---:|---|---:|---:|---:|---|
+| A: 1 replica at 0.5 vCPU | 88 | 88, 87, 88 | 371.2 | 419.8 | 480.7 | 51%, 13%, 21%, 72%, 4% |
+| B: 2 replicas at 0.5 vCPU each | 170 | 169, 170, 172 | 184.6 | 281.2 | 315.7 | 103%, 26%, 41%, 145%, 6% |
+| C: 1 replica at 1 vCPU | 173 | 169, 173, 178 | 182.9 | 206.5 | 224.1 | 96%, 26%, 42%, 138%, 5% |
+| D: 2 replicas at 1 vCPU each | 195 | 193, 195, 197 | 163.8 | 283.6 | 302.0 | 113%, 28%, 45%, 164%, 5% |
+
+CPU one verification cost, in milliseconds, at each configuration's median run:
+
+| Configuration | App | Edge | pgbouncer | PostgreSQL | Redis | All |
+|---|---:|---:|---:|---:|---:|---:|
+| A | 5.8 | 1.5 | 2.4 | 8.1 | 0.4 | 18.3 |
+| B | 6.1 | 1.5 | 2.4 | 8.6 | 0.3 | 18.9 |
+| C | 5.6 | 1.5 | 2.4 | 8.0 | 0.3 | 17.7 |
+| D | 5.8 | 1.4 | 2.3 | 8.4 | 0.3 | 18.3 |
+
+Two replicas at 0.5 vCPU served 1.93 times one replica's verifications.
+One replica at 1 vCPU served 1.96 times one at 0.5 vCPU.
+Two replicas at 1 vCPU served 1.13 times one.
+CPU is the mean over each measured run as `docker stats` reports it, where 100% is one vCPU; "app" sums the app replicas. The generator's own CPU, on the same host, is not counted.
 <!-- throughput:end -->
 
-The configurations run on one host, so two replicas share the edge, the pooler, the database and
-the generator's machine. Their ratio to one replica says how the app tier scales across replicas
-on one host; across hosts is not measured.
+The configurations run on one host, so the replicas share the edge, the pooler, the database and
+the generator's machine. While the app tier binds (A and B), a second replica adds what the first
+serves; once the rest of the host binds (D), PostgreSQL first, it adds little. Across hosts is not
+measured. Hardware moves every figure: an earlier run of the same harness on an AMD EPYC 9V74 runner
+served 251 a second with one replica at 1 vCPU, about 12 ms of CPU per verification, against 173
+and 18 ms above. [`SCALING.md`](SCALING.md#sizing-a-deployment) turns the CPU per verification
+into a sizing guide; size from a run on your own hardware.
 
 ## Floors, and the CI re-run
 

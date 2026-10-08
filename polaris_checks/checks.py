@@ -8365,6 +8365,59 @@ def check_performance_baseline(root: pathlib.Path) -> list[Finding]:
                "JSON as an artifact; the F-03 rate-limit defaults stay 10/60/60 behind the benchmark override")
 
 
+# Lab record 017 (gate rows OP-24 and OP-25): throughput is measured through the production path, per
+# app vCPU and across replicas, and published with its stamp. The one earlier online measurement ran
+# gunicorn and PostgreSQL alone, before the connection pool; nothing had read every answer under load,
+# held the app tier to a CPU share, or measured more than one replica. The measurement lifts the
+# edge's per-address limit in its own copy of the edge's file, never in the shipped ones.
+_THROUGHPUT_NEEDLES = (
+    ("scripts/polaris-throughput-measure.sh", "/api/v1/verify", "drive the relying-party route"),
+    ("scripts/polaris-throughput-measure.sh", "body:find('\"decision\": *\"accept\"')",
+     "read every answer for the accept"),
+    ("scripts/polaris-throughput-measure.sh", 'm["accepted"] != m["requests"]',
+     "fail a run with any answer but an accept"),
+    ("scripts/polaris-throughput-measure.sh", "the credential was not accepted before the measurement",
+     "verify once before any load"),
+    ("scripts/polaris-throughput-measure.sh", 'polaris-key-event.sh" register',
+     "register the issuer key before issuing, as a key ceremony ends"),
+    ("scripts/polaris-throughput-measure.sh", "docker stats --no-stream", "sample every tier's CPU"),
+    ("scripts/polaris-throughput-measure.sh", 'grep -q "rate_limit {" "${WORK}/Caddyfile" && fail',
+     "lift the edge's per-address limit only in its own copy, and prove it gone there"),
+    ("scripts/polaris-throughput-measure.sh", "container_name: !reset null",
+     "leave a stack already on the machine alone"),
+    (".github/workflows/throughput.yml", "bash scripts/polaris-throughput-measure.sh", "run the measurement"),
+    (".github/workflows/throughput.yml", "schedule:", "re-measure on a schedule"),
+    (".github/workflows/throughput.yml", "POLARIS_MEASURE_COMMIT", "stamp the branch's commit, not CI's merge"),
+)
+
+
+def check_throughput_measured(root: pathlib.Path) -> list[Finding]:
+    name = "throughput_measured"
+    for rel, needle, what in _THROUGHPUT_NEEDLES:
+        if needle not in _read(root, rel):
+            return _fail(name, f"{rel} no longer does this: {what}")
+    for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"):
+        if "rate_limit {" not in _read(root, rel):
+            return _fail(name, f"{rel} lost its per-address limit; only the measurement's own copy may")
+    doc = _read(root, "docs/reference/PERFORMANCE-BASELINE.md")
+    if "<!-- throughput:begin -->" not in doc or "<!-- throughput:end -->" not in doc:
+        return _fail(name, "PERFORMANCE-BASELINE.md lost the throughput block's markers (the script writes it)")
+    block = doc.split("<!-- throughput:begin -->", 1)[1].split("<!-- throughput:end -->", 1)[0]
+    if not re.search(r"\*\*Measured \d+\.\d+\.\d+(?:-[a-z]+\.\d+)? @ [0-9a-f]{7,}, "
+                     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z", block):
+        return _fail(name, "the throughput block carries no stamp (version, commit, date): numbers carry stamps")
+    for key in ("A", "B", "C", "D"):
+        if not re.search(r"(?m)^\| %s: " % key, block):
+            return _fail(name, f"the throughput block lacks configuration {key}'s row")
+    if not re.search(r"across hosts is not\s+measured", doc, re.I):
+        return _fail(name, "PERFORMANCE-BASELINE.md must say the replicas share one host and across hosts is not "
+                     "measured")
+    return _ok(name, "online verifications a second are measured through the production path, every answer "
+               "read, with the app tier held to a CPU share at one and two replicas and every tier's CPU per "
+               "verification, weekly in CI; the edge's limit is lifted only in the measurement's copy; the "
+               "published block carries its stamp and says the replicas share one host")
+
+
 # ---------------------------------------------------------------------------
 # Roadmap P1.10 (v9.192) — DR to targets, on a schedule. Pins: the RPO bound
 # (archive_timeout set when archiving is enabled), the drill that kills a
@@ -26128,6 +26181,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_schema_reload_idempotent,
     check_abuse_controls,
     check_performance_baseline,
+    check_throughput_measured,
     check_dr_drill_scheduled,
     check_pitr_drilled,
     check_restore_reconciled,
