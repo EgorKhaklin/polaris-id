@@ -69,7 +69,9 @@ its `archive_command` executes on the database host. A managed service (RDS,
 Cloud SQL, Azure Flexible Server) does not run this image, so its recovery
 point and point-in-time restore are the provider's, and the drill above does
 not measure them. The procedures in section 4 that call `pgbackrest` are
-replaced by the provider's restore console in that deployment.
+replaced by the provider's restore console in that deployment. Such a database
+is initialised by [`scripts/polaris-db-init.sh`](../../scripts/polaris-db-init.sh)
+([ENCRYPTION-AT-REST.md, Option B](ENCRYPTION-AT-REST.md#option-b-managed-postgres-with-storage-layer-encryption)).
 
 **Standby survives the primary.** Streaming replication keeps a standby within
 seconds of the primary and meets the 300 s target more tightly than the

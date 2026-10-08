@@ -1997,11 +1997,14 @@ def test_prod_app_password_synced_check_discriminates(tmp_path):
     web = tmp_path / "polaris_web"
     web.mkdir()
 
+    GATE = '[ ${#POLARIS_APP_PASSWORD} -lt 16 ] && { echo "must be at least 16 characters"; exit 2; }\n'
+    LOAD = 'psql -f "$SQL_DIR/00_load_all.sql"\n'
+    ROTATE = ('verifier=$(printf "%s" "$POLARIS_APP_PASSWORD" | python3 -c "print(\'SCRAM-SHA-256$4096:...\')")\n'
+              'printf "ALTER ROLE polaris_app WITH PASSWORD \'%s\';" "$verifier" | psql\n')
     GOOD_INIT = (
         'if [ -n "$POLARIS_APP_PASSWORD_FILE" ]; then\n'
         '  POLARIS_APP_PASSWORD="$(cat "$POLARIS_APP_PASSWORD_FILE")"\n'
-        'fi\n'
-        'psql -c "ALTER ROLE polaris_app WITH PASSWORD \'$POLARIS_APP_PASSWORD\'"\n')
+        'fi\n' + GATE + LOAD + ROTATE)
 
     def write(compose, init=GOOD_INIT):
         (web / "docker-compose.prod.yml").write_text(compose)
@@ -2032,9 +2035,71 @@ def test_prod_app_password_synced_check_discriminates(tmp_path):
         "must FAIL when docker-init.sh does not ALTER ROLE polaris_app"
 
     # 5. all wired and matching -> OK.
+    # 5. the password itself in the ALTER ROLE statement (psql's command line, any statement log),
+    #    no verifier at all, or the password judged only after the schema loaded -> FAIL.
+    plaintext = GOOD_INIT.replace(ROTATE, 'psql -c "ALTER ROLE polaris_app WITH PASSWORD \'$POLARIS_APP_PASSWORD\'"\n'
+                                  '# SCRAM-SHA-256$ mentioned only here\n')
+    braced = GOOD_INIT.replace(ROTATE, ROTATE + 'psql -c "ALTER ROLE polaris_app PASSWORD \'${POLARIS_APP_PASSWORD}\'"\n')
+    no_verifier = GOOD_INIT.replace(ROTATE, 'printf "ALTER ROLE polaris_app WITH PASSWORD \'%s\';" "$hashed" | psql\n')
+    judged_late = GOOD_INIT.replace(GATE + LOAD, LOAD + GATE)
+    for init in (plaintext, braced, no_verifier, judged_late):
+        write(app_line + role_line, init=init)
+        assert checks.check_prod_app_password_synced(tmp_path)[0].level == "FAIL", \
+            "must FAIL when the password reaches a statement or is judged after the load:\n" + init
+
+    # 6. all wired and matching -> OK.
     write(app_line + role_line)
     assert checks.check_prod_app_password_synced(tmp_path)[0].level == "OK", \
         "must PASS when the role password is synced to the app's secret and rotated at init"
+
+
+def test_external_postgres_check_discriminates(tmp_path):
+    for d in ("scripts", "polaris_web", ".github/workflows", "docs/operator"):
+        (tmp_path / d).mkdir(parents=True)
+    settings = ("polaris.min_epoch_anonymity_set", "polaris.default_max_revoke_percent",
+                "polaris.default_window_days")
+    SCRIPT = ("".join("has_parameter_privilege('%s', 'SET')\n" % s for s in settings)
+              + "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'\n"
+              + 'POLARIS_INIT_MANAGED_BY=external POLARIS_ENV=production bash polaris_web/docker-init.sh\n')
+    INIT = ('SQL_DIR="${POLARIS_SQL_DIR:-/docker-entrypoint-initdb.d/sql}"\n'
+            'if [ "$MANAGED" = "patroni" ]; then\n    echo "skip"\n'
+            'elif [ "$MANAGED" = "external" ]; then\n    echo "the provider\'s"\nfi\n'
+            'if [ -z "$MANAGED" ] && [ -n "$REPL_PWFILE" ]; then :; fi\n'
+            'if [ -z "$MANAGED" ] && [ "${POLARIS_PGBACKREST_ENABLED:-1}" = "1" ]; then :; fi\n')
+    CI = ("jobs:\n  managed-postgres:\n    steps:\n"
+          "      - run: bash scripts/polaris-db-init.sh\n"
+          "      - run: psql -c 'GRANT SET ON PARAMETER x TO o' && bash scripts/polaris-db-init.sh\n"
+          "  other:\n    steps: []\n")
+    DOC = "initialise it with scripts/polaris-db-init.sh after GRANT SET ON PARAMETER ...\n"
+
+    def write(script=SCRIPT, init=INIT, ci=CI, doc=DOC):
+        (tmp_path / "scripts" / "polaris-db-init.sh").write_text(script)
+        (tmp_path / "polaris_web" / "docker-init.sh").write_text(init)
+        (tmp_path / ".github" / "workflows" / "ci.yml").write_text(ci)
+        (tmp_path / "docs" / "operator" / "ENCRYPTION-AT-REST.md").write_text(doc)
+
+    write()
+    assert checks.check_external_postgres_initialised(tmp_path)[0].level == "OK", \
+        "must PASS on the wired path"
+    broken = [
+        dict(script=SCRIPT.replace("has_parameter_privilege('polaris.default_window_days', 'SET')\n", "")),
+        dict(script=SCRIPT.replace("pg_tables WHERE schemaname = 'public'", "pg_tables")),
+        dict(script=SCRIPT.replace("POLARIS_INIT_MANAGED_BY=external", "POLARIS_INIT_MANAGED_BY=patroni")),
+        dict(script=SCRIPT.replace("POLARIS_ENV=production ", "")),
+        dict(init=INIT.replace('elif [ "$MANAGED" = "external" ]; then\n    echo "the provider\'s"\n', "")),
+        dict(init=INIT.replace("POLARIS_SQL_DIR", "SQL_PATH")),
+        dict(init=INIT.replace('if [ -z "$MANAGED" ] && [ -n "$REPL_PWFILE" ]', 'if [ -n "$REPL_PWFILE" ]')),
+        dict(init=INIT.replace('if [ -z "$MANAGED" ] && [ "${POLARIS_PGBACKREST_ENABLED',
+                               'if [ "$MANAGED" != "patroni" ] && [ "${POLARIS_PGBACKREST_ENABLED')),
+        dict(ci=CI.replace("      - run: bash scripts/polaris-db-init.sh\n", "")),
+        dict(ci=CI.replace("GRANT SET ON PARAMETER", "GRANT ALL")),
+        dict(ci=CI.replace("managed-postgres", "something-else")),
+        dict(doc="load polaris_sql/ by hand\n"),
+    ]
+    for case in broken:
+        write(**case)
+        assert checks.check_external_postgres_initialised(tmp_path)[0].level == "FAIL", \
+            "must FAIL when the external path loses a part: %r" % (case,)
 
 
 def test_coercion_evidence_retained_check_discriminates(tmp_path):

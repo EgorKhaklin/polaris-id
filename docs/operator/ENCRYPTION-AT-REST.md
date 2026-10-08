@@ -237,7 +237,17 @@ unused `profiles:` entry keeps it from starting) and resets the `depends_on`
 entries that reference it, points pgbouncer at the provider host and port
 (`POLARIS_DB_HOST`, `POLARIS_DB_PORT`), mounts the provider's CA bundle in
 place of `secrets/postgres_server.crt` at the path
-`PGBOUNCER_SERVER_TLS_CA_FILE` names, and loads `polaris_sql/` by hand.
+`PGBOUNCER_SERVER_TLS_CA_FILE` names, and initialises the database with
+[`scripts/polaris-db-init.sh`](../../scripts/polaris-db-init.sh): the schema, the migrations,
+the application role's password and the production hardening `docker-init.sh` applies, run
+against the provider's server as the database's owner, which need not be a superuser. The
+owner needs CREATEROLE (it creates `polaris_app`) and, on PostgreSQL 15 and later, SET on the
+three `polaris.*` settings the schema keeps on the database, which a superuser grants once:
+`GRANT SET ON PARAMETER polaris.min_epoch_anonymity_set, polaris.default_max_revoke_percent,
+polaris.default_window_days TO <owner>;`. The script refuses, before writing anything, when one
+is missing. CI runs it against PostgreSQL 16 with an owner that is not a superuser; no
+provider's service has been tested, and whether a provider's administrator may grant parameter
+privileges is the provider's to say.
 pgBackRest and the procedures in DR.md section 4 do not apply to that
 deployment. Recovery point and point-in-time restore then belong to the
 provider, not to the shipped pgBackRest path

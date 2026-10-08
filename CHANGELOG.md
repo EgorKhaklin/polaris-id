@@ -16,6 +16,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - ZK proofs are built with Plonky2's zero-knowledge configuration; earlier binaries built sound but non-hiding proofs, which no longer verify.
 - A production database kept the notional sample's anonymity floor of one and closed epochs of two members; it now restores twenty.
 - The access log records method, path and protocol, no longer the query string or the referrer (lab record 017).
+- The application role's password reached the database as plain text on psql's command line at first start; the server now receives a SCRAM verifier.
 - A restore to an earlier point no longer revives what was withdrawn after it, nor reissues identifiers already issued (lab record 017).
 - The rate limiter's Redis authenticates: an ACL user per role, the default user off, the password from a file; production refuses Redis without one (lab record 017).
 - Behind a load balancer or NAT the edge served /metrics and /api/metrics, which carry the duress counter, to every client; unset, it now serves them to no one.
@@ -39,6 +40,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The production compose file passes `POLARIS_TRUSTED_PROXIES` and `POLARIS_METRICS_ALLOW` to the edge; both were documented and never arrived.
 - A host install archives WAL by default, as a Compose stack does; its env template turned archiving off.
 - `polaris-migrate.sh` read a schema registry it could not read as nothing applied and planned every migration; it now stops.
+- A managed PostgreSQL, whose owner is not a superuser, could not load the schema as ENCRYPTION-AT-REST.md said; `scripts/polaris-db-init.sh` initialises one after a single grant.
+- A weak application-role password stopped the database's first start after the schema had loaded; it now stops before anything is written.
 - The observability overlay's Prometheus scraped the app through the public edge, which refuses `/metrics` by default; it now finds the app on the stack's network by name, blue-green included.
 - DR.md's point-in-time restore brought the app back without the revocations, key events and other withdrawals made after the target; it now re-applies them first.
 - A duress record still being written when a worker stopped was abandoned with its daemon thread; the worker now waits for it (a killed worker can still lose one in flight). Kubernetes pods pause before draining.
