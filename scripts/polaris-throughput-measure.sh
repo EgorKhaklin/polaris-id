@@ -193,6 +193,13 @@ prepare() {  # an operator, one credential, a relying party allowed to ask witho
         --reason "an operator for the throughput measurement (scripts/polaris-throughput-measure.sh)" \
         --password-file "${WORK}/operator-password" --target=docker-stack > "${WORK}/operator.log" 2>&1 \
         || { cat "${WORK}/operator.log" >&2; fail "creating the operator"; }
+    # Under real signing every possession route accepts a signature only under a key its authority had
+    # registered when it signed (KEY-CEREMONY.md): register the key minted on this host first, as a
+    # ceremony ends, or every verification answers "not a verifiable presentation".
+    local pk
+    pk=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["public_key_hex"])' "${WEB}/secrets/polaris_signing_key")
+    bash "${ROOT}/scripts/polaris-key-event.sh" register 1 "${pk}" --note "the key minted on this host, for the throughput measurement" \
+        > "${WORK}/key.log" 2>&1 || { cat "${WORK}/key.log" >&2; fail "registering the issuer key"; }
     python3 "${ROOT}/lab/strategy/006/issue_and_pack.py" "${WORK}" "${WEB}/secrets" measure-operator > /dev/null \
         || fail "issuing the credential"
     CLIENT_ID="rp_$(python3 -c 'import secrets; print(secrets.token_hex(12))')"
