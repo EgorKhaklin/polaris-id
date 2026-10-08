@@ -214,6 +214,12 @@ import json, sys
 p = json.load(open(sys.argv[1]))
 print(json.dumps({"token_value": p["token_value"], "signature_hex": p["signature_hex"]}), end="")
 EOF
+    # One verification before any load: it must be accepted, or nothing after it means anything.
+    local answer
+    answer=$(curl -s --cacert "${WORK}/caddy-root.crt" -H "Authorization: Bearer $(bearer)" \
+                 -H "Content-Type: application/json" --data-binary @"${WORK}/body.json" "${BASE}/api/v1/verify")
+    python3 -c 'import json, sys; v = json.loads(sys.argv[1]); sys.exit(0 if v.get("decision") == "accept" and v.get("usable") is True else 1)' \
+        "${answer}" 2> /dev/null || fail "the credential was not accepted before the measurement: ${answer}"
 }
 
 bearer() {
@@ -231,10 +237,15 @@ wrk.headers["Content-Type"] = "application/json"
 wrk.headers["Authorization"] = "Bearer " .. os.getenv("MEASURE_BEARER")
 local threads = {}
 function setup(thread) table.insert(threads, thread) end
-function init(args) statuses = {}; accepted = 0; other = 0 end
+function init(args) statuses = {}; accepted = 0; other = 0; first_other = nil end
 function response(status, headers, body)
   statuses[status] = (statuses[status] or 0) + 1
-  if status == 200 and body:find('"decision": *"accept"') then accepted = accepted + 1 else other = other + 1 end
+  if status == 200 and body:find('"decision": *"accept"') then
+    accepted = accepted + 1
+  else
+    other = other + 1
+    if first_other == nil then first_other = status .. " " .. string.sub(body or "", 1, 300) end
+  end
 end
 function done(summary, latency, requests)
   local agg, acc, oth = {}, 0, 0
@@ -244,6 +255,10 @@ function done(summary, latency, requests)
   end
   local parts = {}
   for k, v in pairs(agg) do table.insert(parts, string.format('"%d": %d', k, v)) end
+  for _, t in ipairs(threads) do
+    local fo = t:get("first_other")
+    if fo then io.write("MEASURE-OTHER " .. fo .. "\n"); break end
+  end
   local e = summary.errors
   io.write(string.format('MEASURE {"requests": %d, "duration_us": %d, "accepted": %d, "other": %d, ' ..
     '"errors": {"connect": %d, "read": %d, "write": %d, "status": %d, "timeout": %d}, ' ..
@@ -289,6 +304,9 @@ for name, xs in samples.items():
     t = tier.get(service[name], service[name])
     cpu[t] = cpu.get(t, 0.0) + sum(xs) / len(xs)
 m.update(config=cfg, run=int(run), rps=m["requests"] / (m["duration_us"] / 1e6), cpu=cpu)
+other = [l for l in open(wrk_out) if l.startswith("MEASURE-OTHER ")]
+if other:
+    m["first_other"] = other[-1][len("MEASURE-OTHER "):].strip()
 print(json.dumps(m))
 EOF
     python3 - "${WORK}/runs.jsonl" <<'EOF' || fail "a run answered something other than 200 and accept; see the counts above"
@@ -299,6 +317,8 @@ print(f"  {m['config']} run {m['run']}: {m['rps']:.0f}/s, p50 {m['p50_ms']:.1f} 
       f"p99 {m['p99_ms']:.1f} ms; statuses {m['statuses']}; accepted {m['accepted']} of {m['requests']}; "
       f"CPU {', '.join(f'{k} {v:.0f}%' for k, v in sorted(m['cpu'].items()))}")
 bad = m["other"] or e["status"] or e["timeout"] or e["connect"] or e["read"] or e["write"] or m["accepted"] != m["requests"]
+if bad and m.get("first_other"):
+    print("  the first answer that was not an accept: " + m["first_other"])
 sys.exit(1 if bad else 0)
 EOF
 }
