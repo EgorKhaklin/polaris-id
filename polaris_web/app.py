@@ -2579,17 +2579,19 @@ def _issuer_key_facts(token_id, agency_id, token_key, signed_at=None):
     a state machine and an audit trigger but no immutability guard, and a database session can
     UPDATE it freely (measured 2026-09-17). The instant used here is the ISSUED row in
     TokenLifecycleEvent, which is an audit of record under C1: the same UPDATE is refused by
-    `reject_audit_modification`. If there is no ISSUED row, there is no trustworthy instant
-    and the historical answer is None rather than a guess.
+    `reject_audit_modification`. Where there is no ISSUED row, the credential's earliest
+    signature dates it instead, below.
 
-    A PURGED ISSUED ROW is not a missing instant (2026-10-09). Retention purges TOKEN_LIFECYCLE
-    at five years and a credential is valid for ten, so the yearly purge took the ISSUED row of
-    every credential past five years, this answer went None, and the relying-party route, which
-    accepts only True, refused credentials still in force. Issuance writes its signature in the
-    same transaction as the ISSUED row, and no purge or update reaches TokenSignature (polaris_app
-    holds no INSERT, UPDATE or DELETE on it, and its trigger refuses a changed signed_at), so the
-    credential's earliest signed_at is that same instant. It stands in only when the ISSUED row
-    is gone; the location the event carried still goes with the purge.
+    NO ISSUED ROW is not a missing instant (2026-10-09). Two credentials have none: one whose
+    ISSUED row retention purged (TOKEN_LIFECYCLE goes at five years; a credential is valid for
+    ten), and one a recovery issued (uc9_complete_recovery writes its signature and no ISSUED
+    row). This answer was None for both, and the relying-party route, which accepts only True,
+    refused them while in force. A credential's first signature is written in the transaction
+    that made it, beside its ISSUED row where there is one; no purge or update reaches
+    TokenSignature (polaris_app holds no INSERT, UPDATE or DELETE on it, and its trigger refuses
+    a changed signed_at), and its default is the UTC clock whatever the session's timezone
+    (2026-10-09-001). So the earliest signed_at is the instant the credential was made. The
+    location the ISSUED event carried still goes with the purge.
 
     A SIGNATURE ADDED LATER is dated by its own making. A migration adds a signature under
     another key long after issuance, and dating that key against the issuance instant read a
@@ -2600,9 +2602,9 @@ def _issuer_key_facts(token_id, agency_id, token_key, signed_at=None):
     transaction, so for the issuance signature the two are the same instant. Which instant an
     inserter may write is the privilege boundary's question, not this function's.
 
-    Either fact is None when it cannot be established: no key history for this authority, no
-    real signing key on the credential (the development placeholder path), or no protected
-    issuance instant. None means unknown, never false.
+    Either fact is None when it cannot be established: no key history for this authority, or
+    no real signing key on the credential (the development placeholder path). None means
+    unknown, never false.
 
     WHAT IT DOES NOT SURVIVE. `AuthorityKeyEvent.effective_at` is operator-supplied
     (`polaris key-event --effective-at`), so an authority that can write its own key history

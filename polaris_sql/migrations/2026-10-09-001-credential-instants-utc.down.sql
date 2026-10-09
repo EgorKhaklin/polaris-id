@@ -1,0 +1,5 @@
+-- Reverts 2026-10-09-001: the four instants default to CURRENT_TIMESTAMP again, the session's timezone.
+ALTER TABLE TokenSignature ALTER COLUMN signed_at SET DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE TokenLifecycleEvent ALTER COLUMN event_timestamp SET DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE AuthorityKeyEvent ALTER COLUMN effective_at SET DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE AuthorityKeyEvent ALTER COLUMN recorded_at SET DEFAULT CURRENT_TIMESTAMP;
