@@ -183,5 +183,5 @@ if [ "$got" = "4242,9999" ]; then
     echo "== OFFSITE DRILL PASSED: backup + archived WAL recovered from S3 over verified TLS =="
     exit 0
 fi
-docker logs "$RES" 2>&1 | tail -20 >&2
+{ docker logs "$RES" 2>&1 || true; } | tail -20 >&2
 fail "offsite restore did not recover the backup + archived WAL from S3"

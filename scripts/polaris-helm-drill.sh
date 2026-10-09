@@ -123,12 +123,20 @@ helm install "$REL" "$ROOT/deploy/helm/polaris" -n "$NS" --set domain=localhost 
     --set secrets.existingSecret=polaris-secrets --set images.pullPolicy=Never \
     --wait --timeout 12m >/dev/null || {
         # Diagnose every workload, not one: the first local run showed only
-        # postgres's log while caddy crash-looped for a different reason.
-        kubectl -n "$NS" get pods -o wide
-        for pod in $(kubectl -n "$NS" get pods -o name); do
-            echo "== $pod: events =="; kubectl -n "$NS" describe "$pod" | sed -n '/^Events:/,$p' | tail -8
-            echo "== $pod: log (current) =="; kubectl -n "$NS" logs "$pod" --tail=20 2>&1 | tail -20
-            echo "== $pod: log (previous) =="; kubectl -n "$NS" logs "$pod" --previous --tail=20 2>&1 | tail -20
+        # postgres's log while caddy crash-looped for a different reason. Each
+        # command may fail (a pod with no previous container, a Pending pod with
+        # no log) and the loop must go on: under pipefail the first such failure
+        # once ended it at the first pod, before the Pending one (2026-10-09).
+        kubectl -n "$NS" get pods -o wide || true
+        # A Pending pod has no log, only the scheduler's reasons and the node's room.
+        echo "== events, newest last =="
+        { kubectl -n "$NS" get events --sort-by=.lastTimestamp 2>&1 || true; } | tail -30
+        echo "== nodes: allocated resources =="
+        { kubectl describe nodes 2>&1 || true; } | sed -n '/^Allocated resources:/,/^Events:/p'
+        for pod in $(kubectl -n "$NS" get pods -o name || true); do
+            echo "== $pod: events =="; { kubectl -n "$NS" describe "$pod" 2>&1 || true; } | sed -n '/^Events:/,$p' | tail -8
+            echo "== $pod: log (current) =="; { kubectl -n "$NS" logs "$pod" --tail=20 2>&1 || true; } | tail -20
+            echo "== $pod: log (previous) =="; { kubectl -n "$NS" logs "$pod" --previous --tail=20 2>&1 || true; } | tail -20
         done
         fail "helm install did not reach ready"
     }
@@ -233,7 +241,9 @@ cluster_healthy() { local l r; l=$(lease_holder); [[ -n "$l" ]] || return 1; r=$
 wait_for() { local limit="$1"; shift; local t0 i; t0=$(date +%s); for i in $(seq 1 "$limit"); do if "$@"; then echo $(( $(date +%s) - t0 )); return 0; fi; sleep 1; done; echo "$limit"; return 1; }
 now() { python3 -c "import time; print(time.time())"; }
 le() { python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) <= float(sys.argv[2]) else 1)" "$1" "$2"; }
-diagnose() { echo "--- diagnostics ---" >&2; kubectl -n "$NS" get pods -l application=polaris-db -L role >&2 || true; kubectl -n "$NS" get endpoints "${REL}-postgres" -o yaml 2>/dev/null | sed -n '/annotations/,/subsets/p' | head -12 >&2; for m in "${REL}-postgres-0" "${REL}-postgres-1"; do echo "[$m]" >&2; kubectl -n "$NS" logs "$m" --tail=25 2>&1 | sed 's/^/    /' >&2; done; }
+# Every command may fail (no Endpoints yet, a member with no log): under pipefail one that did ended the drill
+# here, before the fail that names what broke.
+diagnose() { echo "--- diagnostics ---" >&2; kubectl -n "$NS" get pods -l application=polaris-db -L role >&2 || true; { kubectl -n "$NS" get endpoints "${REL}-postgres" -o yaml 2>/dev/null || true; } | sed -n '/annotations/,/subsets/p' | head -12 >&2; for m in "${REL}-postgres-0" "${REL}-postgres-1"; do echo "[$m]" >&2; { kubectl -n "$NS" logs "$m" --tail=25 2>&1 || true; } | sed 's/^/    /' >&2; done; }
 L0=$(lease_holder); [[ -n "$L0" ]] || { diagnose; fail "no Patroni lease holder (annotation on the leader Endpoints)"; }
 R0=$(other_member "$L0")
 if kubectl -n "$NS" exec "$L0" -- wget -qO- http://127.0.0.1:8008/config 2>/dev/null \
