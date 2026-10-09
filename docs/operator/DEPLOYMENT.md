@@ -69,7 +69,18 @@ plus whatever overlays `POLARIS_COMPOSE_EXTRA` names. In order:
    `awskms` the sealed store is unsealed into `POLARIS_SECRETS_DIR` first; the
    deploy refuses a sealed backend without one.
 2. `git pull --ff-only` (skipped with `--no-pull` or outside a git checkout).
-3. The running app image id is recorded for rollback.
+3. One build or deploy of the host's images at a time, since every stack on a host
+   builds and runs the same tags: a second deploy, `install.sh`, `try.sh` or a drill
+   that builds them or recreates a service from them stops before it changes anything,
+   and says who holds the host; `polaris.service` refuses to start while one runs.
+   The lock is a Docker network, `polaris-host-lock`, which the daemon lets one
+   caller create, so anyone who can reach Docker shares it, with or without `sudo`
+   ([`scripts/polaris-host-lock.sh`](../../scripts/polaris-host-lock.sh)). One this
+   host left, from an earlier boot or a process that is gone, is taken over with its
+   holder named; one held from another host is removed by hand once that run is
+   gone: `docker network rm polaris-host-lock`. The running app's image, found through compose in
+   this project (a stopped app included), is pinned as
+   `polaris-app:rollback-<project>`.
 4. `docker compose pull` for the upstream images, then every Polaris image
    (app, edge, pooler, database, etcd) built by
    [`scripts/polaris-image-build.sh`](../../scripts/polaris-image-build.sh) `--stack prod`.
@@ -86,8 +97,13 @@ plus whatever overlays `POLARIS_COMPOSE_EXTRA` names. In order:
    waited on until its healthcheck passes, then `app`; without it, the single
    `app` is recreated.
 8. Smoke test from inside the network: `/api/health` must report `healthy`
-   (`degraded` is accepted). On failure the previous app image is re-tagged
-   and every app colour recreated from it; the script exits non-zero.
+   (`degraded` is accepted). On failure the previous app image, pinned as
+   `polaris-app:rollback-<project>` before step 4's build, is the app image again and
+   every app colour is recreated from it; the script says whether it came up healthy
+   and exits non-zero. The pin is a tag, kept until the next deploy re-pins it:
+   under Docker's containerd image store, the default on a clean install of Docker
+   Engine 29 and later, an image whose last tag has moved has no record left to
+   re-tag.
 
 `staging` runs the identical flow; point `POLARIS_DOMAIN` at the staging
 hostname yourself, the script does not derive it; `dev` delegates

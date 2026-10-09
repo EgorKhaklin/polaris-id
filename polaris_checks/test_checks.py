@@ -3268,7 +3268,12 @@ def test_infra_alerts_check_discriminates(tmp_path):
 
 
 def test_upgrade_drilled_check_discriminates(tmp_path):
-    files = ("scripts/polaris-deploy.sh", "scripts/polaris-upgrade-drill.sh", ".github/workflows/upgrade.yml")
+    files = ("scripts/polaris-deploy.sh", "scripts/polaris-upgrade-drill.sh", ".github/workflows/upgrade.yml",
+             "scripts/polaris-host-lock.sh", "lab/strategy/006/try.sh", "deploy/linux/install.sh",
+             "scripts/polaris-helm-upgrade-drill.sh", "scripts/polaris-region-evacuation-drill.sh",
+             "scripts/polaris-pilot.sh", "deploy/linux/polaris.service", "lab/strategy/006/doctor.sh",
+             "lab/strategy/006/rotate.sh", "scripts/polaris-rotate-secret.sh", "scripts/polaris-window-drill.sh",
+             "scripts/polaris-throughput-measure.sh")
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text((REPO / rel).read_text())
@@ -3300,6 +3305,110 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
            "must FAIL when CI does not run the drill")
     broken(".github/workflows/upgrade.yml", "fetch-depth: 0", "fetch-depth: 1",
            "must FAIL when CI checks out without the release tags")
+    # The rollback: pinned before the build, re-tagged from the pin, drilled on the containerd store.
+    dep = "scripts/polaris-deploy.sh"
+    broken(dep, 'docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"', 'echo "${PREV_IMAGE_ID}"',
+           "must FAIL when the deploy no longer pins the running image")
+    # 2026-10-09 review of #317: each of these passed the check before.
+    broken(dep, '    if TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"',
+           '    if false && TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"',
+           "must FAIL when the pin is never run")
+    broken(dep, 'ROLLBACK_TAG="polaris-app:rollback-${PROJECT}"', 'ROLLBACK_TAG="polaris-app:rollback"',
+           "must FAIL when the pin is one tag for the whole host")
+    lk = "scripts/polaris-host-lock.sh"
+    broken(lk, "        if id=$(docker network create --internal", "        if id=$(true --internal",
+           "must FAIL when the lock is not held in the Docker daemon")
+    broken(lk, "    trap _polaris_host_unlock EXIT", "    :", "must FAIL when the lock outlives the run that took it")
+    broken(lk, '    export POLARIS_HOST_LOCK_TOKEN="${token}"', '    POLARIS_HOST_LOCK_TOKEN="${token}"',
+           "must FAIL when what the holder runs cannot go on under its lock")
+    # Review 4 of #317, each passed before.
+    broken(lk, 'docker network rm "${POLARIS_HOST_LOCK_ID}" >/dev/null 2>&1 || true; fi\n    exit "${rc}"',
+           'docker network rm "${POLARIS_HOST_LOCK}" >/dev/null 2>&1 || true; fi\n    exit "${rc}"',
+           "must FAIL when the release removes by name, another run's lock included")
+    broken(lk, '            if [[ "$(_polaris_lock_ids | grep -c .)" -ne 1 ]]; then', "            if false; then",
+           "must FAIL when two creates of the name on an older engine both hold the lock")
+    broken(lk, '(exit "${rc}") || eval "${_POLARIS_PREV_EXIT_TRAP}"; else :; eval "${_POLARIS_PREV_EXIT_TRAP}"; fi',
+           ':; fi', "must FAIL when the caller's own EXIT trap no longer runs")
+    broken(lk, '    [[ "$(_polaris_lock_label boot "${net}")" != "$(_polaris_boot_id)" ]] && return 0', "    :",
+           "must FAIL when a lock left by an earlier boot blocks every build")
+    broken("scripts/polaris-pilot.sh", 'polaris_host_lock "the pilot"', ": no lock",
+           "must FAIL when the pilot brings the production stack up without the lock")
+    broken(dep, 'polaris_host_lock "this deploy"', '# polaris_host_lock "this deploy"',
+           "must FAIL when the lock is only a comment")
+    # Review 5 of #317.
+    broken(dep, 'source "${SCRIPT_DIR}/polaris-host-lock.sh"\n', '\n',
+           "must FAIL when the call has no helper sourced before it")
+    broken("deploy/linux/polaris.service", "polaris_host_lock polaris.service", "true",
+           "must FAIL when polaris.service starts while a deploy holds the host")
+    broken("deploy/linux/install.sh", "then polaris_host_release; fi", "then :; fi",
+           "must FAIL when install.sh starts the unit while holding the lock the unit takes")
+    for rel in ("lab/strategy/006/doctor.sh", "lab/strategy/006/rotate.sh", "scripts/polaris-rotate-secret.sh",
+                "scripts/polaris-window-drill.sh", "scripts/polaris-throughput-measure.sh"):
+        broken(rel, "polaris_host_lock ", ": ", "must FAIL when %s recreates from the shared tags unlocked" % rel)
+    broken(dep, 'polaris_host_lock "this deploy"\n', 'polaris_host_lock "this deploy"\ntrap "echo bye" EXIT\n',
+           "must FAIL when an EXIT trap set after the lock drops its release")
+    broken(dep, 'polaris_host_lock "this deploy"', ': "this deploy"', "must FAIL when the deploy takes no lock")
+    for rel, call in (("lab/strategy/006/try.sh", 'polaris_host_lock "try.sh"'),
+                      ("deploy/linux/install.sh", 'polaris_host_lock "install.sh"'),
+                      ("scripts/polaris-upgrade-drill.sh", 'polaris_host_lock "the upgrade drill"'),
+                      ("scripts/polaris-helm-upgrade-drill.sh", 'polaris_host_lock "the Helm upgrade drill"'),
+                      ("scripts/polaris-region-evacuation-drill.sh", 'polaris_host_lock "the region evacuation drill"')):
+        broken(rel, call, ": no lock", "must FAIL when %s builds the host's images without the lock" % rel)
+    # A new script that builds the tags is found without being named: one written beside them.
+    new = tmp_path / "scripts" / "polaris-new-builder.sh"
+    new.write_text('#!/bin/bash\nbash "${ROOT}/scripts/polaris-image-build.sh" --stack prod\n')
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a script nobody named builds the host's images without the lock"
+    new.write_text('#!/bin/bash\nsource "${ROOT}/scripts/polaris-host-lock.sh"\npolaris_host_lock "new"\n'
+                   'bash "${ROOT}/scripts/polaris-image-build.sh" --stack prod\n')
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "OK", "a new builder that takes the lock passes"
+    # A compose wrapper over several lines on the production file, bringing the stack up (review 4: pilot).
+    new.write_text('#!/bin/bash\ncompose() {\n    ( cd x && docker compose \\\n        -f docker-compose.prod.yml "$@" )\n}\n'
+                   'compose up -d\n')
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a multi-line production wrapper brings the stack up without the lock"
+    # Review 5: --no-deps still builds a missing image and recreates from the shared tag; VAR=x before compose
+    # and `sh ... --stack=prod` are the same thing.
+    for body in ('compose() {\n    ( cd x && docker compose \\\n        -f docker-compose.prod.yml "$@" )\n}\n'
+                 'compose up -d --no-deps --force-recreate caddy\n',
+                 'compose() { (cd x && docker compose -f docker-compose.prod.yml "$@"); }\nWEB_CONCURRENCY=4 compose up -d\n',
+                 'sh "${ROOT}/scripts/polaris-image-build.sh" --stack=prod\n',
+                 'docker compose -f ../polaris_web/docker-compose.prod.yml up -d\n'):
+        new.write_text("#!/bin/bash\n" + body)
+        assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+            "must FAIL when a script nobody named recreates from the shared tags unlocked: %r" % body
+    new.unlink()
+    broken(dep, 'wait_healthy "${svc}" || ROLLED=0; done', 'wait_healthy "${svc}" || true; done',
+           "must FAIL when a rollback is reported whether or not the restored app came up")
+    broken(dep, '        if [[ "${ROLLED}" -eq 1 ]]; then', '        ROLLED=1\n        if [[ "${ROLLED}" -eq 1 ]]; then',
+           "must FAIL when ROLLED is set again before it is read")
+    broken(dep, "PREV_APP=$(compose ps -a -q app", "PREV_APP=$(compose ps -q app",
+           "must FAIL when a stopped app is read as a first deploy")
+    broken(dep, 'docker tag "${ROLLBACK_IMAGE}" polaris-app:prod', 'docker tag "${PREV_IMAGE_ID}" polaris-app:prod',
+           "must FAIL when the rollback re-tags the bare image ID again")
+    broken(dep, "PREV_APP=$(compose ps -a -q app 2>/dev/null | head -n1 || true)", "PREV_APP=polaris-app",
+           "must FAIL when the deploy finds the running app by a fixed container name")
+    broken(dep, """docker inspect --format='{{.Image}}' "${PREV_APP}\"""", "docker inspect --format='{{.Image}}' polaris-app",
+           "must FAIL when the image is read from the container named polaris-app")
+    broken(dep, """docker inspect --format='{{.Image}}' "${PREV_APP}\"""", 'docker inspect -f "{{.Image}}" polaris-app',
+           "must FAIL when the image is read from the container named polaris-app, whatever the flags")
+    path = tmp_path / dep
+    good = path.read_text()
+    pin = '    if TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}" 2>&1); then\n'
+    build = 'bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod\n'
+    assert pin in good and build in good, "the fixture drifted"
+    path.write_text(good.replace(pin, "    if true; then\n").replace(build, build + pin.replace("    if", "if") + "fi\n"))
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the image is pinned only after the build has moved the tag"
+    path.write_text(good)
+    broken(drill, 'raise SystemExit("the upgrade drill: a release that does not start")', "true",
+           "must FAIL when the drill never deploys a release that cannot start")
+    broken(drill, 'grep -q "Rolled back"', 'grep -q "Deploy complete"',
+           "must FAIL when the drill does not require the rollback")
+    broken(drill, '[[ "${after}" == "${before}" ]]', "true",
+           "must FAIL when the drill does not require the app back on the image it replaced")
+    broken(".github/workflows/upgrade.yml", '["containerd-snapshotter"] = True', '["containerd-snapshotter"] = False',
+           "must FAIL when CI drills on the classic image store, where the bare ID still resolves")
 
 
 def test_client_ip_behind_proxies_check_discriminates(tmp_path):
@@ -4522,6 +4631,19 @@ def test_read_only_roots_check_discriminates(tmp_path):
            "must FAIL when the setting is commented out")
     broken(t + "_helpers.tpl", "readOnlyRootFilesystem: true", "readOnlyRootFilesystem: false",
            "must FAIL when the chart's read-only helper allows writes")
+    # 2026-10-09 review of #315: a container written in the list-item form `- image:` was not counted.
+    broken(t + "caddy.yaml", "      containers:\n",
+           "      containers:\n        - image: busybox\n          name: sneaky\n          securityContext: {}\n",
+           "must FAIL when a container written as `- image:` has no read-only root")
+    # Round 2: the flow form, extra spaces after the dash, and an include left in a template comment.
+    broken(t + "caddy.yaml", "      containers:\n", "      containers:\n        - {name: sneaky, image: busybox}\n",
+           "must FAIL when a container written in flow form has no read-only root")
+    broken(t + "caddy.yaml", "      containers:\n", "      containers:\n        -   image: busybox\n          name: sneaky\n",
+           "must FAIL when a container written as `-   image:` has no read-only root")
+    broken(t + "caddy.yaml", "      containers:\n",
+           "      containers:\n        - name: sneaky\n          image: busybox\n          securityContext:\n"
+           "            {{/* include \"polaris.containerSecurityReadOnly\" . */}}\n",
+           "must FAIL when a container's read-only include is only a template comment")
     for svc in ("app", "caddy", "pgbouncer", "redis"):
         broken(t + svc + ".yaml", '"polaris.containerSecurityReadOnly"', '"polaris.containerSecurity"',
                f"must FAIL when the chart's {svc} container is writable")
@@ -22076,3 +22198,108 @@ def test_product_suite_parts_share_setup_check_discriminates(tmp_path):
     (gh / "ci.yml").write_text("on: push\njobs:\n" + mono)
     assert checks.check_product_suite_parts_share_setup(tmp_path)[0].level == "OK", \
         "a suite still run as one job has no copies to compare"
+
+
+def test_edge_tls_state_shared_check_discriminates(tmp_path):
+    tpl = tmp_path / "deploy" / "helm" / "polaris" / "templates"
+    tpl.mkdir(parents=True)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "docs" / "operator").mkdir(parents=True)
+    CADDYFILE = ("pki {\n  ca local {\n    root {\n      cert /etc/caddy/ca/ca.crt\n      key /etc/caddy/ca/ca.key\n"
+                 "    }\n  }\n}\ntls /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key\n"
+                 '{{- if has .Values.edge.tls (list "acme" "secret") }}\n'
+                 '  Strict-Transport-Security "max-age=63072000"\n')
+    CA = ('{{- if and (eq .Values.edge.tls "internal") (not .Values.edge.caSecret) }}\n'
+          '{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}\n'
+          '  annotations:\n    "helm.sh/resource-policy": keep\n'
+          '  {{- if and $existing (hasKey $existing.data "ca.crt") (hasKey $existing.data "ca.key") }}\n'
+          '  ca.crt: {{ index $existing.data "ca.crt" }}\n'
+          '  ca.key: {{ index $existing.data "ca.key" }}\n'
+          '  {{- else }}\n'
+          '  {{- $ca := genCA "root" 3650 }}\n')
+    DEPLOY = ('{{- if and (eq .Values.edge.tls "acme") (gt (int .Values.edge.replicas) 1) }}\n'
+              '{{- fail "edge.tls=acme serves one replica" }}\n{{- end }}\n'
+              '  strategy:\n    type: Recreate\n'
+              '        - name: tls-reload\n          args:\n            - |\n              seen=""\n'
+              '              caddy reload --force --config /etc/caddy/Caddyfile\n        {{- end }}\n'
+              '            claimName: {{ include "polaris.fullname" . }}-caddy-acme\n'
+              '            secretName: {{ .Values.edge.caSecret | default (printf "%s-edge-ca" (include "polaris.fullname" .)) }}\n')
+    DRILL = ('kubectl -n "$NS" port-forward "$pod" 18444:8443\n'
+             'served "$p" --cacert /tmp/polaris-edge-ca.crt\n'
+             'echo "  ${victim#pod/} replaced: $n replicas still verify"\n'
+             'fail "the edge still served the old certificate 240 s after the Secret was renewed"\n'
+             # each guard as scripts/polaris-helm-drill.sh writes it
+             + '[ "$(kubectl -n "$NS" get secret "${REL}-edge-ca" -o jsonpath=\'{.data.ca\\.crt}\')" = "$root_before" ] \\\n'
+               '    || fail "helm upgrade replaced the edge root\n'
+             + "if grep -qi '^strict-transport-security' /tmp/polaris-internal.hdr; then\n"
+               '    fail "the edge sends Strict-Transport-Security under the internal root\n'
+             + "-o jsonpath='{range .items[*]}{.metadata.name}{range .status.containerStatuses[*]} {.restartCount}{end}\n"
+             + '[ "$(restarts)" = "$before_renewal" ] || { echo "$before_renewal"; restarts; fail "an edge pod restarted\n'
+             + 'grep -q "edge.tls=acme serves one replica" /tmp/polaris-acme.err \\\n'
+               '    || { cat /tmp/polaris-acme.err; fail "edge.tls=acme with two replicas failed to render for another reason"; }\n'
+             + 'if grep -q "name: ${REL}-edge-ca\\$" /tmp/polaris-casecret.yaml || grep -q "secretName: ${REL}-edge-ca\\$" /tmp/polaris-casecret.yaml \\\n'
+               '        || ! grep -q "secretName: operator-edge-root" /tmp/polaris-casecret.yaml; then\n'
+               '    fail "with edge.caSecret the chart must mount that Secret\n'
+             + '    [ "$n" -ge 2 ] || fail "expected two edge replicas, found $n"\n'
+             + '    pods=$(edge_pods) || return 1\n'
+               '    for p in $pods; do [ "$(served "$p" -k || true)" = "$want" ] || return 1; n=$((n + 1)); done\n'
+               '    [ "$n" -ge 2 ]\n'
+               '}\n')
+    DOC = "--set edge.tls=secret ... kubectl get secret polaris-edge-ca ... edge.caSecret\n"
+
+    def write(caddyfile=CADDYFILE, ca=CA, deploy=DEPLOY, drill=DRILL, doc=DOC):
+        (tpl / "configmap-caddy.yaml").write_text(caddyfile)
+        (tpl / "edge-ca.yaml").write_text(ca)
+        (tpl / "caddy.yaml").write_text(deploy)
+        (tmp_path / "scripts" / "polaris-helm-drill.sh").write_text(drill)
+        (tmp_path / "docs" / "operator" / "KUBERNETES.md").write_text(doc)
+
+    write()
+    assert checks.check_edge_tls_state_shared(tmp_path)[0].level == "OK", "must PASS on the shared edge state"
+    broken = [
+        dict(caddyfile=CADDYFILE.replace("cert /etc/caddy/ca/ca.crt", "cert /data/root.crt")),
+        dict(caddyfile=CADDYFILE.replace("tls /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key\n", "tls internal\n")),
+        dict(caddyfile=CADDYFILE.replace('(list "acme" "secret")', '(list "acme")')),
+        dict(ca=CA.replace("lookup", "nothing")),
+        # 2026-10-09 review of #315: the reuse branch disabled, the operator's root ignored, the acme refusal
+        # removed while other fails remain, and each drill guard removed in turn.
+        dict(ca=CA.replace("if and $existing (hasKey", "if and false $existing (hasKey")),
+        # Round 2: genCA inside the reuse branch; `$existing` assigned anything but the lookup,
+        # with the lookup left in a template comment.
+        dict(ca=CA.replace('  ca.crt: {{ index $existing.data "ca.crt" }}\n',
+                           '  {{- $ca := genCA "root" 3650 }}\n  ca.crt: {{ $ca.Cert | b64enc }}\n')),
+        dict(ca=CA.replace('{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}\n',
+                           '{{- /* $existing := (lookup "v1" "Secret" .Release.Namespace $name) */}}\n'
+                           '{{- $existing := dict }}\n')),
+        dict(ca=CA.replace(" (not .Values.edge.caSecret)", "")),
+        dict(deploy=DEPLOY.replace(".Values.edge.caSecret | default ", "")),
+        dict(deploy=DEPLOY.replace('{{- fail "edge.tls=acme serves one replica" }}\n',
+                                   '{{- /* fail "edge.tls=acme serves one replica" */}}\n{{- fail "other" }}\n')),
+        # Round 2: each guard's condition turned to `true` with its failure message kept.
+        dict(drill=DRILL.replace('[ "$(kubectl -n "$NS" get secret "${REL}-edge-ca" -o jsonpath=\'{.data.ca\\.crt}\')"'
+                                 ' = "$root_before" ]', "true")),
+        dict(drill=DRILL.replace("if grep -qi '^strict-transport-security' /tmp/polaris-internal.hdr; then",
+                                 "if false; then")),
+        dict(drill=DRILL.replace("{.restartCount}", "{.ready}")),
+        dict(drill=DRILL.replace('[ "$(restarts)" = "$before_renewal" ]', "true")),
+        dict(drill=DRILL.replace('grep -q "edge.tls=acme serves one replica" /tmp/polaris-acme.err', "true")),
+        dict(drill=DRILL.replace('|| grep -q "secretName: ${REL}-edge-ca\\$" /tmp/polaris-casecret.yaml ', "")),
+        dict(drill=DRILL.replace('[ "$n" -ge 2 ] || fail "expected two', 'true || fail "expected two')),
+        dict(drill=DRILL.replace('    [ "$n" -ge 2 ]\n}', "    true\n}")),
+        dict(drill=DRILL.replace("pods=$(edge_pods) || return 1", "pods=$(edge_pods)")),
+        dict(doc="--set edge.tls=secret ... kubectl get secret polaris-edge-ca\n"),
+        dict(ca=CA.replace('"helm.sh/resource-policy": keep', "")),
+        dict(deploy=DEPLOY.replace("(gt (int .Values.edge.replicas) 1)", "(gt (int .Values.edge.replicas) 9)")),
+        dict(deploy=DEPLOY.replace("type: Recreate", "type: RollingUpdate")),
+        dict(deploy=DEPLOY.replace("-caddy-acme", "-caddy-data")),
+        dict(deploy=DEPLOY.replace("caddy reload --force", "caddy reload")),
+        dict(deploy=DEPLOY.replace('seen=""', "seen=$(sha256sum /etc/caddy/tls/tls.crt)")),
+        dict(drill=DRILL.replace("--cacert /tmp/polaris-edge-ca.crt", "-k")),
+        dict(drill=DRILL.replace('port-forward "$pod"', 'port-forward "svc/${REL}-caddy"')),
+        dict(drill=DRILL.replace("after the Secret was renewed", "")),
+        dict(doc="--set edge.tls=acme\n"),
+    ]
+    for case in broken:
+        write(**case)
+        assert checks.check_edge_tls_state_shared(tmp_path)[0].level == "FAIL", \
+            "must FAIL when the edge's TLS state is no longer shared: %r" % (case,)

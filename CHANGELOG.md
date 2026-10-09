@@ -55,6 +55,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - KEY-CEREMONY.md rotated keys with a trust-anchors file the running app never reads; it now rotates through the key register.
 - The enrolment-fold concurrency test's control changes an enrolled person's jurisdiction for real, so earlier tests cannot leave it with nothing to fold.
 - deploy/README described a single-PostgreSQL Helm chart and OPERATIONS an unrestricted metrics edge; both now match the code.
+- On Kubernetes each edge replica kept its own TLS state: a restart ordered its certificate again and two replicas served different roots; the chart keeps one internal root, serves and reloads a cert-manager Secret (`edge.tls=secret`), and runs ACME on one replica's kept volume.
 - PQC-POSTURE no longer says Falcon signing time depends on the message: measured natively (record 015, step 4), it does not; the signer stays experimental while FIPS 206 is a draft.
 - A population migration counts a credential as migrated only when its target signature has no deprecation date; one already set to lapse is refused with the re-issue instruction instead of the database's error.
 - The rolling-deploy drill, backup and restore read compose's output whole before matching it; under pipefail an early grep -q exit could SIGPIPE compose and fail a check that had passed.
@@ -220,6 +221,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - An Atlas series could carry one bucket more than asked, and its authority filter took non-ASCII digits.
 - The simulator stamped events on the host's clock, so on a host off UTC the Atlas's hour windows missed them.
 - The UI drill and the performance baseline refuse a port another server holds; the drill's app no longer outlives it.
+- A failed deploy did not roll back on Docker's containerd image store (Engine 29's default) or on a stack whose app is not `polaris-app`.
 - In the Atlas, a hovered tab keeps its label and a lone interval is drawn; a stacked chart no longer reads a withheld value as zero.
 - Public pages: no empty band above the first line, a visible secondary action, a four-column feature grid.
 - Every page showing the OpenID® Certified™ mark names the OpenID Foundation as its owner, as its trademark policy (2.2) asks.
