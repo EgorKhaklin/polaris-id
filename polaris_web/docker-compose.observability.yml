@@ -34,7 +34,7 @@
 
 services:
   prometheus:
-    image: prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
+    image: prom/prometheus@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
     container_name: polaris-prometheus
     restart: unless-stopped
     command:
@@ -83,7 +83,7 @@ services:
       options: { max-size: 10m, max-file: '3' }
 
   alertmanager:
-    image: prom/alertmanager@sha256:690c7b525f4367aa91f73e2f91c632206d32e97c6384bdbf2fb7a861b420340d
+    image: prom/alertmanager@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
     container_name: polaris-alertmanager
     restart: unless-stopped
     volumes:
@@ -100,7 +100,7 @@ services:
       options: { max-size: 10m, max-file: '3' }
 
   tempo:
-    image: grafana/tempo@sha256:f0561deb1c68ec44d6e6e7e4487f30106c4e5e768642077695b37958b105812a  # 2.10.8
+    image: grafana/tempo@sha256:1ce31d6d7ffab62189685e8c47881d4a561c5d38bd0dbd66e40ca83cef07923d  # 2.10.8
     container_name: polaris-tempo
     restart: unless-stopped
     command: ['-config.file=/etc/tempo.yml']
@@ -116,7 +116,7 @@ services:
       options: { max-size: 10m, max-file: '3' }
 
   grafana:
-    image: grafana/grafana@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283  # 13.2.1
+    image: grafana/grafana@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572  # 13.2.1
     container_name: polaris-grafana
     restart: unless-stopped
     environment:
