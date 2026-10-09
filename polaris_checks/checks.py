@@ -26120,6 +26120,294 @@ def check_product_sessions_pin_utc(root: pathlib.Path) -> list[Finding]:
                      "sessions to UTC before connecting, whatever PGTZ the environment sets")
 
 
+# 2026-10-09 (THREAT-MODEL). The pin above holds a session that does not ask; TimeZone is a setting
+# any role may SET. The instant columns are TIMESTAMP without a zone, so a bare clock stored into one,
+# or compared with one, is read in the caller's zone. As polaris_app with SET timezone = 'Etc/GMT-14':
+# uc1 dated a signature and its credential fourteen hours ahead, a status UPDATE made
+# audit_token_state_change write its audit row ahead, uc8 dated a published revocation ahead, the
+# holder key register's effective_at moved through a column default, and uc9_complete_recovery
+# approved a recovery before its cool-down ended. So the database's own clock reads are pinned: a
+# routine that reads the clock carries SET timezone = 'UTC' (a CREATE OR REPLACE without it resets
+# the pin), and a column default on a zoneless column, or a view, reads it AT TIME ZONE 'UTC'. A
+# TIMESTAMPTZ column takes the instant itself (now()), which no zone moves. Migrations before
+# _UTC_CLOCK_MIGRATION are released and unchangeable; that one supersedes what they left.
+_UTC_CLOCK_MIGRATION = "2026-10-09-001-instants-on-the-utc-clock"
+_CLOCK_INSTANT = re.compile(r"\bCURRENT_TIMESTAMP\b(?:\s*\(\s*\d+\s*\))?"
+                            r"|\b(?:now|transaction_timestamp|statement_timestamp|clock_timestamp)\s*\(\s*\)",
+                            re.I)
+_CLOCK_LOCAL = re.compile(r"\bCURRENT_DATE\b|\b(?:CURRENT_TIME|LOCALTIME|LOCALTIMESTAMP)\b(?:\s*\(\s*\d+\s*\))?"
+                          r"|\btimeofday\s*\(\s*\)|'(?:now|today|tomorrow|yesterday)'\s*::", re.I)
+_AT_UTC = re.compile(r"(?:\s*\))*\s*AT\s+TIME\s+ZONE\s+'UTC'", re.I)
+_PINS_UTC = re.compile(r"\bSET\s+\"?timezone\"?\s*(?:=|TO)\s*'UTC'", re.I)
+_SQL_LEX = re.compile(r"--[^\n]*|/\*|'|\"|\$(?:[A-Za-z_]\w*)?\$|;")
+_SQL_BLOCK = re.compile(r"/\*|\*/")
+_ZONED_TYPE = re.compile(r"^(?:TIMESTAMPTZ|TIMESTAMP\s*(?:\(\s*\d+\s*\))?\s+WITH\s+TIME\s+ZONE)\b", re.I)
+_COLUMN_STOP = re.compile(r"\b(?:NOT|NULL|DEFAULT|CONSTRAINT|CHECK|REFERENCES|PRIMARY|UNIQUE|GENERATED|COLLATE)\b",
+                          re.I)
+
+
+def _sql_lex(text: str, split: bool = True) -> list[str]:
+    """SQL with its comments removed, split at top-level semicolons when `split`. String literals
+    and quoted identifiers are kept as they are; a dollar-quoted body is kept with ITS comments
+    removed, since a routine body is code too."""
+    out: list[str] = []
+    cur: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        m = _SQL_LEX.search(text, i)
+        if not m:
+            cur.append(text[i:])
+            break
+        cur.append(text[i:m.start()])
+        tok, j = m.group(0), m.end()
+        if tok.startswith("--"):
+            pass
+        elif tok == "/*":
+            depth = 1
+            while depth and j < n:
+                k = _SQL_BLOCK.search(text, j)
+                if not k:
+                    j = n
+                    break
+                depth += 1 if k.group(0) == "/*" else -1
+                j = k.end()
+            cur.append(" ")
+        elif tok == "'":
+            while True:
+                k = text.find("'", j)
+                if k < 0:
+                    j = n
+                    break
+                if text.startswith("''", k):
+                    j = k + 2
+                    continue
+                j = k + 1
+                break
+            cur.append(text[m.start():j])
+        elif tok == '"':
+            k = text.find('"', j)
+            j = n if k < 0 else k + 1
+            cur.append(text[m.start():j])
+        elif tok == ";":
+            if split:
+                out.append("".join(cur))
+                cur = []
+            else:
+                cur.append(";")
+        else:
+            k = text.find(tok, j)
+            body = text[j:n if k < 0 else k]
+            cur.append(tok + "".join(_sql_lex(body, split=False)) + tok)
+            j = n if k < 0 else k + len(tok)
+        i = j
+    out.append("".join(cur))
+    return [s.strip() for s in out if s.strip()]
+
+
+def _split_top(text: str, sep: str = ",") -> list[str]:
+    """`text` split at `sep` outside parentheses and quotes."""
+    parts, depth, quote, start = [], 0, None, 0
+    for i, ch in enumerate(text):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == sep and depth == 0:
+            parts.append(text[start:i])
+            start = i + 1
+    parts.append(text[start:])
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _paren_body(text: str, at: int) -> str:
+    """What the parenthesis at `at` encloses, quotes respected."""
+    depth, quote = 0, None
+    for i in range(at, len(text)):
+        ch = text[i]
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return text[at + 1:i]
+    return text[at + 1:]
+
+
+def _clock_reads(sql: str) -> list[tuple[str, str]]:
+    """(the read, 'utc' | 'bare' | 'local') for each session-clock read in `sql`."""
+    reads = []
+    for m in _CLOCK_INSTANT.finditer(sql):
+        reads.append((m.group(0), "utc" if _AT_UTC.match(sql, m.end()) else "bare"))
+    reads += [(m.group(0), "local") for m in _CLOCK_LOCAL.finditer(sql)]
+    return reads
+
+
+def _column_default(definition: str) -> tuple[str, str, str] | None:
+    """(column, its type, its DEFAULT expression) for a column definition that has a default."""
+    m = re.match(r"\"?(\w+)\"?\s+(.*)$", definition, re.S)
+    if not m or m.group(1).upper() in ("CONSTRAINT", "PRIMARY", "UNIQUE", "CHECK", "FOREIGN", "EXCLUDE", "LIKE"):
+        return None
+    rest = m.group(2)
+    depth, cut, quote = 0, None, None
+    for k, ch in enumerate(rest):
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "'\"":
+            quote = ch
+        elif ch in "()":
+            depth += 1 if ch == "(" else -1
+        elif depth == 0 and (k == 0 or not (rest[k - 1].isalnum() or rest[k - 1] == "_")):
+            if re.match(r"DEFAULT\b", rest[k:], re.I):
+                cut = k
+                break
+    if cut is None:
+        return None
+    expr = rest[cut + len("DEFAULT"):]
+    stop, depth, quote = None, 0, None
+    for k, ch in enumerate(expr):
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "'\"":
+            quote = ch
+        elif ch in "()":
+            depth += 1 if ch == "(" else -1
+        elif depth == 0 and k > 0 and not (expr[k - 1].isalnum() or expr[k - 1] == "_"):
+            if _COLUMN_STOP.match(expr, k) and expr[:k].strip():
+                stop = k
+                break
+    return m.group(1).lower(), rest[:cut].strip(), (expr if stop is None else expr[:stop]).strip()
+
+
+def check_database_instants_read_the_utc_clock(root: pathlib.Path) -> list[Finding]:
+    """Every routine that reads the clock pins SET timezone = 'UTC', and every column default on a
+    zoneless column, and every view, reads it AT TIME ZONE 'UTC': in the schema sources and in
+    every migration from 2026-10-09-001 on. No session's TimeZone moves an instant the database
+    records or compares."""
+    name = "database_instants_read_the_utc_clock"
+    sql = root / "polaris_sql"
+    if not _read(root, "polaris_sql/migrations/" + _UTC_CLOCK_MIGRATION + ".up.sql").strip():
+        return _fail(name, "migration %s is missing, so a migrated database keeps the session-clock "
+                           "routines, defaults and views the released migrations left" % _UTC_CLOCK_MIGRATION)
+    files = [f for f in sorted(sql.glob("[01]*.sql")) if f.name != "08_tests.sql"]
+    # By date and counter, so another migration of the same day is held to it as well.
+    cut = _UTC_CLOCK_MIGRATION[:14]
+    migrations = sorted((sql / "migrations").glob("*.up.sql"))
+    files += [f for f in migrations if f.name[:14] >= cut]
+    parsed = [(f.name, _sql_lex(_read_path(f))) for f in files]
+    # A column's type, for an ALTER ... SET DEFAULT that does not restate it: every table any
+    # source or migration defines.
+    types: dict[tuple[str, str], str] = {}
+    every = list(parsed) + [(f.name, _sql_lex(_read_path(f))) for f in migrations if f.name[:14] < cut]
+    tables = re.compile(r"^CREATE\s+(?:(?:GLOBAL|LOCAL)\s+)?(?:(?:TEMP|TEMPORARY|UNLOGGED)\s+)?TABLE\s+"
+                        r"(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?(\w+)\"?\s*\(", re.I)
+    alters = re.compile(r"^ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:\w+\.)?\"?(\w+)\"?\s+(.*)$", re.I | re.S)
+    for _, statements in every:
+        for s in statements:
+            t = tables.match(s)
+            for element in (_split_top(_paren_body(s, t.end() - 1)) if t else []):
+                c = re.match(r"\"?(\w+)\"?\s+(\S.*)$", element, re.S)
+                if c:
+                    types[(t.group(1).lower(), c.group(1).lower())] = c.group(2)
+            a = alters.match(s)
+            for action in (_split_top(a.group(2)) if a else []):
+                c = re.match(r"ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?\"?(\w+)\"?\s+(\S.*)$", action, re.I | re.S)
+                if c:
+                    types[(a.group(1).lower(), c.group(1).lower())] = c.group(2)
+
+    routines = re.compile(r"^CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\s+(?:\w+\.)?\"?(\w+)\"?\s*\(",
+                          re.I)
+    views = re.compile(r"^CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?(?:RECURSIVE\s+)?(?:MATERIALIZED\s+)?"
+                       r"VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?(\w+)\"?", re.I)
+    unpin = re.compile(r"^ALTER\s+(?:FUNCTION|PROCEDURE|ROUTINE)\s+(?:\w+\.)?\"?(\w+)\"?.*?"
+                       r"(\bRESET\s+(?:\"?timezone\"?|ALL)\b|\bSET\s+\"?timezone\"?\s*(?:=|TO)\s*(?!\s|'UTC'))", re.I | re.S)
+    offenders: list[str] = []
+    readers: set[str] = set()
+    pinned: set[str] = set()
+    defaults: set[tuple[str, str]] = set()
+    viewed: set[str] = set()
+
+    def judge_default(where: str, table: str, column: str, ctype: str, expr: str):
+        reads = _clock_reads(expr)
+        if not reads:
+            return
+        zoned = bool(_ZONED_TYPE.match(ctype.strip()))
+        if not zoned:
+            defaults.add((table.lower(), column))
+        bad = [r for r, kind in reads if kind == "local" or kind == ("utc" if zoned else "bare")]
+        if bad:
+            offenders.append("%s:%s.%s DEFAULT %s (%s)" % (
+                where, table, column, bad[0],
+                "a TIMESTAMPTZ column takes the instant itself; AT TIME ZONE 'UTC' hands it a wall clock "
+                "the session's zone reads back" if zoned and "AT TIME ZONE" in expr.upper()
+                else "the session's clock: read it AT TIME ZONE 'UTC'"))
+
+    for fname, statements in parsed:
+        for s in statements:
+            r = routines.match(s)
+            if r:
+                d = re.search(r"\bAS\s+(\$(?:[A-Za-z_]\w*)?\$)", s, re.I)
+                end = s.find(d.group(1), d.end()) if d else -1
+                body = s[d.end():end] if d and end >= 0 else s
+                frame = s[:d.start()] + s[end + len(d.group(1)):] if d and end >= 0 else s
+                if _clock_reads(body):
+                    readers.add(r.group(1).lower())
+                    if _PINS_UTC.search(frame):
+                        pinned.add(r.group(1).lower())
+                    else:
+                        offenders.append("%s:%s reads the clock without SET timezone = 'UTC'" % (fname, r.group(1)))
+                continue
+            v = views.match(s)
+            if v:
+                reads = _clock_reads(s)
+                if reads:
+                    viewed.add(v.group(1).lower())
+                bad = [rd for rd, kind in reads if kind != "utc"]
+                if bad:
+                    offenders.append("%s:%s reads %s, the session's clock" % (fname, v.group(1), bad[0]))
+                continue
+            u = unpin.match(s)
+            if u:
+                offenders.append("%s:%s %s, so it reads the caller's clock" % (fname, u.group(1), u.group(2).strip()))
+                continue
+            t = tables.match(s)
+            for element in (_split_top(_paren_body(s, t.end() - 1)) if t else []):
+                col = _column_default(element)
+                if col:
+                    judge_default(fname, t.group(1), col[0], col[1], col[2])
+            a = alters.match(s)
+            for action in (_split_top(a.group(2)) if a else []):
+                sd = re.match(r"ALTER\s+(?:COLUMN\s+)?\"?(\w+)\"?\s+SET\s+DEFAULT\s+(.*)$", action, re.I | re.S)
+                if sd:
+                    ctype = types.get((a.group(1).lower(), sd.group(1).lower()), "")
+                    judge_default(fname, a.group(1), sd.group(1).lower(), ctype, sd.group(2))
+                    continue
+                ad = re.match(r"ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(.*)$", action, re.I | re.S)
+                col = _column_default(ad.group(1)) if ad else None
+                if col:
+                    judge_default(fname, a.group(1), col[0], col[1], col[2])
+    if offenders:
+        return _fail(name, "%d place(s) the database reads the clock in the caller's TimeZone, which any "
+                           "role may SET: %s" % (len(offenders), "; ".join(offenders[:6]) +
+                                                 (" (+%d more)" % (len(offenders) - 6) if len(offenders) > 6 else "")))
+    if not readers or not defaults:
+        return _fail(name, "found %d routine(s) reading the clock and %d zoneless clock default(s) under "
+                           "polaris_sql/; the parse and the schema have drifted and this would pass on "
+                           "nothing" % (len(readers), len(defaults)))
+    return _ok(name, "all %d routines that read the clock pin SET timezone = 'UTC', and all %d zoneless "
+                     "clock defaults and %d clock-reading views read it AT TIME ZONE 'UTC', in the schema "
+                     "sources and the migrations from %s on: no session's TimeZone moves an instant the "
+                     "database records or compares" % (len(pinned), len(defaults), len(viewed), cut))
+
+
 # 2026-09-24. HolderKeyEvent.algorithm and AuthorityKeyEvent.algorithm were free text: the route's
 # allowlist and the CLI's choices were the only things keeping a classical parameter set out of
 # registers whose value is issuer-signed or published for relying parties to verify under. A
@@ -27003,6 +27291,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_security_suite_refuses_skips_in_ci,
     check_no_session_date_in_sql,
     check_product_sessions_pin_utc,
+    check_database_instants_read_the_utc_clock,
     check_openapi_covers_api_v1,
     check_product_suite_parts_share_setup,
 ]

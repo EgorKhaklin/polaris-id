@@ -34,8 +34,10 @@ Coverage map: see the class docstrings. Each class is one schema table.
 import contextlib
 import hashlib
 import os
+import re
 import sys
 import unittest
+from datetime import timedelta
 
 import psycopg2
 from psycopg2 import errors as pg_errors
@@ -3392,6 +3394,242 @@ class TestCredentialCopyRecord(unittest.TestCase):
                     with self.assertRaises(pg_errors.InsufficientPrivilege):
                         cur.execute(sql, (row["copy_id"],))
                     cur.execute("ROLLBACK TO SAVEPOINT s")
+
+
+class TestTheDatabaseClockIsUtc(unittest.TestCase):
+    """2026-10-09 (THREAT-MODEL): an instant the database records or compares is on the UTC clock,
+    whatever TimeZone the session set (migration 2026-10-09-001).
+
+    The instant columns are TIMESTAMP without a zone, and TimeZone is a setting any role may SET;
+    the database's UTC default and the application's PGTZ=UTC hold only for a session that does
+    not ask. As polaris_app, changing nothing but its session's zone, the application moved
+    instants it holds no write on and that no routine takes as an argument: uc1 dated a
+    credential's signature and issuance fourteen hours ahead, a status change wrote its audit row
+    ahead, uc8 dated a published revocation ahead, uc_record_holder_key_event dated a key through
+    its column default, and uc9_complete_recovery approved a recovery before its cool-down ended.
+    Each test runs as polaris_app from UTC+14 and from UTC-12, in a transaction that is rolled
+    back, and holds every instant the database wrote to the UTC clock read in that transaction.
+    """
+
+    ZONES = ("Etc/GMT-14", "Etc/GMT+12")   # UTC+14 and UTC-12: one of them is off the UTC date at any hour
+    SLACK = 5                              # seconds; the doors moved instants by 12 and 14 hours
+
+    @contextlib.contextmanager
+    def _app(self):
+        """One polaris_app transaction, rolled back and closed when the block ends, so the next
+        zone's transaction never waits on a lock this one still holds."""
+        conn = TestC1PrivilegeBoundary._app_conn(self)
+        try:
+            with conn.cursor() as cur:
+                yield cur
+        finally:
+            conn.rollback()
+            conn.close()
+
+    @contextlib.contextmanager
+    def _owner(self):
+        """The schema owner, for the one fixture polaris_app cannot make; the test then runs as
+        polaris_app inside the same transaction (SET LOCAL ROLE), which is rolled back."""
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                yield cur
+        finally:
+            conn.rollback()
+            conn.close()
+
+    def _issue(self, cur, label):
+        value = "TKN-UTC-CLOCK-%s-%d" % (label, os.getpid())
+        cur.execute("SELECT uc1_issue_and_activate(%s, DATE '1990-05-06', 'PA', 2, 1, 'NONE', 2, "
+                    "NULL, %s, %s, 'test', ARRAY[1]) AS token_id",
+                    ("UTC Clock %s" % label, value, "PHY-" + value))
+        return cur.fetchone()["token_id"]
+
+    def _zone(self, cur, zone):
+        """Set the session's zone and return the UTC clock of this transaction."""
+        cur.execute("SET LOCAL timezone = %s", (zone,))
+        cur.execute("SELECT (now() AT TIME ZONE 'UTC') AS utc")
+        return cur.fetchone()["utc"]
+
+    def _on_utc(self, utc, got, what, zone):
+        self.assertIsNotNone(got, what)
+        self.assertLess(abs((got - utc).total_seconds()), self.SLACK,
+                        "%s was recorded at %s from a session at %s; the UTC clock read %s"
+                        % (what, got, zone, utc))
+
+    def test_issuance_records_its_instants_on_the_utc_clock(self):
+        for zone in self.ZONES:
+            with self.subTest(zone=zone), self._app() as cur:
+                utc = self._zone(cur, zone)
+                tid = self._issue(cur, "I" + zone[-3:])
+                cur.execute("SELECT s.signed_at, t.issued_date, t.activated_date, i.enrollment_date "
+                            "FROM IdentityToken t JOIN TokenSignature s ON s.token_id = t.token_id "
+                            "JOIN Individual i ON i.individual_id = t.individual_id WHERE t.token_id = %s",
+                            (tid,))
+                row = cur.fetchone()
+                for column in ("signed_at", "issued_date", "activated_date", "enrollment_date"):
+                    self._on_utc(utc, row[column], column, zone)
+                cur.execute("SELECT event_type, event_timestamp FROM TokenLifecycleEvent "
+                            "WHERE token_id = %s ORDER BY event_id", (tid,))
+                events = cur.fetchall()
+                self.assertTrue(events, "issuance wrote no lifecycle event")
+                for e in events:
+                    self._on_utc(utc, e["event_timestamp"], "the %s event" % e["event_type"], zone)
+
+    def test_a_status_change_is_audited_on_the_utc_clock(self):
+        """polaris_app may UPDATE a credential's status; audit_token_state_change writes the audit
+        row of record, which the application cannot write itself."""
+        for zone in self.ZONES:
+            with self.subTest(zone=zone), self._app() as cur:
+                tid = self._issue(cur, "S" + zone[-3:])
+                utc = self._zone(cur, zone)
+                cur.execute("UPDATE IdentityToken SET status = 'DORMANT' WHERE token_id = %s", (tid,))
+                cur.execute("SELECT event_timestamp FROM TokenLifecycleEvent WHERE token_id = %s "
+                            "AND event_type = 'DEACTIVATED'", (tid,))
+                row = cur.fetchone()
+                self.assertIsNotNone(row, "the status change wrote no audit row")
+                self._on_utc(utc, row["event_timestamp"], "the DEACTIVATED audit row", zone)
+
+    def test_a_revocation_is_published_on_the_utc_clock(self):
+        for zone in self.ZONES:
+            with self.subTest(zone=zone), self._app() as cur:
+                tid = self._issue(cur, "R" + zone[-3:])
+                utc = self._zone(cur, zone)
+                cur.execute("CALL uc8_revoke_token(%s, 2, 'COMPROMISED', 'utc clock test', 1)", (tid,))
+                cur.execute("SELECT revocation_timestamp FROM RevocationList WHERE token_id = %s", (tid,))
+                self._on_utc(utc, cur.fetchone()["revocation_timestamp"], "revocation_timestamp", zone)
+                cur.execute("SELECT event_timestamp FROM TokenLifecycleEvent WHERE token_id = %s "
+                            "AND event_type = 'REVOKED'", (tid,))
+                self._on_utc(utc, cur.fetchone()["event_timestamp"], "the REVOKED event", zone)
+
+    def test_a_holder_key_is_dated_and_read_on_the_utc_clock(self):
+        """uc_record_holder_key_event reads no clock: the instant it sets comes from the column's
+        default, which ran in the caller's zone. HolderKeyCurrent, which the routine reads for
+        the live key, compared with the caller's clock too."""
+        key = "a1" * 40
+        for zone in self.ZONES:
+            with self.subTest(zone=zone), self._app() as cur:
+                tid = self._issue(cur, "K" + zone[-3:])
+                utc = self._zone(cur, zone)
+                cur.execute("SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'bound')", (tid, key))
+                cur.execute("SELECT effective_at, recorded_at FROM HolderKeyEvent WHERE token_id = %s", (tid,))
+                row = cur.fetchone()
+                self._on_utc(utc, row["effective_at"], "effective_at", zone)
+                self._on_utc(utc, row["recorded_at"], "recorded_at", zone)
+        with self.subTest("bound in UTC, read from UTC-12"), self._app() as cur:
+            tid = self._issue(cur, "KV")
+            self._zone(cur, "UTC")
+            cur.execute("SELECT uc_record_holder_key_event(%s, %s, 'ML-DSA-65', 'bound')", (tid, key))
+            self._zone(cur, "Etc/GMT+12")
+            cur.execute("SELECT public_key_hex FROM HolderKeyCurrent WHERE token_id = %s", (tid,))
+            row = cur.fetchone()
+            self.assertIsNotNone(row, "a key bound this instant is not in force to a session at UTC-12")
+            self.assertEqual(row["public_key_hex"], key)
+
+    def test_a_recovery_cool_down_is_judged_on_the_utc_clock(self):
+        """The schema owner records a recovery as uc9_initiate_recovery would have 47 hours ago, so
+        its cool-down ends an hour from now in UTC, with all three out-of-band channels. As
+        polaris_app, uc9_complete_recovery must refuse to approve it from any zone. From UTC+14
+        it approved, and wrote a decided_at that satisfied approved_after_cooldown."""
+        for zone in self.ZONES:
+            with self.subTest(zone=zone), self._owner() as cur:
+                cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' AND is_active "
+                            "ORDER BY user_id LIMIT 1")
+                admin = cur.fetchone()["user_id"]
+                cur.execute("SELECT user_id FROM AppUser WHERE user_id <> %s ORDER BY user_id LIMIT 2",
+                            (admin,))
+                requester, witness = [r["user_id"] for r in cur.fetchall()]
+                cur.execute("SELECT i.individual_id FROM Individual i WHERE NOT EXISTS "
+                            "(SELECT 1 FROM IdentityToken t WHERE t.individual_id = i.individual_id "
+                            "AND t.status = 'ACTIVE') AND NOT EXISTS (SELECT 1 FROM RecoveryRequest r "
+                            "WHERE r.claimed_individual_id = i.individual_id AND r.status = 'PENDING') "
+                            "ORDER BY i.individual_id LIMIT 1")
+                individual = cur.fetchone()["individual_id"]
+                cur.execute("INSERT INTO RecoveryRequest (claimed_individual_id, requested_at, "
+                            "requesting_agency_id, requesting_user_id, biometric_verified, "
+                            "sworn_statement_hash, witness_agency_id, witness_co_sign_user_id, "
+                            "cooldown_expires_at) "
+                            "SELECT %s, t - INTERVAL '47 hours', 1, %s, TRUE, repeat('ab', 32), 2, %s, "
+                            "t + INTERVAL '1 hour' FROM (SELECT now() AT TIME ZONE 'UTC' AS t) n "
+                            "RETURNING recovery_id", (individual, requester, witness))
+                recovery = cur.fetchone()["recovery_id"]
+                cur.execute("SET LOCAL ROLE polaris_app")
+                self._zone(cur, zone)
+                tag = "TKN-UTC-COOLDOWN-%s-%d" % (zone[-3:], os.getpid())
+                try:
+                    cur.execute("CALL uc9_complete_recovery(%s, %s, 'APPROVED', 'cool-down test', %s, %s, "
+                                "1, 'FINGERPRINT', 'PASSIVE', 'https://crl.example/utc', %s, NULL)",
+                                (recovery, admin, tag, "SER-" + tag, psycopg2.Binary(b"\x00")))
+                except psycopg2.Error as exc:
+                    self.assertIn("Cool-down has not expired", str(exc))
+                else:
+                    self.fail("polaris_app approved a recovery from a session at %s an hour before "
+                              "its cool-down ended in UTC" % zone)
+
+    def test_a_superseded_signature_is_deprecated_after_it_was_signed(self):
+        """uc6 deprecates the old signature at CURRENT_TIMESTAMP + 1 second, and
+        deprecation_after_signed holds it after signed_at. A credential issued on the UTC clock
+        and migrated from UTC-12 was deprecated twelve hours before it was signed (refused);
+        from UTC+14 its window ran fourteen hours long."""
+        for zone in self.ZONES:
+            with self.subTest(zone=zone), self._app() as cur:
+                self._zone(cur, "UTC")
+                tid = self._issue(cur, "M" + zone[-3:])
+                utc = self._zone(cur, zone)
+                cur.execute("CALL uc6_migrate_algorithm(%s, 2, %s, TRUE)", (tid, psycopg2.Binary(b"\x01")))
+                cur.execute("SELECT algorithm_id, signed_at, deprecation_date FROM TokenSignature "
+                            "WHERE token_id = %s ORDER BY signature_id", (tid,))
+                old, new = cur.fetchall()
+                self._on_utc(utc, new["signed_at"], "the new signature's signed_at", zone)
+                self.assertGreater(old["deprecation_date"], old["signed_at"])
+                self._on_utc(utc, old["deprecation_date"] - timedelta(seconds=1), "the old signature's "
+                             "deprecation_date (less its second)", zone)
+
+    def test_no_routine_default_or_view_reads_the_session_clock(self):
+        """The catalog, as the migrations leave it: every routine whose body reads the clock pins
+        TimeZone=UTC; every default on a zoneless column, and every view, reads it AT TIME ZONE
+        'UTC'; a TIMESTAMPTZ default takes the instant itself."""
+        clock = (r"(\mCURRENT_TIMESTAMP\M|\mnow\s*\(\s*\)|\mLOCALTIMESTAMP\M|\mCURRENT_DATE\M|"
+                 r"\mCURRENT_TIME\M|\mLOCALTIME\M|transaction_timestamp|statement_timestamp|"
+                 r"clock_timestamp|timeofday)")
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        self.addCleanup(conn.close)
+        with conn.cursor() as cur:
+            cur.execute("SELECT p.oid::regprocedure::text AS routine, "
+                        "coalesce('TimeZone=UTC' = ANY(p.proconfig), FALSE) AS pinned "
+                        "FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prosrc ~* %s",
+                        (clock,))
+            routines = cur.fetchall()
+            cur.execute("SELECT c.relname || '.' || a.attname AS col, pg_get_expr(d.adbin, d.adrelid) AS expr, "
+                        "a.atttypid = 'timestamptz'::regtype AS zoned "
+                        "FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum "
+                        "JOIN pg_class c ON c.oid = d.adrelid "
+                        "WHERE c.relnamespace = 'public'::regnamespace AND pg_get_expr(d.adbin, d.adrelid) ~* %s",
+                        (clock,))
+            defaults = cur.fetchall()
+            cur.execute("SELECT c.relname AS view, pg_get_viewdef(c.oid) AS def FROM pg_class c "
+                        "WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('v', 'm') "
+                        "AND pg_get_viewdef(c.oid) ~* %s", (clock,))
+            views = cur.fetchall()
+        conn.rollback()
+        names = {r["routine"].split("(")[0] for r in routines}
+        for door in ("uc1_issue_and_activate", "uc8_revoke_token", "uc9_complete_recovery",
+                     "uc6_migrate_algorithm", "audit_token_state_change", "enforce_agency_quota"):
+            self.assertIn(door, names, "the catalog query no longer sees %s read the clock" % door)
+        self.assertEqual([r["routine"] for r in routines if not r["pinned"]], [],
+                         "these routines read the clock in the caller's TimeZone")
+        naive = [d for d in defaults if not d["zoned"]]
+        self.assertGreaterEqual(len(naive), 40, "the catalog query found too few zoneless clock defaults")
+        self.assertEqual([d["col"] for d in naive if "AT TIME ZONE 'UTC'" not in d["expr"]], [],
+                         "these zoneless defaults read the session's clock")
+        self.assertEqual([d["col"] for d in defaults if d["zoned"] and "AT TIME ZONE" in d["expr"]], [],
+                         "these TIMESTAMPTZ defaults are handed a wall clock the session's zone reads back")
+        bare = re.compile(r"(?i)\b(?:CURRENT_TIMESTAMP|now\(\)|transaction_timestamp\(\)|statement_timestamp\(\)"
+                          r"|clock_timestamp\(\))(?!\s*\)*\s*AT TIME ZONE 'UTC')"
+                          r"|\b(?:LOCALTIMESTAMP|CURRENT_DATE|LOCALTIME|CURRENT_TIME)\b")
+        self.assertTrue(views, "the catalog query found no view that reads the clock")
+        self.assertEqual([v["view"] for v in views if bare.search(v["def"])], [],
+                         "these views compare with the session's clock")
 
 
 class TestRetentionEngine(_CheckBase):
