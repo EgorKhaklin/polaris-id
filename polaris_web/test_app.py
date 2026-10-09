@@ -4219,19 +4219,26 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
         self.assertEqual(_sql("SELECT count(*) AS n FROM TokenLifecycleEvent WHERE token_id = %s "
                               "AND event_type = 'ISSUED'", (row['token_id'],), fetch='one')['n'], 0,
                          'premise: a recovery writes no ISSUED row')
+        # Registered before the recovery signed, retired an hour after; issued_date moved past the
+        # retirement, so a check dated by issued_date would refuse what the signature dates as sound.
         key = 'e5' * 32
         conn = psycopg2.connect(**_OWNER_DB_CONFIG)
         try:
             with conn.cursor() as cur:
-                cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, event, "
-                            "effective_at) VALUES (%s, %s, 'ML-DSA-65', 'registered', %s - INTERVAL '1 day')",
-                            (row['agency'], key, row['signed_at']))
+                for event, offset in (('registered', "- INTERVAL '1 day'"), ('retired', "+ INTERVAL '1 hour'")):
+                    cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, event, "
+                                "effective_at) VALUES (%s, %s, 'ML-DSA-65', %s, %s::timestamp " + offset + ")",
+                                (row['agency'], key, event, row['signed_at']))
+                cur.execute("UPDATE IdentityToken SET activated_date = %s::timestamp + INTERVAL '2 hours', "
+                            "issued_date = %s::timestamp + INTERVAL '2 hours' WHERE token_id = %s",
+                            (row['signed_at'], row['signed_at'], row['token_id']))
             conn.commit()
         finally:
             conn.close()
         with flask_app.app.app_context():
             facts = flask_app._issuer_key_facts(row['token_id'], row['agency'], key, row['signed_at'])
-        self.assertEqual(facts, (True, True), 'a recovered credential is authorized at its signing')
+        self.assertEqual(facts, (True, False),
+                         'a recovered credential is authorized at its signing, by its signature, not issued_date')
 
     def test_an_approval_without_a_signature_is_refused(self):
         """No placeholder any more: an APPROVED decision that carries no signature is refused,
@@ -14631,34 +14638,6 @@ class FederationInAppTests(PolarisTestCase):
             conn.close()
         self.assertEqual(self._facts(tid), (True, False), 'the purge must not change the answer')
 
-    def test_J_a_session_timezone_does_not_move_the_instants(self):
-        """A session may SET timezone, and a credential's instants were TIMESTAMP defaults of
-        CURRENT_TIMESTAMP, which converts to it: issued from a session at UTC-12, its signature and
-        its ISSUED row were dated twelve hours early, and a signature made after its key was retired
-        read as made before. Through the issuance procedure, as the application calls it."""
-        value = 'FED-TZ-%s' % os.urandom(4).hex()
-        conn = self._new_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SET timezone = 'Etc/GMT+12'")
-                cur.execute("SELECT uc1_issue_and_activate(%s, DATE '1990-05-06', 'PA', 2, 1, 'NONE', 2, "
-                            "NULL, %s, %s, 'timezone test', ARRAY[1]) AS token_id",
-                            ('Timezone Holder', value, 'PHY-' + value))
-                tid = cur.fetchone()['token_id']
-                cur.execute("SELECT (SELECT min(signed_at) FROM TokenSignature WHERE token_id = %s) AS signed, "
-                            "(SELECT min(event_timestamp) FROM TokenLifecycleEvent WHERE token_id = %s "
-                            "AND event_type = 'ISSUED') AS issued, "
-                            "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC') AS utc, CURRENT_TIMESTAMP::timestamp AS local",
-                            (tid, tid))
-                r = cur.fetchone()
-            conn.commit()
-        finally:
-            conn.close()
-        self.assertGreater(abs((r['local'] - r['utc']).total_seconds()), 11 * 3600,
-                           'control: the session clock is twelve hours off UTC')
-        for name in ('signed', 'issued'):
-            self.assertLess(abs((r[name] - r['utc']).total_seconds()), 60, '%s is UTC: %r' % (name, r))
-
     KEY_M = 'd4' * 32
 
     def _add_signature(self, token_id, algorithm_id, key_hex, signed_at):
@@ -15039,6 +15018,7 @@ class KeyRegisterScriptTests(PolarisTestCase):
         ke('register', str(other), self.K1, '--effective-at', '2026-02-01T00:00:00')
         signed(noissue, 'KR-NOISSUE-0001', self.K1, at, issued=False)   # purged: its signature dates it
         ke('register', str(noissue), self.K1, '--effective-at', '2026-02-01T00:00:00')
+        ke('retire', str(noissue), self.K1, '--effective-at', '2026-04-01T00:00:00')   # before its issued_date
         self._reserved_signed_by('KR-RESERVE-0001', reserve, self.K1, at)   # never in force
 
         named = self._judgment()

@@ -2589,9 +2589,9 @@ def _issuer_key_facts(token_id, agency_id, token_key, signed_at=None):
     refused them while in force. A credential's first signature is written in the transaction
     that made it, beside its ISSUED row where there is one; no purge or update reaches
     TokenSignature (polaris_app holds no INSERT, UPDATE or DELETE on it, and its trigger refuses
-    a changed signed_at), and its default is the UTC clock whatever the session's timezone
-    (2026-10-09-001). So the earliest signed_at is the instant the credential was made. The
-    location the ISSUED event carried still goes with the purge.
+    a changed signed_at), so the earliest signed_at is the instant the credential was made, on
+    the same clock as the ISSUED row. The location the ISSUED event carried still goes with the
+    purge.
 
     A SIGNATURE ADDED LATER is dated by its own making. A migration adds a signature under
     another key long after issuance, and dating that key against the issuance instant read a

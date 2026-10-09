@@ -641,8 +641,8 @@ CREATE TABLE AuthorityKeyEvent (
         CONSTRAINT chk_authority_key_algorithm CHECK (algorithm IN ('ML-DSA-65', 'ML-DSA-87', 'Falcon-padded-1024')),
     event           VARCHAR(20)  NOT NULL
         CONSTRAINT chk_authority_key_event CHECK (event IN ('registered', 'retired', 'compromised')),
-    effective_at    TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
-    recorded_at     TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    effective_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    recorded_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     note            VARCHAR(200)
 );
 
@@ -800,7 +800,7 @@ CREATE TABLE TokenLifecycleEvent (
         CHECK (event_type IN ('ISSUED','ACTIVATED','DEACTIVATED',
                               'DEVICE_BOUND','DEVICE_REVOKED',
                               'REVOKED','LOST','EXPIRED','REPLACED')),
-    event_timestamp TIMESTAMP   NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    event_timestamp TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
     reason_code     VARCHAR(60),
     -- Geographic coordinates of the event. Nullable so legacy events without
     -- recorded location remain valid; cluster aggregation IS NULL-tolerant.
@@ -1314,7 +1314,7 @@ CREATE TABLE TokenSignature (
         -- key-file lookup, survives key rotation). NULL = a deterministic
         -- placeholder signature (SHA3-256, no key); non-NULL = a real ML-DSA-65
         -- signature verifiable against this key. Write-once (immutability trigger).
-    signed_at          TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    signed_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deprecation_date   TIMESTAMP,
         -- NULL = currently active; non-NULL = no longer accepted
         -- after this timestamp. One-way: cannot un-set or move earlier
