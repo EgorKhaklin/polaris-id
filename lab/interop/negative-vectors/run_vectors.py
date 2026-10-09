@@ -48,7 +48,22 @@ def sd_jwt_python(vector, settings):
     return "accept", ""
 
 
-ADAPTERS = {"polaris-oid4vp": polaris_oid4vp, "sd-jwt-python": sd_jwt_python}
+_JS = {}
+
+
+def sd_jwt_js(vector, settings):
+    """The OpenWallet Foundation's SD-JWT VC library for JavaScript, through adapters/sd_jwt_js.cjs (one
+    Node run for the whole file). SD_JWT_JS_MODULES names the folder whose node_modules holds it."""
+    if not _JS:
+        import subprocess
+        out = subprocess.run(["node", os.path.join(HERE, "adapters", "sd_jwt_js.cjs"), _JS_FILE[0]],
+                             capture_output=True, text=True, check=True)
+        _JS.update(json.loads(out.stdout))
+    return tuple(_JS[vector["id"]])
+
+
+_JS_FILE = []
+ADAPTERS = {"polaris-oid4vp": polaris_oid4vp, "sd-jwt-python": sd_jwt_python, "sd-jwt-js": sd_jwt_js}
 
 
 def main(argv=None):
@@ -58,6 +73,7 @@ def main(argv=None):
     ap.add_argument("--json", help="write the results here")
     args = ap.parse_args(argv)
     doc = json.load(open(args.vectors))
+    _JS_FILE.append(os.path.abspath(args.vectors))
     run = ADAPTERS[args.adapter]
     results, wrong = [], []
     for vector in doc["vectors"]:

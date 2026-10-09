@@ -37,8 +37,10 @@ python3 run_vectors.py vectors.json --adapter polaris-oid4vp
 An adapter is one function, `(vector, settings) -> ("accept" | "reject", reason)`. `settings` holds the
 instant, nonce, audience, credential type, trust anchors (PEM) and issuer JWKs every vector assumes.
 Adding a verifier means adding its function to `run_vectors.py`; it answers `n/a` for a layer it leaves to
-its caller. Adapters so far: `polaris-oid4vp`, and `sd-jwt-python` (the Python reference implementation of
-RFC 9901, run from its own venv: `pip install sd-jwt`).
+its caller. Adapters so far: `polaris-oid4vp`; `sd-jwt-python` (the Python reference implementation of RFC 9901, run
+from its own venv: `pip install sd-jwt`); and `sd-jwt-js` (the OpenWallet Foundation's `@sd-jwt/sd-jwt-vc`,
+through [`adapters/sd_jwt_js.cjs`](adapters/sd_jwt_js.cjs); `SD_JWT_JS_MODULES` names the folder whose
+`node_modules` holds it and `@sd-jwt/crypto-nodejs`).
 
 ## How they are made
 
