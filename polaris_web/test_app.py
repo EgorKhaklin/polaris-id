@@ -19354,6 +19354,48 @@ class PopulationMigrationTests(PolarisTestCase):
             self.assertEqual(m.pending_count(conn, target_id), 0)
             self.assertEqual(m.verifiability_report(conn)["unverifiable"], 0)
 
+    def _close_the_window_from(self, zone):
+        """2026-10-09 (THREAT-MODEL, migration 2026-10-09-001). The database records signed_at on
+        the UTC clock whatever TimeZone the session set, so deprecate_superseded must close the
+        window on that clock too. A credential signed seconds ago, migrated and closed over from
+        `zone`: every superseded signature is deprecated after it was signed, one grace second
+        past the UTC clock."""
+        m = self._migration()
+        conn = self._new_conn()
+        self.addCleanup(conn.close)
+        with conn.cursor() as cur:
+            cur.execute("SET timezone = %s", (zone,))   # the session's, through every batch's commit
+        self._issue_signed(conn, 'TKN-UTC-WINDOW-%s' % zone[-3:], 'ACTIVE')
+        target_id, target_name = m.resolve_target(conn, "ML-DSA-87")
+        m.migrate_population(conn, target_id, target_name, batch_size=50)
+        with conn.cursor() as cur:
+            cur.execute("SELECT s.signature_id FROM TokenSignature s JOIN IdentityToken t "
+                        "ON t.token_id = s.token_id WHERE t.status IN ('ACTIVE', 'RESERVE') "
+                        "AND s.algorithm_id <> %s AND s.deprecation_date IS NULL", (target_id,))
+            superseded = [r["signature_id"] for r in cur.fetchall()]
+        conn.commit()
+        self.assertTrue(superseded, "the control: a window with something to close")
+        self.assertEqual(m.deprecate_superseded(conn, target_id, grace_seconds=1), len(superseded))
+        with conn.cursor() as cur:
+            cur.execute("SELECT (now() AT TIME ZONE 'UTC') AS utc")
+            utc = cur.fetchone()["utc"]
+            cur.execute("SELECT signature_id, signed_at, deprecation_date FROM TokenSignature "
+                        "WHERE signature_id = ANY(%s)", (superseded,))
+            rows = cur.fetchall()
+        conn.commit()
+        for r in rows:
+            self.assertGreater(r["deprecation_date"], r["signed_at"],
+                               "signature %d deprecated before it was signed" % r["signature_id"])
+            off = (r["deprecation_date"] - timedelta(seconds=1) - utc).total_seconds()
+            self.assertLess(abs(off), 5, "signature %d deprecated %.0f s off the UTC clock from a "
+                                         "session at %s" % (r["signature_id"], off, zone))
+
+    def test_the_window_closes_on_the_utc_clock_from_a_session_behind_utc(self):
+        self._close_the_window_from("Etc/GMT+12")
+
+    def test_the_window_closes_on_the_utc_clock_from_a_session_ahead_of_utc(self):
+        self._close_the_window_from("Etc/GMT-14")
+
     def _issue_signed(self, conn, token_value, status):
         """A credential signed the way issuance signs it. The seed's signatures are labelled
         literals that verify under nothing by design (docs/design/multi-sig-migration.md), so

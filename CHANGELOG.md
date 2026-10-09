@@ -32,6 +32,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The Atlas no longer returns events naming their holders; the access check reads every SQL source.
 - Under real signing, possession routes accept a signature only under a key its authority had registered; a planted signature row vouches for nothing.
 - The application role can no longer insert, update or delete a credential's signatures; `polaris migrate-population` runs as the schema owner.
+- By setting only its session's timezone, the application role could date signatures, audit rows and revocations up to fourteen hours off and approve a recovery before its cool-down ended; every routine, column default and view that reads the clock now reads UTC.
 
 ### Fixed
 
