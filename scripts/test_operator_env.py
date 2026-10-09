@@ -218,19 +218,17 @@ class ComposeRunsWhereTheUnitRunsIt(_Base):
                 self.assertEqual(set(ran), {want}, "%s ran compose outside polaris_web" % script)
 
 
-class DeployIsOnePerProject(_Base):
+class DeploysTakeTurns(_Base):
     """A deploy pins the running app image as its rollback point. Under one host-wide tag, a second
     deploy that started during the first one's smoke test pinned the first one's failed release over
-    it, and the first "rolled back" onto that release (review of #317, 2026-10-09). One deploy of a
-    compose project runs at a time, and the pin is named for the project."""
+    it, and the first "rolled back" onto that release; and every stack on a host builds the same tags
+    (reviews of #317, 2026-10-09). One build or deploy of the host's images runs at a time, and the pin
+    is named for the project. Run as a user other than root, the lock is in that user's own directory."""
 
     def setUp(self):
         super().setUp()
         self.project = "lockt%d" % (abs(hash(str(self.tmp))) % 10 ** 8)
-        self.lock = pathlib.Path("/tmp/polaris-deploy-%s.lock" % self.project)
-        self.addCleanup(lambda: (self.lock.unlink(missing_ok=True),
-                                 pathlib.Path(str(self.lock) + ".d").rmdir()
-                                 if pathlib.Path(str(self.lock) + ".d").is_dir() else None))
+        self.lock = self.tmp / "polaris-host.lock"      # HOME is self.tmp, and TMPDIR is not passed
         secrets = self.tmp / "secrets"
         secrets.mkdir()
         for name in ("polaris_secret_key", "polaris_db_password", "polaris_db_root_password",
@@ -251,12 +249,23 @@ class DeployIsOnePerProject(_Base):
             'esac\nexit 99\n' % (self.docker_log, self.project))
         (self.bin / "docker").chmod(0o755)
 
-    def _deploy(self):
+    def _deploy(self, path=None):
         self.env_file.write_text(self.env_text)
         return subprocess.run(["bash", str(ROOT / "scripts" / "polaris-deploy.sh"), "prod", "--no-pull"],
                               capture_output=True, text=True, timeout=60,
-                              env={"PATH": "%s:/usr/bin:/bin:/usr/sbin:/sbin" % self.bin, "HOME": str(self.tmp),
-                                   "STUB_WD": str(ROOT / "polaris_web"), "STUB_EF": str(self.env_file)})
+                              env={"PATH": path or "%s:/usr/bin:/bin:/usr/sbin:/sbin" % self.bin,
+                                   "HOME": str(self.tmp), "STUB_WD": str(ROOT / "polaris_web"),
+                                   "STUB_EF": str(self.env_file)})
+
+    def _path_without_flock(self):
+        """This PATH's tools less flock(1), so Linux takes the directory lock macOS takes."""
+        tools = self.tmp / "tools"
+        tools.mkdir()
+        for d in ("/usr/bin", "/bin", "/usr/sbin", "/sbin"):
+            for f in (pathlib.Path(d).iterdir() if pathlib.Path(d).is_dir() else ()):
+                if f.name != "flock" and not (tools / f.name).exists():
+                    (tools / f.name).symlink_to(f)
+        return "%s:%s" % (self.bin, tools)
 
     def _calls(self):
         return self.docker_log.read_text().splitlines() if self.docker_log.exists() else []
@@ -279,9 +288,21 @@ class DeployIsOnePerProject(_Base):
         pathlib.Path(str(self.lock) + ".d").mkdir()          # and macOS's stand-in this one
         r = self._deploy()
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        self.assertIn("another deploy of project %s is running" % self.project, r.stderr)
+        self.assertIn("another Polaris build or deploy holds this host's images", r.stderr)
         self.assertFalse([c for c in self._calls() if c.startswith(("tag", "inspect")) or " pull" in c],
                          "the refused deploy acted: %s" % self._calls())
+
+    def test_without_flock_the_directory_lock_takes_turns_and_is_released(self):
+        path = self._path_without_flock()
+        tag = "tag sha256:feed polaris-app:rollback-%s" % self.project
+        first = self._deploy(path)
+        self.assertIn(tag, self._calls(), first.stdout + first.stderr)
+        self.assertFalse(pathlib.Path(str(self.lock) + ".d").exists(), "the directory lock outlived its deploy")
+        pathlib.Path(str(self.lock) + ".d").mkdir()
+        held = self._deploy(path)
+        self.assertEqual(held.returncode, 1, held.stdout + held.stderr)
+        self.assertIn("another Polaris build or deploy holds this host's images", held.stderr)
+        self.assertEqual(self._calls().count(tag), 1, "the deploy refused by the directory lock pinned")
 
 
 if __name__ == "__main__":

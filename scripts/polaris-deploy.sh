@@ -110,24 +110,17 @@ done
 echo "  ✓ docker present"
 echo "  ✓ all secrets present"
 
-# One deploy of a compose project at a time. The rollback pin below is a tag, which the whole host
-# shares: a second deploy that started while the first one's smoke test ran pinned the first one's
-# failed release over it, and the first then "rolled back" onto that release (review of #317,
-# 2026-10-09). The lock and the pin are both named for the project, so try.sh's stack and a
-# production stack on one host neither wait for each other nor share a pin. Taken before step 2,
-# so a refused deploy has changed nothing, the checkout included.
-PROJECT=$(compose config 2>/dev/null | sed -n 's/^name: //p' | head -n1)
+# One build or deploy of this host's images at a time. Every stack on a host builds and runs the same
+# tags (polaris-app:prod and its siblings), so a deploy that ran beside another one, or beside try.sh's
+# build, recreated its app from the other's image or rolled back under it (reviews of #317,
+# 2026-10-09). scripts/polaris-host-lock.sh says where the lock lives and who can hold it. Taken
+# before step 2, so a refused deploy has changed nothing, the checkout included.
+source "${SCRIPT_DIR}/polaris-host-lock.sh"
+polaris_host_lock "this deploy"
+# The rollback pin is named for the compose project: two stacks on one host keep a pin each.
+PROJECT=$(compose config 2>/dev/null | sed -n 's/^name: //p' | head -n1 || true)
 [[ -n "${PROJECT}" ]] || { echo "  ✗ could not read the compose project's name (docker compose config)" >&2; exit 1; }
-DEPLOY_LOCK="/tmp/polaris-deploy-${PROJECT}.lock"
-if command -v flock >/dev/null 2>&1; then
-    [[ -e "${DEPLOY_LOCK}" ]] || : > "${DEPLOY_LOCK}"
-    exec 9<"${DEPLOY_LOCK}"
-    flock -n 9 || { echo "  ✗ another deploy of project ${PROJECT} is running (${DEPLOY_LOCK}); this one changed nothing" >&2; exit 1; }
-else    # macOS has no flock(1): a directory, made atomically, removed when this deploy exits
-    mkdir "${DEPLOY_LOCK}.d" 2>/dev/null || { echo "  ✗ another deploy of project ${PROJECT} is running, or one ended without removing ${DEPLOY_LOCK}.d; this one changed nothing" >&2; exit 1; }
-    trap 'rmdir "${DEPLOY_LOCK}.d" 2>/dev/null || true' EXIT
-fi
-echo "  ✓ the only deploy of project ${PROJECT}"
+echo "  ✓ the only build or deploy of this host's images (project ${PROJECT})"
 
 # ---------------------------------------------------------------------------
 # 2. git pull
@@ -160,12 +153,13 @@ if [[ -n "${PREV_APP}" ]]; then
 fi
 ROLLBACK_IMAGE=""
 if [[ -n "${PREV_IMAGE_ID}" ]]; then
-    if docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}" 2>/dev/null; then
+    if TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}" 2>&1); then
         ROLLBACK_IMAGE="${ROLLBACK_TAG}"
         echo "  [3/7] Previous app image: ${PREV_IMAGE_ID:0:18}, pinned as ${ROLLBACK_IMAGE}"
     else
-        echo "  [3/7] Previous app image ${PREV_IMAGE_ID:0:18} has no record left to pin (its tag moved before"
-        echo "        this deploy, under the containerd image store): a failed smoke test cannot roll back"
+        # Docker's own words: a record gone under the containerd store, or a tag it refuses.
+        echo "  [3/7] Previous app image ${PREV_IMAGE_ID:0:18} could not be pinned as ${ROLLBACK_TAG}:"
+        echo "        ${TAG_ERR}: a failed smoke test cannot roll back"
     fi
 else
     echo "  [3/7] No previous app container in project ${PROJECT} (a first deploy): a failed smoke test cannot roll back"

@@ -53,6 +53,11 @@ T0=$(date +%s)
 step() { printf '\n[%3ds] %s\n' "$(( $(date +%s) - T0 ))" "$1"; }
 fail() { echo "failed: $1 (log: $2)" >&2; tail -20 "$2" >&2; exit 1; }
 
+# The images this builds are the host's (polaris-app:prod and its siblings), which a deploy on this
+# host builds and rolls too: one of them at a time (scripts/polaris-host-lock.sh).
+source "${ROOT}/scripts/polaris-host-lock.sh"
+polaris_host_lock "try.sh"
+
 step "1/7 build the production images (the first build compiles liboqs and takes minutes)"
 bash "${ROOT}/scripts/polaris-image-build.sh" --stack prod > "${OUT}/build.log" 2>&1 \
     || fail "the image build" "${OUT}/build.log"

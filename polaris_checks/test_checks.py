@@ -3268,7 +3268,8 @@ def test_infra_alerts_check_discriminates(tmp_path):
 
 
 def test_upgrade_drilled_check_discriminates(tmp_path):
-    files = ("scripts/polaris-deploy.sh", "scripts/polaris-upgrade-drill.sh", ".github/workflows/upgrade.yml")
+    files = ("scripts/polaris-deploy.sh", "scripts/polaris-upgrade-drill.sh", ".github/workflows/upgrade.yml",
+             "scripts/polaris-host-lock.sh", "lab/strategy/006/try.sh")
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text((REPO / rel).read_text())
@@ -3305,16 +3306,28 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
     broken(dep, 'docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"', 'echo "${PREV_IMAGE_ID}"',
            "must FAIL when the deploy no longer pins the running image")
     # 2026-10-09 review of #317: each of these passed the check before.
-    broken(dep, '    if docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"', '    if false && docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"',
+    broken(dep, '    if TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"',
+           '    if false && TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"',
            "must FAIL when the pin is never run")
     broken(dep, 'ROLLBACK_TAG="polaris-app:rollback-${PROJECT}"', 'ROLLBACK_TAG="polaris-app:rollback"',
            "must FAIL when the pin is one tag for the whole host")
-    broken(dep, "    flock -n 9 || {", "    true || {",
-           "must FAIL when two deploys of one project can run at once")
-    broken(dep, '    mkdir "${DEPLOY_LOCK}.d" 2>/dev/null || {', '    true || {',
-           "must FAIL when, without flock, two deploys of one project can run at once")
+    lk = "scripts/polaris-host-lock.sh"
+    broken(lk, "        flock -n 9 || {", "        true || {", "must FAIL when two builds or deploys can run at once")
+    broken(lk, '        mkdir "${POLARIS_HOST_LOCK}.d" 2>/dev/null || {', "        true || {",
+           "must FAIL when, without flock, two builds or deploys can run at once")
+    broken(lk, """        trap 'rmdir "${POLARIS_HOST_LOCK}.d" 2>/dev/null || true' EXIT""", "        :",
+           "must FAIL when the directory lock outlives the run that took it")
+    broken(lk, "local who=$1 shared=/run/polaris-host.lock", "local who=$1 shared=/tmp/polaris-host.lock",
+           "must FAIL when the lock lives where any local user can hold it")
+    broken(lk, '        if [[ -L "${shared}" ]]; then', "        if false; then",
+           "must FAIL when root follows a link planted where the lock is made")
+    broken(dep, 'polaris_host_lock "this deploy"', ': "this deploy"', "must FAIL when the deploy takes no lock")
+    broken("lab/strategy/006/try.sh", 'polaris_host_lock "try.sh"', ': "try.sh"',
+           "must FAIL when try.sh builds the host's images without the lock")
     broken(dep, 'wait_healthy "${svc}" || ROLLED=0; done', 'wait_healthy "${svc}" || true; done',
            "must FAIL when a rollback is reported whether or not the restored app came up")
+    broken(dep, '        if [[ "${ROLLED}" -eq 1 ]]; then', '        ROLLED=1\n        if [[ "${ROLLED}" -eq 1 ]]; then',
+           "must FAIL when ROLLED is set again before it is read")
     broken(dep, "PREV_APP=$(compose ps -a -q app", "PREV_APP=$(compose ps -q app",
            "must FAIL when a stopped app is read as a first deploy")
     broken(dep, 'docker tag "${ROLLBACK_IMAGE}" polaris-app:prod', 'docker tag "${PREV_IMAGE_ID}" polaris-app:prod',
@@ -3327,7 +3340,7 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
            "must FAIL when the image is read from the container named polaris-app, whatever the flags")
     path = tmp_path / dep
     good = path.read_text()
-    pin = '    if docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}" 2>/dev/null; then\n'
+    pin = '    if TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}" 2>&1); then\n'
     build = 'bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod\n'
     assert pin in good and build in good, "the fixture drifted"
     path.write_text(good.replace(pin, "    if true; then\n").replace(build, build + pin.replace("    if", "if") + "fi\n"))

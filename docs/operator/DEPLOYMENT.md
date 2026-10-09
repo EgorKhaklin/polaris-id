@@ -69,10 +69,14 @@ plus whatever overlays `POLARIS_COMPOSE_EXTRA` names. In order:
    `awskms` the sealed store is unsealed into `POLARIS_SECRETS_DIR` first; the
    deploy refuses a sealed backend without one.
 2. `git pull --ff-only` (skipped with `--no-pull` or outside a git checkout).
-3. One deploy of the compose project at a time: a second one stops before it
-   changes anything (`flock` on `/tmp/polaris-deploy-<project>.lock`; on macOS, a
-   directory beside it). The running app's image, found through compose in this
-   project (a stopped app included), is pinned as `polaris-app:rollback-<project>`.
+3. One build or deploy of the host's images at a time, since every stack on a host
+   builds and runs the same tags: a second deploy, or `lab/strategy/006/try.sh`,
+   stops before it changes anything. Under `sudo` the lock is
+   `/run/polaris-host.lock` (root and the docker group only); run as another user,
+   that file when they can read it, else their own temporary directory
+   ([`scripts/polaris-host-lock.sh`](../../scripts/polaris-host-lock.sh)). The
+   running app's image, found through compose in this project (a stopped app
+   included), is pinned as `polaris-app:rollback-<project>`.
 4. `docker compose pull` for the upstream images, then every Polaris image
    (app, edge, pooler, database, etcd) built by
    [`scripts/polaris-image-build.sh`](../../scripts/polaris-image-build.sh) `--stack prod`.

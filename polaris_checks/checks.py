@@ -7228,7 +7228,7 @@ def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
     # a clean install of Engine 29) once the build had moved polaris-app:prod: the running image is
     # pinned under a tag of its own before the build, and the rollback re-tags the pin.
     # The whole line, so `if false && docker tag ...` does not pass for a pin.
-    pin = dep.find('\n    if docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}" 2>/dev/null; then\n')
+    pin = dep.find('\n    if TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}" 2>&1); then\n')
     build = dep.find('bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod')
     if pin < 0 or pin > build or 'ROLLBACK_TAG="polaris-app:rollback-${PROJECT}"' not in dep \
             or 'docker tag "${ROLLBACK_IMAGE}" polaris-app:prod' not in dep \
@@ -7238,15 +7238,29 @@ def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
                      "ID no longer resolves once the build moves polaris-app:prod")
     # 2026-10-09 review of #317: the pin is a host-wide tag, so a second deploy pinned the first one's
     # failed release over it. One deploy per project, locked before anything changes.
-    lock = dep.find('    flock -n 9 || {')
-    if lock < 0 or lock > pin or 'DEPLOY_LOCK="/tmp/polaris-deploy-${PROJECT}.lock"' not in dep \
-            or '    mkdir "${DEPLOY_LOCK}.d" 2>/dev/null || {' not in dep \
-            or dep.find('PROJECT=$(compose config') > dep.find('echo "  [2/7] git pull'):
-        return _fail(name, "polaris-deploy.sh must let one deploy of a compose project run at a time (flock, or a "
-                     "directory where flock is missing), taken before it pulls or pins: a second deploy pinned "
-                     "the first one's failed release over its rollback point")
-    if 'wait_healthy "${svc}" || ROLLED=0; done' not in dep \
-            or 'if [[ "${ROLLED}" -eq 1 ]]; then\n            echo "  ✓ Rolled back.' not in dep:
+    # Review 2 of #317: every stack on a host builds the same tags, so the lock is the host's, and try.sh,
+    # which builds them too, takes it; it lives where no unprivileged user can hold it or plant a link.
+    lock = _read(root, "scripts/polaris-host-lock.sh")
+    take = dep.find('source "${SCRIPT_DIR}/polaris-host-lock.sh"\npolaris_host_lock "this deploy"\n')
+    try_sh = _read(root, "lab/strategy/006/try.sh")
+    try_take = try_sh.find('source "${ROOT}/scripts/polaris-host-lock.sh"\npolaris_host_lock "try.sh"\n')
+    if take < 0 or take > pin or take > dep.find('echo "  [2/7] git pull') \
+            or try_take < 0 or try_take > try_sh.find('bash "${ROOT}/scripts/polaris-image-build.sh" --stack prod') \
+            or not all(n in lock for n in (
+                "local who=$1 shared=/run/polaris-host.lock",
+                '        if [[ -L "${shared}" ]]; then',
+                '        [[ -e "${shared}" ]] || install -m 0640 /dev/null "${shared}"',
+                '        chgrp docker "${shared}" 2>/dev/null || true',
+                '        POLARIS_HOST_LOCK="${TMPDIR:-${HOME}}/polaris-host.lock"',
+                "        flock -n 9 || {",
+                '        mkdir "${POLARIS_HOST_LOCK}.d" 2>/dev/null || {',
+                """        trap 'rmdir "${POLARIS_HOST_LOCK}.d" 2>/dev/null || true' EXIT""")):
+        return _fail(name, "polaris-deploy.sh and try.sh must take this host's image lock (scripts/polaris-host-lock.sh: "
+                     "flock, or a directory where flock is missing, released on exit, under /run for root and the "
+                     "docker group) before they pull, pin or build: every stack on a host builds the same tags")
+    # The block whole: a ROLLED=1 slipped in before the `if` passed a string search.
+    if not re.search(r'\n        ROLLED=1\n        for svc in [^\n]*wait_healthy "\$\{svc\}" \|\| ROLLED=0; done\n'
+                     r'        if \[\[ "\$\{ROLLED\}" -eq 1 \]\]; then\n            echo "  ✓ Rolled back\.', dep):
         return _fail(name, "polaris-deploy.sh must report a rollback only when the restored app came up healthy")
     if "PREV_APP=$(compose ps -a -q app" not in dep \
             or re.search(r"""(?m)docker inspect\b[^\n]*[\s"']polaris-app(?=["'\s]|$)""", dep):
