@@ -39,7 +39,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A sealed secret store set up as SECRETS.md said left `polaris.service` reading the shredded plaintext directory at its next start; an empty `POLARIS_SECRETS_DIR` is now refused.
 - SECRETS.md said a sealed store's key is not on its disk; an age identity kept on the host is. The doctor and every start now say when the secrets are plaintext on disk.
 - DEPLOYMENT.md's first-operator command omitted the `--reason` the script requires.
-- The install guides did not say to register the signing key, without which every relying-party verification is refused; the doctor now fails when credentials signed for real belong to an authority with no registered key.
+- The install guides did not say to register the signing key, without which every relying-party verification is refused; the doctor now fails when an active credential signed for real is under a key its authority had not registered when it was signed, names the key, and warns to re-issue what no registration can fix.
 - The scaling documents no longer present the signature check's rate per core as the verification route's capacity, nor unmeasured worker, replica and host scaling as measured.
 - A caught-up replica of an idle HA cluster no longer reads as lagging; reads stayed on the primary (lab record 017).
 - SECRETS.md still said Redis runs without a password.
@@ -71,6 +71,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp serves the request object with `Cache-Control: no-store`, as the German EUDI wallet guide's request_uri response does.
 - The record 007 Pomerium demo maps `*.localhost.pomerium.io` to loopback itself; public DNS stopped resolving it.
 - CI's coverage floors are enforced again: since 2026-09-30 a failed coverage export left them comparing nothing, and passing.
+- A fresh install named no step to register its signing key, so relying parties refused its credentials; `polaris-key-event.sh register <agency> --current` registers it from its first signature, so credentials issued before it verify too, and the installer, a deploy and the doctor name it.
+- `polaris-key-event.sh` never registers a retired or compromised key again, and one authority's key events run one at a time.
 - The trigger refusal drill no longer reports a refusal untested when the test that caught it failed inside a subtest beside a flaky one.
 - Two C1 privilege-boundary tests no longer fail when a trigger's random fold runs inside them.
 
@@ -145,6 +147,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp encrypts the request object to the wallet's key when its `wallet_metadata` asks, as the EU iOS wallet kit requires.
 - polaris-oid4vp `serve --verifier-info` adds attestations such as a registration certificate to the request, as the German wallet requires.
 - A check that the product suite's parallel CI parts share one setup and that its required job gates on each.
+- `scripts/polaris-rp-register.sh` registers a relying party on the Docker stack, where `polaris rp-register` could not reach the database.
+- CI walks a fresh host to a credential a relying party verifies online, counting the operator's inputs and reporting the time.
+- The doctor warns when continuous archiving is off or the backup repository is on the host it protects.
 
 ### Changed
 

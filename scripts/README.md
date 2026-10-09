@@ -29,8 +29,10 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-rotate-logs.sh` | The yearly archive-and-purge wrapper | `polaris-cron-install.sh` |
 | `polaris-cron-install.sh` | Installs the operator crontab wiring | An operator, once |
 | `polaris-create-operator.sh` | Onboards an operator account | An operator; `polaris_web/docker-init.sh` bootstraps the first admin |
-| `polaris-key-event.sh` | Registers, retires or declares compromised an authority signing key on the Docker stack, as the schema owner | An operator during a key ceremony (KEY-CEREMONY.md); `lab/strategy/006/rotate.sh` |
+| `polaris-key-event.sh` | Registers, retires or declares compromised an authority signing key on the Docker stack, as the schema owner; `register <agency> --current` registers the key the running app signs with as the authority's first key, from its first signature, and never rotates | An operator after the install and during a key ceremony (KEY-CEREMONY.md); `lab/strategy/006/rotate.sh`; the CI fresh-host drill |
+| `polaris-rp-register.sh` | Registers a relying party for `/api/v1` on the Docker stack, as the schema owner: `polaris rp-register`'s statements through the postgres container; prints the client secret once | An operator onboarding a relying party (DEPLOYMENT.md); the CI fresh-host drill |
 | `polaris-doctor.sh` | Judges every component of the Docker stack and names the failing ones, first one first | An operator, first, when something is wrong; `lab/strategy/006/doctor.sh` |
+| `polaris-key-register-check.sql` | Names the authorities whose credentials signed for real are refused for their key, judged as every relying-party route judges it (`polaris_web/test_app.py` `KeyRegisterScriptTests` holds it to that) | `polaris-doctor.sh`, `polaris-deploy.sh` |
 | `polaris-recover-admin.sh` | Emergency password-only login for a locked-out admin | An operator, under `RUNBOOKS.md` |
 | `polaris-generate-recovery-code.sh` | Mints a printed-mnemonic recovery code | An operator, at enrolment |
 | `polaris-set-webauthn-deadline.sh` | Sets `webauthn_required_after` for an account | An operator, during the MFA rollout |

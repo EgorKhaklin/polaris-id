@@ -1263,6 +1263,11 @@ polaris-id rp-history <client_id>              # every decision, and who made it
 polaris-id rp-history --weakened-only          # only the bars that were lowered
 ```
 
+On the Docker stack the database answers only on the stack's network, so
+[`scripts/polaris-rp-register.sh`](../../scripts/polaris-rp-register.sh) runs `rp-register`'s
+statements as the schema owner through the postgres container, with the same options; `rp-policy`
+and `rp-history` still need a connection as the schema owner.
+
 A change that REDUCES what the party must satisfy (the zero-knowledge step-up turned
 off, a required enrollment dropped, the context restriction lifted, the scope widened,
 the credential re-enabled, the rate limit raised) is refused by the DATABASE without a

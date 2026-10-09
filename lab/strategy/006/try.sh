@@ -117,6 +117,9 @@ The credential was signed with ML-DSA-65 by the stack running on this machine, u
 minted here, and polaris-verify from PyPI checked it against that key.
 
   Check it again:   cd ${OUT} && ./venv/bin/polaris-verify --pqc-provider auto --issuer-anchor anchors.json --pack pack.json
+  Verify online:    relying parties refuse this stack's credentials until its key is registered:
+                    COMPOSE_PROJECT_NAME=polaris-try POLARIS_DOMAIN=localhost \\
+                      bash scripts/polaris-key-event.sh register 1 --current
   Operator console: https://localhost:8443 as ${USERNAME}; the password is in ${OUT}/operator-password.
                     The browser warns about the local certificate authority; its root is ${OUT}/caddy-root.crt.
   Stop and delete:  bash lab/strategy/006/try.sh --down
