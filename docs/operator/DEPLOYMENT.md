@@ -69,7 +69,18 @@ plus whatever overlays `POLARIS_COMPOSE_EXTRA` names. In order:
    `awskms` the sealed store is unsealed into `POLARIS_SECRETS_DIR` first; the
    deploy refuses a sealed backend without one.
 2. `git pull --ff-only` (skipped with `--no-pull` or outside a git checkout).
-3. The running app image id is recorded for rollback.
+3. One build or deploy of the host's images at a time, since every stack on a host
+   builds and runs the same tags: a second deploy, `install.sh`, `try.sh` or a drill
+   that builds them or recreates a service from them stops before it changes anything,
+   and says who holds the host; `polaris.service` refuses to start while one runs.
+   The lock is a Docker network, `polaris-host-lock`, which the daemon lets one
+   caller create, so anyone who can reach Docker shares it, with or without `sudo`
+   ([`scripts/polaris-host-lock.sh`](../../scripts/polaris-host-lock.sh)). One this
+   host left, from an earlier boot or a process that is gone, is taken over with its
+   holder named; one held from another host is removed by hand once that run is
+   gone: `docker network rm polaris-host-lock`. The running app's image, found through compose in
+   this project (a stopped app included), is pinned as
+   `polaris-app:rollback-<project>`.
 4. `docker compose pull` for the upstream images, then every Polaris image
    (app, edge, pooler, database, etcd) built by
    [`scripts/polaris-image-build.sh`](../../scripts/polaris-image-build.sh) `--stack prod`.
@@ -86,8 +97,13 @@ plus whatever overlays `POLARIS_COMPOSE_EXTRA` names. In order:
    waited on until its healthcheck passes, then `app`; without it, the single
    `app` is recreated.
 8. Smoke test from inside the network: `/api/health` must report `healthy`
-   (`degraded` is accepted). On failure the previous app image is re-tagged
-   and every app colour recreated from it; the script exits non-zero.
+   (`degraded` is accepted). On failure the previous app image, pinned as
+   `polaris-app:rollback-<project>` before step 4's build, is the app image again and
+   every app colour is recreated from it; the script says whether it came up healthy
+   and exits non-zero. The pin is a tag, kept until the next deploy re-pins it:
+   under Docker's containerd image store, the default on a clean install of Docker
+   Engine 29 and later, an image whose last tag has moved has no record left to
+   re-tag.
 
 `staging` runs the identical flow; point `POLARIS_DOMAIN` at the staging
 hostname yourself, the script does not derive it; `dev` delegates
@@ -199,13 +215,37 @@ verifiable presentation". Register it before the first credential is issued, for
 that issues under it; the registration ends the key ceremony ([`KEY-CEREMONY.md`](KEY-CEREMONY.md)):
 
 ```bash
-PK=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["public_key_hex"])' \
-       "${POLARIS_SECRETS_DIR:-polaris_web/secrets}/polaris_signing_key")
-./scripts/polaris-key-event.sh register <agency id> "$PK"
+./scripts/polaris-key-event.sh register <agency id> --current
 ```
 
-[`scripts/polaris-doctor.sh`](../../scripts/polaris-doctor.sh) fails when an authority holds
-credentials signed for real under no registered key.
+`--current` reads the public key from the running app's own key store (a file, PKCS#11 or a KMS
+alike), so nobody copies 3,904 hex characters. It registers an authority's first key, effective from
+that key's first signature for the authority, so a credential issued before the registration
+verifies too. Run again, it leaves the key alone, or extends its registration back over a signature
+made before the registration took effect (an issuance in flight at that moment). Everything after
+the first key is the ceremony's, and `--current` refuses it: another active key (a rotation), a key
+retired or declared compromised (the script never registers one again), a later key once the last
+one ended. The ceremony names a key by its hex: `./scripts/polaris-key-event.sh register <agency
+id> <public key hex>`, with `--effective-at` for a key registered from another instant. Every event
+holds the authority's row for its transaction, so a `--current` and a ceremony never interleave.
+[`scripts/polaris-doctor.sh`](../../scripts/polaris-doctor.sh) fails when an active credential signed
+for real is under a key its authority had not registered when it was signed, judged as every
+relying-party route judges it, and names the key: register only a key this install signs with or a
+ceremony minted, since a key nobody minted was planted. It warns to re-issue what no registration
+can fix, and a deploy names the command for each authority.
+
+### Relying parties
+
+A relying party verifies with `POST /api/v1/verify`, using a token from `/api/v1/oauth/token`.
+Registering one grants it standing to ask about people, so it is the schema owner's act, and the
+database answers only on the stack's own network:
+[`scripts/polaris-rp-register.sh`](../../scripts/polaris-rp-register.sh) runs the statements
+`polaris rp-register` runs, through the postgres container, and prints the client id and the secret
+once (only the secret's scrypt hash is kept):
+
+```bash
+./scripts/polaris-rp-register.sh "<organization>" --justification "<why, at least 20 characters>"
+```
 
 ## Environment variables
 

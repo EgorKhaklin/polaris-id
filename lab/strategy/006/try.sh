@@ -53,6 +53,11 @@ T0=$(date +%s)
 step() { printf '\n[%3ds] %s\n' "$(( $(date +%s) - T0 ))" "$1"; }
 fail() { echo "failed: $1 (log: $2)" >&2; tail -20 "$2" >&2; exit 1; }
 
+# The images this builds are the host's (polaris-app:prod and its siblings), which a deploy on this
+# host builds and rolls too: one of them at a time (scripts/polaris-host-lock.sh).
+source "${ROOT}/scripts/polaris-host-lock.sh"
+polaris_host_lock "try.sh"
+
 step "1/7 build the production images (the first build compiles liboqs and takes minutes)"
 bash "${ROOT}/scripts/polaris-image-build.sh" --stack prod > "${OUT}/build.log" 2>&1 \
     || fail "the image build" "${OUT}/build.log"
@@ -117,6 +122,9 @@ The credential was signed with ML-DSA-65 by the stack running on this machine, u
 minted here, and polaris-verify from PyPI checked it against that key.
 
   Check it again:   cd ${OUT} && ./venv/bin/polaris-verify --pqc-provider auto --issuer-anchor anchors.json --pack pack.json
+  Verify online:    relying parties refuse this stack's credentials until its key is registered:
+                    COMPOSE_PROJECT_NAME=polaris-try POLARIS_DOMAIN=localhost \\
+                      bash scripts/polaris-key-event.sh register 1 --current
   Operator console: https://localhost:8443 as ${USERNAME}; the password is in ${OUT}/operator-password.
                     The browser warns about the local certificate authority; its root is ${OUT}/caddy-root.crt.
   Stop and delete:  bash lab/strategy/006/try.sh --down

@@ -208,6 +208,9 @@ stage_app() {
     if [ "$SKIP_BUILD" = 1 ]; then
         skip "image build (--skip-build)"
     else
+        # The host's image tags, which every Polaris build and deploy here shares: one at a time.
+        source "$INSTALL_DIR/scripts/polaris-host-lock.sh"
+        polaris_host_lock "install.sh"
         ( cd "$INSTALL_DIR/polaris_web" && docker compose -f docker-compose.prod.yml build -q ) \
             && ok "production images built"
     fi
@@ -247,7 +250,9 @@ stage_app() {
     fi
     [ "$NO_START" = 1 ] && { skip "stack start (--no-start)"; return 0; }
 
-    # 6. Start, migrate/sync, and prove health through the TLS edge.
+    # 6. Start, migrate/sync, and prove health through the TLS edge. The unit takes the host's image lock in a
+    # process of its own, so this run gives back the one it built under first.
+    if declare -F polaris_host_release >/dev/null; then polaris_host_release; fi
     if ! systemctl start polaris.service; then
         # The one line systemd prints is never the cause; show the journal and the
         # compose state so a CI failure is diagnosable from the log (v9.184).
@@ -279,6 +284,16 @@ stage_app() {
         || die "/api/health reports unhealthy components"
     ok "healthy through the TLS edge: $url"
     printf '\n  Polaris is running under systemd.\n    systemctl status polaris      journalctl -u polaris\n    upgrades: cd %s && scripts/polaris-deploy.sh prod\n    hardening: docs/operator/HARDENING.md\n\n' "$INSTALL_DIR"
+    # Lab record 017 (gate row OP-2): the two steps a working install still needs, named exactly. The
+    # key step is the authority's act, so the install never takes it: it says the one command.
+    printf '  Next, once (docs/operator/LINUX-SERVER.md, "After the install"):\n'
+    printf '    1. the first administrator:\n'
+    printf '         cd %s && sudo scripts/polaris-create-operator.sh --username NAME --role admin \\\n' "$INSTALL_DIR"
+    printf '           --password-file FILE --reason "the first administrator of this install" --target=docker-stack\n'
+    printf '    2. register the signing key this install minted, for each authority that issues (1 in the\n'
+    printf '       notional data); until then every relying party refuses its credentials:\n'
+    printf '         cd %s && sudo scripts/polaris-key-event.sh register 1 --current\n' "$INSTALL_DIR"
+    printf '    Relying parties are registered with scripts/polaris-rp-register.sh.\n\n'
 }
 
 case "$STAGE" in

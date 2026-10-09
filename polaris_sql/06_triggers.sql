@@ -511,6 +511,7 @@ RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_event_type    VARCHAR(40);
@@ -960,6 +961,7 @@ CREATE OR REPLACE FUNCTION enforce_agency_quota()
 RETURNS TRIGGER LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_kind      TEXT := TG_ARGV[0];      -- 'issue' | 'revoke' | 'verify'
@@ -1844,6 +1846,7 @@ CREATE TRIGGER trg_referee_vouching_append_only
 CREATE OR REPLACE FUNCTION enforce_vouching_rules()
 RETURNS TRIGGER
 LANGUAGE plpgsql
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_referee_level  VARCHAR(6);

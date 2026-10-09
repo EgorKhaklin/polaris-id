@@ -123,6 +123,13 @@ DROP TABLE IF EXISTS CryptographicAlgorithm CASCADE;
 DROP TABLE IF EXISTS Agency                 CASCADE;
 DROP TABLE IF EXISTS Individual             CASCADE;
 
+-- 2026-10-09 (THREAT-MODEL). An instant column here is TIMESTAMP without a zone, and a bare
+-- CURRENT_TIMESTAMP stored into one is the wall clock of the SESSION's TimeZone, which any role
+-- may SET. So every default below reads (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'), and every
+-- routine that reads the clock pins SET timezone = 'UTC': an instant the database records or
+-- compares is on the UTC clock whatever zone the caller chose.
+-- check_database_instants_read_the_utc_clock holds both.
+
 -- ============================================================================
 -- PRINCIPAL ENTITIES
 -- The four principal entities (Individual, Agency, CryptographicAlgorithm,
@@ -137,7 +144,7 @@ CREATE TABLE Individual (
     date_of_birth   DATE         NOT NULL,
     jurisdiction    VARCHAR(10)  NOT NULL                 -- ISO 3166-2 (e.g. 'US-PA')
         CHECK (jurisdiction ~ '^[A-Z]{2}(-[A-Z0-9]{1,3})?$'),
-    enrollment_date TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+    enrollment_date TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
 );
 
 COMMENT ON TABLE Individual IS
@@ -226,7 +233,7 @@ CREATE TABLE AppUser (
     password_hash        VARCHAR(255) NOT NULL,
     role                 VARCHAR(20)  NOT NULL,
     is_active            BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at           TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     last_login_at        TIMESTAMP,
     failed_login_count   INTEGER      NOT NULL DEFAULT 0,
     -- When the most recent failure was recorded (migration 2026-09-17-001). The counter
@@ -287,7 +294,7 @@ CREATE TABLE RelyingParty (
         -- record of who authenticated where (the broker keeps only consumed code hashes).
         CONSTRAINT chk_rp_scope CHECK (scope IN ('verify', 'authenticate', 'verify authenticate')),
     enabled            BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at         TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     last_used_at       TIMESTAMP,
     rate_limit_per_min INTEGER      NOT NULL DEFAULT 120
         CONSTRAINT chk_rp_rate_limit CHECK (rate_limit_per_min > 0),
@@ -340,7 +347,7 @@ CREATE TABLE AgencyEvent (
     actor         VARCHAR(100),
     db_role       VARCHAR(100) NOT NULL DEFAULT session_user,
     justification VARCHAR(500),
-    recorded_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    recorded_at   TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     CONSTRAINT chk_agency_event_type CHECK (event_type IN (
         'CREATED', 'RENAMED', 'LEVEL_CHANGED', 'TYPE_CHANGED',
         'JURISDICTION_CHANGED', 'SIGNING_KEY_CHANGED')),
@@ -385,7 +392,7 @@ CREATE TABLE AppUserEvent (
     actor         VARCHAR(100),
     db_role       VARCHAR(100) NOT NULL DEFAULT session_user,
     justification VARCHAR(500),
-    recorded_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    recorded_at   TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     CONSTRAINT chk_app_user_event_type CHECK (event_type IN (
         'CREATED', 'DELETED', 'RENAMED', 'ROLE_CHANGED', 'ACTIVATED', 'DEACTIVATED',
         'WEBAUTHN_DEADLINE_CHANGED', 'AGENCY_CHANGED', 'PASSWORD_CHANGED',
@@ -447,7 +454,7 @@ CREATE TABLE RelyingPartyEvent (
     actor           VARCHAR(100),
     db_role         VARCHAR(100) NOT NULL DEFAULT session_user,
     justification   VARCHAR(500),
-    recorded_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    recorded_at     TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     CONSTRAINT chk_rp_event_type CHECK (event_type IN (
         'REGISTERED', 'POLICY_CHANGED', 'ENABLED', 'DISABLED',
         'RATE_LIMIT_CHANGED', 'SECRET_ROTATED', 'RENAMED', 'SCOPE_CHANGED')),
@@ -481,7 +488,7 @@ CREATE TABLE ExchangeReceiptLog (
     seq            BIGSERIAL    PRIMARY KEY,
     receipt_hash   CHAR(64)     NOT NULL UNIQUE
         CONSTRAINT chk_receipt_log_hash CHECK (receipt_hash ~ '^[0-9a-f]{64}$'),
-    minted_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+    minted_at      TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
 );
 
 COMMENT ON TABLE ExchangeReceiptLog IS
@@ -500,7 +507,7 @@ CREATE TABLE TimestampLog (
     seq             BIGSERIAL    PRIMARY KEY,
     timestamp_hash  CHAR(64)     NOT NULL UNIQUE
         CONSTRAINT chk_timestamp_log_hash CHECK (timestamp_hash ~ '^[0-9a-f]{64}$'),
-    anchored_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+    anchored_at     TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
 );
 
 COMMENT ON TABLE TimestampLog IS
@@ -532,7 +539,7 @@ CREATE TABLE ChainAnchor (
         CONSTRAINT chk_chain_anchor_height CHECK (block_height >= 0),
     block_header_hex   CHAR(160)    NOT NULL
         CONSTRAINT chk_chain_anchor_header CHECK (block_header_hex ~ '^[0-9a-f]{160}$'),
-    recorded_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    recorded_at        TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     recorded_by        VARCHAR(50)  NOT NULL
 );
 
@@ -550,7 +557,7 @@ CREATE TABLE BackupEvent (
     event_id       BIGSERIAL    PRIMARY KEY,
     kind           VARCHAR(20)  NOT NULL
         CONSTRAINT chk_backup_event_kind CHECK (kind IN ('dump', 'pgbackrest', 'dump-verified', 'restore-verified')),
-    completed_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at   TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     location       VARCHAR(300) NOT NULL
         CONSTRAINT chk_backup_event_location CHECK (length(btrim(location)) BETWEEN 1 AND 300),
     detail         VARCHAR(300),
@@ -574,7 +581,7 @@ CREATE TABLE RestoreRecord (
     restore_id     BIGSERIAL    PRIMARY KEY,
     target_time    TIMESTAMPTZ  NOT NULL,
     archive_end    TIMESTAMPTZ  NOT NULL,
-    recorded_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    recorded_at    TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     operator       VARCHAR(100) NOT NULL
         CONSTRAINT chk_restore_record_operator CHECK (length(btrim(operator)) BETWEEN 1 AND 100),
     outcome        VARCHAR(20)  NOT NULL
@@ -601,7 +608,7 @@ CREATE TABLE ExchangeNonce (
         CONSTRAINT chk_exchange_nonce_key CHECK (requester_key_hash ~ '^[0-9a-f]{64}$'),
     nonce              VARCHAR(64)  NOT NULL
         CONSTRAINT chk_exchange_nonce_len CHECK (char_length(nonce) BETWEEN 1 AND 64),
-    consumed_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    consumed_at        TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     PRIMARY KEY (requester_key_hash, nonce)
 );
 
@@ -618,7 +625,7 @@ COMMENT ON TABLE ExchangeNonce IS
 CREATE TABLE AuthCodeConsumed (
     code_hash    CHAR(64)   PRIMARY KEY
         CONSTRAINT chk_auth_code_hash CHECK (code_hash ~ '^[0-9a-f]{64}$'),
-    consumed_at  TIMESTAMP  NOT NULL DEFAULT CURRENT_TIMESTAMP
+    consumed_at  TIMESTAMP  NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
 );
 
 COMMENT ON TABLE AuthCodeConsumed IS
@@ -641,8 +648,8 @@ CREATE TABLE AuthorityKeyEvent (
         CONSTRAINT chk_authority_key_algorithm CHECK (algorithm IN ('ML-DSA-65', 'ML-DSA-87', 'Falcon-padded-1024')),
     event           VARCHAR(20)  NOT NULL
         CONSTRAINT chk_authority_key_event CHECK (event IN ('registered', 'retired', 'compromised')),
-    effective_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    recorded_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    effective_at    TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    recorded_at     TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     note            VARCHAR(200)
 );
 
@@ -658,7 +665,7 @@ CREATE INDEX idx_authority_key_event_key ON AuthorityKeyEvent USING hash (public
 -- coverage:exempt — C1 AoR enforced by tg_authauditlog_append_only; schema_watcher verifies the trigger exists
 CREATE TABLE AuthAuditLog (
     audit_id       BIGSERIAL,
-    event_timestamp    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    event_timestamp    TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     event_type         VARCHAR(40)  NOT NULL,
     username           VARCHAR(50),
     user_id            INTEGER,
@@ -733,7 +740,7 @@ CREATE TABLE IdentityToken (
         CHECK (activation_sequence >= 1),
     status                       VARCHAR(20) NOT NULL DEFAULT 'RESERVE'
         CHECK (status IN ('ACTIVE','RESERVE','DORMANT','REVOKED','LOST','EXPIRED')),
-    issued_date                  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    issued_date                  TIMESTAMP   NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     activated_date               TIMESTAMP,
     expiration_date              DATE,
     -- v8.24 / R11-5 / M2-10: optional duress-code commitment (Werkzeug scrypt hash).
@@ -800,7 +807,7 @@ CREATE TABLE TokenLifecycleEvent (
         CHECK (event_type IN ('ISSUED','ACTIVATED','DEACTIVATED',
                               'DEVICE_BOUND','DEVICE_REVOKED',
                               'REVOKED','LOST','EXPIRED','REPLACED')),
-    event_timestamp TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    event_timestamp TIMESTAMP   NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     reason_code     VARCHAR(60),
     -- Geographic coordinates of the event. Nullable so legacy events without
     -- recorded location remain valid; cluster aggregation IS NULL-tolerant.
@@ -826,7 +833,7 @@ CREATE TABLE VerificationEvent (
     token_id             INTEGER            REFERENCES IdentityToken(token_id),  -- NULLABLE: ZERO_KNOWLEDGE
     requesting_agency_id INTEGER   NOT NULL REFERENCES Agency(agency_id),
     context_id           INTEGER   NOT NULL REFERENCES VerificationContext(context_id),
-    event_timestamp      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    event_timestamp      TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     outcome              VARCHAR(20) NOT NULL
         CHECK (outcome IN ('SUCCESS','FAILURE','EXPIRED','UNAUTHORIZED')),
     disclosure_level     VARCHAR(20) NOT NULL
@@ -890,7 +897,7 @@ CREATE TABLE DeviceBinding (
     device_fingerprint VARCHAR(128) NOT NULL UNIQUE,                 -- secure-enclave-attested
     binding_method     VARCHAR(40) NOT NULL
         CHECK (binding_method IN ('SECURE_ENCLAVE','TITAN_SECURITY','TRUSTED_PLATFORM_MODULE')),
-    authorized_date    TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    authorized_date    TIMESTAMP   NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     expires_date       TIMESTAMP,
     status             VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
         CHECK (status IN ('ACTIVE','REVOKED')),
@@ -913,7 +920,7 @@ CREATE TABLE BlockchainAnchor (
     ledger_network   VARCHAR(40) NOT NULL
         CHECK (ledger_network IN ('ALGORAND_PQ','HYPERLEDGER_INDY','CUSTOM_LATTICE')),
     anchor_tx_hash   VARCHAR(128),                                    -- ledger transaction id
-    anchored_date    TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    anchored_date    TIMESTAMP   NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     status           VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
         CHECK (status IN ('ACTIVE','SUPERSEDED','REVOKED')),
 
@@ -947,7 +954,7 @@ CREATE TABLE RevocationList (
     revocation_id        SERIAL    PRIMARY KEY,
     token_id             INTEGER   NOT NULL REFERENCES IdentityToken(token_id),
     revoked_by_agency_id INTEGER   NOT NULL REFERENCES Agency(agency_id),
-    revocation_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revocation_timestamp TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     effective_date       DATE      NOT NULL,
     reason_code          VARCHAR(40) NOT NULL
         CHECK (reason_code IN ('COMPROMISED','LOST','STOLEN','SUPERSEDED',
@@ -971,7 +978,7 @@ CREATE TABLE AgencyAlgorithmAuth (
     algorithm_id       INTEGER     NOT NULL REFERENCES CryptographicAlgorithm(algorithm_id),
     authorization_type VARCHAR(20) NOT NULL
         CHECK (authorization_type IN ('ISSUE','VERIFY','BOTH')),
-    authorized_date    TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    authorized_date    TIMESTAMP   NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     PRIMARY KEY (agency_id, algorithm_id)
 );
 
@@ -985,7 +992,7 @@ CREATE TABLE TokenPermission (
     context_id       INTEGER     NOT NULL REFERENCES VerificationContext(context_id),
     permission_level VARCHAR(20) NOT NULL
         CHECK (permission_level IN ('READ','VERIFY','FULL')),
-    granted_date     TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    granted_date     TIMESTAMP   NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     PRIMARY KEY (token_id, context_id)
 );
 
@@ -1022,7 +1029,7 @@ CREATE TABLE IssuerDiscretionPolicy (
     window_days         INTEGER     NOT NULL
                         CHECK (window_days BETWEEN 1 AND 365),
     set_by_admin        VARCHAR(50) NOT NULL,
-    set_at              TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    set_at              TIMESTAMP   NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     justification       TEXT        NOT NULL
                         CHECK (length(justification) >= 20),
     -- Set when a later decision replaces this one. NULL = in force, and
@@ -1064,7 +1071,7 @@ CREATE TABLE AgencyQuota (
     revoke_per_day     INTEGER      CHECK (revoke_per_day  IS NULL OR revoke_per_day  > 0),
     verify_per_hour    INTEGER      CHECK (verify_per_hour IS NULL OR verify_per_hour > 0),
     set_by_admin       VARCHAR(50)  NOT NULL,
-    set_at             TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    set_at             TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     justification      TEXT         NOT NULL
                        CHECK (length(justification) >= 20),
     superseded_at      TIMESTAMP
@@ -1121,7 +1128,7 @@ CREATE TABLE EnrollmentStatusEvent (
                           'LAPSED')),
     transition_reason     VARCHAR(60) NOT NULL,
     recorded_by_agency_id INTEGER REFERENCES Agency(agency_id),  -- nullable: SYSTEM seed events
-    event_timestamp       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    event_timestamp       TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     notes                 TEXT,
     -- v9.245 (roadmap P2.1): the partition key must be part of the primary key.
     PRIMARY KEY (event_id, event_timestamp)
@@ -1161,7 +1168,7 @@ CREATE TABLE IndividualErasureEvent (
     erased_by_user_id   INTEGER      NOT NULL REFERENCES AppUser(user_id),
     reason              VARCHAR(200) NOT NULL
         CHECK (char_length(trim(reason)) >= 1),
-    event_timestamp     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+    event_timestamp     TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
 );
 
 CREATE INDEX idx_erasure_individual ON IndividualErasureEvent(individual_id);
@@ -1204,7 +1211,7 @@ CREATE TABLE RecoveryRequest (
     recovery_id              SERIAL       PRIMARY KEY,
     claimed_individual_id    INTEGER      NOT NULL
                              REFERENCES Individual(individual_id),
-    requested_at             TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    requested_at             TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     requesting_agency_id     INTEGER      NOT NULL REFERENCES Agency(agency_id),
     requesting_user_id       INTEGER      NOT NULL REFERENCES AppUser(user_id),
 
@@ -1314,7 +1321,7 @@ CREATE TABLE TokenSignature (
         -- key-file lookup, survives key rotation). NULL = a deterministic
         -- placeholder signature (SHA3-256, no key); non-NULL = a real ML-DSA-65
         -- signature verifiable against this key. Write-once (immutability trigger).
-    signed_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    signed_at          TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     deprecation_date   TIMESTAMP,
         -- NULL = currently active; non-NULL = no longer accepted
         -- after this timestamp. One-way: cannot un-set or move earlier
@@ -1359,7 +1366,7 @@ CREATE TABLE AnchorBatch (
     algorithm_id        INTEGER      NOT NULL
                         REFERENCES CryptographicAlgorithm(algorithm_id),
     batch_size          INTEGER      NOT NULL CHECK (batch_size > 0),
-    created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at          TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     committed_to_chain  BOOLEAN      NOT NULL DEFAULT FALSE,
     external_chain      VARCHAR(40)
                         CHECK (external_chain IS NULL OR
@@ -1438,8 +1445,8 @@ CREATE TABLE HolderKeyEvent (
         CONSTRAINT chk_holder_key_algorithm CHECK (algorithm IN ('ML-DSA-65', 'ML-DSA-87')),
     event           VARCHAR(20)  NOT NULL
         CONSTRAINT chk_holder_key_event CHECK (event IN ('bound', 'rotated', 'revoked')),
-    effective_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    recorded_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    effective_at    TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    recorded_at     TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     note            VARCHAR(200)
 );
 
@@ -1473,7 +1480,7 @@ CREATE TABLE CredentialCopy (
         CONSTRAINT chk_credential_copy_status_index CHECK (status_index >= 0 AND status_index < 1048576),
     format        VARCHAR(20)  NOT NULL
         CONSTRAINT chk_credential_copy_format CHECK (format = 'dc+sd-jwt'),
-    issued_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    issued_at     TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     expires_at    TIMESTAMP    NOT NULL,
     CONSTRAINT chk_credential_copy_window CHECK (expires_at > issued_at),
     CONSTRAINT chk_credential_copy_list_day CHECK (list_day = issued_at::DATE),
@@ -1502,7 +1509,7 @@ SELECT DISTINCT ON (hke.token_id)
        hke.event,
        hke.effective_at
   FROM HolderKeyEvent hke
- WHERE hke.effective_at <= CURRENT_TIMESTAMP
+ WHERE hke.effective_at <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
  ORDER BY hke.token_id, hke.effective_at DESC, hke.event_id DESC;
 
 COMMENT ON VIEW HolderKeyCurrent IS
@@ -1518,7 +1525,7 @@ CREATE TABLE AgencyTrustAttestation (
                           REFERENCES Agency(agency_id),
     context_id            INTEGER      NOT NULL
                           REFERENCES VerificationContext(context_id),
-    attested_date         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    attested_date         TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     valid_until           DATE         NOT NULL,
     signed_by             INTEGER      NOT NULL
                           REFERENCES AppUser(user_id),
@@ -1594,10 +1601,10 @@ COMMENT ON TABLE AgencyTrustAttestation IS
 CREATE TABLE TokenStateEpoch (
     epoch_id           SERIAL       PRIMARY KEY,
     merkle_root        VARCHAR(128) NOT NULL,
-    valid_from         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    valid_from         TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     valid_until        TIMESTAMP    NOT NULL,
     committed_count    INTEGER      NOT NULL CHECK (committed_count > 0),
-    closed_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    closed_at          TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     closed_by_user_id  INTEGER      NOT NULL REFERENCES AppUser(user_id),
 
     CONSTRAINT epoch_root_is_hex CHECK (merkle_root ~ '^[0-9a-fA-F]+$'),
@@ -1699,7 +1706,7 @@ CREATE TABLE DuressEvent (
     token_id              INTEGER      NOT NULL REFERENCES IdentityToken(token_id),
     context_id            INTEGER      NOT NULL REFERENCES VerificationContext(context_id),
     requesting_agency_id  INTEGER      NOT NULL REFERENCES Agency(agency_id),
-    event_timestamp       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    event_timestamp       TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     oob_channel           VARCHAR(40)  NOT NULL DEFAULT 'AUDIT_TABLE'
         CHECK (oob_channel IN ('AUDIT_TABLE','STDERR_LOG','SMS_PLACEHOLDER',
                                'SLACK_PLACEHOLDER','SIEM_PLACEHOLDER')),
@@ -1759,7 +1766,7 @@ CREATE TABLE IF NOT EXISTS EnrollmentProofing (
     biometric_liveness_passed BOOLEAN,
     derived_ial               VARCHAR(6)   NOT NULL
         CHECK (derived_ial IN ('IAL1', 'IAL2', 'IAL3')),
-    recorded_at               TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    recorded_at               TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     -- A biometric is recorded whole or not at all: a modality with no liveness result would
     -- let an enrollment count a photograph of a face, which scores excellently.
     CONSTRAINT biometric_recorded_whole CHECK (
@@ -1841,7 +1848,7 @@ CREATE TABLE IF NOT EXISTS RefereeVouching (
         CHECK (vouched_ial IN ('IAL1', 'IAL2', 'IAL3')),
     co_signer_individual_id INTEGER
                             REFERENCES Individual(individual_id),
-    vouched_at              TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    vouched_at              TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
 
     CONSTRAINT referee_is_not_the_applicant
         CHECK (referee_individual_id <> applicant_individual_id),
@@ -1889,7 +1896,7 @@ CREATE TABLE IF NOT EXISTS EnrollmentCode (
     code_hash           VARCHAR(64)  NOT NULL,
     channel             VARCHAR(24)  NOT NULL
         CHECK (channel IN ('POSTAL', 'SMS', 'EMAIL', 'IN_PERSON_HANDOVER')),
-    issued_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    issued_at           TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     expires_at          TIMESTAMP    NOT NULL,
     redeemed_at         TIMESTAMP,
     attempts            INTEGER      NOT NULL DEFAULT 0,
@@ -1977,7 +1984,7 @@ CREATE TABLE IF NOT EXISTS CardPersonalization (
     card_object_sha3_256  BYTEA        NOT NULL
         CHECK (octet_length(card_object_sha3_256) = 32),
     personalized_by       INTEGER      REFERENCES AppUser(user_id),
-    personalized_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    personalized_at       TIMESTAMP    NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     -- The two slots must differ. A card whose duress key equalled its normal key would have
     -- a duress PIN that produced an indistinguishable presentation for the AUTHORITY too,
     -- which is the one party that has to be able to tell.
@@ -2207,7 +2214,7 @@ CREATE TABLE IF NOT EXISTS BulkEnrollmentBatch (
     issuing_agency_id INTEGER NOT NULL REFERENCES Agency(agency_id),
     algorithm_id      INTEGER NOT NULL REFERENCES CryptographicAlgorithm(algorithm_id),
     note              VARCHAR(200),
-    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at        TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     issued_at         TIMESTAMP,
     rows_issued       INTEGER
 );
@@ -2493,7 +2500,9 @@ END;
 $$;
 
 CREATE OR REPLACE PROCEDURE uc_ensure_event_partitions(p_months_ahead integer DEFAULT 3)
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql
+SET timezone = 'UTC'
+AS $$
 DECLARE
     v_tables text[] := ARRAY['tokenlifecycleevent','verificationevent','enrollmentstatusevent','authauditlog'];
     v_tbl text; v_from date; v_to date; v_part text; i integer;

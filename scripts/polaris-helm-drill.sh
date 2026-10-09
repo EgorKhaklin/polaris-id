@@ -23,6 +23,12 @@
 #      redis).
 #   6. `kubectl rollout restart` of the app rolls with maxUnavailable 0 and the
 #      edge stays healthy.
+#   8. G5: every edge replica, reached by its own port-forward, serves a chain to
+#      the chart's root (Secret <release>-edge-ca), verified without -k, and still
+#      does after one replica is replaced: the root is the chart's, not the pod's.
+#   9. G5: with edge.tls=secret every replica serves the Secret's certificate, and
+#      after the Secret is renewed every replica serves the new one (the
+#      tls-reload container); edge.tls=acme with two replicas does not render.
 #
 # Env: KEEP_CLUSTER=1 keeps the cluster; KIND_CLUSTER (default polaris-drill).
 # ============================================================================
@@ -94,16 +100,43 @@ echo "== 3. secrets + helm install =="
 [ -s "$ROOT/polaris_web/secrets/polaris_signing_key" ] || echo "  (no signing key generated; custody will report degraded)"
 kubectl -n "$NS" create secret generic polaris-secrets --from-file="$ROOT/polaris_web/secrets/" >/dev/null
 helm lint "$ROOT/deploy/helm/polaris" >/dev/null && echo "  helm lint OK"
+# G5: ACME state that replicas do not share is refused, and one replica keeps it on a volume.
+if helm template "$REL" "$ROOT/deploy/helm/polaris" --set edge.tls=acme --set edge.replicas=2 >/dev/null 2>/tmp/polaris-acme.err; then
+    fail "edge.tls=acme rendered with two edge replicas"
+fi
+grep -q "edge.tls=acme serves one replica" /tmp/polaris-acme.err \
+    || { cat /tmp/polaris-acme.err; fail "edge.tls=acme with two replicas failed to render for another reason"; }
+# An upgrade with --reuse-values from an older release keeps values with no edge.acmeVolume: named, not a nil pointer.
+if helm template "$REL" "$ROOT/deploy/helm/polaris" --set edge.tls=acme --set edge.replicas=1 --set edge.acmeVolume=null \
+        >/dev/null 2>/tmp/polaris-acme.err || ! grep -q "edge.tls=acme needs edge.acmeVolume.size" /tmp/polaris-acme.err; then
+    cat /tmp/polaris-acme.err; fail "edge.tls=acme without edge.acmeVolume must be refused by name"
+fi
+helm template "$REL" "$ROOT/deploy/helm/polaris" --set edge.caSecret=operator-edge-root > /tmp/polaris-casecret.yaml
+if grep -q "name: ${REL}-edge-ca\$" /tmp/polaris-casecret.yaml || grep -q "secretName: ${REL}-edge-ca\$" /tmp/polaris-casecret.yaml \
+        || ! grep -q "secretName: operator-edge-root" /tmp/polaris-casecret.yaml; then
+    fail "with edge.caSecret the chart must mount that Secret and generate no root of its own"
+fi
+helm template "$REL" "$ROOT/deploy/helm/polaris" --set edge.tls=acme --set edge.replicas=1 \
+    | grep -q "claimName: ${REL}-caddy-acme" || fail "edge.tls=acme does not keep its state on a volume"
+echo "  edge.tls=acme: refused with two replicas; one keeps its state on ${REL}-caddy-acme"
 helm install "$REL" "$ROOT/deploy/helm/polaris" -n "$NS" --set domain=localhost --set edge.tls=internal \
     --set secrets.existingSecret=polaris-secrets --set images.pullPolicy=Never \
     --wait --timeout 12m >/dev/null || {
         # Diagnose every workload, not one: the first local run showed only
-        # postgres's log while caddy crash-looped for a different reason.
-        kubectl -n "$NS" get pods -o wide
-        for pod in $(kubectl -n "$NS" get pods -o name); do
-            echo "== $pod: events =="; kubectl -n "$NS" describe "$pod" | sed -n '/^Events:/,$p' | tail -8
-            echo "== $pod: log (current) =="; kubectl -n "$NS" logs "$pod" --tail=20 2>&1 | tail -20
-            echo "== $pod: log (previous) =="; kubectl -n "$NS" logs "$pod" --previous --tail=20 2>&1 | tail -20
+        # postgres's log while caddy crash-looped for a different reason. Each
+        # command may fail (a pod with no previous container, a Pending pod with
+        # no log) and the loop must go on: under pipefail the first such failure
+        # once ended it at the first pod, before the Pending one (2026-10-09).
+        kubectl -n "$NS" get pods -o wide || true
+        # A Pending pod has no log, only the scheduler's reasons and the node's room.
+        echo "== events, newest last =="
+        { kubectl -n "$NS" get events --sort-by=.lastTimestamp 2>&1 || true; } | tail -30
+        echo "== nodes: allocated resources =="
+        { kubectl describe nodes 2>&1 || true; } | sed -n '/^Allocated resources:/,/^Events:/p'
+        for pod in $(kubectl -n "$NS" get pods -o name || true); do
+            echo "== $pod: events =="; { kubectl -n "$NS" describe "$pod" 2>&1 || true; } | sed -n '/^Events:/,$p' | tail -8
+            echo "== $pod: log (current) =="; { kubectl -n "$NS" logs "$pod" --tail=20 2>&1 || true; } | tail -20
+            echo "== $pod: log (previous) =="; { kubectl -n "$NS" logs "$pod" --previous --tail=20 2>&1 || true; } | tail -20
         done
         fail "helm install did not reach ready"
     }
@@ -208,7 +241,9 @@ cluster_healthy() { local l r; l=$(lease_holder); [[ -n "$l" ]] || return 1; r=$
 wait_for() { local limit="$1"; shift; local t0 i; t0=$(date +%s); for i in $(seq 1 "$limit"); do if "$@"; then echo $(( $(date +%s) - t0 )); return 0; fi; sleep 1; done; echo "$limit"; return 1; }
 now() { python3 -c "import time; print(time.time())"; }
 le() { python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) <= float(sys.argv[2]) else 1)" "$1" "$2"; }
-diagnose() { echo "--- diagnostics ---" >&2; kubectl -n "$NS" get pods -l application=polaris-db -L role >&2 || true; kubectl -n "$NS" get endpoints "${REL}-postgres" -o yaml 2>/dev/null | sed -n '/annotations/,/subsets/p' | head -12 >&2; for m in "${REL}-postgres-0" "${REL}-postgres-1"; do echo "[$m]" >&2; kubectl -n "$NS" logs "$m" --tail=25 2>&1 | sed 's/^/    /' >&2; done; }
+# Every command may fail (no Endpoints yet, a member with no log): under pipefail one that did ended the drill
+# here, before the fail that names what broke.
+diagnose() { echo "--- diagnostics ---" >&2; kubectl -n "$NS" get pods -l application=polaris-db -L role >&2 || true; { kubectl -n "$NS" get endpoints "${REL}-postgres" -o yaml 2>/dev/null || true; } | sed -n '/annotations/,/subsets/p' | head -12 >&2; for m in "${REL}-postgres-0" "${REL}-postgres-1"; do echo "[$m]" >&2; { kubectl -n "$NS" logs "$m" --tail=25 2>&1 || true; } | sed 's/^/    /' >&2; done; }
 L0=$(lease_holder); [[ -n "$L0" ]] || { diagnose; fail "no Patroni lease holder (annotation on the leader Endpoints)"; }
 R0=$(other_member "$L0")
 if kubectl -n "$NS" exec "$L0" -- wget -qO- http://127.0.0.1:8008/config 2>/dev/null \
@@ -219,19 +254,22 @@ fi
 wait_for 120 replica_streaming "$R0" "$SYNC_WANT" >/dev/null || { diagnose; fail "$R0 is not a streaming replica with zero lag${SYNC_WANT:+, the synchronous standby}"; }
 pctl "$L0" list | sed 's/^/  /'
 kubectl -n "$NS" exec "$L0" -- psql -h /var/run/postgresql -U postgres -d polaris -v ON_ERROR_STOP=1 -q \
-    -c "CREATE TABLE IF NOT EXISTS ha_marker (id bigserial PRIMARY KEY, ts timestamptz NOT NULL DEFAULT clock_timestamp());" \
+    -c "DROP TABLE IF EXISTS ha_marker;" \
+    -c "CREATE TABLE ha_marker (id bigserial PRIMARY KEY, token text UNIQUE NOT NULL, ts timestamptz NOT NULL DEFAULT clock_timestamp());" \
     -c "GRANT INSERT ON ha_marker TO polaris_app; GRANT USAGE ON SEQUENCE ha_marker_id_seq TO polaris_app;" || fail "could not create the marker table"
 APP_PW=$(kubectl -n "$NS" get secret polaris-secrets -o jsonpath='{.data.polaris_db_password}' | base64 -d)
-WRITER_PY=$(python3 -c 'import json; print(json.dumps("""import os, signal, sys, time
+WRITER_PY=$(python3 -c 'import json; print(json.dumps("""import os, signal, sys, time, uuid
 import psycopg
 dsn = os.environ["DSN"]; stop = False
+acked = open("/tmp/acked.log", "a", buffering=1)   # one token per acknowledged insert, in order
 signal.signal(signal.SIGTERM, lambda *a: globals().__setitem__("stop", True))
 while not stop:
-    t = time.time()
+    t = time.time(); token = uuid.uuid4().hex
     try:
         with psycopg.connect(dsn, connect_timeout=3, autocommit=True) as c:
-            c.execute("INSERT INTO ha_marker DEFAULT VALUES")
+            c.execute("INSERT INTO ha_marker (token) VALUES (%s)", (token,))
         print(f"{t:.3f} {time.time():.3f} ok", flush=True)
+        acked.write(token + "\\n")
     except Exception:
         print(f"{t:.3f} {time.time():.3f} fail", flush=True)
     time.sleep(0.25)
@@ -262,10 +300,14 @@ oks = [t for t, s in rows if s == 'ok']; before = [t for t, s in allrows if s ==
 seq = ([max(before)] if before else []) + oks
 stall = max((b - a for a, b in zip(seq, seq[1:])), default=0.0)
 print(f'{max(gap, stall):.1f} {len(fails)}')" "$1"; }
-ok_count() { kubectl -n "$NS" logs ha-writer 2>/dev/null | grep -c ' ok$' || echo 0; }
-rows_on() { kubectl -n "$NS" exec "$1" -- psql -h /var/run/postgresql -U postgres -d polaris -tAc "SELECT count(*) FROM ha_marker" 2>/dev/null | tr -d '[:space:]'; }
+ok_count() { local n; n=$(kubectl -n "$NS" logs ha-writer 2>/dev/null | grep -c ' ok$') || true; echo "${n:-0}"; }
+missing_on() {  # missing_on MEMBER FILE: the tokens in FILE that MEMBER's ha_marker lacks, one per line
+    { echo "CREATE TEMP TABLE acked (token text);"; echo "COPY acked FROM STDIN;"; cat "$2"
+      [[ -z "$(tail -c1 "$2")" ]] || echo; echo '\.'
+      echo "SELECT a.token FROM acked a LEFT JOIN ha_marker m USING (token) WHERE m.token IS NULL;"; } \
+        | kubectl -n "$NS" exec -i "$1" -- psql -h /var/run/postgresql -U postgres -d polaris -qtA -v ON_ERROR_STOP=1
+}
 settle() { local t; t=$(now); wait_for 60 writes_ok_since "$t" >/dev/null || fail "writes are not flowing"; wait_for 120 cluster_healthy >/dev/null || { diagnose; fail "the cluster is not one leader and one current streaming replica${SYNC_WANT:+ (the synchronous standby)}"; }; }
-ROWS0=$(rows_on "$L0")
 settle
 echo "  writes flowing through pgbouncer -> ${REL}-postgres (leader endpoints) -> $L0"
 # 7a. the leader pod is deleted: a restart in place
@@ -307,14 +349,136 @@ j3=$(wait_for "$CEIL_REJOIN" replica_streaming "$L2") || { diagnose; fail "$L2 d
 read -r out3 fails3 <<< "$(outage_since "$t0")"
 echo "  switchover: $C2 leader after ${p3}s; write outage ${out3}s (${fails3} failed inserts); $L2 follows after ${j3}s"
 le "$out3" "$CEIL_SWITCHOVER" || fail "switchover write outage ${out3}s exceeds the ${CEIL_SWITCHOVER}s ceiling"
-# integrity: every insert acknowledged before the freeze is on the leader; inserts acknowledged inside the
-# failure window may be the async replication's RPO (FAILOVER.md section 6) and are reported, not tolerated silently
-L3=$(lease_holder); rows=$(( $(rows_on "$L3") - ROWS0 )); acked=$(ok_count)
-[[ "$rows" -ge "$acked_before_freeze" ]] || fail "$rows rows added on $L3 but $acked_before_freeze inserts were acknowledged before the freeze: an acknowledged write from before the failure was lost"
-lost=$(( acked - rows )); [[ "$lost" -lt 0 ]] && lost=0
-echo "  integrity: $rows rows added, $acked inserts acknowledged, $lost of them (acknowledged inside the failure window) not in the surviving history"
+# integrity, by identity: the tokens of the acknowledged inserts are read from the writer BEFORE the leader is asked
+# which it holds, so an insert acknowledged while the check runs is in neither (two counts taken a moment apart
+# could report a landed write lost, or hide a lost one). Every insert acknowledged before the freeze is on the
+# leader; inside the failure windows, with synchronous_mode on (gate row OP-6), so is every other, and with it off
+# a loss is the async replication's RPO (FAILOVER.md section 6), reported, not tolerated silently.
+L3=$(lease_holder)
+kubectl -n "$NS" exec ha-writer -- cat /tmp/acked.log > /tmp/polaris-acked.now || fail "cannot read the writer's acknowledged inserts"
+acked=$(grep -c . /tmp/polaris-acked.now || true)
+[[ "$acked" -gt 0 && "$acked" -ge "$acked_before_freeze" ]] \
+    || fail "$acked acknowledged inserts are on record against the $acked_before_freeze counted before the freeze: the writer is not recording what it acknowledges, and the comparison would measure nothing"
+missing_on "$L3" /tmp/polaris-acked.now > /tmp/polaris-missing.now || fail "cannot ask $L3 which acknowledged inserts it holds"
+early=$(head -n "$acked_before_freeze" /tmp/polaris-acked.now | grep -cxF -f /tmp/polaris-missing.now || true)
+[[ "$early" -eq 0 ]] || fail "$early of the $acked_before_freeze inserts were acknowledged before the freeze and are not on $L3: an acknowledged write from before the failure was lost"
+lost=$(grep -c . /tmp/polaris-missing.now || true)
+echo "  integrity: $(( acked - lost )) of $acked acknowledged inserts on $L3, $lost of them (acknowledged inside the failure windows) not in the surviving history"
+if [[ -n "$SYNC_WANT" && "$lost" -gt 0 ]]; then
+    fail "$lost acknowledged inserts are not in the surviving history: with synchronous_mode on, a failover must lose none"
+fi
 kubectl -n "$NS" delete pod ha-writer --grace-period=0 --force >/dev/null 2>&1 || true
 code=$(curl -sk --max-time 30 -o /dev/null -w '%{http_code}' https://localhost:18443/api/health || true)
 [ "$code" = 200 ] || fail "edge unhealthy after the failover drill (HTTP $code)"
-echo "== HELM/KIND DRILL PASSED: restricted PSS enforced, policies enforced, stack healthy through the edge, database failover automated =="
+echo "== 8. every edge replica chains to the chart's root, before and after a replacement (G5) =="
+kubectl -n "$NS" get secret "${REL}-edge-ca" -o jsonpath='{.data.ca\.crt}' | base64 -d > /tmp/polaris-edge-ca.crt
+[ -s /tmp/polaris-edge-ca.crt ] || fail "the chart did not create ${REL}-edge-ca"
+# The certificate one edge pod serves, by the pod's own port-forward (a Service forward picks one pod).
+served() {   # pod curl-args... -> the SHA-256 fingerprint served, after a curl with the args succeeds
+    local pod=$1 pf code="" fp; shift
+    kubectl -n "$NS" port-forward "$pod" 18444:8443 >/dev/null 2>&1 & pf=$!
+    for _ in $(seq 1 20); do
+        code=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "$@" https://localhost:18444/api/health || true)
+        [ "$code" = 200 ] && break; sleep 1
+    done
+    fp=$(echo | openssl s_client -connect localhost:18444 -servername localhost 2>/dev/null | openssl x509 -noout -fingerprint -sha256 2>/dev/null)
+    kill "$pf" 2>/dev/null; wait "$pf" 2>/dev/null || true
+    [ "$code" = 200 ] || return 1
+    echo "${fp#*=}"
+}
+edge_pods() {   # the edge's pods, less any being deleted: one still terminating serves its old config
+    kubectl -n "$NS" get pods -l app.kubernetes.io/component=caddy -o json | python3 -c '
+import json, sys
+for p in json.load(sys.stdin)["items"]:
+    if not p["metadata"].get("deletionTimestamp"):
+        print("pod/" + p["metadata"]["name"])'
+}
+verify_all() {
+    local n=0 p
+    for p in $(edge_pods); do
+        served "$p" --cacert /tmp/polaris-edge-ca.crt >/dev/null || fail "$p does not serve a chain to ${REL}-edge-ca's root"
+        n=$((n + 1))
+    done
+    [ "$n" -ge 2 ] || fail "expected two edge replicas, found $n"
+    echo "$n"
+}
+# Assigned, not echoed: set -e does not see a substitution fail inside an argument.
+n=$(verify_all)
+echo "  $n edge replicas verify against the chart's root, without -k"
+victim=$(edge_pods | head -1)
+kubectl -n "$NS" delete "$victim" --wait=true >/dev/null
+kubectl -n "$NS" rollout status "deploy/${REL}-caddy" --timeout=180s >/dev/null
+n=$(verify_all)
+echo "  ${victim#pod/} replaced: $n replicas still verify against the same root"
+root_before=$(kubectl -n "$NS" get secret "${REL}-edge-ca" -o jsonpath='{.data.ca\.crt}')
+helm upgrade "$REL" "$ROOT/deploy/helm/polaris" -n "$NS" --reuse-values --wait --timeout 8m >/dev/null \
+    || fail "a helm upgrade with the same values did not reach ready"
+[ "$(kubectl -n "$NS" get secret "${REL}-edge-ca" -o jsonpath='{.data.ca\.crt}')" = "$root_before" ] \
+    || fail "helm upgrade replaced the edge root: every client that trusted it now fails"
+n=$(verify_all)
+echo "  helm upgrade kept the root: $n replicas still verify against it"
+# The internal root is no root a browser knows: HSTS there would pin users to a certificate they must override.
+kubectl -n "$NS" port-forward "$(edge_pods | head -1)" 18444:8443 >/dev/null 2>&1 & pf=$!
+code=""
+for _ in $(seq 1 20); do
+    code=$(curl -s --cacert /tmp/polaris-edge-ca.crt --max-time 10 -D /tmp/polaris-internal.hdr -o /dev/null -w '%{http_code}' https://localhost:18444/api/health || true)
+    [ "$code" = 200 ] && break; sleep 1
+done
+kill "$pf" 2>/dev/null; wait "$pf" 2>/dev/null || true
+[ "$code" = 200 ] || fail "the edge did not answer under edge.tls=internal (HTTP $code)"
+if grep -qi '^strict-transport-security' /tmp/polaris-internal.hdr; then
+    fail "the edge sends Strict-Transport-Security under the internal root"
+fi
+echo "  and sends no Strict-Transport-Security under the internal root"
+
+echo "== 9. edge.tls=secret serves the Secret's certificate and follows its renewal (G5) =="
+for n in 1 2; do
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 2 -subj /CN=localhost \
+        -addext subjectAltName=DNS:localhost -keyout "/tmp/polaris-edge$n.key" -out "/tmp/polaris-edge$n.crt" 2>/dev/null
+done
+fp_of() { openssl x509 -in "$1" -noout -fingerprint -sha256 | sed 's/.*=//'; }
+kubectl -n "$NS" create secret tls polaris-edge-tls --cert=/tmp/polaris-edge1.crt --key=/tmp/polaris-edge1.key >/dev/null
+helm upgrade "$REL" "$ROOT/deploy/helm/polaris" -n "$NS" --reuse-values --set edge.tls=secret \
+    --set edge.tlsSecret=polaris-edge-tls --wait --timeout 8m >/dev/null || fail "the upgrade to edge.tls=secret did not reach ready"
+kubectl -n "$NS" rollout status "deploy/${REL}-caddy" --timeout=180s >/dev/null
+all_serve() {   # every edge replica (at least two, so an empty list proves nothing) serves this certificate
+    local want=$1 p n=0 pods
+    pods=$(edge_pods) || return 1
+    for p in $pods; do [ "$(served "$p" -k || true)" = "$want" ] || return 1; n=$((n + 1)); done
+    [ "$n" -ge 2 ]
+}
+restarts() {    # each edge pod with its containers' restart counts: a renewal must leave this unchanged
+    kubectl -n "$NS" get pods -l app.kubernetes.io/component=caddy \
+        -o jsonpath='{range .items[*]}{.metadata.name}{range .status.containerStatuses[*]} {.restartCount}{end}{"\n"}{end}' | sort
+}
+t0=$(date +%s); serving=""
+while [ $(( $(date +%s) - t0 )) -lt 120 ]; do
+    if all_serve "$(fp_of /tmp/polaris-edge1.crt)"; then serving=1; break; fi
+    sleep 5
+done
+[ -n "$serving" ] || fail "an edge replica does not serve the certificate in edge.tlsSecret 120 s after the upgrade"
+echo "  every edge replica serves the Secret's certificate"
+# A certificate clients trust carries HSTS (the internal root's never did).
+kubectl -n "$NS" port-forward "$(edge_pods | head -1)" 18444:8443 >/dev/null 2>&1 & pf=$!
+hsts=""
+for _ in $(seq 1 20); do
+    hsts=$(curl -sk --max-time 10 -D - -o /dev/null https://localhost:18444/api/health | grep -i '^strict-transport-security' || true)
+    [ -n "$hsts" ] && break; sleep 1
+done
+kill "$pf" 2>/dev/null; wait "$pf" 2>/dev/null || true
+[ -n "$hsts" ] || fail "the edge sends no Strict-Transport-Security under edge.tls=secret"
+echo "  and sends Strict-Transport-Security"
+before_renewal=$(restarts)
+kubectl -n "$NS" create secret tls polaris-edge-tls --cert=/tmp/polaris-edge2.crt --key=/tmp/polaris-edge2.key \
+    --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
+t0=$(date +%s); renewed=""
+while [ $(( $(date +%s) - t0 )) -lt 240 ]; do
+    if all_serve "$(fp_of /tmp/polaris-edge2.crt)"; then renewed=1; break; fi
+    sleep 10
+done
+[ -n "$renewed" ] || { kubectl -n "$NS" logs -l app.kubernetes.io/component=caddy -c tls-reload --tail=5; fail "the edge still served the old certificate 240 s after the Secret was renewed"; }
+[ "$(restarts)" = "$before_renewal" ] || { echo "$before_renewal"; restarts; fail "an edge pod restarted or was replaced to serve the renewed Secret"; }
+echo "  the Secret renewed: every replica serves the new certificate after $(( $(date +%s) - t0 )) s, no pod restarted"
+
+echo "== HELM/KIND DRILL PASSED: restricted PSS enforced, policies enforced, stack healthy through the edge, database failover automated, the edge's TLS state shared by its replicas =="
 
