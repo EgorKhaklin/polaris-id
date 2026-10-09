@@ -106,8 +106,14 @@ if helm template "$REL" "$ROOT/deploy/helm/polaris" --set edge.tls=acme --set ed
 fi
 grep -q "edge.tls=acme serves one replica" /tmp/polaris-acme.err \
     || { cat /tmp/polaris-acme.err; fail "edge.tls=acme with two replicas failed to render for another reason"; }
+# An upgrade with --reuse-values from an older release keeps values with no edge.acmeVolume: named, not a nil pointer.
+if helm template "$REL" "$ROOT/deploy/helm/polaris" --set edge.tls=acme --set edge.replicas=1 --set edge.acmeVolume=null \
+        >/dev/null 2>/tmp/polaris-acme.err || ! grep -q "edge.tls=acme needs edge.acmeVolume.size" /tmp/polaris-acme.err; then
+    cat /tmp/polaris-acme.err; fail "edge.tls=acme without edge.acmeVolume must be refused by name"
+fi
 helm template "$REL" "$ROOT/deploy/helm/polaris" --set edge.caSecret=operator-edge-root > /tmp/polaris-casecret.yaml
-if grep -q "name: ${REL}-edge-ca\$" /tmp/polaris-casecret.yaml || ! grep -q "secretName: operator-edge-root" /tmp/polaris-casecret.yaml; then
+if grep -q "name: ${REL}-edge-ca\$" /tmp/polaris-casecret.yaml || grep -q "secretName: ${REL}-edge-ca\$" /tmp/polaris-casecret.yaml \
+        || ! grep -q "secretName: operator-edge-root" /tmp/polaris-casecret.yaml; then
     fail "with edge.caSecret the chart must mount that Secret and generate no root of its own"
 fi
 helm template "$REL" "$ROOT/deploy/helm/polaris" --set edge.tls=acme --set edge.replicas=1 \

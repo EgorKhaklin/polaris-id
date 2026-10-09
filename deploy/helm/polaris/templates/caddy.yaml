@@ -5,6 +5,9 @@
 {{- if and (eq .Values.edge.tls "secret") (not .Values.edge.tlsSecret) }}
 {{- fail "edge.tls=secret needs edge.tlsSecret: the kubernetes.io/tls Secret that holds the edge's certificate" }}
 {{- end }}
+{{- if and (eq .Values.edge.tls "acme") (not (dig "acmeVolume" "size" "" .Values.edge)) }}
+{{- fail "edge.tls=acme needs edge.acmeVolume.size. An upgrade with --reuse-values keeps an older release's values, which have none: use --reset-then-reuse-values" }}
+{{- end }}
 {{- if and (eq .Values.edge.tls "acme") (gt (int .Values.edge.replicas) 1) }}
 {{- fail "edge.tls=acme serves one replica: replicas that do not share the ACME state each order a certificate and answer only their own challenges. Set edge.replicas=1, or use edge.tls=secret with a certificate cert-manager keeps" }}
 {{- end }}
@@ -170,7 +173,7 @@ metadata:
     "helm.sh/resource-policy": keep
 spec:
   accessModes: [ReadWriteOnce]
-  {{- with .Values.edge.acmeVolume.storageClass }}
+  {{- with (dig "acmeVolume" "storageClass" "" .Values.edge) }}
   storageClassName: {{ . }}
   {{- end }}
   resources:

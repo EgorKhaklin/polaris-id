@@ -140,9 +140,12 @@ startup probe surfaces. [`HARDENING.md`](HARDENING.md) section 13.
 ```bash
 kubectl -n polaris get pods
 kubectl -n polaris port-forward svc/polaris-caddy 8443:443 &
-# edge.tls=internal: trust the chart's root rather than skipping verification
+# edge.tls=secret or acme (the install above): a certificate clients already trust, for the domain
+curl --resolve polaris.example.org:8443:127.0.0.1 https://polaris.example.org:8443/api/health | python3 -m json.tool
+# edge.tls=internal: trust the chart's root (or edge.caSecret's) rather than skipping verification
 kubectl -n polaris get secret polaris-edge-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > edge-ca.crt
-curl --cacert edge-ca.crt https://localhost:8443/api/health | python3 -m json.tool   # with domain=localhost; database, redis, zk_binary, custody: healthy
+curl --cacert edge-ca.crt --resolve polaris.example.org:8443:127.0.0.1 https://polaris.example.org:8443/api/health
+# either way: database, redis, zk_binary, custody: healthy
 kubectl -n polaris exec polaris-postgres-0 -- patronictl -c /var/lib/postgresql/patroni.yml list   # one Leader, one streaming Replica
 ```
 
