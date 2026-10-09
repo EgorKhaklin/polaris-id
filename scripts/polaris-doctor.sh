@@ -19,10 +19,11 @@
 #   edge           the TLS edge serves /api/health/live
 #   health         the app's own roll-up (/api/health, from inside the app container): every
 #                  component it judges
-#   key register   every agency that has issued holds a registered signing key: a FAIL when it holds
-#                  credentials signed for real under no registered key (every relying-party
-#                  verification of them is refused), a WARN when its credentials carry no real
-#                  signature (its trust list is refused; KEY-CEREMONY.md)
+#   key register   every credential signed for real is under a key its authority had registered when
+#                  it was signed, judged as every relying-party route judges it: a FAIL otherwise
+#                  (every verification of it is refused), a WARN while no key is registered at all,
+#                  and a WARN for active credentials under a key already retired or declared
+#                  compromised when it signed (refused by design: re-issue them; KEY-CEREMONY.md)
 #   backups        continuous archiving is on, and its repository is offsite: a repository on this
 #                  host is lost with it (a WARN; docs/operator/DR.md section 5)
 #
@@ -174,28 +175,29 @@ else
     warn health "not reached: the app container is not running (see its stack line above)"
 fi
 
-# --- key register: every agency that has issued holds a registered key. A credential signed for real
-# under an authority with no key history at all is refused by every possession route, so that is a
-# FAIL; an authority whose credentials carry no real signature (the notional seed) is a WARN.
-KEYQ=$(compose exec -T postgres psql -U postgres -d polaris -qtA -F '|' -c "
-    SELECT (SELECT string_agg(DISTINCT t.issuing_agency_id::text, ' ' ORDER BY t.issuing_agency_id::text)
-              FROM IdentityToken t JOIN TokenSignature s ON s.token_id = t.token_id
-             WHERE s.signing_public_key_hex IS NOT NULL
-               AND NOT EXISTS (SELECT 1 FROM AuthorityKeyEvent e WHERE e.agency_id = t.issuing_agency_id)),
-           (SELECT string_agg(DISTINCT t.issuing_agency_id::text, ' ' ORDER BY t.issuing_agency_id::text)
-              FROM IdentityToken t
-             WHERE NOT EXISTS (SELECT 1 FROM AuthorityKeyCurrent k
-                                WHERE k.agency_id = t.issuing_agency_id AND k.status = 'active'))" 2> /dev/null)
+# --- key register: every credential signed for real is under a key its authority had registered when
+# it was signed, judged signature by signature as every relying-party route judges it
+# (scripts/polaris-key-register-check.sql). One that is not is refused by all of them: a FAIL, with
+# the command that registers it. One signed under a key its authority had already retired or declared
+# compromised is refused by design: a WARN, to re-issue it. The notional seed carries no real
+# signature and needs no registration.
+KEYQ=$(compose exec -T postgres psql -U postgres -d polaris -v ON_ERROR_STOP=1 -qtA \
+           < "${SCRIPT_DIR}/polaris-key-register-check.sql" 2> /dev/null)
 KEYQ_RC=$?
-REFUSED="${KEYQ%%|*}"; UNREGISTERED="${KEYQ#*|}"
-if [[ ${KEYQ_RC} -ne 0 || "${KEYQ}" != *"|"* ]]; then
+IFS='|' read -r UNREGISTERED FIRST ENDED REGISTERED <<< "${KEYQ}"
+if [[ ${KEYQ_RC} -ne 0 || ! "${REGISTERED:-}" =~ ^[0-9]+$ ]]; then
     warn "key register" "not reached: the database did not answer"
-elif [[ -n "${REFUSED}" ]]; then
-    bad "key register" "agency ${REFUSED} holds credentials signed for real under no registered key: every relying-party verification of them answers \"not a verifiable presentation\" (register the key the app signs with, for each: sudo scripts/polaris-key-event.sh register <agency> --current; docs/operator/KEY-CEREMONY.md)"
-elif [[ -n "${UNREGISTERED}" ]]; then
-    warn "key register" "agency ${UNREGISTERED} issued with no registered signing key: its trust list is refused and issuer facts read unknown (register it: sudo scripts/polaris-key-event.sh register <agency> --current; docs/operator/KEY-CEREMONY.md)"
 else
-    ok "key register" "every agency that has issued holds a registered key"
+    if [[ -n "${UNREGISTERED}" ]]; then
+        bad "key register" "agency ${UNREGISTERED} holds credentials signed for real under a key it had not registered when they were signed: every relying-party verification of them answers \"not a verifiable presentation\" (an authority with no key history${FIRST:+, here agency ${FIRST}}: sudo scripts/polaris-key-event.sh register <agency> --current registers the key the app signs with from its first signature; any other is registered by the ceremony, by its hex and --effective-at: docs/operator/KEY-CEREMONY.md)"
+    elif [[ "${REGISTERED}" == 0 ]]; then
+        warn "key register" "no authority key is registered yet: relying parties will refuse every credential this stack signs until it is (sudo scripts/polaris-key-event.sh register <agency> --current, for each authority it issues for)"
+    else
+        ok "key register" "every credential signed for real is under a key its authority had registered when it was signed"
+    fi
+    if [[ -n "${ENDED}" ]]; then
+        warn "ended keys" "agency ${ENDED} holds active credentials signed under a key it had already retired or declared compromised: relying parties refuse them by design; re-issue them under the current key"
+    fi
 fi
 
 # --- backups: continuous archiving is on and its repository survives the host. pgBackRest keeps its

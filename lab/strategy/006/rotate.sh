@@ -73,6 +73,11 @@ if [[ -z "$(sql "SELECT 1 FROM AuthorityKeyCurrent WHERE agency_id = 1 AND publi
     # credential A verifies under the registered key).
     key_event register 1 --current --note "rotate.sh: the key try.sh minted, read from the app's custody"
 fi
+# try.sh issued its credential before any registration; --current registers K1 from its first
+# signature, so that credential is authorized at signing too (the fresh-install review, 2026-10-09).
+TRY=$(field "${OUT}/pack.json" token_id)
+[[ "$(facts "${TRY}")" == "True True True" ]] || fail "try.sh's credential, issued before the registration: $(facts "${TRY}")"
+ok "credential #${TRY}, issued by try.sh before K1 was registered, is authorized at signing"
 issue A
 A=$(field "${OUT}/pack-A.json" token_id)
 [[ "$(field "${OUT}/pack-A.json" public_key_hex)" == "${K1}" ]] || fail "credential A was not signed by K1"

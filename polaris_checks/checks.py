@@ -6964,6 +6964,16 @@ _FRESH_HOST_NEEDLES = (
     ("scripts/polaris-key-event.sh", "| tail -n 1 |", "--current must take only the key's line (a banner is not the key)"),
     ("scripts/polaris-key-event.sh", "already registered and active; nothing to do", "--current must leave an active key alone"),
     ("scripts/polaris-key-event.sh", "Registering it would be a rotation", "--current must refuse to rotate"),
+    ("scripts/polaris-key-event.sh", "WHERE agency_id = :agency FOR UPDATE \\gset",
+     "every key event must hold the agency's row, so a --current and a ceremony cannot interleave"),
+    ("scripts/polaris-key-event.sh", "WHEN :'first' = '1' AND EXISTS (SELECT 1 FROM AuthorityKeyEvent WHERE agency_id = :agency)",
+     "--current must register an authority's first key only, decided inside its transaction"),
+    ("scripts/polaris-key-event.sh", "an ended key is never registered again",
+     "no path may register a retired or compromised key again"),
+    ("scripts/polaris-key-event.sh", "COALESCE(NULLIF(:'eff', '')::timestamp, first_use.at, CURRENT_TIMESTAMP)",
+     "--current must register a first key from its first signature, so what it signed before verifies"),
+    ("scripts/polaris-key-register-check.sql", "registered_at IS NULL OR registered_at > at",
+     "the judgment must refuse a key unregistered when it signed, as every relying-party route does"),
     ("scripts/polaris-rp-register.sh", "sys.stdin.read()", "the relying party's secret must reach the hash on stdin"),
     ("scripts/polaris-rp-register.sh", "polaris.justification", "a relying party's registration must record its reason"),
     ("deploy/linux/install.sh", "polaris-key-event.sh register 1 --current", "install.sh must name the key registration"),
@@ -6972,6 +6982,14 @@ _FRESH_HOST_NEEDLES = (
     ("lab/strategy/006/rotate.sh", "key_event register 1 --current", "the one-command drill must register through --current"),
     ("scripts/polaris-deploy.sh", "polaris-key-event.sh register ${agency} --current", "a deploy must name the registration an issuing authority lacks"),
     ("scripts/polaris-doctor.sh", "register <agency> --current", "the doctor must name the command that fixes its key-register failure"),
+    ("scripts/polaris-doctor.sh", '< "${SCRIPT_DIR}/polaris-key-register-check.sql"',
+     "the doctor must judge credentials by the key that signed them"),
+    ("scripts/polaris-deploy.sh", '< "${SCRIPT_DIR}/polaris-key-register-check.sql"',
+     "a deploy must judge the register as the doctor does"),
+    ("lab/strategy/006/rotate.sh", "issued by try.sh before K1 was registered",
+     "the one-command drill must show a credential issued before the registration verifying after it"),
+    ("polaris_web/test_app.py", "def test_the_doctors_judgment_is_the_routes_signature_by_signature(",
+     "the judgment must be held to _issuer_key_facts, signature by signature"),
     ("docs/operator/LINUX-SERVER.md", "## After the install", "LINUX-SERVER.md must say what follows the install"),
     ("docs/operator/LINUX-SERVER.md", "sudo scripts/polaris-key-event.sh register 1 --current", "LINUX-SERVER.md must give the registration"),
     ("docs/operator/DEPLOYMENT.md", "polaris-rp-register.sh", "DEPLOYMENT.md must say how a relying party is registered on the stack"),
@@ -6984,17 +7002,27 @@ _FRESH_HOST_CI = (
     ('v.get("decision") == "accept"', "require the relying party's online verification to accept"),
     ("operator inputs 5", "report the operator's inputs"),
     ("/tmp/op2-install-start", "time the fresh host from the install"),
+    ("set -o pipefail\n          date +%s > /tmp/op2-install-start", "fail when install.sh fails, not when tee does"),
+    ("no authority key is registered yet", "show the doctor asking for the registration on a fresh host"),
+    ('grep -q "  ok    key register "', "show the doctor reading the register clean after the registration"),
+    ('echo "::add-mask::$secret"', "keep the relying party's secret out of the log"),
 )
 
 
 def check_fresh_host_reaches_online_verification(root: pathlib.Path) -> list[Finding]:
     """A fresh install ends one command away from relying parties accepting its credentials, and CI
     walks that path. Custody says the key it signs with; `polaris-key-event.sh register AGENCY
-    --current` registers it once and never rotates; `polaris-rp-register.sh` registers a relying
-    party on the stack as the schema owner, the secret on stdin; install.sh, a deploy and the doctor
-    name the command; LINUX-SERVER.md and DEPLOYMENT.md give it. The linux-install job's fresh-host
-    drill (gate row OP-2) registers the key, reads it back from the trust list, issues through the
-    console, has a relying party verify online, and reports the inputs and the time."""
+    --current` registers it as the authority's first key, from its first signature, and never
+    rotates, under the agency's row lock, and no path registers an ended key again;
+    `polaris-rp-register.sh` registers a relying party on the stack as the schema owner, the secret
+    on stdin; install.sh, a deploy and the doctor name the command, and the doctor and the deploy
+    judge credentials by the key that signed them (polaris-key-register-check.sql, held to
+    _issuer_key_facts by test_app); LINUX-SERVER.md and DEPLOYMENT.md give it. The linux-install
+    job's fresh-host drill (gate row OP-2) fails with install.sh, sees the doctor ask for the
+    registration, registers the key, reads it back from the trust list, issues through the console,
+    has a relying party verify online with its secret kept out of the log, sees the doctor read the
+    register clean, and reports the inputs and the time; rotate.sh shows a credential issued before
+    the registration verifying after it."""
     name = "fresh_host_verification"
     problems = []
     for rel, needle, why in _FRESH_HOST_NEEDLES:
@@ -7012,9 +7040,10 @@ def check_fresh_host_reaches_online_verification(root: pathlib.Path) -> list[Fin
     if problems:
         return _fail(name, "; ".join(problems[:4]) + (f" (and {len(problems) - 4} more)" if len(problems) > 4 else ""))
     return _ok(name, "a fresh install ends one command from relying parties accepting its credentials: custody "
-                     "says its key, `register --current` registers it once and never rotates, relying parties "
-                     "register on the stack as the owner, install/deploy/doctor/docs name the step, and the "
-                     "linux-install job walks it to an online accept with the inputs counted")
+                     "says its key, `register --current` registers the first key from its first signature and "
+                     "never rotates, relying parties register on the stack as the owner, install/deploy/doctor/docs "
+                     "name the step, the doctor judges credentials by their key, and the linux-install job walks "
+                     "it to an online accept with the inputs counted")
 
 
 # 2026-10-07 (lab record 017, phase 4b): rotating the session key logs nobody out. Before it,
@@ -7085,7 +7114,7 @@ def check_doctor_names_failures(root: pathlib.Path) -> list[Finding]:
               ("config_schema.py check --production", "the production configuration contract"),
               ("/api/health/live", "the TLS edge"),
               ("http://127.0.0.1:8000/api/health", "the app's own roll-up"),
-              ("AuthorityKeyCurrent", "the key register"),
+              ('< "${SCRIPT_DIR}/polaris-key-register-check.sql"', "the key register"),
               ("printenv POLARIS_PGBACKREST_S3_BUCKET", "where the backup repository is (OP-14)"))
     missing = [what for needle, what in judges if needle not in doc]
     if missing:

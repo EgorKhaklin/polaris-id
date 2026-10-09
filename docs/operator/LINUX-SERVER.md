@@ -68,10 +68,12 @@ sudo scripts/polaris-key-event.sh register 1 --current
 The first creates the administrator: production disables the seeded demo accounts at first boot,
 so `/login` refuses everyone until one exists
 ([`DEPLOYMENT.md`](DEPLOYMENT.md#the-first-operator-account)). The second registers the signing key
-this install minted, for authority 1 (the issuer in the notional data; repeat it for each authority
-that issues), read from the running app's own key store
-([`DEPLOYMENT.md`](DEPLOYMENT.md#the-signing-keys-registration)). Until it is registered, a relying
-party's verification of every credential the stack issues answers "not a verifiable presentation".
+this install minted, for authority 1 (the issuer in the notional data), read from the running app's
+own key store ([`DEPLOYMENT.md`](DEPLOYMENT.md#the-signing-keys-registration)). Until it is
+registered, a relying party's verification of every credential the stack issues answers "not a
+verifiable presentation"; it registers the key from its first signature, so a credential issued
+before it verifies too. Repeat it for each other authority this install issues for; the notional
+data's credentials carry no real signature and need no registration.
 A relying party is registered with `sudo scripts/polaris-rp-register.sh "<organization>"
 --justification "<why, at least 20 characters>"`, which prints its client id and its secret once.
 

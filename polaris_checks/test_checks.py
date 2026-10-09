@@ -2997,7 +2997,8 @@ def test_doctor_names_failures_check_discriminates(tmp_path):
            "must FAIL when the doctor no longer judges the configuration contract")
     broken(doc, "compose run --rm --no-deps -T --entrypoint python app", "compose exec -T app python",
            "must FAIL when the configuration is judged only inside a running app")
-    broken(doc, "AuthorityKeyCurrent", "Agency", "must FAIL when the doctor no longer reads the key register")
+    broken(doc, '< "${SCRIPT_DIR}/polaris-key-register-check.sql"', "< /dev/null",
+           "must FAIL when the doctor no longer reads the key register")
     broken(doc, "printenv POLARIS_PGBACKREST_S3_BUCKET", "printenv POLARIS_UNSET",
            "must FAIL when the doctor no longer reads where the backup repository is")
     broken(doc, "(start with ${FAILING[0]})", "", "must FAIL when the last line names no component")

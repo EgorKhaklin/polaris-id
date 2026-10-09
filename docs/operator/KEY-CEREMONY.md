@@ -57,9 +57,11 @@ as the schema owner through the postgres container with
 `scripts/polaris-key-event.sh register AGENCY_ID PUBLIC_KEY_HEX --effective-at <instant>` (it also
 takes `retire` and `compromise`). When the key is the one the running app signs with, as on a fresh
 install, `scripts/polaris-key-event.sh register AGENCY_ID --current` reads it from the app's own key
-store and registers it from now; it leaves a key already active alone, and it refuses when the
-authority already holds a different active key, because that is a rotation, which this ceremony
-performs by name.
+store and registers it as the authority's first key, effective from its first signature for the
+authority (now, if it has signed nothing), so what it signed before the registration is authorized
+too. It leaves a key already active alone and refuses everything after the first key, which this
+ceremony performs by name: another active key (a rotation), a key retired or declared compromised
+(never registered again, by any path), a later key once the last one ended.
 
 Under real signing this is not optional. Every possession route (`/api/v1/verify`, the status
 assertion, holder signing, the verifiable credential, the mdoc, sign-in) accepts a signature only

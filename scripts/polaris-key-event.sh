@@ -23,10 +23,14 @@
 #
 # --current registers the key the running app signs with for that agency, read from its own
 # custody (file, PKCS#11 or KMS alike: `python custody.py public-key` in the app container), so an
-# install's last step is one command and nobody copies 3,904 hex characters. It is idempotent: a
-# key already active for the agency is left alone. It never rotates: when the agency already holds
-# a different active key, it refuses, because registering a re-minted key is a rotation, which is
-# the ceremony's to do by name (KEY-CEREMONY.md).
+# install's last step is one command and nobody copies 3,904 hex characters. It registers an
+# authority's FIRST key only, effective from that key's first signature for the authority (now, if
+# it has signed nothing), so a credential issued before the registration verifies too. It is
+# idempotent: a key already active for the agency is left alone. Anything else is the ceremony's,
+# by the key's hex (KEY-CEREMONY.md), and it refuses: another active key (registering a re-minted
+# key is a rotation), a key retired or declared compromised (an ended key is never registered
+# again, by any path), and a later key after the last one ended. Every event holds the agency's row
+# for its transaction, so a --current and a ceremony cannot interleave.
 #
 # Honours COMPOSE_PROJECT_NAME and POLARIS_COMPOSE_EXTRA like the other stack scripts.
 # Exit: 0 recorded; 1 the database refused it; 2 usage.
@@ -91,34 +95,74 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "${CURRENT}" == 1 ]]; then
-    [[ -z "${EFFECTIVE}" ]] || { echo "error: --current registers from now; a key registered from another instant is named by its hex" >&2; exit 2; }
-    ACTIVE=$(compose exec -T postgres psql -U postgres -d polaris -v ON_ERROR_STOP=1 -qtA -v agency="${AGENCY}" <<'SQL'
-SELECT COALESCE(string_agg(public_key_hex, ' ' ORDER BY public_key_hex), '')
-  FROM AuthorityKeyCurrent WHERE agency_id = :agency AND status = 'active';
+    [[ -z "${EFFECTIVE}" ]] || { echo "error: --current registers a first key from its first signature; a key registered from another instant is named by its hex" >&2; exit 2; }
+    # What the register says now, for the message: the key's own status, the agency's event count and
+    # its active keys. The write below decides again inside its transaction, under the agency's row.
+    STATE=$(compose exec -T postgres psql -U postgres -d polaris -v ON_ERROR_STOP=1 -qtA -v agency="${AGENCY}" -v pk="${KEY}" <<'SQL'
+SELECT COALESCE((SELECT status FROM AuthorityKeyCurrent WHERE agency_id = :agency AND public_key_hex = :'pk'), 'none')
+       || '|' || (SELECT count(*) FROM AuthorityKeyEvent WHERE agency_id = :agency)
+       || '|' || COALESCE((SELECT string_agg(public_key_hex, ' ' ORDER BY public_key_hex)
+                             FROM AuthorityKeyCurrent WHERE agency_id = :agency AND status = 'active'), '');
 SQL
     ) || { echo "error: could not read the key register (see above)" >&2; exit 1; }
-    if [[ " ${ACTIVE} " == *" ${KEY} "* ]]; then
-        echo "agency ${AGENCY}: key ${KEY:0:16}... is already registered and active; nothing to do"
-        exit 0
-    fi
+    IFS='|' read -r STATUS HISTORY ACTIVE <<< "${STATE}"
+    case "${STATUS}" in
+        active)
+            echo "agency ${AGENCY}: key ${KEY:0:16}... is already registered and active; nothing to do"
+            exit 0 ;;
+        retired|compromised)
+            echo "error: agency ${AGENCY}'s key ${KEY:0:16}... was ${STATUS}, and the app still signs with it. An ended key is" >&2
+            echo "       never registered again: mint a new one and run the ceremony (docs/operator/KEY-CEREMONY.md)." >&2
+            exit 1 ;;
+    esac
     if [[ -n "${ACTIVE//[[:space:]]/}" ]]; then
         echo "error: agency ${AGENCY} already holds an active key (${ACTIVE:0:16}...), and the app now signs with another" >&2
         echo "       (${KEY:0:16}...). Registering it would be a rotation: run the ceremony (docs/operator/KEY-CEREMONY.md)," >&2
         echo "       registering the new key by its hex, then retiring the old one." >&2
         exit 1
     fi
+    if [[ "${HISTORY:-0}" != 0 ]]; then
+        echo "error: agency ${AGENCY} has a key history and no active key. --current registers an authority's first key" >&2
+        echo "       only; a later one is the ceremony's, by its hex (docs/operator/KEY-CEREMONY.md)." >&2
+        exit 1
+    fi
 fi
 
 # The values travel as psql variables and are quoted by psql (:'name'), never spliced into SQL.
+# The agency's row lock conflicts with the key-share lock every AuthorityKeyEvent insert takes on
+# its agency, so two writers of one agency's history run one after the other and the second sees
+# the first. Inside it: an ended key is never registered again, and --current registers only while
+# the agency has no key event at all, effective from the key's first signature for the agency (or
+# its first credential's issuance, when that is earlier), so the credentials it signed before the
+# registration are authorized at signing too.
 if ! compose exec -T postgres \
         psql -U postgres -d polaris -v ON_ERROR_STOP=1 -tA \
         -v agency="${AGENCY}" -v pk="${KEY}" -v alg="${ALG}" -v ev="${EVENT}" \
-        -v eff="${EFFECTIVE}" -v note="${NOTE}" <<'SQL'
+        -v eff="${EFFECTIVE}" -v note="${NOTE}" -v first="${CURRENT}" <<'SQL'
 SET TIME ZONE 'UTC';
 BEGIN;
+SELECT agency_id AS held FROM Agency WHERE agency_id = :agency FOR UPDATE \gset
+SELECT CASE WHEN :'ev' = 'registered'
+                 AND EXISTS (SELECT 1 FROM AuthorityKeyEvent WHERE agency_id = :agency AND public_key_hex = :'pk'
+                                AND event IN ('retired', 'compromised'))
+            THEN 'this key was retired or declared compromised for the agency: an ended key is never registered again'
+            WHEN :'first' = '1' AND EXISTS (SELECT 1 FROM AuthorityKeyEvent WHERE agency_id = :agency)
+            THEN 'the agency has a key history: --current registers its first key only (run it again to see why)'
+            ELSE '' END AS refusal \gset
+SELECT :'refusal' <> '' AS refused \gset
+\if :refused
+SELECT set_config('polaris.refusal', :'refusal', true) AS refusal_said \gset
+DO $$ BEGIN RAISE EXCEPTION '%', current_setting('polaris.refusal'); END $$;
+\endif
 INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, event, effective_at, note)
-VALUES (:agency, :'pk', :'alg', :'ev', COALESCE(NULLIF(:'eff', '')::timestamp, CURRENT_TIMESTAMP), :'note')
-RETURNING 'recorded key event #' || event_id;
+SELECT :agency, :'pk', :'alg', :'ev', COALESCE(NULLIF(:'eff', '')::timestamp, first_use.at, CURRENT_TIMESTAMP), :'note'
+  FROM (SELECT LEAST(min(s.signed_at), min(e.event_timestamp)) AS at
+          FROM IdentityToken t
+          JOIN TokenSignature s ON s.token_id = t.token_id
+          LEFT JOIN TokenLifecycleEvent e ON e.token_id = t.token_id AND e.event_type = 'ISSUED'
+         WHERE :'first' = '1' AND t.issuing_agency_id = :agency
+           AND lower(s.signing_public_key_hex) = :'pk') AS first_use
+RETURNING 'recorded key event #' || event_id || ', effective ' || effective_at;
 -- A registration also makes the key the agency's current one, as `polaris key-register` does.
 UPDATE Agency SET signing_public_key_hex = :'pk' WHERE agency_id = :agency AND :'ev' = 'registered';
 COMMIT;

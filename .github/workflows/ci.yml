@@ -1859,6 +1859,7 @@ jobs:
           POLARIS_COMPOSE_EXTRA: "-f docker-compose.citest.yml"
         # The clock for gate row OP-2 starts here (the drill below reads it).
         run: |
+          set -o pipefail
           date +%s > /tmp/op2-install-start
           sudo -E bash deploy/linux/install.sh --source "$PWD" | tee /tmp/op2-install.out
           date +%s > /tmp/op2-install-end
@@ -1917,8 +1918,12 @@ jobs:
           sudo scripts/polaris-rotate-secret.sh polaris_db_password
           health "sudo scripts/polaris-rotate-secret.sh polaris_db_password"
           sudo docker cp polaris-caddy:/data/caddy/pki/authorities/local/root.crt /tmp/caddy-root.crt
+          set -o pipefail
           sudo POLARIS_DOCTOR_URL=https://localhost:8443 POLARIS_DOCTOR_CACERT=/tmp/caddy-root.crt \
             scripts/polaris-doctor.sh | tee /tmp/doctor-file.out
+          # Gate row OP-2: before the key is registered, the doctor asks for the registration.
+          grep -q "WARN  key register .*no authority key is registered yet" /tmp/doctor-file.out \
+            || { echo "::error::the doctor did not ask for the key registration on a fresh host"; exit 1; }
           grep -q "WARN  secrets at rest .*plaintext files in /opt/polaris/polaris_web/secrets" /tmp/doctor-file.out \
             || { echo "::error::the doctor did not say the secrets are plaintext on disk"; exit 1; }
           # Gate row OP-14: this install's backup repository is on the host, and the doctor says so.
@@ -1936,19 +1941,19 @@ jobs:
       - name: a fresh host to a credential a relying party verifies online (OP-2; inputs counted, time measured)
         working-directory: /opt/polaris
         run: |
-          set -e
+          set -eo pipefail
           grep -q "polaris-key-event.sh register 1 --current" /tmp/op2-install.out \
             || { echo "::error::install.sh did not name the key registration"; exit 1; }
           t_ops=$(date +%s)
           # Input 5, and once only: a second run is a no-op.
           sudo scripts/polaris-key-event.sh register 1 --current
-          sudo scripts/polaris-key-event.sh register 1 --current | grep -q "already registered" \
-            || { echo "::error::a second register --current was not a no-op"; exit 1; }
+          again=$(sudo scripts/polaris-key-event.sh register 1 --current)
+          grep -q "already registered" <<< "$again" || { echo "::error::a second register --current was not a no-op"; exit 1; }
           # The runner's own copy of the edge's CA certificate (public): a root-owned copy is unreadable to
           # curl run as the runner, which exits 77.
           sudo docker exec polaris-caddy cat /data/caddy/pki/authorities/local/root.crt > /tmp/op2-ca.crt
           base=https://localhost:8443
-          # The key reached the public trust list, signed by the authority it lists as active.
+          # The key reached the public trust list, listed active for agency 1.
           curl -sf --cacert /tmp/op2-ca.crt "$base/api/v1/trust-list/1" -o /tmp/op2-trust.json
           pk=$(sudo python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["public_key_hex"])' \
                  polaris_web/secrets/polaris_signing_key)       # the key this install minted
@@ -1962,9 +1967,13 @@ jobs:
           mkdir -p /tmp/op2 && cp /tmp/op2-ca.crt /tmp/op2/caddy-root.crt && cp /tmp/ci-operator.pw /tmp/op2/operator-password
           sudo python3 lab/strategy/006/issue_and_pack.py /tmp/op2 /opt/polaris/polaris_web/secrets ci-admin
           # A relying party, registered as the operator registers one, verifies it online.
-          sudo scripts/polaris-rp-register.sh "Fresh-host drill relying party" \
-            --justification "the relying party of the fresh-host drill (lab record 017, gate row OP-2)" | tee /tmp/op2-rp.out
+          # Its secret is printed once: kept in a file, masked, never echoed to this log.
+          (umask 077 && sudo scripts/polaris-rp-register.sh "Fresh-host drill relying party" \
+            --justification "the relying party of the fresh-host drill (lab record 017, gate row OP-2)" > /tmp/op2-rp.out)
           cid=$(sed -n 's/^  client_id: *//p' /tmp/op2-rp.out); secret=$(sed -n 's/^  client_secret: *//p' /tmp/op2-rp.out)
+          echo "::add-mask::$secret"
+          [ -n "$cid" ] && [ -n "$secret" ] || { echo "::error::polaris-rp-register.sh printed no client id and secret"; exit 1; }
+          echo "relying party registered: $cid"
           token=$(curl -sf --cacert /tmp/op2-ca.crt -u "$cid:$secret" -d grant_type=client_credentials \
                     "$base/api/v1/oauth/token" | python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])')
           sudo python3 -c 'import json, sys; p = json.load(open(sys.argv[1])); print(json.dumps({"token_value": p["token_value"], "signature_hex": p["signature_hex"]}))' \
@@ -1975,7 +1984,12 @@ jobs:
           python3 -c 'import json, sys; v = json.loads(sys.argv[1]); sys.exit(0 if v.get("decision") == "accept" and v.get("usable") is True else 1)' "$answer" \
             || { echo "::error::the relying party's online verification did not accept the fresh install's credential"; exit 1; }
           t_done=$(date +%s); t0=$(cat /tmp/op2-install-start); t1=$(cat /tmp/op2-install-end)
-          summary="OP-2: install $(( (t1 - t0) / 60 )) min $(( (t1 - t0) % 60 )) s (images built from source until OP-1), operator steps $(( (t_done - t_ops) / 60 )) min $(( (t_done - t_ops) % 60 )) s, total $(( (t_done - t0) / 60 )) min; operator inputs 5 (domain; administrator name, password, reason; key registration), relying party onboarding 2"
+          # The doctor, after the registration: every credential signed for real is under a registered key.
+          sudo POLARIS_DOCTOR_URL=https://localhost:8443 POLARIS_DOCTOR_CACERT=/tmp/op2-ca.crt \
+            scripts/polaris-doctor.sh > /tmp/op2-doctor.out || true
+          grep -q "  ok    key register " /tmp/op2-doctor.out \
+            || { cat /tmp/op2-doctor.out; echo "::error::after the registration the doctor did not read the key register clean"; exit 1; }
+          summary="OP-2: install $(( (t1 - t0) / 60 )) min $(( (t1 - t0) % 60 )) s (images built from source until OP-1), operator steps $(( (t_done - t_ops) / 60 )) min $(( (t_done - t_ops) % 60 )) s, total $(( (t_done - t0) / 60 )) min; operator inputs 5 as documented (domain; administrator name, password, reason; key registration), relying party onboarding 2"
           echo "$summary"
           echo "$summary" >> "$GITHUB_STEP_SUMMARY"
 
