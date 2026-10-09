@@ -4253,6 +4253,10 @@ def check_prod_app_password_synced(root: pathlib.Path) -> list[Finding]:
 #   2. The rate limiter silently falls back to per-worker in-memory unless
 #      POLARIS_REDIS_URL is set; prod runs 4 workers, so per-IP limits would
 #      fragment 4x. The prod compose must wire POLARIS_REDIS_URL.
+#   3. The same seed sets the zero-knowledge anonymity floor to ONE (04_data.sql)
+#      so its handful of credentials can close an epoch. Every install loads it,
+#      so production must put the floor back to at least the default of 20, or
+#      uc11_close_epoch closes epochs that identify their members by elimination.
 # (Part of the v9.101+ production-readiness arc; see docs/PRODUCTION-READINESS.md.)
 # ---------------------------------------------------------------------------
 def check_prod_hardening(root: pathlib.Path) -> list[Finding]:
@@ -4272,8 +4276,17 @@ def check_prod_hardening(root: pathlib.Path) -> list[Finding]:
         return _fail("prod_hardening",
                      "docker-compose.prod.yml must set POLARIS_REDIS_URL so the rate limiter uses the "
                      "cross-worker Redis backend (else per-IP limits fragment across the 4 workers)")
+    # 3. The sample's anonymity floor of one does not carry into production.
+    floors = [int(n) for n in re.findall(
+        r"^[^-\n]*SET\s+polaris\.min_epoch_anonymity_set\s*=\s*(\d+)", prod_block.group(0), re.M)]
+    if not floors or min(floors) < 20:
+        return _fail("prod_hardening",
+                     "docker-init.sh must set polaris.min_epoch_anonymity_set to at least 20 when "
+                     "POLARIS_ENV=production: the notional sample sets it to 1, and every install loads "
+                     "the sample, so production would close epochs of one")
     return _ok("prod_hardening",
-               "prod neutralizes demo accounts and wires the Redis rate limiter")
+               "prod neutralizes demo accounts, restores the anonymity floor (%d) and wires the Redis "
+               "rate limiter" % min(floors))
 
 
 # ---------------------------------------------------------------------------
@@ -6482,6 +6495,108 @@ def check_ha_internal_auth(root: pathlib.Path) -> list[Finding]:
                "evacuation drills prove the refusals from the app's network")
 
 
+# Lab record 017 (gate row OP-7): the loss of a host or a zone is tolerated, on Kubernetes. The chart
+# spread nothing: two database members or both app pods could share a node, the edge, the router and
+# pgbouncer ran one pod each (their node's loss an outage until the default 300 s eviction), and Redis was
+# a StatefulSet on a node-local volume, never moved off a dead node, while the rate limiter refuses
+# without it. Now every replicated component spreads across nodes (hard) and zones (soft), the hops on
+# the data path run two pods, pods Kubernetes may move leave an unanswering node after 30 s, Redis is a
+# Deployment on an emptyDir, and disruption budgets keep a drained node from taking the last pod. The
+# zone-loss drill kills the leader's node on a three-zone kind cluster.
+_FAILURE_DOMAIN_NEEDLES = (
+    ("deploy/helm/polaris/templates/_helpers.tpl", 'define "polaris.spread"', "define the spread"),
+    ("deploy/helm/polaris/templates/_helpers.tpl",
+     "topologyKey: kubernetes.io/hostname\n    whenUnsatisfiable: DoNotSchedule\n    nodeTaintsPolicy: Honor",
+     "keep two pods of a component off one node while another is free"),
+    ("deploy/helm/polaris/templates/_helpers.tpl", "topologyKey: {{ $root.Values.spread.zoneKey }}",
+     "spread across zones too"),
+    ("deploy/helm/polaris/templates/_helpers.tpl", "tolerationSeconds: {{ .Values.spread.evictAfterSeconds }}",
+     "move pods off an unanswering node quickly"),
+    ("deploy/helm/polaris/templates/postgres.yaml", 'include "polaris.spread" (list "postgres" .)',
+     "spread the database members"),
+    ("deploy/helm/polaris/templates/postgres.yaml", 'include "polaris.pdb" (list "postgres" .)',
+     "keep a drain from taking both members"),
+    ("deploy/helm/polaris/templates/app.yaml", 'include "polaris.spread" (list "app" .)', "spread the app"),
+    ("deploy/helm/polaris/templates/caddy.yaml", 'include "polaris.spread" (list "caddy" .)', "spread the edge"),
+    ("deploy/helm/polaris/templates/pg-router.yaml", 'include "polaris.spread" (list "pg-router" .)',
+     "spread the router"),
+    ("deploy/helm/polaris/templates/pgbouncer.yaml", 'include "polaris.spread" (list "pgbouncer" .)',
+     "spread pgbouncer"),
+    ("deploy/helm/polaris/templates/pgbouncer.yaml", "replicas: {{ .Values.pgbouncer.replicas }}",
+     "let pgbouncer run more than one pod"),
+    ("deploy/helm/polaris/templates/redis.yaml", "kind: Deployment", "run Redis as something that can move"),
+    ("deploy/helm/polaris/templates/redis.yaml", "emptyDir: {}", "keep Redis off a node-local volume"),
+    ("deploy/helm/polaris/templates/redis.yaml", 'include "polaris.fastEviction" .', "move Redis quickly"),
+    ("scripts/polaris-zone-loss-drill.sh", 'docker kill "${L0NODE}"', "kill the leader's node"),
+    ("scripts/polaris-zone-loss-drill.sh", "the database members share a zone", "require the members in two zones"),
+    (".github/workflows/zone-loss.yml", "bash scripts/polaris-zone-loss-drill.sh", "run the drill in CI"),
+)
+
+
+def check_failure_domains(root: pathlib.Path) -> list[Finding]:
+    name = "failure_domains"
+    for rel, needle, what in _FAILURE_DOMAIN_NEEDLES:
+        if needle not in _read(root, rel):
+            return _fail(name, f"{rel} no longer does this: {what}")
+    if "volumeClaimTemplates" in _read(root, "deploy/helm/polaris/templates/redis.yaml"):
+        return _fail(name, "Redis must not hold a node-local volume: a StatefulSet's pod waits for its node forever")
+    for f, comp in (("app.yaml", "app"), ("caddy.yaml", "caddy"), ("pg-router.yaml", "pg-router"),
+                    ("pgbouncer.yaml", "pgbouncer")):
+        t = _read(root, f"deploy/helm/polaris/templates/{f}")
+        if 'include "polaris.fastEviction" .' not in t:
+            return _fail(name, f"{f} must leave an unanswering node after spread.evictAfterSeconds, not 300 s")
+        if comp != "app" and f'include "polaris.pdb" (list "{comp}" .)' not in t:
+            return _fail(name, f"{f} needs a disruption budget, or a drain can take its last pod")
+    values = _read(root, "deploy/helm/polaris/values.yaml")
+    for block in ("edge", "pgRouter", "pgbouncer"):
+        # _read leaves a bare "#" where a comment was, so a block ends at the next top-level key.
+        m = re.search(rf"(?ms)^{block}:\n(.*?)(?=^[A-Za-z_])", values)
+        if not (m and re.search(r"(?m)^  replicas: ([2-9]|\d\d+)\s*$", m.group(1))):
+            return _fail(name, f"values.yaml must run at least two {block} pods, or one node's loss stops it")
+    return _ok(name, "every replicated component spreads across nodes and zones, the hops on the data path run "
+               "two pods, movable pods leave a dead node after 30 s, Redis can move, drains keep a pod; the "
+               "zone-loss drill kills the leader's node")
+
+
+# Lab record 017 (gate row OP-6): a failover loses no acknowledged write. Under asynchronous
+# replication it could (the failover drill counted two acknowledged inserts missing after a leader
+# loss on CI), and in Polaris an acknowledged write can be a revocation. The HA profile and the
+# chart run Patroni's synchronous_mode by default, not strict; a standby cluster stays asynchronous;
+# the failover drill reads the mode from the cluster and, with it on, fails on any acknowledged
+# insert the surviving history lacks. docs/design/synchronous-replication.md records the price.
+_SYNC_REPLICATION_NEEDLES = (
+    ("polaris_web/patroni-entrypoint.sh", 'SYNC_MODE="${POLARIS_PATRONI_SYNCHRONOUS_MODE:-on}"',
+     "replicate synchronously unless told otherwise"),
+    ("polaris_web/patroni-entrypoint.sh", "    synchronous_mode: $SYNC_MODE\n    synchronous_mode_strict: false\n",
+     "write synchronous_mode, not strict, into the cluster's configuration"),
+    ("polaris_web/patroni-entrypoint.sh", '[ -z "$STANDBY_HOST" ] || SYNC_MODE=false',
+     "keep a standby cluster asynchronous"),
+    ("polaris_web/docker-compose.ha.yml", 'POLARIS_PATRONI_SYNCHRONOUS_MODE: "${POLARIS_PATRONI_SYNCHRONOUS_MODE:-on}"',
+     "pass the HA profile's default to its members"),
+    ("deploy/helm/polaris/values.yaml", "    synchronousMode: true\n", "default the chart to synchronous replication"),
+    ("deploy/helm/polaris/templates/postgres.yaml", "POLARIS_PATRONI_SYNCHRONOUS_MODE",
+     "pass the chart's setting to its members"),
+    ("scripts/polaris-failover-drill.sh", ".get('synchronous_mode')", "read the mode from the cluster"),
+    ("scripts/polaris-failover-drill.sh", "with synchronous_mode on, a failover must lose none",
+     "fail on an acknowledged insert lost with synchronous_mode on"),
+    ("scripts/polaris-failover-drill.sh", 'wait_for 60 sync_standby_is "$r" "$l"',
+     "start each scenario with the replica as the synchronous standby"),
+    ("scripts/polaris-failover-drill.sh", '== 5. the replica ($R5) is lost',
+     "drill the replica's loss, where synchronous replication costs a stall"),
+    ("docs/design/synchronous-replication.md", "## What it costs", "record the price"),
+)
+
+
+def check_failover_keeps_acknowledged_writes(root: pathlib.Path) -> list[Finding]:
+    name = "failover_keeps_acknowledged_writes"
+    for rel, needle, what in _SYNC_REPLICATION_NEEDLES:
+        if needle not in _read(root, rel):
+            return _fail(name, f"{rel} no longer does this: {what}")
+    return _ok(name, "the HA profile and the chart replicate synchronously by default (not strict; a standby "
+               "cluster stays asynchronous), and the failover drill fails on any acknowledged write a failover "
+               "loses with it on")
+
+
 def check_redis_authenticated(root: pathlib.Path) -> list[Finding]:
     name = "redis_authenticated"
     problems = []
@@ -8647,6 +8762,59 @@ def check_performance_baseline(root: pathlib.Path) -> list[Finding]:
                "P1.9: the end-to-end baseline (issuance, verification, atlas warm/cold) is measured by one script "
                "through gunicorn with SLO-boundary floors, stamped into the doc, re-run by CI in smoke mode with the "
                "JSON as an artifact; the F-03 rate-limit defaults stay 10/60/60 behind the benchmark override")
+
+
+# Lab record 017 (gate rows OP-24 and OP-25): throughput is measured through the production path, per
+# app vCPU and across replicas, and published with its stamp. The one earlier online measurement ran
+# gunicorn and PostgreSQL alone, before the connection pool; nothing had read every answer under load,
+# held the app tier to a CPU share, or measured more than one replica. The measurement lifts the
+# edge's per-address limit in its own copy of the edge's file, never in the shipped ones.
+_THROUGHPUT_NEEDLES = (
+    ("scripts/polaris-throughput-measure.sh", "/api/v1/verify", "drive the relying-party route"),
+    ("scripts/polaris-throughput-measure.sh", "body:find('\"decision\": *\"accept\"')",
+     "read every answer for the accept"),
+    ("scripts/polaris-throughput-measure.sh", 'm["accepted"] != m["requests"]',
+     "fail a run with any answer but an accept"),
+    ("scripts/polaris-throughput-measure.sh", "the credential was not accepted before the measurement",
+     "verify once before any load"),
+    ("scripts/polaris-throughput-measure.sh", 'polaris-key-event.sh" register',
+     "register the issuer key before issuing, as a key ceremony ends"),
+    ("scripts/polaris-throughput-measure.sh", "docker stats --no-stream", "sample every tier's CPU"),
+    ("scripts/polaris-throughput-measure.sh", 'grep -q "rate_limit {" "${WORK}/Caddyfile" && fail',
+     "lift the edge's per-address limit only in its own copy, and prove it gone there"),
+    ("scripts/polaris-throughput-measure.sh", "container_name: !reset null",
+     "leave a stack already on the machine alone"),
+    (".github/workflows/throughput.yml", "bash scripts/polaris-throughput-measure.sh", "run the measurement"),
+    (".github/workflows/throughput.yml", "schedule:", "re-measure on a schedule"),
+    (".github/workflows/throughput.yml", "POLARIS_MEASURE_COMMIT", "stamp the branch's commit, not CI's merge"),
+)
+
+
+def check_throughput_measured(root: pathlib.Path) -> list[Finding]:
+    name = "throughput_measured"
+    for rel, needle, what in _THROUGHPUT_NEEDLES:
+        if needle not in _read(root, rel):
+            return _fail(name, f"{rel} no longer does this: {what}")
+    for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"):
+        if "rate_limit {" not in _read(root, rel):
+            return _fail(name, f"{rel} lost its per-address limit; only the measurement's own copy may")
+    doc = _read(root, "docs/reference/PERFORMANCE-BASELINE.md")
+    if "<!-- throughput:begin -->" not in doc or "<!-- throughput:end -->" not in doc:
+        return _fail(name, "PERFORMANCE-BASELINE.md lost the throughput block's markers (the script writes it)")
+    block = doc.split("<!-- throughput:begin -->", 1)[1].split("<!-- throughput:end -->", 1)[0]
+    if not re.search(r"\*\*Measured \d+\.\d+\.\d+(?:-[a-z]+\.\d+)? @ [0-9a-f]{7,}, "
+                     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z", block):
+        return _fail(name, "the throughput block carries no stamp (version, commit, date): numbers carry stamps")
+    for key in ("A", "B", "C", "D"):
+        if not re.search(r"(?m)^\| %s: " % key, block):
+            return _fail(name, f"the throughput block lacks configuration {key}'s row")
+    if not re.search(r"across hosts is not\s+measured", doc, re.I):
+        return _fail(name, "PERFORMANCE-BASELINE.md must say the replicas share one host and across hosts is not "
+                     "measured")
+    return _ok(name, "online verifications a second are measured through the production path, every answer "
+               "read, with the app tier held to a CPU share at one and two replicas and every tier's CPU per "
+               "verification, weekly in CI; the edge's limit is lifted only in the measurement's copy; the "
+               "published block carries its stamp and says the replicas share one host")
 
 
 # ---------------------------------------------------------------------------
@@ -17818,8 +17986,9 @@ def check_cost_model(root: pathlib.Path) -> list[Finding]:
                      "and roadmap P2.9 already say in their own words")
     if "not the cost driver" not in doc:
         return _fail(name,
-                     "the document must state the finding plainly: verification throughput is not "
-                     "the cost driver at national scale, and availability and retention are. A cost "
+                     "the document must state the finding plainly: the cryptographic cost of "
+                     "verification is not the cost driver at national scale, and availability and "
+                     "retention are. A cost "
                      "model whose conclusion a reader has to derive is a table again")
     return _ok(name,
                "infrastructure cost is a model that runs rather than a table that asserts: every "
@@ -26377,6 +26546,8 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_release_images_signed,
     check_redis_authenticated,
     check_ha_internal_auth,
+    check_failure_domains,
+    check_failover_keeps_acknowledged_writes,
     check_edge_settings_reach_the_edge,
     check_npm_publish_is_staged,
     check_admin_mfa_deadline,
@@ -26413,6 +26584,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_schema_reload_idempotent,
     check_abuse_controls,
     check_performance_baseline,
+    check_throughput_measured,
     check_dr_drill_scheduled,
     check_pitr_drilled,
     check_restore_reconciled,

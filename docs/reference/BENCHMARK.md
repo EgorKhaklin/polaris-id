@@ -139,10 +139,11 @@ labeled as such.
 2. **Single-witness verify-at-use is the throughput lever (v9.258).** Moving the
    redundant second witness off the hot path lifts one core from ~745 to ~7,848
    verifications/s (~10.5x); because verification needs only the public key (no
-   custody, no private key) it fans out across cores and replicas, ~62,783/s
-   projected on this 8-core node. That takes real PQ verification from hundreds
-   to tens of thousands per second without weakening issuance, which still
-   two-witnesses every signature before it is persisted. This is what
+   custody, no private key) it fans out across cores, ~62,783/s projected on
+   this 8-core node. That takes the signature check from hundreds to tens of
+   thousands per second without weakening issuance, which still two-witnesses
+   every signature before it is persisted. It is not the online route's
+   capacity: database round trips bound that, as
    [verification-scaling.md](../design/verification-scaling.md) measures.
 3. **Real signing dominates enrollment.** At ~0.4 ms per ML-DSA-65 signature
    plus a two-witness self-check, mass enrollment is signing-bound (~372/s

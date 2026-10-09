@@ -19,8 +19,10 @@
 #   edge           the TLS edge serves /api/health/live
 #   health         the app's own roll-up (/api/health, from inside the app container): every
 #                  component it judges
-#   key register   every agency that has issued holds a registered signing key; without one its
-#                  trust list is refused and its credentials' issuer facts read unknown (a WARN)
+#   key register   every agency that has issued holds a registered signing key: a FAIL when it holds
+#                  credentials signed for real under no registered key (every relying-party
+#                  verification of them is refused), a WARN when its credentials carry no real
+#                  signature (its trust list is refused; KEY-CEREMONY.md)
 #
 # Usage:  polaris-doctor.sh   (as root on a systemd host: it reads /etc/polaris/polaris.env, as
 #                              polaris.service does; scripts/polaris-env.sh)
@@ -170,14 +172,24 @@ else
     warn health "not reached: the app container is not running (see its stack line above)"
 fi
 
-# --- key register: every agency that has issued holds a registered key
-UNREGISTERED=$(compose exec -T postgres psql -U postgres -d polaris -qtA -c "
-    SELECT string_agg(DISTINCT t.issuing_agency_id::text, ' ' ORDER BY t.issuing_agency_id::text)
-      FROM IdentityToken t
-     WHERE NOT EXISTS (SELECT 1 FROM AuthorityKeyCurrent k
-                        WHERE k.agency_id = t.issuing_agency_id AND k.status = 'active')" 2> /dev/null)
-if [[ $? -ne 0 ]]; then
+# --- key register: every agency that has issued holds a registered key. A credential signed for real
+# under an authority with no key history at all is refused by every possession route, so that is a
+# FAIL; an authority whose credentials carry no real signature (the notional seed) is a WARN.
+KEYQ=$(compose exec -T postgres psql -U postgres -d polaris -qtA -F '|' -c "
+    SELECT (SELECT string_agg(DISTINCT t.issuing_agency_id::text, ' ' ORDER BY t.issuing_agency_id::text)
+              FROM IdentityToken t JOIN TokenSignature s ON s.token_id = t.token_id
+             WHERE s.signing_public_key_hex IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM AuthorityKeyEvent e WHERE e.agency_id = t.issuing_agency_id)),
+           (SELECT string_agg(DISTINCT t.issuing_agency_id::text, ' ' ORDER BY t.issuing_agency_id::text)
+              FROM IdentityToken t
+             WHERE NOT EXISTS (SELECT 1 FROM AuthorityKeyCurrent k
+                                WHERE k.agency_id = t.issuing_agency_id AND k.status = 'active'))" 2> /dev/null)
+KEYQ_RC=$?
+REFUSED="${KEYQ%%|*}"; UNREGISTERED="${KEYQ#*|}"
+if [[ ${KEYQ_RC} -ne 0 || "${KEYQ}" != *"|"* ]]; then
     warn "key register" "not reached: the database did not answer"
+elif [[ -n "${REFUSED}" ]]; then
+    bad "key register" "agency ${REFUSED} holds credentials signed for real under no registered key: every relying-party verification of them answers \"not a verifiable presentation\" (register the key: scripts/polaris-key-event.sh register <agency> <public key hex>, docs/operator/KEY-CEREMONY.md)"
 elif [[ -n "${UNREGISTERED}" ]]; then
     warn "key register" "agency ${UNREGISTERED} issued with no registered signing key: its trust list is refused and issuer facts read unknown (register it: docs/operator/KEY-CEREMONY.md)"
 else

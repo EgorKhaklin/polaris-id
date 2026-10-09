@@ -13526,6 +13526,87 @@ class ReplicaLagMetricTests(unittest.TestCase):
                          'with no replica configured nothing may be set')
 
 
+class ReplicaCaughtUpTests(unittest.TestCase):
+    """Lab record 017 (gate row OP-6): a replica whose received and replayed WAL differ only by a
+    record it cannot replay yet (an idle primary's partly written page) is caught up, not lagging.
+    CI run 37710821978 read such a replica as 24 s behind on a quiet cluster. The lag check asks
+    replica_replay_caught_up() then, and only then; without the function it keeps its answer."""
+
+    class _Cursor:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql, params=None):
+            self.conn.statements.append(sql)
+            if 'replica_replay_caught_up' in sql and isinstance(self.conn.caught_up, Exception):
+                raise self.conn.caught_up
+
+        def fetchone(self):
+            if 'replica_replay_caught_up' in self.conn.statements[-1]:
+                return {'caught_up': self.conn.caught_up}
+            return {'in_rec': self.conn.in_rec, 'lag': self.conn.lag}
+
+    class _Conn:
+        def __init__(self, in_rec=True, lag=24.0, caught_up=False):
+            self.in_rec, self.lag, self.caught_up = in_rec, lag, caught_up
+            self.statements, self.rolled_back = [], False
+
+        def cursor(self):
+            return ReplicaCaughtUpTests._Cursor(self)
+
+        def rollback(self):
+            self.rolled_back = True
+
+    def test_a_replica_with_only_an_unreplayable_tail_reads_caught_up(self):
+        conn = self._Conn(lag=24.0, caught_up=True)
+        self.assertEqual(flask_app._replica_lag_seconds(conn), 0.0,
+                         'a replica whose startup process waits for WAL has nothing complete to replay')
+
+    def test_a_replica_still_replaying_keeps_its_lag(self):
+        conn = self._Conn(lag=24.0, caught_up=False)
+        self.assertEqual(flask_app._replica_lag_seconds(conn), 24.0)
+
+    def test_without_the_function_the_answer_stands_and_the_connection_serves(self):
+        conn = self._Conn(lag=24.0, caught_up=RuntimeError('function replica_replay_caught_up() does not exist'))
+        self.assertEqual(flask_app._replica_lag_seconds(conn), 24.0)
+        self.assertTrue(conn.rolled_back, 'the failed statement must be rolled back before the read runs')
+
+    def test_a_current_replica_is_not_asked_again(self):
+        conn = self._Conn(lag=0.0, caught_up=True)
+        self.assertEqual(flask_app._replica_lag_seconds(conn), 0.0)
+        self.assertEqual(len(conn.statements), 1, 'received equal to replayed needs no second statement')
+
+    def test_the_function_on_a_primary(self):
+        """Live: it answers false on a server that is not recovering, runs as its owner with its own
+        search_path, and the application role may call it while PUBLIC may not."""
+        conn = psycopg2.connect(**DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT to_regprocedure('replica_replay_caught_up()') IS NOT NULL")
+                if not cur.fetchone()[0]:
+                    self.skipTest('the schema predates 2026-10-08-001')
+                cur.execute("SELECT replica_replay_caught_up()")
+                self.assertIs(cur.fetchone()[0], False)
+                cur.execute("SELECT prosecdef, proconfig FROM pg_proc WHERE oid = 'replica_replay_caught_up()'::regprocedure")
+                secdef, config = cur.fetchone()
+                self.assertTrue(secdef)
+                self.assertTrue(any(c.startswith('search_path=') for c in (config or [])))
+                cur.execute("SELECT has_function_privilege('public', 'replica_replay_caught_up()', 'EXECUTE')")
+                self.assertFalse(cur.fetchone()[0], 'PUBLIC must not execute a definer routine')
+                cur.execute("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'polaris_app')")
+                if cur.fetchone()[0]:
+                    cur.execute("SELECT has_function_privilege('polaris_app', 'replica_replay_caught_up()', 'EXECUTE')")
+                    self.assertTrue(cur.fetchone()[0], 'the application role must be able to ask')
+        finally:
+            conn.close()
+
+
 class StateFilesystemMetricTests(unittest.TestCase):
     """Lab record 017 (gate row OP-15): /metrics carries the size and free space of the filesystem
     holding the state directory, measured at scrape time, NaN when it cannot be read."""

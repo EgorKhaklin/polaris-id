@@ -74,6 +74,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-retention-drill.sh` | The archive and purge chain, per retention class, end to end | `ci.yml` |
 | `polaris-trace-drill.sh` | Tracing joins logs to spans, and the dashboards load | `ci.yml` |
 | `polaris-perf-baseline.sh` | The published latency baseline, re-measured in smoke mode | `ci.yml` |
+| `polaris-throughput-measure.sh` | Online verifications a second through the production path, per app vCPU and across two replicas | `throughput.yml` |
 | `polaris-custody-pkcs11-drill.sh` | ML-DSA-65 signing inside a PKCS#11 token | `ci.yml`'s custody job |
 | `polaris-verify.py` | The detached verifier: an ML-DSA-65 authenticity pack verifies offline with only a standard ML-DSA library, no Polaris code and no database. `--status-assertion` (P3.6) additionally decides AUTHORIZATION offline against a short-lived signed status assertion (fresh + bound + ACTIVE, window-bounded). `--selftest` and `--verify-dir vectors` run in pqc-real | `ci.yml`, and any relying party with no Polaris installed |
 | `polaris-make-vectors.py` | Generates the published authenticity vectors (`vectors/`), preferring liboqs and falling back to an independent FIPS-204 implementation | A contributor regenerating `vectors/` |

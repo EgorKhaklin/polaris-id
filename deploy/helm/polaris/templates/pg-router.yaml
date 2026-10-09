@@ -109,6 +109,8 @@ spec:
         checksum/config: {{ printf "%s/%s/%d/%s" $scope .Release.Namespace (int .Values.postgres.replicas) .Chart.AppVersion | sha256sum | trunc 16 }}
     spec:
       automountServiceAccountToken: false
+      {{- include "polaris.spread" (list "pg-router" .) | nindent 6 }}
+      {{- include "polaris.fastEviction" . | nindent 6 }}
       securityContext:
         {{- include "polaris.podSecurity" (dict "uid" 99 "gid" 99) | nindent 8 }}
       containers:
@@ -133,3 +135,5 @@ spec:
         - name: config
           configMap:
             name: {{ $router }}
+---
+{{ include "polaris.pdb" (list "pg-router" .) }}

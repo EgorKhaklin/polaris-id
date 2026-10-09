@@ -3134,6 +3134,60 @@ def test_restore_verified_on_schedule_check_discriminates(tmp_path):
     (tmp_path / rel).write_text(good)
 
 
+def test_failure_domains_check_discriminates(tmp_path):
+    rels = {rel for rel, _, _ in checks._FAILURE_DOMAIN_NEEDLES} | {
+        "deploy/helm/polaris/values.yaml", "deploy/helm/polaris/templates/app.yaml",
+        "deploy/helm/polaris/templates/caddy.yaml", "deploy/helm/polaris/templates/pg-router.yaml",
+        "deploy/helm/polaris/templates/pgbouncer.yaml", "deploy/helm/polaris/templates/redis.yaml"}
+    for rel in sorted(rels):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_failure_domains(tmp_path)[0].level == "OK", "must PASS on the real chart, drill and workflow"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new))
+        assert checks.check_failure_domains(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    for rel, needle, what in checks._FAILURE_DOMAIN_NEEDLES:
+        broken(rel, needle, "true", f"must FAIL when it no longer does this: {what}")
+    broken("deploy/helm/polaris/templates/caddy.yaml", 'include "polaris.fastEviction" .', "true",
+           "must FAIL when the edge waits 300 s for a dead node")
+    broken("deploy/helm/polaris/templates/pg-router.yaml", 'include "polaris.pdb" (list "pg-router" .)', "true",
+           "must FAIL when a drain can take the router's last pod")
+    broken("deploy/helm/polaris/values.yaml", "  # Two, spread across nodes (lab record 017, gate row OP-7). Each pools for the app pods that reach it.\n  replicas: 2",
+           "  replicas: 1", "must FAIL when pgbouncer runs one pod")
+    broken("deploy/helm/polaris/templates/redis.yaml", "        - name: data\n          emptyDir: {}",
+           "        - name: data\n          emptyDir: {}\n  volumeClaimTemplates: []",
+           "must FAIL when Redis holds a node-local volume again")
+
+
+def test_failover_keeps_acknowledged_writes_check_discriminates(tmp_path):
+    for rel in sorted({rel for rel, _, _ in checks._SYNC_REPLICATION_NEEDLES}):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_failover_keeps_acknowledged_writes(tmp_path)[0].level == "OK", \
+        "must PASS on the real entrypoint, overlay, chart, failover drill and design record"
+    for rel, needle, what in checks._SYNC_REPLICATION_NEEDLES:
+        path = tmp_path / rel
+        good = path.read_text()
+        assert needle in good, f"the fixture drifted: {needle!r} is no longer in {rel}"
+        path.write_text(good.replace(needle, "true"))
+        assert checks.check_failover_keeps_acknowledged_writes(tmp_path)[0].level == "FAIL", \
+            f"must FAIL when it no longer does this: {what}"
+        path.write_text(good)
+    # The default flipped to asynchronous is the regression this exists for.
+    rel = "polaris_web/patroni-entrypoint.sh"
+    good = (tmp_path / rel).read_text()
+    (tmp_path / rel).write_text(good.replace("POLARIS_PATRONI_SYNCHRONOUS_MODE:-on}", "POLARIS_PATRONI_SYNCHRONOUS_MODE:-off}"))
+    assert checks.check_failover_keeps_acknowledged_writes(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the entrypoint defaults to asynchronous replication"
+    (tmp_path / rel).write_text(good)
+
+
 def test_restore_reconciled_check_discriminates(tmp_path):
     files = {"scripts/polaris-reconcile-restore.py", "scripts/polaris-pitr-drill.sh", ".github/workflows/ci.yml",
              "docs/operator/DR.md"}
@@ -3662,10 +3716,12 @@ def test_dockerfile_copies_app_modules_check_discriminates(tmp_path):
 def test_prod_hardening_check_discriminates(tmp_path):
     web = tmp_path / "polaris_web"
     web.mkdir()
+    FLOOR = "    EXECUTE format('ALTER DATABASE %I SET polaris.min_epoch_anonymity_set = 20', current_database());\n"
     GOOD_INIT = (
         'if [ "${POLARIS_ENV:-}" = "production" ]; then\n'
         "  psql <<'SQL'\n"
         "  UPDATE AppUser SET is_active = FALSE WHERE username IN ('admin', 'operator', 'auditor');\n"
+        + FLOOR +
         "SQL\n"
         "fi\n")
     GOOD_COMPOSE = "services:\n  app:\n    environment:\n      POLARIS_REDIS_URL: redis://redis:6379/0\n"
@@ -3684,10 +3740,20 @@ def test_prod_hardening_check_discriminates(tmp_path):
     assert checks.check_prod_hardening(tmp_path)[0].level == "FAIL", \
         "must FAIL when the prod rate limiter is not wired to Redis"
 
-    # 3. Both present -> OK.
+    # 3. The sample's floor of one carried into production: not restored, restored below 20,
+    #    restored only in a comment, or restored outside the production block -> FAIL.
+    for init in (GOOD_INIT.replace(FLOOR, ""),
+                 GOOD_INIT.replace("= 20'", "= 5'"),
+                 GOOD_INIT.replace(FLOOR, "    -- SET polaris.min_epoch_anonymity_set = 20\n"),
+                 GOOD_INIT.replace(FLOOR, "") + FLOOR):
+        write(init, GOOD_COMPOSE)
+        assert checks.check_prod_hardening(tmp_path)[0].level == "FAIL", \
+            "must FAIL when production keeps the notional sample's anonymity floor:\n" + init
+
+    # 4. All present -> OK.
     write(GOOD_INIT, GOOD_COMPOSE)
     assert checks.check_prod_hardening(tmp_path)[0].level == "OK", \
-        "must PASS when demo accounts are neutralized and Redis is wired"
+        "must PASS when demo accounts are neutralized, the floor restored and Redis wired"
 
 
 def test_backup_encryption_check_discriminates(tmp_path):
@@ -6275,6 +6341,34 @@ def test_secrets_lifecycle_sealed_check_discriminates(tmp_path):
     write({"deploy/linux/polaris.service": "ExecStart=docker compose up -d\n"})
     assert checks.check_secrets_lifecycle_sealed(tmp_path)[0].level == "FAIL", "must FAIL when the unit skips unseal"
 
+
+
+def test_throughput_measured_check_discriminates(tmp_path):
+    files = sorted({rel for rel, _, _ in checks._THROUGHPUT_NEEDLES}
+                   | {"polaris_web/Caddyfile", "polaris_web/Caddyfile.citest", "docs/reference/PERFORMANCE-BASELINE.md"})
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_throughput_measured(tmp_path)[0].level == "OK", \
+        "must PASS on the real measurement, workflow, edges and published block"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_throughput_measured(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    for rel, needle, what in checks._THROUGHPUT_NEEDLES:
+        broken(rel, needle, "true", f"must FAIL when it no longer does this: {what}", count=-1)
+    broken("polaris_web/Caddyfile", "rate_limit {", "rate_limits {", "must FAIL when the shipped edge loses its limit",
+           count=-1)
+    doc = "docs/reference/PERFORMANCE-BASELINE.md"
+    broken(doc, "**Measured 1.0.0-rc.70 @", "**Measured @", "must FAIL when the block's stamp loses its version")
+    broken(doc, "| D: ", "| E: ", "must FAIL when a configuration's row is missing")
+    broken(doc, "Across hosts is not\nmeasured", "Across hosts is\nmeasured",
+           "must FAIL when the document stops saying the replicas share one host")
 
 
 def test_secrets_reach_only_their_readers_check_discriminates(tmp_path):
@@ -12609,7 +12703,7 @@ def test_cost_model_check_discriminates(tmp_path):
               "ap.add_argument('--persons')\nap.add_argument('--verifications-per-person')\n"
               "ap.add_argument('--retention-years')\nap.add_argument('--price-vcpu-hour')\n")
     BENCH = "| single-witness | ~7,848 verifications/s per core |\n"
-    DOC = ("Verification throughput is not the cost driver.\n"
+    DOC = ("The cryptographic cost of verification is not the cost driver.\n"
            "Excluded: Staff and on-call; a hardware security module; the physical token.\n"
            "The throughput is a single-node measurement.\n")
     good = {
@@ -12668,7 +12762,7 @@ def test_cost_model_check_discriminates(tmp_path):
 
     # The finding stops being stated, so the reader has to derive the conclusion.
     write({'docs/reference/COST-MODEL.md': DOC.replace(
-        "Verification throughput is not the cost driver.\n", "")})
+        "The cryptographic cost of verification is not the cost driver.\n", "")})
     assert checks.check_cost_model(tmp_path)[0].level == "FAIL", \
         "must FAIL when the document does not state its own finding"
 
