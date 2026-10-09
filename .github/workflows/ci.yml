@@ -1857,7 +1857,12 @@ jobs:
         env:
           POLARIS_DOMAIN: localhost
           POLARIS_COMPOSE_EXTRA: "-f docker-compose.citest.yml"
-        run: sudo -E bash deploy/linux/install.sh --source "$PWD"
+        # The clock for gate row OP-2 starts here (the drill below reads it).
+        run: |
+          set -o pipefail
+          date +%s > /tmp/op2-install-start
+          sudo -E bash deploy/linux/install.sh --source "$PWD" | tee /tmp/op2-install.out
+          date +%s > /tmp/op2-install-end
 
       - name: systemd owns the stack (active, timers scheduled, backup runs, restart survives)
         run: |
@@ -1888,11 +1893,170 @@ jobs:
           [ "$code" = 200 ] || { echo "::error::stack not healthy after systemctl restart polaris (last HTTP $code)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1; }
           echo "healthy again after systemctl restart polaris (check $i)"
 
+      # Lab record 017: an operator runs the scripts with sudo, which resets the environment, so each
+      # one reads /etc/polaris/polaris.env itself (scripts/polaris-env.sh). Before, the compose file
+      # refused to load for want of POLARIS_DOMAIN, and a domain exported alone gave a deploy without
+      # the rest of polaris.env: here, without the overlay that serves the edge on 8443.
+      - name: the operator's scripts, run with sudo, read polaris.env (first account, upgrade, rotation, doctor)
+        working-directory: /opt/polaris
+        run: |
+          set -e
+          health() {
+            code=""
+            for _ in $(seq 1 60); do
+              code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health || true)
+              [ "$code" = 200 ] && { echo "healthy after $1"; return 0; }
+              sleep 3
+            done
+            echo "::error::not healthy after $1 (last HTTP $code)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1
+          }
+          printf 'a-password-for-this-ci-run-only\n' > /tmp/ci-operator.pw
+          sudo scripts/polaris-create-operator.sh --username ci-admin --role admin --password-file /tmp/ci-operator.pw \
+            --reason "the first administrator of this CI install" --target=docker-stack
+          sudo scripts/polaris-deploy.sh prod --no-pull
+          health "sudo scripts/polaris-deploy.sh prod"
+          sudo scripts/polaris-rotate-secret.sh polaris_db_password
+          health "sudo scripts/polaris-rotate-secret.sh polaris_db_password"
+          sudo docker cp polaris-caddy:/data/caddy/pki/authorities/local/root.crt /tmp/caddy-root.crt
+          set -o pipefail
+          sudo POLARIS_DOCTOR_URL=https://localhost:8443 POLARIS_DOCTOR_CACERT=/tmp/caddy-root.crt \
+            scripts/polaris-doctor.sh | tee /tmp/doctor-file.out
+          # Gate row OP-2: before the key is registered, the doctor asks for the registration.
+          grep -q "WARN  key register .*no authority key is registered yet" /tmp/doctor-file.out \
+            || { echo "::error::the doctor did not ask for the key registration on a fresh host"; exit 1; }
+          grep -q "WARN  secrets at rest .*plaintext files in /opt/polaris/polaris_web/secrets" /tmp/doctor-file.out \
+            || { echo "::error::the doctor did not say the secrets are plaintext on disk"; exit 1; }
+          # Gate row OP-14: this install's backup repository is on the host, and the doctor says so.
+          grep -q "WARN  backups .*the backup repository is on this host" /tmp/doctor-file.out \
+            || { echo "::error::the doctor did not say the backups are on this host only"; exit 1; }
+
+      # Lab record 017 (gate row OP-2): a fresh host to a credential a relying party verifies online, by
+      # the documented commands only, with the operator's inputs counted and the time measured. Under
+      # real signing every relying-party route refuses a credential whose key its authority had not
+      # registered: install.sh names the step, and one command takes it. Inputs: 1 the domain (install),
+      # 2-4 the first administrator's name, password and reason (the step above), 5 the key
+      # registration. The relying party's own registration (its name and the reason) is its
+      # onboarding, counted apart. The images are built from source until OP-1 publishes them, so the
+      # install time is an upper bound.
+      - name: a fresh host to a credential a relying party verifies online (OP-2; inputs counted, time measured)
+        working-directory: /opt/polaris
+        run: |
+          set -eo pipefail
+          grep -q "polaris-key-event.sh register 1 --current" /tmp/op2-install.out \
+            || { echo "::error::install.sh did not name the key registration"; exit 1; }
+          t_ops=$(date +%s)
+          # Input 5, and once only: a second run is a no-op.
+          sudo scripts/polaris-key-event.sh register 1 --current
+          again=$(sudo scripts/polaris-key-event.sh register 1 --current)
+          grep -q "already registered" <<< "$again" || { echo "::error::a second register --current was not a no-op"; exit 1; }
+          # The runner's own copy of the edge's CA certificate (public): a root-owned copy is unreadable to
+          # curl run as the runner, which exits 77.
+          sudo docker exec polaris-caddy cat /data/caddy/pki/authorities/local/root.crt > /tmp/op2-ca.crt
+          base=https://localhost:8443
+          # The key reached the public trust list, listed active for agency 1.
+          curl -sf --cacert /tmp/op2-ca.crt "$base/api/v1/trust-list/1" -o /tmp/op2-trust.json
+          pk=$(sudo python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["public_key_hex"])' \
+                 polaris_web/secrets/polaris_signing_key)       # the key this install minted
+          python3 - "$pk" /tmp/op2-trust.json <<'EOF'
+          import json, sys
+          keys = json.load(open(sys.argv[2]))["keys"]
+          ok = [k for k in keys if k.get("agency_id") == 1 and k.get("public_key_hex") == sys.argv[1] and k.get("status") == "active"]
+          sys.exit(0 if ok else "the trust list does not list agency 1's key as active: %s" % [(k.get("agency_id"), k.get("status")) for k in keys])
+          EOF
+          # The first administrator issues one credential through the operator console.
+          mkdir -p /tmp/op2 && cp /tmp/op2-ca.crt /tmp/op2/caddy-root.crt && cp /tmp/ci-operator.pw /tmp/op2/operator-password
+          sudo python3 lab/strategy/006/issue_and_pack.py /tmp/op2 /opt/polaris/polaris_web/secrets ci-admin
+          # A relying party, registered as the operator registers one, verifies it online.
+          # Its secret is printed once: kept in a file, masked, never echoed to this log.
+          (umask 077 && sudo scripts/polaris-rp-register.sh "Fresh-host drill relying party" \
+            --justification "the relying party of the fresh-host drill (lab record 017, gate row OP-2)" > /tmp/op2-rp.out)
+          cid=$(sed -n 's/^  client_id: *//p' /tmp/op2-rp.out); secret=$(sed -n 's/^  client_secret: *//p' /tmp/op2-rp.out)
+          echo "::add-mask::$secret"
+          [ -n "$cid" ] && [ -n "$secret" ] || { echo "::error::polaris-rp-register.sh printed no client id and secret"; exit 1; }
+          echo "relying party registered: $cid"
+          token=$(curl -sf --cacert /tmp/op2-ca.crt -u "$cid:$secret" -d grant_type=client_credentials \
+                    "$base/api/v1/oauth/token" | python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])')
+          sudo python3 -c 'import json, sys; p = json.load(open(sys.argv[1])); print(json.dumps({"token_value": p["token_value"], "signature_hex": p["signature_hex"]}))' \
+            /tmp/op2/pack.json > /tmp/op2-body.json
+          answer=$(curl -s --cacert /tmp/op2-ca.crt -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+                     --data-binary @/tmp/op2-body.json "$base/api/v1/verify")
+          echo "POST /api/v1/verify: $answer"
+          python3 -c 'import json, sys; v = json.loads(sys.argv[1]); sys.exit(0 if v.get("decision") == "accept" and v.get("usable") is True else 1)' "$answer" \
+            || { echo "::error::the relying party's online verification did not accept the fresh install's credential"; exit 1; }
+          t_done=$(date +%s); t0=$(cat /tmp/op2-install-start); t1=$(cat /tmp/op2-install-end)
+          # The doctor, after the registration: every credential signed for real is under a registered key.
+          sudo POLARIS_DOCTOR_URL=https://localhost:8443 POLARIS_DOCTOR_CACERT=/tmp/op2-ca.crt \
+            scripts/polaris-doctor.sh > /tmp/op2-doctor.out || true
+          grep -q "  ok    key register " /tmp/op2-doctor.out \
+            || { cat /tmp/op2-doctor.out; echo "::error::after the registration the doctor did not read the key register clean"; exit 1; }
+          summary="OP-2: install $(( (t1 - t0) / 60 )) min $(( (t1 - t0) % 60 )) s (images built from source until OP-1), operator steps $(( (t_done - t_ops) / 60 )) min $(( (t_done - t_ops) % 60 )) s, total $(( (t_done - t0) / 60 )) min; operator inputs 5 as documented (domain; administrator name, password, reason; key registration), relying party onboarding 2"
+          echo "$summary"
+          echo "$summary" >> "$GITHUB_STEP_SUMMARY"
+
+      # Lab record 017 (gate row OP-9): SECRETS.md 5.1 on a systemd host. polaris.service runs compose
+      # with POLARIS_SECRETS_DIR alone; with it empty, a sealed host's next start read the shredded
+      # plaintext directory while a deploy (which supplied a default) had worked. Now every path
+      # refuses an empty one and names the line; with the line, the unit starts from the store, and
+      # again after its tmpfs is gone (what a reboot leaves).
+      - name: a sealed store on the systemd host as SECRETS.md 5.1 says; an empty POLARIS_SECRETS_DIR is refused
+        working-directory: /opt/polaris
+        run: |
+          set -e
+          health() {
+            code=""
+            for _ in $(seq 1 60); do
+              code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health || true)
+              [ "$code" = 200 ] && { echo "healthy after $1"; return 0; }
+              sleep 3
+            done
+            echo "::error::not healthy after $1 (last HTTP $code)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1
+          }
+          sudo apt-get install -y age > /dev/null
+          sudo sh -c 'age-keygen -o /root/polaris-age.identity 2> /dev/null && age-keygen -y /root/polaris-age.identity > /root/polaris-age.recipients'
+          sudo sed -i -e 's|^POLARIS_SECRETS_BACKEND=.*|POLARIS_SECRETS_BACKEND=age|' \
+                      -e 's|^POLARIS_SECRETS_AGE_IDENTITY=.*|POLARIS_SECRETS_AGE_IDENTITY=/root/polaris-age.identity|' \
+                      -e 's|^POLARIS_SECRETS_AGE_RECIPIENTS=.*|POLARIS_SECRETS_AGE_RECIPIENTS=/root/polaris-age.recipients|' \
+                      /etc/polaris/polaris.env
+          sudo scripts/polaris-secrets.sh seal
+          sudo systemctl stop polaris.service
+          sudo sh -c 'shred -u polaris_web/secrets/* polaris_web/secrets/.archive/* 2> /dev/null; rm -rf polaris_web/secrets'
+          # (1) POLARIS_SECRETS_DIR still empty: the unit, the deploy and the store's own verify refuse.
+          if sudo systemctl start polaris.service; then
+            echo "::error::polaris.service started a sealed store with POLARIS_SECRETS_DIR empty"; exit 1
+          fi
+          sudo journalctl -u polaris.service --no-pager | grep -q "needs POLARIS_SECRETS_DIR=/run/polaris/secrets" \
+            || { echo "::error::the unit's refusal does not name the line"; sudo journalctl -u polaris.service --no-pager | tail -20; exit 1; }
+          for cmd in "scripts/polaris-deploy.sh prod --no-pull" "scripts/polaris-secrets.sh verify"; do
+            if sudo $cmd 2> /tmp/refusal.err; then echo "::error::$cmd accepted an empty POLARIS_SECRETS_DIR"; exit 1; fi
+            grep -q "needs POLARIS_SECRETS_DIR" /tmp/refusal.err || { cat /tmp/refusal.err; exit 1; }
+          done
+          echo "an empty POLARIS_SECRETS_DIR is refused by the unit, the deploy and verify, each naming the line"
+          # (2) The line SECRETS.md 5.1 names: the unit starts from the store, plaintext only in a tmpfs.
+          sudo sed -i 's|^POLARIS_SECRETS_DIR=.*|POLARIS_SECRETS_DIR=/run/polaris/secrets|' /etc/polaris/polaris.env
+          sudo systemctl start polaris.service
+          health "the unit started from the sealed store"
+          findmnt -n -o FSTYPE /run/polaris/secrets | grep -qx tmpfs
+          [ ! -e polaris_web/secrets ] || { echo "::error::the plaintext directory is back"; exit 1; }
+          sudo scripts/polaris-secrets.sh verify
+          # (3) What a reboot leaves: no tmpfs. The unit unseals again.
+          sudo systemctl stop polaris.service
+          sudo umount /run/polaris/secrets
+          sudo systemctl start polaris.service
+          health "a start with the tmpfs gone"
+          # (4) The upgrade and the doctor, by hand, on the sealed host.
+          sudo scripts/polaris-deploy.sh prod --no-pull
+          health "sudo scripts/polaris-deploy.sh prod on the sealed host"
+          sudo POLARIS_DOCTOR_URL=https://localhost:8443 POLARIS_DOCTOR_CACERT=/tmp/caddy-root.crt \
+            scripts/polaris-doctor.sh | tee /tmp/doctor-sealed.out
+          grep -q "ok    secrets at rest .*sealed (age).*/run/polaris/secrets, a tmpfs" /tmp/doctor-sealed.out \
+            || { echo "::error::the doctor did not report the sealed store"; exit 1; }
+
       - name: Tear down
         if: always()
         run: |
           sudo systemctl stop polaris.service || true
           sudo docker compose -f /opt/polaris/polaris_web/docker-compose.prod.yml -f /opt/polaris/polaris_web/docker-compose.citest.yml down -v || true
+          sudo umount /run/polaris/secrets 2> /dev/null || true
 
   # --------------------------------------------------------------------------
   # v9.178 (roadmap P1.2) — the PKCS#11 custody driver against a REAL PKCS#11
@@ -3193,6 +3357,24 @@ jobs:
           docker exec -u postgres polaris-postgres psql -U postgres -d polaris -tAc "SHOW ssl" 2>/dev/null | grep -qx on \
             || { echo "::error::postgres is not running with ssl=on (prod init did not enable TLS)"; exit 1; }
           echo "postgres ssl=on confirmed"
+          # The notional sample's zero-knowledge anonymity floor of one does not carry into
+          # production: an epoch of two members is refused (the demo admin is reactivated only
+          # inside the transaction, which the refusal aborts).
+          refusal=$(docker exec -i -u postgres polaris-postgres psql -U postgres -d polaris -v ON_ERROR_STOP=1 -qtA 2>&1 <<'EOF' || true
+          BEGIN;
+          SELECT set_config('polaris.actor', 'ci', true) \g /dev/null
+          SELECT set_config('polaris.justification', 'reactivated inside a transaction the floor refusal aborts', true) \g /dev/null
+          UPDATE AppUser SET is_active = TRUE WHERE username = 'admin';
+          SELECT user_id AS admin_id FROM AppUser WHERE username = 'admin' \gset
+          CALL uc11_close_epoch(repeat('ab', 32), (now() + interval '1 day')::timestamp, :admin_id, jsonb_build_array(
+              jsonb_build_object('token_id', 1, 'leaf_hash', repeat('c1', 32), 'proof_path', '[]'::jsonb),
+              jsonb_build_object('token_id', 2, 'leaf_hash', repeat('c2', 32), 'proof_path', '[]'::jsonb)));
+          ROLLBACK;
+          EOF
+          )
+          echo "$refusal" | grep -q "below the minimum anonymity set of 20" \
+            || { echo "::error::a production database closed an epoch of two members: $refusal"; exit 1; }
+          echo "a production database refuses an epoch of two members (anonymity floor 20)"
           # Lab record 017 (OP-9): each container mounts only the secrets it reads.
           got=$(docker exec polaris-app ls /run/secrets | sort | tr '\n' ' ')
           [ "$got" = "polaris_db_password polaris_redis_password polaris_secret_key polaris_secret_key_fallbacks polaris_signing_key " ] \

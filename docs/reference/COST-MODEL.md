@@ -11,19 +11,20 @@ the number but how it moves.
 
 ## The finding
 
-**Verification throughput is not the cost driver, at any realistic national scale.**
+**The cryptographic cost of verification is not the cost driver, at any realistic national scale.**
 
 Single-witness verify-at-use measures about 7,848 ML-DSA-65 verifications per second per
 core. A hundred million people verified twelve times a year is 38 verifications per second on
 average, 381 at a ten-times peak. One core. The whole cryptographic load of a national
 identity system fits inside the base capacity a deployment needs anyway for its application
-and database processes.
+and database processes. The rest of an online verification, the database round trips that
+dominate it, is not in this model; what one host measured is below the commands.
 
 What costs money is **availability and retention**: the copies of the database that high
 availability and a standby region require, and the verification events accumulating for the
 retention window. Both are policy choices, not cryptographic ones.
 
-| Population | Peak verify/s | Cores for it | Stored, all copies | Annual | Per 1M/year |
+| Population | Peak verify/s | Cores for its signatures | Stored, all copies | Annual | Per 1M/year |
 |---|---|---|---|---|---|
 | 1,000,000 | 3.8 | 1 | 49 GiB | $12,677 | $12,677 |
 | 10,000,000 | 38 | 1 | 488 GiB | $13,241 | $1,324 |
@@ -90,11 +91,16 @@ scripts/polaris-cost-model.py --regions 1 --replicas 1
 scripts/polaris-cost-model.py --price-vcpu-hour 0.025 --price-gib-month 0.06
 ```
 
-The rate at which verification becomes the constraint is worth knowing and is far away: with
-eight base cores at 7,848/s each, verification only begins to add cores past roughly 62,000
-per second at peak. For a hundred million people that is about two thousand verifications per
-person per year, or five a day each. If your deployment is there, the model is the least of
-what needs rethinking.
+The signature check would begin to add cores only past roughly 62,000 a second at peak
+(eight base cores at 7,848 a second each). The online route reaches its limit far earlier,
+because database round trips dominate it. Without the connection pool, one 8-core host running
+the application and PostgreSQL together served about 165 online verifications a second at
+saturation ([lab/evaluation](../../lab/evaluation/README.md)), below the 381 a second of the
+ten-times peak above. The pool removes most of that cost (a database write path went from about
+300 a second to at least 800, [PERFORMANCE-BASELINE.md](PERFORMANCE-BASELINE.md)). Through the
+production path with the pool, one online verification costs about 18 ms of CPU across the stack on
+the CI runner measured, so that peak needs about 7 vCPU of serving capacity before headroom
+([SCALING.md](SCALING.md#sizing-a-deployment)): small beside what availability and retention cost.
 
 ## The honest caveat on all of it
 
