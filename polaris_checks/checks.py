@@ -6820,6 +6820,137 @@ def check_secrets_reach_only_their_readers(root: pathlib.Path) -> list[Finding]:
                "prod-stack job prove it on the live stacks")
 
 
+#: The scripts that must read the unit's configuration: every operator script that drives the
+#: production compose file, and the secrets wrapper, which reads the backend from it.
+_OPERATOR_ENV_EXTRA = ("scripts/polaris-secrets.sh",)
+# Harnesses that build a stack of their own, under their own compose project, as the drills do: run by
+# hand on a production host they must not take its configuration either.
+_OWN_STACK_HARNESSES = ("scripts/polaris-throughput-measure.sh",)
+#: The ones that resolve the secrets directory, and so must take it from polaris_secrets_dir.
+_OPERATOR_SECRETS_DIR_USERS = ("scripts/polaris-deploy.sh", "scripts/polaris-rotate-secret.sh",
+                               "scripts/polaris-secrets.sh", "scripts/polaris-doctor.sh")
+_SOURCES_OPERATOR_ENV = re.compile(r'(?m)^\s*(?:source|\.)\s+"[^"\n]*/polaris-env\.sh"\s*$')
+
+
+def _code_lines(text: str) -> list[str]:
+    return [l for l in text.splitlines() if not l.lstrip().startswith("#")]
+
+
+# 2026-10-08 (lab record 017, gate rows OP-9 and OP-19): on a systemd host polaris.service reads
+# /etc/polaris/polaris.env, and a script run by hand read only its caller's shell. `sudo`, which
+# resets the environment, left it without POLARIS_DOMAIN, so docker-compose.prod.yml refused to
+# load and the documented upgrade, rotation and first operator account all failed; a domain
+# exported alone gave a deploy that recreated the stack without the rest of polaris.env. And
+# polaris.service runs compose with POLARIS_SECRETS_DIR alone, so on a sealed host with that
+# variable empty (as SECRETS.md said to leave it) a deploy worked, because it supplied a default,
+# and the next start read the shredded plaintext directory.
+def check_operator_scripts_read_the_unit_env(root: pathlib.Path) -> list[Finding]:
+    """Pins scripts/polaris-env.sh and its use. The loader parses the unit's EnvironmentFile (it never
+    sources or evaluates it: systemd takes an unquoted value with spaces, which a shell would run as a
+    command), only for the checkout the unit runs, and lets a variable the caller set win;
+    polaris_secrets_dir refuses a sealed backend with no directory. Every scripts/polaris-*.sh that
+    drives docker-compose.prod.yml, and the secrets wrapper, sources it before it reads its
+    configuration or calls compose; no drill, and no harness that builds a stack of its own, does (run
+    by hand on a production host it must not pick up that host's configuration). Deploy, rotation, the secrets wrapper and the doctor take the directory
+    from polaris_secrets_dir and default it nowhere. The linux-install job runs the documented commands
+    with sudo and asserts the refusal on a sealed host."""
+    name = "operator_env"
+    helper = _read(root, "scripts/polaris-env.sh")
+    if not helper:
+        return _fail(name, "scripts/polaris-env.sh, the loader the operator scripts source, is missing")
+    code = "\n".join(_code_lines(helper))
+    if re.search(r"(?m)^\s*(?:source|\.)\s|\beval\b|\bset\s+-a\b", code):
+        return _fail(name, "scripts/polaris-env.sh must parse polaris.env, never source or eval it: systemd "
+                           "accepts `POLARIS_COMPOSE_EXTRA=-f x.yml` unquoted, and a shell runs that as a command")
+    for needle, why in (("EnvironmentFiles", "read the EnvironmentFile polaris.service itself names"),
+                        ("WorkingDirectory", "read it only when the unit runs this checkout"),
+                        ("${!key+x}", "let a variable the caller set win over the file")):
+        if needle not in code:
+            return _fail(name, f"scripts/polaris-env.sh must {why} ({needle!r} is gone)")
+    fn = re.search(r"(?ms)^polaris_secrets_dir\(\)\s*\{(.*?)^\}", code)
+    if not fn or not re.search(r'-z "\$\{POLARIS_SECRETS_DIR:-\}"[^\n]*\n(?:[^\n]*\n){0,6}?\s*return 1', fn.group(1)):
+        return _fail(name, "polaris_secrets_dir must refuse (return 1) a sealed backend with POLARIS_SECRETS_DIR "
+                           "empty: polaris.service runs compose with that variable alone")
+    problems = []
+    candidates = sorted(set(str(f.relative_to(root)) for f in (root / "scripts").glob("polaris-*.sh"))
+                        | set(_OPERATOR_ENV_EXTRA))
+    for rel in candidates:
+        if rel == "scripts/polaris-env.sh":
+            continue
+        text = _read(root, rel)
+        if not text:
+            continue
+        lines = _code_lines(text)
+        body = "\n".join(lines)
+        sources = _SOURCES_OPERATOR_ENV.search(body)
+        if rel.endswith("-drill.sh") or rel in _OWN_STACK_HARNESSES:
+            if sources:
+                problems.append(f"{rel} builds a stack of its own and sources polaris-env.sh: run by hand on a "
+                                "production host it would take that host's configuration")
+            continue
+        if "docker-compose.prod.yml" not in body and rel not in _OPERATOR_ENV_EXTRA:
+            continue
+        if not sources:
+            problems.append(f"{rel} drives the production stack without sourcing scripts/polaris-env.sh")
+            continue
+        at = body[:sources.start()].count("\n")
+        first = next((i for i, l in enumerate(lines)
+                      if re.search(r"POLARIS_COMPOSE_EXTRA|POLARIS_SECRETS_|POLARIS_DOMAIN|docker compose", l)), None)
+        if first is not None and first < at:
+            problems.append(f"{rel} reads its configuration (line {first + 1} of its code) before it sources "
+                            "polaris-env.sh")
+        # The overlays polaris.env names are relative to polaris_web, where polaris.service runs compose:
+        # passed to compose run from anywhere else, `-f docker-compose.citest.yml` is not found and a
+        # running stack reads as stopped (#311's first CI run: the rotation refused, "not running").
+        for line in lines:
+            if "docker compose" in line and "COMPOSE_EXTRA" in line and "polaris_web" not in line:
+                problems.append(f"{rel} passes polaris.env's overlays to compose run outside polaris_web: "
+                                "an overlay is relative to it (`cd .../polaris_web` first, as the unit does)")
+                break
+    # An image that ships an operator script ships the loader it sources: the Helm migration Job runs
+    # polaris-migrate.sh from the postgres image, and without the loader it stopped at `source`.
+    # And the build context holds each of them: .dockerignore drops scripts/ and lets back in only what
+    # it names, so a COPY of a script it does not name fails the build (#311's second run, every image).
+    ignore = [ln.strip() for ln in _read(root, ".dockerignore").splitlines()]
+    for dockerfile in sorted((root / "polaris_web").glob("Dockerfile*")):
+        text = dockerfile.read_text()
+        copied_all = re.findall(r"(?m)^COPY\b[^\n]*\bscripts/(polaris-[\w-]+\.sh)\b", text)
+        for copied in copied_all:
+            script = "\n".join(_code_lines(_read(root, "scripts/" + copied)))
+            if _SOURCES_OPERATOR_ENV.search(script) and "polaris-env.sh" not in copied_all:
+                problems.append(f"{dockerfile.relative_to(root)} copies scripts/{copied}, which sources polaris-env.sh, "
+                                "and not the loader")
+            if "scripts/" in ignore and f"!scripts/{copied}" not in ignore:
+                problems.append(f"{dockerfile.relative_to(root)} copies scripts/{copied}, which .dockerignore keeps out "
+                                "of the build context (add !scripts/" + copied + ")")
+    for rel in _OPERATOR_SECRETS_DIR_USERS:
+        body = "\n".join(_code_lines(_read(root, rel)))
+        if "polaris_secrets_dir" not in body:
+            problems.append(f"{rel} must take the secrets directory from polaris_secrets_dir")
+        if "POLARIS_SECRETS_DIR:-" in body:
+            problems.append(f"{rel} defaults POLARIS_SECRETS_DIR itself; polaris.service never would")
+    ci = _read(root, ".github/workflows/ci.yml")
+    job = ci[ci.find("  linux-install:"):] if "  linux-install:" in ci else ""
+    job = job[:job.find("\n  # ----", 1)] if "\n  # ----" in job else job
+    for needle, why in (("sudo scripts/polaris-deploy.sh prod", "run the documented upgrade with sudo"),
+                        ("sudo scripts/polaris-create-operator.sh", "create the first account with sudo"),
+                        ("needs POLARIS_SECRETS_DIR", "assert the refusal of a sealed store with no directory"),
+                        ("umount /run/polaris/secrets", "start the unit again once the tmpfs is gone")):
+        if needle not in job:
+            problems.append(f"the linux-install job must {why} ({needle!r})")
+    envx = _read(root, "deploy/linux/polaris.env.example")
+    sec = _read(root, "docs/operator/SECRETS.md")
+    if "POLARIS_SECRETS_DIR=/run/polaris/secrets" not in envx or "POLARIS_SECRETS_DIR=/run/polaris/secrets" not in sec:
+        problems.append("polaris.env.example and SECRETS.md must tell a sealed install to set "
+                        "POLARIS_SECRETS_DIR=/run/polaris/secrets")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + (f" (and {len(problems) - 4} more)" if len(problems) > 4 else ""))
+    return _ok(name, "every operator script that drives the production stack reads polaris.env as the unit does "
+                     "(parsed, never run; the caller's values win; no drill does), a sealed store without "
+                     "POLARIS_SECRETS_DIR is refused everywhere, and the linux-install job runs the documented "
+                     "commands with sudo and the sealed start, refusal included")
+
+
 # 2026-10-07 (lab record 017, phase 4b): rotating the session key logs nobody out. Before it,
 # every rotation ended every operator session, so a key was rotated rarely or never. The key a
 # rotation retires is kept in polaris_secret_key_fallbacks: Flask's SECRET_KEY_FALLBACKS verifies
@@ -7762,12 +7893,15 @@ def check_secrets_lifecycle_sealed(root: pathlib.Path) -> list[Finding]:
     if "unseal-if-configured" not in wr or "mount -t tmpfs" not in wr:
         return _fail("secrets_sealed", "polaris-secrets.sh must provide unseal-if-configured that mounts a tmpfs for the "
                      "materialized plaintext")
-    if "unseal-if-configured" not in dep or "POLARIS_SECRETS_DIR" not in dep:
-        return _fail("secrets_sealed", "polaris-deploy.sh must unseal-if-configured before preflight and honour "
-                     "POLARIS_SECRETS_DIR")
-    if "seal --only" not in rot or "POLARIS_SECRETS_DIR" not in rot:
-        return _fail("secrets_sealed", "polaris-rotate-secret.sh must rotate the materialized secret and write it through "
-                     "to the sealed store (seal --only)")
+    # Lab record 017 (2026-10-08): both take the directory from polaris_secrets_dir
+    # (scripts/polaris-env.sh), which refuses a sealed store without one, never from a
+    # default of their own: polaris.service runs compose with POLARIS_SECRETS_DIR alone.
+    if "unseal-if-configured" not in dep or "polaris_secrets_dir" not in dep:
+        return _fail("secrets_sealed", "polaris-deploy.sh must unseal-if-configured before preflight and take "
+                     "POLARIS_SECRETS_DIR from polaris_secrets_dir")
+    if "seal --only" not in rot or "polaris_secrets_dir" not in rot:
+        return _fail("secrets_sealed", "polaris-rotate-secret.sh must rotate the materialized secret (the directory "
+                     "polaris_secrets_dir names) and write it through to the sealed store (seal --only)")
     m = re.search(r"polaris_db_password\)(.*?)\n\s*;;", rot, re.S)
     if not m or "force-recreate pgbouncer" not in m.group(1):
         return _fail("secrets_sealed", "rotating polaris_db_password must recreate pgbouncer (it generates userlist.txt "
@@ -26426,6 +26560,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_key_custody_abstraction,
     check_secrets_lifecycle_sealed,
     check_secrets_reach_only_their_readers,
+    check_operator_scripts_read_the_unit_env,
     check_migrations_expand_contract,
     check_zero_downtime_deploy,
     check_verification_load_certified,

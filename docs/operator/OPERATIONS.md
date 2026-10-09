@@ -118,7 +118,7 @@ Volumes:
 | Anchor the transparency logs in Bitcoin | Daily, or at the cadence you choose | `./scripts/polaris-chain-anchor.py checkpoint`, `ots stamp`, later `ots upgrade`, `verify`, `polaris-id anchor-record`; see [Anchoring the logs in Bitcoin](#anchoring-the-logs-in-bitcoin) |
 | Certificate transparency check | Daily (cron) | `./scripts/polaris-ct-monitor.sh`: alerts on unexpected cert issuance for `${POLARIS_DOMAIN}`; see [Certificate transparency monitoring](#certificate-transparency-monitoring) |
 | Audit-log rotation | Yearly (cron) | `./scripts/polaris-rotate-logs.sh --actor-user-id=N`: archive from the retention policy, verify, purge, in one cron-ready pipeline (`--cutoff-days` overrides the policy with one fixed cutoff) |
-| Operator onboarding | As needed | `./scripts/polaris-create-operator.sh --username NAME --role admin\|operator\|auditor --password-file PATH`: scrypt-hashed AppUser + AuthAuditLog entry |
+| Operator onboarding | As needed | `./scripts/polaris-create-operator.sh --username NAME --role admin\|operator\|auditor --password-file PATH --reason TEXT`: scrypt-hashed AppUser + AuthAuditLog entry |
 | Scrape `/metrics` | Continuous (Prometheus) | `curl http://app:8000/metrics` from the stack network: Prometheus text-format exposition; see [Prometheus metrics](#prometheus-metrics-metrics) for the required edge ACL |
 | Rotate `POLARIS_SECRET_KEY` | 180 days | `./scripts/polaris-rotate-secret.sh polaris_secret_key` |
 | Rotate DB password | 180 days | `./scripts/polaris-rotate-secret.sh polaris_db_password` |
