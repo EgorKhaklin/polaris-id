@@ -2582,6 +2582,15 @@ def _issuer_key_facts(token_id, agency_id, token_key, signed_at=None):
     `reject_audit_modification`. If there is no ISSUED row, there is no trustworthy instant
     and the historical answer is None rather than a guess.
 
+    A PURGED ISSUED ROW is not a missing instant (2026-10-09). Retention purges TOKEN_LIFECYCLE
+    at five years and a credential is valid for ten, so the yearly purge took the ISSUED row of
+    every credential past five years, this answer went None, and the relying-party route, which
+    accepts only True, refused credentials still in force. Issuance writes its signature in the
+    same transaction as the ISSUED row, and no purge or update reaches TokenSignature (polaris_app
+    holds no INSERT, UPDATE or DELETE on it, and its trigger refuses a changed signed_at), so the
+    credential's earliest signed_at is that same instant. It stands in only when the ISSUED row
+    is gone; the location the event carried still goes with the purge.
+
     A SIGNATURE ADDED LATER is dated by its own making. A migration adds a signature under
     another key long after issuance, and dating that key against the issuance instant read a
     key registered for the migration as unauthorized (CORE-BUG, 2026-10-02). `signed_at` is
@@ -2606,11 +2615,12 @@ def _issuer_key_facts(token_id, agency_id, token_key, signed_at=None):
     rows = query(
         """
         SELECT k.status, k.registered_at, k.retired_at, k.compromised_at,
-               (SELECT min(event_timestamp) FROM TokenLifecycleEvent
-                 WHERE token_id = %s AND event_type = 'ISSUED') AS issued_at
+               COALESCE((SELECT min(event_timestamp) FROM TokenLifecycleEvent
+                          WHERE token_id = %s AND event_type = 'ISSUED'),
+                        (SELECT min(signed_at) FROM TokenSignature WHERE token_id = %s)) AS issued_at
           FROM AuthorityKeyCurrent k
          WHERE k.agency_id = %s AND lower(k.public_key_hex) = lower(%s)
-        """, (token_id, agency_id, token_key))
+        """, (token_id, token_id, agency_id, token_key))
     if not rows:
         return None, None                      # no recorded history: unknown, not false
     k = rows[0]

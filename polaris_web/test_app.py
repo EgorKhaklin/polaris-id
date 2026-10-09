@@ -14551,15 +14551,50 @@ class FederationInAppTests(PolarisTestCase):
         authorized, _current = self._facts(tid)
         self.assertIs(authorized, False, "signed after retirement is not authorized")
 
-    def test_H_no_protected_issuance_instant_is_unknown_not_false(self):
-        """No ISSUED row, so there is no instant that cannot be moved. The historical answer
-        must be None. Manufacturing one from IdentityToken.issued_date would be inventing
-        certainty from a column a database session can edit."""
-        tid = self._token_signed_by('FED-NOTIME-0001', agency_id=1, signing_key_hex=self.KEY_A)
-        self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
+    def test_H_no_issued_row_is_dated_by_the_first_signature_never_issued_date(self):
+        """No ISSUED row (retention purged it): the instant is the credential's first signed_at,
+        which no session can move, never IdentityToken.issued_date, which a session can. Moving
+        issued_date past the registration changes nothing; the signature still dates it."""
+        tid = self._token_signed_by('FED-NOTIME-0001', agency_id=1, signing_key_hex=self.KEY_A,
+                                    signed_at='2026-02-01 00:00:00')
+        self._key_event(1, self.KEY_A, 'registered', '2026-03-01 00:00:00')
+        conn = self._new_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE IdentityToken SET issued_date = '2026-04-01' WHERE token_id = %s",
+                            (tid,))
+            conn.commit()
+        finally:
+            conn.close()
         authorized, current = self._facts(tid)
-        self.assertIsNone(authorized, "no protected instant: unknown")
-        self.assertIs(current, True, "but the key's status today is still knowable")
+        self.assertIs(authorized, False, "signed before the registration, dated by its signature")
+        self.assertIs(current, True, "and the key's status today is still knowable")
+
+    def test_I_a_purged_issued_row_keeps_the_answer(self):
+        """Retention purges TOKEN_LIFECYCLE at five years and a credential is valid for ten. The
+        yearly purge took the ISSUED row of every credential past five, the answer went None, and
+        the relying-party route, which accepts only True, refused credentials still in force. The
+        same credential answers the same after a real purge: its issuance signature dates it."""
+        tid = self._token_signed_by('FED-PURGED-0001', agency_id=1, signing_key_hex=self.KEY_A,
+                                    signed_at='2020-03-01 00:00:00')
+        self._issued_at(tid, 1, '2020-03-01 00:00:00')
+        self._key_event(1, self.KEY_A, 'registered', '2020-02-01 00:00:00')
+        self.assertEqual(self._facts(tid), (True, True), 'control: authorized before the purge')
+        conn = self._new_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' AND is_active "
+                            "ORDER BY user_id LIMIT 1")
+                admin = cur.fetchone()['user_id']
+                cur.execute("CALL uc_archive_purge(now() - INTERVAL '1900 days', 'file:///x', "
+                            "repeat('a', 64), %s)", (admin,))
+                cur.execute("SELECT count(*) AS n FROM TokenLifecycleEvent WHERE token_id = %s "
+                            "AND event_type = 'ISSUED'", (tid,))
+                self.assertEqual(cur.fetchone()['n'], 0, 'control: the purge took the ISSUED row')
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertEqual(self._facts(tid), (True, True), 'the purge must not change the answer')
 
     KEY_M = 'd4' * 32
 
@@ -14915,7 +14950,7 @@ class KeyRegisterScriptTests(PolarisTestCase):
         credential as _issuer_key_facts does: an authority is named unregistered exactly when one is
         refused for a registration it lacked at the signature's instant under a key never ended,
         for --current exactly when that command can fix it, and for re-issue exactly when no
-        registration can (its key since retired or compromised, or no ISSUED instant)."""
+        registration can (its key since retired or compromised, or no issuance instant)."""
         def signed(agency, value, key, at, issued=True):
             tid = self._token_signed_by(value, agency_id=agency, signing_key_hex=key, signed_at=at)
             if issued:
@@ -14939,14 +14974,14 @@ class KeyRegisterScriptTests(PolarisTestCase):
         ke('retire', str(retired), self.K1)
         signed(other, 'KR-OTHER-0001', self.K2, at)                 # a key nobody registered beside K1
         ke('register', str(other), self.K1, '--effective-at', '2026-02-01T00:00:00')
-        signed(noissue, 'KR-NOISSUE-0001', self.K1, at, issued=False)   # no protected instant
+        signed(noissue, 'KR-NOISSUE-0001', self.K1, at, issued=False)   # purged: its signature dates it
         ke('register', str(noissue), self.K1, '--effective-at', '2026-02-01T00:00:00')
         self._reserved_signed_by('KR-RESERVE-0001', reserve, self.K1, at)   # never in force
 
         named = self._judgment()
         for agency, want in ((never, ('unregistered', 'first')), (late, ('unregistered', 'first')),
                              (fine, ()), (ended, ('reissue',)), (retired, ('reissue',)),
-                             (other, ('unregistered',)), (noissue, ('reissue',)), (reserve, ())):
+                             (other, ('unregistered',)), (noissue, ()), (reserve, ())):
             self.assertEqual({n for n in ('unregistered', 'first', 'reissue') if agency in named[n]},
                              set(want), 'agency %d' % agency)
         self.assertIn('%d:%s' % (other, self.K2[:16]), named['keys'])
@@ -14954,8 +14989,10 @@ class KeyRegisterScriptTests(PolarisTestCase):
         expected = {'unregistered': set(), 'first': set(), 'reissue': set(), 'keys': set()}
         for s in _sql("""
                 SELECT t.token_id, t.issuing_agency_id AS agency_id, s.signing_public_key_hex AS k, s.signed_at,
-                       (SELECT min(event_timestamp) FROM TokenLifecycleEvent e WHERE e.token_id = t.token_id
-                           AND e.event_type = 'ISSUED') AS issued_at,
+                       COALESCE((SELECT min(event_timestamp) FROM TokenLifecycleEvent e
+                                  WHERE e.token_id = t.token_id AND e.event_type = 'ISSUED'),
+                                (SELECT min(f.signed_at) FROM TokenSignature f
+                                  WHERE f.token_id = t.token_id)) AS issued_at,
                        EXISTS (SELECT 1 FROM AuthorityKeyEvent e WHERE e.agency_id = t.issuing_agency_id
                                  AND lower(e.public_key_hex) = lower(s.signing_public_key_hex)
                                  AND e.event IN ('retired', 'compromised')) AS ended,

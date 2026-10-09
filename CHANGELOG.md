@@ -35,6 +35,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- Once the audit purge reached a credential's issuance record (five years under either retention template), the relying-party route refused that credential under real signing, though credentials are valid for ten: its key check dated by that record. It now dates such a credential by its first signature, written in the same transaction.
 - Run with `sudo` on a systemd host, the documented upgrade, rotation and first-operator commands failed for want of `POLARIS_DOMAIN`; the scripts now read `polaris.env` as the unit does.
 - A sealed secret store set up as SECRETS.md said left `polaris.service` reading the shredded plaintext directory at its next start; an empty `POLARIS_SECRETS_DIR` is now refused.
 - SECRETS.md said a sealed store's key is not on its disk; an age identity kept on the host is. The doctor and every start now say when the secrets are plaintext on disk.
