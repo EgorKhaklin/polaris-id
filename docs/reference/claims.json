@@ -1,12 +1,30 @@
 {
-  "about": "Each outward claim Polaris makes (every badge in README.md and the status lines), where it is published, the evidence behind it and how a stranger reproduces it. Evidence tokens: check:NAME (a check in polaris_checks/checks.py), test:PATH::NAME, drill:PATH, file:PATH, url:https://... (outside evidence, not fetched by the check). A badge's claim is its alt text and its label what the badge image renders. The outside-implementations entry lists each implementation by the name the README gives it and the term that finds its row in the Wallets table of lab/EXTERNAL-NOUNS.md. reproduce is null, with a why, where the claim is a live value an outside service renders. check_claims_manifest holds this file to the README, the evidence it cites and the scoreboard.",
+  "about": "The outward claims this file covers: every image above the first heading of README.md (its badges), and the sentences listed below from README.md, site/index.html, site/llms.txt, lab/EXTERNAL-NOUNS.md and docs/reference/SPEC-COMPLIANCE.md. A sentence not listed here is not covered. For each: where it is published, the evidence behind it and how a stranger reproduces it. Evidence tokens: check:NAME (a check in polaris_checks/checks.py), test:PATH::NAME, drill:PATH, file:PATH, url:https://... (outside evidence, not fetched by the check). A badge's claim is its alt text and its label what the badge image renders. An entry with implementations states their number and names each one, each found by its scoreboard term in the Wallets table of lab/EXTERNAL-NOUNS.md; an entry with count_of states the total of those entries' lists. reproduce is null, with a why, where the claim is a live value an outside service renders or only a link. check_claims_manifest holds this file to the README, the surfaces it names, the evidence it cites and the scoreboard.",
   "claims": [
+    {
+      "id": "hero",
+      "kind": "badge",
+      "claim": "Polaris ID",
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:docs/assets/hero.svg"
+      ],
+      "reproduce": null,
+      "why": "The project's name as an image: the logo, the wordmark and the maker's mark. It states nothing else."
+    },
     {
       "id": "ci",
       "kind": "badge",
       "claim": "CI",
-      "surfaces": ["README.md"],
-      "evidence": ["file:.github/workflows/ci.yml", "url:https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:.github/workflows/ci.yml",
+        "url:https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml"
+      ],
       "reproduce": null,
       "why": "A live status the CI service renders for main. The workflow is in the tree; its result is on the service."
     },
@@ -14,8 +32,14 @@
       "id": "release",
       "kind": "badge",
       "claim": "Release",
-      "surfaces": ["README.md"],
-      "evidence": ["file:CHANGELOG.md", "file:docs/RELEASING.md", "url:https://github.com/EgorKhaklin/polaris-id/releases/latest"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:CHANGELOG.md",
+        "file:docs/RELEASING.md",
+        "url:https://github.com/EgorKhaklin/polaris-id/releases/latest"
+      ],
       "reproduce": null,
       "why": "A live value the release host renders: the newest release's tag. It names a version and claims nothing about it."
     },
@@ -24,8 +48,14 @@
       "kind": "badge",
       "claim": "Status: pre-pilot",
       "label": "status: pre-pilot",
-      "surfaces": ["README.md"],
-      "evidence": ["check:public_claims_honest", "file:docs/PRODUCTION-READINESS.md", "file:lab/EXTERNAL-NOUNS.md"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "check:public_claims_honest",
+        "file:docs/PRODUCTION-READINESS.md",
+        "file:lab/EXTERNAL-NOUNS.md"
+      ],
       "reproduce": "Read docs/PRODUCTION-READINESS.md, the bound on what the repository may claim, and the Pilot and External relying party / operator sections of lab/EXTERNAL-NOUNS.md, which read None."
     },
     {
@@ -33,8 +63,13 @@
       "kind": "badge",
       "claim": "OpenID Certified: polaris-oid4vp 1.0.0rc7 verifier",
       "label": "OpenID Certified: polaris-oid4vp 1.0.0rc7 verifier",
-      "surfaces": ["README.md"],
-      "evidence": ["file:docs/reference/SPEC-COMPLIANCE.md", "url:https://openid.net/certification/certified-oid4vp-haip-final/"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:docs/reference/SPEC-COMPLIANCE.md",
+        "url:https://openid.net/certification/certified-oid4vp-haip-final/"
+      ],
       "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/ and find Egor Khaklin, polaris-oid4vp 1.0.0rc7, 24-Sep-2026, under OID4VP-1.0+HAIP-1.0 Verifier, sd_jwt_vc, direct_post.jwt. The certification covers that version only."
     },
     {
@@ -42,24 +77,18 @@
       "kind": "badge",
       "claim": "Tested against 14 outside implementations",
       "label": "tested against: 14 outside implementations",
-      "surfaces": ["README.md"],
-      "evidence": ["file:lab/EXTERNAL-NOUNS.md", "file:lab/interop", "file:.github/workflows/wallet-canary.yml"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "file:lab/interop",
+        "file:.github/workflows/wallet-canary.yml"
+      ],
       "reproduce": "Each Wallets row of lab/EXTERNAL-NOUNS.md links the lab/interop directory whose README runs it. The one-minute walk: bash lab/interop/eudi-dev/run.sh, which prints RESULT: accepted, and all three controls refused.",
-      "implementations": [
-        {"name": "walt.id", "scoreboard": "walt.id"},
-        {"name": "Credo", "scoreboard": "Credo"},
-        {"name": "eudi-dev", "scoreboard": "eudi-dev"},
-        {"name": "OID4VCgo", "scoreboard": "OID4VCgo"},
-        {"name": "ProtocolSoup", "scoreboard": "ProtocolSoup"},
-        {"name": "Procivis One Core", "scoreboard": "Procivis One Core"},
-        {"name": "Kotlin", "scoreboard": "eudi-lib-jvm-openid4vp-kt"},
-        {"name": "Swift", "scoreboard": "eudi-lib-ios-openid4vp-swift"},
-        {"name": "PID issuer", "scoreboard": "eudi-srv-pid-issuer"},
-        {"name": "vck", "scoreboard": "vck"},
-        {"name": "Multipaz", "scoreboard": "Multipaz"},
-        {"name": "irmago", "scoreboard": "irmago"},
-        {"name": "SpruceID's adapter", "scoreboard": "wallet-conformance-adapter"},
-        {"name": "ERICA", "scoreboard": "ERICA"}
+      "count_of": [
+        "readme-six-wallets",
+        "readme-eight-more"
       ]
     },
     {
@@ -67,16 +96,25 @@
       "kind": "badge",
       "claim": "License",
       "label": "license: Apache-2.0",
-      "surfaces": ["README.md"],
-      "evidence": ["check:license_is_pinned", "file:LICENSE"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "check:license_is_pinned",
+        "file:LICENSE"
+      ],
       "reproduce": "Read LICENSE: the Apache License, Version 2.0."
     },
     {
       "id": "openssf-best-practices",
       "kind": "badge",
       "claim": "OpenSSF Best Practices",
-      "surfaces": ["README.md"],
-      "evidence": ["url:https://www.bestpractices.dev/projects/15004"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "url:https://www.bestpractices.dev/projects/15004"
+      ],
       "reproduce": null,
       "why": "A level the OpenSSF Best Practices service renders live from the project's own answers there."
     },
@@ -84,8 +122,12 @@
       "id": "openssf-baseline",
       "kind": "badge",
       "claim": "OpenSSF Baseline",
-      "surfaces": ["README.md"],
-      "evidence": ["url:https://www.bestpractices.dev/projects/15004"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "url:https://www.bestpractices.dev/projects/15004"
+      ],
       "reproduce": null,
       "why": "A level the OpenSSF Best Practices service renders live from the project's own answers there."
     },
@@ -93,8 +135,13 @@
       "id": "openssf-scorecard",
       "kind": "badge",
       "claim": "OpenSSF Scorecard",
-      "surfaces": ["README.md"],
-      "evidence": ["file:.github/workflows/scorecard.yml", "url:https://scorecard.dev/viewer/?uri=github.com/EgorKhaklin/polaris-id"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:.github/workflows/scorecard.yml",
+        "url:https://scorecard.dev/viewer/?uri=github.com/EgorKhaklin/polaris-id"
+      ],
       "reproduce": null,
       "why": "A score the OpenSSF Scorecard service computes from the public repository and renders live."
     },
@@ -103,8 +150,15 @@
       "kind": "badge",
       "claim": "OpenID4VP 1.0",
       "label": "OpenID4VP: 1.0",
-      "surfaces": ["README.md"],
-      "evidence": ["file:docs/reference/SPEC-COMPLIANCE.md", "test:packages/polaris-oid4vp/test_verifier.py::TheHappyPathTests", "test:packages/polaris-oid4vp/test_verifier.py::TheSevenRefusalsReachTheWireTests", "url:https://openid.net/certification/certified-oid4vp-haip-final/"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:docs/reference/SPEC-COMPLIANCE.md",
+        "test:packages/polaris-oid4vp/test_verifier.py::TheHappyPathTests",
+        "test:packages/polaris-oid4vp/test_verifier.py::TheSevenRefusalsReachTheWireTests",
+        "url:https://openid.net/certification/certified-oid4vp-haip-final/"
+      ],
       "reproduce": "bash lab/interop/eudi-dev/run.sh (an outside wallet presents to the verifier installed from PyPI); or cd packages/polaris-oid4vp && python -m unittest test_verifier"
     },
     {
@@ -112,8 +166,14 @@
       "kind": "badge",
       "claim": "HAIP 1.0",
       "label": "HAIP: 1.0",
-      "surfaces": ["README.md"],
-      "evidence": ["file:docs/reference/SPEC-COMPLIANCE.md", "test:packages/polaris-oid4vp/test_jwe.py::RoundTripTests", "url:https://openid.net/certification/certified-oid4vp-haip-final/"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:docs/reference/SPEC-COMPLIANCE.md",
+        "test:packages/polaris-oid4vp/test_jwe.py::RoundTripTests",
+        "url:https://openid.net/certification/certified-oid4vp-haip-final/"
+      ],
       "reproduce": "bash lab/interop/eudi-dev/run.sh (the wallet runs with HAIP enforced in strict mode); or cd packages/polaris-oid4vp && python -m unittest test_jwe"
     },
     {
@@ -121,8 +181,14 @@
       "kind": "badge",
       "claim": "SD-JWT VC",
       "label": "SD-JWT VC: supported",
-      "surfaces": ["README.md"],
-      "evidence": ["file:docs/reference/SPEC-COMPLIANCE.md", "test:packages/polaris-oid4vp/test_sdjwt.py::PositiveControlTests", "test:packages/polaris-oid4vp/test_sdjwt.py::TheSevenConformanceRefusalsTests"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:docs/reference/SPEC-COMPLIANCE.md",
+        "test:packages/polaris-oid4vp/test_sdjwt.py::PositiveControlTests",
+        "test:packages/polaris-oid4vp/test_sdjwt.py::TheSevenConformanceRefusalsTests"
+      ],
       "reproduce": "cd packages/polaris-oid4vp && python -m unittest test_sdjwt"
     },
     {
@@ -130,8 +196,14 @@
       "kind": "badge",
       "claim": "OpenID4VCI 1.0",
       "label": "OpenID4VCI: 1.0",
-      "surfaces": ["README.md"],
-      "evidence": ["file:docs/reference/SPEC-COMPLIANCE.md", "test:polaris_web/test_wallet_copy.py::CopyTests", "file:lab/strategy/005/STEP5.md"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:docs/reference/SPEC-COMPLIANCE.md",
+        "test:polaris_web/test_wallet_copy.py::CopyTests",
+        "file:lab/strategy/005/STEP5.md"
+      ],
       "reproduce": "cd polaris_web && python -m unittest test_wallet_copy"
     },
     {
@@ -139,8 +211,14 @@
       "kind": "badge",
       "claim": "Token Status List",
       "label": "Token Status List: IETF draft",
-      "surfaces": ["README.md"],
-      "evidence": ["file:docs/reference/SPEC-COMPLIANCE.md", "test:packages/polaris-oid4vp/test_status.py::PositiveControlTests", "test:packages/polaris-oid4vp/test_status.py::RefusalsTests"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:docs/reference/SPEC-COMPLIANCE.md",
+        "test:packages/polaris-oid4vp/test_status.py::PositiveControlTests",
+        "test:packages/polaris-oid4vp/test_status.py::RefusalsTests"
+      ],
       "reproduce": "cd packages/polaris-oid4vp && python -m unittest test_status"
     },
     {
@@ -148,8 +226,15 @@
       "kind": "badge",
       "claim": "ML-DSA-65",
       "label": "ML-DSA-65: FIPS 204",
-      "surfaces": ["README.md"],
-      "evidence": ["check:pqc_second_witness", "file:vectors/ml-dsa-65-valid.json", "file:vectors/anchors/ml-dsa-65-issuer.json", "test:polaris_web/test_pqc_signing.py::SecondWitnessTests"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "check:pqc_second_witness",
+        "file:vectors/ml-dsa-65-valid.json",
+        "file:vectors/anchors/ml-dsa-65-issuer.json",
+        "test:polaris_web/test_pqc_signing.py::SecondWitnessTests"
+      ],
       "reproduce": "pip install --pre \"polaris-verify[cryptography]\", then polaris-verify --pqc-provider auto --issuer-anchor vectors/anchors/ml-dsa-65-issuer.json --pack vectors/ml-dsa-65-valid.json, which exits 0; the tampered vectors beside it exit 2."
     },
     {
@@ -157,8 +242,15 @@
       "kind": "badge",
       "claim": "FN-DSA: Falcon-1024",
       "label": "FN-DSA: Falcon-1024 (FIPS 206 draft)",
-      "surfaces": ["README.md"],
-      "evidence": ["file:docs/reference/SPEC-COMPLIANCE.md", "test:sdk/python/test_sdk.py::FnDsaFamilyTests", "file:conformance/vectors/pack-fndsa1024-valid.json", "file:lab/strategy/015/STEP4.md"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:docs/reference/SPEC-COMPLIANCE.md",
+        "test:sdk/python/test_sdk.py::FnDsaFamilyTests",
+        "file:conformance/vectors/pack-fndsa1024-valid.json",
+        "file:lab/strategy/015/STEP4.md"
+      ],
       "reproduce": "cd sdk/python && python -m unittest test_sdk.FnDsaFamilyTests (needs liboqs with Falcon; without it the tests are skipped, not passed)"
     },
     {
@@ -166,8 +258,12 @@
       "kind": "badge",
       "claim": "PyPI",
       "label": "PyPI: polaris-verify",
-      "surfaces": ["README.md"],
-      "evidence": ["url:https://pypi.org/project/polaris-verify/"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "url:https://pypi.org/project/polaris-verify/"
+      ],
       "reproduce": "pip install --pre \"polaris-verify[cryptography]\""
     },
     {
@@ -175,8 +271,12 @@
       "kind": "badge",
       "claim": "npm",
       "label": "npm: polaris-sdk-ts",
-      "surfaces": ["README.md"],
-      "evidence": ["url:https://www.npmjs.com/package/polaris-sdk-ts"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "url:https://www.npmjs.com/package/polaris-sdk-ts"
+      ],
       "reproduce": "npm install polaris-sdk-ts@next"
     },
     {
@@ -184,8 +284,12 @@
       "kind": "badge",
       "claim": "Discord",
       "label": "Discord: join the server",
-      "surfaces": ["README.md"],
-      "evidence": ["url:https://discord.gg/ragewuCKj"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "url:https://discord.gg/ragewuCKj"
+      ],
       "reproduce": null,
       "why": "An invitation link; it claims nothing."
     },
@@ -193,41 +297,253 @@
       "id": "project-site",
       "kind": "badge",
       "claim": "Project site",
-      "surfaces": ["README.md"],
-      "evidence": ["file:site/index.html", "file:wrangler.jsonc", "url:https://polaris-id.e-khaklin.workers.dev/"],
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:site/index.html",
+        "file:wrangler.jsonc",
+        "url:https://polaris-id.e-khaklin.workers.dev/"
+      ],
       "reproduce": null,
       "why": "A link to the project site, which is site/ as committed."
+    },
+    {
+      "id": "readme-six-wallets",
+      "kind": "statement",
+      "claim": "Six wallets ran unmodified: walt.id, Credo, eudi-dev, OID4VCgo, ProtocolSoup and Procivis One Core.",
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "file:lab/interop"
+      ],
+      "reproduce": "Find each wallet's dated rows in the Wallets table of lab/EXTERNAL-NOUNS.md; each row links the lab/interop directory whose README runs it.",
+      "implementations": [
+        {
+          "name": "walt.id",
+          "scoreboard": "walt.id"
+        },
+        {
+          "name": "Credo",
+          "scoreboard": "Credo"
+        },
+        {
+          "name": "eudi-dev",
+          "scoreboard": "eudi-dev"
+        },
+        {
+          "name": "OID4VCgo",
+          "scoreboard": "OID4VCgo"
+        },
+        {
+          "name": "ProtocolSoup",
+          "scoreboard": "ProtocolSoup"
+        },
+        {
+          "name": "Procivis One Core",
+          "scoreboard": "Procivis One Core"
+        }
+      ]
+    },
+    {
+      "id": "readme-eight-more",
+      "kind": "statement",
+      "claim": "Eight more libraries, services and test tools took part: the European Commission's reference OpenID4VP libraries (Kotlin and Swift) and PID issuer, vck, Multipaz and irmago through a wallet built here, and SpruceID's adapter and ERICA through their own wallet harnesses.",
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "file:lab/interop"
+      ],
+      "reproduce": "Find each one's dated row in the Wallets table of lab/EXTERNAL-NOUNS.md: the Kotlin and Swift libraries, the PID issuer, vck, Multipaz and irmago rows say under a wallet built here; the SpruceID and ERICA rows name their own harnesses.",
+      "implementations": [
+        {
+          "name": "Kotlin",
+          "scoreboard": "eudi-lib-jvm-openid4vp-kt"
+        },
+        {
+          "name": "Swift",
+          "scoreboard": "eudi-lib-ios-openid4vp-swift"
+        },
+        {
+          "name": "PID issuer",
+          "scoreboard": "eudi-srv-pid-issuer"
+        },
+        {
+          "name": "vck",
+          "scoreboard": "vck"
+        },
+        {
+          "name": "Multipaz",
+          "scoreboard": "Multipaz"
+        },
+        {
+          "name": "irmago",
+          "scoreboard": "irmago"
+        },
+        {
+          "name": "SpruceID's adapter",
+          "scoreboard": "SpruceID"
+        },
+        {
+          "name": "ERICA",
+          "scoreboard": "ERICA"
+        }
+      ]
+    },
+    {
+      "id": "site-six-wallets",
+      "kind": "statement",
+      "claim": "6 independent wallets unmodified, presented and accepted",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "file:lab/interop"
+      ],
+      "reproduce": "Find each of the six wallets the README names in the dated rows of the Wallets table of lab/EXTERNAL-NOUNS.md.",
+      "count_of": [
+        "readme-six-wallets"
+      ]
+    },
+    {
+      "id": "site-six-wallets-description",
+      "kind": "statement",
+      "claim": "six wallets nobody here wrote have presented to it",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "file:lab/interop"
+      ],
+      "reproduce": "Find each of the six wallets the README names in the dated rows of the Wallets table of lab/EXTERNAL-NOUNS.md.",
+      "count_of": [
+        "readme-six-wallets"
+      ]
+    },
+    {
+      "id": "site-six-wallets-card",
+      "kind": "statement",
+      "claim": "six independent wallets have presented to",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "file:lab/interop"
+      ],
+      "reproduce": "Find each of the six wallets the README names in the dated rows of the Wallets table of lab/EXTERNAL-NOUNS.md.",
+      "count_of": [
+        "readme-six-wallets"
+      ]
+    },
+    {
+      "id": "authors-took-no-part",
+      "kind": "statement",
+      "claim": "took no part in the runs, though this project has written to some of them: two",
+      "surfaces": [
+        "site/index.html",
+        "lab/EXTERNAL-NOUNS.md"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://github.com/IDFoundry/OID4VCgo/issues/312",
+        "url:https://github.com/dominikschlosser/eudi-dev/issues/21"
+      ],
+      "reproduce": "Read the notes below the Wallets table of lab/EXTERNAL-NOUNS.md (OID4VCgo and eudi-dev changed after a report from here) and the two linked issues."
+    },
+    {
+      "id": "llms-verdict-exit",
+      "kind": "statement",
+      "claim": "It prints a JSON verdict and exits 0. The tampered vectors beside it (ml-dsa-65-tampered-signature.json, ml-dsa-65-tampered-token.json, ml-dsa-65-wrong-key.json) must exit 2.",
+      "surfaces": [
+        "site/llms.txt"
+      ],
+      "evidence": [
+        "file:vectors/ml-dsa-65-valid.json",
+        "file:vectors/ml-dsa-65-tampered-signature.json",
+        "file:vectors/ml-dsa-65-tampered-token.json",
+        "file:vectors/ml-dsa-65-wrong-key.json",
+        "test:scripts/test_verify_refusals.py::CommandLineExitCodes"
+      ],
+      "reproduce": "The command in site/llms.txt, then the same with --pack set to each tampered vector; echo $? after each prints 0, then 2, 2, 2."
+    },
+    {
+      "id": "llms-exit-codes",
+      "kind": "statement",
+      "claim": "Exit codes: 0 accepted, 2 not accepted (including an abstention without a trust anchor), 3 the check could not run, 4 refused to start.",
+      "surfaces": [
+        "site/llms.txt"
+      ],
+      "evidence": [
+        "test:scripts/test_verify_refusals.py::CommandLineExitCodes",
+        "file:packages/polaris-verify/README.md"
+      ],
+      "reproduce": "python -m unittest scripts/test_verify_refusals.py -k CommandLineExitCodes (needs a real ML-DSA backend; without one it is skipped, not passed)"
     },
     {
       "id": "pre-pilot-notional-data",
       "kind": "statement",
       "claim": "pre-pilot software on notional data: it has never held real identity data, and nobody but the author has operated it.",
-      "surfaces": ["README.md", "site/llms.txt"],
-      "evidence": ["check:public_claims_honest", "file:docs/PRODUCTION-READINESS.md", "file:lab/EXTERNAL-NOUNS.md"],
+      "surfaces": [
+        "README.md",
+        "site/llms.txt"
+      ],
+      "evidence": [
+        "check:public_claims_honest",
+        "file:docs/PRODUCTION-READINESS.md",
+        "file:lab/EXTERNAL-NOUNS.md"
+      ],
       "reproduce": "Read docs/PRODUCTION-READINESS.md and the External relying party / operator, Use and Pilot sections of lab/EXTERNAL-NOUNS.md: no operator, no outside user, no pilot."
     },
     {
       "id": "openid-certified-scoped",
       "kind": "statement",
       "claim": "polaris-oid4vp 1.0.0rc7 is OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile",
-      "surfaces": ["README.md", "site/llms.txt", "docs/reference/SPEC-COMPLIANCE.md"],
-      "evidence": ["file:docs/reference/SPEC-COMPLIANCE.md", "url:https://openid.net/certification/certified-oid4vp-haip-final/"],
+      "surfaces": [
+        "README.md",
+        "site/llms.txt",
+        "docs/reference/SPEC-COMPLIANCE.md"
+      ],
+      "evidence": [
+        "file:docs/reference/SPEC-COMPLIANCE.md",
+        "url:https://openid.net/certification/certified-oid4vp-haip-final/"
+      ],
       "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/ and find Egor Khaklin, polaris-oid4vp 1.0.0rc7, 24-Sep-2026, under OID4VP-1.0+HAIP-1.0 Verifier, sd_jwt_vc, direct_post.jwt."
     },
     {
       "id": "openid-certified-limits",
       "kind": "statement",
       "claim": "not an endorsement, not an audit, and not a certification of the rest of Polaris",
-      "surfaces": ["README.md", "site/llms.txt", "site/index.html", "docs/reference/SPEC-COMPLIANCE.md"],
-      "evidence": ["file:docs/reference/SPEC-COMPLIANCE.md", "url:https://openid.net/certification/mark/"],
+      "surfaces": [
+        "README.md",
+        "site/llms.txt",
+        "site/index.html",
+        "docs/reference/SPEC-COMPLIANCE.md"
+      ],
+      "evidence": [
+        "file:docs/reference/SPEC-COMPLIANCE.md",
+        "url:https://openid.net/certification/mark/"
+      ],
       "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/: it lists polaris-oid4vp 1.0.0rc7 in the Verifier role and nothing else of Polaris. The scoreboard's Independent security review section in lab/EXTERNAL-NOUNS.md reads None."
     },
     {
       "id": "not-yet",
       "kind": "statement",
       "claim": "Not yet: an independent security review, an operator other than the author, a pilot.",
-      "surfaces": ["README.md", "site/llms.txt"],
-      "evidence": ["file:lab/EXTERNAL-NOUNS.md", "file:docs/PRODUCTION-READINESS.md"],
+      "surfaces": [
+        "README.md",
+        "site/llms.txt"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "file:docs/PRODUCTION-READINESS.md"
+      ],
       "reproduce": "Read the Independent security review, External relying party / operator and Pilot sections of lab/EXTERNAL-NOUNS.md, which each read None."
     }
   ]

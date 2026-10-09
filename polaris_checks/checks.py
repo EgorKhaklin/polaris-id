@@ -22168,30 +22168,63 @@ def check_operability_gate(root: pathlib.Path) -> list[Finding]:
 # "Tested against 14 outside implementations", nothing re-measured. docs/reference/claims.json is the map: each claim,
 # where it is published, its evidence in the gate's citation syntax plus https URLs for outside evidence, and how a
 # stranger reproduces it.
+# Review round 1 (2026-10-09): the count was found by the badge's words, so "15 outside wallets" skipped it; names were
+# unique only as exact strings and matched by substring, so one implementation could be counted twice; the canary and
+# Pomerium rows kept a deleted implementation "on the scoreboard"; and titled, reference-style, unlinked and in-page
+# HTML badges were not seen at all.
 _CLAIM_FIELDS = ("id", "kind", "claim", "surfaces", "evidence", "reproduce")
+#: The entry the outward count of outside implementations lives in. It must exist, whatever its badge says.
+_CLAIMS_COUNTED_ID = "outside-implementations"
+_CLAIM_NUMBER_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+                       "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty")
 
 
 def _claim_text(text: str) -> str:
     """A surface as a reader sees it: no HTML comments, tags or entities, no Markdown emphasis or code marks, no
     trademark signs, whitespace collapsed and case folded, so a claim matches its sentence however it is set."""
     from html import unescape
-    text = unescape(re.sub(r"<[^>]+>", " ", re.sub(r"<!--.*?-->", " ", text, flags=re.S)))
+    text = re.sub(r"<!--.*?-->", " ", text, flags=re.S)
+    # A tag is dropped, but what it shows a reader stays: a meta description's text, an image's alt.
+    text = unescape(re.sub(r"<[^>]+>", lambda m: " %s " % " ".join(re.findall(r'\b(?:content|alt)="([^"]*)"', m.group(0))), text))
     text = re.sub(r"\*+|`|(?<!\w)_+|_+(?!\w)|[®™]", "", text)
     return " ".join(text.split()).casefold()
 
 
-def _readme_badges(text: str) -> dict[str, str]:
-    """The badges above a README's first `## ` heading, as alt text -> image source.
+def _claim_phrase_in(phrase: str, text: str, joined: str = r"\w") -> bool:
+    """Is `phrase` in `text` as a whole phrase (case-insensitive), not as the start or end of a longer word?"""
+    return re.search(r"(?<!%s)%s(?!%s)" % (joined, re.escape(phrase), joined), text, re.I) is not None
 
-    A badge is a linked image: Markdown's `[![alt](src)](href)`, or an HTML `<a href><img alt></a>` unless the link
-    is to a section of the page itself (the row of navigation buttons claims nothing). A badge inside an HTML comment
-    is not rendered, so it is not a badge."""
+
+def _claim_first_number(text: str) -> int | None:
+    """The first count a sentence states, in digits or in words; None when it states none."""
+    m = re.search(r"\b(\d+|%s)\b" % "|".join(_CLAIM_NUMBER_WORDS), text or "", re.I)
+    if not m:
+        return None
+    return int(m.group(1)) if m.group(1).isdigit() else _CLAIM_NUMBER_WORDS.index(m.group(1).lower())
+
+
+def _readme_badges(text: str) -> dict[str, str]:
+    """The images above a README's first `## ` heading, as alt text -> image source.
+
+    Every image a reader sees there is a badge: Markdown's inline `![alt](src "title")`, linked or not, its
+    reference form `![alt][ref]` with the `[ref]: src` definition, and an HTML `<img alt>`, linked or not. The one
+    exemption is the row of navigation buttons: an image from docs/assets/nav/ linking to a section of the page. An
+    image inside an HTML comment is not rendered, so it is not a badge; an image with no alt text names nothing."""
     head = re.sub(r"<!--.*?-->", "", text, flags=re.S).split("\n## ", 1)[0]
-    found = dict(re.findall(r"\[!\[([^\]]*)\]\((\S+?)\)\]\(\S+?\)", head))
-    for href, tag in re.findall(r'<a\s[^>]*?href="([^"]*)"[^>]*>\s*(<img\s[^>]*>)', head):
+    refs = {k.casefold(): v for k, v in re.findall(r"^ {0,3}\[([^\]]+)\]:[ \t]*<?([^\s>]+)>?", head, re.M)}
+    found = dict(re.findall(r"!\[([^\]]*)\]\(\s*<?((?:[^\s()<>]|\([^\s()]*\))+)>?"
+                            r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)", head))
+    for alt, ref in re.findall(r"!\[([^\]]*)\](?:\[([^\]]*)\])?(?![(\[])", head):
+        if (ref or alt).casefold() in refs:
+            found[alt] = refs[(ref or alt).casefold()]
+    for href, tag in re.findall(r'(?:<a\s[^>]*?href="([^"]*)"[^>]*>\s*)?(<img\b[^>]*>)', head):
         alt, src = re.search(r'\balt="([^"]*)"', tag), re.search(r'\bsrc="([^"]*)"', tag)
-        if alt and alt.group(1) and src and not href.startswith("#"):
-            found[alt.group(1)] = src.group(1)
+        source = src.group(1) if src else ""
+        if href.startswith("#") and source.startswith("docs/assets/nav/"):
+            continue
+        if alt:
+            found[alt.group(1)] = source
+    found.pop("", None)
     return found
 
 
@@ -22207,13 +22240,15 @@ def _shields_label(src: str) -> str | None:
 
 
 def check_claims_manifest(root: pathlib.Path) -> list[Finding]:
-    """Every outward claim has an entry in docs/reference/claims.json, and every entry is still true of the tree.
+    """The claims docs/reference/claims.json lists are each still true of the tree, and every README badge is listed.
 
-    Both directions for the README's badges (a badge with no entry, an entry whose badge is gone, a rendered label the
-    entry does not state); each entry's text on every surface it names; every evidence token resolving (check, test,
-    drill and file as the operability gate resolves them, url as https and not fetched); and the outside-implementations
-    count equal to the implementations its entry names, each named in the README's Status section and found in a row
-    of the scoreboard's Wallets table."""
+    Both directions for the images above the README's first heading (a badge with no entry, an entry whose badge is
+    gone, a rendered label the entry does not state); each entry's text on every surface it names; every evidence
+    token resolving (check, test, drill and file as the operability gate resolves them, url as https and not fetched).
+    And the counts: an entry listing implementations states their number and names each one, and an entry counting
+    other entries' lists states their total. Names are distinct as whole phrases, and each scoreboard term finds the
+    dated rows of lab/EXTERNAL-NOUNS.md's Wallets table whose wallet it names, no row claimed by two. The entry holding
+    the outward count of outside implementations must exist."""
     name = "claims_manifest"
     try:
         entries = json.loads(_read(root, "docs/reference/claims.json"))["claims"]
@@ -22260,32 +22295,57 @@ def check_claims_manifest(root: pathlib.Path) -> list[Finding]:
                 return _fail(name, f"{e['id']}: evidence {token!r} is not check:, test:, drill:, file: or url:")
             elif not _gate_citation_resolves(root, kind, target):
                 return _fail(name, f"{e['id']}: evidence {token} does not resolve")
-    status = _claim_text(readme.split("\n## Status", 1)[-1].split("\n## ", 1)[0]) if "\n## Status" in readme else ""
+
+    # The counts. A row of the Wallets table is a dated run (the weekly canary's row is not), and the wallet it is
+    # about is the opening of its Wallet cell, before the first parenthesis: "Pomerium 0.33.3 (... walt.id's wallet
+    # presenting)" is a Pomerium row, not a walt.id one.
     nouns = _read(root, "lab/EXTERNAL-NOUNS.md")
     wallets = nouns.split("\n### Wallets", 1)[-1].split("\n### ", 1)[0] if "\n### Wallets" in nouns else ""
-    rows = [cells[1] for cells in (ln.strip().strip("|").split("|") for ln in wallets.splitlines() if ln.startswith("|"))
-            if len(cells) > 2]
+    heads = [cells[1].split("(", 1)[0] for cells in (ln.strip().strip("|").split("|") for ln in wallets.splitlines()
+                                                     if ln.startswith("|")) if len(cells) > 2 and re.match(r"\s*\d{4}-\d{2}-\d{2}", cells[0])]
+    by_id = {e["id"]: e for e in entries}
+    if not by_id.get(_CLAIMS_COUNTED_ID, {}).get("implementations") and not by_id.get(_CLAIMS_COUNTED_ID, {}).get("count_of"):
+        return _fail(name, f"the manifest must hold the outward count of outside implementations as entry {_CLAIMS_COUNTED_ID!r}, "
+                           "with the implementations it counts")
     counted = 0
-    for alt, src in badges.items():
-        stated = {int(n) for n in re.findall(r"(\d+)[ _]outside[ _]implementations", alt + " " + src, re.I)}
-        if not stated:
+    for e in entries:
+        if "implementations" not in e and "count_of" not in e:
             continue
-        impls = by_badge[alt].get("implementations")
-        if not isinstance(impls, list) or not all(isinstance(i, dict) and i.get("name") and i.get("scoreboard") for i in impls):
-            return _fail(name, f"{by_badge[alt]['id']}: the entry must list the implementations it counts, each a name and a scoreboard term")
-        if stated != {len(impls)}:
-            return _fail(name, f"the badge states {sorted(stated)} outside implementations; its entry names {len(impls)}")
-        if len({i["name"] for i in impls}) != len(impls) or len({i["scoreboard"] for i in impls}) != len(impls):
-            return _fail(name, f"{by_badge[alt]['id']}: an implementation is named twice, so the count counts it twice")
+        lists = [e] if "implementations" in e else [by_id.get(i, {}) for i in e["count_of"] if isinstance(e["count_of"], list)]
+        impls = [i for x in lists for i in (x.get("implementations") or [])]
+        if not lists or not all(x.get("implementations") for x in lists) or not all(
+                isinstance(i, dict) and i.get("name") and i.get("scoreboard") for i in impls):
+            return _fail(name, f"{e['id']}: what it counts must be lists of implementations, each a name and a scoreboard term")
+        for stated in (e["claim"], e.get("label")):
+            if stated is not None and _claim_first_number(stated) != len(impls):
+                return _fail(name, f"{e['id']}: {stated!r} states {_claim_first_number(stated)}; it counts {len(impls)}")
+        if "implementations" in e:
+            for i in impls:
+                if not _claim_phrase_in(_claim_text(i["name"]), _claim_text(e["claim"]), r"[\w-]"):
+                    return _fail(name, f"{e['id']}: the sentence counting {i['name']!r} does not name it")
+        names = [_claim_text(i["name"]) for i in impls]
+        for a in range(len(names)):
+            for b in range(len(names)):
+                if a != b and _claim_phrase_in(names[a], names[b]):
+                    return _fail(name, f"{e['id']}: {impls[a]['name']!r} and {impls[b]['name']!r} may be one implementation counted twice")
+        claimed: dict = {}
         for i in impls:
-            if _claim_text(i["name"]) not in status:
-                return _fail(name, f"README.md's Status section no longer names {i['name']!r}")
-            if not any(i["scoreboard"] in cell for cell in rows):
-                return _fail(name, f"{i['name']!r} ({i['scoreboard']!r}) is in no row of lab/EXTERNAL-NOUNS.md's Wallets table")
-        counted += len(impls)
-    return _ok(name, f"{len(entries)} outward claims and all {len(badges)} README badges are mapped, each still on its "
-                     f"surfaces with its evidence resolving; the {counted} outside implementations the badge counts are each "
-                     f"named in the README and on the scoreboard")
+            rows = {n for n, h in enumerate(heads) if _claim_phrase_in(i["scoreboard"], h, r"[\w-]")}
+            if not rows:
+                return _fail(name, f"{i['name']!r} ({i['scoreboard']!r}) names the wallet of no dated row of "
+                                   "lab/EXTERNAL-NOUNS.md's Wallets table")
+            for n in rows:
+                if n in claimed:
+                    return _fail(name, f"{i['name']!r} and {claimed[n]!r} both resolve to the scoreboard row "
+                                       f"{heads[n].strip()[:40]!r}: one implementation counted twice")
+                claimed[n] = i["name"]
+        counted += 1
+    statements = sum(1 for e in entries if e["kind"] == "statement")
+    surfaces = sorted({s for e in entries if e["kind"] == "statement" for s in e["surfaces"]})
+    return _ok(name, f"all {len(badges)} images above the README's first heading are badges with entries, and the "
+                     f"{statements} statements listed on {', '.join(surfaces)} are each still there; every listed claim's "
+                     f"evidence resolves, and its {counted} counts match the implementations named, each on its own "
+                     f"scoreboard rows (the manifest lists these claims, not every sentence of those surfaces)")
 
 def check_assurance_mapping(root: pathlib.Path) -> list[Finding]:
     """The 800-63 mapping cites evidence that exists, and does not claim conformance (P6.2).
