@@ -4045,7 +4045,13 @@ def test_sql_console_readonly_check_discriminates(tmp_path):
     assert checks.check_sql_console_readonly(tmp_path)[0].level == "FAIL", \
         "must FAIL when read-only is set outside the sql_query handler"
 
-    # 5. Missing app.py -> FAIL.
+    # 5. The call deleted, its name left in the handler's docstring -> FAIL (the docstring is not the call).
+    write('    """The session is set READ ONLY (`set_session(readonly=True)`) before any statement."""\n'
+          "    cur.execute(sql)")
+    assert checks.check_sql_console_readonly(tmp_path)[0].level == "FAIL", \
+        "must FAIL when only the docstring names set_session(readonly=True)"
+
+    # 6. Missing app.py -> FAIL.
     (web / "app.py").unlink()
     assert checks.check_sql_console_readonly(tmp_path)[0].level == "FAIL", \
         "must FAIL when app.py is absent"

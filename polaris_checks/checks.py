@@ -1826,7 +1826,9 @@ def check_sql_console_readonly(root: pathlib.Path) -> list[Finding]:
     body = m.group(0) if m else ""
     if not body:
         return _fail("sql_console_ro", "could not locate the sql_query console handler")
-    if not re.search(r"set_session\(\s*readonly\s*=\s*True", body):
+    # The call as a statement of its own: the handler's docstring also names it, and a match there passed with the
+    # call deleted (found when comments began to be cut by Python's tokenizer, 2026-10-09).
+    if not re.search(r"(?m)^[ \t]+\w+\.set_session\(\s*readonly\s*=\s*True\s*\)[ \t]*$", body):
         return _fail("sql_console_ro",
                      "the /sql console must call conn.set_session(readonly=True) before any "
                      "statement so the database refuses writes — the SELECT/WITH keyword "
