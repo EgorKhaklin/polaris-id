@@ -35,6 +35,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- A revocation past the rate bound showed "An internal database error occurred"; the console now asks for a co-signing authority.
 - Run with `sudo` on a systemd host, the documented upgrade, rotation and first-operator commands failed for want of `POLARIS_DOMAIN`; the scripts now read `polaris.env` as the unit does.
 - A sealed secret store set up as SECRETS.md said left `polaris.service` reading the shredded plaintext directory at its next start; an empty `POLARIS_SECRETS_DIR` is now refused.
 - SECRETS.md said a sealed store's key is not on its disk; an age identity kept on the host is. The doctor and every start now say when the secrets are plaintext on disk.
@@ -110,6 +111,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A drill rotates the issuer key on the try.sh stack and then declares the old one compromised; CI runs it after try.sh.
 - scripts/polaris-key-event.sh registers, retires or declares compromised an authority key on the Docker stack, as the schema owner.
 - scripts/polaris-doctor.sh judges every component of the Docker stack and names the failing ones; a drill breaks four and requires each named.
+- scripts/polaris-evaluate.sh judges an install and writes a report that says what it does not establish; CI breaks a rule and the edge under it.
 - An experimental FN-DSA signer: Falcon-padded-1024 keys sign only under POLARIS_EXPERIMENTAL_SIGNERS, never in production, two-witnessed (liboqs, then @noble/post-quantum under Node); migration 2026-10-06-001.
 - A population migrates onto the FN-DSA family where its opt-in holds: 2,000 credentials re-signed at 604/s against ML-DSA-87's 319/s, nobody dark (quantum-event drill, POLARIS_QE_TARGET).
 - A lab step puts a checkpoint of the three transparency logs into Bitcoin block 969876 through OpenTimestamps; its verifier reads the block from two sources.
@@ -220,6 +222,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - An Atlas series could carry one bucket more than asked, and its authority filter took non-ASCII digits.
 - The simulator stamped events on the host's clock, so on a host off UTC the Atlas's hour windows missed them.
 - The UI drill and the performance baseline refuse a port another server holds; the drill's app no longer outlives it.
+- A failed deploy did not roll back on Docker's containerd image store (Engine 29's default) or on a stack whose app is not `polaris-app`.
 - In the Atlas, a hovered tab keeps its label and a lone interval is drawn; a stacked chart no longer reads a withheld value as zero.
 - Public pages: no empty band above the first line, a visible secondary action, a four-column feature grid.
 - Every page showing the OpenID® Certified™ mark names the OpenID Foundation as its owner, as its trademark policy (2.2) asks.

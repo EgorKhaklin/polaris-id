@@ -43,6 +43,9 @@ case "$CMD" in
     command -v docker >/dev/null || { echo "pilot: needs docker" >&2; exit 3; }
     : "${POLARIS_DOMAIN:?set POLARIS_DOMAIN for the TLS edge}"
     : "${POLARIS_ACME_EMAIL:?set POLARIS_ACME_EMAIL for the TLS edge}"
+    # Bringing the production stack up builds whichever of the host's image tags is missing.
+    source "$ROOT/scripts/polaris-host-lock.sh"
+    polaris_host_lock "the pilot"
     compose up -d
     echo
     echo "The stack is up. Before enrolling anybody, run:"

@@ -39,24 +39,6 @@ source "${SCRIPT_DIR}/polaris-env.sh"
 # it through to the sealed store below.
 SECRETS_DIR=$(polaris_secrets_dir) || exit 1
 ARCHIVE_DIR="${SECRETS_DIR}/.archive"
-# v9.183 (P1.4) — honour the same overlays as deploy (blue-green, CI edge), and
-# recreate every app colour one at a time so rotation is zero-downtime too.
-read -r -a COMPOSE_EXTRA <<< "${POLARIS_COMPOSE_EXTRA:-}"
-# From polaris_web, as polaris.service runs it: an overlay polaris.env names is relative to that
-# directory. (The guarded array form: an empty array under set -u is an error in bash before 4.4.)
-compose() { (cd "${POLARIS_ROOT}/polaris_web" && docker compose -f docker-compose.prod.yml ${COMPOSE_EXTRA[@]+"${COMPOSE_EXTRA[@]}"} "$@"); }
-recreate_apps() {
-    local svc cid
-    for svc in $(compose config --services 2>/dev/null | grep -E '^app(-green)?$' | sort -r); do
-        compose up -d --no-deps --force-recreate "${svc}"
-        for _ in $(seq 1 60); do
-            cid=$(compose ps -q "${svc}" 2>/dev/null | head -1)
-            [[ -n "${cid}" ]] && [[ "$(docker inspect --format '{{.State.Health.Status}}' "${cid}" 2>/dev/null)" == "healthy" ]] && break
-            sleep 2
-        done
-    done
-}
-
 DROP_OLD=0
 if [[ $# -eq 2 && "$1" == polaris_secret_key && "$2" == --drop-old ]]; then
     DROP_OLD=1
@@ -76,6 +58,28 @@ case "${SECRET}" in
         exit 2
         ;;
 esac
+
+# It recreates services from the host's image tags (building one if missing): not while a deploy or build runs.
+source "${SCRIPT_DIR}/polaris-host-lock.sh"
+polaris_host_lock "the rotation of ${SECRET}"
+
+# v9.183 (P1.4) — honour the same overlays as deploy (blue-green, CI edge), and
+# recreate every app colour one at a time so rotation is zero-downtime too.
+read -r -a COMPOSE_EXTRA <<< "${POLARIS_COMPOSE_EXTRA:-}"
+# From polaris_web, as polaris.service runs it: an overlay polaris.env names is relative to that
+# directory. (The guarded array form: an empty array under set -u is an error in bash before 4.4.)
+compose() { (cd "${POLARIS_ROOT}/polaris_web" && docker compose -f docker-compose.prod.yml ${COMPOSE_EXTRA[@]+"${COMPOSE_EXTRA[@]}"} "$@"); }
+recreate_apps() {
+    local svc cid
+    for svc in $(compose config --services 2>/dev/null | grep -E '^app(-green)?$' | sort -r); do
+        compose up -d --no-deps --force-recreate "${svc}"
+        for _ in $(seq 1 60); do
+            cid=$(compose ps -q "${svc}" 2>/dev/null | head -1)
+            [[ -n "${cid}" ]] && [[ "$(docker inspect --format '{{.State.Health.Status}}' "${cid}" 2>/dev/null)" == "healthy" ]] && break
+            sleep 2
+        done
+    done
+}
 
 TARGET="${SECRETS_DIR}/${SECRET}"
 if [[ ! -f "${TARGET}" ]]; then

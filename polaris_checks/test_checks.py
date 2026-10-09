@@ -3060,6 +3060,60 @@ def test_doctor_names_failures_check_discriminates(tmp_path):
            "must FAIL when the runbook does not start an operator at the doctor")
 
 
+def test_evaluate_wired_check_discriminates(tmp_path):
+    files = ("scripts/polaris-evaluate.sh", "scripts/polaris-evaluate.py", "docs/operator/EVALUATE.md",
+             ".github/workflows/ci.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_evaluate_wired(tmp_path)[0].level == "OK", \
+        "must PASS on the real evaluation, its guide and the CI step"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_evaluate_wired(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    ev, ci = "scripts/polaris-evaluate.py", ".github/workflows/ci.yml"
+    broken(ev, "athena_selftest.run(conn)", "athena_selftest.PROBES", "must FAIL when the self-test is not run")
+    broken(ev, 'or "signature_valid" not in v', 'or False', "must FAIL when no verdict counts as a refusal")
+    broken(ev, "def guarded(", "def unguarded(", "must FAIL when a probe that cannot run is not a failure")
+    broken(ev, '"cosigner_agency_id": str(args.witness_agency)', '"cosigner_agency_id": ""',
+           "must FAIL when the notional revocation is not co-signed")
+    broken("docs/operator/EVALUATE.md", "## What a run does not establish", "## Limits",
+           "must FAIL when the guide stops saying what a run does not establish")
+    broken(ci, "GRANT INSERT ON DuressEvent TO polaris_app", "SELECT 1",
+           "must FAIL when CI breaks no rule under the evaluation")
+    broken(ci, 'grep -q "failing: .*A.doctor.edge"', 'true', "must FAIL when CI does not require the edge failure named")
+    broken(ci, 'grep -rqF "$(cat /tmp/ci-operator.pw)"', 'grep -rqF "never"',
+           "must FAIL when CI does not look for the password in the report")
+    broken(ci, "          set -eo pipefail\n          # The offline probes", "          set -e\n          # The offline probes",
+           "must FAIL when tee's status stands for the evaluation's (another step's pipefail does not count)")
+    broken(ci, 'short += ["%s=FAIL" % k for k, v in verdicts.items() if v == "FAIL" and k not in need]', "pass",
+           "must FAIL when a FAIL row outside the named ones passes the step")
+    broken(ci, 'sys.exit("the notional evaluation did not pass: %s" % ", ".join(short) if short else 0)', "sys.exit(0)",
+           "must FAIL when the notional evaluation's result is ignored")
+    broken(ci, '[ "$rc" = 1 ] && grep -q "failing: .*B.Privilege"', 'grep -q "failing: .*B.Privilege"',
+           "must FAIL when the privilege control no longer requires exit 1")
+    broken(ci, "/tmp/eval-noedge.out && sudo test -s /tmp/eval-noedge/report.json", "/tmp/eval-noedge.out",
+           "must FAIL when the edge control no longer requires the report")
+    broken(ci, """|| { echo "::error::the evaluation report carries the operator's password"; exit 1; }""", "|| true",
+           "must FAIL when a password in the report no longer fails the step")
+    broken(ev, 're.search(r"/tokens/%d(?:$|[/?#])" % token_id, where)', "True",
+           "must FAIL when any redirect counts as a revocation")
+    broken(ev, '"--only-binary", ":all:", "polaris-verify[cryptography]==" + version', '"--pre", "polaris-verify"',
+           "must FAIL when the verifier is installed unpinned")
+    broken(ev, 'tempfile.TemporaryDirectory(prefix="polaris-evaluate-")', "tempfile.mkdtemp()",
+           "must FAIL when the credential's copies may stay behind")
+    broken(ev, "except FileExistsError:", "except OSError:",
+           "must FAIL when an existing report directory is accepted")
+    (tmp_path / "scripts/polaris-evaluate.sh").unlink()
+    assert checks.check_evaluate_wired(tmp_path)[0].level == "FAIL", "must FAIL when the entry point is gone"
+
+
 def test_pitr_drilled_check_discriminates(tmp_path):
     files = ("scripts/polaris-pitr-drill.sh", ".github/workflows/ci.yml", "docs/operator/DR.md")
     for rel in files:
@@ -3323,7 +3377,12 @@ def test_infra_alerts_check_discriminates(tmp_path):
 
 
 def test_upgrade_drilled_check_discriminates(tmp_path):
-    files = ("scripts/polaris-deploy.sh", "scripts/polaris-upgrade-drill.sh", ".github/workflows/upgrade.yml")
+    files = ("scripts/polaris-deploy.sh", "scripts/polaris-upgrade-drill.sh", ".github/workflows/upgrade.yml",
+             "scripts/polaris-host-lock.sh", "lab/strategy/006/try.sh", "deploy/linux/install.sh",
+             "scripts/polaris-helm-upgrade-drill.sh", "scripts/polaris-region-evacuation-drill.sh",
+             "scripts/polaris-pilot.sh", "deploy/linux/polaris.service", "lab/strategy/006/doctor.sh",
+             "lab/strategy/006/rotate.sh", "scripts/polaris-rotate-secret.sh", "scripts/polaris-window-drill.sh",
+             "scripts/polaris-throughput-measure.sh")
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text((REPO / rel).read_text())
@@ -3355,6 +3414,110 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
            "must FAIL when CI does not run the drill")
     broken(".github/workflows/upgrade.yml", "fetch-depth: 0", "fetch-depth: 1",
            "must FAIL when CI checks out without the release tags")
+    # The rollback: pinned before the build, re-tagged from the pin, drilled on the containerd store.
+    dep = "scripts/polaris-deploy.sh"
+    broken(dep, 'docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"', 'echo "${PREV_IMAGE_ID}"',
+           "must FAIL when the deploy no longer pins the running image")
+    # 2026-10-09 review of #317: each of these passed the check before.
+    broken(dep, '    if TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"',
+           '    if false && TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"',
+           "must FAIL when the pin is never run")
+    broken(dep, 'ROLLBACK_TAG="polaris-app:rollback-${PROJECT}"', 'ROLLBACK_TAG="polaris-app:rollback"',
+           "must FAIL when the pin is one tag for the whole host")
+    lk = "scripts/polaris-host-lock.sh"
+    broken(lk, "        if id=$(docker network create --internal", "        if id=$(true --internal",
+           "must FAIL when the lock is not held in the Docker daemon")
+    broken(lk, "    trap _polaris_host_unlock EXIT", "    :", "must FAIL when the lock outlives the run that took it")
+    broken(lk, '    export POLARIS_HOST_LOCK_TOKEN="${token}"', '    POLARIS_HOST_LOCK_TOKEN="${token}"',
+           "must FAIL when what the holder runs cannot go on under its lock")
+    # Review 4 of #317, each passed before.
+    broken(lk, 'docker network rm "${POLARIS_HOST_LOCK_ID}" >/dev/null 2>&1 || true; fi\n    exit "${rc}"',
+           'docker network rm "${POLARIS_HOST_LOCK}" >/dev/null 2>&1 || true; fi\n    exit "${rc}"',
+           "must FAIL when the release removes by name, another run's lock included")
+    broken(lk, '            if [[ "$(_polaris_lock_ids | grep -c .)" -ne 1 ]]; then', "            if false; then",
+           "must FAIL when two creates of the name on an older engine both hold the lock")
+    broken(lk, '(exit "${rc}") || eval "${_POLARIS_PREV_EXIT_TRAP}"; else :; eval "${_POLARIS_PREV_EXIT_TRAP}"; fi',
+           ':; fi', "must FAIL when the caller's own EXIT trap no longer runs")
+    broken(lk, '    [[ "$(_polaris_lock_label boot "${net}")" != "$(_polaris_boot_id)" ]] && return 0', "    :",
+           "must FAIL when a lock left by an earlier boot blocks every build")
+    broken("scripts/polaris-pilot.sh", 'polaris_host_lock "the pilot"', ": no lock",
+           "must FAIL when the pilot brings the production stack up without the lock")
+    broken(dep, 'polaris_host_lock "this deploy"', '# polaris_host_lock "this deploy"',
+           "must FAIL when the lock is only a comment")
+    # Review 5 of #317.
+    broken(dep, 'source "${SCRIPT_DIR}/polaris-host-lock.sh"\n', '\n',
+           "must FAIL when the call has no helper sourced before it")
+    broken("deploy/linux/polaris.service", "polaris_host_lock polaris.service", "true",
+           "must FAIL when polaris.service starts while a deploy holds the host")
+    broken("deploy/linux/install.sh", "then polaris_host_release; fi", "then :; fi",
+           "must FAIL when install.sh starts the unit while holding the lock the unit takes")
+    for rel in ("lab/strategy/006/doctor.sh", "lab/strategy/006/rotate.sh", "scripts/polaris-rotate-secret.sh",
+                "scripts/polaris-window-drill.sh", "scripts/polaris-throughput-measure.sh"):
+        broken(rel, "polaris_host_lock ", ": ", "must FAIL when %s recreates from the shared tags unlocked" % rel)
+    broken(dep, 'polaris_host_lock "this deploy"\n', 'polaris_host_lock "this deploy"\ntrap "echo bye" EXIT\n',
+           "must FAIL when an EXIT trap set after the lock drops its release")
+    broken(dep, 'polaris_host_lock "this deploy"', ': "this deploy"', "must FAIL when the deploy takes no lock")
+    for rel, call in (("lab/strategy/006/try.sh", 'polaris_host_lock "try.sh"'),
+                      ("deploy/linux/install.sh", 'polaris_host_lock "install.sh"'),
+                      ("scripts/polaris-upgrade-drill.sh", 'polaris_host_lock "the upgrade drill"'),
+                      ("scripts/polaris-helm-upgrade-drill.sh", 'polaris_host_lock "the Helm upgrade drill"'),
+                      ("scripts/polaris-region-evacuation-drill.sh", 'polaris_host_lock "the region evacuation drill"')):
+        broken(rel, call, ": no lock", "must FAIL when %s builds the host's images without the lock" % rel)
+    # A new script that builds the tags is found without being named: one written beside them.
+    new = tmp_path / "scripts" / "polaris-new-builder.sh"
+    new.write_text('#!/bin/bash\nbash "${ROOT}/scripts/polaris-image-build.sh" --stack prod\n')
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a script nobody named builds the host's images without the lock"
+    new.write_text('#!/bin/bash\nsource "${ROOT}/scripts/polaris-host-lock.sh"\npolaris_host_lock "new"\n'
+                   'bash "${ROOT}/scripts/polaris-image-build.sh" --stack prod\n')
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "OK", "a new builder that takes the lock passes"
+    # A compose wrapper over several lines on the production file, bringing the stack up (review 4: pilot).
+    new.write_text('#!/bin/bash\ncompose() {\n    ( cd x && docker compose \\\n        -f docker-compose.prod.yml "$@" )\n}\n'
+                   'compose up -d\n')
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a multi-line production wrapper brings the stack up without the lock"
+    # Review 5: --no-deps still builds a missing image and recreates from the shared tag; VAR=x before compose
+    # and `sh ... --stack=prod` are the same thing.
+    for body in ('compose() {\n    ( cd x && docker compose \\\n        -f docker-compose.prod.yml "$@" )\n}\n'
+                 'compose up -d --no-deps --force-recreate caddy\n',
+                 'compose() { (cd x && docker compose -f docker-compose.prod.yml "$@"); }\nWEB_CONCURRENCY=4 compose up -d\n',
+                 'sh "${ROOT}/scripts/polaris-image-build.sh" --stack=prod\n',
+                 'docker compose -f ../polaris_web/docker-compose.prod.yml up -d\n'):
+        new.write_text("#!/bin/bash\n" + body)
+        assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+            "must FAIL when a script nobody named recreates from the shared tags unlocked: %r" % body
+    new.unlink()
+    broken(dep, 'wait_healthy "${svc}" || ROLLED=0; done', 'wait_healthy "${svc}" || true; done',
+           "must FAIL when a rollback is reported whether or not the restored app came up")
+    broken(dep, '        if [[ "${ROLLED}" -eq 1 ]]; then', '        ROLLED=1\n        if [[ "${ROLLED}" -eq 1 ]]; then',
+           "must FAIL when ROLLED is set again before it is read")
+    broken(dep, "PREV_APP=$(compose ps -a -q app", "PREV_APP=$(compose ps -q app",
+           "must FAIL when a stopped app is read as a first deploy")
+    broken(dep, 'docker tag "${ROLLBACK_IMAGE}" polaris-app:prod', 'docker tag "${PREV_IMAGE_ID}" polaris-app:prod',
+           "must FAIL when the rollback re-tags the bare image ID again")
+    broken(dep, "PREV_APP=$(compose ps -a -q app 2>/dev/null | head -n1 || true)", "PREV_APP=polaris-app",
+           "must FAIL when the deploy finds the running app by a fixed container name")
+    broken(dep, """docker inspect --format='{{.Image}}' "${PREV_APP}\"""", "docker inspect --format='{{.Image}}' polaris-app",
+           "must FAIL when the image is read from the container named polaris-app")
+    broken(dep, """docker inspect --format='{{.Image}}' "${PREV_APP}\"""", 'docker inspect -f "{{.Image}}" polaris-app',
+           "must FAIL when the image is read from the container named polaris-app, whatever the flags")
+    path = tmp_path / dep
+    good = path.read_text()
+    pin = '    if TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}" 2>&1); then\n'
+    build = 'bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod\n'
+    assert pin in good and build in good, "the fixture drifted"
+    path.write_text(good.replace(pin, "    if true; then\n").replace(build, build + pin.replace("    if", "if") + "fi\n"))
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the image is pinned only after the build has moved the tag"
+    path.write_text(good)
+    broken(drill, 'raise SystemExit("the upgrade drill: a release that does not start")', "true",
+           "must FAIL when the drill never deploys a release that cannot start")
+    broken(drill, 'grep -q "Rolled back"', 'grep -q "Deploy complete"',
+           "must FAIL when the drill does not require the rollback")
+    broken(drill, '[[ "${after}" == "${before}" ]]', "true",
+           "must FAIL when the drill does not require the app back on the image it replaced")
+    broken(".github/workflows/upgrade.yml", '["containerd-snapshotter"] = True', '["containerd-snapshotter"] = False',
+           "must FAIL when CI drills on the classic image store, where the bare ID still resolves")
 
 
 def test_client_ip_behind_proxies_check_discriminates(tmp_path):
