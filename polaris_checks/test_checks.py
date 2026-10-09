@@ -3302,17 +3302,32 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
            "must FAIL when CI checks out without the release tags")
     # The rollback: pinned before the build, re-tagged from the pin, drilled on the containerd store.
     dep = "scripts/polaris-deploy.sh"
-    broken(dep, 'docker tag "${PREV_IMAGE_ID}" polaris-app:rollback', 'echo "${PREV_IMAGE_ID}"',
+    broken(dep, 'docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"', 'echo "${PREV_IMAGE_ID}"',
            "must FAIL when the deploy no longer pins the running image")
+    # 2026-10-09 review of #317: each of these passed the check before.
+    broken(dep, '    if docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"', '    if false && docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"',
+           "must FAIL when the pin is never run")
+    broken(dep, 'ROLLBACK_TAG="polaris-app:rollback-${PROJECT}"', 'ROLLBACK_TAG="polaris-app:rollback"',
+           "must FAIL when the pin is one tag for the whole host")
+    broken(dep, "    flock -n 9 || {", "    true || {",
+           "must FAIL when two deploys of one project can run at once")
+    broken(dep, '    mkdir "${DEPLOY_LOCK}.d" 2>/dev/null || {', '    true || {',
+           "must FAIL when, without flock, two deploys of one project can run at once")
+    broken(dep, 'wait_healthy "${svc}" || ROLLED=0; done', 'wait_healthy "${svc}" || true; done',
+           "must FAIL when a rollback is reported whether or not the restored app came up")
+    broken(dep, "PREV_APP=$(compose ps -a -q app", "PREV_APP=$(compose ps -q app",
+           "must FAIL when a stopped app is read as a first deploy")
     broken(dep, 'docker tag "${ROLLBACK_IMAGE}" polaris-app:prod', 'docker tag "${PREV_IMAGE_ID}" polaris-app:prod',
            "must FAIL when the rollback re-tags the bare image ID again")
-    broken(dep, "PREV_APP=$(compose ps -q app 2>/dev/null | head -n1 || true)", "PREV_APP=polaris-app",
+    broken(dep, "PREV_APP=$(compose ps -a -q app 2>/dev/null | head -n1 || true)", "PREV_APP=polaris-app",
            "must FAIL when the deploy finds the running app by a fixed container name")
     broken(dep, """docker inspect --format='{{.Image}}' "${PREV_APP}\"""", "docker inspect --format='{{.Image}}' polaris-app",
            "must FAIL when the image is read from the container named polaris-app")
+    broken(dep, """docker inspect --format='{{.Image}}' "${PREV_APP}\"""", 'docker inspect -f "{{.Image}}" polaris-app',
+           "must FAIL when the image is read from the container named polaris-app, whatever the flags")
     path = tmp_path / dep
     good = path.read_text()
-    pin = '    if docker tag "${PREV_IMAGE_ID}" polaris-app:rollback 2>/dev/null; then\n'
+    pin = '    if docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}" 2>/dev/null; then\n'
     build = 'bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod\n'
     assert pin in good and build in good, "the fixture drifted"
     path.write_text(good.replace(pin, "    if true; then\n").replace(build, build + pin.replace("    if", "if") + "fi\n"))

@@ -69,7 +69,10 @@ plus whatever overlays `POLARIS_COMPOSE_EXTRA` names. In order:
    `awskms` the sealed store is unsealed into `POLARIS_SECRETS_DIR` first; the
    deploy refuses a sealed backend without one.
 2. `git pull --ff-only` (skipped with `--no-pull` or outside a git checkout).
-3. The running app image id is recorded for rollback.
+3. One deploy of the compose project at a time: a second one stops before it
+   changes anything (`flock` on `/tmp/polaris-deploy-<project>.lock`; on macOS, a
+   directory beside it). The running app's image, found through compose in this
+   project (a stopped app included), is pinned as `polaris-app:rollback-<project>`.
 4. `docker compose pull` for the upstream images, then every Polaris image
    (app, edge, pooler, database, etcd) built by
    [`scripts/polaris-image-build.sh`](../../scripts/polaris-image-build.sh) `--stack prod`.
@@ -87,8 +90,9 @@ plus whatever overlays `POLARIS_COMPOSE_EXTRA` names. In order:
    `app` is recreated.
 8. Smoke test from inside the network: `/api/health` must report `healthy`
    (`degraded` is accepted). On failure the previous app image, pinned as
-   `polaris-app:rollback` before step 4's build, is the app image again and every
-   app colour is recreated from it; the script exits non-zero. The pin is a tag:
+   `polaris-app:rollback-<project>` before step 4's build, is the app image again and
+   every app colour is recreated from it; the script says whether it came up healthy
+   and exits non-zero. The pin is a tag, kept until the next deploy re-pins it:
    under Docker's containerd image store, the default on a clean install of Docker
    Engine 29 and later, an image whose last tag has moved has no record left to
    re-tag.

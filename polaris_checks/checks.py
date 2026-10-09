@@ -7227,17 +7227,32 @@ def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
     # A rollback by bare image ID found no image under Docker's containerd image store (the default on
     # a clean install of Engine 29) once the build had moved polaris-app:prod: the running image is
     # pinned under a tag of its own before the build, and the rollback re-tags the pin.
-    pin = dep.find('docker tag "${PREV_IMAGE_ID}" polaris-app:rollback')
+    # The whole line, so `if false && docker tag ...` does not pass for a pin.
+    pin = dep.find('\n    if docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}" 2>/dev/null; then\n')
     build = dep.find('bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod')
-    if pin < 0 or pin > build or 'docker tag "${ROLLBACK_IMAGE}" polaris-app:prod' not in dep \
+    if pin < 0 or pin > build or 'ROLLBACK_TAG="polaris-app:rollback-${PROJECT}"' not in dep \
+            or 'docker tag "${ROLLBACK_IMAGE}" polaris-app:prod' not in dep \
             or 'docker tag "${PREV_IMAGE_ID}" polaris-app:prod' in dep:
-        return _fail(name, "polaris-deploy.sh must pin the running app image as polaris-app:rollback before it "
-                     "builds and roll back from that tag: under the containerd image store the bare ID no "
-                     "longer resolves once the build moves polaris-app:prod")
-    if "PREV_APP=$(compose ps -q app" not in dep or "--format='{{.Image}}' polaris-app" in dep:
-        return _fail(name, "polaris-deploy.sh must find the running app through compose, in its own project: a "
-                     "stack layered with names.yml has no container named polaris-app, and where the laptop "
-                     "stack runs that name is the other stack's app")
+        return _fail(name, "polaris-deploy.sh must pin the running app image as polaris-app:rollback-<project> "
+                     "before it builds and roll back from that tag: under the containerd image store the bare "
+                     "ID no longer resolves once the build moves polaris-app:prod")
+    # 2026-10-09 review of #317: the pin is a host-wide tag, so a second deploy pinned the first one's
+    # failed release over it. One deploy per project, locked before anything changes.
+    lock = dep.find('    flock -n 9 || {')
+    if lock < 0 or lock > pin or 'DEPLOY_LOCK="/tmp/polaris-deploy-${PROJECT}.lock"' not in dep \
+            or '    mkdir "${DEPLOY_LOCK}.d" 2>/dev/null || {' not in dep \
+            or dep.find('PROJECT=$(compose config') > dep.find('echo "  [2/7] git pull'):
+        return _fail(name, "polaris-deploy.sh must let one deploy of a compose project run at a time (flock, or a "
+                     "directory where flock is missing), taken before it pulls or pins: a second deploy pinned "
+                     "the first one's failed release over its rollback point")
+    if 'wait_healthy "${svc}" || ROLLED=0; done' not in dep \
+            or 'if [[ "${ROLLED}" -eq 1 ]]; then\n            echo "  ✓ Rolled back.' not in dep:
+        return _fail(name, "polaris-deploy.sh must report a rollback only when the restored app came up healthy")
+    if "PREV_APP=$(compose ps -a -q app" not in dep \
+            or re.search(r"""(?m)docker inspect\b[^\n]*[\s"']polaris-app(?=["'\s]|$)""", dep):
+        return _fail(name, "polaris-deploy.sh must find the app through compose, in its own project, stopped or "
+                     "not: a stack layered with names.yml has no container named polaris-app, and where the "
+                     "laptop stack runs that name is the other stack's app")
     drill = _read(root, "scripts/polaris-upgrade-drill.sh")
     for needle, what in (("describe --tags --abbrev=0", "start from the previous release"),
                          ('lab/strategy/006/try.sh" > "${WORK}/try-before.log"', "run that release's own try.sh"),

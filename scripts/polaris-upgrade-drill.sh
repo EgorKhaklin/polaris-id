@@ -80,7 +80,7 @@ step "3/4 a release that cannot start is rolled back to the image it replaced"
 # polaris-deploy.sh rolled back by re-tagging the running image's ID. Under Docker's containerd image
 # store, the default on a clean install of Docker Engine 29 and later, that ID no longer resolves once
 # the build moves polaris-app:prod, so the rollback stopped at `docker tag` and left the failed release
-# serving. The deploy now pins the running image as polaris-app:rollback before it builds.
+# serving. The deploy now pins the running image as polaris-app:rollback-<project> before it builds.
 before=$(app_content)
 GUNI="${TREE}/polaris_web/gunicorn.conf.py"
 cp "${GUNI}" "${WORK}/gunicorn.conf.py.good"

@@ -37,7 +37,9 @@ COMPOSE_FILE="${POLARIS_ROOT}/polaris_web/docker-compose.prod.yml"
 # v9.183 (P1.4) — the same overlays polaris.service uses (blue-green, the CI
 # internal-CA edge, a custody overlay) apply to every compose call here.
 read -r -a COMPOSE_EXTRA <<< "${POLARIS_COMPOSE_EXTRA:-}"
-compose() { (cd "${POLARIS_ROOT}/polaris_web" && docker compose -f docker-compose.prod.yml "${COMPOSE_EXTRA[@]}" "$@"); }
+# The +-guard: bash 3.2 (macOS) calls an empty array unbound under set -u, and the first compose call
+# then ended the deploy without a word.
+compose() { (cd "${POLARIS_ROOT}/polaris_web" && docker compose -f docker-compose.prod.yml ${COMPOSE_EXTRA[@]+"${COMPOSE_EXTRA[@]}"} "$@"); }
 # v9.180 (P1.3) — with a sealed store (POLARIS_SECRETS_BACKEND=age|awskms) the
 # plaintext is materialized into POLARIS_SECRETS_DIR (a tmpfs) right before
 # the stack starts; the compose file reads the same variable. Lab record 017: it comes from
@@ -108,6 +110,25 @@ done
 echo "  ✓ docker present"
 echo "  ✓ all secrets present"
 
+# One deploy of a compose project at a time. The rollback pin below is a tag, which the whole host
+# shares: a second deploy that started while the first one's smoke test ran pinned the first one's
+# failed release over it, and the first then "rolled back" onto that release (review of #317,
+# 2026-10-09). The lock and the pin are both named for the project, so try.sh's stack and a
+# production stack on one host neither wait for each other nor share a pin. Taken before step 2,
+# so a refused deploy has changed nothing, the checkout included.
+PROJECT=$(compose config 2>/dev/null | sed -n 's/^name: //p' | head -n1)
+[[ -n "${PROJECT}" ]] || { echo "  ✗ could not read the compose project's name (docker compose config)" >&2; exit 1; }
+DEPLOY_LOCK="/tmp/polaris-deploy-${PROJECT}.lock"
+if command -v flock >/dev/null 2>&1; then
+    [[ -e "${DEPLOY_LOCK}" ]] || : > "${DEPLOY_LOCK}"
+    exec 9<"${DEPLOY_LOCK}"
+    flock -n 9 || { echo "  ✗ another deploy of project ${PROJECT} is running (${DEPLOY_LOCK}); this one changed nothing" >&2; exit 1; }
+else    # macOS has no flock(1): a directory, made atomically, removed when this deploy exits
+    mkdir "${DEPLOY_LOCK}.d" 2>/dev/null || { echo "  ✗ another deploy of project ${PROJECT} is running, or one ended without removing ${DEPLOY_LOCK}.d; this one changed nothing" >&2; exit 1; }
+    trap 'rmdir "${DEPLOY_LOCK}.d" 2>/dev/null || true' EXIT
+fi
+echo "  ✓ the only deploy of project ${PROJECT}"
+
 # ---------------------------------------------------------------------------
 # 2. git pull
 # ---------------------------------------------------------------------------
@@ -130,22 +151,24 @@ fi
 # The running app is found through compose, in this deploy's own project: a stack layered with
 # lab/strategy/006/names.yml (try.sh's) has no container named polaris-app, and where the laptop
 # stack also runs, that name is the other stack's app.
+ROLLBACK_TAG="polaris-app:rollback-${PROJECT}"
 PREV_IMAGE_ID=""
-PREV_APP=$(compose ps -q app 2>/dev/null | head -n1 || true)
+# -a: a stopped or restarting app still names the image this deploy replaces.
+PREV_APP=$(compose ps -a -q app 2>/dev/null | head -n1 || true)
 if [[ -n "${PREV_APP}" ]]; then
     PREV_IMAGE_ID=$(docker inspect --format='{{.Image}}' "${PREV_APP}" 2>/dev/null || echo "")
 fi
 ROLLBACK_IMAGE=""
 if [[ -n "${PREV_IMAGE_ID}" ]]; then
-    if docker tag "${PREV_IMAGE_ID}" polaris-app:rollback 2>/dev/null; then
-        ROLLBACK_IMAGE=polaris-app:rollback
+    if docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}" 2>/dev/null; then
+        ROLLBACK_IMAGE="${ROLLBACK_TAG}"
         echo "  [3/7] Previous app image: ${PREV_IMAGE_ID:0:18}, pinned as ${ROLLBACK_IMAGE}"
     else
         echo "  [3/7] Previous app image ${PREV_IMAGE_ID:0:18} has no record left to pin (its tag moved before"
         echo "        this deploy, under the containerd image store): a failed smoke test cannot roll back"
     fi
 else
-    echo "  [3/7] No previous app image (fresh deploy)"
+    echo "  [3/7] No previous app container in project ${PROJECT} (a first deploy): a failed smoke test cannot roll back"
 fi
 
 # ---------------------------------------------------------------------------
@@ -358,8 +381,13 @@ if [[ "${SMOKE_OK}" -ne 1 || "${ROLL_OK}" -ne 1 ]]; then
     if [[ -n "${ROLLBACK_IMAGE}" ]]; then
         echo "  → Rolling back to previous app image…"
         docker tag "${ROLLBACK_IMAGE}" polaris-app:prod
-        for svc in "${APP_SERVICES[@]+"${APP_SERVICES[@]}"}"; do compose up -d --no-deps --force-recreate "${svc}"; wait_healthy "${svc}" || true; done
-        echo "  ✓ Rolled back. Investigate logs:"
+        ROLLED=1
+        for svc in "${APP_SERVICES[@]+"${APP_SERVICES[@]}"}"; do compose up -d --no-deps --force-recreate "${svc}"; wait_healthy "${svc}" || ROLLED=0; done
+        if [[ "${ROLLED}" -eq 1 ]]; then
+            echo "  ✓ Rolled back. Investigate logs:"
+        else
+            echo "  ✗ The previous app image is in place again and did not become healthy either. Investigate logs:"
+        fi
         echo "    docker compose -f polaris_web/docker-compose.prod.yml logs --tail=200 app"
     else
         echo "  • No prior image to roll back to. Stack is up but unhealthy."

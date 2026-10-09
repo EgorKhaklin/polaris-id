@@ -218,5 +218,71 @@ class ComposeRunsWhereTheUnitRunsIt(_Base):
                 self.assertEqual(set(ran), {want}, "%s ran compose outside polaris_web" % script)
 
 
+class DeployIsOnePerProject(_Base):
+    """A deploy pins the running app image as its rollback point. Under one host-wide tag, a second
+    deploy that started during the first one's smoke test pinned the first one's failed release over
+    it, and the first "rolled back" onto that release (review of #317, 2026-10-09). One deploy of a
+    compose project runs at a time, and the pin is named for the project."""
+
+    def setUp(self):
+        super().setUp()
+        self.project = "lockt%d" % (abs(hash(str(self.tmp))) % 10 ** 8)
+        self.lock = pathlib.Path("/tmp/polaris-deploy-%s.lock" % self.project)
+        self.addCleanup(lambda: (self.lock.unlink(missing_ok=True),
+                                 pathlib.Path(str(self.lock) + ".d").rmdir()
+                                 if pathlib.Path(str(self.lock) + ".d").is_dir() else None))
+        secrets = self.tmp / "secrets"
+        secrets.mkdir()
+        for name in ("polaris_secret_key", "polaris_db_password", "polaris_db_root_password",
+                     "pgbackrest_repo_creds.conf"):
+            (secrets / name).write_text("x\n")
+        self.env_text = ("POLARIS_DOMAIN=polaris.example.org\nPOLARIS_SECRETS_BACKEND=file\n"
+                         "POLARIS_SECRETS_DIR=%s\n" % secrets)
+        # The stand-in Docker: compose names the project and a stopped app (only `ps -a` lists it),
+        # inspect names its image, tag succeeds; anything further fails, so the deploy stops at
+        # step 4 having run nothing against this machine.
+        (self.bin / "docker").write_text(
+            '#!/bin/sh\necho "$*" >> "%s"\ncase "$*" in\n'
+            '  "compose version") exit 0 ;;\n'
+            '  *" config") echo "name: %s"; exit 0 ;;\n'
+            '  *" ps -a -q app") echo cid-app; exit 0 ;;\n'
+            '  "inspect --format={{.Image}} cid-app") echo sha256:feed; exit 0 ;;\n'
+            '  "tag "*) exit 0 ;;\n'
+            'esac\nexit 99\n' % (self.docker_log, self.project))
+        (self.bin / "docker").chmod(0o755)
+
+    def _deploy(self):
+        self.env_file.write_text(self.env_text)
+        return subprocess.run(["bash", str(ROOT / "scripts" / "polaris-deploy.sh"), "prod", "--no-pull"],
+                              capture_output=True, text=True, timeout=60,
+                              env={"PATH": "%s:/usr/bin:/bin:/usr/sbin:/sbin" % self.bin, "HOME": str(self.tmp),
+                                   "STUB_WD": str(ROOT / "polaris_web"), "STUB_EF": str(self.env_file)})
+
+    def _calls(self):
+        return self.docker_log.read_text().splitlines() if self.docker_log.exists() else []
+
+    def test_a_deploy_pins_the_running_image_under_its_projects_name(self):
+        r = self._deploy()
+        tag = "tag sha256:feed polaris-app:rollback-%s" % self.project
+        self.assertIn(tag, self._calls(), r.stdout + r.stderr)
+        self.assertIn("pinned as polaris-app:rollback-%s" % self.project, r.stdout)
+        again = self._deploy()
+        self.assertEqual(self._calls().count(tag), 2,
+                         "the first deploy's lock outlived it: %s" % (again.stdout + again.stderr))
+
+    def test_a_second_deploy_of_the_project_changes_nothing(self):
+        import fcntl
+        self.lock.write_text("")
+        held = open(self.lock)
+        self.addCleanup(held.close)
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)     # flock(1) on Linux takes this one
+        pathlib.Path(str(self.lock) + ".d").mkdir()          # and macOS's stand-in this one
+        r = self._deploy()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("another deploy of project %s is running" % self.project, r.stderr)
+        self.assertFalse([c for c in self._calls() if c.startswith(("tag", "inspect")) or " pull" in c],
+                         "the refused deploy acted: %s" % self._calls())
+
+
 if __name__ == "__main__":
     unittest.main()
