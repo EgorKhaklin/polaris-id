@@ -7226,8 +7226,8 @@ _BUILDS_PROD_TAGS = (
 
 def _host_image_builders(root: pathlib.Path) -> dict:
     """Every shell script that builds the host's production image tags, with where it first does: a run of
-    polaris-image-build.sh --stack prod, a build through the production compose file, or `compose up --build`
-    or `compose build` where the script's compose wrapper is the production file."""
+    polaris-image-build.sh --stack prod, a build through the production compose file, or, through a compose
+    wrapper (function or array) on the production file, a build or an `up` of more than one service."""
     found = {}
     for p in _tree_rglob(root, "*.sh"):
         rel = str(p.relative_to(root))
@@ -7235,8 +7235,18 @@ def _host_image_builders(root: pathlib.Path) -> dict:
             continue
         text = _read_path(p)
         hits = [m.start() for rx in _BUILDS_PROD_TAGS for m in rx.finditer(text)]
-        if re.search(r"compose\(\) \{[^\n]*docker-compose\.prod\.yml", text):
-            hits += [m.start() for m in re.finditer(r"(?m)^\s*compose (?:up\b[^\n]*--build|build)\b", text)]
+        # A compose wrapper on the production file, a function over several lines or an array: what it brings
+        # up whole, or builds, builds the host's tags that are missing. Recreating one service (--no-deps) does
+        # not build.
+        wrappers = []
+        if re.search(r"(?s)\bcompose\(\)\s*\{.*?docker-compose\.prod\.yml.*?\}", text):
+            wrappers.append(r"compose")
+        for m in re.finditer(r"(?m)^\s*([A-Z_]+)=\(docker compose\b[^\n]*docker-compose\.prod\.yml", text):
+            wrappers.append(r'"\$\{%s\[@\]\}"' % m.group(1))
+        for w in wrappers:
+            for m in re.finditer(r"(?m)^\s*%s (up\b[^\n]*|build\b[^\n]*)" % w, text):
+                if m.group(1).startswith("build") or "--build" in m.group(1) or "--no-deps" not in m.group(1):
+                    hits.append(m.start())
         if hits:
             found[rel] = min(hits)
     return found
@@ -7266,21 +7276,38 @@ def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
     # the Docker daemon (a lock file split between /run, $HOME and $TMPDIR), and every script that builds
     # those tags takes it before it builds.
     lock = _read(root, "scripts/polaris-host-lock.sh")
-    take = dep.find('polaris_host_lock "this deploy"\n')
+    take = dep.find('\npolaris_host_lock "this deploy"\n')
     if take < 0 or take > pin or take > dep.find('echo "  [2/7] git pull') or not all(n in lock for n in (
             "POLARIS_HOST_LOCK=polaris-host-lock",
-            '    if ! err=$(docker network create --internal --label "org.polaris.lock.token=${token}"',
+            '        if id=$(docker network create --internal --label "org.polaris.lock.token=${token}"',
+            # Review 4: an engine before 25 let two creates of one name both succeed: count, and give ours back.
+            '            if [[ "$(_polaris_lock_ids | grep -c .)" -ne 1 ]]; then\n'
+            '                docker network rm "${id}" >/dev/null 2>&1 || true',
+            '    docker network ls -q --filter "name=^${POLARIS_HOST_LOCK}\\$" 2>/dev/null || true',
+            # Review 4: released by its own ID, never by the name another run may hold by then.
+            '    if [[ -n "${POLARIS_HOST_LOCK_ID}" ]]; then docker network rm "${POLARIS_HOST_LOCK_ID}"',
+            '    if [[ -n "${_POLARIS_PREV_EXIT_TRAP}" ]]; then eval "${_POLARIS_PREV_EXIT_TRAP}"; fi',
+            '    trap _polaris_host_unlock EXIT',
             '    export POLARIS_HOST_LOCK_TOKEN="${token}"',
-            '    trap "${prev:+${prev}; }docker network rm ${POLARIS_HOST_LOCK} >/dev/null 2>&1 || true" EXIT')):
+            # Review 4: a lock this host left (an earlier boot, a process gone) is taken over, not waited on.
+            '    [[ "$(_polaris_lock_label boot "${net}")" != "$(_polaris_boot_id)" ]] && return 0',
+            '    [[ "${pid}" =~ ^[0-9]+$ ]] && ! ps -p "${pid}" >/dev/null 2>&1')):
         return _fail(name, "polaris-deploy.sh must take this host's image lock before it pulls, pins or builds, and "
                      "scripts/polaris-host-lock.sh must hold it in the Docker daemon (a network one caller can "
-                     "create), hand it to what the holder runs, and release it on exit after the caller's own trap")
+                     "create, counted after creating), release it by its own ID after the caller's own trap, hand "
+                     "it to what the holder runs, and take over one this host left")
     builders = _host_image_builders(root)
-    unlocked = [rel for rel, at in builders.items()
-                if not (0 <= _read(root, rel).find("polaris_host_lock ") < at)]
+    unlocked = []
+    for rel, at in builders.items():
+        text = _read(root, rel)
+        call = re.search(r'(?m)^[ \t]*polaris_host_lock "[^"\n]+"[ \t]*$', text)
+        # A trap set on EXIT after the lock replaces the helper's, and with it the release.
+        if not call or call.start() > at or re.search(r"(?m)^[ \t]*trap\b[^\n]*\bEXIT\b", text[call.end():]):
+            unlocked.append(rel)
     if not builders or unlocked:
-        return _fail(name, "every script that builds the host's production image tags must take its lock "
-                     "(polaris_host_lock) before it builds: " + (", ".join(sorted(unlocked)) or "none found"))
+        return _fail(name, "every script that builds the host's production image tags, or brings the production stack "
+                     "up, must take its lock (a polaris_host_lock statement) before it does, and set no EXIT trap "
+                     "after it: " + (", ".join(sorted(unlocked)) or "none found"))
     # The block whole: a ROLLED=1 slipped in before the `if` passed a string search.
     if not re.search(r'\n        ROLLED=1\n        for svc in [^\n]*wait_healthy "\$\{svc\}" \|\| ROLLED=0; done\n'
                      r'        if \[\[ "\$\{ROLLED\}" -eq 1 \]\]; then\n            echo "  ✓ Rolled back\.', dep):

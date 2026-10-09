@@ -74,9 +74,10 @@ plus whatever overlays `POLARIS_COMPOSE_EXTRA` names. In order:
    that builds them stops before it changes anything, and says who holds the host.
    The lock is a Docker network, `polaris-host-lock`, which the daemon lets one
    caller create, so anyone who can reach Docker shares it, with or without `sudo`
-   ([`scripts/polaris-host-lock.sh`](../../scripts/polaris-host-lock.sh)). A run
-   killed before it lets go leaves it: `docker network rm polaris-host-lock`, once
-   nothing builds or deploys. The running app's image, found through compose in
+   ([`scripts/polaris-host-lock.sh`](../../scripts/polaris-host-lock.sh)). One this
+   host left, from an earlier boot or a process that is gone, is taken over with its
+   holder named; one held from another host is removed by hand once that run is
+   gone: `docker network rm polaris-host-lock`. The running app's image, found through compose in
    this project (a stopped app included), is pinned as
    `polaris-app:rollback-<project>`.
 4. `docker compose pull` for the upstream images, then every Polaris image

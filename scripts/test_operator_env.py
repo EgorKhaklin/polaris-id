@@ -223,7 +223,7 @@ class DeploysTakeTurns(_Base):
     deploy that started during the first one's smoke test pinned the first one's failed release over
     it, and the first "rolled back" onto that release; and every stack on a host builds the same tags
     (reviews of #317, 2026-10-09). One build or deploy of the host's images runs at a time, and the pin
-    is named for the project. Run as a user other than root, the lock is in that user's own directory."""
+    is named for the project. The lock is a network in the Docker daemon; this stand-in keeps it in a file."""
 
     def setUp(self):
         super().setUp()
@@ -236,10 +236,10 @@ class DeploysTakeTurns(_Base):
             (secrets / name).write_text("x\n")
         self.env_text = ("POLARIS_DOMAIN=polaris.example.org\nPOLARIS_SECRETS_BACKEND=file\n"
                          "POLARIS_SECRETS_DIR=%s\n" % secrets)
-        # The stand-in Docker: compose names the project and a stopped app (only `ps -a` lists it),
-        # inspect names its image, tag succeeds, and the polaris-host-lock network is a file one create
-        # makes and a second refuses; anything further fails, so the deploy stops at step 4 having run
-        # nothing against this machine.
+        # The stand-in Docker: compose names the project and a stopped app (only `ps -a` lists it), inspect
+        # names its image, tag succeeds, and the polaris-host-lock network is a file holding its ID and labels:
+        # one create makes it and prints the ID, a second is refused, rm removes it by that ID only. Anything
+        # further fails, so the deploy stops at step 4 having run nothing against this machine.
         (self.bin / "docker").write_text(
             '#!/bin/sh\necho "$*" >> "%(log)s"\nNET="%(net)s"\ncase "$*" in\n'
             '  "compose version") exit 0 ;;\n'
@@ -249,10 +249,15 @@ class DeploysTakeTurns(_Base):
             '  "tag "*) exit 0 ;;\n'
             '  "network create "*)\n'
             '    [ -e "$NET" ] && { echo "Error response from daemon: network with name polaris-host-lock already exists" >&2; exit 1; }\n'
-            '    for a in "$@"; do case "$a" in org.polaris.lock.*) echo "$a" >> "$NET" ;; esac; done; exit 0 ;;\n'
-            '  "network inspect -f "*token*) [ -e "$NET" ] || exit 1; sed -n "s/^org.polaris.lock.token=//p" "$NET"; exit 0 ;;\n'
-            '  "network inspect -f "*holder*) [ -e "$NET" ] || exit 1; sed -n "s/^org.polaris.lock.holder=//p" "$NET"; exit 0 ;;\n'
-            '  "network rm polaris-host-lock") rm -f "$NET"; exit 0 ;;\n'
+            '    id="net$$"; echo "id=$id" > "$NET"\n'
+            '    for a in "$@"; do case "$a" in org.polaris.lock.*) echo "$a" >> "$NET" ;; esac; done; echo "$id"; exit 0 ;;\n'
+            '  "network ls -q --filter name=^polaris-host-lock\\$") [ -e "$NET" ] && sed -n "s/^id=//p" "$NET"; exit 0 ;;\n'
+            '  "network inspect -f "*)\n'
+            '    [ -e "$NET" ] || exit 1; eval "last=\\${$#}"; id=$(sed -n "s/^id=//p" "$NET")\n'
+            '    [ "$last" = polaris-host-lock ] || [ "$last" = "$id" ] || exit 1\n'
+            '    key=$(printf %%s "$*" | sed -n "s/.*org.polaris.lock.\\([a-z]*\\).*/\\1/p")\n'
+            '    sed -n "s/^org.polaris.lock.$key=//p" "$NET"; exit 0 ;;\n'
+            '  "network rm "*) [ -e "$NET" ] && [ "$3" = "$(sed -n "s/^id=//p" "$NET")" ] && rm -f "$NET"; exit 0 ;;\n'
             'esac\nexit 99\n' % {"log": self.docker_log, "net": self.lock, "project": self.project})
         (self.bin / "docker").chmod(0o755)
 
@@ -276,8 +281,13 @@ class DeploysTakeTurns(_Base):
         again = self._deploy()
         self.assertEqual(self._calls().count(tag), 2, again.stdout + again.stderr)
 
+    def _held(self, token, holder, host="another-host", boot="b", pid="1"):
+        self.lock.write_text("id=netX\norg.polaris.lock.token=%s\norg.polaris.lock.holder=%s\n"
+                             "org.polaris.lock.host=%s\norg.polaris.lock.boot=%s\norg.polaris.lock.pid=%s\n"
+                             % (token, holder, host, boot, pid))
+
     def test_a_second_deploy_on_the_host_changes_nothing_and_says_who_holds_it(self):
-        self.lock.write_text("org.polaris.lock.token=other\norg.polaris.lock.holder=try.sh, pid 7 on host\n")
+        self._held("other", "try.sh, pid 7 on host")
         r = self._deploy()
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("another Polaris build or deploy holds this host's images (try.sh, pid 7 on host)", r.stderr)
@@ -286,8 +296,46 @@ class DeploysTakeTurns(_Base):
                          "the refused deploy acted: %s" % self._calls())
         self.assertTrue(self.lock.exists(), "the refused deploy released another run's lock")
 
+    def test_a_lock_this_host_left_is_taken_over_naming_its_holder(self):
+        """Review 4 of #317: a network outlives its run, a reboot too. One this host left, by an earlier boot or
+        a process that is gone, is taken over; one from another host is not."""
+        import socket
+        here = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip() or socket.gethostname()
+        self._held("old", "a killed deploy", host=here, boot="an-earlier-boot")
+        r = self._deploy()
+        self.assertIn("left by a killed deploy, which is gone: taking it over", r.stderr)
+        self.assertIn("tag sha256:feed polaris-app:rollback-%s" % self.project, self._calls(), r.stdout + r.stderr)
+        self._held("old", "a deploy elsewhere", host="elsewhere", boot="an-earlier-boot")
+        r = self._deploy()
+        self.assertEqual(r.returncode, 1, "another host's lock was taken over: %s" % (r.stdout + r.stderr))
+
+    def test_in_this_boot_a_gone_process_is_stale_and_a_live_one_holds(self):
+        import os
+        here = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
+        boot = subprocess.run(["bash", "-c", "cat /proc/sys/kernel/random/boot_id 2>/dev/null || sysctl -n kern.boottime"],
+                              capture_output=True, text=True).stdout.strip()
+        self._held("old", "a deploy that was killed", host=here, boot=boot, pid="999999")
+        r = self._deploy()
+        self.assertIn("which is gone: taking it over", r.stderr, r.stdout + r.stderr)
+        self._held("live", "a deploy still running", host=here, boot=boot, pid=str(os.getpid()))
+        r = self._deploy()
+        self.assertEqual(r.returncode, 1, "a running holder's lock was taken over: %s" % (r.stdout + r.stderr))
+        self.assertIn("(a deploy still running)", r.stderr)
+
+    def test_a_run_releases_only_its_own_network(self):
+        """Review 4 of #317: an operator removes a lock by hand and another run takes the name; the first run,
+        exiting, must not remove the second's."""
+        script = self.tmp / "first.sh"
+        script.write_text('set -euo pipefail\nsource "%s"\npolaris_host_lock first\n'
+                          'printf "id=net-second\\norg.polaris.lock.holder=second\\n" > "%s"\n'
+                          % (ROOT / "scripts" / "polaris-host-lock.sh", self.lock))
+        r = subprocess.run(["bash", str(script)], capture_output=True, text=True, timeout=30,
+                           env={"PATH": "%s:/usr/bin:/bin" % self.bin, "HOME": str(self.tmp)})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("org.polaris.lock.holder=second", self.lock.read_text(), "the first run removed the second's")
+
     def test_what_the_holder_runs_goes_on_under_its_lock(self):
-        self.lock.write_text("org.polaris.lock.token=drill-1\norg.polaris.lock.holder=the upgrade drill\n")
+        self._held("drill-1", "the upgrade drill")
         r = self._deploy(POLARIS_HOST_LOCK_TOKEN="drill-1")
         self.assertIn("tag sha256:feed polaris-app:rollback-%s" % self.project, self._calls(), r.stdout + r.stderr)
         self.assertTrue(self.lock.exists(), "a deploy run under the drill's lock released it")
@@ -299,13 +347,16 @@ class DeploysTakeTurns(_Base):
         helper = ROOT / "scripts" / "polaris-host-lock.sh"
         # The caller sets its own trap, takes the lock, and runs a child that takes it too (the upgrade drill
         # runs try.sh and the deploy): the child goes on under it and leaves it held.
-        script.write_text('set -euo pipefail\ntrap \'echo caller-cleanup\' EXIT\n'
+        # Its trap carries a quote (review 4 of #317: pasted into one trap string, it no longer parsed).
+        import shlex
+        caller_trap = shlex.quote('echo "caller\'s cleanup"')
+        script.write_text('set -euo pipefail\ntrap %s EXIT\n'
                           'source "%s"\npolaris_host_lock "a caller"\necho holding\n'
                           'bash -c \'source "%s"; polaris_host_lock child; echo child-under-lock\'\n'
-                          '[ -e "%s" ] && echo still-held\n' % (helper, helper, self.lock))
+                          '[ -e "%s" ] && echo still-held\n' % (caller_trap, helper, helper, self.lock))
         r = subprocess.run(["bash", str(script)], capture_output=True, text=True, timeout=30,
                            env={"PATH": "%s:/usr/bin:/bin" % self.bin, "HOME": str(self.tmp)})
-        self.assertEqual(r.stdout.split(), ["holding", "child-under-lock", "still-held", "caller-cleanup"],
+        self.assertEqual(r.stdout.splitlines(), ["holding", "child-under-lock", "still-held", "caller's cleanup"],
                          r.stdout + r.stderr)
         self.assertFalse(self.lock.exists(), "released after the caller's own trap")
 

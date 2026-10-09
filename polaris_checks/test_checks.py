@@ -3270,7 +3270,8 @@ def test_infra_alerts_check_discriminates(tmp_path):
 def test_upgrade_drilled_check_discriminates(tmp_path):
     files = ("scripts/polaris-deploy.sh", "scripts/polaris-upgrade-drill.sh", ".github/workflows/upgrade.yml",
              "scripts/polaris-host-lock.sh", "lab/strategy/006/try.sh", "deploy/linux/install.sh",
-             "scripts/polaris-helm-upgrade-drill.sh", "scripts/polaris-region-evacuation-drill.sh")
+             "scripts/polaris-helm-upgrade-drill.sh", "scripts/polaris-region-evacuation-drill.sh",
+             "scripts/polaris-pilot.sh")
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text((REPO / rel).read_text())
@@ -3313,12 +3314,26 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
     broken(dep, 'ROLLBACK_TAG="polaris-app:rollback-${PROJECT}"', 'ROLLBACK_TAG="polaris-app:rollback"',
            "must FAIL when the pin is one tag for the whole host")
     lk = "scripts/polaris-host-lock.sh"
-    broken(lk, "    if ! err=$(docker network create --internal", "    if ! err=$(true --internal",
+    broken(lk, "        if id=$(docker network create --internal", "        if id=$(true --internal",
            "must FAIL when the lock is not held in the Docker daemon")
-    broken(lk, '    trap "${prev:+${prev}; }docker network rm', '    : "${prev:+${prev}; }docker network rm',
-           "must FAIL when the lock outlives the run that took it")
+    broken(lk, "    trap _polaris_host_unlock EXIT", "    :", "must FAIL when the lock outlives the run that took it")
     broken(lk, '    export POLARIS_HOST_LOCK_TOKEN="${token}"', '    POLARIS_HOST_LOCK_TOKEN="${token}"',
            "must FAIL when what the holder runs cannot go on under its lock")
+    # Review 4 of #317, each passed before.
+    broken(lk, 'docker network rm "${POLARIS_HOST_LOCK_ID}"', 'docker network rm "${POLARIS_HOST_LOCK}"',
+           "must FAIL when the release removes by name, another run's lock included")
+    broken(lk, '            if [[ "$(_polaris_lock_ids | grep -c .)" -ne 1 ]]; then', "            if false; then",
+           "must FAIL when two creates of the name on an older engine both hold the lock")
+    broken(lk, '    if [[ -n "${_POLARIS_PREV_EXIT_TRAP}" ]]; then eval "${_POLARIS_PREV_EXIT_TRAP}"; fi', "    :",
+           "must FAIL when the caller's own EXIT trap no longer runs")
+    broken(lk, '    [[ "$(_polaris_lock_label boot "${net}")" != "$(_polaris_boot_id)" ]] && return 0', "    :",
+           "must FAIL when a lock left by an earlier boot blocks every build")
+    broken("scripts/polaris-pilot.sh", 'polaris_host_lock "the pilot"', ": no lock",
+           "must FAIL when the pilot brings the production stack up without the lock")
+    broken(dep, 'polaris_host_lock "this deploy"', '# polaris_host_lock "this deploy"',
+           "must FAIL when the lock is only a comment")
+    broken(dep, 'polaris_host_lock "this deploy"\n', 'polaris_host_lock "this deploy"\ntrap "echo bye" EXIT\n',
+           "must FAIL when an EXIT trap set after the lock drops its release")
     broken(dep, 'polaris_host_lock "this deploy"', ': "this deploy"', "must FAIL when the deploy takes no lock")
     for rel, call in (("lab/strategy/006/try.sh", 'polaris_host_lock "try.sh"'),
                       ("deploy/linux/install.sh", 'polaris_host_lock "install.sh"'),
@@ -3333,6 +3348,14 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
         "must FAIL when a script nobody named builds the host's images without the lock"
     new.write_text('#!/bin/bash\nsource x\npolaris_host_lock "new"\nbash "${ROOT}/scripts/polaris-image-build.sh" --stack prod\n')
     assert checks.check_upgrade_drilled(tmp_path)[0].level == "OK", "a new builder that takes the lock passes"
+    # A compose wrapper over several lines on the production file, bringing the stack up (review 4: pilot).
+    new.write_text('#!/bin/bash\ncompose() {\n    ( cd x && docker compose \\\n        -f docker-compose.prod.yml "$@" )\n}\n'
+                   'compose up -d\n')
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a multi-line production wrapper brings the stack up without the lock"
+    new.write_text('#!/bin/bash\ncompose() {\n    ( cd x && docker compose \\\n        -f docker-compose.prod.yml "$@" )\n}\n'
+                   'compose up -d --no-deps --force-recreate caddy\n')
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "OK", "recreating one service builds nothing"
     new.unlink()
     broken(dep, 'wait_healthy "${svc}" || ROLLED=0; done', 'wait_healthy "${svc}" || true; done',
            "must FAIL when a rollback is reported whether or not the restored app came up")
