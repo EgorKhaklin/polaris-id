@@ -14,6 +14,7 @@ Run: python3 -m pytest polaris_checks/test_checks.py
 
 from __future__ import annotations
 
+import ast
 import os
 import pathlib
 import re
@@ -75,6 +76,40 @@ def test_csp_check_fails_on_unsafe_inline(tmp_path):
     sec.write_text(good + 'csp_parts.append("script-src-elem https://cdn.example")\n')
     assert checks.check_csp_forbids_unsafe_inline(tmp_path)[0].level == "FAIL", \
         "must FAIL when a later script-src-elem widens the policy"
+
+
+def test_python_comments_are_cut_where_the_tokenizer_says():
+    """The checks read Python with its comments blanked. A `#` inside a triple-quoted string is
+    text, not a comment: cutting there took a docstring's closing quotes, and the file no longer
+    parsed as the checks read it (2026-10-09)."""
+    src = ('def f():\n'
+           '    """A docstring that names a pull request\n'
+           '    (review of #318)."""\n'
+           '    x = "a # in a string"  # a real comment\n'
+           '    # a whole-line comment\n'
+           '    return x\n')
+    out = checks._strip_comments_for("m.py", src)
+    ast.parse(out)
+    assert '(review of #318)."""' in out, "a # inside a multi-line string must stay, with the quotes after it"
+    assert '"a # in a string"' in out and "a real comment" not in out and "whole-line comment" not in out, out
+    assert out.count("\n") == src.count("\n"), "line numbers must not move"
+    # A comment ends at a lone carriage return, which Python reads as a line break: the code after it stays.
+    assert checks._strip_comments_for("m.py", "x = 1  # c\ry = 2\n") == "x = 1\ry = 2\n"
+    # The tree: every Python file that parses as written still parses as the checks read it.
+    broken = []
+    for p in sorted(REPO.rglob("*.py")):
+        if any(part in (".git", "node_modules", ".venv", "venv") for part in p.parts):
+            continue
+        raw = p.read_text(errors="replace")
+        try:
+            ast.parse(raw)
+        except SyntaxError:
+            continue
+        try:
+            ast.parse(checks._strip_comments_for(p.name, raw))
+        except SyntaxError as e:
+            broken.append(f"{p.relative_to(REPO)}:{e.lineno}")
+    assert not broken, "stripping comments broke these files as the checks read them: " + ", ".join(broken)
 
 
 def test_c6_app_read_paths_check_discriminates(tmp_path):
@@ -4171,21 +4206,50 @@ def test_sql_console_readonly_check_discriminates(tmp_path):
         "must FAIL on the non-functional mid-transaction SET (it does not bind the query)"
 
     # 3. Session set read-only before any statement -> OK.
-    write("    conn.set_session(readonly=True)\n"
-          "    cur.execute('SET statement_timeout = 5000')\n"
-          "    cur.execute(sql)")
+    good = ("    conn = psycopg2.connect(**DB_CONFIG)\n"
+            "    conn.set_session(readonly=True)\n"
+            "    with conn.cursor() as cur:\n"
+            "        cur.execute('SET statement_timeout = 5000')\n"
+            "        cur.execute(sql)")
+    write(good)
     assert checks.check_sql_console_readonly(tmp_path)[0].level == "OK", \
         "must PASS once the session is set read-only before any statement"
+    # The same, spelled the other ways psycopg2 takes it.
+    for form in ("conn.set_session(autocommit=False, readonly=True)", "conn.readonly = True"):
+        write(good.replace("conn.set_session(readonly=True)", form))
+        assert checks.check_sql_console_readonly(tmp_path)[0].level == "OK", f"must PASS on {form}"
+    # Review of the check: the call that does not run, or not on the query's connection, or too late.
+    for why, body in (
+            ("in a string", good.replace("    conn.set_session(readonly=True)\n",
+                                         '    _ = """\n    conn.set_session(readonly=True)\n    """\n')),
+            ("under if False", good.replace("    conn.set_session(readonly=True)\n",
+                                            "    if False:\n        conn.set_session(readonly=True)\n")),
+            ("on another connection", good.replace("    conn.set_session(readonly=True)\n",
+                                                   "    other = psycopg2.connect(**DB_CONFIG)\n"
+                                                   "    other.set_session(readonly=True)\n")),
+            ("after the first execute", good.replace("    conn.set_session(readonly=True)\n", "") +
+             "\n    conn.set_session(readonly=True)"),
+            ("in a nested function", good.replace("    conn.set_session(readonly=True)\n",
+                                                  "    def later():\n        conn.set_session(readonly=True)\n"))):
+        write(body)
+        assert checks.check_sql_console_readonly(tmp_path)[0].level == "FAIL", f"must FAIL with the call {why}"
 
     # 4. read-only set in some OTHER function, not sql_query -> FAIL (scoped to the handler).
     (web / "app.py").write_text(
-        "def sql_query():\n    cur.execute(sql)\n\n"
+        "def sql_query():\n    conn = psycopg2.connect(**DB_CONFIG)\n    with conn.cursor() as cur:\n"
+        "        cur.execute(sql)\n\n"
         "def elsewhere():\n    conn.set_session(readonly=True)\n"
     )
     assert checks.check_sql_console_readonly(tmp_path)[0].level == "FAIL", \
         "must FAIL when read-only is set outside the sql_query handler"
 
-    # 5. Missing app.py -> FAIL.
+    # 5. The call deleted, its name left in the handler's docstring -> FAIL (the docstring is not the call).
+    write('    """The session is set READ ONLY (`set_session(readonly=True)`) before any statement."""\n'
+          + good.replace("    conn.set_session(readonly=True)\n", ""))
+    assert checks.check_sql_console_readonly(tmp_path)[0].level == "FAIL", \
+        "must FAIL when only the docstring names set_session(readonly=True)"
+
+    # 6. Missing app.py -> FAIL.
     (web / "app.py").unlink()
     assert checks.check_sql_console_readonly(tmp_path)[0].level == "FAIL", \
         "must FAIL when app.py is absent"
