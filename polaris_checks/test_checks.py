@@ -2548,6 +2548,179 @@ def test_operability_gate_check_discriminates(tmp_path):
     assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
         "must FAIL on a PASS row citing only part of the evidence pinned for it"
 
+def test_claims_manifest_check_discriminates(tmp_path):
+    import copy
+    import json
+
+    def badge(alt, label, message):
+        return "[![%s](https://img.shields.io/badge/%s-%s-2b5797?style=flat-square)](#status)" % (alt, label, message)
+
+    badges = ['<img src="docs/assets/hero.svg" width="100%" alt="Polaris ID">',
+              badge("Status: pre-pilot", "status", "pre--pilot"),
+              badge("SD-JWT VC", "SD--JWT_VC", "supported"),
+              badge("Tested against 3 outside implementations", "tested_against", "3_outside_implementations"),
+              "[![CI](https://example.org/ci/badge.svg)](https://example.org/ci)",
+              '<a href="https://example.org/"><img src="docs/assets/nav/site.svg" alt="Project site"></a>',
+              '<a href="#status"><img src="docs/assets/nav/status.svg" alt="Status"></a>',
+              '<img src="docs/assets/rule.svg" alt="">']
+    two = "Two wallets ran unmodified: Alpha and Beta."
+    one = "One more library took part: the reference library (Kotlin)."
+    status = "## Status\n\n**Tested against software nobody here wrote.** %s %s\n\n**Not yet:** an independent security review, a pilot.\n"
+
+    def readme(rows=badges, two=two, one=one):
+        return "<div>\n\n" + "\n".join(rows) + "\n\n</div>\n\n## What it is\n\nPre-pilot.\n\n" + status % (two, one)
+
+    wallets = ["| Date | Wallet | Result |", "|---|---|---|", "| 2026-10-01 | Alpha 1.0 | accepted |",
+               "| 2026-10-02 | Beta wallet 2.0 | accepted |", "| 2026-10-03 | The reference library, `lib-kt` 0.1 (Kotlin) | accepted |",
+               "| 2026-10-04 | Gateway 1.0 (a proxy, with Alpha's wallet presenting) | admitted |",
+               "| weekly since 2026-09-28 | Alpha, Beta wallet and lib-kt, latest | accepted |"]
+
+    def nouns(rows=wallets):
+        return "# Scoreboard\n\n### Wallets\n\n" + "\n".join(rows) + "\n\n### Pilot\n\nNone.\n"
+
+    good = {"claims": [
+        {"id": "hero", "kind": "badge", "claim": "Polaris ID", "surfaces": ["README.md"],
+         "evidence": ["file:LICENSE"], "reproduce": None, "why": "the name"},
+        {"id": "status", "kind": "badge", "claim": "Status: pre-pilot", "label": "status: pre-pilot",
+         "surfaces": ["README.md"], "evidence": ["check:operability_gate", "file:LICENSE"], "reproduce": "Read LICENSE."},
+        {"id": "sd-jwt-vc", "kind": "badge", "claim": "SD-JWT VC", "label": "SD-JWT VC: supported",
+         "surfaces": ["README.md"], "evidence": ["test:t/test_x.py::XTests"], "reproduce": "python -m unittest test_x"},
+        {"id": "outside-implementations", "kind": "badge", "claim": "Tested against 3 outside implementations",
+         "label": "tested against: 3 outside implementations", "surfaces": ["README.md"],
+         "evidence": ["file:lab/EXTERNAL-NOUNS.md", "drill:scripts/walk.sh"], "reproduce": "bash scripts/walk.sh",
+         "count_of": ["two", "one"]},
+        {"id": "ci", "kind": "badge", "claim": "CI", "surfaces": ["README.md"],
+         "evidence": ["url:https://example.org/ci"], "reproduce": None, "why": "a live status"},
+        {"id": "site", "kind": "badge", "claim": "Project site", "surfaces": ["README.md"],
+         "evidence": ["url:https://example.org/"], "reproduce": None, "why": "a link"},
+        {"id": "two", "kind": "statement", "claim": two, "surfaces": ["README.md"], "evidence": ["file:LICENSE"],
+         "reproduce": "Read the scoreboard.",
+         "implementations": [{"name": "Alpha", "scoreboard": "Alpha"}, {"name": "Beta", "scoreboard": "Beta wallet"}]},
+        {"id": "one", "kind": "statement", "claim": one, "surfaces": ["README.md"], "evidence": ["file:LICENSE"],
+         "reproduce": "Read the scoreboard.", "implementations": [{"name": "Kotlin", "scoreboard": "lib-kt"}]},
+        {"id": "not-yet", "kind": "statement", "claim": "Not yet: an independent security review, a pilot.",
+         "surfaces": ["README.md", "site/llms.txt"], "evidence": ["file:LICENSE"], "reproduce": "Read the scoreboard."},
+    ]}
+    for rel, text in (("LICENSE", "Apache License\n"), ("t/test_x.py", "class XTests:\n    pass\n"),
+                      ("scripts/walk.sh", "#!/bin/sh\n"), ("site/llms.txt", "- Not yet: an independent security\n  review, a pilot.\n")):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+    (tmp_path / "lab").mkdir()
+    (tmp_path / "docs" / "reference").mkdir(parents=True)
+    manifest = tmp_path / "docs" / "reference" / "claims.json"
+
+    def run(m=good, rd=None, nn=None):
+        manifest.write_text(m if isinstance(m, str) else json.dumps(m))
+        (tmp_path / "README.md").write_text(readme() if rd is None else rd)
+        (tmp_path / "lab" / "EXTERNAL-NOUNS.md").write_text(nouns() if nn is None else nn)
+        return checks.check_claims_manifest(tmp_path)[0].level
+
+    def edit(change):
+        m = copy.deepcopy(good)
+        change({e["id"]: e for e in m["claims"]})
+        return m
+
+    assert run() == "OK", "must PASS when every badge and listed claim is mapped to evidence that resolves"
+    assert checks.check_claims_manifest(tmp_path)[0].level == "OK", "the same tree, read again, must still PASS"
+
+    # Badges, both directions, in every form a reader sees.
+    assert run(rd=readme(badges + [badge("Audited", "audited", "yes")])) == "FAIL", \
+        "must FAIL on a README badge with no manifest entry"
+    assert run(rd=readme(badges + ['![Audited](https://img.shields.io/badge/audited-yes-blue "x")'])) == "FAIL", \
+        "must FAIL on an unlinked badge with a title and no manifest entry"
+    assert run(rd=readme(badges + ['<a href="#status"><img alt="Audited by NCC" src="docs/assets/audited.svg"></a>'])) == "FAIL", \
+        "must FAIL on an in-page HTML badge that is not a navigation button"
+    assert run(rd=readme(badges + ["![Audited][aud]", "", "[aud]: https://img.shields.io/badge/audited-yes-blue"])) == "FAIL", \
+        "must FAIL on a reference-style badge with no manifest entry"
+    assert run(rd=readme([b for b in badges if "SD-JWT" not in b])) == "FAIL", \
+        "must FAIL on an entry whose badge was removed from the README"
+    assert run(rd=readme([b if "SD-JWT" not in b else "<!-- " + b + " -->" for b in badges])) == "FAIL", \
+        "must FAIL on an entry whose badge is commented out, which nobody sees"
+    assert run(rd=readme([b.replace("-supported-", "-certified-") for b in badges])) == "FAIL", \
+        "must FAIL when a badge's rendered label says more than its entry"
+
+    # Evidence.
+    assert run(edit(lambda by: by["status"]["evidence"].append("file:gone.md"))) == "FAIL", \
+        "must FAIL on an evidence token that does not resolve"
+    assert run(edit(lambda by: by["status"]["evidence"].append("check:no_such_check"))) == "FAIL", \
+        "must FAIL on a check citation that names no check"
+    assert run(edit(lambda by: by["ci"]["evidence"].append("url:http://example.org/ci"))) == "FAIL", \
+        "must FAIL on a url token that is not https"
+    assert run(edit(lambda by: by["ci"]["evidence"].append("doc:README.md"))) == "FAIL", \
+        "must FAIL on an evidence token of no known kind"
+
+    # A listed sentence edited, or an older one restored, on its surface.
+    (tmp_path / "site" / "llms.txt").write_text("- Not yet: an independent security review.\n")
+    assert run() == "FAIL", "must FAIL when a claim was edited on one of its surfaces"
+    (tmp_path / "site" / "llms.txt").write_text("- Not yet: an independent security\n  review, a pilot.\n")
+    assert run() == "OK", "must PASS again once the surface says the claim"
+    assert run(rd=readme(one="One more library presented through a wallet built here: the reference library (Kotlin).")) == "FAIL", \
+        "must FAIL when an older, larger sentence replaces the listed one"
+
+    # The count is held by the entry, whatever the badge's words.
+    raised = readme([b.replace("3 outside", "4 outside").replace("3_outside", "4_outside") for b in badges])
+
+    def to_four(by):
+        by["outside-implementations"]["claim"] = "Tested against 4 outside implementations"
+        by["outside-implementations"]["label"] = "tested against: 4 outside implementations"
+    assert run(edit(to_four), rd=raised) == "FAIL", \
+        "must FAIL when the badge's count is raised past the implementations its entry counts"
+    assert run(edit(lambda by: by["outside-implementations"].update(label="tested against: 4 outside implementations")),
+               rd=readme([b.replace("3_outside", "4_outside") for b in badges])) == "FAIL", \
+        "must FAIL when the badge image's count disagrees with what it counts"
+
+    def to_wallets(by):
+        by["outside-implementations"]["claim"] = "Tested against 4 outside wallets"
+        by["outside-implementations"]["label"] = "tested against: 4 outside wallets"
+    assert run(edit(to_wallets), rd=readme([b.replace("3 outside implementations", "4 outside wallets")
+                                            .replace("3_outside_implementations", "4_outside_wallets") for b in badges])) == "FAIL", \
+        "must FAIL on a count raised under other words"
+    assert run(edit(lambda by: by["outside-implementations"].pop("count_of"))) == "FAIL", \
+        "must FAIL when the outward count's entry counts nothing"
+    def to_nope(by):
+        by["outside-implementations"].update(count_of=["two", "nope"], claim="Tested against 2 outside implementations",
+                                             label="tested against: 2 outside implementations")
+    assert run(edit(to_nope), rd=readme([b.replace("3 outside", "2 outside").replace("3_outside", "2_outside") for b in badges])) == "FAIL", \
+        "must FAIL when the count is of an entry that lists no implementations"
+    assert run(edit(lambda by: by["two"].update(claim="Two wallets ran unmodified: Alpha.")),
+               rd=readme(two="Two wallets ran unmodified: Alpha.")) == "FAIL", \
+        "must FAIL when the counting sentence no longer names an implementation it counts"
+
+    # One implementation is never counted twice.
+    three = "Three wallets ran unmodified: Alpha, Beta and Beta wallet."
+
+    def plus(name, term):
+        def change(by):
+            to_four(by)
+            by["two"]["claim"] = three.replace("Beta wallet", name)
+            by["two"]["implementations"].append({"name": name, "scoreboard": term})
+        return change
+    gamma = nouns(wallets + ["| 2026-10-05 | Gamma 1.0 | accepted |"])
+    assert run(edit(plus("Beta wallet", "Gamma")), rd=readme([b.replace("3 outside", "4 outside").replace("3_outside", "4_outside")
+                                                             for b in badges], two=three), nn=gamma) == "FAIL", \
+        "must FAIL on two names one of which contains the other as a whole word"
+    assert run(edit(plus("Gamma", "Beta wallet 2")), rd=readme([b.replace("3 outside", "4 outside").replace("3_outside", "4_outside")
+                                                               for b in badges], two=three.replace("Beta wallet", "Gamma")),
+               nn=gamma) == "FAIL", "must FAIL on two implementations resolving to the same scoreboard row"
+
+    # Each implementation stands on its own dated rows, not on the canary's or another wallet's.
+    assert run(nn=nouns([w for w in wallets if not w.startswith("| 2026-10-01 |")])) == "FAIL", \
+        "must FAIL when a named implementation's dated rows are gone, though the canary row and another row mention it"
+    assert run(nn=nouns([w for w in wallets if "lib-kt" not in w])) == "FAIL", \
+        "must FAIL when a named implementation is missing from the scoreboard's Wallets table"
+
+    # The manifest's own shape.
+    assert run("{not json") == "FAIL", "must FAIL when the manifest is not JSON"
+    assert run(edit(lambda by: by["status"].pop("evidence"))) == "FAIL", \
+        "must FAIL on an entry with no evidence"
+    assert run(edit(lambda by: by["ci"].pop("why"))) == "FAIL", \
+        "must FAIL on a null reproduce with no reason"
+    assert run(edit(lambda by: by["site"].update(id="ci"))) == "FAIL", "must FAIL on two entries with one id"
+    assert run(edit(lambda by: by["not-yet"].update(kind="claim"))) == "FAIL", "must FAIL on an unknown kind"
+    manifest.unlink()
+    assert checks.check_claims_manifest(tmp_path)[0].level == "FAIL", "must FAIL when the manifest is missing"
+
+
 def test_ci_atlas_e2e_check_discriminates(tmp_path):
     wf = tmp_path / ".github" / "workflows"
     wf.mkdir(parents=True)

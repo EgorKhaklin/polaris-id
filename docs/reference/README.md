@@ -15,6 +15,7 @@ the system without reading its source. For runbooks see
 | [`openapi.yaml`](openapi.yaml) | The machine-readable OpenAPI 3.1 contract for every `/api/v1` and OpenID4VCI route: the same surface as API.md, in the form a client generator reads |
 | [`API-CLIENTS.md`](API-CLIENTS.md) | Generate a typed client in any language from `openapi.yaml`, and the shape of a verification call |
 | [`WIRE-SPEC.md`](WIRE-SPEC.md) | The normative wire specification (P8.1): every signed artifact's format, signed-field list, canonical construction, and verification rules, and the federation trust decision, so an implementation importing no Polaris code can interoperate |
+| [`claims.json`](claims.json) | Every README badge and the status sentences it lists from the README, the site, `site/llms.txt` and the scoreboard: where each is published, the evidence behind it and how a stranger reproduces it; `check_claims_manifest` holds it to those surfaces and the scoreboard. A sentence it does not list is not covered |
 | [`SPEC-COMPLIANCE.md`](SPEC-COMPLIANCE.md) | Which standards Polaris implements (OpenID4VP, HAIP, SD-JWT VC, OpenID4VCI, Token Status List, ML-DSA-65), in what role, and how it is certified, each line scoped so a standard is not a certification and a certification is not the whole system |
 | [`DATA-MODEL.md`](DATA-MODEL.md) | Every table in the schema and its migrations, grouped, with the invariant that guards it |
 | [`PQC-POSTURE.md`](PQC-POSTURE.md) | Which primitives are post-quantum and which are still classical, against the NIST 2030/2035 timeline |
