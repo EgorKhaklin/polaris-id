@@ -84,6 +84,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- The plug-and-play matrix runs site/llms.txt's command block as written against the published polaris-verify, on every operating system and interpreter it covers and on any pull request that edits the file, and holds the exit codes the file states.
 - `docs/reference/claims.json` maps every README badge and the listed status sentences of the README, the site, `site/llms.txt` and the scoreboard to where each is published, its evidence and how to reproduce it; `check_claims_manifest` fails when a badge has no entry, a listed badge or sentence is gone from its surface, evidence does not resolve, or a stated count of outside implementations differs from the implementations named, each counted once on its own dated scoreboard rows.
 - `scripts/polaris-throughput-measure.sh` measures online verifications a second through the production path, per app vCPU and across two replicas, weekly; SCALING.md sizes a deployment from it.
 - `scripts/polaris-zone-loss-drill.sh` kills the database leader's node, then Redis's, on a three-zone kind cluster.

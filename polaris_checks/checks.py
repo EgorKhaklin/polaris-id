@@ -22239,6 +22239,65 @@ def _shields_label(src: str) -> str | None:
     return ": ".join(parts[:-1]) or None
 
 
+# 2026-10-09: site/llms.txt hands a reading agent one command block and the exit codes to expect. The
+# plug-and-play matrix runs that block as written, from an empty folder, against the package published on
+# PyPI, on every operating system and interpreter it covers, and holds each exit code the file states; a pull
+# request that edits the file runs it too. These pin that wiring, so the file cannot say more than the package
+# does without a red run.
+_LLMS_WALK_NEEDLES = (
+    ('  pull_request:\n    paths:\n      - ".github/workflows/plug-and-play-matrix.yml"\n      - "site/llms.txt"\n',
+     "run on a pull request that edits site/llms.txt (pull_request with paths, not push or paths-ignore)"),
+    ('set -euo pipefail\n          work=$(mktemp -d) && cd "$work"', "stop on the first failure, from an empty folder"),
+    ('python - "$GITHUB_WORKSPACE/site/llms.txt" <<\'EOF\'', "read the command block from site/llms.txt itself"),
+    ('assert len(fenced) == 3, "the section must hold exactly one command block"', "refuse a section without one block"),
+    ('assert "~~~" not in section', "refuse a second code block"),
+    ('assert not re.search(r"polaris-verify\\s+-", prose)', "refuse a command outside the block"),
+    ('bash -euo pipefail agent-path.sh > out.txt\n          rc=$?', "run the block as written and keep its exit code"),
+    ('[ "$rc" = "$OK_RC" ] || { echo "::error::the command block exited $rc; site/llms.txt says $OK_RC"; exit 1; }',
+     "require the block to exit with the code the file states"),
+    ('assert verdict["authenticity"] == "genuine" and verdict["issuer_trusted"] is True, verdict',
+     "require the block's JSON verdict to be genuine and trusted"),
+    ('[ "$rc" = "$BAD_RC" ] || { echo "::error::$t exited $rc; site/llms.txt says $BAD_RC"; exit 1; }',
+     "require each tampered vector the file names to exit with the code it states"),
+    ('done < tampered.txt', "walk every tampered vector the file names"),
+    ('[ "$no_anchor/$cannot_run/$refused" = "2/3/4" ]', "demonstrate the exit-code list (2, 3, 4)"),
+)
+
+
+def check_llms_txt_walked(root: pathlib.Path) -> list[Finding]:
+    name = "llms_txt_walked"
+    llms = _read_raw(root, "site/llms.txt")
+    wf = _read(root, ".github/workflows/plug-and-play-matrix.yml")  # comments cut: a needle commented out is gone
+    if not llms or not wf:
+        return _fail(name, "site/llms.txt and .github/workflows/plug-and-play-matrix.yml must both exist")
+    section = llms.split("## Verify a credential offline", 1)
+    fenced = section[1].split("\n## ", 1)[0].split("```") if len(section) == 2 else []
+    if len(fenced) != 3 or "polaris-verify " not in fenced[1] or "--json" not in fenced[1]:
+        return _fail(name, "site/llms.txt must keep its 'Verify a credential offline' section with exactly one command "
+                           "block that runs polaris-verify with --json")
+    verify = wf.split("\n  verify:\n", 1)[-1].split("\n  oid4vp:\n", 1)[0] if "\n  verify:\n" in wf else ""
+    head = wf.split("\njobs:\n", 1)[0]
+    missing = [why for needle, why in _LLMS_WALK_NEEDLES
+               if needle not in (head if needle.startswith("  pull_request:") else verify)]
+    # A step or a job that never runs, or whose failure counts for nothing, walks nothing (review of #6c).
+    at = verify.find("name: The agent path in site/llms.txt")
+    if at < 0:
+        missing.append("the step 'The agent path in site/llms.txt' is gone")
+    begin = verify.rfind("\n      - ", 0, at) if at >= 0 else 0
+    end = verify.find("\n      - ", at) if at >= 0 else 0
+    step_text = verify[begin:end if end >= 0 else len(verify)] if at >= 0 else ""
+    job_head = verify.split("\n    steps:\n", 1)[0]
+    for text, where in ((step_text, "the step"), (job_head, "the verify job")):
+        if re.search(r"(?m)^\s*(?:-\s+)?(if|continue-on-error)\s*:", text):
+            missing.append(f"{where} must carry no `if:` or `continue-on-error:`")
+    if missing:
+        return _fail(name, "the plug-and-play matrix must walk site/llms.txt as written: " + "; ".join(missing))
+    return _ok(name, "site/llms.txt's command block runs as written against the published polaris-verify on every "
+                     "operating system and interpreter of the plug-and-play matrix, and on any pull request that "
+                     "edits it; the verdict must be genuine and trusted, and every exit code the file states (the "
+                     "block's, the tampered vectors', 2, 3 and 4) is demonstrated")
+
+
 def check_claims_manifest(root: pathlib.Path) -> list[Finding]:
     """The claims docs/reference/claims.json lists are each still true of the tree, and every README badge is listed.
 
@@ -27942,6 +28001,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_config_doc_current,
     check_operability_gate,
     check_claims_manifest,
+    check_llms_txt_walked,
     check_ci_runs_atlas_e2e,
     check_load_gen_single_ledger,
     check_chaos_probe_reaches_wrapper,

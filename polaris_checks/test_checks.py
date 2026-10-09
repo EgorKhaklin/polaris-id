@@ -2548,6 +2548,49 @@ def test_operability_gate_check_discriminates(tmp_path):
     assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
         "must FAIL on a PASS row citing only part of the evidence pinned for it"
 
+def test_llms_txt_walked_check_discriminates(tmp_path):
+    for rel in ("site/llms.txt", ".github/workflows/plug-and-play-matrix.yml"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_llms_txt_walked(tmp_path)[0].level == "OK", "must PASS on the real file and workflow"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_llms_txt_walked(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    wf = ".github/workflows/plug-and-play-matrix.yml"
+    for needle, why in checks._LLMS_WALK_NEEDLES:
+        broken(wf, needle, "", f"must FAIL when the matrix no longer does this: {why}")
+    broken(wf, "          done < tampered.txt\n", "          # done < tampered.txt\n          done < /dev/null\n",
+           "must FAIL when the tampered walk survives only in a comment")
+    broken("site/llms.txt", "```\n\nIt prints a JSON verdict", "\nIt prints a JSON verdict",
+           "must FAIL when the command block is unfenced")
+    broken("site/llms.txt", "--pack ml-dsa-65-valid.json --json", "--pack ml-dsa-65-valid.json",
+           "must FAIL when the block stops asking for a JSON verdict")
+    broken("site/llms.txt", "## Verify a credential offline", "## Check a credential",
+           "must FAIL when the section the walk reads is renamed away")
+    # Review of #6c: a step or job that never runs, or whose failure counts for nothing, and the trigger.
+    step_name = "      - name: The agent path in site/llms.txt"
+    broken(wf, step_name, step_name.replace("- name:", "- if: false\n        name:"), "must FAIL when the step never runs")
+    broken(wf, "        shell: bash\n        run: |\n          set -euo pipefail\n          work=",
+           "        shell: bash\n        continue-on-error: true\n        run: |\n          set -euo pipefail\n          work=",
+           "must FAIL when the step's failure counts for nothing")
+    broken(wf, "    runs-on: ${{ matrix.os }}\n    steps:\n      - name: Checkout (only",
+           "    runs-on: ${{ matrix.os }}\n    if: false\n    steps:\n      - name: Checkout (only",
+           "must FAIL when the verify job never runs")
+    broken(wf, "  pull_request:\n    paths:", "  push:\n    paths:", "must FAIL when only a push, not a pull request, runs it")
+    broken(wf, "  pull_request:\n    paths:", "  pull_request:\n    paths-ignore:",
+           "must FAIL when the paths filter excludes the file instead")
+    broken(wf, "bash -euo pipefail agent-path.sh > out.txt\n", "bash -euo pipefail agent-path.sh > out.txt || true\n",
+           "must FAIL when the block's failure is swallowed")
+    broken(wf, "name: The agent path in site/llms.txt", "name: Another step",
+           "must FAIL when the step is renamed out of the guard's sight")
+
+
 def test_claims_manifest_check_discriminates(tmp_path):
     import copy
     import json
