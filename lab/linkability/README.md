@@ -128,7 +128,8 @@ ledger as a limitation for the deploying organisation to decide about.
 **Since 1.0.0-rc.46 (2026-09-25), the population is floored where proofs are decided.**
 `uc11_close_epoch` refuses to close an epoch with fewer members than
 `polaris.min_epoch_anonymity_set` (20 unless a deployment sets it; the notional sample data sets 1
-and says so), so an epoch of one can no longer be published by the procedure. The offline
+and says so, and a production install puts 20 back), so an epoch of one can no longer be published
+by the procedure. The offline
 verifier's cross-authority path, `verify_cross_authority_zk`, refuses a proof over a foreign epoch
 whose `committed_count` is below 20 ("privacy unavailable"), because there the verifier, not the
 issuer's database, is the last line. Re-read 2026-10-05: the "nothing floors it" above described the

@@ -66,6 +66,21 @@ if [ -n "$STANDBY_HOST" ]; then
     case "$STANDBY_HOST" in ''|*[!A-Za-z0-9._-]*) fail "POLARIS_PATRONI_STANDBY_HOST must be a plain hostname (got '$STANDBY_HOST')" ;; esac
     case "$STANDBY_PORT" in ''|*[!0-9]*) fail "POLARIS_PATRONI_STANDBY_PORT must be a port number (got '$STANDBY_PORT')" ;; esac
 fi
+# A failover loses no acknowledged write (gate row OP-6, docs/design/synchronous-replication.md).
+# In synchronous mode a commit returns only once the replica has flushed it, and Patroni promotes
+# only that replica, so an acknowledged commit outlives the leader. Not strict: with the replica
+# gone the leader keeps taking writes alone, and losing the leader then means no failover until it
+# returns (the replica that missed those writes is never promoted), not lost writes.
+# POLARIS_PATRONI_SYNCHRONOUS_MODE=off trades that for asynchronous replication (FAILOVER.md
+# section 1). A standby cluster takes no writes of its own, so it stays asynchronous. Like ttl, it is
+# written to the DCS at bootstrap; an existing cluster changes with `patronictl edit-config`.
+SYNC_MODE="${POLARIS_PATRONI_SYNCHRONOUS_MODE:-on}"
+case "$SYNC_MODE" in
+    on|true|1) SYNC_MODE=true ;;
+    off|false|0) SYNC_MODE=false ;;
+    *) fail "POLARIS_PATRONI_SYNCHRONOUS_MODE must be on or off (got '$SYNC_MODE')" ;;
+esac
+[ -z "$STANDBY_HOST" ] || SYNC_MODE=false
 TTL="${POLARIS_PATRONI_TTL:-20}"
 LOOP_WAIT="${POLARIS_PATRONI_LOOP_WAIT:-5}"
 RETRY_TIMEOUT="${POLARIS_PATRONI_RETRY_TIMEOUT:-5}"
@@ -228,7 +243,8 @@ bootstrap:
     # let it stay primary while the DCS is unreachable, which is the property
     # docs/operator/FAILOVER.md's split-brain analysis relies on NOT having.
     failsafe_mode: false
-    synchronous_mode: false
+    synchronous_mode: $SYNC_MODE
+    synchronous_mode_strict: false
 $STANDBY_YAML    postgresql:
       use_pg_rewind: true
       use_slots: true
@@ -280,7 +296,7 @@ log:
 YAML
 
 if [ "$DCS" = "kubernetes" ]; then DCS_DESC="the Kubernetes API (namespace $NAMESPACE)"; else DCS_DESC="etcd $ETCD_HOSTS"; fi
-echo "patroni-entrypoint: member $NAME of scope $SCOPE at $HOST, lease store $DCS_DESC, ttl ${TTL}s (loop ${LOOP_WAIT}s, retry ${RETRY_TIMEOUT}s), data $DATA_DIR" >&2
+echo "patroni-entrypoint: member $NAME of scope $SCOPE at $HOST, lease store $DCS_DESC, ttl ${TTL}s (loop ${LOOP_WAIT}s, retry ${RETRY_TIMEOUT}s), synchronous $SYNC_MODE, data $DATA_DIR" >&2
 if [ -n "$RUN_AS" ]; then
     chown "$RUN_AS:$RUN_AS" "$CONF"
     exec gosu "$RUN_AS" patroni "$CONF"

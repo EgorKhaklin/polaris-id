@@ -134,9 +134,22 @@ kubectl -n polaris exec polaris-postgres-0 -- patronictl -c /var/lib/postgresql/
   planned switchover for node maintenance is
   `kubectl -n polaris exec polaris-postgres-0 -- patronictl -c /var/lib/postgresql/patroni.yml switchover`.
   The mechanics, the measured numbers and the split-brain analysis are in
-  [`FAILOVER.md`](FAILOVER.md); on a cluster the two members belong on two
-  nodes (a `topologySpreadConstraints` or anti-affinity of your own, since
-  the chart does not know your zones).
+  [`FAILOVER.md`](FAILOVER.md).
+- **Failure domains** (lab record 017, gate row OP-7):
+  - The chart spreads every replicated component across nodes and, where the
+    nodes carry `topology.kubernetes.io/zone`, across zones: the two database
+    members, two app pods, and two pods each of the edge, the router and
+    pgbouncer. A single-node cluster still schedules them all.
+  - Pods Kubernetes may move leave a node that stopped answering after
+    `spread.evictAfterSeconds` (30 s, not the default 300 s).
+  - Redis is a Deployment on an emptyDir, so it moves too. The rate limiter
+    refuses requests while Redis is unreachable, and its windows are
+    short-lived.
+  - Disruption budgets keep a drain from taking the last pod of anything.
+  - `scripts/polaris-zone-loss-drill.sh` kills the leader's node on a kind
+    cluster of three zones and measures what comes back.
+  - Upgrading from a chart with the Redis StatefulSet leaves its claim
+    (`data-<release>-redis-0`) to delete.
 - **Backups**: `pgbackrest.enabled=true` with the S3 values and the key pair in
   the Secret's `pgbackrest_repo_creds.conf` ([`DR.md`](DR.md)); only the
   leader archives, so the repo follows the lease.
