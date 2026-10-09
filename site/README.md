@@ -30,6 +30,7 @@ broken under it fails the build.
 | `404.html`, `404.css` | The not-found page and its styles | The host, for any unknown path (`not_found_handling` in `wrangler.jsonc`) |
 | `_headers` | The security headers the host sends with every file | Cloudflare |
 | `robots.txt` | Crawl policy: one page, nothing private | Crawlers |
+| `llms.txt` | The project for a reading agent: what it is and is not, the one-minute offline check with its exit codes, and where the specifications and evidence live, as absolute links | Agents and tools that read `/llms.txt` |
 | `favicon.svg` | The tab icon | `index.html`, `404.html` |
 | `og.png` | The 1200 x 630 social card: the emblem, the page's headline, "pre-pilot" and the maker's mark, captured from the page's own styles | `index.html` (`og:image`) |
 | `khaklin.svg` | The KHAKLIN TECHNOLOGIES lockup in the site's gold, from the traced lettering and owl (never redrawn) | `index.html` (footer), `og.png` |
