@@ -7,8 +7,8 @@ hardening that ships alongside. The headline measurement is the Atlas on its
 activity rollups at ten million verifications (step 4 of lab/strategy/009); the
 event-table measurements of v9.150 and the 2-million-event era follow it, kept as
 taken.
-Production deployments with tuned Postgres, connection pooling and edge
-caching are faster than these developer-laptop numbers.
+These are developer-laptop numbers; tuned PostgreSQL, pooling and edge caching
+have not been measured against them.
 
 **Since 2026-10-02** the Atlas returns counts only
 ([lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md), step A0):
@@ -328,8 +328,44 @@ Expect ~90 seconds for the INSERT (pure CPU; no I/O bottleneck).
 The atlas numbers above are SQL-function timings at ten million events. The
 application-path numbers (issuance/s, verification/s, and atlas p95 through
 gunicorn, on stated hardware, with stamps) are the published baseline in
-[`PERFORMANCE-BASELINE.md`](PERFORMANCE-BASELINE.md), re-run by CI on every
-push (v9.191, roadmap P1.9).
+[`PERFORMANCE-BASELINE.md`](PERFORMANCE-BASELINE.md), measured by hand on stated
+hardware. CI runs the same script's five-second smoke on every push, a check of
+the procedure rather than a baseline (v9.191, roadmap P1.9).
+
+## Sizing a deployment
+
+What one online verification costs, from the throughput measurement in
+[`PERFORMANCE-BASELINE.md`](PERFORMANCE-BASELINE.md#through-the-production-path-per-vcpu-and-across-replicas)
+(`POST /api/v1/verify` through the TLS edge, the app with its pool, pgbouncer, PostgreSQL and Redis,
+every answer read, weekly in CI): on a 4-vCPU AMD EPYC 7763 host, one replica at 1 vCPU, about 18 ms
+of CPU across the stack. Per 100 verifications a second at peak, that is:
+
+| Tier | vCPU per 100 verifications a second |
+|---|---:|
+| PostgreSQL | 0.80 |
+| App | 0.56 |
+| pgbouncer | 0.24 |
+| Edge | 0.15 |
+| Redis | 0.03 |
+| All | 1.77 |
+
+The other configurations agree within 10%. A newer EPYC 9V74 spent about 12 ms instead of 18.
+
+- **Size the database first.** It is the largest share and the one tier that does not scale out:
+  Patroni runs one leader, and a verification reads the leader.
+- **App replicas add capacity while the app tier is what binds.** Two replicas at 0.5 vCPU served
+  1.93 times one. On one 4-vCPU host a second replica at 1 vCPU added 13%, because the database
+  had taken the rest of the host.
+- **Leave headroom.** The measured hosts ran at their CPU limit, at p95 latencies of 200 to 400 ms
+  with 32 clients waiting.
+
+For example, the ten-times peak of a hundred million people verified twelve times a year
+([`COST-MODEL.md`](COST-MODEL.md)) is 381 a second. At these costs that needs about 3 vCPU of
+PostgreSQL, 2 of app, 1 of pgbouncer and half of edge: about 7 vCPU before headroom.
+
+Not measured: hosts larger than 4 vCPU, a database on its own host, more than two replicas,
+scaling across hosts, and other hardware than the runners named. The measurement runs anywhere
+Docker does: run `scripts/polaris-throughput-measure.sh` on the hardware you will deploy.
 
 ## What's not yet covered
 

@@ -51,8 +51,8 @@ statement.
 **There was no performance case for a rewrite while proofs were not hiding.** A holder proved
 in 33 milliseconds at national depth; with zero-knowledge it is about 2 seconds on the
 reference machine, most of it blinding rather than the statement. [../reference/COST-MODEL.md](../reference/COST-MODEL.md) found
-separately that verification throughput is not the cost driver at any realistic national
-scale. Nothing in the measured behaviour is asking to be faster.
+separately that the cryptographic cost of verification is not the cost driver at any realistic
+national scale. Nothing in the measured behaviour is asking to be faster.
 
 The one number a migration might improve is proof size, and 77 KB is already small enough to
 staple to a presentation and to move as QR frames.
@@ -112,8 +112,8 @@ claims as findings is how a rewrite gets justified by a paragraph nobody sourced
 1. **A release candidate is not a soundness core.** A system that models national identity does
    not put its zero-knowledge proofs on a pre-release toolkit. This alone defers the question
    until Plonky3 is stable, whatever the other columns say.
-2. **There is no problem to solve.** Proving is 33 ms at national depth, verification is not
-   the cost driver, and the proof fits in a QR presentation. A rewrite of the soundness core
+2. **There is no problem to solve.** Proving is 33 ms at national depth, verification's cryptography is
+   not the cost driver, and the proof fits in a QR presentation. A rewrite of the soundness core
    with no measured deficiency to fix is risk without return.
 3. **The cost is a rewrite plus a re-anchor plus an invalidation of every published epoch**, and
    it is now measured rather than feared. That is a price worth paying for a real problem and
