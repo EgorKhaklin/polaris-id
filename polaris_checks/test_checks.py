@@ -2059,16 +2059,26 @@ def test_external_postgres_check_discriminates(tmp_path):
     settings = ("polaris.min_epoch_anonymity_set", "polaris.default_max_revoke_percent",
                 "polaris.default_window_days")
     SCRIPT = ("".join("has_parameter_privilege('%s', 'SET')\n" % s for s in settings)
-              + "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'\n"
+              + "SELECT count(*) FROM pg_class WHERE relnamespace = 'public'::regnamespace\n"
+              + "  + (SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace)\n"
+              + 'if [[ "${app_exists}" == t && "${POLARIS_DB_INIT_REUSE_APP_ROLE:-}" != 1 ]]; then refuse; fi\n'
+              + 'if [[ -z "${APP_PW}" ]]; then\n    exit 2\nfi\n'
               + 'POLARIS_INIT_MANAGED_BY=external POLARIS_ENV=production bash polaris_web/docker-init.sh\n')
     INIT = ('SQL_DIR="${POLARIS_SQL_DIR:-/docker-entrypoint-initdb.d/sql}"\n'
+            'if [ "${POLARIS_ENV:-}" = "production" ] \\\n        && { [ -z "$POLARIS_APP_PASSWORD" ] || false; }; then exit 2; fi\n'
+            'app_role_sql="CREATE ROLE polaris_app WITH LOGIN PASSWORD \'%s\';\\n"\n'
+            'psql -f "$SQL_DIR/00_load_all.sql"\n'
             'if [ "$MANAGED" = "patroni" ]; then\n    echo "skip"\n'
             'elif [ "$MANAGED" = "external" ]; then\n    echo "the provider\'s"\nfi\n'
             'if [ -z "$MANAGED" ] && [ -n "$REPL_PWFILE" ]; then :; fi\n'
             'if [ -z "$MANAGED" ] && [ "${POLARIS_PGBACKREST_ENABLED:-1}" = "1" ]; then :; fi\n')
     CI = ("jobs:\n  managed-postgres:\n    steps:\n"
-          "      - run: bash scripts/polaris-db-init.sh\n"
+          "      - run: bash scripts/polaris-db-init.sh; [ $? = 3 ] || echo 'expected the refusal (exit 3)'\n"
           "      - run: psql -c 'GRANT SET ON PARAMETER x TO o' && bash scripts/polaris-db-init.sh\n"
+          "      - run: POLARIS_APP_PASSWORD_FILE=/tmp/empty.pw bash scripts/polaris-db-init.sh\n"
+          "      - run: echo 'after a failed load polaris_app answers to the development password'\n"
+          "      - run: echo \"polaris_app's password reached the server's statement log\"\n"
+          "      - run: echo 'the check above measured nothing'\n"
           "  other:\n    steps: []\n")
     DOC = "initialise it with scripts/polaris-db-init.sh after GRANT SET ON PARAMETER ...\n"
 
@@ -2083,7 +2093,19 @@ def test_external_postgres_check_discriminates(tmp_path):
         "must PASS on the wired path"
     broken = [
         dict(script=SCRIPT.replace("has_parameter_privilege('polaris.default_window_days', 'SET')\n", "")),
-        dict(script=SCRIPT.replace("pg_tables WHERE schemaname = 'public'", "pg_tables")),
+        dict(script=SCRIPT.replace("pg_class WHERE relnamespace = 'public'::regnamespace", "pg_tables")),
+        dict(script=SCRIPT.replace("pronamespace = 'public'::regnamespace", "true")),
+        dict(script=SCRIPT.replace(' && "${POLARIS_DB_INIT_REUSE_APP_ROLE:-}" != 1', "")),
+        dict(script=SCRIPT.replace('if [[ -z "${APP_PW}" ]]; then', 'if false; then')),
+        dict(init=INIT.replace('[ -z "$POLARIS_APP_PASSWORD" ]', '[ "$X" = 1 ]')),
+        dict(init=INIT.replace('app_role_sql="CREATE ROLE polaris_app WITH LOGIN PASSWORD \'%s\';\\n"\n'
+                               'psql -f "$SQL_DIR/00_load_all.sql"\n',
+                               'psql -f "$SQL_DIR/00_load_all.sql"\n'
+                               'app_role_sql="CREATE ROLE polaris_app WITH LOGIN PASSWORD \'%s\';\\n"\n')),
+        dict(ci=CI.replace("POLARIS_APP_PASSWORD_FILE=/tmp/empty.pw", "POLARIS_APP_PASSWORD_FILE=/tmp/app.pw")),
+        dict(ci=CI.replace("after a failed load polaris_app answers to the development password", "x")),
+        dict(ci=CI.replace("polaris_app's password reached the server's statement log", "x")),
+        dict(ci=CI.replace("the check above measured nothing", "x")),
         dict(script=SCRIPT.replace("POLARIS_INIT_MANAGED_BY=external", "POLARIS_INIT_MANAGED_BY=patroni")),
         dict(script=SCRIPT.replace("POLARIS_ENV=production ", "")),
         dict(init=INIT.replace('elif [ "$MANAGED" = "external" ]; then\n    echo "the provider\'s"\n', "")),
@@ -2091,7 +2113,7 @@ def test_external_postgres_check_discriminates(tmp_path):
         dict(init=INIT.replace('if [ -z "$MANAGED" ] && [ -n "$REPL_PWFILE" ]', 'if [ -n "$REPL_PWFILE" ]')),
         dict(init=INIT.replace('if [ -z "$MANAGED" ] && [ "${POLARIS_PGBACKREST_ENABLED',
                                'if [ "$MANAGED" != "patroni" ] && [ "${POLARIS_PGBACKREST_ENABLED')),
-        dict(ci=CI.replace("      - run: bash scripts/polaris-db-init.sh\n", "")),
+        dict(ci=CI.replace("      - run: bash scripts/polaris-db-init.sh; [ $? = 3 ] || echo 'expected the refusal (exit 3)'\n", "")),
         dict(ci=CI.replace("GRANT SET ON PARAMETER", "GRANT ALL")),
         dict(ci=CI.replace("managed-postgres", "something-else")),
         dict(doc="load polaris_sql/ by hand\n"),
@@ -3822,6 +3844,16 @@ def test_prod_hardening_check_discriminates(tmp_path):
     write(GOOD_INIT, GOOD_COMPOSE)
     assert checks.check_prod_hardening(tmp_path)[0].level == "OK", \
         "must PASS when demo accounts are neutralized, the floor restored and Redis wired"
+
+    # 5. An earlier production block that hardens nothing (docker-init.sh refuses a missing password in
+    #    production before it loads anything) neither hides the hardening block nor stands in for it.
+    EARLY = 'if [ "${POLARIS_ENV:-}" = "production" ] && [ -z "$PW" ]; then\n    exit 2\nfi\n'
+    write(EARLY + GOOD_INIT, GOOD_COMPOSE)
+    assert checks.check_prod_hardening(tmp_path)[0].level == "OK", \
+        "must PASS when the hardening block follows an earlier production block"
+    write(EARLY + 'echo "no prod hardening"\n', GOOD_COMPOSE)
+    assert checks.check_prod_hardening(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the only production block hardens nothing"
 
 
 def test_backup_encryption_check_discriminates(tmp_path):

@@ -245,7 +245,11 @@ owner needs CREATEROLE (it creates `polaris_app`) and, on PostgreSQL 15 and late
 three `polaris.*` settings the schema keeps on the database, which a superuser grants once:
 `GRANT SET ON PARAMETER polaris.min_epoch_anonymity_set, polaris.default_max_revoke_percent,
 polaris.default_window_days TO <owner>;`. The script refuses, before writing anything, when one
-is missing. CI runs it against PostgreSQL 16 with an owner that is not a superuser; no
+is missing, when the application password is empty, or when `polaris_app` already exists on the
+server: a role belongs to the server, not to one database, so setting its password could lock out
+another database's stack, and an existing one is used only with `POLARIS_DB_INIT_REUSE_APP_ROLE=1`.
+`polaris_app` gets its password before the schema loads, so the public development password is
+never set, not even by a load that fails. CI runs it against PostgreSQL 16 with an owner that is not a superuser; no
 provider's service has been tested, and whether a provider's administrator may grant parameter
 privileges is the provider's to say.
 pgBackRest and the procedures in DR.md section 4 do not apply to that

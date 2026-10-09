@@ -20,7 +20,11 @@
 #             polaris.default_window_days TO <owner>;
 #   - CREATEROLE, to create the application role polaris_app; or polaris_app exists and the owner
 #     holds ADMIN on it, so it may set its password;
-#   - an empty database: an initialised one is upgraded with scripts/polaris-migrate.sh --up.
+#   - an empty database: an initialised one is upgraded with scripts/polaris-migrate.sh --up;
+#   - no polaris_app on the server yet. A role is the server's, not the database's: when another
+#     database's stack already presents polaris_app, setting its password here locks that stack out,
+#     so an existing one is used only with POLARIS_DB_INIT_REUSE_APP_ROLE=1, after the operator has
+#     given every stack that uses it the password in POLARIS_APP_PASSWORD_FILE.
 #
 # Usage (from the checkout; psql and python3 on PATH):
 #   POLARIS_DB_HOST=db.example.net POLARIS_DB_OWNER=polaris_owner \
@@ -31,8 +35,8 @@
 # POLARIS_DB_PORT (5432) and POLARIS_DB_NAME (polaris) have defaults. libpq's own variables pass
 # through; PGSSLMODE defaults to verify-full. POLARIS_APP_PASSWORD_FILE is the password the app and
 # pgbouncer present as polaris_app (the stack's secrets/polaris_db_password).
-# Exit: 0 initialised; 1 the server or the initialisation failed; 2 usage; 3 a precondition does
-# not hold (nothing was written).
+# Exit: 0 initialised; 1 the server or the initialisation failed; 2 usage, or a password refused
+# (nothing was written); 3 a precondition does not hold (nothing was written).
 # ============================================================================
 set -euo pipefail
 
@@ -51,10 +55,18 @@ if [[ -z "${POLARIS_APP_PASSWORD_FILE:-}" || ! -r "${POLARIS_APP_PASSWORD_FILE}"
     echo "       pgbouncer present as polaris_app (the stack's secrets/polaris_db_password)" >&2
     exit 2
 fi
-if [[ "$(cat "${POLARIS_APP_PASSWORD_FILE}")" == "polaris_dev_password" ]]; then
+# Read as the app reads it (_read_secret_file: .read().strip()).
+APP_PW="$(cat "${POLARIS_APP_PASSWORD_FILE}")"
+APP_PW="${APP_PW#"${APP_PW%%[![:space:]]*}"}"; APP_PW="${APP_PW%"${APP_PW##*[![:space:]]}"}"
+if [[ -z "${APP_PW}" ]]; then
+    echo "error: ${POLARIS_APP_PASSWORD_FILE} is empty: polaris_app would keep the public development password" >&2
+    exit 2
+fi
+if [[ "${APP_PW}" == "polaris_dev_password" ]]; then
     echo "error: ${POLARIS_APP_PASSWORD_FILE} holds the development password, which is public" >&2
     exit 2
 fi
+unset APP_PW
 for tool in psql python3; do
     command -v "${tool}" > /dev/null || { echo "error: ${tool} is not on PATH" >&2; exit 2; }
 done
@@ -79,7 +91,10 @@ IFS='|' read -r super owns createrole app_exists app_admin tables can_set < <(q 
            to_regrole('polaris_app') IS NOT NULL,
            COALESCE((SELECT bool_or(m.admin_option) FROM pg_auth_members m
                       WHERE m.roleid = to_regrole('polaris_app') AND m.member = r.oid), false),
-           (SELECT count(*) FROM pg_tables WHERE schemaname = 'public'),
+           (SELECT count(*) FROM pg_class WHERE relnamespace = 'public'::regnamespace)
+             + (SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace)
+             + (SELECT count(*) FROM pg_type WHERE typnamespace = 'public'::regnamespace AND typelem = 0
+                                              AND typrelid = 0),
            has_parameter_privilege('polaris.min_epoch_anonymity_set', 'SET')
              AND has_parameter_privilege('polaris.default_max_revoke_percent', 'SET')
              AND has_parameter_privilege('polaris.default_window_days', 'SET')
@@ -87,7 +102,10 @@ IFS='|' read -r super owns createrole app_exists app_admin tables can_set < <(q 
      WHERE r.rolname = current_user AND d.datname = current_database()")
 refusals=()
 if [[ "${tables}" != 0 ]]; then
-    refusals+=("the database is not empty (${tables} tables in public): an initialised database is upgraded with scripts/polaris-migrate.sh --up")
+    refusals+=("the database is not empty (${tables} relations, functions or types in public): an initialised database is upgraded with scripts/polaris-migrate.sh --up")
+fi
+if [[ "${app_exists}" == t && "${POLARIS_DB_INIT_REUSE_APP_ROLE:-}" != 1 ]]; then
+    refusals+=("polaris_app already exists on this server, perhaps for another database's stack; setting its password here would lock that stack out. Give every stack that uses it the password in ${POLARIS_APP_PASSWORD_FILE}, then run again with POLARIS_DB_INIT_REUSE_APP_ROLE=1")
 fi
 if [[ "${super}" != t && "${owns}" != t ]]; then
     refusals+=("${PGUSER} does not own ${PGDATABASE}: the schema keeps settings on the database, which only its owner may write")
@@ -109,9 +127,15 @@ if (( ${#refusals[@]} )); then
 fi
 
 echo "initialising ${WHERE} as a production database"
-if ! POLARIS_INIT_MANAGED_BY=external POLARIS_SQL_DIR="${POLARIS_ROOT}/polaris_sql" \
-        POSTGRES_USER="${PGUSER}" POSTGRES_DB="${PGDATABASE}" POLARIS_ENV=production \
-        bash "${POLARIS_ROOT}/polaris_web/docker-init.sh"; then
+rc=0
+POLARIS_INIT_MANAGED_BY=external POLARIS_SQL_DIR="${POLARIS_ROOT}/polaris_sql" \
+    POSTGRES_USER="${PGUSER}" POSTGRES_DB="${PGDATABASE}" POLARIS_ENV=production \
+    bash "${POLARIS_ROOT}/polaris_web/docker-init.sh" || rc=$?
+if (( rc == 2 )); then
+    # docker-init.sh's external mode exits 2 only before its first write (a refused password).
+    echo "refused (above); nothing was written" >&2
+    exit 2
+elif (( rc != 0 )); then
     echo "error: the initialisation stopped (above); drop and recreate ${PGDATABASE} before running this again" >&2
     exit 1
 fi

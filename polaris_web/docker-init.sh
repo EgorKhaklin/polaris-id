@@ -48,10 +48,19 @@ SQL_DIR="${POLARIS_SQL_DIR:-/docker-entrypoint-initdb.d/sql}"
 # the prod stack uses, G28). docker-compose.prod.yml points
 # POLARIS_APP_PASSWORD_FILE at the SAME /run/secrets/polaris_db_password the app
 # and pgbouncer read, so the role's password ends up equal to theirs. `cat`
-# command substitution strips the trailing newline, matching the app's
-# _read_secret_file().read().strip(), so the two values compare byte-for-byte.
+# command substitution strips the trailing newline; the leading and trailing whitespace go too, as
+# the app's _read_secret_file().read().strip() drops them, so the two values compare byte-for-byte.
 if [ -n "$POLARIS_APP_PASSWORD_FILE" ] && [ -r "$POLARIS_APP_PASSWORD_FILE" ]; then
     POLARIS_APP_PASSWORD="$(cat "$POLARIS_APP_PASSWORD_FILE")"
+fi
+POLARIS_APP_PASSWORD="${POLARIS_APP_PASSWORD#"${POLARIS_APP_PASSWORD%%[![:space:]]*}"}"
+POLARIS_APP_PASSWORD="${POLARIS_APP_PASSWORD%"${POLARIS_APP_PASSWORD##*[![:space:]]}"}"
+# In production polaris_app never keeps the public development password: an empty or absent secret
+# (a file holding only a newline) is refused before anything is written, not skipped.
+if [ "${POLARIS_ENV:-}" = "production" ] \
+        && { [ -z "$POLARIS_APP_PASSWORD" ] || [ "$POLARIS_APP_PASSWORD" = "polaris_dev_password" ]; }; then
+    echo "FATAL: production needs polaris_app's password (POLARIS_APP_PASSWORD_FILE): it is empty or the public development one." >&2
+    exit 2
 fi
 
 ROTATE_APP_PASSWORD=0
@@ -92,6 +101,33 @@ if [ -n "$POLARIS_APP_PASSWORD" ] && [ "$POLARIS_APP_PASSWORD" != "polaris_dev_p
     command -v python3 > /dev/null \
         || { echo "FATAL: python3 computes polaris_app's SCRAM verifier and is not on PATH." >&2; exit 2; }
     ROTATE_APP_PASSWORD=1
+fi
+
+# polaris_app gets its password BEFORE the schema loads. 09_grants.sql creates the role with the
+# development password only when it does not exist, so creating it here first means that password is
+# never set: not while the load runs, and not after a load or a migration that fails (a role is the
+# cluster's, and outlives a dropped database). The server receives a SCRAM-SHA-256 verifier computed
+# here, as psql's \password sends one, never the password: it reaches neither a command line nor the
+# statement a server may log (on a managed database, the provider's log). The password travels to
+# python on stdin.
+if [ "$ROTATE_APP_PASSWORD" = 1 ]; then
+    echo "Setting polaris_app's password..."
+    verifier=$(printf '%s' "$POLARIS_APP_PASSWORD" | python3 -c '
+import base64, hashlib, hmac, os, sys
+pw = sys.stdin.buffer.read(); salt = os.urandom(16); n = 4096
+salted = hashlib.pbkdf2_hmac("sha256", pw, salt, n)
+ck = hmac.new(salted, b"Client Key", hashlib.sha256).digest()
+sk = hmac.new(salted, b"Server Key", hashlib.sha256).digest()
+b64 = lambda x: base64.b64encode(x).decode()
+print("SCRAM-SHA-256$%d:%s$%s:%s" % (n, b64(salt), b64(hashlib.sha256(ck).digest()), b64(sk)))')
+    if [ -n "$(psql -X -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -qtAc \
+                 "SELECT 1 FROM pg_roles WHERE rolname = 'polaris_app'")" ]; then
+        app_role_sql="ALTER ROLE polaris_app WITH PASSWORD '%s';\n"
+    else
+        app_role_sql="CREATE ROLE polaris_app WITH LOGIN PASSWORD '%s';\n"
+    fi
+    printf "$app_role_sql" "$verifier" \
+        | psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -q > /dev/null
 fi
 
 echo "Loading Polaris SQL package..."
@@ -169,24 +205,6 @@ SQL
         echo "  ✓ applied: $name (sha=${sha:0:16}…)"
     done
     echo "Applied $count migration(s)."
-fi
-
-# Sync the polaris_app role password to the prod secret (read and judged at the top).
-if [ "$ROTATE_APP_PASSWORD" = 1 ]; then
-    echo "Rotating polaris_app password..."
-    # The server receives a SCRAM-SHA-256 verifier computed here, as psql's \password sends one,
-    # never the password: it reaches neither a command line nor the statement a server may log
-    # (on a managed database, the provider's log). The password travels to python on stdin.
-    verifier=$(printf '%s' "$POLARIS_APP_PASSWORD" | python3 -c '
-import base64, hashlib, hmac, os, sys
-pw = sys.stdin.buffer.read(); salt = os.urandom(16); n = 4096
-salted = hashlib.pbkdf2_hmac("sha256", pw, salt, n)
-ck = hmac.new(salted, b"Client Key", hashlib.sha256).digest()
-sk = hmac.new(salted, b"Server Key", hashlib.sha256).digest()
-b64 = lambda x: base64.b64encode(x).decode()
-print("SCRAM-SHA-256$%d:%s$%s:%s" % (n, b64(salt), b64(hashlib.sha256(ck).digest()), b64(sk)))')
-    printf "ALTER ROLE polaris_app WITH PASSWORD '%s';\n" "$verifier" \
-        | psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -q > /dev/null
 fi
 
 # v9.126 — streaming-replication readiness. When the operator provides a

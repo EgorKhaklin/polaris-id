@@ -49,6 +49,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-migrate.sh` read a schema registry it could not read as nothing applied and planned every migration; it now stops.
 - A managed PostgreSQL, whose owner is not a superuser, could not load the schema as ENCRYPTION-AT-REST.md said; `scripts/polaris-db-init.sh` initialises one after a single grant.
 - A weak application-role password stopped the database's first start after the schema had loaded; it now stops before anything is written.
+- The application role briefly had the public development password while the schema loaded, and kept it if a migration failed; it now gets its own before the load, and an empty one is refused in production.
 - The observability overlay's Prometheus scraped the app through the public edge, which refuses `/metrics` by default; it now finds the app on the stack's network by name, blue-green included.
 - DR.md's point-in-time restore brought the app back without the revocations, key events and other withdrawals made after the target; it now re-applies them first.
 - A duress record still being written when a worker stopped was abandoned with its daemon thread; the worker now waits for it (a killed worker can still lose one in flight). Kubernetes pods pause before draining.

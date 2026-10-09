@@ -42,7 +42,7 @@ sys.stderr.write("stand-in psql: unexpected query\n"); sys.exit(99)
 # docker-init.sh: records its environment; STUB_INIT_FAIL makes it fail as a load would.
 INIT = r'''#!/bin/bash
 python3 -c 'import json, os, sys; json.dump(dict(os.environ), open(sys.argv[1], "w"))' "$STUB_INIT_LOG"
-[ -z "$STUB_INIT_FAIL" ] || { echo "psql: ERROR: something" >&2; exit 3; }
+[ -z "$STUB_INIT_FAIL" ] || { echo "psql: ERROR: something" >&2; exit "${STUB_INIT_FAIL_CODE:-3}"; }
 echo "Polaris init complete."
 '''
 
@@ -129,12 +129,18 @@ class DbInitTests(unittest.TestCase):
             self.assertIn(said, r.stderr)
 
     def test_a_superuser_needs_no_grant(self):
-        r = self.run_script(STUB_FACTS="t|f|f|t|f|0|f")
+        r = self.run_script(STUB_FACTS="t|f|f|f|f|0|f")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIsNotNone(self.init_env())
 
-    def test_an_existing_app_role_the_owner_administers_is_kept(self):
+    def test_an_existing_app_role_is_used_only_when_the_operator_says_so(self):
+        """A role is the server's: another database's stack may present polaris_app, and setting its
+        password here would lock that stack out (the review of 2026-10-09)."""
         r = self.run_script(STUB_FACTS="f|t|f|t|t|0|t")
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn("polaris_app already exists", r.stderr)
+        self.assertIsNone(self.init_env())
+        r = self.run_script(STUB_FACTS="f|t|f|t|t|0|t", POLARIS_DB_INIT_REUSE_APP_ROLE="1")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
     def test_a_server_older_than_sixteen_is_refused(self):
@@ -159,6 +165,22 @@ class DbInitTests(unittest.TestCase):
         r = self.run_script(drop=("POLARIS_DB_HOST",))
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertIsNone(self.init_env())
+
+    def test_an_empty_app_password_is_refused_before_a_write(self):
+        """A file holding only a newline read as no password, and polaris_app kept the public one."""
+        for body in ("\n", "   \n", ""):
+            with self.subTest(repr(body)):
+                self.app_pw.write_text(body)
+                r = self.run_script()
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertIn("empty", r.stderr)
+                self.assertIsNone(self.init_env())
+
+    def test_a_password_refused_before_the_first_write_is_not_a_failed_load(self):
+        r = self.run_script(STUB_INIT_FAIL="1", STUB_INIT_FAIL_CODE="2")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("nothing was written", r.stderr)
+        self.assertNotIn("drop and recreate", r.stderr)
 
     def test_a_failed_initialisation_says_to_start_again_from_an_empty_database(self):
         r = self.run_script(STUB_INIT_FAIL="1")
