@@ -31,6 +31,7 @@ It prints a JSON verdict and exits 0. The tampered vectors beside it (`ml-dsa-65
 
 ## Evidence and limits
 
+- [Claims manifest](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/claims.json): each outward claim with its evidence and how to reproduce it.
 - [Production readiness](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md): the bound on what the project may claim, and the operability gate, each PASS citing evidence a check resolves.
 - [Scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md): what named outside parties did with Polaris, with dates.
 - [Security policy](https://github.com/EgorKhaklin/polaris-id/blob/main/SECURITY.md), [threat model](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/design/threat-model.md), [red-team scope](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/RED-TEAM-SCOPE.md), [review packet](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/REVIEW-PACKET.md).
@@ -38,7 +39,7 @@ It prints a JSON verdict and exits 0. The tampered vectors beside it (`ml-dsa-65
 
 ## Certification, in its scope
 
-`polaris-oid4vp 1.0.0rc7` is OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/), 24 September 2026): a self-certification the OpenID Foundation reviewed and published, for that package version in that role. It is not an endorsement, not an audit, and not a certification of the rest of Polaris.
+`polaris-oid4vp 1.0.0rc7` is OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/), 24 September 2026): a self-certification the OpenID Foundation reviewed and published, for that package version in that role. It is not an endorsement, not an audit, and not a certification of the rest of Polaris.
 
 ## Packages
 

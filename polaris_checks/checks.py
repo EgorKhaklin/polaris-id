@@ -22064,6 +22064,131 @@ def check_operability_gate(root: pathlib.Path) -> list[Finding]:
     return _ok(name, f"the operability gate's {len(rows)} rows have known statuses, every PASS cites the "
                      f"evidence pinned for it, every citation resolves and the totals match the rows")
 
+
+# 2026-10-09: the outward claims manifest. The operability gate ties each PASS to evidence a check resolves; the
+# README's badges and status lines, the site and site/llms.txt had no such map, and one outward count, the badge
+# "Tested against 14 outside implementations", nothing re-measured. docs/reference/claims.json is the map: each claim,
+# where it is published, its evidence in the gate's citation syntax plus https URLs for outside evidence, and how a
+# stranger reproduces it.
+_CLAIM_FIELDS = ("id", "kind", "claim", "surfaces", "evidence", "reproduce")
+
+
+def _claim_text(text: str) -> str:
+    """A surface as a reader sees it: no HTML comments, tags or entities, no Markdown emphasis or code marks, no
+    trademark signs, whitespace collapsed and case folded, so a claim matches its sentence however it is set."""
+    from html import unescape
+    text = unescape(re.sub(r"<[^>]+>", " ", re.sub(r"<!--.*?-->", " ", text, flags=re.S)))
+    text = re.sub(r"\*+|`|(?<!\w)_+|_+(?!\w)|[®™]", "", text)
+    return " ".join(text.split()).casefold()
+
+
+def _readme_badges(text: str) -> dict[str, str]:
+    """The badges above a README's first `## ` heading, as alt text -> image source.
+
+    A badge is a linked image: Markdown's `[![alt](src)](href)`, or an HTML `<a href><img alt></a>` unless the link
+    is to a section of the page itself (the row of navigation buttons claims nothing). A badge inside an HTML comment
+    is not rendered, so it is not a badge."""
+    head = re.sub(r"<!--.*?-->", "", text, flags=re.S).split("\n## ", 1)[0]
+    found = dict(re.findall(r"\[!\[([^\]]*)\]\((\S+?)\)\]\(\S+?\)", head))
+    for href, tag in re.findall(r'<a\s[^>]*?href="([^"]*)"[^>]*>\s*(<img\s[^>]*>)', head):
+        alt, src = re.search(r'\balt="([^"]*)"', tag), re.search(r'\bsrc="([^"]*)"', tag)
+        if alt and alt.group(1) and src and not href.startswith("#"):
+            found[alt.group(1)] = src.group(1)
+    return found
+
+
+def _shields_label(src: str) -> str | None:
+    """What a static shields.io badge renders, as 'label: message'; None for any other image."""
+    from urllib.parse import unquote
+    m = re.match(r"https://img\.shields\.io/badge/([^?#]+)", src)
+    if not m:
+        return None
+    parts = [unquote(p.replace("\0", "-").replace("__", "\0").replace("_", " ").replace("\0", "_"))
+             for p in m.group(1).replace("--", "\0").split("-")]
+    return ": ".join(parts[:-1]) or None
+
+
+def check_claims_manifest(root: pathlib.Path) -> list[Finding]:
+    """Every outward claim has an entry in docs/reference/claims.json, and every entry is still true of the tree.
+
+    Both directions for the README's badges (a badge with no entry, an entry whose badge is gone, a rendered label the
+    entry does not state); each entry's text on every surface it names; every evidence token resolving (check, test,
+    drill and file as the operability gate resolves them, url as https and not fetched); and the outside-implementations
+    count equal to the implementations its entry names, each named in the README's Status section and found in a row
+    of the scoreboard's Wallets table."""
+    name = "claims_manifest"
+    try:
+        entries = json.loads(_read(root, "docs/reference/claims.json"))["claims"]
+    except (ValueError, KeyError, TypeError):
+        entries = None
+    if not isinstance(entries, list) or not entries:
+        return _fail(name, "docs/reference/claims.json is missing, is not JSON, or lists no claims")
+    readme = _read(root, "README.md")
+    badges = _readme_badges(readme)
+    ids: set = set()
+    for e in entries:
+        if (not isinstance(e, dict) or any(e.get(f) in (None, "", []) for f in _CLAIM_FIELDS if f != "reproduce")
+                or not isinstance(e["surfaces"], list) or not isinstance(e["evidence"], list)):
+            return _fail(name, f"a manifest entry lacks one of {', '.join(_CLAIM_FIELDS)}: {str(e)[:80]}")
+        if "reproduce" not in e or (e["reproduce"] is None and not e.get("why")) or e["reproduce"] == "":
+            return _fail(name, f"{e['id']}: reproduce must be a command or steps, or null with a 'why'")
+        if e["id"] in ids:
+            return _fail(name, f"{e['id']}: two entries share this id")
+        ids.add(e["id"])
+        if e["kind"] not in ("badge", "statement"):
+            return _fail(name, f"{e['id']}: kind is {e['kind']!r}; it must be 'badge' or 'statement'")
+    by_badge = {e["claim"]: e for e in entries if e["kind"] == "badge"}
+    for alt in badges:
+        if alt not in by_badge:
+            return _fail(name, f"README.md shows the badge {alt!r} and docs/reference/claims.json has no entry for it")
+    for e in entries:
+        for surface in e["surfaces"]:
+            text = _read(root, surface)
+            if e["kind"] == "badge":
+                shown = _readme_badges(text)
+                if e["claim"] not in shown:
+                    return _fail(name, f"{e['id']}: the badge {e['claim']!r} is no longer on {surface}")
+                if e.get("label") != _shields_label(shown[e["claim"]]):
+                    return _fail(name, f"{e['id']}: the badge on {surface} renders {_shields_label(shown[e['claim']])!r}; "
+                                       f"the entry says {e.get('label')!r}")
+            elif _claim_text(e["claim"]) not in _claim_text(text):
+                return _fail(name, f"{e['id']}: {surface} no longer says {e['claim'][:60]!r}")
+        for token in e["evidence"]:
+            kind, _, target = str(token).partition(":")
+            if kind == "url":
+                if not re.fullmatch(r"https://[\w.-]+(?:[/?#]\S*)?", target):
+                    return _fail(name, f"{e['id']}: {token} is not an https URL")
+            elif kind not in ("check", "test", "drill", "file"):
+                return _fail(name, f"{e['id']}: evidence {token!r} is not check:, test:, drill:, file: or url:")
+            elif not _gate_citation_resolves(root, kind, target):
+                return _fail(name, f"{e['id']}: evidence {token} does not resolve")
+    status = _claim_text(readme.split("\n## Status", 1)[-1].split("\n## ", 1)[0]) if "\n## Status" in readme else ""
+    nouns = _read(root, "lab/EXTERNAL-NOUNS.md")
+    wallets = nouns.split("\n### Wallets", 1)[-1].split("\n### ", 1)[0] if "\n### Wallets" in nouns else ""
+    rows = [cells[1] for cells in (ln.strip().strip("|").split("|") for ln in wallets.splitlines() if ln.startswith("|"))
+            if len(cells) > 2]
+    counted = 0
+    for alt, src in badges.items():
+        stated = {int(n) for n in re.findall(r"(\d+)[ _]outside[ _]implementations", alt + " " + src, re.I)}
+        if not stated:
+            continue
+        impls = by_badge[alt].get("implementations")
+        if not isinstance(impls, list) or not all(isinstance(i, dict) and i.get("name") and i.get("scoreboard") for i in impls):
+            return _fail(name, f"{by_badge[alt]['id']}: the entry must list the implementations it counts, each a name and a scoreboard term")
+        if stated != {len(impls)}:
+            return _fail(name, f"the badge states {sorted(stated)} outside implementations; its entry names {len(impls)}")
+        if len({i["name"] for i in impls}) != len(impls) or len({i["scoreboard"] for i in impls}) != len(impls):
+            return _fail(name, f"{by_badge[alt]['id']}: an implementation is named twice, so the count counts it twice")
+        for i in impls:
+            if _claim_text(i["name"]) not in status:
+                return _fail(name, f"README.md's Status section no longer names {i['name']!r}")
+            if not any(i["scoreboard"] in cell for cell in rows):
+                return _fail(name, f"{i['name']!r} ({i['scoreboard']!r}) is in no row of lab/EXTERNAL-NOUNS.md's Wallets table")
+        counted += len(impls)
+    return _ok(name, f"{len(entries)} outward claims and all {len(badges)} README badges are mapped, each still on its "
+                     f"surfaces with its evidence resolving; the {counted} outside implementations the badge counts are each "
+                     f"named in the README and on the scoreboard")
+
 def check_assurance_mapping(root: pathlib.Path) -> list[Finding]:
     """The 800-63 mapping cites evidence that exists, and does not claim conformance (P6.2).
 
@@ -27041,6 +27166,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_config_schema_covers_env,
     check_config_doc_current,
     check_operability_gate,
+    check_claims_manifest,
     check_ci_runs_atlas_e2e,
     check_load_gen_single_ledger,
     check_chaos_probe_reaches_wrapper,
