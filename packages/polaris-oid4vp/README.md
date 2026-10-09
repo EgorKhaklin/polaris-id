@@ -58,7 +58,9 @@ the walks against the newest release on PyPI.
 
 The author drove every walk: interoperability with those implementations, not use by their
 maintainers. Each walk is one script you can run against your own copy; to test your wallet,
-point it at `polaris-oid4vp serve` as below.
+point it at `polaris-oid4vp serve` as below. The weekly canary last walked every row above
+against 1.0.0rc16 from PyPI on 2026-10-06, and every walk passed
+([run 37460790872](https://github.com/EgorKhaklin/polaris-id/actions/runs/37460790872)).
 
 ## Install and run
 
