@@ -6588,8 +6588,8 @@ _SYNC_REPLICATION_NEEDLES = (
     ("deploy/helm/polaris/templates/postgres.yaml", "POLARIS_PATRONI_SYNCHRONOUS_MODE",
      "pass the chart's setting to its members"),
     ("scripts/polaris-failover-drill.sh", ".get('synchronous_mode')", "read the mode from the cluster"),
-    ("scripts/polaris-failover-drill.sh", '[[ -z "$EXPECT_SYNC" || "$SYNC" == "$EXPECT_SYNC" ]]',
-     "fail when the cluster's mode is not the one the run expects"),
+    ("scripts/polaris-failover-drill.sh", '[[ -z "$EXPECT_SYNC" || "$SYNC" == "$EXPECT_SYNC" ]] \\\n'
+     '    || fail "synchronous_mode is $SYNC', "fail when the cluster's mode is not the one the run expects"),
     (".github/workflows/ci.yml", 'POLARIS_FAILOVER_EXPECT_SYNC: "on"\n        run: bash scripts/polaris-failover-drill.sh',
      "run the drill CI holds gate row OP-6 to with synchronous_mode required"),
     ("scripts/polaris-failover-drill.sh", "with synchronous_mode on, a failover must lose none",
@@ -7031,9 +7031,11 @@ _FRESH_HOST_CI = (
     ("sudo scripts/polaris-rp-register.sh", "register the relying party as the operator would"),
     ('v.get("decision") == "accept"', "require the relying party's online verification to accept"),
     ("operator inputs 5 to the offline verification", "report the operator's inputs"),
-    ("/tmp/op2-venv/bin/polaris-verify --pqc-provider auto --issuer-anchor /tmp/op2-anchors.json --pack /tmp/op2-pack.json",
-     "verify the credential offline with polaris-verify from PyPI"),
-    ('[ "$total" -le 900 ]', "fail past the 15 minutes gate row OP-2 allows, not only print the time"),
+    ("/tmp/op2-venv/bin/polaris-verify --pqc-provider auto --issuer-anchor /tmp/op2-anchors.json --pack /tmp/op2-pack.json \\\n"
+     '            || { echo "::error::polaris-verify from PyPI did not verify', "verify the credential offline with "
+     "polaris-verify from PyPI, and fail when it does not"),
+    ('[ "$total" -le 900 ] \\\n            || { echo "::error::gate row OP-2',
+     "fail past the 15 minutes gate row OP-2 allows, not only print the time"),
     ("/tmp/op2-install-start", "time the fresh host from the install"),
     ("set -o pipefail\n          date +%s > /tmp/op2-install-start", "fail when install.sh fails, not when tee does"),
     ("no authority key is registered yet", "show the doctor asking for the registration on a fresh host"),
@@ -21733,33 +21735,57 @@ def check_accessibility(root: pathlib.Path) -> list[Finding]:
 # every citation in any row resolves (a check that exists, a test file and name, a drill or file
 # path), the stated totals are recomputed from the rows, and the last word on real identity data
 # cannot turn PASS while the status line still says otherwise.
-_GATE_STATUSES = ("PASS", "PARTIAL", "FAIL", "UNKNOWN", "N/A")
+# The four the totals line counts (review round 2: N/A was allowed, needed no citation and was in no total, so the
+# real-identity-data row turned N/A with "1 FAIL" passed).
+_GATE_STATUSES = ("PASS", "PARTIAL", "FAIL", "UNKNOWN")
 
-# The evidence each PASS row rests on, pinned (review of the OP-2/OP-6 rows, 2026-10-09: a PASS citing any
-# evidence that resolved passed, so OP-6 citing only the zone-loss drill did). A row turned PASS gets its pin here,
-# reviewed with it.
-_GATE_PASS_EVIDENCE = {
-    "OP-2": "check:fresh_host_reaches_online_verification",
-    "OP-3": "check:config_schema_covers_env",
-    "OP-4": "check:health_liveness_readiness_split",
-    "OP-5": "drill:scripts/polaris-rolling-drill.sh",
-    "OP-6": "drill:scripts/polaris-failover-drill.sh",
-    "OP-8": "check:ha_internal_auth",
-    "OP-11": "check:restore_verified_on_schedule",
-    "OP-12": "drill:scripts/polaris-pitr-drill.sh",
-    "OP-13": "check:restore_reconciled",
-    "OP-15": "check:infra_alerts",
-    "OP-16": "drill:scripts/polaris-page-drill.sh",
-    "OP-17": "check:doctor_names_failures",
-    "OP-18": "check:helm_upgrade_migrates",
-    "OP-19": "drill:scripts/polaris-upgrade-drill.sh",
-    "OP-20": "check:aor_append_only_triggers",
-    "OP-21": "check:pqc_second_witness",
-    "OP-22": "drill:scripts/polaris-quantum-event-drill.py",
-    "OP-23": "check:key_rotation_drilled",
-    "OP-24": "check:throughput_measured",
-    "OP-26": "check:client_ip_behind_proxies",
-    "OP-27": "file:Polaris.command",
+# The criterion and the evidence each PASS row rests on, pinned (review of the OP-2/OP-6 rows, 2026-10-09: a PASS
+# citing any evidence that resolved passed, so OP-6 citing only the zone-loss drill did, and a PASS whose criterion was
+# reworded to ask less passed too). A row turned PASS gets its pin here, reviewed with it; every pinned citation is
+# required.
+_GATE_PASS_PINS = {
+    "OP-2": ('A fresh host reaches HTTPS and a verified credential in 15 minutes or less, with five operator inputs or fewer',
+              ("check:fresh_host_reaches_online_verification",)),
+    "OP-3": ('Every setting is validated at boot, and a wrong one stops it by name',
+              ("check:config_schema_covers_env", "test:polaris_web/test_app.py::ConfigSchemaTests")),
+    "OP-4": ('Readiness reflects what this instance can serve, and a shared failure does not empty the pool',
+              ("check:health_liveness_readiness_split",)),
+    "OP-5": ('An instance crash costs no request',
+              ("drill:scripts/polaris-rolling-drill.sh",)),
+    "OP-6": ('A database failover loses no acknowledged write',
+              ("drill:scripts/polaris-failover-drill.sh",)),
+    "OP-8": ('Internal services authenticate one another',
+              ("check:redis_authenticated", "check:ha_internal_auth")),
+    "OP-11": ('Restores are verified on a schedule and the evidence is current',
+              ("check:restore_verified_on_schedule",)),
+    "OP-12": ('A restore to a chosen point in time is tested',
+              ("drill:scripts/polaris-pitr-drill.sh", "check:pitr_drilled")),
+    "OP-13": ('Revocations made after a restore point are re-applied after the restore',
+              ("check:restore_reconciled",)),
+    "OP-15": ('Backup age, archive failure, replication lag, disk, certificate expiry and clock skew alert',
+              ("drill:lab/strategy/006/alerts.sh", "check:infra_alerts")),
+    "OP-16": ('Application metrics, alerts and traces are tested',
+              ("drill:scripts/polaris-page-drill.sh", "drill:scripts/polaris-trace-drill.sh")),
+    "OP-17": ('One command names the failing component',
+              ("check:doctor_names_failures",)),
+    "OP-18": ('Schema migrations run on every upgrade path',
+              ("check:upgrade_drilled", "check:helm_upgrade_migrates")),
+    "OP-19": ('An upgrade from the previous release is drilled',
+              ("drill:scripts/polaris-upgrade-drill.sh", "drill:scripts/polaris-helm-upgrade-drill.sh")),
+    "OP-20": ('The data-integrity rules (C1 to C10) are enforced in the schema and mutation-tested',
+              ("check:aor_append_only_triggers", "drill:scripts/polaris-constraint-mutation-drill.py")),
+    "OP-21": ('Two independent ML-DSA implementations agree at issuance',
+              ("check:pqc_second_witness",)),
+    "OP-22": ('A signature-algorithm migration is drilled',
+              ("drill:scripts/polaris-quantum-event-drill.py",)),
+    "OP-23": ('A same-algorithm signing-key rotation is drilled end to end',
+              ("check:key_rotation_drilled",)),
+    "OP-24": ('Throughput is measured and a sizing guide is published',
+              ("check:throughput_measured", "file:docs/reference/SCALING.md")),
+    "OP-26": ('The client address is correct behind load balancers and NAT',
+              ("check:client_ip_behind_proxies",)),
+    "OP-27": ('Contributors need no Kubernetes',
+              ("file:Polaris.command",)),
 }
 
 
@@ -21785,10 +21811,16 @@ def check_operability_gate(root: pathlib.Path) -> list[Finding]:
     if "not readiness for real identity data" not in " ".join(section.split()):
         return _fail(name, "the gate must say it is not readiness for real identity data")
     rows = []
-    # Every table line is a row or the header: a row spelled `|OP-29|` once went uncounted.
-    for line in section.splitlines():
-        if not line.lstrip().startswith("|") or re.match(r"\s*\|\s*ID\s*\|", line) or re.match(r"\s*\|[-|\s]+$", line):
-            continue
+    # Every line of the table (from its header to the first blank line) is a row, the header or its rule, and so is
+    # any other line of the section that starts with a pipe: a row spelled `|OP-29|`, or with no leading pipe inside
+    # the table (Markdown renders both), once went uncounted.
+    lines = section.splitlines()
+    head = next((i for i, line in enumerate(lines) if re.match(r"\s*\|?\s*ID\s*\|", line)), None)
+    if head is None or head + 1 >= len(lines) or not re.fullmatch(r"\s*\|?[-:|\s]+", lines[head + 1]):
+        return _fail(name, "the gate has no table with an 'ID | Criterion | Status | Evidence' header and its rule")
+    end = next((i for i in range(head, len(lines)) if not lines[i].strip()), len(lines))
+    outside = [line for i, line in enumerate(lines) if not head <= i < end and line.lstrip().startswith("|")]
+    for line in lines[head + 2:end] + outside:
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         if len(cells) != 4 or not re.fullmatch(r"OP-\d+", cells[0]):
             return _fail(name, f"gate row is not OP-N | criterion | status | evidence: {line[:60]}")
@@ -21813,11 +21845,18 @@ def check_operability_gate(root: pathlib.Path) -> list[Finding]:
     if ("not production-ready for real identity data" in doc
             and any(r[2] == "PASS" for r in real)):
         return _fail(name, "the real-identity-data row is PASS while the status line says it is not")
-    for rid, _, status, evidence in rows:
+    for rid, crit, status, evidence in rows:
+        if status != "PASS":
+            continue
+        if rid not in _GATE_PASS_PINS:
+            return _fail(name, f"{rid} is PASS with no criterion and evidence pinned for it in _GATE_PASS_PINS")
+        pinned_crit, pinned = _GATE_PASS_PINS[rid]
+        if crit != pinned_crit:
+            return _fail(name, f"{rid} is PASS under a criterion other than the pinned one ({pinned_crit!r})")
         cited = {f"{k}:{t}" for k, t in re.findall(r"`(check|test|drill|file):([^`]+)`", evidence)}
-        if status == "PASS" and _GATE_PASS_EVIDENCE.get(rid) not in cited:
-            return _fail(name, f"{rid} is PASS without the evidence it rests on "
-                               f"({_GATE_PASS_EVIDENCE.get(rid) or 'none pinned: pin it in _GATE_PASS_EVIDENCE'})")
+        missing = [e for e in pinned if e not in cited]
+        if missing:
+            return _fail(name, f"{rid} is PASS without the evidence it rests on: {', '.join(missing)}")
     m = re.search(r"(\d+) criteria: (\d+) PASS, (\d+) PARTIAL, (\d+) FAIL, (\d+) UNKNOWN", section)
     if not m:
         return _fail(name, "the gate must state its totals ('N criteria: a PASS, b PARTIAL, c FAIL, d UNKNOWN')")
