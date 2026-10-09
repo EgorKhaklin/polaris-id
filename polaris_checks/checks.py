@@ -7239,31 +7239,148 @@ def check_infra_alerts(root: pathlib.Path) -> list[Finding]:
                "conditions and clears them on repair")
 
 
+_BUILDS_PROD_TAGS = (
+    re.compile(r'\b(?:ba)?sh\s+"?[^"\s]*polaris-image-build\.sh"?\s+--stack[= ]prod\b'),
+    re.compile(r'docker compose\b[^\n]*\s-f\s+"?[^"\s]*docker-compose\.prod\.yml"?[^\n]*\s(?:build|up)\b'),
+)
+
+
+def _host_image_builders(root: pathlib.Path) -> dict:
+    """Every shell script that builds the host's production image tags or recreates a service from them, with where
+    it first does: a run of polaris-image-build.sh --stack prod, a build or `up` through the production compose
+    file, or through a compose wrapper (function or array) on that file."""
+    found = {}
+    for p in _tree_rglob(root, "*.sh"):
+        rel = str(p.relative_to(root))
+        if rel == "scripts/polaris-host-lock.sh":
+            continue
+        text = _read_path(p)
+        hits = [m.start() for rx in _BUILDS_PROD_TAGS for m in rx.finditer(text)]
+        # A compose wrapper on the production file, a function over several lines or an array: what it brings
+        # up whole, or builds, builds the host's tags that are missing. Recreating one service (--no-deps) does
+        # not build.
+        wrappers = []
+        if re.search(r"(?s)\bcompose\(\)\s*\{.*?docker-compose\.prod\.yml.*?\}", text):
+            wrappers.append(r"compose")
+        for m in re.finditer(r"(?m)^\s*([A-Z_]+)=\(docker compose\b[^\n]*docker-compose\.prod\.yml", text):
+            wrappers.append(r'"\$\{%s\[@\]\}"' % m.group(1))
+        # An `up` of one service with --no-deps still builds that service's image when it is missing and recreates
+        # it from the shared tag (review 5 of #317), so every `up` and `build` counts; `VAR=x compose up` too.
+        for w in wrappers:
+            hits += [m.start() for m in re.finditer(r"(?m)^\s*(?:[A-Z_]+=\S*\s+)*%s (?:up|build)\b" % w, text)]
+        if hits:
+            found[rel] = min(hits)
+    return found
+
+
 def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
     name = "upgrade_drilled"
     dep = _read(root, "scripts/polaris-deploy.sh")
     if not re.search(r'(?m)^bash "\$\{SCRIPT_DIR\}/polaris-image-build\.sh" --stack prod$', dep):
         return _fail(name, "polaris-deploy.sh must build every Polaris image (polaris-image-build.sh --stack prod), "
                      "not the app's alone, or an upgrade keeps the edge, pooler and database it first built")
+    # A rollback by bare image ID found no image under Docker's containerd image store (the default on
+    # a clean install of Engine 29) once the build had moved polaris-app:prod: the running image is
+    # pinned under a tag of its own before the build, and the rollback re-tags the pin.
+    # The whole line, so `if false && docker tag ...` does not pass for a pin.
+    pin = dep.find('\n    if TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}" 2>&1); then\n')
+    build = dep.find('bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod')
+    if pin < 0 or pin > build or 'ROLLBACK_TAG="polaris-app:rollback-${PROJECT}"' not in dep \
+            or 'docker tag "${ROLLBACK_IMAGE}" polaris-app:prod' not in dep \
+            or 'docker tag "${PREV_IMAGE_ID}" polaris-app:prod' in dep:
+        return _fail(name, "polaris-deploy.sh must pin the running app image as polaris-app:rollback-<project> "
+                     "before it builds and roll back from that tag: under the containerd image store the bare "
+                     "ID no longer resolves once the build moves polaris-app:prod")
+    # 2026-10-09 review of #317: the pin is a host-wide tag, so a second deploy pinned the first one's
+    # failed release over it. One deploy per project, locked before anything changes.
+    # Reviews 2 and 3 of #317: every stack on a host builds the same tags, so the lock is the host's, held in
+    # the Docker daemon (a lock file split between /run, $HOME and $TMPDIR), and every script that builds
+    # those tags takes it before it builds.
+    lock = _read(root, "scripts/polaris-host-lock.sh")
+    take = dep.find('\npolaris_host_lock "this deploy"\n')
+    if take < 0 or take > pin or take > dep.find('echo "  [2/7] git pull') or not all(n in lock for n in (
+            "POLARIS_HOST_LOCK=polaris-host-lock",
+            '        if id=$(docker network create --internal --label "org.polaris.lock.token=${token}"',
+            # Review 4: an engine before 25 let two creates of one name both succeed: count, and give ours back.
+            '            if [[ "$(_polaris_lock_ids | grep -c .)" -ne 1 ]]; then\n'
+            '                docker network rm "${id}" >/dev/null 2>&1 || true',
+            '    docker network ls -q --filter "name=^${POLARIS_HOST_LOCK}\\$" 2>/dev/null || true',
+            # Review 4: released by its own ID, never by the name another run may hold by then.
+            '    if [[ -n "${POLARIS_HOST_LOCK_ID}" ]]; then docker network rm "${POLARIS_HOST_LOCK_ID}" >/dev/null 2>&1 '
+            '|| true; fi\n    exit "${rc}"',
+            # Review 5: the caller's trap in a subshell with its own set -e and the run's status, so neither its
+            # failure nor an exit in it skips the release.
+            '            if (( rc )); then (exit "${rc}") || eval "${_POLARIS_PREV_EXIT_TRAP}"; else :; eval "${_POLARIS_PREV_EXIT_TRAP}"; fi',
+            '    exit "${rc}"',
+            '    trap _polaris_host_unlock EXIT',
+            '    export POLARIS_HOST_LOCK_TOKEN="${token}"',
+            # Review 4: a lock this host left (an earlier boot, a process gone) is taken over, not waited on.
+            '    [[ "$(_polaris_lock_label boot "${net}")" != "$(_polaris_boot_id)" ]] && return 0',
+            '    [[ "${pid}" =~ ^[0-9]+$ ]] && ! ps -p "${pid}" >/dev/null 2>&1')):
+        return _fail(name, "polaris-deploy.sh must take this host's image lock before it pulls, pins or builds, and "
+                     "scripts/polaris-host-lock.sh must hold it in the Docker daemon (a network one caller can "
+                     "create, counted after creating), release it by its own ID after the caller's own trap, hand "
+                     "it to what the holder runs, and take over one this host left")
+    builders = _host_image_builders(root)
+    unlocked = []
+    for rel, at in builders.items():
+        text = _read(root, rel)
+        # The call as a statement, on the line after the helper is sourced (review 5: a call nothing defined
+        # passed, as an unknown command under no set -e).
+        call = re.search(r'(?m)^[ \t]*source "[^"\n]*polaris-host-lock\.sh"\n[ \t]*polaris_host_lock "[^"\n]+"[ \t]*$',
+                         text)
+        # A trap set on EXIT after the lock replaces the helper's, and with it the release.
+        if not call or call.start() > at or re.search(r"(?m)^[ \t]*trap\b[^\n]*\bEXIT\b", text[call.end():]):
+            unlocked.append(rel)
+    # install.sh builds under the lock and then starts the unit, which takes it itself: it gives its own back first.
+    inst = _read(root, "deploy/linux/install.sh")
+    if not (0 <= inst.find("polaris_host_release; fi") < inst.find("systemctl start polaris.service")):
+        unlocked.append("deploy/linux/install.sh (gives the lock back before polaris.service starts)")
+    unit = _read(root, "deploy/linux/polaris.service")
+    if "polaris_host_lock polaris.service" not in unit or \
+            unit.find("polaris_host_lock polaris.service") > unit.find("\nExecStart="):
+        unlocked.append("deploy/linux/polaris.service (its ExecStartPre)")
+    if not builders or unlocked:
+        return _fail(name, "every script that builds the host's production image tags or recreates a service from "
+                     "them must take its lock (source the helper, then a polaris_host_lock statement) before it "
+                     "does, and set no EXIT trap after it; polaris.service must take it before it starts: "
+                     + (", ".join(sorted(unlocked)) or "none found"))
+    # The block whole: a ROLLED=1 slipped in before the `if` passed a string search.
+    if not re.search(r'\n        ROLLED=1\n        for svc in [^\n]*wait_healthy "\$\{svc\}" \|\| ROLLED=0; done\n'
+                     r'        if \[\[ "\$\{ROLLED\}" -eq 1 \]\]; then\n            echo "  ✓ Rolled back\.', dep):
+        return _fail(name, "polaris-deploy.sh must report a rollback only when the restored app came up healthy")
+    if "PREV_APP=$(compose ps -a -q app" not in dep \
+            or re.search(r"""(?m)docker inspect\b[^\n]*[\s"']polaris-app(?=["'\s]|$)""", dep):
+        return _fail(name, "polaris-deploy.sh must find the app through compose, in its own project, stopped or "
+                     "not: a stack layered with names.yml has no container named polaris-app, and where the "
+                     "laptop stack runs that name is the other stack's app")
     drill = _read(root, "scripts/polaris-upgrade-drill.sh")
     for needle, what in (("describe --tags --abbrev=0", "start from the previous release"),
                          ('lab/strategy/006/try.sh" > "${WORK}/try-before.log"', "run that release's own try.sh"),
                          ("checkout --detach", "move the same checkout to this commit"),
                          ("scripts/polaris-generate-secrets.sh", "write the secrets a new release adds"),
-                         ("scripts/polaris-deploy.sh\" prod", "upgrade with the deploy script"),
+                         ('scripts/polaris-deploy.sh" prod --no-pull > "${WORK}/deploy.log"', "upgrade with the deploy script"),
                          ("no pending migrations", "require no migration pending"),
                          ("{{json .RootFS.Layers}}{{json .Config}}", "compare each running image's content with this commit's build"),
                          ("/api/tokens/${A}/verify", "ask the upgraded app about the old credential"),
-                         ("--pack pack-A-after.json", "verify the old credential's pack fetched again")):
+                         ("--pack pack-A-after.json", "verify the old credential's pack fetched again"),
+                         ('raise SystemExit("the upgrade drill: a release that does not start")',
+                          "deploy a release that cannot start"),
+                         ('grep -q "Rolled back"', "require the deploy to roll it back"),
+                         ('[[ "${after}" == "${before}" ]]', "require the app back on the image it replaced")):
         if needle not in drill:
             return _fail(name, f"scripts/polaris-upgrade-drill.sh no longer does this: {what}")
     wf = _read(root, ".github/workflows/upgrade.yml")
     if "bash scripts/polaris-upgrade-drill.sh" not in wf or not re.search(r"(?m)^\s*fetch-depth: 0$", wf):
         return _fail(name, "upgrade.yml must run scripts/polaris-upgrade-drill.sh on a checkout with the "
                      "release tags (fetch-depth: 0)")
+    if '["containerd-snapshotter"] = True' not in wf or "io.containerd.snapshotter.v1" not in wf:
+        return _fail(name, "upgrade.yml must run the drill on Docker's containerd image store (the default on a "
+                     "clean install of Engine 29), where a rollback by image ID found no image")
     return _ok(name,
                "CI upgrades the previous release's own try.sh stack to this commit the documented way and "
-               "requires nothing pending, every image rebuilt, and credentials from before and after verifying")
+               "requires nothing pending, every image rebuilt, and credentials from before and after verifying; "
+               "a release that cannot start is rolled back, on the containerd image store")
 
 
 # Lab record 017 (gate rows OP-18 and OP-19): a Helm upgrade runs the migrations. The postgres image
