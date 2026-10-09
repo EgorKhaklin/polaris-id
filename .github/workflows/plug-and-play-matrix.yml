@@ -24,6 +24,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/plug-and-play-matrix.yml"
+      - "site/llms.txt"
 
 permissions:
   contents: read
@@ -70,6 +71,44 @@ jobs:
           rc=$?
           [ "$rc" != "0" ] || { echo "a credential under an untrusted key was accepted"; exit 1; }
           echo "ok: an untrusted key was refused (exit $rc)"
+      # site/llms.txt gives a reading agent one command block and the exit codes to expect. This runs
+      # that block as written, from an empty folder, against the published package, and holds every
+      # exit code the file states, so the file cannot say more than the package does.
+      - name: The agent path in site/llms.txt, run as written (a JSON verdict, exit 0; each tampered vector it names exits 2)
+        shell: bash
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d) && cd "$work"
+          python - "$GITHUB_WORKSPACE/site/llms.txt" <<'EOF'
+          import re, sys
+          text = open(sys.argv[1], encoding="utf-8").read()
+          section = text.split("## Verify a credential offline", 1)[1].split("\n## ", 1)[0]
+          fenced = section.split("```")
+          assert len(fenced) == 3, "the section must hold exactly one command block"
+          tampered = re.findall(r"`(ml-dsa-65-[a-z-]+\.json)`", fenced[2])
+          assert len(tampered) >= 3, "the section must name the tampered vectors: %r" % tampered
+          open("agent-path.sh", "w", newline="\n").write(fenced[1].lstrip("\n"))
+          open("tampered.txt", "w", newline="\n").write("\n".join(tampered) + "\n")
+          EOF
+          bash -euo pipefail agent-path.sh > out.txt
+          python - <<'EOF'
+          import json
+          lines = open("out.txt").read().splitlines()
+          start = max(i for i, line in enumerate(lines) if line.strip() == "{")
+          verdict = json.loads("\n".join(lines[start:]))
+          assert verdict["authenticity"] == "genuine" and verdict["issuer_trusted"] is True, verdict
+          print("ok: the command block's verdict is genuine and trusted, exit 0")
+          EOF
+          r=https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main
+          while read -r t; do
+            curl -fsSLO "$r/vectors/$t"
+            set +e
+            polaris-verify --pqc-provider auto --issuer-anchor ml-dsa-65-issuer.json --pack "$t" --json > /dev/null
+            rc=$?
+            set -e
+            [ "$rc" = 2 ] || { echo "::error::$t exited $rc; site/llms.txt says 2"; exit 1; }
+            echo "ok: $t exited 2"
+          done < tampered.txt
 
   oid4vp:
     name: polaris-oid4vp (${{ matrix.os }}, py${{ matrix.python }})

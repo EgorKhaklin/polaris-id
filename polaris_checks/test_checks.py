@@ -2548,6 +2548,33 @@ def test_operability_gate_check_discriminates(tmp_path):
     assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
         "must FAIL on a PASS row citing only part of the evidence pinned for it"
 
+def test_llms_txt_walked_check_discriminates(tmp_path):
+    for rel in ("site/llms.txt", ".github/workflows/plug-and-play-matrix.yml"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_llms_txt_walked(tmp_path)[0].level == "OK", "must PASS on the real file and workflow"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_llms_txt_walked(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    wf = ".github/workflows/plug-and-play-matrix.yml"
+    for needle, why in checks._LLMS_WALK_NEEDLES:
+        broken(wf, needle, "", f"must FAIL when the matrix no longer does this: {why}")
+    broken(wf, "          done < tampered.txt\n", "          # done < tampered.txt\n          done < /dev/null\n",
+           "must FAIL when the tampered walk survives only in a comment")
+    broken("site/llms.txt", "```\n\nIt prints a JSON verdict", "\nIt prints a JSON verdict",
+           "must FAIL when the command block is unfenced")
+    broken("site/llms.txt", "--pack ml-dsa-65-valid.json --json", "--pack ml-dsa-65-valid.json",
+           "must FAIL when the block stops asking for a JSON verdict")
+    broken("site/llms.txt", "## Verify a credential offline", "## Check a credential",
+           "must FAIL when the section the walk reads is renamed away")
+
+
 def test_claims_manifest_check_discriminates(tmp_path):
     import copy
     import json
