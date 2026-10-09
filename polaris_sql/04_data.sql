@@ -544,9 +544,10 @@ SELECT c.class, NULL, 1825, c.why, 1
 -- 2026-09-25: the minimum anonymity set for a zero-knowledge epoch. This notional sample holds a
 -- handful of credentials, fewer than any floor that means anything, so it sets the floor to ONE,
 -- here and nowhere else, and says so: every epoch the sample closes identifies its members by
--- elimination, and nothing proved against one is private. A deployment that does not load this
--- file gets the default of 20 from 09_grants.sql. Loaded before 09_grants.sql, which keeps a
--- value already set.
+-- elimination, and nothing proved against one is private. Every install loads this file, so a
+-- production database puts the default of 20 back (docker-init.sh, POLARIS_ENV=production); a
+-- database that does not load it gets 20 from 09_grants.sql. Loaded before 09_grants.sql, which
+-- keeps a value already set.
 DO $$
 BEGIN
     EXECUTE format('ALTER DATABASE %I SET polaris.min_epoch_anonymity_set = 1', current_database());

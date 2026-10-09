@@ -3144,3 +3144,25 @@ COMMENT ON FUNCTION uc_rebuild_activity_rollups() IS
   'Recounts the activity rollups from VerificationEvent and TokenLifecycleEvent under a SHARE lock '
   '(lab/strategy/009, step 4), keeping the hours and days a recorded purge cut through. '
   'Owner-only: a full pass over the events is a maintenance act.';
+
+-- Lab record 017 (gate row OP-6): whether this server is a replica with nothing complete left to
+-- replay. The application's replica-lag check compares received and replayed WAL, and an idle
+-- primary can leave its newest WAL page partly unwritten: the replica then holds the page up to its
+-- boundary and cannot replay the record that straddles it, so the two differ while every commit is
+-- applied. The startup process says which: waiting for WAL, it has replayed everything complete it
+-- received. Only pg_read_all_stats sees that process, so the function runs as its owner and answers
+-- only this.
+CREATE OR REPLACE FUNCTION replica_replay_caught_up() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
+AS $$
+    SELECT pg_is_in_recovery()
+       AND coalesce(bool_or(wait_event IN ('RecoveryWalStream', 'RecoveryRetrieveRetryInterval')), false)
+      FROM pg_stat_activity
+     WHERE backend_type = 'startup'
+$$;
+
+COMMENT ON FUNCTION replica_replay_caught_up() IS
+  'True on a replica whose startup process waits for WAL: it has replayed every complete record it '
+  'received (lab record 017, gate row OP-6). The application asks when received and replayed WAL '
+  'differ. False on a primary.';

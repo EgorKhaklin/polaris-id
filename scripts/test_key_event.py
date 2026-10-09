@@ -5,7 +5,7 @@
 Under real signing every relying-party route refuses a credential whose key its authority had not
 registered when it signed (KEY-CEREMONY.md), and no install path registered one: a fresh install's
 relying-party API refused its own credentials. `polaris-key-event.sh register AGENCY --current`
-reads the key from the running app's custody, registers it once, and never rotates by itself. On
+reads the key from the running app's custody, registers an authority's first key, and never rotates. On
 the Docker stack the documented `polaris rp-register` could not reach the database as its owner;
 `polaris-rp-register.sh` runs the CLI's statements there. These tests run the real scripts under
 bash with a stand-in `docker` that answers as the stack would and records every call. No Docker,
@@ -46,8 +46,8 @@ if "custody.py public-key" in line:
 if "generate_password_hash" in line:
     print("scrypt:32768:8:1$salt$" + "0" * 16); sys.exit(0)
 if "psql" in line:
-    if "FROM AuthorityKeyCurrent" in stdin:
-        print(os.environ.get("STUB_ACTIVE", "")); sys.exit(0)
+    if "FROM AuthorityKeyCurrent" in stdin:     # --current's read: the key's status|events|active keys
+        print(os.environ.get("STUB_STATE", "none|0|")); sys.exit(0)
     if "INSERT INTO RelyingParty" in stdin:
         if os.environ.get("STUB_REFUSE"):
             sys.stderr.write("ERROR:  refused\n"); sys.exit(3)
@@ -107,6 +107,7 @@ class RegisterCurrentTests(_Base):
         self.assertEqual(self.var(ins, "ev"), "registered")
         self.assertEqual(self.var(ins, "agency"), "1")
         self.assertIn("--current", self.var(ins, "note"))
+        self.assertEqual(self.var(ins, "first"), "1")
         read = [c for c in self.calls() if "custody.py public-key" in " ".join(c["argv"])]
         self.assertEqual(len(read), 1)
         self.assertIn("--agency 1", " ".join(read[0]["argv"]))
@@ -117,15 +118,37 @@ class RegisterCurrentTests(_Base):
         self.assertEqual(self.var(self.inserts("AuthorityKeyEvent")[0], "pk"), KEY)
 
     def test_a_key_already_active_is_left_alone(self):
-        r = self.run_script(KEY_EVENT, "register", "1", "--current", STUB_PK=KEY, STUB_ACTIVE=KEY)
+        r = self.run_script(KEY_EVENT, "register", "1", "--current", STUB_PK=KEY, STUB_STATE="active|1|" + KEY)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("already registered", r.stdout)
         self.assertEqual(self.inserts("AuthorityKeyEvent"), [])
 
     def test_another_active_key_is_never_rotated_by_the_script(self):
-        r = self.run_script(KEY_EVENT, "register", "1", "--current", STUB_PK=KEY, STUB_ACTIVE=OTHER)
+        r = self.run_script(KEY_EVENT, "register", "1", "--current", STUB_PK=KEY, STUB_STATE="none|1|" + OTHER)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("rotation", r.stderr)
+        self.assertEqual(self.inserts("AuthorityKeyEvent"), [])
+
+    def test_a_key_that_signed_before_its_registration_is_extended_back(self):
+        r = self.run_script(KEY_EVENT, "register", "1", "--current", STUB_PK=KEY,
+                            STUB_STATE="active|1|" + KEY + "|true")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("extending it back", r.stdout)
+        [ins] = self.inserts("AuthorityKeyEvent")
+        self.assertEqual(self.var(ins, "first"), "1")
+
+    def test_an_ended_key_is_never_registered_again(self):
+        for status in ("retired", "compromised"):
+            with self.subTest(status):
+                r = self.run_script(KEY_EVENT, "register", "1", "--current", STUB_PK=KEY, STUB_STATE=status + "|2|")
+                self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                self.assertIn("never registered again", r.stderr)
+                self.assertEqual(self.inserts("AuthorityKeyEvent"), [])
+
+    def test_a_key_after_the_first_is_the_ceremonys(self):
+        r = self.run_script(KEY_EVENT, "register", "1", "--current", STUB_PK=KEY, STUB_STATE="none|2|")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("first key", r.stderr)
         self.assertEqual(self.inserts("AuthorityKeyEvent"), [])
 
     def test_no_key_in_the_app_is_refused(self):
@@ -138,7 +161,7 @@ class RegisterCurrentTests(_Base):
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertEqual(self.inserts("AuthorityKeyEvent"), [])
 
-    def test_current_is_for_registration_only_and_from_now(self):
+    def test_current_is_for_registration_only_and_dates_itself(self):
         for args in (("retire", "1", "--current"), ("compromise", "1", "--current"),
                      ("register", "1", "--current", "--effective-at", "2026-01-01T00:00:00")):
             with self.subTest(args):
@@ -150,6 +173,7 @@ class RegisterCurrentTests(_Base):
         r = self.run_script(KEY_EVENT, "register", "1", OTHER.upper())
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(self.var(self.inserts("AuthorityKeyEvent")[0], "pk"), OTHER)
+        self.assertEqual(self.var(self.inserts("AuthorityKeyEvent")[0], "first"), "0")
         self.assertFalse([c for c in self.calls() if "custody.py" in " ".join(c["argv"])])
 
 

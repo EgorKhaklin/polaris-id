@@ -23,6 +23,8 @@ spec:
       # projected token mount lands under /var/run/secrets, which the app's Secret
       # mount would otherwise make read-only (the mkdir failed at runc).
       automountServiceAccountToken: false
+      {{- include "polaris.spread" (list "caddy" .) | nindent 6 }}
+      {{- include "polaris.fastEviction" . | nindent 6 }}
       securityContext:
         {{- include "polaris.podSecurity" (dict "uid" 1000 "gid" 1000) | nindent 8 }}
       containers:
@@ -94,3 +96,5 @@ spec:
     - name: https
       port: {{ .Values.edge.service.httpsPort }}
       targetPort: https
+---
+{{ include "polaris.pdb" (list "caddy" .) }}

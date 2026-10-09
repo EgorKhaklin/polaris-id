@@ -247,6 +247,9 @@ fi
 # AppUser (ON DELETE NO ACTION) and audit history must survive. The operator then
 # bootstraps the real first admin with scripts/polaris-create-operator.sh. No
 # default credentials ship; /login refuses everyone until a real admin exists.
+# The sample also sets the zero-knowledge anonymity floor to ONE so its handful of
+# credentials can close an epoch (04_data.sql says why); production puts back the
+# default of 20, or every epoch it closed could identify its members by elimination.
 if [ "${POLARIS_ENV:-}" = "production" ]; then
     echo "Production mode: neutralizing demo accounts (disable + scramble password)..."
     psql -v ON_ERROR_STOP=1 \
@@ -260,7 +263,13 @@ if [ "${POLARIS_ENV:-}" = "production" ]; then
     -- Retire any demo duress-code enrollment so a publicly-known duress code does
     -- not silently flag real verifications. IdentityToken holds the duress hash.
     UPDATE IdentityToken SET duress_code_hash = NULL WHERE duress_code_hash IS NOT NULL;
+    -- The sample's anonymity floor of ONE goes; the procedures read the database's setting.
+    DO $$
+    BEGIN
+        EXECUTE format('ALTER DATABASE %I SET polaris.min_epoch_anonymity_set = 20', current_database());
+    END$$;
 SQL
+    echo "  Zero-knowledge anonymity floor: 20 (the notional sample's 1 does not carry into production)."
     echo "  Demo accounts disabled. Create the first real admin before use:"
     echo "    scripts/polaris-create-operator.sh --role admin --username <name>"
 fi
