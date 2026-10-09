@@ -250,7 +250,9 @@ stage_app() {
     fi
     [ "$NO_START" = 1 ] && { skip "stack start (--no-start)"; return 0; }
 
-    # 6. Start, migrate/sync, and prove health through the TLS edge.
+    # 6. Start, migrate/sync, and prove health through the TLS edge. The unit takes the host's image lock in a
+    # process of its own, so this run gives back the one it built under first.
+    if declare -F polaris_host_release >/dev/null; then polaris_host_release; fi
     if ! systemctl start polaris.service; then
         # The one line systemd prints is never the cause; show the journal and the
         # compose state so a CI failure is diagnosable from the log (v9.184).

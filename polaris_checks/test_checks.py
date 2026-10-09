@@ -3271,7 +3271,9 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
     files = ("scripts/polaris-deploy.sh", "scripts/polaris-upgrade-drill.sh", ".github/workflows/upgrade.yml",
              "scripts/polaris-host-lock.sh", "lab/strategy/006/try.sh", "deploy/linux/install.sh",
              "scripts/polaris-helm-upgrade-drill.sh", "scripts/polaris-region-evacuation-drill.sh",
-             "scripts/polaris-pilot.sh")
+             "scripts/polaris-pilot.sh", "deploy/linux/polaris.service", "lab/strategy/006/doctor.sh",
+             "lab/strategy/006/rotate.sh", "scripts/polaris-rotate-secret.sh", "scripts/polaris-window-drill.sh",
+             "scripts/polaris-throughput-measure.sh")
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text((REPO / rel).read_text())
@@ -3320,18 +3322,29 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
     broken(lk, '    export POLARIS_HOST_LOCK_TOKEN="${token}"', '    POLARIS_HOST_LOCK_TOKEN="${token}"',
            "must FAIL when what the holder runs cannot go on under its lock")
     # Review 4 of #317, each passed before.
-    broken(lk, 'docker network rm "${POLARIS_HOST_LOCK_ID}"', 'docker network rm "${POLARIS_HOST_LOCK}"',
+    broken(lk, 'docker network rm "${POLARIS_HOST_LOCK_ID}" >/dev/null 2>&1 || true; fi\n    exit "${rc}"',
+           'docker network rm "${POLARIS_HOST_LOCK}" >/dev/null 2>&1 || true; fi\n    exit "${rc}"',
            "must FAIL when the release removes by name, another run's lock included")
     broken(lk, '            if [[ "$(_polaris_lock_ids | grep -c .)" -ne 1 ]]; then', "            if false; then",
            "must FAIL when two creates of the name on an older engine both hold the lock")
-    broken(lk, '    if [[ -n "${_POLARIS_PREV_EXIT_TRAP}" ]]; then eval "${_POLARIS_PREV_EXIT_TRAP}"; fi', "    :",
-           "must FAIL when the caller's own EXIT trap no longer runs")
+    broken(lk, '(exit "${rc}") || eval "${_POLARIS_PREV_EXIT_TRAP}"; else :; eval "${_POLARIS_PREV_EXIT_TRAP}"; fi',
+           ':; fi', "must FAIL when the caller's own EXIT trap no longer runs")
     broken(lk, '    [[ "$(_polaris_lock_label boot "${net}")" != "$(_polaris_boot_id)" ]] && return 0', "    :",
            "must FAIL when a lock left by an earlier boot blocks every build")
     broken("scripts/polaris-pilot.sh", 'polaris_host_lock "the pilot"', ": no lock",
            "must FAIL when the pilot brings the production stack up without the lock")
     broken(dep, 'polaris_host_lock "this deploy"', '# polaris_host_lock "this deploy"',
            "must FAIL when the lock is only a comment")
+    # Review 5 of #317.
+    broken(dep, 'source "${SCRIPT_DIR}/polaris-host-lock.sh"\n', '\n',
+           "must FAIL when the call has no helper sourced before it")
+    broken("deploy/linux/polaris.service", "polaris_host_lock polaris.service", "true",
+           "must FAIL when polaris.service starts while a deploy holds the host")
+    broken("deploy/linux/install.sh", "then polaris_host_release; fi", "then :; fi",
+           "must FAIL when install.sh starts the unit while holding the lock the unit takes")
+    for rel in ("lab/strategy/006/doctor.sh", "lab/strategy/006/rotate.sh", "scripts/polaris-rotate-secret.sh",
+                "scripts/polaris-window-drill.sh", "scripts/polaris-throughput-measure.sh"):
+        broken(rel, "polaris_host_lock ", ": ", "must FAIL when %s recreates from the shared tags unlocked" % rel)
     broken(dep, 'polaris_host_lock "this deploy"\n', 'polaris_host_lock "this deploy"\ntrap "echo bye" EXIT\n',
            "must FAIL when an EXIT trap set after the lock drops its release")
     broken(dep, 'polaris_host_lock "this deploy"', ': "this deploy"', "must FAIL when the deploy takes no lock")
@@ -3346,16 +3359,24 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
     new.write_text('#!/bin/bash\nbash "${ROOT}/scripts/polaris-image-build.sh" --stack prod\n')
     assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
         "must FAIL when a script nobody named builds the host's images without the lock"
-    new.write_text('#!/bin/bash\nsource x\npolaris_host_lock "new"\nbash "${ROOT}/scripts/polaris-image-build.sh" --stack prod\n')
+    new.write_text('#!/bin/bash\nsource "${ROOT}/scripts/polaris-host-lock.sh"\npolaris_host_lock "new"\n'
+                   'bash "${ROOT}/scripts/polaris-image-build.sh" --stack prod\n')
     assert checks.check_upgrade_drilled(tmp_path)[0].level == "OK", "a new builder that takes the lock passes"
     # A compose wrapper over several lines on the production file, bringing the stack up (review 4: pilot).
     new.write_text('#!/bin/bash\ncompose() {\n    ( cd x && docker compose \\\n        -f docker-compose.prod.yml "$@" )\n}\n'
                    'compose up -d\n')
     assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
         "must FAIL when a multi-line production wrapper brings the stack up without the lock"
-    new.write_text('#!/bin/bash\ncompose() {\n    ( cd x && docker compose \\\n        -f docker-compose.prod.yml "$@" )\n}\n'
-                   'compose up -d --no-deps --force-recreate caddy\n')
-    assert checks.check_upgrade_drilled(tmp_path)[0].level == "OK", "recreating one service builds nothing"
+    # Review 5: --no-deps still builds a missing image and recreates from the shared tag; VAR=x before compose
+    # and `sh ... --stack=prod` are the same thing.
+    for body in ('compose() {\n    ( cd x && docker compose \\\n        -f docker-compose.prod.yml "$@" )\n}\n'
+                 'compose up -d --no-deps --force-recreate caddy\n',
+                 'compose() { (cd x && docker compose -f docker-compose.prod.yml "$@"); }\nWEB_CONCURRENCY=4 compose up -d\n',
+                 'sh "${ROOT}/scripts/polaris-image-build.sh" --stack=prod\n',
+                 'docker compose -f ../polaris_web/docker-compose.prod.yml up -d\n'):
+        new.write_text("#!/bin/bash\n" + body)
+        assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+            "must FAIL when a script nobody named recreates from the shared tags unlocked: %r" % body
     new.unlink()
     broken(dep, 'wait_healthy "${svc}" || ROLLED=0; done', 'wait_healthy "${svc}" || true; done',
            "must FAIL when a rollback is reported whether or not the restored app came up")

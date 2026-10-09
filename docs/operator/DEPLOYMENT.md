@@ -71,7 +71,8 @@ plus whatever overlays `POLARIS_COMPOSE_EXTRA` names. In order:
 2. `git pull --ff-only` (skipped with `--no-pull` or outside a git checkout).
 3. One build or deploy of the host's images at a time, since every stack on a host
    builds and runs the same tags: a second deploy, `install.sh`, `try.sh` or a drill
-   that builds them stops before it changes anything, and says who holds the host.
+   that builds them or recreates a service from them stops before it changes anything,
+   and says who holds the host; `polaris.service` refuses to start while one runs.
    The lock is a Docker network, `polaris-host-lock`, which the daemon lets one
    caller create, so anyone who can reach Docker shares it, with or without `sudo`
    ([`scripts/polaris-host-lock.sh`](../../scripts/polaris-host-lock.sh)). One this

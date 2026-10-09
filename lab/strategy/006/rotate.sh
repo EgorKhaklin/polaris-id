@@ -22,6 +22,9 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 HERE="${ROOT}/lab/strategy/006"
 OUT="${HERE}/out"
 SECRETS="${ROOT}/polaris_web/secrets"
+# It recreates a service from the host's image tags (building it if missing): one build or deploy at a time.
+source "${ROOT}/scripts/polaris-host-lock.sh"
+polaris_host_lock "the lab rotation"
 export COMPOSE_PROJECT_NAME=polaris-try POLARIS_DOMAIN=localhost
 export POLARIS_COMPOSE_EXTRA="-f ${ROOT}/polaris_web/docker-compose.citest.yml -f ${HERE}/names.yml"
 COMPOSE=(docker compose -f "${ROOT}/polaris_web/docker-compose.prod.yml"
