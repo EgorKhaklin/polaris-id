@@ -3,7 +3,7 @@
 **Reader:** anyone building or testing a verifier of SD-JWT VC presentations under OpenID4VP 1.0 and
 HAIP 1.0, with or without Polaris. **What it is:** [`vectors.json`](vectors.json), 23 presentations a
 verifier must judge, each with the verdict a correct verifier reaches and the sentence that requires it.
-Lab record 018 explains why it exists.
+[Lab record 018](../../strategy/018-negative-vectors.md) explains why it exists and what would end it.
 
 The public suites test acceptance well and refusal thinly, and a protocol-level suite cannot always see a
 refusal: OpenID4VP 1.0 lets a verifier answer a bad presentation with a 2xx and decide later. A vector run

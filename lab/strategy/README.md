@@ -63,6 +63,7 @@ arguing with it. A decision that only reverses the one before it has not finishe
 | [015-three-signature-standards.md](015-three-signature-standards.md) | SLH-DSA as a product signer and FN-DSA opt-in beside ML-DSA, with `@noble/post-quantum` as the second witness: the rotation away from lattices that the posture claim describes, made runnable | OPEN, 2026-10-05: falsifiers written first; nothing built. Follows 014 |
 | [016-batch-wallet-copies.md](016-batch-wallet-copies.md) | OpenID4VCI batch issuance of wallet copies, each presented once, so verifiers cannot link one holder by holder key, status index, signature or timestamp | OPEN, 2026-10-05: falsifiers written first; nothing built |
 | [017-production-operability.md](017-production-operability.md) | An operator who is not the author installs Polaris from signed artifacts, configures, upgrades, restores and diagnoses it, measured by an operability gate whose every PASS cites evidence | OPEN, 2026-10-07: falsifiers written first. Step 0: the gate in PRODUCTION-READINESS.md and two operator documents corrected |
+| [018-negative-vectors.md](018-negative-vectors.md) | Negative test vectors for SD-JWT VC presentations that any verifier can run: each one valid presentation with one defect, the verdict a correct verifier reaches and the sentence that requires it | OPEN, 2026-10-09: 23 vectors; polaris-oid4vp reaches all 23; outside verifiers next |
 
 ## Candidates generated, not admitted
 
