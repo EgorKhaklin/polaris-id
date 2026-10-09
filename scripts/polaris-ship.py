@@ -141,11 +141,15 @@ VERIFICATION = [
      ["cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_verifier test_jwe "
       "test_serve test_cli test_conformance_capture test_status",
       "python3 -m unittest lab/strategy/007/test_gate.py",
+      "python3 -m unittest lab/interop/negative-vectors/test_vectors.py",
       "lab/interop/waltid/README.md end to end if the presentation path changed"],
      "the OpenID4VP verifier moved: the one external wallet result rests on it"),
     (r"^lab/strategy/007/",
      ["python3 -m unittest lab/strategy/007/test_gate.py"],
      "the access gate moved (lab, record 007): its OIDC flow over the verifier"),
+    (r"^lab/interop/negative-vectors/",
+     ["python3 -m unittest lab/interop/negative-vectors/test_vectors.py"],
+     "the negative vectors moved (lab, record 018): regenerated, and every verdict reached"),
     (r"^packages/polaris-verify/",
      ["python3 scripts/polaris-compat-suite.py",
       "python3 conformance/run_conformance.py --self",
@@ -343,6 +347,7 @@ UNSHARDED_SUITES = {
     "packages/polaris-oid4vp": ["test_sdjwt", "test_jwe", "test_verifier", "test_serve",
                                 "test_cli", "test_conformance_capture", "test_status"],
     "lab/strategy/007": ["test_gate"],
+    "lab/interop/negative-vectors": ["test_vectors"],
     # pytest, not unittest, and the card suite is a directory discovery. Named so the
     # coverage check can see them; run them with the commands CI uses.
     "polaris_zk/witness2": ["test_witness2"],
@@ -371,6 +376,7 @@ UNSHARDED_RUNNERS = {
     "sdk/python":               ("preflight", None),
     "packages/polaris-oid4vp":  ("preflight", None),
     "lab/strategy/007":         ("unittest", None),
+    "lab/interop/negative-vectors": ("unittest", None),
     "polaris_zk/witness2":      ("pytest-file", None),
     ".":                        ("mixed", None),
 }
