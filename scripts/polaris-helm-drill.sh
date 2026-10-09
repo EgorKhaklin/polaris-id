@@ -125,6 +125,21 @@ bad = [k for k in ('database', 'redis', 'zk_binary', 'custody') if c[k]['status'
 print('  checks:', {k: v.get('status') for k, v in c.items()}); assert not bad, f'unhealthy: {bad}'
 print('  custody:', c['custody'].get('driver'), c['custody'].get('public_key_fingerprint'))" "$health"
 
+echo "== 4b. each pod reads only the secrets it uses =="
+# Lab record 017 (OP-9): the app's pod once mounted the whole Secret, the superuser's and the
+# replicator's passwords, both servers' TLS keys and the backup repository's credentials included.
+want="pgbouncer_server.crt polaris_db_password polaris_redis_password polaris_secret_key polaris_secret_key_fallbacks"
+[ -s "$ROOT/polaris_web/secrets/polaris_signing_key" ] && want="$want polaris_signing_key"
+want=$(printf '%s\n' $want | sort | tr '\n' ' ')
+got=$(kubectl -n "$NS" exec "deploy/${REL}-app" -c app -- ls /run/secrets | sort | tr '\n' ' ')
+[ "$got" = "$want" ] || fail "the app's pod sees secrets [$got], not exactly [$want]"
+mode=$(kubectl -n "$NS" exec "deploy/${REL}-app" -c app -- python3 -c \
+    "import os, stat; print('%o' % stat.S_IMODE(os.stat('/run/secrets/polaris_db_password').st_mode))")
+[ "$mode" = 440 ] || fail "the app's secret files are mode $mode, not mode 440"
+got=$(kubectl -n "$NS" exec "deploy/${REL}-pgbouncer" -- ls /run/secrets | tr '\n' ' ')
+[ "$got" = "polaris_db_password " ] || fail "pgbouncer's pod sees secrets [$got], not only polaris_db_password"
+echo "  the app's pod reads only [${want% }] at 0440; pgbouncer's only the database password"
+
 echo "== 5. NetworkPolicy: a pod outside the topology is denied =="
 cat > /tmp/np-probe.py <<'PYEOF'
 import socket, sys
@@ -176,36 +191,50 @@ pctl() { kubectl -n "$NS" exec "$1" -- patronictl -c /var/lib/postgresql/patroni
 lease_holder() { kubectl -n "$NS" get endpoints "${REL}-postgres" -o jsonpath='{.metadata.annotations.leader}' 2>/dev/null; }
 lease_held_by() { [[ "$(lease_holder)" == "$1" ]]; }
 other_member() { [[ "$1" == "${REL}-postgres-0" ]] && echo "${REL}-postgres-1" || echo "${REL}-postgres-0"; }
-replica_streaming() {  # replica_streaming POD: Patroni's /cluster, asked of the lease holder, says streaming with no lag
+replica_streaming() {  # replica_streaming POD [sync]: Patroni's /cluster, asked of the lease holder, says streaming
+    # with no lag; with "sync", it must also be the synchronous standby, the only member Patroni promotes then.
     local l; l=$(lease_holder); [[ -n "$l" ]] || return 1
     kubectl -n "$NS" exec "$l" -- wget -qO- http://127.0.0.1:8008/cluster 2>/dev/null | python3 -c "
 import json, sys
 d = json.load(sys.stdin); m = next((m for m in d['members'] if m['name'] == sys.argv[1]), None)
-sys.exit(0 if m and m['role'] == 'replica' and m['state'] == 'streaming' and m.get('lag', 1) == 0 else 1)" "$1"
+roles = ('sync_standby',) if sys.argv[2] == 'sync' else ('replica', 'sync_standby')
+sys.exit(0 if m and m['role'] in roles and m['state'] == 'streaming' and m.get('lag', 1) == 0 else 1)" "$1" "${2:-}"
 }
-cluster_healthy() { local l r; l=$(lease_holder); [[ -n "$l" ]] || return 1; r=$(other_member "$l"); replica_streaming "$r"; }
+# Under synchronous replication (the chart's default) a failure scenario starts only once the replica is the
+# synchronous standby again: until then Patroni will not promote it, by design, and a leader lost in that
+# window is an outage, not a failover (docs/design/synchronous-replication.md).
+SYNC_WANT=""
+cluster_healthy() { local l r; l=$(lease_holder); [[ -n "$l" ]] || return 1; r=$(other_member "$l"); replica_streaming "$r" "$SYNC_WANT"; }
 wait_for() { local limit="$1"; shift; local t0 i; t0=$(date +%s); for i in $(seq 1 "$limit"); do if "$@"; then echo $(( $(date +%s) - t0 )); return 0; fi; sleep 1; done; echo "$limit"; return 1; }
 now() { python3 -c "import time; print(time.time())"; }
 le() { python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) <= float(sys.argv[2]) else 1)" "$1" "$2"; }
 diagnose() { echo "--- diagnostics ---" >&2; kubectl -n "$NS" get pods -l application=polaris-db -L role >&2 || true; kubectl -n "$NS" get endpoints "${REL}-postgres" -o yaml 2>/dev/null | sed -n '/annotations/,/subsets/p' | head -12 >&2; for m in "${REL}-postgres-0" "${REL}-postgres-1"; do echo "[$m]" >&2; kubectl -n "$NS" logs "$m" --tail=25 2>&1 | sed 's/^/    /' >&2; done; }
 L0=$(lease_holder); [[ -n "$L0" ]] || { diagnose; fail "no Patroni lease holder (annotation on the leader Endpoints)"; }
 R0=$(other_member "$L0")
-wait_for 120 replica_streaming "$R0" >/dev/null || { diagnose; fail "$R0 is not a streaming replica with zero lag"; }
+if kubectl -n "$NS" exec "$L0" -- wget -qO- http://127.0.0.1:8008/config 2>/dev/null \
+       | python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin).get("synchronous_mode") else 1)'; then
+    SYNC_WANT=sync
+    echo "  synchronous_mode on: each scenario starts with the replica the synchronous standby"
+fi
+wait_for 120 replica_streaming "$R0" "$SYNC_WANT" >/dev/null || { diagnose; fail "$R0 is not a streaming replica with zero lag${SYNC_WANT:+, the synchronous standby}"; }
 pctl "$L0" list | sed 's/^/  /'
 kubectl -n "$NS" exec "$L0" -- psql -h /var/run/postgresql -U postgres -d polaris -v ON_ERROR_STOP=1 -q \
-    -c "CREATE TABLE IF NOT EXISTS ha_marker (id bigserial PRIMARY KEY, ts timestamptz NOT NULL DEFAULT clock_timestamp());" \
+    -c "DROP TABLE IF EXISTS ha_marker;" \
+    -c "CREATE TABLE ha_marker (id bigserial PRIMARY KEY, token text UNIQUE NOT NULL, ts timestamptz NOT NULL DEFAULT clock_timestamp());" \
     -c "GRANT INSERT ON ha_marker TO polaris_app; GRANT USAGE ON SEQUENCE ha_marker_id_seq TO polaris_app;" || fail "could not create the marker table"
 APP_PW=$(kubectl -n "$NS" get secret polaris-secrets -o jsonpath='{.data.polaris_db_password}' | base64 -d)
-WRITER_PY=$(python3 -c 'import json; print(json.dumps("""import os, signal, sys, time
+WRITER_PY=$(python3 -c 'import json; print(json.dumps("""import os, signal, sys, time, uuid
 import psycopg
 dsn = os.environ["DSN"]; stop = False
+acked = open("/tmp/acked.log", "a", buffering=1)   # one token per acknowledged insert, in order
 signal.signal(signal.SIGTERM, lambda *a: globals().__setitem__("stop", True))
 while not stop:
-    t = time.time()
+    t = time.time(); token = uuid.uuid4().hex
     try:
         with psycopg.connect(dsn, connect_timeout=3, autocommit=True) as c:
-            c.execute("INSERT INTO ha_marker DEFAULT VALUES")
+            c.execute("INSERT INTO ha_marker (token) VALUES (%s)", (token,))
         print(f"{t:.3f} {time.time():.3f} ok", flush=True)
+        acked.write(token + "\\n")
     except Exception:
         print(f"{t:.3f} {time.time():.3f} fail", flush=True)
     time.sleep(0.25)
@@ -236,10 +265,14 @@ oks = [t for t, s in rows if s == 'ok']; before = [t for t, s in allrows if s ==
 seq = ([max(before)] if before else []) + oks
 stall = max((b - a for a, b in zip(seq, seq[1:])), default=0.0)
 print(f'{max(gap, stall):.1f} {len(fails)}')" "$1"; }
-ok_count() { kubectl -n "$NS" logs ha-writer 2>/dev/null | grep -c ' ok$' || echo 0; }
-rows_on() { kubectl -n "$NS" exec "$1" -- psql -h /var/run/postgresql -U postgres -d polaris -tAc "SELECT count(*) FROM ha_marker" 2>/dev/null | tr -d '[:space:]'; }
-settle() { local t; t=$(now); wait_for 60 writes_ok_since "$t" >/dev/null || fail "writes are not flowing"; wait_for 120 cluster_healthy >/dev/null || { diagnose; fail "the cluster is not one leader and one current streaming replica"; }; }
-ROWS0=$(rows_on "$L0")
+ok_count() { local n; n=$(kubectl -n "$NS" logs ha-writer 2>/dev/null | grep -c ' ok$') || true; echo "${n:-0}"; }
+missing_on() {  # missing_on MEMBER FILE: the tokens in FILE that MEMBER's ha_marker lacks, one per line
+    { echo "CREATE TEMP TABLE acked (token text);"; echo "COPY acked FROM STDIN;"; cat "$2"
+      [[ -z "$(tail -c1 "$2")" ]] || echo; echo '\.'
+      echo "SELECT a.token FROM acked a LEFT JOIN ha_marker m USING (token) WHERE m.token IS NULL;"; } \
+        | kubectl -n "$NS" exec -i "$1" -- psql -h /var/run/postgresql -U postgres -d polaris -qtA -v ON_ERROR_STOP=1
+}
+settle() { local t; t=$(now); wait_for 60 writes_ok_since "$t" >/dev/null || fail "writes are not flowing"; wait_for 120 cluster_healthy >/dev/null || { diagnose; fail "the cluster is not one leader and one current streaming replica${SYNC_WANT:+ (the synchronous standby)}"; }; }
 settle
 echo "  writes flowing through pgbouncer -> ${REL}-postgres (leader endpoints) -> $L0"
 # 7a. the leader pod is deleted: a restart in place
@@ -281,12 +314,24 @@ j3=$(wait_for "$CEIL_REJOIN" replica_streaming "$L2") || { diagnose; fail "$L2 d
 read -r out3 fails3 <<< "$(outage_since "$t0")"
 echo "  switchover: $C2 leader after ${p3}s; write outage ${out3}s (${fails3} failed inserts); $L2 follows after ${j3}s"
 le "$out3" "$CEIL_SWITCHOVER" || fail "switchover write outage ${out3}s exceeds the ${CEIL_SWITCHOVER}s ceiling"
-# integrity: every insert acknowledged before the freeze is on the leader; inserts acknowledged inside the
-# failure window may be the async replication's RPO (FAILOVER.md section 6) and are reported, not tolerated silently
-L3=$(lease_holder); rows=$(( $(rows_on "$L3") - ROWS0 )); acked=$(ok_count)
-[[ "$rows" -ge "$acked_before_freeze" ]] || fail "$rows rows added on $L3 but $acked_before_freeze inserts were acknowledged before the freeze: an acknowledged write from before the failure was lost"
-lost=$(( acked - rows )); [[ "$lost" -lt 0 ]] && lost=0
-echo "  integrity: $rows rows added, $acked inserts acknowledged, $lost of them (acknowledged inside the failure window) not in the surviving history"
+# integrity, by identity: the tokens of the acknowledged inserts are read from the writer BEFORE the leader is asked
+# which it holds, so an insert acknowledged while the check runs is in neither (two counts taken a moment apart
+# could report a landed write lost, or hide a lost one). Every insert acknowledged before the freeze is on the
+# leader; inside the failure windows, with synchronous_mode on (gate row OP-6), so is every other, and with it off
+# a loss is the async replication's RPO (FAILOVER.md section 6), reported, not tolerated silently.
+L3=$(lease_holder)
+kubectl -n "$NS" exec ha-writer -- cat /tmp/acked.log > /tmp/polaris-acked.now || fail "cannot read the writer's acknowledged inserts"
+acked=$(grep -c . /tmp/polaris-acked.now || true)
+[[ "$acked" -gt 0 && "$acked" -ge "$acked_before_freeze" ]] \
+    || fail "$acked acknowledged inserts are on record against the $acked_before_freeze counted before the freeze: the writer is not recording what it acknowledges, and the comparison would measure nothing"
+missing_on "$L3" /tmp/polaris-acked.now > /tmp/polaris-missing.now || fail "cannot ask $L3 which acknowledged inserts it holds"
+early=$(head -n "$acked_before_freeze" /tmp/polaris-acked.now | grep -cxF -f /tmp/polaris-missing.now || true)
+[[ "$early" -eq 0 ]] || fail "$early of the $acked_before_freeze inserts were acknowledged before the freeze and are not on $L3: an acknowledged write from before the failure was lost"
+lost=$(grep -c . /tmp/polaris-missing.now || true)
+echo "  integrity: $(( acked - lost )) of $acked acknowledged inserts on $L3, $lost of them (acknowledged inside the failure windows) not in the surviving history"
+if [[ -n "$SYNC_WANT" && "$lost" -gt 0 ]]; then
+    fail "$lost acknowledged inserts are not in the surviving history: with synchronous_mode on, a failover must lose none"
+fi
 kubectl -n "$NS" delete pod ha-writer --grace-period=0 --force >/dev/null 2>&1 || true
 code=$(curl -sk --max-time 30 -o /dev/null -w '%{http_code}' https://localhost:18443/api/health || true)
 [ "$code" = 200 ] || fail "edge unhealthy after the failover drill (HTTP $code)"

@@ -40,8 +40,15 @@ mounts each file through `${POLARIS_SECRETS_DIR:-./secrets}/<name>`.
 | `pgbackrest_repo_creds.conf` | S3 key pair for the offsite backup repo; ships as an empty template | 0644 | pgBackRest as the postgres user | at the object-store provider, then rewrite the file |
 | Caddy ACME account key and certificates | managed by Caddy | n/a | Caddy | automatic (Let's Encrypt renewal) |
 
-Redis runs without AUTH on the private compose network; there is no Redis
-secret. The Let's Encrypt contact address is `admin@$POLARIS_DOMAIN`
+Each container mounts only the files whose "Read by" cell names it, and the Helm chart projects into
+each pod only the keys that pod reads, at 0440 under the pod's group: the app never sees the
+superuser's or the replicator's password, a server's TLS key or the backup repository's credentials.
+Compose cannot set the owner or mode of a file secret (it bind-mounts the file), so on a Compose host
+the files keep the modes above and the 0700 directory is the boundary; each container runs its service
+as one user. `check_secrets_reach_only_their_readers` holds the readers, and the Helm drill and the
+prod-stack CI job list what the app's container can read on a live stack.
+
+The Let's Encrypt contact address is `admin@$POLARIS_DOMAIN`
 ([`Caddyfile`](../../polaris_web/Caddyfile)); no operator-email variable
 exists.
 
@@ -211,16 +218,29 @@ points at this host.
 
 With a sealed backend, the plaintext directory is the MATERIALIZED form,
 written into a root-only tmpfs at start; the source of truth is
-`polaris_web/secrets.sealed/`, whose contents are useless without a key that
-is not on the disk beside them. The implementation is
+`polaris_web/secrets.sealed/`, whose contents are useless without the key that
+unseals them. The implementation is
 [`polaris_web/secretstore.py`](../../polaris_web/secretstore.py); the operator
 wrapper is [`scripts/polaris-secrets.sh`](../../scripts/polaris-secrets.sh).
 
 | `POLARIS_SECRETS_BACKEND` | Sealed with | Unsealed by | Use when |
 |---|---|---|---|
-| `file` (default) | nothing: the plaintext dir is the store | n/a | development; the plain layout |
+| `file` (default) | nothing: the plaintext dir is the store | n/a | development; in production only where plaintext on the disk is accepted (the table below) |
 | `age` | the operator's age recipients (`POLARIS_SECRETS_AGE_RECIPIENTS`) | an age identity file (`POLARIS_SECRETS_AGE_IDENTITY`), root-only, or an age plugin for a hardware token | on-premises; no cloud dependency; the identity can live on a YubiKey |
 | `awskms` | envelope encryption: per file, KMS `GenerateDataKey` (AES-256) + AES-256-GCM with the file name as AAD; the KMS-wrapped data key stored beside the ciphertext | `kms:Decrypt` on `POLARIS_SECRETS_AWSKMS_KEY_ID`, an IAM decision rather than a file | AWS-hosted authorities |
+
+Where that key lives decides what a copy of the disk holds:
+
+| Setup | A copy of the Polaris directory, its backups, or a repository holding the sealed store | A copy of the whole disk |
+|---|---|---|
+| `file` (the default) | every secret, in plaintext | every secret, in plaintext |
+| `age`, the identity in a file on the host ([5.1](#51-adopting-a-sealed-store)) | nothing readable | every secret: the disk carries the identity |
+| `age`, the identity on a hardware token (an age plugin) | nothing readable | nothing readable without the token |
+| `awskms` | nothing readable | nothing readable without `kms:Decrypt` on the key |
+
+With the `file` backend, [`polaris-doctor.sh`](../../scripts/polaris-doctor.sh) and every start
+of `polaris.service` say so. An unattended start needs the key at boot: a token must then
+decrypt without a touch or a PIN, and a KMS key is reached through the instance's role.
 
 The issuer signing key has its own custody layer with HSM/PKCS#11 and KMS
 drivers ([KEY-CEREMONY.md](KEY-CEREMONY.md)); this section covers everything
@@ -234,7 +254,7 @@ else in the matrix.
 age-keygen -o /root/polaris-age.identity          # keep OUT of the repo; back it up sealed
 age-keygen -y /root/polaris-age.identity > /root/polaris-age.recipients   # prints the bare recipient
 export POLARIS_SECRETS_BACKEND=age POLARIS_SECRETS_AGE_RECIPIENTS=/root/polaris-age.recipients \
-       POLARIS_SECRETS_AGE_IDENTITY=/root/polaris-age.identity
+       POLARIS_SECRETS_AGE_IDENTITY=/root/polaris-age.identity POLARIS_SECRETS_DIR=/run/polaris/secrets
 ./scripts/polaris-secrets.sh seal                 # -> polaris_web/secrets.sealed/ (+ MANIFEST.json)
 ./scripts/polaris-secrets.sh verify               # every blob decrypts and matches its sha256
 shred -u polaris_web/secrets/* polaris_web/secrets/.archive/* 2>/dev/null; rm -rf polaris_web/secrets
@@ -242,18 +262,18 @@ shred -u polaris_web/secrets/* polaris_web/secrets/.archive/* 2>/dev/null; rm -r
 # rotations and is never sealed, so it must be destroyed too
 ```
 
-Put the `POLARIS_SECRETS_*` lines in `/etc/polaris/polaris.env`
-([LINUX-SERVER.md](LINUX-SERVER.md)) and leave `POLARIS_SECRETS_DIR` empty
-there unless you need a non-default tmpfs path (with the `file` backend a set
-value makes compose read a directory nothing populates). From then on
-[`polaris.service`](../../deploy/linux/polaris.service) runs
-`polaris-secrets.sh unseal-if-configured` as `ExecStartPre` and
-[`polaris-deploy.sh`](../../scripts/polaris-deploy.sh) does the same before
-its preflight: the store is unsealed into `POLARIS_SECRETS_DIR` (default
-`/run/polaris/secrets`, a tmpfs mounted `size=16m,mode=0700,nosuid,nodev,noexec`
-when the caller is root on Linux), file modes are restored from the manifest,
-and compose reads every secret and certificate from there. No plaintext
-touches the disk.
+Put the same `POLARIS_SECRETS_*` lines in `/etc/polaris/polaris.env`
+([LINUX-SERVER.md](LINUX-SERVER.md)), `POLARIS_SECRETS_DIR=/run/polaris/secrets` among them.
+[`polaris.service`](../../deploy/linux/polaris.service) runs compose with that variable alone, so
+with a sealed backend and no `POLARIS_SECRETS_DIR`, `polaris-secrets.sh`, `polaris-deploy.sh` and
+`polaris-rotate-secret.sh` refuse and name the line, and the doctor reports it. (With the `file`
+backend leave it empty: a set value makes compose read a directory nothing populates.) From then
+on `polaris.service` runs `polaris-secrets.sh unseal-if-configured` as `ExecStartPre` and
+[`polaris-deploy.sh`](../../scripts/polaris-deploy.sh) does the same before its preflight: the
+store is unsealed into `POLARIS_SECRETS_DIR` (a tmpfs mounted
+`size=16m,mode=0700,nosuid,nodev,noexec` when the caller is root on Linux), file modes are
+restored from the manifest, and compose reads every secret and certificate from there. No
+secret's plaintext touches the disk; in this setup the age identity does (the table above).
 
 **What the store is trusted for, and what it is not.** `MANIFEST.json` is not signed. It
 carries a SHA-256 per file, which catches a blob that does not match the manifest, not a
@@ -307,7 +327,12 @@ directory, unseals into a tmpfs, boots the full production stack from it,
 asserts health through the TLS edge, then runs `polaris-rotate-secret.sh` for
 `polaris_db_password` and `polaris_secret_key` against the live stack, asserts
 health again, verifies the sealed store matches the tmpfs, and proves a fresh
-unseal returns the rotated password.
+unseal returns the rotated password. The `linux-install` job adopts a store on a
+systemd host as section 5.1 says: with `POLARIS_SECRETS_DIR` still empty, the
+unit, the deploy and `verify` each refuse and name the line; with it set, the
+unit starts from the store, starts again once its tmpfs is gone (what a reboot
+leaves), and a deploy and the doctor run by hand with `sudo` read the same
+configuration.
 [`test_secretstore.py`](../../polaris_web/test_secretstore.py) covers both
 backends (age through the real CLI, KMS through the wire-faithful stand-in),
 wrapping-key rotation, tamper and drift detection, and mode restoration.
@@ -393,6 +418,8 @@ pins the following; `python -m polaris_checks.run` must end with `READY`
   default from `09_grants.sql` is never live in production
   (`check_prod_app_password_synced`).
 - Rotation preserves file modes (`check_rotate_secret_preserves_mode`).
+- Each Compose service and each chart pod mounts only the secrets it reads, the chart's at 0440
+  (`check_secrets_reach_only_their_readers`).
 - `polaris.env` is gitignored (`check_secrets_file_ignored`).
 
 The dev launcher generates `POLARIS_SECRET_KEY` once and persists it in
@@ -423,6 +450,7 @@ For secrets specifically:
 | Postgres statement log leaks a password | `log_statement = 'mod'`, never `'all'`; review log redaction quarterly |
 | Dev secrets promoted to production | Separate directories and generators; `check_prod_app_password_synced` pins that the prod role is altered to the file-mounted secret. Nothing refuses a dev-valued file (`docker-init.sh` skips the `ALTER` when the file holds `polaris_dev_password`), so never copy dev secrets into the prod directory |
 | Caddy compromise leaks the TLS private key | Caddy re-issues; rotate the secrets that crossed TLS-terminated traffic |
+| A compromised application reads the secrets of the services beside it | Each container and pod mounts only its own secrets ([section 1](#1-the-secrets-matrix)); the app's are the session keys, its database and Redis passwords and the signing key |
 | Memory dump of a running gunicorn worker | No shared tenancy on the host; the sealed store keeps plaintext in a root-only tmpfs rather than on disk |
 
 For each threat the response is the same: rotate, audit, postmortem. Speed

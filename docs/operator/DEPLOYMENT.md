@@ -35,9 +35,9 @@ review, migrations, certificate monitoring) is
   (`acme-v02.api.letsencrypt.org`) and, if the certificate transparency
   monitor runs here, crt.sh.
 - `POLARIS_DOMAIN` exported in the shell (or in `/etc/polaris/polaris.env` on a
-  systemd host). Its DNS A/AAAA record points at this host and TCP 80/443 plus
-  UDP 443 are reachable before the first start: Caddy provisions the Let's
-  Encrypt certificate on boot.
+  systemd host, which every script reads when run as root). Its DNS A/AAAA
+  record points at this host and TCP 80/443 plus UDP 443 are reachable before
+  the first start: Caddy provisions the Let's Encrypt certificate on boot.
 - Secrets in `polaris_web/secrets/` (or the directory `POLARIS_SECRETS_DIR`
   names). `scripts/polaris-deploy.sh` refuses to start unless
   `polaris_secret_key`, `polaris_db_password`, `polaris_db_root_password`, and
@@ -66,7 +66,8 @@ plus whatever overlays `POLARIS_COMPOSE_EXTRA` names. In order:
 
 1. Pre-flight: docker and the compose plugin present, the four secrets above
    present, `POLARIS_DOMAIN` set. With `POLARIS_SECRETS_BACKEND=age` or
-   `awskms` the sealed store is unsealed into `POLARIS_SECRETS_DIR` first.
+   `awskms` the sealed store is unsealed into `POLARIS_SECRETS_DIR` first; the
+   deploy refuses a sealed backend without one.
 2. `git pull --ff-only` (skipped with `--no-pull` or outside a git checkout).
 3. The running app image id is recorded for rollback.
 4. `docker compose pull` for the upstream images, then every Polaris image
@@ -180,12 +181,55 @@ a real admin exists. Create it with
 [`scripts/polaris-create-operator.sh`](../../scripts/polaris-create-operator.sh):
 
 ```bash
-./scripts/polaris-create-operator.sh --username <name> --role admin --password-file <path> --target=docker-stack
+./scripts/polaris-create-operator.sh --username <name> --role admin --password-file <path> \
+    --reason "<why this person gets an account, at least 20 characters>" --target=docker-stack
 ```
 
 The seeded credentials themselves live in the SQL seed
 ([`polaris_sql/10_auth.sql`](../../polaris_sql/10_auth.sql)) and in
 [`INSTALL.md`](INSTALL.md), where they belong: the evaluation launcher.
+
+### The signing key's registration
+
+The stack signs for real, with the ML-DSA-65 key `polaris-generate-secrets.sh` minted on this
+host. Every route that takes a presented credential, `POST /api/v1/verify` among them, accepts a
+signature only under a key its authority had registered when it signed, so until the key is
+registered a relying party's verification of every credential the stack issues answers "not a
+verifiable presentation". Register it before the first credential is issued, for each authority
+that issues under it; the registration ends the key ceremony ([`KEY-CEREMONY.md`](KEY-CEREMONY.md)):
+
+```bash
+./scripts/polaris-key-event.sh register <agency id> --current
+```
+
+`--current` reads the public key from the running app's own key store (a file, PKCS#11 or a KMS
+alike), so nobody copies 3,904 hex characters. It registers an authority's first key, effective from
+that key's first signature for the authority, so a credential issued before the registration
+verifies too. Run again, it leaves the key alone, or extends its registration back over a signature
+made before the registration took effect (an issuance in flight at that moment). Everything after
+the first key is the ceremony's, and `--current` refuses it: another active key (a rotation), a key
+retired or declared compromised (the script never registers one again), a later key once the last
+one ended. The ceremony names a key by its hex: `./scripts/polaris-key-event.sh register <agency
+id> <public key hex>`, with `--effective-at` for a key registered from another instant. Every event
+holds the authority's row for its transaction, so a `--current` and a ceremony never interleave.
+[`scripts/polaris-doctor.sh`](../../scripts/polaris-doctor.sh) fails when an active credential signed
+for real is under a key its authority had not registered when it was signed, judged as every
+relying-party route judges it, and names the key: register only a key this install signs with or a
+ceremony minted, since a key nobody minted was planted. It warns to re-issue what no registration
+can fix, and a deploy names the command for each authority.
+
+### Relying parties
+
+A relying party verifies with `POST /api/v1/verify`, using a token from `/api/v1/oauth/token`.
+Registering one grants it standing to ask about people, so it is the schema owner's act, and the
+database answers only on the stack's own network:
+[`scripts/polaris-rp-register.sh`](../../scripts/polaris-rp-register.sh) runs the statements
+`polaris rp-register` runs, through the postgres container, and prints the client id and the secret
+once (only the secret's scrypt hash is kept):
+
+```bash
+./scripts/polaris-rp-register.sh "<organization>" --justification "<why, at least 20 characters>"
+```
 
 ## Environment variables
 

@@ -7,7 +7,7 @@ Ubuntu 24.04 and macOS 15; compatible with PostgreSQL 14 or later.
 | Part | Count |
 |------|-------|
 | Tables | **60 tables** (the 47th and 48th, PopulationCount and PopulationCountDelta, 2026-10-01; the 49th to 51st, EnrollmentCurrent, EnrollmentCount and EnrollmentCountDelta, 2026-10-02; the 52nd to 57th, the six activity rollups the Atlas reads, 2026-10-02; the 58th, ChainAnchor, 2026-10-04; the 59th, BackupEvent, 2026-10-07; the 60th, RestoreRecord, 2026-10-07; a migrated deployment holds 67, with the `schema_version` registry, the three migration-added tables, and the three Athena curated tables) |
-| Stored procedures and functions | **32 stored procedures and functions** (with the two wallet-copy functions, 2026-09-28, the holder key register's writer, 2026-10-01, the population counts' fold and recount, 2026-10-01, the enrolment counts' fold and rebuild, 2026-10-02, and the activity rollups' fold and recount, 2026-10-02) in `05_procedures.sql` |
+| Stored procedures and functions | **33 stored procedures and functions** (with the two wallet-copy functions, 2026-09-28, the holder key register's writer, 2026-10-01, the population counts' fold and recount, 2026-10-01, the enrolment counts' fold and rebuild, 2026-10-02, the activity rollups' fold and recount, 2026-10-02, and the replica's caught-up probe, 2026-10-08) in `05_procedures.sql` |
 | Self-tests | `08_tests.sql` reports 91 checks, all PASS on a fresh load (v1.0.0-rc.62) |
 | Substrate manifest | 27 rows in `SystemDependency` |
 
@@ -57,7 +57,7 @@ Dependencies when loading by hand:
 | `02_indexes.sql` | Partial unique indexes, spatial index on `VerificationEvent(latitude, longitude)`, revocation-rate (R11-6), enrollment-event (R11-4), recovery-queue, active-signature (R11-1), anchor batch/pending (R10-2), secondary indexes |
 | `03_view.sql` | `ActiveTokens` and `IndividualCurrentEnrollment` views |
 | `04_data.sql` | Sample data across all five enrollment states, TokenSignature backfill, two closed `AnchorBatch` rows |
-| `05_procedures.sql` | 32 stored procedures and functions (below) |
+| `05_procedures.sql` | 33 stored procedures and functions (below) |
 | `06_triggers.sql` | State machine, auto-audit, append-only on every audit-of-record table (see `docs/design/audit-of-record.md`), revocation-velocity bound (R11-6), enrollment seed (R11-4), active-signature and signature immutability (R11-1), attestation immutability (R11-3), epoch immutability (R10-1) |
 | `07_queries.sql` | Relational-algebra queries from §8, UC-6 bonus, `civic_enrollment_summary` (R11-4) |
 | `08_tests.sql` | Self-test suite: prints PASS or FAIL per check |
@@ -86,9 +86,10 @@ pseudonymization), `uc_apply_retention_template` + `uc_set_retention_policy` +
 status lists, 2026-09-28), `uc_record_holder_key_event` (the holder key register's only
 writer, 2026-10-01), `uc_fold_population_counts` + `uc_rebuild_population_counts` (the
 exact population counts, lab/strategy/008, 2026-10-01), `uc_fold_enrollment_counts` +
-`uc_rebuild_enrollment_counts` (the exact enrolment counts, step 4, 2026-10-02), and
+`uc_rebuild_enrollment_counts` (the exact enrolment counts, step 4, 2026-10-02),
 `uc_fold_activity_rollups` + `uc_rebuild_activity_rollups` (the activity rollups the Atlas
-reads, lab/strategy/009 step 4, 2026-10-02).
+reads, lab/strategy/009 step 4, 2026-10-02), and `replica_replay_caught_up` (whether a replica
+has replayed everything complete it received, lab record 017, 2026-10-08).
 
 ## Migrations
 

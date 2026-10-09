@@ -118,7 +118,7 @@ Volumes:
 | Anchor the transparency logs in Bitcoin | Daily, or at the cadence you choose | `./scripts/polaris-chain-anchor.py checkpoint`, `ots stamp`, later `ots upgrade`, `verify`, `polaris-id anchor-record`; see [Anchoring the logs in Bitcoin](#anchoring-the-logs-in-bitcoin) |
 | Certificate transparency check | Daily (cron) | `./scripts/polaris-ct-monitor.sh`: alerts on unexpected cert issuance for `${POLARIS_DOMAIN}`; see [Certificate transparency monitoring](#certificate-transparency-monitoring) |
 | Audit-log rotation | Yearly (cron) | `./scripts/polaris-rotate-logs.sh --actor-user-id=N`: archive from the retention policy, verify, purge, in one cron-ready pipeline (`--cutoff-days` overrides the policy with one fixed cutoff) |
-| Operator onboarding | As needed | `./scripts/polaris-create-operator.sh --username NAME --role admin\|operator\|auditor --password-file PATH`: scrypt-hashed AppUser + AuthAuditLog entry |
+| Operator onboarding | As needed | `./scripts/polaris-create-operator.sh --username NAME --role admin\|operator\|auditor --password-file PATH --reason TEXT`: scrypt-hashed AppUser + AuthAuditLog entry |
 | Scrape `/metrics` | Continuous (Prometheus) | `curl http://app:8000/metrics` from the stack network: Prometheus text-format exposition; see [Prometheus metrics](#prometheus-metrics-metrics) for the required edge ACL |
 | Rotate `POLARIS_SECRET_KEY` | 180 days | `./scripts/polaris-rotate-secret.sh polaris_secret_key` |
 | Rotate DB password | 180 days | `./scripts/polaris-rotate-secret.sh polaris_db_password` |
@@ -1065,7 +1065,9 @@ it keeps the `geo` columns, unindexed, until the contract step drops them with `
 For most deployments the cheaper move is vertical scaling first, horizontal
 second:
 
-- 2 vCPU to 4 vCPU: doubles app throughput with a gunicorn worker bump
+- More vCPU for the app, with the gunicorn workers raised to match: more throughput while the
+  app tier is what binds (one replica at 1 vCPU served 1.96 times one at 0.5), and then the
+  database binds ([SCALING.md](../reference/SCALING.md#sizing-a-deployment))
 - 4 GB to 16 GB: enables larger `shared_buffers` for Postgres
 - SSD to NVMe: cuts atlas p99 at large cardinality
 
@@ -1260,6 +1262,11 @@ polaris-id rp-policy <client_id> --no-require-zk \
 polaris-id rp-history <client_id>              # every decision, and who made it
 polaris-id rp-history --weakened-only          # only the bars that were lowered
 ```
+
+On the Docker stack the database answers only on the stack's network, so
+[`scripts/polaris-rp-register.sh`](../../scripts/polaris-rp-register.sh) runs `rp-register`'s
+statements as the schema owner through the postgres container, with the same options; `rp-policy`
+and `rp-history` still need a connection as the schema owner.
 
 A change that REDUCES what the party must satisfy (the zero-knowledge step-up turned
 off, a required enrollment dropped, the context restriction lifted, the scope widened,

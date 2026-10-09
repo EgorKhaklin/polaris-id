@@ -42,6 +42,13 @@
 #      CEIL_SWITCHOVER; the old leader must follow as a replica.
 #   4. One etcd member crashes. The leader must NOT change, no write may
 #      fail, and the member must restart on its own within CEIL_RESTART.
+#   5. The replica is lost (gate row OP-6). The leader keeps its lease and no
+#      write fails; with synchronous_mode on, writes stall at most
+#      CEIL_REPLICA_STALL while Patroni stops waiting for it. The replica
+#      rejoins and is named synchronous again.
+#
+# The drill reads synchronous_mode from the cluster. With it on, a scenario
+# that loses an acknowledged write fails; with it off, the loss is reported.
 #
 # The ceilings are hard assertions, the same discipline as the window and
 # chaos drills. The measured numbers are the ones FAILOVER.md states.
@@ -56,6 +63,7 @@ CEIL_REJOIN="${POLARIS_FAILOVER_CEIL_REJOIN:-120}"
 CEIL_DEMOTE="${POLARIS_FAILOVER_CEIL_DEMOTE:-45}"
 CEIL_SWITCHOVER="${POLARIS_FAILOVER_CEIL_SWITCHOVER:-30}"
 CEIL_RESTART="${POLARIS_FAILOVER_CEIL_RESTART:-60}"
+CEIL_REPLICA_STALL="${POLARIS_FAILOVER_CEIL_REPLICA_STALL:-30}"
 read -r -a COMPOSE_EXTRA <<< "${POLARIS_COMPOSE_EXTRA:-}"
 compose() { (cd "$ROOT/polaris_web" && docker compose -f docker-compose.prod.yml "${COMPOSE_EXTRA[@]}" "$@"); }
 WORK="$(mktemp -d)"
@@ -124,7 +132,8 @@ not_primary() { ! is_primary "$1"; }
 leader_is() { [[ "$(leader_via "$2")" == "$1" ]]; }
 leader_changed_from() { local l; l=$(leader_via "$2"); [[ -n "$l" && "$l" != "$1" ]]; }
 replica_streaming() {  # replica_streaming MEMBER VIA
-    [[ "$(cluster_field "$2" role "$1")" == "replica" && "$(cluster_field "$2" state "$1")" == "streaming" ]]
+    # A synchronous replica reads as sync_standby (gate row OP-6); either is a streaming replica.
+    [[ "$(cluster_field "$2" role "$1")" =~ ^(replica|sync_standby)$ && "$(cluster_field "$2" state "$1")" == "streaming" ]]
 }
 timeline_followed() {  # timeline_followed MEMBER VIA WANT: the member reports the leader's timeline
     local tl; tl="$(cluster_field "$2" timeline "$1")"
@@ -163,17 +172,20 @@ le() { python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) <= float(sys.arg
 
 # --- the write stream and the read traffic ---------------------------------------
 cat > "$WORK/writer.py" <<'PYEOF'
-import os, signal, sys, time
+import os, signal, sys, time, uuid
 import psycopg
 dsn = os.environ["DSN"]; log = open("/state/writes.log", "a", buffering=1)
+acked = open("/state/acked.log", "a", buffering=1)   # one token per acknowledged insert, in order
 stop = False
 signal.signal(signal.SIGTERM, lambda *a: globals().__setitem__("stop", True))
 while not stop:
     t = time.time()   # each line: start, end, outcome; an insert queued in the pooler is a long line, not a fast one
+    token = uuid.uuid4().hex
     try:
         with psycopg.connect(dsn, connect_timeout=3, autocommit=True) as c:
-            c.execute("INSERT INTO ha_marker DEFAULT VALUES")
+            c.execute("INSERT INTO ha_marker (token) VALUES (%s)", (token,))
         log.write(f"{t:.3f} {time.time():.3f} ok\n")
+        acked.write(token + "\n")   # only after the acknowledgement
     except Exception:
         log.write(f"{t:.3f} {time.time():.3f} fail\n")
     time.sleep(0.25)
@@ -205,8 +217,14 @@ while not stop.is_set(): time.sleep(0.2)
 time.sleep(0.5)
 with open(out, "w") as fh: json.dump(stats, fh)
 PYEOF
-ok_count() { grep -c ' ok$' "$WORK/state/writes.log" 2>/dev/null || echo 0; }
+ok_count() { local n; n=$(grep -c ' ok$' "$WORK/state/writes.log" 2>/dev/null) || true; echo "${n:-0}"; }
 rows_on() { docker exec "polaris-$1" psql -h /var/run/postgresql -U postgres -d polaris -tAc "SELECT count(*) FROM ha_marker" 2>/dev/null | tr -d '[:space:]'; }
+missing_on() {  # missing_on MEMBER FILE: the tokens in FILE that MEMBER's ha_marker lacks, one per line
+    { echo "CREATE TEMP TABLE acked (token text);"; echo "COPY acked FROM STDIN;"; cat "$2"
+      [[ -z "$(tail -c1 "$2")" ]] || echo; echo '\.'
+      echo "SELECT a.token FROM acked a LEFT JOIN ha_marker m USING (token) WHERE m.token IS NULL;"; } \
+        | docker exec -i "polaris-$1" psql -h /var/run/postgresql -U postgres -d polaris -qtA -v ON_ERROR_STOP=1
+}
 replica_current() {  # replica_current MEMBER VIA: streaming with zero lag, twice a second apart
     local i; for i in 1 2; do
         replica_streaming "$1" "$2" || return 1
@@ -215,20 +233,48 @@ replica_current() {  # replica_current MEMBER VIA: streaming with zero lag, twic
     done
     return 0
 }
-ROWS0=0
+SYNC=""; LOST=0; LOST_TOTAL=0
 no_lost_write() {  # no_lost_write FLOOR: every insert acknowledged before the failure began (FLOOR of them) is in
-                   # the surviving history; inserts acknowledged after it began may be the async replication's
-                   # RPO (FAILOVER.md section 6) and are reported, not tolerated silently
-    local floor="$1" leader rows acked lost; leader=$(leader); rows=$(( $(rows_on "$leader") - ROWS0 )); acked=$(ok_count)
-    [[ "$rows" -ge "$floor" ]] || fail "$rows rows added to ha_marker on $leader but $floor inserts were acknowledged before the failure began: an acknowledged write from before the failure was lost"
-    lost=$(( acked - rows )); [[ "$lost" -lt 0 ]] && lost=0
-    echo "  integrity: $rows rows added on $leader, $acked inserts acknowledged, $lost of them (acknowledged inside the failure window) not in the surviving history"
+                   # the surviving history. Inserts acknowledged after it began are the asynchronous replication's
+                   # RPO (FAILOVER.md section 6) and are reported; with synchronous_mode on (gate row OP-6) a
+                   # commit returned only once the replica held it, so none may be missing. An earlier scenario's
+                   # reported loss is not this one's: it stays lost, so it is not counted again.
+                   # By identity, not by count: the acknowledged tokens are read BEFORE the leader is asked, so an
+                   # insert acknowledged while the check runs is in neither, where two counts taken a moment apart
+                   # (rows, then acknowledgements, with the writer still running) once reported a write lost that
+                   # had only landed between them, and in the other order could hide one.
+    local floor="$1" leader acked early lost
+    leader=$(leader)
+    cp "$WORK/state/acked.log" "$WORK/acked.now"
+    acked=$(grep -c . "$WORK/acked.now" || true)
+    [[ "$acked" -gt 0 && "$acked" -ge "$floor" ]] \
+        || fail "$acked acknowledged inserts are on record against the $floor counted before the failure began: the writer is not recording what it acknowledges, and the comparison would measure nothing"
+    missing_on "$leader" "$WORK/acked.now" > "$WORK/missing.now" || fail "cannot ask $leader which acknowledged inserts it holds"
+    grep -vxF -f "$WORK/lost.all" "$WORK/missing.now" > "$WORK/missing.new" || true
+    early=$(head -n "$floor" "$WORK/acked.now" | grep -cxF -f "$WORK/missing.new" || true)
+    [[ "$early" -eq 0 ]] || fail "$early of the $floor inserts acknowledged before the failure began are not on $leader: an acknowledged write from before the failure was lost"
+    lost=$(grep -c . "$WORK/missing.new" || true); cat "$WORK/missing.new" >> "$WORK/lost.all"
+    LOST=$lost; LOST_TOTAL=$(( LOST_TOTAL + lost ))
+    echo "  integrity: $(( acked - $(grep -c . "$WORK/missing.now" || true) )) of $acked acknowledged inserts on $leader, $lost of them (acknowledged inside the failure window) not in the surviving history"
+    if [[ "$SYNC" == on && "$lost" -gt 0 ]]; then
+        fail "$lost acknowledged inserts are not in the surviving history: with synchronous_mode on, a failover must lose none"
+    fi
 }
-member_role_is() { [[ "$(rest "$1" /patroni | python3 -c "import json,sys; print(json.load(sys.stdin).get('role',''))" 2>/dev/null)" == "$2" ]]; }
+# /patroni says replica for a member that is also the synchronous standby; /cluster says sync_standby.
+member_role_is() {
+    local role; role=$(rest "$1" /patroni | python3 -c "import json,sys; print(json.load(sys.stdin).get('role',''))" 2>/dev/null)
+    [[ "$role" == "$2" || ( "$2" == replica && "$role" == sync_standby ) ]]
+}
+sync_standby_is() { [[ "$(cluster_field "$2" role "$1")" == sync_standby ]]; }  # sync_standby_is MEMBER VIA
 settle() {  # the write stream must be flowing and the replica current before a scenario starts its clock
     local t l r; t=$(now); wait_for 60 writes_ok_since "$t" >/dev/null || fail "writes are not flowing before the next scenario"
     l=$(leader); r=$(other "$l")
     wait_for 90 replica_current "$r" "$l" >/dev/null || fail "$r is not a current streaming replica of $l before the next scenario ($(cluster_field "$l" state "$r"), lag $(cluster_field "$l" lag "$r"))"
+    # Gate row OP-6: each scenario starts under the protection it measures. A member that just
+    # rejoined is asynchronous until Patroni names it the synchronous standby again.
+    if [[ "$SYNC" == on ]]; then
+        wait_for 60 sync_standby_is "$r" "$l" >/dev/null || fail "$r is not the synchronous standby of $l before the next scenario"
+    fi
 }
 traffic_start() { : > "$1"; python3 "$WORK/traffic.py" "$URL" "$1" & TRAFFIC_PID=$!; }
 traffic_stop()  { kill -TERM "$TRAFFIC_PID" 2>/dev/null || true; wait "$TRAFFIC_PID" 2>/dev/null || true; TRAFFIC_PID=""; }
@@ -252,6 +298,17 @@ R0=$(other "$L0")
 wait_for 30 replica_streaming "$R0" "$L0" >/dev/null \
     || fail "$R0 is not a streaming replica of $L0 before the drill, after 30s ($(cluster_field "$L0" role "$R0")/$(cluster_field "$L0" state "$R0"))"
 echo "  leader $L0, replica $R0 streaming, timeline $(cluster_field "$L0" timeline "$L0")"
+# Gate row OP-6: how the cluster replicates, by its own configuration in the lease store. With
+# synchronous_mode on, the replica must be the synchronous standby before anything fails, and no
+# scenario may lose an acknowledged write (no_lost_write).
+SYNC=$(rest "$L0" /config | python3 -c "import json,sys; print('on' if json.load(sys.stdin).get('synchronous_mode') else 'off')" 2>/dev/null || true)
+[[ "$SYNC" == on || "$SYNC" == off ]] || fail "could not read synchronous_mode from $L0's configuration"
+if [[ "$SYNC" == on ]]; then
+    wait_for 60 sync_standby_is "$R0" "$L0" >/dev/null || fail "$R0 is not the synchronous standby of $L0 after 60s, with synchronous_mode on"
+    echo "  synchronous_mode on: $R0 is the synchronous standby; no acknowledged write may be lost"
+else
+    echo "  synchronous_mode off: inserts acknowledged inside a failure window may be lost, and are counted"
+fi
 
 # Lab record 017 (gate row OP-8): the cluster's internal surfaces authenticate. From the members'
 # network, where the app runs, an unauthenticated write to Patroni's REST API (PATCH /config sets
@@ -282,11 +339,13 @@ echo "  read replica routing: database_replica=$RH"
 # The marker table the writer fills, created on the leader by the superuser
 # over the local socket (pg_hba: local trust, like the stock image).
 docker exec "polaris-$L0" psql -h /var/run/postgresql -U postgres -d polaris -v ON_ERROR_STOP=1 -q \
-    -c "CREATE TABLE IF NOT EXISTS ha_marker (id bigserial PRIMARY KEY, ts timestamptz NOT NULL DEFAULT clock_timestamp());" \
+    -c "DROP TABLE IF EXISTS ha_marker;" \
+    -c "CREATE TABLE ha_marker (id bigserial PRIMARY KEY, token text UNIQUE NOT NULL, ts timestamptz NOT NULL DEFAULT clock_timestamp());" \
     -c "GRANT INSERT ON ha_marker TO polaris_app; GRANT USAGE ON SEQUENCE ha_marker_id_seq TO polaris_app;" \
     || fail "could not create the marker table on $L0"
-ROWS0=$(rows_on "$L0"); [[ "$ROWS0" =~ ^[0-9]+$ ]] || fail "cannot count ha_marker on $L0"
-mkdir -p "$WORK/state"; : > "$WORK/state/writes.log"; chmod 0777 "$WORK/state"; chmod 0644 "$WORK/writer.py"
+[[ "$(rows_on "$L0")" == 0 ]] || fail "cannot read ha_marker on $L0"
+mkdir -p "$WORK/state"; : > "$WORK/state/writes.log"; : > "$WORK/state/acked.log"; : > "$WORK/lost.all"
+chmod 0777 "$WORK/state"; chmod 0666 "$WORK/state/writes.log" "$WORK/state/acked.log"; chmod 0644 "$WORK/writer.py"
 APP_PW=$(cat "$SECRETS/polaris_db_password")
 docker rm -f "$WRITER" >/dev/null 2>&1 || true
 docker run -d --name "$WRITER" --network "$NET" \
@@ -331,6 +390,7 @@ tl1=$(cluster_field "$L1" timeline "$L1")
 echo "  promoted $L1 after ${p1}s; writes: ${fails1} failed (span ${gap1}s), longest stall ${stall1}s, outage ${out1}s; $L0 rejoined as a replica ${j1}s after it was started; timeline $tl1; reads dropped $(drops "$WORK/s1.json")"
 le "$out1" "$CEIL_FAILOVER" || fail "write outage ${out1}s exceeds the ${CEIL_FAILOVER}s ceiling"
 no_lost_write "$acked0"
+lost1=$LOST
 # Poll rather than read once. This asserted on a SINGLE read and failed CI on 2026-09-18
 # with "postgres is on timeline , the leader on 2" -- an EMPTY timeline, three lines after
 # its own summary said the node had rejoined on timeline 2. Patroni's REST endpoint was
@@ -385,6 +445,7 @@ else
     echo "  $L1 demoted itself after ${d2}s; leaderless until the partition healed; $L2 held the lease ${p2}s after the partition began; writes: ${fails2} failed (span ${gap2}s), longest stall ${stall2}s, outage ${out2}s; $R2 streaming after ${j2}s; reads dropped $(drops "$WORK/s2.json")"
 fi
 no_lost_write "$acked0"
+lost2=$LOST
 verify_recovered || fail "verification did not recover after the lease partition (scenario 2)"
 
 # --- 3. a planned switchover ------------------------------------------------------------
@@ -403,6 +464,7 @@ read -r gap3 fails3 stall3 <<< "$(gap_since "$t0")"; out3=$(outage "$gap3" "$sta
 echo "  $C3 leader after ${p3}s; writes: ${fails3} failed (span ${gap3}s), longest stall ${stall3}s, outage ${out3}s; $L3 follows after ${j3}s; reads dropped $(drops "$WORK/s3.json")"
 le "$out3" "$CEIL_SWITCHOVER" || fail "switchover write outage ${out3}s exceeds the ${CEIL_SWITCHOVER}s ceiling"
 no_lost_write "$(ok_count)"
+lost3=$LOST
 L1="$C3"
 verify_recovered || fail "verification did not recover after the switchover (scenario 3)"
 
@@ -421,6 +483,32 @@ r4=$(wait_for "$CEIL_RESTART" container_healthy polaris-etcd1) || fail "etcd1 di
 sleep 2; traffic_stop
 echo "  leader unchanged, 0 failed inserts, longest stall ${stall4}s; etcd1 back healthy after ${r4}s; reads dropped $(drops "$WORK/s4.json")"
 verify_recovered || fail "verification did not recover after the etcd member crash (scenario 4)"
+
+# --- 5. the replica is lost ----------------------------------------------------------------
+# Gate row OP-6: what synchronous replication costs when the replica goes. The leader keeps its
+# lease and its writes. With synchronous_mode on, a commit waits for the lost replica until Patroni
+# stops naming it synchronous on its next loop, so writes stall for a loop or two, not until the
+# replica returns, and none fails; off, they do not wait at all. The replica then comes back,
+# rejoins, and (on) is named synchronous again.
+settle
+L5=$(leader); R5=$(other "$L5")
+echo "== 5. the replica ($R5) is lost: killed, and it stays down =="
+traffic_start "$WORK/s5.json"
+t0=$(now)
+docker kill -s KILL "polaris-$R5" >/dev/null 2>&1 || fail "could not kill $R5"
+sleep 25
+[[ "$(leader_via "$L5")" == "$L5" ]] || fail "the leader changed when the replica was lost"
+read -r _ fails5 stall5 <<< "$(gap_since "$t0")"
+[[ "$fails5" -eq 0 ]] || fail "${fails5} inserts failed while the replica was down; the leader must keep taking writes"
+le "$stall5" "$CEIL_REPLICA_STALL" || fail "writes stalled ${stall5}s when the replica was lost, over the ${CEIL_REPLICA_STALL}s ceiling"
+started=$(compose start "$R5" 2>&1) || { printf '%s\n' "$started" | tail -15 >&2; fail "could not start $R5 again"; }
+j5=$(wait_for "$CEIL_REJOIN" replica_streaming "$R5" "$L5") || fail "$R5 did not rejoin as a streaming replica within ${CEIL_REJOIN}s"
+if [[ "$SYNC" == on ]]; then
+    wait_for 60 sync_standby_is "$R5" "$L5" >/dev/null || fail "$R5 rejoined but was not named the synchronous standby again within 60s"
+fi
+sleep 2; traffic_stop
+no_lost_write "$(ok_count)"
+echo "  leader $L5 kept its lease, 0 failed inserts, longest stall ${stall5}s (synchronous_mode $SYNC); $R5 rejoined after ${j5}s; reads dropped $(drops "$WORK/s5.json")"
 
 wait_for 30 edge_ok >/dev/null || fail "stack not healthy at the end of the drill"
 
@@ -464,14 +552,16 @@ json.dump({"latency_ms": lat, "achieved_rps": s.get("achieved_rps"),
           open(sys.argv[2], "w"), indent=2)
 print("  verification was served at rate throughout and recovered after every failover")
 PYEOF
-python3 - "$OUT" "$WORK/verify-latency.json" "$p1" "$out1" "$fails1" "$stall1" "$j1" "$d2" "$outcome2" "$p2" "$out2" "$fails2" "$stall2" "$j2" "$p3" "$out3" "$fails3" "$stall3" "$j3" "$stall4" "$r4" <<'PYEOF'
+python3 - "$OUT" "$WORK/verify-latency.json" "$p1" "$out1" "$fails1" "$stall1" "$j1" "$d2" "$outcome2" "$p2" "$out2" "$fails2" "$stall2" "$j2" "$p3" "$out3" "$fails3" "$stall3" "$j3" "$stall4" "$r4" "$SYNC" "$lost1" "$lost2" "$lost3" "$stall5" "$j5" <<'PYEOF'
 import json, sys
-o, lat_path, p1, o1, f1, s1, j1, d2, oc2, p2, o2, f2, s2, j2, p3, o3, f3, s3, j3, s4, r4 = sys.argv[1:]
+o, lat_path, p1, o1, f1, s1, j1, d2, oc2, p2, o2, f2, s2, j2, p3, o3, f3, s3, j3, s4, r4, sync, l1, l2, l3, s5, j5 = sys.argv[1:]
 summary = {
-    "leader_lost":           {"promoted_s": int(p1), "write_outage_s": float(o1), "failed_inserts": int(f1), "longest_stall_s": float(s1), "rejoined_s": int(j1)},
-    "leader_cut_from_dcs":   {"demoted_s": int(d2), "outcome": oc2, "lease_held_again_s": int(p2), "write_outage_s": float(o2), "failed_inserts": int(f2), "longest_stall_s": float(s2), "rejoined_s": int(j2)},
-    "switchover":            {"promoted_s": int(p3), "write_outage_s": float(o3), "failed_inserts": int(f3), "longest_stall_s": float(s3), "followed_s": int(j3)},
+    "synchronous_mode":      sync == "on",
+    "leader_lost":           {"promoted_s": int(p1), "write_outage_s": float(o1), "failed_inserts": int(f1), "longest_stall_s": float(s1), "rejoined_s": int(j1), "acknowledged_lost": int(l1)},
+    "leader_cut_from_dcs":   {"demoted_s": int(d2), "outcome": oc2, "lease_held_again_s": int(p2), "write_outage_s": float(o2), "failed_inserts": int(f2), "longest_stall_s": float(s2), "rejoined_s": int(j2), "acknowledged_lost": int(l2)},
+    "switchover":            {"promoted_s": int(p3), "write_outage_s": float(o3), "failed_inserts": int(f3), "longest_stall_s": float(s3), "followed_s": int(j3), "acknowledged_lost": int(l3)},
     "etcd_member_crashed":   {"leader_changed": False, "failed_inserts": 0, "longest_stall_s": float(s4), "restarted_s": int(r4)},
+    "replica_lost":          {"leader_changed": False, "failed_inserts": 0, "longest_stall_s": float(s5), "rejoined_s": int(j5)},
 }
 # v9.387 (P1.18 item 6): the verification latency measured ON THIS TOPOLOGY rides
 # in the uploaded summary, so the one number an operator can cite about a real
@@ -482,4 +572,4 @@ except (OSError, ValueError):
     pass
 json.dump(summary, open(o, "w"), indent=2); print(json.dumps(summary))
 PYEOF
-echo "== FAILOVER DRILL PASSED: the replica took over a lost leader, a leader without its lease stood down, a switchover was a short gap, and the quorum carried an etcd crash =="
+echo "== FAILOVER DRILL PASSED: the replica took over a lost leader, a leader without its lease stood down, a switchover was a short gap, the quorum carried an etcd crash, and the leader carried a lost replica (synchronous_mode $SYNC) =="

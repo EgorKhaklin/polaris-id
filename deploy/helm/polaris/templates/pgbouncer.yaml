@@ -6,7 +6,7 @@ metadata:
     {{- include "polaris.labels" . | nindent 4 }}
     app.kubernetes.io/component: pgbouncer
 spec:
-  replicas: 1
+  replicas: {{ .Values.pgbouncer.replicas }}
   selector:
     matchLabels:
       {{- include "polaris.selector" . | nindent 6 }}
@@ -21,6 +21,8 @@ spec:
       # projected token mount lands under /var/run/secrets, which the app's Secret
       # mount would otherwise make read-only (the mkdir failed at runc).
       automountServiceAccountToken: false
+      {{- include "polaris.spread" (list "pgbouncer" .) | nindent 6 }}
+      {{- include "polaris.fastEviction" . | nindent 6 }}
       securityContext:
         {{- include "polaris.podSecurity" (dict "uid" 1000 "gid" 1000) | nindent 8 }}
       containers:
@@ -73,10 +75,16 @@ spec:
             requests: {cpu: 50m, memory: 32Mi}
             limits: {memory: 128Mi}
       volumes:
+        # Only the keys the pooler reads, 0440 under the pod's group.
         - name: secrets
           secret:
             secretName: {{ include "polaris.secretName" . }}
-            defaultMode: 0444
+            defaultMode: 0440
+            items:
+              - {key: polaris_db_password, path: polaris_db_password}
+              - {key: postgres_server.crt, path: postgres_server.crt}
+              - {key: pgbouncer_server.crt, path: pgbouncer_server.crt}
+              - {key: pgbouncer_server.key, path: pgbouncer_server.key}
         - name: conf
           emptyDir: {medium: Memory}
         - name: tmp
@@ -97,3 +105,5 @@ spec:
     - name: pgbouncer
       port: 6432
       targetPort: pgbouncer
+---
+{{ include "polaris.pdb" (list "pgbouncer" .) }}

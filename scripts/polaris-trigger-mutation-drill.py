@@ -209,6 +209,20 @@ def _suite_is_red(module: str, env: dict[str, str]) -> bool:
                                    capture_output=True).returncode != 0
 
 
+# unittest names a failed test "FAIL: test_x (module.Class.test_x)", and a failure inside a subTest
+# "FAIL: test_x (module.Class.test_x) [the subtest's message]"; the id is the parenthesised part
+# in both. Until 2026-10-08 only lines ending in ")" were read, so a subTest failure was dropped.
+# Alone, the red run still counted as caught; beside an unrelated flaky failure, only the flaky
+# test was run again, it passed, and the real catch was reported UNTESTED. That failed CI on a
+# different refusal each time (attestation#4, token_signature#3, token_state_machine#1 and #2).
+_FAILED_TEST = re.compile(r"^(?:FAIL|ERROR): \S+ \(([\w.]+)\)")
+
+
+def _failed_tests(stderr: str) -> list[str]:
+    """The dotted ids of the tests a unittest run reports failed or errored, subtests included."""
+    return sorted({m.group(1) for m in map(_FAILED_TEST.match, stderr.splitlines()) if m})
+
+
 def _suite_catches(module: str, env: dict[str, str]) -> bool:
     """Red, and red again: the tests that failed under a mutation fail a second time.
 
@@ -223,10 +237,7 @@ def _suite_catches(module: str, env: dict[str, str]) -> bool:
                                 capture_output=True, text=True)
     if r.returncode == 0:
         return False
-    failed = []
-    for line in r.stderr.splitlines():
-        if line.startswith(("FAIL: ", "ERROR: ")) and "(" in line and line.endswith(")"):
-            failed.append(line[line.rindex("(") + 1:-1])        # module.Class.test_name
+    failed = _failed_tests(r.stderr)
     if not failed:
         return True        # red with no test named (an import or setup error): as before
     again = polaris_bounded_run.run([sys.executable, "-m", "unittest", *sorted(set(failed))],

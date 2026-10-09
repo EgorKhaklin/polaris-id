@@ -279,6 +279,16 @@ stage_app() {
         || die "/api/health reports unhealthy components"
     ok "healthy through the TLS edge: $url"
     printf '\n  Polaris is running under systemd.\n    systemctl status polaris      journalctl -u polaris\n    upgrades: cd %s && scripts/polaris-deploy.sh prod\n    hardening: docs/operator/HARDENING.md\n\n' "$INSTALL_DIR"
+    # Lab record 017 (gate row OP-2): the two steps a working install still needs, named exactly. The
+    # key step is the authority's act, so the install never takes it: it says the one command.
+    printf '  Next, once (docs/operator/LINUX-SERVER.md, "After the install"):\n'
+    printf '    1. the first administrator:\n'
+    printf '         cd %s && sudo scripts/polaris-create-operator.sh --username NAME --role admin \\\n' "$INSTALL_DIR"
+    printf '           --password-file FILE --reason "the first administrator of this install" --target=docker-stack\n'
+    printf '    2. register the signing key this install minted, for each authority that issues (1 in the\n'
+    printf '       notional data); until then every relying party refuses its credentials:\n'
+    printf '         cd %s && sudo scripts/polaris-key-event.sh register 1 --current\n' "$INSTALL_DIR"
+    printf '    Relying parties are registered with scripts/polaris-rp-register.sh.\n\n'
 }
 
 case "$STAGE" in
