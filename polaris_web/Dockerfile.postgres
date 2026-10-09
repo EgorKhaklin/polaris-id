@@ -24,7 +24,7 @@
 #
 # Build context is the REPOSITORY ROOT (see docker-compose.prod.yml).
 # ============================================================================
-FROM postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+FROM postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
 
 # Every Polaris image carries the same provenance labels; the version is
 # passed in by scripts/polaris-image-build.sh from polaris_web/__version__.py.
