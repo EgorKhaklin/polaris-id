@@ -9590,6 +9590,19 @@ class F08_ErrorMessageSanitizationTests(PolarisTestCase):
         self.assertNotIn('percent', msg)
         self.assertNotIn('uc8_revoke_token', msg)
 
+    def test_the_co_signer_refusals_say_what_is_wrong(self):
+        """The two refusals that follow once a co-signer is named are the procedure's own words."""
+        from app import db_error_to_message
+        for raw, want in (('Co-signer must differ from actor', 'Co-signer must differ from actor'),
+                          ('Co-signer agency 3 lacks BOTH authorization on the relevant algorithm',
+                           'Co-signer agency 3 lacks BOTH authorization on the relevant algorithm')):
+            class FakeErr:
+                def __str__(self, raw=raw):
+                    return 'ERROR:  %s\nCONTEXT:  PL/pgSQL function uc8_revoke_token(...) line 63 at RAISE' % raw
+            msg = db_error_to_message(FakeErr())
+            self.assertEqual(msg, want)
+            self.assertNotIn('uc8_revoke_token', msg)
+
 
 class F11_AuditLoggingTests(PolarisTestCase):
     """F-11: Authentication events recorded in AuthAuditLog."""

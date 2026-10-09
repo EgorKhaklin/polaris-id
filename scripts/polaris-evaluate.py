@@ -23,6 +23,7 @@ import http.cookiejar
 import json
 import os
 import platform
+import pwd
 import re
 import ssl
 import subprocess
@@ -137,6 +138,13 @@ def _csrf(page):
     m = (re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page)
          or re.search(r'value="([^"]+)"[^>]*name="csrf_token"', page))
     return html.unescape(m.group(1)) if m else ""
+
+
+def _flash(page):
+    """The page's flash messages: the reason a form refused, which sits after kilobytes of layout."""
+    found = re.findall(r'class="[^"]*\b(?:flash|alert)\b[^"]*"[^>]*>(.*?)</', page or "", re.S)
+    text = " | ".join(t for t in (re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", f))).strip() for f in found) if t)
+    return text or re.sub(r"\s+", " ", page or "")[:300]
 
 
 def _json(text):
@@ -263,58 +271,74 @@ def probe_trust(rep, web, agency):
 
 
 # --- D: offline verification with the published detached verifier -------------------------------------
-def probe_offline(rep, out, pack, anchor_hex):
-    venv = os.path.join(out, "verifier-venv")
-    exe = os.path.join(venv, "bin", "polaris-verify")
-    if not os.path.exists(exe):
+def _verifier_version():
+    """The polaris-verify version this checkout ships: the one its install is judged with."""
+    text = open(os.path.join(ROOT, "packages", "polaris-verify", "pyproject.toml")).read()
+    return re.search(r'(?m)^version = "([^"]+)"', text).group(1)
+
+
+def probe_offline(rep, pack, anchor_hex):
+    # Everything here lives in a temporary directory removed afterwards: the verifier's venv, and the
+    # credential and its tampered copies, which are a possession proof and never belong in the report.
+    with tempfile.TemporaryDirectory(prefix="polaris-evaluate-") as work:
+        venv = os.path.join(work, "venv")
+        exe, pip = os.path.join(venv, "bin", "polaris-verify"), os.path.join(venv, "bin", "pip")
+        version = _verifier_version()
         mk = subprocess.run([sys.executable, "-m", "venv", venv], capture_output=True, text=True)
-        pip = subprocess.run([os.path.join(venv, "bin", "pip"), "install", "-q", "--pre",
-                              "polaris-verify[cryptography]"], capture_output=True, text=True, timeout=600) \
-            if mk.returncode == 0 else mk
-        if pip.returncode != 0:
-            rep.add("D.verifier", "install polaris-verify from PyPI into a venv", "installed",
-                    "could not install it (no network?)", "SKIP", (pip.stderr or "")[-300:])
+        source = "PyPI"
+        r = subprocess.run([pip, "install", "-q", "--only-binary", ":all:", "polaris-verify[cryptography]==" + version],
+                           capture_output=True, text=True, timeout=600) if mk.returncode == 0 else mk
+        if mk.returncode == 0 and r.returncode != 0:
+            # This checkout's version is not on PyPI (a tree ahead of the last release): its own package.
+            source = "this checkout"
+            r = subprocess.run([pip, "install", "-q", os.path.join(ROOT, "packages", "polaris-verify") + "[cryptography]"],
+                               capture_output=True, text=True, timeout=600)
+        if r.returncode != 0:
+            rep.add("D.verifier", "install polaris-verify %s into a venv" % version, "installed",
+                    "it could not be installed", "FAIL", (r.stderr or r.stdout or "")[-300:])
             return
-    ver = subprocess.run([os.path.join(venv, "bin", "pip"), "show", "polaris-verify"], capture_output=True, text=True)
-    version = next((l.split(":", 1)[1].strip() for l in ver.stdout.splitlines() if l.startswith("Version:")), "?")
-    rep.add("D.verifier", "the detached verifier, installed from PyPI", "installed",
-            "polaris-verify %s" % version, "INFO")
-    work = tempfile.mkdtemp(dir=out)
+        rep.add("D.verifier", "the detached verifier this release ships", "installed",
+                "polaris-verify %s from %s" % (version, source), "INFO")
 
-    def verify(name, p, anchor):
-        pf, af = os.path.join(work, name + "-pack.json"), os.path.join(work, name + "-anchor.json")
-        with open(pf, "w") as fh:
-            json.dump(p, fh)
-        with open(af, "w") as fh:
-            json.dump({"public_keys_hex": [anchor]}, fh)
-        r = subprocess.run([exe, "--pqc-provider", "auto", "--issuer-anchor", af, "--pack", pf, "--json"],
-                           capture_output=True, text=True, timeout=120)
-        return r.returncode, _json(r.stdout) or {}
+        def verify(name, p, anchor):
+            pf, af = os.path.join(work, name + "-pack.json"), os.path.join(work, name + "-anchor.json")
+            with open(pf, "w") as fh:
+                json.dump(p, fh)
+            with open(af, "w") as fh:
+                json.dump({"public_keys_hex": [anchor]}, fh)
+            r = subprocess.run([exe, "--pqc-provider", "auto", "--issuer-anchor", af, "--pack", pf, "--json"],
+                               capture_output=True, text=True, timeout=120)
+            return r.returncode, _json(r.stdout) or {}
 
-    rc, v = verify("genuine", pack, anchor_hex)
-    good = rc == 0 and v.get("signature_valid") is True and v.get("issuer_trusted") is True
-    rep.add("D.offline.genuine", "verify the credential offline against the published key",
-            "signature_valid and issuer_trusted, exit 0",
-            "signature_valid %s, issuer_trusted %s, exit %d" % (v.get("signature_valid"), v.get("issuer_trusted"), rc),
-            "PASS" if good else "FAIL")
-    other = json.load(open(os.path.join(ROOT, "vectors", "anchors", "ml-dsa-65-issuer.json")))
-    other_key = (other.get("public_keys_hex") or [other.get("public_key_hex")])[0]
-    tampered = (
-        ("signature-byte", "one nibble of the signature changed", dict(pack, signature_hex=_flip(pack["signature_hex"])), anchor_hex),
-        ("token-altered", "the token value changed", dict(pack, token_value=pack["token_value"] + "X"), anchor_hex),
-        ("other-issuer", "verified against an unrelated issuer's key", pack, other_key),
-        ("hash-as-signature", "a SHA3 hash of the token presented as an ML-DSA-65 signature",
-         dict(pack, signature_hex=hashlib.sha3_256(pack["token_value"].encode()).hexdigest()), anchor_hex),
-        ("empty-signature", "an empty signature", dict(pack, signature_hex=""), anchor_hex),
-    )
-    for name, what, p, anchor in tampered:
-        rc, v = verify(name, p, anchor)
-        accepted = rc == 0 and v.get("signature_valid") is True and v.get("issuer_trusted") is True
-        # A refusal counts only when the verifier gave a verdict: no verdict at all measured nothing.
-        verdict = "FAIL" if accepted or "signature_valid" not in v else "PASS"
-        rep.add("D.offline.%s" % name, "verify offline: %s" % what, "a verdict that refuses it (not both valid and trusted)",
+        rc, v = verify("genuine", pack, anchor_hex)
+        good = rc == 0 and v.get("signature_valid") is True and v.get("issuer_trusted") is True
+        rep.add("D.offline.genuine", "verify the credential offline against the published key",
+                "signature_valid and issuer_trusted, exit 0",
                 "signature_valid %s, issuer_trusted %s, exit %d" % (v.get("signature_valid"), v.get("issuer_trusted"), rc),
-                verdict)
+                "PASS" if good else "FAIL")
+        other = json.load(open(os.path.join(ROOT, "vectors", "anchors", "ml-dsa-65-issuer.json")))
+        other_key = (other.get("public_keys_hex") or [other.get("public_key_hex")])[0]
+        tampered = (
+            ("signature-byte", "one nibble of the signature changed", dict(pack, signature_hex=_flip(pack["signature_hex"])), anchor_hex),
+            ("token-altered", "the token value changed", dict(pack, token_value=pack["token_value"] + "X"), anchor_hex),
+            ("other-issuer", "verified against an unrelated issuer's key", pack, other_key),
+            ("hash-as-signature", "a SHA3 hash of the token presented as an ML-DSA-65 signature",
+             dict(pack, signature_hex=hashlib.sha3_256(pack["token_value"].encode()).hexdigest()), anchor_hex),
+            ("empty-signature", "an empty signature", dict(pack, signature_hex=""), anchor_hex),
+        )
+        for name, what, p, anchor in tampered:
+            if not good:
+                # A verifier that refuses the genuine credential refuses its copies too: that measures nothing.
+                rep.add("D.offline.%s" % name, "verify offline: %s" % what, "a verdict that refuses it",
+                        "not measured: the genuine credential was not accepted (D.offline.genuine)", "SKIP")
+                continue
+            rc, v = verify(name, p, anchor)
+            accepted = rc == 0 and v.get("signature_valid") is True and v.get("issuer_trusted") is True
+            # A refusal counts only when the verifier gave a verdict: no verdict at all measured nothing.
+            verdict = "FAIL" if accepted or "signature_valid" not in v else "PASS"
+            rep.add("D.offline.%s" % name, "verify offline: %s" % what, "a verdict that refuses it (not both valid and trusted)",
+                    "signature_valid %s, issuer_trusted %s, exit %d" % (v.get("signature_valid"), v.get("issuer_trusted"), rc),
+                    verdict)
 
 
 # --- E and F: online verification, the status assertion, revocation ------------------------------------
@@ -343,6 +367,10 @@ def probe_online(rep, web, token, pack, label=""):
     for name, what, p in (("signature-byte", "one nibble of the signature changed",
                            dict(pack, signature_hex=_flip(pack["signature_hex"]))),
                           ("token-altered", "the token value changed", dict(pack, token_value=pack["token_value"] + "X"))):
+        if not good:
+            rep.add("E.online.%s" % name, "POST /api/v1/verify: %s" % what, "an answer that does not accept it",
+                    "not measured: the genuine credential was not accepted (E.online.genuine)", "SKIP")
+            continue
         status, v = online(web, token, p)
         refused = status == 200 and v.get("decision") not in (None, "accept")
         rep.add("E.online.%s" % name, "POST /api/v1/verify: %s" % what, "an answer that does not accept it",
@@ -373,7 +401,7 @@ def notional_issue(rep, web, args, password):
         reason = "the operator's login needs a second factor" if "webauthn" in where.lower() else \
             "login answered %s, the issue form %s" % (status, status2)
         rep.add("F.issue", "log in as %s and issue one notional credential" % args.operator, "issued",
-                reason + ": issue one in the console and run again with --pack and --anchor", "SKIP")
+                reason + ": issue one in the console and run again with --pack and --rp-config", "SKIP")
         return None
     serial = "TKN-EVAL-%d" % int(time.time())
     status, headers, body = web.call("/uc1/issue", form={
@@ -384,7 +412,7 @@ def notional_issue(rep, web, args, password):
     m = re.search(r"/tokens/(\d+)", (headers.get("Location") or "") if headers else "")
     if not m:
         rep.add("F.issue", "issue one notional credential through the console's own form", "issued",
-                "the form answered %s without a new credential" % status, "FAIL", re.sub(r"\s+", " ", body)[:300])
+                "the form answered %s without a new credential" % status, "FAIL", _flash(body))
         return None
     token_id = int(m.group(1))
     status, _, body = web.call("/api/tokens/%d/authenticity-pack" % token_id)
@@ -399,22 +427,26 @@ def notional_issue(rep, web, args, password):
 
 def notional_revoke(rep, web, args, token_id, token, pack):
     _, _, page = web.call("/uc8/revoke")
-    status, _, body = web.call("/uc8/revoke", form={
+    status, headers, body = web.call("/uc8/revoke", form={
         "csrf_token": _csrf(page), "token_id": str(token_id), "actor_agency_id": str(args.agency),
         "reason_code": "ADMINISTRATIVE", "published_location": "polaris-evaluate notional run",
         # Co-signed: one authority alone may not revoke past its rate bound (7 percent in 30 days by
         # default), and on a small notional database one revocation already passes it.
         "cosigner_agency_id": str(args.witness_agency)})
-    if status not in (302, 303):
+    where = (headers.get("Location") or "") if headers else ""
+    # A redirect is not a revocation: a lost session also answers 302, to /login. The form, done, lands
+    # on this credential's own page.
+    if status not in (302, 303) or not re.search(r"/tokens/%d(?:$|[/?#])" % token_id, where):
         rep.add("F.revoke", "revoke it through the console's own form", "revoked",
-                "the form answered %s" % status, "FAIL", re.sub(r"\s+", " ", body)[:300])
-        return
+                "the form answered %s%s" % (status, (", to " + where) if where else ""), "FAIL", _flash(body))
+        return False
     rep.add("F.revoke", "revoke it through the console's own form, co-signed by authority %d" % args.witness_agency,
             "revoked", "revoked", "PASS")
     status, v = online(web, token, pack)
     refused = status == 200 and v.get("decision") not in (None, "accept") and v.get("usable") is False
     rep.add("F.online.after-revoke", "POST /api/v1/verify after the revocation", "an answer: not accepted, not usable",
             "HTTP %s, decision %s, usable %s" % (status, v.get("decision"), v.get("usable")), "PASS" if refused else "FAIL")
+    return True
 
 
 def register_rp(rep):
@@ -517,19 +549,42 @@ def main(argv=None):
     ap.add_argument("--url", default=os.environ.get("POLARIS_EVALUATE_URL")
                     or "https://%s" % os.environ.get("POLARIS_DOMAIN", "localhost"))
     ap.add_argument("--cacert", help="a CA file the edge's certificate chains to, when it is not a public one")
-    ap.add_argument("--out", help="the report directory (default ./polaris-evaluation-<UTC>)")
+    ap.add_argument("--out", help="a new directory for the report (default ~/polaris-evaluation-<UTC> of the "
+                    "user who ran it, sudo included)")
     args = ap.parse_args(argv)
     if args.notional and not (args.operator and args.password_file):
         ap.error("--notional needs --operator and --password-file")
     if args.notional and args.pack:
         ap.error("--pack is for a run without --notional (a notional run issues its own)")
 
+    args.url = args.url.rstrip("/")
+    # Every input is read before anything runs: a bad file stops here, with exit 2 and no half-run.
+    try:
+        password = open(args.password_file).read().strip() if args.password_file else ""
+        rp = json.load(open(args.rp_config)) if args.rp_config else {}
+        if args.rp_config and not (rp.get("client_id") and rp.get("client_secret")):
+            raise ValueError("%s has no client_id and client_secret" % args.rp_config)
+        given_pack = json.load(open(args.pack)) if args.pack else None
+        if given_pack is not None and not (given_pack.get("token_value") and given_pack.get("signature_hex")):
+            raise ValueError("%s is not an authenticity pack (token_value, signature_hex)" % args.pack)
+    except (OSError, ValueError) as e:
+        print("polaris-evaluate: %s" % e, file=sys.stderr)
+        return 2
+
     started = datetime.datetime.now(datetime.timezone.utc)
-    out = os.path.abspath(args.out or "polaris-evaluation-%s" % started.strftime("%Y%m%dT%H%M%SZ"))
+    # The report goes outside the checkout (a run from /opt/polaris must not leave the clone dirty) and to
+    # the person who ran it: under sudo, their home and their ownership, not root's.
+    owner = None
+    if os.geteuid() == 0 and os.environ.get("SUDO_UID", "").isdigit():
+        owner = (int(os.environ["SUDO_UID"]), int(os.environ.get("SUDO_GID", os.environ["SUDO_UID"])))
+    home = pwd.getpwuid(owner[0]).pw_dir if owner else os.path.expanduser("~")
+    out = os.path.abspath(args.out or os.path.join(home, "polaris-evaluation-%s" % started.strftime("%Y%m%dT%H%M%SZ")))
     os.umask(0o077)
-    os.makedirs(out, exist_ok=True)
-    password = open(args.password_file).read().strip() if args.password_file else ""
-    rp = json.load(open(args.rp_config)) if args.rp_config else {}
+    try:
+        os.makedirs(out)  # a new directory only: never chmod, write into or run from one that exists
+    except FileExistsError:
+        print("polaris-evaluate: %s exists; name a new directory with --out" % out, file=sys.stderr)
+        return 2
     rep = Report([password, rp.get("client_secret", "")])
     print("polaris-evaluate: %s, %s mode; the report goes to %s"
           % (args.url, "notional" if args.notional else "live-safe", out))
@@ -546,9 +601,10 @@ def main(argv=None):
     if cafile:
         env["POLARIS_DOCTOR_CACERT"] = cafile
     web = Http(args.url, cafile)
-    residue = ["audit rows for each verification and each self-test run, as every verification leaves",
-               "the self-test's refused statements as ERROR lines in the PostgreSQL log "
-               "(application_name=polaris-athena-selftest)"]
+    # What a run leaves, as it happens: the relying-party API keeps no record of a verification, and the
+    # self-test rolls back, so the database keeps only advanced sequences and its log the refusals.
+    residue = ["the self-test's refused statements as ERROR lines in the PostgreSQL log "
+               "(application_name=polaris-athena-selftest), and the sequences its rolled-back inserts advanced"]
 
     print("A. the stack")
     ok, why = guarded(rep, "A.doctor", probe_doctor, rep, env) or (True, "")
@@ -572,37 +628,44 @@ def main(argv=None):
             if not token:
                 rep.add("E.relying-party.token", "POST /api/v1/oauth/token", "an access token", "HTTP %s" % st, "FAIL")
         issued = guarded(rep, "F.issue", notional_issue, rep, web, args, password)
-        if issued:
-            residue.append("one notional holder and one credential, revoked at the end of the run")
     print("B. the database's rules on this database")
     guarded(rep, "B.selftest", probe_selftest, rep)
 
-    pack = issued[1] if issued else (json.load(open(args.pack)) if args.pack else None)
+    pack = issued[1] if issued else given_pack
+    # Why there is nothing to verify is named once, where it happened; the rows downstream say so, not fail again.
+    if args.notional and not issued:
+        no_pack = "no credential: the notional run issued none (F.issue)"
+    else:
+        no_pack = "none given: a live-safe run issues nothing; pass --pack, or run --notional on notional data"
     if pack is None:
-        rep.add("D.offline", "offline verification of a credential", "a credential to verify",
-                "none: a live-safe run issues nothing; pass --pack, or run --notional on notional data", "SKIP")
+        rep.add("D.offline", "offline verification of a credential", "a credential to verify", no_pack, "SKIP")
     elif anchor is None:
         rep.add("D.offline", "offline verification of a credential", "the install's published key",
-                "no published key to verify against (C.trust-list)", "SKIP")
+                "not measured: no published key to verify against (C.trust-list)", "SKIP")
     else:
         print("D. offline verification")
-        guarded(rep, "D.offline", probe_offline, rep, out, pack, anchor)
-    if pack is not None and not args.notional and rp.get("client_id"):
+        guarded(rep, "D.offline", probe_offline, rep, pack, anchor)
+    if pack is not None and not args.notional and rp:
         token, st = guarded(rep, "E.relying-party.token", rp_token, web, rp["client_id"], rp["client_secret"]) \
             or (None, "no answer")
         if not token:
             rep.add("E.relying-party.token", "POST /api/v1/oauth/token as the given relying party", "an access token",
                     "HTTP %s" % st, "FAIL")
-    if pack is None or not token:
-        given = args.notional or (args.pack and args.rp_config)
-        rep.add("E.online", "online verification by a relying party", "a credential and a relying party",
-                "no relying party token (above)" if given else "none given (pass --pack and --rp-config, or run --notional)",
-                "FAIL" if given else "SKIP")
+    revoked = None
+    if pack is None:
+        rep.add("E.online", "online verification by a relying party", "a credential to verify", no_pack, "SKIP")
+    elif not token:
+        why = "not measured: no relying party token (E.relying-party.token)" if (args.notional or rp) else \
+            "none given: pass --rp-config with --pack, or run --notional"
+        rep.add("E.online", "online verification by a relying party", "a relying party's token", why, "SKIP")
     else:
         print("E. online verification")
         guarded(rep, "E.online", probe_online, rep, web, token, pack)
         if issued:
-            guarded(rep, "F.revoke", notional_revoke, rep, web, args, issued[0], token, pack)
+            revoked = guarded(rep, "F.revoke", notional_revoke, rep, web, args, issued[0], token, pack)
+    if issued:
+        residue.append("one notional holder and credential #%d, %s" % (issued[0], "revoked by the run" if revoked else
+                       "still ACTIVE: the run could not revoke it (F.revoke); revoke it in the console"))
 
     header = {"tool": "scripts/polaris-evaluate.py", "polaris_version": version,
               "mode": "notional" if args.notional else "live-safe",
@@ -613,6 +676,9 @@ def main(argv=None):
               "project": os.environ.get("COMPOSE_PROJECT_NAME", "polaris_web"), "url": args.url,
               "host": host_facts(), "residue": residue}
     write_report(out, rep, header)
+    if owner:
+        for path in [out] + [os.path.join(out, n) for n in os.listdir(out)]:
+            os.chown(path, *owner)
     c = rep.counts()
     print("polaris-evaluate: %d PASS, %d FAIL, %d WARN, %d SKIP, %d INFO; verdict digest %s"
           % (c["PASS"], c["FAIL"], c["WARN"], c["SKIP"], c["INFO"], rep.digest()[:16]))

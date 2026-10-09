@@ -1986,7 +1986,8 @@ jobs:
       - name: the install evaluates itself, and the evaluation fails when a rule or the edge is broken
         working-directory: /opt/polaris
         run: |
-          set -e
+          # pipefail: the evaluation runs through tee, and without it the step would read tee's status.
+          set -eo pipefail
           # The offline probes run the published polaris-verify from a venv the evaluation makes.
           sudo apt-get install -y python3-venv > /dev/null
           sudo scripts/polaris-evaluate.sh --notional --operator ci-admin --password-file /tmp/ci-operator.pw \
@@ -1999,6 +2000,7 @@ jobs:
                   "D.offline.hash-as-signature", "D.offline.empty-signature", "E.relying-party", "E.online.genuine",
                   "E.online.signature-byte", "E.online.token-altered", "F.issue", "F.revoke", "F.online.after-revoke"]
           short = ["%s=%s" % (k, verdicts.get(k)) for k in need if verdicts.get(k) != "PASS"]
+          short += ["%s=FAIL" % k for k, v in verdicts.items() if v == "FAIL" and k not in need]
           sys.exit("the notional evaluation did not pass: %s" % ", ".join(short) if short else 0)
           EOF
           ! sudo grep -rqF "$(cat /tmp/ci-operator.pw)" /tmp/eval-notional \

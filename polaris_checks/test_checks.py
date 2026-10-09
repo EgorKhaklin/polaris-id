@@ -3041,6 +3041,25 @@ def test_evaluate_wired_check_discriminates(tmp_path):
     broken(ci, 'grep -q "failing: .*A.doctor.edge"', 'true', "must FAIL when CI does not require the edge failure named")
     broken(ci, 'grep -rqF "$(cat /tmp/ci-operator.pw)"', 'grep -rqF "never"',
            "must FAIL when CI does not look for the password in the report")
+    broken(ci, "set -eo pipefail", "set -e", "must FAIL when tee's status stands for the evaluation's")
+    broken(ci, 'short += ["%s=FAIL" % k for k, v in verdicts.items() if v == "FAIL" and k not in need]', "pass",
+           "must FAIL when a FAIL row outside the named ones passes the step")
+    broken(ci, 'sys.exit("the notional evaluation did not pass: %s" % ", ".join(short) if short else 0)', "sys.exit(0)",
+           "must FAIL when the notional evaluation's result is ignored")
+    broken(ci, '[ "$rc" = 1 ] && grep -q "failing: .*B.Privilege"', 'grep -q "failing: .*B.Privilege"',
+           "must FAIL when the privilege control no longer requires exit 1")
+    broken(ci, "/tmp/eval-noedge.out && sudo test -s /tmp/eval-noedge/report.json", "/tmp/eval-noedge.out",
+           "must FAIL when the edge control no longer requires the report")
+    broken(ci, """|| { echo "::error::the evaluation report carries the operator's password"; exit 1; }""", "|| true",
+           "must FAIL when a password in the report no longer fails the step")
+    broken(ev, 're.search(r"/tokens/%d(?:$|[/?#])" % token_id, where)', "True",
+           "must FAIL when any redirect counts as a revocation")
+    broken(ev, '"--only-binary", ":all:", "polaris-verify[cryptography]==" + version', '"--pre", "polaris-verify"',
+           "must FAIL when the verifier is installed unpinned")
+    broken(ev, 'tempfile.TemporaryDirectory(prefix="polaris-evaluate-")', "tempfile.mkdtemp()",
+           "must FAIL when the credential's copies may stay behind")
+    broken(ev, "except FileExistsError:", "except OSError:",
+           "must FAIL when an existing report directory is accepted")
     (tmp_path / "scripts/polaris-evaluate.sh").unlink()
     assert checks.check_evaluate_wired(tmp_path)[0].level == "FAIL", "must FAIL when the entry point is gone"
 

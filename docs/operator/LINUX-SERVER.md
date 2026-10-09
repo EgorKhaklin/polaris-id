@@ -82,9 +82,9 @@ The backups and the WAL archive start on this host. Point them at an offsite rep
 ([`DR.md`](DR.md) section 5): until then `scripts/polaris-doctor.sh` warns that a lost host loses
 its backups with it.
 
-To judge the result, `sudo scripts/polaris-evaluate.sh` runs the doctor, the database's own
-self-test and a verifier's checks against this install and writes a report you can keep
-([`EVALUATE.md`](EVALUATE.md)).
+To judge the result, `sudo scripts/polaris-evaluate.sh` runs the doctor and the database's own
+self-test against this install, and with `--pack` and `--rp-config` verifies a credential of yours offline
+and online; it writes a report you can keep ([`EVALUATE.md`](EVALUATE.md)).
 
 ## What is installed
 

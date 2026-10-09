@@ -1173,6 +1173,12 @@ def db_error_to_message(e):
         # pass it. Named, so the operator knows to add a co-signer; the rate itself stays out.
         return ("This revocation would take the authority past its revocation rate bound: "
                 "name a co-signing authority from another agency.")
+    if 'Co-signer ' in msg:
+        # The next refusals an operator meets after adding one: the co-signer must be another agency
+        # holding BOTH on the algorithm. The procedure's own sentence, without SQL context.
+        for line in msg.split('\n'):
+            if 'Co-signer ' in line:
+                return line.replace('ERROR:', '').strip()
     if QUOTA_EXCEEDED_MARKER in msg:
         # v9.190: the AgencyQuota trigger's own sentence, without SQL context.
         for line in msg.split('\n'):
