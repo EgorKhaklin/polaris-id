@@ -265,9 +265,10 @@ oks = [t for t, s in rows if s == 'ok']; before = [t for t, s in allrows if s ==
 seq = ([max(before)] if before else []) + oks
 stall = max((b - a for a, b in zip(seq, seq[1:])), default=0.0)
 print(f'{max(gap, stall):.1f} {len(fails)}')" "$1"; }
-ok_count() { kubectl -n "$NS" logs ha-writer 2>/dev/null | grep -c ' ok$' || echo 0; }
+ok_count() { local n; n=$(kubectl -n "$NS" logs ha-writer 2>/dev/null | grep -c ' ok$') || true; echo "${n:-0}"; }
 missing_on() {  # missing_on MEMBER FILE: the tokens in FILE that MEMBER's ha_marker lacks, one per line
-    { echo "CREATE TEMP TABLE acked (token text);"; echo "COPY acked FROM STDIN;"; cat "$2"; echo '\.'
+    { echo "CREATE TEMP TABLE acked (token text);"; echo "COPY acked FROM STDIN;"; cat "$2"
+      [[ -z "$(tail -c1 "$2")" ]] || echo; echo '\.'
       echo "SELECT a.token FROM acked a LEFT JOIN ha_marker m USING (token) WHERE m.token IS NULL;"; } \
         | kubectl -n "$NS" exec -i "$1" -- psql -h /var/run/postgresql -U postgres -d polaris -qtA -v ON_ERROR_STOP=1
 }
@@ -321,6 +322,8 @@ le "$out3" "$CEIL_SWITCHOVER" || fail "switchover write outage ${out3}s exceeds 
 L3=$(lease_holder)
 kubectl -n "$NS" exec ha-writer -- cat /tmp/acked.log > /tmp/polaris-acked.now || fail "cannot read the writer's acknowledged inserts"
 acked=$(grep -c . /tmp/polaris-acked.now || true)
+[[ "$acked" -gt 0 && "$acked" -ge "$acked_before_freeze" ]] \
+    || fail "$acked acknowledged inserts are on record against the $acked_before_freeze counted before the freeze: the writer is not recording what it acknowledges, and the comparison would measure nothing"
 missing_on "$L3" /tmp/polaris-acked.now > /tmp/polaris-missing.now || fail "cannot ask $L3 which acknowledged inserts it holds"
 early=$(head -n "$acked_before_freeze" /tmp/polaris-acked.now | grep -cxF -f /tmp/polaris-missing.now || true)
 [[ "$early" -eq 0 ]] || fail "$early of the $acked_before_freeze inserts were acknowledged before the freeze and are not on $L3: an acknowledged write from before the failure was lost"

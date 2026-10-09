@@ -6585,6 +6585,14 @@ _SYNC_REPLICATION_NEEDLES = (
      "drill the replica's loss, where synchronous replication costs a stall"),
     ("scripts/polaris-failover-drill.sh", 'missing_on "$leader" "$WORK/acked.now"',
      "compare acknowledged inserts by identity, read before the leader is asked, not two totals taken apart"),
+    ("scripts/polaris-failover-drill.sh", 'acked.write(token + "\\n")',
+     "record each insert's token once the database acknowledged it"),
+    ("scripts/polaris-failover-drill.sh", 'early=$(head -n "$floor" "$WORK/acked.now"',
+     "fail on any insert acknowledged before the failure began that the leader lacks"),
+    ("scripts/polaris-failover-drill.sh", '[[ "$acked" -gt 0 && "$acked" -ge "$floor" ]]',
+     "refuse an empty or short acknowledged set, which would measure nothing"),
+    ("scripts/polaris-failover-drill.sh", '[[ -z "$(tail -c1 "$2")" ]] || echo; echo',
+     "end the tokens with a newline, or COPY reads its terminator and the query as data and reports none missing"),
     ("docs/design/synchronous-replication.md", "## What it costs", "record the price"),
 )
 
@@ -8384,7 +8392,9 @@ def check_helm_reference_profile(root: pathlib.Path) -> list[Finding]:
     for needle in ("pod-security.kubernetes.io/enforce=restricted", "violates PodSecurity", "polaris-postgres\", 5432",
                    "REACHED", "helm install", "/api/health", "rollout restart", "custody",
                    "annotations.leader", "delete pod", "task pause", "switchover", "ha_marker", "inserts were acknowledged",
-                   'missing_on "$L3" /tmp/polaris-acked.now', "with synchronous_mode on, a failover must lose none"):
+                   'missing_on "$L3" /tmp/polaris-acked.now', "with synchronous_mode on, a failover must lose none",
+                   'acked.write(token + "\\\\n")', 'early=$(head -n "$acked_before_freeze"',
+                   '[[ "$acked" -gt 0 && "$acked" -ge "$acked_before_freeze" ]]', '[[ -z "$(tail -c1 "$2")" ]] || echo; echo'):
         if needle not in drill:
             return _fail("helm_profile", f"polaris-helm-drill.sh must contain {needle!r} (restricted PSS enforced, a "
                          "privileged pod rejected, a probe pod denied on postgres, health incl. custody, a rolling "

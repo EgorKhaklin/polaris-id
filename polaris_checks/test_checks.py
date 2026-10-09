@@ -7240,7 +7240,10 @@ def test_helm_reference_profile_check_discriminates(tmp_path):
              "targets = [(\"polaris-postgres\", 5432)]\nprint(\"REACHED\")\nkubectl rollout restart deploy/polaris-app\n"
              "jsonpath='{.metadata.annotations.leader}'\nkubectl delete pod $L0\nctr -n k8s.io task pause\npatronictl switchover\nCREATE TABLE ha_marker\n"
              "fail \"inserts were acknowledged\"\n"
-             "missing_on \"$L3\" /tmp/polaris-acked.now\nfail \"with synchronous_mode on, a failover must lose none\"\n")
+             "missing_on \"$L3\" /tmp/polaris-acked.now\nfail \"with synchronous_mode on, a failover must lose none\"\n"
+             "acked.write(token + \"\\\\n\")\nearly=$(head -n \"$acked_before_freeze\" /tmp/polaris-acked.now)\n"
+             "[[ \"$acked\" -gt 0 && \"$acked\" -ge \"$acked_before_freeze\" ]] || fail\n"
+             "[[ -z \"$(tail -c1 \"$2\")\" ]] || echo; echo '\\.'\n")
     PG = ("automountServiceAccountToken: true\nkind: Role\nkind: RoleBinding\n(dict \"uid\" 70 \"gid\" 70)\n"
           "value: /var/lib/postgresql/data/pgdata\n- {name: POLARIS_PATRONI_DCS, value: kubernetes}\n"
           "replicas: {{ .Values.postgres.replicas }}\nargs: [\"/usr/local/bin/polaris-patroni-entrypoint.sh\"]\n"
@@ -7313,6 +7316,14 @@ def test_helm_reference_profile_check_discriminates(tmp_path):
     write({"scripts/polaris-helm-drill.sh": DRILL.replace("with synchronous_mode on, a failover must lose none", "reported")})
     assert checks.check_helm_reference_profile(tmp_path)[0].level == "FAIL", \
         "must FAIL when the kind drill tolerates a lost write under synchronous replication"
+    # 2026-10-09 review of #316: each guard against a vacuous comparison, removed in turn.
+    for needle, why in (('acked.write(token + "\\\\n")', "the writer no longer records what was acknowledged"),
+                        ('early=$(head -n "$acked_before_freeze"', "inserts acknowledged before the freeze are not checked"),
+                        ('[[ "$acked" -gt 0 && "$acked" -ge "$acked_before_freeze" ]]', "an empty acknowledged set passes"),
+                        ('[[ -z "$(tail -c1 "$2")" ]] || echo; echo', "a token file without its last newline reads as none missing")):
+        assert needle in DRILL, needle
+        write({"scripts/polaris-helm-drill.sh": DRILL.replace(needle, "true")})
+        assert checks.check_helm_reference_profile(tmp_path)[0].level == "FAIL", "must FAIL when " + why
 
     # The SQL not baked into the postgres image.
     write({"polaris_web/Dockerfile.postgres": "FROM postgres\n"})

@@ -217,10 +217,11 @@ while not stop.is_set(): time.sleep(0.2)
 time.sleep(0.5)
 with open(out, "w") as fh: json.dump(stats, fh)
 PYEOF
-ok_count() { grep -c ' ok$' "$WORK/state/writes.log" 2>/dev/null || echo 0; }
+ok_count() { local n; n=$(grep -c ' ok$' "$WORK/state/writes.log" 2>/dev/null) || true; echo "${n:-0}"; }
 rows_on() { docker exec "polaris-$1" psql -h /var/run/postgresql -U postgres -d polaris -tAc "SELECT count(*) FROM ha_marker" 2>/dev/null | tr -d '[:space:]'; }
 missing_on() {  # missing_on MEMBER FILE: the tokens in FILE that MEMBER's ha_marker lacks, one per line
-    { echo "CREATE TEMP TABLE acked (token text);"; echo "COPY acked FROM STDIN;"; cat "$2"; echo '\.'
+    { echo "CREATE TEMP TABLE acked (token text);"; echo "COPY acked FROM STDIN;"; cat "$2"
+      [[ -z "$(tail -c1 "$2")" ]] || echo; echo '\.'
       echo "SELECT a.token FROM acked a LEFT JOIN ha_marker m USING (token) WHERE m.token IS NULL;"; } \
         | docker exec -i "polaris-$1" psql -h /var/run/postgresql -U postgres -d polaris -qtA -v ON_ERROR_STOP=1
 }
@@ -246,6 +247,8 @@ no_lost_write() {  # no_lost_write FLOOR: every insert acknowledged before the f
     leader=$(leader)
     cp "$WORK/state/acked.log" "$WORK/acked.now"
     acked=$(grep -c . "$WORK/acked.now" || true)
+    [[ "$acked" -gt 0 && "$acked" -ge "$floor" ]] \
+        || fail "$acked acknowledged inserts are on record against the $floor counted before the failure began: the writer is not recording what it acknowledges, and the comparison would measure nothing"
     missing_on "$leader" "$WORK/acked.now" > "$WORK/missing.now" || fail "cannot ask $leader which acknowledged inserts it holds"
     grep -vxF -f "$WORK/lost.all" "$WORK/missing.now" > "$WORK/missing.new" || true
     early=$(head -n "$floor" "$WORK/acked.now" | grep -cxF -f "$WORK/missing.new" || true)
