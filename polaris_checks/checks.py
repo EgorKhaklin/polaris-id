@@ -26330,6 +26330,12 @@ def _job_parts(block: str) -> tuple[str, dict[str, str]]:
     return head, out
 
 
+# The product suite's work, by what it runs: a job that runs any of it is a part, whatever its label says (review
+# of #309, 2026-10-09: a part renamed out of "Product suite:" and dropped from the gate's needs passed).
+_PRODUCT_SUITE_WORK = ("scripts/polaris-coverage.sh", "polaris-procedure-mutation-drill.py", "polaris-app-role-suite.py",
+                       "cargo test --release", "cargo llvm-cov", "polaris-zk-mutation-drill.py")
+
+
 def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
     """The product suite's parallel parts carry one setup, and its required job gates on each.
 
@@ -26369,16 +26375,24 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
         return _ok(name, "the product suite runs as one job; there are no copies to keep in step")
     problems = [f"{j} is a part of the product suite the required job does not need" for j in labelled
                 if j not in needs]
+    problems += [f"{j} runs the product suite's work but the required job does not need it"
+                 for j, b in jobs.items() if j != gate and j not in needs and any(w in b for w in _PRODUCT_SUITE_WORK)]
     problems += [f"the required job needs {j}, which ci.yml does not define" for j in needs if j not in jobs]
     if not re.search(r"(?m)^    if:\s*\$?\{?\{?\s*always\(\)", block):
         problems.append("the required job does not run `if: always()`: when a part fails it is skipped, and "
                         "GitHub reports a skipped required check as passing")
-    if "needs" not in block.split("\n    steps:\n", 1)[-1] or "success" not in block:
-        problems.append("the required job does not judge its parts' results (needs.*.result == success)")
+    # Every result, and as many as it needs: `any(... == "success")`, or a count short of the parts, passed one
+    # green part as the whole suite (review of #309).
+    judge = block.split("\n    steps:\n", 1)[-1]
+    if "toJSON(needs)" not in judge or f"len(r) == {len(needs)} and" not in judge \
+            or 'all(v == "success" for v in r.values())' not in judge:
+        problems.append(f"the required job must judge all {len(needs)} parts' results (len(r) == {len(needs)} and "
+                        "all(v == \"success\" ...)), not one of them")
     parts = [j for j in needs if j in jobs]
     split = {j: _job_parts(jobs[j]) for j in parts}
     shared = 0
-    for a, b in zip(parts, parts[1:]):
+    # Every pair, not neighbours in needs: a step two parts share that a third lacks is still compared.
+    for a, b in ((x, y) for i, x in enumerate(parts) for y in parts[i + 1:]):
         (ha, sa), (hb, sb) = split[a], split[b]
         if ha != hb:
             problems.append(f"{a} and {b} differ in their runner, services or environment")
