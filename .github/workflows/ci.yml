@@ -2185,14 +2185,16 @@ jobs:
           grep -q "WARN  backups .*the backup repository is on this host" /tmp/doctor-file.out \
             || { echo "::error::the doctor did not say the backups are on this host only"; exit 1; }
 
-      # Lab record 017 (gate row OP-2): a fresh host to a credential a relying party verifies online, by
-      # the documented commands only, with the operator's inputs counted and the time measured. Under
-      # real signing every relying-party route refuses a credential whose key its authority had not
-      # registered: install.sh names the step, and one command takes it. Inputs: 1 the domain (install),
-      # 2-4 the first administrator's name, password and reason (the step above), 5 the key
-      # registration. The relying party's own registration (its name and the reason) is its
-      # onboarding, counted apart. The images are built from source until OP-1 publishes them, so the
-      # install time is an upper bound.
+      # Lab record 017 (gate row OP-2): a fresh host to a credential verified offline by polaris-verify from
+      # PyPI, then online by a relying party, by the documented commands only, with the operator's inputs
+      # listed and the time read. Under real signing every relying-party route refuses a credential whose
+      # key its authority had not registered: install.sh names the step, and one command takes it.
+      # Inputs to the offline verification: 1 the domain (install), 2-4 the first administrator's name,
+      # password and reason (the step above), 5 the key registration. The relying party's own
+      # registration (its name and the reason) comes after, for the online verification. The job fails
+      # past 15 minutes from the install's start to the online accept, a span that also holds the backup,
+      # upgrade and rotation the steps above run; the images are built from source until OP-1 publishes
+      # them. Both make the time an upper bound.
       - name: a fresh host to a credential a relying party verifies online (OP-2; inputs counted, time measured)
         working-directory: /opt/polaris
         run: |
@@ -2221,6 +2223,13 @@ jobs:
           # The first administrator issues one credential through the operator console.
           mkdir -p /tmp/op2 && cp /tmp/op2-ca.crt /tmp/op2/caddy-root.crt && cp /tmp/ci-operator.pw /tmp/op2/operator-password
           sudo python3 lab/strategy/006/issue_and_pack.py /tmp/op2 /opt/polaris/polaris_web/secrets ci-admin
+          # A verifier with no account checks it offline: polaris-verify from PyPI, against the key this install
+          # minted, with no registration and no call to the stack. Five inputs reach here.
+          python3 -m venv /tmp/op2-venv && /tmp/op2-venv/bin/pip install -q --pre "polaris-verify[cryptography]"
+          sudo cat /tmp/op2/pack.json > /tmp/op2-pack.json && sudo cat /tmp/op2/anchors.json > /tmp/op2-anchors.json
+          /tmp/op2-venv/bin/polaris-verify --pqc-provider auto --issuer-anchor /tmp/op2-anchors.json --pack /tmp/op2-pack.json \
+            || { echo "::error::polaris-verify from PyPI did not verify the fresh install's credential offline"; exit 1; }
+          t_offline=$(date +%s)
           # A relying party, registered as the operator registers one, verifies it online.
           # Its secret is printed once: kept in a file, masked, never echoed to this log.
           (umask 077 && sudo scripts/polaris-rp-register.sh "Fresh-host drill relying party" \
@@ -2244,9 +2253,13 @@ jobs:
             scripts/polaris-doctor.sh > /tmp/op2-doctor.out || true
           grep -q "  ok    key register " /tmp/op2-doctor.out \
             || { cat /tmp/op2-doctor.out; echo "::error::after the registration the doctor did not read the key register clean"; exit 1; }
-          summary="OP-2: install $(( (t1 - t0) / 60 )) min $(( (t1 - t0) % 60 )) s (images built from source until OP-1), operator steps $(( (t_done - t_ops) / 60 )) min $(( (t_done - t_ops) % 60 )) s, total $(( (t_done - t0) / 60 )) min; operator inputs 5 as documented (domain; administrator name, password, reason; key registration), relying party onboarding 2"
+          total=$(( t_done - t0 )); offline=$(( t_offline - t0 ))
+          summary="OP-2: install $(( (t1 - t0) / 60 )) min $(( (t1 - t0) % 60 )) s (images built from source until OP-1); from its start, verified offline by polaris-verify at $(( offline / 60 )) min $(( offline % 60 )) s and online at $(( total / 60 )) min $(( total % 60 )) s (both spans include the backup, upgrade and rotation this job runs); operator inputs 5 to the offline verification as listed above (domain; administrator name, password, reason; key registration), and the relying party's registration 2 more (its name, the reason)"
           echo "$summary"
           echo "$summary" >> "$GITHUB_STEP_SUMMARY"
+          # Gate row OP-2's bound, read here and not only printed.
+          [ "$total" -le 900 ] \
+            || { echo "::error::gate row OP-2: the fresh host reached an online verification in $total s, past 15 minutes"; exit 1; }
 
       # Lab record 017 (gate row OP-9): SECRETS.md 5.1 on a systemd host. polaris.service runs compose
       # with POLARIS_SECRETS_DIR alone; with it empty, a sealed host's next start read the shredded
@@ -2502,6 +2515,8 @@ jobs:
       - name: Failover drill (leader crash, lease partition, switchover, etcd crash)
         env:
           POLARIS_FAILOVER_OUT: /tmp/failover.json
+          # Gate row OP-6 rests on this run: the drill fails unless the cluster replicates synchronously.
+          POLARIS_FAILOVER_EXPECT_SYNC: "on"
         run: bash scripts/polaris-failover-drill.sh
 
       - name: Upload the drill summary

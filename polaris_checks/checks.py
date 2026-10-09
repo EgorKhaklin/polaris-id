@@ -6588,6 +6588,10 @@ _SYNC_REPLICATION_NEEDLES = (
     ("deploy/helm/polaris/templates/postgres.yaml", "POLARIS_PATRONI_SYNCHRONOUS_MODE",
      "pass the chart's setting to its members"),
     ("scripts/polaris-failover-drill.sh", ".get('synchronous_mode')", "read the mode from the cluster"),
+    ("scripts/polaris-failover-drill.sh", '[[ -z "$EXPECT_SYNC" || "$SYNC" == "$EXPECT_SYNC" ]]',
+     "fail when the cluster's mode is not the one the run expects"),
+    (".github/workflows/ci.yml", 'POLARIS_FAILOVER_EXPECT_SYNC: "on"\n        run: bash scripts/polaris-failover-drill.sh',
+     "run the drill CI holds gate row OP-6 to with synchronous_mode required"),
     ("scripts/polaris-failover-drill.sh", "with synchronous_mode on, a failover must lose none",
      "fail on an acknowledged insert lost with synchronous_mode on"),
     ("scripts/polaris-failover-drill.sh", 'wait_for 60 sync_standby_is "$r" "$l"',
@@ -7026,7 +7030,10 @@ _FRESH_HOST_CI = (
     ("/api/v1/trust-list/1", "read the key back from the published trust list"),
     ("sudo scripts/polaris-rp-register.sh", "register the relying party as the operator would"),
     ('v.get("decision") == "accept"', "require the relying party's online verification to accept"),
-    ("operator inputs 5", "report the operator's inputs"),
+    ("operator inputs 5 to the offline verification", "report the operator's inputs"),
+    ("/tmp/op2-venv/bin/polaris-verify --pqc-provider auto --issuer-anchor /tmp/op2-anchors.json --pack /tmp/op2-pack.json",
+     "verify the credential offline with polaris-verify from PyPI"),
+    ('[ "$total" -le 900 ]', "fail past the 15 minutes gate row OP-2 allows, not only print the time"),
     ("/tmp/op2-install-start", "time the fresh host from the install"),
     ("set -o pipefail\n          date +%s > /tmp/op2-install-start", "fail when install.sh fails, not when tee does"),
     ("no authority key is registered yet", "show the doctor asking for the registration on a fresh host"),
@@ -7046,8 +7053,9 @@ def check_fresh_host_reaches_online_verification(root: pathlib.Path) -> list[Fin
     _issuer_key_facts by test_app); LINUX-SERVER.md and DEPLOYMENT.md give it. The linux-install
     job's fresh-host drill (gate row OP-2) fails with install.sh, sees the doctor ask for the
     registration, registers the key, reads it back from the trust list, issues through the console,
-    has a relying party verify online with its secret kept out of the log, sees the doctor read the
-    register clean, and reports the inputs and the time; rotate.sh shows a credential issued before
+    has polaris-verify from PyPI verify it offline and a relying party online with its secret kept out
+    of the log, sees the doctor read the register clean, reports the inputs and the time, and fails past
+    fifteen minutes; rotate.sh shows a credential issued before
     the registration verifying after it."""
     name = "fresh_host_verification"
     problems = []
@@ -7069,7 +7077,7 @@ def check_fresh_host_reaches_online_verification(root: pathlib.Path) -> list[Fin
                      "says its key, `register --current` registers the first key from its first signature and "
                      "never rotates, relying parties register on the stack as the owner, install/deploy/doctor/docs "
                      "name the step, the doctor judges credentials by their key, and the linux-install job walks "
-                     "it to an online accept with the inputs counted")
+                     "it to an offline and an online accept, with the inputs listed and fifteen minutes enforced")
 
 
 # 2026-10-07 (lab record 017, phase 4b): rotating the session key logs nobody out. Before it,
@@ -21727,6 +21735,33 @@ def check_accessibility(root: pathlib.Path) -> list[Finding]:
 # cannot turn PASS while the status line still says otherwise.
 _GATE_STATUSES = ("PASS", "PARTIAL", "FAIL", "UNKNOWN", "N/A")
 
+# The evidence each PASS row rests on, pinned (review of the OP-2/OP-6 rows, 2026-10-09: a PASS citing any
+# evidence that resolved passed, so OP-6 citing only the zone-loss drill did). A row turned PASS gets its pin here,
+# reviewed with it.
+_GATE_PASS_EVIDENCE = {
+    "OP-2": "check:fresh_host_reaches_online_verification",
+    "OP-3": "check:config_schema_covers_env",
+    "OP-4": "check:health_liveness_readiness_split",
+    "OP-5": "drill:scripts/polaris-rolling-drill.sh",
+    "OP-6": "drill:scripts/polaris-failover-drill.sh",
+    "OP-8": "check:ha_internal_auth",
+    "OP-11": "check:restore_verified_on_schedule",
+    "OP-12": "drill:scripts/polaris-pitr-drill.sh",
+    "OP-13": "check:restore_reconciled",
+    "OP-15": "check:infra_alerts",
+    "OP-16": "drill:scripts/polaris-page-drill.sh",
+    "OP-17": "check:doctor_names_failures",
+    "OP-18": "check:helm_upgrade_migrates",
+    "OP-19": "drill:scripts/polaris-upgrade-drill.sh",
+    "OP-20": "check:aor_append_only_triggers",
+    "OP-21": "check:pqc_second_witness",
+    "OP-22": "drill:scripts/polaris-quantum-event-drill.py",
+    "OP-23": "check:key_rotation_drilled",
+    "OP-24": "check:throughput_measured",
+    "OP-26": "check:client_ip_behind_proxies",
+    "OP-27": "file:Polaris.command",
+}
+
 
 def _gate_citation_resolves(root: pathlib.Path, kind: str, target: str) -> bool:
     if kind == "check":
@@ -21750,12 +21785,17 @@ def check_operability_gate(root: pathlib.Path) -> list[Finding]:
     if "not readiness for real identity data" not in " ".join(section.split()):
         return _fail(name, "the gate must say it is not readiness for real identity data")
     rows = []
+    # Every table line is a row or the header: a row spelled `|OP-29|` once went uncounted.
     for line in section.splitlines():
-        if line.startswith("| OP-"):
-            cells = [c.strip() for c in line.strip().strip("|").split("|")]
-            if len(cells) != 4:
-                return _fail(name, f"gate row is not ID | criterion | status | evidence: {line[:60]}")
-            rows.append(cells)
+        if not line.lstrip().startswith("|") or re.match(r"\s*\|\s*ID\s*\|", line) or re.match(r"\s*\|[-|\s]+$", line):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) != 4 or not re.fullmatch(r"OP-\d+", cells[0]):
+            return _fail(name, f"gate row is not OP-N | criterion | status | evidence: {line[:60]}")
+        rows.append(cells)
+    ids = [r[0] for r in rows]
+    if len(set(ids)) != len(ids):
+        return _fail(name, f"gate rows repeat an ID: {sorted({i for i in ids if ids.count(i) > 1})}")
     if len(rows) < 10:
         return _fail(name, f"the gate has {len(rows)} rows; it must actually cover operation")
     for rid, crit, status, evidence in rows:
@@ -21773,14 +21813,19 @@ def check_operability_gate(root: pathlib.Path) -> list[Finding]:
     if ("not production-ready for real identity data" in doc
             and any(r[2] == "PASS" for r in real)):
         return _fail(name, "the real-identity-data row is PASS while the status line says it is not")
+    for rid, _, status, evidence in rows:
+        cited = {f"{k}:{t}" for k, t in re.findall(r"`(check|test|drill|file):([^`]+)`", evidence)}
+        if status == "PASS" and _GATE_PASS_EVIDENCE.get(rid) not in cited:
+            return _fail(name, f"{rid} is PASS without the evidence it rests on "
+                               f"({_GATE_PASS_EVIDENCE.get(rid) or 'none pinned: pin it in _GATE_PASS_EVIDENCE'})")
     m = re.search(r"(\d+) criteria: (\d+) PASS, (\d+) PARTIAL, (\d+) FAIL, (\d+) UNKNOWN", section)
     if not m:
         return _fail(name, "the gate must state its totals ('N criteria: a PASS, b PARTIAL, c FAIL, d UNKNOWN')")
     counted = (len(rows), *(sum(1 for r in rows if r[2] == st) for st in ("PASS", "PARTIAL", "FAIL", "UNKNOWN")))
     if tuple(int(g) for g in m.groups()) != counted:
         return _fail(name, f"the stated totals {m.group(0)!r} disagree with the rows {counted}")
-    return _ok(name, f"the operability gate's {len(rows)} rows have known statuses, every PASS cites "
-                     f"evidence, every citation resolves and the totals match the rows")
+    return _ok(name, f"the operability gate's {len(rows)} rows have known statuses, every PASS cites the "
+                     f"evidence pinned for it, every citation resolves and the totals match the rows")
 
 def check_assurance_mapping(root: pathlib.Path) -> list[Finding]:
     """The 800-63 mapping cites evidence that exists, and does not claim conformance (P6.2).

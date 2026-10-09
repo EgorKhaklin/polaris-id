@@ -2422,12 +2422,12 @@ def test_operability_gate_check_discriminates(tmp_path):
     docs = tmp_path / "docs"
     docs.mkdir()
     (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts" / "drill.sh").write_text("#!/bin/sh\n")
+    (tmp_path / "scripts" / "polaris-rolling-drill.sh").write_text("#!/bin/sh\n")
     ready = docs / "PRODUCTION-READINESS.md"
-    rows = ["| OP-%d | Criterion %d | FAIL | not built |" % (i, i) for i in range(1, 9)]
-    rows += ["| OP-9 | A crash costs no request | PASS | `drill:scripts/drill.sh` |",
-             "| OP-10 | Rules in the schema | PASS | `check:aor_append_only_triggers` |",
-             "| OP-11 | Real identity data | FAIL | external review, DPIA, pilot |"]
+    rows = ["| OP-%d | Criterion %d | FAIL | not built |" % (i, i) for i in range(1, 12) if i not in (4, 5)]
+    rows.insert(3, "| OP-4 | Readiness | PASS | `check:health_liveness_readiness_split` |")
+    rows.insert(4, "| OP-5 | A crash costs no request | PASS | `drill:scripts/polaris-rolling-drill.sh` |")
+    rows[-1] = "| OP-11 | Real identity data | FAIL | external review, DPIA, pilot |"
 
     def doc(rows, totals="11 criteria: 2 PASS, 0 PARTIAL, 9 FAIL, 0 UNKNOWN."):
         return ("**Status: not production-ready for real identity data.**\n\n"
@@ -2439,15 +2439,17 @@ def test_operability_gate_check_discriminates(tmp_path):
     assert checks.check_operability_gate(tmp_path)[0].level == "OK", \
         "must PASS on a gate whose PASS rows cite resolvable evidence and whose totals match"
 
-    ready.write_text(doc([r.replace("`drill:scripts/drill.sh`", "measured") for r in rows]))
+    ready.write_text(doc([r.replace("`drill:scripts/polaris-rolling-drill.sh`", "measured") for r in rows]))
     assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
         "must FAIL on a PASS row with no citation"
 
-    ready.write_text(doc([r.replace("scripts/drill.sh", "scripts/gone.sh") for r in rows]))
+    ready.write_text(doc([r.replace("not built |", "`drill:scripts/gone.sh` |", 1) if r.startswith("| OP-1 ") else r
+                          for r in rows]))
     assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
         "must FAIL on a citation that does not resolve"
 
-    ready.write_text(doc([r.replace("check:aor_append_only_triggers", "check:no_such_check") for r in rows]))
+    ready.write_text(doc([r.replace("not built |", "`check:no_such_check` |", 1) if r.startswith("| OP-1 ") else r
+                          for r in rows]))
     assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
         "must FAIL on a check citation that names no check"
 
@@ -2464,6 +2466,28 @@ def test_operability_gate_check_discriminates(tmp_path):
                           for r in rows], totals="11 criteria: 3 PASS, 0 PARTIAL, 8 FAIL, 0 UNKNOWN."))
     assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
         "must FAIL when real identity data is PASS while the status line says it is not"
+
+    # Review of the OP-2/OP-6 rows: a PASS rests on the evidence pinned for it, and every table line is counted.
+    (tmp_path / "scripts" / "polaris-zone-loss-drill.sh").write_text("#!/bin/sh\n")
+    ready.write_text(doc([r.replace("`drill:scripts/polaris-rolling-drill.sh`", "`drill:scripts/polaris-zone-loss-drill.sh`")
+                          for r in rows]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a PASS citing evidence that resolves but is not the evidence pinned for it"
+    ready.write_text(doc([r.replace("| Criterion 1 | FAIL | not built |",
+                                    "| Criterion 1 | PASS | `check:health_liveness_readiness_split` |") for r in rows],
+                         totals="11 criteria: 3 PASS, 0 PARTIAL, 8 FAIL, 0 UNKNOWN."))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a PASS row with no evidence pinned for it"
+    ready.write_text(doc(rows + ["|OP-12| Hidden | FAIL | x |"]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a row spelled without a space goes uncounted"
+    ready.write_text(doc(rows + ["| OP12 | Misnamed | FAIL | x |"], totals="12 criteria: 2 PASS, 0 PARTIAL, 10 FAIL, 0 UNKNOWN."))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a table line that is not an OP-N row"
+    ready.write_text(doc(rows[:-2] + [rows[-3].replace("| Criterion 9 |", "| Again |")] + rows[-1:],
+                         ))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL when two rows share an ID"
 
 def test_ci_atlas_e2e_check_discriminates(tmp_path):
     wf = tmp_path / ".github" / "workflows"
