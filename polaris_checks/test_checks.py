@@ -14,6 +14,7 @@ Run: python3 -m pytest polaris_checks/test_checks.py
 
 from __future__ import annotations
 
+import ast
 import os
 import pathlib
 import re
@@ -75,6 +76,38 @@ def test_csp_check_fails_on_unsafe_inline(tmp_path):
     sec.write_text(good + 'csp_parts.append("script-src-elem https://cdn.example")\n')
     assert checks.check_csp_forbids_unsafe_inline(tmp_path)[0].level == "FAIL", \
         "must FAIL when a later script-src-elem widens the policy"
+
+
+def test_python_comments_are_cut_where_the_tokenizer_says():
+    """The checks read Python with its comments blanked. A `#` inside a triple-quoted string is
+    text, not a comment: cutting there took a docstring's closing quotes, and the file no longer
+    parsed as the checks read it (2026-10-09)."""
+    src = ('def f():\n'
+           '    """A docstring that names a pull request\n'
+           '    (review of #318)."""\n'
+           '    x = "a # in a string"  # a real comment\n'
+           '    # a whole-line comment\n'
+           '    return x\n')
+    out = checks._strip_comments_for("m.py", src)
+    ast.parse(out)
+    assert '(review of #318)."""' in out, "a # inside a multi-line string must stay, with the quotes after it"
+    assert '"a # in a string"' in out and "a real comment" not in out and "whole-line comment" not in out, out
+    assert out.count("\n") == src.count("\n"), "line numbers must not move"
+    # The tree: every Python file that parses as written still parses as the checks read it.
+    broken = []
+    for p in sorted(REPO.rglob("*.py")):
+        if any(part in (".git", "node_modules", ".venv", "venv") for part in p.parts):
+            continue
+        raw = p.read_text(errors="replace")
+        try:
+            ast.parse(raw)
+        except SyntaxError:
+            continue
+        try:
+            ast.parse(checks._strip_comments_for(p.name, raw))
+        except SyntaxError as e:
+            broken.append(f"{p.relative_to(REPO)}:{e.lineno}")
+    assert not broken, "stripping comments broke these files as the checks read them: " + ", ".join(broken)
 
 
 def test_c6_app_read_paths_check_discriminates(tmp_path):

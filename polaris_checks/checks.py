@@ -62,12 +62,29 @@ _COMMENT_SYNTAX = {
 _GO_TEMPLATE_COMMENT = re.compile(r"\{\{-?\s*/\*.*?\*/\s*-?\}\}", re.S)
 
 
+def _python_comment_columns(text: str) -> dict[int, int] | None:
+    """{line index: the column its comment starts at}, from Python's own tokenizer; None when
+    the text does not tokenize. A line scanner cannot know it is inside a triple-quoted string:
+    a docstring line that named "review of #318" before its closing quotes lost them to it, and
+    four files of the tree, checks.py and custody.py among them, no longer parsed as their checks
+    read them (2026-10-09), so a check walking their syntax tree saw nothing there."""
+    columns = {}
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.COMMENT:
+                columns[tok.start[0] - 1] = tok.start[1]
+    except (tokenize.TokenError, SyntaxError):
+        return None
+    return columns
+
+
 def _strip_comments_for(rel: str, text: str) -> str:
     """Blank out comment bodies while keeping line numbers and string literals intact.
 
     Only whole-line comments and trailing comments outside quotes are removed, so a
     `#` inside a string stays. Lines are kept (blanked, not deleted) so anything that
-    reports a line number still reports the right one.
+    reports a line number still reports the right one. Python is cut where its own
+    tokenizer says a comment starts, so a `#` inside a multi-line string stays too.
     """
     suffix = pathlib.PurePosixPath(rel).suffix
     if suffix in (".yaml", ".yml", ".tpl") or rel.endswith("NOTES.txt"):
@@ -78,6 +95,7 @@ def _strip_comments_for(rel: str, text: str) -> str:
     if not marker:
         return text
     _needs_space = suffix in (".yml", ".yaml", ".sh", ".toml", ".cfg")
+    py_columns = _python_comment_columns(text) if suffix == ".py" else None
     out = []
     for lineno, line in enumerate(text.split("\n")):
         # A shebang is not a comment. Blanking it breaks anything that reads what
@@ -87,7 +105,9 @@ def _strip_comments_for(rel: str, text: str) -> str:
             continue
         quote = None
         cut = None
-        i = 0
+        i = len(line) if py_columns is not None else 0
+        if py_columns is not None:
+            cut = py_columns.get(lineno)
         while i < len(line):
             ch = line[i]
             if quote:
