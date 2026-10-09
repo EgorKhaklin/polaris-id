@@ -59,9 +59,11 @@ takes `retire` and `compromise`). When the key is the one the running app signs 
 install, `scripts/polaris-key-event.sh register AGENCY_ID --current` reads it from the app's own key
 store and registers it as the authority's first key, effective from its first signature for the
 authority (now, if it has signed nothing), so what it signed before the registration is authorized
-too. It leaves a key already active alone and refuses everything after the first key, which this
-ceremony performs by name: another active key (a rotation), a key retired or declared compromised
-(never registered again, by any path), a later key once the last one ended.
+too; run again, it extends that registration back over a signature made before it took effect. It
+refuses everything after the first key, which this ceremony performs by name: another active key (a
+rotation), a key retired or declared compromised (the script never registers one again), a later
+key once the last one ended. `polaris key-register`, run as the schema owner, has no such refusal:
+register only a key the ceremony minted, and never one retired or declared compromised.
 
 Under real signing this is not optional. Every possession route (`/api/v1/verify`, the status
 assertion, holder signing, the verifiable credential, the mdoc, sign-in) accepts a signature only

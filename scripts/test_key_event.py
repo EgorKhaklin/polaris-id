@@ -129,6 +129,14 @@ class RegisterCurrentTests(_Base):
         self.assertIn("rotation", r.stderr)
         self.assertEqual(self.inserts("AuthorityKeyEvent"), [])
 
+    def test_a_key_that_signed_before_its_registration_is_extended_back(self):
+        r = self.run_script(KEY_EVENT, "register", "1", "--current", STUB_PK=KEY,
+                            STUB_STATE="active|1|" + KEY + "|true")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("extending it back", r.stdout)
+        [ins] = self.inserts("AuthorityKeyEvent")
+        self.assertEqual(self.var(ins, "first"), "1")
+
     def test_an_ended_key_is_never_registered_again(self):
         for status in ("retired", "compromised"):
             with self.subTest(status):

@@ -205,15 +205,18 @@ that issues under it; the registration ends the key ceremony ([`KEY-CEREMONY.md`
 `--current` reads the public key from the running app's own key store (a file, PKCS#11 or a KMS
 alike), so nobody copies 3,904 hex characters. It registers an authority's first key, effective from
 that key's first signature for the authority, so a credential issued before the registration
-verifies too; a key already active is left alone. Everything after the first key is the ceremony's,
-and `--current` refuses it: another active key (a rotation), a key retired or declared compromised
-(never registered again, by any path), a later key once the last one ended. The ceremony names a key
-by its hex: `./scripts/polaris-key-event.sh register <agency id> <public key hex>`, with
-`--effective-at` for a key registered from another instant. Every event holds the authority's row
-for its transaction, so a `--current` and a ceremony never interleave.
-[`scripts/polaris-doctor.sh`](../../scripts/polaris-doctor.sh) fails when a credential signed for
-real is under a key its authority had not registered when it was signed, judged as every
-relying-party route judges it, and a deploy names the command for each authority.
+verifies too. Run again, it leaves the key alone, or extends its registration back over a signature
+made before the registration took effect (an issuance in flight at that moment). Everything after
+the first key is the ceremony's, and `--current` refuses it: another active key (a rotation), a key
+retired or declared compromised (the script never registers one again), a later key once the last
+one ended. The ceremony names a key by its hex: `./scripts/polaris-key-event.sh register <agency
+id> <public key hex>`, with `--effective-at` for a key registered from another instant. Every event
+holds the authority's row for its transaction, so a `--current` and a ceremony never interleave.
+[`scripts/polaris-doctor.sh`](../../scripts/polaris-doctor.sh) fails when an active credential signed
+for real is under a key its authority had not registered when it was signed, judged as every
+relying-party route judges it, and names the key: register only a key this install signs with or a
+ceremony minted, since a key nobody minted was planted. It warns to re-issue what no registration
+can fix, and a deploy names the command for each authority.
 
 ### Relying parties
 

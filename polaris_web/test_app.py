@@ -14682,6 +14682,7 @@ class KeyRegisterScriptTests(PolarisTestCase):
     _token_signed_by = FederationInAppTests._token_signed_by
     _key_event = FederationInAppTests._key_event
     _issued_at = FederationInAppTests._issued_at
+    _add_signature = FederationInAppTests._add_signature
 
     def setUp(self):
         super().setUp()
@@ -14695,7 +14696,7 @@ class KeyRegisterScriptTests(PolarisTestCase):
             path = os.path.join(self.tmp, 'bin', name)
             with open(path, 'w') as f:
                 f.write(body)
-            os.chmod(path, 0o755)
+            os.chmod(path, 0o700)            # this user runs them; nobody else reads them
 
     def _agency(self):
         """A new authority with no key history, whatever the sample data registers for the others."""
@@ -14738,6 +14739,48 @@ class KeyRegisterScriptTests(PolarisTestCase):
         with flask_app.app.app_context():
             return flask_app._issuer_key_facts(token_id, agency_id, key, signed_at)
 
+    def _reserved_signed_by(self, value, agency_id, key, at):
+        """A credential that never became ACTIVE, signed under `key`: not in force."""
+        conn = self._new_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                            "VALUES (%s, '1990-01-01', 'US-PA') RETURNING individual_id", ('KR ' + value,))
+                iid = cur.fetchone()['individual_id']
+                cur.execute("""
+                    INSERT INTO IdentityToken
+                        (token_value, physical_serial, hardware_model, biometric_binding_type,
+                         individual_id, issuing_agency_id, algorithm_id, status, issued_date, expiration_date)
+                    VALUES (%s, %s, 'TitanQ-3', 'IRIS', %s, %s, 1, 'RESERVE', CURRENT_TIMESTAMP,
+                            (polaris_utc_date() + INTERVAL '10 years')::date)
+                    RETURNING token_id""", (value, 'SN-' + value, iid, agency_id))
+                tid = cur.fetchone()['token_id']
+                cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+                            "signing_public_key_hex, signed_at) VALUES (%s, 1, %s, %s, %s)",
+                            (tid, b'reserve-signature-bytes', key, at))
+            conn.commit()
+            return tid
+        finally:
+            conn.close()
+
+    def _judgment(self):
+        """scripts/polaris-key-register-check.sql's five fields, as the doctor reads them."""
+        with open(os.path.join(self.ROOT, 'scripts', 'polaris-key-register-check.sql')) as f:
+            judgment = f.read()
+        conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(judgment)
+                line = cur.fetchone()[0]
+        finally:
+            conn.close()
+        unregistered, first, reissue, registered, keys = line.split('|')
+        self.assertTrue(registered.isdigit(), line)
+        named = {name: {int(a) for a in field.split()} for name, field in
+                 (('unregistered', unregistered), ('first', first), ('reissue', reissue))}
+        named['keys'] = set(keys.split())
+        return named
+
     def test_current_registers_a_first_key_from_its_first_signature(self):
         """A credential issued before the registration is authorized at signing once --current
         registers its key: the registration takes effect from the key's first signature."""
@@ -14763,6 +14806,40 @@ class KeyRegisterScriptTests(PolarisTestCase):
         age = _sql("SELECT now() AT TIME ZONE 'UTC' - effective_at AS d FROM AuthorityKeyEvent "
                    "WHERE agency_id = %s", (ag,))[0]['d']
         self.assertLess(abs(age.total_seconds()), 60)
+
+    def test_a_signature_added_to_an_old_credential_does_not_date_the_registration(self):
+        """A signature under the key added to a credential issued years before (a migration, or a row
+        the application role plants through uc6_migrate_algorithm) is dated by its own making, as
+        the routes date it, so it cannot move the key's first registration back to that issuance."""
+        ag = self._agency()
+        tid = self._token_signed_by('KR-OLD-0001', agency_id=ag, signing_key_hex=None,
+                                    signed_at='2023-03-01 09:00:00')
+        self._issued_at(tid, ag, '2023-03-01 09:00:00')
+        self._add_signature(tid, 2, self.K1, '2026-03-01 09:00:00')
+        r = self._script('register', str(ag), '--current', key=self.K1)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('effective 2026-03-01 09:00:00', r.stdout)
+
+    def test_current_extends_a_first_key_back_over_a_signature_made_before_it(self):
+        """An issuance in flight while --current ran commits a signature dated before the
+        registration: the judgment names the agency for --current, and run again it extends the
+        registration back over that signature; a third run has nothing to do."""
+        ag = self._agency()
+        self.assertEqual(self._script('register', str(ag), '--current', key=self.K1).returncode, 0)
+        tid = self._token_signed_by('KR-INFLIGHT-0001', agency_id=ag, signing_key_hex=self.K1,
+                                    signed_at='2026-03-01 09:00:00')
+        self._issued_at(tid, ag, '2026-03-01 09:00:00')
+        self.assertEqual(self._facts_of(tid, ag, self.K1, datetime(2026, 3, 1, 9)), (False, True))
+        self.assertIn(ag, self._judgment()['first'])
+        r = self._script('register', str(ag), '--current', key=self.K1)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('extending it back', r.stdout)
+        self.assertIn('effective 2026-03-01 09:00:00', r.stdout)
+        self.assertEqual(self._facts_of(tid, ag, self.K1, datetime(2026, 3, 1, 9)), (True, True))
+        self.assertNotIn(ag, self._judgment()['unregistered'])
+        again = self._script('register', str(ag), '--current', key=self.K1)
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertIn('nothing to do', again.stdout)
 
     def test_an_ended_key_is_never_registered_again(self):
         """Custody restored from an old backup signs with a key the ceremony retired: --current
@@ -14834,66 +14911,74 @@ class KeyRegisterScriptTests(PolarisTestCase):
             (ag,))], ['b2b2'])
 
     def test_the_doctors_judgment_is_the_routes_signature_by_signature(self):
-        """scripts/polaris-key-register-check.sql names an authority as unregistered exactly when one
-        of its real signatures in force is refused by _issuer_key_facts for want of a registration at
-        its instant, and as ended exactly when an active credential's is refused although its key was
-        registered then; every signature in this database is judged both ways."""
-        never, late, fine, ended, other = (self._agency() for _ in range(5))
-        def signed(agency, value, key, at):
+        """scripts/polaris-key-register-check.sql judges every real signature in force on an active
+        credential as _issuer_key_facts does: an authority is named unregistered exactly when one is
+        refused for a registration it lacked at the signature's instant under a key never ended,
+        for --current exactly when that command can fix it, and for re-issue exactly when no
+        registration can (its key since retired or compromised, or no ISSUED instant)."""
+        def signed(agency, value, key, at, issued=True):
             tid = self._token_signed_by(value, agency_id=agency, signing_key_hex=key, signed_at=at)
-            self._issued_at(tid, agency, at)
-        signed(never, 'KR-NEVER-0001', self.K1, '2026-03-01 09:00:00')
-        signed(late, 'KR-LATE-0001', self.K1, '2026-03-01 09:00:00')
-        self._key_event(late, self.K1, 'registered', '2026-04-01 00:00:00')
-        signed(fine, 'KR-FINE-0001', self.K1, '2026-03-01 09:00:00')
-        self._key_event(fine, self.K1, 'registered', '2026-02-01 00:00:00')
-        signed(ended, 'KR-ENDED-0001', self.K1, '2026-03-01 09:00:00')
-        self._key_event(ended, self.K1, 'registered', '2026-02-01 00:00:00')
-        self._key_event(ended, self.K1, 'compromised', '2026-02-15 00:00:00')
-        signed(other, 'KR-OTHER-0001', self.K2, '2026-03-01 09:00:00')
-        self._key_event(other, self.K1, 'registered', '2026-02-01 00:00:00')
+            if issued:
+                self._issued_at(tid, agency, at)
+        def ke(*args):
+            r = self._script(*args)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        at = '2026-03-01 09:00:00'
+        never, late, fine, ended, retired, other, noissue, reserve = (self._agency() for _ in range(8))
+        signed(never, 'KR-NEVER-0001', self.K1, at)                 # no history at all
+        signed(late, 'KR-LATE-0001', self.K1, at)                   # its only key, registered after it signed
+        ke('register', str(late), self.K1, '--effective-at', '2026-04-01T00:00:00')
+        signed(fine, 'KR-FINE-0001', self.K1, at)
+        ke('register', str(fine), self.K1, '--effective-at', '2026-02-01T00:00:00')
+        signed(ended, 'KR-ENDED-0001', self.K1, at)                 # compromised before it signed
+        ke('register', str(ended), self.K1, '--effective-at', '2026-02-01T00:00:00')
+        ke('compromise', str(ended), self.K1, '--effective-at', '2026-02-15T00:00:00')
+        signed(retired, 'KR-RETIRED-0001', self.K1, at)             # registered late, then rotated out
+        ke('register', str(retired), self.K1, '--effective-at', '2026-05-01T00:00:00')
+        ke('register', str(retired), self.K2)
+        ke('retire', str(retired), self.K1)
+        signed(other, 'KR-OTHER-0001', self.K2, at)                 # a key nobody registered beside K1
+        ke('register', str(other), self.K1, '--effective-at', '2026-02-01T00:00:00')
+        signed(noissue, 'KR-NOISSUE-0001', self.K1, at, issued=False)   # no protected instant
+        ke('register', str(noissue), self.K1, '--effective-at', '2026-02-01T00:00:00')
+        self._reserved_signed_by('KR-RESERVE-0001', reserve, self.K1, at)   # never in force
 
-        with open(os.path.join(self.ROOT, 'scripts', 'polaris-key-register-check.sql')) as f:
-            judgment = f.read()
-        conn = psycopg2.connect(**_OWNER_DB_CONFIG)
-        try:
-            with conn.cursor() as cur:
-                cur.execute(judgment)
-                line = cur.fetchone()[0]
-        finally:
-            conn.close()
-        unregistered, first, ended_list, registered = line.split('|')
-        named = {name: {int(a) for a in field.split()} for name, field in
-                 (('unregistered', unregistered), ('first', first), ('ended', ended_list))}
-        self.assertTrue(registered.isdigit(), line)
-        for agency, unreg, is_first, is_ended in ((never, True, True, False), (late, True, False, False),
-                                                  (fine, False, False, False), (ended, False, False, True),
-                                                  (other, True, False, False)):
-            self.assertEqual((agency in named['unregistered'], agency in named['first'], agency in named['ended']),
-                             (unreg, is_first, is_ended), 'agency %d' % agency)
+        named = self._judgment()
+        for agency, want in ((never, ('unregistered', 'first')), (late, ('unregistered', 'first')),
+                             (fine, ()), (ended, ('reissue',)), (retired, ('reissue',)),
+                             (other, ('unregistered',)), (noissue, ('reissue',)), (reserve, ())):
+            self.assertEqual({n for n in ('unregistered', 'first', 'reissue') if agency in named[n]},
+                             set(want), 'agency %d' % agency)
+        self.assertIn('%d:%s' % (other, self.K2[:16]), named['keys'])
 
-        expected = {'unregistered': set(), 'ended': set()}
+        expected = {'unregistered': set(), 'first': set(), 'reissue': set(), 'keys': set()}
         for s in _sql("""
-                SELECT t.token_id, t.issuing_agency_id AS agency_id, t.status, s.signing_public_key_hex AS k, s.signed_at,
-                       (SELECT registered_at FROM AuthorityKeyCurrent c WHERE c.agency_id = t.issuing_agency_id
-                           AND lower(c.public_key_hex) = lower(s.signing_public_key_hex)) AS registered_at,
+                SELECT t.token_id, t.issuing_agency_id AS agency_id, s.signing_public_key_hex AS k, s.signed_at,
                        (SELECT min(event_timestamp) FROM TokenLifecycleEvent e WHERE e.token_id = t.token_id
-                           AND e.event_type = 'ISSUED') AS issued_at
+                           AND e.event_type = 'ISSUED') AS issued_at,
+                       EXISTS (SELECT 1 FROM AuthorityKeyEvent e WHERE e.agency_id = t.issuing_agency_id
+                                 AND lower(e.public_key_hex) = lower(s.signing_public_key_hex)
+                                 AND e.event IN ('retired', 'compromised')) AS ended,
+                       lower(a.signing_public_key_hex) AS current_key,
+                       EXISTS (SELECT 1 FROM AuthorityKeyEvent e WHERE e.agency_id = t.issuing_agency_id) AS history,
+                       EXISTS (SELECT 1 FROM AuthorityKeyEvent e WHERE e.agency_id = t.issuing_agency_id
+                                 AND (lower(e.public_key_hex) <> lower(s.signing_public_key_hex)
+                                      OR e.event <> 'registered')) AS beyond
                   FROM IdentityToken t JOIN TokenSignature s ON s.token_id = t.token_id
-                 WHERE s.signing_public_key_hex IS NOT NULL
+                  JOIN Agency a ON a.agency_id = t.issuing_agency_id
+                 WHERE s.signing_public_key_hex IS NOT NULL AND t.status = 'ACTIVE'
+                   AND (t.expiration_date IS NULL OR t.expiration_date >= (now() AT TIME ZONE 'UTC')::date)
                    AND (s.deprecation_date IS NULL OR s.deprecation_date > now())"""):
             if self._facts_of(s['token_id'], s['agency_id'], s['k'], s['signed_at'])[0] is True:
                 continue
-            at = max(s['issued_at'], s['signed_at']) if s['issued_at'] else None
-            if at is None or s['registered_at'] is None or s['registered_at'] > at:
-                expected['unregistered'].add(s['agency_id'])
-            elif s['status'] == 'ACTIVE':
-                expected['ended'].add(s['agency_id'])
-        self.assertEqual(named['unregistered'], expected['unregistered'])
-        self.assertEqual(named['ended'], expected['ended'])
-        self.assertEqual(named['first'], {a for a in expected['unregistered'] if not _sql(
-            "SELECT 1 FROM AuthorityKeyEvent WHERE agency_id = %s", (a,))})
-
+            if s['issued_at'] is None or s['ended']:
+                expected['reissue'].add(s['agency_id'])
+                continue
+            expected['unregistered'].add(s['agency_id'])
+            expected['keys'].add('%d:%s' % (s['agency_id'], s['k'].lower()[:16]))
+            if not s['history'] or (s['k'].lower() == s['current_key'] and not s['beyond']):
+                expected['first'].add(s['agency_id'])
+        self.assertEqual(named, expected)
 
 class TokenVerifyTests(PolarisTestCase):
     """GET /api/tokens/<id>/verify cryptographically verifies a token's active

@@ -39,7 +39,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A sealed secret store set up as SECRETS.md said left `polaris.service` reading the shredded plaintext directory at its next start; an empty `POLARIS_SECRETS_DIR` is now refused.
 - SECRETS.md said a sealed store's key is not on its disk; an age identity kept on the host is. The doctor and every start now say when the secrets are plaintext on disk.
 - DEPLOYMENT.md's first-operator command omitted the `--reason` the script requires.
-- The install guides did not say to register the signing key, without which every relying-party verification is refused; the doctor now fails when a credential signed for real is under a key its authority had not registered when it was signed.
+- The install guides did not say to register the signing key, without which every relying-party verification is refused; the doctor now fails when an active credential signed for real is under a key its authority had not registered when it was signed, names the key, and warns to re-issue what no registration can fix.
 - The scaling documents no longer present the signature check's rate per core as the verification route's capacity, nor unmeasured worker, replica and host scaling as measured.
 - A caught-up replica of an idle HA cluster no longer reads as lagging; reads stayed on the primary (lab record 017).
 - SECRETS.md still said Redis runs without a password.

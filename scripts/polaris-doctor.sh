@@ -19,11 +19,11 @@
 #   edge           the TLS edge serves /api/health/live
 #   health         the app's own roll-up (/api/health, from inside the app container): every
 #                  component it judges
-#   key register   every credential signed for real is under a key its authority had registered when
-#                  it was signed, judged as every relying-party route judges it: a FAIL otherwise
-#                  (every verification of it is refused), a WARN while no key is registered at all,
-#                  and a WARN for active credentials under a key already retired or declared
-#                  compromised when it signed (refused by design: re-issue them; KEY-CEREMONY.md)
+#   key register   every active credential signed for real is under a key its authority had registered
+#                  when it was signed, judged as every relying-party route judges it: a FAIL naming the
+#                  key otherwise (every verification of it is refused), a WARN while no key is
+#                  registered at all, and a WARN to re-issue those no registration can fix
+#                  (KEY-CEREMONY.md)
 #   backups        continuous archiving is on, and its repository is offsite: a repository on this
 #                  host is lost with it (a WARN; docs/operator/DR.md section 5)
 #
@@ -175,28 +175,29 @@ else
     warn health "not reached: the app container is not running (see its stack line above)"
 fi
 
-# --- key register: every credential signed for real is under a key its authority had registered when
-# it was signed, judged signature by signature as every relying-party route judges it
-# (scripts/polaris-key-register-check.sql). One that is not is refused by all of them: a FAIL, with
-# the command that registers it. One signed under a key its authority had already retired or declared
-# compromised is refused by design: a WARN, to re-issue it. The notional seed carries no real
-# signature and needs no registration.
+# --- key register: every active credential signed for real is under a key its authority had
+# registered when it was signed, judged signature by signature as every relying-party route judges it
+# (scripts/polaris-key-register-check.sql). One that is not is refused by all of them: a FAIL, naming
+# the key and the command that registers it, which is --current for the key this install signs with;
+# a key nobody's ceremony minted was planted and is never registered. One no registration can fix (its
+# key since retired or declared compromised, or no recorded issuance instant): a WARN, to re-issue it.
+# The notional seed carries no real signature and needs no registration.
 KEYQ=$(compose exec -T postgres psql -U postgres -d polaris -v ON_ERROR_STOP=1 -qtA \
            < "${SCRIPT_DIR}/polaris-key-register-check.sql" 2> /dev/null)
 KEYQ_RC=$?
-IFS='|' read -r UNREGISTERED FIRST ENDED REGISTERED <<< "${KEYQ}"
+IFS='|' read -r UNREGISTERED FIRST REISSUE REGISTERED KEYS <<< "${KEYQ}"
 if [[ ${KEYQ_RC} -ne 0 || ! "${REGISTERED:-}" =~ ^[0-9]+$ ]]; then
     warn "key register" "not reached: the database did not answer"
 else
     if [[ -n "${UNREGISTERED}" ]]; then
-        bad "key register" "agency ${UNREGISTERED} holds credentials signed for real under a key it had not registered when they were signed: every relying-party verification of them answers \"not a verifiable presentation\" (an authority with no key history${FIRST:+, here agency ${FIRST}}: sudo scripts/polaris-key-event.sh register <agency> --current registers the key the app signs with from its first signature; any other is registered by the ceremony, by its hex and --effective-at: docs/operator/KEY-CEREMONY.md)"
+        bad "key register" "agency ${UNREGISTERED} holds active credentials signed under a key it had not registered when they were signed (agency:key ${KEYS}): every relying-party verification of them answers \"not a verifiable presentation\". ${FIRST:+For agency ${FIRST}: sudo scripts/polaris-key-event.sh register <agency> --current registers the key this install signs with from its first signature. }${FIRST:+Any other key}${FIRST:-Such a key} is registered only by the ceremony, and only if the ceremony minted it: a key nobody minted was planted, never register it (docs/operator/KEY-CEREMONY.md)"
     elif [[ "${REGISTERED}" == 0 ]]; then
         warn "key register" "no authority key is registered yet: relying parties will refuse every credential this stack signs until it is (sudo scripts/polaris-key-event.sh register <agency> --current, for each authority it issues for)"
     else
-        ok "key register" "every credential signed for real is under a key its authority had registered when it was signed"
+        ok "key register" "every active credential signed for real is under a key its authority had registered when it was signed"
     fi
-    if [[ -n "${ENDED}" ]]; then
-        warn "ended keys" "agency ${ENDED} holds active credentials signed under a key it had already retired or declared compromised: relying parties refuse them by design; re-issue them under the current key"
+    if [[ -n "${REISSUE}" ]]; then
+        warn "re-issue" "agency ${REISSUE} holds active credentials no registration can make verifiable (signed under a key since retired or declared compromised, or with no recorded issuance instant): re-issue them under the current key"
     fi
 fi
 

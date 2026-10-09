@@ -372,15 +372,19 @@ EOF
 # deploy only names the command for each.
 KEYQ=$(compose exec -T postgres psql -U postgres -d polaris -v ON_ERROR_STOP=1 -qtA \
            < "${SCRIPT_DIR}/polaris-key-register-check.sql" 2> /dev/null || true)
-IFS='|' read -r UNREGISTERED FIRST _ REGISTERED <<< "${KEYQ}"
+IFS='|' read -r UNREGISTERED FIRST REISSUE REGISTERED KEYS <<< "${KEYQ}"
 for agency in ${UNREGISTERED}; do
     if [[ " ${FIRST} " == *" ${agency} "* ]]; then
         echo "  ! agency ${agency} signs under a key the register does not hold: relying parties refuse its"
         echo "    credentials until:  sudo scripts/polaris-key-event.sh register ${agency} --current"
     else
-        echo "  ! agency ${agency} holds credentials under a key it had not registered when they were signed:"
-        echo "    relying parties refuse them until the ceremony registers it (docs/operator/KEY-CEREMONY.md)"
+        echo "  ! agency ${agency} holds credentials under a key it had not registered when they were signed"
+        echo "    (agency:key ${KEYS}): only the ceremony registers it, and only a key it minted; a key nobody"
+        echo "    minted was planted, never register it (docs/operator/KEY-CEREMONY.md)"
     fi
+done
+for agency in ${REISSUE}; do
+    echo "  ! agency ${agency} holds active credentials no registration can make verifiable: re-issue them"
 done
 if [[ "${REGISTERED:-}" == 0 ]]; then
     echo "  ! no authority key is registered yet: before the first credential,"
