@@ -25,6 +25,7 @@ import os
 import platform
 import pwd
 import re
+import secrets
 import ssl
 import subprocess
 import sys
@@ -277,6 +278,36 @@ def _verifier_version():
     return re.search(r'(?m)^version = "([^"]+)"', text).group(1)
 
 
+def install_verifier(pip, version):
+    """Install polaris-verify `version` into the venv `pip` belongs to: the published wheel, or, where PyPI has no
+    such version or cannot be reached, this checkout's own package built from source. Returns (result, source)."""
+    r = subprocess.run([pip, "install", "-q", "--only-binary", ":all:", "polaris-verify[cryptography]==" + version],
+                       capture_output=True, text=True, timeout=600)
+    if r.returncode == 0:
+        return r, "PyPI"
+    r = subprocess.run([pip, "install", "-q", os.path.join(ROOT, "packages", "polaris-verify") + "[cryptography]"],
+                       capture_output=True, text=True, timeout=600)
+    return r, "this checkout"
+
+
+def record_verifier(rep, version, r, source):
+    """The D.verifier row. The published wheel is what a stranger runs; a verifier built from this checkout is not
+    that, and the report says so as a WARN rather than an INFO footnote (review of #318, 2026-10-09)."""
+    if r.returncode != 0:
+        rep.add("D.verifier", "install polaris-verify %s into a venv" % version, "installed",
+                "it could not be installed", "FAIL", (r.stderr or r.stdout or "")[-300:])
+        return False
+    if source == "PyPI":
+        rep.add("D.verifier", "the detached verifier this release ships", "the published wheel",
+                "polaris-verify %s from PyPI" % version, "INFO")
+    else:
+        rep.add("D.verifier", "the detached verifier this release ships", "the published wheel",
+                "polaris-verify %s built from this checkout" % version, "WARN",
+                "PyPI had no wheel of this version or could not be reached: the checks below ran a verifier "
+                "built from source, not the one a stranger installs")
+    return True
+
+
 def probe_offline(rep, pack, anchor_hex):
     # Everything here lives in a temporary directory removed afterwards: the verifier's venv, and the
     # credential and its tampered copies, which are a possession proof and never belong in the report.
@@ -285,20 +316,9 @@ def probe_offline(rep, pack, anchor_hex):
         exe, pip = os.path.join(venv, "bin", "polaris-verify"), os.path.join(venv, "bin", "pip")
         version = _verifier_version()
         mk = subprocess.run([sys.executable, "-m", "venv", venv], capture_output=True, text=True)
-        source = "PyPI"
-        r = subprocess.run([pip, "install", "-q", "--only-binary", ":all:", "polaris-verify[cryptography]==" + version],
-                           capture_output=True, text=True, timeout=600) if mk.returncode == 0 else mk
-        if mk.returncode == 0 and r.returncode != 0:
-            # This checkout's version is not on PyPI (a tree ahead of the last release): its own package.
-            source = "this checkout"
-            r = subprocess.run([pip, "install", "-q", os.path.join(ROOT, "packages", "polaris-verify") + "[cryptography]"],
-                               capture_output=True, text=True, timeout=600)
-        if r.returncode != 0:
-            rep.add("D.verifier", "install polaris-verify %s into a venv" % version, "installed",
-                    "it could not be installed", "FAIL", (r.stderr or r.stdout or "")[-300:])
+        r, source = install_verifier(pip, version) if mk.returncode == 0 else (mk, "PyPI")
+        if not record_verifier(rep, version, r, source):
             return
-        rep.add("D.verifier", "the detached verifier this release ships", "installed",
-                "polaris-verify %s from %s" % (version, source), "INFO")
 
         def verify(name, p, anchor):
             pf, af = os.path.join(work, name + "-pack.json"), os.path.join(work, name + "-anchor.json")
@@ -397,13 +417,20 @@ def notional_issue(rep, web, args, password):
                                                   "csrf_token": _csrf(page)})
     where = (headers.get("Location") or "") if headers else ""
     status2, _, page = web.call("/uc1/issue")
-    if status not in (302, 303) or status2 != 200:
-        reason = "the operator's login needs a second factor" if "webauthn" in where.lower() else \
-            "login answered %s, the issue form %s" % (status, status2)
+    if status in (302, 303) and "webauthn" in where.lower():
+        # The one login this tool cannot finish: the account holds a security key. Not a failure of the install.
         rep.add("F.issue", "log in as %s and issue one notional credential" % args.operator, "issued",
-                reason + ": issue one in the console and run again with --pack and --rp-config", "SKIP")
+                "the operator's login needs a second factor: issue one in the console and run again with --pack "
+                "and --rp-config", "SKIP")
         return None
-    serial = "TKN-EVAL-%d" % int(time.time())
+    if status not in (302, 303) or status2 != 200:
+        # A wrong password or a broken console is a notional run that cannot do what it was asked (review of
+        # #318, 2026-10-09: it was a SKIP, and the run exited 0).
+        rep.add("F.issue", "log in as %s and issue one notional credential" % args.operator, "issued",
+                "login answered %s%s, the issue form %s" % (status, (", to " + where) if where else "", status2), "FAIL")
+        return None
+    # Two runs in one second must not collide on the serial (unique in IdentityToken).
+    serial = "TKN-EVAL-%d-%s" % (int(time.time()), secrets.token_hex(3))
     status, headers, body = web.call("/uc1/issue", form={
         "csrf_token": _csrf(page), "legal_name": "Notional Evaluation Holder", "date_of_birth": "1990-04-02",
         "jurisdiction": "US-PA", "issuing_agency_id": str(args.agency), "algorithm_id": "1",

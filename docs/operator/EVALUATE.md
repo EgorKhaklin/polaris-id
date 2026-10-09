@@ -24,9 +24,9 @@ on a private CA, `--cacert FILE`; on `localhost` the edge's local root is read f
 | A | `polaris-doctor.sh`: services, secrets, configuration, the edge, the app's health, the key register, backups | every component ok |
 | B | the database's own self-test (the one behind `/athena`), on the application's connection, every statement rolled back | each forbidden write refused by the rule that should refuse it |
 | C | the published trust list against the key custody signs with | the key is published and active |
-| D | `polaris-verify`, the version this release ships (from PyPI, or this checkout when it is ahead), offline, against the published key: the credential, then five tampered copies | the credential accepted, every copy refused |
+| D | `polaris-verify`, the version this release ships (the PyPI wheel; built from this checkout, and a WARN, when PyPI has none), offline, against the published key: the credential, then five tampered copies | the credential accepted, every copy refused |
 | E | a relying party verifying online, two tampered copies, and the lifetime of a status assertion | accepted, refused, a number |
-| F | with `--notional`: one credential issued through the console, revoked (co-signed), verified again | the revoked credential refused online |
+| F | with `--notional`: one credential issued through the console, revoked (co-signed), verified again; a login the console refuses fails it, and only an account that needs its security key skips it | the revoked credential refused online |
 | G | the version, and the image each service runs | reported, not judged, until releases publish images |
 
 A refusal counts only when it is an answer: a verifier or an API that gives no verdict fails its row,
