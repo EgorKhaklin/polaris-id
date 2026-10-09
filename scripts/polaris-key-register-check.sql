@@ -8,7 +8,9 @@
 -- Every route that takes a presented credential accepts a real signature only under a key its
 -- authority had registered at the signature's instant and had not retired or declared compromised
 -- by then (rp_api.py, _issuer_key_facts in app.py): the instant is the later of the signature's
--- signed_at and the credential's protected ISSUED instant, and no ISSUED row is no instant. This
+-- signed_at and the credential's protected ISSUED instant, or its earliest signed_at where it has no
+-- ISSUED row (retention purged it, or a recovery made the credential; each signature is written in the
+-- transaction that made it). This
 -- judges every real signature in force on an ACTIVE, unexpired credential the same way and prints
 -- one line, five fields:
 --
@@ -18,7 +20,7 @@
 --                 history at all, or a signature under the agency's current key, whose history holds
 --                 that key's registrations only (--current extends it back to its first signature)
 --   reissue       agencies whose refused signature no registration can fix: its key has been retired
---                 or declared compromised, or the credential has no recorded ISSUED instant
+--                 or declared compromised
 --   registered    how many registrations the register holds (0: no authority key is registered)
 --   keys          agency:key-prefix for each unregistered key, so an operator can tell the key the
 --                 install signs with from one nobody minted (a planted signature row)
@@ -26,8 +28,9 @@
 -- polaris_web/test_app.py (KeyRegisterScriptTests) holds this to _issuer_key_facts, signature by signature.
 WITH sig AS (
     SELECT t.issuing_agency_id AS agency_id, lower(s.signing_public_key_hex) AS key_hex, s.signed_at,
-           (SELECT min(e.event_timestamp) FROM TokenLifecycleEvent e
-             WHERE e.token_id = t.token_id AND e.event_type = 'ISSUED') AS issued_at
+           COALESCE((SELECT min(e.event_timestamp) FROM TokenLifecycleEvent e
+                      WHERE e.token_id = t.token_id AND e.event_type = 'ISSUED'),
+                    (SELECT min(f.signed_at) FROM TokenSignature f WHERE f.token_id = t.token_id)) AS issued_at
       FROM IdentityToken t
       JOIN TokenSignature s ON s.token_id = t.token_id
                            AND (s.deprecation_date IS NULL OR s.deprecation_date > now())
