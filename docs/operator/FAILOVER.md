@@ -45,17 +45,28 @@ stack):**
 - A three-member etcd (`etcd1`, `etcd2`, `etcd3`, self-built from Alpine's
   package, non-root) on an internal network only the database members join.
   It holds the leader lease: `ttl` 20 s, renewed every `loop_wait` 5 s, with
-  `retry_timeout` 5 s.
+  `retry_timeout` 5 s. It authenticates its clients: the one-shot `etcd-auth`
+  makes a root user and a `patroni` user whose role reaches `/service/` alone,
+  then turns authentication on, before either member starts (passwords from
+  `polaris_etcd_root_password` and `polaris_etcd_patroni_password`). From then
+  on `etcdctl endpoint health` needs `--user root`; the containers' health
+  check asks `/readyz`, which needs a quorum and no user.
+- Patroni's REST API answers reads to anyone on the stack network (HAProxy's
+  role checks below), and its writes (switchover, restart, reload, `PATCH
+  /config`, which sets postgresql parameters across the cluster) take the
+  password in `polaris_patroni_restapi_password`; `patronictl` reads it from
+  the same rendered configuration.
 - HAProxy (`pg-router`) forwarding 5432 to whichever member answers
   Patroni's `/primary` and 5433 to a member answering `/replica`, checking
   every half second, cutting sessions to a member the moment it is marked
   down. pgbouncer dials `pg-router`; the application is unchanged.
 - The failover drill, [`scripts/polaris-failover-drill.sh`](../../scripts/polaris-failover-drill.sh),
-  run on every push (the `ha-failover` CI job) against the ceilings in §3,
+  run on every push (the `ha-failover` CI job) against the ceilings in §3
+  (its fifth scenario loses the replica and bounds the write stall),
   asserting after every scenario that every insert acknowledged before the
-  failure began is present on the leader, and reporting how many acknowledged
-  inside the failure window are not: with asynchronous replication that
-  number is the RPO of §6, a switchover's is zero.
+  failure began is present on the leader. With `synchronous_mode` on it also
+  fails on any acknowledged inside the failure window that is missing; with it
+  off it reports how many are, and that number is the RPO of §6.
 
 **Operator-supplied:**
 
@@ -78,11 +89,17 @@ stack):**
   and `restapi` sections take certificates; the entrypoint's rendering is
   the place to add them) or a private network you trust as much as the
   bridge.
-- **Durability versus availability.** Replication is asynchronous:
-  a failover can lose the transactions the replica had not received.
-  `synchronous_mode` (`patronictl edit-config`) makes a commit wait for the
-  replica; the trade is commit latency and a liveness coupling. Polaris does
-  not choose for you.
+- **Durability versus availability.** Replication is synchronous by default
+  (Patroni's `synchronous_mode`, not strict): a commit returns only once the
+  replica has it, and Patroni promotes only that replica, so a failover loses
+  no acknowledged write. An acknowledged write is often a revocation, and one
+  lost to a failover reads as good again. The price is commit latency and,
+  while the replica is down, no automatic failover. Both are measured in
+  [synchronous-replication.md](../design/synchronous-replication.md).
+  `POLARIS_PATRONI_SYNCHRONOUS_MODE=off` (or the chart's
+  `postgres.patroni.synchronousMode: false`) bootstraps an asynchronous
+  cluster instead, and `patronictl edit-config --set synchronous_mode=false`
+  changes an existing one.
 
 ---
 
@@ -303,10 +320,12 @@ $P reinit postgres2                                      # force a fresh clone o
 
 - **RTO** for a lost host is the lease plus routing: 21 s measured (§3), against [`DR.md`](DR.md)'s 4 h target for the case where no replica
   survives.
-- **RPO** is whatever the replica had not received: usually milliseconds on
-  a healthy link, zero with `synchronous_mode` at the cost above. The 300 s
-  target in `DR.md` is met by streaming more tightly than by the 60 s WAL
-  archive interval, for the failure class where the replica survives.
+- **RPO** for a failover is zero acknowledged writes with `synchronous_mode`
+  on, the default, and the failover drill fails on any it finds missing.
+  Asynchronous, it is whatever the replica had not received: usually
+  milliseconds on a healthy link. The 300 s target in `DR.md` is met by
+  streaming more tightly than by the 60 s WAL archive interval, for the
+  failure class where the replica survives.
 - Replication does **not** replace backups. A logical error (a bad
   migration, an erroneous bulk update) replicates to the replica within
   milliseconds; the point-in-time restore in `DR.md` is the recovery for

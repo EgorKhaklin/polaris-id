@@ -38,6 +38,8 @@ on:
       - "scripts/polaris-key-event.sh"
       - "scripts/polaris-doctor.sh"
       - "scripts/polaris-backup.sh"
+      - "scripts/polaris-restore-verify.sh"
+      - "scripts/polaris-restore-check.sh"
       - ".github/workflows/one-command.yml"
   schedule:
     - cron: "41 3 * * *"
@@ -91,6 +93,13 @@ jobs:
       # refuses) and report nothing failing after each repair. Pinned by check_doctor_names_failures.
       - name: The doctor names what is broken (lab/strategy/006/doctor.sh)
         run: bash lab/strategy/006/doctor.sh
+      # Lab record 017 (gate row OP-11): on the same stack, the newest backup restores into a scratch
+      # copy that is proven against the live database (scripts/polaris-restore-verify.sh) and recorded;
+      # an archive that is not current, a copy that differs and a damaged repository must each be
+      # refused, recording nothing. It damages the repository, so it runs last. Pinned by
+      # check_restore_verified_on_schedule.
+      - name: The newest backup restores and is proven, and each refusal holds (lab/strategy/006/restore.sh)
+        run: bash lab/strategy/006/restore.sh
 
       - name: Tear down
         if: always()

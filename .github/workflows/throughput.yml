@@ -1,0 +1,64 @@
+# ============================================================================
+# throughput.yml - how many online verifications a second the production stack serves, per app vCPU
+# and across two app replicas (scripts/polaris-throughput-measure.sh; lab record 017, gate rows OP-24
+# and OP-25).
+#
+# POST /api/v1/verify through the TLS edge, the app, pgbouncer and PostgreSQL, every answer read: one
+# and two app replicas at 0.5 vCPU each, then at 1 vCPU each, three measured runs each on a fresh
+# stack, with the CPU each tier spends on a verification. It builds the images and takes about forty
+# minutes, so it runs by hand, weekly, and on pull requests that change the measurement. The result
+# is the job's artifact; PERFORMANCE-BASELINE.md publishes one.
+# ============================================================================
+name: Throughput (online verifications a second, per vCPU and across replicas)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 4 * * 1"
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/polaris-throughput-measure.sh"
+      - ".github/workflows/throughput.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: throughput-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  throughput:
+    name: Online verifications a second, per app vCPU and across two replicas
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Build the prod images
+        run: bash scripts/polaris-image-build.sh --stack prod
+
+      - name: Generate the secrets
+        run: bash scripts/polaris-generate-secrets.sh
+
+      # wrk from Ubuntu's archive: keep-alive TLS, a closed loop, every answer read by its Lua script.
+      - name: Install wrk
+        run: sudo apt-get -o Acquire::Retries=3 update -q && sudo apt-get -o Acquire::Retries=3 install -y -q wrk
+
+      - name: Measure
+        env:
+          # A pull request runs on a merge commit that exists only for the run; the stamp names the branch's.
+          POLARIS_MEASURE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash scripts/polaris-throughput-measure.sh --out throughput.json
+
+      - name: Upload the result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: throughput
+          path: throughput.json
+          if-no-files-found: ignore

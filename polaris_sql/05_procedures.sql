@@ -33,11 +33,19 @@
 -- signed in. The same reason polaris_database_setting exists: a bound the caller can move is
 -- not a bound. Every product decision reads this instead; check_no_session_date_in_sql
 -- refuses CURRENT_DATE in the product's SQL.
+--
+-- 2026-10-09 (THREAT-MODEL): the same holds one level down. The instant columns are TIMESTAMP
+-- without a zone, so a bare CURRENT_TIMESTAMP stored into one, or compared with one, is read in
+-- the caller's zone: polaris_app set Etc/GMT-14 and uc1 dated a signature fourteen hours ahead,
+-- and uc9_complete_recovery approved before the cool-down ended. Every routine in this file that
+-- reads the clock therefore carries SET timezone = 'UTC'; a CREATE OR REPLACE without it would
+-- reset the pin, so check_database_instants_read_the_utc_clock refuses one.
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION polaris_utc_date()
 RETURNS DATE
 LANGUAGE sql STABLE PARALLEL SAFE
 SET search_path = pg_catalog, pg_temp
+SET timezone = 'UTC'
 AS $$
     SELECT (now() AT TIME ZONE 'UTC')::date
 $$;
@@ -92,6 +100,7 @@ CREATE OR REPLACE FUNCTION uc1_issue_and_activate(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_individual_id  INTEGER;
@@ -113,7 +122,7 @@ BEGIN
     -- Step 1b: refuse issuance under a deprecated algorithm. uc6_migrate_algorithm
     -- already refuses to migrate a token TO a deprecated algorithm; uc1 must not
     -- mint a brand-new ACTIVE token under one either (it would be a live token
-    -- signed with an algorithm the system already considers retired/weakened —
+    -- signed with an algorithm the system already considers retired/weakened:
     -- exactly what the algorithm-as-data, post-quantum-migration design prevents).
     PERFORM 1 FROM CryptographicAlgorithm
      WHERE algorithm_id = p_algorithm_id
@@ -147,7 +156,7 @@ BEGIN
     -- so the M:N invariant (every token has >= 1 active signature) is
     -- satisfied from the moment the token exists. v9.58: the signature bytes
     -- now come from the app's signing module (polaris_web/pqc_signing.py) via
-    -- p_signature_bytes — a real ML-DSA-65 signature when POLARIS_USE_REAL_PQC=1
+    -- p_signature_bytes: a real ML-DSA-65 signature when POLARIS_USE_REAL_PQC=1
     -- and liboqs are present, a deterministic SHA3-256 binding of token_value
     -- otherwise. Direct SQL callers that pass NULL fall back to the legacy
     -- deterministic string, so existing tooling and tests are unaffected.
@@ -175,7 +184,7 @@ BEGIN
     -- Step 6-7: activate (UC-1 steps 6-7). Set the audit-trigger context GUCs
     -- so the AFTER UPDATE trigger writes a properly-attributed lifecycle event.
     -- This replaces the explicit INSERT INTO TokenLifecycleEvent that used to
-    -- live here — the database now guarantees the audit row.
+    -- live here: the database now guarantees the audit row.
     PERFORM set_config('polaris.actor_agency_id', p_issuing_agency_id::TEXT, true);
     PERFORM set_config('polaris.reason_code',     'POST_BIOMETRIC_ENROLLMENT', true);
 
@@ -232,6 +241,7 @@ LANGUAGE plpgsql
 -- not weaken any gate; search_path is pinned so the elevated body cannot be redirected.
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_lost_individual_id     INTEGER;
@@ -407,6 +417,7 @@ CREATE OR REPLACE FUNCTION uc5_bind_device(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_token_status VARCHAR(20);
@@ -576,6 +587,7 @@ LANGUAGE plpgsql
 -- not weaken any gate; search_path is pinned so the elevated body cannot be redirected.
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_issuing_agency_id INTEGER;
@@ -760,6 +772,7 @@ CREATE OR REPLACE PROCEDURE uc9_initiate_recovery(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_active_count   INTEGER;
@@ -955,6 +968,7 @@ LANGUAGE plpgsql
 -- not weaken any gate; search_path is pinned so the elevated body cannot be redirected.
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_individual_id     INTEGER;
@@ -1233,6 +1247,7 @@ CREATE OR REPLACE PROCEDURE uc6_migrate_algorithm(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_token_exists  INTEGER;
@@ -1338,6 +1353,7 @@ CREATE OR REPLACE PROCEDURE close_anchor_batch(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_pending_count   INTEGER;
@@ -1537,6 +1553,7 @@ LANGUAGE plpgsql
 -- the admin gate below and not through a plain UPDATE by the application role.
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_attesting_id  INTEGER;
@@ -1914,6 +1931,7 @@ LANGUAGE plpgsql
 -- be redirected to attacker-controlled objects.
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_actor_role         VARCHAR(64);
@@ -2337,7 +2355,9 @@ CREATE OR REPLACE FUNCTION retention_cutoff(
     p_jurisdiction VARCHAR(10) DEFAULT NULL
 )
 RETURNS TIMESTAMPTZ
-LANGUAGE sql STABLE AS $$
+LANGUAGE sql STABLE
+SET timezone = 'UTC'
+AS $$
     SELECT now() - make_interval(days => retention_days_for(p_table_class, p_jurisdiction));
 $$;
 
@@ -2380,6 +2400,7 @@ LANGUAGE plpgsql
 -- elevated body cannot be redirected.
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_role      VARCHAR(20);
@@ -2462,6 +2483,7 @@ CREATE OR REPLACE PROCEDURE uc_set_retention_policy(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_role    VARCHAR(20);
@@ -2509,6 +2531,7 @@ CREATE OR REPLACE PROCEDURE uc_bulk_issue(p_batch_id INTEGER, INOUT p_rows_issue
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_agency INTEGER; v_algo INTEGER; v_auth VARCHAR(20); v_n INTEGER;
@@ -2634,6 +2657,7 @@ CREATE OR REPLACE FUNCTION uc_issue_credential_copy(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_token_id    INTEGER;
@@ -2724,6 +2748,7 @@ LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
     SELECT c.status_index
       FROM CredentialCopy c
@@ -3144,3 +3169,25 @@ COMMENT ON FUNCTION uc_rebuild_activity_rollups() IS
   'Recounts the activity rollups from VerificationEvent and TokenLifecycleEvent under a SHARE lock '
   '(lab/strategy/009, step 4), keeping the hours and days a recorded purge cut through. '
   'Owner-only: a full pass over the events is a maintenance act.';
+
+-- Lab record 017 (gate row OP-6): whether this server is a replica with nothing complete left to
+-- replay. The application's replica-lag check compares received and replayed WAL, and an idle
+-- primary can leave its newest WAL page partly unwritten: the replica then holds the page up to its
+-- boundary and cannot replay the record that straddles it, so the two differ while every commit is
+-- applied. The startup process says which: waiting for WAL, it has replayed everything complete it
+-- received. Only pg_read_all_stats sees that process, so the function runs as its owner and answers
+-- only this.
+CREATE OR REPLACE FUNCTION replica_replay_caught_up() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
+AS $$
+    SELECT pg_is_in_recovery()
+       AND coalesce(bool_or(wait_event IN ('RecoveryWalStream', 'RecoveryRetrieveRetryInterval')), false)
+      FROM pg_stat_activity
+     WHERE backend_type = 'startup'
+$$;
+
+COMMENT ON FUNCTION replica_replay_caught_up() IS
+  'True on a replica whose startup process waits for WAL: it has replayed every complete record it '
+  'received (lab record 017, gate row OP-6). The application asks when received and replayed WAL '
+  'differ. False on a primary.';

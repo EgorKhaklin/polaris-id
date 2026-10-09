@@ -31,19 +31,24 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 POLARIS_ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
+# Run by hand (sudo resets the environment), read the configuration polaris.service runs with.
+source "${SCRIPT_DIR}/polaris-env.sh"
 COMPOSE_FILE="${POLARIS_ROOT}/polaris_web/docker-compose.prod.yml"
 # v9.183 (P1.4) — the same overlays polaris.service uses (blue-green, the CI
 # internal-CA edge, a custody overlay) apply to every compose call here.
 read -r -a COMPOSE_EXTRA <<< "${POLARIS_COMPOSE_EXTRA:-}"
-compose() { (cd "${POLARIS_ROOT}/polaris_web" && docker compose -f docker-compose.prod.yml "${COMPOSE_EXTRA[@]}" "$@"); }
+# The +-guard: bash 3.2 (macOS) calls an empty array unbound under set -u, and the first compose call
+# then ended the deploy without a word.
+compose() { (cd "${POLARIS_ROOT}/polaris_web" && docker compose -f docker-compose.prod.yml ${COMPOSE_EXTRA[@]+"${COMPOSE_EXTRA[@]}"} "$@"); }
 # v9.180 (P1.3) — with a sealed store (POLARIS_SECRETS_BACKEND=age|awskms) the
 # plaintext is materialized into POLARIS_SECRETS_DIR (a tmpfs) right before
-# the stack starts; the compose file reads the same variable.
+# the stack starts; the compose file reads the same variable. Lab record 017: it comes from
+# polaris.env and is never defaulted here. polaris.service runs compose with that variable
+# alone, so a deploy that supplied a default worked until the next restart.
+SECRETS_DIR=$(polaris_secrets_dir) || exit 1
 if [[ "${POLARIS_SECRETS_BACKEND:-file}" != "file" ]]; then
-    export POLARIS_SECRETS_DIR="${POLARIS_SECRETS_DIR:-/run/polaris/secrets}"
     "${SCRIPT_DIR}/polaris-secrets.sh" unseal-if-configured
 fi
-SECRETS_DIR="${POLARIS_SECRETS_DIR:-${POLARIS_ROOT}/polaris_web/secrets}"
 
 MODE="${1:-prod}"
 shift || true
@@ -105,6 +110,18 @@ done
 echo "  ✓ docker present"
 echo "  ✓ all secrets present"
 
+# One build or deploy of this host's images at a time. Every stack on a host builds and runs the same
+# tags (polaris-app:prod and its siblings), so a deploy that ran beside another one, or beside try.sh's
+# build, recreated its app from the other's image or rolled back under it (reviews of #317,
+# 2026-10-09). scripts/polaris-host-lock.sh says where the lock lives (the Docker daemon) and who can
+# hold it. Taken before step 2, so a refused deploy has changed nothing, the checkout included.
+source "${SCRIPT_DIR}/polaris-host-lock.sh"
+polaris_host_lock "this deploy"
+# The rollback pin is named for the compose project: two stacks on one host keep a pin each.
+PROJECT=$(compose config 2>/dev/null | sed -n 's/^name: //p' | head -n1 || true)
+[[ -n "${PROJECT}" ]] || { echo "  ✗ could not read the compose project's name (docker compose config)" >&2; exit 1; }
+echo "  ✓ the only build or deploy of this host's images (project ${PROJECT})"
+
 # ---------------------------------------------------------------------------
 # 2. git pull
 # ---------------------------------------------------------------------------
@@ -120,11 +137,32 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Capture previous image tag (for rollback)
 # ---------------------------------------------------------------------------
-PREV_IMAGE_ID=$(docker inspect --format='{{.Image}}' polaris-app 2>/dev/null || echo "")
+# The running image is pinned under a tag of its own before step 4 moves polaris-app:prod. Docker's
+# containerd image store, the default on a clean install of Docker Engine 29 and later, keeps no
+# record of an image once its last tag moves, even while a container still runs it: the bare ID
+# recorded here could not be re-tagged when a rollback needed it, and the deploy stopped there.
+# The running app is found through compose, in this deploy's own project: a stack layered with
+# lab/strategy/006/names.yml (try.sh's) has no container named polaris-app, and where the laptop
+# stack also runs, that name is the other stack's app.
+ROLLBACK_TAG="polaris-app:rollback-${PROJECT}"
+PREV_IMAGE_ID=""
+# -a: a stopped or restarting app still names the image this deploy replaces.
+PREV_APP=$(compose ps -a -q app 2>/dev/null | head -n1 || true)
+if [[ -n "${PREV_APP}" ]]; then
+    PREV_IMAGE_ID=$(docker inspect --format='{{.Image}}' "${PREV_APP}" 2>/dev/null || echo "")
+fi
+ROLLBACK_IMAGE=""
 if [[ -n "${PREV_IMAGE_ID}" ]]; then
-    echo "  [3/7] Previous app image: ${PREV_IMAGE_ID:0:18}"
+    if TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}" 2>&1); then
+        ROLLBACK_IMAGE="${ROLLBACK_TAG}"
+        echo "  [3/7] Previous app image: ${PREV_IMAGE_ID:0:18}, pinned as ${ROLLBACK_IMAGE}"
+    else
+        # Docker's own words: a record gone under the containerd store, or a tag it refuses.
+        echo "  [3/7] Previous app image ${PREV_IMAGE_ID:0:18} could not be pinned as ${ROLLBACK_TAG}:"
+        echo "        ${TAG_ERR}: a failed smoke test cannot roll back"
+    fi
 else
-    echo "  [3/7] No previous app image (fresh deploy)"
+    echo "  [3/7] No previous app container in project ${PROJECT} (a first deploy): a failed smoke test cannot roll back"
 fi
 
 # ---------------------------------------------------------------------------
@@ -246,6 +284,18 @@ if [[ "${POLARIS_PGBACKREST_ENABLED:-1}" == "1" ]]; then
                 pg_sql -c "INSERT INTO BackupEvent (kind, location, detail) VALUES ('pgbackrest', 'pgBackRest repo1, stanza polaris', 'full, the first, by polaris-deploy.sh')" > /dev/null \
                     || echo "  ⚠  the first full backup is complete but was not recorded in BackupEvent" >&2
                 echo "  ✓ first full backup taken (a point-in-time restore can start from it)"
+                # Lab record 017 (gate row OP-11): prove now that it restores, so the clock
+                # PolarisRestoreUnverified reads starts at a verified restore; the weekly timer
+                # (deploy/linux/polaris-restore-verify.timer) keeps it current.
+                echo "        verifying that it restores (scripts/polaris-restore-verify.sh)…"
+                rv_log="$(mktemp)"
+                if "${SCRIPT_DIR}/polaris-restore-verify.sh" > "$rv_log" 2>&1; then
+                    echo "  ✓ the first backup restores: a scratch copy was proven against the live database"
+                else
+                    echo "  ⚠  the first backup did NOT verify; the weekly check and PolarisRestoreUnverified will say so too:" >&2
+                    tail -12 "$rv_log" | sed 's/^/       /' >&2
+                fi
+                rm -f "$rv_log"
             else
                 echo "  ⚠  the first full backup FAILED; a point-in-time restore has nothing to start from" >&2
                 echo "     until one completes: docker compose -f ${COMPOSE_FILE} exec -u postgres postgres \\" >&2
@@ -322,11 +372,16 @@ done
 
 if [[ "${SMOKE_OK}" -ne 1 || "${ROLL_OK}" -ne 1 ]]; then
     echo "  ✗ Smoke test failed after 60s"
-    if [[ -n "${PREV_IMAGE_ID}" ]]; then
+    if [[ -n "${ROLLBACK_IMAGE}" ]]; then
         echo "  → Rolling back to previous app image…"
-        docker tag "${PREV_IMAGE_ID}" polaris-app:prod
-        for svc in "${APP_SERVICES[@]+"${APP_SERVICES[@]}"}"; do compose up -d --no-deps --force-recreate "${svc}"; wait_healthy "${svc}" || true; done
-        echo "  ✓ Rolled back. Investigate logs:"
+        docker tag "${ROLLBACK_IMAGE}" polaris-app:prod
+        ROLLED=1
+        for svc in "${APP_SERVICES[@]+"${APP_SERVICES[@]}"}"; do compose up -d --no-deps --force-recreate "${svc}"; wait_healthy "${svc}" || ROLLED=0; done
+        if [[ "${ROLLED}" -eq 1 ]]; then
+            echo "  ✓ Rolled back. Investigate logs:"
+        else
+            echo "  ✗ The previous app image is in place again and did not become healthy either. Investigate logs:"
+        fi
         echo "    docker compose -f polaris_web/docker-compose.prod.yml logs --tail=200 app"
     else
         echo "  • No prior image to roll back to. Stack is up but unhealthy."
@@ -350,3 +405,28 @@ cat <<EOF
   Rotate key:   ./scripts/polaris-rotate-secret.sh <name>
 
 EOF
+
+# Lab record 017 (gate row OP-2): a credential signed for real under a key its authority had not
+# registered when it was signed is refused by every relying party (the doctor's FAIL, the same
+# judgment: scripts/polaris-key-register-check.sql). The register is the authority's act, so the
+# deploy only names the command for each.
+KEYQ=$(compose exec -T postgres psql -U postgres -d polaris -v ON_ERROR_STOP=1 -qtA \
+           < "${SCRIPT_DIR}/polaris-key-register-check.sql" 2> /dev/null || true)
+IFS='|' read -r UNREGISTERED FIRST REISSUE REGISTERED KEYS <<< "${KEYQ}"
+for agency in ${UNREGISTERED}; do
+    if [[ " ${FIRST} " == *" ${agency} "* ]]; then
+        echo "  ! agency ${agency} signs under a key the register does not hold: relying parties refuse its"
+        echo "    credentials until:  sudo scripts/polaris-key-event.sh register ${agency} --current"
+    else
+        echo "  ! agency ${agency} holds credentials under a key it had not registered when they were signed"
+        echo "    (agency:key ${KEYS}): only the ceremony registers it, and only a key it minted; a key nobody"
+        echo "    minted was planted, never register it (docs/operator/KEY-CEREMONY.md)"
+    fi
+done
+for agency in ${REISSUE}; do
+    echo "  ! agency ${agency} holds active credentials no registration can make verifiable: re-issue them"
+done
+if [[ "${REGISTERED:-}" == 0 ]]; then
+    echo "  ! no authority key is registered yet: before the first credential,"
+    echo "    sudo scripts/polaris-key-event.sh register <agency> --current"
+fi

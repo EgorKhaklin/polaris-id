@@ -52,8 +52,41 @@ It ends with:
   Polaris is running under systemd.
 ```
 
-Then log in and rotate the seeded accounts immediately
-([`DEPLOYMENT.md`](DEPLOYMENT.md#the-first-operator-account)).
+and then the two steps below, with this host's paths.
+
+## After the install
+
+Two steps, once:
+
+```bash
+cd /opt/polaris
+sudo scripts/polaris-create-operator.sh --username <name> --role admin --password-file <path> \
+    --reason "the first administrator of this install" --target=docker-stack
+sudo scripts/polaris-key-event.sh register 1 --current
+```
+
+The first creates the administrator: production disables the seeded demo accounts at first boot,
+so `/login` refuses everyone until one exists
+([`DEPLOYMENT.md`](DEPLOYMENT.md#the-first-operator-account)). The second registers the signing key
+this install minted, for authority 1 (the issuer in the notional data), read from the running app's
+own key store ([`DEPLOYMENT.md`](DEPLOYMENT.md#the-signing-keys-registration)). Until it is
+registered, a relying party's verification of every credential the stack issues answers "not a
+verifiable presentation"; it registers the key from its first signature, so a credential issued
+before it verifies too. Repeat it for each other authority this install issues for; the notional
+data's credentials carry no real signature and need no registration.
+A relying party is registered with `sudo scripts/polaris-rp-register.sh "<organization>"
+--justification "<why, at least 20 characters>"`, which prints its client id and its secret once.
+
+That makes five operator inputs from a fresh host to a working authority: the domain, the
+administrator's name, password and reason, and the registration.
+
+The backups and the WAL archive start on this host. Point them at an offsite repository
+([`DR.md`](DR.md) section 5): until then `scripts/polaris-doctor.sh` warns that a lost host loses
+its backups with it.
+
+To judge the result, `sudo scripts/polaris-evaluate.sh` runs the doctor and the database's own
+self-test against this install, and with `--pack` and `--rp-config` verifies a credential of yours offline
+and online; it writes a report you can keep ([`EVALUATE.md`](EVALUATE.md)).
 
 ## What is installed
 
@@ -62,6 +95,7 @@ Then log in and rotate the seeded accounts immediately
 | `polaris.service` | The production compose stack. `ExecStart` is `docker compose up -d`; enabled at boot; `Requires=docker.service`. |
 | `polaris-backup.timer` and `.service` | Daily 03:00 UTC `scripts/polaris-backup.sh --dest /var/backups/polaris` (a `pg_dump` tarball with a SHA-256 manifest). |
 | `polaris-backup-verify.timer` and `.service` | Sunday 04:00 UTC: the newest tarball extracted and hash-verified. |
+| `polaris-restore-verify.timer` and `.service` | Sunday 06:00 UTC: `scripts/polaris-restore-verify.sh`, the newest pgBackRest backup and the archive after it restored into a scratch copy and proven against the live database, recorded for the PolarisRestoreUnverified alert ([`DR.md`](DR.md) section 6). |
 | `polaris-dr-drill.timer` and `.service` | The 1st at 05:00 UTC (v9.192): the DR drill on scratch containers, RPO and RTO measured against the targets and appended to `/var/lib/polaris/dr-drills.md` ([`DR-DRILLS.md`](DR-DRILLS.md) explains the row). Never touches the production stack. |
 
 Files: `/opt/polaris` (the checkout, root-owned), `/etc/polaris/polaris.env`
@@ -77,8 +111,13 @@ cd /opt/polaris/polaris_web && docker compose -f docker-compose.prod.yml ps   # 
 docker logs polaris-app --tail 100       # per container: polaris-app, polaris-caddy, polaris-postgres, polaris-pgbouncer, polaris-redis
 systemctl list-timers 'polaris-*'        # next backup / verify
 systemctl start polaris-backup           # a backup now
-sudo -e /etc/polaris/polaris.env && systemctl restart polaris   # change WEB_CONCURRENCY, enable archiving, ...
+sudo -e /etc/polaris/polaris.env && systemctl restart polaris   # change WEB_CONCURRENCY, point archiving offsite, ...
 ```
+
+**The scripts read `polaris.env`.** Run the scripts under `scripts/` as root
+(`sudo`). Each one reads `/etc/polaris/polaris.env`, as `polaris.service` does,
+so a deploy, a rotation or a new operator account runs with the domain, overlays
+and secrets the unit starts with; a variable set on the command line wins.
 
 **Upgrade**: `cd /opt/polaris && sudo scripts/polaris-deploy.sh prod`. It
 pulls, rebuilds the app image, applies migrations, smoke-tests `/api/health`,
@@ -102,10 +141,14 @@ HAProxy; a lost leader is replaced within the lease and a returning one
 rejoins as a replica ([`FAILOVER.md`](FAILOVER.md)). On one host this proves
 the mechanism; the members belong on separate hosts, which is your placement.
 
-**Sealed secrets**: set `POLARIS_SECRETS_BACKEND=age` (or `awskms`) plus the
-identity/recipients (or key id) lines in `polaris.env`; `polaris.service`
-unseals into a tmpfs at `/run/polaris/secrets` before every start and the
-plaintext directory can be shredded ([SECRETS.md, section 5](SECRETS.md#5-the-sealed-secret-store)).
+**Sealed secrets**: until you seal them, the secrets are plaintext files in
+`polaris_web/secrets/` on this disk, and `polaris-doctor.sh` and every start say
+so. Set `POLARIS_SECRETS_BACKEND=age` (or `awskms`),
+`POLARIS_SECRETS_DIR=/run/polaris/secrets`, and the identity/recipients (or key
+id) lines in `polaris.env`; `polaris.service` unseals into a tmpfs there before
+every start and the plaintext directory can be shredded
+([SECRETS.md, section 5](SECRETS.md#5-the-sealed-secret-store), which also says
+what a copy of the disk still holds in each setup).
 
 **Paging**: mount your pager URL into Alertmanager per
 [`RUNBOOKS.md`](RUNBOOKS.md) "Paging". The Prometheus and Alertmanager
@@ -121,7 +164,7 @@ permissions, auditing, and `/metrics` exposure.
 ## Uninstall
 
 ```bash
-sudo systemctl disable --now polaris polaris-backup.timer polaris-backup-verify.timer polaris-dr-drill.timer
+sudo systemctl disable --now polaris polaris-backup.timer polaris-backup-verify.timer polaris-restore-verify.timer polaris-dr-drill.timer
 cd /opt/polaris/polaris_web && sudo docker compose -f docker-compose.prod.yml down -v   # -v deletes the database
 sudo rm -f /etc/systemd/system/polaris*.service /etc/systemd/system/polaris*.timer && sudo systemctl daemon-reload
 sudo rm -rf /opt/polaris /etc/polaris                     # keep /var/backups/polaris if you want the backups
@@ -151,6 +194,9 @@ branches, key verification included), and the **full installer** runs on the
 Ubuntu runner with real systemd: `/opt/polaris`, secrets, units, `systemctl
 start polaris`, migrations, `/api/health` healthy through the TLS edge,
 `systemctl start polaris-backup` producing a tarball, and health again after
-`systemctl restart polaris`. What CI cannot exercise is ACME against a public
+`systemctl restart polaris`. After it, the fresh-host drill (gate row OP-2) takes the two steps
+above, issues a credential through the operator console, registers a relying party with
+`polaris-rp-register.sh` and has it verify the credential online, and reports the time from the
+install to that verification and the inputs it took. What CI cannot exercise is ACME against a public
 domain; it uses the internal-CA edge (`docker-compose.citest.yml`), which
 differs from production only in who signs the certificate.

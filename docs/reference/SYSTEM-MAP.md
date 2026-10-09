@@ -86,7 +86,7 @@ polaris/
 ├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks; the detached verifier polaris-verify.py, its vector generator, and the holder wallet polaris-wallet.py live here too
 ├── site/               ← the published project page (Cloudflare, wrangler.jsonc) and its logo
 │
-├── .github/workflows/  ← ci.yml (23 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the old GitHub Pages address, now a redirect to the site)
+├── .github/workflows/  ← ci.yml (29 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the old GitHub Pages address, now a redirect to the site)
 ├── .github/dependabot.yml, .pre-commit-config.yaml, .gitignore, .coveragerc, .trivyignore, ruff.toml
 ├── osv-scanner.toml   ← declared exceptions for the malicious-package and vulnerability scan (none today)
 ├── vex.openvex.json   ← scanner findings that do not affect Polaris, and why (OpenVEX)
@@ -98,7 +98,12 @@ polaris/
 
 **CI jobs** ([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)):
 
-- `test`: the product suite against Postgres 16 and Redis; the checks layer, the DB suites, the ZK build and prove-verify round trip, the encrypted backup and restore round trip, the abuse drill, the performance smoke.
+- `test`: the required product-suite check; it passes only when its five parallel parts did.
+- `test-core`: the product suite against Postgres 16 and Redis; the checks layer, the constraint and trigger drills, the encrypted backup and restore round trip, the abuse drill, the performance smoke.
+- `test-coverage`: the DB suites under coverage, with the floor gate.
+- `test-procedures`: the procedure mutation drill (the procedures a change touches).
+- `test-app-role`: the web suite and the CLI suite again, with the application connected as `polaris_app`.
+- `test-zk`: the ZK crate's tests, its coverage floor, the prove-verify round trip with the second witness, and the ZK mutation drill.
 - `docker-image`: builds and smoke-boots the dev and prod images; PgBouncer, verify-ca pinning, streaming replication and pgBackRest round trips, including the off-site S3 drill.
 - `caddy-edge`: builds the self-built Caddy image, validates the real prod Caddyfile, proves the X25519MLKEM768 post-quantum hybrid KEX.
 - `page-drill`: the duress page path, Prometheus rules through Alertmanager to the pager webhook.
@@ -111,6 +116,7 @@ polaris/
 - `region-evacuation`: the SECOND region (a Patroni standby cluster with its own lease store, streaming asynchronously) after region A goes dark entirely, promoted with the recovery time and the recovery point MEASURED rather than asserted, and divergence asserted absent.
 - `helm-kind`: the Kubernetes reference profile boots to healthy on kind with Calico-enforced policies and restricted PSS.
 - `pqc-real`: real ML-DSA-65 sign and verify (liboqs), cross-checked by the cryptography second witness.
+- `pqc-real-web`: the web suite (`test_app`, the whole module) under real ML-DSA-65.
 - `federation-two-instances`: boots two independent instances, each its own database and real ML-DSA-65 root, and drives cross-authority federation over HTTP; a relying party accepts a foreign credential from a manifest, epoch checkpoint and revocation feed pulled over the wire, and the decision flips as attestations and revocations change (P3.10). The first job with both a database and real liboqs.
 - `product-boundary`: the required install test, as a stranger runs it. Builds a wheel from
   `packages/polaris-verify/`, installs it into a throwaway venv, and verifies real signed

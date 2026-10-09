@@ -15,6 +15,7 @@ the system without reading its source. For runbooks see
 | [`openapi.yaml`](openapi.yaml) | The machine-readable OpenAPI 3.1 contract for every `/api/v1` and OpenID4VCI route: the same surface as API.md, in the form a client generator reads |
 | [`API-CLIENTS.md`](API-CLIENTS.md) | Generate a typed client in any language from `openapi.yaml`, and the shape of a verification call |
 | [`WIRE-SPEC.md`](WIRE-SPEC.md) | The normative wire specification (P8.1): every signed artifact's format, signed-field list, canonical construction, and verification rules, and the federation trust decision, so an implementation importing no Polaris code can interoperate |
+| [`claims.json`](claims.json) | Every README badge and the status sentences it lists from the README, the site, `site/llms.txt` and the scoreboard: where each is published, the evidence behind it and how a stranger reproduces it; `check_claims_manifest` holds it to those surfaces and the scoreboard. A sentence it does not list is not covered |
 | [`SPEC-COMPLIANCE.md`](SPEC-COMPLIANCE.md) | Which standards Polaris implements (OpenID4VP, HAIP, SD-JWT VC, OpenID4VCI, Token Status List, ML-DSA-65), in what role, and how it is certified, each line scoped so a standard is not a certification and a certification is not the whole system |
 | [`DATA-MODEL.md`](DATA-MODEL.md) | Every table in the schema and its migrations, grouped, with the invariant that guards it |
 | [`PQC-POSTURE.md`](PQC-POSTURE.md) | Which primitives are post-quantum and which are still classical, against the NIST 2030/2035 timeline |
@@ -22,7 +23,7 @@ the system without reading its source. For runbooks see
 | [`SCALING.md`](SCALING.md) | The Atlas and the verification log at 10 million events: indexes, caps, rollups |
 | [`BENCHMARK.md`](BENCHMARK.md) | The committed load certification: the national simulation driven at scale, with throughput, latency, Atlas query times, and invariants under load |
 | [`NIST-800-63-MAPPING.md`](NIST-800-63-MAPPING.md) | IAL, AAL and FAL mapped to what this tree actually does, with every row citing a check, test, drill or schema object that a drill resolves and runs; gaps named with reasons rather than rounded away, and the front matter refusing the conformance reading |
-| [`COST-MODEL.md`](COST-MODEL.md) | Infrastructure cost per million persons per year, as a script you re-run rather than a table you are asked to believe: every input labelled measured, computed, assumed or priced, and the finding that verification throughput is not the cost driver at any realistic national scale |
+| [`COST-MODEL.md`](COST-MODEL.md) | Infrastructure cost per million persons per year, as a script you re-run rather than a table you are asked to believe: every input labelled measured, computed, assumed or priced, and the finding that the cryptographic cost of verification is not the cost driver at any realistic national scale |
 | [`DYNO.md`](DYNO.md) | Real numbers from a real box: single-core ML-DSA-65 sign/verify and ZK prove/verify at a stated tree depth, measured by `scripts/polaris-dyno.py` and re-measured every release |
 | [`GLOSSARY.md`](GLOSSARY.md) | Defined terms |
 

@@ -11,7 +11,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- The chart mounted every key of its Secret into the app's pod, the superuser's and the replicator's passwords, both servers' TLS keys and the backup repository's credentials among them; each pod now mounts only the keys it reads, at 0440 (lab record 017).
+- The HA and DR profiles' etcd authenticates its clients, and Patroni's REST API refuses unauthenticated writes; both accepted any container on their networks (lab record 017).
 - ZK proofs are built with Plonky2's zero-knowledge configuration; earlier binaries built sound but non-hiding proofs, which no longer verify.
+- A production database kept the notional sample's anonymity floor of one and closed epochs of two members; it now restores twenty.
 - The access log records method, path and protocol, no longer the query string or the referrer (lab record 017).
 - A restore to an earlier point no longer revives what was withdrawn after it, nor reissues identifiers already issued (lab record 017).
 - The rate limiter's Redis authenticates: an ACL user per role, the default user off, the password from a file; production refuses Redis without one (lab record 017).
@@ -29,9 +32,24 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The Atlas no longer returns events naming their holders; the access check reads every SQL source.
 - Under real signing, possession routes accept a signature only under a key its authority had registered; a planted signature row vouches for nothing.
 - The application role can no longer insert, update or delete a credential's signatures; `polaris migrate-population` runs as the schema owner.
+- By setting only its session's timezone, the application role could date signatures, audit rows and revocations up to fourteen hours off and approve a recovery before its cool-down ended; every routine, column default and view that reads the clock now reads UTC.
 
 ### Fixed
 
+- The README said all eight outside libraries and tools presented through a wallet built here; SpruceID's adapter and ERICA ran their own wallet harnesses. Its OpenID Certified badge now names the certified version, 1.0.0rc7.
+- Under real signing, the relying-party route refused a credential with no issuance record: every credential a recovery issued, and every credential once the audit purge reached its record (five years under either retention template; credentials are valid for ten). Its key check dated by that record; it now dates such a credential by its first signature, written in the transaction that made it.
+- A revocation past the rate bound showed "An internal database error occurred"; the console now asks for a co-signing authority.
+- Run with `sudo` on a systemd host, the documented upgrade, rotation and first-operator commands failed for want of `POLARIS_DOMAIN`; the scripts now read `polaris.env` as the unit does.
+- A sealed secret store set up as SECRETS.md said left `polaris.service` reading the shredded plaintext directory at its next start; an empty `POLARIS_SECRETS_DIR` is now refused.
+- SECRETS.md said a sealed store's key is not on its disk; an age identity kept on the host is. The doctor and every start now say when the secrets are plaintext on disk.
+- DEPLOYMENT.md's first-operator command omitted the `--reason` the script requires.
+- The install guides did not say to register the signing key, without which every relying-party verification is refused; the doctor now fails when an active credential signed for real is under a key its authority had not registered when it was signed, names the key, and warns to re-issue what no registration can fix.
+- The scaling documents no longer present the signature check's rate per core as the verification route's capacity, nor unmeasured worker, replica and host scaling as measured.
+- A caught-up replica of an idle HA cluster no longer reads as lagging; reads stayed on the primary (lab record 017).
+- SECRETS.md still said Redis runs without a password.
+- The production compose file passes `POLARIS_TRUSTED_PROXIES` and `POLARIS_METRICS_ALLOW` to the edge; both were documented and never arrived.
+- A host install archives WAL by default, as a Compose stack does; its env template turned archiving off.
+- `polaris-migrate.sh` read a schema registry it could not read as nothing applied and planned every migration; it now stops.
 - The observability overlay's Prometheus scraped the app through the public edge, which refuses `/metrics` by default; it now finds the app on the stack's network by name, blue-green included.
 - DR.md's point-in-time restore brought the app back without the revocations, key events and other withdrawals made after the target; it now re-applies them first.
 - A duress record still being written when a worker stopped was abandoned with its daemon thread; the worker now waits for it (a killed worker can still lose one in flight). Kubernetes pods pause before draining.
@@ -40,11 +58,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - KEY-CEREMONY.md rotated keys with a trust-anchors file the running app never reads; it now rotates through the key register.
 - The enrolment-fold concurrency test's control changes an enrolled person's jurisdiction for real, so earlier tests cannot leave it with nothing to fold.
 - deploy/README described a single-PostgreSQL Helm chart and OPERATIONS an unrestricted metrics edge; both now match the code.
+- On Kubernetes each edge replica kept its own TLS state: a restart ordered its certificate again and two replicas served different roots; the chart keeps one internal root, serves and reloads a cert-manager Secret (`edge.tls=secret`), and runs ACME on one replica's kept volume.
 - PQC-POSTURE no longer says Falcon signing time depends on the message: measured natively (record 015, step 4), it does not; the signer stays experimental while FIPS 206 is a draft.
 - A population migration counts a credential as migrated only when its target signature has no deprecation date; one already set to lapse is refused with the re-issue instruction instead of the database's error.
 - The rolling-deploy drill, backup and restore read compose's output whole before matching it; under pipefail an early grep -q exit could SIGPIPE compose and fail a check that had passed.
 - The internal-hop key-exchange drill retries a TLS probe that returned nothing and names one that never ran, instead of reporting an empty measurement.
 - The trigger mutation drill credits a mutation only when the tests that failed fail again, so a flaky test can no longer hide an untested refusal.
+- The failover drills compare acknowledged inserts by identity: two totals read while writes continued once reported a landed write lost in CI and could hide a real loss; the Kubernetes drill now fails on any loss under synchronous replication.
 - Every documented install reaches the current candidate; a bare `pip install` gets 0.1.0, which predates every fix in SECURITY.md.
 - The plug-and-play matrix tests the SDKs' current candidates on a genuine and a tampered credential, not npm's `latest`.
 - The EU-library lab wallet's lockfile carried nine OSV advisories (Bouncy Castle 1.83, Kotlin 2.2.21); it pins fixed releases.
@@ -56,9 +76,19 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The checks layer skips other checkouts nested in the tree (agent worktrees); four checks failed on their stale copies.
 - polaris-oid4vp serves the request object with `Cache-Control: no-store`, as the German EUDI wallet guide's request_uri response does.
 - The record 007 Pomerium demo maps `*.localhost.pomerium.io` to loopback itself; public DNS stopped resolving it.
+- CI's coverage floors are enforced again: since 2026-09-30 a failed coverage export left them comparing nothing, and passing.
+- A fresh install named no step to register its signing key, so relying parties refused its credentials; `polaris-key-event.sh register <agency> --current` registers it from its first signature, so credentials issued before it verify too, and the installer, a deploy and the doctor name it.
+- `polaris-key-event.sh` never registers a retired or compromised key again, and one authority's key events run one at a time.
+- The trigger refusal drill no longer reports a refusal untested when the test that caught it failed inside a subtest beside a flaky one.
+- Two C1 privilege-boundary tests no longer fail when a trigger's random fold runs inside them.
 
 ### Added
 
+- The plug-and-play matrix runs site/llms.txt's command block as written against the published polaris-verify, on every operating system and interpreter it covers and on any pull request that edits the file, and holds the exit codes the file states.
+- `docs/reference/claims.json` maps every README badge and the listed status sentences of the README, the site, `site/llms.txt` and the scoreboard to where each is published, its evidence and how to reproduce it; `check_claims_manifest` fails when a badge has no entry, a listed badge or sentence is gone from its surface, evidence does not resolve, or a stated count of outside implementations differs from the implementations named, each counted once on its own dated scoreboard rows.
+- `scripts/polaris-throughput-measure.sh` measures online verifications a second through the production path, per app vCPU and across two replicas, weekly; SCALING.md sizes a deployment from it.
+- `scripts/polaris-zone-loss-drill.sh` kills the database leader's node, then Redis's, on a three-zone kind cluster.
+- The edge reads a client's address from a PROXY protocol header sent by an L4 balancer the operator names.
 - `lab/strategy/006/alerts.sh` fires the certificate, backup and archive alerts on their real conditions and clears them on repair; CI runs it after try.sh.
 - `/metrics` reports this instance's clock against the database's (`polaris_clock_skew_seconds`); PolarisClockSkew pages when they disagree by more than 2 s for 10 minutes.
 - `/metrics` reports the database's WAL archiving as `pg_stat_archiver` sees it; PolarisArchiveFailing pages when the newest attempt failed and none succeeded since.
@@ -69,7 +99,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A point-in-time restore drill: a restore to a chosen moment brings back exactly what was committed by then, and nothing after.
 - `scripts/polaris-reconcile-restore.py` re-applies withdrawals made after a restore point through their own paths; `RestoreRecord` records each run.
 - `polaris-pitr-drill.sh --reconcile` withdraws trust on both sides of a restore point and requires nothing looser afterwards.
+- `scripts/polaris-restore-verify.sh` restores the newest backup into a scratch copy and proves it against the live database.
+- A weekly timer and the first deploy verify a restore; `PolarisRestoreUnverified` pages when none is 8 days old.
 - WAL archiving is on by default to a local pgBackRest repository; the deploy takes the first full backup, `polaris-backup.sh` the scheduled ones.
+- A Helm upgrade runs the pending migrations in a pre-upgrade Job; `polaris-helm-upgrade-drill.sh` upgrades the previous release's chart on kind.
 - `/api/health` compares this instance's clock with the database's and reports `clock` degraded beyond 2 s of skew.
 - A per-process database connection pool (`POLARIS_DB_POOL_SIZE`, 1 in the production compose file and the Helm chart): each checkout resets the session and the pool is keyed on the exact connection settings; verification went from about 300 to at least 800 requests/s on one host (lab record 017).
 - The transparency logs can be anchored in Bitcoin: `ChainAnchor` records each checkpoint, published at `/api/v1/transparency/anchors`.
@@ -83,6 +116,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A drill rotates the issuer key on the try.sh stack and then declares the old one compromised; CI runs it after try.sh.
 - scripts/polaris-key-event.sh registers, retires or declares compromised an authority key on the Docker stack, as the schema owner.
 - scripts/polaris-doctor.sh judges every component of the Docker stack and names the failing ones; a drill breaks four and requires each named.
+- scripts/polaris-evaluate.sh judges an install and writes a report that says what it does not establish; CI breaks a rule and the edge under it.
 - An experimental FN-DSA signer: Falcon-padded-1024 keys sign only under POLARIS_EXPERIMENTAL_SIGNERS, never in production, two-witnessed (liboqs, then @noble/post-quantum under Node); migration 2026-10-06-001.
 - A population migrates onto the FN-DSA family where its opt-in holds: 2,000 credentials re-signed at 604/s against ML-DSA-87's 319/s, nobody dark (quantum-event drill, POLARIS_QE_TARGET).
 - A lab step puts a checkpoint of the three transparency logs into Bitcoin block 969876 through OpenTimestamps; its verifier reads the block from two sources.
@@ -121,9 +155,17 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The weekly canary also runs ERICA, and the EU iOS library with the wallet kit's own request-object encryption.
 - polaris-oid4vp encrypts the request object to the wallet's key when its `wallet_metadata` asks, as the EU iOS wallet kit requires.
 - polaris-oid4vp `serve --verifier-info` adds attestations such as a registration certificate to the request, as the German wallet requires.
+- A check that the product suite's parallel CI parts share one setup and that its required job gates on each.
+- `scripts/polaris-rp-register.sh` registers a relying party on the Docker stack, where `polaris rp-register` could not reach the database.
+- CI walks a fresh host to a credential a relying party verifies online, counting the operator's inputs and reporting the time.
+- The doctor warns when continuous archiving is off or the backup repository is on the host it protects.
 
 ### Changed
 
+- The chart spreads its replicated pods across nodes and zones, runs two edge, router and pgbouncer pods, and moves Redis.
+- The HA profile and the chart replicate synchronously by default; a failover loses no acknowledged write (lab record 017).
+- Dependabot groups each directory's minor and patch updates into one pull request per run.
+- CI runs the product suite as three parallel jobs behind its one required check, so the slowest part alone sets the wait.
 - `/api/health/ready` answers for one instance (custody, the second witness, local disk) and leaves the shared database to `/api/health`; the edge and the Helm readiness probe route on it, so a database failover no longer takes every instance out of rotation (lab record 017).
 - security.txt's contact defaults to security@ the deployment's domain when none is set.
 - The scoreboard records the IETF SD-JWT repository listing polaris-oid4vp among its implementations.
@@ -158,6 +200,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A web request's statements end two seconds before its worker's timeout, so no query outlives its request.
 - The landing emblem has no ring; a soft gold halo sits behind it.
 - `polaris-id migrate-algorithm` signs as the route does; `--signature-hex` and `--signature-file` are withdrawn.
+- CI runs the product suite's app-role suite and ZK steps, and Real PQC's web suite, as jobs of their own.
+- The coverage step stops re-running suites the product suite's other steps run.
 
 ### Fixed
 
@@ -183,6 +227,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - An Atlas series could carry one bucket more than asked, and its authority filter took non-ASCII digits.
 - The simulator stamped events on the host's clock, so on a host off UTC the Atlas's hour windows missed them.
 - The UI drill and the performance baseline refuse a port another server holds; the drill's app no longer outlives it.
+- A failed deploy did not roll back on Docker's containerd image store (Engine 29's default) or on a stack whose app is not `polaris-app`.
 - In the Atlas, a hovered tab keeps its label and a lone interval is drawn; a stacked chart no longer reads a withheld value as zero.
 - Public pages: no empty band above the first line, a visible secondary action, a four-column feature grid.
 - Every page showing the OpenID® Certified™ mark names the OpenID Foundation as its owner, as its trademark policy (2.2) asks.

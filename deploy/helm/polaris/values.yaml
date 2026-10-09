@@ -35,13 +35,36 @@ edge:
   # network's CIDR, for example "10.20.0.0/16", or scrape the app Service
   # from inside the cluster, which needs no edge route.
   metricsAllow: ""
-  # acme: Let's Encrypt for `domain` (needs a reachable LoadBalancer on 80/443).
-  # internal: Caddy's internal CA (evaluation, kind, private networks).
+  # Where the edge's certificate comes from (G5: each replica kept its TLS state in an emptyDir,
+  # so a restart re-issued and replicas disagreed):
+  # secret: the kubernetes.io/tls Secret edge.tlsSecret names (cert-manager's Certificate writes
+  #   one); any number of replicas, each reloading it when it changes. The production choice.
+  # acme: Let's Encrypt for `domain`, for ONE replica (needs a reachable LoadBalancer on 80/443):
+  #   replicas that do not share the ACME state each order a certificate and answer only their
+  #   own challenges. Its account and certificates live on a volume (edge.acmeVolume).
+  # internal: Caddy's internal CA (evaluation, kind, private networks), under a root the chart
+  #   generates once and keeps: the Secret <release>-edge-ca, whose ca.crt is what clients trust.
+  #   A render without the cluster (helm template, so Argo CD) cannot see that Secret and would mint
+  #   a new root each time: there, set edge.caSecret.
   tls: internal
-  replicas: 1
+  # With edge.tls=internal: an existing Secret (keys ca.crt and ca.key) holding the root, created once
+  # by the operator; the chart then generates none and never overwrites it (docs/operator/KUBERNETES.md).
+  caSecret: ""
+  # With edge.tls=secret: the kubernetes.io/tls Secret, in the release's namespace.
+  tlsSecret: ""
+  # With edge.tls=acme: the volume that keeps the ACME account and certificates across restarts.
+  acmeVolume:
+    size: 1Gi
+    storageClass: ""
+  # Two, spread across nodes, so a host's loss leaves the edge serving (lab record 017, gate row OP-7).
+  replicas: 2
   # The load balancer in front of the edge, if any, by address range ("10.0.0.0/8"); its
   # X-Forwarded-For then carries the client address. Empty: no proxy is trusted.
   trustedProxies: ""
+  # An L4 balancer that sends a PROXY protocol header (v1 or v2) with each connection, by
+  # address range: the edge reads the client's address from it. Turn PROXY protocol on at the
+  # balancer first (for example the network load balancer's annotation). Empty: none is read.
+  proxyProtocolFrom: ""
   service:
     type: ClusterIP        # LoadBalancer on a real cluster
     # With a LoadBalancer or NodePort Service, Local keeps the client's own source address
@@ -79,8 +102,21 @@ clusterDomain: cluster.local
 pgRouter:
   # HAProxy in front of the Patroni members (v9.244): pgbouncer dials it; it
   # routes 5432 to the member answering /primary and 5433 to a replica, and
-  # cuts sessions to a member the moment it is marked down.
-  replicas: 1
+  # cuts sessions to a member the moment it is marked down. Two, spread (OP-7).
+  replicas: 2
+
+pgbouncer:
+  # Two, spread across nodes (lab record 017, gate row OP-7). Each pools for the app pods that reach it.
+  replicas: 2
+
+# Lab record 017 (gate row OP-7): placement for a host or a zone going away. Every replicated component
+# is spread across nodes (never two on one node while another is free) and, where the cluster has zones,
+# across zones; the database members too. A single-node cluster still schedules them.
+spread:
+  # The node label that names a zone (the well-known one).
+  zoneKey: topology.kubernetes.io/zone
+  # How long a pod Kubernetes may move waits for a node that stopped answering (its default is 300 s).
+  evictAfterSeconds: 30
 
 postgres:
   # Patroni members (v9.244, roadmap P2.13): two is a leader and a streaming
@@ -93,6 +129,10 @@ postgres:
     ttl: 20
     loopWait: 5
     retryTimeout: 5
+    # A commit waits for a replica, so a failover loses no acknowledged write (gate row OP-6,
+    # docs/design/synchronous-replication.md). false trades that for asynchronous replication.
+    # Written to the cluster at bootstrap; an existing one changes with `patronictl edit-config`.
+    synchronousMode: true
 
 secrets:
   # An existing Secret holding the files polaris-generate-secrets.sh writes
@@ -112,7 +152,13 @@ persistence:
   storageClass: ""
   postgres: 10Gi
   pgbackrest: 10Gi
-  redis: 1Gi
+
+# Lab record 017 (gate row OP-18): a Helm upgrade runs the pending migrations, then syncs the database
+# objects, from the new release's postgres image before the upgrade applies anything else
+# (templates/migrate-job.yaml). An install needs no Job: the init loads every migration.
+migrations:
+  enabled: true
+  activeDeadlineSeconds: 900
 
 pgbackrest:
   # Continuous WAL archiving to the S3 repo (docs/operator/DR.md); the key pair

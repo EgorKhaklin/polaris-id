@@ -7,7 +7,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/EgorKhaklin/polaris-id?include_prereleases&label=release&color=c9a352&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/releases/latest)
 [![Status: pre-pilot](https://img.shields.io/badge/status-pre--pilot-9a6b2f?labelColor=0a1421&style=flat-square)](#status)
-[![OpenID Certified: polaris-oid4vp verifier](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_verifier-c9a352?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid-certified)
+[![OpenID Certified: polaris-oid4vp 1.0.0rc7 verifier](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_1.0.0rc7_verifier-c9a352?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid-certified)
 [![Tested against 14 outside implementations](https://img.shields.io/badge/tested_against-14_outside_implementations-2b5797?labelColor=0a1421&style=flat-square)](#status)
 [![License](https://img.shields.io/badge/license-Apache--2.0-2b5797?labelColor=0a1421&style=flat-square)](LICENSE)
 [![OpenSSF Best Practices](https://img.shields.io/cii/level/15004?label=OpenSSF%20best%20practices&labelColor=0a1421&style=flat-square)](https://www.bestpractices.dev/projects/15004)
@@ -42,7 +42,7 @@ An authority issues a credential signed with **ML-DSA-65**; the person holds it;
 
 - **Authenticity, offline.** A standalone verifier checks the signature against published keys, with no database and no network.
 - **Authorization, fresh.** A relying-party API, or a short-lived signed status assertion, says whether the credential counts right now.
-- **The rules live in the database.** A 60-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client; 361 machine-checked invariants and 23 CI jobs gate every change.
+- **The rules live in the database.** A 60-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client; 377 machine-checked invariants and 29 CI jobs gate every change.
 - **Wallets speak to it.** `polaris-oid4vp` is an OpenID4VP 1.0 + HAIP 1.0 verifier for SD-JWT VC, as a library or a server.
 
 It is **pre-pilot software on notional data**: it has never held real identity data, and nobody but the author has operated it.
@@ -83,7 +83,7 @@ polaris-verify --pqc-provider auto --issuer-anchor ml-dsa-65-issuer.json --pack 
 
 **`polaris-oid4vp 1.0.0rc7` is OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile** (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/), 24 September 2026). A self-certification the Foundation reviewed and published, for that package version in that role: not an endorsement, not an audit, and not a certification of the rest of Polaris. OpenID® and OpenID® Certified™ are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Tested against software nobody here wrote.** Six wallets ran unmodified: walt.id, Credo, eudi-dev, OID4VCgo, ProtocolSoup and Procivis One Core. Eight more libraries, services and test tools presented through a wallet built here: the European Commission's reference OpenID4VP libraries (Kotlin and Swift) and PID issuer, vck, Multipaz, irmago, SpruceID's adapter and ERICA. Every run carries controls that must be refused, and a [weekly canary](.github/workflows/wallet-canary.yml) re-runs them against the newest release. The author drove every walk: this is interoperability, not use. Dated runs: [the scoreboard](lab/EXTERNAL-NOUNS.md#wallets).
+**Tested against software nobody here wrote.** Six wallets ran unmodified: walt.id, Credo, eudi-dev, OID4VCgo, ProtocolSoup and Procivis One Core. Eight more libraries, services and test tools took part: the European Commission's reference OpenID4VP libraries (Kotlin and Swift) and PID issuer, vck, Multipaz and irmago through a wallet built here, and SpruceID's adapter and ERICA through their own wallet harnesses. Every run carries controls that must be refused, and a [weekly canary](.github/workflows/wallet-canary.yml) re-runs them against the newest release. The author drove every walk: this is interoperability, not use. Dated runs: [the scoreboard](lab/EXTERNAL-NOUNS.md#wallets).
 
 **Not yet:** an independent security review, an operator other than the author, a pilot. What separates the release candidates from 1.0.0 is one outside operator reaching a verified result without help. Versions: [RELEASING.md](docs/RELEASING.md).
 
@@ -162,7 +162,7 @@ Every other row is deployed at national scale; Polaris is neither. Its ticks are
 | Review the architecture | [ARCHITECTURE-OVERVIEW](docs/ARCHITECTURE-OVERVIEW.md) · [SYSTEM-MAP](docs/reference/SYSTEM-MAP.md) · [DATA-MODEL](docs/reference/DATA-MODEL.md) |
 | Review security | [SECURITY.md](SECURITY.md) · [threat model](docs/design/threat-model.md) · [RED-TEAM-SCOPE](docs/RED-TEAM-SCOPE.md) · [REVIEW-PACKET](docs/REVIEW-PACKET.md) |
 | Integrate | [API](docs/reference/API.md) · [SPEC-COMPLIANCE](docs/reference/SPEC-COMPLIANCE.md) · [GLOSSARY](docs/reference/GLOSSARY.md) |
-| Operate an instance | [docs/operator/](docs/operator/README.md) · [Linux server](docs/operator/LINUX-SERVER.md) · [Kubernetes](docs/operator/KUBERNETES.md) |
+| Operate an instance | [docs/operator/](docs/operator/README.md) · [Linux server](docs/operator/LINUX-SERVER.md) · [Kubernetes](docs/operator/KUBERNETES.md) · [evaluate an install](docs/operator/EVALUATE.md) |
 | Read it as research | [Project report](docs/paper/polaris_project_report_v3.pdf) · [CITATION.cff](CITATION.cff) |
 | Ask or contribute | [Discussions](https://github.com/EgorKhaklin/polaris-id/discussions) · [Discord](https://discord.gg/ragewuCKj) · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md) |
 

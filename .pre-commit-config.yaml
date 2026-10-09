@@ -64,7 +64,8 @@ repos:
           bash -c 'cd scripts && python3 -m unittest
           test_ship_tool test_verify_conformance test_verify_p9 test_verify_refusals
           test_conformance_runner test_sbom_enrich test_issuance_scope
-          test_relying_party test_wallet test_pin_chart_images test_chain_anchor_tool'
+          test_relying_party test_wallet test_pin_chart_images test_chain_anchor_tool
+          test_migrate_runner test_coverage_script test_trigger_drill test_operator_env test_key_event test_doctor test_evaluate'
         language: system
         pass_filenames: false
         files: '^scripts/'

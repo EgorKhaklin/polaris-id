@@ -15,10 +15,13 @@ block after the shebang is its documentation, and `--help` prints it.
 | Script | What it does | Called by |
 |---|---|---|
 | `polaris-deploy.sh` | Idempotent production deploy of the compose stack | An operator; `deploy/linux/install.sh` |
+| `polaris-env.sh` | Sourced, never run: reads the `polaris.env` that `polaris.service` runs with, so a script run by hand with `sudo` has the same configuration; refuses a sealed store with no `POLARIS_SECRETS_DIR` | Every operator script above that drives the production stack; `test_operator_env.py` |
 | `polaris-generate-secrets.sh` | Mints the secret material, including the ML-DSA-65 signing key | An operator, once, before the first deploy |
 | `polaris-secrets.sh` | The sealed secret store: put, get, list, seal | An operator; `polaris_web/secretstore.py` documents the format |
 | `polaris-rotate-secret.sh` | Rotates one secret in place, without a redeploy | An operator |
 | `polaris-backup.sh` | Atomic full-system backup, encrypted, with a manifest | An operator; the cron wiring |
+| `polaris-restore-verify.sh` | Restores the newest pgBackRest backup and the archive after it into a scratch copy that never archives or listens, proves it against the live database, and records a verified restore; `--keep`, `--compare-only`, `--discard` | An operator; `polaris-restore-verify.timer`; `polaris-deploy.sh` after the first full backup |
+| `polaris-restore-check.sh` | What `polaris-restore-verify.sh` runs inside a one-off container of the postgres image, which carries it at `/opt/polaris/scripts` | `polaris-restore-verify.sh` |
 | `polaris-reconcile-restore.py` | After a restore to an earlier point, re-applies through their own paths the withdrawals made after it, retires the identifiers the archive's end issued, and records the run in RestoreRecord | An operator (DR.md 4.3); `polaris-pitr-drill.sh --reconcile` |
 | `polaris-restore.sh` | Recovery from a backup, verifying the manifest first | An operator, under `DR.md` |
 | `polaris-archive.sh` | Selective export of audit rows to cold storage; `--from-policy` takes a cutoff per retention class | `polaris-rotate-logs.sh` |
@@ -26,8 +29,10 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-rotate-logs.sh` | The yearly archive-and-purge wrapper | `polaris-cron-install.sh` |
 | `polaris-cron-install.sh` | Installs the operator crontab wiring | An operator, once |
 | `polaris-create-operator.sh` | Onboards an operator account | An operator; `polaris_web/docker-init.sh` bootstraps the first admin |
-| `polaris-key-event.sh` | Registers, retires or declares compromised an authority signing key on the Docker stack, as the schema owner | An operator during a key ceremony (KEY-CEREMONY.md); `lab/strategy/006/rotate.sh` |
+| `polaris-key-event.sh` | Registers, retires or declares compromised an authority signing key on the Docker stack, as the schema owner; `register <agency> --current` registers the key the running app signs with as the authority's first key, from its first signature, and never rotates | An operator after the install and during a key ceremony (KEY-CEREMONY.md); `lab/strategy/006/rotate.sh`; the CI fresh-host drill |
+| `polaris-rp-register.sh` | Registers a relying party for `/api/v1` on the Docker stack, as the schema owner: `polaris rp-register`'s statements through the postgres container; prints the client secret once | An operator onboarding a relying party (DEPLOYMENT.md); the CI fresh-host drill |
 | `polaris-doctor.sh` | Judges every component of the Docker stack and names the failing ones, first one first | An operator, first, when something is wrong; `lab/strategy/006/doctor.sh` |
+| `polaris-key-register-check.sql` | Names the authorities whose credentials signed for real are refused for their key, judged as every relying-party route judges it (`polaris_web/test_app.py` `KeyRegisterScriptTests` holds it to that) | `polaris-doctor.sh`, `polaris-deploy.sh` |
 | `polaris-recover-admin.sh` | Emergency password-only login for a locked-out admin | An operator, under `RUNBOOKS.md` |
 | `polaris-generate-recovery-code.sh` | Mints a printed-mnemonic recovery code | An operator, at enrolment |
 | `polaris-set-webauthn-deadline.sh` | Sets `webauthn_required_after` for an account | An operator, during the MFA rollout |
@@ -64,12 +69,14 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-client-ip-drill.sh` | Behind an appending load balancer the app is told the client's own address only when the balancer is named, and no forged X-Forwarded-For gets through | `ci.yml` |
 | `polaris-edge-limits-drill.sh` | In front of an upstream that serves one request at a time, the shipped edge keeps a trickled body off it, ends the slow client, refuses a 2 MiB body and cuts off trickled headers | `ci.yml` |
 | `polaris-upgrade-drill.sh` | The previous release's own try.sh stack, upgraded to this commit as OPERATIONS.md says: no migration pending, every image rebuilt, a credential issued before the upgrade still verifies | `upgrade.yml` |
+| `polaris-helm-upgrade-drill.sh` | The previous release's chart on kind (Calico, restricted PSS), upgraded to this commit with `helm upgrade`: the pre-upgrade Job migrates, nothing pending, data from before intact, the edge healthy | `helm-upgrade.yml` |
 | `polaris-pitr-drill.sh` | A restore to a moment read off the database's clock brings back exactly what was committed by then and nothing after; `--prove-control` restores to the archive's end and must be told apart; `--reconcile` withdraws trust on either side of the moment and requires the reconciliation to leave nothing looser than the archive's end | `ci.yml` |
 | `polaris-chaos-drill.sh` | Induced failures against the booted stack under traffic: one colour killed, both stopped until the outage pages, redis and postgres killed, pgbouncer partitioned, every recovery measured against a ceiling | `chaos.yml`, weekly and on demand |
 | `polaris-abuse-drill.sh` | The per-agency quotas refuse writes under real load | `ci.yml` |
 | `polaris-retention-drill.sh` | The archive and purge chain, per retention class, end to end | `ci.yml` |
 | `polaris-trace-drill.sh` | Tracing joins logs to spans, and the dashboards load | `ci.yml` |
 | `polaris-perf-baseline.sh` | The published latency baseline, re-measured in smoke mode | `ci.yml` |
+| `polaris-throughput-measure.sh` | Online verifications a second through the production path, per app vCPU and across two replicas | `throughput.yml` |
 | `polaris-custody-pkcs11-drill.sh` | ML-DSA-65 signing inside a PKCS#11 token | `ci.yml`'s custody job |
 | `polaris-verify.py` | The detached verifier: an ML-DSA-65 authenticity pack verifies offline with only a standard ML-DSA library, no Polaris code and no database. `--status-assertion` (P3.6) additionally decides AUTHORIZATION offline against a short-lived signed status assertion (fresh + bound + ACTIVE, window-bounded). `--selftest` and `--verify-dir vectors` run in pqc-real | `ci.yml`, and any relying party with no Polaris installed |
 | `polaris-make-vectors.py` | Generates the published authenticity vectors (`vectors/`), preferring liboqs and falling back to an independent FIPS-204 implementation | A contributor regenerating `vectors/` |

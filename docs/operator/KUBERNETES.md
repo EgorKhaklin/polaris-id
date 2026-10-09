@@ -43,8 +43,33 @@ are read from the `kubernetes` Endpoints at install time; set
 - Permission to create a Role and RoleBinding in the namespace: Patroni
   keeps the lease in Endpoints and a ConfigMap and labels its own pod, and
   the chart grants exactly those verbs to the postgres ServiceAccount.
-- For `edge.tls=acme`: a LoadBalancer Service reachable on 80/443 and the
-  domain's DNS pointing at it before the first install.
+- The edge's certificate (`edge.tls`). Each edge replica once kept its TLS state
+  in its own emptyDir, so a restart ordered a certificate again and two replicas
+  served different roots; now one of:
+  - `secret` (production): a `kubernetes.io/tls` Secret for the domain, named by
+    `edge.tlsSecret`, which cert-manager's `Certificate` keeps (any issuer;
+    DNS-01 needs no ingress). Every replica serves it and reloads it when it is
+    renewed.
+  - `acme`: Let's Encrypt from Caddy itself, for one edge replica
+    (`edge.replicas=1`) on a volume that keeps the account and certificates
+    (`edge.acmeVolume`), behind a LoadBalancer Service reachable on 80/443 with
+    the domain's DNS pointing at it. The chart refuses it with more replicas:
+    replicas that do not share the ACME state each order a certificate and
+    answer only their own challenges.
+  - `internal` (the default; evaluation, private networks): Caddy's internal CA
+    under a root the chart generates once and keeps, the Secret
+    `<release>-edge-ca`, whose `ca.crt` clients trust. It finds that Secret again
+    with Helm's `lookup`, which only `helm install` and `helm upgrade` can run: a
+    render without the cluster (`helm template`, and so Argo CD) would mint a new
+    root each time, and every replaced pod would then chain to a root no client
+    trusts. There, create the root once and name it in `edge.caSecret`; the chart
+    then generates none and never overwrites it:
+    ```bash
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 3650 \
+      -subj "/CN=Polaris edge root" -keyout ca.key -out ca.crt
+    kubectl -n polaris create secret generic polaris-edge-root --from-file=ca.crt --from-file=ca.key
+    # values: edge.caSecret: polaris-edge-root
+    ```
 - The four images in a registry your nodes can pull from (`images.*` in
   values), or `kind load docker-image` for a local cluster. Polaris publishes
   no registry images yet (P0.6 deferred image signing for that reason), so
@@ -69,8 +94,20 @@ kubectl label namespace polaris pod-security.kubernetes.io/enforce=restricted \
 ./scripts/polaris-generate-secrets.sh
 kubectl -n polaris create secret generic polaris-secrets --from-file=polaris_web/secrets/
 
+# The edge's certificate, kept by cert-manager (here a ClusterIssuer named letsencrypt).
+kubectl -n polaris apply -f - <<'EOF'
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: polaris-edge}
+spec:
+  secretName: polaris-edge-tls
+  dnsNames: [polaris.example.org]
+  issuerRef: {name: letsencrypt, kind: ClusterIssuer}
+EOF
+
 helm install polaris deploy/helm/polaris -n polaris \
-  --set domain=polaris.example.org --set edge.tls=acme --set edge.service.type=LoadBalancer \
+  --set domain=polaris.example.org --set edge.tls=secret --set edge.tlsSecret=polaris-edge-tls \
+  --set edge.service.type=LoadBalancer \
   --set secrets.existingSecret=polaris-secrets \
   --set images.app=REGISTRY/polaris-app:$V --set images.caddy=REGISTRY/polaris-caddy:$V \
   --set images.pgbouncer=REGISTRY/polaris-pgbouncer:$V --set images.postgres=REGISTRY/polaris-postgres:$V \
@@ -81,7 +118,16 @@ Without `secrets.existingSecret` the chart generates random passwords and
 self-signed PostgreSQL/pgbouncer certificates (kept across upgrades), but it
 cannot mint a signing key, so `/api/health` reports custody degraded until you
 add `polaris_signing_key` to the Secret ([`KEY-CEREMONY.md`](KEY-CEREMONY.md);
-the PKCS#11 and KMS custody drivers work here too, through the same env).
+the PKCS#11 and KMS custody drivers work here too, through the same env). Register its public
+key for each issuing authority before the first credential is issued, as the schema owner
+(`polaris key-register`, KEY-CEREMONY.md): until then a relying party's verification of every
+credential answers "not a verifiable presentation".
+
+Each pod reads only its own keys of that Secret, at 0440. Whether the Secret is
+encrypted at rest is the cluster's setting, not the chart's: on a control plane
+you run, configure an `EncryptionConfiguration` (preferably with a KMS
+provider); on a managed service, read its documentation on encrypting etcd.
+The chart cannot see either.
 
 The v9.189 session and origin controls (`POLARIS_NETWORK_POLICY_<ROLE>`,
 `POLARIS_SESSION_MAX_<ROLE>`, `POLARIS_SESSION_IDLE_MINUTES_<ROLE>`, and the
@@ -94,7 +140,12 @@ startup probe surfaces. [`HARDENING.md`](HARDENING.md) section 13.
 ```bash
 kubectl -n polaris get pods
 kubectl -n polaris port-forward svc/polaris-caddy 8443:443 &
-curl -k https://localhost:8443/api/health | python3 -m json.tool     # database, redis, zk_binary, custody: healthy
+# edge.tls=secret or acme (the install above): a certificate clients already trust, for the domain
+curl --resolve polaris.example.org:8443:127.0.0.1 https://polaris.example.org:8443/api/health | python3 -m json.tool
+# edge.tls=internal: trust the chart's root (or edge.caSecret's) rather than skipping verification
+kubectl -n polaris get secret polaris-edge-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > edge-ca.crt
+curl --cacert edge-ca.crt --resolve polaris.example.org:8443:127.0.0.1 https://polaris.example.org:8443/api/health
+# either way: database, redis, zk_binary, custody: healthy
 kubectl -n polaris exec polaris-postgres-0 -- patronictl -c /var/lib/postgresql/patroni.yml list   # one Leader, one streaming Replica
 ```
 
@@ -106,9 +157,15 @@ kubectl -n polaris exec polaris-postgres-0 -- patronictl -c /var/lib/postgresql/
   Kubernetes-native form of the P1.4 zero-downtime deploy; the edge retries
   onto the remaining pod while one is replaced.
 - **Migrations** follow the expand-contract policy
-  (`polaris_sql/migrations/README.md`); the postgres image applies pending
-  migrations at init and `scripts/polaris-migrate.sh` can be run against the
-  pod (`kubectl exec`).
+  (`polaris_sql/migrations/README.md`). An install's init loads every
+  migration; on `helm upgrade` a pre-upgrade Job
+  (`templates/migrate-job.yaml`, `migrations.enabled`) runs the runner the
+  new postgres image carries, `polaris-migrate.sh --up` then
+  `--sync-objects`, before anything else is applied, so the release still
+  running reads an expanded schema and the new one starts on it. A failed Job
+  fails the upgrade and stays for `kubectl logs job/<release>-migrate`.
+  `scripts/polaris-helm-upgrade-drill.sh` upgrades the previous release's
+  chart on kind and requires nothing pending.
 - **Rotate a secret**: update the Secret (`kubectl create secret ... --dry-run
   -o yaml | kubectl apply -f -`), then `kubectl rollout restart` the consumers
   (app, pgbouncer for the DB password; postgres needs the role updated first,
@@ -119,9 +176,22 @@ kubectl -n polaris exec polaris-postgres-0 -- patronictl -c /var/lib/postgresql/
   planned switchover for node maintenance is
   `kubectl -n polaris exec polaris-postgres-0 -- patronictl -c /var/lib/postgresql/patroni.yml switchover`.
   The mechanics, the measured numbers and the split-brain analysis are in
-  [`FAILOVER.md`](FAILOVER.md); on a cluster the two members belong on two
-  nodes (a `topologySpreadConstraints` or anti-affinity of your own, since
-  the chart does not know your zones).
+  [`FAILOVER.md`](FAILOVER.md).
+- **Failure domains** (lab record 017, gate row OP-7):
+  - The chart spreads every replicated component across nodes and, where the
+    nodes carry `topology.kubernetes.io/zone`, across zones: the two database
+    members, two app pods, and two pods each of the edge, the router and
+    pgbouncer. A single-node cluster still schedules them all.
+  - Pods Kubernetes may move leave a node that stopped answering after
+    `spread.evictAfterSeconds` (30 s, not the default 300 s).
+  - Redis is a Deployment on an emptyDir, so it moves too. The rate limiter
+    refuses requests while Redis is unreachable, and its windows are
+    short-lived.
+  - Disruption budgets keep a drain from taking the last pod of anything.
+  - `scripts/polaris-zone-loss-drill.sh` kills the leader's node on a kind
+    cluster of three zones and measures what comes back.
+  - Upgrading from a chart with the Redis StatefulSet leaves its claim
+    (`data-<release>-redis-0`) to delete.
 - **Backups**: `pgbackrest.enabled=true` with the S3 values and the key pair in
   the Secret's `pgbackrest_repo_creds.conf` ([`DR.md`](DR.md)); only the
   leader archives, so the repo follows the lease.

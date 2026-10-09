@@ -10,7 +10,10 @@
 #   2. the same checkout moves to this commit, as `git pull` would, and upgrades as OPERATIONS.md's
 #      "Polaris version upgrade" says: polaris-generate-secrets.sh (it writes only what is
 #      missing), then polaris-deploy.sh prod (images, migrations, objects, the app, a smoke test);
-#   3. after it: no migration is pending; every Polaris container runs an image built from this
+#   3. a release that cannot start is deployed the same way: its smoke test fails and the deploy
+#      puts back the app image it replaced, which the app then runs, serving (under Docker's
+#      containerd image store, which upgrade.yml turns on, as a clean install of Engine 29 has it);
+#   4. after it: no migration is pending; every Polaris container runs an image built from this
 #      commit; this commit's try.sh issues credential B on the upgraded stack and polaris-verify
 #      accepts it; credential A's authenticity pack, fetched again from the upgraded stack,
 #      verifies against the key the old release minted, and the app still says A's signature is
@@ -44,8 +47,11 @@ if [[ -n "$(docker ps -q --filter label=com.docker.compose.project=polaris-try)"
     exit 2
 fi
 echo "upgrading ${FROM} ($(git -C "${ROOT}" rev-parse --short "${FROM}^{commit}")) to ${TARGET:0:8}"
+# The host's image tags, for the whole drill: the try.sh and the deploy it runs go on under it.
+source "${ROOT}/scripts/polaris-host-lock.sh"
+polaris_host_lock "the upgrade drill"
 
-step "1/3 the previous release, ${FROM}, as its own try.sh leaves it"
+step "1/4 the previous release, ${FROM}, as its own try.sh leaves it"
 git -C "${ROOT}" worktree add --detach "${TREE}" "${FROM}" > /dev/null 2>&1 || fail "checking out ${FROM}"
 OUT="${TREE}/lab/strategy/006/out"
 bash "${TREE}/lab/strategy/006/try.sh" > "${WORK}/try-before.log" 2>&1 \
@@ -54,7 +60,7 @@ A=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["token_id"])
 cp "${OUT}/pack.json" "${WORK}/pack-A-before.json"
 ok "${FROM} issued credential #${A} and polaris-verify accepted it"
 
-step "2/3 upgrade to ${TARGET:0:8} as OPERATIONS.md says"
+step "2/4 upgrade to ${TARGET:0:8} as OPERATIONS.md says"
 git -C "${TREE}" checkout --detach -q "${TARGET}" || fail "moving the checkout to ${TARGET:0:8}"
 bash "${TREE}/scripts/polaris-generate-secrets.sh" > "${WORK}/secrets.log" 2>&1 \
     || { tail -20 "${WORK}/secrets.log" >&2; fail "polaris-generate-secrets.sh"; }
@@ -63,9 +69,41 @@ POLARIS_COMPOSE_EXTRA="-f docker-compose.citest.yml -f ${TREE}/lab/strategy/006/
     || { tail -30 "${WORK}/deploy.log" >&2; fail "polaris-deploy.sh prod"; }
 ok "polaris-deploy.sh prod finished: migrations, objects, the app, its smoke test"
 
-step "3/3 what the operator had, after the upgrade"
 COMPOSE=(docker compose -f "${TREE}/polaris_web/docker-compose.prod.yml"
          -f "${TREE}/polaris_web/docker-compose.citest.yml" -f "${TREE}/lab/strategy/006/names.yml")
+content() {  # a short digest of an image's layers and config; an unreadable image names itself
+    local raw
+    raw=$(docker image inspect --format '{{json .RootFS.Layers}}{{json .Config}}' "$1" 2> /dev/null) \
+        && [[ -n "${raw}" ]] || { printf 'unreadable(%s)' "$1"; return; }
+    printf '%s' "${raw}" | shasum -a 256 | cut -c1-12
+}
+app_content() { content "$(docker inspect --format '{{.Image}}' "$("${COMPOSE[@]}" ps -q app)")"; }
+
+step "3/4 a release that cannot start is rolled back to the image it replaced"
+# polaris-deploy.sh rolled back by re-tagging the running image's ID. Under Docker's containerd image
+# store, the default on a clean install of Docker Engine 29 and later, that ID no longer resolves once
+# the build moves polaris-app:prod, so the rollback stopped at `docker tag` and left the failed release
+# serving. The deploy now pins the running image as polaris-app:rollback-<project> before it builds.
+before=$(app_content)
+GUNI="${TREE}/polaris_web/gunicorn.conf.py"
+cp "${GUNI}" "${WORK}/gunicorn.conf.py.good"
+printf '\nraise SystemExit("the upgrade drill: a release that does not start")\n' >> "${GUNI}"
+rc=0
+POLARIS_COMPOSE_EXTRA="-f docker-compose.citest.yml -f ${TREE}/lab/strategy/006/names.yml" \
+    bash "${TREE}/scripts/polaris-deploy.sh" prod --no-pull > "${WORK}/deploy-broken.log" 2>&1 || rc=$?
+cp "${WORK}/gunicorn.conf.py.good" "${GUNI}"
+[[ "${rc}" -ne 0 ]] || fail "the deploy of a release that cannot start reported success"
+grep -q "Rolled back" "${WORK}/deploy-broken.log" \
+    || { tail -25 "${WORK}/deploy-broken.log" >&2; fail "the deploy of a release that cannot start did not roll back"; }
+after=$(app_content)
+[[ "${after}" == "${before}" ]] \
+    || fail "after the rollback the app runs image content ${after}, not ${before}, the image the deploy replaced"
+status=$(curl -s --cacert "${OUT}/caddy-root.crt" https://localhost:8443/api/health \
+         | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status"))' 2> /dev/null || true)
+[[ "${status}" == healthy || "${status}" == degraded ]] || fail "the app does not serve after the rollback (status ${status:-none})"
+ok "a release that could not start was rolled back to the image it replaced (content ${before}); the app serves (${status})"
+
+step "4/4 what the operator had, after the upgrade and the rollback"
 mig=$(cd "${TREE}" && bash scripts/polaris-migrate.sh --target=docker-stack --dry-run --up 2>&1) \
     || { printf '%s\n' "${mig}" | tail -10 >&2; fail "polaris-migrate.sh could not read the upgraded database"; }
 grep -q "no pending migrations" <<< "${mig}" \
@@ -78,6 +116,13 @@ ok "no migration pending"
 "${COMPOSE[@]}" exec -T -u postgres postgres pgbackrest --stanza=polaris --output=json info < /dev/null 2> /dev/null \
     | grep -q '"type": *"full"' || fail "the repository holds no full base backup after the upgrade"
 ok "WAL archiving is on and the repository holds a full base backup"
+# Gate row OP-11: the deploy proved that first backup restores (scripts/polaris-restore-verify.sh) and
+# recorded it, so PolarisRestoreUnverified's clock starts at a verified restore.
+verified="$("${COMPOSE[@]}" exec -T postgres psql -X -t -A -U postgres -d polaris \
+    -c "SELECT count(*) FROM BackupEvent WHERE kind = 'restore-verified'" < /dev/null | tr -d '[:space:]')"
+[[ "${verified:-0}" -ge 1 ]] || { grep -A14 'verifying that it restores' "${WORK}/deploy.log" >&2 || true
+                                 fail "the deploy recorded no verified restore of its first backup"; }
+ok "the deploy restored its first backup into a scratch copy and proved it ($verified recorded)"
 # Build this commit's image set the one supported way; where the upgrade already built an image
 # this is a cache hit. A service whose running image differs in content (its layers or its
 # config) was not rebuilt. Content, not the image ID: with Docker's containerd image store two
@@ -85,12 +130,6 @@ ok "WAL archiving is on and the repository holds a full base backup"
 # Each running image is read before the rebuild: once a rebuild moves the tag, the containerd
 # store keeps no record of the image a container was created from.
 SVCS=(app caddy pgbouncer postgres)
-content() {  # a short digest of an image's layers and config; an unreadable image names itself
-    local raw
-    raw=$(docker image inspect --format '{{json .RootFS.Layers}}{{json .Config}}' "$1" 2> /dev/null) \
-        && [[ -n "${raw}" ]] || { printf 'unreadable(%s)' "$1"; return; }
-    printf '%s' "${raw}" | shasum -a 256 | cut -c1-12
-}
 running=()
 for svc in "${SVCS[@]}"; do
     running+=("$(content "$(docker inspect --format '{{.Image}}' "$("${COMPOSE[@]}" ps -q "${svc}")")")")

@@ -14,6 +14,7 @@ Run: python3 -m pytest polaris_checks/test_checks.py
 
 from __future__ import annotations
 
+import ast
 import os
 import pathlib
 import re
@@ -75,6 +76,40 @@ def test_csp_check_fails_on_unsafe_inline(tmp_path):
     sec.write_text(good + 'csp_parts.append("script-src-elem https://cdn.example")\n')
     assert checks.check_csp_forbids_unsafe_inline(tmp_path)[0].level == "FAIL", \
         "must FAIL when a later script-src-elem widens the policy"
+
+
+def test_python_comments_are_cut_where_the_tokenizer_says():
+    """The checks read Python with its comments blanked. A `#` inside a triple-quoted string is
+    text, not a comment: cutting there took a docstring's closing quotes, and the file no longer
+    parsed as the checks read it (2026-10-09)."""
+    src = ('def f():\n'
+           '    """A docstring that names a pull request\n'
+           '    (review of #318)."""\n'
+           '    x = "a # in a string"  # a real comment\n'
+           '    # a whole-line comment\n'
+           '    return x\n')
+    out = checks._strip_comments_for("m.py", src)
+    ast.parse(out)
+    assert '(review of #318)."""' in out, "a # inside a multi-line string must stay, with the quotes after it"
+    assert '"a # in a string"' in out and "a real comment" not in out and "whole-line comment" not in out, out
+    assert out.count("\n") == src.count("\n"), "line numbers must not move"
+    # A comment ends at a lone carriage return, which Python reads as a line break: the code after it stays.
+    assert checks._strip_comments_for("m.py", "x = 1  # c\ry = 2\n") == "x = 1\ry = 2\n"
+    # The tree: every Python file that parses as written still parses as the checks read it.
+    broken = []
+    for p in sorted(REPO.rglob("*.py")):
+        if any(part in (".git", "node_modules", ".venv", "venv") for part in p.parts):
+            continue
+        raw = p.read_text(errors="replace")
+        try:
+            ast.parse(raw)
+        except SyntaxError:
+            continue
+        try:
+            ast.parse(checks._strip_comments_for(p.name, raw))
+        except SyntaxError as e:
+            broken.append(f"{p.relative_to(REPO)}:{e.lineno}")
+    assert not broken, "stripping comments broke these files as the checks read them: " + ", ".join(broken)
 
 
 def test_c6_app_read_paths_check_discriminates(tmp_path):
@@ -2422,12 +2457,13 @@ def test_operability_gate_check_discriminates(tmp_path):
     docs = tmp_path / "docs"
     docs.mkdir()
     (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts" / "drill.sh").write_text("#!/bin/sh\n")
+    (tmp_path / "scripts" / "polaris-rolling-drill.sh").write_text("#!/bin/sh\n")
     ready = docs / "PRODUCTION-READINESS.md"
-    rows = ["| OP-%d | Criterion %d | FAIL | not built |" % (i, i) for i in range(1, 9)]
-    rows += ["| OP-9 | A crash costs no request | PASS | `drill:scripts/drill.sh` |",
-             "| OP-10 | Rules in the schema | PASS | `check:aor_append_only_triggers` |",
-             "| OP-11 | Real identity data | FAIL | external review, DPIA, pilot |"]
+    rows = ["| OP-%d | Criterion %d | FAIL | not built |" % (i, i) for i in range(1, 12) if i not in (4, 5)]
+    rows.insert(3, "| OP-4 | Readiness reflects what this instance can serve, and a shared failure does not empty the "
+                   "pool | PASS | `check:health_liveness_readiness_split` |")
+    rows.insert(4, "| OP-5 | An instance crash costs no request | PASS | `drill:scripts/polaris-rolling-drill.sh` |")
+    rows[-1] = "| OP-11 | Real identity data | FAIL | external review, DPIA, pilot |"
 
     def doc(rows, totals="11 criteria: 2 PASS, 0 PARTIAL, 9 FAIL, 0 UNKNOWN."):
         return ("**Status: not production-ready for real identity data.**\n\n"
@@ -2439,15 +2475,17 @@ def test_operability_gate_check_discriminates(tmp_path):
     assert checks.check_operability_gate(tmp_path)[0].level == "OK", \
         "must PASS on a gate whose PASS rows cite resolvable evidence and whose totals match"
 
-    ready.write_text(doc([r.replace("`drill:scripts/drill.sh`", "measured") for r in rows]))
+    ready.write_text(doc([r.replace("`drill:scripts/polaris-rolling-drill.sh`", "measured") for r in rows]))
     assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
         "must FAIL on a PASS row with no citation"
 
-    ready.write_text(doc([r.replace("scripts/drill.sh", "scripts/gone.sh") for r in rows]))
+    ready.write_text(doc([r.replace("not built |", "`drill:scripts/gone.sh` |", 1) if r.startswith("| OP-1 ") else r
+                          for r in rows]))
     assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
         "must FAIL on a citation that does not resolve"
 
-    ready.write_text(doc([r.replace("check:aor_append_only_triggers", "check:no_such_check") for r in rows]))
+    ready.write_text(doc([r.replace("not built |", "`check:no_such_check` |", 1) if r.startswith("| OP-1 ") else r
+                          for r in rows]))
     assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
         "must FAIL on a check citation that names no check"
 
@@ -2464,6 +2502,267 @@ def test_operability_gate_check_discriminates(tmp_path):
                           for r in rows], totals="11 criteria: 3 PASS, 0 PARTIAL, 8 FAIL, 0 UNKNOWN."))
     assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
         "must FAIL when real identity data is PASS while the status line says it is not"
+
+    # Review of the OP-2/OP-6 rows: a PASS rests on the evidence pinned for it, and every table line is counted.
+    (tmp_path / "scripts" / "polaris-zone-loss-drill.sh").write_text("#!/bin/sh\n")
+    ready.write_text(doc([r.replace("`drill:scripts/polaris-rolling-drill.sh`", "`drill:scripts/polaris-zone-loss-drill.sh`")
+                          for r in rows]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a PASS citing evidence that resolves but is not the evidence pinned for it"
+    ready.write_text(doc([r.replace("| Criterion 1 | FAIL | not built |",
+                                    "| Criterion 1 | PASS | `check:health_liveness_readiness_split` |") for r in rows],
+                         totals="11 criteria: 3 PASS, 0 PARTIAL, 8 FAIL, 0 UNKNOWN."))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a PASS row with no evidence pinned for it"
+    ready.write_text(doc(rows + ["|OP-12| Hidden | FAIL | x |"]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a row spelled without a space goes uncounted"
+    ready.write_text(doc(rows + ["| OP12 | Misnamed | FAIL | x |"], totals="12 criteria: 2 PASS, 0 PARTIAL, 10 FAIL, 0 UNKNOWN."))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a table line that is not an OP-N row"
+    ready.write_text(doc(rows[:-2] + [rows[-3].replace("| Criterion 9 |", "| Again |")] + rows[-1:],
+                         ))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL when two rows share an ID"
+
+    # Review round 2.
+    ready.write_text(doc(rows + ["OP-12 | Hidden | FAIL | x |"]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a row with no leading pipe inside the table goes uncounted"
+    ready.write_text(doc([r.replace("| Criterion 1 | FAIL |", "| Criterion 1 | N/A |") for r in rows],
+                         totals="11 criteria: 2 PASS, 0 PARTIAL, 8 FAIL, 0 UNKNOWN."))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a status the totals line does not count"
+    ready.write_text(doc([r.replace("| An instance crash costs no request |", "| An instance crash costs few requests |")
+                          for r in rows]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a PASS row whose criterion was reworded from the pinned one"
+    both = ("| OP-8 | Internal services authenticate one another | PASS | `check:redis_authenticated`, "
+            "`check:ha_internal_auth` |")
+    three = "11 criteria: 3 PASS, 0 PARTIAL, 8 FAIL, 0 UNKNOWN."
+    ready.write_text(doc([both if r.startswith("| OP-8 ") else r for r in rows], totals=three))
+    assert checks.check_operability_gate(tmp_path)[0].level == "OK", \
+        "must PASS on a PASS row citing all the evidence pinned for it"
+    ready.write_text(doc([both.replace("`check:redis_authenticated`, ", "") if r.startswith("| OP-8 ") else r
+                          for r in rows], totals=three))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a PASS row citing only part of the evidence pinned for it"
+
+def test_llms_txt_walked_check_discriminates(tmp_path):
+    for rel in ("site/llms.txt", ".github/workflows/plug-and-play-matrix.yml"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_llms_txt_walked(tmp_path)[0].level == "OK", "must PASS on the real file and workflow"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_llms_txt_walked(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    wf = ".github/workflows/plug-and-play-matrix.yml"
+    for needle, why in checks._LLMS_WALK_NEEDLES:
+        broken(wf, needle, "", f"must FAIL when the matrix no longer does this: {why}")
+    broken(wf, "          done < tampered.txt\n", "          # done < tampered.txt\n          done < /dev/null\n",
+           "must FAIL when the tampered walk survives only in a comment")
+    broken("site/llms.txt", "```\n\nIt prints a JSON verdict", "\nIt prints a JSON verdict",
+           "must FAIL when the command block is unfenced")
+    broken("site/llms.txt", "--pack ml-dsa-65-valid.json --json", "--pack ml-dsa-65-valid.json",
+           "must FAIL when the block stops asking for a JSON verdict")
+    broken("site/llms.txt", "## Verify a credential offline", "## Check a credential",
+           "must FAIL when the section the walk reads is renamed away")
+    # Review of #6c: a step or job that never runs, or whose failure counts for nothing, and the trigger.
+    step_name = "      - name: The agent path in site/llms.txt"
+    broken(wf, step_name, step_name.replace("- name:", "- if: false\n        name:"), "must FAIL when the step never runs")
+    broken(wf, "        shell: bash\n        run: |\n          set -euo pipefail\n          work=",
+           "        shell: bash\n        continue-on-error: true\n        run: |\n          set -euo pipefail\n          work=",
+           "must FAIL when the step's failure counts for nothing")
+    broken(wf, "    runs-on: ${{ matrix.os }}\n    steps:\n      - name: Checkout (only",
+           "    runs-on: ${{ matrix.os }}\n    if: false\n    steps:\n      - name: Checkout (only",
+           "must FAIL when the verify job never runs")
+    broken(wf, "  pull_request:\n    paths:", "  push:\n    paths:", "must FAIL when only a push, not a pull request, runs it")
+    broken(wf, "  pull_request:\n    paths:", "  pull_request:\n    paths-ignore:",
+           "must FAIL when the paths filter excludes the file instead")
+    broken(wf, "bash -euo pipefail agent-path.sh > out.txt\n", "bash -euo pipefail agent-path.sh > out.txt || true\n",
+           "must FAIL when the block's failure is swallowed")
+    broken(wf, "name: The agent path in site/llms.txt", "name: Another step",
+           "must FAIL when the step is renamed out of the guard's sight")
+
+
+def test_claims_manifest_check_discriminates(tmp_path):
+    import copy
+    import json
+
+    def badge(alt, label, message):
+        return "[![%s](https://img.shields.io/badge/%s-%s-2b5797?style=flat-square)](#status)" % (alt, label, message)
+
+    badges = ['<img src="docs/assets/hero.svg" width="100%" alt="Polaris ID">',
+              badge("Status: pre-pilot", "status", "pre--pilot"),
+              badge("SD-JWT VC", "SD--JWT_VC", "supported"),
+              badge("Tested against 3 outside implementations", "tested_against", "3_outside_implementations"),
+              "[![CI](https://example.org/ci/badge.svg)](https://example.org/ci)",
+              '<a href="https://example.org/"><img src="docs/assets/nav/site.svg" alt="Project site"></a>',
+              '<a href="#status"><img src="docs/assets/nav/status.svg" alt="Status"></a>',
+              '<img src="docs/assets/rule.svg" alt="">']
+    two = "Two wallets ran unmodified: Alpha and Beta."
+    one = "One more library took part: the reference library (Kotlin)."
+    status = "## Status\n\n**Tested against software nobody here wrote.** %s %s\n\n**Not yet:** an independent security review, a pilot.\n"
+
+    def readme(rows=badges, two=two, one=one):
+        return "<div>\n\n" + "\n".join(rows) + "\n\n</div>\n\n## What it is\n\nPre-pilot.\n\n" + status % (two, one)
+
+    wallets = ["| Date | Wallet | Result |", "|---|---|---|", "| 2026-10-01 | Alpha 1.0 | accepted |",
+               "| 2026-10-02 | Beta wallet 2.0 | accepted |", "| 2026-10-03 | The reference library, `lib-kt` 0.1 (Kotlin) | accepted |",
+               "| 2026-10-04 | Gateway 1.0 (a proxy, with Alpha's wallet presenting) | admitted |",
+               "| weekly since 2026-09-28 | Alpha, Beta wallet and lib-kt, latest | accepted |"]
+
+    def nouns(rows=wallets):
+        return "# Scoreboard\n\n### Wallets\n\n" + "\n".join(rows) + "\n\n### Pilot\n\nNone.\n"
+
+    good = {"claims": [
+        {"id": "hero", "kind": "badge", "claim": "Polaris ID", "surfaces": ["README.md"],
+         "evidence": ["file:LICENSE"], "reproduce": None, "why": "the name"},
+        {"id": "status", "kind": "badge", "claim": "Status: pre-pilot", "label": "status: pre-pilot",
+         "surfaces": ["README.md"], "evidence": ["check:operability_gate", "file:LICENSE"], "reproduce": "Read LICENSE."},
+        {"id": "sd-jwt-vc", "kind": "badge", "claim": "SD-JWT VC", "label": "SD-JWT VC: supported",
+         "surfaces": ["README.md"], "evidence": ["test:t/test_x.py::XTests"], "reproduce": "python -m unittest test_x"},
+        {"id": "outside-implementations", "kind": "badge", "claim": "Tested against 3 outside implementations",
+         "label": "tested against: 3 outside implementations", "surfaces": ["README.md"],
+         "evidence": ["file:lab/EXTERNAL-NOUNS.md", "drill:scripts/walk.sh"], "reproduce": "bash scripts/walk.sh",
+         "count_of": ["two", "one"]},
+        {"id": "ci", "kind": "badge", "claim": "CI", "surfaces": ["README.md"],
+         "evidence": ["url:https://example.org/ci"], "reproduce": None, "why": "a live status"},
+        {"id": "site", "kind": "badge", "claim": "Project site", "surfaces": ["README.md"],
+         "evidence": ["url:https://example.org/"], "reproduce": None, "why": "a link"},
+        {"id": "two", "kind": "statement", "claim": two, "surfaces": ["README.md"], "evidence": ["file:LICENSE"],
+         "reproduce": "Read the scoreboard.",
+         "implementations": [{"name": "Alpha", "scoreboard": "Alpha"}, {"name": "Beta", "scoreboard": "Beta wallet"}]},
+        {"id": "one", "kind": "statement", "claim": one, "surfaces": ["README.md"], "evidence": ["file:LICENSE"],
+         "reproduce": "Read the scoreboard.", "implementations": [{"name": "Kotlin", "scoreboard": "lib-kt"}]},
+        {"id": "not-yet", "kind": "statement", "claim": "Not yet: an independent security review, a pilot.",
+         "surfaces": ["README.md", "site/llms.txt"], "evidence": ["file:LICENSE"], "reproduce": "Read the scoreboard."},
+    ]}
+    for rel, text in (("LICENSE", "Apache License\n"), ("t/test_x.py", "class XTests:\n    pass\n"),
+                      ("scripts/walk.sh", "#!/bin/sh\n"), ("site/llms.txt", "- Not yet: an independent security\n  review, a pilot.\n")):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+    (tmp_path / "lab").mkdir()
+    (tmp_path / "docs" / "reference").mkdir(parents=True)
+    manifest = tmp_path / "docs" / "reference" / "claims.json"
+
+    def run(m=good, rd=None, nn=None):
+        manifest.write_text(m if isinstance(m, str) else json.dumps(m))
+        (tmp_path / "README.md").write_text(readme() if rd is None else rd)
+        (tmp_path / "lab" / "EXTERNAL-NOUNS.md").write_text(nouns() if nn is None else nn)
+        return checks.check_claims_manifest(tmp_path)[0].level
+
+    def edit(change):
+        m = copy.deepcopy(good)
+        change({e["id"]: e for e in m["claims"]})
+        return m
+
+    assert run() == "OK", "must PASS when every badge and listed claim is mapped to evidence that resolves"
+    assert checks.check_claims_manifest(tmp_path)[0].level == "OK", "the same tree, read again, must still PASS"
+
+    # Badges, both directions, in every form a reader sees.
+    assert run(rd=readme(badges + [badge("Audited", "audited", "yes")])) == "FAIL", \
+        "must FAIL on a README badge with no manifest entry"
+    assert run(rd=readme(badges + ['![Audited](https://img.shields.io/badge/audited-yes-blue "x")'])) == "FAIL", \
+        "must FAIL on an unlinked badge with a title and no manifest entry"
+    assert run(rd=readme(badges + ['<a href="#status"><img alt="Audited by NCC" src="docs/assets/audited.svg"></a>'])) == "FAIL", \
+        "must FAIL on an in-page HTML badge that is not a navigation button"
+    assert run(rd=readme(badges + ["![Audited][aud]", "", "[aud]: https://img.shields.io/badge/audited-yes-blue"])) == "FAIL", \
+        "must FAIL on a reference-style badge with no manifest entry"
+    assert run(rd=readme([b for b in badges if "SD-JWT" not in b])) == "FAIL", \
+        "must FAIL on an entry whose badge was removed from the README"
+    assert run(rd=readme([b if "SD-JWT" not in b else "<!-- " + b + " -->" for b in badges])) == "FAIL", \
+        "must FAIL on an entry whose badge is commented out, which nobody sees"
+    assert run(rd=readme([b.replace("-supported-", "-certified-") for b in badges])) == "FAIL", \
+        "must FAIL when a badge's rendered label says more than its entry"
+
+    # Evidence.
+    assert run(edit(lambda by: by["status"]["evidence"].append("file:gone.md"))) == "FAIL", \
+        "must FAIL on an evidence token that does not resolve"
+    assert run(edit(lambda by: by["status"]["evidence"].append("check:no_such_check"))) == "FAIL", \
+        "must FAIL on a check citation that names no check"
+    assert run(edit(lambda by: by["ci"]["evidence"].append("url:http://example.org/ci"))) == "FAIL", \
+        "must FAIL on a url token that is not https"
+    assert run(edit(lambda by: by["ci"]["evidence"].append("doc:README.md"))) == "FAIL", \
+        "must FAIL on an evidence token of no known kind"
+
+    # A listed sentence edited, or an older one restored, on its surface.
+    (tmp_path / "site" / "llms.txt").write_text("- Not yet: an independent security review.\n")
+    assert run() == "FAIL", "must FAIL when a claim was edited on one of its surfaces"
+    (tmp_path / "site" / "llms.txt").write_text("- Not yet: an independent security\n  review, a pilot.\n")
+    assert run() == "OK", "must PASS again once the surface says the claim"
+    assert run(rd=readme(one="One more library presented through a wallet built here: the reference library (Kotlin).")) == "FAIL", \
+        "must FAIL when an older, larger sentence replaces the listed one"
+
+    # The count is held by the entry, whatever the badge's words.
+    raised = readme([b.replace("3 outside", "4 outside").replace("3_outside", "4_outside") for b in badges])
+
+    def to_four(by):
+        by["outside-implementations"]["claim"] = "Tested against 4 outside implementations"
+        by["outside-implementations"]["label"] = "tested against: 4 outside implementations"
+    assert run(edit(to_four), rd=raised) == "FAIL", \
+        "must FAIL when the badge's count is raised past the implementations its entry counts"
+    assert run(edit(lambda by: by["outside-implementations"].update(label="tested against: 4 outside implementations")),
+               rd=readme([b.replace("3_outside", "4_outside") for b in badges])) == "FAIL", \
+        "must FAIL when the badge image's count disagrees with what it counts"
+
+    def to_wallets(by):
+        by["outside-implementations"]["claim"] = "Tested against 4 outside wallets"
+        by["outside-implementations"]["label"] = "tested against: 4 outside wallets"
+    assert run(edit(to_wallets), rd=readme([b.replace("3 outside implementations", "4 outside wallets")
+                                            .replace("3_outside_implementations", "4_outside_wallets") for b in badges])) == "FAIL", \
+        "must FAIL on a count raised under other words"
+    assert run(edit(lambda by: by["outside-implementations"].pop("count_of"))) == "FAIL", \
+        "must FAIL when the outward count's entry counts nothing"
+    def to_nope(by):
+        by["outside-implementations"].update(count_of=["two", "nope"], claim="Tested against 2 outside implementations",
+                                             label="tested against: 2 outside implementations")
+    assert run(edit(to_nope), rd=readme([b.replace("3 outside", "2 outside").replace("3_outside", "2_outside") for b in badges])) == "FAIL", \
+        "must FAIL when the count is of an entry that lists no implementations"
+    assert run(edit(lambda by: by["two"].update(claim="Two wallets ran unmodified: Alpha.")),
+               rd=readme(two="Two wallets ran unmodified: Alpha.")) == "FAIL", \
+        "must FAIL when the counting sentence no longer names an implementation it counts"
+
+    # One implementation is never counted twice.
+    three = "Three wallets ran unmodified: Alpha, Beta and Beta wallet."
+
+    def plus(name, term):
+        def change(by):
+            to_four(by)
+            by["two"]["claim"] = three.replace("Beta wallet", name)
+            by["two"]["implementations"].append({"name": name, "scoreboard": term})
+        return change
+    gamma = nouns(wallets + ["| 2026-10-05 | Gamma 1.0 | accepted |"])
+    assert run(edit(plus("Beta wallet", "Gamma")), rd=readme([b.replace("3 outside", "4 outside").replace("3_outside", "4_outside")
+                                                             for b in badges], two=three), nn=gamma) == "FAIL", \
+        "must FAIL on two names one of which contains the other as a whole word"
+    assert run(edit(plus("Gamma", "Beta wallet 2")), rd=readme([b.replace("3 outside", "4 outside").replace("3_outside", "4_outside")
+                                                               for b in badges], two=three.replace("Beta wallet", "Gamma")),
+               nn=gamma) == "FAIL", "must FAIL on two implementations resolving to the same scoreboard row"
+
+    # Each implementation stands on its own dated rows, not on the canary's or another wallet's.
+    assert run(nn=nouns([w for w in wallets if not w.startswith("| 2026-10-01 |")])) == "FAIL", \
+        "must FAIL when a named implementation's dated rows are gone, though the canary row and another row mention it"
+    assert run(nn=nouns([w for w in wallets if "lib-kt" not in w])) == "FAIL", \
+        "must FAIL when a named implementation is missing from the scoreboard's Wallets table"
+
+    # The manifest's own shape.
+    assert run("{not json") == "FAIL", "must FAIL when the manifest is not JSON"
+    assert run(edit(lambda by: by["status"].pop("evidence"))) == "FAIL", \
+        "must FAIL on an entry with no evidence"
+    assert run(edit(lambda by: by["ci"].pop("why"))) == "FAIL", \
+        "must FAIL on a null reproduce with no reason"
+    assert run(edit(lambda by: by["site"].update(id="ci"))) == "FAIL", "must FAIL on two entries with one id"
+    assert run(edit(lambda by: by["not-yet"].update(kind="claim"))) == "FAIL", "must FAIL on an unknown kind"
+    manifest.unlink()
+    assert checks.check_claims_manifest(tmp_path)[0].level == "FAIL", "must FAIL when the manifest is missing"
+
 
 def test_ci_atlas_e2e_check_discriminates(tmp_path):
     wf = tmp_path / ".github" / "workflows"
@@ -2997,7 +3296,10 @@ def test_doctor_names_failures_check_discriminates(tmp_path):
            "must FAIL when the doctor no longer judges the configuration contract")
     broken(doc, "compose run --rm --no-deps -T --entrypoint python app", "compose exec -T app python",
            "must FAIL when the configuration is judged only inside a running app")
-    broken(doc, "AuthorityKeyCurrent", "Agency", "must FAIL when the doctor no longer reads the key register")
+    broken(doc, '< "${SCRIPT_DIR}/polaris-key-register-check.sql"', "< /dev/null",
+           "must FAIL when the doctor no longer reads the key register")
+    broken(doc, "printenv POLARIS_PGBACKREST_S3_BUCKET", "printenv POLARIS_UNSET",
+           "must FAIL when the doctor no longer reads where the backup repository is")
     broken(doc, "(start with ${FAILING[0]})", "", "must FAIL when the last line names no component")
     broken(drill, "stop redis", "restart redis", "must FAIL when the drill no longer stops Redis")
     broken(drill, 'expect_named secrets', 'expect_clean secrets', "must FAIL when an emptied secret need not be named")
@@ -3007,6 +3309,60 @@ def test_doctor_names_failures_check_discriminates(tmp_path):
            "must FAIL when CI does not run the fault drill")
     broken("docs/operator/OPERATIONS.md", "polaris-doctor.sh        # exit 0", "polaris-other        # exit 0",
            "must FAIL when the runbook does not start an operator at the doctor")
+
+
+def test_evaluate_wired_check_discriminates(tmp_path):
+    files = ("scripts/polaris-evaluate.sh", "scripts/polaris-evaluate.py", "docs/operator/EVALUATE.md",
+             ".github/workflows/ci.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_evaluate_wired(tmp_path)[0].level == "OK", \
+        "must PASS on the real evaluation, its guide and the CI step"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_evaluate_wired(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    ev, ci = "scripts/polaris-evaluate.py", ".github/workflows/ci.yml"
+    broken(ev, "athena_selftest.run(conn)", "athena_selftest.PROBES", "must FAIL when the self-test is not run")
+    broken(ev, 'or "signature_valid" not in v', 'or False', "must FAIL when no verdict counts as a refusal")
+    broken(ev, "def guarded(", "def unguarded(", "must FAIL when a probe that cannot run is not a failure")
+    broken(ev, '"cosigner_agency_id": str(args.witness_agency)', '"cosigner_agency_id": ""',
+           "must FAIL when the notional revocation is not co-signed")
+    broken("docs/operator/EVALUATE.md", "## What a run does not establish", "## Limits",
+           "must FAIL when the guide stops saying what a run does not establish")
+    broken(ci, "GRANT INSERT ON DuressEvent TO polaris_app", "SELECT 1",
+           "must FAIL when CI breaks no rule under the evaluation")
+    broken(ci, 'grep -q "failing: .*A.doctor.edge"', 'true', "must FAIL when CI does not require the edge failure named")
+    broken(ci, 'grep -rqF "$(cat /tmp/ci-operator.pw)"', 'grep -rqF "never"',
+           "must FAIL when CI does not look for the password in the report")
+    broken(ci, "          set -eo pipefail\n          # The offline probes", "          set -e\n          # The offline probes",
+           "must FAIL when tee's status stands for the evaluation's (another step's pipefail does not count)")
+    broken(ci, 'short += ["%s=FAIL" % k for k, v in verdicts.items() if v == "FAIL" and k not in need]', "pass",
+           "must FAIL when a FAIL row outside the named ones passes the step")
+    broken(ci, 'sys.exit("the notional evaluation did not pass: %s" % ", ".join(short) if short else 0)', "sys.exit(0)",
+           "must FAIL when the notional evaluation's result is ignored")
+    broken(ci, '[ "$rc" = 1 ] && grep -q "failing: .*B.Privilege"', 'grep -q "failing: .*B.Privilege"',
+           "must FAIL when the privilege control no longer requires exit 1")
+    broken(ci, "/tmp/eval-noedge.out && sudo test -s /tmp/eval-noedge/report.json", "/tmp/eval-noedge.out",
+           "must FAIL when the edge control no longer requires the report")
+    broken(ci, """|| { echo "::error::the evaluation report carries the operator's password"; exit 1; }""", "|| true",
+           "must FAIL when a password in the report no longer fails the step")
+    broken(ev, 're.search(r"/tokens/%d(?:$|[/?#])" % token_id, where)', "True",
+           "must FAIL when any redirect counts as a revocation")
+    broken(ev, '"--only-binary", ":all:", "polaris-verify[cryptography]==" + version', '"--pre", "polaris-verify"',
+           "must FAIL when the verifier is installed unpinned")
+    broken(ev, 'tempfile.TemporaryDirectory(prefix="polaris-evaluate-")', "tempfile.mkdtemp()",
+           "must FAIL when the credential's copies may stay behind")
+    broken(ev, "except FileExistsError:", "except OSError:",
+           "must FAIL when an existing report directory is accepted")
+    (tmp_path / "scripts/polaris-evaluate.sh").unlink()
+    assert checks.check_evaluate_wired(tmp_path)[0].level == "FAIL", "must FAIL when the entry point is gone"
 
 
 def test_pitr_drilled_check_discriminates(tmp_path):
@@ -3036,6 +3392,163 @@ def test_pitr_drilled_check_discriminates(tmp_path):
            "must FAIL when CI does not run the drill")
     broken("docs/operator/DR.md", "polaris-pitr-drill.sh", "polaris-other-drill.sh",
            "must FAIL when the runbook does not cite the drill", count=-1)
+
+
+def test_helm_upgrade_migrates_check_discriminates(tmp_path):
+    files = ("deploy/helm/polaris/templates/migrate-job.yaml", "deploy/helm/polaris/values.yaml",
+             "polaris_web/Dockerfile.postgres", ".dockerignore", "scripts/polaris-migrate.sh",
+             "scripts/polaris-helm-upgrade-drill.sh", ".github/workflows/helm-upgrade.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_helm_upgrade_migrates(tmp_path)[0].level == "OK", \
+        "must PASS on the real chart Job, image, runner, drill and workflow"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_helm_upgrade_migrates(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    job = "deploy/helm/polaris/templates/migrate-job.yaml"
+    broken(job, '"helm.sh/hook": pre-upgrade', '"helm.sh/hook": post-upgrade', "must FAIL when the Job runs after the "
+           "upgrade rather than before it", count=-1)
+    broken(job, '"helm.sh/hook-weight": "-5"', '"helm.sh/hook-weight": "5"', "must FAIL when the Job's network "
+           "policies are not created before it", count=-1)
+    broken(job, "/opt/polaris/scripts/polaris-migrate.sh --sync-objects", "true", "must FAIL without the object sync")
+    broken(job, 'PGPASSWORD="$(cat /run/secrets/polaris_db_root_password)"', 'PGPASSWORD="$PGPASSWORD_ENV"',
+           "must FAIL when the password is not read from the mounted file")
+    broken("deploy/helm/polaris/values.yaml", "migrations:\n  enabled: true", "migrations:\n  enabled: false",
+           "must FAIL when the Job is off by default")
+    broken("polaris_web/Dockerfile.postgres", "scripts/polaris-migrate.sh /opt/polaris/scripts/polaris-migrate.sh",
+           "scripts/polaris-migrate.sh /usr/local/bin/polaris-migrate.sh", "must FAIL when the runner is not beside "
+           "the migrations in the image")
+    broken(".dockerignore", "!scripts/polaris-migrate.sh", "", "must FAIL when the build context leaves the runner out")
+    broken("scripts/polaris-migrate.sh", "    validate_filenames\n    require_readable_registry\n\n    local pending=()",
+           "    validate_filenames\n\n    local pending=()", "must FAIL when --up plans without reading the registry")
+    drill = "scripts/polaris-helm-upgrade-drill.sh"
+    broken(drill, 'helm upgrade "${REL}" "${ROOT}/deploy/helm/polaris"', 'helm install "${REL}" "${ROOT}/deploy/helm/polaris"',
+           "must FAIL when the drill does not upgrade")
+    broken(drill, '[[ "${AFTER}" -gt "${BEFORE}" ]]', '[[ -n "${AFTER}" ]]', "must FAIL when an upgrade that "
+           "applied nothing would pass")
+    broken(".github/workflows/helm-upgrade.yml", "bash scripts/polaris-helm-upgrade-drill.sh", "true",
+           "must FAIL when CI does not run the drill")
+
+
+def test_ha_internal_auth_check_discriminates(tmp_path):
+    files = ("polaris_web/docker-compose.ha.yml", "polaris_web/docker-compose.dr.yml", "polaris_web/patroni-entrypoint.sh",
+             "scripts/polaris-generate-secrets.sh", "scripts/polaris-failover-drill.sh",
+             "scripts/polaris-region-evacuation-drill.sh")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_ha_internal_auth(tmp_path)[0].level == "OK", \
+        "must PASS on the real HA and DR overlays, entrypoint, secrets script and drills"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_ha_internal_auth(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    for rel, needle, what in checks._HA_AUTH_NEEDLES:
+        broken(rel, needle, "true", f"must FAIL when it no longer does this: {what}", count=-1)
+    broken("polaris_web/patroni-entrypoint.sh", "  connect_address: $HOST:8008\n$RESTAPI_AUTH",
+           "  connect_address: $HOST:8008\n", "must FAIL when the authentication is not inside the restapi block")
+
+
+def test_restore_verified_on_schedule_check_discriminates(tmp_path):
+    files = sorted({rel for rel, _, _ in checks._RESTORE_VERIFY_NEEDLES})
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_restore_verified_on_schedule(tmp_path)[0].level == "OK", \
+        "must PASS on the real check, wrapper, image, schema, metrics, alert, timer, deploy and drills"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_restore_verified_on_schedule(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    for rel, needle, what in checks._RESTORE_VERIFY_NEEDLES:
+        broken(rel, needle, "true", f"must FAIL when it no longer does this: {what}", count=-1)
+    # Recording before the proof: the INSERT moved above the run's call to prove_copy.
+    rel = "scripts/polaris-restore-check.sh"
+    good = (tmp_path / rel).read_text()
+    record = good[good.index("# --- record"):good.index('say "verified, and recorded')]
+    moved = good.replace(record, "").replace("\nprove_copy\n", "\n" + record + "\nprove_copy\n")
+    (tmp_path / rel).write_text(moved)
+    assert checks.check_restore_verified_on_schedule(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a verified restore is recorded before the copy is proven"
+    (tmp_path / rel).write_text(good)
+
+
+def test_failure_domains_check_discriminates(tmp_path):
+    rels = {rel for rel, _, _ in checks._FAILURE_DOMAIN_NEEDLES} | {
+        "deploy/helm/polaris/values.yaml", "deploy/helm/polaris/templates/app.yaml",
+        "deploy/helm/polaris/templates/caddy.yaml", "deploy/helm/polaris/templates/pg-router.yaml",
+        "deploy/helm/polaris/templates/pgbouncer.yaml", "deploy/helm/polaris/templates/redis.yaml"}
+    for rel in sorted(rels):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_failure_domains(tmp_path)[0].level == "OK", "must PASS on the real chart, drill and workflow"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new))
+        assert checks.check_failure_domains(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    for rel, needle, what in checks._FAILURE_DOMAIN_NEEDLES:
+        broken(rel, needle, "true", f"must FAIL when it no longer does this: {what}")
+    broken("deploy/helm/polaris/templates/caddy.yaml", 'include "polaris.fastEviction" .', "true",
+           "must FAIL when the edge waits 300 s for a dead node")
+    broken("deploy/helm/polaris/templates/pg-router.yaml", 'include "polaris.pdb" (list "pg-router" .)', "true",
+           "must FAIL when a drain can take the router's last pod")
+    broken("deploy/helm/polaris/values.yaml", "  # Two, spread across nodes (lab record 017, gate row OP-7). Each pools for the app pods that reach it.\n  replicas: 2",
+           "  replicas: 1", "must FAIL when pgbouncer runs one pod")
+    broken("deploy/helm/polaris/templates/redis.yaml", "        - name: data\n          emptyDir: {}",
+           "        - name: data\n          emptyDir: {}\n  volumeClaimTemplates: []",
+           "must FAIL when Redis holds a node-local volume again")
+
+
+def test_failover_keeps_acknowledged_writes_check_discriminates(tmp_path):
+    for rel in sorted({rel for rel, _, _ in checks._SYNC_REPLICATION_NEEDLES}):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_failover_keeps_acknowledged_writes(tmp_path)[0].level == "OK", \
+        "must PASS on the real entrypoint, overlay, chart, failover drill and design record"
+    for rel, needle, what in checks._SYNC_REPLICATION_NEEDLES:
+        path = tmp_path / rel
+        good = path.read_text()
+        assert needle in good, f"the fixture drifted: {needle!r} is no longer in {rel}"
+        path.write_text(good.replace(needle, "true"))
+        assert checks.check_failover_keeps_acknowledged_writes(tmp_path)[0].level == "FAIL", \
+            f"must FAIL when it no longer does this: {what}"
+        path.write_text(good)
+    # Review round 2 of the OP-2/OP-6 rows: the expected mode's failure branch neutralized.
+    rel = "scripts/polaris-failover-drill.sh"
+    good = (tmp_path / rel).read_text()
+    (tmp_path / rel).write_text(good.replace('"$SYNC" == "$EXPECT_SYNC" ]] \\\n', '"$SYNC" == "$EXPECT_SYNC" ]] || true \\\n'))
+    assert checks.check_failover_keeps_acknowledged_writes(tmp_path)[0].level == "FAIL", \
+        "must FAIL when `|| true` lets a run that expects synchronous_mode pass without it"
+    (tmp_path / rel).write_text(good)
+    # The default flipped to asynchronous is the regression this exists for.
+    rel = "polaris_web/patroni-entrypoint.sh"
+    good = (tmp_path / rel).read_text()
+    (tmp_path / rel).write_text(good.replace("POLARIS_PATRONI_SYNCHRONOUS_MODE:-on}", "POLARIS_PATRONI_SYNCHRONOUS_MODE:-off}"))
+    assert checks.check_failover_keeps_acknowledged_writes(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the entrypoint defaults to asynchronous replication"
+    (tmp_path / rel).write_text(good)
 
 
 def test_restore_reconciled_check_discriminates(tmp_path):
@@ -3115,7 +3628,12 @@ def test_infra_alerts_check_discriminates(tmp_path):
 
 
 def test_upgrade_drilled_check_discriminates(tmp_path):
-    files = ("scripts/polaris-deploy.sh", "scripts/polaris-upgrade-drill.sh", ".github/workflows/upgrade.yml")
+    files = ("scripts/polaris-deploy.sh", "scripts/polaris-upgrade-drill.sh", ".github/workflows/upgrade.yml",
+             "scripts/polaris-host-lock.sh", "lab/strategy/006/try.sh", "deploy/linux/install.sh",
+             "scripts/polaris-helm-upgrade-drill.sh", "scripts/polaris-region-evacuation-drill.sh",
+             "scripts/polaris-pilot.sh", "deploy/linux/polaris.service", "lab/strategy/006/doctor.sh",
+             "lab/strategy/006/rotate.sh", "scripts/polaris-rotate-secret.sh", "scripts/polaris-window-drill.sh",
+             "scripts/polaris-throughput-measure.sh")
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text((REPO / rel).read_text())
@@ -3147,6 +3665,110 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
            "must FAIL when CI does not run the drill")
     broken(".github/workflows/upgrade.yml", "fetch-depth: 0", "fetch-depth: 1",
            "must FAIL when CI checks out without the release tags")
+    # The rollback: pinned before the build, re-tagged from the pin, drilled on the containerd store.
+    dep = "scripts/polaris-deploy.sh"
+    broken(dep, 'docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"', 'echo "${PREV_IMAGE_ID}"',
+           "must FAIL when the deploy no longer pins the running image")
+    # 2026-10-09 review of #317: each of these passed the check before.
+    broken(dep, '    if TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"',
+           '    if false && TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}"',
+           "must FAIL when the pin is never run")
+    broken(dep, 'ROLLBACK_TAG="polaris-app:rollback-${PROJECT}"', 'ROLLBACK_TAG="polaris-app:rollback"',
+           "must FAIL when the pin is one tag for the whole host")
+    lk = "scripts/polaris-host-lock.sh"
+    broken(lk, "        if id=$(docker network create --internal", "        if id=$(true --internal",
+           "must FAIL when the lock is not held in the Docker daemon")
+    broken(lk, "    trap _polaris_host_unlock EXIT", "    :", "must FAIL when the lock outlives the run that took it")
+    broken(lk, '    export POLARIS_HOST_LOCK_TOKEN="${token}"', '    POLARIS_HOST_LOCK_TOKEN="${token}"',
+           "must FAIL when what the holder runs cannot go on under its lock")
+    # Review 4 of #317, each passed before.
+    broken(lk, 'docker network rm "${POLARIS_HOST_LOCK_ID}" >/dev/null 2>&1 || true; fi\n    exit "${rc}"',
+           'docker network rm "${POLARIS_HOST_LOCK}" >/dev/null 2>&1 || true; fi\n    exit "${rc}"',
+           "must FAIL when the release removes by name, another run's lock included")
+    broken(lk, '            if [[ "$(_polaris_lock_ids | grep -c .)" -ne 1 ]]; then', "            if false; then",
+           "must FAIL when two creates of the name on an older engine both hold the lock")
+    broken(lk, '(exit "${rc}") || eval "${_POLARIS_PREV_EXIT_TRAP}"; else :; eval "${_POLARIS_PREV_EXIT_TRAP}"; fi',
+           ':; fi', "must FAIL when the caller's own EXIT trap no longer runs")
+    broken(lk, '    [[ "$(_polaris_lock_label boot "${net}")" != "$(_polaris_boot_id)" ]] && return 0', "    :",
+           "must FAIL when a lock left by an earlier boot blocks every build")
+    broken("scripts/polaris-pilot.sh", 'polaris_host_lock "the pilot"', ": no lock",
+           "must FAIL when the pilot brings the production stack up without the lock")
+    broken(dep, 'polaris_host_lock "this deploy"', '# polaris_host_lock "this deploy"',
+           "must FAIL when the lock is only a comment")
+    # Review 5 of #317.
+    broken(dep, 'source "${SCRIPT_DIR}/polaris-host-lock.sh"\n', '\n',
+           "must FAIL when the call has no helper sourced before it")
+    broken("deploy/linux/polaris.service", "polaris_host_lock polaris.service", "true",
+           "must FAIL when polaris.service starts while a deploy holds the host")
+    broken("deploy/linux/install.sh", "then polaris_host_release; fi", "then :; fi",
+           "must FAIL when install.sh starts the unit while holding the lock the unit takes")
+    for rel in ("lab/strategy/006/doctor.sh", "lab/strategy/006/rotate.sh", "scripts/polaris-rotate-secret.sh",
+                "scripts/polaris-window-drill.sh", "scripts/polaris-throughput-measure.sh"):
+        broken(rel, "polaris_host_lock ", ": ", "must FAIL when %s recreates from the shared tags unlocked" % rel)
+    broken(dep, 'polaris_host_lock "this deploy"\n', 'polaris_host_lock "this deploy"\ntrap "echo bye" EXIT\n',
+           "must FAIL when an EXIT trap set after the lock drops its release")
+    broken(dep, 'polaris_host_lock "this deploy"', ': "this deploy"', "must FAIL when the deploy takes no lock")
+    for rel, call in (("lab/strategy/006/try.sh", 'polaris_host_lock "try.sh"'),
+                      ("deploy/linux/install.sh", 'polaris_host_lock "install.sh"'),
+                      ("scripts/polaris-upgrade-drill.sh", 'polaris_host_lock "the upgrade drill"'),
+                      ("scripts/polaris-helm-upgrade-drill.sh", 'polaris_host_lock "the Helm upgrade drill"'),
+                      ("scripts/polaris-region-evacuation-drill.sh", 'polaris_host_lock "the region evacuation drill"')):
+        broken(rel, call, ": no lock", "must FAIL when %s builds the host's images without the lock" % rel)
+    # A new script that builds the tags is found without being named: one written beside them.
+    new = tmp_path / "scripts" / "polaris-new-builder.sh"
+    new.write_text('#!/bin/bash\nbash "${ROOT}/scripts/polaris-image-build.sh" --stack prod\n')
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a script nobody named builds the host's images without the lock"
+    new.write_text('#!/bin/bash\nsource "${ROOT}/scripts/polaris-host-lock.sh"\npolaris_host_lock "new"\n'
+                   'bash "${ROOT}/scripts/polaris-image-build.sh" --stack prod\n')
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "OK", "a new builder that takes the lock passes"
+    # A compose wrapper over several lines on the production file, bringing the stack up (review 4: pilot).
+    new.write_text('#!/bin/bash\ncompose() {\n    ( cd x && docker compose \\\n        -f docker-compose.prod.yml "$@" )\n}\n'
+                   'compose up -d\n')
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a multi-line production wrapper brings the stack up without the lock"
+    # Review 5: --no-deps still builds a missing image and recreates from the shared tag; VAR=x before compose
+    # and `sh ... --stack=prod` are the same thing.
+    for body in ('compose() {\n    ( cd x && docker compose \\\n        -f docker-compose.prod.yml "$@" )\n}\n'
+                 'compose up -d --no-deps --force-recreate caddy\n',
+                 'compose() { (cd x && docker compose -f docker-compose.prod.yml "$@"); }\nWEB_CONCURRENCY=4 compose up -d\n',
+                 'sh "${ROOT}/scripts/polaris-image-build.sh" --stack=prod\n',
+                 'docker compose -f ../polaris_web/docker-compose.prod.yml up -d\n'):
+        new.write_text("#!/bin/bash\n" + body)
+        assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+            "must FAIL when a script nobody named recreates from the shared tags unlocked: %r" % body
+    new.unlink()
+    broken(dep, 'wait_healthy "${svc}" || ROLLED=0; done', 'wait_healthy "${svc}" || true; done',
+           "must FAIL when a rollback is reported whether or not the restored app came up")
+    broken(dep, '        if [[ "${ROLLED}" -eq 1 ]]; then', '        ROLLED=1\n        if [[ "${ROLLED}" -eq 1 ]]; then',
+           "must FAIL when ROLLED is set again before it is read")
+    broken(dep, "PREV_APP=$(compose ps -a -q app", "PREV_APP=$(compose ps -q app",
+           "must FAIL when a stopped app is read as a first deploy")
+    broken(dep, 'docker tag "${ROLLBACK_IMAGE}" polaris-app:prod', 'docker tag "${PREV_IMAGE_ID}" polaris-app:prod',
+           "must FAIL when the rollback re-tags the bare image ID again")
+    broken(dep, "PREV_APP=$(compose ps -a -q app 2>/dev/null | head -n1 || true)", "PREV_APP=polaris-app",
+           "must FAIL when the deploy finds the running app by a fixed container name")
+    broken(dep, """docker inspect --format='{{.Image}}' "${PREV_APP}\"""", "docker inspect --format='{{.Image}}' polaris-app",
+           "must FAIL when the image is read from the container named polaris-app")
+    broken(dep, """docker inspect --format='{{.Image}}' "${PREV_APP}\"""", 'docker inspect -f "{{.Image}}" polaris-app',
+           "must FAIL when the image is read from the container named polaris-app, whatever the flags")
+    path = tmp_path / dep
+    good = path.read_text()
+    pin = '    if TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}" 2>&1); then\n'
+    build = 'bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod\n'
+    assert pin in good and build in good, "the fixture drifted"
+    path.write_text(good.replace(pin, "    if true; then\n").replace(build, build + pin.replace("    if", "if") + "fi\n"))
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the image is pinned only after the build has moved the tag"
+    path.write_text(good)
+    broken(drill, 'raise SystemExit("the upgrade drill: a release that does not start")', "true",
+           "must FAIL when the drill never deploys a release that cannot start")
+    broken(drill, 'grep -q "Rolled back"', 'grep -q "Deploy complete"',
+           "must FAIL when the drill does not require the rollback")
+    broken(drill, '[[ "${after}" == "${before}" ]]', "true",
+           "must FAIL when the drill does not require the app back on the image it replaced")
+    broken(".github/workflows/upgrade.yml", '["containerd-snapshotter"] = True', '["containerd-snapshotter"] = False',
+           "must FAIL when CI drills on the classic image store, where the bare ID still resolves")
 
 
 def test_client_ip_behind_proxies_check_discriminates(tmp_path):
@@ -3181,6 +3803,39 @@ def test_client_ip_behind_proxies_check_discriminates(tmp_path):
            "must FAIL when CI does not run the drill")
     broken("scripts/polaris-client-ip-drill.sh", 'expect "via the balancer, forging', 'echo "via the balancer, forging',
            "must FAIL when the drill no longer forges through the balancer")
+    # Lab record 017 (OP-26): the PROXY protocol listener.
+    broken("polaris_web/Caddyfile", "                fallback_policy skip\n", "                fallback_policy use\n",
+           "must FAIL when the edge reads a PROXY header from any source, so a client names its own address")
+    broken("polaris_web/Caddyfile.citest", "{$POLARIS_EDGE_PROXY_PROTOCOL_FROM:255.255.255.255/32}",
+           "{$POLARIS_EDGE_PROXY_PROTOCOL_FROM:0.0.0.0/0}",
+           "must FAIL when every source is trusted with a PROXY header by default")
+    broken("deploy/helm/polaris/templates/configmap-caddy.yaml", "                    fallback_policy skip\n", "",
+           "must FAIL when the chart's edge parses PROXY headers from sources nobody named")
+    broken("scripts/polaris-client-ip-drill.sh", 'refused "straight to the edge"', 'echo "straight to the edge"',
+           "must FAIL when the drill no longer sends a client's own PROXY header to the edge")
+
+
+def test_edge_settings_reach_the_edge_check_discriminates(tmp_path):
+    files = ("polaris_web/Caddyfile", "polaris_web/docker-compose.prod.yml")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_edge_settings_reach_the_edge(tmp_path)[0].level == "OK", \
+        "must PASS on the real Caddyfile and production compose file"
+    compose = tmp_path / "polaris_web/docker-compose.prod.yml"
+    good = compose.read_text()
+    line = '      POLARIS_TRUSTED_PROXIES: "${POLARIS_TRUSTED_PROXIES:-0.0.0.0/32}"\n'
+    assert line in good, "the fixture drifted"
+    compose.write_text(good.replace(line, ""))
+    assert checks.check_edge_settings_reach_the_edge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the compose file no longer passes a setting the Caddyfile reads (the 2026-10-08 defect)"
+    compose.write_text(good)
+    caddy = tmp_path / "polaris_web/Caddyfile"
+    conf = caddy.read_text()
+    caddy.write_text(conf.replace("    http_port 8080\n", "    http_port {$POLARIS_EDGE_HTTP_PORT:8080}\n", 1))
+    assert checks.check_edge_settings_reach_the_edge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the Caddyfile starts reading a setting nothing passes"
+    caddy.write_text(conf)
 
 
 def test_edge_limits_check_discriminates(tmp_path):
@@ -3533,10 +4188,12 @@ def test_dockerfile_copies_app_modules_check_discriminates(tmp_path):
 def test_prod_hardening_check_discriminates(tmp_path):
     web = tmp_path / "polaris_web"
     web.mkdir()
+    FLOOR = "    EXECUTE format('ALTER DATABASE %I SET polaris.min_epoch_anonymity_set = 20', current_database());\n"
     GOOD_INIT = (
         'if [ "${POLARIS_ENV:-}" = "production" ]; then\n'
         "  psql <<'SQL'\n"
         "  UPDATE AppUser SET is_active = FALSE WHERE username IN ('admin', 'operator', 'auditor');\n"
+        + FLOOR +
         "SQL\n"
         "fi\n")
     GOOD_COMPOSE = "services:\n  app:\n    environment:\n      POLARIS_REDIS_URL: redis://redis:6379/0\n"
@@ -3555,10 +4212,20 @@ def test_prod_hardening_check_discriminates(tmp_path):
     assert checks.check_prod_hardening(tmp_path)[0].level == "FAIL", \
         "must FAIL when the prod rate limiter is not wired to Redis"
 
-    # 3. Both present -> OK.
+    # 3. The sample's floor of one carried into production: not restored, restored below 20,
+    #    restored only in a comment, or restored outside the production block -> FAIL.
+    for init in (GOOD_INIT.replace(FLOOR, ""),
+                 GOOD_INIT.replace("= 20'", "= 5'"),
+                 GOOD_INIT.replace(FLOOR, "    -- SET polaris.min_epoch_anonymity_set = 20\n"),
+                 GOOD_INIT.replace(FLOOR, "") + FLOOR):
+        write(init, GOOD_COMPOSE)
+        assert checks.check_prod_hardening(tmp_path)[0].level == "FAIL", \
+            "must FAIL when production keeps the notional sample's anonymity floor:\n" + init
+
+    # 4. All present -> OK.
     write(GOOD_INIT, GOOD_COMPOSE)
     assert checks.check_prod_hardening(tmp_path)[0].level == "OK", \
-        "must PASS when demo accounts are neutralized and Redis is wired"
+        "must PASS when demo accounts are neutralized, the floor restored and Redis wired"
 
 
 def test_backup_encryption_check_discriminates(tmp_path):
@@ -3637,21 +4304,50 @@ def test_sql_console_readonly_check_discriminates(tmp_path):
         "must FAIL on the non-functional mid-transaction SET (it does not bind the query)"
 
     # 3. Session set read-only before any statement -> OK.
-    write("    conn.set_session(readonly=True)\n"
-          "    cur.execute('SET statement_timeout = 5000')\n"
-          "    cur.execute(sql)")
+    good = ("    conn = psycopg2.connect(**DB_CONFIG)\n"
+            "    conn.set_session(readonly=True)\n"
+            "    with conn.cursor() as cur:\n"
+            "        cur.execute('SET statement_timeout = 5000')\n"
+            "        cur.execute(sql)")
+    write(good)
     assert checks.check_sql_console_readonly(tmp_path)[0].level == "OK", \
         "must PASS once the session is set read-only before any statement"
+    # The same, spelled the other ways psycopg2 takes it.
+    for form in ("conn.set_session(autocommit=False, readonly=True)", "conn.readonly = True"):
+        write(good.replace("conn.set_session(readonly=True)", form))
+        assert checks.check_sql_console_readonly(tmp_path)[0].level == "OK", f"must PASS on {form}"
+    # Review of the check: the call that does not run, or not on the query's connection, or too late.
+    for why, body in (
+            ("in a string", good.replace("    conn.set_session(readonly=True)\n",
+                                         '    _ = """\n    conn.set_session(readonly=True)\n    """\n')),
+            ("under if False", good.replace("    conn.set_session(readonly=True)\n",
+                                            "    if False:\n        conn.set_session(readonly=True)\n")),
+            ("on another connection", good.replace("    conn.set_session(readonly=True)\n",
+                                                   "    other = psycopg2.connect(**DB_CONFIG)\n"
+                                                   "    other.set_session(readonly=True)\n")),
+            ("after the first execute", good.replace("    conn.set_session(readonly=True)\n", "") +
+             "\n    conn.set_session(readonly=True)"),
+            ("in a nested function", good.replace("    conn.set_session(readonly=True)\n",
+                                                  "    def later():\n        conn.set_session(readonly=True)\n"))):
+        write(body)
+        assert checks.check_sql_console_readonly(tmp_path)[0].level == "FAIL", f"must FAIL with the call {why}"
 
     # 4. read-only set in some OTHER function, not sql_query -> FAIL (scoped to the handler).
     (web / "app.py").write_text(
-        "def sql_query():\n    cur.execute(sql)\n\n"
+        "def sql_query():\n    conn = psycopg2.connect(**DB_CONFIG)\n    with conn.cursor() as cur:\n"
+        "        cur.execute(sql)\n\n"
         "def elsewhere():\n    conn.set_session(readonly=True)\n"
     )
     assert checks.check_sql_console_readonly(tmp_path)[0].level == "FAIL", \
         "must FAIL when read-only is set outside the sql_query handler"
 
-    # 5. Missing app.py -> FAIL.
+    # 5. The call deleted, its name left in the handler's docstring -> FAIL (the docstring is not the call).
+    write('    """The session is set READ ONLY (`set_session(readonly=True)`) before any statement."""\n'
+          + good.replace("    conn.set_session(readonly=True)\n", ""))
+    assert checks.check_sql_console_readonly(tmp_path)[0].level == "FAIL", \
+        "must FAIL when only the docstring names set_session(readonly=True)"
+
+    # 6. Missing app.py -> FAIL.
     (web / "app.py").unlink()
     assert checks.check_sql_console_readonly(tmp_path)[0].level == "FAIL", \
         "must FAIL when app.py is absent"
@@ -4324,6 +5020,19 @@ def test_read_only_roots_check_discriminates(tmp_path):
            "must FAIL when the setting is commented out")
     broken(t + "_helpers.tpl", "readOnlyRootFilesystem: true", "readOnlyRootFilesystem: false",
            "must FAIL when the chart's read-only helper allows writes")
+    # 2026-10-09 review of #315: a container written in the list-item form `- image:` was not counted.
+    broken(t + "caddy.yaml", "      containers:\n",
+           "      containers:\n        - image: busybox\n          name: sneaky\n          securityContext: {}\n",
+           "must FAIL when a container written as `- image:` has no read-only root")
+    # Round 2: the flow form, extra spaces after the dash, and an include left in a template comment.
+    broken(t + "caddy.yaml", "      containers:\n", "      containers:\n        - {name: sneaky, image: busybox}\n",
+           "must FAIL when a container written in flow form has no read-only root")
+    broken(t + "caddy.yaml", "      containers:\n", "      containers:\n        -   image: busybox\n          name: sneaky\n",
+           "must FAIL when a container written as `-   image:` has no read-only root")
+    broken(t + "caddy.yaml", "      containers:\n",
+           "      containers:\n        - name: sneaky\n          image: busybox\n          securityContext:\n"
+           "            {{/* include \"polaris.containerSecurityReadOnly\" . */}}\n",
+           "must FAIL when a container's read-only include is only a template comment")
     for svc in ("app", "caddy", "pgbouncer", "redis"):
         broken(t + svc + ".yaml", '"polaris.containerSecurityReadOnly"', '"polaris.containerSecurity"',
                f"must FAIL when the chart's {svc} container is writable")
@@ -4915,9 +5624,12 @@ def test_pgbackrest_scaffolding_check_discriminates(tmp_path):
                    "  docker compose exec postgres pgbackrest --stanza=polaris --type=full backup\nfi\n")
     GOOD_BACKUP = ('docker compose exec postgres pgbackrest --stanza=polaris --type="${PGBR_TYPE}" backup\n'
                    'record_backup pgbackrest "repo1" "${PGBR_TYPE}"\n')
+    GOOD_ENV = "# archiving on by default\nPOLARIS_PGBACKREST_ENABLED=1\n"
+    (tmp_path / "deploy" / "linux").mkdir(parents=True)
 
     def write(df=GOOD_DF, conf=GOOD_CONF, compose=GOOD_COMPOSE, init=GOOD_INIT, dr=GOOD_DR,
-              ci=GOOD_CI, deploy=GOOD_DEPLOY, backup=GOOD_BACKUP):
+              ci=GOOD_CI, deploy=GOOD_DEPLOY, backup=GOOD_BACKUP, env=GOOD_ENV):
+        (tmp_path / "deploy" / "linux" / "polaris.env.example").write_text(env)
         (web / "Dockerfile.postgres").write_text(df)
         (web / "pgbackrest.conf").write_text(conf)
         (web / "docker-compose.prod.yml").write_text(compose)
@@ -4931,6 +5643,11 @@ def test_pgbackrest_scaffolding_check_discriminates(tmp_path):
     write()
     assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "OK", \
         "must PASS the complete pgBackRest scaffolding"
+    # 1b. the host-install env template turns archiving off -> FAIL (the 2026-10-08 defect).
+    write(env="POLARIS_PGBACKREST_ENABLED=0\n")
+    assert checks.check_pgbackrest_scaffolding(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a host install starts with archiving off"
+    write()
 
     # 2. image does not install pgbackrest -> FAIL.
     write(df="FROM postgres:16-alpine@sha256:abc\nRUN echo hi\n")
@@ -6076,8 +6793,8 @@ def test_secrets_lifecycle_sealed_check_discriminates(tmp_path):
     good = {
         "polaris_web/secretstore.py": ST,
         "scripts/polaris-secrets.sh": "unseal-if-configured) mount -t tmpfs -o mode=0700 tmpfs $d\n",
-        "scripts/polaris-deploy.sh": "polaris-secrets.sh unseal-if-configured\nSECRETS_DIR=${POLARIS_SECRETS_DIR:-x}\n",
-        "scripts/polaris-rotate-secret.sh": ("SECRETS_DIR=${POLARIS_SECRETS_DIR:-x}\npolaris-secrets.sh seal --only $SECRET\n"
+        "scripts/polaris-deploy.sh": "polaris-secrets.sh unseal-if-configured\nSECRETS_DIR=$(polaris_secrets_dir)\n",
+        "scripts/polaris-rotate-secret.sh": ("SECRETS_DIR=$(polaris_secrets_dir)\npolaris-secrets.sh seal --only $SECRET\n"
                                             "case x in\n    polaris_db_password)\n        docker compose up -d --no-deps --force-recreate pgbouncer\n"
                                             "        docker compose up -d --no-deps --force-recreate app\n        ;;\nesac\n"),
         "deploy/linux/polaris.service": "ExecStartPre=polaris-secrets.sh unseal-if-configured\n",
@@ -6115,7 +6832,7 @@ def test_secrets_lifecycle_sealed_check_discriminates(tmp_path):
     assert checks.check_secrets_lifecycle_sealed(tmp_path)[0].level == "FAIL", "must FAIL without KeyId pinned on Decrypt"
 
     # Rotation that recreates only the app (pgbouncer keeps the old password).
-    write({"scripts/polaris-rotate-secret.sh": "SECRETS_DIR=${POLARIS_SECRETS_DIR:-x}\npolaris-secrets.sh seal --only $SECRET\n"
+    write({"scripts/polaris-rotate-secret.sh": "SECRETS_DIR=$(polaris_secrets_dir)\npolaris-secrets.sh seal --only $SECRET\n"
            "case x in\n    polaris_db_password)\n        docker compose up -d --no-deps --force-recreate app\n        ;;\nesac\n"})
     f = checks.check_secrets_lifecycle_sealed(tmp_path)[0]
     assert f.level == "FAIL" and "pgbouncer" in f.message, "must FAIL when rotation skips pgbouncer"
@@ -6128,10 +6845,239 @@ def test_secrets_lifecycle_sealed_check_discriminates(tmp_path):
     write({".github/workflows/ci.yml": "run: bash scripts/polaris-generate-secrets.sh; docker compose up -d\n"})
     assert checks.check_secrets_lifecycle_sealed(tmp_path)[0].level == "FAIL", "must FAIL when CI does not drill the sealed boot + rotation"
 
+    # A deploy that defaults the sealed directory itself (a deploy worked; the next restart did not).
+    write({"scripts/polaris-deploy.sh": "polaris-secrets.sh unseal-if-configured\n"
+                                        "export POLARIS_SECRETS_DIR=${POLARIS_SECRETS_DIR:-/run/polaris/secrets}\n"})
+    f = checks.check_secrets_lifecycle_sealed(tmp_path)[0]
+    assert f.level == "FAIL" and "polaris_secrets_dir" in f.message, "must FAIL when the deploy defaults the directory"
+
     # The systemd unit that starts compose without unsealing.
     write({"deploy/linux/polaris.service": "ExecStart=docker compose up -d\n"})
     assert checks.check_secrets_lifecycle_sealed(tmp_path)[0].level == "FAIL", "must FAIL when the unit skips unseal"
 
+
+
+def test_secrets_reach_only_their_readers_check_discriminates(tmp_path):
+    files = [str(p.relative_to(REPO)) for p in (REPO / "deploy/helm/polaris/templates").glob("*.yaml")]
+    files += [str(p.relative_to(REPO)) for p in (REPO / "polaris_web").glob("docker-compose*.yml")]
+    files += ["scripts/polaris-helm-drill.sh", ".github/workflows/ci.yml"]
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_secrets_reach_only_their_readers(tmp_path)[0].level == "OK", \
+        "must PASS on the real chart, Compose files, Helm drill and prod-stack job"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        f = checks.check_secrets_reach_only_their_readers(tmp_path)[0]
+        assert f.level == "FAIL", why
+        path.write_text(good)
+        return f
+
+    app = "deploy/helm/polaris/templates/app.yaml"
+    good = (tmp_path / app).read_text()
+    projected = good[good.index("        - name: secrets\n          projected:"):good.index("        - name: state")]
+    # The defect itself: the app's pod mounting every key of the Secret.
+    f = broken(app, projected, "        - name: secrets\n          secret:\n            secretName: "
+               "{{ include \"polaris.secretName\" . }}\n            defaultMode: 0444\n            optional: false\n",
+               "must FAIL when the app's pod mounts the whole Secret")
+    assert "reads every key" in f.message, f.message
+    f = broken(app, "                    - {key: polaris_db_password, path: polaris_db_password}\n",
+               "                    - {key: polaris_db_password, path: polaris_db_password}\n"
+               "                    - {key: polaris_db_root_password, path: polaris_db_root_password}\n",
+               "must FAIL when the app's pod is given the superuser's password")
+    assert "polaris_db_root_password" in f.message, f.message
+    broken(app, "            defaultMode: 0440\n            sources:", "            defaultMode: 0444\n            sources:",
+           "must FAIL when the app's projected secrets are world-readable")
+    broken(app, "{key: polaris_redis_password, path: polaris_redis_password}",
+           "{key: polaris_redis_password, path: polaris_redis_password, mode: 0644}",
+           "must FAIL when one projected file is given a wider mode")
+    broken("deploy/helm/polaris/templates/pgbouncer.yaml", "            defaultMode: 0440\n",
+           "            defaultMode: 0444\n", "must FAIL when pgbouncer's secrets are world-readable")
+    broken("deploy/helm/polaris/templates/pgbouncer.yaml", "              - {key: pgbouncer_server.key, path: pgbouncer_server.key}\n",
+           "              - {key: pgbouncer_server.key, path: pgbouncer_server.key}\n"
+           "              - {key: pgbackrest_repo_creds.conf, path: pgbackrest_repo_creds.conf}\n",
+           "must FAIL when the pooler is given the backup repository's credentials")
+    broken("deploy/helm/polaris/templates/caddy.yaml", "      containers:\n",
+           "      volumes:\n        - name: s\n          secret:\n            secretName: {{ include \"polaris.secretName\" . }}\n"
+           "            defaultMode: 0440\n            items:\n              - {key: polaris_secret_key, path: k}\n"
+           "      containers:\n", "must FAIL when a pod that reads no secret mounts the Secret")
+    broken("polaris_web/docker-compose.prod.yml", "      - polaris_redis_password\n",
+           "      - polaris_redis_password\n      - polaris_db_root_password\n",
+           "must FAIL when the app's Compose service mounts the superuser's password")
+    broken("polaris_web/docker-compose.prod.yml", "    secrets:\n      - redis_users_acl\n",
+           "    secrets:\n      - redis_users_acl\n      - polaris_signing_key\n",
+           "must FAIL when Redis is given the signing key")
+    broken("scripts/polaris-helm-drill.sh", "the app's pod sees secrets", "the app is fine",
+           "must FAIL when the Helm drill stops listing what the app's pod reads")
+    broken(".github/workflows/ci.yml", "the app container mounts", "the app is fine",
+           "must FAIL when the prod-stack job stops listing what the app's container reads")
+
+
+def test_operator_scripts_read_the_unit_env_check_discriminates(tmp_path):
+    files = [str(p.relative_to(REPO)) for p in (REPO / "scripts").glob("polaris-*.sh")]
+    files += [".github/workflows/ci.yml", "deploy/linux/polaris.env.example", "docs/operator/SECRETS.md"]
+    files += [str(p.relative_to(REPO)) for p in (REPO / "polaris_web").glob("Dockerfile*")] + [".dockerignore"]
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_operator_scripts_read_the_unit_env(tmp_path)[0].level == "OK", \
+        "must PASS on the real scripts, images, the linux-install job, the env example and SECRETS.md"
+
+    def broken(rel, old, new, why, every=False):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new) if every else good.replace(old, new, 1))
+        f = checks.check_operator_scripts_read_the_unit_env(tmp_path)[0]
+        assert f.level == "FAIL", why
+        path.write_text(good)
+        return f
+
+    loader = 'source "${SCRIPT_DIR}/polaris-env.sh"\n'
+    # The defect itself: the first operator account, created by hand, without the unit's configuration.
+    f = broken("scripts/polaris-create-operator.sh", loader, "",
+               "must FAIL when an operator script drives the stack without the loader")
+    assert "polaris-create-operator.sh" in f.message, f.message
+    deploy = (tmp_path / "scripts/polaris-deploy.sh").read_text()
+    f = broken("scripts/polaris-deploy.sh", loader, "", "must FAIL when the deploy reads only its caller's shell")
+    # Sourced too late: after the overlays were read from the caller's shell.
+    late = deploy.replace(loader, "", 1).replace("compose() {", loader + "compose() {", 1)
+    (tmp_path / "scripts/polaris-deploy.sh").write_text(late)
+    f = checks.check_operator_scripts_read_the_unit_env(tmp_path)[0]
+    assert f.level == "FAIL" and "before it sources" in f.message, f.message
+    (tmp_path / "scripts/polaris-deploy.sh").write_text(deploy)
+    # The silent default that let a deploy work and the next restart fail.
+    broken("scripts/polaris-deploy.sh", "SECRETS_DIR=$(polaris_secrets_dir) || exit 1\n",
+           'export POLARIS_SECRETS_DIR="${POLARIS_SECRETS_DIR:-/run/polaris/secrets}"\n'
+           'SECRETS_DIR="${POLARIS_SECRETS_DIR}"\n', "must FAIL when the deploy defaults the sealed directory")
+    broken("scripts/polaris-secrets.sh", "DST=$(polaris_secrets_dir) || exit 1\n",
+           'DST="${POLARIS_SECRETS_DIR:-/run/polaris/secrets}"\n',
+           "must FAIL when the unit's unseal defaults the directory compose will not read")
+    # The loader sourcing the file: a shell runs an unquoted value with spaces as a command.
+    f = broken("scripts/polaris-env.sh", '    while IFS= read -r line || [[ -n "${line}" ]]; do\n',
+               '    set -a; . "${file}"; set +a\n    while IFS= read -r line || [[ -n "${line}" ]]; do\n',
+               "must FAIL when the loader sources polaris.env")
+    assert "never source" in f.message, f.message
+    broken("scripts/polaris-env.sh", '        [[ -n "${!key+x}" ]] && continue\n', "",
+           "must FAIL when the file overrides what the caller set")
+    broken("scripts/polaris-env.sh", "        return 1\n    fi\n    printf '%s\\n' \"${POLARIS_SECRETS_DIR}\"",
+           "        printf '%s\\n' /run/polaris/secrets\n        return 0\n    fi\n    printf '%s\\n' \"${POLARIS_SECRETS_DIR}\"",
+           "must FAIL when a sealed backend with no directory gets a default instead of a refusal")
+    # #311's first CI run: compose given polaris.env's overlays from the caller's directory, where a
+    # relative overlay is not found and a running stack reads as stopped.
+    f = broken("scripts/polaris-doctor.sh",
+               'compose() { (cd "${POLARIS_ROOT}/polaris_web" && docker compose -f docker-compose.prod.yml ${COMPOSE_EXTRA[@]+"${COMPOSE_EXTRA[@]}"} "$@"); }',
+               'compose() { docker compose -f "${COMPOSE_FILE}" "${COMPOSE_EXTRA[@]}" "$@"; }',
+               "must FAIL when a script passes the overlays to compose run outside polaris_web")
+    assert "outside polaris_web" in f.message, f.message
+    # The Helm migration Job's image ships the migration script without the loader it sources.
+    f = broken("polaris_web/Dockerfile.postgres", "COPY --chmod=0644 scripts/polaris-env.sh /opt/polaris/scripts/polaris-env.sh\n", "",
+               "must FAIL when an image ships a loader-sourcing script without the loader")
+    assert "Dockerfile.postgres" in f.message and "polaris-migrate.sh" in f.message, f.message
+    # #311's second run: the loader copied, but .dockerignore kept it out of the build context.
+    f = broken(".dockerignore", "!scripts/polaris-env.sh\n", "",
+               "must FAIL when an image copies a script the build context does not hold")
+    assert "!scripts/polaris-env.sh" in f.message, f.message
+    # A drill that takes the production host's configuration.
+    broken("scripts/polaris-chaos-drill.sh", "set -euo pipefail\n",
+           'set -euo pipefail\nsource "${SCRIPT_DIR}/polaris-env.sh"\n', "must FAIL when a drill sources the loader")
+    # A harness that builds its own stack (the throughput measurement) is held to the drills' rule: driving
+    # the production compose file without the loader passes, sourcing it fails.
+    harness = tmp_path / "scripts/polaris-throughput-measure.sh"
+    real = harness.read_text() if harness.exists() else None
+    harness.write_text("#!/usr/bin/env bash\nset -euo pipefail\n"
+                       "docker compose -p polaris-measure -f polaris_web/docker-compose.prod.yml up -d\n")
+    assert checks.check_operator_scripts_read_the_unit_env(tmp_path)[0].level == "OK", \
+        "must PASS when a harness that builds its own stack does not source the loader"
+    f = broken("scripts/polaris-throughput-measure.sh", "set -euo pipefail\n",
+               'set -euo pipefail\nsource "${SCRIPT_DIR}/polaris-env.sh"\n',
+               "must FAIL when a harness that builds its own stack sources the loader")
+    assert "builds a stack of its own" in f.message, f.message
+    harness.write_text(real) if real is not None else harness.unlink()
+    # A new operator script that forgets the loader.
+    (tmp_path / "scripts/polaris-new-tool.sh").write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\ndocker compose -f polaris_web/docker-compose.prod.yml ps\n")
+    f = checks.check_operator_scripts_read_the_unit_env(tmp_path)[0]
+    assert f.level == "FAIL" and "polaris-new-tool.sh" in f.message, f.message
+    (tmp_path / "scripts/polaris-new-tool.sh").unlink()
+    # The CI evidence.
+    broken(".github/workflows/ci.yml", "sudo scripts/polaris-deploy.sh prod", "scripts/polaris-deploy.sh prod",
+           "must FAIL when the linux-install job stops running the upgrade with sudo", every=True)
+    broken(".github/workflows/ci.yml", "needs POLARIS_SECRETS_DIR", "accepted",
+           "must FAIL when the linux-install job stops asserting the refusal", every=True)
+    broken("docs/operator/SECRETS.md", "POLARIS_SECRETS_DIR=/run/polaris/secrets", "POLARIS_SECRETS_DIR=",
+           "must FAIL when SECRETS.md stops telling a sealed install to set the directory", every=True)
+
+
+def test_fresh_host_reaches_online_verification_check_discriminates(tmp_path):
+    files = sorted({rel for rel, _, _ in checks._FRESH_HOST_NEEDLES} | {".github/workflows/ci.yml"})
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_fresh_host_reaches_online_verification(tmp_path)[0].level == "OK", \
+        "must PASS on the real custody, scripts, installer, docs and linux-install job"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new))
+        f = checks.check_fresh_host_reaches_online_verification(tmp_path)[0]
+        assert f.level == "FAIL", why
+        path.write_text(good)
+        return f
+
+    # Every pinned piece, removed in turn, is named.
+    for rel, needle, why in checks._FRESH_HOST_NEEDLES:
+        f = broken(rel, needle, "", f"must FAIL when {why}")
+        assert rel in f.message, f.message
+    # The defect itself: the installer goes quiet about the registration.
+    broken("deploy/linux/install.sh", "polaris-key-event.sh register 1 --current", "polaris-key-event.sh register 1 PUBLIC_KEY_HEX",
+           "must FAIL when the installer stops naming the one-command registration")
+    # The CI walk: each step it must take.
+    for needle, why in checks._FRESH_HOST_CI:
+        f = broken(".github/workflows/ci.yml", needle, "", f"must FAIL when the linux-install job stops: {why}")
+        assert "linux-install" in f.message, f.message
+    # Review round 2 of the OP-2/OP-6 rows: a failure branch neutralized while the command stays.
+    for cmd in ('--pack /tmp/op2-pack.json \\\n', '[ "$total" -le 900 ] \\\n'):
+        broken(".github/workflows/ci.yml", cmd, cmd.replace(" \\\n", " || true \\\n"),
+               f"must FAIL when `|| true` keeps the job green past {cmd.strip()!r}")
+    # A missing file is a failure, not a pass.
+    (tmp_path / "scripts/polaris-rp-register.sh").unlink()
+    f = checks.check_fresh_host_reaches_online_verification(tmp_path)[0]
+    assert f.level == "FAIL" and "polaris-rp-register.sh is missing" in f.message, f.message
+
+
+def test_throughput_measured_check_discriminates(tmp_path):
+    files = sorted({rel for rel, _, _ in checks._THROUGHPUT_NEEDLES}
+                   | {"polaris_web/Caddyfile", "polaris_web/Caddyfile.citest", "docs/reference/PERFORMANCE-BASELINE.md"})
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_throughput_measured(tmp_path)[0].level == "OK", \
+        "must PASS on the real measurement, workflow, edges and published block"
+
+    def broken(rel, old, new, why, count=1):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, count))
+        assert checks.check_throughput_measured(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    for rel, needle, what in checks._THROUGHPUT_NEEDLES:
+        broken(rel, needle, "true", f"must FAIL when it no longer does this: {what}", count=-1)
+    broken("polaris_web/Caddyfile", "rate_limit {", "rate_limits {", "must FAIL when the shipped edge loses its limit",
+           count=-1)
+    doc = "docs/reference/PERFORMANCE-BASELINE.md"
+    broken(doc, "**Measured 1.0.0-rc.70 @", "**Measured @", "must FAIL when the block's stamp loses its version")
+    broken(doc, "| D: ", "| E: ", "must FAIL when a configuration's row is missing")
+    broken(doc, "Across hosts is not\nmeasured", "Across hosts is\nmeasured",
+           "must FAIL when the document stops saying the replicas share one host")
 
 def test_migrations_expand_contract_check_discriminates(tmp_path):
     mig = tmp_path / "polaris_sql" / "migrations"
@@ -6808,7 +7754,11 @@ def test_helm_reference_profile_check_discriminates(tmp_path):
              "grep -q \"violates PodSecurity\"\nhelm install polaris\ncurl /api/health custody\n"
              "targets = [(\"polaris-postgres\", 5432)]\nprint(\"REACHED\")\nkubectl rollout restart deploy/polaris-app\n"
              "jsonpath='{.metadata.annotations.leader}'\nkubectl delete pod $L0\nctr -n k8s.io task pause\npatronictl switchover\nCREATE TABLE ha_marker\n"
-             "fail \"inserts were acknowledged\"\n")
+             "fail \"inserts were acknowledged\"\n"
+             "missing_on \"$L3\" /tmp/polaris-acked.now\nfail \"with synchronous_mode on, a failover must lose none\"\n"
+             "acked.write(token + \"\\\\n\")\nearly=$(head -n \"$acked_before_freeze\" /tmp/polaris-acked.now)\n"
+             "[[ \"$acked\" -gt 0 && \"$acked\" -ge \"$acked_before_freeze\" ]] || fail\n"
+             "[[ -z \"$(tail -c1 \"$2\")\" ]] || echo; echo '\\.'\n")
     PG = ("automountServiceAccountToken: true\nkind: Role\nkind: RoleBinding\n(dict \"uid\" 70 \"gid\" 70)\n"
           "value: /var/lib/postgresql/data/pgdata\n- {name: POLARIS_PATRONI_DCS, value: kubernetes}\n"
           "replicas: {{ .Values.postgres.replicas }}\nargs: [\"/usr/local/bin/polaris-patroni-entrypoint.sh\"]\n"
@@ -6873,6 +7823,22 @@ def test_helm_reference_profile_check_discriminates(tmp_path):
     # A drill with no negative policy probe.
     write({"scripts/polaris-helm-drill.sh": DRILL.replace("print(\"REACHED\")\n", "")})
     assert checks.check_helm_reference_profile(tmp_path)[0].level == "FAIL", "must FAIL without the policy-denial probe"
+
+    # Acknowledged inserts counted rather than compared by identity, or a loss under synchronous mode tolerated.
+    write({"scripts/polaris-helm-drill.sh": DRILL.replace('missing_on "$L3" /tmp/polaris-acked.now\n', "")})
+    assert checks.check_helm_reference_profile(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the kind drill no longer compares acknowledged inserts by identity"
+    write({"scripts/polaris-helm-drill.sh": DRILL.replace("with synchronous_mode on, a failover must lose none", "reported")})
+    assert checks.check_helm_reference_profile(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the kind drill tolerates a lost write under synchronous replication"
+    # 2026-10-09 review of #316: each guard against a vacuous comparison, removed in turn.
+    for needle, why in (('acked.write(token + "\\\\n")', "the writer no longer records what was acknowledged"),
+                        ('early=$(head -n "$acked_before_freeze"', "inserts acknowledged before the freeze are not checked"),
+                        ('[[ "$acked" -gt 0 && "$acked" -ge "$acked_before_freeze" ]]', "an empty acknowledged set passes"),
+                        ('[[ -z "$(tail -c1 "$2")" ]] || echo; echo', "a token file without its last newline reads as none missing")):
+        assert needle in DRILL, needle
+        write({"scripts/polaris-helm-drill.sh": DRILL.replace(needle, "true")})
+        assert checks.check_helm_reference_profile(tmp_path)[0].level == "FAIL", "must FAIL when " + why
 
     # The SQL not baked into the postgres image.
     write({"polaris_web/Dockerfile.postgres": "FROM postgres\n"})
@@ -12310,7 +13276,7 @@ def test_cost_model_check_discriminates(tmp_path):
               "ap.add_argument('--persons')\nap.add_argument('--verifications-per-person')\n"
               "ap.add_argument('--retention-years')\nap.add_argument('--price-vcpu-hour')\n")
     BENCH = "| single-witness | ~7,848 verifications/s per core |\n"
-    DOC = ("Verification throughput is not the cost driver.\n"
+    DOC = ("The cryptographic cost of verification is not the cost driver.\n"
            "Excluded: Staff and on-call; a hardware security module; the physical token.\n"
            "The throughput is a single-node measurement.\n")
     good = {
@@ -12369,7 +13335,7 @@ def test_cost_model_check_discriminates(tmp_path):
 
     # The finding stops being stated, so the reader has to derive the conclusion.
     write({'docs/reference/COST-MODEL.md': DOC.replace(
-        "Verification throughput is not the cost driver.\n", "")})
+        "The cryptographic cost of verification is not the cost driver.\n", "")})
     assert checks.check_cost_model(tmp_path)[0].level == "FAIL", \
         "must FAIL when the document does not state its own finding"
 
@@ -21520,6 +22486,169 @@ def test_product_sessions_pin_utc_check_discriminates(tmp_path):
     assert checks.check_product_sessions_pin_utc(tmp_path)[0].level == "FAIL", "a missing file must FAIL"
 
 
+def test_database_instants_read_the_utc_clock_check_discriminates(tmp_path):
+    sql = tmp_path / "polaris_sql"
+    (sql / "migrations").mkdir(parents=True)
+    procs, schema = sql / "05_procedures.sql", sql / "01_schema.sql"
+    cutoff = sql / "migrations" / (checks._UTC_CLOCK_MIGRATION + ".up.sql")
+    later = sql / "migrations" / "2026-12-01-001-later.up.sql"
+    routines = ("CREATE OR REPLACE FUNCTION f() RETURNS INTEGER\nLANGUAGE plpgsql\nSECURITY DEFINER\n"
+                "SET search_path = public, pg_temp\nSET timezone = 'UTC'\nAS $$\nBEGIN\n"
+                "    INSERT INTO T (at) VALUES (CURRENT_TIMESTAMP);\n    RETURN 1;\nEND;\n$$;\n"
+                "CREATE OR REPLACE FUNCTION g() RETURNS DATE LANGUAGE sql AS $$\n"
+                "    -- reads no clock itself: not now()\n    SELECT polaris_utc_date()\n$$;\n"
+                "CREATE OR REPLACE PROCEDURE p() LANGUAGE plpgsql AS $$ BEGIN PERFORM now(); END $$\n"
+                "SET TimeZone TO 'UTC';\n")
+    table = ("CREATE TABLE T (\n    id  SERIAL PRIMARY KEY,\n"
+             "    at  TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),\n"
+             "    tz  TIMESTAMPTZ NOT NULL DEFAULT now(),\n"
+             "    CONSTRAINT c CHECK (tz <= now())\n) PARTITION BY RANGE (at);\n"
+             "CREATE OR REPLACE VIEW V WITH (security_invoker = true) AS\n"
+             "SELECT id FROM T WHERE at <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC');\n")
+    procs.write_text(routines)
+    schema.write_text(table)
+    cutoff.write_text("ALTER TABLE T ALTER COLUMN at SET DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC');\n"
+                      "ALTER PROCEDURE p() SET timezone = 'UTC';\n")
+    (sql / "migrations" / "2026-01-01-001-released.up.sql").write_text(
+        "CREATE OR REPLACE FUNCTION f() RETURNS INTEGER LANGUAGE sql AS $$ SELECT 1 WHERE now() > now() $$;\n"
+        "ALTER TABLE T ALTER COLUMN at SET DEFAULT CURRENT_TIMESTAMP;\n")
+    assert checks.check_database_instants_read_the_utc_clock(tmp_path)[0].level == "OK", \
+        ("pinned routines, UTC defaults and views, an instant on a TIMESTAMPTZ column and in a CHECK on one, "
+         "and a released migration the cutoff supersedes must PASS")
+    good = {procs: routines, schema: table}
+    m = "2026-12-01-001-later.up.sql:"
+    dynamic_create = ("DO $$ BEGIN EXECUTE 'CREATE FUNCTION g9() RETURNS TIMESTAMP LANGUAGE sql AS "
+                      "''SELECT now()'''; END $$;\n")
+    routine_creates = ("CREATE FUNCTION mk() RETURNS VOID LANGUAGE plpgsql AS $$ BEGIN EXECUTE 'CREATE OR "
+                       "REPLACE FUNCTION g9() RETURNS INTEGER LANGUAGE sql AS ''SELECT 1'''; END $$;\n")
+    for label, path, text, named in (
+            ("a routine that reads the clock unpinned", procs,
+             routines.replace("SET timezone = 'UTC'\n", ""), "05_procedures.sql:f"),
+            ("a setting after the body that is not UTC", procs,
+             routines.replace("TO 'UTC'", "TO 'Etc/GMT-14'"), "05_procedures.sql:p"),
+            ("a zoneless default on the session's clock", schema,
+             table.replace("DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')", "DEFAULT CURRENT_TIMESTAMP"), "T.at"),
+            ("a DATE default on the session's date", schema,
+             table.replace("    id  SERIAL PRIMARY KEY,\n", "    id  SERIAL PRIMARY KEY,\n    d   DATE DEFAULT CURRENT_DATE,\n"),
+             "T.d"),
+            ("a TIMESTAMPTZ default handed a wall clock", schema,
+             table.replace("DEFAULT now()", "DEFAULT (now() AT TIME ZONE 'UTC')"), "T.tz"),
+            ("a view on the session's clock", schema,
+             table.replace("at <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')", "at <= CURRENT_TIMESTAMP"), "01_schema.sql:v"),
+            ("a view on the session's local clock", schema,
+             table.replace("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC');\n", "LOCALTIMESTAMP;\n"), "01_schema.sql:v"),
+            ("a later migration's unpinned routine", later,
+             "CREATE OR REPLACE FUNCTION h() RETURNS DATE LANGUAGE sql AS $$ SELECT now()::date $$;\n", m + "h"),
+            ("a later migration's session-clock default", later,
+             "ALTER TABLE T ALTER COLUMN at SET DEFAULT now();\n", m + "T.at"),
+            ("a later migration that unpins", later, "ALTER FUNCTION f() RESET timezone;\n", m + "f"),
+            # Review round 1 (2026-10-09): each of these passed before.
+            ("a schema-qualified routine, the schema quoted", later,
+             'CREATE FUNCTION "public".f2() RETURNS TIMESTAMP LANGUAGE sql AS $$ SELECT now() $$;\n', m + "f2"),
+            ("a quoted routine name", later,
+             'CREATE FUNCTION public."m 3"() RETURNS TIMESTAMP LANGUAGE sql AS $$ SELECT now() $$;\n', m + "m 3"),
+            ("timestamp 'now' in a routine", later,
+             "CREATE FUNCTION f3() RETURNS TIMESTAMP LANGUAGE sql AS $$ SELECT timestamp 'now' $$;\n", m + "f3"),
+            ("'yesterday' cast to a date in a routine", later,
+             "CREATE FUNCTION f4() RETURNS DATE LANGUAGE sql AS $$ SELECT 'yesterday'::date $$;\n", m + "f4"),
+            ("'today' as a default", later, "ALTER TABLE T ALTER COLUMN at SET DEFAULT 'today'::date;\n", m + "T.at"),
+            ("CAST('tomorrow' AS timestamp) in a view", later,
+             "CREATE VIEW W WITH (security_invoker = true) AS SELECT CAST('tomorrow' AS timestamp) AS t;\n", m + "w"),
+            ("timeofday() as a default", later,
+             "ALTER TABLE T ALTER COLUMN at SET DEFAULT timeofday()::timestamp;\n", m + "T.at"),
+            ("a routine created through EXECUTE in a DO block", later, dynamic_create, m + "a DO block"),
+            ("a routine created by a routine's dynamic SQL", later, routine_creates, m + "mk"),
+            ("a pin taken from the session's zone", later,
+             "ALTER FUNCTION uc8_revoke_token(INTEGER) SET timezone FROM CURRENT;\n", m + "uc8_revoke_token"),
+            ("a pinned body that sets TimeZone through set_config", procs,
+             routines.replace("    RETURN 1;\n", "    PERFORM set_config('TimeZone', 'Etc/GMT-14', true);\n    RETURN 1;\n"),
+             "05_procedures.sql:f sets TimeZone"),
+            ("a pinned body that runs SET LOCAL timezone", procs,
+             routines.replace("    RETURN 1;\n", "    SET LOCAL timezone = 'Etc/GMT-14';\n    RETURN 1;\n"),
+             "05_procedures.sql:f sets TimeZone"),
+            ("a BEGIN ATOMIC body", later,
+             "CREATE FUNCTION a1() RETURNS TIMESTAMP LANGUAGE sql\nBEGIN ATOMIC\n  SELECT 1;\n  SELECT now();\nEND;\n",
+             m + "a1"),
+            ("a CHECK added on a zoneless column", later,
+             "ALTER TABLE T ADD CONSTRAINT k CHECK (at <= now());\n", m + "T CHECK"),
+            ("a domain default on the session's clock", later,
+             "CREATE DOMAIN stamp AS TIMESTAMP DEFAULT now();\n", m + "domain stamp DEFAULT"),
+            ("a domain CHECK on the session's clock", later,
+             "CREATE DOMAIN stamp2 AS TIMESTAMP CHECK (VALUE <= now());\n", m + "domain stamp2 CHECK"),
+            ("a policy on the session's clock", later,
+             "CREATE POLICY pol ON T USING (at <= now());\n", m + "policy pol"),
+            ("a trigger condition on the session's clock", later,
+             "CREATE TRIGGER trg BEFORE UPDATE ON T FOR EACH ROW WHEN (NEW.at <= now()) EXECUTE FUNCTION f();\n",
+             m + "trigger trg WHEN"),
+            ("a rule on the session's clock", later,
+             "CREATE RULE rl AS ON INSERT TO T DO ALSO SELECT now();\n", m + "rule rl"),
+            ("a type change that makes an instant default a wall clock", later,
+             "ALTER TABLE T ALTER COLUMN tz TYPE TIMESTAMP;\n", m + "T.tz TYPE"),
+            # Review round 2 (2026-10-09): each of these passed before.
+            ("a clock function named in quotes", later,
+             'CREATE FUNCTION q1() RETURNS TIMESTAMP LANGUAGE sql AS $$ SELECT "now"() $$;\n', m + "q1"),
+            ("a clock function named in quotes as a default", later,
+             'ALTER TABLE T ALTER COLUMN at SET DEFAULT "now"();\n', m + "T.at"),
+            ("a dollar-quoted 'now' as a default", later,
+             "ALTER TABLE T ALTER COLUMN at SET DEFAULT $q$now$q$::timestamp;\n", m + "T.at"),
+            ("a dollar-quoted 'today' in a routine", later,
+             "CREATE FUNCTION q2() RETURNS DATE LANGUAGE sql AS $body$ SELECT $$today$$::date $body$;\n", m + "q2"),
+            ("a pinned body that updates pg_settings", procs,
+             routines.replace("    RETURN 1;\n", "    UPDATE pg_settings SET setting = 'Etc/GMT-14' "
+                              "WHERE name = 'TimeZone';\n    RETURN 1;\n"), "05_procedures.sql:f sets TimeZone"),
+            ("a pinned body that names the setting it changes by expression", procs,
+             routines.replace("    RETURN 1;\n", "    PERFORM set_config(lower('TIMEZONE'), 'Etc/GMT-14', true);\n"
+                              "    RETURN 1;\n"), "computed parameter name"),
+            ("an argument default on the caller's clock", later,
+             "CREATE FUNCTION pd(p_at TIMESTAMP DEFAULT now()) RETURNS TIMESTAMP LANGUAGE sql "
+             "SET timezone = 'UTC' AS $$ SELECT p_at $$;\n", m + "pd argument p_at TIMESTAMP DEFAULT"),
+            ("a read converted only after a call", later,
+             "ALTER TABLE T ALTER COLUMN at SET DEFAULT date_trunc('day', now()) AT TIME ZONE 'UTC';\n", m + "T.at"),
+            ("an E'' string that hides the next statement", later,
+             "SELECT E'\\'';\nALTER TABLE T ALTER COLUMN at SET DEFAULT now();\n", m + "T.at"),
+            ("ALTER VIEW ... SET DEFAULT on the session's clock", later,
+             "ALTER VIEW V ALTER COLUMN id SET DEFAULT now();\n", m + "V.id DEFAULT"),
+            ("ALTER FOREIGN TABLE ... SET DEFAULT on the session's clock", later,
+             "ALTER FOREIGN TABLE F ALTER COLUMN at SET DEFAULT CURRENT_TIMESTAMP;\n", m + "F.at DEFAULT")):
+        path.write_text(text)
+        r = checks.check_database_instants_read_the_utc_clock(tmp_path)[0]
+        assert r.level == "FAIL" and named in r.message, (label, r.message)
+        if path in good:
+            path.write_text(good[path])
+        else:
+            path.unlink()
+        assert checks.check_database_instants_read_the_utc_clock(tmp_path)[0].level == "OK", "restored: " + label
+    procs.write_text(routines.replace("SET timezone = 'UTC'", "SET timezone TO UTC"))
+    assert checks.check_database_instants_read_the_utc_clock(tmp_path)[0].level == "OK", "an unquoted UTC is a pin"
+    procs.write_text(routines)
+    # Round 2's controls: what each new rule must still let through.
+    for label, path, text in (
+            ("grouping parentheses before AT TIME ZONE", later,
+             "ALTER TABLE T ALTER COLUMN at SET DEFAULT ((now())) AT TIME ZONE 'UTC';\n"),
+            ("argument defaults on the UTC clock, and an instant on a TIMESTAMPTZ argument", later,
+             "CREATE FUNCTION pd2(p_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'), p_tz TIMESTAMPTZ = now()) "
+             "RETURNS TIMESTAMP LANGUAGE sql AS $$ SELECT p_at $$;\n"),
+            ("a pinned body setting another parameter by a literal name", procs,
+             routines.replace("    RETURN 1;\n", "    PERFORM set_config('polaris.reason_code', 'x', true);\n"
+                              "    RETURN 1;\n")),
+            ("an E'' string followed by a UTC default", later,
+             "SELECT E'it\\'s';\nALTER TABLE T ALTER COLUMN at SET DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC');\n")):
+        path.write_text(text)
+        assert checks.check_database_instants_read_the_utc_clock(tmp_path)[0].level == "OK", label
+        if path in good:
+            path.write_text(good[path])
+        else:
+            path.unlink()
+    cutoff.unlink()
+    r = checks.check_database_instants_read_the_utc_clock(tmp_path)[0]
+    assert r.level == "FAIL" and checks._UTC_CLOCK_MIGRATION in r.message, \
+        "without the migration a migrated database keeps what the released ones left"
+    cutoff.write_text("SELECT 1;\n")
+    procs.write_text("SELECT 1;\n")
+    schema.write_text("SELECT 1;\n")
+    assert checks.check_database_instants_read_the_utc_clock(tmp_path)[0].level == "FAIL", "none found is vacuous"
+
+
 def test_license_headers_check_discriminates(tmp_path):
     good = "# SPDX-License-Identifier: Apache-2.0\n# Copyright 2026 Egor Khaklin and the Polaris contributors\n"
     (tmp_path / "a.py").write_text(good + "print(1)\n")
@@ -21563,3 +22692,170 @@ def test_license_headers_check_discriminates(tmp_path):
     assert checks.check_source_files_carry_license_header(tmp_path)[0].level == "FAIL", \
         "must FAIL when it finds no source file at all, so a broken filter cannot pass"
 
+
+
+def test_product_suite_parts_share_setup_check_discriminates(tmp_path):
+    gh = tmp_path / ".github" / "workflows"
+    gh.mkdir(parents=True)
+
+    def part(jid, label, image="postgres:16-alpine@sha256:aa", deps="pip install -r req.txt",
+             comment="# a note", last="run tests"):
+        return (f"  {jid}:\n    name: \"Product suite: {label}\"\n    runs-on: ubuntu-latest\n"
+                f"    services:\n      postgres:\n        image: {image}\n    env:\n      A: '1'\n"
+                f"    steps:\n      - name: Checkout\n        uses: actions/checkout@abc\n\n"
+                f"      - name: Install deps\n        run: |\n          {comment}\n          {deps}\n\n"
+                f"      - name: {label} only\n        run: {last}\n")
+
+    gate_ok = ("  test:\n    name: Polaris product test suite\n    needs: [test-core, test-coverage]\n"
+               "    if: always()\n    runs-on: ubuntu-latest\n    steps:\n"
+               "      - name: Every part passed\n        env:\n          RESULTS: ${{ toJSON(needs) }}\n"
+               "        run: echo \"$RESULTS\" | python3 -c 'import json, sys; r = {k: v[\"result\"] for k, v in "
+               "json.load(sys.stdin).items()}; sys.exit(0 if len(r) == 2 and all(v == \"success\" for v in r.values()) "
+               "else 1)'\n")
+
+    def write(core=None, cov=None, gate=gate_ok, extra=""):
+        (gh / "ci.yml").write_text("on: push\njobs:\n" + (core or part("test-core", "core"))
+                                   + (cov or part("test-coverage", "coverage")) + extra + gate)
+        return checks.check_product_suite_parts_share_setup(tmp_path)[0]
+
+    assert write().level == "OK", "two parts with one setup and a gate that judges them must pass"
+    assert write(cov=part("test-coverage", "coverage", comment="# another note")).level == "OK", \
+        "copies that differ only in a comment must pass"
+    extra_comment = part("test-coverage", "coverage").replace(
+        "    runs-on:", "    # Split out of the product suite.\n    runs-on:")
+    assert write(cov=extra_comment).level == "OK", \
+        "a part with an extra comment line in its header (as every split part has) must pass"
+    assert write(cov=part("test-coverage", "coverage", image="postgres:16-alpine")).level == "FAIL", \
+        "a part left on an unpinned service image (the 2026-10-08 merge) must FAIL"
+    assert write(cov=part("test-coverage", "coverage", deps="pip install -r other.txt")).level == "FAIL", \
+        "a shared setup step changed in one part only must FAIL"
+    assert write(gate=gate_ok.replace("    if: always()\n", "")).level == "FAIL", \
+        "a gate without if: always() is skipped when a part fails, and skipped reads as passing"
+    assert write(gate=gate_ok.replace("all(v ==", "any(v ==")).level == "FAIL", \
+        "a gate that passes one green part as the suite must FAIL"
+    assert write(gate=gate_ok.replace("len(r) == 2 and", "len(r) == 1 and")).level == "FAIL", \
+        "a gate that counts fewer results than it needs must FAIL"
+    # Review of #309: a part known by its work, not its label, and every pair of parts compared.
+    renamed = part("test-zk", "zk", last="cargo test --release").replace('"Product suite: zk"', '"ZK, somewhere"')
+    assert write(extra=renamed).level == "FAIL", \
+        "a job running the suite's work under another label, not needed by the gate, must FAIL"
+    three = gate_ok.replace("[test-core, test-coverage]", "[test-core, test-coverage, test-third]").replace(
+        "len(r) == 2 and", "len(r) == 3 and")
+    mid = part("test-coverage", "coverage").replace("      - name: Install deps\n", "      - name: Install other\n")
+    third = part("test-third", "third", deps="pip install -r drifted.txt")
+    assert write(cov=mid, extra=third, gate=three).level == "FAIL", \
+        "a step the first and third parts share, drifted, with the middle part lacking it, must FAIL"
+    assert write(extra=part("test-extra", "extra")).level == "FAIL", \
+        "a Product suite part the gate does not need must FAIL"
+    assert write(gate=gate_ok.replace("Polaris product test suite", "Something else")).level == "FAIL", \
+        "with no job carrying the required check's name, the check must FAIL"
+    mono = ("  test:\n    name: Polaris product test suite\n    runs-on: ubuntu-latest\n    steps:\n"
+            "      - name: Checkout\n        run: echo\n")
+    (gh / "ci.yml").write_text("on: push\njobs:\n" + mono)
+    assert checks.check_product_suite_parts_share_setup(tmp_path)[0].level == "OK", \
+        "a suite still run as one job has no copies to compare"
+
+
+def test_edge_tls_state_shared_check_discriminates(tmp_path):
+    tpl = tmp_path / "deploy" / "helm" / "polaris" / "templates"
+    tpl.mkdir(parents=True)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "docs" / "operator").mkdir(parents=True)
+    CADDYFILE = ("pki {\n  ca local {\n    root {\n      cert /etc/caddy/ca/ca.crt\n      key /etc/caddy/ca/ca.key\n"
+                 "    }\n  }\n}\ntls /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key\n"
+                 '{{- if has .Values.edge.tls (list "acme" "secret") }}\n'
+                 '  Strict-Transport-Security "max-age=63072000"\n')
+    CA = ('{{- if and (eq .Values.edge.tls "internal") (not .Values.edge.caSecret) }}\n'
+          '{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}\n'
+          '  annotations:\n    "helm.sh/resource-policy": keep\n'
+          '  {{- if and $existing (hasKey $existing.data "ca.crt") (hasKey $existing.data "ca.key") }}\n'
+          '  ca.crt: {{ index $existing.data "ca.crt" }}\n'
+          '  ca.key: {{ index $existing.data "ca.key" }}\n'
+          '  {{- else }}\n'
+          '  {{- $ca := genCA "root" 3650 }}\n')
+    DEPLOY = ('{{- if and (eq .Values.edge.tls "acme") (gt (int .Values.edge.replicas) 1) }}\n'
+              '{{- fail "edge.tls=acme serves one replica" }}\n{{- end }}\n'
+              '  strategy:\n    type: Recreate\n'
+              '        - name: tls-reload\n          args:\n            - |\n              seen=""\n'
+              '              caddy reload --force --config /etc/caddy/Caddyfile\n        {{- end }}\n'
+              '            claimName: {{ include "polaris.fullname" . }}-caddy-acme\n'
+              '            secretName: {{ .Values.edge.caSecret | default (printf "%s-edge-ca" (include "polaris.fullname" .)) }}\n')
+    DRILL = ('kubectl -n "$NS" port-forward "$pod" 18444:8443\n'
+             'served "$p" --cacert /tmp/polaris-edge-ca.crt\n'
+             'echo "  ${victim#pod/} replaced: $n replicas still verify"\n'
+             'fail "the edge still served the old certificate 240 s after the Secret was renewed"\n'
+             # each guard as scripts/polaris-helm-drill.sh writes it
+             + '[ "$(kubectl -n "$NS" get secret "${REL}-edge-ca" -o jsonpath=\'{.data.ca\\.crt}\')" = "$root_before" ] \\\n'
+               '    || fail "helm upgrade replaced the edge root\n'
+             + "if grep -qi '^strict-transport-security' /tmp/polaris-internal.hdr; then\n"
+               '    fail "the edge sends Strict-Transport-Security under the internal root\n'
+             + "-o jsonpath='{range .items[*]}{.metadata.name}{range .status.containerStatuses[*]} {.restartCount}{end}\n"
+             + '[ "$(restarts)" = "$before_renewal" ] || { echo "$before_renewal"; restarts; fail "an edge pod restarted\n'
+             + 'grep -q "edge.tls=acme serves one replica" /tmp/polaris-acme.err \\\n'
+               '    || { cat /tmp/polaris-acme.err; fail "edge.tls=acme with two replicas failed to render for another reason"; }\n'
+             + 'if grep -q "name: ${REL}-edge-ca\\$" /tmp/polaris-casecret.yaml || grep -q "secretName: ${REL}-edge-ca\\$" /tmp/polaris-casecret.yaml \\\n'
+               '        || ! grep -q "secretName: operator-edge-root" /tmp/polaris-casecret.yaml; then\n'
+               '    fail "with edge.caSecret the chart must mount that Secret\n'
+             + '    [ "$n" -ge 2 ] || fail "expected two edge replicas, found $n"\n'
+             + '    pods=$(edge_pods) || return 1\n'
+               '    for p in $pods; do [ "$(served "$p" -k || true)" = "$want" ] || return 1; n=$((n + 1)); done\n'
+               '    [ "$n" -ge 2 ]\n'
+               '}\n')
+    DOC = "--set edge.tls=secret ... kubectl get secret polaris-edge-ca ... edge.caSecret\n"
+
+    def write(caddyfile=CADDYFILE, ca=CA, deploy=DEPLOY, drill=DRILL, doc=DOC):
+        (tpl / "configmap-caddy.yaml").write_text(caddyfile)
+        (tpl / "edge-ca.yaml").write_text(ca)
+        (tpl / "caddy.yaml").write_text(deploy)
+        (tmp_path / "scripts" / "polaris-helm-drill.sh").write_text(drill)
+        (tmp_path / "docs" / "operator" / "KUBERNETES.md").write_text(doc)
+
+    write()
+    assert checks.check_edge_tls_state_shared(tmp_path)[0].level == "OK", "must PASS on the shared edge state"
+    broken = [
+        dict(caddyfile=CADDYFILE.replace("cert /etc/caddy/ca/ca.crt", "cert /data/root.crt")),
+        dict(caddyfile=CADDYFILE.replace("tls /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key\n", "tls internal\n")),
+        dict(caddyfile=CADDYFILE.replace('(list "acme" "secret")', '(list "acme")')),
+        dict(ca=CA.replace("lookup", "nothing")),
+        # 2026-10-09 review of #315: the reuse branch disabled, the operator's root ignored, the acme refusal
+        # removed while other fails remain, and each drill guard removed in turn.
+        dict(ca=CA.replace("if and $existing (hasKey", "if and false $existing (hasKey")),
+        # Round 2: genCA inside the reuse branch; `$existing` assigned anything but the lookup,
+        # with the lookup left in a template comment.
+        dict(ca=CA.replace('  ca.crt: {{ index $existing.data "ca.crt" }}\n',
+                           '  {{- $ca := genCA "root" 3650 }}\n  ca.crt: {{ $ca.Cert | b64enc }}\n')),
+        dict(ca=CA.replace('{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}\n',
+                           '{{- /* $existing := (lookup "v1" "Secret" .Release.Namespace $name) */}}\n'
+                           '{{- $existing := dict }}\n')),
+        dict(ca=CA.replace(" (not .Values.edge.caSecret)", "")),
+        dict(deploy=DEPLOY.replace(".Values.edge.caSecret | default ", "")),
+        dict(deploy=DEPLOY.replace('{{- fail "edge.tls=acme serves one replica" }}\n',
+                                   '{{- /* fail "edge.tls=acme serves one replica" */}}\n{{- fail "other" }}\n')),
+        # Round 2: each guard's condition turned to `true` with its failure message kept.
+        dict(drill=DRILL.replace('[ "$(kubectl -n "$NS" get secret "${REL}-edge-ca" -o jsonpath=\'{.data.ca\\.crt}\')"'
+                                 ' = "$root_before" ]', "true")),
+        dict(drill=DRILL.replace("if grep -qi '^strict-transport-security' /tmp/polaris-internal.hdr; then",
+                                 "if false; then")),
+        dict(drill=DRILL.replace("{.restartCount}", "{.ready}")),
+        dict(drill=DRILL.replace('[ "$(restarts)" = "$before_renewal" ]', "true")),
+        dict(drill=DRILL.replace('grep -q "edge.tls=acme serves one replica" /tmp/polaris-acme.err', "true")),
+        dict(drill=DRILL.replace('|| grep -q "secretName: ${REL}-edge-ca\\$" /tmp/polaris-casecret.yaml ', "")),
+        dict(drill=DRILL.replace('[ "$n" -ge 2 ] || fail "expected two', 'true || fail "expected two')),
+        dict(drill=DRILL.replace('    [ "$n" -ge 2 ]\n}', "    true\n}")),
+        dict(drill=DRILL.replace("pods=$(edge_pods) || return 1", "pods=$(edge_pods)")),
+        dict(doc="--set edge.tls=secret ... kubectl get secret polaris-edge-ca\n"),
+        dict(ca=CA.replace('"helm.sh/resource-policy": keep', "")),
+        dict(deploy=DEPLOY.replace("(gt (int .Values.edge.replicas) 1)", "(gt (int .Values.edge.replicas) 9)")),
+        dict(deploy=DEPLOY.replace("type: Recreate", "type: RollingUpdate")),
+        dict(deploy=DEPLOY.replace("-caddy-acme", "-caddy-data")),
+        dict(deploy=DEPLOY.replace("caddy reload --force", "caddy reload")),
+        dict(deploy=DEPLOY.replace('seen=""', "seen=$(sha256sum /etc/caddy/tls/tls.crt)")),
+        dict(drill=DRILL.replace("--cacert /tmp/polaris-edge-ca.crt", "-k")),
+        dict(drill=DRILL.replace('port-forward "$pod"', 'port-forward "svc/${REL}-caddy"')),
+        dict(drill=DRILL.replace("after the Secret was renewed", "")),
+        dict(doc="--set edge.tls=acme\n"),
+    ]
+    for case in broken:
+        write(**case)
+        assert checks.check_edge_tls_state_shared(tmp_path)[0].level == "FAIL", \
+            "must FAIL when the edge's TLS state is no longer shared: %r" % (case,)

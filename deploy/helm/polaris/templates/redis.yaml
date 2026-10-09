@@ -15,15 +15,19 @@ spec:
       port: 6379
       targetPort: redis
 ---
+# Lab record 017 (gate row OP-7): a Deployment on an emptyDir, so a node that stops answering does not
+# keep it: a StatefulSet's pod waits for its node forever, and the rate limiter fails closed without
+# Redis (writes and logins refused). Its sliding windows are short-lived and the ACL comes from the
+# Secret, so nothing is lost but the current windows. Upgrading from a chart with the StatefulSet leaves
+# its volume claim (data-<release>-redis-0) to delete.
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
   name: {{ include "polaris.fullname" . }}-redis
   labels:
     {{- include "polaris.labels" . | nindent 4 }}
     app.kubernetes.io/component: redis
 spec:
-  serviceName: {{ include "polaris.fullname" . }}-redis
   replicas: 1
   selector:
     matchLabels:
@@ -38,6 +42,7 @@ spec:
       # No API token (see app.yaml); the projected token mount would collide
       # with the Secret mounts under /run/secrets.
       automountServiceAccountToken: false
+      {{- include "polaris.fastEviction" . | nindent 6 }}
       securityContext:
         {{- include "polaris.podSecurity" (dict "uid" 999 "gid" 1000) | nindent 8 }}
       containers:
@@ -69,17 +74,8 @@ spec:
         - name: acl
           secret:
             secretName: {{ include "polaris.secretName" . }}
-            defaultMode: 0444
+            defaultMode: 0440
             items:
               - {key: redis_users.acl, path: users.acl}
-  volumeClaimTemplates:
-    - metadata:
-        name: data
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        {{- with .Values.persistence.storageClass }}
-        storageClassName: {{ . }}
-        {{- end }}
-        resources:
-          requests:
-            storage: {{ .Values.persistence.redis }}
+        - name: data
+          emptyDir: {}

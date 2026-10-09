@@ -23,7 +23,11 @@ member is proving among everyone in that snapshot, so a shorter cadence over a g
 population is not automatically better: an epoch closed hourly for a small context can produce
 a crowd small enough to identify someone by elimination. The floor is a population question,
 not a schedule question, and an authority with few members in a context should lengthen the
-cadence rather than publish a crowd of eleven.
+cadence rather than publish a crowd of eleven. `uc11_close_epoch` refuses an epoch below the
+database setting `polaris.min_epoch_anonymity_set`, 20 unless the authority sets another.
+Releases up to 1.0.0-rc.70 left the notional sample's floor of one in a production database; as
+the database superuser, `ALTER DATABASE polaris SET polaris.min_epoch_anonymity_set = 20`
+restores it.
 
 **How often a relying party's ledger resets.** The scoped nullifier (P9.3) is keyed by the
 epoch, deliberately, so that membership never becomes a permanent pseudonym. A relying party
