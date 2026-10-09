@@ -428,5 +428,70 @@ exit 99
 HELPER = ROOT / "scripts" / "polaris-host-lock.sh"
 
 
+# A stand-in kubectl for a cluster where one member never schedules: it answers as kubectl does,
+# failing for a pod with no previous container, a Pending pod's log and Endpoints not yet made.
+_KUBECTL = r"""#!/bin/bash
+case "$*" in
+  *"get pods -o name"*) printf 'pod/polaris-app-1\npod/polaris-postgres-1\n' ;;
+  *"get pods"*) echo "polaris-postgres-1 0/1 Pending" ;;
+  *"get endpoints"*) echo 'Error from server (NotFound): endpoints not found' >&2; exit 1 ;;
+  *"get events"*) echo "Warning FailedScheduling pod/polaris-postgres-1 0/1 nodes are available: 1 Insufficient cpu." ;;
+  *"describe nodes"*) printf 'Allocated resources:\n  cpu 3950m (98%%)\nEvents: <none>\n' ;;
+  *describe*) printf 'Events:\n  Warning FailedScheduling Insufficient cpu\n' ;;
+  *"--previous"*) echo 'Error from server (BadRequest): previous terminated container not found' >&2; exit 1 ;;
+  *postgres-1*) echo 'Error from server (BadRequest): container "postgres" is waiting to start' >&2; exit 1 ;;
+  *logs*) echo "a log line" ;;
+esac
+"""
+
+
+class DrillDiagnosticsReachTheirFail(unittest.TestCase):
+    """A drill's diagnostics run when something already failed, so each command in them may fail
+    too. Under `set -euo pipefail` the first that did ended the drill there: the kind job of
+    2026-10-09 stopped at the first pod's previous log, before the Pending member whose scheduler
+    reason was the answer, and before the `fail` that names what broke. The blocks run here, cut
+    from the drills, under their own options and a stand-in kubectl."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        bin_dir = pathlib.Path(self.tmp.name)
+        (bin_dir / "kubectl").write_text(_KUBECTL)
+        (bin_dir / "kubectl").chmod(0o755)
+        self.path = f"{bin_dir}:/usr/bin:/bin"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_block(self, block):
+        script = ('NS=polaris; REL=polaris; LAST_INSERT_ERR=; fail() { echo "FAIL: $*"; exit 1; }\n'
+                  + block + '\necho "REACHED THE FAIL"\n')
+        return subprocess.run(["bash", "-euo", "pipefail", "-c", script], capture_output=True, text=True,
+                              env={"PATH": self.path}, timeout=30)
+
+    def diagnose(self, rel):
+        lines = (ROOT / rel).read_text().splitlines()
+        start = next(i for i, line in enumerate(lines) if line.startswith("diagnose() {"))
+        if lines[start].rstrip().endswith("}"):
+            return lines[start] + "\ndiagnose"
+        end = next(i for i in range(start, len(lines)) if lines[i] == "}")
+        return "\n".join(lines[start:end + 1]) + "\ndiagnose"
+
+    def test_each_diagnose_reaches_the_fail_after_it(self):
+        for rel in ("scripts/polaris-helm-drill.sh", "scripts/polaris-helm-upgrade-drill.sh",
+                    "scripts/polaris-zone-loss-drill.sh"):
+            with self.subTest(rel):
+                r = self.run_block(self.diagnose(rel))
+                self.assertIn("REACHED THE FAIL", r.stdout, f"{rel}: diagnose ended the drill:\n{r.stdout}{r.stderr}")
+
+    def test_the_install_diagnostics_reach_the_pending_member(self):
+        text = (ROOT / "scripts/polaris-helm-drill.sh").read_text()
+        block = text.split("--wait --timeout 12m >/dev/null || {\n", 1)[1].split("\n    }\n", 1)[0]
+        r = self.run_block(block)
+        self.assertIn("FAIL: helm install did not reach ready", r.stdout, r.stdout + r.stderr)
+        self.assertIn("== pod/polaris-postgres-1: events ==", r.stdout, "the loop must reach the Pending member")
+        self.assertIn("Insufficient cpu", r.stdout, "the scheduler's reason must be printed")
+        self.assertIn("Allocated resources", r.stdout, "the node's room must be printed")
+
+
 if __name__ == "__main__":
     unittest.main()

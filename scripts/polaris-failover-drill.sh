@@ -49,6 +49,8 @@
 #
 # The drill reads synchronous_mode from the cluster. With it on, a scenario
 # that loses an acknowledged write fails; with it off, the loss is reported.
+# POLARIS_FAILOVER_EXPECT_SYNC=on (or off) fails the drill when the cluster says
+# otherwise: CI sets on, since gate row OP-6 rests on that run.
 #
 # The ceilings are hard assertions, the same discipline as the window and
 # chaos drills. The measured numbers are the ones FAILOVER.md states.
@@ -58,6 +60,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
 URL="${POLARIS_DRILL_URL:-https://localhost:8443}"
 OUT="${POLARIS_FAILOVER_OUT:-}"
+EXPECT_SYNC="${POLARIS_FAILOVER_EXPECT_SYNC:-}"
+case "$EXPECT_SYNC" in ''|on|off) ;; *) echo "POLARIS_FAILOVER_EXPECT_SYNC must be on or off (got '$EXPECT_SYNC')" >&2; exit 2 ;; esac
 CEIL_FAILOVER="${POLARIS_FAILOVER_CEIL_FAILOVER:-60}"
 CEIL_REJOIN="${POLARIS_FAILOVER_CEIL_REJOIN:-120}"
 CEIL_DEMOTE="${POLARIS_FAILOVER_CEIL_DEMOTE:-45}"
@@ -81,9 +85,9 @@ diagnose() {  # what the cluster looked like when a scenario failed; the CI job 
     for m in postgres postgres2; do
         echo "[$m] /cluster: $(rest "$m" /cluster 2>/dev/null || echo unreachable)" >&2
         echo "[$m] /patroni: $(rest "$m" /patroni 2>/dev/null || echo unreachable)" >&2
-        echo "[$m] last 40 log lines:" >&2; docker logs --tail 40 "polaris-$m" 2>&1 | sed 's/^/    /' >&2
+        echo "[$m] last 40 log lines:" >&2; { docker logs --tail 40 "polaris-$m" 2>&1 || true; } | sed 's/^/    /' >&2
     done
-    echo "[pg-router] last 15 log lines:" >&2; docker logs --tail 15 polaris-pg-router 2>&1 | sed 's/^/    /' >&2
+    echo "[pg-router] last 15 log lines:" >&2; { docker logs --tail 15 polaris-pg-router 2>&1 || true; } | sed 's/^/    /' >&2
     for e in etcd1 etcd2 etcd3; do echo "[$e] $(docker inspect -f '{{.State.Status}} health={{.State.Health.Status}}' "polaris-$e" 2>/dev/null)" >&2; done
     echo "[writer] last 12 lines:" >&2; tail -12 "$WORK/state/writes.log" 2>/dev/null | sed 's/^/    /' >&2
 }
@@ -303,6 +307,8 @@ echo "  leader $L0, replica $R0 streaming, timeline $(cluster_field "$L0" timeli
 # scenario may lose an acknowledged write (no_lost_write).
 SYNC=$(rest "$L0" /config | python3 -c "import json,sys; print('on' if json.load(sys.stdin).get('synchronous_mode') else 'off')" 2>/dev/null || true)
 [[ "$SYNC" == on || "$SYNC" == off ]] || fail "could not read synchronous_mode from $L0's configuration"
+[[ -z "$EXPECT_SYNC" || "$SYNC" == "$EXPECT_SYNC" ]] \
+    || fail "synchronous_mode is $SYNC on $L0, and this run expects $EXPECT_SYNC (POLARIS_FAILOVER_EXPECT_SYNC)"
 if [[ "$SYNC" == on ]]; then
     wait_for 60 sync_standby_is "$R0" "$L0" >/dev/null || fail "$R0 is not the synchronous standby of $L0 after 60s, with synchronous_mode on"
     echo "  synchronous_mode on: $R0 is the synchronous standby; no acknowledged write may be lost"
@@ -351,7 +357,7 @@ docker rm -f "$WRITER" >/dev/null 2>&1 || true
 docker run -d --name "$WRITER" --network "$NET" \
     -e DSN="host=pgbouncer port=6432 dbname=polaris user=polaris_app password=$APP_PW sslmode=require application_name=ha_drill" \
     -v "$WORK/writer.py:/writer.py:ro" -v "$WORK/state:/state" --entrypoint python3 polaris-postgres:prod /writer.py >/dev/null
-t=$(now); wait_for 30 writes_ok_since "$t" >/dev/null || { docker logs "$WRITER" 2>&1 | tail -5 >&2; fail "the writer never completed an insert through pgbouncer and HAProxy"; }
+t=$(now); wait_for 30 writes_ok_since "$t" >/dev/null || { { docker logs "$WRITER" 2>&1 || true; } | tail -5 >&2; fail "the writer never completed an insert through pgbouncer and HAProxy"; }
 echo "  writes flowing through pgbouncer -> pg-router -> $L0"
 
 # A real admin for the verification load: production disables the demo accounts,

@@ -62,12 +62,30 @@ _COMMENT_SYNTAX = {
 _GO_TEMPLATE_COMMENT = re.compile(r"\{\{-?\s*/\*.*?\*/\s*-?\}\}", re.S)
 
 
+def _python_comment_columns(text: str) -> dict[int, list[tuple[int, int]]] | None:
+    """{line index: the (start, end) columns of its comments}, from Python's own tokenizer; None when
+    the text does not tokenize. A line scanner cannot know it is inside a triple-quoted string:
+    a docstring line that named "review of #318" before its closing quotes lost them to it, and
+    four files of the tree, checks.py and custody.py among them, no longer parsed as their checks
+    read them (2026-10-09), so a check walking their syntax tree saw nothing there. A comment ends at
+    a lone carriage return, which Python reads as a line break, so the code after one is kept."""
+    columns: dict[int, list[tuple[int, int]]] = {}
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.COMMENT:
+                columns.setdefault(tok.start[0] - 1, []).append((tok.start[1], tok.end[1]))
+    except (tokenize.TokenError, SyntaxError):
+        return None
+    return columns
+
+
 def _strip_comments_for(rel: str, text: str) -> str:
     """Blank out comment bodies while keeping line numbers and string literals intact.
 
     Only whole-line comments and trailing comments outside quotes are removed, so a
     `#` inside a string stays. Lines are kept (blanked, not deleted) so anything that
-    reports a line number still reports the right one.
+    reports a line number still reports the right one. Python is cut where its own
+    tokenizer says a comment starts, so a `#` inside a multi-line string stays too.
     """
     suffix = pathlib.PurePosixPath(rel).suffix
     if suffix in (".yaml", ".yml", ".tpl") or rel.endswith("NOTES.txt"):
@@ -78,12 +96,24 @@ def _strip_comments_for(rel: str, text: str) -> str:
     if not marker:
         return text
     _needs_space = suffix in (".yml", ".yaml", ".sh", ".toml", ".cfg")
+    py_columns = _python_comment_columns(text) if suffix == ".py" else None
     out = []
     for lineno, line in enumerate(text.split("\n")):
         # A shebang is not a comment. Blanking it breaks anything that reads what
         # follows it -- cli_help looks for the module docstring after the `#!` line.
         if lineno == 0 and line.startswith("#!"):
             out.append(line)
+            continue
+        if py_columns is not None:
+            spans = py_columns.get(lineno)
+            if not spans:
+                out.append(line)
+                continue
+            kept = line
+            for start, end in sorted(spans, reverse=True):
+                tail = kept[end:]
+                kept = kept[:start].rstrip() + (tail if tail.strip() else "")
+            out.append(kept if kept else (marker if line.strip() else line))
             continue
         quote = None
         cut = None
@@ -1798,19 +1828,87 @@ def check_prod_real_pqc(root: pathlib.Path) -> list[Finding]:
 # this needs a DB-backed test, not just this static check.) The grant boundary
 # already stops DDL; this stops DML smuggled through the console.
 # ---------------------------------------------------------------------------
+def _sql_console_readonly_problem(fn: ast.FunctionDef) -> str | None:
+    """Why sql_query does not set its connection read-only before its first statement, or None.
+
+    Read from the syntax tree, statements that run only (a branch on a constant false, a nested
+    function and a string are not code that runs): a connection opened with `.connect(...)`, made
+    read-only by `set_session(readonly=True)` or `.readonly = True`, the cursor the query runs on
+    taken from that same connection, and the read-only statement before the first `.execute(`.
+    (2026-10-09: the check matched the call's name in the handler's docstring and passed with the
+    call deleted; a regex then still passed it in a string, under `if False:` and on another
+    connection.)"""
+    stmts: list[ast.stmt] = []
+
+    def walk(body):
+        for s in body:
+            if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(s, (ast.If, ast.While)) and isinstance(s.test, ast.Constant):
+                walk(s.body if s.test.value else s.orelse)
+                continue
+            stmts.append(s)
+            for field in ("body", "orelse", "finalbody", "handlers"):
+                walk(getattr(s, field, []) or [])
+
+    walk(fn.body)
+    connections, readonly, cursors, executes = set(), [], set(), []
+    for s in stmts:
+        if isinstance(s, ast.Assign) and isinstance(s.value, ast.Call) and \
+                isinstance(s.value.func, ast.Attribute) and s.value.func.attr == "connect":
+            connections |= {t.id for t in s.targets if isinstance(t, ast.Name)}
+        if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call) and isinstance(s.value.func, ast.Attribute) \
+                and s.value.func.attr == "set_session" and isinstance(s.value.func.value, ast.Name) and any(
+                    k.arg == "readonly" and isinstance(k.value, ast.Constant) and k.value.value is True
+                    for k in s.value.keywords):
+            readonly.append((s.value.func.value.id, s.lineno))
+        if isinstance(s, ast.Assign) and isinstance(s.value, ast.Constant) and s.value.value is True and any(
+                isinstance(t, ast.Attribute) and t.attr == "readonly" and isinstance(t.value, ast.Name)
+                for t in s.targets):
+            readonly += [(t.value.id, s.lineno) for t in s.targets if isinstance(t, ast.Attribute)]
+        heads = [s] if not isinstance(s, (ast.With, ast.For, ast.While, ast.If, ast.Try)) else \
+            [*getattr(s, "items", []), getattr(s, "test", None), getattr(s, "iter", None)]
+        for head in [h for h in heads if h is not None]:
+            for node in ast.walk(head):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                    if node.func.attr == "cursor" and isinstance(node.func.value, ast.Name):
+                        cursors.add(node.func.value.id)
+                    if node.func.attr == "execute":
+                        executes.append(node.lineno)
+    first_execute = min(executes) if executes else None
+    ok = [(name, line) for name, line in readonly if name in connections and name in cursors]
+    if not ok:
+        return ("no statement that runs makes the connection the query's cursor comes from read-only "
+                "(conn = psycopg2.connect(...); conn.set_session(readonly=True); conn.cursor())")
+    if first_execute is not None and min(line for _, line in ok) > first_execute:
+        return "the connection is made read-only only after the first execute, which has already opened a transaction"
+    return None
+
+
 def check_sql_console_readonly(root: pathlib.Path) -> list[Finding]:
-    app = _read_app(root)
-    if not app:
+    web = root / "polaris_web"
+    if not web.is_dir():
         return _fail("sql_console_ro", "polaris_web/ is missing")
-    m = re.search(r"def sql_query\(.*?\n(?=@app\.route|def [a-z])", app, re.S)
-    body = m.group(0) if m else ""
-    if not body:
+    fn = None
+    for path in sorted(web.glob("*.py")):
+        if path.name.startswith("test_"):
+            continue
+        raw = path.read_text(errors="replace")
+        if "def sql_query(" not in raw:
+            continue
+        try:
+            tree = ast.parse(raw)
+        except SyntaxError:
+            return _fail("sql_console_ro", f"{path.name} defines sql_query but does not parse")
+        fn = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "sql_query"), fn)
+    if fn is None:
         return _fail("sql_console_ro", "could not locate the sql_query console handler")
-    if not re.search(r"set_session\(\s*readonly\s*=\s*True", body):
+    problem = _sql_console_readonly_problem(fn)
+    if problem:
         return _fail("sql_console_ro",
-                     "the /sql console must call conn.set_session(readonly=True) before any "
-                     "statement so the database refuses writes — the SELECT/WITH keyword "
-                     "whitelist alone is bypassable by a data-modifying CTE")
+                     "the /sql console must make its connection read-only before any statement so the database "
+                     "refuses writes (the SELECT/WITH keyword whitelist alone is bypassable by a data-modifying "
+                     "CTE): " + problem)
     return _ok("sql_console_ro",
                "the /sql console sets the session READ ONLY at the DB level "
                "(CTE-smuggled writes are refused by Postgres, not just the keyword gate)")
@@ -6588,6 +6686,10 @@ _SYNC_REPLICATION_NEEDLES = (
     ("deploy/helm/polaris/templates/postgres.yaml", "POLARIS_PATRONI_SYNCHRONOUS_MODE",
      "pass the chart's setting to its members"),
     ("scripts/polaris-failover-drill.sh", ".get('synchronous_mode')", "read the mode from the cluster"),
+    ("scripts/polaris-failover-drill.sh", '[[ -z "$EXPECT_SYNC" || "$SYNC" == "$EXPECT_SYNC" ]] \\\n'
+     '    || fail "synchronous_mode is $SYNC', "fail when the cluster's mode is not the one the run expects"),
+    (".github/workflows/ci.yml", 'POLARIS_FAILOVER_EXPECT_SYNC: "on"\n        run: bash scripts/polaris-failover-drill.sh',
+     "run the drill CI holds gate row OP-6 to with synchronous_mode required"),
     ("scripts/polaris-failover-drill.sh", "with synchronous_mode on, a failover must lose none",
      "fail on an acknowledged insert lost with synchronous_mode on"),
     ("scripts/polaris-failover-drill.sh", 'wait_for 60 sync_standby_is "$r" "$l"',
@@ -7026,7 +7128,12 @@ _FRESH_HOST_CI = (
     ("/api/v1/trust-list/1", "read the key back from the published trust list"),
     ("sudo scripts/polaris-rp-register.sh", "register the relying party as the operator would"),
     ('v.get("decision") == "accept"', "require the relying party's online verification to accept"),
-    ("operator inputs 5", "report the operator's inputs"),
+    ("operator inputs 5 to the offline verification", "report the operator's inputs"),
+    ("/tmp/op2-venv/bin/polaris-verify --pqc-provider auto --issuer-anchor /tmp/op2-anchors.json --pack /tmp/op2-pack.json \\\n"
+     '            || { echo "::error::polaris-verify from PyPI did not verify', "verify the credential offline with "
+     "polaris-verify from PyPI, and fail when it does not"),
+    ('[ "$total" -le 900 ] \\\n            || { echo "::error::gate row OP-2',
+     "fail past the 15 minutes gate row OP-2 allows, not only print the time"),
     ("/tmp/op2-install-start", "time the fresh host from the install"),
     ("set -o pipefail\n          date +%s > /tmp/op2-install-start", "fail when install.sh fails, not when tee does"),
     ("no authority key is registered yet", "show the doctor asking for the registration on a fresh host"),
@@ -7046,8 +7153,9 @@ def check_fresh_host_reaches_online_verification(root: pathlib.Path) -> list[Fin
     _issuer_key_facts by test_app); LINUX-SERVER.md and DEPLOYMENT.md give it. The linux-install
     job's fresh-host drill (gate row OP-2) fails with install.sh, sees the doctor ask for the
     registration, registers the key, reads it back from the trust list, issues through the console,
-    has a relying party verify online with its secret kept out of the log, sees the doctor read the
-    register clean, and reports the inputs and the time; rotate.sh shows a credential issued before
+    has polaris-verify from PyPI verify it offline and a relying party online with its secret kept out
+    of the log, sees the doctor read the register clean, reports the inputs and the time, and fails past
+    fifteen minutes; rotate.sh shows a credential issued before
     the registration verifying after it."""
     name = "fresh_host_verification"
     problems = []
@@ -7069,7 +7177,7 @@ def check_fresh_host_reaches_online_verification(root: pathlib.Path) -> list[Fin
                      "says its key, `register --current` registers the first key from its first signature and "
                      "never rotates, relying parties register on the stack as the owner, install/deploy/doctor/docs "
                      "name the step, the doctor judges credentials by their key, and the linux-install job walks "
-                     "it to an online accept with the inputs counted")
+                     "it to an offline and an online accept, with the inputs listed and fifteen minutes enforced")
 
 
 # 2026-10-07 (lab record 017, phase 4b): rotating the session key logs nobody out. Before it,
@@ -21923,7 +22031,58 @@ def check_accessibility(root: pathlib.Path) -> list[Finding]:
 # every citation in any row resolves (a check that exists, a test file and name, a drill or file
 # path), the stated totals are recomputed from the rows, and the last word on real identity data
 # cannot turn PASS while the status line still says otherwise.
-_GATE_STATUSES = ("PASS", "PARTIAL", "FAIL", "UNKNOWN", "N/A")
+# The four the totals line counts (review round 2: N/A was allowed, needed no citation and was in no total, so the
+# real-identity-data row turned N/A with "1 FAIL" passed).
+_GATE_STATUSES = ("PASS", "PARTIAL", "FAIL", "UNKNOWN")
+
+# The criterion and the evidence each PASS row rests on, pinned (review of the OP-2/OP-6 rows, 2026-10-09: a PASS
+# citing any evidence that resolved passed, so OP-6 citing only the zone-loss drill did, and a PASS whose criterion was
+# reworded to ask less passed too). A row turned PASS gets its pin here, reviewed with it; every pinned citation is
+# required.
+_GATE_PASS_PINS = {
+    "OP-2": ('A fresh host reaches HTTPS and a verified credential in 15 minutes or less, with five operator inputs or fewer',
+              ("check:fresh_host_reaches_online_verification",)),
+    "OP-3": ('Every setting is validated at boot, and a wrong one stops it by name',
+              ("check:config_schema_covers_env", "test:polaris_web/test_app.py::ConfigSchemaTests")),
+    "OP-4": ('Readiness reflects what this instance can serve, and a shared failure does not empty the pool',
+              ("check:health_liveness_readiness_split",)),
+    "OP-5": ('An instance crash costs no request',
+              ("drill:scripts/polaris-rolling-drill.sh",)),
+    "OP-6": ('A database failover loses no acknowledged write',
+              ("drill:scripts/polaris-failover-drill.sh",)),
+    "OP-8": ('Internal services authenticate one another',
+              ("check:redis_authenticated", "check:ha_internal_auth")),
+    "OP-11": ('Restores are verified on a schedule and the evidence is current',
+              ("check:restore_verified_on_schedule",)),
+    "OP-12": ('A restore to a chosen point in time is tested',
+              ("drill:scripts/polaris-pitr-drill.sh", "check:pitr_drilled")),
+    "OP-13": ('Revocations made after a restore point are re-applied after the restore',
+              ("check:restore_reconciled",)),
+    "OP-15": ('Backup age, archive failure, replication lag, disk, certificate expiry and clock skew alert',
+              ("drill:lab/strategy/006/alerts.sh", "check:infra_alerts")),
+    "OP-16": ('Application metrics, alerts and traces are tested',
+              ("drill:scripts/polaris-page-drill.sh", "drill:scripts/polaris-trace-drill.sh")),
+    "OP-17": ('One command names the failing component',
+              ("check:doctor_names_failures",)),
+    "OP-18": ('Schema migrations run on every upgrade path',
+              ("check:upgrade_drilled", "check:helm_upgrade_migrates")),
+    "OP-19": ('An upgrade from the previous release is drilled',
+              ("drill:scripts/polaris-upgrade-drill.sh", "drill:scripts/polaris-helm-upgrade-drill.sh")),
+    "OP-20": ('The data-integrity rules (C1 to C10) are enforced in the schema and mutation-tested',
+              ("check:aor_append_only_triggers", "drill:scripts/polaris-constraint-mutation-drill.py")),
+    "OP-21": ('Two independent ML-DSA implementations agree at issuance',
+              ("check:pqc_second_witness",)),
+    "OP-22": ('A signature-algorithm migration is drilled',
+              ("drill:scripts/polaris-quantum-event-drill.py",)),
+    "OP-23": ('A same-algorithm signing-key rotation is drilled end to end',
+              ("check:key_rotation_drilled",)),
+    "OP-24": ('Throughput is measured and a sizing guide is published',
+              ("check:throughput_measured", "file:docs/reference/SCALING.md")),
+    "OP-26": ('The client address is correct behind load balancers and NAT',
+              ("check:client_ip_behind_proxies",)),
+    "OP-27": ('Contributors need no Kubernetes',
+              ("file:Polaris.command",)),
+}
 
 
 def _gate_citation_resolves(root: pathlib.Path, kind: str, target: str) -> bool:
@@ -21948,12 +22107,23 @@ def check_operability_gate(root: pathlib.Path) -> list[Finding]:
     if "not readiness for real identity data" not in " ".join(section.split()):
         return _fail(name, "the gate must say it is not readiness for real identity data")
     rows = []
-    for line in section.splitlines():
-        if line.startswith("| OP-"):
-            cells = [c.strip() for c in line.strip().strip("|").split("|")]
-            if len(cells) != 4:
-                return _fail(name, f"gate row is not ID | criterion | status | evidence: {line[:60]}")
-            rows.append(cells)
+    # Every line of the table (from its header to the first blank line) is a row, the header or its rule, and so is
+    # any other line of the section that starts with a pipe: a row spelled `|OP-29|`, or with no leading pipe inside
+    # the table (Markdown renders both), once went uncounted.
+    lines = section.splitlines()
+    head = next((i for i, line in enumerate(lines) if re.match(r"\s*\|?\s*ID\s*\|", line)), None)
+    if head is None or head + 1 >= len(lines) or not re.fullmatch(r"\s*\|?[-:|\s]+", lines[head + 1]):
+        return _fail(name, "the gate has no table with an 'ID | Criterion | Status | Evidence' header and its rule")
+    end = next((i for i in range(head, len(lines)) if not lines[i].strip()), len(lines))
+    outside = [line for i, line in enumerate(lines) if not head <= i < end and line.lstrip().startswith("|")]
+    for line in lines[head + 2:end] + outside:
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) != 4 or not re.fullmatch(r"OP-\d+", cells[0]):
+            return _fail(name, f"gate row is not OP-N | criterion | status | evidence: {line[:60]}")
+        rows.append(cells)
+    ids = [r[0] for r in rows]
+    if len(set(ids)) != len(ids):
+        return _fail(name, f"gate rows repeat an ID: {sorted({i for i in ids if ids.count(i) > 1})}")
     if len(rows) < 10:
         return _fail(name, f"the gate has {len(rows)} rows; it must actually cover operation")
     for rid, crit, status, evidence in rows:
@@ -21971,14 +22141,26 @@ def check_operability_gate(root: pathlib.Path) -> list[Finding]:
     if ("not production-ready for real identity data" in doc
             and any(r[2] == "PASS" for r in real)):
         return _fail(name, "the real-identity-data row is PASS while the status line says it is not")
+    for rid, crit, status, evidence in rows:
+        if status != "PASS":
+            continue
+        if rid not in _GATE_PASS_PINS:
+            return _fail(name, f"{rid} is PASS with no criterion and evidence pinned for it in _GATE_PASS_PINS")
+        pinned_crit, pinned = _GATE_PASS_PINS[rid]
+        if crit != pinned_crit:
+            return _fail(name, f"{rid} is PASS under a criterion other than the pinned one ({pinned_crit!r})")
+        cited = {f"{k}:{t}" for k, t in re.findall(r"`(check|test|drill|file):([^`]+)`", evidence)}
+        missing = [e for e in pinned if e not in cited]
+        if missing:
+            return _fail(name, f"{rid} is PASS without the evidence it rests on: {', '.join(missing)}")
     m = re.search(r"(\d+) criteria: (\d+) PASS, (\d+) PARTIAL, (\d+) FAIL, (\d+) UNKNOWN", section)
     if not m:
         return _fail(name, "the gate must state its totals ('N criteria: a PASS, b PARTIAL, c FAIL, d UNKNOWN')")
     counted = (len(rows), *(sum(1 for r in rows if r[2] == st) for st in ("PASS", "PARTIAL", "FAIL", "UNKNOWN")))
     if tuple(int(g) for g in m.groups()) != counted:
         return _fail(name, f"the stated totals {m.group(0)!r} disagree with the rows {counted}")
-    return _ok(name, f"the operability gate's {len(rows)} rows have known statuses, every PASS cites "
-                     f"evidence, every citation resolves and the totals match the rows")
+    return _ok(name, f"the operability gate's {len(rows)} rows have known statuses, every PASS cites the "
+                     f"evidence pinned for it, every citation resolves and the totals match the rows")
 
 def check_assurance_mapping(root: pathlib.Path) -> list[Finding]:
     """The 800-63 mapping cites evidence that exists, and does not claim conformance (P6.2).

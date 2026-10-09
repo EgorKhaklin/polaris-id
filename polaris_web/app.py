@@ -2590,8 +2590,19 @@ def _issuer_key_facts(token_id, agency_id, token_key, signed_at=None):
     a state machine and an audit trigger but no immutability guard, and a database session can
     UPDATE it freely (measured 2026-09-17). The instant used here is the ISSUED row in
     TokenLifecycleEvent, which is an audit of record under C1: the same UPDATE is refused by
-    `reject_audit_modification`. If there is no ISSUED row, there is no trustworthy instant
-    and the historical answer is None rather than a guess.
+    `reject_audit_modification`. Where there is no ISSUED row, the credential's earliest
+    signature dates it instead, below.
+
+    NO ISSUED ROW is not a missing instant (2026-10-09). Two credentials have none: one whose
+    ISSUED row retention purged (TOKEN_LIFECYCLE goes at five years; a credential is valid for
+    ten), and one a recovery issued (uc9_complete_recovery writes its signature and no ISSUED
+    row). This answer was None for both, and the relying-party route, which accepts only True,
+    refused them while in force. A credential's first signature is written in the transaction
+    that made it, beside its ISSUED row where there is one; no purge or update reaches
+    TokenSignature (polaris_app holds no INSERT, UPDATE or DELETE on it, and its trigger refuses
+    a changed signed_at), so the earliest signed_at is the instant the credential was made, on
+    the same clock as the ISSUED row. The location the ISSUED event carried still goes with the
+    purge.
 
     A SIGNATURE ADDED LATER is dated by its own making. A migration adds a signature under
     another key long after issuance, and dating that key against the issuance instant read a
@@ -2602,9 +2613,9 @@ def _issuer_key_facts(token_id, agency_id, token_key, signed_at=None):
     transaction, so for the issuance signature the two are the same instant. Which instant an
     inserter may write is the privilege boundary's question, not this function's.
 
-    Either fact is None when it cannot be established: no key history for this authority, no
-    real signing key on the credential (the development placeholder path), or no protected
-    issuance instant. None means unknown, never false.
+    Either fact is None when it cannot be established: no key history for this authority, or
+    no real signing key on the credential (the development placeholder path). None means
+    unknown, never false.
 
     WHAT IT DOES NOT SURVIVE. `AuthorityKeyEvent.effective_at` is operator-supplied
     (`polaris key-event --effective-at`), so an authority that can write its own key history
@@ -2617,11 +2628,12 @@ def _issuer_key_facts(token_id, agency_id, token_key, signed_at=None):
     rows = query(
         """
         SELECT k.status, k.registered_at, k.retired_at, k.compromised_at,
-               (SELECT min(event_timestamp) FROM TokenLifecycleEvent
-                 WHERE token_id = %s AND event_type = 'ISSUED') AS issued_at
+               COALESCE((SELECT min(event_timestamp) FROM TokenLifecycleEvent
+                          WHERE token_id = %s AND event_type = 'ISSUED'),
+                        (SELECT min(signed_at) FROM TokenSignature WHERE token_id = %s)) AS issued_at
           FROM AuthorityKeyCurrent k
          WHERE k.agency_id = %s AND lower(k.public_key_hex) = lower(%s)
-        """, (token_id, agency_id, token_key))
+        """, (token_id, token_id, agency_id, token_key))
     if not rows:
         return None, None                      # no recorded history: unknown, not false
     k = rows[0]

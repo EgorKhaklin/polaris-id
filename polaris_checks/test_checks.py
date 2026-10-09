@@ -14,6 +14,7 @@ Run: python3 -m pytest polaris_checks/test_checks.py
 
 from __future__ import annotations
 
+import ast
 import os
 import pathlib
 import re
@@ -75,6 +76,40 @@ def test_csp_check_fails_on_unsafe_inline(tmp_path):
     sec.write_text(good + 'csp_parts.append("script-src-elem https://cdn.example")\n')
     assert checks.check_csp_forbids_unsafe_inline(tmp_path)[0].level == "FAIL", \
         "must FAIL when a later script-src-elem widens the policy"
+
+
+def test_python_comments_are_cut_where_the_tokenizer_says():
+    """The checks read Python with its comments blanked. A `#` inside a triple-quoted string is
+    text, not a comment: cutting there took a docstring's closing quotes, and the file no longer
+    parsed as the checks read it (2026-10-09)."""
+    src = ('def f():\n'
+           '    """A docstring that names a pull request\n'
+           '    (review of #318)."""\n'
+           '    x = "a # in a string"  # a real comment\n'
+           '    # a whole-line comment\n'
+           '    return x\n')
+    out = checks._strip_comments_for("m.py", src)
+    ast.parse(out)
+    assert '(review of #318)."""' in out, "a # inside a multi-line string must stay, with the quotes after it"
+    assert '"a # in a string"' in out and "a real comment" not in out and "whole-line comment" not in out, out
+    assert out.count("\n") == src.count("\n"), "line numbers must not move"
+    # A comment ends at a lone carriage return, which Python reads as a line break: the code after it stays.
+    assert checks._strip_comments_for("m.py", "x = 1  # c\ry = 2\n") == "x = 1\ry = 2\n"
+    # The tree: every Python file that parses as written still parses as the checks read it.
+    broken = []
+    for p in sorted(REPO.rglob("*.py")):
+        if any(part in (".git", "node_modules", ".venv", "venv") for part in p.parts):
+            continue
+        raw = p.read_text(errors="replace")
+        try:
+            ast.parse(raw)
+        except SyntaxError:
+            continue
+        try:
+            ast.parse(checks._strip_comments_for(p.name, raw))
+        except SyntaxError as e:
+            broken.append(f"{p.relative_to(REPO)}:{e.lineno}")
+    assert not broken, "stripping comments broke these files as the checks read them: " + ", ".join(broken)
 
 
 def test_c6_app_read_paths_check_discriminates(tmp_path):
@@ -2422,12 +2457,13 @@ def test_operability_gate_check_discriminates(tmp_path):
     docs = tmp_path / "docs"
     docs.mkdir()
     (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts" / "drill.sh").write_text("#!/bin/sh\n")
+    (tmp_path / "scripts" / "polaris-rolling-drill.sh").write_text("#!/bin/sh\n")
     ready = docs / "PRODUCTION-READINESS.md"
-    rows = ["| OP-%d | Criterion %d | FAIL | not built |" % (i, i) for i in range(1, 9)]
-    rows += ["| OP-9 | A crash costs no request | PASS | `drill:scripts/drill.sh` |",
-             "| OP-10 | Rules in the schema | PASS | `check:aor_append_only_triggers` |",
-             "| OP-11 | Real identity data | FAIL | external review, DPIA, pilot |"]
+    rows = ["| OP-%d | Criterion %d | FAIL | not built |" % (i, i) for i in range(1, 12) if i not in (4, 5)]
+    rows.insert(3, "| OP-4 | Readiness reflects what this instance can serve, and a shared failure does not empty the "
+                   "pool | PASS | `check:health_liveness_readiness_split` |")
+    rows.insert(4, "| OP-5 | An instance crash costs no request | PASS | `drill:scripts/polaris-rolling-drill.sh` |")
+    rows[-1] = "| OP-11 | Real identity data | FAIL | external review, DPIA, pilot |"
 
     def doc(rows, totals="11 criteria: 2 PASS, 0 PARTIAL, 9 FAIL, 0 UNKNOWN."):
         return ("**Status: not production-ready for real identity data.**\n\n"
@@ -2439,15 +2475,17 @@ def test_operability_gate_check_discriminates(tmp_path):
     assert checks.check_operability_gate(tmp_path)[0].level == "OK", \
         "must PASS on a gate whose PASS rows cite resolvable evidence and whose totals match"
 
-    ready.write_text(doc([r.replace("`drill:scripts/drill.sh`", "measured") for r in rows]))
+    ready.write_text(doc([r.replace("`drill:scripts/polaris-rolling-drill.sh`", "measured") for r in rows]))
     assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
         "must FAIL on a PASS row with no citation"
 
-    ready.write_text(doc([r.replace("scripts/drill.sh", "scripts/gone.sh") for r in rows]))
+    ready.write_text(doc([r.replace("not built |", "`drill:scripts/gone.sh` |", 1) if r.startswith("| OP-1 ") else r
+                          for r in rows]))
     assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
         "must FAIL on a citation that does not resolve"
 
-    ready.write_text(doc([r.replace("check:aor_append_only_triggers", "check:no_such_check") for r in rows]))
+    ready.write_text(doc([r.replace("not built |", "`check:no_such_check` |", 1) if r.startswith("| OP-1 ") else r
+                          for r in rows]))
     assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
         "must FAIL on a check citation that names no check"
 
@@ -2464,6 +2502,51 @@ def test_operability_gate_check_discriminates(tmp_path):
                           for r in rows], totals="11 criteria: 3 PASS, 0 PARTIAL, 8 FAIL, 0 UNKNOWN."))
     assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
         "must FAIL when real identity data is PASS while the status line says it is not"
+
+    # Review of the OP-2/OP-6 rows: a PASS rests on the evidence pinned for it, and every table line is counted.
+    (tmp_path / "scripts" / "polaris-zone-loss-drill.sh").write_text("#!/bin/sh\n")
+    ready.write_text(doc([r.replace("`drill:scripts/polaris-rolling-drill.sh`", "`drill:scripts/polaris-zone-loss-drill.sh`")
+                          for r in rows]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a PASS citing evidence that resolves but is not the evidence pinned for it"
+    ready.write_text(doc([r.replace("| Criterion 1 | FAIL | not built |",
+                                    "| Criterion 1 | PASS | `check:health_liveness_readiness_split` |") for r in rows],
+                         totals="11 criteria: 3 PASS, 0 PARTIAL, 8 FAIL, 0 UNKNOWN."))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a PASS row with no evidence pinned for it"
+    ready.write_text(doc(rows + ["|OP-12| Hidden | FAIL | x |"]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a row spelled without a space goes uncounted"
+    ready.write_text(doc(rows + ["| OP12 | Misnamed | FAIL | x |"], totals="12 criteria: 2 PASS, 0 PARTIAL, 10 FAIL, 0 UNKNOWN."))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a table line that is not an OP-N row"
+    ready.write_text(doc(rows[:-2] + [rows[-3].replace("| Criterion 9 |", "| Again |")] + rows[-1:],
+                         ))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL when two rows share an ID"
+
+    # Review round 2.
+    ready.write_text(doc(rows + ["OP-12 | Hidden | FAIL | x |"]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a row with no leading pipe inside the table goes uncounted"
+    ready.write_text(doc([r.replace("| Criterion 1 | FAIL |", "| Criterion 1 | N/A |") for r in rows],
+                         totals="11 criteria: 2 PASS, 0 PARTIAL, 8 FAIL, 0 UNKNOWN."))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a status the totals line does not count"
+    ready.write_text(doc([r.replace("| An instance crash costs no request |", "| An instance crash costs few requests |")
+                          for r in rows]))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a PASS row whose criterion was reworded from the pinned one"
+    both = ("| OP-8 | Internal services authenticate one another | PASS | `check:redis_authenticated`, "
+            "`check:ha_internal_auth` |")
+    three = "11 criteria: 3 PASS, 0 PARTIAL, 8 FAIL, 0 UNKNOWN."
+    ready.write_text(doc([both if r.startswith("| OP-8 ") else r for r in rows], totals=three))
+    assert checks.check_operability_gate(tmp_path)[0].level == "OK", \
+        "must PASS on a PASS row citing all the evidence pinned for it"
+    ready.write_text(doc([both.replace("`check:redis_authenticated`, ", "") if r.startswith("| OP-8 ") else r
+                          for r in rows], totals=three))
+    assert checks.check_operability_gate(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a PASS row citing only part of the evidence pinned for it"
 
 def test_ci_atlas_e2e_check_discriminates(tmp_path):
     wf = tmp_path / ".github" / "workflows"
@@ -3236,6 +3319,13 @@ def test_failover_keeps_acknowledged_writes_check_discriminates(tmp_path):
         assert checks.check_failover_keeps_acknowledged_writes(tmp_path)[0].level == "FAIL", \
             f"must FAIL when it no longer does this: {what}"
         path.write_text(good)
+    # Review round 2 of the OP-2/OP-6 rows: the expected mode's failure branch neutralized.
+    rel = "scripts/polaris-failover-drill.sh"
+    good = (tmp_path / rel).read_text()
+    (tmp_path / rel).write_text(good.replace('"$SYNC" == "$EXPECT_SYNC" ]] \\\n', '"$SYNC" == "$EXPECT_SYNC" ]] || true \\\n'))
+    assert checks.check_failover_keeps_acknowledged_writes(tmp_path)[0].level == "FAIL", \
+        "must FAIL when `|| true` lets a run that expects synchronous_mode pass without it"
+    (tmp_path / rel).write_text(good)
     # The default flipped to asynchronous is the regression this exists for.
     rel = "polaris_web/patroni-entrypoint.sh"
     good = (tmp_path / rel).read_text()
@@ -3998,21 +4088,50 @@ def test_sql_console_readonly_check_discriminates(tmp_path):
         "must FAIL on the non-functional mid-transaction SET (it does not bind the query)"
 
     # 3. Session set read-only before any statement -> OK.
-    write("    conn.set_session(readonly=True)\n"
-          "    cur.execute('SET statement_timeout = 5000')\n"
-          "    cur.execute(sql)")
+    good = ("    conn = psycopg2.connect(**DB_CONFIG)\n"
+            "    conn.set_session(readonly=True)\n"
+            "    with conn.cursor() as cur:\n"
+            "        cur.execute('SET statement_timeout = 5000')\n"
+            "        cur.execute(sql)")
+    write(good)
     assert checks.check_sql_console_readonly(tmp_path)[0].level == "OK", \
         "must PASS once the session is set read-only before any statement"
+    # The same, spelled the other ways psycopg2 takes it.
+    for form in ("conn.set_session(autocommit=False, readonly=True)", "conn.readonly = True"):
+        write(good.replace("conn.set_session(readonly=True)", form))
+        assert checks.check_sql_console_readonly(tmp_path)[0].level == "OK", f"must PASS on {form}"
+    # Review of the check: the call that does not run, or not on the query's connection, or too late.
+    for why, body in (
+            ("in a string", good.replace("    conn.set_session(readonly=True)\n",
+                                         '    _ = """\n    conn.set_session(readonly=True)\n    """\n')),
+            ("under if False", good.replace("    conn.set_session(readonly=True)\n",
+                                            "    if False:\n        conn.set_session(readonly=True)\n")),
+            ("on another connection", good.replace("    conn.set_session(readonly=True)\n",
+                                                   "    other = psycopg2.connect(**DB_CONFIG)\n"
+                                                   "    other.set_session(readonly=True)\n")),
+            ("after the first execute", good.replace("    conn.set_session(readonly=True)\n", "") +
+             "\n    conn.set_session(readonly=True)"),
+            ("in a nested function", good.replace("    conn.set_session(readonly=True)\n",
+                                                  "    def later():\n        conn.set_session(readonly=True)\n"))):
+        write(body)
+        assert checks.check_sql_console_readonly(tmp_path)[0].level == "FAIL", f"must FAIL with the call {why}"
 
     # 4. read-only set in some OTHER function, not sql_query -> FAIL (scoped to the handler).
     (web / "app.py").write_text(
-        "def sql_query():\n    cur.execute(sql)\n\n"
+        "def sql_query():\n    conn = psycopg2.connect(**DB_CONFIG)\n    with conn.cursor() as cur:\n"
+        "        cur.execute(sql)\n\n"
         "def elsewhere():\n    conn.set_session(readonly=True)\n"
     )
     assert checks.check_sql_console_readonly(tmp_path)[0].level == "FAIL", \
         "must FAIL when read-only is set outside the sql_query handler"
 
-    # 5. Missing app.py -> FAIL.
+    # 5. The call deleted, its name left in the handler's docstring -> FAIL (the docstring is not the call).
+    write('    """The session is set READ ONLY (`set_session(readonly=True)`) before any statement."""\n'
+          + good.replace("    conn.set_session(readonly=True)\n", ""))
+    assert checks.check_sql_console_readonly(tmp_path)[0].level == "FAIL", \
+        "must FAIL when only the docstring names set_session(readonly=True)"
+
+    # 6. Missing app.py -> FAIL.
     (web / "app.py").unlink()
     assert checks.check_sql_console_readonly(tmp_path)[0].level == "FAIL", \
         "must FAIL when app.py is absent"
@@ -6707,6 +6826,10 @@ def test_fresh_host_reaches_online_verification_check_discriminates(tmp_path):
     for needle, why in checks._FRESH_HOST_CI:
         f = broken(".github/workflows/ci.yml", needle, "", f"must FAIL when the linux-install job stops: {why}")
         assert "linux-install" in f.message, f.message
+    # Review round 2 of the OP-2/OP-6 rows: a failure branch neutralized while the command stays.
+    for cmd in ('--pack /tmp/op2-pack.json \\\n', '[ "$total" -le 900 ] \\\n'):
+        broken(".github/workflows/ci.yml", cmd, cmd.replace(" \\\n", " || true \\\n"),
+               f"must FAIL when `|| true` keeps the job green past {cmd.strip()!r}")
     # A missing file is a failure, not a pass.
     (tmp_path / "scripts/polaris-rp-register.sh").unlink()
     f = checks.check_fresh_host_reaches_online_verification(tmp_path)[0]

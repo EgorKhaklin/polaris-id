@@ -73,9 +73,12 @@ kubectl -n "${NS}" create secret generic polaris-secrets --from-file="${ROOT}/po
 ok "cluster up, eight images loaded, namespace restricted"
 
 diagnose() {
+    # Every command may fail (a pod with no log yet): under pipefail one that did ended the drill here, before
+    # the fail that names what broke. A Pending pod has no log, only the scheduler's reasons.
     kubectl -n "${NS}" get pods,jobs -o wide >&2 || true
-    for p in $(kubectl -n "${NS}" get pods -o name); do
-        echo "== ${p} ==" >&2; kubectl -n "${NS}" logs "${p}" --tail=15 2>&1 | sed 's/^/    /' >&2
+    { kubectl -n "${NS}" get events --sort-by=.lastTimestamp 2>&1 || true; } | tail -20 >&2
+    for p in $(kubectl -n "${NS}" get pods -o name || true); do
+        echo "== ${p} ==" >&2; { kubectl -n "${NS}" logs "${p}" --tail=15 2>&1 || true; } | sed 's/^/    /' >&2
     done
 }
 COMMON=(--set domain=localhost --set edge.tls=internal --set secrets.existingSecret=polaris-secrets
