@@ -62,17 +62,18 @@ _COMMENT_SYNTAX = {
 _GO_TEMPLATE_COMMENT = re.compile(r"\{\{-?\s*/\*.*?\*/\s*-?\}\}", re.S)
 
 
-def _python_comment_columns(text: str) -> dict[int, int] | None:
-    """{line index: the column its comment starts at}, from Python's own tokenizer; None when
+def _python_comment_columns(text: str) -> dict[int, list[tuple[int, int]]] | None:
+    """{line index: the (start, end) columns of its comments}, from Python's own tokenizer; None when
     the text does not tokenize. A line scanner cannot know it is inside a triple-quoted string:
     a docstring line that named "review of #318" before its closing quotes lost them to it, and
     four files of the tree, checks.py and custody.py among them, no longer parsed as their checks
-    read them (2026-10-09), so a check walking their syntax tree saw nothing there."""
-    columns = {}
+    read them (2026-10-09), so a check walking their syntax tree saw nothing there. A comment ends at
+    a lone carriage return, which Python reads as a line break, so the code after one is kept."""
+    columns: dict[int, list[tuple[int, int]]] = {}
     try:
         for tok in tokenize.generate_tokens(io.StringIO(text).readline):
             if tok.type == tokenize.COMMENT:
-                columns[tok.start[0] - 1] = tok.start[1]
+                columns.setdefault(tok.start[0] - 1, []).append((tok.start[1], tok.end[1]))
     except (tokenize.TokenError, SyntaxError):
         return None
     return columns
@@ -103,11 +104,20 @@ def _strip_comments_for(rel: str, text: str) -> str:
         if lineno == 0 and line.startswith("#!"):
             out.append(line)
             continue
+        if py_columns is not None:
+            spans = py_columns.get(lineno)
+            if not spans:
+                out.append(line)
+                continue
+            kept = line
+            for start, end in sorted(spans, reverse=True):
+                tail = kept[end:]
+                kept = kept[:start].rstrip() + (tail if tail.strip() else "")
+            out.append(kept if kept else (marker if line.strip() else line))
+            continue
         quote = None
         cut = None
-        i = len(line) if py_columns is not None else 0
-        if py_columns is not None:
-            cut = py_columns.get(lineno)
+        i = 0
         while i < len(line):
             ch = line[i]
             if quote:
@@ -1818,21 +1828,87 @@ def check_prod_real_pqc(root: pathlib.Path) -> list[Finding]:
 # this needs a DB-backed test, not just this static check.) The grant boundary
 # already stops DDL; this stops DML smuggled through the console.
 # ---------------------------------------------------------------------------
+def _sql_console_readonly_problem(fn: ast.FunctionDef) -> str | None:
+    """Why sql_query does not set its connection read-only before its first statement, or None.
+
+    Read from the syntax tree, statements that run only (a branch on a constant false, a nested
+    function and a string are not code that runs): a connection opened with `.connect(...)`, made
+    read-only by `set_session(readonly=True)` or `.readonly = True`, the cursor the query runs on
+    taken from that same connection, and the read-only statement before the first `.execute(`.
+    (2026-10-09: the check matched the call's name in the handler's docstring and passed with the
+    call deleted; a regex then still passed it in a string, under `if False:` and on another
+    connection.)"""
+    stmts: list[ast.stmt] = []
+
+    def walk(body):
+        for s in body:
+            if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(s, (ast.If, ast.While)) and isinstance(s.test, ast.Constant):
+                walk(s.body if s.test.value else s.orelse)
+                continue
+            stmts.append(s)
+            for field in ("body", "orelse", "finalbody", "handlers"):
+                walk(getattr(s, field, []) or [])
+
+    walk(fn.body)
+    connections, readonly, cursors, executes = set(), [], set(), []
+    for s in stmts:
+        if isinstance(s, ast.Assign) and isinstance(s.value, ast.Call) and \
+                isinstance(s.value.func, ast.Attribute) and s.value.func.attr == "connect":
+            connections |= {t.id for t in s.targets if isinstance(t, ast.Name)}
+        if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call) and isinstance(s.value.func, ast.Attribute) \
+                and s.value.func.attr == "set_session" and isinstance(s.value.func.value, ast.Name) and any(
+                    k.arg == "readonly" and isinstance(k.value, ast.Constant) and k.value.value is True
+                    for k in s.value.keywords):
+            readonly.append((s.value.func.value.id, s.lineno))
+        if isinstance(s, ast.Assign) and isinstance(s.value, ast.Constant) and s.value.value is True and any(
+                isinstance(t, ast.Attribute) and t.attr == "readonly" and isinstance(t.value, ast.Name)
+                for t in s.targets):
+            readonly += [(t.value.id, s.lineno) for t in s.targets if isinstance(t, ast.Attribute)]
+        heads = [s] if not isinstance(s, (ast.With, ast.For, ast.While, ast.If, ast.Try)) else \
+            [*getattr(s, "items", []), getattr(s, "test", None), getattr(s, "iter", None)]
+        for head in [h for h in heads if h is not None]:
+            for node in ast.walk(head):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                    if node.func.attr == "cursor" and isinstance(node.func.value, ast.Name):
+                        cursors.add(node.func.value.id)
+                    if node.func.attr == "execute":
+                        executes.append(node.lineno)
+    first_execute = min(executes) if executes else None
+    ok = [(name, line) for name, line in readonly if name in connections and name in cursors]
+    if not ok:
+        return ("no statement that runs makes the connection the query's cursor comes from read-only "
+                "(conn = psycopg2.connect(...); conn.set_session(readonly=True); conn.cursor())")
+    if first_execute is not None and min(line for _, line in ok) > first_execute:
+        return "the connection is made read-only only after the first execute, which has already opened a transaction"
+    return None
+
+
 def check_sql_console_readonly(root: pathlib.Path) -> list[Finding]:
-    app = _read_app(root)
-    if not app:
+    web = root / "polaris_web"
+    if not web.is_dir():
         return _fail("sql_console_ro", "polaris_web/ is missing")
-    m = re.search(r"def sql_query\(.*?\n(?=@app\.route|def [a-z])", app, re.S)
-    body = m.group(0) if m else ""
-    if not body:
+    fn = None
+    for path in sorted(web.glob("*.py")):
+        if path.name.startswith("test_"):
+            continue
+        raw = path.read_text(errors="replace")
+        if "def sql_query(" not in raw:
+            continue
+        try:
+            tree = ast.parse(raw)
+        except SyntaxError:
+            return _fail("sql_console_ro", f"{path.name} defines sql_query but does not parse")
+        fn = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "sql_query"), fn)
+    if fn is None:
         return _fail("sql_console_ro", "could not locate the sql_query console handler")
-    # The call as a statement of its own: the handler's docstring also names it, and a match there passed with the
-    # call deleted (found when comments began to be cut by Python's tokenizer, 2026-10-09).
-    if not re.search(r"(?m)^[ \t]+\w+\.set_session\(\s*readonly\s*=\s*True\s*\)[ \t]*$", body):
+    problem = _sql_console_readonly_problem(fn)
+    if problem:
         return _fail("sql_console_ro",
-                     "the /sql console must call conn.set_session(readonly=True) before any "
-                     "statement so the database refuses writes — the SELECT/WITH keyword "
-                     "whitelist alone is bypassable by a data-modifying CTE")
+                     "the /sql console must make its connection read-only before any statement so the database "
+                     "refuses writes (the SELECT/WITH keyword whitelist alone is bypassable by a data-modifying "
+                     "CTE): " + problem)
     return _ok("sql_console_ro",
                "the /sql console sets the session READ ONLY at the DB level "
                "(CTE-smuggled writes are refused by Postgres, not just the keyword gate)")

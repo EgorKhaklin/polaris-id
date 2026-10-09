@@ -241,7 +241,7 @@ for i in $(seq 1 "$CEIL_PAGE"); do
     if grep -q '"alertname":"PolarisAppDown"' "$WORK/state/hooks.log" 2>/dev/null; then paged=$(( $(date +%s) - t0 )); break; fi
     sleep 1
 done
-[[ -n "$paged" ]] || { docker logs "$PROM" 2>&1 | tail -10 >&2; fail "PolarisAppDown never reached the sink within ${CEIL_PAGE}s of the outage"; }
+[[ -n "$paged" ]] || { { docker logs "$PROM" 2>&1 || true; } | tail -10 >&2; fail "PolarisAppDown never reached the sink within ${CEIL_PAGE}s of the outage"; }
 grep -q '"status":"firing"' "$WORK/state/hooks.log" || fail "the sink received a notification that was not a firing alert"
 elapsed=$(( $(date +%s) - t0 )); [[ "$elapsed" -ge "$OUTAGE_S" ]] || sleep $(( OUTAGE_S - elapsed ))
 compose start app app-green >/dev/null 2>&1 || fail "could not start the app colours"

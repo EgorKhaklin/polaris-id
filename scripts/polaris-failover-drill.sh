@@ -81,9 +81,9 @@ diagnose() {  # what the cluster looked like when a scenario failed; the CI job 
     for m in postgres postgres2; do
         echo "[$m] /cluster: $(rest "$m" /cluster 2>/dev/null || echo unreachable)" >&2
         echo "[$m] /patroni: $(rest "$m" /patroni 2>/dev/null || echo unreachable)" >&2
-        echo "[$m] last 40 log lines:" >&2; docker logs --tail 40 "polaris-$m" 2>&1 | sed 's/^/    /' >&2
+        echo "[$m] last 40 log lines:" >&2; { docker logs --tail 40 "polaris-$m" 2>&1 || true; } | sed 's/^/    /' >&2
     done
-    echo "[pg-router] last 15 log lines:" >&2; docker logs --tail 15 polaris-pg-router 2>&1 | sed 's/^/    /' >&2
+    echo "[pg-router] last 15 log lines:" >&2; { docker logs --tail 15 polaris-pg-router 2>&1 || true; } | sed 's/^/    /' >&2
     for e in etcd1 etcd2 etcd3; do echo "[$e] $(docker inspect -f '{{.State.Status}} health={{.State.Health.Status}}' "polaris-$e" 2>/dev/null)" >&2; done
     echo "[writer] last 12 lines:" >&2; tail -12 "$WORK/state/writes.log" 2>/dev/null | sed 's/^/    /' >&2
 }
@@ -351,7 +351,7 @@ docker rm -f "$WRITER" >/dev/null 2>&1 || true
 docker run -d --name "$WRITER" --network "$NET" \
     -e DSN="host=pgbouncer port=6432 dbname=polaris user=polaris_app password=$APP_PW sslmode=require application_name=ha_drill" \
     -v "$WORK/writer.py:/writer.py:ro" -v "$WORK/state:/state" --entrypoint python3 polaris-postgres:prod /writer.py >/dev/null
-t=$(now); wait_for 30 writes_ok_since "$t" >/dev/null || { docker logs "$WRITER" 2>&1 | tail -5 >&2; fail "the writer never completed an insert through pgbouncer and HAProxy"; }
+t=$(now); wait_for 30 writes_ok_since "$t" >/dev/null || { { docker logs "$WRITER" 2>&1 || true; } | tail -5 >&2; fail "the writer never completed an insert through pgbouncer and HAProxy"; }
 echo "  writes flowing through pgbouncer -> pg-router -> $L0"
 
 # A real admin for the verification load: production disables the demo accounts,
