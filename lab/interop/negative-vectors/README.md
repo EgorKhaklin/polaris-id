@@ -24,7 +24,9 @@ only reason to refuse it is the clause it cites:
 | `x5c` chain | a self-signed leaf, the anchor sent in the chain, an unknown root, an expired leaf, an intermediate that is not a CA |
 
 `class` says how strong the requirement is: `spec` when a sentence requires the refusal, `spec-implied`
-when the sentence binds the issuer or the wallet, or a definition implies it.
+when the sentence binds the issuer or the wallet, or a definition implies it. `layer` says whose job the
+refusal is: `jose`, `sd-jwt` (RFC 9901), `sd-jwt-vc` (the profile), `openid4vp`, or `haip-x509` (the
+issuer's certificate chain). A library that implements only some layers is judged on those alone.
 
 ## Run them
 
@@ -34,8 +36,9 @@ python3 run_vectors.py vectors.json --adapter polaris-oid4vp
 
 An adapter is one function, `(vector, settings) -> ("accept" | "reject", reason)`. `settings` holds the
 instant, nonce, audience, credential type, trust anchors (PEM) and issuer JWKs every vector assumes.
-Adding a verifier means adding its function to `run_vectors.py`. A verifier that leaves key resolution
-to its caller can still run every vector outside the `x5c` group.
+Adding a verifier means adding its function to `run_vectors.py`; it answers `n/a` for a layer it leaves to
+its caller. Adapters so far: `polaris-oid4vp`, and `sd-jwt-python` (the Python reference implementation of
+RFC 9901, run from its own venv: `pip install sd-jwt`).
 
 ## How they are made
 

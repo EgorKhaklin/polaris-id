@@ -23,6 +23,14 @@
    }
   ]
  },
+ "layers": {
+  "control": "the controls, which every verifier judges",
+  "jose": "JWS rules (RFC 7515, 7518, 8725) any JOSE verifier applies",
+  "sd-jwt": "RFC 9901, which any SD-JWT verifier applies",
+  "sd-jwt-vc": "the SD-JWT VC profile, which a verifier of SD-JWT VCs applies",
+  "openid4vp": "OpenID4VP 1.0, which a verifier receiving presentations over it applies",
+  "haip-x509": "the issuer's x5c chain under HAIP 1.0 and RFC 5280, which a verifier resolving keys from x5c applies"
+ },
  "classes": {
   "control": "a valid presentation: a correct verifier accepts it",
   "spec": "a sentence of the cited text requires the refusal",
@@ -33,6 +41,7 @@
    "id": "accept-x5c",
    "changed": "nothing: the control, issuer key from x5c chaining to the anchor",
    "class": "control",
+   "layer": "control",
    "clauses": [],
    "trust": "x5c",
    "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCbHpDQ0FUeWdBd0lCQWdJQkF6QUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dKekVsTUNNR0ExVUVBd3djVG1WbllYUnBkbVVnVm1WamRHOXljeUJVWlhOMElFbHpjM1ZsY2pCWk1CTUdCeXFHU000OUFnRUdDQ3FHU000OUF3RUhBMElBQkJsWVJ1KzNMSGRvdVplQjNOdkw2eW9ZMVNCbEtvL3JkamljOERNSk5xaksrMExIZzFhT25hTml6MnVnWkxVamM3am1rQjFmcUlXVmNXSWxPK2Y5SFZpalV6QlJNQXdHQTFVZEV3RUIvd1FDTUFBd0RnWURWUjBQQVFIL0JBUURBZ2VBTURFR0ExVWRFUVFxTUNpR0ZtaDBkSEJ6T2k4dmFYTnpkV1Z5TG1WNFlXMXdiR1dDRG1semMzVmxjaTVsZUdGdGNHeGxNQW9HQ0NxR1NNNDlCQU1DQTBrQU1FWUNJUUNaMytCYjd3cENPNE0vZjNZVTAwY0ZoQmRQV3VBdmhWR0lnSU1RVzNWNUt3SWhBTDM5emJ2Rm1rcys2SU5USmpzR2x4bGlMOTBuVmtjRkc5R3BDSEkwRXpmWiIsIk1JSUJaekNDQVEyZ0F3SUJBZ0lCQWpBS0JnZ3Foa2pPUFFRREFqQWxNU013SVFZRFZRUUREQnBPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1VtOXZkREFlRncweU5qQXhNREV3TURBd01EQmFGdzB6TURBeE1ERXdNREF3TURCYU1DMHhLekFwQmdOVkJBTU1JazVsWjJGMGFYWmxJRlpsWTNSdmNuTWdWR1Z6ZENCSmJuUmxjbTFsWkdsaGRHVXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU2ROZzVkM3VYUHE1dHlOK3Vrb2gvTUlCS2RTYWZxd2lPeFIzTEV3cTVXNmQ4cENma2tmT1RFM0ViMGtId0kvaFU3R3BCcDQyNkRMRXQ1NHlqQVNQNUVveVl3SkRBU0JnTlZIUk1CQWY4RUNEQUdBUUgvQWdFQU1BNEdBMVVkRHdFQi93UUVBd0lCQmpBS0JnZ3Foa2pPUFFRREFnTklBREJGQWlFQXltenQvbjFVTG5JbTVZVXRTaUhtZVNBU2ZDS2JjQWhrVGNaWkdOYTRHb0FDSUVhZTVnNklRTXZWbEU2YjVqM2kwdm9rbllzWW5lcjIzck5RMEFCTUtoWDMiXX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX19.cdHgUaKfZadXKMm9R2RIZCEBIKxvUXF_T7p792ClFPFWLFu-K2yUUFvVh0nCmWHoCPkYtrXDyYODfo41zCmanw~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6IkNYTFRHU1hOUC1XVUh2OTRNVEVFZ3d1M04zdFR0VGJMNFNqQUltR1d2U28ifQ.EQjv1OpipCP6X4H1St38_ssQjnyMjE8TeU4CA-FJWV9CYKqx8TsqLhsTETJJ8e4GIms3gGOUtmG2_Ein1xGqOA",
@@ -42,6 +51,7 @@
    "id": "accept-jwks",
    "changed": "nothing: the control, issuer key given as a JWK",
    "class": "control",
+   "layer": "control",
    "clauses": [],
    "trust": "jwks",
    "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsImtpZCI6Imlzc3Vlci0xIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX19.1-_gTupopcjF8692j4Yr3Ke3HleHQkohVV5gLxRDw0AlxCn3XQZNpa2M7y9NKAAqRFu-qeOCB6Va1xL1QCgAXQ~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6Im0waWRFSFNQWUVSX29hMVo2a0F5Xzk1cktGbURTSVZwQlVIMDdtdVZZdmcifQ.g3nu92Z1Nn44ekh6ytIEmR2KrGx1ZMEE4KuoRoabFrGiFBE7mK3qvsojLiaaYLef4v9oVQbvvKsiSJopGBdmew",
@@ -51,6 +61,7 @@
    "id": "issuer-crit",
    "changed": "the issuer JWT's header marks an extension critical",
    "class": "spec",
+   "layer": "jose",
    "clauses": [
     {
      "ref": "RFC 7515 s4.1.11",
@@ -65,6 +76,7 @@
    "id": "kb-crit",
    "changed": "the Key Binding JWT's header marks an extension critical",
    "class": "spec",
+   "layer": "jose",
    "clauses": [
     {
      "ref": "RFC 7515 s4.1.11",
@@ -79,6 +91,7 @@
    "id": "kb-aud-array",
    "changed": "the Key Binding JWT's aud is an array holding the right identifier",
    "class": "spec",
+   "layer": "sd-jwt",
    "clauses": [
     {
      "ref": "RFC 9901 s4.3",
@@ -93,6 +106,7 @@
    "id": "kb-aud-no-prefix",
    "changed": "the Key Binding JWT's aud is the Client Identifier without its x509_hash: prefix",
    "class": "spec",
+   "layer": "openid4vp",
    "clauses": [
     {
      "ref": "OpenID4VP 1.0 B.3.6",
@@ -107,6 +121,7 @@
    "id": "digest-twice",
    "changed": "the issuer committed to one digest twice",
    "class": "spec",
+   "layer": "sd-jwt",
    "clauses": [
     {
      "ref": "RFC 9901 s7.1 step 4",
@@ -121,6 +136,7 @@
    "id": "claim-overwrite",
    "changed": "a Disclosure names a claim the payload already holds in the clear",
    "class": "spec",
+   "layer": "sd-jwt",
    "clauses": [
     {
      "ref": "RFC 9901 s7.1 step 3.c.ii.3",
@@ -135,6 +151,7 @@
    "id": "disclosed-exp",
    "changed": "exp travels in a Disclosure instead of the payload",
    "class": "spec",
+   "layer": "sd-jwt-vc",
    "clauses": [
     {
      "ref": "SD-JWT VC draft-19 s2.2.2.3",
@@ -149,6 +166,7 @@
    "id": "disclosed-iss",
    "changed": "iss travels in a Disclosure instead of the payload",
    "class": "spec",
+   "layer": "sd-jwt-vc",
    "clauses": [
     {
      "ref": "SD-JWT VC draft-19 s2.2.2.3",
@@ -163,6 +181,7 @@
    "id": "disclosure-four-elements",
    "changed": "an object-property Disclosure with four elements",
    "class": "spec",
+   "layer": "sd-jwt",
    "clauses": [
     {
      "ref": "RFC 9901 s7.1 step 3.c.ii.1",
@@ -177,6 +196,7 @@
    "id": "disclosure-named-sd",
    "changed": "a Disclosure whose claim name is _sd",
    "class": "spec",
+   "layer": "sd-jwt",
    "clauses": [
     {
      "ref": "RFC 9901 s7.1 step 3.c.ii.2",
@@ -191,6 +211,7 @@
    "id": "kb-typ-jwt",
    "changed": "the Key Binding JWT's typ is JWT",
    "class": "spec",
+   "layer": "sd-jwt",
    "clauses": [
     {
      "ref": "RFC 9901 s7.3 step 5.d",
@@ -205,6 +226,7 @@
    "id": "kb-alg-none",
    "changed": "the Key Binding JWT is unsigned (alg none)",
    "class": "spec",
+   "layer": "sd-jwt",
    "clauses": [
     {
      "ref": "RFC 9901 s7.3 step 5.b",
@@ -219,6 +241,7 @@
    "id": "kb-alg-hs256",
    "changed": "the Key Binding JWT is an HMAC keyed with the holder's public JWK (algorithm confusion)",
    "class": "spec",
+   "layer": "jose",
    "clauses": [
     {
      "ref": "RFC 8725 s3.1",
@@ -233,6 +256,7 @@
    "id": "kb-iat-nan",
    "changed": "the Key Binding JWT's iat is NaN, which is not JSON",
    "class": "spec",
+   "layer": "sd-jwt",
    "clauses": [
     {
      "ref": "RFC 8259 s6",
@@ -247,6 +271,7 @@
    "id": "kb-exp-string",
    "changed": "the Key Binding JWT's exp is a string",
    "class": "spec-implied",
+   "layer": "sd-jwt",
    "clauses": [
     {
      "ref": "RFC 7519 s4.1.4",
@@ -261,6 +286,7 @@
    "id": "issuer-sig-der",
    "changed": "the issuer JWT's ES256 signature is DER-encoded instead of R||S",
    "class": "spec",
+   "layer": "jose",
    "clauses": [
     {
      "ref": "RFC 7518 s3.4",
@@ -275,6 +301,7 @@
    "id": "x5c-self-signed",
    "changed": "x5c holds only a self-signed leaf",
    "class": "spec-implied",
+   "layer": "haip-x509",
    "clauses": [
     {
      "ref": "HAIP 1.0 s6.1.1",
@@ -289,6 +316,7 @@
    "id": "x5c-includes-anchor",
    "changed": "x5c carries the trust anchor's own certificate",
    "class": "spec-implied",
+   "layer": "haip-x509",
    "clauses": [
     {
      "ref": "HAIP 1.0 s6.1.1",
@@ -303,6 +331,7 @@
    "id": "x5c-unknown-root",
    "changed": "the leaf chains to a root the verifier was not given",
    "class": "spec",
+   "layer": "haip-x509",
    "clauses": [
     {
      "ref": "RFC 7515 s4.1.6",
@@ -317,6 +346,7 @@
    "id": "x5c-leaf-expired",
    "changed": "the leaf expired before the verification instant",
    "class": "spec",
+   "layer": "haip-x509",
    "clauses": [
     {
      "ref": "RFC 7515 s4.1.6",
@@ -335,6 +365,7 @@
    "id": "x5c-intermediate-not-ca",
    "changed": "the intermediate in x5c is not a CA",
    "class": "spec",
+   "layer": "haip-x509",
    "clauses": [
     {
      "ref": "RFC 7515 s4.1.6",

@@ -32,7 +32,23 @@ def polaris_oid4vp(vector, settings):
     return ("accept" if verdict.authentic else "reject"), "%s: %s" % (verdict.code, verdict.reason)
 
 
-ADAPTERS = {"polaris-oid4vp": polaris_oid4vp}
+def sd_jwt_python(vector, settings):
+    """The Python reference implementation of RFC 9901 (PyPI `sd-jwt`): JOSE and SD-JWT. The SD-JWT VC
+    profile, OpenID4VP and the issuer's x5c chain are its caller's to apply."""
+    if vector["layer"] not in ("control", "jose", "sd-jwt"):
+        return "n/a", "the %s layer is the caller's" % vector["layer"]
+    from jwcrypto.jwk import JWK
+    from sd_jwt.verifier import SDJWTVerifier
+    key = JWK(**{k: v for k, v in settings["issuer_jwks"][0].items() if k in ("kty", "crv", "x", "y", "kid")})
+    try:
+        SDJWTVerifier(vector["presentation"], lambda issuer, header: key, expected_aud=settings["audience"],
+                      expected_nonce=settings["nonce"]).get_verified_payload()
+    except Exception as e:  # noqa: BLE001: the library refuses by raising
+        return "reject", "%s: %s" % (type(e).__name__, " ".join(str(e).split())[:120])
+    return "accept", ""
+
+
+ADAPTERS = {"polaris-oid4vp": polaris_oid4vp, "sd-jwt-python": sd_jwt_python}
 
 
 def main(argv=None):
@@ -50,11 +66,11 @@ def main(argv=None):
         except Exception as e:  # noqa: BLE001: an adapter that cannot judge a vector stops the run
             print("could not run %s: %s: %s" % (vector["id"], type(e).__name__, e), file=sys.stderr)
             return 2
-        ok = got == vector["expected"]
+        ok = None if got == "n/a" else got == vector["expected"]
         results.append({"id": vector["id"], "expected": vector["expected"], "got": got, "ok": ok, "reason": why})
-        print("%-4s %-26s expected %-6s got %-6s %s" % ("ok" if ok else "FAIL", vector["id"], vector["expected"], got,
-                                                       why[:90]))
-        if not ok:
+        print("%-4s %-26s expected %-6s got %-6s %s" % ({True: "ok", False: "FAIL", None: "n/a"}[ok], vector["id"],
+                                                       vector["expected"], got, why[:90]))
+        if ok is False:
             wrong.append(vector["id"])
     controls = [r for r in results if r["id"].startswith("accept-")]
     if args.json:
@@ -63,7 +79,9 @@ def main(argv=None):
     if any(not r["ok"] for r in controls):
         print("a control was refused: the refusals above measured nothing", file=sys.stderr)
         return 1
-    print("%d of %d as expected" % (len(results) - len(wrong), len(results)))
+    judged = [r for r in results if r["ok"] is not None]
+    print("%d of %d as expected; %d not applicable to this verifier" % (len(judged) - len(wrong), len(judged),
+                                                                      len(results) - len(judged)))
     return 1 if wrong else 0
 
 
