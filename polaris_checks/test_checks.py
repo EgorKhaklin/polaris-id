@@ -4522,6 +4522,19 @@ def test_read_only_roots_check_discriminates(tmp_path):
            "must FAIL when the setting is commented out")
     broken(t + "_helpers.tpl", "readOnlyRootFilesystem: true", "readOnlyRootFilesystem: false",
            "must FAIL when the chart's read-only helper allows writes")
+    # 2026-10-09 review of #315: a container written in the list-item form `- image:` was not counted.
+    broken(t + "caddy.yaml", "      containers:\n",
+           "      containers:\n        - image: busybox\n          name: sneaky\n          securityContext: {}\n",
+           "must FAIL when a container written as `- image:` has no read-only root")
+    # Round 2: the flow form, extra spaces after the dash, and an include left in a template comment.
+    broken(t + "caddy.yaml", "      containers:\n", "      containers:\n        - {name: sneaky, image: busybox}\n",
+           "must FAIL when a container written in flow form has no read-only root")
+    broken(t + "caddy.yaml", "      containers:\n", "      containers:\n        -   image: busybox\n          name: sneaky\n",
+           "must FAIL when a container written as `-   image:` has no read-only root")
+    broken(t + "caddy.yaml", "      containers:\n",
+           "      containers:\n        - name: sneaky\n          image: busybox\n          securityContext:\n"
+           "            {{/* include \"polaris.containerSecurityReadOnly\" . */}}\n",
+           "must FAIL when a container's read-only include is only a template comment")
     for svc in ("app", "caddy", "pgbouncer", "redis"):
         broken(t + svc + ".yaml", '"polaris.containerSecurityReadOnly"', '"polaris.containerSecurity"',
                f"must FAIL when the chart's {svc} container is writable")
@@ -22076,3 +22089,108 @@ def test_product_suite_parts_share_setup_check_discriminates(tmp_path):
     (gh / "ci.yml").write_text("on: push\njobs:\n" + mono)
     assert checks.check_product_suite_parts_share_setup(tmp_path)[0].level == "OK", \
         "a suite still run as one job has no copies to compare"
+
+
+def test_edge_tls_state_shared_check_discriminates(tmp_path):
+    tpl = tmp_path / "deploy" / "helm" / "polaris" / "templates"
+    tpl.mkdir(parents=True)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "docs" / "operator").mkdir(parents=True)
+    CADDYFILE = ("pki {\n  ca local {\n    root {\n      cert /etc/caddy/ca/ca.crt\n      key /etc/caddy/ca/ca.key\n"
+                 "    }\n  }\n}\ntls /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key\n"
+                 '{{- if has .Values.edge.tls (list "acme" "secret") }}\n'
+                 '  Strict-Transport-Security "max-age=63072000"\n')
+    CA = ('{{- if and (eq .Values.edge.tls "internal") (not .Values.edge.caSecret) }}\n'
+          '{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}\n'
+          '  annotations:\n    "helm.sh/resource-policy": keep\n'
+          '  {{- if and $existing (hasKey $existing.data "ca.crt") (hasKey $existing.data "ca.key") }}\n'
+          '  ca.crt: {{ index $existing.data "ca.crt" }}\n'
+          '  ca.key: {{ index $existing.data "ca.key" }}\n'
+          '  {{- else }}\n'
+          '  {{- $ca := genCA "root" 3650 }}\n')
+    DEPLOY = ('{{- if and (eq .Values.edge.tls "acme") (gt (int .Values.edge.replicas) 1) }}\n'
+              '{{- fail "edge.tls=acme serves one replica" }}\n{{- end }}\n'
+              '  strategy:\n    type: Recreate\n'
+              '        - name: tls-reload\n          args:\n            - |\n              seen=""\n'
+              '              caddy reload --force --config /etc/caddy/Caddyfile\n        {{- end }}\n'
+              '            claimName: {{ include "polaris.fullname" . }}-caddy-acme\n'
+              '            secretName: {{ .Values.edge.caSecret | default (printf "%s-edge-ca" (include "polaris.fullname" .)) }}\n')
+    DRILL = ('kubectl -n "$NS" port-forward "$pod" 18444:8443\n'
+             'served "$p" --cacert /tmp/polaris-edge-ca.crt\n'
+             'echo "  ${victim#pod/} replaced: $n replicas still verify"\n'
+             'fail "the edge still served the old certificate 240 s after the Secret was renewed"\n'
+             # each guard as scripts/polaris-helm-drill.sh writes it
+             + '[ "$(kubectl -n "$NS" get secret "${REL}-edge-ca" -o jsonpath=\'{.data.ca\\.crt}\')" = "$root_before" ] \\\n'
+               '    || fail "helm upgrade replaced the edge root\n'
+             + "if grep -qi '^strict-transport-security' /tmp/polaris-internal.hdr; then\n"
+               '    fail "the edge sends Strict-Transport-Security under the internal root\n'
+             + "-o jsonpath='{range .items[*]}{.metadata.name}{range .status.containerStatuses[*]} {.restartCount}{end}\n"
+             + '[ "$(restarts)" = "$before_renewal" ] || { echo "$before_renewal"; restarts; fail "an edge pod restarted\n'
+             + 'grep -q "edge.tls=acme serves one replica" /tmp/polaris-acme.err \\\n'
+               '    || { cat /tmp/polaris-acme.err; fail "edge.tls=acme with two replicas failed to render for another reason"; }\n'
+             + 'if grep -q "name: ${REL}-edge-ca\\$" /tmp/polaris-casecret.yaml || grep -q "secretName: ${REL}-edge-ca\\$" /tmp/polaris-casecret.yaml \\\n'
+               '        || ! grep -q "secretName: operator-edge-root" /tmp/polaris-casecret.yaml; then\n'
+               '    fail "with edge.caSecret the chart must mount that Secret\n'
+             + '    [ "$n" -ge 2 ] || fail "expected two edge replicas, found $n"\n'
+             + '    pods=$(edge_pods) || return 1\n'
+               '    for p in $pods; do [ "$(served "$p" -k || true)" = "$want" ] || return 1; n=$((n + 1)); done\n'
+               '    [ "$n" -ge 2 ]\n'
+               '}\n')
+    DOC = "--set edge.tls=secret ... kubectl get secret polaris-edge-ca ... edge.caSecret\n"
+
+    def write(caddyfile=CADDYFILE, ca=CA, deploy=DEPLOY, drill=DRILL, doc=DOC):
+        (tpl / "configmap-caddy.yaml").write_text(caddyfile)
+        (tpl / "edge-ca.yaml").write_text(ca)
+        (tpl / "caddy.yaml").write_text(deploy)
+        (tmp_path / "scripts" / "polaris-helm-drill.sh").write_text(drill)
+        (tmp_path / "docs" / "operator" / "KUBERNETES.md").write_text(doc)
+
+    write()
+    assert checks.check_edge_tls_state_shared(tmp_path)[0].level == "OK", "must PASS on the shared edge state"
+    broken = [
+        dict(caddyfile=CADDYFILE.replace("cert /etc/caddy/ca/ca.crt", "cert /data/root.crt")),
+        dict(caddyfile=CADDYFILE.replace("tls /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key\n", "tls internal\n")),
+        dict(caddyfile=CADDYFILE.replace('(list "acme" "secret")', '(list "acme")')),
+        dict(ca=CA.replace("lookup", "nothing")),
+        # 2026-10-09 review of #315: the reuse branch disabled, the operator's root ignored, the acme refusal
+        # removed while other fails remain, and each drill guard removed in turn.
+        dict(ca=CA.replace("if and $existing (hasKey", "if and false $existing (hasKey")),
+        # Round 2: genCA inside the reuse branch; `$existing` assigned anything but the lookup,
+        # with the lookup left in a template comment.
+        dict(ca=CA.replace('  ca.crt: {{ index $existing.data "ca.crt" }}\n',
+                           '  {{- $ca := genCA "root" 3650 }}\n  ca.crt: {{ $ca.Cert | b64enc }}\n')),
+        dict(ca=CA.replace('{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}\n',
+                           '{{- /* $existing := (lookup "v1" "Secret" .Release.Namespace $name) */}}\n'
+                           '{{- $existing := dict }}\n')),
+        dict(ca=CA.replace(" (not .Values.edge.caSecret)", "")),
+        dict(deploy=DEPLOY.replace(".Values.edge.caSecret | default ", "")),
+        dict(deploy=DEPLOY.replace('{{- fail "edge.tls=acme serves one replica" }}\n',
+                                   '{{- /* fail "edge.tls=acme serves one replica" */}}\n{{- fail "other" }}\n')),
+        # Round 2: each guard's condition turned to `true` with its failure message kept.
+        dict(drill=DRILL.replace('[ "$(kubectl -n "$NS" get secret "${REL}-edge-ca" -o jsonpath=\'{.data.ca\\.crt}\')"'
+                                 ' = "$root_before" ]', "true")),
+        dict(drill=DRILL.replace("if grep -qi '^strict-transport-security' /tmp/polaris-internal.hdr; then",
+                                 "if false; then")),
+        dict(drill=DRILL.replace("{.restartCount}", "{.ready}")),
+        dict(drill=DRILL.replace('[ "$(restarts)" = "$before_renewal" ]', "true")),
+        dict(drill=DRILL.replace('grep -q "edge.tls=acme serves one replica" /tmp/polaris-acme.err', "true")),
+        dict(drill=DRILL.replace('|| grep -q "secretName: ${REL}-edge-ca\\$" /tmp/polaris-casecret.yaml ', "")),
+        dict(drill=DRILL.replace('[ "$n" -ge 2 ] || fail "expected two', 'true || fail "expected two')),
+        dict(drill=DRILL.replace('    [ "$n" -ge 2 ]\n}', "    true\n}")),
+        dict(drill=DRILL.replace("pods=$(edge_pods) || return 1", "pods=$(edge_pods)")),
+        dict(doc="--set edge.tls=secret ... kubectl get secret polaris-edge-ca\n"),
+        dict(ca=CA.replace('"helm.sh/resource-policy": keep', "")),
+        dict(deploy=DEPLOY.replace("(gt (int .Values.edge.replicas) 1)", "(gt (int .Values.edge.replicas) 9)")),
+        dict(deploy=DEPLOY.replace("type: Recreate", "type: RollingUpdate")),
+        dict(deploy=DEPLOY.replace("-caddy-acme", "-caddy-data")),
+        dict(deploy=DEPLOY.replace("caddy reload --force", "caddy reload")),
+        dict(deploy=DEPLOY.replace('seen=""', "seen=$(sha256sum /etc/caddy/tls/tls.crt)")),
+        dict(drill=DRILL.replace("--cacert /tmp/polaris-edge-ca.crt", "-k")),
+        dict(drill=DRILL.replace('port-forward "$pod"', 'port-forward "svc/${REL}-caddy"')),
+        dict(drill=DRILL.replace("after the Secret was renewed", "")),
+        dict(doc="--set edge.tls=acme\n"),
+    ]
+    for case in broken:
+        write(**case)
+        assert checks.check_edge_tls_state_shared(tmp_path)[0].level == "FAIL", \
+            "must FAIL when the edge's TLS state is no longer shared: %r" % (case,)
