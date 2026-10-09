@@ -26213,23 +26213,44 @@ def check_product_sessions_pin_utc(root: pathlib.Path) -> list[Finding]:
 # a CHECK, policy or trigger condition over a zoneless column read it AT TIME ZONE 'UTC'. A
 # TIMESTAMPTZ column takes the instant itself (now()), which no zone moves. The special inputs
 # 'now', 'today', 'tomorrow' and 'yesterday', timeofday() and the LOCAL / CURRENT_DATE clocks are the
-# session's however they are written. Dynamic SQL is not read, so a DO block or a routine body that
-# creates a routine, a view, a rule, a policy or a domain, alters a routine, or sets a default that
-# way is refused. Migrations before _UTC_CLOCK_MIGRATION are released and unchangeable; that one
-# supersedes what they left (review round 1, 2026-10-09, found the forms this now reads).
+# session's however they are written, single- or dollar-quoted, and a clock function named in
+# quotes ("now"()) is the same function. A read is on the UTC clock only when AT TIME ZONE 'UTC'
+# converts it directly or through grouping parentheses: date_trunc('day', now()) AT TIME ZONE 'UTC'
+# truncates in the session's zone first. An argument default is evaluated by the caller, before the
+# routine's pin applies, so it is judged like a column default; a body that sets TimeZone through
+# SET, set_config or an UPDATE of pg_settings undoes the pin, and a set_config whose parameter name
+# is not a literal is refused because a reading cannot tell which setting it names. Dynamic SQL is
+# not executed here: a DO block or a routine body whose literal text creates a routine, a view, a
+# rule, a policy or a domain, alters a routine, or sets a default is refused, and DDL a routine
+# builds by concatenation at run time is beyond any static reading, which is why the catalog test in
+# TestTheDatabaseClockIsUtc reads the built database as well. This reads code written in good
+# faith; deliberately obfuscated SQL is the catalog test's to find. Migrations before
+# _UTC_CLOCK_MIGRATION are released and unchangeable; that one supersedes what they left (review
+# rounds 1 and 2, 2026-10-09, found the forms this now reads).
 _UTC_CLOCK_MIGRATION = "2026-10-09-001-instants-on-the-utc-clock"
+_CLOCK_FUNCTIONS = r"(?:now|transaction_timestamp|statement_timestamp|clock_timestamp)"
 _CLOCK_INSTANT = re.compile(r"\bCURRENT_TIMESTAMP\b(?:\s*\(\s*\d+\s*\))?"
-                            r"|\b(?:now|transaction_timestamp|statement_timestamp|clock_timestamp)\s*\(\s*\)",
-                            re.I)
+                            r"|(?:\b%s\b|\"%s\")\s*\(\s*\)" % (_CLOCK_FUNCTIONS, _CLOCK_FUNCTIONS), re.I)
 _CLOCK_LOCAL = re.compile(r"\bCURRENT_DATE\b|\b(?:CURRENT_TIME|LOCALTIME|LOCALTIMESTAMP)\b(?:\s*\(\s*\d+\s*\))?"
-                          r"|\btimeofday\s*\(\s*\)|'\s*(?:now|today|tomorrow|yesterday)\s*'", re.I)
-_AT_UTC = re.compile(r"(?:\s*\))*\s*AT\s+TIME\s+ZONE\s+'UTC'", re.I)
+                          r"|(?:\btimeofday\b|\"timeofday\")\s*\(\s*\)|'\s*(?:now|today|tomorrow|yesterday)\s*'"
+                          r"|\$(?P<tag>[A-Za-z_]\w*|)\$\s*(?:now|today|tomorrow|yesterday)\s*\$(?P=tag)\$", re.I)
+#: Words after which a parenthesis groups rather than calls: `THEN (now()) AT TIME ZONE 'UTC'` is
+#: a conversion of the read, `date_trunc('day', now()) AT TIME ZONE 'UTC'` is not.
+_GROUPING_WORDS = frozenset((
+    "SELECT", "THEN", "ELSE", "WHEN", "AND", "OR", "NOT", "DEFAULT", "IN", "IS", "BY", "ON", "WHERE",
+    "HAVING", "RETURN", "BETWEEN", "LIKE", "ILIKE", "CASE", "AS", "USING", "CHECK", "VALUES", "DISTINCT",
+    "ALL", "ANY", "SOME", "SET", "INTO", "TO", "FROM", "WITH"))
+_ZONED_ANYWHERE = re.compile(r"\b(?:TIMESTAMPTZ|TIMESTAMP\s*(?:\(\s*\d+\s*\))?\s+WITH\s+TIME\s+ZONE|TIMETZ"
+                             r"|TIME\s*(?:\(\s*\d+\s*\))?\s+WITH\s+TIME\s+ZONE)\b", re.I)
 _UTC_VALUE = r"(?:'UTC'|\"UTC\"|UTC\b)"
 _PINS_UTC = re.compile(r"\bSET\s+\"?timezone\"?\s*(?:=|TO)\s*" + _UTC_VALUE, re.I)
 _SETS_ZONE = re.compile(r"\bSET\s+\"?timezone\"?\s*(?:(?:=|TO)\s*(?!\s|" + _UTC_VALUE + r")|FROM\s+CURRENT\b)"
                         r"|\bRESET\s+(?:\"?timezone\"?|ALL)\b", re.I)
-_BODY_SETS_ZONE = re.compile(r"\bset_config\s*\(\s*'\s*timezone\s*'|\bSET\s+(?:LOCAL\s+|SESSION\s+)?"
-                             r"(?:\"?timezone\"?|TIME\s+ZONE)\b|\bRESET\s+(?:\"?timezone\"?|ALL)\b", re.I)
+_BODY_SETS_ZONE = re.compile(r"\bSET\s+(?:LOCAL\s+|SESSION\s+)?(?:\"?timezone\"?|TIME\s+ZONE)\b"
+                             r"|\bRESET\s+(?:\"?timezone\"?|ALL)\b"
+                             r"|\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+(?:pg_catalog\s*\.\s*)?\"?pg_settings\b", re.I)
+_SET_CONFIG = re.compile(r"(?:\bset_config\b|\"set_config\")\s*\(", re.I)
+_LITERAL_ARGUMENT = re.compile(r"\s*(?:[Ee]?'((?:[^']|'')*)'|\$([A-Za-z_]\w*|)\$(.*?)\$\2\$)\s*,", re.S)
 _DYNAMIC_DDL = re.compile(r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE|(?:MATERIALIZED\s+)?VIEW|RULE"
                           r"|POLICY|DOMAIN)\b|\bALTER\s+(?:FUNCTION|PROCEDURE|ROUTINE|POLICY|DOMAIN)\b"
                           r"|\bALTER\s+(?:COLUMN\s+)?\S+\s+SET\s+DEFAULT\b", re.I)
@@ -26280,17 +26301,37 @@ def _sql_lex(text: str, split: bool = True) -> list[str]:
                 j = k.end()
             cur.append(" ")
         elif tok == "'":
-            while True:
-                k = text.find("'", j)
-                if k < 0:
-                    j = n
+            s0 = m.start()
+            if s0 and text[s0 - 1] in "eE" and (s0 < 2 or not (text[s0 - 2].isalnum() or text[s0 - 2] in "_$")):
+                # E'...': a backslash escapes the next character. Kept with each escaped quote
+                # written as two, so what reads the statement afterwards sees an ordinary literal.
+                buf = []
+                while j < n:
+                    if text[j] == "\\" and j + 1 < n:
+                        buf.append("''" if text[j + 1] == "'" else text[j:j + 2])
+                        j += 2
+                    elif text.startswith("''", j):
+                        buf.append("''")
+                        j += 2
+                    elif text[j] == "'":
+                        j += 1
+                        break
+                    else:
+                        buf.append(text[j])
+                        j += 1
+                cur.append("'" + "".join(buf) + "'")
+            else:
+                while True:
+                    k = text.find("'", j)
+                    if k < 0:
+                        j = n
+                        break
+                    if text.startswith("''", k):
+                        j = k + 2
+                        continue
+                    j = k + 1
                     break
-                if text.startswith("''", k):
-                    j = k + 2
-                    continue
-                j = k + 1
-                break
-            cur.append(text[m.start():j])
+                cur.append(text[s0:j])
         elif tok == '"':
             k = text.find('"', j)
             j = n if k < 0 else k + 1
@@ -26379,13 +26420,92 @@ def _top_keyword_bodies(text: str, keyword: str) -> list[str]:
     return out
 
 
+def _paren_pairs(sql: str) -> dict[int, int]:
+    """Each closing parenthesis's index -> its opening one's, quotes respected."""
+    stack, pairs, quote = [], {}, None
+    for i, ch in enumerate(sql):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "(":
+            stack.append(i)
+        elif ch == ")" and stack:
+            pairs[i] = stack.pop()
+    return pairs
+
+
+def _utc_after(sql: str, end: int, pairs: dict[int, int]) -> bool:
+    """Whether the read ending at `end` is converted AT TIME ZONE 'UTC': directly, or through
+    parentheses that only group. A parenthesis that closes a call makes the read an argument, and
+    date_trunc('day', now()) AT TIME ZONE 'UTC' has already read the session's zone inside the call."""
+    i = end
+    while True:
+        j = i
+        while j < len(sql) and sql[j].isspace():
+            j += 1
+        if j < len(sql) and sql[j] == ")":
+            opening = pairs.get(j)
+            if opening is None:
+                return False
+            word = re.search(r"(\"[^\"]*\"|[A-Za-z_][\w$]*)\s*$", sql[:opening])
+            if word and (word.group(1).startswith('"') or word.group(1).upper() not in _GROUPING_WORDS):
+                return False
+            i = j + 1
+            continue
+        return bool(re.match(r"AT\s+TIME\s+ZONE\s+'UTC'", sql[j:], re.I))
+
+
 def _clock_reads(sql: str) -> list[tuple[str, str]]:
     """(the read, 'utc' | 'bare' | 'local') for each session-clock read in `sql`."""
-    reads = []
+    reads, pairs = [], None
     for m in _CLOCK_INSTANT.finditer(sql):
-        reads.append((m.group(0), "utc" if _AT_UTC.match(sql, m.end()) else "bare"))
+        if pairs is None:
+            pairs = _paren_pairs(sql)
+        reads.append((m.group(0), "utc" if _utc_after(sql, m.end(), pairs) else "bare"))
     reads += [(m.group(0), "local") for m in _CLOCK_LOCAL.finditer(sql)]
     return reads
+
+
+def _body_sets_zone(body: str) -> str | None:
+    """How a routine body changes TimeZone, which undoes the routine's pin, or None. A set_config
+    whose parameter name is not one literal is refused: a reading cannot tell what it names."""
+    m = _BODY_SETS_ZONE.search(body)
+    if m:
+        return re.sub(r"\s+", " ", m.group(0))
+    for call in _SET_CONFIG.finditer(body):
+        arg = _LITERAL_ARGUMENT.match(body, call.end())
+        if not arg:
+            return "set_config with a computed parameter name"
+        if (arg.group(1) if arg.group(1) is not None else arg.group(3)).strip().lower() == "timezone":
+            return "set_config('TimeZone', ...)"
+    return None
+
+
+def _argument_defaults(params: str) -> list[tuple[str, str]]:
+    """(what precedes it, the expression) for each argument of a routine signature with a DEFAULT
+    or = default."""
+    out = []
+    for param in _split_top(params):
+        depth, quote = 0, None
+        for k, ch in enumerate(param):
+            if quote:
+                quote = None if ch == quote else quote
+            elif ch in "'\"":
+                quote = ch
+            elif ch in "()":
+                depth += 1 if ch == "(" else -1
+            elif depth:
+                continue
+            elif ch == "=" and param[k - 1:k] not in ("<", ">", "!", ":"):
+                out.append((param[:k], param[k + 1:]))
+                break
+            elif (k == 0 or not (param[k - 1].isalnum() or param[k - 1] == "_")) and \
+                    re.match(r"DEFAULT\b", param[k:], re.I):
+                out.append((param[:k], param[k + len("DEFAULT"):]))
+                break
+    return out
 
 
 def _column_default(definition: str) -> tuple[str, str, str | None] | None:
@@ -26453,12 +26573,15 @@ def _routine_parts(s: str) -> tuple[str, str]:
 
 
 def check_database_instants_read_the_utc_clock(root: pathlib.Path) -> list[Finding]:
-    """In the schema sources and every migration from 2026-10-09-001 on: every routine that reads
-    the clock pins SET timezone = 'UTC' and changes no TimeZone itself; every column or domain
-    default, column type change, view, rule, and CHECK, policy or trigger condition that reads the
-    clock reads it AT TIME ZONE 'UTC' over a zoneless column (the instant itself over a TIMESTAMPTZ
-    one); and no DO block or routine body creates a routine, view, rule, policy or domain, alters a
-    routine or sets a default through dynamic SQL, which this cannot read."""
+    """In the schema sources and every migration from 2026-10-09-001 on, read as code written in good
+    faith: every routine whose body reads the clock pins SET timezone = 'UTC' and sets no TimeZone
+    in its body; the clock reads it parses in column, domain and argument defaults, column type
+    changes, views, rules, and CHECK, policy and trigger conditions read it AT TIME ZONE 'UTC' over a
+    zoneless column (the instant itself over a TIMESTAMPTZ one); and no DO block or routine body
+    creates a routine, view, rule, policy or domain, alters a routine or sets a default in the
+    literal text of dynamic SQL. DDL a routine builds by concatenation at run time, and SQL written
+    to evade a reading, are beyond a static check: the catalog test in TestTheDatabaseClockIsUtc
+    reads the built database for them."""
     name = "database_instants_read_the_utc_clock"
     sql = root / "polaris_sql"
     if not _read(root, "polaris_sql/migrations/" + _UTC_CLOCK_MIGRATION + ".up.sql").strip():
@@ -26488,11 +26611,12 @@ def check_database_instants_read_the_utc_clock(root: pathlib.Path) -> list[Findi
         base = domains.get(_sql_name(first.group(2))) if first else None
         return bool(base) and zoned(base)
 
-    def judge_value(where: str, what: str, ctype: str, expr: str | None, count: tuple | None = None):
+    def judge_value(where: str, what: str, ctype: str, expr: str | None, count: tuple | None = None,
+                    z: bool | None = None):
         reads = _clock_reads(expr or "")
         if not reads:
             return
-        z = zoned(ctype)
+        z = zoned(ctype) if z is None else z
         if count and not z:
             defaults.add(count)
         bad = [r for r, kind in reads if kind == "local" or kind == ("utc" if z else "bare")]
@@ -26531,7 +26655,8 @@ def check_database_instants_read_the_utc_clock(root: pathlib.Path) -> list[Findi
     rule = re.compile(r"^CREATE\s+(?:OR\s+REPLACE\s+)?RULE\s+(%s)" % _SQL_IDENT, re.I)
     table = re.compile(r"^CREATE\s+(?:(?:GLOBAL|LOCAL)\s+)?(?:(?:TEMP|TEMPORARY|UNLOGGED)\s+)?TABLE\s+"
                        r"(?:IF\s+NOT\s+EXISTS\s+)?%s\s*\(" % _SQL_NAME, re.I)
-    alter_table = re.compile(r"^ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?%s\s+(.*)$" % _SQL_NAME, re.I | re.S)
+    alter_table = re.compile(r"^ALTER\s+(?:TABLE|VIEW|MATERIALIZED\s+VIEW|FOREIGN\s+TABLE)\s+(?:IF\s+EXISTS\s+)?"
+                             r"(?:ONLY\s+)?%s\s+(.*)$" % _SQL_NAME, re.I | re.S)
     domain = re.compile(r"^CREATE\s+DOMAIN\s+%s\s+(?:AS\s+)?(.*)$" % _SQL_NAME, re.I | re.S)
     alter_domain = re.compile(r"^ALTER\s+DOMAIN\s+%s\s+(.*)$" % _SQL_NAME, re.I | re.S)
     policy = re.compile(r"^(?:CREATE|ALTER)\s+POLICY\s+(%s)\s+ON\s+%s(.*)$" % (_SQL_IDENT, _SQL_NAME), re.I | re.S)
@@ -26552,9 +26677,15 @@ def check_database_instants_read_the_utc_clock(root: pathlib.Path) -> list[Findi
                             pinned.add(rname)
                         else:
                             offenders.append("%s:%s reads the clock without SET timezone = 'UTC'" % (fname, rname))
-                    if _BODY_SETS_ZONE.search(body):
-                        offenders.append("%s:%s sets TimeZone in its body, which undoes its pin" % (fname, rname))
+                    sets = _body_sets_zone(body)
+                    if sets:
+                        offenders.append("%s:%s sets TimeZone in its body (%s), which undoes its pin"
+                                         % (fname, rname, sets))
                     judge_dynamic(fname, rname, body)
+                    # An argument's default is evaluated by the caller, before the routine's pin.
+                    for before, expr in _argument_defaults(_paren_body(s, r.end() - 1)):
+                        judge_value(fname, "%s argument %s DEFAULT" % (rname, re.sub(r"\s+", " ", before.strip())),
+                                    before, expr, z=bool(_ZONED_ANYWHERE.search(before)))
                 continue
             if re.match(r"DO\b", s, re.I):
                 if judged:
@@ -26676,12 +26807,14 @@ def check_database_instants_read_the_utc_clock(root: pathlib.Path) -> list[Findi
         return _fail(name, "found %d routine(s) reading the clock and %d zoneless clock default(s) under "
                            "polaris_sql/; the parse and the schema have drifted and this would pass on "
                            "nothing" % (len(readers), len(defaults)))
-    return _ok(name, "in the schema sources and the migrations from %s on: the %d routines that read the "
-                     "clock pin SET timezone = 'UTC' and set no TimeZone themselves; every clock read in a "
-                     "column or domain default, a column type change, a view, a rule, or a CHECK, policy or "
-                     "trigger condition is on the UTC clock (%d zoneless defaults, %d views, %d conditions); "
-                     "and no DO block or routine body creates a routine, view, rule, policy or domain, alters "
-                     "a routine or sets a default through dynamic SQL, which this does not otherwise read"
+    return _ok(name, "in the schema sources and the migrations from %s on, read as code written in good "
+                     "faith: the %d routines whose bodies read the clock pin SET timezone = 'UTC' and set no "
+                     "TimeZone in their bodies; the clock reads parsed in column, domain and argument "
+                     "defaults, type changes, views, rules and CHECK, policy and trigger conditions are on "
+                     "the UTC clock (%d zoneless defaults, %d views, %d conditions); no DO block or routine "
+                     "body creates a routine, view, rule, policy or domain, alters a routine or sets a "
+                     "default in literal dynamic SQL. Concatenated or deliberately obfuscated SQL is beyond "
+                     "a static reading; the catalog test reads the built database"
                      % (cut, len(pinned), len(defaults), len(viewed), len(conditions)))
 
 

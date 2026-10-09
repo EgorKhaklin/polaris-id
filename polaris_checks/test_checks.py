@@ -22244,7 +22244,33 @@ def test_database_instants_read_the_utc_clock_check_discriminates(tmp_path):
             ("a rule on the session's clock", later,
              "CREATE RULE rl AS ON INSERT TO T DO ALSO SELECT now();\n", m + "rule rl"),
             ("a type change that makes an instant default a wall clock", later,
-             "ALTER TABLE T ALTER COLUMN tz TYPE TIMESTAMP;\n", m + "T.tz TYPE")):
+             "ALTER TABLE T ALTER COLUMN tz TYPE TIMESTAMP;\n", m + "T.tz TYPE"),
+            # Review round 2 (2026-10-09): each of these passed before.
+            ("a clock function named in quotes", later,
+             'CREATE FUNCTION q1() RETURNS TIMESTAMP LANGUAGE sql AS $$ SELECT "now"() $$;\n', m + "q1"),
+            ("a clock function named in quotes as a default", later,
+             'ALTER TABLE T ALTER COLUMN at SET DEFAULT "now"();\n', m + "T.at"),
+            ("a dollar-quoted 'now' as a default", later,
+             "ALTER TABLE T ALTER COLUMN at SET DEFAULT $q$now$q$::timestamp;\n", m + "T.at"),
+            ("a dollar-quoted 'today' in a routine", later,
+             "CREATE FUNCTION q2() RETURNS DATE LANGUAGE sql AS $body$ SELECT $$today$$::date $body$;\n", m + "q2"),
+            ("a pinned body that updates pg_settings", procs,
+             routines.replace("    RETURN 1;\n", "    UPDATE pg_settings SET setting = 'Etc/GMT-14' "
+                              "WHERE name = 'TimeZone';\n    RETURN 1;\n"), "05_procedures.sql:f sets TimeZone"),
+            ("a pinned body that names the setting it changes by expression", procs,
+             routines.replace("    RETURN 1;\n", "    PERFORM set_config(lower('TIMEZONE'), 'Etc/GMT-14', true);\n"
+                              "    RETURN 1;\n"), "computed parameter name"),
+            ("an argument default on the caller's clock", later,
+             "CREATE FUNCTION pd(p_at TIMESTAMP DEFAULT now()) RETURNS TIMESTAMP LANGUAGE sql "
+             "SET timezone = 'UTC' AS $$ SELECT p_at $$;\n", m + "pd argument p_at TIMESTAMP DEFAULT"),
+            ("a read converted only after a call", later,
+             "ALTER TABLE T ALTER COLUMN at SET DEFAULT date_trunc('day', now()) AT TIME ZONE 'UTC';\n", m + "T.at"),
+            ("an E'' string that hides the next statement", later,
+             "SELECT E'\\'';\nALTER TABLE T ALTER COLUMN at SET DEFAULT now();\n", m + "T.at"),
+            ("ALTER VIEW ... SET DEFAULT on the session's clock", later,
+             "ALTER VIEW V ALTER COLUMN id SET DEFAULT now();\n", m + "V.id DEFAULT"),
+            ("ALTER FOREIGN TABLE ... SET DEFAULT on the session's clock", later,
+             "ALTER FOREIGN TABLE F ALTER COLUMN at SET DEFAULT CURRENT_TIMESTAMP;\n", m + "F.at DEFAULT")):
         path.write_text(text)
         r = checks.check_database_instants_read_the_utc_clock(tmp_path)[0]
         assert r.level == "FAIL" and named in r.message, (label, r.message)
@@ -22256,6 +22282,24 @@ def test_database_instants_read_the_utc_clock_check_discriminates(tmp_path):
     procs.write_text(routines.replace("SET timezone = 'UTC'", "SET timezone TO UTC"))
     assert checks.check_database_instants_read_the_utc_clock(tmp_path)[0].level == "OK", "an unquoted UTC is a pin"
     procs.write_text(routines)
+    # Round 2's controls: what each new rule must still let through.
+    for label, path, text in (
+            ("grouping parentheses before AT TIME ZONE", later,
+             "ALTER TABLE T ALTER COLUMN at SET DEFAULT ((now())) AT TIME ZONE 'UTC';\n"),
+            ("argument defaults on the UTC clock, and an instant on a TIMESTAMPTZ argument", later,
+             "CREATE FUNCTION pd2(p_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'), p_tz TIMESTAMPTZ = now()) "
+             "RETURNS TIMESTAMP LANGUAGE sql AS $$ SELECT p_at $$;\n"),
+            ("a pinned body setting another parameter by a literal name", procs,
+             routines.replace("    RETURN 1;\n", "    PERFORM set_config('polaris.reason_code', 'x', true);\n"
+                              "    RETURN 1;\n")),
+            ("an E'' string followed by a UTC default", later,
+             "SELECT E'it\\'s';\nALTER TABLE T ALTER COLUMN at SET DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC');\n")):
+        path.write_text(text)
+        assert checks.check_database_instants_read_the_utc_clock(tmp_path)[0].level == "OK", label
+        if path in good:
+            path.write_text(good[path])
+        else:
+            path.unlink()
     cutoff.unlink()
     r = checks.check_database_instants_read_the_utc_clock(tmp_path)[0]
     assert r.level == "FAIL" and checks._UTC_CLOCK_MIGRATION in r.message, \

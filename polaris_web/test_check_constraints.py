@@ -3588,16 +3588,64 @@ class TestTheDatabaseClockIsUtc(unittest.TestCase):
                              "deprecation_date (less its second)", zone)
 
     # The session's clock as the catalog writes it back. An instant read (CURRENT_TIMESTAMP, now()
-    # and the other *_timestamp() functions) is judged by what follows it; the LOCAL clocks,
-    # CURRENT_DATE, timeofday() and the special inputs 'now', 'today', 'tomorrow' and 'yesterday'
-    # are the session's however they are written (review round 1, 2026-10-09).
-    _INSTANT = re.compile(r"(?i)\b(?:CURRENT_TIMESTAMP|now\(\)|transaction_timestamp\(\)|statement_timestamp\(\)"
-                          r"|clock_timestamp\(\))")
-    _LOCAL = re.compile(r"(?i)\b(?:LOCALTIMESTAMP|CURRENT_DATE|LOCALTIME|CURRENT_TIME)\b|\btimeofday\(\)"
-                        r"|'\s*(?:now|today|tomorrow|yesterday)\s*'")
-    _UTC_AFTER = re.compile(r"(?i)(?:\s*\))*\s*AT TIME ZONE 'UTC'")
-    _SETS_ZONE = re.compile(r"(?i)\bset_config\s*\(\s*'\s*timezone\s*'|\bSET\s+(?:LOCAL\s+|SESSION\s+)?"
-                            r"(?:\"?timezone\"?|TIME\s+ZONE)\b")
+    # and the other *_timestamp() functions, their names quoted or not) is judged by what follows
+    # it; the LOCAL clocks, CURRENT_DATE, timeofday() and the special inputs 'now', 'today',
+    # 'tomorrow' and 'yesterday', single- or dollar-quoted, are the session's however they are
+    # written (review rounds 1 and 2, 2026-10-09).
+    _CLOCK_FUNCTIONS = r"(?:now|transaction_timestamp|statement_timestamp|clock_timestamp)"
+    _INSTANT = re.compile(r"(?i)\bCURRENT_TIMESTAMP\b|(?:\b%s\b|\"%s\")\s*\(\s*\)" % (_CLOCK_FUNCTIONS, _CLOCK_FUNCTIONS))
+    _LOCAL = re.compile(r"(?i)\b(?:LOCALTIMESTAMP|CURRENT_DATE|LOCALTIME|CURRENT_TIME)\b"
+                        r"|(?:\btimeofday\b|\"timeofday\")\s*\(\s*\)|'\s*(?:now|today|tomorrow|yesterday)\s*'"
+                        r"|\$(?P<tag>[A-Za-z_]\w*|)\$\s*(?:now|today|tomorrow|yesterday)\s*\$(?P=tag)\$")
+    #: Words after which a parenthesis groups rather than calls.
+    _GROUPING = frozenset((
+        "SELECT", "THEN", "ELSE", "WHEN", "AND", "OR", "NOT", "DEFAULT", "IN", "IS", "BY", "ON", "WHERE",
+        "HAVING", "RETURN", "BETWEEN", "LIKE", "ILIKE", "CASE", "AS", "USING", "CHECK", "VALUES", "DISTINCT",
+        "ALL", "ANY", "SOME", "SET", "INTO", "TO", "FROM", "WITH"))
+    _SETS_ZONE = re.compile(r"(?i)\bSET\s+(?:LOCAL\s+|SESSION\s+)?(?:\"?timezone\"?|TIME\s+ZONE)\b"
+                            r"|\bRESET\s+(?:\"?timezone\"?|ALL)\b"
+                            r"|\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+(?:pg_catalog\s*\.\s*)?\"?pg_settings\b")
+    _SET_CONFIG = re.compile(r"(?i)(?:\bset_config\b|\"set_config\")\s*\(")
+    _LITERAL_ARG = re.compile(r"\s*(?:[Ee]?'((?:[^']|'')*)'|\$([A-Za-z_]\w*|)\$(.*?)\$\2\$)\s*,", re.S)
+    _ZONED_TYPE = re.compile(r"(?i)\b(?:timestamp(?:\(\d+\))? with time zone|timestamptz|time(?:\(\d+\))? "
+                             r"with time zone|timetz)\b")
+
+    @staticmethod
+    def _pairs(text):
+        """Each closing parenthesis's index -> its opening one's, quotes respected."""
+        stack, pairs, quote = [], {}, None
+        for i, ch in enumerate(text):
+            if quote:
+                if ch == quote:
+                    quote = None
+            elif ch in "'\"":
+                quote = ch
+            elif ch == "(":
+                stack.append(i)
+            elif ch == ")" and stack:
+                pairs[i] = stack.pop()
+        return pairs
+
+    @classmethod
+    def _converted(cls, text, end, pairs):
+        """AT TIME ZONE 'UTC' directly after the read, or after parentheses that only group: a
+        parenthesis closing a call, as in date_trunc('day', now()) AT TIME ZONE 'UTC', leaves the
+        read an argument the call has already taken in the session's zone."""
+        i = end
+        while True:
+            j = i
+            while j < len(text) and text[j].isspace():
+                j += 1
+            if j < len(text) and text[j] == ")":
+                opening = pairs.get(j)
+                if opening is None:
+                    return False
+                word = re.search(r"(\"[^\"]*\"|[A-Za-z_][\w$]*)\s*$", text[:opening])
+                if word and (word.group(1).startswith('"') or word.group(1).upper() not in cls._GROUPING):
+                    return False
+                i = j + 1
+                continue
+            return bool(re.match(r"(?i)AT TIME ZONE 'UTC'", text[j:]))
 
     @classmethod
     def _session_reads(cls, text, zoned=()):
@@ -3607,23 +3655,69 @@ class TestTheDatabaseClockIsUtc(unittest.TestCase):
         known is judged as zoneless."""
         naive, tz = (not zoned) or not all(zoned), any(zoned)
         bad = [m.group(0) for m in cls._LOCAL.finditer(text)]
+        pairs = None
         for m in cls._INSTANT.finditer(text):
-            converted = bool(cls._UTC_AFTER.match(text, m.end()))
+            if pairs is None:
+                pairs = cls._pairs(text)
+            converted = cls._converted(text, m.end(), pairs)
             if (naive and not converted) or (tz and converted):
                 bad.append(m.group(0))
         return bad
 
+    @classmethod
+    def _sets_zone(cls, body):
+        """Whether a routine body changes TimeZone (SET, RESET, set_config, an UPDATE of
+        pg_settings) or names a setting by expression, which a reading cannot judge."""
+        if cls._SETS_ZONE.search(body):
+            return True
+        for call in cls._SET_CONFIG.finditer(body):
+            arg = cls._LITERAL_ARG.match(body, call.end())
+            if not arg:
+                return True
+            if (arg.group(1) if arg.group(1) is not None else arg.group(3)).strip().lower() == "timezone":
+                return True
+        return False
+
+    @classmethod
+    def _argument_defaults(cls, arguments):
+        """(the argument, its DEFAULT expression, whether it is TIMESTAMPTZ) from
+        pg_get_function_arguments."""
+        out, depth, quote, start = [], 0, None, 0
+        parts = []
+        for i, ch in enumerate(arguments):
+            if quote:
+                quote = None if ch == quote else quote
+            elif ch in "'\"":
+                quote = ch
+            elif ch in "()":
+                depth += 1 if ch == "(" else -1
+            elif ch == "," and depth == 0:
+                parts.append(arguments[start:i])
+                start = i + 1
+        parts.append(arguments[start:])
+        for part in parts:
+            d = re.search(r"\sDEFAULT\s", part)
+            if d:
+                out.append((part[:d.start()].strip(), part[d.end():], bool(cls._ZONED_TYPE.search(part[:d.start()]))))
+        return out
+
     def test_no_routine_default_or_view_reads_the_session_clock(self):
-        """The catalog, as the migrations leave it: every routine whose body reads the clock (prosrc,
-        or prosqlbody for a BEGIN ATOMIC one) pins TimeZone=UTC and sets no TimeZone itself; every
-        clock read in a column or domain default, a view, a CHECK constraint, a row-level policy or a
-        trigger condition is on the UTC clock, judged read by read."""
+        """The catalog, as the migrations leave it. It reads what PostgreSQL stores: routine bodies as
+        written (prosrc, and prosqlbody for a BEGIN ATOMIC one), argument defaults, column and domain
+        defaults, views, CHECK constraints, row-level policies and trigger conditions as PostgreSQL
+        deparses them, and judges each clock read on its own. A routine whose body reads the clock
+        must pin TimeZone=UTC and must not set TimeZone in its body, or name a setting by expression.
+        Because it reads the built database it sees what a migration made through dynamic or
+        concatenated SQL once that has run. It cannot see a special input such as 'now' in a view or
+        a default, which PostgreSQL freezes into a constant when the object is made (the static
+        check refuses those), nor SQL a routine builds and runs only when it is called."""
         conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
         self.addCleanup(conn.close)
         with conn.cursor() as cur:
             cur.execute("SELECT p.oid::regprocedure::text AS routine, p.prosrc || ' ' || "
                         "coalesce(CASE WHEN p.prosqlbody IS NOT NULL THEN pg_get_function_sqlbody(p.oid) END, '') "
-                        "AS body, coalesce('TimeZone=UTC' = ANY(p.proconfig), FALSE) AS pinned "
+                        "AS body, coalesce('TimeZone=UTC' = ANY(p.proconfig), FALSE) AS pinned, "
+                        "pg_get_function_arguments(p.oid) AS arguments "
                         "FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace")
             routines = cur.fetchall()
             cur.execute("SELECT c.relname || '.' || a.attname AS what, pg_get_expr(d.adbin, d.adrelid) AS expr, "
@@ -3661,8 +3755,14 @@ class TestTheDatabaseClockIsUtc(unittest.TestCase):
             self.assertIn(door, names, "the catalog query no longer sees %s read the clock" % door)
         self.assertEqual([r["routine"] for r in reads_clock if not r["pinned"]], [],
                          "these routines read the clock in the caller's TimeZone")
-        self.assertEqual([r["routine"] for r in routines if self._SETS_ZONE.search(r["body"])], [],
-                         "these routines set TimeZone in their bodies, which undoes the pin")
+        self.assertEqual([r["routine"] for r in routines if self._sets_zone(r["body"])], [],
+                         "these routines set TimeZone in their bodies, which undoes the pin, or name a "
+                         "setting by expression")
+        # An argument's default is evaluated by the caller, before the routine's pin applies.
+        self.assertEqual(["%s: %s" % (r["routine"], arg) for r in routines
+                          for arg, expr, zoned in self._argument_defaults(r["arguments"])
+                          if self._session_reads(expr, (zoned,))], [],
+                         "these argument defaults read the caller's clock")
         clocked = [d for d in defaults if self._INSTANT.search(d["expr"]) or self._LOCAL.search(d["expr"])]
         self.assertGreaterEqual(len([d for d in clocked if not d["zoned"]]), 40,
                                 "the catalog query found too few zoneless clock defaults")
