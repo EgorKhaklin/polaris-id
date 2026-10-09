@@ -6583,6 +6583,16 @@ _SYNC_REPLICATION_NEEDLES = (
      "start each scenario with the replica as the synchronous standby"),
     ("scripts/polaris-failover-drill.sh", '== 5. the replica ($R5) is lost',
      "drill the replica's loss, where synchronous replication costs a stall"),
+    ("scripts/polaris-failover-drill.sh", 'missing_on "$leader" "$WORK/acked.now"',
+     "compare acknowledged inserts by identity, read before the leader is asked, not two totals taken apart"),
+    ("scripts/polaris-failover-drill.sh", 'acked.write(token + "\\n")',
+     "record each insert's token once the database acknowledged it"),
+    ("scripts/polaris-failover-drill.sh", 'early=$(head -n "$floor" "$WORK/acked.now"',
+     "fail on any insert acknowledged before the failure began that the leader lacks"),
+    ("scripts/polaris-failover-drill.sh", '[[ "$acked" -gt 0 && "$acked" -ge "$floor" ]]',
+     "refuse an empty or short acknowledged set, which would measure nothing"),
+    ("scripts/polaris-failover-drill.sh", '[[ -z "$(tail -c1 "$2")" ]] || echo; echo',
+     "end the tokens with a newline, or COPY reads its terminator and the query as data and reports none missing"),
     ("docs/design/synchronous-replication.md", "## What it costs", "record the price"),
 )
 
@@ -8498,12 +8508,16 @@ def check_helm_reference_profile(root: pathlib.Path) -> list[Finding]:
                      "enforce NetworkPolicy, so a green run would prove nothing about the policies")
     for needle in ("pod-security.kubernetes.io/enforce=restricted", "violates PodSecurity", "polaris-postgres\", 5432",
                    "REACHED", "helm install", "/api/health", "rollout restart", "custody",
-                   "annotations.leader", "delete pod", "task pause", "switchover", "ha_marker", "inserts were acknowledged"):
+                   "annotations.leader", "delete pod", "task pause", "switchover", "ha_marker", "inserts were acknowledged",
+                   'missing_on "$L3" /tmp/polaris-acked.now', "with synchronous_mode on, a failover must lose none",
+                   'acked.write(token + "\\\\n")', 'early=$(head -n "$acked_before_freeze"',
+                   '[[ "$acked" -gt 0 && "$acked" -ge "$acked_before_freeze" ]]', '[[ -z "$(tail -c1 "$2")" ]] || echo; echo'):
         if needle not in drill:
             return _fail("helm_profile", f"polaris-helm-drill.sh must contain {needle!r} (restricted PSS enforced, a "
                          "privileged pod rejected, a probe pod denied on postgres, health incl. custody, a rolling "
                          "restart, the leader pod deleted, the leader frozen until the other member holds the lease, "
-                         "a switchover, and every acknowledged insert present afterwards)")
+                         "a switchover, and every acknowledged insert present afterwards, compared by identity, none "
+                         "lost under synchronous replication)")
     if "polaris-helm-drill.sh" not in ci or "helm/kind-action@" not in ci:
         return _fail("helm_profile", "ci.yml must install kind (helm/kind-action, pinned) and run scripts/polaris-helm-drill.sh")
     if "docs/operator/KUBERNETES.md" not in readme or "restricted" not in doc or "Calico" not in doc:
@@ -26433,6 +26447,12 @@ def _job_parts(block: str) -> tuple[str, dict[str, str]]:
     return head, out
 
 
+# The product suite's work, by what it runs: a job that runs any of it is a part, whatever its label says (review
+# of #309, 2026-10-09: a part renamed out of "Product suite:" and dropped from the gate's needs passed).
+_PRODUCT_SUITE_WORK = ("scripts/polaris-coverage.sh", "polaris-procedure-mutation-drill.py", "polaris-app-role-suite.py",
+                       "cargo test --release", "cargo llvm-cov", "polaris-zk-mutation-drill.py")
+
+
 def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
     """The product suite's parallel parts carry one setup, and its required job gates on each.
 
@@ -26472,16 +26492,24 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
         return _ok(name, "the product suite runs as one job; there are no copies to keep in step")
     problems = [f"{j} is a part of the product suite the required job does not need" for j in labelled
                 if j not in needs]
+    problems += [f"{j} runs the product suite's work but the required job does not need it"
+                 for j, b in jobs.items() if j != gate and j not in needs and any(w in b for w in _PRODUCT_SUITE_WORK)]
     problems += [f"the required job needs {j}, which ci.yml does not define" for j in needs if j not in jobs]
     if not re.search(r"(?m)^    if:\s*\$?\{?\{?\s*always\(\)", block):
         problems.append("the required job does not run `if: always()`: when a part fails it is skipped, and "
                         "GitHub reports a skipped required check as passing")
-    if "needs" not in block.split("\n    steps:\n", 1)[-1] or "success" not in block:
-        problems.append("the required job does not judge its parts' results (needs.*.result == success)")
+    # Every result, and as many as it needs: `any(... == "success")`, or a count short of the parts, passed one
+    # green part as the whole suite (review of #309).
+    judge = block.split("\n    steps:\n", 1)[-1]
+    if "toJSON(needs)" not in judge or f"len(r) == {len(needs)} and" not in judge \
+            or 'all(v == "success" for v in r.values())' not in judge:
+        problems.append(f"the required job must judge all {len(needs)} parts' results (len(r) == {len(needs)} and "
+                        "all(v == \"success\" ...)), not one of them")
     parts = [j for j in needs if j in jobs]
     split = {j: _job_parts(jobs[j]) for j in parts}
     shared = 0
-    for a, b in zip(parts, parts[1:]):
+    # Every pair, not neighbours in needs: a step two parts share that a third lacks is still compared.
+    for a, b in ((x, y) for i, x in enumerate(parts) for y in parts[i + 1:]):
         (ha, sa), (hb, sb) = split[a], split[b]
         if ha != hb:
             problems.append(f"{a} and {b} differ in their runner, services or environment")
