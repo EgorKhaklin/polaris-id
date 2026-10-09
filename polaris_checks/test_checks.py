@@ -22174,9 +22174,14 @@ def test_database_instants_read_the_utc_clock_check_discriminates(tmp_path):
         "CREATE OR REPLACE FUNCTION f() RETURNS INTEGER LANGUAGE sql AS $$ SELECT 1 WHERE now() > now() $$;\n"
         "ALTER TABLE T ALTER COLUMN at SET DEFAULT CURRENT_TIMESTAMP;\n")
     assert checks.check_database_instants_read_the_utc_clock(tmp_path)[0].level == "OK", \
-        ("pinned routines, UTC defaults and views, an instant on a TIMESTAMPTZ column, a CHECK, and a "
-         "released migration the cutoff supersedes must PASS")
+        ("pinned routines, UTC defaults and views, an instant on a TIMESTAMPTZ column and in a CHECK on one, "
+         "and a released migration the cutoff supersedes must PASS")
     good = {procs: routines, schema: table}
+    m = "2026-12-01-001-later.up.sql:"
+    dynamic_create = ("DO $$ BEGIN EXECUTE 'CREATE FUNCTION g9() RETURNS TIMESTAMP LANGUAGE sql AS "
+                      "''SELECT now()'''; END $$;\n")
+    routine_creates = ("CREATE FUNCTION mk() RETURNS VOID LANGUAGE plpgsql AS $$ BEGIN EXECUTE 'CREATE OR "
+                       "REPLACE FUNCTION g9() RETURNS INTEGER LANGUAGE sql AS ''SELECT 1'''; END $$;\n")
     for label, path, text, named in (
             ("a routine that reads the clock unpinned", procs,
              routines.replace("SET timezone = 'UTC'\n", ""), "05_procedures.sql:f"),
@@ -22190,16 +22195,56 @@ def test_database_instants_read_the_utc_clock_check_discriminates(tmp_path):
             ("a TIMESTAMPTZ default handed a wall clock", schema,
              table.replace("DEFAULT now()", "DEFAULT (now() AT TIME ZONE 'UTC')"), "T.tz"),
             ("a view on the session's clock", schema,
-             table.replace("at <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')", "at <= CURRENT_TIMESTAMP"), "01_schema.sql:V"),
+             table.replace("at <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')", "at <= CURRENT_TIMESTAMP"), "01_schema.sql:v"),
             ("a view on the session's local clock", schema,
-             table.replace("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC');\n", "LOCALTIMESTAMP;\n"), "01_schema.sql:V"),
+             table.replace("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC');\n", "LOCALTIMESTAMP;\n"), "01_schema.sql:v"),
             ("a later migration's unpinned routine", later,
-             "CREATE OR REPLACE FUNCTION h() RETURNS DATE LANGUAGE sql AS $$ SELECT now()::date $$;\n",
-             "2026-12-01-001-later.up.sql:h"),
+             "CREATE OR REPLACE FUNCTION h() RETURNS DATE LANGUAGE sql AS $$ SELECT now()::date $$;\n", m + "h"),
             ("a later migration's session-clock default", later,
-             "ALTER TABLE T ALTER COLUMN at SET DEFAULT now();\n", "2026-12-01-001-later.up.sql:T.at"),
-            ("a later migration that unpins", later, "ALTER FUNCTION f() RESET timezone;\n",
-             "2026-12-01-001-later.up.sql:f")):
+             "ALTER TABLE T ALTER COLUMN at SET DEFAULT now();\n", m + "T.at"),
+            ("a later migration that unpins", later, "ALTER FUNCTION f() RESET timezone;\n", m + "f"),
+            # Review round 1 (2026-10-09): each of these passed before.
+            ("a schema-qualified routine, the schema quoted", later,
+             'CREATE FUNCTION "public".f2() RETURNS TIMESTAMP LANGUAGE sql AS $$ SELECT now() $$;\n', m + "f2"),
+            ("a quoted routine name", later,
+             'CREATE FUNCTION public."m 3"() RETURNS TIMESTAMP LANGUAGE sql AS $$ SELECT now() $$;\n', m + "m 3"),
+            ("timestamp 'now' in a routine", later,
+             "CREATE FUNCTION f3() RETURNS TIMESTAMP LANGUAGE sql AS $$ SELECT timestamp 'now' $$;\n", m + "f3"),
+            ("'yesterday' cast to a date in a routine", later,
+             "CREATE FUNCTION f4() RETURNS DATE LANGUAGE sql AS $$ SELECT 'yesterday'::date $$;\n", m + "f4"),
+            ("'today' as a default", later, "ALTER TABLE T ALTER COLUMN at SET DEFAULT 'today'::date;\n", m + "T.at"),
+            ("CAST('tomorrow' AS timestamp) in a view", later,
+             "CREATE VIEW W WITH (security_invoker = true) AS SELECT CAST('tomorrow' AS timestamp) AS t;\n", m + "w"),
+            ("timeofday() as a default", later,
+             "ALTER TABLE T ALTER COLUMN at SET DEFAULT timeofday()::timestamp;\n", m + "T.at"),
+            ("a routine created through EXECUTE in a DO block", later, dynamic_create, m + "a DO block"),
+            ("a routine created by a routine's dynamic SQL", later, routine_creates, m + "mk"),
+            ("a pin taken from the session's zone", later,
+             "ALTER FUNCTION uc8_revoke_token(INTEGER) SET timezone FROM CURRENT;\n", m + "uc8_revoke_token"),
+            ("a pinned body that sets TimeZone through set_config", procs,
+             routines.replace("    RETURN 1;\n", "    PERFORM set_config('TimeZone', 'Etc/GMT-14', true);\n    RETURN 1;\n"),
+             "05_procedures.sql:f sets TimeZone"),
+            ("a pinned body that runs SET LOCAL timezone", procs,
+             routines.replace("    RETURN 1;\n", "    SET LOCAL timezone = 'Etc/GMT-14';\n    RETURN 1;\n"),
+             "05_procedures.sql:f sets TimeZone"),
+            ("a BEGIN ATOMIC body", later,
+             "CREATE FUNCTION a1() RETURNS TIMESTAMP LANGUAGE sql\nBEGIN ATOMIC\n  SELECT 1;\n  SELECT now();\nEND;\n",
+             m + "a1"),
+            ("a CHECK added on a zoneless column", later,
+             "ALTER TABLE T ADD CONSTRAINT k CHECK (at <= now());\n", m + "T CHECK"),
+            ("a domain default on the session's clock", later,
+             "CREATE DOMAIN stamp AS TIMESTAMP DEFAULT now();\n", m + "domain stamp DEFAULT"),
+            ("a domain CHECK on the session's clock", later,
+             "CREATE DOMAIN stamp2 AS TIMESTAMP CHECK (VALUE <= now());\n", m + "domain stamp2 CHECK"),
+            ("a policy on the session's clock", later,
+             "CREATE POLICY pol ON T USING (at <= now());\n", m + "policy pol"),
+            ("a trigger condition on the session's clock", later,
+             "CREATE TRIGGER trg BEFORE UPDATE ON T FOR EACH ROW WHEN (NEW.at <= now()) EXECUTE FUNCTION f();\n",
+             m + "trigger trg WHEN"),
+            ("a rule on the session's clock", later,
+             "CREATE RULE rl AS ON INSERT TO T DO ALSO SELECT now();\n", m + "rule rl"),
+            ("a type change that makes an instant default a wall clock", later,
+             "ALTER TABLE T ALTER COLUMN tz TYPE TIMESTAMP;\n", m + "T.tz TYPE")):
         path.write_text(text)
         r = checks.check_database_instants_read_the_utc_clock(tmp_path)[0]
         assert r.level == "FAIL" and named in r.message, (label, r.message)
@@ -22208,6 +22253,9 @@ def test_database_instants_read_the_utc_clock_check_discriminates(tmp_path):
         else:
             path.unlink()
         assert checks.check_database_instants_read_the_utc_clock(tmp_path)[0].level == "OK", "restored: " + label
+    procs.write_text(routines.replace("SET timezone = 'UTC'", "SET timezone TO UTC"))
+    assert checks.check_database_instants_read_the_utc_clock(tmp_path)[0].level == "OK", "an unquoted UTC is a pin"
+    procs.write_text(routines)
     cutoff.unlink()
     r = checks.check_database_instants_read_the_utc_clock(tmp_path)[0]
     assert r.level == "FAIL" and checks._UTC_CLOCK_MIGRATION in r.message, \

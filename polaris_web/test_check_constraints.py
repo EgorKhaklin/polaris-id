@@ -3529,10 +3529,12 @@ class TestTheDatabaseClockIsUtc(unittest.TestCase):
     def test_a_recovery_cool_down_is_judged_on_the_utc_clock(self):
         """The schema owner records a recovery as uc9_initiate_recovery would have 47 hours ago, so
         its cool-down ends an hour from now in UTC, with all three out-of-band channels. As
-        polaris_app, uc9_complete_recovery must refuse to approve it from any zone. From UTC+14
-        it approved, and wrote a decided_at that satisfied approved_after_cooldown."""
-        for zone in self.ZONES:
-            with self.subTest(zone=zone), self._owner() as cur:
+        polaris_app, uc9_complete_recovery must refuse to approve it from any zone. UTC+14 is the
+        evidence: before 2026-10-09-001 it approved from there, and wrote a decided_at that
+        satisfied approved_after_cooldown. UTC-12 is a control: a session behind UTC sees the
+        cool-down further away, so it was refused before the change too."""
+        for zone, role in (("Etc/GMT-14", "evidence"), ("Etc/GMT+12", "control, refused before the change too")):
+            with self.subTest(zone=zone, role=role), self._owner() as cur:
                 cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' AND is_active "
                             "ORDER BY user_id LIMIT 1")
                 admin = cur.fetchone()["user_id"]
@@ -3585,51 +3587,97 @@ class TestTheDatabaseClockIsUtc(unittest.TestCase):
                 self._on_utc(utc, old["deprecation_date"] - timedelta(seconds=1), "the old signature's "
                              "deprecation_date (less its second)", zone)
 
+    # The session's clock as the catalog writes it back. An instant read (CURRENT_TIMESTAMP, now()
+    # and the other *_timestamp() functions) is judged by what follows it; the LOCAL clocks,
+    # CURRENT_DATE, timeofday() and the special inputs 'now', 'today', 'tomorrow' and 'yesterday'
+    # are the session's however they are written (review round 1, 2026-10-09).
+    _INSTANT = re.compile(r"(?i)\b(?:CURRENT_TIMESTAMP|now\(\)|transaction_timestamp\(\)|statement_timestamp\(\)"
+                          r"|clock_timestamp\(\))")
+    _LOCAL = re.compile(r"(?i)\b(?:LOCALTIMESTAMP|CURRENT_DATE|LOCALTIME|CURRENT_TIME)\b|\btimeofday\(\)"
+                        r"|'\s*(?:now|today|tomorrow|yesterday)\s*'")
+    _UTC_AFTER = re.compile(r"(?i)(?:\s*\))*\s*AT TIME ZONE 'UTC'")
+    _SETS_ZONE = re.compile(r"(?i)\bset_config\s*\(\s*'\s*timezone\s*'|\bSET\s+(?:LOCAL\s+|SESSION\s+)?"
+                            r"(?:\"?timezone\"?|TIME\s+ZONE)\b")
+
+    @classmethod
+    def _session_reads(cls, text, zoned=()):
+        """The clock reads in `text` that are the session's, judged one by one: over a zoneless
+        operand an instant must be read AT TIME ZONE 'UTC'; over a TIMESTAMPTZ one, as itself.
+        `zoned` says, for each column the expression compares, whether it is TIMESTAMPTZ; none
+        known is judged as zoneless."""
+        naive, tz = (not zoned) or not all(zoned), any(zoned)
+        bad = [m.group(0) for m in cls._LOCAL.finditer(text)]
+        for m in cls._INSTANT.finditer(text):
+            converted = bool(cls._UTC_AFTER.match(text, m.end()))
+            if (naive and not converted) or (tz and converted):
+                bad.append(m.group(0))
+        return bad
+
     def test_no_routine_default_or_view_reads_the_session_clock(self):
-        """The catalog, as the migrations leave it: every routine whose body reads the clock pins
-        TimeZone=UTC; every default on a zoneless column, and every view, reads it AT TIME ZONE
-        'UTC'; a TIMESTAMPTZ default takes the instant itself."""
-        clock = (r"(\mCURRENT_TIMESTAMP\M|\mnow\s*\(\s*\)|\mLOCALTIMESTAMP\M|\mCURRENT_DATE\M|"
-                 r"\mCURRENT_TIME\M|\mLOCALTIME\M|transaction_timestamp|statement_timestamp|"
-                 r"clock_timestamp|timeofday)")
+        """The catalog, as the migrations leave it: every routine whose body reads the clock (prosrc,
+        or prosqlbody for a BEGIN ATOMIC one) pins TimeZone=UTC and sets no TimeZone itself; every
+        clock read in a column or domain default, a view, a CHECK constraint, a row-level policy or a
+        trigger condition is on the UTC clock, judged read by read."""
         conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
         self.addCleanup(conn.close)
         with conn.cursor() as cur:
-            cur.execute("SELECT p.oid::regprocedure::text AS routine, "
-                        "coalesce('TimeZone=UTC' = ANY(p.proconfig), FALSE) AS pinned "
-                        "FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prosrc ~* %s",
-                        (clock,))
+            cur.execute("SELECT p.oid::regprocedure::text AS routine, p.prosrc || ' ' || "
+                        "coalesce(CASE WHEN p.prosqlbody IS NOT NULL THEN pg_get_function_sqlbody(p.oid) END, '') "
+                        "AS body, coalesce('TimeZone=UTC' = ANY(p.proconfig), FALSE) AS pinned "
+                        "FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace")
             routines = cur.fetchall()
-            cur.execute("SELECT c.relname || '.' || a.attname AS col, pg_get_expr(d.adbin, d.adrelid) AS expr, "
-                        "a.atttypid = 'timestamptz'::regtype AS zoned "
+            cur.execute("SELECT c.relname || '.' || a.attname AS what, pg_get_expr(d.adbin, d.adrelid) AS expr, "
+                        "a.atttypid IN ('timestamptz'::regtype, 'timetz'::regtype) AS zoned "
                         "FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum "
-                        "JOIN pg_class c ON c.oid = d.adrelid "
-                        "WHERE c.relnamespace = 'public'::regnamespace AND pg_get_expr(d.adbin, d.adrelid) ~* %s",
-                        (clock,))
+                        "JOIN pg_class c ON c.oid = d.adrelid WHERE c.relnamespace = 'public'::regnamespace "
+                        "UNION ALL "
+                        "SELECT 'domain ' || t.typname, pg_get_expr(t.typdefaultbin, 0), "
+                        "t.typbasetype IN ('timestamptz'::regtype, 'timetz'::regtype) "
+                        "FROM pg_type t WHERE t.typnamespace = 'public'::regnamespace AND t.typtype = 'd' "
+                        "AND t.typdefaultbin IS NOT NULL")
             defaults = cur.fetchall()
             cur.execute("SELECT c.relname AS view, pg_get_viewdef(c.oid) AS def FROM pg_class c "
-                        "WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('v', 'm') "
-                        "AND pg_get_viewdef(c.oid) ~* %s", (clock,))
+                        "WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('v', 'm')")
             views = cur.fetchall()
+            # A CHECK names the columns it compares (conkey); a domain's CHECK compares its base type.
+            cur.execute("SELECT 'CHECK ' || k.conname AS what, pg_get_constraintdef(k.oid) AS expr, "
+                        "CASE WHEN k.contypid <> 0 THEN ARRAY[t.typbasetype IN ('timestamptz'::regtype, 'timetz'::regtype)] "
+                        "ELSE ARRAY(SELECT a.atttypid IN ('timestamptz'::regtype, 'timetz'::regtype) "
+                        "FROM pg_attribute a WHERE a.attrelid = k.conrelid AND a.attnum = ANY(k.conkey)) END AS zoned "
+                        "FROM pg_constraint k LEFT JOIN pg_type t ON t.oid = k.contypid "
+                        "WHERE k.connamespace = 'public'::regnamespace AND k.contype = 'c' "
+                        "UNION ALL "
+                        "SELECT 'policy ' || p.polname, coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' || "
+                        "coalesce(pg_get_expr(p.polwithcheck, p.polrelid), ''), ARRAY[]::boolean[] FROM pg_policy p "
+                        "UNION ALL "
+                        "SELECT 'trigger ' || g.tgname, substring(pg_get_triggerdef(g.oid) from ' WHEN (.*) EXECUTE '), "
+                        "ARRAY[]::boolean[] FROM pg_trigger g WHERE NOT g.tgisinternal AND g.tgqual IS NOT NULL")
+            conditions = cur.fetchall()
         conn.rollback()
-        names = {r["routine"].split("(")[0] for r in routines}
+        reads_clock = [r for r in routines if self._LOCAL.search(r["body"]) or self._INSTANT.search(r["body"])]
+        names = {r["routine"].split("(")[0] for r in reads_clock}
         for door in ("uc1_issue_and_activate", "uc8_revoke_token", "uc9_complete_recovery",
                      "uc6_migrate_algorithm", "audit_token_state_change", "enforce_agency_quota"):
             self.assertIn(door, names, "the catalog query no longer sees %s read the clock" % door)
-        self.assertEqual([r["routine"] for r in routines if not r["pinned"]], [],
+        self.assertEqual([r["routine"] for r in reads_clock if not r["pinned"]], [],
                          "these routines read the clock in the caller's TimeZone")
-        naive = [d for d in defaults if not d["zoned"]]
-        self.assertGreaterEqual(len(naive), 40, "the catalog query found too few zoneless clock defaults")
-        self.assertEqual([d["col"] for d in naive if "AT TIME ZONE 'UTC'" not in d["expr"]], [],
-                         "these zoneless defaults read the session's clock")
-        self.assertEqual([d["col"] for d in defaults if d["zoned"] and "AT TIME ZONE" in d["expr"]], [],
-                         "these TIMESTAMPTZ defaults are handed a wall clock the session's zone reads back")
-        bare = re.compile(r"(?i)\b(?:CURRENT_TIMESTAMP|now\(\)|transaction_timestamp\(\)|statement_timestamp\(\)"
-                          r"|clock_timestamp\(\))(?!\s*\)*\s*AT TIME ZONE 'UTC')"
-                          r"|\b(?:LOCALTIMESTAMP|CURRENT_DATE|LOCALTIME|CURRENT_TIME)\b")
-        self.assertTrue(views, "the catalog query found no view that reads the clock")
-        self.assertEqual([v["view"] for v in views if bare.search(v["def"])], [],
+        self.assertEqual([r["routine"] for r in routines if self._SETS_ZONE.search(r["body"])], [],
+                         "these routines set TimeZone in their bodies, which undoes the pin")
+        clocked = [d for d in defaults if self._INSTANT.search(d["expr"]) or self._LOCAL.search(d["expr"])]
+        self.assertGreaterEqual(len([d for d in clocked if not d["zoned"]]), 40,
+                                "the catalog query found too few zoneless clock defaults")
+        self.assertEqual([d["what"] for d in defaults if self._session_reads(d["expr"], (d["zoned"],))], [],
+                         "these defaults read the session's clock (a TIMESTAMPTZ one handed a wall clock "
+                         "reads it too)")
+        self.assertTrue([v for v in views if self._INSTANT.search(v["def"])],
+                        "the catalog query found no view that reads the clock")
+        self.assertEqual([v["view"] for v in views if self._session_reads(v["def"])], [],
                          "these views compare with the session's clock")
+        self.assertTrue([c for c in conditions if c["expr"] and self._INSTANT.search(c["expr"])],
+                        "the catalog query found no CHECK that reads the clock")
+        self.assertEqual([c["what"] for c in conditions
+                          if c["expr"] and self._session_reads(c["expr"], tuple(c["zoned"]))], [],
+                         "these conditions compare with the session's clock")
 
 
 class TestRetentionEngine(_CheckBase):

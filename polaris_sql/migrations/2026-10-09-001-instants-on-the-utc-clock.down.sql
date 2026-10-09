@@ -1,6 +1,8 @@
 -- Reverts 2026-10-09-001: the routines, the column defaults and the two views read the session's
--- clock again. The ten re-created functions keep their bodies, which are the ones the migrations
--- before this one left; only the setting goes.
+-- clock again. The ten re-created functions keep the bodies this migration gave them; only the
+-- setting goes. Nine are the bodies the migrations before this one left. uc1_issue_and_activate's
+-- differs from that one in three comment lines only: their em dashes became colons, because the
+-- tree no longer admits that dash in a new line, so the revert cannot restore them.
 
 ALTER FUNCTION polaris_utc_date() RESET timezone;
 ALTER FUNCTION uc1_issue_and_activate(VARCHAR, DATE, VARCHAR, INTEGER, INTEGER, VARCHAR, INTEGER, VARCHAR, VARCHAR, VARCHAR, VARCHAR, INTEGER[], BYTEA, TEXT) RESET timezone;
