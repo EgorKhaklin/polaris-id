@@ -172,17 +172,20 @@ le() { python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) <= float(sys.arg
 
 # --- the write stream and the read traffic ---------------------------------------
 cat > "$WORK/writer.py" <<'PYEOF'
-import os, signal, sys, time
+import os, signal, sys, time, uuid
 import psycopg
 dsn = os.environ["DSN"]; log = open("/state/writes.log", "a", buffering=1)
+acked = open("/state/acked.log", "a", buffering=1)   # one token per acknowledged insert, in order
 stop = False
 signal.signal(signal.SIGTERM, lambda *a: globals().__setitem__("stop", True))
 while not stop:
     t = time.time()   # each line: start, end, outcome; an insert queued in the pooler is a long line, not a fast one
+    token = uuid.uuid4().hex
     try:
         with psycopg.connect(dsn, connect_timeout=3, autocommit=True) as c:
-            c.execute("INSERT INTO ha_marker DEFAULT VALUES")
+            c.execute("INSERT INTO ha_marker (token) VALUES (%s)", (token,))
         log.write(f"{t:.3f} {time.time():.3f} ok\n")
+        acked.write(token + "\n")   # only after the acknowledgement
     except Exception:
         log.write(f"{t:.3f} {time.time():.3f} fail\n")
     time.sleep(0.25)
@@ -214,8 +217,14 @@ while not stop.is_set(): time.sleep(0.2)
 time.sleep(0.5)
 with open(out, "w") as fh: json.dump(stats, fh)
 PYEOF
-ok_count() { grep -c ' ok$' "$WORK/state/writes.log" 2>/dev/null || echo 0; }
+ok_count() { local n; n=$(grep -c ' ok$' "$WORK/state/writes.log" 2>/dev/null) || true; echo "${n:-0}"; }
 rows_on() { docker exec "polaris-$1" psql -h /var/run/postgresql -U postgres -d polaris -tAc "SELECT count(*) FROM ha_marker" 2>/dev/null | tr -d '[:space:]'; }
+missing_on() {  # missing_on MEMBER FILE: the tokens in FILE that MEMBER's ha_marker lacks, one per line
+    { echo "CREATE TEMP TABLE acked (token text);"; echo "COPY acked FROM STDIN;"; cat "$2"
+      [[ -z "$(tail -c1 "$2")" ]] || echo; echo '\.'
+      echo "SELECT a.token FROM acked a LEFT JOIN ha_marker m USING (token) WHERE m.token IS NULL;"; } \
+        | docker exec -i "polaris-$1" psql -h /var/run/postgresql -U postgres -d polaris -qtA -v ON_ERROR_STOP=1
+}
 replica_current() {  # replica_current MEMBER VIA: streaming with zero lag, twice a second apart
     local i; for i in 1 2; do
         replica_streaming "$1" "$2" || return 1
@@ -224,16 +233,29 @@ replica_current() {  # replica_current MEMBER VIA: streaming with zero lag, twic
     done
     return 0
 }
-ROWS0=0; SYNC=""; LOST=0; LOST_TOTAL=0
+SYNC=""; LOST=0; LOST_TOTAL=0
 no_lost_write() {  # no_lost_write FLOOR: every insert acknowledged before the failure began (FLOOR of them) is in
                    # the surviving history. Inserts acknowledged after it began are the asynchronous replication's
                    # RPO (FAILOVER.md section 6) and are reported; with synchronous_mode on (gate row OP-6) a
                    # commit returned only once the replica held it, so none may be missing. An earlier scenario's
-                   # reported loss is not this one's: it stays lost, so it comes off this floor.
-    local floor="$1" leader rows acked lost; leader=$(leader); rows=$(( $(rows_on "$leader") - ROWS0 )); acked=$(ok_count)
-    [[ "$rows" -ge $(( floor - LOST_TOTAL )) ]] || fail "$rows rows added to ha_marker on $leader but $floor inserts were acknowledged before the failure began ($LOST_TOTAL lost in earlier scenarios): an acknowledged write from before the failure was lost"
-    lost=$(( acked - LOST_TOTAL - rows )); [[ "$lost" -lt 0 ]] && lost=0; LOST=$lost; LOST_TOTAL=$(( LOST_TOTAL + lost ))
-    echo "  integrity: $rows rows added on $leader, $acked inserts acknowledged, $lost of them (acknowledged inside the failure window) not in the surviving history"
+                   # reported loss is not this one's: it stays lost, so it is not counted again.
+                   # By identity, not by count: the acknowledged tokens are read BEFORE the leader is asked, so an
+                   # insert acknowledged while the check runs is in neither, where two counts taken a moment apart
+                   # (rows, then acknowledgements, with the writer still running) once reported a write lost that
+                   # had only landed between them, and in the other order could hide one.
+    local floor="$1" leader acked early lost
+    leader=$(leader)
+    cp "$WORK/state/acked.log" "$WORK/acked.now"
+    acked=$(grep -c . "$WORK/acked.now" || true)
+    [[ "$acked" -gt 0 && "$acked" -ge "$floor" ]] \
+        || fail "$acked acknowledged inserts are on record against the $floor counted before the failure began: the writer is not recording what it acknowledges, and the comparison would measure nothing"
+    missing_on "$leader" "$WORK/acked.now" > "$WORK/missing.now" || fail "cannot ask $leader which acknowledged inserts it holds"
+    grep -vxF -f "$WORK/lost.all" "$WORK/missing.now" > "$WORK/missing.new" || true
+    early=$(head -n "$floor" "$WORK/acked.now" | grep -cxF -f "$WORK/missing.new" || true)
+    [[ "$early" -eq 0 ]] || fail "$early of the $floor inserts acknowledged before the failure began are not on $leader: an acknowledged write from before the failure was lost"
+    lost=$(grep -c . "$WORK/missing.new" || true); cat "$WORK/missing.new" >> "$WORK/lost.all"
+    LOST=$lost; LOST_TOTAL=$(( LOST_TOTAL + lost ))
+    echo "  integrity: $(( acked - $(grep -c . "$WORK/missing.now" || true) )) of $acked acknowledged inserts on $leader, $lost of them (acknowledged inside the failure window) not in the surviving history"
     if [[ "$SYNC" == on && "$lost" -gt 0 ]]; then
         fail "$lost acknowledged inserts are not in the surviving history: with synchronous_mode on, a failover must lose none"
     fi
@@ -317,11 +339,13 @@ echo "  read replica routing: database_replica=$RH"
 # The marker table the writer fills, created on the leader by the superuser
 # over the local socket (pg_hba: local trust, like the stock image).
 docker exec "polaris-$L0" psql -h /var/run/postgresql -U postgres -d polaris -v ON_ERROR_STOP=1 -q \
-    -c "CREATE TABLE IF NOT EXISTS ha_marker (id bigserial PRIMARY KEY, ts timestamptz NOT NULL DEFAULT clock_timestamp());" \
+    -c "DROP TABLE IF EXISTS ha_marker;" \
+    -c "CREATE TABLE ha_marker (id bigserial PRIMARY KEY, token text UNIQUE NOT NULL, ts timestamptz NOT NULL DEFAULT clock_timestamp());" \
     -c "GRANT INSERT ON ha_marker TO polaris_app; GRANT USAGE ON SEQUENCE ha_marker_id_seq TO polaris_app;" \
     || fail "could not create the marker table on $L0"
-ROWS0=$(rows_on "$L0"); [[ "$ROWS0" =~ ^[0-9]+$ ]] || fail "cannot count ha_marker on $L0"
-mkdir -p "$WORK/state"; : > "$WORK/state/writes.log"; chmod 0777 "$WORK/state"; chmod 0644 "$WORK/writer.py"
+[[ "$(rows_on "$L0")" == 0 ]] || fail "cannot read ha_marker on $L0"
+mkdir -p "$WORK/state"; : > "$WORK/state/writes.log"; : > "$WORK/state/acked.log"; : > "$WORK/lost.all"
+chmod 0777 "$WORK/state"; chmod 0666 "$WORK/state/writes.log" "$WORK/state/acked.log"; chmod 0644 "$WORK/writer.py"
 APP_PW=$(cat "$SECRETS/polaris_db_password")
 docker rm -f "$WRITER" >/dev/null 2>&1 || true
 docker run -d --name "$WRITER" --network "$NET" \
