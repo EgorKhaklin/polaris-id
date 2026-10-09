@@ -11,17 +11,24 @@
 #   stack          every service of the compose project is running, and healthy where it has
 #                  a healthcheck
 #   secrets        every file the stack mounts as a secret exists and is not empty
+#   secrets at rest
+#                  what a copy of this disk holds: plaintext files with the file backend (a WARN),
+#                  the unsealed copy on a tmpfs with a sealed one, and no plaintext left behind
 #   configuration  the production configuration contract, judged in a one-off app container,
 #                  so it answers when the app itself cannot start
 #   edge           the TLS edge serves /api/health/live
 #   health         the app's own roll-up (/api/health, from inside the app container): every
 #                  component it judges
-#   key register   every agency that has issued holds a registered signing key: a FAIL when it holds
-#                  credentials signed for real under no registered key (every relying-party
-#                  verification of them is refused), a WARN when its credentials carry no real
-#                  signature (its trust list is refused; KEY-CEREMONY.md)
+#   key register   every active credential signed for real is under a key its authority had registered
+#                  when it was signed, judged as every relying-party route judges it: a FAIL naming the
+#                  key otherwise (every verification of it is refused), a WARN while no key is
+#                  registered at all, and a WARN to re-issue those no registration can fix
+#                  (KEY-CEREMONY.md)
+#   backups        continuous archiving is on, and its repository is offsite: a repository on this
+#                  host is lost with it (a WARN; docs/operator/DR.md section 5)
 #
-# Usage:  polaris-doctor.sh
+# Usage:  polaris-doctor.sh   (as root on a systemd host: it reads /etc/polaris/polaris.env, as
+#                              polaris.service does; scripts/polaris-env.sh)
 # Environment: COMPOSE_PROJECT_NAME and POLARIS_COMPOSE_EXTRA, as the other stack scripts;
 #   POLARIS_DOCTOR_URL (default https://$POLARIS_DOMAIN, else https://localhost) and
 #   POLARIS_DOCTOR_CACERT (a CA file the edge's certificate chains to, when it is not a public one).
@@ -31,9 +38,13 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 POLARIS_ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
+# Run by hand (sudo resets the environment), read the configuration polaris.service runs with.
+source "${SCRIPT_DIR}/polaris-env.sh"
 COMPOSE_FILE="${POLARIS_ROOT}/polaris_web/docker-compose.prod.yml"
 read -r -a COMPOSE_EXTRA <<< "${POLARIS_COMPOSE_EXTRA:-}"
-compose() { docker compose -f "${COMPOSE_FILE}" "${COMPOSE_EXTRA[@]}" "$@"; }
+# From polaris_web, as polaris.service runs it: an overlay polaris.env names is relative to that
+# directory. (The guarded array form: an empty array under set -u is an error in bash before 4.4.)
+compose() { (cd "${POLARIS_ROOT}/polaris_web" && docker compose -f docker-compose.prod.yml ${COMPOSE_EXTRA[@]+"${COMPOSE_EXTRA[@]}"} "$@"); }
 URL="${POLARIS_DOCTOR_URL:-https://${POLARIS_DOMAIN:-localhost}}"
 CURL_TLS=()
 [[ -n "${POLARIS_DOCTOR_CACERT:-}" ]] && CURL_TLS=(--cacert "${POLARIS_DOCTOR_CACERT}")
@@ -81,6 +92,9 @@ else:
 done <<< "${SERVICES}"
 
 # --- secrets: every mounted file exists and is not empty
+if ! SECRETS_AT=$(polaris_secrets_dir 2> /dev/null); then
+    bad secrets "POLARIS_SECRETS_BACKEND=${POLARIS_SECRETS_BACKEND} without POLARIS_SECRETS_DIR: polaris.service's compose reads polaris_web/secrets, which a sealed install has shredded; set POLARIS_SECRETS_DIR=/run/polaris/secrets in polaris.env (docs/operator/SECRETS.md, section 5.1)"
+fi
 while IFS='|' read -r name path; do
     [[ -z "${name}" ]] && continue
     if [[ ! -e "${path}" ]]; then
@@ -95,6 +109,23 @@ for name, s in (json.load(sys.stdin).get("secrets") or {}).items():
         print("%s|%s" % (name, s["file"]))
 ')
 [[ " ${FAILING[*]-} " == *" secrets "* ]] || ok secrets "every mounted secret file is present and not empty"
+
+# --- secrets at rest: what a copy of this disk holds
+if [[ "${POLARIS_SECRETS_BACKEND:-file}" == file ]]; then
+    warn "secrets at rest" "plaintext files in ${SECRETS_AT} on this disk: a copy of the disk, or a backup holding that directory, reads every password and key; seal them with age or awskms (docs/operator/SECRETS.md, section 5)"
+elif [[ -n "${SECRETS_AT}" ]]; then
+    fs=$(stat -f -c %T "${SECRETS_AT}" 2> /dev/null)
+    case "${fs}" in
+        tmpfs|ramfs) ok "secrets at rest" "sealed (${POLARIS_SECRETS_BACKEND}); the stack reads the unsealed copy from ${SECRETS_AT}, a ${fs}" ;;
+        "") warn "secrets at rest" "sealed (${POLARIS_SECRETS_BACKEND}); whether ${SECRETS_AT} is a tmpfs could not be read (run as root, on Linux)" ;;
+        *) warn "secrets at rest" "sealed (${POLARIS_SECRETS_BACKEND}), but ${SECRETS_AT} is ${fs}, not a tmpfs: the unsealed copy is on disk" ;;
+    esac
+    leftover="${POLARIS_ROOT}/polaris_web/secrets"
+    if [[ "${SECRETS_AT}" != "${leftover}" && -d "${leftover}" ]] \
+            && [[ -n "$(find "${leftover}" -type f 2> /dev/null | head -1)" ]]; then
+        warn "secrets at rest" "a plaintext copy remains in ${leftover}; shred it (docs/operator/SECRETS.md, section 5.1)"
+    fi
+fi
 
 # --- configuration: the production contract, in a one-off container (answers when the app cannot start)
 if echo "${SERVICES}" | grep -qx app; then
@@ -144,28 +175,44 @@ else
     warn health "not reached: the app container is not running (see its stack line above)"
 fi
 
-# --- key register: every agency that has issued holds a registered key. A credential signed for real
-# under an authority with no key history at all is refused by every possession route, so that is a
-# FAIL; an authority whose credentials carry no real signature (the notional seed) is a WARN.
-KEYQ=$(compose exec -T postgres psql -U postgres -d polaris -qtA -F '|' -c "
-    SELECT (SELECT string_agg(DISTINCT t.issuing_agency_id::text, ' ' ORDER BY t.issuing_agency_id::text)
-              FROM IdentityToken t JOIN TokenSignature s ON s.token_id = t.token_id
-             WHERE s.signing_public_key_hex IS NOT NULL
-               AND NOT EXISTS (SELECT 1 FROM AuthorityKeyEvent e WHERE e.agency_id = t.issuing_agency_id)),
-           (SELECT string_agg(DISTINCT t.issuing_agency_id::text, ' ' ORDER BY t.issuing_agency_id::text)
-              FROM IdentityToken t
-             WHERE NOT EXISTS (SELECT 1 FROM AuthorityKeyCurrent k
-                                WHERE k.agency_id = t.issuing_agency_id AND k.status = 'active'))" 2> /dev/null)
+# --- key register: every active credential signed for real is under a key its authority had
+# registered when it was signed, judged signature by signature as every relying-party route judges it
+# (scripts/polaris-key-register-check.sql). One that is not is refused by all of them: a FAIL, naming
+# the key and the command that registers it, which is --current for the key this install signs with;
+# a key nobody's ceremony minted was planted and is never registered. One no registration can fix (its
+# key since retired or declared compromised, or no recorded issuance instant): a WARN, to re-issue it.
+# The notional seed carries no real signature and needs no registration.
+KEYQ=$(compose exec -T postgres psql -U postgres -d polaris -v ON_ERROR_STOP=1 -qtA \
+           < "${SCRIPT_DIR}/polaris-key-register-check.sql" 2> /dev/null)
 KEYQ_RC=$?
-REFUSED="${KEYQ%%|*}"; UNREGISTERED="${KEYQ#*|}"
-if [[ ${KEYQ_RC} -ne 0 || "${KEYQ}" != *"|"* ]]; then
+IFS='|' read -r UNREGISTERED FIRST REISSUE REGISTERED KEYS <<< "${KEYQ}"
+if [[ ${KEYQ_RC} -ne 0 || ! "${REGISTERED:-}" =~ ^[0-9]+$ ]]; then
     warn "key register" "not reached: the database did not answer"
-elif [[ -n "${REFUSED}" ]]; then
-    bad "key register" "agency ${REFUSED} holds credentials signed for real under no registered key: every relying-party verification of them answers \"not a verifiable presentation\" (register the key: scripts/polaris-key-event.sh register <agency> <public key hex>, docs/operator/KEY-CEREMONY.md)"
-elif [[ -n "${UNREGISTERED}" ]]; then
-    warn "key register" "agency ${UNREGISTERED} issued with no registered signing key: its trust list is refused and issuer facts read unknown (register it: docs/operator/KEY-CEREMONY.md)"
 else
-    ok "key register" "every agency that has issued holds a registered key"
+    if [[ -n "${UNREGISTERED}" ]]; then
+        bad "key register" "agency ${UNREGISTERED} holds active credentials signed under a key it had not registered when they were signed (agency:key ${KEYS}): every relying-party verification of them answers \"not a verifiable presentation\". ${FIRST:+For agency ${FIRST}: sudo scripts/polaris-key-event.sh register <agency> --current registers the key this install signs with from its first signature. }${FIRST:+Any other key}${FIRST:-Such a key} is registered only by the ceremony, and only if the ceremony minted it: a key nobody minted was planted, never register it (docs/operator/KEY-CEREMONY.md)"
+    elif [[ "${REGISTERED}" == 0 ]]; then
+        warn "key register" "no authority key is registered yet: relying parties will refuse every credential this stack signs until it is (sudo scripts/polaris-key-event.sh register <agency> --current, for each authority it issues for)"
+    else
+        ok "key register" "every active credential signed for real is under a key its authority had registered when it was signed"
+    fi
+    if [[ -n "${REISSUE}" ]]; then
+        warn "re-issue" "agency ${REISSUE} holds active credentials no registration can make verifiable (signed under a key since retired or declared compromised, or with no recorded issuance instant): re-issue them under the current key"
+    fi
+fi
+
+# --- backups: continuous archiving is on and its repository survives the host. pgBackRest keeps its
+# repository on this host unless POLARIS_PGBACKREST_S3_BUCKET names an offsite one, and a repository
+# on the host is lost with it: the backups and the WAL the point-in-time restore replays (lab record
+# 017, gate row OP-14). Read from the running database container, which is what pgBackRest runs with.
+ARCHIVING=$(compose exec -T postgres printenv POLARIS_PGBACKREST_ENABLED 2> /dev/null | tr -d '\r' || true)
+BUCKET=$(compose exec -T postgres printenv POLARIS_PGBACKREST_S3_BUCKET 2> /dev/null | tr -d '\r' || true)
+if [[ "${ARCHIVING}" == "0" ]]; then
+    warn "backups" "continuous archiving is off (POLARIS_PGBACKREST_ENABLED=0): a restore can reach only the last dump, and nothing is replayed to a point in time"
+elif [[ -z "${BUCKET}" ]]; then
+    warn "backups" "the backup repository is on this host (no POLARIS_PGBACKREST_S3_BUCKET): a lost host loses its backups and its WAL with it; configure the offsite repository (docs/operator/DR.md section 5)"
+else
+    ok "backups" "continuous archiving on, to the offsite repository s3://${BUCKET}"
 fi
 
 echo
