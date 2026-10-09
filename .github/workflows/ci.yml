@@ -3523,6 +3523,8 @@ jobs:
 
       - name: With the grant the script initialises a production database
         env:
+          # The service container's ID through the environment, not a template inside the script.
+          PG_CONTAINER: ${{ job.services.postgres.id }}
           PGPASSWORD: ci_superuser_password
         run: |
           set -e
@@ -3549,7 +3551,7 @@ jobs:
           [ "$rc" = 3 ] && grep -q "not empty" /tmp/again.out
           # The server logged every statement: polaris_app's password is never among them, and the
           # verifier that replaced it is (the control: a log that recorded nothing would also lack it).
-          docker logs "${{ job.services.postgres.id }}" > /tmp/server.log 2>&1
+          docker logs "${PG_CONTAINER}" > /tmp/server.log 2>&1
           if grep -qF "$(cat /tmp/app.pw)" /tmp/server.log; then
             echo "::error::polaris_app's password reached the server's statement log"; exit 1
           fi
