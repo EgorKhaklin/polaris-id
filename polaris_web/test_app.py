@@ -9574,6 +9574,35 @@ class F08_ErrorMessageSanitizationTests(PolarisTestCase):
         msg = db_error_to_message(FakeErr())
         self.assertIn('Cannot create a second ACTIVE token', msg)
 
+    def test_revocation_past_the_rate_bound_names_the_co_signer(self):
+        """A revocation the rate bound refuses tells the operator to add a co-signer, not that the
+        database failed; the agency's rate stays out of the message."""
+        from app import db_error_to_message
+        class FakeErr:
+            def __str__(self):
+                return ('ERROR:  Revocation rate for agency 1 would reach 20.0000 percent in 30 day window '
+                        '(bound: 7.00 percent); co-signer required\n'
+                        'CONTEXT:  PL/pgSQL function uc8_revoke_token(integer,integer,character varying,'
+                        'character varying,integer) line 76 at RAISE')
+        msg = db_error_to_message(FakeErr())
+        self.assertIn('co-signing authority', msg)
+        self.assertNotIn('internal database error', msg.lower())
+        self.assertNotIn('percent', msg)
+        self.assertNotIn('uc8_revoke_token', msg)
+
+    def test_the_co_signer_refusals_say_what_is_wrong(self):
+        """The two refusals that follow once a co-signer is named are the procedure's own words."""
+        from app import db_error_to_message
+        for raw, want in (('Co-signer must differ from actor', 'Co-signer must differ from actor'),
+                          ('Co-signer agency 3 lacks BOTH authorization on the relevant algorithm',
+                           'Co-signer agency 3 lacks BOTH authorization on the relevant algorithm')):
+            class FakeErr:
+                def __str__(self, raw=raw):
+                    return 'ERROR:  %s\nCONTEXT:  PL/pgSQL function uc8_revoke_token(...) line 63 at RAISE' % raw
+            msg = db_error_to_message(FakeErr())
+            self.assertEqual(msg, want)
+            self.assertNotIn('uc8_revoke_token', msg)
+
 
 class F11_AuditLoggingTests(PolarisTestCase):
     """F-11: Authentication events recorded in AuthAuditLog."""

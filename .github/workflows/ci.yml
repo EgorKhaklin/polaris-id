@@ -2248,6 +2248,66 @@ jobs:
           echo "$summary"
           echo "$summary" >> "$GITHUB_STEP_SUMMARY"
 
+      # The operator's own evaluation of this install, the way EVALUATE.md runs it. A
+      # notional run must pass every probe a fresh install can answer, and the same run must fail when
+      # something under it is broken: a privilege the database withholds, granted to the application,
+      # and the TLS edge, stopped. An evaluation that cannot fail proves nothing.
+      - name: the install evaluates itself, and the evaluation fails when a rule or the edge is broken
+        working-directory: /opt/polaris
+        run: |
+          # pipefail: the evaluation runs through tee, and without it the step would read tee's status.
+          set -eo pipefail
+          # The offline probes run the published polaris-verify from a venv the evaluation makes.
+          sudo apt-get install -y python3-venv > /dev/null
+          sudo scripts/polaris-evaluate.sh --notional --operator ci-admin --password-file /tmp/ci-operator.pw \
+            --url https://localhost:8443 --out /tmp/eval-notional | tee /tmp/eval-notional.out
+          sudo python3 - /tmp/eval-notional/report.json <<'EOF'
+          import json, sys
+          verdicts = {r["id"]: r["verdict"] for r in json.load(open(sys.argv[1]))["rows"]}
+          need = ["B.role", "B.C1", "B.C2", "B.Success-rules", "B.Binding", "B.Privilege", "C.trust-list",
+                  "D.offline.genuine", "D.offline.signature-byte", "D.offline.token-altered", "D.offline.other-issuer",
+                  "D.offline.hash-as-signature", "D.offline.empty-signature", "E.relying-party", "E.online.genuine",
+                  "E.online.signature-byte", "E.online.token-altered", "F.issue", "F.revoke", "F.online.after-revoke"]
+          short = ["%s=%s" % (k, verdicts.get(k)) for k in need if verdicts.get(k) != "PASS"]
+          short += ["%s=FAIL" % k for k, v in verdicts.items() if v == "FAIL" and k not in need]
+          sys.exit("the notional evaluation did not pass: %s" % ", ".join(short) if short else 0)
+          EOF
+          ! sudo grep -rqF "$(cat /tmp/ci-operator.pw)" /tmp/eval-notional \
+            || { echo "::error::the evaluation report carries the operator's password"; exit 1; }
+          # Negative control 1: the application role may insert a duress record directly.
+          sudo docker exec polaris-postgres psql -U postgres -d polaris -c "GRANT INSERT ON DuressEvent TO polaris_app"
+          rc=0; sudo sh -c 'scripts/polaris-evaluate.sh --url https://localhost:8443 --out /tmp/eval-granted > /tmp/eval-granted.out 2>&1' || rc=$?
+          sudo docker exec polaris-postgres psql -U postgres -d polaris -c "REVOKE INSERT ON DuressEvent FROM polaris_app"
+          [ "$rc" = 1 ] && grep -q "failing: .*B.Privilege" /tmp/eval-granted.out \
+            || { cat /tmp/eval-granted.out; echo "::error::the evaluation did not fail with a forbidden privilege granted"; exit 1; }
+          # Negative control 2: the edge is down.
+          sudo docker stop polaris-caddy > /dev/null
+          rc=0; sudo sh -c 'scripts/polaris-evaluate.sh --url https://localhost:8443 --out /tmp/eval-noedge > /tmp/eval-noedge.out 2>&1' || rc=$?
+          sudo docker start polaris-caddy > /dev/null
+          [ "$rc" = 1 ] && grep -q "failing: .*A.doctor.edge" /tmp/eval-noedge.out && sudo test -s /tmp/eval-noedge/report.json \
+            || { cat /tmp/eval-noedge.out; echo "::error::the evaluation did not fail, with a report, with the edge down"; exit 1; }
+          for _ in $(seq 1 60); do
+            [ "$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health || true)" = 200 ] && break
+            sleep 2
+          done
+          grep "^polaris-evaluate: [0-9]" /tmp/eval-notional.out >> "$GITHUB_STEP_SUMMARY"
+
+      - name: copy the evaluation reports where the upload can read them
+        if: always()
+        run: |
+          mkdir -p /tmp/eval-reports
+          for run in notional granted noedge; do
+            for ext in md json; do sudo cp "/tmp/eval-$run/report.$ext" "/tmp/eval-reports/$run.$ext" 2> /dev/null || true; done
+          done
+          sudo chown -R "$(id -u):$(id -g)" /tmp/eval-reports
+      - name: keep the evaluation reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: evaluation-reports
+          path: /tmp/eval-reports/
+          if-no-files-found: warn
+
       # Lab record 017 (gate row OP-9): SECRETS.md 5.1 on a systemd host. polaris.service runs compose
       # with POLARIS_SECRETS_DIR alone; with it empty, a sealed host's next start read the shredded
       # plaintext directory while a deploy (which supplied a default) had worked. Now every path
