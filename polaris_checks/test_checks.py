@@ -2573,6 +2573,22 @@ def test_llms_txt_walked_check_discriminates(tmp_path):
            "must FAIL when the block stops asking for a JSON verdict")
     broken("site/llms.txt", "## Verify a credential offline", "## Check a credential",
            "must FAIL when the section the walk reads is renamed away")
+    # Review of #6c: a step or job that never runs, or whose failure counts for nothing, and the trigger.
+    step_name = "      - name: The agent path in site/llms.txt"
+    broken(wf, step_name, step_name.replace("- name:", "- if: false\n        name:"), "must FAIL when the step never runs")
+    broken(wf, "        shell: bash\n        run: |\n          set -euo pipefail\n          work=",
+           "        shell: bash\n        continue-on-error: true\n        run: |\n          set -euo pipefail\n          work=",
+           "must FAIL when the step's failure counts for nothing")
+    broken(wf, "    runs-on: ${{ matrix.os }}\n    steps:\n      - name: Checkout (only",
+           "    runs-on: ${{ matrix.os }}\n    if: false\n    steps:\n      - name: Checkout (only",
+           "must FAIL when the verify job never runs")
+    broken(wf, "  pull_request:\n    paths:", "  push:\n    paths:", "must FAIL when only a push, not a pull request, runs it")
+    broken(wf, "  pull_request:\n    paths:", "  pull_request:\n    paths-ignore:",
+           "must FAIL when the paths filter excludes the file instead")
+    broken(wf, "bash -euo pipefail agent-path.sh > out.txt\n", "bash -euo pipefail agent-path.sh > out.txt || true\n",
+           "must FAIL when the block's failure is swallowed")
+    broken(wf, "name: The agent path in site/llms.txt", "name: Another step",
+           "must FAIL when the step is renamed out of the guard's sight")
 
 
 def test_claims_manifest_check_discriminates(tmp_path):
