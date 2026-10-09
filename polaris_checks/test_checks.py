@@ -3269,7 +3269,8 @@ def test_infra_alerts_check_discriminates(tmp_path):
 
 def test_upgrade_drilled_check_discriminates(tmp_path):
     files = ("scripts/polaris-deploy.sh", "scripts/polaris-upgrade-drill.sh", ".github/workflows/upgrade.yml",
-             "scripts/polaris-host-lock.sh", "lab/strategy/006/try.sh")
+             "scripts/polaris-host-lock.sh", "lab/strategy/006/try.sh", "deploy/linux/install.sh",
+             "scripts/polaris-helm-upgrade-drill.sh", "scripts/polaris-region-evacuation-drill.sh")
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text((REPO / rel).read_text())
@@ -3312,18 +3313,27 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
     broken(dep, 'ROLLBACK_TAG="polaris-app:rollback-${PROJECT}"', 'ROLLBACK_TAG="polaris-app:rollback"',
            "must FAIL when the pin is one tag for the whole host")
     lk = "scripts/polaris-host-lock.sh"
-    broken(lk, "        flock -n 9 || {", "        true || {", "must FAIL when two builds or deploys can run at once")
-    broken(lk, '        mkdir "${POLARIS_HOST_LOCK}.d" 2>/dev/null || {', "        true || {",
-           "must FAIL when, without flock, two builds or deploys can run at once")
-    broken(lk, """        trap 'rmdir "${POLARIS_HOST_LOCK}.d" 2>/dev/null || true' EXIT""", "        :",
-           "must FAIL when the directory lock outlives the run that took it")
-    broken(lk, "local who=$1 shared=/run/polaris-host.lock", "local who=$1 shared=/tmp/polaris-host.lock",
-           "must FAIL when the lock lives where any local user can hold it")
-    broken(lk, '        if [[ -L "${shared}" ]]; then', "        if false; then",
-           "must FAIL when root follows a link planted where the lock is made")
+    broken(lk, "    if ! err=$(docker network create --internal", "    if ! err=$(true --internal",
+           "must FAIL when the lock is not held in the Docker daemon")
+    broken(lk, '    trap "${prev:+${prev}; }docker network rm', '    : "${prev:+${prev}; }docker network rm',
+           "must FAIL when the lock outlives the run that took it")
+    broken(lk, '    export POLARIS_HOST_LOCK_TOKEN="${token}"', '    POLARIS_HOST_LOCK_TOKEN="${token}"',
+           "must FAIL when what the holder runs cannot go on under its lock")
     broken(dep, 'polaris_host_lock "this deploy"', ': "this deploy"', "must FAIL when the deploy takes no lock")
-    broken("lab/strategy/006/try.sh", 'polaris_host_lock "try.sh"', ': "try.sh"',
-           "must FAIL when try.sh builds the host's images without the lock")
+    for rel, call in (("lab/strategy/006/try.sh", 'polaris_host_lock "try.sh"'),
+                      ("deploy/linux/install.sh", 'polaris_host_lock "install.sh"'),
+                      ("scripts/polaris-upgrade-drill.sh", 'polaris_host_lock "the upgrade drill"'),
+                      ("scripts/polaris-helm-upgrade-drill.sh", 'polaris_host_lock "the Helm upgrade drill"'),
+                      ("scripts/polaris-region-evacuation-drill.sh", 'polaris_host_lock "the region evacuation drill"')):
+        broken(rel, call, ": no lock", "must FAIL when %s builds the host's images without the lock" % rel)
+    # A new script that builds the tags is found without being named: one written beside them.
+    new = tmp_path / "scripts" / "polaris-new-builder.sh"
+    new.write_text('#!/bin/bash\nbash "${ROOT}/scripts/polaris-image-build.sh" --stack prod\n')
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a script nobody named builds the host's images without the lock"
+    new.write_text('#!/bin/bash\nsource x\npolaris_host_lock "new"\nbash "${ROOT}/scripts/polaris-image-build.sh" --stack prod\n')
+    assert checks.check_upgrade_drilled(tmp_path)[0].level == "OK", "a new builder that takes the lock passes"
+    new.unlink()
     broken(dep, 'wait_healthy "${svc}" || ROLLED=0; done', 'wait_healthy "${svc}" || true; done',
            "must FAIL when a rollback is reported whether or not the restored app came up")
     broken(dep, '        if [[ "${ROLLED}" -eq 1 ]]; then', '        ROLLED=1\n        if [[ "${ROLLED}" -eq 1 ]]; then',

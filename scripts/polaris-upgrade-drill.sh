@@ -47,6 +47,9 @@ if [[ -n "$(docker ps -q --filter label=com.docker.compose.project=polaris-try)"
     exit 2
 fi
 echo "upgrading ${FROM} ($(git -C "${ROOT}" rev-parse --short "${FROM}^{commit}")) to ${TARGET:0:8}"
+# The host's image tags, for the whole drill: the try.sh and the deploy it runs go on under it.
+source "${ROOT}/scripts/polaris-host-lock.sh"
+polaris_host_lock "the upgrade drill"
 
 step "1/4 the previous release, ${FROM}, as its own try.sh leaves it"
 git -C "${ROOT}" worktree add --detach "${TREE}" "${FROM}" > /dev/null 2>&1 || fail "checking out ${FROM}"

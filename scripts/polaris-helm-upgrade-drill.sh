@@ -42,6 +42,9 @@ CALICO_VERSION=$(sed -n 's/^CALICO_VERSION=//p' "${ROOT}/scripts/polaris-helm-dr
 CALICO_SHA256=$(sed -n 's/^CALICO_SHA256=//p' "${ROOT}/scripts/polaris-helm-drill.sh")
 [[ -n "${CALICO_VERSION}" && -n "${CALICO_SHA256}" ]] || fail "could not read the Calico pin from polaris-helm-drill.sh"
 
+# This commit's images are built under the host's production tags: one build or deploy at a time.
+source "${ROOT}/scripts/polaris-host-lock.sh"
+polaris_host_lock "the Helm upgrade drill"
 echo "== 1. the two releases' images: ${FROM} and ${TARGET:0:8} =="
 git -C "${ROOT}" worktree add -q --detach "${WORK}/from" "${FROM}" || fail "checking out ${FROM}"
 ( cd "${WORK}/from" && bash scripts/polaris-image-build.sh --stack from > "${WORK}/build-from.log" 2>&1 ) \

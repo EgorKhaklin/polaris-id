@@ -113,8 +113,8 @@ echo "  ✓ all secrets present"
 # One build or deploy of this host's images at a time. Every stack on a host builds and runs the same
 # tags (polaris-app:prod and its siblings), so a deploy that ran beside another one, or beside try.sh's
 # build, recreated its app from the other's image or rolled back under it (reviews of #317,
-# 2026-10-09). scripts/polaris-host-lock.sh says where the lock lives and who can hold it. Taken
-# before step 2, so a refused deploy has changed nothing, the checkout included.
+# 2026-10-09). scripts/polaris-host-lock.sh says where the lock lives (the Docker daemon) and who can
+# hold it. Taken before step 2, so a refused deploy has changed nothing, the checkout included.
 source "${SCRIPT_DIR}/polaris-host-lock.sh"
 polaris_host_lock "this deploy"
 # The rollback pin is named for the compose project: two stacks on one host keep a pin each.

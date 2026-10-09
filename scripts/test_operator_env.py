@@ -228,7 +228,7 @@ class DeploysTakeTurns(_Base):
     def setUp(self):
         super().setUp()
         self.project = "lockt%d" % (abs(hash(str(self.tmp))) % 10 ** 8)
-        self.lock = self.tmp / "polaris-host.lock"      # HOME is self.tmp, and TMPDIR is not passed
+        self.lock = self.tmp / "network"       # the stand-in daemon's polaris-host-lock network: its labels
         secrets = self.tmp / "secrets"
         secrets.mkdir()
         for name in ("polaris_secret_key", "polaris_db_password", "polaris_db_root_password",
@@ -237,35 +237,32 @@ class DeploysTakeTurns(_Base):
         self.env_text = ("POLARIS_DOMAIN=polaris.example.org\nPOLARIS_SECRETS_BACKEND=file\n"
                          "POLARIS_SECRETS_DIR=%s\n" % secrets)
         # The stand-in Docker: compose names the project and a stopped app (only `ps -a` lists it),
-        # inspect names its image, tag succeeds; anything further fails, so the deploy stops at
-        # step 4 having run nothing against this machine.
+        # inspect names its image, tag succeeds, and the polaris-host-lock network is a file one create
+        # makes and a second refuses; anything further fails, so the deploy stops at step 4 having run
+        # nothing against this machine.
         (self.bin / "docker").write_text(
-            '#!/bin/sh\necho "$*" >> "%s"\ncase "$*" in\n'
+            '#!/bin/sh\necho "$*" >> "%(log)s"\nNET="%(net)s"\ncase "$*" in\n'
             '  "compose version") exit 0 ;;\n'
-            '  *" config") echo "name: %s"; exit 0 ;;\n'
+            '  *" config") echo "name: %(project)s"; exit 0 ;;\n'
             '  *" ps -a -q app") echo cid-app; exit 0 ;;\n'
             '  "inspect --format={{.Image}} cid-app") echo sha256:feed; exit 0 ;;\n'
             '  "tag "*) exit 0 ;;\n'
-            'esac\nexit 99\n' % (self.docker_log, self.project))
+            '  "network create "*)\n'
+            '    [ -e "$NET" ] && { echo "Error response from daemon: network with name polaris-host-lock already exists" >&2; exit 1; }\n'
+            '    for a in "$@"; do case "$a" in org.polaris.lock.*) echo "$a" >> "$NET" ;; esac; done; exit 0 ;;\n'
+            '  "network inspect -f "*token*) [ -e "$NET" ] || exit 1; sed -n "s/^org.polaris.lock.token=//p" "$NET"; exit 0 ;;\n'
+            '  "network inspect -f "*holder*) [ -e "$NET" ] || exit 1; sed -n "s/^org.polaris.lock.holder=//p" "$NET"; exit 0 ;;\n'
+            '  "network rm polaris-host-lock") rm -f "$NET"; exit 0 ;;\n'
+            'esac\nexit 99\n' % {"log": self.docker_log, "net": self.lock, "project": self.project})
         (self.bin / "docker").chmod(0o755)
 
-    def _deploy(self, path=None):
+    def _deploy(self, **env):
         self.env_file.write_text(self.env_text)
         return subprocess.run(["bash", str(ROOT / "scripts" / "polaris-deploy.sh"), "prod", "--no-pull"],
                               capture_output=True, text=True, timeout=60,
-                              env={"PATH": path or "%s:/usr/bin:/bin:/usr/sbin:/sbin" % self.bin,
-                                   "HOME": str(self.tmp), "STUB_WD": str(ROOT / "polaris_web"),
-                                   "STUB_EF": str(self.env_file)})
-
-    def _path_without_flock(self):
-        """This PATH's tools less flock(1), so Linux takes the directory lock macOS takes."""
-        tools = self.tmp / "tools"
-        tools.mkdir()
-        for d in ("/usr/bin", "/bin", "/usr/sbin", "/sbin"):
-            for f in (pathlib.Path(d).iterdir() if pathlib.Path(d).is_dir() else ()):
-                if f.name != "flock" and not (tools / f.name).exists():
-                    (tools / f.name).symlink_to(f)
-        return "%s:%s" % (self.bin, tools)
+                              env=dict({"PATH": "%s:/usr/bin:/bin:/usr/sbin:/sbin" % self.bin,
+                                        "HOME": str(self.tmp), "STUB_WD": str(ROOT / "polaris_web"),
+                                        "STUB_EF": str(self.env_file)}, **env))
 
     def _calls(self):
         return self.docker_log.read_text().splitlines() if self.docker_log.exists() else []
@@ -275,34 +272,42 @@ class DeploysTakeTurns(_Base):
         tag = "tag sha256:feed polaris-app:rollback-%s" % self.project
         self.assertIn(tag, self._calls(), r.stdout + r.stderr)
         self.assertIn("pinned as polaris-app:rollback-%s" % self.project, r.stdout)
+        self.assertFalse(self.lock.exists(), "the deploy's lock outlived it")
         again = self._deploy()
-        self.assertEqual(self._calls().count(tag), 2,
-                         "the first deploy's lock outlived it: %s" % (again.stdout + again.stderr))
+        self.assertEqual(self._calls().count(tag), 2, again.stdout + again.stderr)
 
-    def test_a_second_deploy_of_the_project_changes_nothing(self):
-        import fcntl
-        self.lock.write_text("")
-        held = open(self.lock)
-        self.addCleanup(held.close)
-        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)     # flock(1) on Linux takes this one
-        pathlib.Path(str(self.lock) + ".d").mkdir()          # and macOS's stand-in this one
+    def test_a_second_deploy_on_the_host_changes_nothing_and_says_who_holds_it(self):
+        self.lock.write_text("org.polaris.lock.token=other\norg.polaris.lock.holder=try.sh, pid 7 on host\n")
         r = self._deploy()
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        self.assertIn("another Polaris build or deploy holds this host's images", r.stderr)
+        self.assertIn("another Polaris build or deploy holds this host's images (try.sh, pid 7 on host)", r.stderr)
+        self.assertIn("docker network rm polaris-host-lock", r.stderr)
         self.assertFalse([c for c in self._calls() if c.startswith(("tag", "inspect")) or " pull" in c],
                          "the refused deploy acted: %s" % self._calls())
+        self.assertTrue(self.lock.exists(), "the refused deploy released another run's lock")
 
-    def test_without_flock_the_directory_lock_takes_turns_and_is_released(self):
-        path = self._path_without_flock()
-        tag = "tag sha256:feed polaris-app:rollback-%s" % self.project
-        first = self._deploy(path)
-        self.assertIn(tag, self._calls(), first.stdout + first.stderr)
-        self.assertFalse(pathlib.Path(str(self.lock) + ".d").exists(), "the directory lock outlived its deploy")
-        pathlib.Path(str(self.lock) + ".d").mkdir()
-        held = self._deploy(path)
-        self.assertEqual(held.returncode, 1, held.stdout + held.stderr)
-        self.assertIn("another Polaris build or deploy holds this host's images", held.stderr)
-        self.assertEqual(self._calls().count(tag), 1, "the deploy refused by the directory lock pinned")
+    def test_what_the_holder_runs_goes_on_under_its_lock(self):
+        self.lock.write_text("org.polaris.lock.token=drill-1\norg.polaris.lock.holder=the upgrade drill\n")
+        r = self._deploy(POLARIS_HOST_LOCK_TOKEN="drill-1")
+        self.assertIn("tag sha256:feed polaris-app:rollback-%s" % self.project, self._calls(), r.stdout + r.stderr)
+        self.assertTrue(self.lock.exists(), "a deploy run under the drill's lock released it")
+        forged = self._deploy(POLARIS_HOST_LOCK_TOKEN="not-the-holders")
+        self.assertEqual(forged.returncode, 1, "a token that is not the holder's is no lock")
+
+    def test_the_callers_own_exit_trap_still_runs_before_the_release(self):
+        script = self.tmp / "caller.sh"
+        helper = ROOT / "scripts" / "polaris-host-lock.sh"
+        # The caller sets its own trap, takes the lock, and runs a child that takes it too (the upgrade drill
+        # runs try.sh and the deploy): the child goes on under it and leaves it held.
+        script.write_text('set -euo pipefail\ntrap \'echo caller-cleanup\' EXIT\n'
+                          'source "%s"\npolaris_host_lock "a caller"\necho holding\n'
+                          'bash -c \'source "%s"; polaris_host_lock child; echo child-under-lock\'\n'
+                          '[ -e "%s" ] && echo still-held\n' % (helper, helper, self.lock))
+        r = subprocess.run(["bash", str(script)], capture_output=True, text=True, timeout=30,
+                           env={"PATH": "%s:/usr/bin:/bin" % self.bin, "HOME": str(self.tmp)})
+        self.assertEqual(r.stdout.split(), ["holding", "child-under-lock", "still-held", "caller-cleanup"],
+                         r.stdout + r.stderr)
+        self.assertFalse(self.lock.exists(), "released after the caller's own trap")
 
 
 if __name__ == "__main__":

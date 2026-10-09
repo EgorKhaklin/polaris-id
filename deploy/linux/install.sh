@@ -208,6 +208,9 @@ stage_app() {
     if [ "$SKIP_BUILD" = 1 ]; then
         skip "image build (--skip-build)"
     else
+        # The host's image tags, which every Polaris build and deploy here shares: one at a time.
+        source "$INSTALL_DIR/scripts/polaris-host-lock.sh"
+        polaris_host_lock "install.sh"
         ( cd "$INSTALL_DIR/polaris_web" && docker compose -f docker-compose.prod.yml build -q ) \
             && ok "production images built"
     fi

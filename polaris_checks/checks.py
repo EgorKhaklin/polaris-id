@@ -7218,6 +7218,30 @@ def check_infra_alerts(root: pathlib.Path) -> list[Finding]:
                "conditions and clears them on repair")
 
 
+_BUILDS_PROD_TAGS = (
+    re.compile(r'\bbash\s+"?[^"\s]*polaris-image-build\.sh"?\s+--stack\s+prod\b'),
+    re.compile(r"docker compose -f docker-compose\.prod\.yml[^\n]*\bbuild\b"),
+)
+
+
+def _host_image_builders(root: pathlib.Path) -> dict:
+    """Every shell script that builds the host's production image tags, with where it first does: a run of
+    polaris-image-build.sh --stack prod, a build through the production compose file, or `compose up --build`
+    or `compose build` where the script's compose wrapper is the production file."""
+    found = {}
+    for p in _tree_rglob(root, "*.sh"):
+        rel = str(p.relative_to(root))
+        if rel == "scripts/polaris-host-lock.sh":
+            continue
+        text = _read_path(p)
+        hits = [m.start() for rx in _BUILDS_PROD_TAGS for m in rx.finditer(text)]
+        if re.search(r"compose\(\) \{[^\n]*docker-compose\.prod\.yml", text):
+            hits += [m.start() for m in re.finditer(r"(?m)^\s*compose (?:up\b[^\n]*--build|build)\b", text)]
+        if hits:
+            found[rel] = min(hits)
+    return found
+
+
 def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
     name = "upgrade_drilled"
     dep = _read(root, "scripts/polaris-deploy.sh")
@@ -7238,26 +7262,25 @@ def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
                      "ID no longer resolves once the build moves polaris-app:prod")
     # 2026-10-09 review of #317: the pin is a host-wide tag, so a second deploy pinned the first one's
     # failed release over it. One deploy per project, locked before anything changes.
-    # Review 2 of #317: every stack on a host builds the same tags, so the lock is the host's, and try.sh,
-    # which builds them too, takes it; it lives where no unprivileged user can hold it or plant a link.
+    # Reviews 2 and 3 of #317: every stack on a host builds the same tags, so the lock is the host's, held in
+    # the Docker daemon (a lock file split between /run, $HOME and $TMPDIR), and every script that builds
+    # those tags takes it before it builds.
     lock = _read(root, "scripts/polaris-host-lock.sh")
-    take = dep.find('source "${SCRIPT_DIR}/polaris-host-lock.sh"\npolaris_host_lock "this deploy"\n')
-    try_sh = _read(root, "lab/strategy/006/try.sh")
-    try_take = try_sh.find('source "${ROOT}/scripts/polaris-host-lock.sh"\npolaris_host_lock "try.sh"\n')
-    if take < 0 or take > pin or take > dep.find('echo "  [2/7] git pull') \
-            or try_take < 0 or try_take > try_sh.find('bash "${ROOT}/scripts/polaris-image-build.sh" --stack prod') \
-            or not all(n in lock for n in (
-                "local who=$1 shared=/run/polaris-host.lock",
-                '        if [[ -L "${shared}" ]]; then',
-                '        [[ -e "${shared}" ]] || install -m 0640 /dev/null "${shared}"',
-                '        chgrp docker "${shared}" 2>/dev/null || true',
-                '        POLARIS_HOST_LOCK="${TMPDIR:-${HOME}}/polaris-host.lock"',
-                "        flock -n 9 || {",
-                '        mkdir "${POLARIS_HOST_LOCK}.d" 2>/dev/null || {',
-                """        trap 'rmdir "${POLARIS_HOST_LOCK}.d" 2>/dev/null || true' EXIT""")):
-        return _fail(name, "polaris-deploy.sh and try.sh must take this host's image lock (scripts/polaris-host-lock.sh: "
-                     "flock, or a directory where flock is missing, released on exit, under /run for root and the "
-                     "docker group) before they pull, pin or build: every stack on a host builds the same tags")
+    take = dep.find('polaris_host_lock "this deploy"\n')
+    if take < 0 or take > pin or take > dep.find('echo "  [2/7] git pull') or not all(n in lock for n in (
+            "POLARIS_HOST_LOCK=polaris-host-lock",
+            '    if ! err=$(docker network create --internal --label "org.polaris.lock.token=${token}"',
+            '    export POLARIS_HOST_LOCK_TOKEN="${token}"',
+            '    trap "${prev:+${prev}; }docker network rm ${POLARIS_HOST_LOCK} >/dev/null 2>&1 || true" EXIT')):
+        return _fail(name, "polaris-deploy.sh must take this host's image lock before it pulls, pins or builds, and "
+                     "scripts/polaris-host-lock.sh must hold it in the Docker daemon (a network one caller can "
+                     "create), hand it to what the holder runs, and release it on exit after the caller's own trap")
+    builders = _host_image_builders(root)
+    unlocked = [rel for rel, at in builders.items()
+                if not (0 <= _read(root, rel).find("polaris_host_lock ") < at)]
+    if not builders or unlocked:
+        return _fail(name, "every script that builds the host's production image tags must take its lock "
+                     "(polaris_host_lock) before it builds: " + (", ".join(sorted(unlocked)) or "none found"))
     # The block whole: a ROLLED=1 slipped in before the `if` passed a string search.
     if not re.search(r'\n        ROLLED=1\n        for svc in [^\n]*wait_healthy "\$\{svc\}" \|\| ROLLED=0; done\n'
                      r'        if \[\[ "\$\{ROLLED\}" -eq 1 \]\]; then\n            echo "  ✓ Rolled back\.', dep):
