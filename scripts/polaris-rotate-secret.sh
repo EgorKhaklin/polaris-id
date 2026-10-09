@@ -32,15 +32,19 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 POLARIS_ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
+# Run by hand (sudo resets the environment), read the configuration polaris.service runs with.
+source "${SCRIPT_DIR}/polaris-env.sh"
 # v9.180 (P1.3) — rotate the MATERIALIZED secret (a tmpfs when a sealed store
-# is in use) and write it through to the sealed store below.
-SECRETS_DIR="${POLARIS_SECRETS_DIR:-${POLARIS_ROOT}/polaris_web/secrets}"
+# is in use, named by POLARIS_SECRETS_DIR, which a sealed store requires) and write
+# it through to the sealed store below.
+SECRETS_DIR=$(polaris_secrets_dir) || exit 1
 ARCHIVE_DIR="${SECRETS_DIR}/.archive"
-COMPOSE_FILE="${POLARIS_ROOT}/polaris_web/docker-compose.prod.yml"
 # v9.183 (P1.4) — honour the same overlays as deploy (blue-green, CI edge), and
 # recreate every app colour one at a time so rotation is zero-downtime too.
 read -r -a COMPOSE_EXTRA <<< "${POLARIS_COMPOSE_EXTRA:-}"
-compose() { docker compose -f "${COMPOSE_FILE}" "${COMPOSE_EXTRA[@]}" "$@"; }
+# From polaris_web, as polaris.service runs it: an overlay polaris.env names is relative to that
+# directory. (The guarded array form: an empty array under set -u is an error in bash before 4.4.)
+compose() { (cd "${POLARIS_ROOT}/polaris_web" && docker compose -f docker-compose.prod.yml ${COMPOSE_EXTRA[@]+"${COMPOSE_EXTRA[@]}"} "$@"); }
 recreate_apps() {
     local svc cid
     for svc in $(compose config --services 2>/dev/null | grep -E '^app(-green)?$' | sort -r); do

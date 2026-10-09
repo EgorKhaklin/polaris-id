@@ -210,7 +210,7 @@ table = "\n".join([
     "| Stage | Offered req/s | Achieved req/s | Success req/s | p50 ms | p95 ms | p99 ms | Success/total |",
     "|---|---:|---:|---:|---:|---:|---:|---:|",
     row("Issuance (`POST /uc1/issue`, full uc1 procedure + signature)", stages["issue"]),
-    row("Verification (`POST /verifications/new`)", stages["verify"]),
+    row("Verification event (`POST /verifications/new`, no signature check)", stages["verify"]),
     row("Atlas breakdown, warm (`/api/atlas/breakdown`, cached)", stages["atlas_breakdown_warm"]),
     row("Atlas breakdown, cold (a new question every request)", stages["atlas_breakdown_cold"]),
     row("Atlas all-time stats, warm (`/api/atlas/stats`)", stages["atlas_stats_warm"]),

@@ -84,6 +84,9 @@ COPY --chown=postgres:postgres polaris_web/pgbackrest.conf /etc/pgbackrest/pgbac
 # from this image as a Job (deploy/helm/polaris/templates/migrate-job.yaml). It finds them beside
 # itself, at /opt/polaris/polaris_sql: the same files the init loads.
 COPY --chmod=0755 scripts/polaris-migrate.sh /opt/polaris/scripts/polaris-migrate.sh
+# The loader it sources (scripts/polaris-env.sh): on a systemd host it reads polaris.env; here, with no
+# unit, it reads nothing. Without it the migration Job stopped at `source` (lab record 017).
+COPY --chmod=0644 scripts/polaris-env.sh /opt/polaris/scripts/polaris-env.sh
 RUN ln -s /docker-entrypoint-initdb.d/sql /opt/polaris/polaris_sql
 # Lab record 017 (gate row OP-11): the restore check, which a one-off container of this image runs
 # against the deployment's own repository (scripts/polaris-restore-verify.sh).

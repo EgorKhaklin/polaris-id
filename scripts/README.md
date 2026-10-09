@@ -15,6 +15,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | Script | What it does | Called by |
 |---|---|---|
 | `polaris-deploy.sh` | Idempotent production deploy of the compose stack | An operator; `deploy/linux/install.sh` |
+| `polaris-env.sh` | Sourced, never run: reads the `polaris.env` that `polaris.service` runs with, so a script run by hand with `sudo` has the same configuration; refuses a sealed store with no `POLARIS_SECRETS_DIR` | Every operator script above that drives the production stack; `test_operator_env.py` |
 | `polaris-generate-secrets.sh` | Mints the secret material, including the ML-DSA-65 signing key | An operator, once, before the first deploy |
 | `polaris-secrets.sh` | The sealed secret store: put, get, list, seal | An operator; `polaris_web/secretstore.py` documents the format |
 | `polaris-rotate-secret.sh` | Rotates one secret in place, without a redeploy | An operator |
@@ -28,8 +29,10 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-rotate-logs.sh` | The yearly archive-and-purge wrapper | `polaris-cron-install.sh` |
 | `polaris-cron-install.sh` | Installs the operator crontab wiring | An operator, once |
 | `polaris-create-operator.sh` | Onboards an operator account | An operator; `polaris_web/docker-init.sh` bootstraps the first admin |
-| `polaris-key-event.sh` | Registers, retires or declares compromised an authority signing key on the Docker stack, as the schema owner | An operator during a key ceremony (KEY-CEREMONY.md); `lab/strategy/006/rotate.sh` |
+| `polaris-key-event.sh` | Registers, retires or declares compromised an authority signing key on the Docker stack, as the schema owner; `register <agency> --current` registers the key the running app signs with as the authority's first key, from its first signature, and never rotates | An operator after the install and during a key ceremony (KEY-CEREMONY.md); `lab/strategy/006/rotate.sh`; the CI fresh-host drill |
+| `polaris-rp-register.sh` | Registers a relying party for `/api/v1` on the Docker stack, as the schema owner: `polaris rp-register`'s statements through the postgres container; prints the client secret once | An operator onboarding a relying party (DEPLOYMENT.md); the CI fresh-host drill |
 | `polaris-doctor.sh` | Judges every component of the Docker stack and names the failing ones, first one first | An operator, first, when something is wrong; `lab/strategy/006/doctor.sh` |
+| `polaris-key-register-check.sql` | Names the authorities whose credentials signed for real are refused for their key, judged as every relying-party route judges it (`polaris_web/test_app.py` `KeyRegisterScriptTests` holds it to that) | `polaris-doctor.sh`, `polaris-deploy.sh` |
 | `polaris-recover-admin.sh` | Emergency password-only login for a locked-out admin | An operator, under `RUNBOOKS.md` |
 | `polaris-generate-recovery-code.sh` | Mints a printed-mnemonic recovery code | An operator, at enrolment |
 | `polaris-set-webauthn-deadline.sh` | Sets `webauthn_required_after` for an account | An operator, during the MFA rollout |
@@ -74,6 +77,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-retention-drill.sh` | The archive and purge chain, per retention class, end to end | `ci.yml` |
 | `polaris-trace-drill.sh` | Tracing joins logs to spans, and the dashboards load | `ci.yml` |
 | `polaris-perf-baseline.sh` | The published latency baseline, re-measured in smoke mode | `ci.yml` |
+| `polaris-throughput-measure.sh` | Online verifications a second through the production path, per app vCPU and across two replicas | `throughput.yml` |
 | `polaris-custody-pkcs11-drill.sh` | ML-DSA-65 signing inside a PKCS#11 token | `ci.yml`'s custody job |
 | `polaris-verify.py` | The detached verifier: an ML-DSA-65 authenticity pack verifies offline with only a standard ML-DSA library, no Polaris code and no database. `--status-assertion` (P3.6) additionally decides AUTHORIZATION offline against a short-lived signed status assertion (fresh + bound + ACTIVE, window-bounded). `--selftest` and `--verify-dir vectors` run in pqc-real | `ci.yml`, and any relying party with no Polaris installed |
 | `polaris-make-vectors.py` | Generates the published authenticity vectors (`vectors/`), preferring liboqs and falling back to an independent FIPS-204 implementation | A contributor regenerating `vectors/` |
