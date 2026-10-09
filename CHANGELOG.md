@@ -35,6 +35,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- Under real signing, the relying-party route refused a credential with no issuance record: every credential a recovery issued, and every credential once the audit purge reached its record (five years under either retention template; credentials are valid for ten). Its key check dated by that record; it now dates such a credential by its first signature, written in the transaction that made it.
 - A revocation past the rate bound showed "An internal database error occurred"; the console now asks for a co-signing authority.
 - Run with `sudo` on a systemd host, the documented upgrade, rotation and first-operator commands failed for want of `POLARIS_DOMAIN`; the scripts now read `polaris.env` as the unit does.
 - A sealed secret store set up as SECRETS.md said left `polaris.service` reading the shredded plaintext directory at its next start; an empty `POLARIS_SECRETS_DIR` is now refused.
