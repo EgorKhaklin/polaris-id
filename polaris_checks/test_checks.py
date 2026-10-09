@@ -22031,7 +22031,9 @@ def test_product_suite_parts_share_setup_check_discriminates(tmp_path):
     gate_ok = ("  test:\n    name: Polaris product test suite\n    needs: [test-core, test-coverage]\n"
                "    if: always()\n    runs-on: ubuntu-latest\n    steps:\n"
                "      - name: Every part passed\n        env:\n          RESULTS: ${{ toJSON(needs) }}\n"
-               "        run: echo \"$RESULTS\" | grep -q success\n")
+               "        run: echo \"$RESULTS\" | python3 -c 'import json, sys; r = {k: v[\"result\"] for k, v in "
+               "json.load(sys.stdin).items()}; sys.exit(0 if len(r) == 2 and all(v == \"success\" for v in r.values()) "
+               "else 1)'\n")
 
     def write(core=None, cov=None, gate=gate_ok, extra=""):
         (gh / "ci.yml").write_text("on: push\njobs:\n" + (core or part("test-core", "core"))
@@ -22051,8 +22053,20 @@ def test_product_suite_parts_share_setup_check_discriminates(tmp_path):
         "a shared setup step changed in one part only must FAIL"
     assert write(gate=gate_ok.replace("    if: always()\n", "")).level == "FAIL", \
         "a gate without if: always() is skipped when a part fails, and skipped reads as passing"
-    assert write(gate=gate_ok.replace(" | grep -q success", "")).level == "FAIL", \
-        "a gate that never judges its parts' results must FAIL"
+    assert write(gate=gate_ok.replace("all(v ==", "any(v ==")).level == "FAIL", \
+        "a gate that passes one green part as the suite must FAIL"
+    assert write(gate=gate_ok.replace("len(r) == 2 and", "len(r) == 1 and")).level == "FAIL", \
+        "a gate that counts fewer results than it needs must FAIL"
+    # Review of #309: a part known by its work, not its label, and every pair of parts compared.
+    renamed = part("test-zk", "zk", last="cargo test --release").replace('"Product suite: zk"', '"ZK, somewhere"')
+    assert write(extra=renamed).level == "FAIL", \
+        "a job running the suite's work under another label, not needed by the gate, must FAIL"
+    three = gate_ok.replace("[test-core, test-coverage]", "[test-core, test-coverage, test-third]").replace(
+        "len(r) == 2 and", "len(r) == 3 and")
+    mid = part("test-coverage", "coverage").replace("      - name: Install deps\n", "      - name: Install other\n")
+    third = part("test-third", "third", deps="pip install -r drifted.txt")
+    assert write(cov=mid, extra=third, gate=three).level == "FAIL", \
+        "a step the first and third parts share, drifted, with the middle part lacking it, must FAIL"
     assert write(extra=part("test-extra", "extra")).level == "FAIL", \
         "a Product suite part the gate does not need must FAIL"
     assert write(gate=gate_ok.replace("Polaris product test suite", "Something else")).level == "FAIL", \
