@@ -42,7 +42,7 @@ An authority issues a credential signed with **ML-DSA-65**; the person holds it;
 
 - **Authenticity, offline.** A standalone verifier checks the signature against published keys, with no database and no network.
 - **Authorization, fresh.** A relying-party API, or a short-lived signed status assertion, says whether the credential counts right now.
-- **The rules live in the database.** A 60-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client; 373 machine-checked invariants and 29 CI jobs gate every change.
+- **The rules live in the database.** A 60-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client; 374 machine-checked invariants and 29 CI jobs gate every change.
 - **Wallets speak to it.** `polaris-oid4vp` is an OpenID4VP 1.0 + HAIP 1.0 verifier for SD-JWT VC, as a library or a server.
 
 It is **pre-pilot software on notional data**: it has never held real identity data, and nobody but the author has operated it.
@@ -162,7 +162,7 @@ Every other row is deployed at national scale; Polaris is neither. Its ticks are
 | Review the architecture | [ARCHITECTURE-OVERVIEW](docs/ARCHITECTURE-OVERVIEW.md) · [SYSTEM-MAP](docs/reference/SYSTEM-MAP.md) · [DATA-MODEL](docs/reference/DATA-MODEL.md) |
 | Review security | [SECURITY.md](SECURITY.md) · [threat model](docs/design/threat-model.md) · [RED-TEAM-SCOPE](docs/RED-TEAM-SCOPE.md) · [REVIEW-PACKET](docs/REVIEW-PACKET.md) |
 | Integrate | [API](docs/reference/API.md) · [SPEC-COMPLIANCE](docs/reference/SPEC-COMPLIANCE.md) · [GLOSSARY](docs/reference/GLOSSARY.md) |
-| Operate an instance | [docs/operator/](docs/operator/README.md) · [Linux server](docs/operator/LINUX-SERVER.md) · [Kubernetes](docs/operator/KUBERNETES.md) |
+| Operate an instance | [docs/operator/](docs/operator/README.md) · [Linux server](docs/operator/LINUX-SERVER.md) · [Kubernetes](docs/operator/KUBERNETES.md) · [evaluate an install](docs/operator/EVALUATE.md) |
 | Read it as research | [Project report](docs/paper/polaris_project_report_v3.pdf) · [CITATION.cff](CITATION.cff) |
 | Ask or contribute | [Discussions](https://github.com/EgorKhaklin/polaris-id/discussions) · [Discord](https://discord.gg/ragewuCKj) · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md) |
 

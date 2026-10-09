@@ -7174,6 +7174,87 @@ def check_doctor_names_failures(root: pathlib.Path) -> list[Finding]:
                "each named first, and a clean bill after each repair")
 
 
+# 2026-10-08: an operator evaluates their own install with one command and keeps the
+# report. It is worth something only if it can fail, so CI runs it notional on the fresh host, then
+# grants the application a privilege the database withholds and stops the edge, and requires each run
+# to fail and name what broke. A report carries no secret and says what a run does not establish.
+_EVALUATE_NEEDLES = (
+    ("scripts/polaris-evaluate.sh", 'source "${SCRIPT_DIR}/polaris-env.sh"', "read the configuration polaris.service runs with"),
+    ("scripts/polaris-evaluate.py", 'os.path.join(ROOT, "scripts", "polaris-doctor.sh")', "run the doctor"),
+    ("scripts/polaris-evaluate.py", "athena_selftest.run(conn)", "run the database's self-test on the application's own connection"),
+    ("scripts/polaris-evaluate.py", 'web.call("/api/v1/trust-list/%d" % agency)', "compare the published key with the one custody signs with"),
+    ("scripts/polaris-evaluate.py", '"--only-binary", ":all:", "polaris-verify[cryptography]==" + version',
+     "install the verifier this release ships, pinned, from wheels"),
+    ("scripts/polaris-evaluate.py", 'tempfile.TemporaryDirectory(prefix="polaris-evaluate-")',
+     "keep the credential and its tampered copies out of the report directory"),
+    ("scripts/polaris-evaluate.py", '"--pqc-provider", "auto"', "verify offline with the detached verifier"),
+    ("scripts/polaris-evaluate.py", '"hash-as-signature"', "present a hash as a signature offline"),
+    ("scripts/polaris-evaluate.py", '"/api/v1/verify"', "verify online as a relying party"),
+    ("scripts/polaris-evaluate.py", '"cosigner_agency_id": str(args.witness_agency)', "revoke the notional credential, co-signed"),
+    ("scripts/polaris-evaluate.py", 're.search(r"/tokens/%d(?:$|[/?#])" % token_id, where)',
+     "count a revocation only when the form lands on that credential"),
+    ("scripts/polaris-evaluate.py", 'or "signature_valid" not in v', "count an offline refusal only when the verifier gave a verdict"),
+    ("scripts/polaris-evaluate.py", "except FileExistsError:", "refuse a report directory that already exists"),
+    ("scripts/polaris-evaluate.py", "def guarded(", "turn a probe that cannot run into a failure"),
+    ("scripts/polaris-evaluate.py", "def scrub(", "keep secrets out of the report"),
+    ("scripts/polaris-evaluate.py", "DOES_NOT_ESTABLISH = (", "say what a run does not establish"),
+    ("docs/operator/EVALUATE.md", "## What a run does not establish", "the operator's guide must say what a run does not establish"),
+)
+_EVALUATE_CI = (
+    ("sudo scripts/polaris-evaluate.sh --notional", "run a notional evaluation on the fresh host"),
+    ('"F.online.after-revoke"', "require the revoked credential refused online"),
+    ('short += ["%s=FAIL" % k for k, v in verdicts.items() if v == "FAIL" and k not in need]',
+     "fail on any FAIL row, not only the named ones"),
+    ('sys.exit("the notional evaluation did not pass: %s" % ", ".join(short) if short else 0)',
+     "fail the step when the notional evaluation did not pass"),
+    ('! sudo grep -rqF "$(cat /tmp/ci-operator.pw)" /tmp/eval-notional', "look for the operator's password in the report"),
+    ('|| { echo "::error::the evaluation report carries the operator\'s password"; exit 1; }',
+     "fail when the report holds the operator's password"),
+    ("GRANT INSERT ON DuressEvent TO polaris_app", "grant the application a privilege the database withholds"),
+    ('[ "$rc" = 1 ] && grep -q "failing: .*B.Privilege" /tmp/eval-granted.out',
+     "require the evaluation to exit 1 and name that privilege"),
+    ("sudo docker stop polaris-caddy", "stop the edge"),
+    ('[ "$rc" = 1 ] && grep -q "failing: .*A.doctor.edge" /tmp/eval-noedge.out && sudo test -s /tmp/eval-noedge/report.json',
+     "require the evaluation to exit 1, name the edge and still write its report"),
+)
+
+
+def check_evaluate_wired(root: pathlib.Path) -> list[Finding]:
+    """`scripts/polaris-evaluate.sh` judges the install it runs on: the doctor, the database's own
+    self-test on the application's connection, the published key against custody's, offline and
+    online verification with tampered copies refused, and (on notional data) a credential issued and
+    revoked. The linux-install job runs it notional and then with a rule and the edge broken under it."""
+    name = "evaluate_wired"
+    problems = []
+    for rel, needle, why in _EVALUATE_NEEDLES:
+        text = _read(root, rel)
+        if not text:
+            problems.append(f"{rel} is missing")
+        elif needle not in text:
+            problems.append(f"{why} ({rel}: {needle!r} is gone)")
+    ci = _read(root, ".github/workflows/ci.yml")
+    job = ci[ci.find("  linux-install:"):] if "  linux-install:" in ci else ""
+    job = job[:job.find("\n  # ----", 1)] if "\n  # ----" in job else job
+    for needle, why in _EVALUATE_CI:
+        if needle not in job:
+            problems.append(f"the linux-install job must {why} ({needle!r})")
+    # The step's own pipefail: the job has other steps that set it, and one of theirs stood for this
+    # one's after another step was added (2026-10-09).
+    head = "- name: the install evaluates itself"
+    step = job[job.find(head):] if head in job else ""
+    step = step[:step.find("\n      - name:", 1)] if "\n      - name:" in step else step
+    tee = step.find("| tee /tmp/eval-notional.out")
+    if not (0 <= step.find("set -eo pipefail") < tee):
+        problems.append("the evaluation step must set pipefail before it runs the evaluation through tee, or the "
+                        "step reads tee's status instead of the evaluation's")
+    if problems:
+        return _fail(name, "; ".join(problems))
+    return _ok(name,
+               "scripts/polaris-evaluate.sh judges an install with the doctor, the database's self-test, the "
+               "published key, offline and online verification and a notional revocation; CI runs it on the "
+               "fresh host, then fails it with a privilege granted and with the edge down")
+
+
 # 2026-10-07 (lab record 017, gate row OP-19): an upgrade from the previous release is drilled. The
 # drill runs the previous release's own try.sh, moves that checkout to this commit and upgrades it
 # the way OPERATIONS.md says (polaris-generate-secrets.sh, polaris-deploy.sh prod), then requires no
@@ -26891,6 +26972,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_client_ip_behind_proxies,
     check_edge_limits,
     check_doctor_names_failures,
+    check_evaluate_wired,
     check_upgrade_drilled,
     check_helm_upgrade_migrates,
     check_infra_alerts,
