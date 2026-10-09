@@ -144,7 +144,7 @@ spec:
         {{- if eq .Values.edge.tls "internal" }}
         - name: edge-ca
           secret:
-            secretName: {{ include "polaris.fullname" . }}-edge-ca
+            secretName: {{ .Values.edge.caSecret | default (printf "%s-edge-ca" (include "polaris.fullname" .)) }}
             defaultMode: 0440
         {{- else if eq .Values.edge.tls "secret" }}
         - name: edge-tls

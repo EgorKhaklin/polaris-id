@@ -2750,7 +2750,7 @@ def check_read_only_roots(root: pathlib.Path) -> list[Finding]:
     for svc in READ_ONLY_SERVICES:
         # Every container in the pod, not one of them (G5 put the edge's tls-reload beside caddy).
         text = _read(root, f"deploy/helm/polaris/templates/{svc}.yaml")
-        images = len(re.findall(r"(?m)^\s+image: ", text))
+        images = len(re.findall(r"(?m)^\s+(?:- )?image: ", text))
         if text.count('include "polaris.containerSecurityReadOnly"') < max(images, 1):
             problems.append(f"the chart's {svc} pod runs a container that is not read-only")
     drill = _read(root, "lab/strategy/006/posture.sh")
@@ -8333,11 +8333,19 @@ def check_edge_tls_state_shared(root: pathlib.Path) -> list[Finding]:
     if not re.search(r'has \.Values\.edge\.tls \(list "acme" "secret"\) \}\}\s*\n\s*Strict-Transport-Security', caddyfile):
         return _fail("edge_tls_state", "the edge must send Strict-Transport-Security with a certificate clients "
                      "trust, edge.tls=secret (the production choice) as well as acme")
-    if not ("genCA" in ca and "lookup" in ca and '"helm.sh/resource-policy": keep' in ca):
-        return _fail("edge_tls_state", "templates/edge-ca.yaml must generate the root once and keep it (genCA, "
-                     "lookup, resource-policy keep): a root that changes on upgrade breaks every client's trust")
-    if not re.search(r'eq \.Values\.edge\.tls "acme"\) \(gt \(int \.Values\.edge\.replicas\) 1\)', deploy) \
-            or "{{- fail" not in deploy:
+    reuse = '{{- if and $existing (hasKey $existing.data "ca.crt") (hasKey $existing.data "ca.key") }}'
+    if not ("genCA" in ca and reuse in ca and '(lookup "v1" "Secret" .Release.Namespace $name)' in ca
+            and '"helm.sh/resource-policy": keep' in ca):
+        return _fail("edge_tls_state", "templates/edge-ca.yaml must generate the root once and keep it (genCA, the "
+                     "branch that reuses the root lookup found, resource-policy keep): a root that changes on "
+                     "upgrade breaks every client's trust")
+    if '{{- if and (eq .Values.edge.tls "internal") (not .Values.edge.caSecret) }}' not in ca \
+            or 'secretName: {{ .Values.edge.caSecret | default (printf "%s-edge-ca"' not in deploy:
+        return _fail("edge_tls_state", "an operator-supplied root (edge.caSecret) must replace the generated one: a "
+                     "render without the cluster (helm template, Argo CD) cannot look the generated one up and mints "
+                     "a new root each time")
+    if not re.search(r'eq \.Values\.edge\.tls "acme"\) \(gt \(int \.Values\.edge\.replicas\) 1\) \}\}\n'
+                     r'\{\{- fail "edge\.tls=acme serves one replica', deploy):
         return _fail("edge_tls_state", "caddy.yaml must refuse edge.tls=acme with more than one replica: replicas "
                      "that do not share the ACME state answer only their own challenges")
     if "claimName: {{ include \"polaris.fullname\" . }}-caddy-acme" not in deploy or "type: Recreate" not in deploy:
@@ -8347,11 +8355,22 @@ def check_edge_tls_state_shared(root: pathlib.Path) -> list[Finding]:
     if not reload or "caddy reload --force" not in reload.group(1) or 'seen=""' not in reload.group(1):
         return _fail("edge_tls_state", "edge.tls=secret needs the tls-reload container: `caddy reload --force` when "
                      "the Secret's files change, starting from nothing recorded so a restarted reloader still reloads")
+    for needle, why in (("helm upgrade replaced the edge root", "keep the internal root across a helm upgrade"),
+                        ("the edge sends Strict-Transport-Security under the internal root",
+                         "send no Strict-Transport-Security under the internal root"),
+                        ("an edge pod restarted or was replaced to serve the renewed Secret",
+                         "follow a renewed Secret without restarting a pod (restart counts compared)"),
+                        ("edge.tls=acme with two replicas failed to render for another reason",
+                         "refuse acme with two replicas for that reason, not any render failure"),
+                        ("with edge.caSecret the chart must mount that Secret", "honour edge.caSecret"),
+                        ('pods=$(edge_pods) || return 1', "count the replicas a renewal reached")):
+        if needle not in drill:
+            return _fail("edge_tls_state", f"polaris-helm-drill.sh must {why} ({needle!r})")
     if "--cacert /tmp/polaris-edge-ca.crt" not in drill or 'port-forward "$pod"' not in drill \
             or "replaced:" not in drill or "after the Secret was renewed" not in drill:
         return _fail("edge_tls_state", "polaris-helm-drill.sh must verify every edge replica against the chart's "
                      "root (by pod, without -k) across a replacement, and a renewed Secret reaching every replica")
-    if "edge.tls=secret" not in doc or "-edge-ca" not in doc:
+    if "edge.tls=secret" not in doc or "-edge-ca" not in doc or "edge.caSecret" not in doc:
         return _fail("edge_tls_state", "KUBERNETES.md must name edge.tls=secret and the chart's edge root")
     return _ok("edge_tls_state", "the edge's TLS state is shared by its replicas: the chart's internal root, a "
                "Secret reloaded on renewal, ACME on one replica's kept volume; the kind drill verifies every replica")

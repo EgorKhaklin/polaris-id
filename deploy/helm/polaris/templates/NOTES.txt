@@ -2,7 +2,12 @@ Polaris {{ .Chart.AppVersion }} installed as release {{ .Release.Name }} in {{ .
 
   Edge:     service/{{ include "polaris.fullname" . }}-caddy  ({{ .Values.edge.service.type }}, {{ .Values.edge.tls }} TLS for {{ .Values.domain }})
   Health:   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "polaris.fullname" . }}-caddy 8443:{{ .Values.edge.service.httpsPort }}
-            curl -k https://localhost:8443/api/health
+{{- if eq .Values.edge.tls "internal" }}
+            kubectl -n {{ .Release.Namespace }} get secret {{ .Values.edge.caSecret | default (printf "%s-edge-ca" (include "polaris.fullname" .)) }} -o jsonpath='{.data.ca\.crt}' | base64 -d > edge-ca.crt
+            curl --cacert edge-ca.crt --resolve {{ .Values.domain }}:8443:127.0.0.1 https://{{ .Values.domain }}:8443/api/health
+{{- else }}
+            curl --resolve {{ .Values.domain }}:8443:127.0.0.1 https://{{ .Values.domain }}:8443/api/health
+{{- end }}
   Secrets:  {{ include "polaris.secretName" . }}{{ if not .Values.secrets.existingSecret }}  (chart-generated; add polaris_signing_key for real ML-DSA-65 custody){{ end }}
   Database: {{ .Values.postgres.replicas }} Patroni member(s); kubectl -n {{ .Release.Namespace }} exec {{ include "polaris.fullname" . }}-postgres-0 -- patronictl -c /var/lib/postgresql/patroni.yml list
   Policies: default-deny NetworkPolicies are {{ ternary "ON (needs an enforcing CNI)" "OFF" .Values.networkPolicy.enabled }}

@@ -101,8 +101,14 @@ echo "== 3. secrets + helm install =="
 kubectl -n "$NS" create secret generic polaris-secrets --from-file="$ROOT/polaris_web/secrets/" >/dev/null
 helm lint "$ROOT/deploy/helm/polaris" >/dev/null && echo "  helm lint OK"
 # G5: ACME state that replicas do not share is refused, and one replica keeps it on a volume.
-if helm template "$REL" "$ROOT/deploy/helm/polaris" --set edge.tls=acme --set edge.replicas=2 >/dev/null 2>&1; then
+if helm template "$REL" "$ROOT/deploy/helm/polaris" --set edge.tls=acme --set edge.replicas=2 >/dev/null 2>/tmp/polaris-acme.err; then
     fail "edge.tls=acme rendered with two edge replicas"
+fi
+grep -q "edge.tls=acme serves one replica" /tmp/polaris-acme.err \
+    || { cat /tmp/polaris-acme.err; fail "edge.tls=acme with two replicas failed to render for another reason"; }
+helm template "$REL" "$ROOT/deploy/helm/polaris" --set edge.caSecret=operator-edge-root > /tmp/polaris-casecret.yaml
+if grep -q "name: ${REL}-edge-ca\$" /tmp/polaris-casecret.yaml || ! grep -q "secretName: operator-edge-root" /tmp/polaris-casecret.yaml; then
+    fail "with edge.caSecret the chart must mount that Secret and generate no root of its own"
 fi
 helm template "$REL" "$ROOT/deploy/helm/polaris" --set edge.tls=acme --set edge.replicas=1 \
     | grep -q "claimName: ${REL}-caddy-acme" || fail "edge.tls=acme does not keep its state on a volume"
@@ -369,6 +375,26 @@ kubectl -n "$NS" delete "$victim" --wait=true >/dev/null
 kubectl -n "$NS" rollout status "deploy/${REL}-caddy" --timeout=180s >/dev/null
 n=$(verify_all)
 echo "  ${victim#pod/} replaced: $n replicas still verify against the same root"
+root_before=$(kubectl -n "$NS" get secret "${REL}-edge-ca" -o jsonpath='{.data.ca\.crt}')
+helm upgrade "$REL" "$ROOT/deploy/helm/polaris" -n "$NS" --reuse-values --wait --timeout 8m >/dev/null \
+    || fail "a helm upgrade with the same values did not reach ready"
+[ "$(kubectl -n "$NS" get secret "${REL}-edge-ca" -o jsonpath='{.data.ca\.crt}')" = "$root_before" ] \
+    || fail "helm upgrade replaced the edge root: every client that trusted it now fails"
+n=$(verify_all)
+echo "  helm upgrade kept the root: $n replicas still verify against it"
+# The internal root is no root a browser knows: HSTS there would pin users to a certificate they must override.
+kubectl -n "$NS" port-forward "$(edge_pods | head -1)" 18444:8443 >/dev/null 2>&1 & pf=$!
+code=""
+for _ in $(seq 1 20); do
+    code=$(curl -s --cacert /tmp/polaris-edge-ca.crt --max-time 10 -D /tmp/polaris-internal.hdr -o /dev/null -w '%{http_code}' https://localhost:18444/api/health || true)
+    [ "$code" = 200 ] && break; sleep 1
+done
+kill "$pf" 2>/dev/null; wait "$pf" 2>/dev/null || true
+[ "$code" = 200 ] || fail "the edge did not answer under edge.tls=internal (HTTP $code)"
+if grep -qi '^strict-transport-security' /tmp/polaris-internal.hdr; then
+    fail "the edge sends Strict-Transport-Security under the internal root"
+fi
+echo "  and sends no Strict-Transport-Security under the internal root"
 
 echo "== 9. edge.tls=secret serves the Secret's certificate and follows its renewal (G5) =="
 for n in 1 2; do
@@ -380,9 +406,15 @@ kubectl -n "$NS" create secret tls polaris-edge-tls --cert=/tmp/polaris-edge1.cr
 helm upgrade "$REL" "$ROOT/deploy/helm/polaris" -n "$NS" --reuse-values --set edge.tls=secret \
     --set edge.tlsSecret=polaris-edge-tls --wait --timeout 8m >/dev/null || fail "the upgrade to edge.tls=secret did not reach ready"
 kubectl -n "$NS" rollout status "deploy/${REL}-caddy" --timeout=180s >/dev/null
-all_serve() {   # every edge replica serves the certificate with this fingerprint
-    local want=$1 p
-    for p in $(edge_pods); do [ "$(served "$p" -k || true)" = "$want" ] || return 1; done
+all_serve() {   # every edge replica (at least two, so an empty list proves nothing) serves this certificate
+    local want=$1 p n=0 pods
+    pods=$(edge_pods) || return 1
+    for p in $pods; do [ "$(served "$p" -k || true)" = "$want" ] || return 1; n=$((n + 1)); done
+    [ "$n" -ge 2 ]
+}
+restarts() {    # each edge pod with its containers' restart counts: a renewal must leave this unchanged
+    kubectl -n "$NS" get pods -l app.kubernetes.io/component=caddy \
+        -o jsonpath='{range .items[*]}{.metadata.name}{range .status.containerStatuses[*]} {.restartCount}{end}{"\n"}{end}' | sort
 }
 t0=$(date +%s); serving=""
 while [ $(( $(date +%s) - t0 )) -lt 120 ]; do
@@ -401,6 +433,7 @@ done
 kill "$pf" 2>/dev/null; wait "$pf" 2>/dev/null || true
 [ -n "$hsts" ] || fail "the edge sends no Strict-Transport-Security under edge.tls=secret"
 echo "  and sends Strict-Transport-Security"
+before_renewal=$(restarts)
 kubectl -n "$NS" create secret tls polaris-edge-tls --cert=/tmp/polaris-edge2.crt --key=/tmp/polaris-edge2.key \
     --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
 t0=$(date +%s); renewed=""
@@ -409,7 +442,8 @@ while [ $(( $(date +%s) - t0 )) -lt 240 ]; do
     sleep 10
 done
 [ -n "$renewed" ] || { kubectl -n "$NS" logs -l app.kubernetes.io/component=caddy -c tls-reload --tail=5; fail "the edge still served the old certificate 240 s after the Secret was renewed"; }
-echo "  the Secret renewed: every replica serves the new certificate after $(( $(date +%s) - t0 )) s, no restart"
+[ "$(restarts)" = "$before_renewal" ] || { echo "$before_renewal"; restarts; fail "an edge pod restarted or was replaced to serve the renewed Secret"; }
+echo "  the Secret renewed: every replica serves the new certificate after $(( $(date +%s) - t0 )) s, no pod restarted"
 
 echo "== HELM/KIND DRILL PASSED: restricted PSS enforced, policies enforced, stack healthy through the edge, database failover automated, the edge's TLS state shared by its replicas =="
 

@@ -2,7 +2,7 @@
      edge replica and every restart chains to it, and ca.crt is what a client trusts. Without it each
      replica minted its own root into an emptyDir, so a second replica or a restart served a chain the
      client's root did not sign. */}}
-{{- if eq .Values.edge.tls "internal" }}
+{{- if and (eq .Values.edge.tls "internal") (not .Values.edge.caSecret) }}
 {{- $name := printf "%s-edge-ca" (include "polaris.fullname" .) }}
 {{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}
 apiVersion: v1

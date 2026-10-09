@@ -58,7 +58,18 @@ are read from the `kubernetes` Endpoints at install time; set
     answer only their own challenges.
   - `internal` (the default; evaluation, private networks): Caddy's internal CA
     under a root the chart generates once and keeps, the Secret
-    `<release>-edge-ca`, whose `ca.crt` clients trust.
+    `<release>-edge-ca`, whose `ca.crt` clients trust. It finds that Secret again
+    with Helm's `lookup`, which only `helm install` and `helm upgrade` can run: a
+    render without the cluster (`helm template`, and so Argo CD) would mint a new
+    root each time, and every replaced pod would then chain to a root no client
+    trusts. There, create the root once and name it in `edge.caSecret`; the chart
+    then generates none and never overwrites it:
+    ```bash
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 3650 \
+      -subj "/CN=Polaris edge root" -keyout ca.key -out ca.crt
+    kubectl -n polaris create secret generic polaris-edge-root --from-file=ca.crt --from-file=ca.key
+    # values: edge.caSecret: polaris-edge-root
+    ```
 - The four images in a registry your nodes can pull from (`images.*` in
   values), or `kind load docker-image` for a local cluster. Polaris publishes
   no registry images yet (P0.6 deferred image signing for that reason), so

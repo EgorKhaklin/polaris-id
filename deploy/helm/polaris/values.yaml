@@ -44,7 +44,12 @@ edge:
   #   own challenges. Its account and certificates live on a volume (edge.acmeVolume).
   # internal: Caddy's internal CA (evaluation, kind, private networks), under a root the chart
   #   generates once and keeps: the Secret <release>-edge-ca, whose ca.crt is what clients trust.
+  #   A render without the cluster (helm template, so Argo CD) cannot see that Secret and would mint
+  #   a new root each time: there, set edge.caSecret.
   tls: internal
+  # With edge.tls=internal: an existing Secret (keys ca.crt and ca.key) holding the root, created once
+  # by the operator; the chart then generates none and never overwrites it (docs/operator/KUBERNETES.md).
+  caSecret: ""
   # With edge.tls=secret: the kubernetes.io/tls Secret, in the release's namespace.
   tlsSecret: ""
   # With edge.tls=acme: the volume that keeps the ACME account and certificates across restarts.
