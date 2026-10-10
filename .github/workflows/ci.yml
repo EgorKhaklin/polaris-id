@@ -3534,6 +3534,13 @@ jobs:
           # pytest, and PyYAML for the one detection test that parses the pre-commit config.
           pip install --require-hashes -r polaris_web/requirements-test.txt
           python3 -m pytest polaris_checks/test_checks.py -q -p no:cacheprovider
+      # Every documented `docker compose -f` file set, parsed by the runner's Compose with Docker
+      # pointed at a socket that does not exist: nothing starts and nothing is pulled. Two documented
+      # commands failed only when run on 2026-10-10 (scripts/polaris-compose-parse.py says which).
+      - name: Every documented compose file set parses under the runner's Compose
+        run: |
+          python3 scripts/polaris-compose-parse.py
+          cd scripts && python3 -m unittest test_compose_parse
 
   dco:
     # OpenSSF Baseline OSPS-LE-01.01: every commit a person contributes asserts, with a

@@ -6610,6 +6610,54 @@ def test_no_grep_q_psql_check_discriminates(tmp_path):
         "must PASS for a read-only psql listing piped into grep -q"
 
 
+def test_documented_compose_files_resolve_check_discriminates(tmp_path, monkeypatch):
+    def write(files):
+        for rel, body in files.items():
+            p = tmp_path / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(body)
+
+    def run():
+        return checks.check_documented_compose_files_resolve(tmp_path)[0]
+
+    assert run().level == "FAIL", "must FAIL when it finds no documented compose call"
+    monkeypatch.setattr(checks, "_COMPOSE_FLOOR", 1)
+    monkeypatch.setattr(checks, "_COMPOSE_COMBO_FLOOR", 1)
+    write({"polaris_web/docker-compose.prod.yml": "services: {}\n", "polaris_web/docker-compose.ha.yml": "services: {}\n",
+           "polaris_web/docker-compose.bluegreen.yml": "services: {}\n", "polaris_web/docker-compose.citest.yml": "services: {}\n"})
+    doc = ("# Ops\n\nProse with docker compose -f nowhere.yml outside a block is not a command.\n\n```bash\n"
+           'P="docker compose -f polaris_web/docker-compose.prod.yml -f polaris_web/docker-compose.ha.yml exec postgres patronictl"\n'
+           "N=$(. scripts/polaris-env.sh && cd polaris_web && POLARIS_DOMAIN=\"${POLARIS_DOMAIN:-x}\" docker compose \\\n"
+           "      -f docker-compose.prod.yml config --no-interpolate --format json | jq .name)\n"
+           'export POLARIS_COMPOSE_EXTRA="-f docker-compose.citest.yml -f docker-compose.bluegreen.yml"\n```\n')
+    write({"docs/OPS.md": doc})
+    found = run()
+    assert found.level == "OK", f"must PASS when every documented file is in the tree: {found.message}"
+    calls = {c.line: c for c in checks._compose_calls(tmp_path)}
+    # The quoted alias, seen through its quotes, with its two files in order and its subcommand.
+    assert calls[6].files == ("polaris_web/docker-compose.prod.yml", "polaris_web/docker-compose.ha.yml") \
+        and calls[6].sub == "exec", calls.get(6)
+    # The $(cd X && ...) form after a continuation: resolved from its cd, with the flags that change the parse.
+    assert calls[7].files == ("polaris_web/docker-compose.prod.yml",) and calls[7].sub == "config", calls.get(7)
+    assert calls[7].flags == ("--no-interpolate", "--format", "json"), calls[7].flags
+    assert calls[7].env == (("POLARIS_DOMAIN", "${POLARIS_DOMAIN:-x}"),), calls[7].env
+    # polaris.env's overlays, beside the production file the deploy always loads.
+    assert calls[9].files == ("polaris_web/docker-compose.prod.yml", "polaris_web/docker-compose.citest.yml",
+                              "polaris_web/docker-compose.bluegreen.yml"), calls.get(9)
+    assert 3 not in calls, "prose outside a code block is not a command"
+
+    # A documented file the tree does not have is named with its document and line.
+    write({"docs/OPS.md": doc.replace("docker-compose.ha.yml exec", "docker-compose.dr.yml exec")})
+    found = run()
+    assert found.level == "FAIL" and "docs/OPS.md:6 (polaris_web/docker-compose.dr.yml)" in found.message, found.message
+
+    # A suite cloned at run time names its own files: a cd to a variable is another checkout's.
+    write({"docs/OPS.md": doc, ".github/workflows/w.yml": 'jobs:\n  j:\n    steps:\n      - run: |\n'
+           '          cd "$SUITE"\n          docker compose -f docker-compose-prebuilt.yml up -d\n'})
+    assert run().level == "OK", f"a call in another checkout is not resolved here: {run().message}"
+    assert [c.dynamic for c in checks._compose_calls(tmp_path) if c.rel.endswith("w.yml")] == [True]
+
+
 def test_shell_pipes_read_to_the_end_check_discriminates(tmp_path):
     def level(root):
         return checks.check_shell_pipes_read_to_the_end(root)[0]

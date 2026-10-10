@@ -5833,6 +5833,208 @@ def check_shell_pipes_read_to_the_end(root: pathlib.Path) -> list[Finding]:
                f"{pipes} pipelines in {len(files)} shell files: none feeds a consumer that stops reading early")
 
 
+# Every documented `docker compose -f ...`, so the file sets operators and scripts use are parsed in CI
+# under the runner's Compose (scripts/polaris-compose-parse.py) and resolved here. On 2026-10-10 two
+# documented commands failed only when run: OPERATIONS.md's `config --no-interpolate`, which Compose
+# 2.38 refuses on the production file, and the HA patronictl alias, whose overlay extends a service
+# only the blue-green file defines. Read from fenced code blocks in Markdown, from shell scripts and
+# from workflows; a `\\` continuation is joined; a quoted alias, a `$(cd X && ...)` and an env prefix
+# are seen through. docs/history/ is an archive of commands for releases that are gone.
+_COMPOSE_SKIP = ("docs/history/",)
+_COMPOSE_CALL = re.compile(r"(?<![\w-])docker(?: compose|-compose)(?![\w-])")
+# Variables that name a place in the tree; any other variable in a -f is dynamic and not resolved here.
+_COMPOSE_ROOT_VARS = {"ROOT": "", "POLARIS_ROOT": "", "TREE": "", "REPO": "", "REPO_ROOT": "",
+                      "WEB": "polaris_web", "WEB_DIR": "polaris_web", "POLARIS_WEB": "polaris_web"}
+# Floors a little under what was measured when they were set (2026-10-10: 103 calls with a static file set,
+# 9 combinations), so an extractor that stops reading fails while an ordinary doc edit does not.
+_COMPOSE_FLOOR = 100
+_COMPOSE_COMBO_FLOOR = 8
+
+
+@dataclass
+class ComposeCall:
+    rel: str
+    line: int
+    files: tuple[str, ...]      # resolved, repo-relative; empty when any -f is dynamic
+    unresolved: tuple[str, ...]
+    dynamic: bool
+    sub: str
+    flags: tuple[str, ...]      # what changes how the file set parses: --no-interpolate, --format X, --profile X
+    env: tuple[tuple[str, str], ...]
+    expect_fail: str
+
+
+def _compose_logical_lines(rel: str, text: str):
+    """(first line number, logical line, expect-fail reason) for every line `docker compose` could be on."""
+    lines = text.split("\n")
+    if rel.endswith(".md"):
+        keep, fence, expect, pending = [], False, "", ""
+        for ln in lines:
+            m = re.match(r"\s*<!-- compose-parse: expect-fail (.+?) -->", ln)
+            if m and not fence:
+                pending = m.group(1)
+            if re.match(r"\s*(```|~~~)", ln):
+                fence = not fence
+                expect, pending = (pending, "") if fence else ("", pending)
+                keep.append(("", ""))
+                continue
+            keep.append((ln if fence else "", expect if fence else ""))
+    else:
+        keep = [(ln, "") for ln in lines]
+    # A standalone `cd` holds for the rest of its block: a fenced block, or one workflow step. A shell
+    # script's cd is read on the call's own line only.
+    blocky = rel.endswith(".md") or rel.endswith(".yml")
+    i, block_cd = 0, ""
+    while i < len(keep):
+        start, (cur, expect) = i, keep[i]
+        while cur.endswith("\\") and i + 1 < len(keep):
+            i += 1
+            cur = cur[:-1] + " " + keep[i][0].lstrip()
+        if blocky:
+            if (rel.endswith(".md") and not cur and not expect) or re.match(r"\s*-\s+(name|uses|run):|\s*run:", cur):
+                block_cd = ""
+            m = re.match(r"\s*cd\s+([\"']?)([^\"'\s;&]+)\1\s*$", cur)
+            if m:
+                block_cd = m.group(2)
+        if _COMPOSE_CALL.search(cur):
+            yield start + 1, cur, expect, block_cd
+        i += 1
+
+
+def _compose_place(rel: str, path: str) -> str:
+    """`path` with the variables that name a place in the tree replaced; any other variable is left."""
+    places = dict(_COMPOSE_ROOT_VARS, HERE=str(pathlib.PurePosixPath(rel).parent))
+    for var, place in places.items():
+        for form in ("${%s}" % var, "$%s" % var):
+            if path == form:
+                return place or "."
+            if path.startswith(form + "/"):
+                path = (place + "/" if place else "") + path[len(form) + 1:]
+    if path.startswith("/opt/polaris/"):
+        path = path[len("/opt/polaris/"):]
+    return path
+
+
+def _compose_resolve(root: pathlib.Path, rel: str, cwd: str, path: str) -> str | None:
+    path = _compose_place(rel, path)
+    if "$" in path or path.startswith("/"):
+        return None
+    for base in ([cwd] if cwd else []) + ["", "polaris_web", str(pathlib.PurePosixPath(rel).parent)]:
+        cand = os.path.normpath(os.path.join(base, path)) if base else os.path.normpath(path)
+        if not cand.startswith("..") and (root / cand).is_file():
+            return cand
+    return ""
+
+
+def _compose_calls(root: pathlib.Path) -> list[ComposeCall]:
+    import shlex
+    calls = []
+    for rel in _tracked_files(root):
+        if rel.startswith(_COMPOSE_SKIP) or not (
+                rel.endswith((".md", ".sh")) or (rel.startswith(".github/workflows/") and rel.endswith(".yml"))):
+            continue
+        text = _read_path(root / rel)
+        if "docker" not in text:
+            continue
+        for line, cur, expect, block_cd in _compose_logical_lines(rel, text):
+            for m in _COMPOSE_CALL.finditer(cur):
+                before, tail = cur[:m.start()], cur[m.end():]
+                # Inside a quoted alias (P="docker compose ..."), the command ends at the closing quote.
+                quote = '"' if before.count('"') % 2 else "'" if before.count("'") % 2 else ""
+                end = len(tail)
+                for stop in ([quote] if quote else []) + ["|", ";", "&&", "||", "`"]:
+                    k = tail.find(stop)
+                    if k >= 0:
+                        end = min(end, k)
+                depth, k = 0, 0
+                while k < end:          # a `)` that closes the $( ) the call sits in
+                    depth += {"(": 1, ")": -1}.get(tail[k], 0)
+                    if depth < 0:
+                        end = k
+                        break
+                    k += 1
+                try:
+                    toks = shlex.split(tail[:end], comments=False, posix=True)
+                except ValueError:
+                    toks = tail[:end].split()
+                env_m = re.search(r"((?:[A-Z_][A-Z0-9_]*=(?:\"[^\"]*\"|'[^']*'|[^\s\"']*)\s+)+)$", before)
+                env = tuple(tuple(kv.split("=", 1)) for kv in shlex.split(env_m.group(1))) if env_m else ()
+                lead = before[:env_m.start()] if env_m else before
+                cd = re.search(r"\bcd\s+([\"']?)([^\"'\s;&)]+)\1\s*&&\s*$", lead)
+                cwd = _compose_place(rel, cd.group(2) if cd else block_cd)
+                # A cd to a variable, or to a directory the tree does not have (a suite cloned at run
+                # time), names another checkout's files: dynamic here.
+                elsewhere = bool(cwd) and ("$" in cwd or not (root / cwd).is_dir())
+                raw, flags, sub, i = [], [], "", 0
+                while i < len(toks):
+                    t = toks[i]
+                    if t in ("-f", "--file") and i + 1 < len(toks):
+                        raw.append(toks[i + 1]); i += 2; continue
+                    if t.startswith("--file="):
+                        raw.append(t.split("=", 1)[1]); i += 1; continue
+                    if t in ("--profile", "-p", "--project-name", "--env-file", "--project-directory") and i + 1 < len(toks):
+                        if t == "--profile":
+                            flags += [t, toks[i + 1]]
+                        i += 2; continue
+                    if t.startswith("-"):
+                        i += 1; continue
+                    sub = t
+                    rest = toks[i + 1:]
+                    for j, r in enumerate(rest):
+                        if r == "--no-interpolate":
+                            flags.append(r)
+                        elif r == "--format" and j + 1 < len(rest):
+                            flags += [r, rest[j + 1]]
+                        elif r.startswith("--format="):
+                            flags += ["--format", r.split("=", 1)[1]]
+                    break
+                if not raw:
+                    continue
+                resolved = [None if elsewhere else _compose_resolve(root, rel, cwd, p) for p in raw]
+                dynamic = any(r is None for r in resolved)
+                calls.append(ComposeCall(
+                    rel, line, () if dynamic else tuple(r for r in resolved if r),
+                    tuple(p for p, r in zip(raw, resolved) if r == ""), dynamic, sub,
+                    tuple(flags) if sub == "config" else _compose_profiles(flags),
+                    env, expect))
+            # The overlays the deploy loads beside the production file (polaris.env's POLARIS_COMPOSE_EXTRA),
+            # resolved from polaris_web/ where it runs compose.
+            for m in re.finditer(r"POLARIS_COMPOSE_EXTRA=([\"'])([^\"']*)\1", cur):
+                raw = re.findall(r"(?:^|\s)-f\s+(\S+)", m.group(2))
+                if not raw:
+                    continue
+                resolved = [_compose_resolve(root, rel, "polaris_web", p) for p in raw]
+                dynamic = any(r is None for r in resolved)
+                calls.append(ComposeCall(
+                    rel, line, () if dynamic else ("polaris_web/docker-compose.prod.yml",) + tuple(r for r in resolved if r),
+                    tuple(p for p, r in zip(raw, resolved) if r == ""), dynamic, "config", (), (), expect))
+    return calls
+
+
+def _compose_profiles(flags: list[str]) -> tuple[str, ...]:
+    out = []
+    for i, f in enumerate(flags):
+        if f == "--profile" and i + 1 < len(flags):
+            out += [f, flags[i + 1]]
+    return tuple(out)
+
+
+def check_documented_compose_files_resolve(root: pathlib.Path) -> list[Finding]:
+    name = "documented_compose_files_resolve"
+    calls = _compose_calls(root)
+    static = [c for c in calls if not c.dynamic]
+    if not calls or len(static) < _COMPOSE_FLOOR or len({(c.files, c.flags) for c in static}) < _COMPOSE_COMBO_FLOOR:
+        return _fail(name, f"found {len(calls)} documented `docker compose -f` calls, {len(static)} with a static "
+                           f"file set (floor {_COMPOSE_FLOOR}, {_COMPOSE_COMBO_FLOOR} combinations): the extractor "
+                           "reads less than it did")
+    missing = [f"{c.rel}:{c.line} ({', '.join(c.unresolved)})" for c in static if c.unresolved]
+    if missing:
+        return _fail(name, "a documented `docker compose -f` names a file the tree does not have: " + "; ".join(missing))
+    combos = {(c.files, c.flags) for c in static}
+    return _ok(name, f"{len(calls)} documented `docker compose -f` calls, {len(static)} with a static file set "
+                     f"({len(combos)} file-set and flag combinations, parsed in CI by scripts/polaris-compose-parse.py); "
+                     "every file they name is in the tree")
+
 # A psql that runs INSIDE a container (a run_psql routed through `docker compose ... exec`)
 # cannot read a file on the host. polaris-create-operator.sh, polaris-generate-recovery-code.sh
 # and polaris-recover-admin.sh wrote their SQL to a host temp file and ran `run_psql -f` on it,
@@ -28622,6 +28824,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_archive_version_derived,
     check_no_grep_q_transaction_scrape,
     check_shell_pipes_read_to_the_end,
+    check_documented_compose_files_resolve,
     check_container_psql_reads_sql_from_stdin,
     check_psql_status_capture_set_e_safe,
     check_recover_admin_refuses_self_pairing,

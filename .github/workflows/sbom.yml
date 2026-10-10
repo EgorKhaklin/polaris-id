@@ -107,7 +107,7 @@ jobs:
     if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || needs.resolve.result == 'success') }}
     permissions:
       contents: read
-    uses: ./.github/workflows/sbom-build.yml  # zizmor: ignore[self-repository] -- a job's ./ reusable workflow is read at the caller's own commit, not from the runner's workspace
+    uses: ./.github/workflows/sbom-build.yml  # zizmor: ignore[self-repository] -- GitHub's "Reuse workflows": a ./ reusable workflow in the same repository is from the same commit as the caller, not the runner's workspace
     with:
       ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'schedule' && github.sha || needs.resolve.outputs.tag }}
       version: ${{ needs.resolve.outputs.version }}
