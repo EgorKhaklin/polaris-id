@@ -75,7 +75,8 @@ venv/bin/polaris-oid4vp serve --help | grep -- --issuer-trust-anchor >/dev/null 
 
 # The wallet, built at exactly $VERSION for the container's own architecture inside the official
 # Go image. `go install pkg@version` pins the module version with no go.mod of our own.
-docker run --rm -v "$WORK:/out" -e CGO_ENABLED=0 -e GOBIN=/out golang:1.26 \
+# GOTOOLCHAIN=auto: a release needing a newer Go than a cached image holds (v0.39.0: 1.26.9) fetches it.
+docker run --rm -v "$WORK:/out" -e CGO_ENABLED=0 -e GOBIN=/out -e GOTOOLCHAIN=auto golang:1.26 \
   go install "github.com/idfoundry/oid4vcgo/cmd/conformance-wallet-vp@$VERSION"
 mv "$WORK/conformance-wallet-vp" "$WORK/wallet"
 
