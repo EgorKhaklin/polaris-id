@@ -18,8 +18,8 @@ version 1.0.0rc7, which passed all eleven modules of the Foundation's hosted HAI
 2026-09-24). The certification covers that version in that role. OpenID® and OpenID® Certified™
 are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Status:** this release, 1.0.0rc16, is the certified rc7 verifier plus the fixes made since; the
-certification names rc7. It is re-run weekly against the outside implementations in the table
+**Status:** this release, 1.0.0rc17, is the certified rc7 verifier plus the fixes and additions
+made since; the certification names rc7. It is re-run weekly against the outside implementations in the table
 below. No operator other than the author has run it and no independent security review exists.
 Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
 
@@ -160,6 +160,9 @@ make every presentation replayable. `sdjwt.py` touches no socket and reads no co
 | `disclosure` | a disclosure of a claim that must be signed (`iss`, `exp`, `cnf`, ...), a colliding claim, a digest the credential commits to twice, or nesting past the depth cap |
 | `issuer_key` | an untrusted key, an x5c leaf outside its validity, not marked for signing, self-signed or a CA, or one that does not name the credential's `iss` |
 | `crit` | an issuer JWT, key-binding JWT or status list token whose `crit` names an extension; none is implemented |
+| `transaction_data_missing`, `transaction_data_extra`, `transaction_data_mismatch` | (transaction data) `transaction_data_hashes` that lack, add to or differ from the hashes of the entries the key-binding JWT must bind, in the request's order |
+| `transaction_data_alg` | (transaction data) a `transaction_data_hashes_alg` that is not a string, not allowed by every entry it binds, absent when an entry names algorithms, or not computable here |
+| `ts12_jti`, `ts12_response_mode`, `ts12_amr` | (a TS12 entry naming the credential) no `jti` or one used before; a `response_mode` other than the request's; `amr` that is not single-member objects naming at least two TS12 categories |
 | `malformed` | over 256 KiB, JSON over 64 KiB or 64 levels, or non-finite numbers |
 
 Recursive disclosures (SD-JWT 4.2.4.1) are supported.
@@ -176,6 +179,43 @@ one constant body, so the verifier is not a per-check oracle:
 The response JWE (`jwe.py`) accepts only ECDH-ES over P-256 with A128GCM or A256GCM, with a
 fresh encryption key per request. The listener (`verifier.py`, `serve.py`) is standard library
 only.
+
+## Transaction data
+
+A request may carry OpenID4VP 1.0 `transaction_data` (section 8.4), opt-in per request:
+`Verifier.new_request(transaction_data=[...])`, or `serve --transaction-data FILE --once`. An entry
+is a base64url string, sent exactly as given, or a JSON object, encoded once. It must name the
+request's credential query (`--credential-query-id`, default `pid`), and a TS12 payment
+(`urn:eudi:sca:payment:1`) must satisfy TS12's own JSON Schema for it, or the request is refused
+before it is sent. A request without `transaction_data` is unchanged.
+
+The presentation's key-binding JWT must then carry:
+
+- `transaction_data_hashes`: base64url(HASH(the ASCII bytes of each string as sent)), never of the
+  decoded JSON (Appendix B.3.3.1), for exactly the entries it binds, in the request's order;
+- `transaction_data_hashes_alg`: a string naming an algorithm every entry it binds allows
+  (sha-256 by default; sha-384 and sha-512 when an entry lists them), required when one lists any;
+- for a TS12 entry (`urn:eudi:sca:...`) naming its credential (TS12 section 3.6): a `jti` not seen
+  before, the request's `response_mode`, and `amr` naming at least two TS12 categories.
+
+`verdict.transaction_data` says what the JWT was held to: the entries, the reading, the algorithm
+and the `jti`.
+
+**Which entries each key-binding JWT binds**, when a response presents several credentials, is not
+settled by OpenID4VP 1.0 (SIROS's question B8). Both readings are implemented and one is named:
+`per_credential`, the entries whose `credential_ids` name that credential (SIROS, multipaz), or
+`all_entries`, every entry (SUNET/vc). Under `per_credential` an entry naming two presented
+credentials is bound by exactly one of them, as section 5.1 has the wallet "use only one of the
+referenced Credentials"; twice or not at all is refused.
+`polaris-oid4vp verdict --request R --vp-token T` judges a captured response under both, and with
+two readings that differ decides only under `--transaction-data-scope`. Otherwise it accepts
+nothing: `accepted` is null and the command exits 2. An undecided reading is not an acceptance. With
+one credential query, as `serve` asks, both expect every entry.
+[lab/interop/transaction-data](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/transaction-data/README.md)
+holds this to SIROS's published vectors and to a two-credential vector.
+
+Not covered: the DC API, mdoc, schemas for TS12's other three types, TS12 rules its schema does not
+encode, and JSON Schema `format` (an annotation). A `Verifier` remembers a `jti` for one day.
 
 ## Revocation
 
@@ -226,7 +266,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 422 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 496 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 120 refusals accept and requires a

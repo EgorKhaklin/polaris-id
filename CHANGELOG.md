@@ -27,6 +27,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- polaris-oid4vp checks OpenID4VP 1.0 `transaction_data`, opt-in per request: the key-binding JWT must hash each entry's string as sent, with an offered algorithm, and for an EU TS12 (SCA) entry carry a fresh `jti`, the request's `response_mode` and two `amr` categories; which entries each credential binds is a named option, and `polaris-oid4vp verdict` judges a captured response under both.
 - `scripts/polaris-pg-upgrade-drill.sh` runs OPERATIONS.md's PostgreSQL major-version upgrade (16 to 17) and its rollback as written, and requires every table's rows, the sequences, the catalogue, roles and grants, a credential issued before and pgBackRest's health to be the same on each side; its control must name one audit row changed on the new major. CI runs both nightly and on pull requests that change what they run.
 
 ### Changed

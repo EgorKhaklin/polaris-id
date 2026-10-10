@@ -33,6 +33,9 @@ from polaris_oid4vp.jwe import b64u_decode, b64u_encode, decrypt_compact, encryp
 from polaris_oid4vp.verifier import Verifier, claim_query  # noqa: E402
 from polaris_oid4vp import sdjwt  # noqa: E402
 
+#: A claim value that removes the claim (Wallet.binding_claims).
+DROP = object()
+
 
 def _jws(key, header, payload):
     h = b64u_encode(json.dumps(header, separators=(",", ":")).encode())
@@ -90,26 +93,52 @@ class Wallet:
 
     def respond(self, jar, *, nonce=None, audience=None, iat=None, sd_hash=None,
                 corrupt_issuer_sig=False, corrupt_kb_sig=False, extra_disclosure=None,
-                state=None, enc="A128GCM", vp_token=None, vct=None, status=None):
+                state=None, enc="A128GCM", vp_token=None, vct=None, status=None, kb=None):
         _, claims = self.read_request(jar)
         enc_jwk = claims["client_metadata"]["jwks"]["keys"][0]
         enc_public = ec.EllipticCurvePublicNumbers(
             int.from_bytes(b64u_decode(enc_jwk["x"]), "big"),
             int.from_bytes(b64u_decode(enc_jwk["y"]), "big"), ec.SECP256R1()).public_key()
 
+        bound = self.binding_claims(claims, kb)
         presentation = self._presentation(
             nonce=claims["nonce"] if nonce is None else nonce,
             audience=claims["client_id"] if audience is None else audience,
             iat=iat, sd_hash=sd_hash, corrupt_issuer_sig=corrupt_issuer_sig,
             corrupt_kb_sig=corrupt_kb_sig, extra_disclosure=extra_disclosure, vct=vct,
-            status=status)
+            status=status, **({"kb_extra": bound} if bound else {}))
+        # Keyed by the id the request's credential query names, as section 8.1 has it.
+        query_id = claims["dcql_query"]["credentials"][0]["id"]
         body = {"state": claims["state"] if state is None else state,
-                "vp_token": {"pid": [presentation]} if vp_token is None else vp_token}
+                "vp_token": {query_id: [presentation]} if vp_token is None else vp_token}
         token = encrypt_compact(json.dumps(body).encode(), enc_public, enc)
         return {"response": [token]}
 
+    @staticmethod
+    def binding_claims(request, overrides=None):
+        """What a TS12 wallet adds to its key binding JWT for the request's transaction_data:
+        the SHA-256 of each string as received (computed here, with hashlib), the algorithm as a
+        string, a fresh jti, the request's response_mode and two amr categories. `overrides`
+        replaces a claim, or with DROP removes it."""
+        out = {}
+        raws = request.get("transaction_data")
+        if raws:
+            out = {"transaction_data_hashes": [
+                       b64u_encode(hashlib.sha256(r.encode("ascii")).digest()) for r in raws],
+                   "transaction_data_hashes_alg": "sha-256",
+                   "jti": b64u_encode(os.urandom(16)),
+                   "response_mode": request["response_mode"],
+                   "amr": [{"knowledge": "pin_6_or_more_digits"},
+                           {"possession": "key_in_local_native_wscd"}]}
+        for name, value in (overrides or {}).items():
+            if value is DROP:
+                out.pop(name, None)
+            else:
+                out[name] = value
+        return out
+
     def _presentation(self, *, nonce, audience, iat, sd_hash, corrupt_issuer_sig,
-                      corrupt_kb_sig, extra_disclosure, vct=None, status=None):
+                      corrupt_kb_sig, extra_disclosure, vct=None, status=None, kb_extra=None):
         disclosures = [
             b64u_encode(json.dumps([s, n, v], separators=(",", ":")).encode())
             for s, n, v in (("s0", "given_name", "Jean"), ("s1", "family_name", "Dupont"))]
@@ -131,11 +160,12 @@ class Wallet:
         if extra_disclosure is not None:
             disclosures = disclosures + [extra_disclosure]
         presented = issuer_jwt + "~" + "".join(d + "~" for d in disclosures)
-        kb = _jws(self.holder_key, {"alg": "ES256", "typ": "kb+jwt"},
-                  {"iat": int(time.time()) if iat is None else iat, "aud": audience,
-                   "nonce": nonce,
-                   "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())
-                   if sd_hash is None else sd_hash})
+        kb_payload = {"iat": int(time.time()) if iat is None else iat, "aud": audience,
+                      "nonce": nonce,
+                      "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())
+                      if sd_hash is None else sd_hash}
+        kb_payload.update(kb_extra or {})
+        kb = _jws(self.holder_key, {"alg": "ES256", "typ": "kb+jwt"}, kb_payload)
         if corrupt_kb_sig:
             head, _, sig = kb.rpartition(".")
             raw = bytearray(b64u_decode(sig))
@@ -174,7 +204,8 @@ class PidWallet(Wallet):
         self.ages, self.disclose, self.names = ages, disclose, names
 
     def _presentation(self, *, nonce, audience, iat=None, sd_hash=None, corrupt_issuer_sig=False,
-                      corrupt_kb_sig=False, extra_disclosure=None, vct=None, status=None):
+                      corrupt_kb_sig=False, extra_disclosure=None, vct=None, status=None,
+                      kb_extra=None):
         def disclosure(*parts):
             d = b64u_encode(json.dumps(list(parts), separators=(",", ":")).encode())
             return d, b64u_encode(hashlib.sha256(d.encode("ascii")).digest())
@@ -192,8 +223,9 @@ class PidWallet(Wallet):
                  + [members[n][0] for n in self.disclose])
         presented = issuer_jwt + "~" + "".join(d + "~" for d in shown)
         kb = _jws(self.holder_key, {"alg": "ES256", "typ": "kb+jwt"},
-                  {"iat": int(time.time()), "aud": audience, "nonce": nonce,
-                   "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())})
+                  dict({"iat": int(time.time()), "aud": audience, "nonce": nonce,
+                        "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())},
+                       **(kb_extra or {})))
         return presented + kb
 
 
@@ -1088,3 +1120,465 @@ class TheResponsePathReturnsRatherThanRaisesTests(VerifierTestCase):
             self.fail("handle_direct_post raised %r" % exc)
         self.assertEqual(status, 400)
         self.assertEqual(body, Verifier.REFUSAL_BODY)
+
+
+# ------------------------------------------------------------------- transaction data
+
+from polaris_oid4vp.sdjwt import transaction_data_hash  # noqa: E402
+from polaris_oid4vp.verifier import verify_response  # noqa: E402
+
+
+def _raw(entry):
+    return b64u_encode(json.dumps(entry, separators=(",", ":")).encode())
+
+
+PAYMENT = {"type": "urn:eudi:sca:payment:1", "credential_ids": ["pay"],
+           "payload": {"transaction_id": "polaris-test-0001",
+                       "payee": {"name": "Example Shop", "id": "DE00EXAMPLE0001"},
+                       "currency": "EUR", "amount": 49.99}}
+RAW_PAYMENT = _raw(PAYMENT)
+
+
+def _payment(**payload):
+    return dict(PAYMENT, payload=dict(PAYMENT["payload"], **payload))
+
+
+class _PayVerifier(unittest.TestCase):
+
+    def verifier(self, **kw):
+        cert_pem, key_pem = _client_chain()
+        self.wallet = Wallet()
+        kw.setdefault("credential_query_id", "pay")
+        return Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                        request_uri="https://verifier.test/request.jwt",
+                        response_uri="https://verifier.test/response",
+                        issuer_jwks=[self.wallet.issuer_jwk], **kw)
+
+
+class TransactionDataRequestTests(_PayVerifier):
+    """The request side: the strings carried as given, and an entry a wallet would refuse
+    refused here rather than sent (OpenID4VP 1.0 section 5.1, B.3.3.1, TS12 section 4)."""
+
+    def test_a_string_is_carried_byte_for_byte_and_an_object_is_encoded(self):
+        v = self.verifier()
+        obj = _payment(transaction_id="t-é")
+        session, jar = v.new_request(transaction_data=[RAW_PAYMENT, obj])
+        sent = Wallet.read_request(jar)[1]["transaction_data"]
+        self.assertEqual(sent[0], RAW_PAYMENT)
+        self.assertEqual(b64u_decode(sent[1]), json.dumps(
+            obj, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+        again = Wallet.read_request(v.request_object(session.state, wallet_nonce="w-1"))[1]
+        self.assertEqual(again["transaction_data"], sent, "a re-minted object changed the strings")
+
+    def test_the_credential_query_is_the_one_named(self):
+        _, jar = self.verifier().new_request()
+        self.assertEqual(Wallet.read_request(jar)[1]["dcql_query"]["credentials"][0]["id"], "pay")
+        for bad in ("", "pay me", "pay.1", 7, "päy"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.verifier(credential_query_id=bad)
+        with self.assertRaises(ValueError):
+            self.verifier(verifier_info=[{"format": "f", "data": "x", "credential_ids": ["pid"]}])
+
+    def test_entries_a_wallet_would_refuse_are_refused_at_construction(self):
+        """Each for its own reason: the operator reads the sentence, and a refusal that fires for
+        another check's reason hides that its own check is gone (found by mutation: the entry
+        allowing no algorithm this computes was also caught, unnamed, by the shared-algorithm
+        check)."""
+        v = self.verifier()
+        cases = {
+            "an empty list": ([], "a non-empty JSON array"),
+            "not a list": (RAW_PAYMENT, "a non-empty JSON array"),
+            "a number": ([5], "entry 0 is a JSON int"),
+            "not base64url": (["%%%"], "entry 0: a transaction_data entry does not decode"),
+            "naming a query the request does not make":
+                ([_raw(dict(PAYMENT, credential_ids=["pid"]))], "must name this request's"),
+            "naming the query twice":
+                ([_raw(dict(PAYMENT, credential_ids=["pay", "pay"]))], "each once"),
+            "a bare-string algorithm":
+                ([_raw(dict(PAYMENT, transaction_data_hashes_alg="sha-256"))], "not a bare string"),
+            "only algorithms this cannot compute":
+                ([_raw(dict(PAYMENT, transaction_data_hashes_alg=["sha3-256"]))],
+                 "entry 0 allows sha3-256, none of which this verifier computes"),
+            "a TS12 type without a payload":
+                ([_raw({"type": "urn:eudi:sca:login_risk_transaction:1", "credential_ids": ["pay"]})],
+                 "carries no payload object (TS12 section 4.2)"),
+            "entries sharing no algorithm":
+                ([_raw(dict(PAYMENT, transaction_data_hashes_alg=["sha-384"])),
+                  _raw(dict(_payment(transaction_id="t-2"), transaction_data_hashes_alg=["sha-512"]))],
+                 "share no hash algorithm"),
+        }
+        for label, (entries, reason) in cases.items():
+            with self.subTest(label), self.assertRaises(ValueError) as caught:
+                v.new_request(transaction_data=entries)
+            self.assertIn(reason, str(caught.exception), label)
+        self.assertEqual(v._sessions, {}, "a refused request left a session behind")
+
+    def test_a_ts12_payment_must_satisfy_ts12s_own_schema(self):
+        v = self.verifier()
+        p = PAYMENT["payload"]
+        bad = {
+            "an amount written as a string": dict(p, amount="49.99"),
+            "a boolean amount": dict(p, amount=True),
+            "a payee without its id": dict(p, payee={"name": "Example Shop"}),
+            "no currency": {k: x for k, x in p.items() if k != "currency"},
+            "a lower-case currency": dict(p, currency="eur"),
+            "a currency ending in a newline": dict(p, currency="EUR\n"),
+            "a 37-character transaction_id": dict(p, transaction_id="x" * 37),
+            "an empty transaction_id": dict(p, transaction_id=""),
+            "a member the schema does not have": dict(p, note="hi"),
+            "a recurrence without a frequency": dict(p, recurrence={"number": 3}),
+            "a frequency ISO 20022 does not list": dict(p, recurrence={"frequency": "DAILY"}),
+            "a fractional number of payments": dict(p, recurrence={"frequency": "MNTH", "number": 1.5}),
+            "a PISP without its brand": dict(p, pisp={"legal_name": "P", "domain_name": "p.example"}),
+            "a payload that is not an object": [p],
+        }
+        for label, payload in bad.items():
+            with self.subTest(label), self.assertRaises(ValueError) as caught:
+                v.new_request(transaction_data=[dict(PAYMENT, payload=payload)])
+            self.assertIn("TS12", str(caught.exception))
+        full = dict(p, date_time="2026-10-10T12:00:00+00:00",
+                    payee=dict(p["payee"], logo="https://shop.example/logo.png",
+                               website="https://shop.example"),
+                    pisp={"legal_name": "Pay Initiation AB", "brand_name": "PayInit",
+                          "domain_name": "payinit.example"},
+                    amount=-5, amount_estimated=False, amount_earmarked=True, sct_inst=True,
+                    recurrence={"start_date": "2026-11-01T00:00:00+00:00",
+                                "end_date": "2027-10-01T00:00:00+00:00", "number": 12.0,
+                                "frequency": "MNTH",
+                                "mit_options": {"amount_variable": True, "min_amount": 1,
+                                                "max_amount": 100.5, "total_amount": 500,
+                                                "initial_amount": 5, "initial_amount_number": 1,
+                                                "apr": 3.5, "beyond": "nested objects may"}})
+        session, _ = v.new_request(transaction_data=[dict(PAYMENT, payload=full)])
+        self.assertEqual(len(session.transaction_data), 1)
+
+    def test_another_type_is_carried_without_a_schema(self):
+        v = self.verifier()
+        for entry in ({"type": "example_type", "credential_ids": ["pay"]},
+                      {"type": "urn:eudi:sca:login_risk_transaction:1", "credential_ids": ["pay"],
+                       "payload": {"anything": "goes"}}):
+            with self.subTest(entry["type"]):
+                session, _ = v.new_request(transaction_data=[entry])
+                self.assertEqual(session.transaction_data[0].type, entry["type"])
+
+
+class TransactionDataOnTheWireTests(_PayVerifier):
+    """A request carrying a TS12 payment, answered by a wallet that binds it as TS12 says."""
+
+    def setUp(self):
+        self.v = self.verifier()
+
+    def exchange(self, kb=None, entries=(RAW_PAYMENT,)):
+        _, jar = self.v.new_request(transaction_data=list(entries))
+        return self.v.handle_direct_post(self.wallet.respond(jar, kb=kb))
+
+    def test_a_presentation_that_binds_the_payment_is_answered_200(self):
+        status, body, verdict = self.exchange()
+        self.assertEqual(status, 200, verdict.reason)
+        self.assertEqual(body, {"redirect_uri": self.v.redirect_uri})
+        report = verdict.transaction_data
+        self.assertEqual((report["credential"], report["expected"], report["alg"], report["ts12"]),
+                         ("pay", [0], "sha-256", True))
+        self.assertTrue(report["readings_agree"], "one credential: both readings expect it all")
+
+    def test_two_entries_are_bound_in_the_requests_order(self):
+        status, _, verdict = self.exchange(entries=(RAW_PAYMENT, _raw(_payment(transaction_id="t-2"))))
+        self.assertEqual(status, 200, verdict.reason)
+        self.assertEqual(verdict.transaction_data["expected"], [0, 1])
+
+    CAUSES = {
+        "transaction_data_missing": {"transaction_data_hashes": DROP},
+        "transaction_data_extra": {"transaction_data_hashes": [transaction_data_hash(RAW_PAYMENT)] * 2},
+        "transaction_data_mismatch": {"transaction_data_hashes": [
+            b64u_encode(hashlib.sha256(b64u_decode(RAW_PAYMENT)).digest())]},
+        "transaction_data_alg": {"transaction_data_hashes_alg": ["sha-256"]},
+        "ts12_jti": {"jti": DROP},
+        "ts12_response_mode": {"response_mode": "direct_post"},
+        "ts12_amr": {"amr": [{"knowledge": "pattern"}]},
+    }
+
+    def test_every_refusal_reaches_the_wire_as_the_one_constant_400(self):
+        for code, kb in self.CAUSES.items():
+            with self.subTest(code):
+                status, body, verdict = self.exchange(kb=kb)
+                self.assertEqual((status, body, verdict.code), (400, Verifier.REFUSAL_BODY, code))
+
+    def test_a_jti_answers_once_across_requests(self):
+        self.assertEqual(self.exchange(kb={"jti": "one-and-the-same"})[0], 200)
+        status, _, verdict = self.exchange(kb={"jti": "one-and-the-same"})
+        self.assertEqual((status, verdict.code), (400, "ts12_jti"))
+
+    def test_a_presentation_under_another_query_id_is_refused(self):
+        _, jar = self.v.new_request(transaction_data=[RAW_PAYMENT])
+        claims = Wallet.read_request(jar)[1]
+        genuine = self.wallet._presentation(
+            nonce=claims["nonce"], audience=claims["client_id"], iat=None, sd_hash=None,
+            corrupt_issuer_sig=False, corrupt_kb_sig=False, extra_disclosure=None,
+            kb_extra=Wallet.binding_claims(claims))
+        status, _, verdict = self.v.handle_direct_post(
+            self.wallet.respond(jar, vp_token={"pid": [genuine]}))
+        self.assertEqual(status, 400)
+        self.assertIn("not one presentation", verdict.reason)
+
+
+class WithoutTransactionDataTheRequestIsAsBeforeTests(VerifierTestCase):
+    """Non-regression, on the wire: a request that carries no transaction_data is the request it
+    always was, and the key binding JWT's transaction claims are not read."""
+
+    BEFORE = {"iss", "aud", "client_id", "response_type", "response_mode", "response_uri",
+              "nonce", "state", "iat", "exp", "client_metadata", "dcql_query"}
+
+    def test_the_request_object_carries_what_it_always_did(self):
+        session, jar = self.verifier.new_request()
+        self.assertEqual(set(Wallet.read_request(jar)[1]), self.BEFORE)
+        self.assertEqual(session.transaction_data, ())
+        self.assertEqual(Wallet.read_request(jar)[1]["dcql_query"]["credentials"][0]["id"], "pid")
+
+    def test_stray_transaction_claims_change_nothing(self):
+        stray = {"transaction_data_hashes": ["x"], "transaction_data_hashes_alg": ["y"],
+                 "amr": "none", "response_mode": "fragment"}
+        for kb in (None, stray):
+            with self.subTest(kb=kb):
+                _, jar = self.verifier.new_request()
+                status, body, verdict = self.verifier.handle_direct_post(
+                    self.wallet.respond(jar, kb=kb))
+                self.assertEqual((status, body), (200, {"redirect_uri": self.verifier.redirect_uri}))
+                self.assertIsNone(verdict.transaction_data)
+                self.assertNotIn("transaction_data", verdict.as_dict())
+                self.assertEqual(set(verdict.as_dict()), set(sdjwt.Verdict(True).as_dict()))
+
+
+VECTOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata",
+                      "transaction-data-two-credentials.json")
+
+
+class TwoCredentialVectorTests(unittest.TestCase):
+    """B8, measured: two credential queries, pid and pay, and one TS12 payment naming pay. The
+    vector was written by lab/interop/transaction-data/two_credentials.py with its own code."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(VECTOR, encoding="utf-8") as fh:
+            cls.v = json.load(fh)
+
+    def judge(self, response, scope, now=None):
+        return verify_response(self.v["request"], self.v["responses"][response]["vp_token"],
+                               transaction_data_scope=scope, issuer_jwks=self.v["issuer_jwks"],
+                               now=self.v["at"] if now is None else now)
+
+    def test_the_hash_is_of_the_string_as_sent(self):
+        raw = self.v["request"]["transaction_data"][0]
+        # OpenSSL, not Python: printf %s RAW | openssl dgst -sha256 -binary | base64url
+        self.assertEqual(self.v["transaction_data_hashes"]["sha-256"],
+                         ["yUmPIT-FIjqquKu1XOi1cf8HieQ3BU1Mw8dvLPm6ppU"])
+        self.assertEqual(transaction_data_hash(raw), "yUmPIT-FIjqquKu1XOi1cf8HieQ3BU1Mw8dvLPm6ppU")
+
+    def test_what_each_key_binding_jwt_must_carry_under_each_reading(self):
+        expected = self.judge("per_credential", None)["expected"]
+        self.assertEqual(expected, {"per_credential": {"pid": [], "pay": [0]},
+                                    "all_entries": {"pid": [0], "pay": [0]}})
+        hashes = self.v["transaction_data_hashes"]["sha-256"]
+        for reading, by_query in self.v["must_carry"].items():
+            for qid, carried in by_query.items():
+                with self.subTest(reading=reading, credential=qid):
+                    self.assertEqual(carried.get("transaction_data_hashes", []),
+                                     [hashes[i] for i in expected[reading][qid]])
+
+    def test_each_response_passes_its_own_reading_and_fails_the_other(self):
+        for response, outcomes in self.v["outcomes"].items():
+            for scope, outcome in outcomes.items():
+                with self.subTest(response=response, scope=scope):
+                    result = self.judge(response, scope)
+                    self.assertEqual(result["scope"], scope)
+                    if outcome == "accepted":
+                        self.assertTrue(result["accepted"], result["problem"])
+                        self.assertEqual(result["verdicts"]["pay"].transaction_data["expected"], [0])
+                        continue
+                    _, qid, code = outcome.split()
+                    self.assertFalse(result["accepted"])
+                    self.assertEqual(result["verdicts"][qid].code, code)
+                    self.assertTrue(result["verdicts"]["pay"].authentic,
+                                    "the pay presentation is the same under both readings")
+
+    def test_without_a_named_reading_nothing_is_decided(self):
+        for response in self.v["responses"]:
+            with self.subTest(response=response):
+                result = self.judge(response, None)
+                self.assertIsNone(result["accepted"])
+                self.assertIn("name the transaction_data scope", result["problem"])
+                self.assertEqual(set(result["readings"]), {"per_credential", "all_entries"})
+
+    def test_it_goes_stale_as_a_capture_does(self):
+        result = self.judge("per_credential", "per_credential", now=self.v["at"] + 365 * 86400)
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["verdicts"]["pid"].code, "kb_freshness")
+
+
+class VerifyResponseTests(unittest.TestCase):
+    """verify_response's own refusals: a request nothing can be held to, a vp_token that does not
+    answer it, and a request with no transaction_data at all."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(VECTOR, encoding="utf-8") as fh:
+            cls.v = json.load(fh)
+
+    def test_a_request_nothing_can_be_held_to_is_refused(self):
+        """Each for its own reason (found by mutation: the query-id and empty-query refusals could
+        go, and the entries' "does not ask for" refusal caught the same requests unnamed)."""
+        r = self.v["request"]
+        q = r["dcql_query"]["credentials"]
+        cases = {
+            "not an object": ([r], "the request is a JSON object"),
+            "no nonce": ({k: x for k, x in r.items() if k != "nonce"}, "names no nonce or no client_id"),
+            "no client_id": (dict(r, client_id=""), "names no nonce or no client_id"),
+            "no credentials": (dict(r, dcql_query={"credentials": []}), "has no credentials"),
+            "a repeated id": (dict(r, dcql_query={"credentials": [q[0], q[0]]}),
+                              "missing, malformed or repeated: 'pid'"),
+            "an id DCQL does not allow": (dict(r, dcql_query={"credentials": [dict(q[0], id="p d")]}),
+                                          "missing, malformed or repeated: 'p d'"),
+            "an mdoc query": (dict(r, dcql_query={"credentials": [dict(q[0], format="mso_mdoc"), q[1]]}),
+                              "this verifier checks dc+sd-jwt only"),
+            "an entry naming no query": (dict(r, dcql_query={"credentials": [q[0]]}),
+                                         "names pay, which the request's dcql_query does not ask for"),
+            "an entry that is not one": (dict(r, transaction_data=["%%%"]), "transaction_data entry 0:"),
+            "an empty transaction_data": (dict(r, transaction_data=[]), "not a non-empty array"),
+            "TS12 without a response_mode": ({k: x for k, x in r.items() if k != "response_mode"},
+                                             "names no response_mode"),
+        }
+        for label, (request, reason) in cases.items():
+            with self.subTest(label), self.assertRaises(ValueError) as caught:
+                verify_response(request, self.v["responses"]["per_credential"]["vp_token"],
+                                issuer_jwks=self.v["issuer_jwks"], now=self.v["at"])
+            self.assertIn(reason, str(caught.exception), label)
+        with self.assertRaises(ValueError) as caught:
+            verify_response(r, {}, transaction_data_scope="both")
+        self.assertIn("it is one of per_credential, all_entries", str(caught.exception))
+
+    def test_a_vp_token_that_does_not_answer_the_request_is_not_accepted(self):
+        token = self.v["responses"]["per_credential"]["vp_token"]
+        for label, bad in (("one credential", {"pay": token["pay"]}),
+                           ("one more", dict(token, extra=token["pay"])),
+                           ("two for one", dict(token, pay=token["pay"] * 2)),
+                           ("not an object", [token])):
+            with self.subTest(label):
+                result = verify_response(self.v["request"], bad, issuer_jwks=self.v["issuer_jwks"],
+                                         now=self.v["at"], transaction_data_scope="per_credential")
+                self.assertIs(result["accepted"], False)
+                self.assertIn("vp_token", result["problem"])
+
+    def test_without_transaction_data_the_presentations_are_judged_as_they_are(self):
+        request = {k: x for k, x in self.v["request"].items() if k != "transaction_data"}
+        result = verify_response(request, self.v["responses"]["per_credential"]["vp_token"],
+                                 issuer_jwks=self.v["issuer_jwks"], now=self.v["at"])
+        self.assertTrue(result["accepted"], result["problem"])
+        self.assertEqual((result["readings"], result["expected"], result["scope"]), ({}, {}, None))
+        self.assertTrue(all(v.transaction_data is None for v in result["verdicts"].values()))
+
+
+class _TwoCredentials:
+    """Two credentials, pid and pay, from one issuer, each bound to its own holder key, and the
+    response a wallet makes with the transaction claims a test chooses. Minted here, with this
+    module's own helpers; the hashes with hashlib."""
+
+    QUERIES = ("pid", "pay")
+    TWO_FACTORS = [{"knowledge": "pin_6_or_more_digits"}, {"possession": "key_in_local_native_wscd"}]
+
+    def __init__(self, entries):
+        self.issuer = ec.generate_private_key(ec.SECP256R1())
+        self.holders = {q: ec.generate_private_key(ec.SECP256R1()) for q in self.QUERIES}
+        self.at = int(time.time())
+        self.request = {
+            "client_id": "x509_hash:two-credential-test", "nonce": b64u_encode(os.urandom(24)),
+            "response_type": "vp_token", "response_mode": "direct_post.jwt",
+            "dcql_query": {"credentials": [{"id": q, "format": "dc+sd-jwt",
+                                            "meta": {"vct_values": ["urn:test:" + q]}}
+                                           for q in self.QUERIES]},
+            "transaction_data": [_raw(e) for e in entries]}
+        self.issuer_jwks = [dict(_public_jwk(self.issuer), kid="issuer-1")]
+
+    def _presentation(self, qid, kb_extra):
+        disclosure = b64u_encode(json.dumps(["salt-" + qid, "name", "Jean"],
+                                            separators=(",", ":")).encode())
+        payload = {"iss": "https://issuer.example", "vct": "urn:test:" + qid, "iat": self.at,
+                   "_sd": [b64u_encode(hashlib.sha256(disclosure.encode("ascii")).digest())],
+                   "cnf": {"jwk": _public_jwk(self.holders[qid])}}
+        presented = (_jws(self.issuer, {"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1"},
+                          payload) + "~" + disclosure + "~")
+        kb = dict({"iat": self.at, "aud": self.request["client_id"], "nonce": self.request["nonce"],
+                   "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())},
+                  **kb_extra)
+        return presented + _jws(self.holders[qid], {"alg": "ES256", "typ": "kb+jwt"}, kb)
+
+    def judge(self, binds, scope="per_credential", sca=True):
+        """`binds` maps a query id to the positions its key binding JWT hashes, in that order."""
+        raws = self.request["transaction_data"]
+        token = {}
+        for qid in self.QUERIES:
+            extra = {}
+            if qid in binds:
+                extra = {"transaction_data_hashes": [
+                    b64u_encode(hashlib.sha256(raws[i].encode("ascii")).digest()) for i in binds[qid]],
+                    "transaction_data_hashes_alg": "sha-256"}
+                if sca:
+                    extra.update(jti=b64u_encode(os.urandom(16)), response_mode="direct_post.jwt",
+                                 amr=self.TWO_FACTORS)
+            token[qid] = [self._presentation(qid, extra)]
+        return verify_response(self.request, token, transaction_data_scope=scope,
+                               issuer_jwks=self.issuer_jwks, now=self.at)
+
+
+class AnEntryNamingTwoPresentedCredentialsTests(unittest.TestCase):
+    """OpenID4VP 1.0 section 5.1: "If there is more than one element in the array, the Wallet
+    MUST use only one of the referenced Credentials for transaction authorization." Under
+    per_credential such an entry is bound by exactly one of them, the wallet's choice."""
+
+    SHARED = {"type": "example_type", "credential_ids": ["pid", "pay"]}
+
+    def test_bound_by_either_one_of_the_two_it_is_accepted(self):
+        for chooser, other in (("pay", "pid"), ("pid", "pay")):
+            with self.subTest(chooser=chooser):
+                result = _TwoCredentials([self.SHARED]).judge({chooser: [0]})
+                self.assertTrue(result["accepted"], result["problem"])
+                self.assertEqual(result["verdicts"][chooser].transaction_data["bound"], [0])
+                self.assertEqual(result["verdicts"][other].transaction_data["bound"], [])
+                self.assertEqual(result["either"], {0: ["pid", "pay"]})
+                self.assertEqual(result["expected"]["per_credential"], {"pid": [], "pay": []})
+
+    def test_bound_by_both_it_is_refused(self):
+        result = _TwoCredentials([self.SHARED]).judge({"pid": [0], "pay": [0]})
+        self.assertIs(result["accepted"], False)
+        self.assertTrue(result["problem"].startswith("transaction_data_extra"), result["problem"])
+        self.assertIn("MUST use only one of the referenced Credentials", result["problem"])
+        self.assertTrue(all(v.authentic for v in result["verdicts"].values()),
+                        "each presentation alone is authentic; the response is what is wrong")
+
+    def test_bound_by_neither_it_is_refused(self):
+        result = _TwoCredentials([self.SHARED]).judge({})
+        self.assertIs(result["accepted"], False)
+        self.assertTrue(result["problem"].startswith("transaction_data_missing"), result["problem"])
+        self.assertIn("no key binding JWT binds it", result["problem"])
+
+    def test_all_entries_still_wants_it_in_both(self):
+        both = _TwoCredentials([self.SHARED]).judge({"pid": [0], "pay": [0]}, "all_entries")
+        self.assertTrue(both["accepted"], both["problem"])
+        one = _TwoCredentials([self.SHARED]).judge({"pay": [0]}, "all_entries")
+        self.assertIs(one["accepted"], False)
+        self.assertEqual(one["verdicts"]["pid"].code, "transaction_data_missing")
+
+    def test_a_shared_ts12_payment_needs_ts12s_claims_only_where_it_is_bound(self):
+        shared = dict(PAYMENT, credential_ids=["pid", "pay"])
+        ok = _TwoCredentials([shared]).judge({"pay": [0]})
+        self.assertTrue(ok["accepted"], ok["problem"])
+        self.assertTrue(ok["verdicts"]["pay"].transaction_data["ts12"])
+        self.assertFalse(ok["verdicts"]["pid"].transaction_data["ts12"])
+        bare = _TwoCredentials([shared]).judge({"pay": [0]}, sca=False)
+        self.assertEqual(bare["verdicts"]["pay"].code, "ts12_jti")
+
+    def test_a_shared_entry_keeps_its_place_in_the_request_order(self):
+        entries = [self.SHARED, dict(self.SHARED, credential_ids=["pay"])]
+        for binds, accepted in (({"pay": [0, 1]}, True), ({"pid": [0], "pay": [1]}, True),
+                                ({"pay": [1, 0]}, False), ({"pay": [1], "pid": [0, 1]}, False)):
+            with self.subTest(binds=binds):
+                result = _TwoCredentials(entries).judge(binds)
+                self.assertIs(result["accepted"], accepted, result["problem"])
