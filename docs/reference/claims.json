@@ -75,8 +75,8 @@
     {
       "id": "outside-implementations",
       "kind": "badge",
-      "claim": "Tested against 14 outside implementations",
-      "label": "tested against: 14 outside implementations",
+      "claim": "Tested against 15 outside implementations",
+      "label": "tested against: 15 outside implementations",
       "surfaces": [
         "README.md"
       ],
@@ -88,8 +88,22 @@
       "reproduce": "Each Wallets row of lab/EXTERNAL-NOUNS.md links the lab/interop directory whose README runs it. The one-minute walk: bash lab/interop/eudi-dev/run.sh, which prints RESULT: accepted, and all three controls refused.",
       "count_of": [
         "readme-six-wallets",
-        "readme-eight-more"
+        "readme-nine-more"
       ]
+    },
+    {
+      "id": "wallet-canary",
+      "kind": "badge",
+      "claim": "Wallet canary: outside wallets' newest releases against the published verifier, weekly",
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:.github/workflows/wallet-canary.yml",
+        "url:https://github.com/EgorKhaklin/polaris-id/actions/workflows/wallet-canary.yml?query=event%3Aschedule"
+      ],
+      "reproduce": null,
+      "why": "A live status the CI service renders for the weekly scheduled runs on main, in which outside wallets' newest releases present to the verifier installed from PyPI. The workflow is in the tree; its result is on the service, and it can turn red for a reason outside the tree."
     },
     {
       "id": "license",
@@ -348,9 +362,9 @@
       ]
     },
     {
-      "id": "readme-eight-more",
+      "id": "readme-nine-more",
       "kind": "statement",
-      "claim": "Eight more libraries, services and test tools took part: the European Commission's reference OpenID4VP libraries (Kotlin and Swift) and PID issuer, vck, Multipaz and irmago through a wallet built here, and SpruceID's adapter and ERICA through their own wallet harnesses.",
+      "claim": "Nine more libraries, services and test tools took part: the European Commission's reference OpenID4VP libraries (Kotlin and Swift) and PID issuer, vck, Multipaz and irmago through a wallet built here; Axle's Kotlin OpenID4VP client, driven by a harness written here; and SpruceID's adapter and ERICA through their own wallet harnesses.",
       "surfaces": [
         "README.md"
       ],
@@ -358,7 +372,7 @@
         "file:lab/EXTERNAL-NOUNS.md",
         "file:lab/interop"
       ],
-      "reproduce": "Find each one's dated row in the Wallets table of lab/EXTERNAL-NOUNS.md: the Kotlin and Swift libraries, the PID issuer, vck, Multipaz and irmago rows say under a wallet built here; the SpruceID and ERICA rows name their own harnesses.",
+      "reproduce": "Find each one's dated row in the Wallets table of lab/EXTERNAL-NOUNS.md: the Kotlin and Swift libraries, the PID issuer, vck, Multipaz and irmago rows say under a wallet built here; the Axle row says driven by a harness written here; the SpruceID and ERICA rows name their own harnesses.",
       "implementations": [
         {
           "name": "Kotlin",
@@ -383,6 +397,10 @@
         {
           "name": "irmago",
           "scoreboard": "irmago"
+        },
+        {
+          "name": "Axle",
+          "scoreboard": "Axle"
         },
         {
           "name": "SpruceID's adapter",

@@ -17435,6 +17435,9 @@ _PRIVATE_KEY_FIXTURES = {
     "lab/interop/credo/adversarial/eudi-dev/capture.json": _REPLAY_KEY,
     "lab/interop/credo/adversarial/oid4vcgo/capture.json": _REPLAY_KEY,
     "lab/interop/credo/adversarial/waltid/capture.json": _REPLAY_KEY,
+    "lab/interop/eudi-dev/capture/verifier-decryption-key.test-only.jwk.json":
+        "the eudi-dev capture's response-decryption JWK, made for that one request, kept to decrypt "
+        "its captured response",
     "packages/polaris-oid4vp/testdata/conformance-suite-capture.json":
         "the OpenID Foundation suite run's response-decryption JWK, kept to decrypt its captured response",
     "polaris_web/test_secretstore.py": "a dummy PEM whose body is 'xyz', not a key",

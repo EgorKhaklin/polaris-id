@@ -221,11 +221,27 @@ refuses a wallet that would send another value anyway (`claims`; unit tests, a w
 ignores `values`). This PID carries no age statements, so `age_equal_or_over.18` is not
 exercised here; the same path and value check covers it in the package's tests.
 
+## A captured presentation (2026-10-10)
+
+[`capture/`](capture/README.md) holds one genuine exchange as files another verifier can vendor
+and check offline: the presentation with its key binding JWT, the DCQL-keyed `vp_token`, the
+signed request and the issuer's CA, with [their provenance](capture/PROVENANCE.md) and a test that
+verifies them with the clock frozen at the capture. `EUDI_CAPTURE=DIR` writes them:
+
+    EUDI_CAPTURE=../ecap/capture3 POLARIS_OID4VP=polaris-oid4vp==1.0.0rc16 PORT=9547 lab/interop/eudi-dev/run.sh
+
+In that mode the issuer script signs under an `x5c` certificate and the verifier trusts its CA
+(`--issuer-trust-anchor`), so control (a) trusts an unrelated CA, and the genuine presentation's
+verifier runs through [`capture_serve.py`](capture_serve.py), which runs the installed
+`polaris-oid4vp serve` in-process and records the bytes it serves, reads and decrypts. Against
+eudi-dev v2.3.7 and 1.0.0rc16 from PyPI: accepted, all three controls refused.
+
 ## What this does not establish
 
-- **Not observed.** Whether eudi-dev posted a `wallet_nonce` with `request_uri_method=post`
-  (neither side's log records it at the default verbosity). It chose A128GCM (its debug line
-  prints a 16-byte content key), so A256GCM was not reached.
+- **Observed 2026-10-10, in the capture above.** eudi-dev v2.3.7 posts a `wallet_nonce` with
+  `request_uri_method=post`, and a `wallet_metadata` asking for the request object encrypted to
+  its own key, which `polaris-oid4vp` 1.0.0rc16 did. It chose A128GCM for the response, so A256GCM
+  was not reached.
 - **Observed 2026-09-30, the wallet's trust.** Given no trust anchor at all, eudi-dev still
   accepts a request object whose certificate chains only to `keygen`'s test CA, so it does not
   require that chain to reach anything it trusts: the `x509_hash` binding is what it checks. It

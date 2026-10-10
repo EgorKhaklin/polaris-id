@@ -1,0 +1,3 @@
+An SD-JWT VC revoked by its Token Status List: `credential.sd-jwt` (and `presentation.sd-jwt`, with its Key Binding JWT) names index 3 of `status-list.jwt`, where index 3 is 1 (INVALID); index 2 is 0 (VALID), a control.
+To test a verifier's revocation check: trust `trust-anchor.pem` as the issuer's root, serve `status-list.jwt` at the `status_uri` in `fixture.json` (or hand the file to your status fetcher), verify at the instant, nonce and audience in `fixture.json`, and require a refusal or a revoked verdict.
+Every key is TEST material from public seeds (`make_fixture.py`, from `../../negative-vectors`); `test_fixture.py` shows polaris-oid4vp reading index 3 as INVALID and index 2 as VALID.
