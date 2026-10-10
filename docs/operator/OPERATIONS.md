@@ -1659,6 +1659,15 @@ Always read [CHANGELOG.md](../../CHANGELOG.md) for the version you are
 upgrading to; an entry with "breaking change" in the notes requires extra
 steps.
 
+**The anonymity floor.** A production database initialised before 2026-10-08
+(every release up to 1.0.0-rc.70) kept the notional sample's
+`polaris.min_epoch_anonymity_set` of 1, so `uc11_close_epoch` closed epochs of
+two. The object sync this upgrade runs raises exactly that 1 to 20 and stops
+the upgrade if the floor then reads below 20; a floor you set to another value
+stays, with a warning when it is below 20. The Linux installer and the chart's
+migration Job do the same
+([epoch-cadence.md](../design/epoch-cadence.md)).
+
 **Upgrading across v9.239.** The edge now runs as uid 1000 and listens on
 8080/8443 behind the host's 80/443. A deployment created earlier has
 `caddy_data` and `caddy_config` volumes owned by root, which the new edge could

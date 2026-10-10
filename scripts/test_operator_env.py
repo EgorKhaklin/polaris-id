@@ -13,6 +13,7 @@ database, no Docker and no systemd.
     python3 -m unittest test_operator_env      (from scripts/)
 """
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -491,6 +492,114 @@ class DrillDiagnosticsReachTheirFail(unittest.TestCase):
         self.assertIn("== pod/polaris-postgres-1: events ==", r.stdout, "the loop must reach the Pending member")
         self.assertIn("Insufficient cpu", r.stdout, "the scheduler's reason must be printed")
         self.assertIn("Allocated resources", r.stdout, "the node's room must be printed")
+
+
+# A stand-in polaris-migrate.sh: records the environment it was run with and its arguments, and
+# fails --up or --sync-objects when the case asks.
+_MIGRATE = r"""#!/bin/sh
+echo "POLARIS_ENV=${POLARIS_ENV-unset} $*" >> "$STUB_LOG"
+case "$*" in
+  *--up*) exit "${STUB_UP_RC:-0}" ;;
+  *--sync-objects*) exit "${STUB_SYNC_RC:-0}" ;;
+esac
+exit 0
+"""
+
+
+class UpgradesRunTheSyncAsProduction(unittest.TestCase):
+    """Every path that upgrades a production database runs `polaris-migrate.sh --sync-objects` with
+    POLARIS_ENV=production, so the sync raises the notional sample's anonymity floor of one there
+    (test_migrate_runner.py proves the raise); and the Linux installer stops when a migration fails.
+    Until 2026-10-10 it ran both inside an && list, which set -e does not stop, and went on to the
+    health check. The blocks run here, cut from the scripts, under their own options."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-upgrade-env-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        (self.tmp / "scripts").mkdir()
+        (self.tmp / "scripts" / "polaris-migrate.sh").write_text(_MIGRATE)
+        (self.tmp / "scripts" / "polaris-migrate.sh").chmod(0o755)
+        self.log = self.tmp / "migrate.log"
+
+    def calls(self):
+        return self.log.read_text().splitlines() if self.log.exists() else []
+
+    def run_block(self, block, **env):
+        full = {"PATH": "/usr/bin:/bin", "HOME": str(self.tmp), "STUB_LOG": str(self.log)}
+        full.update(env)
+        return subprocess.run(["bash", "-c", "set -euo pipefail\n" + block + '\necho "REACHED THE HEALTH CHECK"\n'],
+                              env=full, capture_output=True, text=True, timeout=30)
+
+    @staticmethod
+    def function(text, name):
+        lines = text.splitlines()
+        start = lines.index(name + "() {")
+        end = next(i for i in range(start, len(lines)) if lines[i] == "}")
+        return "\n".join(lines[start:end + 1])
+
+    def install_block(self):
+        text = (ROOT / "deploy" / "linux" / "install.sh").read_text()
+        helpers = [line for line in text.splitlines() if line.startswith(("ok()", "die()"))]
+        self.assertEqual(len(helpers), 2, helpers)
+        return "\n".join(helpers + [self.function(text, "migrate_stack"),
+                                    'INSTALL_DIR="%s"' % self.tmp, "migrate_stack"])
+
+    def test_the_installer_migrates_and_syncs_as_production(self):
+        r = self.run_block(self.install_block())
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.calls(), ["POLARIS_ENV=production --up --target=docker-stack",
+                                        "POLARIS_ENV=production --sync-objects --target=docker-stack"])
+        self.assertIn("ok   migrations applied + DB objects synced", r.stdout)
+
+    def test_a_failed_migration_stops_the_install(self):
+        r = self.run_block(self.install_block(), STUB_UP_RC="5")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("install: the migrations did not apply", r.stderr)
+        self.assertNotIn("REACHED THE HEALTH CHECK", r.stdout)
+        self.assertEqual(len(self.calls()), 1, "the objects were synced after a migration failed")
+
+    def test_a_failed_sync_stops_the_install(self):
+        r = self.run_block(self.install_block(), STUB_SYNC_RC="5")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("install: the database objects did not sync", r.stderr)
+        self.assertNotIn("REACHED THE HEALTH CHECK", r.stdout)
+
+    def test_the_installer_migrates_only_through_that_step(self):
+        text = (ROOT / "deploy" / "linux" / "install.sh").read_text()
+        self.assertIn("\n    migrate_stack\n", self.function(text, "stage_app") + "\n",
+                      "stage_app no longer runs the migration step")
+        outside = text.replace(self.function(text, "migrate_stack"), "")
+        self.assertNotIn("polaris-migrate.sh --", outside, "a migration call outside migrate_stack")
+
+    def test_the_deploy_migrates_and_syncs_as_production(self):
+        text = (ROOT / "scripts" / "polaris-deploy.sh").read_text()
+        lines = [line for line in text.splitlines()
+                 if "polaris-migrate.sh" in line and not line.lstrip().startswith("#")]
+        self.assertEqual(len(lines), 2, lines)
+        r = self.run_block('SCRIPT_DIR="%s"\n%s' % (self.tmp / "scripts", "\n".join(lines)), POLARIS_ENV="staging")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.calls(), ["POLARIS_ENV=production --up --target=docker-stack",
+                                        "POLARIS_ENV=production --sync-objects --target=docker-stack"])
+
+    def test_the_charts_migration_job_runs_as_production(self):
+        job = (ROOT / "deploy" / "helm" / "polaris" / "templates" / "migrate-job.yaml").read_text()
+        container = job.split("        - name: migrate\n", 1)[1]
+        env = container.split("          env:\n", 1)[1].split("          resources:", 1)[0]
+        self.assertIn("            - {name: POLARIS_ENV, value: production}\n", env)
+        self.assertIn("/opt/polaris/scripts/polaris-migrate.sh --sync-objects", container)
+
+    def test_the_databases_they_upgrade_are_initialised_as_production(self):
+        """What the three rest on: the database each upgrades was initialised by docker-init.sh with
+        POLARIS_ENV=production, so its production block (the demo accounts, the floor) ran there."""
+        compose = (ROOT / "polaris_web" / "docker-compose.prod.yml").read_text()
+        block = []
+        for line in compose.split("\n  postgres:\n", 1)[1].splitlines():
+            if line.startswith("  ") and not line.startswith("    "):
+                break
+            block.append(line)
+        self.assertIn("      POLARIS_ENV: production", block)
+        chart = (ROOT / "deploy" / "helm" / "polaris" / "templates" / "postgres.yaml").read_text()
+        self.assertIn("- {name: POLARIS_ENV, value: production}", chart)
 
 
 if __name__ == "__main__":

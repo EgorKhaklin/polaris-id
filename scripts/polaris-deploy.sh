@@ -241,8 +241,11 @@ for _i in $(seq 1 30); do
     fi
     sleep 2
 done
-"${SCRIPT_DIR}/polaris-migrate.sh" --up --target=docker-stack
-"${SCRIPT_DIR}/polaris-migrate.sh" --sync-objects --target=docker-stack
+# The database docker-compose.prod.yml runs was initialised as production (its postgres service sets
+# POLARIS_ENV=production, staging's too), so the object sync raises the notional sample's anonymity
+# floor of one there, which docker-init.sh did only for a cluster first initialised after 2026-10-08.
+POLARIS_ENV=production "${SCRIPT_DIR}/polaris-migrate.sh" --up --target=docker-stack
+POLARIS_ENV=production "${SCRIPT_DIR}/polaris-migrate.sh" --sync-objects --target=docker-stack
 
 # ---------------------------------------------------------------------------
 # 5c. Continuous WAL archiving, on by default (lab record 017, gate row OP-14;

@@ -25,9 +25,12 @@ a crowd small enough to identify someone by elimination. The floor is a populati
 not a schedule question, and an authority with few members in a context should lengthen the
 cadence rather than publish a crowd of eleven. `uc11_close_epoch` refuses an epoch below the
 database setting `polaris.min_epoch_anonymity_set`, 20 unless the authority sets another.
-Releases up to 1.0.0-rc.70 left the notional sample's floor of one in a production database; as
-the database superuser, `ALTER DATABASE polaris SET polaris.min_epoch_anonymity_set = 20`
-restores it.
+Releases up to 1.0.0-rc.70 left the notional sample's floor of one in a production database. The
+next upgrade raises exactly that one to 20: `polaris-migrate.sh --sync-objects` under
+`POLARIS_ENV=production`, which the deploy, the Linux installer and the chart's migration Job run,
+and which stops the upgrade if the floor then reads below 20. A floor the authority set to another
+value stays; as the database superuser, `ALTER DATABASE polaris SET polaris.min_epoch_anonymity_set = 20`
+sets it by hand.
 
 **How often a relying party's ledger resets.** The scoped nullifier (P9.3) is keyed by the
 epoch, deliberately, so that membership never becomes a permanent pseudonym. A relying party

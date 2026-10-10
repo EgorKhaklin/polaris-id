@@ -179,6 +179,19 @@ REPO
     docker compose version >/dev/null 2>&1 || die "docker compose plugin not working after install"
 }
 
+# The migrations, then the database objects, against the stack's database; either failing stops the
+# install. Until 2026-10-10 both ran inside an && list, which set -e does not stop, so a migration that
+# failed went on to the health check and could end in "healthy". The stack's database is initialised
+# as production (docker-compose.prod.yml sets POLARIS_ENV=production on postgres), so the object sync
+# also raises the notional sample's anonymity floor of one there (scripts/polaris-migrate.sh).
+migrate_stack() {
+    ( cd "$INSTALL_DIR" && POLARIS_ENV=production bash scripts/polaris-migrate.sh --up --target=docker-stack >/dev/null ) \
+        || die "the migrations did not apply (cd $INSTALL_DIR && scripts/polaris-migrate.sh --up --target=docker-stack)"
+    ( cd "$INSTALL_DIR" && POLARIS_ENV=production bash scripts/polaris-migrate.sh --sync-objects --target=docker-stack >/dev/null ) \
+        || die "the database objects did not sync (cd $INSTALL_DIR && scripts/polaris-migrate.sh --sync-objects --target=docker-stack)"
+    ok "migrations applied + DB objects synced"
+}
+
 # ---------------------------------------------------------------------------
 # app
 # ---------------------------------------------------------------------------
@@ -267,9 +280,7 @@ stage_app() {
         die "polaris.service failed to start"
     fi
     ok "polaris.service started (compose up)"
-    ( cd "$INSTALL_DIR" && bash scripts/polaris-migrate.sh --up --target=docker-stack >/dev/null \
-        && bash scripts/polaris-migrate.sh --sync-objects --target=docker-stack >/dev/null ) \
-        && ok "migrations applied + DB objects synced"
+    migrate_stack
     local url curlk=""
     if [ -n "$COMPOSE_EXTRA" ]; then url="https://localhost:8443/api/health"; curlk="-k"; else url="https://${DOMAIN}/api/health"; fi
     local i code body
