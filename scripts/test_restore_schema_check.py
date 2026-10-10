@@ -525,11 +525,12 @@ class DockerExecUsesTheStackRole(unittest.TestCase):
             text = path.read_text(encoding="utf-8", errors="replace").replace("\\\n", " ")
             for c in self.CLIENT.finditer(text):
                 u = re.search(r'(?:-U|--username[= ])\s*"?([^"\s]+)', c.group(2))
-                calls.append((path.name, c.group(1)))
+                calls.append((path.name, c.group(1), c.group(2)))
                 if not u or u.group(1) != role:
                     wrong.append("%s: %s -U %s" % (path.name, c.group(1), u.group(1) if u else "(none)"))
         self.assertGreaterEqual(len(calls), 20, "the scan found too few calls to mean anything")
-        self.assertIn(("polaris-restore.sh", "psql"), calls, "the restore cross-check's docker read was not seen")
+        cross_check = [c for c in calls if c[:2] == ("polaris-restore.sh", "psql") and '"${applied_sql}"' in c[2]]
+        self.assertTrue(cross_check, "the restore cross-check's docker read was not seen")
         self.assertEqual(wrong, [], "docker exec clients must connect as %s" % role)
 
     def test_every_restore_client_call_uses_its_branch_role(self):
