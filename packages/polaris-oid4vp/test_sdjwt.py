@@ -116,7 +116,8 @@ class Wallet:
                 claims=(("given_name", "Jean"), ("family_name", "Dupont")),
                 corrupt_issuer_sig=False, corrupt_kb_sig=False, drop_key_binding=False,
                 extra_disclosure=None, issuer_typ="dc+sd-jwt", kb_typ="kb+jwt",
-                issuer_alg="ES256", include_cnf=True, payload_extra=None, issuer_header=None):
+                issuer_alg="ES256", include_cnf=True, payload_extra=None, issuer_header=None,
+                drop_kb_claims=()):
         disclosures = [_disclosure("salt%d" % i, name, value)
                        for i, (name, value) in enumerate(claims)]
         digests = [b64u_encode(hashlib.sha256(d.encode("ascii")).digest()) for d in disclosures]
@@ -146,9 +147,11 @@ class Wallet:
             return presented
 
         computed = b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())
-        kb = _jws(self.holder_key, {"alg": "ES256", "typ": kb_typ},
-                  {"iat": int(time.time()) if iat is None else iat, "aud": audience,
-                   "nonce": nonce, "sd_hash": computed if sd_hash is None else sd_hash})
+        kb_payload = {"iat": int(time.time()) if iat is None else iat, "aud": audience,
+                      "nonce": nonce, "sd_hash": computed if sd_hash is None else sd_hash}
+        for claim in drop_kb_claims:
+            del kb_payload[claim]
+        kb = _jws(self.holder_key, {"alg": "ES256", "typ": kb_typ}, kb_payload)
         if corrupt_kb_sig:
             head, _, sig = kb.rpartition(".")
             flipped = bytearray(base64.urlsafe_b64decode(sig + "=" * (-len(sig) % 4)))
@@ -543,6 +546,39 @@ class TheSevenConformanceRefusalsTests(unittest.TestCase):
         v = w.verify(w.present(iat=int(time.time()) + 365 * 24 * 3600))
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "kb_freshness")
+
+
+class AbsentKeyBindingClaimsTests(unittest.TestCase):
+    """RFC 9901 s4.3: the Key Binding JWT MUST contain iat, aud, nonce and sd_hash. Each one ABSENT is
+    refused, not only each one wrong: a verifier that checks a claim only when it is present passes the
+    wrong-value tests above and accepts these. Signed by the holder, so the missing claim is the only
+    defect."""
+
+    def _refusal(self, claim):
+        w = Wallet()
+        v = w.verify(w.present(drop_kb_claims=(claim,)))
+        self.assertFalse(v.authentic, "a key binding JWT with no %s verified" % claim)
+        return v
+
+    def test_a_key_binding_jwt_with_no_aud_is_refused(self):
+        v = self._refusal("aud")
+        self.assertEqual(v.code, "audience")
+        self.assertIn("aud is None", v.reason)
+
+    def test_a_key_binding_jwt_with_no_nonce_is_refused(self):
+        v = self._refusal("nonce")
+        self.assertEqual(v.code, "nonce")
+        self.assertIn("nonce is not the one this request asked for", v.reason)
+
+    def test_a_key_binding_jwt_with_no_iat_is_refused(self):
+        v = self._refusal("iat")
+        self.assertEqual(v.code, "kb_freshness")
+        self.assertIn("iat is None, which is not a finite number", v.reason)
+
+    def test_a_key_binding_jwt_with_no_sd_hash_is_refused(self):
+        v = self._refusal("sd_hash")
+        self.assertEqual(v.code, "sd_hash")
+        self.assertIn("sd_hash does not match", v.reason)
 
 
 class StructuralRefusalsTests(unittest.TestCase):
