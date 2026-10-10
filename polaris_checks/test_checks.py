@@ -13416,6 +13416,33 @@ def test_multi_region_dr_check_discriminates(tmp_path):
         "must FAIL when the design record does not explain the quorum reason"
 
 
+def test_region_drill_in_doubt_boundaries():
+    # The drill's verdict function runs for real under bash: the writer is strictly sequential,
+    # so one write past the last acknowledgement is an in-doubt write (passes) and two is
+    # divergence (fails); losing acknowledged writes fails only beyond the ceiling.
+    import shutil
+    import subprocess
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash not available")
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "scripts/polaris-region-evacuation-drill.sh").read_text()
+    m = re.search(r"IN_FLIGHT=(\d+)\n# BEGIN rpo-verdict\n(.*?)# END rpo-verdict\n", src, re.S)
+    assert m, "the drill must carry its rpo-verdict function between BEGIN/END markers"
+    assert m.group(1) == "1", "a strictly sequential writer has at most one write in flight"
+
+    def verdict(acked, present, ceil=50):
+        script = "IN_FLIGHT=%s\n%s\nrpo_verdict %d %d %d\n" % (m.group(1), m.group(2), acked, present, ceil)
+        return subprocess.run([bash, "-c", script], capture_output=True, text=True,
+                              check=True).stdout.strip()
+
+    assert verdict(82, 82) == "ok"
+    assert verdict(82, 83) == "ok", "one in-doubt write at the cut is not divergence"
+    assert verdict(82, 84) == "diverged", "two rows past the last acknowledgement cannot come from a sequential writer"
+    assert verdict(82, 32) == "ok", "losing exactly the ceiling is the stated async cost"
+    assert verdict(82, 31) == "rpo-exceeded", "losing acknowledged writes beyond the ceiling fails"
+
+
 def test_cost_model_check_discriminates(tmp_path):
     # v9.360 (P2.10): each fixture below either turns the model back into a table, or drops
     # a caveat whose absence makes the figure wrong in the direction that gets a project

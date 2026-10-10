@@ -172,18 +172,45 @@ echo "  region B promoted and serving writes in ${RTO}s (ceiling ${CEIL_RTO}s)  
 echo "  ...and reports itself a leader, not a standby                  OK"
 
 # --- 6. RPO: what did not cross ----------------------------------------------------
+# IN_FLIGHT is the writer's true maximum of writes that can sit between "committed on A"
+# and "acknowledged to the client" at the cut. The writer loop in step 3 is strictly
+# sequential: it waits for psql_a to return before it issues write n+1, so at most ONE write
+# is outstanding when the region goes dark. Under asynchronous replication region A can commit
+# and stream that write to region B and then go dark before the client sees the
+# acknowledgement. That is an in-doubt write, not divergence. Two or more rows past the
+# last acknowledgement cannot come from this writer and are divergence.
+IN_FLIGHT=1
+# BEGIN rpo-verdict
+# rpo_verdict ACKED PRESENT CEIL prints one word: ok, rpo-exceeded (lost acknowledged writes
+# beyond the ceiling) or diverged (region B holds more than one write past the last acknowledgement).
+rpo_verdict() {
+    local acked=$1 present=$2 ceil=$3
+    if (( present > acked + IN_FLIGHT )); then echo diverged
+    elif (( acked - present > ceil )); then echo rpo-exceeded
+    else echo ok
+    fi
+}
+# END rpo-verdict
 PRESENT=$(psql_b "SELECT coalesce(max(n),0) FROM dr_marker WHERE n < 999000000" | tr -d ' ')
-RPO_ROWS=$(( ACKED - PRESENT ))
-(( RPO_ROWS >= 0 )) || fail "region B holds a row region A never acknowledged (acked=$ACKED, present=$PRESENT): the regions DIVERGED"
+[[ "$(rpo_verdict "$ACKED" "$PRESENT" "$CEIL_RPO_ROWS")" != diverged ]] \
+    || fail "region B holds more than $IN_FLIGHT row past the last one region A acknowledged (acked=$ACKED, present=$PRESENT): the regions DIVERGED"
+IN_DOUBT=0
+(( PRESENT > ACKED )) && IN_DOUBT=$(( PRESENT - ACKED ))
+RPO_ROWS=0
+(( PRESENT < ACKED )) && RPO_ROWS=$(( ACKED - PRESENT ))
+if (( IN_DOUBT > 0 )); then
+    echo "  in-doubt write(s) at the cut: $IN_DOUBT (committed on A, streamed to B, unacknowledged)   OK"
+fi
 echo "  RPO: $RPO_ROWS of $ACKED acknowledged writes did not cross (ceiling $CEIL_RPO_ROWS)   OK"
-(( RPO_ROWS <= CEIL_RPO_ROWS )) || fail "RPO $RPO_ROWS rows exceeds the ceiling $CEIL_RPO_ROWS"
+[[ "$(rpo_verdict "$ACKED" "$PRESENT" "$CEIL_RPO_ROWS")" == ok ]] || fail "RPO $RPO_ROWS rows exceeds the ceiling $CEIL_RPO_ROWS"
 
-# --- 7. NO INVENTION: every row region B holds was acknowledged --------------------
-# The correctness property. RPO > 0 is a stated cost; a row region A never
-# acknowledged would mean a promotion publishes writes no client was told succeeded.
-EXTRA=$(psql_b "SELECT count(*) FROM dr_marker WHERE n > $ACKED AND n < 999000000" | tr -d ' ')
+# --- 7. NO INVENTION: every row region B holds was acknowledged or in doubt --------
+# The correctness property. RPO > 0 is a stated cost; a row beyond the last acknowledged
+# write plus the single in-flight one would mean a promotion publishes writes no client
+# was told succeeded and that the sequential writer never issued.
+EXTRA=$(psql_b "SELECT count(*) FROM dr_marker WHERE n > $ACKED + $IN_FLIGHT AND n < 999000000" | tr -d ' ')
 [[ "$EXTRA" == "0" ]] || fail "region B holds $EXTRA rows region A never acknowledged: the regions diverged"
-echo "  no row in region B was invented: every one was acknowledged    OK"
+echo "  no row in region B was invented: every one was acknowledged or in doubt    OK"
 
 # --- 8. The gap is contiguous, not a hole in the middle ----------------------------
 # A standby that had 1..40 and 45..60 would mean replication skipped, which is a
@@ -215,5 +242,5 @@ echo "so region A going dark takes no part of region B's consensus with it; it r
 echo "while it is a standby, so the two never both accept; and when the region is evacuated it"
 echo "promotes and serves in ${RTO}s having lost ${RPO_ROWS} of ${ACKED} acknowledged writes. That"
 echo "loss is the stated price of asynchronous replication, measured rather than assumed, and"
-echo "every row region B does hold was one region A acknowledged: a bounded recovery point, not"
-echo "a divergence."
+echo "every row region B does hold was one region A acknowledged, or the single write in doubt at"
+echo "the cut: a bounded recovery point, not a divergence."
