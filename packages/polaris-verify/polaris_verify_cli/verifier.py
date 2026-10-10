@@ -153,6 +153,33 @@ def _accepted_alg(alg):
     """True iff `alg` names an accepted parameter set. Total: a hostile non-string is simply
     not accepted (never a TypeError from an unhashable value)."""
     return isinstance(alg, str) and alg in _ACCEPTED
+
+
+def _size_problem(alg, pk, sig):
+    """Why `pk` and `sig` cannot be a public key and a signature of `alg`, or None when each is
+    exactly the length `_ACCEPTED` gives for it (FIPS 204 for ML-DSA).
+
+    2026-10-10: no verify path checked an ML-DSA public key's or signature's length before
+    verifying, so a missing or truncated key could come back as a valid signature from one
+    witness. The rule since then: every door asks this BEFORE either witness runs and refuses
+    with its answer, so no witness ever sees a key or signature of the wrong length, and a
+    wrong length is a refusal, never a witness that "could not run". Each witness asks again
+    before its library sees the bytes, for any caller that reaches it directly.
+
+    It decides the shape and nothing else: an attacker can make a full-length key too, and
+    what binds a key to an issuer is the trust anchor. Empty is a wrong length, whatever the
+    table says."""
+    if not _accepted_alg(alg):
+        return "unknown or unaccepted signature algorithm: %r" % (alg,)
+    _cls, pk_len, sig_len = _ACCEPTED[alg]
+    for what, value, want in (("public key", pk, pk_len), ("signature", sig, sig_len)):
+        if not isinstance(value, (bytes, bytearray)):
+            return "the %s is not bytes" % what
+        if not value or len(value) != want:
+            return "the %s is %d bytes; %s takes exactly %d" % (what, len(value), alg, want)
+    return None
+
+
 _PLACEHOLDER = "DETERMINISTIC-PLACEHOLDER-SHA3-256"
 
 #: Set only by the CLI, only under --dev-placeholder. A declared mode that did not change
@@ -226,10 +253,13 @@ def token_value_serial_problem(token_value):
 
 
 def _verify_liboqs(digest: bytes, sig: bytes, pk: bytes, alg=_ALG):
-    """Primary witness: liboqs. Returns True/False, or None if liboqs is absent."""
+    """Primary witness: liboqs. Returns True/False, or None if liboqs is absent. A key or
+    signature of the wrong length is False before the library sees it (`_size_problem`)."""
     if _DEV_PLACEHOLDER_MODE:
         return None
     if not _accepted_alg(alg):
+        return False
+    if _size_problem(alg, pk, sig) is not None:
         return False
     try:
         oqs = _import_oqs()
@@ -243,9 +273,12 @@ def _verify_liboqs(digest: bytes, sig: bytes, pk: bytes, alg=_ALG):
 
 
 def _verify_cryptography(digest: bytes, sig: bytes, pk: bytes, alg=_ALG):
-    """Second, independent witness: cryptography/OpenSSL. None if unavailable."""
+    """Second, independent witness: cryptography/OpenSSL. None if unavailable. A key or
+    signature of the wrong length is False, not None: it is refused, not unwitnessable."""
     if _DEV_PLACEHOLDER_MODE:
         return None
+    if _accepted_alg(alg) and _size_problem(alg, pk, sig) is not None:
+        return False
     try:
         from cryptography.hazmat.primitives.asymmetric import mldsa
         from cryptography.exceptions import InvalidSignature
@@ -257,6 +290,7 @@ def _verify_cryptography(digest: bytes, sig: bytes, pk: bytes, alg=_ALG):
     try:
         key = getattr(mldsa, cls_name).from_public_bytes(pk)
     except Exception:
+        # The length was checked above, so this is a backend without the parameter set.
         return None
     try:
         key.verify(sig, digest)
@@ -354,6 +388,10 @@ def verify_pack(pack: dict, anchor_keys=None) -> dict:
         return verdict
 
     digest = _digest(tok)
+    size_problem = _size_problem(alg, pk, sig)   # before either witness runs: see _size_problem
+    if size_problem is not None:
+        verdict["note"] = size_problem
+        return verdict
     primary = _verify_liboqs(digest, sig, pk, alg)
     witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
@@ -652,6 +690,10 @@ def verify_status_assertion(assertion, now=None, max_window_seconds=None, anchor
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
+    size_problem = _size_problem(alg, pk, sig)   # before either witness runs: see _size_problem
+    if size_problem is not None:
+        v["note"] = size_problem
+        return v
     primary = _verify_liboqs(digest, sig, pk, alg)
     witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
@@ -786,6 +828,10 @@ def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
+    size_problem = _size_problem(alg, pk, sig)   # before either witness runs: see _size_problem
+    if size_problem is not None:
+        v["note"] = size_problem
+        return v
     primary = _verify_liboqs(digest, sig, pk, alg)
     witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
@@ -912,7 +958,7 @@ def verify_attestation(att, attesting_agency_id=None, expected_key=None, now=Non
         return v
     v["attestation_authentic"] = bool(ok)
     if not ok:
-        v["note"] = "the attestation signature is invalid"
+        v["note"] = note or "the attestation signature is invalid"
         return v
     if attesting_agency_id is not None:
         v["attester_matches"] = _same_id(att.get("attesting_agency_id"), attesting_agency_id)
@@ -1161,9 +1207,13 @@ def revocation_leaf(token_value):
 def _two_witness_verify(digest, sig, pk, alg=_ALG):
     """Shared ML-DSA-65 two-witness check (liboqs primary, cryptography second). Returns
     (ok, ran, note): ok is True/False, or None when no verifier is available or the two
-    witnesses disagree -- in which case `note` says which."""
+    witnesses disagree -- in which case `note` says which. A key or signature of the wrong
+    length is (False, [], why), decided before either witness runs."""
     if not _accepted_alg(alg):
         return None, [], "unknown or unaccepted signature algorithm: %r" % alg
+    size_problem = _size_problem(alg, pk, sig)   # before either witness runs: see _size_problem
+    if size_problem is not None:
+        return False, [], size_problem
     primary = _verify_liboqs(digest, sig, pk, alg)
     witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
@@ -1233,7 +1283,7 @@ def verify_epoch_checkpoint(cp, now=None, max_window_seconds=None, issuer_key=No
         return v
     v["checkpoint_authentic"] = bool(ok)
     if not ok:
-        v["note"] = "checkpoint signature is invalid"
+        v["note"] = note or "checkpoint signature is invalid"
         return v
     _verify_window(cp, v, now, max_window_seconds)
     if issuer_key is not None:
@@ -1350,7 +1400,7 @@ def verify_revocation_feed(feed, now=None, max_window_seconds=None, issuer_key=N
         v["note"] = note
         return v
     if not ok:
-        v["note"] = "feed signature is invalid"
+        v["note"] = note or "feed signature is invalid"
         return v
     if not v["commitment_ok"]:
         v["note"] = "the revoked-set commitment does not match the listed leaves"
@@ -1509,7 +1559,7 @@ def verify_status_bundle(bundle, now=None, max_window_seconds=None, publisher_ke
         v["note"] = note
         return v
     if not ok:
-        v["note"] = "bundle signature is invalid"
+        v["note"] = note or "bundle signature is invalid"
         return v
     if not v["commitment_ok"]:
         v["note"] = "the members_root does not match the embedded members (the set was tampered)"
@@ -1887,6 +1937,10 @@ def verify_timestamp(ts, now=None, anchor_keys=None):
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
+    size_problem = _size_problem(alg, pk, sig)   # before either witness runs: see _size_problem
+    if size_problem is not None:
+        v["note"] = size_problem
+        return v
     primary = _verify_liboqs(digest, sig, pk, alg)
     witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
@@ -2169,6 +2223,10 @@ def verify_registry(reg, now=None, max_window_seconds=None, trusted_anchors=None
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
+    size_problem = _size_problem(alg, pk, sig)   # before either witness runs: see _size_problem
+    if size_problem is not None:
+        v["note"] = size_problem
+        return v
     primary = _verify_liboqs(digest, sig, pk, alg)
     witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
@@ -2335,6 +2393,10 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
     digest = hashlib.sha3_256(_exchange_request_canonical(envelope)).digest()
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
+        return v
+    size_problem = _size_problem(alg, pk, sig)   # before either witness runs: see _size_problem
+    if size_problem is not None:
+        v["note"] = size_problem
         return v
     primary = _verify_liboqs(digest, sig, pk, alg)
     witness = _verify_cryptography(digest, sig, pk, alg)
@@ -2542,6 +2604,10 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
+    size_problem = _size_problem(alg, pk, sig)   # before either witness runs: see _size_problem
+    if size_problem is not None:
+        v["note"] = size_problem
+        return v
     primary = _verify_liboqs(digest, sig, pk, alg)
     witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
@@ -2742,6 +2808,10 @@ def verify_id_token(tok, audience=None, nonce=None, now=None, trusted_anchors=No
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
+    size_problem = _size_problem(alg, pk, sig)   # before either witness runs: see _size_problem
+    if size_problem is not None:
+        v["note"] = size_problem
+        return v
     primary = _verify_liboqs(digest, sig, pk, alg)
     witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
@@ -2826,6 +2896,10 @@ def verify_trust_list(tl, now=None, max_window_seconds=None, trusted_anchors=Non
     digest = hashlib.sha3_256(_trust_list_canonical(tl)).digest()
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
+        return v
+    size_problem = _size_problem(alg, pk, sig)   # before either witness runs: see _size_problem
+    if size_problem is not None:
+        v["note"] = size_problem
         return v
     primary = _verify_liboqs(digest, sig, pk, alg)
     witness = _verify_cryptography(digest, sig, pk, alg)
@@ -2961,7 +3035,7 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
         v["note"] = note
         return v
     if not ok:
-        v["note"] = "receipt signature is invalid"
+        v["note"] = note or "receipt signature is invalid"
         return v
     v["receipt_authentic"] = True
     if responder_key is not None:
@@ -3191,7 +3265,7 @@ def verify_sth(sth, issuer_key=None):
         return v
     v["sth_authentic"] = bool(ok)
     if not ok:
-        v["note"] = "STH signature is invalid"
+        v["note"] = note or "STH signature is invalid"
     if issuer_key is not None:
         v["issuer_matches"] = _same_hex(pk_hex, issuer_key)
     return v
@@ -3300,7 +3374,7 @@ def verify_cosignature(cosig, witness_key=None):
         return v
     v["cosignature_authentic"] = bool(ok)
     if not ok:
-        v["note"] = "cosignature signature is invalid"
+        v["note"] = note or "cosignature signature is invalid"
     if witness_key is not None:
         v["witness_matches"] = _same_hex(pk_hex, witness_key)
     return v
@@ -3986,7 +4060,7 @@ def verify_epoch_leaves(bundle, now=None, max_window_seconds=None, anchor_keys=N
         v["note"] = note
         return v
     if not ok:
-        v["note"] = "the bundle signature is invalid"
+        v["note"] = note or "the bundle signature is invalid"
         return v
     # The commitment must match the published set, and a mismatch is a REFUSAL, not a note.
     # A caller who read `leaves_authentic: true` would take all_leaves_hex as the anonymity
@@ -4096,7 +4170,7 @@ def verify_holder_binding(binding, credential=None, now=None, max_window_seconds
         return v
     v["binding_authentic"] = bool(ok)
     if not ok:
-        v["note"] = "the binding signature is invalid"
+        v["note"] = note or "the binding signature is invalid"
         return v
     _verify_window(binding, v, now, max_window_seconds)
     if anchor_keys is not None:
@@ -4140,7 +4214,7 @@ def verify_holder_proof(proof, binding=None, expected_nonce=None, expected_conte
         return v
     v["proof_authentic"] = bool(ok)
     if not ok:
-        v["note"] = "the holder proof signature is invalid"
+        v["note"] = note or "the holder proof signature is invalid"
         return v
     # A nonce and a context read as the TypeScript SDK reads them: str() spelled true "True" and
     # 1e-05 "1e-05" where String() spells them "true" and "0.00001", and == read True as context 1
@@ -4294,7 +4368,7 @@ def _verify_standalone(obj, fmt, canonical, key):
         return v
     v["authentic"] = bool(ok)
     if not ok:
-        v["note"] = "the signature is invalid"
+        v["note"] = note or "the signature is invalid"
     return v
 
 
@@ -4424,7 +4498,7 @@ def verify_verifiable_credential(document, anchor_keys=None, now=None):
         return v
     v["proof_authentic"] = bool(ok)
     if not ok:
-        v["note"] = "the credential proof is invalid"
+        v["note"] = note or "the credential proof is invalid"
         return v
     if anchor_keys is not None:
         v["issuer_trusted"] = _hex_in(key_hex, {_hex_text(a) for a in anchor_keys})
@@ -4678,7 +4752,7 @@ def verify_mdoc(document_bytes, anchor_keys=None, now=None):
         return v
     v["issuer_authentic"] = bool(ok2)
     if not ok2:
-        v["note"] = "the MSO signature is invalid"
+        v["note"] = note or "the MSO signature is invalid"
         return v
     if anchor_keys is not None:
         v["issuer_trusted"] = _hex_in(key_hex, {_hex_text(a) for a in anchor_keys})
@@ -4767,7 +4841,7 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
         v["note"] = note
         return v
     if not ok:
-        v["note"] = "the grant signature is invalid"
+        v["note"] = note or "the grant signature is invalid"
         return v
     # WIRE-SPEC 3.17: `grant_id` is the revocation handle and names this grant alone. A grant
     # without one as text could never be revoked once a revocation names a grant as text
@@ -4849,7 +4923,7 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
             if rok is None:
                 v["note"] = rnote
             elif not rok:
-                v["note"] = "the revocation signature is invalid"
+                v["note"] = rnote or "the revocation signature is invalid"
             elif not _same_hex(revocation.get("public_key_hex"), holder_key):
                 # Anyone may publish bytes; only the holder may end the grant.
                 v["note"] = "the revocation is signed by a key other than the grant's holder"
@@ -4893,7 +4967,7 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
             if aok is None:
                 v["note"] = anote
             elif not aok:
-                v["note"] = "the agent proof signature is invalid"
+                v["note"] = anote or "the agent proof signature is invalid"
             else:
                 v["agent_proved"] = True
 

@@ -228,6 +228,102 @@ class Witnesses(unittest.TestCase):
         self.assertIs(V._verify_liboqs(self.digest, self.sig, self.pk, "RSA-2048"), False)
 
 
+class ExactSizeIsCheckedBeforeEitherWitness(unittest.TestCase):
+    """2026-10-10: the detached verifier did not check an ML-DSA public key's or signature's
+    length before verifying, so a missing or truncated key could come back as a valid signature
+    from one witness. `_size_problem` now runs on every door BEFORE either witness, and each
+    witness re-checks before its library sees the bytes, so a wrong length is a refusal and never
+    a witness that "could not run". These tests use arbitrary bytes of the wrong length; they do
+    not forge anything, because a wrong length is refused at the size check, upstream of any
+    cryptography. A wrong-length key is a recognised conformance case
+    (fido-alliance/conformance-test-tools-resources#817)."""
+
+    PK_LEN, SIG_LEN = 1952, 3309   # ML-DSA-65, FIPS 204
+
+    def test_the_accepted_sizes_match_liboqs_details(self):
+        try:
+            oqs = V._import_oqs()
+        except Exception:  # noqa: BLE001
+            self.skipTest("liboqs absent")
+        for alg, (_cls, pk_len, sig_len) in V._ACCEPTED.items():
+            if alg not in set(oqs.get_enabled_sig_mechanisms()):
+                continue
+            with oqs.Signature(alg) as s:
+                self.assertEqual((pk_len, sig_len),
+                                 (s.details["length_public_key"], s.details["length_signature"]), alg)
+
+    def test_size_problem_names_a_wrong_length_and_passes_the_exact_one(self):
+        self.assertIsNone(V._size_problem("ML-DSA-65", b"\x01" * self.PK_LEN, b"\x02" * self.SIG_LEN))
+        for pk_len in (0, 1, 32, self.PK_LEN - 1, self.PK_LEN + 1):
+            self.assertIn("public key", V._size_problem("ML-DSA-65", b"\x01" * pk_len, b"\x02" * self.SIG_LEN))
+        for sig_len in (0, 1, self.SIG_LEN - 1, self.SIG_LEN + 1):
+            self.assertIn("signature", V._size_problem("ML-DSA-65", b"\x01" * self.PK_LEN, b"\x02" * sig_len))
+        # empty input is a wrong length, not an abstention
+        self.assertIn("public key", V._size_problem("ML-DSA-65", b"", b"\x02" * self.SIG_LEN))
+        self.assertIn("signature", V._size_problem("ML-DSA-65", b"\x01" * self.PK_LEN, b""))
+
+    def test_each_witness_returns_False_not_None_on_a_wrong_length(self):
+        # Never None (which would let the other witness decide alone): a size mismatch is refused.
+        for pk_len in (0, 1, 32, self.PK_LEN - 1):
+            self.assertIs(V._verify_liboqs(b"d" * 32, b"\x02" * self.SIG_LEN, b"\x01" * pk_len), False, pk_len)
+            self.assertIs(V._verify_cryptography(b"d" * 32, b"\x02" * self.SIG_LEN, b"\x01" * pk_len), False, pk_len)
+        for sig_len in (0, 1, self.SIG_LEN - 1, self.SIG_LEN + 1):
+            self.assertIs(V._verify_liboqs(b"d" * 32, b"\x02" * sig_len, b"\x01" * self.PK_LEN), False, sig_len)
+            self.assertIs(V._verify_cryptography(b"d" * 32, b"\x02" * sig_len, b"\x01" * self.PK_LEN), False, sig_len)
+
+    def test_the_shared_combiner_refuses_a_wrong_length_with_its_reason(self):
+        ok, ran, note = V._two_witness_verify(b"d" * 32, b"\x02" * self.SIG_LEN, b"\x01" * 32)
+        self.assertIs(ok, False)
+        self.assertEqual(ran, [])
+        self.assertIn("public key", note)
+
+    def test_a_lone_witness_that_would_accept_cannot_resurrect_a_wrong_length(self):
+        # The size check is upstream of the fallback: even if the only installed witness were
+        # patched to accept, a wrong length never reaches it. Both witnesses stubbed to a verdict.
+        saved = (V._verify_liboqs, V._verify_cryptography)
+        try:
+            V._verify_liboqs = lambda *a, **k: None          # "not installed"
+            V._verify_cryptography = lambda *a, **k: True     # the lone witness says yes
+            ok, ran, note = V._two_witness_verify(b"d" * 32, b"\x02" * self.SIG_LEN, b"\x01" * 32)
+            self.assertIs(ok, False, "a wrong-length key must not reach the lone witness")
+            self.assertIn("public key", note)
+        finally:
+            V._verify_liboqs, V._verify_cryptography = saved
+
+    def test_pack_refuses_a_wrong_length_key_and_a_real_pack_still_verifies(self):
+        tok = "TKN-SIZE-0001"
+
+        def pack(sig_hex, pk_hex):
+            return {"format": "polaris-authenticity-pack/1", "token_value": tok,
+                    "algorithm": "ML-DSA-65", "signature_hex": sig_hex, "public_key_hex": pk_hex}
+        # An empty key is caught by the earlier missing-field guard (also a refusal); a non-empty
+        # wrong length is refused at the size check, with its reason and no witness run.
+        v0 = V.verify_pack(pack((b"\x02" * self.SIG_LEN).hex(), ""))
+        self.assertIs(v0["signature_valid"], False)
+        self.assertNotEqual(v0["authenticity"], "genuine")
+        for pk_len in (1, 32, self.PK_LEN - 1, self.PK_LEN + 1):
+            v = V.verify_pack(pack((b"\x02" * self.SIG_LEN).hex(), (b"\x01" * pk_len).hex()))
+            self.assertIs(v["signature_valid"], False, pk_len)
+            self.assertNotEqual(v["authenticity"], "genuine")
+            self.assertIn("public key", v["note"] or "")
+            self.assertEqual(v["witnesses"], [], "no witness ran on a wrong length")
+        for sig_len in (1, self.SIG_LEN - 1, self.SIG_LEN + 1):   # wrong signature length
+            v = V.verify_pack(pack((b"\x02" * sig_len).hex(), (b"\x01" * self.PK_LEN).hex()))
+            self.assertIs(v["signature_valid"], False, sig_len)
+            self.assertIn("signature", v["note"] or "")
+        # positive control: a real key and a real signature still verify
+        try:
+            oqs = V._import_oqs()
+        except Exception:  # noqa: BLE001
+            self.skipTest("liboqs absent for the positive control")
+        with oqs.Signature("ML-DSA-65") as s:
+            pk = bytes(s.generate_keypair())
+            sig = bytes(s.sign(V._digest(tok)))
+        good = V.verify_pack(pack(sig.hex(), pk.hex()))
+        self.assertIs(good["signature_valid"], True, good["note"])
+        self.assertGreaterEqual(len(good["witnesses"]), 1)
+
+
 # --------------------------------------------------------------------------- the prover
 
 class ZeroKnowledgeProverOutcomes(unittest.TestCase):
@@ -541,6 +637,17 @@ class MdocDecisions(unittest.TestCase):
         self.assertIs(v["fresh"], False)
         self.assertIs(v["issuer_authentic"], True, "the window is refused, the signature is still judged")
         self.assertIn("validity window is not readable", v["note"] or "")
+
+    def test_a_wrong_length_issuer_key_is_refused_at_the_size_check(self):
+        # 2026-10-10: a keyless (or short-key) document reported issuer_authentic True, because the
+        # key's length was never checked. The digests are fine; the refusal is the key's length,
+        # before either witness runs. Arbitrary bytes of the wrong length, not a forgery.
+        for pk_len, why in ((0, "public key"), (1, "public key"), (32, "public key"), (1951, "public key")):
+            doc = self.document(unprotected={"polaris_public_key_hex": (b"\x01" * pk_len).hex()})
+            v = V.verify_mdoc(doc, now=self.NOW)
+            self.assertIs(v["digests_match"], True, "the digests are fine; the refusal is the key's length")
+            self.assertIs(v["issuer_authentic"], False, pk_len)
+            self.assertIn(why, v["note"] or "", pk_len)
 
 
 @unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")

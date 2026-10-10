@@ -190,6 +190,30 @@ def _verifies_under(algorithm) -> bool:
                                            or algorithm in custody.EXPERIMENTAL_ALGORITHM_SIZES)
 
 
+def _size_problem(algorithm, public_key, signature):
+    """Why these bytes cannot be a public key and a signature of `algorithm`, or None when each
+    is exactly its length in custody's tables (ALGORITHM_SIZES, EXPERIMENTAL_ALGORITHM_SIZES;
+    FIPS 204 for ML-DSA).
+
+    2026-10-10: verify() and verify_both() with an explicit algorithm did not check an ML-DSA
+    public key's or signature's length before verifying, so an empty or truncated key could
+    verify. The rule since then: verify_both() asks this BEFORE either witness runs, and
+    verify() and the second witness ask it before their library sees the bytes, so a wrong
+    length is a refusal (False), never a witness that "could not run" (None). It decides the
+    shape and nothing else: whose key a full-length one is, the trust anchor decides."""
+    if not _verifies_under(algorithm):
+        return "%r is not a parameter set this process verifies" % (algorithm,)
+    sizes = custody.ALGORITHM_SIZES.get(algorithm) or custody.EXPERIMENTAL_ALGORITHM_SIZES.get(algorithm)
+    if not sizes:
+        return "no size is known for %r" % (algorithm,)
+    for what, value, want in (("public key", public_key, sizes[0]), ("signature", signature, sizes[1])):
+        if not isinstance(value, (bytes, bytearray)):
+            return "the %s is not bytes" % what
+        if not value or len(value) != want:
+            return "the %s is %d bytes; %s takes exactly %d" % (what, len(value), algorithm, want)
+    return None
+
+
 # The FN-DSA family's second witness: cryptography carries no Falcon, so the independent
 # implementation is @noble/post-quantum, run by witness/falcon_witness.mjs under Node.
 _FALCON_WITNESS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "witness", "falcon_witness.mjs")
@@ -791,6 +815,8 @@ def verify(
     alg = algorithm or custody.algorithm_for_public_key(public_key)
     if not _verifies_under(alg):
         return False
+    if _size_problem(alg, public_key, signature) is not None:   # before liboqs sees the bytes
+        return False
     try:
         with _oqs.Signature(alg) as verifier:
             return verifier.verify(digest, signature, public_key)
@@ -807,8 +833,9 @@ def _verify_second_witness(message: bytes, signature_hex: str, public_key_hex: s
     """Independent ML-DSA-65 verify via cryptography/OpenSSL — NOT liboqs.
 
     Returns True/False (the witness's verdict), or None when the witness cannot
-    run (library too old, or it cannot even load the key) so the caller falls back
-    to the lone primary. Verifies the SAME SHA3-256 digest the signer signs.
+    run (library too old, or no implementation of the parameter set) so the caller
+    falls back to the lone primary. A key or signature of the wrong length is False,
+    never None. Verifies the SAME SHA3-256 digest the signer signs.
     """
     try:
         pk_bytes = unhex(public_key_hex)
@@ -816,6 +843,8 @@ def _verify_second_witness(message: bytes, signature_hex: str, public_key_hex: s
     except (ValueError, TypeError):
         return False
     alg = algorithm or custody.algorithm_for_public_key(pk_bytes)
+    if _verifies_under(alg) and _size_problem(alg, pk_bytes, sig_bytes) is not None:
+        return False
     if isinstance(alg, str) and alg in custody.EXPERIMENTAL_ALGORITHM_SIZES:
         # Its witness is @noble/post-quantum, not cryptography, so cryptography's absence
         # says nothing about whether this one can run.
@@ -828,7 +857,7 @@ def _verify_second_witness(message: bytes, signature_hex: str, public_key_hex: s
             return None  # no witness implements this parameter set
         pk = cls.from_public_bytes(pk_bytes)
     except Exception:
-        return None  # the witness cannot load this key — it cannot witness
+        return None  # the length was checked above: a backend without this parameter set
     digest = hashlib.sha3_256(message).digest()
     try:
         pk.verify(sig_bytes, digest)
@@ -855,7 +884,17 @@ def verify_both(message: bytes, signature_hex: str, public_key_hex: str,
     witness actually ran, so a missing witness is a REFUSAL, not a silent
     downgrade to one implementation. Raises PQCUnavailableError if the PRIMARY
     (oqs) is unavailable.
+
+    A key or signature whose length is not its parameter set's is refused here,
+    before either witness runs (_size_problem), so the lone-primary fallback above
+    can never decide bytes of the wrong length.
     """
+    try:
+        pk_bytes, sig_bytes = unhex(public_key_hex), unhex(signature_hex)
+    except (ValueError, TypeError):
+        return False
+    if _size_problem(algorithm or custody.algorithm_for_public_key(pk_bytes), pk_bytes, sig_bytes) is not None:
+        return False
     primary = verify(message, signature_hex, public_key_hex, algorithm=algorithm)
     witness = _verify_second_witness(message, signature_hex, public_key_hex, algorithm=algorithm)
     if witness is None:
