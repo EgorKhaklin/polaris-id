@@ -548,6 +548,115 @@ class ClassSkipTests(unittest.TestCase):
         self.assertEqual(ship.class_skips(log), [])
 
 
+
+class ZkProverStale(unittest.TestCase):
+    """A run refuses a ZK prover built before its source last changed: ZKSnarkTests would check the
+    old circuit (2026-10-10, a worktree linked to a 09-23 binary)."""
+
+    CHANGED = 1_800_000_000  # the commit to polaris_zk/src, as a Unix time
+
+    def setUp(self):
+        import subprocess, tempfile
+        self.root = tempfile.mkdtemp(prefix="polaris-zk-stale-")
+        self.addCleanup(__import__("shutil").rmtree, self.root, True)
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.org",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.org",
+                   GIT_AUTHOR_DATE="@%d +0000" % self.CHANGED, GIT_COMMITTER_DATE="@%d +0000" % self.CHANGED)
+        def git(*args):
+            subprocess.run(["git", "-C", self.root, *args], env=env, check=True, capture_output=True)
+        git("init", "-q")
+        os.makedirs(os.path.join(self.root, "polaris_zk", "src"))
+        with open(os.path.join(self.root, "polaris_zk", "src", "lib.rs"), "w") as f:
+            f.write("// the circuit\n")
+        git("add", "-A")
+        git("commit", "-q", "-m", "circuit")
+        self.binary = os.path.join(self.root, "polaris_zk", "target", "release", "polaris-zk")
+
+    def build(self, at):
+        os.makedirs(os.path.dirname(self.binary), exist_ok=True)
+        with open(self.binary, "w") as f:
+            f.write("binary\n")
+        os.utime(self.binary, (at, at))
+
+    def test_a_binary_built_before_the_source_changed_is_refused(self):
+        self.build(self.CHANGED - 3600)
+        why = ship.zk_prover_stale(self.root, {})
+        self.assertIsNotNone(why)
+        self.assertIn("old circuit", why)
+        self.assertIn("cargo build --release", why)
+
+    def test_a_binary_built_after_it_is_current(self):
+        self.build(self.CHANGED + 3600)
+        self.assertIsNone(ship.zk_prover_stale(self.root, {}))
+
+    def test_no_binary_is_left_to_the_tests_skip(self):
+        self.assertIsNone(ship.zk_prover_stale(self.root, {}))
+
+    def test_the_binary_named_in_the_environment_is_the_one_judged(self):
+        self.build(self.CHANGED + 3600)
+        other = os.path.join(self.root, "old-polaris-zk")
+        with open(other, "w") as f:
+            f.write("binary\n")
+        os.utime(other, (self.CHANGED - 3600, self.CHANGED - 3600))
+        self.assertIn("old circuit", ship.zk_prover_stale(self.root, {"POLARIS_ZK_BINARY": other}))
+
+    def test_a_run_refuses_a_stale_prover_before_it_touches_a_database(self):
+        import io
+        calls = []
+        saved = ship.zk_prover_stale, ship.hold_run_lock
+        ship.zk_prover_stale = lambda root, env: "the prover is stale (stand-in)"
+        ship.hold_run_lock = lambda env, *a, **k: calls.append("lock") or (None, "stand-in")
+        try:
+            out = io.StringIO()
+            rc = ship.run(["--shards", "1"], out)
+        finally:
+            ship.zk_prover_stale, ship.hold_run_lock = saved
+        self.assertEqual(rc, 2)
+        self.assertIn("run: refused: the prover is stale (stand-in).", out.getvalue())
+        self.assertEqual(calls, [], "the run went on to take the database lock")
+
+    def test_a_change_merged_later_counts_from_its_merge(self):
+        # A side branch's commit to the circuit, dated before the binary, reaches this branch with a
+        # merge dated after it: the binary in between was built from the earlier circuit.
+        import subprocess
+        def git(when, *args):
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.org",
+                       GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.org",
+                       GIT_AUTHOR_DATE="@%d +0000" % when, GIT_COMMITTER_DATE="@%d +0000" % when)
+            subprocess.run(["git", "-C", self.root, *args], env=env, check=True, capture_output=True)
+        main = subprocess.run(["git", "-C", self.root, "rev-parse", "--abbrev-ref", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        git(self.CHANGED, "checkout", "-q", "-b", "side")
+        with open(os.path.join(self.root, "polaris_zk", "src", "lib.rs"), "a") as f:
+            f.write("// the zero-knowledge configuration\n")
+        git(self.CHANGED + 1000, "commit", "-q", "-am", "circuit change on a side branch")
+        git(self.CHANGED + 1000, "checkout", "-q", main)
+        git(self.CHANGED + 9000, "merge", "-q", "--no-ff", "-m", "merge the circuit change", "side")
+        self.build(self.CHANGED + 5000)
+        why = ship.zk_prover_stale(self.root, {})
+        self.assertIsNotNone(why, "a binary built before the merge passed as current")
+        self.assertIn("old circuit", why)
+
+    def test_an_uncommitted_change_newer_than_the_binary_is_refused(self):
+        self.build(self.CHANGED + 3600)
+        src = os.path.join(self.root, "polaris_zk", "src", "lib.rs")
+        with open(src, "a") as f:
+            f.write("// edited, not committed\n")
+        os.utime(src, (self.CHANGED + 7200, self.CHANGED + 7200))
+        why = ship.zk_prover_stale(self.root, {})
+        self.assertIsNotNone(why)
+        self.assertIn("uncommitted change", why)
+        os.utime(src, (self.CHANGED + 60, self.CHANGED + 60))
+        self.assertIsNone(ship.zk_prover_stale(self.root, {}), "an edit older than the binary was refused")
+
+    def test_an_unreadable_history_is_not_a_current_binary(self):
+        import shutil
+        self.build(self.CHANGED + 3600)
+        shutil.rmtree(os.path.join(self.root, ".git"))
+        why = ship.zk_prover_stale(self.root, {})
+        self.assertIsNotNone(why)
+        self.assertIn("could not be read", why)
+
 if __name__ == "__main__":
     unittest.main()
 
