@@ -909,8 +909,11 @@ class RunLockTests(unittest.TestCase):
 
         out = io.StringIO()
         refused = (None, "another polaris-ship run holds the shard databases (polaris_test_s*) on this server")
+        # The prover check comes first and reads git history where a built prover exists (a worktree
+        # linking polaris_zk/target): ZkProverStale holds that refusal; this one holds the lock's.
         with mock.patch.dict(os.environ, {"POLARIS_DB_USER": "drill"}), \
                 mock.patch.object(ship, "_python", return_value="python3"), \
+                mock.patch.object(ship, "zk_prover_stale", return_value=None), \
                 mock.patch.object(ship, "hold_run_lock", return_value=refused), \
                 mock.patch.object(ship.subprocess, "Popen", side_effect=no_process), \
                 mock.patch.object(ship.subprocess, "run", side_effect=no_process):
