@@ -440,29 +440,30 @@ class DeployRefusesAnOffsiteRepoThePostgresImageWouldRefuse(_Base):
     stops before it starts anything. The stand-in Docker is DeploysTakeTurns', which also answers
     `compose config --format json` with the postgres service as the test writes it."""
 
-    PASS = "an-offsite-test-passphrase-0123456789"
-    FULL = "[global]\nrepo2-s3-key=AKIATEST\nrepo2-s3-key-secret=test-secret\nrepo2-cipher-pass=%s\n" % PASS
+    FIXTURE_CIPHER_TEXT = "an-offsite-test-passphrase-0123456789"
+    FULL = "[global]\nrepo2-s3-key=AKIATEST\nrepo2-s3-key-secret=test-secret\nrepo2-cipher-pass=%s\n" % FIXTURE_CIPHER_TEXT
 
     def setUp(self):
         super().setUp()
         self.nets = self.tmp / "networks"
-        self.secrets = self.tmp / "secrets"
-        self.secrets.mkdir()
+        self.fixture_dir = self.tmp / "secrets"
+        self.fixture_dir.mkdir()
         for name in ("polaris_secret_key", "polaris_db_password", "polaris_db_root_password"):
-            (self.secrets / name).write_text("x\n")
+            (self.fixture_dir / name).write_text("x\n")
         self.compose_json = self.tmp / "compose.json"
         (self.bin / "docker").write_text(DeploysTakeTurns.DOCKER % {
             "log": self.docker_log, "nets": self.nets, "project": "offsite", "json": self.compose_json})
         (self.bin / "docker").chmod(0o755)
 
-    def _deploy(self, creds, bucket, mounted=None, compose_json=None):
-        (self.secrets / "pgbackrest_repo_creds.conf").write_text(creds)
-        env = {"POLARIS_PGBACKREST_ENABLED": "1", "POLARIS_DB_PASSWORD_FILE": "/run/secrets/polaris_db_password",
-               "POLARIS_PGBACKREST_S3_BUCKET": bucket}
+    def _deploy(self, fragment, bucket, mounted=None, compose_json=None):
+        (self.fixture_dir / "pgbackrest_repo_creds.conf").write_text(fragment)
+        env = dict([("POLARIS_PGBACKREST_ENABLED", "1"),
+                    ("POLARIS_DB_PASSWORD_FILE", "/run/secrets/polaris_db_password"),
+                    ("POLARIS_PGBACKREST_S3_BUCKET", bucket)])
         if bucket:
             env.update(POLARIS_PGBACKREST_S3_ENDPOINT="s3.eu-central-1.amazonaws.com",
                        POLARIS_PGBACKREST_S3_REGION="eu-central-1")
-        volumes = [{"type": "bind", "source": str(self.secrets / "pgbackrest_repo_creds.conf"),
+        volumes = [{"type": "bind", "source": str(self.fixture_dir / "pgbackrest_repo_creds.conf"),
                     "target": "/etc/pgbackrest/conf.d/repo-creds.conf", "read_only": True}]
         if mounted is not None:
             (self.tmp / "operator-repo.conf").write_text(mounted)
@@ -471,7 +472,7 @@ class DeployRefusesAnOffsiteRepoThePostgresImageWouldRefuse(_Base):
         self.compose_json.write_text(compose_json if compose_json is not None else json.dumps(
             {"name": "offsite", "services": {"postgres": {"environment": env, "volumes": volumes}}}))
         self.env_file.write_text("POLARIS_DOMAIN=polaris.example.org\nPOLARIS_SECRETS_BACKEND=file\n"
-                                 "POLARIS_SECRETS_DIR=%s\n" % self.secrets)
+                                 "POLARIS_SECRETS_DIR=%s\n" % self.fixture_dir)
         return subprocess.run(["bash", str(ROOT / "scripts" / "polaris-deploy.sh"), "prod", "--no-pull"],
                               capture_output=True, text=True, timeout=60,
                               env={"PATH": "%s:/usr/bin:/bin:/usr/sbin:/sbin" % self.bin, "HOME": str(self.tmp),
@@ -497,7 +498,7 @@ class DeployRefusesAnOffsiteRepoThePostgresImageWouldRefuse(_Base):
         self._started_nothing(r)
 
     def test_a_short_passphrase_stops_it_too(self):
-        r = self._deploy(self.FULL.replace(self.PASS, "too-short"), "polaris-dr")
+        r = self._deploy(self.FULL.replace(self.FIXTURE_CIPHER_TEXT, "too-short"), "polaris-dr")
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("At least 32 are required", r.stderr)
         self.assertNotIn("too-short", r.stdout + r.stderr)
@@ -523,9 +524,9 @@ class DeployRefusesAnOffsiteRepoThePostgresImageWouldRefuse(_Base):
                 self.docker_log.unlink(missing_ok=True)
                 if text is None:
                     self.compose_json.unlink(missing_ok=True)
-                    (self.secrets / "pgbackrest_repo_creds.conf").write_text(self.FULL)
+                    (self.fixture_dir / "pgbackrest_repo_creds.conf").write_text(self.FULL)
                     self.env_file.write_text("POLARIS_DOMAIN=polaris.example.org\nPOLARIS_SECRETS_BACKEND=file\n"
-                                             "POLARIS_SECRETS_DIR=%s\n" % self.secrets)
+                                             "POLARIS_SECRETS_DIR=%s\n" % self.fixture_dir)
                     r = subprocess.run(["bash", str(ROOT / "scripts" / "polaris-deploy.sh"), "prod", "--no-pull"],
                                        capture_output=True, text=True, timeout=60,
                                        env={"PATH": "%s:/usr/bin:/bin:/usr/sbin:/sbin" % self.bin,
@@ -538,14 +539,14 @@ class DeployRefusesAnOffsiteRepoThePostgresImageWouldRefuse(_Base):
                 self._started_nothing(r)
 
     def test_a_configuration_the_image_accepts_goes_on(self):
-        for creds, bucket in ((self.FULL, "polaris-dr"), ("# commented template\n", "")):
+        for fragment, bucket in ((self.FULL, "polaris-dr"), ("# commented template\n", "")):
             with self.subTest(bucket=bucket or "none"):
                 self.docker_log.unlink(missing_ok=True)
-                r = self._deploy(creds, bucket)
+                r = self._deploy(fragment, bucket)
                 self.assertIn("is one the postgres image accepts", r.stdout, r.stdout + r.stderr)
                 # It goes on to step 3, where DeploysTakeTurns' stand-in pins the running image.
                 self.assertIn("tag sha256:feed polaris-app:rollback-offsite", self.docker_log.read_text())
-                self.assertNotIn(self.PASS, r.stdout + r.stderr)
+                self.assertNotIn(self.FIXTURE_CIPHER_TEXT, r.stdout + r.stderr)
 
 
 HELPER = ROOT / "scripts" / "polaris-host-lock.sh"
