@@ -27,6 +27,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- Axle's Kotlin OpenID4VP client (OpenWallet Foundation Labs), driven by a harness written here, presents to the published verifier, 1.0.0rc16; the README's count of outside implementations is 15. Not in the weekly canary.
 - `scripts/polaris-pg-upgrade-drill.sh` runs OPERATIONS.md's PostgreSQL major-version upgrade (16 to 17) and its rollback as written, and requires every table's rows, the sequences, the catalogue, roles and grants, a credential issued before and pgBackRest's health to be the same on each side; its control must name one audit row changed on the new major. CI runs both nightly and on pull requests that change what they run.
 
 ### Changed
