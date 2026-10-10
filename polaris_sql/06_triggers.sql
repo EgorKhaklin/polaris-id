@@ -727,19 +727,19 @@ COMMENT ON FUNCTION enforce_token_has_active_signature IS
   'token must have ≥ 1 non-deprecated signature. Mirrors the partial '
   'unique index pattern used for one-ACTIVE-per-individual (C3).';
 
+-- DELETE is forbidden outright: it would erase the migration record. On UPDATE only deprecation_date
+-- may change, and only one way; signing_public_key_hex (v9.117) is nullable, so it is compared with IS
+-- DISTINCT FROM (a plain <> with NULL yields NULL, not TRUE, and would let a change through). The body
+-- is byte for byte what the migrations install, so a deploy's --sync-objects rewrites nothing.
 CREATE OR REPLACE FUNCTION enforce_token_signature_immutability()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
-    -- DELETE is forbidden outright — would erase the migration record.
     IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION
             'DELETE on TokenSignature is forbidden (audit-of-record for migrations)'
             USING ERRCODE = 'insufficient_privilege';
     END IF;
 
-    -- UPDATE: only deprecation_date may change. signing_public_key_hex (v9.117)
-    -- is nullable, so it is compared with IS DISTINCT FROM (a plain <> with NULL
-    -- would yield NULL, not TRUE, and silently let a change through).
     IF NEW.signature_id      <> OLD.signature_id
        OR NEW.token_id        <> OLD.token_id
        OR NEW.algorithm_id    <> OLD.algorithm_id
@@ -751,7 +751,6 @@ BEGIN
             USING ERRCODE = 'insufficient_privilege';
     END IF;
 
-    -- deprecation_date is one-way.
     IF OLD.deprecation_date IS NOT NULL THEN
         IF NEW.deprecation_date IS NULL THEN
             RAISE EXCEPTION

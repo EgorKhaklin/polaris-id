@@ -461,6 +461,34 @@ widened. Before the fix, a widened restore lasted until a deploy re-ran
 `09_grants.sql`, and a revoke made only by a migration (DELETE on
 `EnrollmentCode`) not even then.
 
+### E-E6: a deploy gives the application role back what a migration revoked
+
+**Scenario:** every deploy runs `polaris-migrate.sh --sync-objects`, which
+re-applies the schema's canonical files to a migrated database.
+`09_grants.sql` grants `polaris_app` SELECT, INSERT, UPDATE and DELETE on
+every table and revokes what it names; migration 2026-09-11-017 revoked
+DELETE on `EnrollmentCode` and the file did not, so from that migration
+on every deploy granted it back. The code's one-way-door trigger guards
+UPDATE only: it did not limit this. A compromised application could
+delete an issued or redeemed code and reissue it with no attempts
+counted. Measured on 2026-10-10 on a database built as production builds
+it: the only change one sync made to behaviour was that privilege; three
+routines' stored comments also changed (aligned in this change).
+
+**Affected:** every deploy of a database migrated past 2026-09-11-017.
+
+**Controls:**
+- `09_grants.sql` revokes it, as the migration does
+- `scripts/test_sync_objects_parity.py`: on a database built from the
+  canonical files and migrated, one sync must change no view (or its
+  options), trigger, routine (its whole definition, settings, SECURITY
+  DEFINER or owner), privilege of any role on any table, column,
+  sequence, routine or the public schema, default privilege or database
+  setting; its control requires a view that lost `security_invoker` to
+  be seen
+
+**Residual risk:** LOW.
+
 ---
 
 ## P: the physical card

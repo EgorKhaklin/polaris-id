@@ -2218,6 +2218,15 @@ COMMENT ON PROCEDURE uc_archive_purge IS
 -- must be an admin, as defense in depth. The procedure issues NO DELETE — it
 -- cannot be a covert deletion path.
 -- ============================================================================
+-- In order: (1) the individual must exist; (2) the actor must exist, be an admin, AND be active
+-- (a deactivated admin account must not be able to erase); (3) a non-empty reason is required
+-- (the legal or policy basis); (4) refuse to double-erase by the AUTHORITATIVE log, not the current
+-- name: legal_name has no format constraint beyond non-empty, so a holder whose real name equals the
+-- pseudonym template must not be refused a first, legitimate erasure; (5) pseudonymize the name (a
+-- legitimate UPDATE on the mutable Individual); (6) record the act in the append-only erasure log
+-- (who, when and why, NOT what), with no RAISE NOTICE, which would write id, actor and reason to a
+-- less-controlled sink. The body is byte for byte what the migrations install, so a deploy's
+-- --sync-objects rewrites nothing (scripts/test_sync_objects_parity.py).
 CREATE OR REPLACE PROCEDURE uc_pseudonymize_individual(
     p_individual_id   INTEGER,
     p_actor_user_id   INTEGER,
@@ -2238,7 +2247,6 @@ DECLARE
     v_already      INTEGER;
     v_pseudonym    VARCHAR(200) := 'PSEUDONYMIZED-' || p_individual_id;
 BEGIN
-    -- 1. The individual must exist.
     SELECT legal_name INTO v_current_name
         FROM Individual WHERE individual_id = p_individual_id;
     IF v_current_name IS NULL THEN
@@ -2247,8 +2255,6 @@ BEGIN
             USING ERRCODE = 'foreign_key_violation';
     END IF;
 
-    -- 2. The actor must exist, be an admin, AND be active (a deactivated admin
-    --    account must not be able to erase).
     SELECT role, is_active INTO v_actor_role, v_actor_active
         FROM AppUser WHERE user_id = p_actor_user_id;
     IF v_actor_role IS NULL THEN
@@ -2267,16 +2273,13 @@ BEGIN
             USING ERRCODE = 'insufficient_privilege';
     END IF;
 
-    -- 3. A non-empty reason is required (the legal/policy basis).
     IF p_reason IS NULL OR char_length(trim(p_reason)) = 0 THEN
         RAISE EXCEPTION 'uc_pseudonymize_individual: a non-empty reason is required.'
             USING ERRCODE = 'check_violation';
     END IF;
 
-    -- 4. Refuse to double-erase. Check the AUTHORITATIVE log, not the current
-    --    name: legal_name has no format constraint beyond non-empty, so a
-    --    holder whose real name happens to equal the pseudonym template must
-    --    not be wrongly refused a first, legitimate erasure.
+    -- Refuse to double-erase by consulting the AUTHORITATIVE log, not the name
+    -- (legal_name has no format constraint beyond non-empty).
     SELECT count(*) INTO v_already
         FROM IndividualErasureEvent WHERE individual_id = p_individual_id;
     IF v_already > 0 THEN
@@ -2285,15 +2288,12 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
 
-    -- 5. Pseudonymize the name (a legitimate UPDATE on the mutable Individual).
     UPDATE Individual
         SET legal_name = v_pseudonym
         WHERE individual_id = p_individual_id;
 
-    -- 6. Record the act in the append-only erasure log (who/when/why, NOT what).
-    --    No RAISE NOTICE: the IndividualErasureEvent row is the authoritative
-    --    record; re-emitting id/actor/reason to the server log would write them
-    --    to a less-controlled sink, against the erasure intent.
+    -- No RAISE NOTICE: the IndividualErasureEvent row is the authoritative
+    -- record; re-emitting it to the server log is an uncontrolled sink.
     INSERT INTO IndividualErasureEvent
         (individual_id, pseudonym_assigned, erased_by_user_id, reason)
     VALUES
@@ -2320,6 +2320,8 @@ COMMENT ON PROCEDURE uc_pseudonymize_individual IS
 -- deployment that has recorded no decision at all still cannot purge a recent
 -- audit row.
 -- ============================================================================
+-- The final 365 is the schema floor, when nothing is configured at all. The body is byte for byte what
+-- the migrations install, so a deploy's --sync-objects rewrites nothing.
 CREATE OR REPLACE FUNCTION retention_days_for(
     p_table_class  VARCHAR(24),
     p_jurisdiction VARCHAR(10) DEFAULT NULL
@@ -2341,7 +2343,7 @@ LANGUAGE sql STABLE AS $$
             AND rp.superseded_at IS NULL
           ORDER BY rp.effective_from DESC
           LIMIT 1),
-        365   -- the schema floor, when nothing is configured at all
+        365
     );
 $$;
 
