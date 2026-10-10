@@ -10,12 +10,12 @@
     "receive": "node receive.ts"
   },
   "dependencies": {
-    "@credo-ts/core": "0.6.3",
-    "@credo-ts/node": "0.6.3",
-    "@credo-ts/openid4vc": "0.6.3"
+    "@credo-ts/core": "0.7.2",
+    "@credo-ts/node": "0.7.2",
+    "@credo-ts/openid4vc": "0.7.2"
   },
   "devDependencies": {
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   },
   "engines": {
     "node": ">=22.18"
