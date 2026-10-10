@@ -8677,10 +8677,31 @@ def test_stated_counts_check_measures_the_artifacts(tmp_path):
     procs = "CREATE OR REPLACE FUNCTION uc1() RETURNS void AS $$ $$;\n"
     readme = (f"{n_checks} plain `check_*` functions; Flask, 3 routes; 1 stored procedure.\n"
               "| CI jobs | 2 |\n")
+    # Every listed document exists and states the kinds it is pinned to, at the fixture's numbers.
+    says = {"invariant checks": f"{n_checks} invariant checks", "CI jobs": "ci.yml (2 jobs)",
+            "routes": "3 routes", "stored procedures": "1 stored procedure"}
+    write({rel: "Counts: " + "; ".join(says[k] for k in kinds) + ".\n" if kinds else "No counts here.\n"
+           for rel, kinds in checks._STATED_COUNT_DOCS.items()})
     write({".github/workflows/ci.yml": ci, "polaris_web/app.py": app,
            "polaris_sql/05_procedures.sql": procs, "README.md": readme,
            "site/index.html": f"<b>{n_checks}</b><span>invariant checks</span> <b>2</b><span>CI jobs</span>\n"})
-    assert checks.check_stated_counts(tmp_path)[0].level == "OK", "must PASS when every count is measured"
+    found = checks.check_stated_counts(tmp_path)[0]
+    assert found.level == "OK", f"must PASS when every count is measured: {found.message}"
+
+    # A pinned count reworded past the patterns fails open no more: the map's line in words.
+    write({"docs/reference/SYSTEM-MAP.md": "```\n├── .github/workflows/  ← ci.yml (two jobs)\n```\n"})
+    found = checks.check_stated_counts(tmp_path)[0]
+    assert found.level == "FAIL" and "docs/reference/SYSTEM-MAP.md no longer states the CI jobs count" in found.message, \
+        f"must FAIL when a pinned count stops parsing: {found.message}"
+    write({"docs/reference/SYSTEM-MAP.md": "Counts: ci.yml (2 jobs).\n"})
+
+    # A listed document that goes missing fails, rather than reading as nothing to compare.
+    (tmp_path / "MISSION.md").unlink()
+    found = checks.check_stated_counts(tmp_path)[0]
+    assert found.level == "FAIL" and "MISSION.md is missing" in found.message, \
+        f"must FAIL when a listed document is gone: {found.message}"
+    write({"MISSION.md": "No counts here.\n"})
+    assert checks.check_stated_counts(tmp_path)[0].level == "OK", "fixture: restored, it passes again"
 
     write({"site/index.html": "<b>7</b><span>CI jobs</span>\n"})
     assert checks.check_stated_counts(tmp_path)[0].level == "FAIL", "must FAIL when the site's CI-job count drifts"
@@ -8706,6 +8727,10 @@ def test_stated_counts_check_measures_the_artifacts(tmp_path):
     assert found.level == "FAIL" and "README.md states [3]" in found.message \
         and "docs/reference/SYSTEM-MAP.md states [3]" in found.message, \
         f"must name both drifted documents, the system map's diagram included: {found.message}"
+
+    # The tree itself states every pinned count, at the measured numbers.
+    found = checks.check_stated_counts(REPO)[0]
+    assert found.level == "OK", f"the repository's own documents must pass: {found.message}"
 
 
 def test_c1c10_objects_check_resolves_names_against_the_code(tmp_path):

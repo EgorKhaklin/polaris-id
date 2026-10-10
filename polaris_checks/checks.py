@@ -4613,13 +4613,26 @@ def check_table_count_matches_doc(root: pathlib.Path) -> list[Finding]:
 # on the README, the roadmap, the system map and the demo site while the repo
 # held 104, 73 and 14. A number nobody re-measures is a number that lies.
 # ---------------------------------------------------------------------------
-_STATED_COUNT_DOCS = (
-    "README.md", "ROADMAP.md", "MISSION.md", "CONTRIBUTING.md",
-    "docs/ARCHITECTURE-OVERVIEW.md", "docs/reference/SYSTEM-MAP.md",
-    "docs/reference/DATA-MODEL.md", "docs/reference/README.md",
-    "docs/PRODUCTION-READINESS.md", "polaris_sql/README.md", "polaris_web/README.md",
-    "polaris_cli/README.md", "polaris_checks/README.md", "site/index.html",
-)
+# Each document with the kinds it states, pinned. A count compared only when a pattern finds it
+# fails open: a reworded line ("ci.yml (thirty-one jobs)"), a document that drops a count or one
+# that goes missing all read as nothing to compare (2026-10-10). So every listed document must
+# exist and state each kind pinned here; the rest are listed to be checked if they ever state one.
+_STATED_COUNT_DOCS: dict[str, tuple[str, ...]] = {
+    "README.md": ("invariant checks", "CI jobs"),
+    "ROADMAP.md": ("invariant checks", "routes"),
+    "MISSION.md": (),
+    "CONTRIBUTING.md": (),
+    "docs/ARCHITECTURE-OVERVIEW.md": (),
+    "docs/reference/SYSTEM-MAP.md": ("CI jobs",),
+    "docs/reference/DATA-MODEL.md": (),
+    "docs/reference/README.md": (),
+    "docs/PRODUCTION-READINESS.md": (),
+    "polaris_sql/README.md": ("stored procedures",),
+    "polaris_web/README.md": (),
+    "polaris_cli/README.md": (),
+    "polaris_checks/README.md": (),
+    "site/index.html": (),
+}
 _STATED_COUNT_KINDS = {
     # kind: patterns whose single group is the stated number
     "invariant checks": (
@@ -4672,26 +4685,29 @@ def check_stated_counts(root: pathlib.Path) -> list[Finding]:
     real = _measured_counts(root)
     if real["CI jobs"] == 0 or real["routes"] == 0:
         return _fail("stated_counts", "cannot measure CI jobs or routes (ci.yml / app.py missing)")
-    seen_in_readme: set[str] = set()
     # Every drifted document is named, not the first: on 2026-10-10 the README's job count was
     # fixed, SYSTEM-MAP's was fixed before the next run, and its own failure was never seen.
     drifted = []
-    for rel in _STATED_COUNT_DOCS:
+    for rel, pinned in _STATED_COUNT_DOCS.items():
         text = _prose(_read(root, rel))
         if not text:
+            drifted.append(f"{rel} is missing or empty")
             continue
+        found = set()
         for kind, patterns in _STATED_COUNT_KINDS.items():
             stated = [int(m) for pat in patterns for m in re.findall(pat, text, re.I)]
-            if stated and rel == "README.md":
-                seen_in_readme.add(kind)
+            if stated:
+                found.add(kind)
             wrong = sorted(set(s for s in stated if s != real[kind]))
             if wrong:
                 drifted.append(f"{rel} states {wrong} {kind} but the repo measures {real[kind]}")
+        lost = [k for k in pinned if k not in found]
+        if lost:
+            drifted.append(f"{rel} no longer states the {' and '.join(lost)} count it is pinned to "
+                           "(reworded past the patterns, or removed: restate it, or unpin it in "
+                           "_STATED_COUNT_DOCS)")
     if drifted:
         return _fail("stated_counts", "; ".join(drifted))
-    for kind in ("invariant checks", "CI jobs"):
-        if kind not in seen_in_readme:
-            return _fail("stated_counts", f"README.md no longer states the {kind} count")
     summary = ", ".join(f"{v} {k}" for k, v in real.items())
     return _ok("stated_counts", f"every stated count matches the artifacts ({summary})")
 
