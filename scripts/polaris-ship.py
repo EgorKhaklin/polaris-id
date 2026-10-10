@@ -1265,7 +1265,19 @@ def triage(run_id=None, out=None):
 # travelling to a machine that never ran anything.
 # --------------------------------------------------------------------------------------
 
-RECEIPTS = os.path.join(ROOT, ".git", "polaris-drill-receipts")
+def _receipts_dir(root=ROOT):
+    """The repository's own git directory, which its worktrees share. In a worktree .git is a
+    file, so <root>/.git/polaris-drill-receipts could not be made and no worktree could record a
+    drill (2026-10-10). A receipt fingerprints the contents it ran on, so one store serves every
+    worktree of the clone."""
+    r = subprocess.run(["git", "-C", root, "rev-parse", "--git-common-dir"], capture_output=True, text=True)
+    common = r.stdout.strip()
+    if r.returncode != 0 or not common:
+        return os.path.join(root, ".git", "polaris-drill-receipts")
+    return os.path.join(common if os.path.isabs(common) else os.path.join(root, common), "polaris-drill-receipts")
+
+
+RECEIPTS = _receipts_dir()
 
 #: A plan entry's `run` line is prose as often as a command. These are the shapes that
 #: name an actual drill this tool can execute and fingerprint.

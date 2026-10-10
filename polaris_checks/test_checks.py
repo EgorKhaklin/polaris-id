@@ -18265,6 +18265,23 @@ def test_drill_plan_binding_check_discriminates(tmp_path):
     assert level("inside the working tree") == "FAIL", \
         "must FAIL when receipts live where they could be committed"
 
+    # The store a worktree can use: the clone's git directory, by --git-common-dir.
+    COMMON = ('def _receipts_dir(root=ROOT):\n'
+              '    r = subprocess.run(["git", "-C", root, "rev-parse", "--git-common-dir"], capture_output=True, text=True)\n'
+              '    common = r.stdout.strip()\n'
+              '    if r.returncode != 0 or not common:\n'
+              '        return os.path.join(root, ".git", "polaris-drill-receipts")\n'
+              '    return os.path.join(common if os.path.isabs(common) else os.path.join(root, common), "polaris-drill-receipts")\n'
+              '\n\nRECEIPTS = _receipts_dir()\n')
+    old_decl = 'RECEIPTS = os.path.join(ROOT, ".git", "polaris-drill-receipts")\n'
+    write(ship=SHIP.replace(old_decl, COMMON))
+    assert level() == "OK", "must PASS with the store in the clone's git directory"
+    write(ship=SHIP.replace(old_decl, COMMON.replace('"--git-common-dir"', '"--show-toplevel"')))
+    assert level("inside the working tree") == "FAIL", "must FAIL when the directory is the working tree's top"
+    write(ship=SHIP.replace(old_decl, COMMON.replace('os.path.join(root, ".git", "polaris-drill-receipts")',
+                                                     'os.path.join(root, "drill-receipts")')))
+    assert level("inside the working tree") == "FAIL", "must FAIL when the fallback is inside the working tree"
+
     # Preflight never asks.
     write(pre="echo nothing\n")
     assert level("never asks") == "FAIL", "must FAIL when preflight does not ask"

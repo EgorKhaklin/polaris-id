@@ -11718,14 +11718,22 @@ def check_drill_plan_is_binding(root: pathlib.Path) -> list[Finding]:
         if needle not in ship:
             findings.extend(_fail(name, why))
 
-    # The receipt store must sit outside the working tree.
+    # The receipt store must sit outside the working tree: in the clone's git directory, named by
+    # `git rev-parse --git-common-dir` (which a worktree shares; 2026-10-10), or <root>/.git.
+    inside = ("receipts are stored inside the working tree, so one could be committed and assert a "
+              "drill ran on a machine that never ran it")
     m = re.search(r"RECEIPTS\s*=\s*os\.path\.join\(ROOT,\s*([^)]*)\)", ship)
-    if not m:
+    fn = re.search(r"(?ms)^def _receipts_dir\(.*?(?=^\S)", ship)
+    if m:
+        if '".git"' not in m.group(1):
+            findings.extend(_fail(name, inside))
+    elif re.search(r"(?m)^RECEIPTS\s*=\s*_receipts_dir\(\)", ship) and fn:
+        joins = re.findall(r"os\.path\.join\(([^\n]*)\)", fn.group(0))
+        if '"--git-common-dir"' not in fn.group(0) or not joins \
+                or any('".git"' not in j and "common" not in j for j in joins):
+            findings.extend(_fail(name, inside))
+    else:
         findings.extend(_fail(name, "the receipt store is not declared"))
-    elif '".git"' not in m.group(1):
-        findings.extend(_fail(name, "receipts are stored inside the working tree, so one could "
-                                    "be committed and assert a drill ran on a machine that "
-                                    "never ran it"))
 
     # And preflight must act on it.
     # v9.430: the same rule for the lint step, which had the same hole. It printed a

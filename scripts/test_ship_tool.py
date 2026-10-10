@@ -549,6 +549,26 @@ class ClassSkipTests(unittest.TestCase):
 
 
 
+class DrillReceiptsLiveInTheClonesGitDirectory(unittest.TestCase):
+    """A worktree's .git is a file: receipts go to the git directory the clone's worktrees share."""
+
+    def test_a_worktree_and_its_clone_share_one_receipt_store(self):
+        import subprocess, tempfile, shutil
+        root = tempfile.mkdtemp(prefix="polaris-receipts-")
+        self.addCleanup(shutil.rmtree, root, True)
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.org",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.org")
+        clone, tree = os.path.join(root, "clone"), os.path.join(root, "tree")
+        os.makedirs(clone)
+        for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "x"], ["worktree", "add", "-q", "--detach", tree]):
+            subprocess.run(["git", "-C", clone, *args], env=env, check=True, capture_output=True)
+        self.assertTrue(os.path.isfile(os.path.join(tree, ".git")), "fixture: a worktree's .git is a file")
+        in_clone, in_tree = ship._receipts_dir(clone), ship._receipts_dir(tree)
+        self.assertEqual(os.path.realpath(in_clone), os.path.realpath(os.path.join(clone, ".git", "polaris-drill-receipts")))
+        self.assertEqual(os.path.realpath(in_tree), os.path.realpath(in_clone))
+        os.makedirs(in_tree, exist_ok=True)  # what `drills --run` does first; it raised in a worktree
+
+
 class ZkProverStale(unittest.TestCase):
     """A run refuses a ZK prover built before its source last changed: ZKSnarkTests would check the
     old circuit (2026-10-10, a worktree linked to a 09-23 binary)."""
