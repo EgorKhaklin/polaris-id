@@ -19,6 +19,9 @@
 #
 # Exits 0 only if the presentation is accepted AND every control is refused where it should be.
 set -euo pipefail
+# Every exit path ends with "done", success and failure alike: a run whose output does not end in
+# "done" did not finish, and is never a pass.
+trap 'echo "done"' EXIT
 
 PS_REPO="${PS_REPO:-https://github.com/ParleSec/ProtocolSoup.git}"
 PS_COMMIT="${PS_COMMIT:-97d306cafa3a005dd01c1641b13c9b5abb6bcc19}"   # tag v4.0.0
@@ -105,7 +108,7 @@ cleanup() {
     docker rm -f "$NAME-$w" >/dev/null 2>&1 || true
   done
 }
-trap cleanup EXIT
+trap 'cleanup || true; echo "done"' EXIT
 
 PYTHONUNBUFFERED=1 venv/bin/python "$HERE/walk.py" serve issuer "$ISSUER_PORT" > issuer.log 2>&1 &
 ISSUER_PID=$!

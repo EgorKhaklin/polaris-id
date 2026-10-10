@@ -13,6 +13,9 @@
 #
 # Exits 0 only if the presentation is accepted AND every control is refused.
 set -euo pipefail
+# Every exit path ends with "done", success and failure alike: a run whose output does not end in
+# "done" did not finish, and is never a pass.
+trap 'echo "done"' EXIT
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PKG="${POLARIS_OID4VP:-polaris-oid4vp}"
@@ -38,7 +41,7 @@ npm ci --no-audit --no-fund --loglevel=error
 if [ -n "${CREDO_VERSION:-}" ]; then
   # Another release in place of the pinned one, without touching package.json or the lock; the
   # pinned install comes back at the end.
-  trap 'npm ci --no-audit --no-fund --loglevel=error >/dev/null 2>&1 || true' EXIT
+  trap 'npm ci --no-audit --no-fund --loglevel=error >/dev/null 2>&1 || true; echo "done"' EXIT
   npm install --no-save --no-audit --no-fund --loglevel=error \
     "@credo-ts/core@$CREDO_VERSION" "@credo-ts/node@$CREDO_VERSION" "@credo-ts/openid4vc@$CREDO_VERSION"
 fi
