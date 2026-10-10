@@ -23,8 +23,8 @@
 [![ML-DSA-65](https://img.shields.io/badge/ML--DSA--65-FIPS_204-5b4b8a?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#ml-dsa-65)
 [![FN-DSA: Falcon-1024](https://img.shields.io/badge/FN--DSA-Falcon--1024_(FIPS_206_draft)-5b4b8a?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#fn-dsa-draft-fips-206)
 
-[![PyPI](https://img.shields.io/badge/PyPI-polaris--verify-3775a9?labelColor=0a1421&style=flat-square)](https://pypi.org/project/polaris-verify/)
-[![npm](https://img.shields.io/badge/npm-polaris--sdk--ts-cb3837?labelColor=0a1421&style=flat-square)](https://www.npmjs.com/package/polaris-sdk-ts)
+[![PyPI](https://img.shields.io/badge/PyPI-polaris--verify-3775a9?labelColor=0a1421&style=flat-square)](packages/polaris-verify)
+[![npm](https://img.shields.io/badge/npm-polaris--sdk--ts-cb3837?labelColor=0a1421&style=flat-square)](sdk/typescript)
 [![Discord](https://img.shields.io/badge/Discord-join_the_server-5865F2?logo=discord&logoColor=white&labelColor=0a1421&style=flat-square)](https://discord.gg/ragewuCKj)
 
 <a href="https://polaris-id.e-khaklin.workers.dev/"><img src="docs/assets/nav/project-site.svg" alt="Project site"></a>
@@ -43,7 +43,7 @@ An authority issues a credential signed with **ML-DSA-65**; the person holds it;
 
 - **Authenticity, offline.** A standalone verifier checks the signature against published keys, with no database and no network.
 - **Authorization, fresh.** A relying-party API, or a short-lived signed status assertion, says whether the credential counts right now.
-- **The rules live in the database.** A 60-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client; 381 machine-checked invariants and 30 CI jobs gate every change.
+- **The rules live in the database.** A 60-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client; 382 machine-checked invariants and 31 CI jobs gate every change.
 - **Wallets speak to it.** `polaris-oid4vp` is an OpenID4VP 1.0 + HAIP 1.0 verifier for SD-JWT VC, as a library or a server.
 
 It is **pre-pilot software on notional data**: it has never held real identity data, and nobody but the author has operated it.
@@ -63,7 +63,7 @@ bash run.sh
 # RESULT: accepted, and all three controls refused
 ```
 
-A failure report is as useful as a success: tell us how it went in [the stranger's path report](https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml).
+It works in a temporary directory it creates and serves the verifier on port 9443. A failure report is as useful as a success: tell us how it went in [the stranger's path report](https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml).
 
 Or verify a published credential offline, in Python or TypeScript:
 

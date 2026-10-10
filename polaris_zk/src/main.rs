@@ -198,9 +198,16 @@ fn cmd_verify(input: &str) -> Result<String> {
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let subcommand = args.get(1).cloned().unwrap_or_else(|| {
-        eprintln!("usage: polaris-zk <compute-root|compute-leaves|leaf|nullifier|prove|verify>");
+        eprintln!("usage: polaris-zk <compute-root|compute-leaves|leaf|nullifier|prove|verify|source-tree>");
         std::process::exit(2);
     });
+
+    // The source this binary was built from (build.rs), read before stdin: the local gate asks it
+    // without input, to refuse a prover built from other source than the working copy's.
+    if subcommand == "source-tree" {
+        println!("{}", env!("POLARIS_ZK_SOURCE_TREE"));
+        return Ok(());
+    }
 
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
