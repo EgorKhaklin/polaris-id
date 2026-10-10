@@ -56,6 +56,21 @@ gen_hex() {
     fi
 }
 
+# A directory where a secret file belongs: Docker Compose before 2.30 creates one at a secret file
+# that is missing when the stack starts (2.30 and later refuse to start instead), and every version
+# creates one at a missing bind-mounted file such as the pgBackRest fragment. `-s` is true for a directory, so it read as an existing
+# secret and the file was never written. Refused, never removed here: it is the operator's.
+refuse_directory() {
+    local path
+    for path in "$@"; do
+        if [[ -d "${path}" ]]; then
+            echo "  ✗ $(basename "${path}")  (a directory, not a file: remove the directory ${path}," >&2
+            echo "      created by docker for a missing secret, then rerun)" >&2
+            return 1
+        fi
+    done
+}
+
 write_secret_if_missing() {
     local name="$1"
     local hex_bytes="$2"
@@ -72,6 +87,7 @@ write_secret_if_missing() {
     # 0644 because docker-init.sh reads it as the non-root postgres user.
     local mode="${3:-0600}"
     local target="${SECRETS_DIR}/${name}"
+    refuse_directory "${target}" || return 1
 
     # -s (non-empty), not -e: a 0-byte file from an interrupted prior run must be
     # regenerated, not treated as a real secret. An -e guard silently shipped an
@@ -111,6 +127,7 @@ REDIS_ACL_POLARIS_RULES='~polaris:rl:* resetchannels -@all +ping +client|setinfo
 write_redis_acl_if_missing() {
     local pw="${SECRETS_DIR}/polaris_redis_password"
     local target="${SECRETS_DIR}/redis_users.acl"
+    refuse_directory "${target}" "${pw}" || return 1
     if [[ -s "${target}" ]]; then
         echo "  ✓ redis_users.acl  (exists; not overwriting — use polaris-rotate-secret.sh to rotate)"
         return 0
@@ -134,6 +151,7 @@ write_redis_acl_if_missing() {
 write_signing_key_if_missing() {
     local name="polaris_signing_key"
     local target="${SECRETS_DIR}/${name}"
+    refuse_directory "${target}" || return 1
     if [[ -s "${target}" ]]; then
         echo "  ✓ ${name}  (exists; not overwriting — use polaris-rotate-secret.sh to rotate)"
         return 0
@@ -177,7 +195,8 @@ print(json.dumps(pqc_signing.generate_keypair()))'
     echo "  ✓ ${name}  (ML-DSA-65 keypair generated; mode 0644)"
 }
 
-# v9.173 (roadmap P0.9) — the S3 key pair for the OFFSITE backup repo. The prod
+# v9.173 (roadmap P0.9) - the S3 key pair for the OFFSITE backup repo, and since
+# 2026-10-10 its cipher passphrase (repo2-cipher-pass, mandatory with a bucket). The prod
 # compose mounts this file read-only at /etc/pgbackrest/conf.d/repo-creds.conf
 # UNCONDITIONALLY (a compose mount cannot be optional, and a missing source
 # path would make docker create a directory there), so it must exist even for a
@@ -189,21 +208,28 @@ print(json.dumps(pqc_signing.generate_keypair()))'
 # the host boundary.
 write_pgbackrest_creds_if_missing() {
     local target="${SECRETS_DIR}/pgbackrest_repo_creds.conf"
+    refuse_directory "${target}" || return 1
     if [[ -s "${target}" ]]; then
         echo "  ✓ pgbackrest_repo_creds.conf  (exists; not overwriting)"
         return 0
     fi
     ( umask 0022 && cat > "${target}" <<'TPL'
-# pgbackrest_repo_creds.conf — S3 key pair for the OFFSITE backup repo (P0.9).
-# Mounted read-only at /etc/pgbackrest/conf.d/repo-creds.conf. Empty = local
-# repo. To go offsite: fill in the two keys below AND set
+# pgbackrest_repo_creds.conf - S3 key pair and cipher passphrase for the OFFSITE
+# backup repo (P0.9). Mounted read-only at /etc/pgbackrest/conf.d/repo-creds.conf.
+# Empty = local repo only. To go offsite: fill in the three lines below AND set
 # POLARIS_PGBACKREST_S3_BUCKET / _ENDPOINT / _REGION for the postgres service,
-# then ./scripts/polaris-deploy.sh prod (it runs stanza-create + check).
-# Rotate with the bucket's IAM tooling; then update here and redeploy.
+# then ./scripts/polaris-deploy.sh prod (it runs stanza-create + check). The
+# bucket becomes repo2, beside the local repo1, encrypted by pgBackRest with the
+# passphrase (openssl rand -base64 48); the postgres container refuses to start
+# with a bucket and no passphrase. Keep a copy of the passphrase off this host:
+# without it the offsite copy cannot be restored, and it cannot be changed later
+# without a new repo. Rotate the key pair with the bucket's IAM tooling; then
+# update here and redeploy.
 #
 # [global]
-# repo1-s3-key=<access-key>
-# repo1-s3-key-secret=<secret-key>
+# repo2-s3-key=<access-key>
+# repo2-s3-key-secret=<secret-key>
+# repo2-cipher-pass=<32+ characters: openssl rand -base64 48>
 TPL
     )
     chmod 0644 "${target}"
@@ -220,6 +246,7 @@ TPL
 write_postgres_cert_if_missing() {
     local crt="${SECRETS_DIR}/postgres_server.crt"
     local key="${SECRETS_DIR}/postgres_server.key"
+    refuse_directory "${crt}" "${key}" || return 1
     if [[ -f "${crt}" && -f "${key}" ]]; then
         echo "  ✓ postgres_server.crt/.key  (exist; not overwriting)"
         return 0
@@ -255,6 +282,7 @@ write_postgres_cert_if_missing() {
 write_pgbouncer_cert_if_missing() {
     local crt="${SECRETS_DIR}/pgbouncer_server.crt"
     local key="${SECRETS_DIR}/pgbouncer_server.key"
+    refuse_directory "${crt}" "${key}" || return 1
     if [[ -f "${crt}" && -f "${key}" ]]; then
         echo "  ✓ pgbouncer_server.crt/.key  (exist; not overwriting)"
         return 0

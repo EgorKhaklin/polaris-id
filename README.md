@@ -51,7 +51,7 @@ It is **pre-pilot software on notional data**: it has never held real identity d
 
 ## Try it
 
-One minute, from an empty folder. An independent, OpenID Certified wallet ([eudi-dev](https://github.com/dominikschlosser/eudi-dev)) presents a credential to the verifier installed from PyPI, then three tampered presentations must each be refused. Needs `python3`; Docker is optional.
+One minute, from an empty folder. An independent, OpenID Certified wallet ([eudi-dev](https://github.com/dominikschlosser/eudi-dev)) presents a credential to the verifier installed from PyPI, then three tampered presentations must each be refused. Needs `python3` 3.9 or newer. Docker is optional: `run.sh` uses it when it is running, and `EUDI_NATIVE=1 bash run.sh` runs the wallet's own binary instead.
 
 ```bash
 r=https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main
@@ -102,7 +102,7 @@ The vocation above them: **no person can be compelled to renounce, transfer or s
 | **C5** | No inline scripts (`script-src 'self'`). | Engineering | HTTP response header, verified per route |
 | **C6** | Disclosure level is enforced server-side. | Constitutional | Server code paired with redaction tests |
 | **C7** | No hardcoded cryptography. | Engineering | Foreign key to `CryptographicAlgorithm` |
-| **C8** | Every map/API aggregate is bounded. | Engineering | Hard caps in the SQL functions |
+| **C8** | Every map/API aggregate is bounded. | Engineering | Route-level caps (`_ATLAS_MAX_*`) applied before the SQL sees a caller's count |
 | **C9** | Concurrency is tested with real threads. | Engineering | Threaded suites against a live database |
 | **C10** | Identity is not money. | Constitutional | Structural absence, pinned by a check |
 

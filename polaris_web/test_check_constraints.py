@@ -2707,6 +2707,33 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                         cur.execute(stmt)
                 conn.rollback()
 
+    def test_no_partition_of_an_event_table_can_be_read_directly(self):
+        """2026-10-10. The authority policies live on the parents, and a partition read directly
+        carries none; polaris_app kept SELECT on every partition, which no product path uses. It
+        keeps nothing now: a partition read is refused, and the parent, where the policies apply,
+        still answers, scoped to the session's authority."""
+        conn = self._app_conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
+                        "JOIN pg_class p ON p.oid = i.inhparent WHERE p.relname IN "
+                        "('tokenlifecycleevent', 'verificationevent', 'enrollmentstatusevent', "
+                        "'authauditlog') ORDER BY 1")
+            parts = [r["relname"] for r in cur.fetchall()]
+        conn.rollback()
+        self.assertGreaterEqual(len(parts), 8, "the partitions must exist for this to mean anything")
+        for part in parts:
+            with conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege, msg=part):
+                    cur.execute("SELECT count(*) FROM %s" % part)
+            conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("SELECT set_config('polaris.operator_agency_id', '1', true)")
+            cur.execute("SELECT count(*) AS n FROM TokenLifecycleEvent WHERE actor_agency_id = 1")
+            self.assertGreater(cur.fetchone()["n"], 0, "fixture: authority 1 has lifecycle events")
+            cur.execute("SELECT count(*) AS n FROM TokenLifecycleEvent WHERE actor_agency_id <> 1")
+            self.assertEqual(cur.fetchone()["n"], 0, "the parent showed another authority's events")
+        conn.rollback()
+
     def test_the_application_cannot_append_a_lifecycle_event(self):
         """1.0.0-rc.40. TokenLifecycleEvent is written by uc1_issue_and_activate,
         uc5_bind_device, uc_bulk_issue and the audit_token_state_change trigger, all SECURITY
@@ -3062,7 +3089,8 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             conn.close()
 
     def test_a_partition_made_later_is_locked_too(self):
-        """The partition manager takes the blanket grant back from each partition it creates."""
+        """The partition manager takes the blanket grant back from each partition it creates: every
+        privilege, SELECT included (2026-10-10)."""
         # In ONE transaction, rolled back: the partitions this makes (and the triggers each
         # clones from its parent) must not outlive the test. An autocommitted first version
         # left 30 triggers behind, which the trigger mutation drill caught as a catalog that
@@ -3076,7 +3104,7 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 cur.execute("SELECT count(*) FROM pg_inherits")
                 self.assertGreater(cur.fetchone()[0], before, "fixture: no partition was made")
                 cur.execute("SELECT count(*) FROM information_schema.role_table_grants "
-                            "WHERE grantee = 'polaris_app' AND privilege_type <> 'SELECT' "
+                            "WHERE grantee = 'polaris_app' "
                             "AND table_name ~ '^(tokenlifecycleevent|verificationevent|"
                             "enrollmentstatusevent|authauditlog)_'")
                 self.assertEqual(cur.fetchone()[0], 0)

@@ -1830,10 +1830,12 @@ jobs:
 
       # v9.173 (roadmap P0.9) — the OFFSITE path. The round-trip above uses a
       # LOCAL repo, which is not what a real deployment relies on for durability.
-      # This drill switches the repo to S3 by env alone (the production path:
+      # This drill adds an S3 repo by env alone (the production path:
       # POLARIS_PGBACKREST_S3_* rendered by the image entrypoint + a mounted
-      # credential fragment), backs up into a TLS MinIO bucket with verification
-      # on, and restores a fresh postgres from the bucket. Pinned by
+      # secret fragment): the bucket is an encrypted repo2 beside the local repo1.
+      # It backs up into both over verified TLS, expires repo2, checks the bucket
+      # holds ciphertext only, refuses restores without the passphrase, wipes
+      # repo1 and restores a fresh postgres from repo2 alone. Pinned by
       # check_offsite_backup_env_driven.
       - name: pgBackRest OFFSITE (S3) backup + restore drill against MinIO
         run: bash scripts/polaris-offsite-drill.sh
@@ -2170,7 +2172,16 @@ jobs:
             --reason "the first administrator of this CI install" --target=docker-stack
           sudo scripts/polaris-deploy.sh prod --no-pull
           health "sudo scripts/polaris-deploy.sh prod"
-          sudo scripts/polaris-rotate-secret.sh polaris_db_password
+          # A rotation changes the password and nothing else: the database's security state (every
+          # role's attributes, every privilege and setting; scripts/lib/polaris-db-state.sh, which never
+          # reads a password) is exactly the same after it as before.
+          source "${GITHUB_WORKSPACE}/scripts/lib/polaris-db-state.sh"
+          source "${GITHUB_WORKSPACE}/scripts/lib/polaris-db-reference.sh"
+          sql() { sudo docker exec polaris-postgres psql -X -q -At -v ON_ERROR_STOP=1 -U postgres -d polaris -c "$1"; }
+          mkdir -p /tmp/rotation-state
+          polaris_db_state_unchanged_by /tmp/rotation-state sudo scripts/polaris-rotate-secret.sh polaris_db_password \
+            || { echo "::error::rotating polaris_db_password failed, or changed the database's security state"; exit 1; }
+          echo "the rotation changed no security fact ($(grep -c . /tmp/rotation-state/state-after) read before and after)"
           health "sudo scripts/polaris-rotate-secret.sh polaris_db_password"
           sudo docker cp polaris-caddy:/data/caddy/pki/authorities/local/root.crt /tmp/caddy-root.crt
           set -o pipefail

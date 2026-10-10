@@ -192,9 +192,11 @@ kubectl -n polaris exec polaris-postgres-0 -- patronictl -c /var/lib/postgresql/
     cluster of three zones and measures what comes back.
   - Upgrading from a chart with the Redis StatefulSet leaves its claim
     (`data-<release>-redis-0`) to delete.
-- **Backups**: `pgbackrest.enabled=true` with the S3 values and the key pair in
-  the Secret's `pgbackrest_repo_creds.conf` ([`DR.md`](DR.md)); only the
-  leader archives, so the repo follows the lease.
+- **Backups**: `pgbackrest.enabled=true` with the S3 values, and the key pair and
+  `repo2-cipher-pass` in the Secret's `pgbackrest_repo_creds.conf` as
+  `repo2-*` lines ([`DR.md`](DR.md), section 5; the postgres pod refuses to
+  start with a bucket and no passphrase); only the leader archives, so the repo
+  follows the lease.
 - **Observability**: `/metrics` is served by the app pods; scrape it from
   inside the cluster (the NetworkPolicy allows ingress to the app only from
   caddy; add a rule for your Prometheus namespace). Alerting and paging:

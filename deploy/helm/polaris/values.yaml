@@ -161,8 +161,11 @@ migrations:
   activeDeadlineSeconds: 900
 
 pgbackrest:
-  # Continuous WAL archiving to the S3 repo (docs/operator/DR.md); the key pair
-  # is pgbackrest_repo_creds.conf in the secret.
+  # Continuous WAL archiving to the local repo and, with a bucket, to an S3 repo2
+  # encrypted by pgBackRest (docs/operator/DR.md, section 5). The key pair and
+  # the passphrase are pgbackrest_repo_creds.conf in the secret, as repo2-s3-key,
+  # repo2-s3-key-secret and repo2-cipher-pass (32+ characters); with a bucket and
+  # no passphrase the postgres pod refuses to start. Off unless enabled here.
   enabled: false
   s3:
     bucket: ""

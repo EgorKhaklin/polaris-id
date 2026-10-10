@@ -8,8 +8,8 @@ This covers the four artifacts a stranger installs, and the operator CLI, `polar
 (`polaris_cli/`), for someone already running a Polaris instance: its commands need a running
 Polaris PostgreSQL, and the few that need the application tree refuse from a package install and
 name the clone to run them from. It does not cover the tree version in
-`polaris_web/__version__.py`, which is published nowhere and moves only when something
-externally observable changes.
+`polaris_web/__version__.py`, which is released on GitHub, goes to no registry, and moves only
+when something externally observable changes.
 
 | Artifact | Registry | Name | On the registry | Before it |
 |---|---|---|---|---|

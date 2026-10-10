@@ -228,12 +228,13 @@ if [ "$MANAGED" != "patroni" ] && [ "${POLARIS_PGBACKREST_ENABLED:-1}" = "1" ]; 
     # durability an operator enabling archiving usually expects.
     # v9.173 — the repo location is rendered into conf.d/repo.conf by the image
     # entrypoint from POLARIS_PGBACKREST_S3_* env (P0.9), so look there too.
-    if ! grep -qsE '^[[:space:]]*repo1-type[[:space:]]*=[[:space:]]*s3' \
+    # 2026-10-10: the bucket is repo2 beside the local repo1, so any repo index counts.
+    if ! grep -qsE '^[[:space:]]*repo[0-9]+-type[[:space:]]*=[[:space:]]*s3' \
             /etc/pgbackrest/pgbackrest.conf /etc/pgbackrest/conf.d/*.conf; then
-        echo "WARNING: pgBackRest archiving is enabled but the repo is LOCAL (no repo1-type=s3)." >&2
+        echo "WARNING: pgBackRest archiving is enabled but the repo is LOCAL (no S3 repo configured)." >&2
         echo "         A local repo does NOT survive host loss. Set POLARIS_PGBACKREST_S3_BUCKET," >&2
-        echo "         _ENDPOINT and _REGION on the postgres service and put the S3 credentials" >&2
-        echo "         in secrets/pgbackrest_repo_creds.conf for real durability (DR.md)." >&2
+        echo "         _ENDPOINT and _REGION on the postgres service and put the S3 credentials and" >&2
+        echo "         repo2-cipher-pass in secrets/pgbackrest_repo_creds.conf for real durability (DR.md)." >&2
     fi
 fi
 

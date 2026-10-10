@@ -969,6 +969,20 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertIn("**Fixed**", details)
         self.assertIn("- **Breaking**: a second fix.", page.split("### Upgrade")[0])
 
+    def test_the_upgrade_is_the_documented_procedure(self):
+        # rc.70's notes told a Linux host to restart polaris.service after `git pull`: the unit only
+        # runs `docker compose up -d`, so no migration, no database objects and no new secret applied.
+        upgrade = self.render("").split("### Upgrade")[1].split("### Verify this release")[0]
+        steps = [ln for ln in upgrade.splitlines() if ln.startswith(("git ", "bash ", "scripts/"))]
+        self.assertEqual([s.split("  #")[0].strip() for s in steps],
+                         ["git fetch --tags && git checkout v9.9.9", "bash scripts/polaris-generate-secrets.sh",
+                          "scripts/polaris-deploy.sh prod --no-pull"])
+        self.assertNotIn("systemctl", upgrade)
+        # Generic: which files one release lacks belongs in that release's CHANGELOG line, not here.
+        self.assertNotIn("rc.70", upgrade)
+        self.assertIn("a secret file the production compose file mounts", upgrade)
+        self.assertIn("/blob/v9.9.9/docs/operator/OPERATIONS.md#polaris-version-upgrade", upgrade)
+
     def test_a_block_with_no_intro_has_no_summary(self):
         head = self.render("").split("### Breaking changes")[0]
         self.assertNotIn("Security", head)

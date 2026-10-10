@@ -556,6 +556,10 @@ every durable component:
 - `pg_dump` of the Polaris database (custom format), encrypted with the key
   in `POLARIS_BACKUP_KEY_FILE` (the script warns loudly when the key is unset
   and the dump goes out in plaintext)
+- `database-settings.json`: the database's own settings (`ALTER DATABASE ... SET`
+  and `ALTER ROLE ... IN DATABASE ... SET`: the revocation bound, the UTC clock,
+  the anonymity floor and any you set), which `pg_restore` applies only with
+  `--create`; the restore replays them
 - `MANIFEST.json` with timestamps + SHA-256 hashes of each component
 
 ```bash
@@ -634,6 +638,7 @@ Exit codes (greppable for incident response):
 | 9 | `docker` not available (when `--target=docker-stack`) |
 | 10 | `schema_version` diverges from `migrations/`, or cannot be read (`--verify-schema-version`) |
 | 11 | The restored privileges are not the backup's, or cannot be checked: every table, column, routine and sequence the dump holds, the public schema and the default privileges must carry the ACLs the same dump gives a new database. Also refused before anything is restored: a target with database-wide default privileges |
+| 12 | The restored database settings are not the backup's (`database-settings.json`), or cannot be read or applied, or the backup records none (every Polaris database carries `09_grants.sql`'s). The target's own settings are replaced by the backup's and read back; a backup taken before 2026-10-10 records none and leaves the target's as they are |
 
 After restore:
 
@@ -1633,13 +1638,40 @@ The Plonky2 prover is CPU-bound. To improve:
 ### Polaris version upgrade
 
 ```bash
-# Standard path
-./scripts/polaris-deploy.sh prod
+# Standard path, in the install's checkout (on a Linux host, /opt/polaris, as root)
+git fetch --tags && git checkout vX.Y.Z    # or, following a branch: git pull --ff-only
+bash scripts/polaris-generate-secrets.sh   # writes only the secret files a release adds
+./scripts/polaris-deploy.sh prod --no-pull
 ```
 
-This pulls the latest commit, rebuilds every Polaris image (the app, the
+Update the checkout first, so the secrets step and the deploy are the new
+release's. `polaris-generate-secrets.sh` writes only the secret files that are
+missing and never overwrites one; a release can add one. An install made at
+v1.0.0-rc.70 or earlier lacks three files that `docker-compose.prod.yml` mounts
+(`polaris_secret_key_fallbacks`, `polaris_redis_password` and
+`redis_users.acl`), six with the HA/DR overlays; the generator writes all six.
+It refuses, and names, a directory where a secret file belongs: Docker Compose
+before 2.30 creates one at a secret file that is missing when the stack starts
+(2.30 and later refuse to start instead), and every version creates one at a
+missing bind-mounted file such as the pgBackRest fragment; the operator removes
+it. The deploy refuses to start while a secret
+file that `docker-compose.prod.yml` mounts and the production configuration
+validates is missing, and names it. A tag checkout has no branch,
+so the deploy's own `git pull --ff-only` would fail; `--no-pull` skips it.
+On a host whose secrets are sealed (age or awskms), the generator writes to
+`polaris_web/secrets` in plaintext, and as adopting the store removed that
+directory it writes every secret anew: seal only the files the deploy names as
+missing, each with `./scripts/polaris-secrets.sh seal --only <name>`
+(`redis_users.acl` is derived from `polaris_redis_password`: seal both or
+neither), then
+remove the plaintext directory as
+[SECRETS.md, section 5.1](SECRETS.md#51-adopting-a-sealed-store) does (a full
+`seal` would replace the live database passwords and signing key).
+
+The deploy rebuilds every Polaris image (the app, the
 edge, the pooler and the database), applies schema migrations idempotently,
-recreates the infrastructure containers whose image changed, and then the app
+re-applies the database objects (procedures, triggers, grants), recreates the
+infrastructure containers whose image changed, and then the app
 container(s). The DB volume is preserved.
 [`scripts/polaris-upgrade-drill.sh`](../../scripts/polaris-upgrade-drill.sh)
 runs this path from the previous release's own stack: nothing pending, every
@@ -1653,6 +1685,16 @@ recreated.
 Always read [CHANGELOG.md](../../CHANGELOG.md) for the version you are
 upgrading to; an entry with "breaking change" in the notes requires extra
 steps.
+
+**The anonymity floor.** A production database initialised before 2026-10-08
+(every release up to 1.0.0-rc.70) kept the notional sample's
+`polaris.min_epoch_anonymity_set` of 1, so `uc11_close_epoch` could close epochs
+smaller than 20. The object sync this upgrade runs raises exactly that 1 to 20 and stops
+the upgrade if the floor then reads below 20; a floor you set to another value
+stays, with a warning when it is below 20. A floor of exactly 1 is taken to be
+the sample's and raised: a production floor of 1 does not survive an upgrade. The Linux installer and the chart's
+migration Job do the same
+([epoch-cadence.md](../design/epoch-cadence.md)).
 
 **Upgrading across v9.239.** The edge now runs as uid 1000 and listens on
 8080/8443 behind the host's 80/443. A deployment created earlier has

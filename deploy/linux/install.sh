@@ -171,12 +171,27 @@ REPO
         ok "docker-ce + compose plugin installed from Docker's official repository"
     fi
     if have systemctl && [ -d /run/systemd/system ]; then
-        systemctl enable --now docker >/dev/null 2>&1 && ok "docker.service enabled and running"
+        systemctl enable --now docker >/dev/null 2>&1 \
+            || die "docker.service could not be enabled and started (systemctl enable --now docker; journalctl -u docker)"
+        ok "docker.service enabled and running"
     else
         skip "no systemd here (container?): docker.service not enabled"
     fi
     have git || die "git is required"
     docker compose version >/dev/null 2>&1 || die "docker compose plugin not working after install"
+}
+
+# The migrations, then the database objects, against the stack's database; either failing stops the
+# install. Until 2026-10-10 both ran inside an && list, which set -e does not stop, so a migration that
+# failed went on to the health check and could end in "healthy". The stack's database is initialised
+# as production (docker-compose.prod.yml sets POLARIS_ENV=production on postgres), so the object sync
+# also raises the notional sample's anonymity floor of one there (scripts/polaris-migrate.sh).
+migrate_stack() {
+    ( cd "$INSTALL_DIR" && POLARIS_ENV=production bash scripts/polaris-migrate.sh --up --target=docker-stack >/dev/null ) \
+        || die "the migrations did not apply (cd $INSTALL_DIR && scripts/polaris-migrate.sh --up --target=docker-stack)"
+    ( cd "$INSTALL_DIR" && POLARIS_ENV=production bash scripts/polaris-migrate.sh --sync-objects --target=docker-stack >/dev/null ) \
+        || die "the database objects did not sync (cd $INSTALL_DIR && scripts/polaris-migrate.sh --sync-objects --target=docker-stack)"
+    ok "migrations applied + DB objects synced"
 }
 
 # ---------------------------------------------------------------------------
@@ -189,7 +204,7 @@ stage_app() {
 
     # 1. The repository at INSTALL_DIR.
     if [ -d "$INSTALL_DIR/polaris_web" ]; then
-        skip "$INSTALL_DIR already holds Polaris (upgrades: scripts/polaris-deploy.sh prod)"
+        skip "$INSTALL_DIR already holds Polaris (upgrades: docs/operator/LINUX-SERVER.md, Upgrade)"
     else
         local src="${SOURCE:-}"
         if [ -z "$src" ] && [ -f "$SELF_ROOT/polaris_web/docker-compose.prod.yml" ]; then src="$SELF_ROOT"; fi
@@ -212,11 +227,15 @@ stage_app() {
         source "$INSTALL_DIR/scripts/polaris-host-lock.sh"
         polaris_host_lock "install.sh"
         ( cd "$INSTALL_DIR/polaris_web" && docker compose -f docker-compose.prod.yml build -q ) \
-            && ok "production images built"
+            || die "the production images did not build (cd $INSTALL_DIR/polaris_web && docker compose -f docker-compose.prod.yml build)"
+        ok "production images built"
     fi
 
-    # 3. Secrets (if-missing; 0700 dir, file modes chosen by the generator).
-    ( cd "$INSTALL_DIR" && bash scripts/polaris-generate-secrets.sh >/dev/null ) && ok "secrets present under polaris_web/secrets/"
+    # 3. Secrets (if-missing; 0700 dir, file modes chosen by the generator). Each step here stops the
+    # install when it fails: inside an && list, as until 2026-10-10, set -e does not.
+    ( cd "$INSTALL_DIR" && bash scripts/polaris-generate-secrets.sh >/dev/null ) \
+        || die "the secrets were not generated (cd $INSTALL_DIR && bash scripts/polaris-generate-secrets.sh)"
+    ok "secrets present under polaris_web/secrets/"
 
     # 4. The EnvironmentFile.
     if [ -f "$ENV_FILE" ]; then
@@ -267,9 +286,7 @@ stage_app() {
         die "polaris.service failed to start"
     fi
     ok "polaris.service started (compose up)"
-    ( cd "$INSTALL_DIR" && bash scripts/polaris-migrate.sh --up --target=docker-stack >/dev/null \
-        && bash scripts/polaris-migrate.sh --sync-objects --target=docker-stack >/dev/null ) \
-        && ok "migrations applied + DB objects synced"
+    migrate_stack
     local url curlk=""
     if [ -n "$COMPOSE_EXTRA" ]; then url="https://localhost:8443/api/health"; curlk="-k"; else url="https://${DOMAIN}/api/health"; fi
     local i code body
@@ -283,7 +300,7 @@ stage_app() {
     printf '%s' "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); c=d['checks']; bad=[k for k in ('database','redis','zk_binary') if c[k]['status']!='healthy']; assert not bad, 'unhealthy: %s' % bad; print('  checks:', {k: v.get('status') for k, v in c.items()})" \
         || die "/api/health reports unhealthy components"
     ok "healthy through the TLS edge: $url"
-    printf '\n  Polaris is running under systemd.\n    systemctl status polaris      journalctl -u polaris\n    upgrades: cd %s && scripts/polaris-deploy.sh prod\n    hardening: docs/operator/HARDENING.md\n\n' "$INSTALL_DIR"
+    printf '\n  Polaris is running under systemd.\n    systemctl status polaris      journalctl -u polaris\n    upgrades: docs/operator/LINUX-SERVER.md, Upgrade (in %s)\n    hardening: docs/operator/HARDENING.md\n\n' "$INSTALL_DIR"
     # Lab record 017 (gate row OP-2): the two steps a working install still needs, named exactly. The
     # key step is the authority's act, so the install never takes it: it says the one command.
     printf '  Next, once (docs/operator/LINUX-SERVER.md, "After the install"):\n'

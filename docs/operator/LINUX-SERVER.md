@@ -119,14 +119,26 @@ sudo -e /etc/polaris/polaris.env && systemctl restart polaris   # change WEB_CON
 so a deploy, a rotation or a new operator account runs with the domain, overlays
 and secrets the unit starts with; a variable set on the command line wins.
 
-**Upgrade**: `cd /opt/polaris && sudo scripts/polaris-deploy.sh prod`. It
-pulls, rebuilds the app image, applies migrations, smoke-tests `/api/health`,
-and rolls back the app image if the smoke test fails. It operates on the same
-compose project systemd started, so `systemctl status polaris` stays accurate.
+**Upgrade** ([`OPERATIONS.md`](OPERATIONS.md#polaris-version-upgrade)):
+
+```bash
+cd /opt/polaris
+sudo git fetch --tags && sudo git checkout vX.Y.Z   # or, following a branch: sudo git pull --ff-only
+sudo bash scripts/polaris-generate-secrets.sh        # writes only the secret files a release adds
+sudo scripts/polaris-deploy.sh prod --no-pull
+```
+
+The deploy refuses to start while a secret file that
+`docker-compose.prod.yml` mounts and the production configuration validates is
+missing, rebuilds the images, applies migrations and the database objects,
+smoke-tests `/api/health`, and rolls back the app image if the smoke test
+fails. It operates on the same compose project systemd started, so
+`systemctl status polaris` stays accurate. A restart of `polaris.service`
+starts the images already built and applies none of this.
 
 **Offsite backups**: WAL archiving and the base backups are on by default, to
 a local repository that does not survive the host. Set `POLARIS_PGBACKREST_S3_*`
-in `polaris.env`, put the key pair in
+in `polaris.env`, put the key pair and a cipher passphrase in
 `polaris_web/secrets/pgbackrest_repo_creds.conf`, then
 `scripts/polaris-deploy.sh prod` ([`DR.md`](DR.md)).
 

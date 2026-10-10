@@ -8,8 +8,13 @@
 # the database dump plus a manifest with SHA-256 hashes:
 #
 #   pg_dump (custom format)                 the database
+#   database-settings.json                  its own settings (ALTER DATABASE ... SET and
+#                                           ALTER ROLE ... IN DATABASE ... SET), which
+#                                           polaris-restore.sh replays (scripts/polaris_db_settings.py)
 #   MANIFEST.json                           timestamps + SHA-256 hashes
 #
+# Exits 5 when the dump was taken and its database's settings could not be recorded: a backup
+# without them would restore without them, so none is written.
 # Usage:
 #     ./scripts/polaris-backup.sh                       # writes /var/backups/polaris-<ts>.tar.gz
 #     ./scripts/polaris-backup.sh --dest /path/to/dir   # custom destination
@@ -146,6 +151,10 @@ for name, expected in m["sha256"].items():
         ok = False
     else:
         print(f"  ✓ {name}")
+# A settings file the manifest does not cover could have been put there; the restore refuses it too.
+if os.path.exists(os.path.join(base, "database-settings.json")) and "database-settings.json" not in m["sha256"]:
+    print("  ✗ database-settings.json is not covered by the manifest")
+    ok = False
 if not ok:
     sys.exit(1)
 print("  ✓ MANIFEST verified")
@@ -174,7 +183,7 @@ echo "  → Polaris backup ${TS}"
 echo "  → staging at ${STAGE}"
 
 # 1. pg_dump
-echo "  [1/2] pg_dump…"
+echo "  [1/3] pg_dump…"
 # Capture before matching: under pipefail a grep -q that leaves early can SIGPIPE compose.
 RUNNING_SERVICES="$(docker compose -f "${COMPOSE_FILE}" ps --services 2>/dev/null || true)"
 if grep -qx postgres <<<"$RUNNING_SERVICES"; then
@@ -193,8 +202,41 @@ else
     : > "${STAGE}/polaris.dump"   # zero-byte sentinel
 fi
 
-# 2. Manifest with hashes
-echo "  [2/2] manifest…"
+# 2. The database's own settings (pg_db_role_setting). pg_restore applies them only with --create,
+#    which polaris-restore.sh does not use, so they travel beside the dump and the restore replays
+#    them. Read where the dump was taken, as the role that took it; none for the zero-byte sentinel.
+echo "  [2/3] database settings…"
+if [[ -s "${STAGE}/polaris.dump" ]]; then
+    SETTINGS_QUERY=$(python3 "${SCRIPT_DIR}/polaris_db_settings.py" query)
+    if grep -qx postgres <<<"$RUNNING_SERVICES"; then
+        read_settings() {
+            docker compose -f "${COMPOSE_FILE}" exec -T postgres psql -X -At -v ON_ERROR_STOP=1 -U postgres -d polaris -c "${SETTINGS_QUERY}"
+        }
+    else
+        read_settings() {
+            psql -X -At -v ON_ERROR_STOP=1 -h "${POLARIS_DB_HOST:-localhost}" -U "${POLARIS_DB_USER:-postgres}" \
+                -d "${POLARIS_DB_NAME:-polaris}" -c "${SETTINGS_QUERY}"
+        }
+    fi
+    if ! settings_raw=$(read_settings 2>"${WORK}/settings.err") \
+       || ! printf '%s\n' "${settings_raw}" | python3 "${SCRIPT_DIR}/polaris_db_settings.py" record \
+                > "${STAGE}/database-settings.json" 2>>"${WORK}/settings.err"; then
+        echo "  ✗ the database's own settings could not be recorded, so a restore of this backup would lose them; no backup was written:" >&2
+        sed -n '1,5p' "${WORK}/settings.err" | sed 's/^/      /' >&2
+        exit 5
+    fi
+    # Every Polaris database carries 09_grants.sql's settings (the clock, the revocation bound and its
+    # window, the floor): none means a reading that saw nothing, which a restore would replay as none.
+    settings_count=$(python3 "${SCRIPT_DIR}/polaris_db_settings.py" count "${STAGE}/database-settings.json" 2>/dev/null || echo 0)
+    if ! [[ "${settings_count}" =~ ^[0-9]+$ ]] || (( settings_count < 1 )); then
+        echo "  ✗ the database records no settings of its own (09_grants.sql sets four); no backup was written" >&2
+        exit 5
+    fi
+    echo "  ✓ ${settings_count} database settings recorded"
+fi
+
+# 3. Manifest with hashes
+echo "  [3/3] manifest…"
 python3 - "${STAGE}" "${TS}" <<'PY' > "${STAGE}/MANIFEST.json"
 import json, hashlib, os, sys, time
 stage = sys.argv[1]
@@ -284,40 +326,67 @@ else
     echo "  ! this tarball holds no database dump; it is not recorded as a backup" >&2
 fi
 
-# 3. A pgBackRest base backup, when the database archives its WAL (on by default since lab record 017,
+# 4. A pgBackRest base backup, when the database archives its WAL (on by default since lab record 017,
 #    gate row OP-14). A point-in-time restore starts from one of these, and taking them is also what
 #    expires old WAL: the repository keeps two fulls and the archive they need (pgbackrest.conf). A
 #    full when the newest is a week old or there is none, a differential otherwise; each recorded in
 #    BackupEvent as kind pgbackrest, the age PolarisBackupStale reads.
+#    One per repository: archive-push writes WAL to every repo, but a backup goes to one (repo1
+#    unless --repo names another). With an offsite bucket the local repo is repo1 and the bucket an
+#    encrypted repo2 (pgbackrest-conf.sh); backing up repo1 alone would leave the bucket WAL with
+#    no base backup to replay it onto. The repos are the ones the rendered conf.d/repo.conf names.
 if grep -qx postgres <<<"$RUNNING_SERVICES" \
    && [[ "$(docker compose -f "${COMPOSE_FILE}" exec -T postgres psql -X -t -A -U postgres -d polaris \
             -c 'SHOW archive_mode' 2>/dev/null | tr -d '[:space:]')" == "on" ]]; then
-    FULL_AGE=$(docker compose -f "${COMPOSE_FILE}" exec -T -u postgres postgres \
-                   pgbackrest --stanza=polaris --output=json info 2>/dev/null \
-               | python3 -c 'import json, sys, time
+    PGBR_REPOS="$(docker compose -f "${COMPOSE_FILE}" exec -T postgres cat /etc/pgbackrest/conf.d/repo.conf 2>/dev/null \
+                  | sed -nE 's/^repo([0-9]+)-(path|type)=.*/\1/p' | sort -un)" || PGBR_REPOS=""
+    PGBR_FAILED=""
+    PGBR_RECORDED_REPO1=0
+    if [[ -z "${PGBR_REPOS}" ]]; then
+        # Never a silent repo1: repo1 (local) is backed up, and with a bucket set the offsite repo2
+        # is counted as failed, so the run exits 4 and says why.
+        PGBR_BUCKET="$(docker compose -f "${COMPOSE_FILE}" exec -T postgres printenv POLARIS_PGBACKREST_S3_BUCKET 2>/dev/null \
+                       | tr -d '\r')" || PGBR_BUCKET=""
+        echo "  ! could not read the rendered /etc/pgbackrest/conf.d/repo.conf: backing up repo1 (local) only" >&2
+        if [[ -n "${PGBR_BUCKET}" ]]; then
+            PGBR_FAILED=" repo2 (bucket ${PGBR_BUCKET} set, repo.conf unreadable: not backed up)"
+        fi
+        PGBR_REPOS=1
+    fi
+    for repo in ${PGBR_REPOS}; do
+        FULL_AGE=$(docker compose -f "${COMPOSE_FILE}" exec -T -u postgres postgres \
+                       pgbackrest --stanza=polaris --repo="${repo}" --output=json info 2>/dev/null \
+                   | python3 -c 'import json, sys, time
 stops = [b["timestamp"]["stop"] for s in json.load(sys.stdin) for b in s.get("backup", []) if b.get("type") == "full"]
 print(int(time.time() - max(stops)) if stops else -1)' 2>/dev/null || echo -1)
-    PGBR_TYPE=diff
-    if [[ "${FULL_AGE}" -lt 0 || "${FULL_AGE}" -gt 604800 ]]; then PGBR_TYPE=full; fi
-    echo "  → pgBackRest ${PGBR_TYPE} backup (WAL archiving is on)…"
-    if docker compose -f "${COMPOSE_FILE}" exec -T -u postgres postgres \
-            pgbackrest --stanza=polaris --type="${PGBR_TYPE}" backup > /dev/null; then
-        if record_backup pgbackrest "pgBackRest repo1, stanza polaris" "${PGBR_TYPE}" > /dev/null; then
-            echo "  ✓ pgBackRest ${PGBR_TYPE} backup complete; recorded in BackupEvent (pgbackrest)"
-            # Gate row OP-11: likewise the first restore. A host install takes its first pgBackRest
-            # backup here, not in polaris-deploy.sh, and its weekly restore check may be days away.
-            if [[ "$(count_backups restore-verified)" == 0 ]]; then
-                if "${SCRIPT_DIR}/polaris-restore-verify.sh" > /dev/null 2>&1; then
-                    echo "  ✓ the first pgBackRest backup restores: a scratch copy was proven (restore-verified)"
-                else
-                    echo "  ! the first pgBackRest backup did not verify: scripts/polaris-restore-verify.sh says why" >&2
-                fi
+        PGBR_TYPE=diff
+        if [[ "${FULL_AGE}" -lt 0 || "${FULL_AGE}" -gt 604800 ]]; then PGBR_TYPE=full; fi
+        echo "  → pgBackRest ${PGBR_TYPE} backup to repo${repo} (WAL archiving is on)…"
+        if docker compose -f "${COMPOSE_FILE}" exec -T -u postgres postgres \
+                pgbackrest --stanza=polaris --repo="${repo}" --type="${PGBR_TYPE}" backup > /dev/null; then
+            if record_backup pgbackrest "pgBackRest repo${repo}, stanza polaris" "${PGBR_TYPE}" > /dev/null; then
+                if [[ "${repo}" == 1 ]]; then PGBR_RECORDED_REPO1=1; fi
+                echo "  ✓ pgBackRest ${PGBR_TYPE} backup to repo${repo} complete; recorded in BackupEvent (pgbackrest)"
+            else
+                echo "  ! the pgBackRest backup to repo${repo} is complete but was not recorded in BackupEvent" >&2
             fi
         else
-            echo "  ! the pgBackRest backup is complete but was not recorded in BackupEvent" >&2
+            echo "  ✗ the pgBackRest ${PGBR_TYPE} backup to repo${repo} FAILED: a point-in-time restore from it starts from its last good one" >&2
+            PGBR_FAILED="${PGBR_FAILED} repo${repo}"
         fi
-    else
-        echo "  ✗ the pgBackRest ${PGBR_TYPE} backup FAILED: a point-in-time restore starts from the last good one" >&2
+    done
+    # Gate row OP-11: likewise the first restore. A host install takes its first pgBackRest
+    # backup here, not in polaris-deploy.sh, and its weekly restore check may be days away. That
+    # check restores repo1 (and verifies the newest repo2 backup), so it follows a repo1 backup.
+    if [[ "${PGBR_RECORDED_REPO1}" == 1 && "$(count_backups restore-verified)" == 0 ]]; then
+        if "${SCRIPT_DIR}/polaris-restore-verify.sh" > /dev/null 2>&1; then
+            echo "  ✓ the first pgBackRest backup restores: a scratch copy was proven (restore-verified)"
+        else
+            echo "  ! the first pgBackRest backup did not verify: scripts/polaris-restore-verify.sh says why" >&2
+        fi
+    fi
+    if [[ -n "${PGBR_FAILED}" ]]; then
+        echo "  ✗ pgBackRest backup FAILED for:${PGBR_FAILED}" >&2
         exit 4
     fi
 fi

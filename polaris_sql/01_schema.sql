@@ -2471,8 +2471,12 @@ COMMENT ON TABLE LifecycleRollupDelta IS
 -- tokenlifecycleevent_2026_09 directly, and with the purge carve-out's setting (which any role
 -- can set) the trigger let it: measured, every row of all four tables deleted. A row is always
 -- routed through the parent, whose privileges are the ones checked, so the application needs
--- nothing on a partition beyond reading it. This strips the rest, on every partition that
--- exists; the partition manager and 09_grants.sql call it after they create or grant.
+-- nothing on a partition. Until 2026-10-10 it kept SELECT; the authority policies on
+-- TokenLifecycleEvent and VerificationEvent live on those parents, and a partition read directly
+-- carries none. No product path reads a partition, so the
+-- application role now keeps no privilege on one at all (least privilege). This strips every
+-- privilege, on every partition that exists; the partition manager and 09_grants.sql call it after
+-- they create or grant.
 CREATE OR REPLACE FUNCTION polaris_lock_event_partitions()
 RETURNS INTEGER
 LANGUAGE plpgsql
@@ -2492,7 +2496,7 @@ BEGIN
          WHERE p.relname IN ('tokenlifecycleevent', 'verificationevent',
                              'enrollmentstatusevent', 'authauditlog')
     LOOP
-        EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON %I FROM polaris_app', v_part);
+        EXECUTE format('REVOKE ALL ON %I FROM polaris_app', v_part);
         v_n := v_n + 1;
     END LOOP;
     RETURN v_n;
@@ -2564,6 +2568,11 @@ BEGIN
             -- stays immutable until the caller archives then drops it.
             EXECUTE format('CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION reject_audit_modification()',
                            left(v_rec.part, 55) || '_ao', v_rec.part);
+            -- Least privilege across detach: the application role keeps nothing on the standalone
+            -- table, as it kept nothing on the partition (polaris_lock_event_partitions).
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'polaris_app') THEN
+                EXECUTE format('REVOKE ALL ON %I FROM polaris_app', v_rec.part);
+            END IF;
             p_detached := array_append(p_detached, v_rec.part);
         END IF;
     END LOOP;

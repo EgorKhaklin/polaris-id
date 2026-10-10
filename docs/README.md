@@ -25,9 +25,9 @@ root.
 | [THESIS.md](THESIS.md) | The claim behind the project, the test that would have confirmed it, and the record that the window closed unactioned. |
 | [SEED_DATA.md](SEED_DATA.md) | The notional individuals, agencies, tokens and events the sample database loads, and what each demonstrates. |
 | [STRANGER-PATH.md](STRANGER-PATH.md) | Somebody who has never seen this repository: from a clean machine to one accepted presentation from an external wallet, in about ten minutes, without asking anyone a question. Nine steps, one of which is a diagnostics command for when it does not work. Run start to finish before it was written. |
-| [RELEASING.md](RELEASING.md) | Whoever decides a version of a product artifact should exist outside this repository: what must hold first, the one-time Trusted Publishing setup per registry, and the manual dry-run-by-default workflow. Not the `v9.x` tree version, which is published nowhere. |
+| [RELEASING.md](RELEASING.md) | Whoever decides a version of a product artifact should exist outside this repository: what must hold first, the one-time Trusted Publishing setup per registry, and the manual dry-run-by-default workflow. Not the tree version in `polaris_web/__version__.py` (a 1.0.0 release candidate), which is released on GitHub and goes to no registry. |
 | [CONVENTIONS.md](CONVENTIONS.md) | A contributor: naming, file layout, CHANGELOG shape, cross-reference and prose rules. |
-| [OPERATING-CONTRACT.md](OPERATING-CONTRACT.md) | Anyone deciding whether a piece of work should exist: the unit of progress, the product and lab boundary, the merge rule and its four qualifying reasons, versioning, the scoreboard, the ninety-day objective and the 180-day line. |
+| [OPERATING-CONTRACT.md](OPERATING-CONTRACT.md) | Anyone deciding whether a piece of work should exist: the unit of progress, the product and lab boundary, the merge rule and its six qualifying reasons, versioning, the scoreboard, the ninety-day objective and the 180-day line. |
 
 ## Sub-directories
 
