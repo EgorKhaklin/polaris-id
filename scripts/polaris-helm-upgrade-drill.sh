@@ -32,6 +32,26 @@ CLUSTER=polaris-helm-upgrade NS=polaris REL=polaris
 WORK="$(mktemp -d)"
 PF_PID=""
 fail() { echo "::error::$*" >&2; exit 1; }
+# migrations_new FROM TARGET: how many up-migrations TARGET's tree has that FROM's does not. Either
+# list empty (a revision git cannot read) is a refusal, never a count of nothing new.
+migrations_new() {
+    local from_ups to_ups
+    from_ups=$(git -C "${ROOT}" ls-tree --name-only "$1" polaris_sql/migrations/ 2>/dev/null | { grep '\.up\.sql$' || true; } | sort)
+    to_ups=$(git -C "${ROOT}" ls-tree --name-only "$2" polaris_sql/migrations/ 2>/dev/null | { grep '\.up\.sql$' || true; } | sort)
+    [[ -n "${from_ups}" && -n "${to_ups}" ]] || { echo "could not list the migrations of $1 and $2"; return 1; }
+    comm -13 <(printf '%s\n' "${from_ups}") <(printf '%s\n' "${to_ups}") | { grep -c . || true; }
+}
+# migrations_since BEFORE AFTER WANT: the upgrade recorded exactly the WANT up-migrations this commit
+# has and the previous release does not. None is a valid answer, for a release cut with no migration
+# since; "at least one" failed every pull request once v1.0.0-rc.71 was cut (114 before, 114 after).
+migrations_since() {
+    [[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[0-9]+$ && "$3" =~ ^[0-9]+$ ]] \
+        || { echo "the migration counts could not be read: before '$1', after '$2', new since ${FROM} '$3'"; return 1; }
+    [[ $(( $2 - $1 )) -eq "$3" ]] \
+        || { echo "the upgrade applied $(( $2 - $1 )) migrations, but ${TARGET:0:8} has $3 that ${FROM} does not ($1 -> $2 recorded)"; return 1; }
+    if [[ "$3" -eq 0 ]]; then echo "no migration since ${FROM} ($2 recorded)"
+    else echo "the upgrade applied the $3 new since ${FROM} ($1 -> $2 recorded)"; fi
+}
 cleanup() {
     [[ -n "${PF_PID}" ]] && kill "${PF_PID}" 2> /dev/null || true
     [[ "${KEEP_CLUSTER:-0}" == 1 ]] || kind delete cluster --name "${CLUSTER}" > /dev/null 2>&1 || true
@@ -171,8 +191,9 @@ pending=$(kubectl -n "${NS}" exec "${LEADER}" -c postgres -- env POLARIS_DB_HOST
     || { echo "${pending}" | tail -10 >&2; fail "the migration runner could not read the upgraded database"; }
 grep -q "no pending migrations" <<< "${pending}" || { echo "${pending}" | tail -10 >&2; fail "migrations still pending"; }
 AFTER=$(psql_db "SELECT count(*) FROM schema_version WHERE event_type = 'applied'")
-[[ "${AFTER}" -gt "${BEFORE}" ]] || fail "no migration was applied by the upgrade (${BEFORE} before, ${AFTER} after)"
-ok "no migration pending; the upgrade applied $(( AFTER - BEFORE )) (${BEFORE} -> ${AFTER} recorded)"
+WANT=$(migrations_new "${FROM}" "${TARGET}") || fail "${WANT}"
+why=$(migrations_since "${BEFORE}" "${AFTER}" "${WANT}") || fail "${why}"
+ok "no migration pending; ${why}"
 [[ "$(psql_db "SELECT note FROM drill.marker")" == "${FROM}" ]] || fail "the marker did not survive the upgrade"
 ok "the marker written under ${FROM} is intact"
 kubectl -n "${NS}" port-forward "svc/${REL}-caddy" 18444:443 > /dev/null 2>&1 & PF_PID=$!
