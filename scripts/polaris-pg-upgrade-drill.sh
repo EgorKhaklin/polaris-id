@@ -189,6 +189,10 @@ OLD=$(sql -c "SHOW server_version_num"); ok "credential #${A} on PostgreSQL $(sq
 compose exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U postgres -d polaris -f - \
     < "${ROOT}/scripts/pg-upgrade-drill-seed.sql" > "${WORK}/seed.log" 2>&1 \
     || { tail -20 "${WORK}/seed.log" >&2; fail "the seed"; }
+# Every deploy recounts the counts from the tables (06_triggers.sql calls these three when --sync-objects
+# applies it), so a deploy after the seed would rewrite them; the baseline is read after the same recount.
+sql -c "SELECT uc_rebuild_population_counts(); SELECT uc_rebuild_enrollment_counts(); SELECT uc_rebuild_activity_rollups();" \
+    > /dev/null || fail "recounting the counts as a deploy does"
 # A table c without rows. A count that cannot be read counts as none.
 EMPTY="coalesce((xpath('/row/n/text()', query_to_xml(format('SELECT count(*) AS n FROM %I.%I', c.relnamespace::regnamespace, c.relname), false, true, '')))[1]::text::bigint, -1) <= 0"
 # The test must be able to fire, in every run: of a table left empty and one given a row, it names the first alone.
@@ -207,6 +211,13 @@ cd "${ROOT}"
 W0=$(date +%s)
 bash "${WORK}/step1.sh" > "${WORK}/step1.log" 2>&1 || { tail -10 "${WORK}/step1.log" >&2; fail "step 1 (backup)"; }
 TARBALL=$({ ls -1t "${WORK}"/backups/polaris-*.tar.gz* 2>/dev/null || true; } | sed -n 1p); [[ -n "${TARBALL}" ]] || fail "step 1 wrote no tarball"
+# The backup records itself in BackupEvent after its dump: the rollback brings back this cluster, record
+# included, so it is held to the state read now; between the two reads nothing else may have changed.
+state "${WORK}/state-16-backed-up.txt"
+since=$({ diff "${WORK}/state-16.txt" "${WORK}/state-16-backed-up.txt" || true; } | { grep '^[<>]' || true; })
+[[ -n "$({ grep -E '^> rows public\.backupevent ' <<< "${since}" || true; })" ]] || fail "step 1's backup recorded no BackupEvent"
+others=$({ grep -v -E '^[<>] (rows public\.backupevent|seq public\.backupevent_event_id_seq) ' <<< "${since}" || true; } | sed -n 1,6p)
+[[ -z "${others}" ]] || fail "the backup changed more than its own record: $(tr '\n' ';' <<< "${others}")"
 D0=$(date +%s)
 bash "${WORK}/step2.sh" > "${WORK}/step2.log" 2>&1 || fail "step 2 (stop)"
 MOVED=1
@@ -293,9 +304,9 @@ bash "${WORK}/rollback.sh" > "${WORK}/rollback.log" 2>&1 || { tail -20 "${WORK}/
 grep -q 'Stop here' "${WORK}/rollback.log" && { cat "${WORK}/rollback.log" >&2; fail "the rollback refused"; }
 [[ "$(sql -c "SHOW server_version_num")" == "${OLD}" ]] || fail "the rollback did not bring back PostgreSQL ${OLD}"
 state "${WORK}/state-back.txt"
-diff -q "${WORK}/state-16.txt" "${WORK}/state-back.txt" > /dev/null \
-    || fail "the state after the rollback differs from 16's: $({ diff "${WORK}/state-16.txt" "${WORK}/state-back.txt" || true; } | { grep '^[<>]' || true; } | awk '{print $2 " " $3}' | sort -u | sed -n 1,8p | tr '\n' ';')"
-ok "back on PostgreSQL $(sql -c 'SHOW server_version') with the state step 2 read"
+diff -q "${WORK}/state-16-backed-up.txt" "${WORK}/state-back.txt" > /dev/null \
+    || fail "the state after the rollback differs from 16's: $({ diff "${WORK}/state-16-backed-up.txt" "${WORK}/state-back.txt" || true; } | { grep '^[<>]' || true; } | awk '{print $2 " " $3}' | sort -u | sed -n 1,8p | tr '\n' ';')"
+ok "back on PostgreSQL $(sql -c 'SHOW server_version') with the state read after the backup"
 pgbackrest_current "${OLD:0:2}"
 ok "pgBackRest after the rollback: check passes, and the repository's current database, ${OLD:0:2}, has a full backup"
 bash "${WORK}/step2.sh" > /dev/null 2>&1

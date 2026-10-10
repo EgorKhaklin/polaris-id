@@ -3791,7 +3791,7 @@ def test_pg_upgrade_drilled_check_discriminates(tmp_path):
     broken(drill, 'bash -e "${WORK}/step5-run.sh"', 'bash "${WORK}/step5-run.sh"',
            "must FAIL when step 5 runs past a failing line")
     broken(drill, 'bash "${WORK}/rollback.sh"', 'true "${WORK}/rollback.sh"', "must FAIL when the rollback is not run")
-    broken(drill, 'diff -q "${WORK}/state-16.txt" "${WORK}/state-back.txt"', 'true',
+    broken(drill, 'diff -q "${WORK}/state-16-backed-up.txt" "${WORK}/state-back.txt"', 'true',
            "must FAIL when the state after the rollback is not compared")
     broken(drill, '|| fail "the state could not copy ${t}"', '|| true',
            "must FAIL when a copy that cannot be read passes")
@@ -3810,6 +3810,8 @@ def test_pg_upgrade_drilled_check_discriminates(tmp_path):
     broken(drill, '    || fail "the state after the rollback differs from 16', '    || echo "the state after the rollback differs from 16',
            "must FAIL when a state changed by the rollback is only reported")
     broken(drill, '"${t}" "${n}" "${d}"', '"${t}" "${n}"', "must FAIL when a table's rows are counted but not digested")
+    broken(drill, 'fail "the backup changed more than its own record', 'echo "the backup changed more than its own record',
+           "must FAIL when the rollback's baseline may differ from step 2's by more than the backup's record")
     wf = ".github/workflows/pg-upgrade.yml"
     broken(wf, "run: bash scripts/polaris-pg-upgrade-drill.sh --prove-control", "run: true",
            "must FAIL when CI does not run the control")
