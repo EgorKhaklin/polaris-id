@@ -62,13 +62,15 @@ Every Key Binding JWT names one verifier (`aud`, `nonce`) and one instant, so th
 verifier but the one in its `settings`, controls included. Regenerate it for yours:
 
 ```bash
-python3 make_vectors.py --audience 'x509_san_dns:verifier.test' --nonce 'your-test-nonce' --now 1830297600 \
-    [--issuer-key issuer.pem] [--holder-key holder.pem] --out DIR
+python3 make_vectors.py --audience 'x509_san_dns:verifier.test' --nonce 'your-test-nonce' --now 1830297600 --out DIR
 ```
+
+Two flags are optional: `--issuer-key FILE` and `--holder-key FILE` replace the seeded issuer and holder keys.
 
 Your two settings:
 - **the verifier:** `--audience` is your client_id, with its OpenID4VP 1.0 Client Identifier Prefix
-  (`x509_san_dns:`, `x509_hash:`, `redirect_uri:`, ...; `kb-aud-no-prefix` strips it, so one is required), and
+  (`x509_san_dns:`, `x509_hash:`, `redirect_uri:`, ..., or `origin:` over the Digital Credentials API;
+  `kb-aud-no-prefix` strips it, so one is required: a pre-registered client_id without one cannot be bound), and
   `--nonce` is the nonce your test request carries. `--now` (Unix seconds) is the instant your verifier judges at:
   every `iat`, `exp` and certificate validity moves with it, the expired leaf included.
 - **the issuer:** your test configuration trusts the root in `DIR/vectors.json`'s `settings.trust_anchors_pem`
@@ -77,7 +79,9 @@ Your two settings:
 
 `--issuer-key` and `--holder-key` are PEM files holding an unencrypted P-256 private key, PKCS#8 (`PRIVATE KEY`)
 or SEC1 (`EC PRIVATE KEY`), for example from `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256`.
-Without flags the generator reproduces `vectors.json` and `views/` byte for byte.
+Without binding flags, `python3 make_vectors.py > vectors.json` reproduces `vectors.json` byte for byte, and
+`python3 make_vectors.py --out .` run in this directory (or `--out` naming it) reproduces `vectors.json` and
+`views/` byte for byte.
 
 ## Views
 
@@ -91,7 +95,9 @@ Without flags the generator reproduces `vectors.json` and `views/` byte for byte
   never renumbers one. `INDEX.json` is the index below.
 - [`views/index.json`](views/index.json): one entry per vector, `id`, `spec_section` (the first clause),
   `target` (the layer), `input` (the presentation), `expected`, `hardening` (true for `spec-implied`),
-  `reference_rejected_at_mint`, `clauses`, `trust`, and `files` (its EU pair). `reference_rejected_at_mint` is
+  `reference_rejected_at_mint`, `clauses`, `trust`, `profile` (`haip` for every vector: the Key Binding JWT's
+  `typ` is `kb+jwt`; AP2's hops use `kb+sd-jwt`, so the `typ` cases do not transfer to AP2, as the header's
+  `scope` says), and `files` (its EU pair). `reference_rejected_at_mint` is
   polaris-oid4vp's verdict when the views were made: the generator runs every vector through
   `run_vectors.py`'s `polaris-oid4vp` adapter with the vectors' own settings, as `test_vectors.py` does (this
   tree's package, else an installed one). Making the views therefore needs polaris-oid4vp.

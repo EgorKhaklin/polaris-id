@@ -45,9 +45,11 @@ UTC = datetime.timezone.utc
 NOW = int(datetime.datetime(2026, 10, 1, tzinfo=UTC).timestamp())
 NONCE = "nV7cX2q-0bQ5mT9sKe4wLz"
 AUDIENCE = "x509_hash:WJfeA4xR3mvFsWk2fEB3oiu4f3E1yBHkXjsN0P2s6RE"
-# OpenID4VP 1.0's Client Identifier Prefixes: kb-aud-no-prefix strips one, so the audience needs one.
+# The Client Identifier Prefixes of OpenID4VP 1.0 s5.9.3, including the reserved origin (A.2): over the Digital
+# Credentials API the Key Binding JWT's aud is origin:<Origin> (A.4). kb-aud-no-prefix strips the prefix, so the
+# audience needs one; a pre-registered client_id without a prefix (s5.9) cannot be bound.
 CLIENT_ID_PREFIXES = ("redirect_uri", "openid_federation", "decentralized_identifier", "verifier_attestation",
-                      "x509_san_dns", "x509_hash")
+                      "x509_san_dns", "x509_hash", "origin")
 ISSUER = "https://issuer.example"
 VCT = "urn:eudi:pid:1"
 _P256_N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
@@ -421,10 +423,13 @@ def views(doc, rejected):
         entries.append({"id": v["id"], "spec_section": v["clauses"][0]["ref"] if v["clauses"] else None,
                         "target": v["layer"], "input": v["presentation"], "expected": v["expected"],
                         "hardening": v["class"] == "spec-implied", "reference_rejected_at_mint": rejected[v["id"]],
-                        "clauses": v["clauses"], "trust": v["trust"], "files": {"eudi": pair}})
+                        "clauses": v["clauses"], "trust": v["trust"], "profile": "haip", "files": {"eudi": pair}})
     index = _view_json({"name": doc["name"], "version": doc["version"], "warning": doc["warning"],
                         "source": "vectors.json; these views are derived from it by make_vectors.py",
                         "reference": "reference_rejected_at_mint: polaris-oid4vp's verdict when the views were made",
+                        "scope": "profile haip: SD-JWT VC presentations under OpenID4VP 1.0 and HAIP 1.0, whose Key "
+                                 "Binding JWT typ is kb+jwt. AP2's hops use kb+sd-jwt, so the vectors that turn on "
+                                 "typ (kb-typ-jwt) do not transfer to AP2.",
                         "settings": settings, "vectors": entries})
     out["index.json"] = index
     out["eudi/INDEX.json"] = index

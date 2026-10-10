@@ -4,6 +4,7 @@
   "warning": "TEST KEYS AND CERTIFICATES, derived from public seeds by make_vectors.py. Never trust them.",
   "source": "vectors.json; these views are derived from it by make_vectors.py",
   "reference": "reference_rejected_at_mint: polaris-oid4vp's verdict when the views were made",
+  "scope": "profile haip: SD-JWT VC presentations under OpenID4VP 1.0 and HAIP 1.0, whose Key Binding JWT typ is kb+jwt. AP2's hops use kb+sd-jwt, so the vectors that turn on typ (kb-typ-jwt) do not transfer to AP2.",
   "settings": {
     "now": 1790812800,
     "nonce": "nV7cX2q-0bQ5mT9sKe4wLz",
@@ -36,6 +37,7 @@
       "reference_rejected_at_mint": false,
       "clauses": [],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "50-accept-x5c-dcql.json",
@@ -53,6 +55,7 @@
       "reference_rejected_at_mint": false,
       "clauses": [],
       "trust": "jwks",
+      "profile": "haip",
       "files": {
         "eudi": [
           "51-accept-jwks-dcql.json",
@@ -75,6 +78,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "52-issuer-crit-dcql.json",
@@ -97,6 +101,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "53-kb-crit-dcql.json",
@@ -119,6 +124,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "54-kb-aud-array-dcql.json",
@@ -141,6 +147,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "55-kb-aud-no-prefix-dcql.json",
@@ -163,6 +170,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "56-digest-twice-dcql.json",
@@ -185,6 +193,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "57-claim-overwrite-dcql.json",
@@ -207,6 +216,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "58-disclosed-exp-dcql.json",
@@ -229,6 +239,7 @@
         }
       ],
       "trust": "jwks",
+      "profile": "haip",
       "files": {
         "eudi": [
           "59-disclosed-iss-dcql.json",
@@ -251,6 +262,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "60-disclosure-four-elements-dcql.json",
@@ -273,6 +285,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "61-disclosure-named-sd-dcql.json",
@@ -295,6 +308,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "62-kb-typ-jwt-dcql.json",
@@ -317,6 +331,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "63-kb-alg-none-dcql.json",
@@ -339,6 +354,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "64-kb-alg-hs256-dcql.json",
@@ -361,6 +377,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "65-kb-iat-nan-dcql.json",
@@ -383,6 +400,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "66-kb-exp-string-dcql.json",
@@ -405,6 +423,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "67-issuer-sig-der-dcql.json",
@@ -427,6 +446,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "68-x5c-self-signed-dcql.json",
@@ -449,6 +469,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "69-x5c-includes-anchor-dcql.json",
@@ -471,6 +492,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "70-x5c-unknown-root-dcql.json",
@@ -497,6 +519,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "71-x5c-leaf-expired-dcql.json",
@@ -523,6 +546,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "72-x5c-intermediate-not-ca-dcql.json",
@@ -553,6 +577,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "73-kb-aud-missing-dcql.json",
@@ -583,6 +608,7 @@
         }
       ],
       "trust": "x5c",
+      "profile": "haip",
       "files": {
         "eudi": [
           "74-kb-nonce-missing-dcql.json",

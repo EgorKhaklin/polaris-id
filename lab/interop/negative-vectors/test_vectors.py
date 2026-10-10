@@ -149,6 +149,7 @@ class Views(unittest.TestCase):
         for entry in entries:
             # The generator's own check refused every negative at mint, and accepted every control.
             self.assertEqual(entry["reference_rejected_at_mint"], entry["expected"] == "reject", entry["id"])
+            self.assertEqual(entry["profile"], "haip", entry["id"])
             self.assertEqual(entry["hardening"], next(v["class"] for v in self.doc["vectors"]
                                                       if v["id"] == entry["id"]) == "spec-implied")
 
@@ -263,9 +264,20 @@ class Rebinding(unittest.TestCase):
         self.assertLess(mv.ROOT.not_valid_before_utc.timestamp(), OTHER["now"])
         self.assertLess(OTHER["now"], mv.ROOT.not_valid_after_utc.timestamp())
 
+    def test_a_digital_credentials_api_origin_rebinds(self):
+        # OpenID4VP 1.0 A.4: over the DC API the Key Binding JWT's aud is the Origin prefixed with origin:.
+        rv = _load("run_vectors_origin", "run_vectors.py")
+        mv = _load("make_vectors_origin", "make_vectors.py")
+        mv.bind(audience="origin:https://verifier.test", nonce=OTHER["nonce"])
+        doc = mv.build()
+        self.assertEqual(doc["settings"]["audience"], "origin:https://verifier.test")
+        self._assert_verdicts(doc, rv)
+        stripped = next(v for v in doc["vectors"] if v["id"] == "kb-aud-no-prefix")
+        self.assertIn("origin: prefix", stripped["changed"])
+
     def test_an_audience_without_a_client_identifier_prefix_is_refused(self):
         mv = _load("make_vectors_noprefix", "make_vectors.py")
-        for audience in ("https://verifier.test", "verifier", "x509_hash:"):
+        for audience in ("https://verifier.test", "verifier", "x509_hash:", "origin:"):
             with self.assertRaises(ValueError, msg=audience):
                 mv.bind(audience=audience)
 
