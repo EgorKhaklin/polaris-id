@@ -131,6 +131,9 @@ cleanup() {
     rm -rf "$WORK"
 }
 trap cleanup EXIT
+# It recreates a service from the host's image tags (building it if missing): one build or deploy at a time.
+source "${ROOT}/scripts/polaris-host-lock.sh"
+polaris_host_lock "the window drill"
 RELOAD=(compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --address unix//config/admin.sock)
 
 echo "== 1. edge configuration reload under traffic =="

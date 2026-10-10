@@ -56,7 +56,7 @@ env:
 
 jobs:
   test-core:
-    name: "Product suite: checks, drills, the app-role suite"
+    name: "Product suite: checks and drills"
     runs-on: ubuntu-latest
 
     services:
@@ -76,7 +76,7 @@ jobs:
       # tests RUN here (they skipped for want of a server since v9.40) and the
       # abuse drill exercises the Lua sliding window under redis-py 8.x.
       redis:
-        image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+        image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
         ports:
           - 6379:6379
         options: >-
@@ -232,7 +232,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master  # zizmor: ignore[ref-version-mismatch] -- the action publishes no tags: a master commit, pinned by its SHA
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -481,18 +481,6 @@ jobs:
       # A constraint whose removal leaves the suite green is not tested by it. Runs
       # AFTER the coverage gate because it mutates the schema; it restores every
       # constraint it drops and fails if the catalog does not come back.
-      # 2026-09-25: the web suite connects as the schema owner, and so does the application it
-      # drives, so a route needing a privilege polaris_app lacks passes every test and fails in
-      # every deployment. This runs the whole suite again with the APPLICATION connected as
-      # polaris_app. First run: the Atlas simulation tick used COPY FROM on a row-level-secured
-      # table, refused for the real role, green in all 873 tests.
-      - name: The web suite with the application connected as polaris_app
-        # With the connection pool on (lab record 017, phase 2d): the role-sensitive suite is
-        # where a pooled connection crossing roles would show.
-        env:
-          POLARIS_DB_POOL_SIZE: "1"
-        run: python scripts/polaris-app-role-suite.py
-
       - name: Constraint mutation drill (drop each named constraint, the suite must notice)
         run: python scripts/polaris-constraint-mutation-drill.py
 
@@ -624,56 +612,6 @@ jobs:
       - name: polaris-link-check
         run: bash scripts/polaris-link-check.sh --ci
 
-      - name: ZK crate tests
-        working-directory: polaris_zk
-        run: cargo test --release
-
-      # P0.8 — Rust coverage floor for the crypto LIBRARY (lib.rs: circuit,
-      # prover, verifier). main.rs (the thin CLI dispatch) is excluded because
-      # it is exercised end to end by the prove-verify roundtrip below and the
-      # app shelling into the binary, not by `cargo test`, so counting it would
-      # understate the tested surface. The floor is a ratchet set below the
-      # measured baseline (~92% lines); raise it as coverage climbs.
-      # Pinned to a release, not the action's per-tool tag: that tag moves on every release, which
-      # leaves a pinned commit unreachable upstream. fallback: none keeps the install to the
-      # checksummed prebuilt binary.
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
-        with:
-          tool: cargo-llvm-cov
-          fallback: none
-      # The suite runs once, instrumented in the release profile, and both reports read that run.
-      # Under the zero-knowledge circuit configuration the debug profile took two hours to prove
-      # under instrumentation, and the step ran the suite twice, pushing this job toward its
-      # six-hour limit; the release profile measures the same lines in about two minutes.
-      - name: ZK library coverage floor
-        working-directory: polaris_zk
-        run: |
-          cargo llvm-cov --release --no-report
-          cargo llvm-cov report --release --summary-only --ignore-filename-regex 'main\.rs' \
-            --fail-under-lines 85
-          echo "### ZK library coverage" >> "$GITHUB_STEP_SUMMARY"
-          cargo llvm-cov report --release --summary-only --ignore-filename-regex 'main\.rs' 2>/dev/null \
-            | grep -E 'lib.rs|TOTAL' >> "$GITHUB_STEP_SUMMARY" || true
-
-      - name: ZK prove-verify roundtrip + two-witness differential
-        run: |
-          BIN="$POLARIS_ZK_BINARY"
-          LEAVES='{"leaves_hex":["0000000000000000000000000000000000000000000000000000000000000001","0000000000000000000000000000000000000000000000000000000000000002","0000000000000000000000000000000000000000000000000000000000000003","0000000000000000000000000000000000000000000000000000000000000004"]}'
-          ROOT=$(echo "$LEAVES" | $BIN compute-root | python3 -c "import sys,json;print(json.load(sys.stdin)['epoch_root_hex'])")
-          test -n "$ROOT" || { echo "compute-root empty"; exit 1; }
-          python3 -m pytest polaris_zk/witness2/test_witness2.py polaris_web/test_zk_second_witness.py -v
-
-      # v9.419 - and would either witness notice being switched off? "Two
-      # independent witnesses" is worth exactly as much as the tests that would
-      # catch one saying yes to everything, and a differential is satisfied when
-      # both are wrong the same way. Three mutations: the Rust verifier accepts
-      # everything, the second witness accepts everything, and the second witness
-      # is weakened to the membership-only check its own docstring says is not
-      # enough. Each must turn a suite red. About twenty seconds.
-      - name: ZK mutation drill (disable a witness, a suite must notice)
-        run: python3 scripts/polaris-zk-mutation-drill.py
-
       # The disaster-recovery path (backup -> restore) is operator-critical and,
       # like the Docker images, was never exercised in CI — a broken restore is
       # only discovered during an actual disaster. v9.100 fixed the restore
@@ -744,7 +682,7 @@ jobs:
       # tests RUN here (they skipped for want of a server since v9.40) and the
       # abuse drill exercises the Lua sliding window under redis-py 8.x.
       redis:
-        image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+        image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
         ports:
           - 6379:6379
         options: >-
@@ -838,7 +776,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master  # zizmor: ignore[ref-version-mismatch] -- the action publishes no tags: a master commit, pinned by its SHA
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -879,7 +817,7 @@ jobs:
       # tests RUN here (they skipped for want of a server since v9.40) and the
       # abuse drill exercises the Lua sliding window under redis-py 8.x.
       redis:
-        image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+        image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
         ports:
           - 6379:6379
         options: >-
@@ -973,7 +911,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master  # zizmor: ignore[ref-version-mismatch] -- the action publishes no tags: a master commit, pinned by its SHA
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -1011,11 +949,328 @@ jobs:
         if: always()
         run: psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f polaris_sql/05_procedures.sql
 
+  test-app-role:
+    name: "Product suite: the web suite as the application role"
+    # Split out of the core part (2026-10-08): the whole web suite again, 23 minutes on its own.
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: polaris_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      # v9.190 (roadmap P1.8): a real Redis so the Redis-backed rate-limiter
+      # tests RUN here (they skipped for want of a server since v9.40) and the
+      # abuse drill exercises the Lua sliding window under redis-py 8.x.
+      redis:
+        image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      POLARIS_DB_HOST: localhost
+      POLARIS_DB_PORT: '5432'
+      POLARIS_DB_NAME: polaris_test
+      POLARIS_DB_USER: postgres
+      POLARIS_DB_PASSWORD: ci_password
+      # The application role's password, as 09_grants.sql creates it. Without it the tests that
+      # connect AS polaris_app (the C1 privilege boundary) could not log in and skipped.
+      POLARIS_APP_TEST_PASSWORD: polaris_dev_password
+      POLARIS_SECRET_KEY: ci-only-test-secret-key-32-bytes-long
+      # v9.280 (PE.1): this suite runs the SHA3-256 placeholder signer (no liboqs
+      # here). Name the dev profile explicitly so the boot is quiet and honest,
+      # rather than relying on the silent default.
+      POLARIS_PQC_PROFILE: placeholder
+      POLARIS_STATE_DIR: /tmp/polaris-state
+      PGPASSWORD: ci_password
+      # v9.190: test_app's RedisRateLimiterTests + the multiprocess test run
+      # against the redis service instead of skipping.
+      POLARIS_TEST_REDIS_URL: redis://localhost:6379/0
+      # Built before the app suite (see "Build ZK binary"); makes test_app's
+      # ZKSnarkTests run instead of skipping for want of the binary.
+      POLARIS_ZK_BINARY: ${{ github.workspace }}/polaris_zk/target/release/polaris-zk
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          # v9.436: the procedure drill's --changed mode refuses rather than passing when it
+          # cannot reach its baseline. Since 2026-09-28 the baseline is the commit the push
+          # started from (POLARIS_CHANGED_BASE), which can be any number of commits back, so
+          # the job takes the whole history.
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list   # the runner's Chrome apt source is not ours and flakes (index hash mismatch, v9.343)
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client age   # age: test_secretstore's age backend (P1.3)
+
+      - name: Install Python deps
+        run: |
+          # CI runs the test suites, so it needs the dev tooling (pytest,
+          # hypothesis, playwright). requirements-dev.txt pulls in the full
+          # runtime surface via its `-r requirements.txt` line. The Docker
+          # images, by contrast, install requirements.txt only (no test deps).
+          pip install --require-hashes -r polaris_web/requirements-dev.txt
+          # v9.178 (P1.2): the optional custody drivers (boto3, python-pkcs11) so
+          # test_custody's KMS stand-in and env-selection tests run here.
+          pip install --require-hashes -r polaris_web/requirements-custody.txt
+
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U postgres; then break; fi
+            sleep 1
+          done
+
+      - name: Load Polaris schema
+        run: |
+          mkdir -p $POLARIS_STATE_DIR
+          cd polaris_sql
+          psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f 00_load_all.sql
+
+      - name: Apply migrations
+        run: |
+          cd polaris_sql
+          for f in $(ls migrations/*.up.sql | sort); do
+            echo "applying $f"
+            psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Read the pinned Rust toolchain
+        id: rust_pin
+        run: |
+          chan=$(grep -oE 'nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}' polaris_zk/rust-toolchain.toml)
+          [ -n "$chan" ] || { echo "::error::polaris_zk/rust-toolchain.toml carries no dated nightly pin"; exit 1; }
+          echo "chan=$chan" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust (pinned nightly for Plonky2)
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master  # zizmor: ignore[ref-version-mismatch] -- the action publishes no tags: a master commit, pinned by its SHA
+        with:
+          toolchain: ${{ steps.rust_pin.outputs.chan }}
+
+      - name: Build ZK binary
+        working-directory: polaris_zk
+        run: |
+          # The toolchain file governs; assert the compiler in use matches it.
+          rustc --version
+          rustc --version | grep -qE "nightly" || { echo "::error::pinned nightly not active"; exit 1; }
+          cargo build --release --bin polaris-zk
+      # 2026-09-25: the web suite connects as the schema owner, and so does the application it
+      # drives, so a route needing a privilege polaris_app lacks passes every test and fails in
+      # every deployment. This runs the whole suite again with the APPLICATION connected as
+      # polaris_app. First run: the Atlas simulation tick used COPY FROM on a row-level-secured
+      # table, refused for the real role, green in all 873 tests.
+      - name: The web suite with the application connected as polaris_app
+        # With the connection pool on (lab record 017, phase 2d): the role-sensitive suite is
+        # where a pooled connection crossing roles would show.
+        env:
+          POLARIS_DB_POOL_SIZE: "1"
+        run: python scripts/polaris-app-role-suite.py
+
+  test-zk:
+    name: "Product suite: the ZK library, its coverage floor and its mutation drill"
+    # Split out of the core part (2026-10-08): the Rust crate's suite, coverage and drill.
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: polaris_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      # v9.190 (roadmap P1.8): a real Redis so the Redis-backed rate-limiter
+      # tests RUN here (they skipped for want of a server since v9.40) and the
+      # abuse drill exercises the Lua sliding window under redis-py 8.x.
+      redis:
+        image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      POLARIS_DB_HOST: localhost
+      POLARIS_DB_PORT: '5432'
+      POLARIS_DB_NAME: polaris_test
+      POLARIS_DB_USER: postgres
+      POLARIS_DB_PASSWORD: ci_password
+      # The application role's password, as 09_grants.sql creates it. Without it the tests that
+      # connect AS polaris_app (the C1 privilege boundary) could not log in and skipped.
+      POLARIS_APP_TEST_PASSWORD: polaris_dev_password
+      POLARIS_SECRET_KEY: ci-only-test-secret-key-32-bytes-long
+      # v9.280 (PE.1): this suite runs the SHA3-256 placeholder signer (no liboqs
+      # here). Name the dev profile explicitly so the boot is quiet and honest,
+      # rather than relying on the silent default.
+      POLARIS_PQC_PROFILE: placeholder
+      POLARIS_STATE_DIR: /tmp/polaris-state
+      PGPASSWORD: ci_password
+      # v9.190: test_app's RedisRateLimiterTests + the multiprocess test run
+      # against the redis service instead of skipping.
+      POLARIS_TEST_REDIS_URL: redis://localhost:6379/0
+      # Built before the app suite (see "Build ZK binary"); makes test_app's
+      # ZKSnarkTests run instead of skipping for want of the binary.
+      POLARIS_ZK_BINARY: ${{ github.workspace }}/polaris_zk/target/release/polaris-zk
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          # v9.436: the procedure drill's --changed mode refuses rather than passing when it
+          # cannot reach its baseline. Since 2026-09-28 the baseline is the commit the push
+          # started from (POLARIS_CHANGED_BASE), which can be any number of commits back, so
+          # the job takes the whole history.
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list   # the runner's Chrome apt source is not ours and flakes (index hash mismatch, v9.343)
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client age   # age: test_secretstore's age backend (P1.3)
+
+      - name: Install Python deps
+        run: |
+          # CI runs the test suites, so it needs the dev tooling (pytest,
+          # hypothesis, playwright). requirements-dev.txt pulls in the full
+          # runtime surface via its `-r requirements.txt` line. The Docker
+          # images, by contrast, install requirements.txt only (no test deps).
+          pip install --require-hashes -r polaris_web/requirements-dev.txt
+          # v9.178 (P1.2): the optional custody drivers (boto3, python-pkcs11) so
+          # test_custody's KMS stand-in and env-selection tests run here.
+          pip install --require-hashes -r polaris_web/requirements-custody.txt
+
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U postgres; then break; fi
+            sleep 1
+          done
+
+      - name: Load Polaris schema
+        run: |
+          mkdir -p $POLARIS_STATE_DIR
+          cd polaris_sql
+          psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f 00_load_all.sql
+
+      - name: Apply migrations
+        run: |
+          cd polaris_sql
+          for f in $(ls migrations/*.up.sql | sort); do
+            echo "applying $f"
+            psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Read the pinned Rust toolchain
+        id: rust_pin
+        run: |
+          chan=$(grep -oE 'nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}' polaris_zk/rust-toolchain.toml)
+          [ -n "$chan" ] || { echo "::error::polaris_zk/rust-toolchain.toml carries no dated nightly pin"; exit 1; }
+          echo "chan=$chan" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust (pinned nightly for Plonky2)
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master  # zizmor: ignore[ref-version-mismatch] -- the action publishes no tags: a master commit, pinned by its SHA
+        with:
+          toolchain: ${{ steps.rust_pin.outputs.chan }}
+
+      - name: Build ZK binary
+        working-directory: polaris_zk
+        run: |
+          # The toolchain file governs; assert the compiler in use matches it.
+          rustc --version
+          rustc --version | grep -qE "nightly" || { echo "::error::pinned nightly not active"; exit 1; }
+          cargo build --release --bin polaris-zk
+      - name: ZK crate tests
+        working-directory: polaris_zk
+        run: cargo test --release
+
+      # P0.8: Rust coverage floor for the crypto LIBRARY (lib.rs: circuit,
+      # prover, verifier). main.rs (the thin CLI dispatch) is excluded because
+      # it is exercised end to end by the prove-verify roundtrip below and the
+      # app shelling into the binary, not by `cargo test`, so counting it would
+      # understate the tested surface. The floor is a ratchet set below the
+      # measured baseline (~92% lines); raise it as coverage climbs.
+      # Pinned to a release, not the action's per-tool tag: that tag moves on every release, which
+      # leaves a pinned commit unreachable upstream. fallback: none keeps the install to the
+      # checksummed prebuilt binary.
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
+        with:
+          tool: cargo-llvm-cov
+          fallback: none
+
+      # The suite runs once, instrumented in the release profile, and both reports read that run.
+      # Under the zero-knowledge circuit configuration the debug profile took two hours to prove
+      # under instrumentation, and the step ran the suite twice, pushing this job toward its
+      # six-hour limit; the release profile measures the same lines in about two minutes.
+      - name: ZK library coverage floor
+        working-directory: polaris_zk
+        run: |
+          cargo llvm-cov --release --no-report
+          cargo llvm-cov report --release --summary-only --ignore-filename-regex 'main\.rs' \
+            --fail-under-lines 85
+          echo "### ZK library coverage" >> "$GITHUB_STEP_SUMMARY"
+          cargo llvm-cov report --release --summary-only --ignore-filename-regex 'main\.rs' 2>/dev/null \
+            | grep -E 'lib.rs|TOTAL' >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: ZK prove-verify roundtrip + two-witness differential
+        run: |
+          BIN="$POLARIS_ZK_BINARY"
+          LEAVES='{"leaves_hex":["0000000000000000000000000000000000000000000000000000000000000001","0000000000000000000000000000000000000000000000000000000000000002","0000000000000000000000000000000000000000000000000000000000000003","0000000000000000000000000000000000000000000000000000000000000004"]}'
+          ROOT=$(echo "$LEAVES" | $BIN compute-root | python3 -c "import sys,json;print(json.load(sys.stdin)['epoch_root_hex'])")
+          test -n "$ROOT" || { echo "compute-root empty"; exit 1; }
+          python3 -m pytest polaris_zk/witness2/test_witness2.py polaris_web/test_zk_second_witness.py -v
+
+      # v9.419 - and would either witness notice being switched off? "Two
+      # independent witnesses" is worth exactly as much as the tests that would
+      # catch one saying yes to everything, and a differential is satisfied when
+      # both are wrong the same way. Three mutations: the Rust verifier accepts
+      # everything, the second witness accepts everything, and the second witness
+      # is weakened to the membership-only check its own docstring says is not
+      # enough. Each must turn a suite red. About twenty seconds.
+      - name: ZK mutation drill (disable a witness, a suite must notice)
+        run: python3 scripts/polaris-zk-mutation-drill.py
+
   test:
-    # The required check. Its three parts (test-core, test-coverage, test-procedures) were one
-    # serial job of 2 to 4.5 hours; they now run in parallel and this passes only if all three did.
+    # The required check. Its parts (the test-* jobs it needs) were one serial job of 2 to 4.5
+    # hours; they now run in parallel and this passes only if every one of them did.
     name: Polaris product test suite
-    needs: [test-core, test-coverage, test-procedures]
+    needs: [test-core, test-coverage, test-procedures, test-app-role, test-zk]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1023,7 +1278,7 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
         run: |
-          echo "$RESULTS" | python3 -c 'import json, sys; r = {k: v["result"] for k, v in json.load(sys.stdin).items()}; print(r); sys.exit(0 if len(r) == 3 and all(v == "success" for v in r.values()) else 1)'
+          echo "$RESULTS" | python3 -c 'import json, sys; r = {k: v["result"] for k, v in json.load(sys.stdin).items()}; print(r); sys.exit(0 if len(r) == 5 and all(v == "success" for v in r.values()) else 1)'
 
   ui-drill:
     name: Atlas live-simulation UI drill (Playwright, headless chromium)
@@ -1857,7 +2112,12 @@ jobs:
         env:
           POLARIS_DOMAIN: localhost
           POLARIS_COMPOSE_EXTRA: "-f docker-compose.citest.yml"
-        run: sudo -E bash deploy/linux/install.sh --source "$PWD"
+        # The clock for gate row OP-2 starts here (the drill below reads it).
+        run: |
+          set -o pipefail
+          date +%s > /tmp/op2-install-start
+          sudo -E bash deploy/linux/install.sh --source "$PWD" | tee /tmp/op2-install.out
+          date +%s > /tmp/op2-install-end
 
       - name: systemd owns the stack (active, timers scheduled, backup runs, restart survives)
         run: |
@@ -1888,11 +2148,243 @@ jobs:
           [ "$code" = 200 ] || { echo "::error::stack not healthy after systemctl restart polaris (last HTTP $code)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1; }
           echo "healthy again after systemctl restart polaris (check $i)"
 
+      # Lab record 017: an operator runs the scripts with sudo, which resets the environment, so each
+      # one reads /etc/polaris/polaris.env itself (scripts/polaris-env.sh). Before, the compose file
+      # refused to load for want of POLARIS_DOMAIN, and a domain exported alone gave a deploy without
+      # the rest of polaris.env: here, without the overlay that serves the edge on 8443.
+      - name: the operator's scripts, run with sudo, read polaris.env (first account, upgrade, rotation, doctor)
+        working-directory: /opt/polaris
+        run: |
+          set -e
+          health() {
+            code=""
+            for _ in $(seq 1 60); do
+              code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health || true)
+              [ "$code" = 200 ] && { echo "healthy after $1"; return 0; }
+              sleep 3
+            done
+            echo "::error::not healthy after $1 (last HTTP $code)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1
+          }
+          printf 'a-password-for-this-ci-run-only\n' > /tmp/ci-operator.pw
+          sudo scripts/polaris-create-operator.sh --username ci-admin --role admin --password-file /tmp/ci-operator.pw \
+            --reason "the first administrator of this CI install" --target=docker-stack
+          sudo scripts/polaris-deploy.sh prod --no-pull
+          health "sudo scripts/polaris-deploy.sh prod"
+          sudo scripts/polaris-rotate-secret.sh polaris_db_password
+          health "sudo scripts/polaris-rotate-secret.sh polaris_db_password"
+          sudo docker cp polaris-caddy:/data/caddy/pki/authorities/local/root.crt /tmp/caddy-root.crt
+          set -o pipefail
+          sudo POLARIS_DOCTOR_URL=https://localhost:8443 POLARIS_DOCTOR_CACERT=/tmp/caddy-root.crt \
+            scripts/polaris-doctor.sh | tee /tmp/doctor-file.out
+          # Gate row OP-2: before the key is registered, the doctor asks for the registration.
+          grep -q "WARN  key register .*no authority key is registered yet" /tmp/doctor-file.out \
+            || { echo "::error::the doctor did not ask for the key registration on a fresh host"; exit 1; }
+          grep -q "WARN  secrets at rest .*plaintext files in /opt/polaris/polaris_web/secrets" /tmp/doctor-file.out \
+            || { echo "::error::the doctor did not say the secrets are plaintext on disk"; exit 1; }
+          # Gate row OP-14: this install's backup repository is on the host, and the doctor says so.
+          grep -q "WARN  backups .*the backup repository is on this host" /tmp/doctor-file.out \
+            || { echo "::error::the doctor did not say the backups are on this host only"; exit 1; }
+
+      # Lab record 017 (gate row OP-2): a fresh host to a credential verified offline by polaris-verify from
+      # PyPI, then online by a relying party, by the documented commands only, with the operator's inputs
+      # listed and the time read. Under real signing every relying-party route refuses a credential whose
+      # key its authority had not registered: install.sh names the step, and one command takes it.
+      # Inputs to the offline verification: 1 the domain (install), 2-4 the first administrator's name,
+      # password and reason (the step above), 5 the key registration. The relying party's own
+      # registration (its name and the reason) comes after, for the online verification. The job fails
+      # past 15 minutes from the install's start to the online accept, a span that also holds the backup,
+      # upgrade and rotation the steps above run; the images are built from source until OP-1 publishes
+      # them. Both make the time an upper bound.
+      - name: a fresh host to a credential a relying party verifies online (OP-2; inputs counted, time measured)
+        working-directory: /opt/polaris
+        run: |
+          set -eo pipefail
+          grep -q "polaris-key-event.sh register 1 --current" /tmp/op2-install.out \
+            || { echo "::error::install.sh did not name the key registration"; exit 1; }
+          t_ops=$(date +%s)
+          # Input 5, and once only: a second run is a no-op.
+          sudo scripts/polaris-key-event.sh register 1 --current
+          again=$(sudo scripts/polaris-key-event.sh register 1 --current)
+          grep -q "already registered" <<< "$again" || { echo "::error::a second register --current was not a no-op"; exit 1; }
+          # The runner's own copy of the edge's CA certificate (public): a root-owned copy is unreadable to
+          # curl run as the runner, which exits 77.
+          sudo docker exec polaris-caddy cat /data/caddy/pki/authorities/local/root.crt > /tmp/op2-ca.crt
+          base=https://localhost:8443
+          # The key reached the public trust list, listed active for agency 1.
+          curl -sf --cacert /tmp/op2-ca.crt "$base/api/v1/trust-list/1" -o /tmp/op2-trust.json
+          pk=$(sudo python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["public_key_hex"])' \
+                 polaris_web/secrets/polaris_signing_key)       # the key this install minted
+          python3 - "$pk" /tmp/op2-trust.json <<'EOF'
+          import json, sys
+          keys = json.load(open(sys.argv[2]))["keys"]
+          ok = [k for k in keys if k.get("agency_id") == 1 and k.get("public_key_hex") == sys.argv[1] and k.get("status") == "active"]
+          sys.exit(0 if ok else "the trust list does not list agency 1's key as active: %s" % [(k.get("agency_id"), k.get("status")) for k in keys])
+          EOF
+          # The first administrator issues one credential through the operator console.
+          mkdir -p /tmp/op2 && cp /tmp/op2-ca.crt /tmp/op2/caddy-root.crt && cp /tmp/ci-operator.pw /tmp/op2/operator-password
+          sudo python3 lab/strategy/006/issue_and_pack.py /tmp/op2 /opt/polaris/polaris_web/secrets ci-admin
+          # A verifier with no account checks it offline: polaris-verify from PyPI, against the key this install
+          # minted, with no registration and no call to the stack. Five inputs reach here.
+          python3 -m venv /tmp/op2-venv && /tmp/op2-venv/bin/pip install -q --pre "polaris-verify[cryptography]"
+          sudo cat /tmp/op2/pack.json > /tmp/op2-pack.json && sudo cat /tmp/op2/anchors.json > /tmp/op2-anchors.json
+          /tmp/op2-venv/bin/polaris-verify --pqc-provider auto --issuer-anchor /tmp/op2-anchors.json --pack /tmp/op2-pack.json \
+            || { echo "::error::polaris-verify from PyPI did not verify the fresh install's credential offline"; exit 1; }
+          t_offline=$(date +%s)
+          # A relying party, registered as the operator registers one, verifies it online.
+          # Its secret is printed once: kept in a file, masked, never echoed to this log.
+          (umask 077 && sudo scripts/polaris-rp-register.sh "Fresh-host drill relying party" \
+            --justification "the relying party of the fresh-host drill (lab record 017, gate row OP-2)" > /tmp/op2-rp.out)
+          cid=$(sed -n 's/^  client_id: *//p' /tmp/op2-rp.out); secret=$(sed -n 's/^  client_secret: *//p' /tmp/op2-rp.out)
+          echo "::add-mask::$secret"
+          [ -n "$cid" ] && [ -n "$secret" ] || { echo "::error::polaris-rp-register.sh printed no client id and secret"; exit 1; }
+          echo "relying party registered: $cid"
+          token=$(curl -sf --cacert /tmp/op2-ca.crt -u "$cid:$secret" -d grant_type=client_credentials \
+                    "$base/api/v1/oauth/token" | python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])')
+          sudo python3 -c 'import json, sys; p = json.load(open(sys.argv[1])); print(json.dumps({"token_value": p["token_value"], "signature_hex": p["signature_hex"]}))' \
+            /tmp/op2/pack.json > /tmp/op2-body.json
+          answer=$(curl -s --cacert /tmp/op2-ca.crt -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+                     --data-binary @/tmp/op2-body.json "$base/api/v1/verify")
+          echo "POST /api/v1/verify: $answer"
+          python3 -c 'import json, sys; v = json.loads(sys.argv[1]); sys.exit(0 if v.get("decision") == "accept" and v.get("usable") is True else 1)' "$answer" \
+            || { echo "::error::the relying party's online verification did not accept the fresh install's credential"; exit 1; }
+          t_done=$(date +%s); t0=$(cat /tmp/op2-install-start); t1=$(cat /tmp/op2-install-end)
+          # The doctor, after the registration: every credential signed for real is under a registered key.
+          sudo POLARIS_DOCTOR_URL=https://localhost:8443 POLARIS_DOCTOR_CACERT=/tmp/op2-ca.crt \
+            scripts/polaris-doctor.sh > /tmp/op2-doctor.out || true
+          grep -q "  ok    key register " /tmp/op2-doctor.out \
+            || { cat /tmp/op2-doctor.out; echo "::error::after the registration the doctor did not read the key register clean"; exit 1; }
+          total=$(( t_done - t0 )); offline=$(( t_offline - t0 ))
+          summary="OP-2: install $(( (t1 - t0) / 60 )) min $(( (t1 - t0) % 60 )) s (images built from source until OP-1); from its start, verified offline by polaris-verify at $(( offline / 60 )) min $(( offline % 60 )) s and online at $(( total / 60 )) min $(( total % 60 )) s (both spans include the backup, upgrade and rotation this job runs); operator inputs 5 to the offline verification as listed above (domain; administrator name, password, reason; key registration), and the relying party's registration 2 more (its name, the reason)"
+          echo "$summary"
+          echo "$summary" >> "$GITHUB_STEP_SUMMARY"
+          # Gate row OP-2's bound, read here and not only printed.
+          [ "$total" -le 900 ] \
+            || { echo "::error::gate row OP-2: the fresh host reached an online verification in $total s, past 15 minutes"; exit 1; }
+
+      # The operator's own evaluation of this install, the way EVALUATE.md runs it. A
+      # notional run must pass every probe a fresh install can answer, and the same run must fail when
+      # something under it is broken: a privilege the database withholds, granted to the application,
+      # and the TLS edge, stopped. An evaluation that cannot fail proves nothing.
+      - name: the install evaluates itself, and the evaluation fails when a rule or the edge is broken
+        working-directory: /opt/polaris
+        run: |
+          # pipefail: the evaluation runs through tee, and without it the step would read tee's status.
+          set -eo pipefail
+          # The offline probes run the published polaris-verify from a venv the evaluation makes.
+          sudo apt-get install -y python3-venv > /dev/null
+          sudo scripts/polaris-evaluate.sh --notional --operator ci-admin --password-file /tmp/ci-operator.pw \
+            --url https://localhost:8443 --out /tmp/eval-notional | tee /tmp/eval-notional.out
+          sudo python3 - /tmp/eval-notional/report.json <<'EOF'
+          import json, sys
+          verdicts = {r["id"]: r["verdict"] for r in json.load(open(sys.argv[1]))["rows"]}
+          need = ["B.role", "B.C1", "B.C2", "B.Success-rules", "B.Binding", "B.Privilege", "C.trust-list",
+                  "D.offline.genuine", "D.offline.signature-byte", "D.offline.token-altered", "D.offline.other-issuer",
+                  "D.offline.hash-as-signature", "D.offline.empty-signature", "E.relying-party", "E.online.genuine",
+                  "E.online.signature-byte", "E.online.token-altered", "F.issue", "F.revoke", "F.online.after-revoke"]
+          short = ["%s=%s" % (k, verdicts.get(k)) for k in need if verdicts.get(k) != "PASS"]
+          short += ["%s=FAIL" % k for k, v in verdicts.items() if v == "FAIL" and k not in need]
+          sys.exit("the notional evaluation did not pass: %s" % ", ".join(short) if short else 0)
+          EOF
+          ! sudo grep -rqF "$(cat /tmp/ci-operator.pw)" /tmp/eval-notional \
+            || { echo "::error::the evaluation report carries the operator's password"; exit 1; }
+          # Negative control 1: the application role may insert a duress record directly.
+          sudo docker exec polaris-postgres psql -U postgres -d polaris -c "GRANT INSERT ON DuressEvent TO polaris_app"
+          rc=0; sudo sh -c 'scripts/polaris-evaluate.sh --url https://localhost:8443 --out /tmp/eval-granted > /tmp/eval-granted.out 2>&1' || rc=$?
+          sudo docker exec polaris-postgres psql -U postgres -d polaris -c "REVOKE INSERT ON DuressEvent FROM polaris_app"
+          [ "$rc" = 1 ] && grep -q "failing: .*B.Privilege" /tmp/eval-granted.out \
+            || { cat /tmp/eval-granted.out; echo "::error::the evaluation did not fail with a forbidden privilege granted"; exit 1; }
+          # Negative control 2: the edge is down.
+          sudo docker stop polaris-caddy > /dev/null
+          rc=0; sudo sh -c 'scripts/polaris-evaluate.sh --url https://localhost:8443 --out /tmp/eval-noedge > /tmp/eval-noedge.out 2>&1' || rc=$?
+          sudo docker start polaris-caddy > /dev/null
+          [ "$rc" = 1 ] && grep -q "failing: .*A.doctor.edge" /tmp/eval-noedge.out && sudo test -s /tmp/eval-noedge/report.json \
+            || { cat /tmp/eval-noedge.out; echo "::error::the evaluation did not fail, with a report, with the edge down"; exit 1; }
+          for _ in $(seq 1 60); do
+            [ "$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health || true)" = 200 ] && break
+            sleep 2
+          done
+          grep "^polaris-evaluate: [0-9]" /tmp/eval-notional.out >> "$GITHUB_STEP_SUMMARY"
+
+      - name: copy the evaluation reports where the upload can read them
+        if: always()
+        run: |
+          mkdir -p /tmp/eval-reports
+          for run in notional granted noedge; do
+            for ext in md json; do sudo cp "/tmp/eval-$run/report.$ext" "/tmp/eval-reports/$run.$ext" 2> /dev/null || true; done
+          done
+          sudo chown -R "$(id -u):$(id -g)" /tmp/eval-reports
+      - name: keep the evaluation reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: evaluation-reports
+          path: /tmp/eval-reports/
+          if-no-files-found: warn
+
+      # Lab record 017 (gate row OP-9): SECRETS.md 5.1 on a systemd host. polaris.service runs compose
+      # with POLARIS_SECRETS_DIR alone; with it empty, a sealed host's next start read the shredded
+      # plaintext directory while a deploy (which supplied a default) had worked. Now every path
+      # refuses an empty one and names the line; with the line, the unit starts from the store, and
+      # again after its tmpfs is gone (what a reboot leaves).
+      - name: a sealed store on the systemd host as SECRETS.md 5.1 says; an empty POLARIS_SECRETS_DIR is refused
+        working-directory: /opt/polaris
+        run: |
+          set -e
+          health() {
+            code=""
+            for _ in $(seq 1 60); do
+              code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health || true)
+              [ "$code" = 200 ] && { echo "healthy after $1"; return 0; }
+              sleep 3
+            done
+            echo "::error::not healthy after $1 (last HTTP $code)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1
+          }
+          sudo apt-get install -y age > /dev/null
+          sudo sh -c 'age-keygen -o /root/polaris-age.identity 2> /dev/null && age-keygen -y /root/polaris-age.identity > /root/polaris-age.recipients'
+          sudo sed -i -e 's|^POLARIS_SECRETS_BACKEND=.*|POLARIS_SECRETS_BACKEND=age|' \
+                      -e 's|^POLARIS_SECRETS_AGE_IDENTITY=.*|POLARIS_SECRETS_AGE_IDENTITY=/root/polaris-age.identity|' \
+                      -e 's|^POLARIS_SECRETS_AGE_RECIPIENTS=.*|POLARIS_SECRETS_AGE_RECIPIENTS=/root/polaris-age.recipients|' \
+                      /etc/polaris/polaris.env
+          sudo scripts/polaris-secrets.sh seal
+          sudo systemctl stop polaris.service
+          sudo sh -c 'shred -u polaris_web/secrets/* polaris_web/secrets/.archive/* 2> /dev/null; rm -rf polaris_web/secrets'
+          # (1) POLARIS_SECRETS_DIR still empty: the unit, the deploy and the store's own verify refuse.
+          if sudo systemctl start polaris.service; then
+            echo "::error::polaris.service started a sealed store with POLARIS_SECRETS_DIR empty"; exit 1
+          fi
+          sudo journalctl -u polaris.service --no-pager | grep -q "needs POLARIS_SECRETS_DIR=/run/polaris/secrets" \
+            || { echo "::error::the unit's refusal does not name the line"; sudo journalctl -u polaris.service --no-pager | tail -20; exit 1; }
+          for cmd in "scripts/polaris-deploy.sh prod --no-pull" "scripts/polaris-secrets.sh verify"; do
+            if sudo $cmd 2> /tmp/refusal.err; then echo "::error::$cmd accepted an empty POLARIS_SECRETS_DIR"; exit 1; fi
+            grep -q "needs POLARIS_SECRETS_DIR" /tmp/refusal.err || { cat /tmp/refusal.err; exit 1; }
+          done
+          echo "an empty POLARIS_SECRETS_DIR is refused by the unit, the deploy and verify, each naming the line"
+          # (2) The line SECRETS.md 5.1 names: the unit starts from the store, plaintext only in a tmpfs.
+          sudo sed -i 's|^POLARIS_SECRETS_DIR=.*|POLARIS_SECRETS_DIR=/run/polaris/secrets|' /etc/polaris/polaris.env
+          sudo systemctl start polaris.service
+          health "the unit started from the sealed store"
+          findmnt -n -o FSTYPE /run/polaris/secrets | grep -qx tmpfs
+          [ ! -e polaris_web/secrets ] || { echo "::error::the plaintext directory is back"; exit 1; }
+          sudo scripts/polaris-secrets.sh verify
+          # (3) What a reboot leaves: no tmpfs. The unit unseals again.
+          sudo systemctl stop polaris.service
+          sudo umount /run/polaris/secrets
+          sudo systemctl start polaris.service
+          health "a start with the tmpfs gone"
+          # (4) The upgrade and the doctor, by hand, on the sealed host.
+          sudo scripts/polaris-deploy.sh prod --no-pull
+          health "sudo scripts/polaris-deploy.sh prod on the sealed host"
+          sudo POLARIS_DOCTOR_URL=https://localhost:8443 POLARIS_DOCTOR_CACERT=/tmp/caddy-root.crt \
+            scripts/polaris-doctor.sh | tee /tmp/doctor-sealed.out
+          grep -q "ok    secrets at rest .*sealed (age).*/run/polaris/secrets, a tmpfs" /tmp/doctor-sealed.out \
+            || { echo "::error::the doctor did not report the sealed store"; exit 1; }
+
       - name: Tear down
         if: always()
         run: |
           sudo systemctl stop polaris.service || true
           sudo docker compose -f /opt/polaris/polaris_web/docker-compose.prod.yml -f /opt/polaris/polaris_web/docker-compose.citest.yml down -v || true
+          sudo umount /run/polaris/secrets 2> /dev/null || true
 
   # --------------------------------------------------------------------------
   # v9.178 (roadmap P1.2) — the PKCS#11 custody driver against a REAL PKCS#11
@@ -2083,6 +2575,8 @@ jobs:
       - name: Failover drill (leader crash, lease partition, switchover, etcd crash)
         env:
           POLARIS_FAILOVER_OUT: /tmp/failover.json
+          # Gate row OP-6 rests on this run: the drill fails unless the cluster replicates synchronously.
+          POLARIS_FAILOVER_EXPECT_SYNC: "on"
         run: bash scripts/polaris-failover-drill.sh
 
       - name: Upload the drill summary
@@ -2152,7 +2646,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+        image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
         ports:
           - 6379:6379
         options: >-
@@ -2675,6 +3169,66 @@ jobs:
         run: |
           set -o pipefail
           python -m unittest test_custody -v 2>&1 | grep -v faulthandler
+
+  pqc-real-web:
+    name: "Real PQC: the web suite under real ML-DSA-65"
+    # Split out of Real PQC (2026-10-08): its last step was 21 of its 39 minutes.
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_PASSWORD: ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Install liboqs-python (builds liboqs) + the cryptography witness
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list   # the runner's Chrome apt source is not ours and flakes (index hash mismatch, v9.343)
+          sudo apt-get update
+          # postgresql-client: the quantum-event drill (v9.365) builds and drops its own
+          # database, so it needs psql/createdb/dropdb. Without them it exits 3, which
+          # fails this step rather than skipping quietly.
+          sudo apt-get install -y cmake ninja-build postgresql-client
+          pip install --require-hashes -r polaris_web/requirements-pqc.txt
+          # The independent second witness (v9.133): cryptography provides an
+          # OpenSSL-backed ML-DSA-65, a DIFFERENT FIPS 204 implementation than liboqs.
+          # cbor2 serves the ISO 18013-5 bridge drill (v9.362) and psycopg2 the
+          # quantum-event drill (v9.365). All three come from the runtime lock, hashed,
+          # never from a pin repeated here: a repeated literal once still said 48.0.0
+          # after the runtime moved to 50.0.1 for PYSEC-2026-3552/3553/3554 +
+          # GHSA-537c-gmf6-5ccf, and the job reinstalled what cve-scan had rejected.
+          pip install --require-hashes -r polaris_web/requirements.txt
+          # v9.178 (P1.2): the custody drivers, so test_custody runs here with BOTH
+          # witnesses (liboqs + OpenSSL): the file driver for real, the AWS KMS
+          # driver against its wire-faithful stand-in, rotation end to end.
+          pip install --require-hashes -r polaris_web/requirements-custody.txt
 
       # 2026-09-25: the web suite had only ever run with the placeholder signer; the first run
       # under real ML-DSA-65 found five tests asserting the placeholder's bytes. This job has

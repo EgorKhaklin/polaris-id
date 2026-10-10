@@ -7,9 +7,9 @@ images:
   caddy: polaris-caddy:prod
   pgbouncer: polaris-pgbouncer:prod
   postgres: polaris-postgres:prod
-  redis: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+  redis: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
   # The database router (v9.244): the same HAProxy as the compose HA profile.
-  haproxy: haproxy:3.1-alpine@sha256:475863a372c92c3dab3d59eafbbf8019dceebcd0c456594551b160ecdba4bdb9
+  haproxy: haproxy:3.4-alpine@sha256:7af8255207ee9964ccb4eec8ce4b7a40b777769665e3ae83897fb01b24d8a43a
   # For the four self-built images. The drill sets Never (nothing pulled).
   pullPolicy: IfNotPresent
   # Redis is a digest-pinned upstream image the nodes pull themselves: `kind
@@ -35,9 +35,27 @@ edge:
   # network's CIDR, for example "10.20.0.0/16", or scrape the app Service
   # from inside the cluster, which needs no edge route.
   metricsAllow: ""
-  # acme: Let's Encrypt for `domain` (needs a reachable LoadBalancer on 80/443).
-  # internal: Caddy's internal CA (evaluation, kind, private networks).
+  # Where the edge's certificate comes from (G5: each replica kept its TLS state in an emptyDir,
+  # so a restart re-issued and replicas disagreed):
+  # secret: the kubernetes.io/tls Secret edge.tlsSecret names (cert-manager's Certificate writes
+  #   one); any number of replicas, each reloading it when it changes. The production choice.
+  # acme: Let's Encrypt for `domain`, for ONE replica (needs a reachable LoadBalancer on 80/443):
+  #   replicas that do not share the ACME state each order a certificate and answer only their
+  #   own challenges. Its account and certificates live on a volume (edge.acmeVolume).
+  # internal: Caddy's internal CA (evaluation, kind, private networks), under a root the chart
+  #   generates once and keeps: the Secret <release>-edge-ca, whose ca.crt is what clients trust.
+  #   A render without the cluster (helm template, so Argo CD) cannot see that Secret and would mint
+  #   a new root each time: there, set edge.caSecret.
   tls: internal
+  # With edge.tls=internal: an existing Secret (keys ca.crt and ca.key) holding the root, created once
+  # by the operator; the chart then generates none and never overwrites it (docs/operator/KUBERNETES.md).
+  caSecret: ""
+  # With edge.tls=secret: the kubernetes.io/tls Secret, in the release's namespace.
+  tlsSecret: ""
+  # With edge.tls=acme: the volume that keeps the ACME account and certificates across restarts.
+  acmeVolume:
+    size: 1Gi
+    storageClass: ""
   # Two, spread across nodes, so a host's loss leaves the edge serving (lab record 017, gate row OP-7).
   replicas: 2
   # The load balancer in front of the edge, if any, by address range ("10.0.0.0/8"); its

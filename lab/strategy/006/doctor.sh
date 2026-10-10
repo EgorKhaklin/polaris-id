@@ -19,6 +19,9 @@ set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 HERE="${ROOT}/lab/strategy/006"
 OUT="${HERE}/out"
+# It recreates a service from the host's image tags (building it if missing): one build or deploy at a time.
+source "${ROOT}/scripts/polaris-host-lock.sh"
+polaris_host_lock "the lab doctor"
 export COMPOSE_PROJECT_NAME=polaris-try POLARIS_DOMAIN=localhost
 export POLARIS_COMPOSE_EXTRA="-f ${ROOT}/polaris_web/docker-compose.citest.yml -f ${HERE}/names.yml"
 export POLARIS_DOCTOR_URL=https://localhost:8443 POLARIS_DOCTOR_CACERT="${OUT}/caddy-root.crt"

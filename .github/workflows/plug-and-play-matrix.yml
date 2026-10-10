@@ -24,6 +24,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/plug-and-play-matrix.yml"
+      - "site/llms.txt"
 
 permissions:
   contents: read
@@ -70,6 +71,69 @@ jobs:
           rc=$?
           [ "$rc" != "0" ] || { echo "a credential under an untrusted key was accepted"; exit 1; }
           echo "ok: an untrusted key was refused (exit $rc)"
+      # site/llms.txt gives a reading agent one command block and the exit codes to expect. This runs
+      # that block as written, from an empty folder, against the published package, and demonstrates
+      # every exit code the file states, read from the file: the block's, the tampered vectors', and
+      # the list's (2 without a trust anchor, 3 when the check cannot run, 4 when it refuses to start).
+      # So the file cannot say more than the package does.
+      - name: The agent path in site/llms.txt, run as written, every exit code it states demonstrated
+        shell: bash
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d) && cd "$work"
+          python - "$GITHUB_WORKSPACE/site/llms.txt" <<'EOF'
+          import re, sys
+          text = open(sys.argv[1], encoding="utf-8").read()
+          section = text.split("## Verify a credential offline", 1)[1].split("\n## ", 1)[0]
+          assert "~~~" not in section and not re.search(r"(?m)^(?: {4}|\t)\S", section), "one fenced block, no other"
+          fenced = section.split("```")
+          assert len(fenced) == 3, "the section must hold exactly one command block"
+          block = fenced[1].split("\n", 1)[1]
+          prose = fenced[0] + fenced[2]
+          assert not re.search(r"polaris-verify\s+-", prose), "a command outside the block is not run here"
+          ok = re.search(r"It prints a JSON verdict and exits (\d)\.", prose)
+          bad = re.search(r"\(([^)]*)\) must exit (\d)\.", prose)
+          assert ok and bad, "the section must state the block's exit code and the tampered vectors' exit code"
+          names = re.findall(r"`([\w./-]+\.json)`", bad.group(1))
+          assert len(names) >= 3 and len(set(names)) == len(names), "three distinct tampered vectors: %r" % names
+          assert "Exit codes: 0 accepted, 2 not accepted (including an abstention without a trust anchor), " \
+                 "3 the check could not run, 4 refused to start." in " ".join(prose.split()), "the exit-code list"
+          open("agent-path.sh", "w", newline="\n").write(block)
+          open("tampered.txt", "w", newline="\n").write("\n".join(names) + "\n")
+          open("stated.sh", "w", newline="\n").write("OK_RC=%s\nBAD_RC=%s\n" % (ok.group(1), bad.group(2)))
+          EOF
+          . ./stated.sh
+          set +e
+          bash -euo pipefail agent-path.sh > out.txt
+          rc=$?
+          set -e
+          [ "$rc" = "$OK_RC" ] || { echo "::error::the command block exited $rc; site/llms.txt says $OK_RC"; exit 1; }
+          python - <<'EOF'
+          import json
+          lines = open("out.txt").read().splitlines()
+          start = max(i for i, line in enumerate(lines) if line.strip() == "{")
+          verdict = json.loads("\n".join(lines[start:]))
+          assert verdict["authenticity"] == "genuine" and verdict["issuer_trusted"] is True, verdict
+          print("ok: the command block's verdict is genuine and trusted")
+          EOF
+          r=https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main
+          while read -r t; do
+            curl -fsSLO "$r/vectors/$t"
+            set +e
+            polaris-verify --pqc-provider auto --issuer-anchor ml-dsa-65-issuer.json --pack "$t" --json > /dev/null
+            rc=$?
+            set -e
+            [ "$rc" = "$BAD_RC" ] || { echo "::error::$t exited $rc; site/llms.txt says $BAD_RC"; exit 1; }
+            echo "ok: $t exited $rc"
+          done < tampered.txt
+          set +e
+          polaris-verify --pqc-provider auto --pack ml-dsa-65-valid.json --json > /dev/null; no_anchor=$?
+          polaris-verify --pqc-provider auto --issuer-anchor ml-dsa-65-issuer.json --pack absent.json --json > /dev/null; cannot_run=$?
+          polaris-verify --issuer-anchor ml-dsa-65-issuer.json --pack ml-dsa-65-valid.json --json > /dev/null; refused=$?
+          set -e
+          [ "$no_anchor/$cannot_run/$refused" = "2/3/4" ] \
+            || { echo "::error::no anchor, unreadable input, no cryptography exited $no_anchor/$cannot_run/$refused; site/llms.txt says 2/3/4"; exit 1; }
+          echo "ok: no anchor 2, unreadable input 3, no cryptography named 4"
 
   oid4vp:
     name: polaris-oid4vp (${{ matrix.os }}, py${{ matrix.python }})

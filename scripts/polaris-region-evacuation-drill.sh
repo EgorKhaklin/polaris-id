@@ -62,7 +62,7 @@ CURL_IMAGE="curlimages/curl@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34
 diagnose() {
     echo "--- diagnostics ---" >&2
     echo "[dr] /cluster: $(docker exec "$DR" wget -qO- http://127.0.0.1:8008/cluster 2>/dev/null || echo unreachable)" >&2
-    echo "[dr] last 40 log lines:" >&2; docker logs --tail 40 "$DR" 2>&1 | sed 's/^/    /' >&2
+    echo "[dr] last 40 log lines:" >&2; { docker logs --tail 40 "$DR" 2>&1 || true; } | sed 's/^/    /' >&2
     for c in "${REGION_A[@]}"; do
         echo "[$c] $(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo absent)" >&2
     done
@@ -84,6 +84,9 @@ psql_b() { docker exec -e PGPASSWORD="$PW" "$DR" psql -U postgres -d polaris -qt
 role_b() { docker exec "$DR" wget -qO- http://127.0.0.1:8008/cluster 2>/dev/null \
     | python3 -c "import json,sys;d=json.load(sys.stdin);print(d['members'][0].get('role','?'))" 2>/dev/null || echo unknown; }
 
+# compose up --build below builds the host's production tags: one build or deploy at a time.
+source "${ROOT}/scripts/polaris-host-lock.sh"
+polaris_host_lock "the region evacuation drill"
 echo "=== region evacuation: an async standby region, promoted and measured ==="
 echo
 

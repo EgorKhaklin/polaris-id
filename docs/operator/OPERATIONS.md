@@ -85,7 +85,7 @@ below.
 | `app` | `polaris-app:prod` (built from `Dockerfile.prod`) | Flask + gunicorn (`WEB_CONCURRENCY`, default 4) | 8000 |
 | `pgbouncer` | `polaris-pgbouncer:prod` (built from `Dockerfile.pgbouncer`) | Session-mode connection pool in front of Postgres (transaction mode is refused: it would hand one request's operator scope to the next) | 6432 |
 | `postgres` | `polaris-postgres:prod` (built from `Dockerfile.postgres`: `postgres:16-alpine` plus pgBackRest) | Database | 5432 |
-| `redis` | `redis:7-alpine` (digest-pinned) | Rate-limiter backend | 6379 |
+| `redis` | `redis:8-alpine` (digest-pinned) | Rate-limiter backend | 6379 |
 
 Volumes:
 - `pg_data` (named): Postgres data
@@ -118,7 +118,7 @@ Volumes:
 | Anchor the transparency logs in Bitcoin | Daily, or at the cadence you choose | `./scripts/polaris-chain-anchor.py checkpoint`, `ots stamp`, later `ots upgrade`, `verify`, `polaris-id anchor-record`; see [Anchoring the logs in Bitcoin](#anchoring-the-logs-in-bitcoin) |
 | Certificate transparency check | Daily (cron) | `./scripts/polaris-ct-monitor.sh`: alerts on unexpected cert issuance for `${POLARIS_DOMAIN}`; see [Certificate transparency monitoring](#certificate-transparency-monitoring) |
 | Audit-log rotation | Yearly (cron) | `./scripts/polaris-rotate-logs.sh --actor-user-id=N`: archive from the retention policy, verify, purge, in one cron-ready pipeline (`--cutoff-days` overrides the policy with one fixed cutoff) |
-| Operator onboarding | As needed | `./scripts/polaris-create-operator.sh --username NAME --role admin\|operator\|auditor --password-file PATH`: scrypt-hashed AppUser + AuthAuditLog entry |
+| Operator onboarding | As needed | `./scripts/polaris-create-operator.sh --username NAME --role admin\|operator\|auditor --password-file PATH --reason TEXT`: scrypt-hashed AppUser + AuthAuditLog entry |
 | Scrape `/metrics` | Continuous (Prometheus) | `curl http://app:8000/metrics` from the stack network: Prometheus text-format exposition; see [Prometheus metrics](#prometheus-metrics-metrics) for the required edge ACL |
 | Rotate `POLARIS_SECRET_KEY` | 180 days | `./scripts/polaris-rotate-secret.sh polaris_secret_key` |
 | Rotate DB password | 180 days | `./scripts/polaris-rotate-secret.sh polaris_db_password` |
@@ -632,7 +632,7 @@ Exit codes (greppable for incident response):
 | 7 | `pg_restore` failed (state may be partial) |
 | 8 | Filesystem audit-of-record restore failed |
 | 9 | `docker` not available (when `--target=docker-stack`) |
-| 10 | `schema_version` diverges from `migrations/` (`--verify-schema-version`) |
+| 10 | `schema_version` diverges from `migrations/`, or cannot be read (`--verify-schema-version`) |
 
 After restore:
 
@@ -1263,6 +1263,11 @@ polaris-id rp-history <client_id>              # every decision, and who made it
 polaris-id rp-history --weakened-only          # only the bars that were lowered
 ```
 
+On the Docker stack the database answers only on the stack's network, so
+[`scripts/polaris-rp-register.sh`](../../scripts/polaris-rp-register.sh) runs `rp-register`'s
+statements as the schema owner through the postgres container, with the same options; `rp-policy`
+and `rp-history` still need a connection as the schema owner.
+
 A change that REDUCES what the party must satisfy (the zero-knowledge step-up turned
 off, a required enrollment dropped, the context restriction lifted, the scope widened,
 the credential re-enabled, the rate limit raised) is refused by the DATABASE without a
@@ -1686,14 +1691,59 @@ docker compose -f polaris_web/docker-compose.prod.yml down
 
 # 3. Change the FROM line in polaris_web/Dockerfile.postgres to the new major
 
-# 4. Retire the old data volume (the backup from step 1 is the only copy now).
-#    The compose project prefixes the volume name, so look it up.
-docker volume rm "$(docker volume ls -q | grep pg_data)"
+# 4. Set the old cluster aside, keeping it until step 6. Run this step once: it refuses when
+#    the copy already exists, because a second run would copy the new cluster over the only
+#    copy of the old one. The volume is found by its compose labels, as polaris-deploy.sh
+#    finds its project; a name match can pick another stack's volume on the same host.
+P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config --no-interpolate | sed -n 's/^name: //p' | head -n1)
+V=$(docker volume ls -q --filter "label=com.docker.compose.project=$P" \
+      --filter label=com.docker.compose.volume=pg_data)
+if [ -z "$P" ]; then
+  echo "docker compose config failed: run this from the repository root, and check the compose file parses. Stop here."
+elif [ "$(printf '%s\n' "$V" | grep -c .)" -ne 1 ]; then
+  echo "expected one pg_data volume in project '$P', found: '$V'. Stop here."
+elif docker volume inspect "${V}_old" >/dev/null 2>&1; then
+  echo "${V}_old already exists (step 4 ran before, or an earlier upgrade left it). Stop here."
+else
+  docker volume create "${V}_old" &&
+  docker run --rm -v "$V:/from:ro" -v "${V}_old:/to" \
+    alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
+    cp -a /from/. /to/ &&
+  docker volume rm "$V"
+fi
 
 # 5. Rebuild and bring the stack up on an empty cluster, then restore into it
 ./scripts/polaris-deploy.sh prod --no-pull
 ./scripts/polaris-restore.sh /var/backups/polaris/<step-1 tarball> \
     --target=docker-stack --force --verify-schema-version
+
+# 6. Only once step 5 printed "schema_version table matches migrations/ on disk" and the
+#    stack serves, delete the old cluster's copy. The names are looked up again, without
+#    needing the deploy's variables, so a new shell works; compose names the volume <project>_pg_data.
+P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config --no-interpolate | sed -n 's/^name: //p' | head -n1)
+if [ -n "$P" ]; then docker volume rm "${P}_pg_data_old"
+else echo "docker compose config failed: run this from the repository root, and check the compose file parses."; fi
+```
+
+Until step 6, `<project>_pg_data_old` holds the old major's cluster untouched. To go back,
+restore the `FROM` line, then put the copy back into the cluster's volume (created with
+compose's labels if step 5 never made it) and redeploy. A new shell works here too:
+
+```bash
+P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config --no-interpolate | sed -n 's/^name: //p' | head -n1)
+V="${P}_pg_data"
+if [ -z "$P" ] || ! docker volume inspect "${V}_old" >/dev/null 2>&1; then
+  echo "docker compose config failed (run from the repository root, check the compose file parses), or no ${V}_old to roll back to. Stop here."
+else
+  docker compose -f polaris_web/docker-compose.prod.yml down
+  docker volume inspect "$V" >/dev/null 2>&1 ||
+    docker volume create --label com.docker.compose.project="$P" \
+      --label com.docker.compose.volume=pg_data "$V"
+  docker run --rm -v "${V}_old:/from:ro" -v "$V:/to" \
+    alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
+    sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'
+  ./scripts/polaris-deploy.sh prod --no-pull
+fi
 ```
 
 If continuous WAL archiving is enabled, run the stanza upgrade before the

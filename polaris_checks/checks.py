@@ -59,24 +59,61 @@ _COMMENT_SYNTAX = {
 }
 
 
+_GO_TEMPLATE_COMMENT = re.compile(r"\{\{-?\s*/\*.*?\*/\s*-?\}\}", re.S)
+
+
+def _python_comment_columns(text: str) -> dict[int, list[tuple[int, int]]] | None:
+    """{line index: the (start, end) columns of its comments}, from Python's own tokenizer; None when
+    the text does not tokenize. A line scanner cannot know it is inside a triple-quoted string:
+    a docstring line that named "review of #318" before its closing quotes lost them to it, and
+    four files of the tree, checks.py and custody.py among them, no longer parsed as their checks
+    read them (2026-10-09), so a check walking their syntax tree saw nothing there. A comment ends at
+    a lone carriage return, which Python reads as a line break, so the code after one is kept."""
+    columns: dict[int, list[tuple[int, int]]] = {}
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.COMMENT:
+                columns.setdefault(tok.start[0] - 1, []).append((tok.start[1], tok.end[1]))
+    except (tokenize.TokenError, SyntaxError):
+        return None
+    return columns
+
+
 def _strip_comments_for(rel: str, text: str) -> str:
     """Blank out comment bodies while keeping line numbers and string literals intact.
 
     Only whole-line comments and trailing comments outside quotes are removed, so a
     `#` inside a string stays. Lines are kept (blanked, not deleted) so anything that
-    reports a line number still reports the right one.
+    reports a line number still reports the right one. Python is cut where its own
+    tokenizer says a comment starts, so a `#` inside a multi-line string stays too.
     """
     suffix = pathlib.PurePosixPath(rel).suffix
+    if suffix in (".yaml", ".yml", ".tpl") or rel.endswith("NOTES.txt"):
+        # A Helm template's own comment, `{{/* ... */}}`: an include or a lookup moved into one is
+        # gone from the render, so it is gone from the check's view. Its newlines stay.
+        text = _GO_TEMPLATE_COMMENT.sub(lambda m: "\n" * m.group(0).count("\n"), text)
     marker = _COMMENT_SYNTAX.get(suffix)
     if not marker:
         return text
     _needs_space = suffix in (".yml", ".yaml", ".sh", ".toml", ".cfg")
+    py_columns = _python_comment_columns(text) if suffix == ".py" else None
     out = []
     for lineno, line in enumerate(text.split("\n")):
         # A shebang is not a comment. Blanking it breaks anything that reads what
         # follows it -- cli_help looks for the module docstring after the `#!` line.
         if lineno == 0 and line.startswith("#!"):
             out.append(line)
+            continue
+        if py_columns is not None:
+            spans = py_columns.get(lineno)
+            if not spans:
+                out.append(line)
+                continue
+            kept = line
+            for start, end in sorted(spans, reverse=True):
+                tail = kept[end:]
+                kept = kept[:start].rstrip() + (tail if tail.strip() else "")
+            out.append(kept if kept else (marker if line.strip() else line))
             continue
         quote = None
         cut = None
@@ -1791,19 +1828,87 @@ def check_prod_real_pqc(root: pathlib.Path) -> list[Finding]:
 # this needs a DB-backed test, not just this static check.) The grant boundary
 # already stops DDL; this stops DML smuggled through the console.
 # ---------------------------------------------------------------------------
+def _sql_console_readonly_problem(fn: ast.FunctionDef) -> str | None:
+    """Why sql_query does not set its connection read-only before its first statement, or None.
+
+    Read from the syntax tree, statements that run only (a branch on a constant false, a nested
+    function and a string are not code that runs): a connection opened with `.connect(...)`, made
+    read-only by `set_session(readonly=True)` or `.readonly = True`, the cursor the query runs on
+    taken from that same connection, and the read-only statement before the first `.execute(`.
+    (2026-10-09: the check matched the call's name in the handler's docstring and passed with the
+    call deleted; a regex then still passed it in a string, under `if False:` and on another
+    connection.)"""
+    stmts: list[ast.stmt] = []
+
+    def walk(body):
+        for s in body:
+            if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(s, (ast.If, ast.While)) and isinstance(s.test, ast.Constant):
+                walk(s.body if s.test.value else s.orelse)
+                continue
+            stmts.append(s)
+            for field in ("body", "orelse", "finalbody", "handlers"):
+                walk(getattr(s, field, []) or [])
+
+    walk(fn.body)
+    connections, readonly, cursors, executes = set(), [], set(), []
+    for s in stmts:
+        if isinstance(s, ast.Assign) and isinstance(s.value, ast.Call) and \
+                isinstance(s.value.func, ast.Attribute) and s.value.func.attr == "connect":
+            connections |= {t.id for t in s.targets if isinstance(t, ast.Name)}
+        if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call) and isinstance(s.value.func, ast.Attribute) \
+                and s.value.func.attr == "set_session" and isinstance(s.value.func.value, ast.Name) and any(
+                    k.arg == "readonly" and isinstance(k.value, ast.Constant) and k.value.value is True
+                    for k in s.value.keywords):
+            readonly.append((s.value.func.value.id, s.lineno))
+        if isinstance(s, ast.Assign) and isinstance(s.value, ast.Constant) and s.value.value is True and any(
+                isinstance(t, ast.Attribute) and t.attr == "readonly" and isinstance(t.value, ast.Name)
+                for t in s.targets):
+            readonly += [(t.value.id, s.lineno) for t in s.targets if isinstance(t, ast.Attribute)]
+        heads = [s] if not isinstance(s, (ast.With, ast.For, ast.While, ast.If, ast.Try)) else \
+            [*getattr(s, "items", []), getattr(s, "test", None), getattr(s, "iter", None)]
+        for head in [h for h in heads if h is not None]:
+            for node in ast.walk(head):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                    if node.func.attr == "cursor" and isinstance(node.func.value, ast.Name):
+                        cursors.add(node.func.value.id)
+                    if node.func.attr == "execute":
+                        executes.append(node.lineno)
+    first_execute = min(executes) if executes else None
+    ok = [(name, line) for name, line in readonly if name in connections and name in cursors]
+    if not ok:
+        return ("no statement that runs makes the connection the query's cursor comes from read-only "
+                "(conn = psycopg2.connect(...); conn.set_session(readonly=True); conn.cursor())")
+    if first_execute is not None and min(line for _, line in ok) > first_execute:
+        return "the connection is made read-only only after the first execute, which has already opened a transaction"
+    return None
+
+
 def check_sql_console_readonly(root: pathlib.Path) -> list[Finding]:
-    app = _read_app(root)
-    if not app:
+    web = root / "polaris_web"
+    if not web.is_dir():
         return _fail("sql_console_ro", "polaris_web/ is missing")
-    m = re.search(r"def sql_query\(.*?\n(?=@app\.route|def [a-z])", app, re.S)
-    body = m.group(0) if m else ""
-    if not body:
+    fn = None
+    for path in sorted(web.glob("*.py")):
+        if path.name.startswith("test_"):
+            continue
+        raw = path.read_text(errors="replace")
+        if "def sql_query(" not in raw:
+            continue
+        try:
+            tree = ast.parse(raw)
+        except SyntaxError:
+            return _fail("sql_console_ro", f"{path.name} defines sql_query but does not parse")
+        fn = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "sql_query"), fn)
+    if fn is None:
         return _fail("sql_console_ro", "could not locate the sql_query console handler")
-    if not re.search(r"set_session\(\s*readonly\s*=\s*True", body):
+    problem = _sql_console_readonly_problem(fn)
+    if problem:
         return _fail("sql_console_ro",
-                     "the /sql console must call conn.set_session(readonly=True) before any "
-                     "statement so the database refuses writes — the SELECT/WITH keyword "
-                     "whitelist alone is bypassable by a data-modifying CTE")
+                     "the /sql console must make its connection read-only before any statement so the database "
+                     "refuses writes (the SELECT/WITH keyword whitelist alone is bypassable by a data-modifying "
+                     "CTE): " + problem)
     return _ok("sql_console_ro",
                "the /sql console sets the session READ ONLY at the DB level "
                "(CTE-smuggled writes are refused by Postgres, not just the keyword gate)")
@@ -2748,8 +2853,12 @@ def check_read_only_roots(root: pathlib.Path) -> list[Finding]:
     if not ro or not re.search(r"(?m)^readOnlyRootFilesystem: true$", ro.group(0)):
         problems.append("the chart's polaris.containerSecurityReadOnly must set readOnlyRootFilesystem: true")
     for svc in READ_ONLY_SERVICES:
-        if 'include "polaris.containerSecurityReadOnly"' not in _read(root, f"deploy/helm/polaris/templates/{svc}.yaml"):
-            problems.append(f"the chart's {svc} container is not read-only")
+        # Every container in the pod, not one of them (G5 put the edge's tls-reload beside caddy).
+        text = _read(root, f"deploy/helm/polaris/templates/{svc}.yaml")
+        # Block (`image:`, `- image:`) and flow (`- {name: x, image: y}`) forms alike.
+        images = len(re.findall(r"(?m)(?:^\s+(?:-\s+)?|[{,]\s*)image:\s", text))
+        if text.count('include "polaris.containerSecurityReadOnly"') < max(images, 1):
+            problems.append(f"the chart's {svc} pod runs a container that is not read-only")
     drill = _read(root, "lab/strategy/006/posture.sh")
     for needle, what in (("{{.HostConfig.ReadonlyRootfs}}", "Docker's own answer"),
                          ("*\"Read-only file system\"*", "a refused write to /"),
@@ -6577,12 +6686,26 @@ _SYNC_REPLICATION_NEEDLES = (
     ("deploy/helm/polaris/templates/postgres.yaml", "POLARIS_PATRONI_SYNCHRONOUS_MODE",
      "pass the chart's setting to its members"),
     ("scripts/polaris-failover-drill.sh", ".get('synchronous_mode')", "read the mode from the cluster"),
+    ("scripts/polaris-failover-drill.sh", '[[ -z "$EXPECT_SYNC" || "$SYNC" == "$EXPECT_SYNC" ]] \\\n'
+     '    || fail "synchronous_mode is $SYNC', "fail when the cluster's mode is not the one the run expects"),
+    (".github/workflows/ci.yml", 'POLARIS_FAILOVER_EXPECT_SYNC: "on"\n        run: bash scripts/polaris-failover-drill.sh',
+     "run the drill CI holds gate row OP-6 to with synchronous_mode required"),
     ("scripts/polaris-failover-drill.sh", "with synchronous_mode on, a failover must lose none",
      "fail on an acknowledged insert lost with synchronous_mode on"),
     ("scripts/polaris-failover-drill.sh", 'wait_for 60 sync_standby_is "$r" "$l"',
      "start each scenario with the replica as the synchronous standby"),
     ("scripts/polaris-failover-drill.sh", '== 5. the replica ($R5) is lost',
      "drill the replica's loss, where synchronous replication costs a stall"),
+    ("scripts/polaris-failover-drill.sh", 'missing_on "$leader" "$WORK/acked.now"',
+     "compare acknowledged inserts by identity, read before the leader is asked, not two totals taken apart"),
+    ("scripts/polaris-failover-drill.sh", 'acked.write(token + "\\n")',
+     "record each insert's token once the database acknowledged it"),
+    ("scripts/polaris-failover-drill.sh", 'early=$(head -n "$floor" "$WORK/acked.now"',
+     "fail on any insert acknowledged before the failure began that the leader lacks"),
+    ("scripts/polaris-failover-drill.sh", '[[ "$acked" -gt 0 && "$acked" -ge "$floor" ]]',
+     "refuse an empty or short acknowledged set, which would measure nothing"),
+    ("scripts/polaris-failover-drill.sh", '[[ -z "$(tail -c1 "$2")" ]] || echo; echo',
+     "end the tokens with a newline, or COPY reads its terminator and the query as data and reports none missing"),
     ("docs/design/synchronous-replication.md", "## What it costs", "record the price"),
 )
 
@@ -6820,6 +6943,243 @@ def check_secrets_reach_only_their_readers(root: pathlib.Path) -> list[Finding]:
                "prod-stack job prove it on the live stacks")
 
 
+#: The scripts that must read the unit's configuration: every operator script that drives the
+#: production compose file, and the secrets wrapper, which reads the backend from it.
+_OPERATOR_ENV_EXTRA = ("scripts/polaris-secrets.sh",)
+# Harnesses that build a stack of their own, under their own compose project, as the drills do: run by
+# hand on a production host they must not take its configuration either.
+_OWN_STACK_HARNESSES = ("scripts/polaris-throughput-measure.sh",)
+#: The ones that resolve the secrets directory, and so must take it from polaris_secrets_dir.
+_OPERATOR_SECRETS_DIR_USERS = ("scripts/polaris-deploy.sh", "scripts/polaris-rotate-secret.sh",
+                               "scripts/polaris-secrets.sh", "scripts/polaris-doctor.sh")
+_SOURCES_OPERATOR_ENV = re.compile(r'(?m)^\s*(?:source|\.)\s+"[^"\n]*/polaris-env\.sh"\s*$')
+
+
+def _code_lines(text: str) -> list[str]:
+    return [l for l in text.splitlines() if not l.lstrip().startswith("#")]
+
+
+# 2026-10-08 (lab record 017, gate rows OP-9 and OP-19): on a systemd host polaris.service reads
+# /etc/polaris/polaris.env, and a script run by hand read only its caller's shell. `sudo`, which
+# resets the environment, left it without POLARIS_DOMAIN, so docker-compose.prod.yml refused to
+# load and the documented upgrade, rotation and first operator account all failed; a domain
+# exported alone gave a deploy that recreated the stack without the rest of polaris.env. And
+# polaris.service runs compose with POLARIS_SECRETS_DIR alone, so on a sealed host with that
+# variable empty (as SECRETS.md said to leave it) a deploy worked, because it supplied a default,
+# and the next start read the shredded plaintext directory.
+def check_operator_scripts_read_the_unit_env(root: pathlib.Path) -> list[Finding]:
+    """Pins scripts/polaris-env.sh and its use. The loader parses the unit's EnvironmentFile (it never
+    sources or evaluates it: systemd takes an unquoted value with spaces, which a shell would run as a
+    command), only for the checkout the unit runs, and lets a variable the caller set win;
+    polaris_secrets_dir refuses a sealed backend with no directory. Every scripts/polaris-*.sh that
+    drives docker-compose.prod.yml, and the secrets wrapper, sources it before it reads its
+    configuration or calls compose; no drill, and no harness that builds a stack of its own, does (run
+    by hand on a production host it must not pick up that host's configuration). Deploy, rotation, the secrets wrapper and the doctor take the directory
+    from polaris_secrets_dir and default it nowhere. The linux-install job runs the documented commands
+    with sudo and asserts the refusal on a sealed host."""
+    name = "operator_env"
+    helper = _read(root, "scripts/polaris-env.sh")
+    if not helper:
+        return _fail(name, "scripts/polaris-env.sh, the loader the operator scripts source, is missing")
+    code = "\n".join(_code_lines(helper))
+    if re.search(r"(?m)^\s*(?:source|\.)\s|\beval\b|\bset\s+-a\b", code):
+        return _fail(name, "scripts/polaris-env.sh must parse polaris.env, never source or eval it: systemd "
+                           "accepts `POLARIS_COMPOSE_EXTRA=-f x.yml` unquoted, and a shell runs that as a command")
+    for needle, why in (("EnvironmentFiles", "read the EnvironmentFile polaris.service itself names"),
+                        ("WorkingDirectory", "read it only when the unit runs this checkout"),
+                        ("${!key+x}", "let a variable the caller set win over the file")):
+        if needle not in code:
+            return _fail(name, f"scripts/polaris-env.sh must {why} ({needle!r} is gone)")
+    fn = re.search(r"(?ms)^polaris_secrets_dir\(\)\s*\{(.*?)^\}", code)
+    if not fn or not re.search(r'-z "\$\{POLARIS_SECRETS_DIR:-\}"[^\n]*\n(?:[^\n]*\n){0,6}?\s*return 1', fn.group(1)):
+        return _fail(name, "polaris_secrets_dir must refuse (return 1) a sealed backend with POLARIS_SECRETS_DIR "
+                           "empty: polaris.service runs compose with that variable alone")
+    problems = []
+    candidates = sorted(set(str(f.relative_to(root)) for f in (root / "scripts").glob("polaris-*.sh"))
+                        | set(_OPERATOR_ENV_EXTRA))
+    for rel in candidates:
+        if rel == "scripts/polaris-env.sh":
+            continue
+        text = _read(root, rel)
+        if not text:
+            continue
+        lines = _code_lines(text)
+        body = "\n".join(lines)
+        sources = _SOURCES_OPERATOR_ENV.search(body)
+        if rel.endswith("-drill.sh") or rel in _OWN_STACK_HARNESSES:
+            if sources:
+                problems.append(f"{rel} builds a stack of its own and sources polaris-env.sh: run by hand on a "
+                                "production host it would take that host's configuration")
+            continue
+        if "docker-compose.prod.yml" not in body and rel not in _OPERATOR_ENV_EXTRA:
+            continue
+        if not sources:
+            problems.append(f"{rel} drives the production stack without sourcing scripts/polaris-env.sh")
+            continue
+        at = body[:sources.start()].count("\n")
+        first = next((i for i, l in enumerate(lines)
+                      if re.search(r"POLARIS_COMPOSE_EXTRA|POLARIS_SECRETS_|POLARIS_DOMAIN|docker compose", l)), None)
+        if first is not None and first < at:
+            problems.append(f"{rel} reads its configuration (line {first + 1} of its code) before it sources "
+                            "polaris-env.sh")
+        # The overlays polaris.env names are relative to polaris_web, where polaris.service runs compose:
+        # passed to compose run from anywhere else, `-f docker-compose.citest.yml` is not found and a
+        # running stack reads as stopped (#311's first CI run: the rotation refused, "not running").
+        for line in lines:
+            if "docker compose" in line and "COMPOSE_EXTRA" in line and "polaris_web" not in line:
+                problems.append(f"{rel} passes polaris.env's overlays to compose run outside polaris_web: "
+                                "an overlay is relative to it (`cd .../polaris_web` first, as the unit does)")
+                break
+    # An image that ships an operator script ships the loader it sources: the Helm migration Job runs
+    # polaris-migrate.sh from the postgres image, and without the loader it stopped at `source`.
+    # And the build context holds each of them: .dockerignore drops scripts/ and lets back in only what
+    # it names, so a COPY of a script it does not name fails the build (#311's second run, every image).
+    ignore = [ln.strip() for ln in _read(root, ".dockerignore").splitlines()]
+    for dockerfile in sorted((root / "polaris_web").glob("Dockerfile*")):
+        text = dockerfile.read_text()
+        copied_all = re.findall(r"(?m)^COPY\b[^\n]*\bscripts/(polaris-[\w-]+\.sh)\b", text)
+        for copied in copied_all:
+            script = "\n".join(_code_lines(_read(root, "scripts/" + copied)))
+            if _SOURCES_OPERATOR_ENV.search(script) and "polaris-env.sh" not in copied_all:
+                problems.append(f"{dockerfile.relative_to(root)} copies scripts/{copied}, which sources polaris-env.sh, "
+                                "and not the loader")
+            if "scripts/" in ignore and f"!scripts/{copied}" not in ignore:
+                problems.append(f"{dockerfile.relative_to(root)} copies scripts/{copied}, which .dockerignore keeps out "
+                                "of the build context (add !scripts/" + copied + ")")
+    for rel in _OPERATOR_SECRETS_DIR_USERS:
+        body = "\n".join(_code_lines(_read(root, rel)))
+        if "polaris_secrets_dir" not in body:
+            problems.append(f"{rel} must take the secrets directory from polaris_secrets_dir")
+        if "POLARIS_SECRETS_DIR:-" in body:
+            problems.append(f"{rel} defaults POLARIS_SECRETS_DIR itself; polaris.service never would")
+    ci = _read(root, ".github/workflows/ci.yml")
+    job = ci[ci.find("  linux-install:"):] if "  linux-install:" in ci else ""
+    job = job[:job.find("\n  # ----", 1)] if "\n  # ----" in job else job
+    for needle, why in (("sudo scripts/polaris-deploy.sh prod", "run the documented upgrade with sudo"),
+                        ("sudo scripts/polaris-create-operator.sh", "create the first account with sudo"),
+                        ("needs POLARIS_SECRETS_DIR", "assert the refusal of a sealed store with no directory"),
+                        ("umount /run/polaris/secrets", "start the unit again once the tmpfs is gone")):
+        if needle not in job:
+            problems.append(f"the linux-install job must {why} ({needle!r})")
+    envx = _read(root, "deploy/linux/polaris.env.example")
+    sec = _read(root, "docs/operator/SECRETS.md")
+    if "POLARIS_SECRETS_DIR=/run/polaris/secrets" not in envx or "POLARIS_SECRETS_DIR=/run/polaris/secrets" not in sec:
+        problems.append("polaris.env.example and SECRETS.md must tell a sealed install to set "
+                        "POLARIS_SECRETS_DIR=/run/polaris/secrets")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + (f" (and {len(problems) - 4} more)" if len(problems) > 4 else ""))
+    return _ok(name, "every operator script that drives the production stack reads polaris.env as the unit does "
+                     "(parsed, never run; the caller's values win; no drill does), a sealed store without "
+                     "POLARIS_SECRETS_DIR is refused everywhere, and the linux-install job runs the documented "
+                     "commands with sudo and the sealed start, refusal included")
+
+
+# 2026-10-08 (lab record 017, gate row OP-2): a fresh install's relying-party API refused its own
+# credentials. Under real signing every possession route accepts a signature only under a key its
+# authority had registered, and no install path registered one or said to: the install, the
+# deploy, LINUX-SERVER.md and the one-command path never routed there, and on the Docker stack the
+# documented `polaris rp-register` could not reach the database as its owner.
+_FRESH_HOST_NEEDLES = (
+    ("polaris_web/custody.py", "def public_key_hex(", "custody must say the public key it signs with"),
+    ("polaris_web/custody.py", 'sub.add_parser("public-key"', "custody must offer `public-key` on its command line"),
+    ("scripts/polaris-key-event.sh", '"$3" == "--current"', "the key event script must take --current"),
+    ("scripts/polaris-key-event.sh", "custody.py public-key --agency", "--current must read the key from the app's custody"),
+    ("scripts/polaris-key-event.sh", "| tail -n 1 |", "--current must take only the key's line (a banner is not the key)"),
+    ("scripts/polaris-key-event.sh", "already registered and active; nothing to do", "--current must leave an active key alone"),
+    ("scripts/polaris-key-event.sh", "Registering it would be a rotation", "--current must refuse to rotate"),
+    ("scripts/polaris-key-event.sh", "WHERE agency_id = :agency FOR UPDATE \\gset",
+     "every key event must hold the agency's row, so a --current and a ceremony cannot interleave"),
+    ("scripts/polaris-key-event.sh", "WHEN :'first' = '1' AND EXISTS (SELECT 1 FROM AuthorityKeyEvent WHERE agency_id = :agency\n",
+     "--current must register an authority's first key only, decided inside its transaction"),
+    ("scripts/polaris-key-event.sh", "min(GREATEST(s.signed_at,",
+     "--current must date a first key by the instant the routes judge, so an old credential cannot date it"),
+    ("scripts/polaris-key-event.sh", "an ended key is never registered again",
+     "no path may register a retired or compromised key again"),
+    ("scripts/polaris-key-event.sh", "COALESCE(NULLIF(:'eff', '')::timestamp, first_use.at, CURRENT_TIMESTAMP)",
+     "--current must register a first key from its first signature, so what it signed before verifies"),
+    ("scripts/polaris-key-register-check.sql", "OR k.registered_at > GREATEST(sig.issued_at, sig.signed_at)",
+     "the judgment must refuse a key unregistered when it signed, as every relying-party route does"),
+    ("scripts/polaris-doctor.sh", "a key nobody minted was planted, never register it",
+     "the doctor must never steer an operator into registering a planted key"),
+    ("scripts/polaris-doctor.sh", 'warn "re-issue"', "the doctor must say what no registration can fix"),
+    ("scripts/polaris-rp-register.sh", "sys.stdin.read()", "the relying party's secret must reach the hash on stdin"),
+    ("scripts/polaris-rp-register.sh", "polaris.justification", "a relying party's registration must record its reason"),
+    ("deploy/linux/install.sh", "polaris-key-event.sh register 1 --current", "install.sh must name the key registration"),
+    ("deploy/linux/install.sh", "polaris-create-operator.sh --username NAME --role admin", "install.sh must name the first administrator"),
+    ("lab/strategy/006/try.sh", "polaris-key-event.sh register 1 --current", "the one-command path must say how to verify online"),
+    ("lab/strategy/006/rotate.sh", "key_event register 1 --current", "the one-command drill must register through --current"),
+    ("scripts/polaris-deploy.sh", "polaris-key-event.sh register ${agency} --current", "a deploy must name the registration an issuing authority lacks"),
+    ("scripts/polaris-doctor.sh", "register <agency> --current", "the doctor must name the command that fixes its key-register failure"),
+    ("scripts/polaris-doctor.sh", '< "${SCRIPT_DIR}/polaris-key-register-check.sql"',
+     "the doctor must judge credentials by the key that signed them"),
+    ("scripts/polaris-deploy.sh", '< "${SCRIPT_DIR}/polaris-key-register-check.sql"',
+     "a deploy must judge the register as the doctor does"),
+    ("lab/strategy/006/rotate.sh", "issued by try.sh before K1 was registered",
+     "the one-command drill must show a credential issued before the registration verifying after it"),
+    ("polaris_web/test_app.py", "def test_the_doctors_judgment_is_the_routes_signature_by_signature(",
+     "the judgment must be held to _issuer_key_facts, signature by signature"),
+    ("docs/operator/LINUX-SERVER.md", "## After the install", "LINUX-SERVER.md must say what follows the install"),
+    ("docs/operator/LINUX-SERVER.md", "sudo scripts/polaris-key-event.sh register 1 --current", "LINUX-SERVER.md must give the registration"),
+    ("docs/operator/DEPLOYMENT.md", "polaris-rp-register.sh", "DEPLOYMENT.md must say how a relying party is registered on the stack"),
+)
+_FRESH_HOST_CI = (
+    ("sudo scripts/polaris-key-event.sh register 1 --current", "take the registration as the operator would"),
+    ("already registered", "show that a second registration is a no-op"),
+    ("/api/v1/trust-list/1", "read the key back from the published trust list"),
+    ("sudo scripts/polaris-rp-register.sh", "register the relying party as the operator would"),
+    ('v.get("decision") == "accept"', "require the relying party's online verification to accept"),
+    ("operator inputs 5 to the offline verification", "report the operator's inputs"),
+    ("/tmp/op2-venv/bin/polaris-verify --pqc-provider auto --issuer-anchor /tmp/op2-anchors.json --pack /tmp/op2-pack.json \\\n"
+     '            || { echo "::error::polaris-verify from PyPI did not verify', "verify the credential offline with "
+     "polaris-verify from PyPI, and fail when it does not"),
+    ('[ "$total" -le 900 ] \\\n            || { echo "::error::gate row OP-2',
+     "fail past the 15 minutes gate row OP-2 allows, not only print the time"),
+    ("/tmp/op2-install-start", "time the fresh host from the install"),
+    ("set -o pipefail\n          date +%s > /tmp/op2-install-start", "fail when install.sh fails, not when tee does"),
+    ("no authority key is registered yet", "show the doctor asking for the registration on a fresh host"),
+    ('grep -q "  ok    key register "', "show the doctor reading the register clean after the registration"),
+    ('echo "::add-mask::$secret"', "keep the relying party's secret out of the log"),
+)
+
+
+def check_fresh_host_reaches_online_verification(root: pathlib.Path) -> list[Finding]:
+    """A fresh install ends one command away from relying parties accepting its credentials, and CI
+    walks that path. Custody says the key it signs with; `polaris-key-event.sh register AGENCY
+    --current` registers it as the authority's first key, from its first signature, and never
+    rotates, under the agency's row lock, and no path registers an ended key again;
+    `polaris-rp-register.sh` registers a relying party on the stack as the schema owner, the secret
+    on stdin; install.sh, a deploy and the doctor name the command, and the doctor and the deploy
+    judge credentials by the key that signed them (polaris-key-register-check.sql, held to
+    _issuer_key_facts by test_app); LINUX-SERVER.md and DEPLOYMENT.md give it. The linux-install
+    job's fresh-host drill (gate row OP-2) fails with install.sh, sees the doctor ask for the
+    registration, registers the key, reads it back from the trust list, issues through the console,
+    has polaris-verify from PyPI verify it offline and a relying party online with its secret kept out
+    of the log, sees the doctor read the register clean, reports the inputs and the time, and fails past
+    fifteen minutes; rotate.sh shows a credential issued before
+    the registration verifying after it."""
+    name = "fresh_host_verification"
+    problems = []
+    for rel, needle, why in _FRESH_HOST_NEEDLES:
+        text = _read(root, rel)
+        if not text:
+            problems.append(f"{rel} is missing")
+        elif needle not in text:
+            problems.append(f"{why} ({rel}: {needle!r} is gone)")
+    ci = _read(root, ".github/workflows/ci.yml")
+    job = ci[ci.find("  linux-install:"):] if "  linux-install:" in ci else ""
+    job = job[:job.find("\n  # ----", 1)] if "\n  # ----" in job else job
+    for needle, why in _FRESH_HOST_CI:
+        if needle not in job:
+            problems.append(f"the linux-install job must {why} ({needle!r})")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + (f" (and {len(problems) - 4} more)" if len(problems) > 4 else ""))
+    return _ok(name, "a fresh install ends one command from relying parties accepting its credentials: custody "
+                     "says its key, `register --current` registers the first key from its first signature and "
+                     "never rotates, relying parties register on the stack as the owner, install/deploy/doctor/docs "
+                     "name the step, the doctor judges credentials by their key, and the linux-install job walks "
+                     "it to an offline and an online accept, with the inputs listed and fifteen minutes enforced")
+
+
 # 2026-10-07 (lab record 017, phase 4b): rotating the session key logs nobody out. Before it,
 # every rotation ended every operator session, so a key was rotated rarely or never. The key a
 # rotation retires is kept in polaris_secret_key_fallbacks: Flask's SECRET_KEY_FALLBACKS verifies
@@ -6888,7 +7248,8 @@ def check_doctor_names_failures(root: pathlib.Path) -> list[Finding]:
               ("config_schema.py check --production", "the production configuration contract"),
               ("/api/health/live", "the TLS edge"),
               ("http://127.0.0.1:8000/api/health", "the app's own roll-up"),
-              ("AuthorityKeyCurrent", "the key register"))
+              ('< "${SCRIPT_DIR}/polaris-key-register-check.sql"', "the key register"),
+              ("printenv POLARIS_PGBACKREST_S3_BUCKET", "where the backup repository is (OP-14)"))
     missing = [what for needle, what in judges if needle not in doc]
     if missing:
         return _fail(name, "scripts/polaris-doctor.sh no longer judges " + ", ".join(missing))
@@ -6919,6 +7280,87 @@ def check_doctor_names_failures(root: pathlib.Path) -> list[Finding]:
                "the app's roll-up and the key register, and names the failing ones, the first one first; CI "
                "breaks Redis, PostgreSQL, a secret and a setting on the try.sh stack and requires "
                "each named first, and a clean bill after each repair")
+
+
+# 2026-10-08: an operator evaluates their own install with one command and keeps the
+# report. It is worth something only if it can fail, so CI runs it notional on the fresh host, then
+# grants the application a privilege the database withholds and stops the edge, and requires each run
+# to fail and name what broke. A report carries no secret and says what a run does not establish.
+_EVALUATE_NEEDLES = (
+    ("scripts/polaris-evaluate.sh", 'source "${SCRIPT_DIR}/polaris-env.sh"', "read the configuration polaris.service runs with"),
+    ("scripts/polaris-evaluate.py", 'os.path.join(ROOT, "scripts", "polaris-doctor.sh")', "run the doctor"),
+    ("scripts/polaris-evaluate.py", "athena_selftest.run(conn)", "run the database's self-test on the application's own connection"),
+    ("scripts/polaris-evaluate.py", 'web.call("/api/v1/trust-list/%d" % agency)', "compare the published key with the one custody signs with"),
+    ("scripts/polaris-evaluate.py", '"--only-binary", ":all:", "polaris-verify[cryptography]==" + version',
+     "install the verifier this release ships, pinned, from wheels"),
+    ("scripts/polaris-evaluate.py", 'tempfile.TemporaryDirectory(prefix="polaris-evaluate-")',
+     "keep the credential and its tampered copies out of the report directory"),
+    ("scripts/polaris-evaluate.py", '"--pqc-provider", "auto"', "verify offline with the detached verifier"),
+    ("scripts/polaris-evaluate.py", '"hash-as-signature"', "present a hash as a signature offline"),
+    ("scripts/polaris-evaluate.py", '"/api/v1/verify"', "verify online as a relying party"),
+    ("scripts/polaris-evaluate.py", '"cosigner_agency_id": str(args.witness_agency)', "revoke the notional credential, co-signed"),
+    ("scripts/polaris-evaluate.py", 're.search(r"/tokens/%d(?:$|[/?#])" % token_id, where)',
+     "count a revocation only when the form lands on that credential"),
+    ("scripts/polaris-evaluate.py", 'or "signature_valid" not in v', "count an offline refusal only when the verifier gave a verdict"),
+    ("scripts/polaris-evaluate.py", "except FileExistsError:", "refuse a report directory that already exists"),
+    ("scripts/polaris-evaluate.py", "def guarded(", "turn a probe that cannot run into a failure"),
+    ("scripts/polaris-evaluate.py", "def scrub(", "keep secrets out of the report"),
+    ("scripts/polaris-evaluate.py", "DOES_NOT_ESTABLISH = (", "say what a run does not establish"),
+    ("docs/operator/EVALUATE.md", "## What a run does not establish", "the operator's guide must say what a run does not establish"),
+)
+_EVALUATE_CI = (
+    ("sudo scripts/polaris-evaluate.sh --notional", "run a notional evaluation on the fresh host"),
+    ('"F.online.after-revoke"', "require the revoked credential refused online"),
+    ('short += ["%s=FAIL" % k for k, v in verdicts.items() if v == "FAIL" and k not in need]',
+     "fail on any FAIL row, not only the named ones"),
+    ('sys.exit("the notional evaluation did not pass: %s" % ", ".join(short) if short else 0)',
+     "fail the step when the notional evaluation did not pass"),
+    ('! sudo grep -rqF "$(cat /tmp/ci-operator.pw)" /tmp/eval-notional', "look for the operator's password in the report"),
+    ('|| { echo "::error::the evaluation report carries the operator\'s password"; exit 1; }',
+     "fail when the report holds the operator's password"),
+    ("GRANT INSERT ON DuressEvent TO polaris_app", "grant the application a privilege the database withholds"),
+    ('[ "$rc" = 1 ] && grep -q "failing: .*B.Privilege" /tmp/eval-granted.out',
+     "require the evaluation to exit 1 and name that privilege"),
+    ("sudo docker stop polaris-caddy", "stop the edge"),
+    ('[ "$rc" = 1 ] && grep -q "failing: .*A.doctor.edge" /tmp/eval-noedge.out && sudo test -s /tmp/eval-noedge/report.json',
+     "require the evaluation to exit 1, name the edge and still write its report"),
+)
+
+
+def check_evaluate_wired(root: pathlib.Path) -> list[Finding]:
+    """`scripts/polaris-evaluate.sh` judges the install it runs on: the doctor, the database's own
+    self-test on the application's connection, the published key against custody's, offline and
+    online verification with tampered copies refused, and (on notional data) a credential issued and
+    revoked. The linux-install job runs it notional and then with a rule and the edge broken under it."""
+    name = "evaluate_wired"
+    problems = []
+    for rel, needle, why in _EVALUATE_NEEDLES:
+        text = _read(root, rel)
+        if not text:
+            problems.append(f"{rel} is missing")
+        elif needle not in text:
+            problems.append(f"{why} ({rel}: {needle!r} is gone)")
+    ci = _read(root, ".github/workflows/ci.yml")
+    job = ci[ci.find("  linux-install:"):] if "  linux-install:" in ci else ""
+    job = job[:job.find("\n  # ----", 1)] if "\n  # ----" in job else job
+    for needle, why in _EVALUATE_CI:
+        if needle not in job:
+            problems.append(f"the linux-install job must {why} ({needle!r})")
+    # The step's own pipefail: the job has other steps that set it, and one of theirs stood for this
+    # one's after another step was added (2026-10-09).
+    head = "- name: the install evaluates itself"
+    step = job[job.find(head):] if head in job else ""
+    step = step[:step.find("\n      - name:", 1)] if "\n      - name:" in step else step
+    tee = step.find("| tee /tmp/eval-notional.out")
+    if not (0 <= step.find("set -eo pipefail") < tee):
+        problems.append("the evaluation step must set pipefail before it runs the evaluation through tee, or the "
+                        "step reads tee's status instead of the evaluation's")
+    if problems:
+        return _fail(name, "; ".join(problems))
+    return _ok(name,
+               "scripts/polaris-evaluate.sh judges an install with the doctor, the database's self-test, the "
+               "published key, offline and online verification and a notional revocation; CI runs it on the "
+               "fresh host, then fails it with a privilege granted and with the edge down")
 
 
 # 2026-10-07 (lab record 017, gate row OP-19): an upgrade from the previous release is drilled. The
@@ -6986,31 +7428,148 @@ def check_infra_alerts(root: pathlib.Path) -> list[Finding]:
                "conditions and clears them on repair")
 
 
+_BUILDS_PROD_TAGS = (
+    re.compile(r'\b(?:ba)?sh\s+"?[^"\s]*polaris-image-build\.sh"?\s+--stack[= ]prod\b'),
+    re.compile(r'docker compose\b[^\n]*\s-f\s+"?[^"\s]*docker-compose\.prod\.yml"?[^\n]*\s(?:build|up)\b'),
+)
+
+
+def _host_image_builders(root: pathlib.Path) -> dict:
+    """Every shell script that builds the host's production image tags or recreates a service from them, with where
+    it first does: a run of polaris-image-build.sh --stack prod, a build or `up` through the production compose
+    file, or through a compose wrapper (function or array) on that file."""
+    found = {}
+    for p in _tree_rglob(root, "*.sh"):
+        rel = str(p.relative_to(root))
+        if rel == "scripts/polaris-host-lock.sh":
+            continue
+        text = _read_path(p)
+        hits = [m.start() for rx in _BUILDS_PROD_TAGS for m in rx.finditer(text)]
+        # A compose wrapper on the production file, a function over several lines or an array: what it brings
+        # up whole, or builds, builds the host's tags that are missing. Recreating one service (--no-deps) does
+        # not build.
+        wrappers = []
+        if re.search(r"(?s)\bcompose\(\)\s*\{.*?docker-compose\.prod\.yml.*?\}", text):
+            wrappers.append(r"compose")
+        for m in re.finditer(r"(?m)^\s*([A-Z_]+)=\(docker compose\b[^\n]*docker-compose\.prod\.yml", text):
+            wrappers.append(r'"\$\{%s\[@\]\}"' % m.group(1))
+        # An `up` of one service with --no-deps still builds that service's image when it is missing and recreates
+        # it from the shared tag (review 5 of #317), so every `up` and `build` counts; `VAR=x compose up` too.
+        for w in wrappers:
+            hits += [m.start() for m in re.finditer(r"(?m)^\s*(?:[A-Z_]+=\S*\s+)*%s (?:up|build)\b" % w, text)]
+        if hits:
+            found[rel] = min(hits)
+    return found
+
+
 def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
     name = "upgrade_drilled"
     dep = _read(root, "scripts/polaris-deploy.sh")
     if not re.search(r'(?m)^bash "\$\{SCRIPT_DIR\}/polaris-image-build\.sh" --stack prod$', dep):
         return _fail(name, "polaris-deploy.sh must build every Polaris image (polaris-image-build.sh --stack prod), "
                      "not the app's alone, or an upgrade keeps the edge, pooler and database it first built")
+    # A rollback by bare image ID found no image under Docker's containerd image store (the default on
+    # a clean install of Engine 29) once the build had moved polaris-app:prod: the running image is
+    # pinned under a tag of its own before the build, and the rollback re-tags the pin.
+    # The whole line, so `if false && docker tag ...` does not pass for a pin.
+    pin = dep.find('\n    if TAG_ERR=$(docker tag "${PREV_IMAGE_ID}" "${ROLLBACK_TAG}" 2>&1); then\n')
+    build = dep.find('bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod')
+    if pin < 0 or pin > build or 'ROLLBACK_TAG="polaris-app:rollback-${PROJECT}"' not in dep \
+            or 'docker tag "${ROLLBACK_IMAGE}" polaris-app:prod' not in dep \
+            or 'docker tag "${PREV_IMAGE_ID}" polaris-app:prod' in dep:
+        return _fail(name, "polaris-deploy.sh must pin the running app image as polaris-app:rollback-<project> "
+                     "before it builds and roll back from that tag: under the containerd image store the bare "
+                     "ID no longer resolves once the build moves polaris-app:prod")
+    # 2026-10-09 review of #317: the pin is a host-wide tag, so a second deploy pinned the first one's
+    # failed release over it. One deploy per project, locked before anything changes.
+    # Reviews 2 and 3 of #317: every stack on a host builds the same tags, so the lock is the host's, held in
+    # the Docker daemon (a lock file split between /run, $HOME and $TMPDIR), and every script that builds
+    # those tags takes it before it builds.
+    lock = _read(root, "scripts/polaris-host-lock.sh")
+    take = dep.find('\npolaris_host_lock "this deploy"\n')
+    if take < 0 or take > pin or take > dep.find('echo "  [2/7] git pull') or not all(n in lock for n in (
+            "POLARIS_HOST_LOCK=polaris-host-lock",
+            '        if id=$(docker network create --internal --label "org.polaris.lock.token=${token}"',
+            # Review 4: an engine before 25 let two creates of one name both succeed: count, and give ours back.
+            '            if [[ "$(_polaris_lock_ids | grep -c .)" -ne 1 ]]; then\n'
+            '                docker network rm "${id}" >/dev/null 2>&1 || true',
+            '    docker network ls -q --filter "name=^${POLARIS_HOST_LOCK}\\$" 2>/dev/null || true',
+            # Review 4: released by its own ID, never by the name another run may hold by then.
+            '    if [[ -n "${POLARIS_HOST_LOCK_ID}" ]]; then docker network rm "${POLARIS_HOST_LOCK_ID}" >/dev/null 2>&1 '
+            '|| true; fi\n    exit "${rc}"',
+            # Review 5: the caller's trap in a subshell with its own set -e and the run's status, so neither its
+            # failure nor an exit in it skips the release.
+            '            if (( rc )); then (exit "${rc}") || eval "${_POLARIS_PREV_EXIT_TRAP}"; else :; eval "${_POLARIS_PREV_EXIT_TRAP}"; fi',
+            '    exit "${rc}"',
+            '    trap _polaris_host_unlock EXIT',
+            '    export POLARIS_HOST_LOCK_TOKEN="${token}"',
+            # Review 4: a lock this host left (an earlier boot, a process gone) is taken over, not waited on.
+            '    [[ "$(_polaris_lock_label boot "${net}")" != "$(_polaris_boot_id)" ]] && return 0',
+            '    [[ "${pid}" =~ ^[0-9]+$ ]] && ! ps -p "${pid}" >/dev/null 2>&1')):
+        return _fail(name, "polaris-deploy.sh must take this host's image lock before it pulls, pins or builds, and "
+                     "scripts/polaris-host-lock.sh must hold it in the Docker daemon (a network one caller can "
+                     "create, counted after creating), release it by its own ID after the caller's own trap, hand "
+                     "it to what the holder runs, and take over one this host left")
+    builders = _host_image_builders(root)
+    unlocked = []
+    for rel, at in builders.items():
+        text = _read(root, rel)
+        # The call as a statement, on the line after the helper is sourced (review 5: a call nothing defined
+        # passed, as an unknown command under no set -e).
+        call = re.search(r'(?m)^[ \t]*source "[^"\n]*polaris-host-lock\.sh"\n[ \t]*polaris_host_lock "[^"\n]+"[ \t]*$',
+                         text)
+        # A trap set on EXIT after the lock replaces the helper's, and with it the release.
+        if not call or call.start() > at or re.search(r"(?m)^[ \t]*trap\b[^\n]*\bEXIT\b", text[call.end():]):
+            unlocked.append(rel)
+    # install.sh builds under the lock and then starts the unit, which takes it itself: it gives its own back first.
+    inst = _read(root, "deploy/linux/install.sh")
+    if not (0 <= inst.find("polaris_host_release; fi") < inst.find("systemctl start polaris.service")):
+        unlocked.append("deploy/linux/install.sh (gives the lock back before polaris.service starts)")
+    unit = _read(root, "deploy/linux/polaris.service")
+    if "polaris_host_lock polaris.service" not in unit or \
+            unit.find("polaris_host_lock polaris.service") > unit.find("\nExecStart="):
+        unlocked.append("deploy/linux/polaris.service (its ExecStartPre)")
+    if not builders or unlocked:
+        return _fail(name, "every script that builds the host's production image tags or recreates a service from "
+                     "them must take its lock (source the helper, then a polaris_host_lock statement) before it "
+                     "does, and set no EXIT trap after it; polaris.service must take it before it starts: "
+                     + (", ".join(sorted(unlocked)) or "none found"))
+    # The block whole: a ROLLED=1 slipped in before the `if` passed a string search.
+    if not re.search(r'\n        ROLLED=1\n        for svc in [^\n]*wait_healthy "\$\{svc\}" \|\| ROLLED=0; done\n'
+                     r'        if \[\[ "\$\{ROLLED\}" -eq 1 \]\]; then\n            echo "  ✓ Rolled back\.', dep):
+        return _fail(name, "polaris-deploy.sh must report a rollback only when the restored app came up healthy")
+    if "PREV_APP=$(compose ps -a -q app" not in dep \
+            or re.search(r"""(?m)docker inspect\b[^\n]*[\s"']polaris-app(?=["'\s]|$)""", dep):
+        return _fail(name, "polaris-deploy.sh must find the app through compose, in its own project, stopped or "
+                     "not: a stack layered with names.yml has no container named polaris-app, and where the "
+                     "laptop stack runs that name is the other stack's app")
     drill = _read(root, "scripts/polaris-upgrade-drill.sh")
     for needle, what in (("describe --tags --abbrev=0", "start from the previous release"),
                          ('lab/strategy/006/try.sh" > "${WORK}/try-before.log"', "run that release's own try.sh"),
                          ("checkout --detach", "move the same checkout to this commit"),
                          ("scripts/polaris-generate-secrets.sh", "write the secrets a new release adds"),
-                         ("scripts/polaris-deploy.sh\" prod", "upgrade with the deploy script"),
+                         ('scripts/polaris-deploy.sh" prod --no-pull > "${WORK}/deploy.log"', "upgrade with the deploy script"),
                          ("no pending migrations", "require no migration pending"),
                          ("{{json .RootFS.Layers}}{{json .Config}}", "compare each running image's content with this commit's build"),
                          ("/api/tokens/${A}/verify", "ask the upgraded app about the old credential"),
-                         ("--pack pack-A-after.json", "verify the old credential's pack fetched again")):
+                         ("--pack pack-A-after.json", "verify the old credential's pack fetched again"),
+                         ('raise SystemExit("the upgrade drill: a release that does not start")',
+                          "deploy a release that cannot start"),
+                         ('grep -q "Rolled back"', "require the deploy to roll it back"),
+                         ('[[ "${after}" == "${before}" ]]', "require the app back on the image it replaced")):
         if needle not in drill:
             return _fail(name, f"scripts/polaris-upgrade-drill.sh no longer does this: {what}")
     wf = _read(root, ".github/workflows/upgrade.yml")
     if "bash scripts/polaris-upgrade-drill.sh" not in wf or not re.search(r"(?m)^\s*fetch-depth: 0$", wf):
         return _fail(name, "upgrade.yml must run scripts/polaris-upgrade-drill.sh on a checkout with the "
                      "release tags (fetch-depth: 0)")
+    if '["containerd-snapshotter"] = True' not in wf or "io.containerd.snapshotter.v1" not in wf:
+        return _fail(name, "upgrade.yml must run the drill on Docker's containerd image store (the default on a "
+                     "clean install of Engine 29), where a rollback by image ID found no image")
     return _ok(name,
                "CI upgrades the previous release's own try.sh stack to this commit the documented way and "
-               "requires nothing pending, every image rebuilt, and credentials from before and after verifying")
+               "requires nothing pending, every image rebuilt, and credentials from before and after verifying; "
+               "a release that cannot start is rolled back, on the containerd image store")
 
 
 # Lab record 017 (gate rows OP-18 and OP-19): a Helm upgrade runs the migrations. The postgres image
@@ -7762,12 +8321,15 @@ def check_secrets_lifecycle_sealed(root: pathlib.Path) -> list[Finding]:
     if "unseal-if-configured" not in wr or "mount -t tmpfs" not in wr:
         return _fail("secrets_sealed", "polaris-secrets.sh must provide unseal-if-configured that mounts a tmpfs for the "
                      "materialized plaintext")
-    if "unseal-if-configured" not in dep or "POLARIS_SECRETS_DIR" not in dep:
-        return _fail("secrets_sealed", "polaris-deploy.sh must unseal-if-configured before preflight and honour "
-                     "POLARIS_SECRETS_DIR")
-    if "seal --only" not in rot or "POLARIS_SECRETS_DIR" not in rot:
-        return _fail("secrets_sealed", "polaris-rotate-secret.sh must rotate the materialized secret and write it through "
-                     "to the sealed store (seal --only)")
+    # Lab record 017 (2026-10-08): both take the directory from polaris_secrets_dir
+    # (scripts/polaris-env.sh), which refuses a sealed store without one, never from a
+    # default of their own: polaris.service runs compose with POLARIS_SECRETS_DIR alone.
+    if "unseal-if-configured" not in dep or "polaris_secrets_dir" not in dep:
+        return _fail("secrets_sealed", "polaris-deploy.sh must unseal-if-configured before preflight and take "
+                     "POLARIS_SECRETS_DIR from polaris_secrets_dir")
+    if "seal --only" not in rot or "polaris_secrets_dir" not in rot:
+        return _fail("secrets_sealed", "polaris-rotate-secret.sh must rotate the materialized secret (the directory "
+                     "polaris_secrets_dir names) and write it through to the sealed store (seal --only)")
     m = re.search(r"polaris_db_password\)(.*?)\n\s*;;", rot, re.S)
     if not m or "force-recreate pgbouncer" not in m.group(1):
         return _fail("secrets_sealed", "rotating polaris_db_password must recreate pgbouncer (it generates userlist.txt "
@@ -8067,6 +8629,101 @@ def check_verification_load_certified(root: pathlib.Path) -> list[Finding]:
                "the load generator's strict accounting is unit-tested and run under coverage")
 
 
+# ---------------------------------------------------------------------------
+# G5 (lab record 017). The chart's edge kept its TLS state, the internal CA and Caddy's ACME account
+# and certificates, in each pod's emptyDir: a restart ordered a certificate again until Let's
+# Encrypt's limits refused the domain, and two replicas served chains under different roots, which
+# the drill never saw because it ran curl -k. The internal CA's root is now the chart's (generated
+# once, kept), edge.tls=secret serves a Secret cert-manager keeps and reloads it, and ACME runs one
+# replica on a kept volume; the drill verifies every replica against the root, across a
+# replacement, and a renewal reaching every replica.
+# ---------------------------------------------------------------------------
+def check_edge_tls_state_shared(root: pathlib.Path) -> list[Finding]:
+    tpl = root / "deploy" / "helm" / "polaris" / "templates"
+    caddyfile = _read(root, "deploy/helm/polaris/templates/configmap-caddy.yaml")
+    deploy = _read(root, "deploy/helm/polaris/templates/caddy.yaml")
+    ca = _read(root, "deploy/helm/polaris/templates/edge-ca.yaml")
+    drill = _read(root, "scripts/polaris-helm-drill.sh")
+    doc = _read(root, "docs/operator/KUBERNETES.md")
+    if not (tpl.is_dir() and caddyfile and deploy and ca and drill and doc):
+        return _fail("edge_tls_state", "the chart's edge templates, templates/edge-ca.yaml, the Helm drill or "
+                     "KUBERNETES.md is missing")
+    for needle in ("cert /etc/caddy/ca/ca.crt", "key /etc/caddy/ca/ca.key"):
+        if needle not in caddyfile:
+            return _fail("edge_tls_state", "the Caddyfile's internal CA must use the chart's root "
+                         f"(missing `{needle}`): each replica otherwise mints its own")
+    if "tls /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key" not in caddyfile:
+        return _fail("edge_tls_state", "edge.tls=secret must serve the certificate mounted from edge.tlsSecret")
+    if not re.search(r'has \.Values\.edge\.tls \(list "acme" "secret"\) \}\}\s*\n\s*Strict-Transport-Security', caddyfile):
+        return _fail("edge_tls_state", "the edge must send Strict-Transport-Security with a certificate clients "
+                     "trust, edge.tls=secret (the production choice) as well as acme")
+    # The block, not its words: genCA moved into the reuse branch, or `$existing` assigned anything
+    # but the lookup, mints a new root on every upgrade with every word still present.
+    kept = re.search(r'\{\{- \$existing := \(lookup "v1" "Secret" \.Release\.Namespace \$name\) \}\}\n.*?'
+                     r'\{\{- if and \$existing \(hasKey \$existing\.data "ca\.crt"\) '
+                     r'\(hasKey \$existing\.data "ca\.key"\) \}\}\n'
+                     r'\s*ca\.crt: \{\{ index \$existing\.data "ca\.crt" \}\}\n'
+                     r'\s*ca\.key: \{\{ index \$existing\.data "ca\.key" \}\}\n'
+                     r'\s*\{\{- else \}\}\n\s*\{\{- \$ca := genCA ', ca, re.S)
+    if not (kept and '"helm.sh/resource-policy": keep' in ca):
+        return _fail("edge_tls_state", "templates/edge-ca.yaml must generate the root once and keep it (genCA, the "
+                     "branch that reuses the root lookup found, resource-policy keep): a root that changes on "
+                     "upgrade breaks every client's trust")
+    if '{{- if and (eq .Values.edge.tls "internal") (not .Values.edge.caSecret) }}' not in ca \
+            or 'secretName: {{ .Values.edge.caSecret | default (printf "%s-edge-ca"' not in deploy:
+        return _fail("edge_tls_state", "an operator-supplied root (edge.caSecret) must replace the generated one: a "
+                     "render without the cluster (helm template, Argo CD) cannot look the generated one up and mints "
+                     "a new root each time")
+    if not re.search(r'eq \.Values\.edge\.tls "acme"\) \(gt \(int \.Values\.edge\.replicas\) 1\) \}\}\n'
+                     r'\{\{- fail "edge\.tls=acme serves one replica', deploy):
+        return _fail("edge_tls_state", "caddy.yaml must refuse edge.tls=acme with more than one replica: replicas "
+                     "that do not share the ACME state answer only their own challenges")
+    if "claimName: {{ include \"polaris.fullname\" . }}-caddy-acme" not in deploy or "type: Recreate" not in deploy:
+        return _fail("edge_tls_state", "edge.tls=acme must keep its state on a volume (the caddy-acme claim) and "
+                     "replace its pod with Recreate")
+    reload = re.search(r"- name: tls-reload\n(.*?)\n        \{\{- end \}\}", deploy, re.S)
+    if not reload or "caddy reload --force" not in reload.group(1) or 'seen=""' not in reload.group(1):
+        return _fail("edge_tls_state", "edge.tls=secret needs the tls-reload container: `caddy reload --force` when "
+                     "the Secret's files change, starting from nothing recorded so a restarted reloader still reloads")
+    # Each guard by its CONDITION and its failure together: a needle on the message alone stayed
+    # satisfied with the test in front of it turned to `true`.
+    for needle, why in (
+            ('[ "$(kubectl -n "$NS" get secret "${REL}-edge-ca" -o jsonpath=\'{.data.ca\\.crt}\')" = "$root_before" ] \\\n'
+             '    || fail "helm upgrade replaced the edge root',
+             'keep the internal root across a helm upgrade'),
+            ("if grep -qi '^strict-transport-security' /tmp/polaris-internal.hdr; then\n"
+             '    fail "the edge sends Strict-Transport-Security under the internal root',
+             'send no Strict-Transport-Security under the internal root'),
+            ("-o jsonpath='{range .items[*]}{.metadata.name}{range .status.containerStatuses[*]} {.restartCount}{end}",
+             "read each edge pod's restart counts"),
+            ('[ "$(restarts)" = "$before_renewal" ] || { echo "$before_renewal"; restarts; fail "an edge pod restarted',
+             'follow a renewed Secret without restarting a pod (restart counts compared)'),
+            ('grep -q "edge.tls=acme serves one replica" /tmp/polaris-acme.err \\\n'
+             '    || { cat /tmp/polaris-acme.err; fail "edge.tls=acme with two replicas failed to render for another reason"; }',
+             'refuse acme with two replicas for that reason, not any render failure'),
+            ('if grep -q "name: ${REL}-edge-ca\\$" /tmp/polaris-casecret.yaml || grep -q "secretName: ${REL}-edge-ca\\$" /tmp/polaris-casecret.yaml \\\n'
+             '        || ! grep -q "secretName: operator-edge-root" /tmp/polaris-casecret.yaml; then\n'
+             '    fail "with edge.caSecret the chart must mount that Secret',
+             'honour edge.caSecret, and mount no generated root beside it'),
+            ('    [ "$n" -ge 2 ] || fail "expected two edge replicas, found $n"',
+             'verify at least two replicas against the root'),
+            ('    pods=$(edge_pods) || return 1\n'
+             '    for p in $pods; do [ "$(served "$p" -k || true)" = "$want" ] || return 1; n=$((n + 1)); done\n'
+             '    [ "$n" -ge 2 ]\n'
+             '}',
+             'count the replicas a renewal reached, at least two')):
+        if needle not in drill:
+            return _fail("edge_tls_state", f"polaris-helm-drill.sh must {why} ({needle!r})")
+    if "--cacert /tmp/polaris-edge-ca.crt" not in drill or 'port-forward "$pod"' not in drill \
+            or "replaced:" not in drill or "after the Secret was renewed" not in drill:
+        return _fail("edge_tls_state", "polaris-helm-drill.sh must verify every edge replica against the chart's "
+                     "root (by pod, without -k) across a replacement, and a renewed Secret reaching every replica")
+    if "edge.tls=secret" not in doc or "-edge-ca" not in doc or "edge.caSecret" not in doc:
+        return _fail("edge_tls_state", "KUBERNETES.md must name edge.tls=secret and the chart's edge root")
+    return _ok("edge_tls_state", "the edge's TLS state is shared by its replicas: the chart's internal root, a "
+               "Secret reloaded on renewal, ACME on one replica's kept volume; the kind drill verifies every replica")
+
+
 def check_helm_reference_profile(root: pathlib.Path) -> list[Finding]:
     """Roadmap P1.5: a Helm chart deploys the production topology with default-deny
     NetworkPolicies and the restricted Pod Security Standard, the postgres image
@@ -8146,12 +8803,16 @@ def check_helm_reference_profile(root: pathlib.Path) -> list[Finding]:
                      "enforce NetworkPolicy, so a green run would prove nothing about the policies")
     for needle in ("pod-security.kubernetes.io/enforce=restricted", "violates PodSecurity", "polaris-postgres\", 5432",
                    "REACHED", "helm install", "/api/health", "rollout restart", "custody",
-                   "annotations.leader", "delete pod", "task pause", "switchover", "ha_marker", "inserts were acknowledged"):
+                   "annotations.leader", "delete pod", "task pause", "switchover", "ha_marker", "inserts were acknowledged",
+                   'missing_on "$L3" /tmp/polaris-acked.now', "with synchronous_mode on, a failover must lose none",
+                   'acked.write(token + "\\\\n")', 'early=$(head -n "$acked_before_freeze"',
+                   '[[ "$acked" -gt 0 && "$acked" -ge "$acked_before_freeze" ]]', '[[ -z "$(tail -c1 "$2")" ]] || echo; echo'):
         if needle not in drill:
             return _fail("helm_profile", f"polaris-helm-drill.sh must contain {needle!r} (restricted PSS enforced, a "
                          "privileged pod rejected, a probe pod denied on postgres, health incl. custody, a rolling "
                          "restart, the leader pod deleted, the leader frozen until the other member holds the lease, "
-                         "a switchover, and every acknowledged insert present afterwards)")
+                         "a switchover, and every acknowledged insert present afterwards, compared by identity, none "
+                         "lost under synchronous replication)")
     if "polaris-helm-drill.sh" not in ci or "helm/kind-action@" not in ci:
         return _fail("helm_profile", "ci.yml must install kind (helm/kind-action, pinned) and run scripts/polaris-helm-drill.sh")
     if "docs/operator/KUBERNETES.md" not in readme or "restricted" not in doc or "Calico" not in doc:
@@ -21370,7 +22031,58 @@ def check_accessibility(root: pathlib.Path) -> list[Finding]:
 # every citation in any row resolves (a check that exists, a test file and name, a drill or file
 # path), the stated totals are recomputed from the rows, and the last word on real identity data
 # cannot turn PASS while the status line still says otherwise.
-_GATE_STATUSES = ("PASS", "PARTIAL", "FAIL", "UNKNOWN", "N/A")
+# The four the totals line counts (review round 2: N/A was allowed, needed no citation and was in no total, so the
+# real-identity-data row turned N/A with "1 FAIL" passed).
+_GATE_STATUSES = ("PASS", "PARTIAL", "FAIL", "UNKNOWN")
+
+# The criterion and the evidence each PASS row rests on, pinned (review of the OP-2/OP-6 rows, 2026-10-09: a PASS
+# citing any evidence that resolved passed, so OP-6 citing only the zone-loss drill did, and a PASS whose criterion was
+# reworded to ask less passed too). A row turned PASS gets its pin here, reviewed with it; every pinned citation is
+# required.
+_GATE_PASS_PINS = {
+    "OP-2": ('A fresh host reaches HTTPS and a verified credential in 15 minutes or less, with five operator inputs or fewer',
+              ("check:fresh_host_reaches_online_verification",)),
+    "OP-3": ('Every setting is validated at boot, and a wrong one stops it by name',
+              ("check:config_schema_covers_env", "test:polaris_web/test_app.py::ConfigSchemaTests")),
+    "OP-4": ('Readiness reflects what this instance can serve, and a shared failure does not empty the pool',
+              ("check:health_liveness_readiness_split",)),
+    "OP-5": ('An instance crash costs no request',
+              ("drill:scripts/polaris-rolling-drill.sh",)),
+    "OP-6": ('A database failover loses no acknowledged write',
+              ("drill:scripts/polaris-failover-drill.sh",)),
+    "OP-8": ('Internal services authenticate one another',
+              ("check:redis_authenticated", "check:ha_internal_auth")),
+    "OP-11": ('Restores are verified on a schedule and the evidence is current',
+              ("check:restore_verified_on_schedule",)),
+    "OP-12": ('A restore to a chosen point in time is tested',
+              ("drill:scripts/polaris-pitr-drill.sh", "check:pitr_drilled")),
+    "OP-13": ('Revocations made after a restore point are re-applied after the restore',
+              ("check:restore_reconciled",)),
+    "OP-15": ('Backup age, archive failure, replication lag, disk, certificate expiry and clock skew alert',
+              ("drill:lab/strategy/006/alerts.sh", "check:infra_alerts")),
+    "OP-16": ('Application metrics, alerts and traces are tested',
+              ("drill:scripts/polaris-page-drill.sh", "drill:scripts/polaris-trace-drill.sh")),
+    "OP-17": ('One command names the failing component',
+              ("check:doctor_names_failures",)),
+    "OP-18": ('Schema migrations run on every upgrade path',
+              ("check:upgrade_drilled", "check:helm_upgrade_migrates")),
+    "OP-19": ('An upgrade from the previous release is drilled',
+              ("drill:scripts/polaris-upgrade-drill.sh", "drill:scripts/polaris-helm-upgrade-drill.sh")),
+    "OP-20": ('The data-integrity rules (C1 to C10) are enforced in the schema and mutation-tested',
+              ("check:aor_append_only_triggers", "drill:scripts/polaris-constraint-mutation-drill.py")),
+    "OP-21": ('Two independent ML-DSA implementations agree at issuance',
+              ("check:pqc_second_witness",)),
+    "OP-22": ('A signature-algorithm migration is drilled',
+              ("drill:scripts/polaris-quantum-event-drill.py",)),
+    "OP-23": ('A same-algorithm signing-key rotation is drilled end to end',
+              ("check:key_rotation_drilled",)),
+    "OP-24": ('Throughput is measured and a sizing guide is published',
+              ("check:throughput_measured", "file:docs/reference/SCALING.md")),
+    "OP-26": ('The client address is correct behind load balancers and NAT',
+              ("check:client_ip_behind_proxies",)),
+    "OP-27": ('Contributors need no Kubernetes',
+              ("file:Polaris.command",)),
+}
 
 
 def _gate_citation_resolves(root: pathlib.Path, kind: str, target: str) -> bool:
@@ -21395,12 +22107,23 @@ def check_operability_gate(root: pathlib.Path) -> list[Finding]:
     if "not readiness for real identity data" not in " ".join(section.split()):
         return _fail(name, "the gate must say it is not readiness for real identity data")
     rows = []
-    for line in section.splitlines():
-        if line.startswith("| OP-"):
-            cells = [c.strip() for c in line.strip().strip("|").split("|")]
-            if len(cells) != 4:
-                return _fail(name, f"gate row is not ID | criterion | status | evidence: {line[:60]}")
-            rows.append(cells)
+    # Every line of the table (from its header to the first blank line) is a row, the header or its rule, and so is
+    # any other line of the section that starts with a pipe: a row spelled `|OP-29|`, or with no leading pipe inside
+    # the table (Markdown renders both), once went uncounted.
+    lines = section.splitlines()
+    head = next((i for i, line in enumerate(lines) if re.match(r"\s*\|?\s*ID\s*\|", line)), None)
+    if head is None or head + 1 >= len(lines) or not re.fullmatch(r"\s*\|?[-:|\s]+", lines[head + 1]):
+        return _fail(name, "the gate has no table with an 'ID | Criterion | Status | Evidence' header and its rule")
+    end = next((i for i in range(head, len(lines)) if not lines[i].strip()), len(lines))
+    outside = [line for i, line in enumerate(lines) if not head <= i < end and line.lstrip().startswith("|")]
+    for line in lines[head + 2:end] + outside:
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) != 4 or not re.fullmatch(r"OP-\d+", cells[0]):
+            return _fail(name, f"gate row is not OP-N | criterion | status | evidence: {line[:60]}")
+        rows.append(cells)
+    ids = [r[0] for r in rows]
+    if len(set(ids)) != len(ids):
+        return _fail(name, f"gate rows repeat an ID: {sorted({i for i in ids if ids.count(i) > 1})}")
     if len(rows) < 10:
         return _fail(name, f"the gate has {len(rows)} rows; it must actually cover operation")
     for rid, crit, status, evidence in rows:
@@ -21418,14 +22141,270 @@ def check_operability_gate(root: pathlib.Path) -> list[Finding]:
     if ("not production-ready for real identity data" in doc
             and any(r[2] == "PASS" for r in real)):
         return _fail(name, "the real-identity-data row is PASS while the status line says it is not")
+    for rid, crit, status, evidence in rows:
+        if status != "PASS":
+            continue
+        if rid not in _GATE_PASS_PINS:
+            return _fail(name, f"{rid} is PASS with no criterion and evidence pinned for it in _GATE_PASS_PINS")
+        pinned_crit, pinned = _GATE_PASS_PINS[rid]
+        if crit != pinned_crit:
+            return _fail(name, f"{rid} is PASS under a criterion other than the pinned one ({pinned_crit!r})")
+        cited = {f"{k}:{t}" for k, t in re.findall(r"`(check|test|drill|file):([^`]+)`", evidence)}
+        missing = [e for e in pinned if e not in cited]
+        if missing:
+            return _fail(name, f"{rid} is PASS without the evidence it rests on: {', '.join(missing)}")
     m = re.search(r"(\d+) criteria: (\d+) PASS, (\d+) PARTIAL, (\d+) FAIL, (\d+) UNKNOWN", section)
     if not m:
         return _fail(name, "the gate must state its totals ('N criteria: a PASS, b PARTIAL, c FAIL, d UNKNOWN')")
     counted = (len(rows), *(sum(1 for r in rows if r[2] == st) for st in ("PASS", "PARTIAL", "FAIL", "UNKNOWN")))
     if tuple(int(g) for g in m.groups()) != counted:
         return _fail(name, f"the stated totals {m.group(0)!r} disagree with the rows {counted}")
-    return _ok(name, f"the operability gate's {len(rows)} rows have known statuses, every PASS cites "
-                     f"evidence, every citation resolves and the totals match the rows")
+    return _ok(name, f"the operability gate's {len(rows)} rows have known statuses, every PASS cites the "
+                     f"evidence pinned for it, every citation resolves and the totals match the rows")
+
+
+# 2026-10-09: the outward claims manifest. The operability gate ties each PASS to evidence a check resolves; the
+# README's badges and status lines, the site and site/llms.txt had no such map, and one outward count, the badge
+# "Tested against 14 outside implementations", nothing re-measured. docs/reference/claims.json is the map: each claim,
+# where it is published, its evidence in the gate's citation syntax plus https URLs for outside evidence, and how a
+# stranger reproduces it.
+# Review round 1 (2026-10-09): the count was found by the badge's words, so "15 outside wallets" skipped it; names were
+# unique only as exact strings and matched by substring, so one implementation could be counted twice; the canary and
+# Pomerium rows kept a deleted implementation "on the scoreboard"; and titled, reference-style, unlinked and in-page
+# HTML badges were not seen at all.
+_CLAIM_FIELDS = ("id", "kind", "claim", "surfaces", "evidence", "reproduce")
+#: The entry the outward count of outside implementations lives in. It must exist, whatever its badge says.
+_CLAIMS_COUNTED_ID = "outside-implementations"
+_CLAIM_NUMBER_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+                       "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty")
+
+
+def _claim_text(text: str) -> str:
+    """A surface as a reader sees it: no HTML comments, tags or entities, no Markdown emphasis or code marks, no
+    trademark signs, whitespace collapsed and case folded, so a claim matches its sentence however it is set."""
+    from html import unescape
+    text = re.sub(r"<!--.*?-->", " ", text, flags=re.S)
+    # A tag is dropped, but what it shows a reader stays: a meta description's text, an image's alt.
+    text = unescape(re.sub(r"<[^>]+>", lambda m: " %s " % " ".join(re.findall(r'\b(?:content|alt)="([^"]*)"', m.group(0))), text))
+    text = re.sub(r"\*+|`|(?<!\w)_+|_+(?!\w)|[®™]", "", text)
+    return " ".join(text.split()).casefold()
+
+
+def _claim_phrase_in(phrase: str, text: str, joined: str = r"\w") -> bool:
+    """Is `phrase` in `text` as a whole phrase (case-insensitive), not as the start or end of a longer word?"""
+    return re.search(r"(?<!%s)%s(?!%s)" % (joined, re.escape(phrase), joined), text, re.I) is not None
+
+
+def _claim_first_number(text: str) -> int | None:
+    """The first count a sentence states, in digits or in words; None when it states none."""
+    m = re.search(r"\b(\d+|%s)\b" % "|".join(_CLAIM_NUMBER_WORDS), text or "", re.I)
+    if not m:
+        return None
+    return int(m.group(1)) if m.group(1).isdigit() else _CLAIM_NUMBER_WORDS.index(m.group(1).lower())
+
+
+def _readme_badges(text: str) -> dict[str, str]:
+    """The images above a README's first `## ` heading, as alt text -> image source.
+
+    Every image a reader sees there is a badge: Markdown's inline `![alt](src "title")`, linked or not, its
+    reference form `![alt][ref]` with the `[ref]: src` definition, and an HTML `<img alt>`, linked or not. The one
+    exemption is the row of navigation buttons: an image from docs/assets/nav/ linking to a section of the page. An
+    image inside an HTML comment is not rendered, so it is not a badge; an image with no alt text names nothing."""
+    head = re.sub(r"<!--.*?-->", "", text, flags=re.S).split("\n## ", 1)[0]
+    refs = {k.casefold(): v for k, v in re.findall(r"^ {0,3}\[([^\]]+)\]:[ \t]*<?([^\s>]+)>?", head, re.M)}
+    found = dict(re.findall(r"!\[([^\]]*)\]\(\s*<?((?:[^\s()<>]|\([^\s()]*\))+)>?"
+                            r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)", head))
+    for alt, ref in re.findall(r"!\[([^\]]*)\](?:\[([^\]]*)\])?(?![(\[])", head):
+        if (ref or alt).casefold() in refs:
+            found[alt] = refs[(ref or alt).casefold()]
+    for href, tag in re.findall(r'(?:<a\s[^>]*?href="([^"]*)"[^>]*>\s*)?(<img\b[^>]*>)', head):
+        alt, src = re.search(r'\balt="([^"]*)"', tag), re.search(r'\bsrc="([^"]*)"', tag)
+        source = src.group(1) if src else ""
+        if href.startswith("#") and source.startswith("docs/assets/nav/"):
+            continue
+        if alt:
+            found[alt.group(1)] = source
+    found.pop("", None)
+    return found
+
+
+def _shields_label(src: str) -> str | None:
+    """What a static shields.io badge renders, as 'label: message'; None for any other image."""
+    from urllib.parse import unquote
+    m = re.match(r"https://img\.shields\.io/badge/([^?#]+)", src)
+    if not m:
+        return None
+    parts = [unquote(p.replace("\0", "-").replace("__", "\0").replace("_", " ").replace("\0", "_"))
+             for p in m.group(1).replace("--", "\0").split("-")]
+    return ": ".join(parts[:-1]) or None
+
+
+# 2026-10-09: site/llms.txt hands a reading agent one command block and the exit codes to expect. The
+# plug-and-play matrix runs that block as written, from an empty folder, against the package published on
+# PyPI, on every operating system and interpreter it covers, and holds each exit code the file states; a pull
+# request that edits the file runs it too. These pin that wiring, so the file cannot say more than the package
+# does without a red run.
+_LLMS_WALK_NEEDLES = (
+    ('  pull_request:\n    paths:\n      - ".github/workflows/plug-and-play-matrix.yml"\n      - "site/llms.txt"\n',
+     "run on a pull request that edits site/llms.txt (pull_request with paths, not push or paths-ignore)"),
+    ('set -euo pipefail\n          work=$(mktemp -d) && cd "$work"', "stop on the first failure, from an empty folder"),
+    ('python - "$GITHUB_WORKSPACE/site/llms.txt" <<\'EOF\'', "read the command block from site/llms.txt itself"),
+    ('assert len(fenced) == 3, "the section must hold exactly one command block"', "refuse a section without one block"),
+    ('assert "~~~" not in section', "refuse a second code block"),
+    ('assert not re.search(r"polaris-verify\\s+-", prose)', "refuse a command outside the block"),
+    ('bash -euo pipefail agent-path.sh > out.txt\n          rc=$?', "run the block as written and keep its exit code"),
+    ('[ "$rc" = "$OK_RC" ] || { echo "::error::the command block exited $rc; site/llms.txt says $OK_RC"; exit 1; }',
+     "require the block to exit with the code the file states"),
+    ('assert verdict["authenticity"] == "genuine" and verdict["issuer_trusted"] is True, verdict',
+     "require the block's JSON verdict to be genuine and trusted"),
+    ('[ "$rc" = "$BAD_RC" ] || { echo "::error::$t exited $rc; site/llms.txt says $BAD_RC"; exit 1; }',
+     "require each tampered vector the file names to exit with the code it states"),
+    ('done < tampered.txt', "walk every tampered vector the file names"),
+    ('[ "$no_anchor/$cannot_run/$refused" = "2/3/4" ]', "demonstrate the exit-code list (2, 3, 4)"),
+)
+
+
+def check_llms_txt_walked(root: pathlib.Path) -> list[Finding]:
+    name = "llms_txt_walked"
+    llms = _read_raw(root, "site/llms.txt")
+    wf = _read(root, ".github/workflows/plug-and-play-matrix.yml")  # comments cut: a needle commented out is gone
+    if not llms or not wf:
+        return _fail(name, "site/llms.txt and .github/workflows/plug-and-play-matrix.yml must both exist")
+    section = llms.split("## Verify a credential offline", 1)
+    fenced = section[1].split("\n## ", 1)[0].split("```") if len(section) == 2 else []
+    if len(fenced) != 3 or "polaris-verify " not in fenced[1] or "--json" not in fenced[1]:
+        return _fail(name, "site/llms.txt must keep its 'Verify a credential offline' section with exactly one command "
+                           "block that runs polaris-verify with --json")
+    verify = wf.split("\n  verify:\n", 1)[-1].split("\n  oid4vp:\n", 1)[0] if "\n  verify:\n" in wf else ""
+    head = wf.split("\njobs:\n", 1)[0]
+    missing = [why for needle, why in _LLMS_WALK_NEEDLES
+               if needle not in (head if needle.startswith("  pull_request:") else verify)]
+    # A step or a job that never runs, or whose failure counts for nothing, walks nothing (review of #6c).
+    at = verify.find("name: The agent path in site/llms.txt")
+    if at < 0:
+        missing.append("the step 'The agent path in site/llms.txt' is gone")
+    begin = verify.rfind("\n      - ", 0, at) if at >= 0 else 0
+    end = verify.find("\n      - ", at) if at >= 0 else 0
+    step_text = verify[begin:end if end >= 0 else len(verify)] if at >= 0 else ""
+    job_head = verify.split("\n    steps:\n", 1)[0]
+    for text, where in ((step_text, "the step"), (job_head, "the verify job")):
+        if re.search(r"(?m)^\s*(?:-\s+)?(if|continue-on-error)\s*:", text):
+            missing.append(f"{where} must carry no `if:` or `continue-on-error:`")
+    if missing:
+        return _fail(name, "the plug-and-play matrix must walk site/llms.txt as written: " + "; ".join(missing))
+    return _ok(name, "site/llms.txt's command block runs as written against the published polaris-verify on every "
+                     "operating system and interpreter of the plug-and-play matrix, and on any pull request that "
+                     "edits it; the verdict must be genuine and trusted, and every exit code the file states (the "
+                     "block's, the tampered vectors', 2, 3 and 4) is demonstrated")
+
+
+def check_claims_manifest(root: pathlib.Path) -> list[Finding]:
+    """The claims docs/reference/claims.json lists are each still true of the tree, and every README badge is listed.
+
+    Both directions for the images above the README's first heading (a badge with no entry, an entry whose badge is
+    gone, a rendered label the entry does not state); each entry's text on every surface it names; every evidence
+    token resolving (check, test, drill and file as the operability gate resolves them, url as https and not fetched).
+    And the counts: an entry listing implementations states their number and names each one, and an entry counting
+    other entries' lists states their total. Names are distinct as whole phrases, and each scoreboard term finds the
+    dated rows of lab/EXTERNAL-NOUNS.md's Wallets table whose wallet it names, no row claimed by two. The entry holding
+    the outward count of outside implementations must exist."""
+    name = "claims_manifest"
+    try:
+        entries = json.loads(_read(root, "docs/reference/claims.json"))["claims"]
+    except (ValueError, KeyError, TypeError):
+        entries = None
+    if not isinstance(entries, list) or not entries:
+        return _fail(name, "docs/reference/claims.json is missing, is not JSON, or lists no claims")
+    readme = _read(root, "README.md")
+    badges = _readme_badges(readme)
+    ids: set = set()
+    for e in entries:
+        if (not isinstance(e, dict) or any(e.get(f) in (None, "", []) for f in _CLAIM_FIELDS if f != "reproduce")
+                or not isinstance(e["surfaces"], list) or not isinstance(e["evidence"], list)):
+            return _fail(name, f"a manifest entry lacks one of {', '.join(_CLAIM_FIELDS)}: {str(e)[:80]}")
+        if "reproduce" not in e or (e["reproduce"] is None and not e.get("why")) or e["reproduce"] == "":
+            return _fail(name, f"{e['id']}: reproduce must be a command or steps, or null with a 'why'")
+        if e["id"] in ids:
+            return _fail(name, f"{e['id']}: two entries share this id")
+        ids.add(e["id"])
+        if e["kind"] not in ("badge", "statement"):
+            return _fail(name, f"{e['id']}: kind is {e['kind']!r}; it must be 'badge' or 'statement'")
+    by_badge = {e["claim"]: e for e in entries if e["kind"] == "badge"}
+    for alt in badges:
+        if alt not in by_badge:
+            return _fail(name, f"README.md shows the badge {alt!r} and docs/reference/claims.json has no entry for it")
+    for e in entries:
+        for surface in e["surfaces"]:
+            text = _read(root, surface)
+            if e["kind"] == "badge":
+                shown = _readme_badges(text)
+                if e["claim"] not in shown:
+                    return _fail(name, f"{e['id']}: the badge {e['claim']!r} is no longer on {surface}")
+                if e.get("label") != _shields_label(shown[e["claim"]]):
+                    return _fail(name, f"{e['id']}: the badge on {surface} renders {_shields_label(shown[e['claim']])!r}; "
+                                       f"the entry says {e.get('label')!r}")
+            elif _claim_text(e["claim"]) not in _claim_text(text):
+                return _fail(name, f"{e['id']}: {surface} no longer says {e['claim'][:60]!r}")
+        for token in e["evidence"]:
+            kind, _, target = str(token).partition(":")
+            if kind == "url":
+                if not re.fullmatch(r"https://[\w.-]+(?:[/?#]\S*)?", target):
+                    return _fail(name, f"{e['id']}: {token} is not an https URL")
+            elif kind not in ("check", "test", "drill", "file"):
+                return _fail(name, f"{e['id']}: evidence {token!r} is not check:, test:, drill:, file: or url:")
+            elif not _gate_citation_resolves(root, kind, target):
+                return _fail(name, f"{e['id']}: evidence {token} does not resolve")
+
+    # The counts. A row of the Wallets table is a dated run (the weekly canary's row is not), and the wallet it is
+    # about is the opening of its Wallet cell, before the first parenthesis: "Pomerium 0.33.3 (... walt.id's wallet
+    # presenting)" is a Pomerium row, not a walt.id one.
+    nouns = _read(root, "lab/EXTERNAL-NOUNS.md")
+    wallets = nouns.split("\n### Wallets", 1)[-1].split("\n### ", 1)[0] if "\n### Wallets" in nouns else ""
+    heads = [cells[1].split("(", 1)[0] for cells in (ln.strip().strip("|").split("|") for ln in wallets.splitlines()
+                                                     if ln.startswith("|")) if len(cells) > 2 and re.match(r"\s*\d{4}-\d{2}-\d{2}", cells[0])]
+    by_id = {e["id"]: e for e in entries}
+    if not by_id.get(_CLAIMS_COUNTED_ID, {}).get("implementations") and not by_id.get(_CLAIMS_COUNTED_ID, {}).get("count_of"):
+        return _fail(name, f"the manifest must hold the outward count of outside implementations as entry {_CLAIMS_COUNTED_ID!r}, "
+                           "with the implementations it counts")
+    counted = 0
+    for e in entries:
+        if "implementations" not in e and "count_of" not in e:
+            continue
+        lists = [e] if "implementations" in e else [by_id.get(i, {}) for i in e["count_of"] if isinstance(e["count_of"], list)]
+        impls = [i for x in lists for i in (x.get("implementations") or [])]
+        if not lists or not all(x.get("implementations") for x in lists) or not all(
+                isinstance(i, dict) and i.get("name") and i.get("scoreboard") for i in impls):
+            return _fail(name, f"{e['id']}: what it counts must be lists of implementations, each a name and a scoreboard term")
+        for stated in (e["claim"], e.get("label")):
+            if stated is not None and _claim_first_number(stated) != len(impls):
+                return _fail(name, f"{e['id']}: {stated!r} states {_claim_first_number(stated)}; it counts {len(impls)}")
+        if "implementations" in e:
+            for i in impls:
+                if not _claim_phrase_in(_claim_text(i["name"]), _claim_text(e["claim"]), r"[\w-]"):
+                    return _fail(name, f"{e['id']}: the sentence counting {i['name']!r} does not name it")
+        names = [_claim_text(i["name"]) for i in impls]
+        for a in range(len(names)):
+            for b in range(len(names)):
+                if a != b and _claim_phrase_in(names[a], names[b]):
+                    return _fail(name, f"{e['id']}: {impls[a]['name']!r} and {impls[b]['name']!r} may be one implementation counted twice")
+        claimed: dict = {}
+        for i in impls:
+            rows = {n for n, h in enumerate(heads) if _claim_phrase_in(i["scoreboard"], h, r"[\w-]")}
+            if not rows:
+                return _fail(name, f"{i['name']!r} ({i['scoreboard']!r}) names the wallet of no dated row of "
+                                   "lab/EXTERNAL-NOUNS.md's Wallets table")
+            for n in rows:
+                if n in claimed:
+                    return _fail(name, f"{i['name']!r} and {claimed[n]!r} both resolve to the scoreboard row "
+                                       f"{heads[n].strip()[:40]!r}: one implementation counted twice")
+                claimed[n] = i["name"]
+        counted += 1
+    statements = sum(1 for e in entries if e["kind"] == "statement")
+    surfaces = sorted({s for e in entries if e["kind"] == "statement" for s in e["surfaces"]})
+    return _ok(name, f"all {len(badges)} images above the README's first heading are badges with entries, and the "
+                     f"{statements} statements listed on {', '.join(surfaces)} are each still there; every listed claim's "
+                     f"evidence resolves, and its {counted} counts match the implementations named, each on its own "
+                     f"scoreboard rows (the manifest lists these claims, not every sentence of those surfaces)")
 
 def check_assurance_mapping(root: pathlib.Path) -> list[Finding]:
     """The 800-63 mapping cites evidence that exists, and does not claim conformance (P6.2).
@@ -25648,6 +26627,623 @@ def check_product_sessions_pin_utc(root: pathlib.Path) -> list[Finding]:
                      "sessions to UTC before connecting, whatever PGTZ the environment sets")
 
 
+# 2026-10-09 (THREAT-MODEL). The pin above holds a session that does not ask; TimeZone is a setting
+# any role may SET. The instant columns are TIMESTAMP without a zone, so a bare clock stored into one,
+# or compared with one, is read in the caller's zone. As polaris_app with SET timezone = 'Etc/GMT-14':
+# uc1 dated a signature and its credential fourteen hours ahead, a status UPDATE made
+# audit_token_state_change write its audit row ahead, uc8 dated a published revocation ahead, the
+# holder key register's effective_at moved through a column default, and uc9_complete_recovery
+# approved a recovery before its cool-down ended. So the database's own clock reads are pinned: a
+# routine that reads the clock carries SET timezone = 'UTC' (a CREATE OR REPLACE without it resets
+# the pin) and does not change TimeZone itself; a default on a zoneless column, a view, a rule, and
+# a CHECK, policy or trigger condition over a zoneless column read it AT TIME ZONE 'UTC'. A
+# TIMESTAMPTZ column takes the instant itself (now()), which no zone moves. The special inputs
+# 'now', 'today', 'tomorrow' and 'yesterday', timeofday() and the LOCAL / CURRENT_DATE clocks are the
+# session's however they are written, single- or dollar-quoted, and a clock function named in
+# quotes ("now"()) is the same function. A read is on the UTC clock only when AT TIME ZONE 'UTC'
+# converts it directly or through grouping parentheses: date_trunc('day', now()) AT TIME ZONE 'UTC'
+# truncates in the session's zone first. An argument default is evaluated by the caller, before the
+# routine's pin applies, so it is judged like a column default; a body that sets TimeZone through
+# SET, set_config or an UPDATE of pg_settings undoes the pin, and a set_config whose parameter name
+# is not a literal is refused because a reading cannot tell which setting it names. Dynamic SQL is
+# not executed here: a DO block or a routine body whose literal text creates a routine, a view, a
+# rule, a policy or a domain, alters a routine, or sets a default is refused, and DDL a routine
+# builds by concatenation at run time is beyond any static reading, which is why the catalog test in
+# TestTheDatabaseClockIsUtc reads the built database as well. This reads code written in good
+# faith; deliberately obfuscated SQL is the catalog test's to find. Migrations before
+# _UTC_CLOCK_MIGRATION are released and unchangeable; that one supersedes what they left (review
+# rounds 1 and 2, 2026-10-09, found the forms this now reads).
+_UTC_CLOCK_MIGRATION = "2026-10-09-001-instants-on-the-utc-clock"
+_CLOCK_FUNCTIONS = r"(?:now|transaction_timestamp|statement_timestamp|clock_timestamp)"
+_CLOCK_INSTANT = re.compile(r"\bCURRENT_TIMESTAMP\b(?:\s*\(\s*\d+\s*\))?"
+                            r"|(?:\b%s\b|\"%s\")\s*\(\s*\)" % (_CLOCK_FUNCTIONS, _CLOCK_FUNCTIONS), re.I)
+_CLOCK_LOCAL = re.compile(r"\bCURRENT_DATE\b|\b(?:CURRENT_TIME|LOCALTIME|LOCALTIMESTAMP)\b(?:\s*\(\s*\d+\s*\))?"
+                          r"|(?:\btimeofday\b|\"timeofday\")\s*\(\s*\)|'\s*(?:now|today|tomorrow|yesterday)\s*'"
+                          r"|\$(?P<tag>[A-Za-z_]\w*|)\$\s*(?:now|today|tomorrow|yesterday)\s*\$(?P=tag)\$", re.I)
+#: Words after which a parenthesis groups rather than calls: `THEN (now()) AT TIME ZONE 'UTC'` is
+#: a conversion of the read, `date_trunc('day', now()) AT TIME ZONE 'UTC'` is not.
+_GROUPING_WORDS = frozenset((
+    "SELECT", "THEN", "ELSE", "WHEN", "AND", "OR", "NOT", "DEFAULT", "IN", "IS", "BY", "ON", "WHERE",
+    "HAVING", "RETURN", "BETWEEN", "LIKE", "ILIKE", "CASE", "AS", "USING", "CHECK", "VALUES", "DISTINCT",
+    "ALL", "ANY", "SOME", "SET", "INTO", "TO", "FROM", "WITH"))
+_ZONED_ANYWHERE = re.compile(r"\b(?:TIMESTAMPTZ|TIMESTAMP\s*(?:\(\s*\d+\s*\))?\s+WITH\s+TIME\s+ZONE|TIMETZ"
+                             r"|TIME\s*(?:\(\s*\d+\s*\))?\s+WITH\s+TIME\s+ZONE)\b", re.I)
+_UTC_VALUE = r"(?:'UTC'|\"UTC\"|UTC\b)"
+_PINS_UTC = re.compile(r"\bSET\s+\"?timezone\"?\s*(?:=|TO)\s*" + _UTC_VALUE, re.I)
+_SETS_ZONE = re.compile(r"\bSET\s+\"?timezone\"?\s*(?:(?:=|TO)\s*(?!\s|" + _UTC_VALUE + r")|FROM\s+CURRENT\b)"
+                        r"|\bRESET\s+(?:\"?timezone\"?|ALL)\b", re.I)
+_BODY_SETS_ZONE = re.compile(r"\bSET\s+(?:LOCAL\s+|SESSION\s+)?(?:\"?timezone\"?|TIME\s+ZONE)\b"
+                             r"|\bRESET\s+(?:\"?timezone\"?|ALL)\b"
+                             r"|\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+(?:pg_catalog\s*\.\s*)?\"?pg_settings\b", re.I)
+_SET_CONFIG = re.compile(r"(?:\bset_config\b|\"set_config\")\s*\(", re.I)
+_LITERAL_ARGUMENT = re.compile(r"\s*(?:[Ee]?'((?:[^']|'')*)'|\$([A-Za-z_]\w*|)\$(.*?)\$\2\$)\s*,", re.S)
+_DYNAMIC_DDL = re.compile(r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE|(?:MATERIALIZED\s+)?VIEW|RULE"
+                          r"|POLICY|DOMAIN)\b|\bALTER\s+(?:FUNCTION|PROCEDURE|ROUTINE|POLICY|DOMAIN)\b"
+                          r"|\bALTER\s+(?:COLUMN\s+)?\S+\s+SET\s+DEFAULT\b", re.I)
+_SQL_LEX = re.compile(r"--[^\n]*|/\*|'|\"|\$(?:[A-Za-z_]\w*)?\$|;|\b(?:BEGIN\s+ATOMIC|BEGIN|CASE|END)\b", re.I)
+_SQL_BLOCK = re.compile(r"/\*|\*/")
+_SQL_IDENT = r"(?:\"(?:[^\"]|\"\")+\"|[A-Za-z_][\w$]*)"
+_SQL_NAME = r"(?:%s\s*\.\s*)?(%s)" % (_SQL_IDENT, _SQL_IDENT)
+_ZONED_TYPE = re.compile(r"^(?:TIMESTAMPTZ|TIMESTAMP\s*(?:\(\s*\d+\s*\))?\s+WITH\s+TIME\s+ZONE|TIMETZ"
+                         r"|TIME\s*(?:\(\s*\d+\s*\))?\s+WITH\s+TIME\s+ZONE)\b", re.I)
+_COLUMN_STOP = re.compile(r"\b(?:NOT|NULL|DEFAULT|CONSTRAINT|CHECK|REFERENCES|PRIMARY|UNIQUE|GENERATED|COLLATE)\b",
+                          re.I)
+
+
+def _sql_name(raw: str) -> str:
+    """An identifier as PostgreSQL resolves it: a quoted one exactly, an unquoted one folded."""
+    return raw[1:-1].replace('""', '"') if raw.startswith('"') else raw.lower()
+
+
+def _sql_lex(text: str, split: bool = True) -> list[str]:
+    """SQL with its comments and psql meta-commands removed, split at top-level semicolons when
+    `split`. String literals and quoted identifiers are kept as they are; a dollar-quoted body is
+    kept with ITS comments removed, since a routine body is code too; a BEGIN ATOMIC body is one
+    statement however many semicolons it holds."""
+    if split:
+        text = re.sub(r"(?m)^[ \t]*\\.*$", "", text)
+    out: list[str] = []
+    cur: list[str] = []
+    atomic = 0
+    i, n = 0, len(text)
+    while i < n:
+        m = _SQL_LEX.search(text, i)
+        if not m:
+            cur.append(text[i:])
+            break
+        cur.append(text[i:m.start()])
+        tok, j = m.group(0), m.end()
+        word = tok.upper()
+        if tok.startswith("--"):
+            pass
+        elif tok == "/*":
+            depth = 1
+            while depth and j < n:
+                k = _SQL_BLOCK.search(text, j)
+                if not k:
+                    j = n
+                    break
+                depth += 1 if k.group(0) == "/*" else -1
+                j = k.end()
+            cur.append(" ")
+        elif tok == "'":
+            s0 = m.start()
+            if s0 and text[s0 - 1] in "eE" and (s0 < 2 or not (text[s0 - 2].isalnum() or text[s0 - 2] in "_$")):
+                # E'...': a backslash escapes the next character. Kept with each escaped quote
+                # written as two, so what reads the statement afterwards sees an ordinary literal.
+                buf = []
+                while j < n:
+                    if text[j] == "\\" and j + 1 < n:
+                        buf.append("''" if text[j + 1] == "'" else text[j:j + 2])
+                        j += 2
+                    elif text.startswith("''", j):
+                        buf.append("''")
+                        j += 2
+                    elif text[j] == "'":
+                        j += 1
+                        break
+                    else:
+                        buf.append(text[j])
+                        j += 1
+                cur.append("'" + "".join(buf) + "'")
+            else:
+                while True:
+                    k = text.find("'", j)
+                    if k < 0:
+                        j = n
+                        break
+                    if text.startswith("''", k):
+                        j = k + 2
+                        continue
+                    j = k + 1
+                    break
+                cur.append(text[s0:j])
+        elif tok == '"':
+            k = text.find('"', j)
+            j = n if k < 0 else k + 1
+            cur.append(text[m.start():j])
+        elif tok == ";":
+            if split and not atomic:
+                out.append("".join(cur))
+                cur = []
+            else:
+                cur.append(";")
+        elif tok.startswith("$"):
+            k = text.find(tok, j)
+            body = text[j:n if k < 0 else k]
+            cur.append(tok + "".join(_sql_lex(body, split=False)) + tok)
+            j = n if k < 0 else k + len(tok)
+        else:
+            if re.match(r"BEGIN\s+ATOMIC", word):
+                atomic = 1 if not atomic else atomic + 1
+            elif atomic and word in ("BEGIN", "CASE"):
+                atomic += 1
+            elif atomic and word == "END":
+                atomic -= 1
+            cur.append(tok)
+        i = j
+    out.append("".join(cur))
+    return [s.strip() for s in out if s.strip()]
+
+
+def _split_top(text: str, sep: str = ",") -> list[str]:
+    """`text` split at `sep` outside parentheses and quotes."""
+    parts, depth, quote, start = [], 0, None, 0
+    for i, ch in enumerate(text):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == sep and depth == 0:
+            parts.append(text[start:i])
+            start = i + 1
+    parts.append(text[start:])
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _paren_body(text: str, at: int) -> str:
+    """What the parenthesis at `at` encloses, quotes respected."""
+    depth, quote = 0, None
+    for i in range(at, len(text)):
+        ch = text[i]
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return text[at + 1:i]
+    return text[at + 1:]
+
+
+def _top_keyword_bodies(text: str, keyword: str) -> list[str]:
+    """The parenthesised expression after each `keyword (` in `text` outside quotes, e.g. every
+    CHECK (...) of a column definition."""
+    out, quote = [], None
+    pat = re.compile(r"\b%s\s*\(" % keyword, re.I)
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "'\"":
+            quote = ch
+        else:
+            m = pat.match(text, i)
+            if m and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")):
+                out.append(_paren_body(text, m.end() - 1))
+                i = m.end()
+                continue
+        i += 1
+    return out
+
+
+def _paren_pairs(sql: str) -> dict[int, int]:
+    """Each closing parenthesis's index -> its opening one's, quotes respected."""
+    stack, pairs, quote = [], {}, None
+    for i, ch in enumerate(sql):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "(":
+            stack.append(i)
+        elif ch == ")" and stack:
+            pairs[i] = stack.pop()
+    return pairs
+
+
+def _utc_after(sql: str, end: int, pairs: dict[int, int]) -> bool:
+    """Whether the read ending at `end` is converted AT TIME ZONE 'UTC': directly, or through
+    parentheses that only group. A parenthesis that closes a call makes the read an argument, and
+    date_trunc('day', now()) AT TIME ZONE 'UTC' has already read the session's zone inside the call."""
+    i = end
+    while True:
+        j = i
+        while j < len(sql) and sql[j].isspace():
+            j += 1
+        if j < len(sql) and sql[j] == ")":
+            opening = pairs.get(j)
+            if opening is None:
+                return False
+            word = re.search(r"(\"[^\"]*\"|[A-Za-z_][\w$]*)\s*$", sql[:opening])
+            if word and (word.group(1).startswith('"') or word.group(1).upper() not in _GROUPING_WORDS):
+                return False
+            i = j + 1
+            continue
+        return bool(re.match(r"AT\s+TIME\s+ZONE\s+'UTC'", sql[j:], re.I))
+
+
+def _clock_reads(sql: str) -> list[tuple[str, str]]:
+    """(the read, 'utc' | 'bare' | 'local') for each session-clock read in `sql`."""
+    reads, pairs = [], None
+    for m in _CLOCK_INSTANT.finditer(sql):
+        if pairs is None:
+            pairs = _paren_pairs(sql)
+        reads.append((m.group(0), "utc" if _utc_after(sql, m.end(), pairs) else "bare"))
+    reads += [(m.group(0), "local") for m in _CLOCK_LOCAL.finditer(sql)]
+    return reads
+
+
+def _body_sets_zone(body: str) -> str | None:
+    """How a routine body changes TimeZone, which undoes the routine's pin, or None. A set_config
+    whose parameter name is not one literal is refused: a reading cannot tell what it names."""
+    m = _BODY_SETS_ZONE.search(body)
+    if m:
+        return re.sub(r"\s+", " ", m.group(0))
+    for call in _SET_CONFIG.finditer(body):
+        arg = _LITERAL_ARGUMENT.match(body, call.end())
+        if not arg:
+            return "set_config with a computed parameter name"
+        if (arg.group(1) if arg.group(1) is not None else arg.group(3)).strip().lower() == "timezone":
+            return "set_config('TimeZone', ...)"
+    return None
+
+
+def _argument_defaults(params: str) -> list[tuple[str, str]]:
+    """(what precedes it, the expression) for each argument of a routine signature with a DEFAULT
+    or = default."""
+    out = []
+    for param in _split_top(params):
+        depth, quote = 0, None
+        for k, ch in enumerate(param):
+            if quote:
+                quote = None if ch == quote else quote
+            elif ch in "'\"":
+                quote = ch
+            elif ch in "()":
+                depth += 1 if ch == "(" else -1
+            elif depth:
+                continue
+            elif ch == "=" and param[k - 1:k] not in ("<", ">", "!", ":"):
+                out.append((param[:k], param[k + 1:]))
+                break
+            elif (k == 0 or not (param[k - 1].isalnum() or param[k - 1] == "_")) and \
+                    re.match(r"DEFAULT\b", param[k:], re.I):
+                out.append((param[:k], param[k + len("DEFAULT"):]))
+                break
+    return out
+
+
+def _column_default(definition: str) -> tuple[str, str, str | None] | None:
+    """(column, its type and constraints, its DEFAULT expression or None) for a column definition."""
+    m = re.match(r"(%s)\s+(.*)$" % _SQL_IDENT, definition, re.S)
+    if not m or m.group(1).upper() in ("CONSTRAINT", "PRIMARY", "UNIQUE", "CHECK", "FOREIGN", "EXCLUDE", "LIKE"):
+        return None
+    rest = m.group(2)
+    depth, cut, quote = 0, None, None
+    for k, ch in enumerate(rest):
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "'\"":
+            quote = ch
+        elif ch in "()":
+            depth += 1 if ch == "(" else -1
+        elif depth == 0 and (k == 0 or not (rest[k - 1].isalnum() or rest[k - 1] == "_")):
+            if re.match(r"DEFAULT\b", rest[k:], re.I):
+                cut = k
+                break
+    if cut is None:
+        return _sql_name(m.group(1)), rest, None
+    expr = rest[cut + len("DEFAULT"):]
+    stop, depth, quote = None, 0, None
+    for k, ch in enumerate(expr):
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "'\"":
+            quote = ch
+        elif ch in "()":
+            depth += 1 if ch == "(" else -1
+        elif depth == 0 and k > 0 and not (expr[k - 1].isalnum() or expr[k - 1] == "_"):
+            if _COLUMN_STOP.match(expr, k) and expr[:k].strip():
+                stop = k
+                break
+    return _sql_name(m.group(1)), rest[:cut], (expr if stop is None else expr[:stop]).strip()
+
+
+def _routine_parts(s: str) -> tuple[str, str]:
+    """(the body, the rest of the statement) of a CREATE FUNCTION or PROCEDURE: a dollar-quoted
+    body, a single-quoted one, or a BEGIN ATOMIC one. A body it cannot find is the whole statement,
+    so the routine is judged on everything it says rather than skipped."""
+    d = re.search(r"\bAS\s+(\$(?:[A-Za-z_]\w*)?\$)", s, re.I)
+    if d:
+        end = s.find(d.group(1), d.end())
+        if end >= 0:
+            return s[d.end():end], s[:d.start()] + s[end + len(d.group(1)):]
+    q = re.search(r"\bAS\s+'", s, re.I)
+    if q:
+        j, parts = q.end(), []
+        while True:
+            k = s.find("'", j)
+            if k < 0:
+                return s, s
+            if s.startswith("''", k):
+                parts.append(s[j:k] + "'")
+                j = k + 2
+                continue
+            parts.append(s[j:k])
+            return "".join(parts), s[:q.start()] + s[k + 1:]
+    a = re.search(r"\bBEGIN\s+ATOMIC\b", s, re.I)
+    if a:
+        return s[a.end():], s[:a.start()]
+    return s, s
+
+
+def check_database_instants_read_the_utc_clock(root: pathlib.Path) -> list[Finding]:
+    """In the schema sources and every migration from 2026-10-09-001 on, read as code written in good
+    faith: every routine whose body reads the clock pins SET timezone = 'UTC' and sets no TimeZone
+    in its body; the clock reads it parses in column, domain and argument defaults, column type
+    changes, views, rules, and CHECK, policy and trigger conditions read it AT TIME ZONE 'UTC' over a
+    zoneless column (the instant itself over a TIMESTAMPTZ one); and no DO block or routine body
+    creates a routine, view, rule, policy or domain, alters a routine or sets a default in the
+    literal text of dynamic SQL. DDL a routine builds by concatenation at run time, and SQL written
+    to evade a reading, are beyond a static check: the catalog test in TestTheDatabaseClockIsUtc
+    reads the built database for them."""
+    name = "database_instants_read_the_utc_clock"
+    sql = root / "polaris_sql"
+    if not _read(root, "polaris_sql/migrations/" + _UTC_CLOCK_MIGRATION + ".up.sql").strip():
+        return _fail(name, "migration %s is missing, so a migrated database keeps the session-clock "
+                           "routines, defaults and views the released migrations left" % _UTC_CLOCK_MIGRATION)
+    # By date and counter, so another migration of the same day is held to it as well. The
+    # released ones are replayed for the columns, types and defaults they leave, not judged.
+    cut = _UTC_CLOCK_MIGRATION[:14]
+    replay = [(f, True) for f in sorted(sql.glob("[01]*.sql")) if f.name != "08_tests.sql"]
+    replay += [(f, f.name[:14] >= cut) for f in sorted((sql / "migrations").glob("*.up.sql"))]
+
+    types: dict[tuple[str, str], str] = {}
+    dflts: dict[tuple[str, str], str] = {}
+    domains: dict[str, str] = {}
+    offenders: list[str] = []
+    readers: set[str] = set()
+    pinned: set[str] = set()
+    defaults: set[tuple[str, str]] = set()
+    viewed: set[str] = set()
+    conditions: set[str] = set()
+
+    def zoned(ctype: str) -> bool:
+        ctype = ctype.strip()
+        if _ZONED_TYPE.match(ctype):
+            return True
+        first = re.match(r"(%s)" % _SQL_NAME, ctype)
+        base = domains.get(_sql_name(first.group(2))) if first else None
+        return bool(base) and zoned(base)
+
+    def judge_value(where: str, what: str, ctype: str, expr: str | None, count: tuple | None = None,
+                    z: bool | None = None):
+        reads = _clock_reads(expr or "")
+        if not reads:
+            return
+        z = zoned(ctype) if z is None else z
+        if count and not z:
+            defaults.add(count)
+        bad = [r for r, kind in reads if kind == "local" or kind == ("utc" if z else "bare")]
+        if bad:
+            offenders.append("%s:%s %s (%s)" % (
+                where, what, bad[0],
+                "a TIMESTAMPTZ value takes the instant itself; AT TIME ZONE 'UTC' hands it a wall clock "
+                "the session's zone reads back" if z and any(k == "utc" for _, k in reads)
+                else "the session's clock: read it AT TIME ZONE 'UTC'"))
+
+    def judge_condition(where: str, what: str, table: str | None, expr: str, extra: tuple = ()):
+        reads = _clock_reads(expr)
+        if not reads:
+            return
+        conditions.add("%s:%s" % (where, what))
+        bare_text = re.sub(r"'(?:[^']|'')*'", "''", expr)
+        names = {_sql_name(q or w) for q, w in re.findall(r"(\"(?:[^\"]|\"\")+\")|\b([A-Za-z_]\w*)\b", bare_text)}
+        used = [types[(table, c)] for c in names if table and (table, c) in types] + list(extra)
+        flags = [zoned(t) for t in used]
+        naive, tz = (not flags) or not all(flags), any(flags)
+        bad = [r for r, kind in reads if kind == "local" or (kind == "bare" and naive) or (kind == "utc" and tz)]
+        if bad:
+            offenders.append("%s:%s reads %s, the session's clock, against %s" % (
+                where, what, bad[0], "a zoneless column" if naive else "a TIMESTAMPTZ column as a wall clock"))
+
+    def judge_dynamic(where: str, what: str, body: str):
+        d = _DYNAMIC_DDL.search(body)
+        if d:
+            offenders.append("%s:%s runs %s as dynamic SQL, which this cannot read" % (
+                where, what, re.sub(r"\s+", " ", d.group(0))))
+
+    routine = re.compile(r"^CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\s+%s\s*\(" % _SQL_NAME, re.I)
+    alter_routine = re.compile(r"^ALTER\s+(?:FUNCTION|PROCEDURE|ROUTINE)\s+%s(.*)$" % _SQL_NAME, re.I | re.S)
+    view = re.compile(r"^CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?(?:RECURSIVE\s+)?(?:MATERIALIZED\s+)?"
+                      r"VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?%s" % _SQL_NAME, re.I)
+    rule = re.compile(r"^CREATE\s+(?:OR\s+REPLACE\s+)?RULE\s+(%s)" % _SQL_IDENT, re.I)
+    table = re.compile(r"^CREATE\s+(?:(?:GLOBAL|LOCAL)\s+)?(?:(?:TEMP|TEMPORARY|UNLOGGED)\s+)?TABLE\s+"
+                       r"(?:IF\s+NOT\s+EXISTS\s+)?%s\s*\(" % _SQL_NAME, re.I)
+    alter_table = re.compile(r"^ALTER\s+(?:TABLE|VIEW|MATERIALIZED\s+VIEW|FOREIGN\s+TABLE)\s+(?:IF\s+EXISTS\s+)?"
+                             r"(?:ONLY\s+)?%s\s+(.*)$" % _SQL_NAME, re.I | re.S)
+    domain = re.compile(r"^CREATE\s+DOMAIN\s+%s\s+(?:AS\s+)?(.*)$" % _SQL_NAME, re.I | re.S)
+    alter_domain = re.compile(r"^ALTER\s+DOMAIN\s+%s\s+(.*)$" % _SQL_NAME, re.I | re.S)
+    policy = re.compile(r"^(?:CREATE|ALTER)\s+POLICY\s+(%s)\s+ON\s+%s(.*)$" % (_SQL_IDENT, _SQL_NAME), re.I | re.S)
+    trigger = re.compile(r"^CREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\s+(%s)\s.*?\bON\s+%s(.*)$"
+                         % (_SQL_IDENT, _SQL_NAME), re.I | re.S)
+
+    for f, judged in replay:
+        fname = f.name
+        for s in _sql_lex(_read_path(f)):
+            r = routine.match(s)
+            if r:
+                if judged:
+                    rname = _sql_name(r.group(1))
+                    body, frame = _routine_parts(s)
+                    if _clock_reads(body):
+                        readers.add(rname)
+                        if _PINS_UTC.search(frame) and not _SETS_ZONE.search(frame):
+                            pinned.add(rname)
+                        else:
+                            offenders.append("%s:%s reads the clock without SET timezone = 'UTC'" % (fname, rname))
+                    sets = _body_sets_zone(body)
+                    if sets:
+                        offenders.append("%s:%s sets TimeZone in its body (%s), which undoes its pin"
+                                         % (fname, rname, sets))
+                    judge_dynamic(fname, rname, body)
+                    # An argument's default is evaluated by the caller, before the routine's pin.
+                    for before, expr in _argument_defaults(_paren_body(s, r.end() - 1)):
+                        judge_value(fname, "%s argument %s DEFAULT" % (rname, re.sub(r"\s+", " ", before.strip())),
+                                    before, expr, z=bool(_ZONED_ANYWHERE.search(before)))
+                continue
+            if re.match(r"DO\b", s, re.I):
+                if judged:
+                    judge_dynamic(fname, "a DO block", s)
+                continue
+            a = alter_routine.match(s)
+            if a:
+                u = _SETS_ZONE.search(a.group(2))
+                if judged and u:
+                    offenders.append("%s:%s %s, so it reads the caller's clock" % (
+                        fname, _sql_name(a.group(1)), re.sub(r"\s+", " ", u.group(0).strip())))
+                continue
+            v = view.match(s)
+            if v:
+                reads = _clock_reads(s)
+                if judged and reads:
+                    viewed.add(_sql_name(v.group(1)))
+                    bad = [rd for rd, kind in reads if kind != "utc"]
+                    if bad:
+                        offenders.append("%s:%s reads %s, the session's clock" % (fname, _sql_name(v.group(1)), bad[0]))
+                continue
+            ru = rule.match(s)
+            if ru:
+                bad = [rd for rd, kind in _clock_reads(s) if kind != "utc"]
+                if judged and bad:
+                    offenders.append("%s:rule %s reads %s, the session's clock" % (fname, _sql_name(ru.group(1)), bad[0]))
+                continue
+            t = table.match(s)
+            if t:
+                tname = _sql_name(t.group(1))
+                elements = _split_top(_paren_body(s, t.end() - 1))
+                cols = [c for c in (_column_default(e) for e in elements) if c]
+                for c, ctype, expr in cols:
+                    types[(tname, c)] = ctype
+                    if expr is not None:
+                        dflts[(tname, c)] = expr
+                if judged:
+                    for c, ctype, expr in cols:
+                        judge_value(fname, "%s.%s DEFAULT" % (t.group(1), c), ctype, expr, (tname, c))
+                    for e in elements:
+                        for body in _top_keyword_bodies(e, "CHECK"):
+                            judge_condition(fname, "%s CHECK (%s)" % (t.group(1), body[:40]), tname, body)
+                continue
+            at = alter_table.match(s)
+            if at:
+                tname = _sql_name(at.group(1))
+                for action in _split_top(at.group(2)):
+                    sd = re.match(r"ALTER\s+(?:COLUMN\s+)?(%s)\s+SET\s+DEFAULT\s+(.*)$" % _SQL_IDENT, action, re.I | re.S)
+                    dd = re.match(r"ALTER\s+(?:COLUMN\s+)?(%s)\s+DROP\s+DEFAULT\b" % _SQL_IDENT, action, re.I)
+                    ty = re.match(r"ALTER\s+(?:COLUMN\s+)?(%s)\s+(?:SET\s+DATA\s+)?TYPE\s+(.*?)(?:\s+USING\s+(.*))?$"
+                                  % _SQL_IDENT, action, re.I | re.S)
+                    ad = re.match(r"ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(.*)$", action, re.I | re.S)
+                    if sd:
+                        c = _sql_name(sd.group(1))
+                        dflts[(tname, c)] = sd.group(2)
+                        if judged:
+                            judge_value(fname, "%s.%s DEFAULT" % (at.group(1), c), types.get((tname, c), ""),
+                                        sd.group(2), (tname, c))
+                    elif dd:
+                        dflts.pop((tname, _sql_name(dd.group(1))), None)
+                    elif ty:
+                        c = _sql_name(ty.group(1))
+                        types[(tname, c)] = ty.group(2)
+                        if judged:
+                            judge_value(fname, "%s.%s TYPE %s with DEFAULT" % (at.group(1), c, ty.group(2).strip()),
+                                        ty.group(2), dflts.get((tname, c)))
+                            judge_value(fname, "%s.%s TYPE ... USING" % (at.group(1), c), ty.group(2), ty.group(3))
+                    elif ad:
+                        checks = _top_keyword_bodies(ad.group(1), "CHECK")
+                        col = _column_default(ad.group(1))
+                        if col:
+                            types[(tname, col[0])] = col[1]
+                            if col[2] is not None:
+                                dflts[(tname, col[0])] = col[2]
+                            if judged:
+                                judge_value(fname, "%s.%s DEFAULT" % (at.group(1), col[0]), col[1], col[2],
+                                            (tname, col[0]))
+                        if judged:
+                            for body in checks:
+                                judge_condition(fname, "%s CHECK (%s)" % (at.group(1), body[:40]), tname, body)
+                continue
+            dm = domain.match(s)
+            if dm:
+                dname = _sql_name(dm.group(1))
+                spec = _column_default("value " + dm.group(2))
+                domains[dname] = spec[1] if spec else dm.group(2)
+                if judged:
+                    if spec:
+                        judge_value(fname, "domain %s DEFAULT" % dname, spec[1], spec[2])
+                    for body in _top_keyword_bodies(dm.group(2), "CHECK"):
+                        judge_condition(fname, "domain %s CHECK" % dname, None, body, (domains[dname],))
+                continue
+            ad = alter_domain.match(s)
+            if ad:
+                dname = _sql_name(ad.group(1))
+                sd = re.match(r"SET\s+DEFAULT\s+(.*)$", ad.group(2), re.I | re.S)
+                if judged and sd:
+                    judge_value(fname, "domain %s DEFAULT" % dname, domains.get(dname, ""), sd.group(1))
+                if judged:
+                    for body in _top_keyword_bodies(ad.group(2), "CHECK"):
+                        judge_condition(fname, "domain %s CHECK" % dname, None, body, (domains.get(dname, ""),))
+                continue
+            p = policy.match(s)
+            if p:
+                if judged:
+                    for kw in ("USING", r"WITH\s+CHECK"):
+                        for body in _top_keyword_bodies(p.group(3), kw):
+                            judge_condition(fname, "policy %s" % _sql_name(p.group(1)), _sql_name(p.group(2)), body)
+                continue
+            tg = trigger.match(s)
+            if tg and judged:
+                for body in _top_keyword_bodies(tg.group(3), "WHEN"):
+                    judge_condition(fname, "trigger %s WHEN" % _sql_name(tg.group(1)), _sql_name(tg.group(2)), body)
+    if offenders:
+        return _fail(name, "%d place(s) the database reads the clock in the caller's TimeZone, which any "
+                           "role may SET, or cannot be read: %s" % (len(offenders), "; ".join(offenders[:6]) +
+                                                 (" (+%d more)" % (len(offenders) - 6) if len(offenders) > 6 else "")))
+    if not readers or not defaults:
+        return _fail(name, "found %d routine(s) reading the clock and %d zoneless clock default(s) under "
+                           "polaris_sql/; the parse and the schema have drifted and this would pass on "
+                           "nothing" % (len(readers), len(defaults)))
+    return _ok(name, "in the schema sources and the migrations from %s on, read as code written in good "
+                     "faith: the %d routines whose bodies read the clock pin SET timezone = 'UTC' and set no "
+                     "TimeZone in their bodies; the clock reads parsed in column, domain and argument "
+                     "defaults, type changes, views, rules and CHECK, policy and trigger conditions are on "
+                     "the UTC clock (%d zoneless defaults, %d views, %d conditions); no DO block or routine "
+                     "body creates a routine, view, rule, policy or domain, alters a routine or sets a "
+                     "default in literal dynamic SQL. Concatenated or deliberately obfuscated SQL is beyond "
+                     "a static reading; the catalog test reads the built database"
+                     % (cut, len(pinned), len(defaults), len(viewed), len(conditions)))
+
+
 # 2026-09-24. HolderKeyEvent.algorithm and AuthorityKeyEvent.algorithm were free text: the route's
 # allowlist and the CLI's choices were the only things keeping a classical parameter set out of
 # registers whose value is issuer-signed or published for relying parties to verify under. A
@@ -26081,6 +27677,12 @@ def _job_parts(block: str) -> tuple[str, dict[str, str]]:
     return head, out
 
 
+# The product suite's work, by what it runs: a job that runs any of it is a part, whatever its label says (review
+# of #309, 2026-10-09: a part renamed out of "Product suite:" and dropped from the gate's needs passed).
+_PRODUCT_SUITE_WORK = ("scripts/polaris-coverage.sh", "polaris-procedure-mutation-drill.py", "polaris-app-role-suite.py",
+                       "cargo test --release", "cargo llvm-cov", "polaris-zk-mutation-drill.py")
+
+
 def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
     """The product suite's parallel parts carry one setup, and its required job gates on each.
 
@@ -26120,16 +27722,24 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
         return _ok(name, "the product suite runs as one job; there are no copies to keep in step")
     problems = [f"{j} is a part of the product suite the required job does not need" for j in labelled
                 if j not in needs]
+    problems += [f"{j} runs the product suite's work but the required job does not need it"
+                 for j, b in jobs.items() if j != gate and j not in needs and any(w in b for w in _PRODUCT_SUITE_WORK)]
     problems += [f"the required job needs {j}, which ci.yml does not define" for j in needs if j not in jobs]
     if not re.search(r"(?m)^    if:\s*\$?\{?\{?\s*always\(\)", block):
         problems.append("the required job does not run `if: always()`: when a part fails it is skipped, and "
                         "GitHub reports a skipped required check as passing")
-    if "needs" not in block.split("\n    steps:\n", 1)[-1] or "success" not in block:
-        problems.append("the required job does not judge its parts' results (needs.*.result == success)")
+    # Every result, and as many as it needs: `any(... == "success")`, or a count short of the parts, passed one
+    # green part as the whole suite (review of #309).
+    judge = block.split("\n    steps:\n", 1)[-1]
+    if "toJSON(needs)" not in judge or f"len(r) == {len(needs)} and" not in judge \
+            or 'all(v == "success" for v in r.values())' not in judge:
+        problems.append(f"the required job must judge all {len(needs)} parts' results (len(r) == {len(needs)} and "
+                        "all(v == \"success\" ...)), not one of them")
     parts = [j for j in needs if j in jobs]
     split = {j: _job_parts(jobs[j]) for j in parts}
     shared = 0
-    for a, b in zip(parts, parts[1:]):
+    # Every pair, not neighbours in needs: a step two parts share that a third lacks is still compared.
+    for a, b in ((x, y) for i, x in enumerate(parts) for y in parts[i + 1:]):
         (ha, sa), (hb, sb) = split[a], split[b]
         if ha != hb:
             problems.append(f"{a} and {b} differ in their runner, services or environment")
@@ -26390,6 +28000,8 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_config_schema_covers_env,
     check_config_doc_current,
     check_operability_gate,
+    check_claims_manifest,
+    check_llms_txt_walked,
     check_ci_runs_atlas_e2e,
     check_load_gen_single_ledger,
     check_chaos_probe_reaches_wrapper,
@@ -26405,6 +28017,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_client_ip_behind_proxies,
     check_edge_limits,
     check_doctor_names_failures,
+    check_evaluate_wired,
     check_upgrade_drilled,
     check_helm_upgrade_migrates,
     check_infra_alerts,
@@ -26426,6 +28039,8 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_key_custody_abstraction,
     check_secrets_lifecycle_sealed,
     check_secrets_reach_only_their_readers,
+    check_operator_scripts_read_the_unit_env,
+    check_fresh_host_reaches_online_verification,
     check_migrations_expand_contract,
     check_zero_downtime_deploy,
     check_verification_load_certified,
@@ -26433,6 +28048,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_sim_mode_gated,
     check_ui_drill,
     check_helm_reference_profile,
+    check_edge_tls_state_shared,
     check_local_clock_convention,
     check_c6_atlas_redacts_zk_location,
     check_c6_app_read_paths_redact,
@@ -26514,6 +28130,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_security_suite_refuses_skips_in_ci,
     check_no_session_date_in_sql,
     check_product_sessions_pin_utc,
+    check_database_instants_read_the_utc_clock,
     check_openapi_covers_api_v1,
     check_product_suite_parts_share_setup,
 ]
