@@ -365,10 +365,12 @@ refused_restore() {  # refused_restore <what> <expected text> <and this ERE, or 
 # key/value found outside of section at line 1", then "[075]: no backup set found to restore"; a
 # padding check that fails first would raise CryptoError instead. Step 9 restores the same bucket
 # with the right passphrase, so the passphrase is the only difference. With no cipher configured,
-# CIPHER_REFUSED is the loader's hint for a file it could not parse, or a CryptoError.
+# pgBackRest reads the ciphertext as text: the same run logged "key/value found outside of section
+# at line 1: Salted__", the header of aes-256-cbc's format opening the file; older releases hinted
+# "is or was the repo encrypted".
 INFO_REFUSED="unable to load info file"
 WRONG_KEY_REFUSED='\[FormatError\] unable to load info file|CryptoError'
-CIPHER_REFUSED="is or was the repo encrypted|CryptoError"
+NO_CIPHER_REFUSED='at line 1: Salted__|is or was the repo encrypted'
 
 echo "== 8. (d) a restore from repo2 without the passphrase is refused =="
 # No passphrase: the image's own path refuses before pgBackRest runs (fail closed).
@@ -378,7 +380,7 @@ refused_restore "with a wrong passphrase" "$INFO_REFUSED" "$WRONG_KEY_REFUSED" "
 # The bucket and its key pair with no cipher configured at all: pgBackRest reading the objects as
 # plaintext.
 grep -v '^repo2-cipher-type=' "$WORK/rendered.conf" > "$WORK/repo-nocipher.conf"
-refused_restore "with no cipher configured" "$INFO_REFUSED" "$CIPHER_REFUSED" "$WORK/repo-creds-nopass.conf" own \
+refused_restore "with no cipher configured" "$INFO_REFUSED" "$NO_CIPHER_REFUSED" "$WORK/repo-creds-nopass.conf" own \
     -v "$WORK/repo-nocipher.conf:/etc/pgbackrest/conf.d/repo.conf:ro"
 
 echo "== 9. (b) restore into a FRESH postgres from repo2 ONLY =="

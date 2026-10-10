@@ -6581,10 +6581,12 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
         "if grep -qF \"$MARKER\" /tmp/obj; then echo PLAINTEXT; fi\n"
         "[ \"$(head -c 8 /tmp/obj)\" != \"Salted__\" ] && echo NOT-CIPHERTEXT\n"
         "[ \"$left\" = 0 ] || fail \"repo1 was not wiped\"\n"
-        "refused_restore nopass \"$WORK/repo-creds-nopass.conf\"\n"
-        "refused_restore wrong \"$WORK/repo-creds-wrongpass.conf\"\n"
+        "refused_restore nopass \"repo2-cipher-pass. The offsite repo\" \"\" \"$WORK/repo-creds-nopass.conf\" image\n"
+        "refused_restore wrong \"$INFO_REFUSED\" \"$WRONG_KEY_REFUSED\" \"$WORK/repo-creds-wrongpass.conf\" image\n"
+        "refused_restore nocipher \"$INFO_REFUSED\" \"$NO_CIPHER_REFUSED\" \"$WORK/repo-creds-nopass.conf\" own\n"
         "grep -qF -- \"$says\" \"$WORK/refused-restore.log\"\n"
-        "CIPHER_REFUSED=\"is or was the repo encrypted|CryptoError\"\n"
+        "WRONG_KEY_REFUSED='\\[FormatError\\] unable to load info file|CryptoError'\n"
+        "NO_CIPHER_REFUSED='at line 1: Salted__|is or was the repo encrypted'\n"
         "grep -qE 'HostConnectError|ServiceError|FileMissingError' \"$WORK/refused-restore.log\"\n"
         "RESTORE_REPO2='pgbackrest --stanza=polaris --repo=2 restore'\n"
         "echo \"done\"\n")
@@ -6743,15 +6745,21 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
              "rendered retention"),
             ("refuses mounted \"configures repo2 (repo2-type=s3) with no cipher\"\n", "mounted repo.conf"),
             ("grep -qF -- \"$says\" \"$WORK/refused-restore.log\"\n", "own error text"),
-            ("CIPHER_REFUSED=\"is or was the repo encrypted|CryptoError\"\n", "cipher-specific error"),
+            ("WRONG_KEY_REFUSED='\\[FormatError\\] unable to load info file|CryptoError'\n",
+             "wrong-passphrase restore's own cipher error"),
+            ("NO_CIPHER_REFUSED='at line 1: Salted__|is or was the repo encrypted'\n", "no-cipher restore's own error"),
+            ("refused_restore nocipher \"$INFO_REFUSED\" \"$NO_CIPHER_REFUSED\" \"$WORK/repo-creds-nopass.conf\" own\n",
+             "hold the no-cipher restore"),
             ("grep -qE 'HostConnectError|ServiceError|FileMissingError' \"$WORK/refused-restore.log\"\n",
              "missing info file"),
             ("[ \"$(head -c 8 /tmp/obj)\" != \"Salted__\" ] && echo NOT-CIPHERTEXT\n", "cipher header"),
             ("if grep -qF \"$MARKER\" /tmp/obj; then echo PLAINTEXT; fi\n", "marker row's plaintext"),
             ("put canary/plaintext\n", "plaintext canary"),
             ("[ \"$left\" = 0 ] || fail \"repo1 was not wiped\"\n", "wipe repo1"),
-            ("refused_restore nopass \"$WORK/repo-creds-nopass.conf\"\n", "with no passphrase"),
-            ("refused_restore wrong \"$WORK/repo-creds-wrongpass.conf\"\n", "with a wrong passphrase"),
+            ("refused_restore nopass \"repo2-cipher-pass. The offsite repo\" \"\" \"$WORK/repo-creds-nopass.conf\" image\n",
+             "with no passphrase"),
+            ("refused_restore wrong \"$INFO_REFUSED\" \"$WRONG_KEY_REFUSED\" \"$WORK/repo-creds-wrongpass.conf\" image\n",
+             "with a wrong passphrase"),
             ("RESTORE_REPO2='pgbackrest --stanza=polaris --repo=2 restore'\n", "from repo2 alone"),
             ("echo \"done\"\n", "final done line")):
         assert gone in DRILL, gone
