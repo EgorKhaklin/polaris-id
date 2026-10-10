@@ -3529,8 +3529,8 @@ def test_helm_upgrade_migrates_check_discriminates(tmp_path):
     drill = "scripts/polaris-helm-upgrade-drill.sh"
     broken(drill, 'helm upgrade "${REL}" "${ROOT}/deploy/helm/polaris"', 'helm install "${REL}" "${ROOT}/deploy/helm/polaris"',
            "must FAIL when the drill does not upgrade")
-    broken(drill, '[[ "${AFTER}" -gt "${BEFORE}" ]]', '[[ -n "${AFTER}" ]]', "must FAIL when an upgrade that "
-           "applied nothing would pass")
+    broken(drill, 'why=$(migrations_since "${BEFORE}" "${AFTER}" "${WANT}") || fail', 'why=ok',
+           "must FAIL when the drill stops holding the upgrade to the migrations new since the release")
     broken(".github/workflows/helm-upgrade.yml", "bash scripts/polaris-helm-upgrade-drill.sh", "true",
            "must FAIL when CI does not run the drill")
 
