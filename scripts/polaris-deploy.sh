@@ -166,6 +166,37 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 3b. The database's PostgreSQL major against this tree's. A server refuses a cluster another major
+#     initialised, so a FROM line moved to a new major and deployed (as a dependency bump proposes)
+#     recreated postgres in step 5 on a cluster it could not open, and the database stayed down until
+#     the line went back. A major change is a dump and restore: OPERATIONS.md, "Postgres version
+#     upgrade". Checked before step 4 builds anything. A missing or empty volume passes (the image
+#     initialises it); a cluster whose major cannot be read is refused.
+# ---------------------------------------------------------------------------
+pg_major_check() {
+    local vols cluster want
+    want=$(sed -n -E 's/^FROM postgres:([0-9]+)[^0-9].*/\1/p' "${POLARIS_ROOT}/polaris_web/Dockerfile.postgres")
+    [[ "${want}" =~ ^[0-9]+$ ]] || { echo "  ✗ polaris_web/Dockerfile.postgres has no single 'FROM postgres:<major>' line" >&2; return 1; }
+    vols=$(docker volume ls -q --filter "label=com.docker.compose.project=${PROJECT}" \
+               --filter label=com.docker.compose.volume=pg_data) \
+        || { echo "  ✗ could not list project ${PROJECT}'s volumes" >&2; return 1; }
+    [[ -n "${vols}" ]] || return 0
+    [[ "$(printf '%s\n' "${vols}" | grep -c .)" -eq 1 ]] \
+        || { echo "  ✗ more than one pg_data volume in project ${PROJECT}: ${vols//$'\n'/ }" >&2; return 1; }
+    cluster=$(docker run --rm -v "${vols}:/d:ro" \
+                  alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
+                  sh -c 'cat /d/PG_VERSION 2>/dev/null || echo none') \
+        || { echo "  ✗ could not read ${vols}'s PG_VERSION, so its cluster's major is unknown" >&2; return 1; }
+    [[ "${cluster}" != none && "${cluster}" != "${want}" ]] || return 0
+    echo "  ✗ ${vols} holds a PostgreSQL ${cluster} cluster, and polaris_web/Dockerfile.postgres is PostgreSQL ${want}." >&2
+    echo "    A server refuses another major's cluster: recreating postgres would take the database down." >&2
+    echo "    Change majors the way docs/operator/OPERATIONS.md, \"Postgres version upgrade\", says (a dump and" >&2
+    echo "    restore), or put the FROM line back. Nothing was built or recreated." >&2
+    return 1
+}
+pg_major_check || exit 1
+
+# ---------------------------------------------------------------------------
 # 4. Pull the upstream images, build Polaris's own
 # ---------------------------------------------------------------------------
 # Lab record 017 (gate row OP-19): every image built from this tree is rebuilt, not the app's
@@ -274,8 +305,9 @@ if [[ "${POLARIS_PGBACKREST_ENABLED:-1}" == "1" ]]; then
     fi
     # As the postgres user: the server archives WAL as postgres, so a repo
     # created by root here would refuse every later archive-push.
-    if compose exec -T -u postgres postgres pgbackrest --stanza=polaris stanza-create >/dev/null 2>&1 \
-       && compose exec -T -u postgres postgres pgbackrest --stanza=polaris check >/dev/null 2>&1; then
+    stanza_log="$(mktemp)"
+    if compose exec -T -u postgres postgres pgbackrest --stanza=polaris stanza-create >"$stanza_log" 2>&1 \
+       && compose exec -T -u postgres postgres pgbackrest --stanza=polaris check >>"$stanza_log" 2>&1; then
         echo "  ✓ pgBackRest stanza ready (archive-push validated)"
         if ! compose exec -T -u postgres postgres pgbackrest --stanza=polaris --output=json info 2>/dev/null \
                 | grep -q '"type": *"full"'; then
@@ -304,11 +336,24 @@ if [[ "${POLARIS_PGBACKREST_ENABLED:-1}" == "1" ]]; then
         fi
     else
         echo "  ⚠  pgBackRest stanza-create/check FAILED. Archiving is enabled but the" >&2
-        echo "     repo is not ready — WAL will accumulate on disk until this is fixed." >&2
-        echo "     Check POLARIS_PGBACKREST_S3_* on the postgres service and" >&2
-        echo "     secrets/pgbackrest_repo_creds.conf (the S3 key pair), then re-run:" >&2
-        echo "       docker compose -f ${COMPOSE_FILE} exec -u postgres postgres pgbackrest --stanza=polaris check" >&2
+        echo "     repo is not ready, so WAL will accumulate on disk until this is fixed." >&2
+        # A log without pgBackRest's own ERROR or HINT lines (a daemon or compose failure says
+        # "Error") must not end the deploy here: grep's no-match is 1, and set -e would.
+        { grep -E 'ERROR|HINT' "$stanza_log" || true; } | head -4 | sed 's/^/       /' >&2
+        if grep -q 'ERROR: \[028\]' "$stanza_log"; then
+            # [028]: the repository's stanza belongs to another cluster, as after a PostgreSQL
+            # major-version upgrade (OPERATIONS.md, "Postgres version upgrade", step 5).
+            echo "     The repository holds the previous cluster's stanza. After a major-version" >&2
+            echo "     upgrade, upgrade the stanza, then take a full backup:" >&2
+            echo "       docker compose -f ${COMPOSE_FILE} exec -u postgres postgres pgbackrest --stanza=polaris stanza-upgrade" >&2
+            echo "       docker compose -f ${COMPOSE_FILE} exec -u postgres postgres pgbackrest --stanza=polaris --type=full backup" >&2
+        else
+            echo "     Check POLARIS_PGBACKREST_S3_* on the postgres service and" >&2
+            echo "     secrets/pgbackrest_repo_creds.conf (the S3 key pair), then re-run:" >&2
+            echo "       docker compose -f ${COMPOSE_FILE} exec -u postgres postgres pgbackrest --stanza=polaris check" >&2
+        fi
     fi
+    rm -f "$stanza_log"
 fi
 
 # ---------------------------------------------------------------------------

@@ -493,5 +493,227 @@ class DrillDiagnosticsReachTheirFail(unittest.TestCase):
         self.assertIn("Allocated resources", r.stdout, "the node's room must be printed")
 
 
+def _cut(rel, first, last="}"):
+    """The lines of ROOT/rel from the one starting with FIRST to the first after it that is exactly LAST."""
+    lines = (ROOT / rel).read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(first))
+    end = next(i for i in range(start + 1, len(lines)) if lines[i] == last)
+    return "\n".join(lines[start:end + 1])
+
+
+class _CutBlock(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = pathlib.Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_bash(self, script, **env):
+        return subprocess.run(["bash", "-c", "set -euo pipefail\n" + script], capture_output=True, text=True,
+                              timeout=60, env=dict({"PATH": "/usr/bin:/bin", "HOME": self.tmp.name}, **env))
+
+
+class ArchivingFailureWarnsAndTheDeployGoesOn(_CutBlock):
+    """polaris-deploy.sh's step 5c promises that a pgBackRest failure warns and does not block. Its
+    failure branch printed the log's ERROR and HINT lines with a grep, and under the deploy's
+    `set -euo pipefail` a log without them (a daemon or compose failure says "Error") ended the deploy
+    there, after the infrastructure was up and before the app was rolled. The block runs here, cut from
+    the script, with a stand-in compose."""
+
+    BLOCK = _cut("scripts/polaris-deploy.sh", 'if [[ "${POLARIS_PGBACKREST_ENABLED:-1}" == "1" ]]; then', "fi")
+    COMPOSE = r'''COMPOSE_FILE=polaris_web/docker-compose.prod.yml; SCRIPT_DIR=/nonexistent
+compose() {
+    case "$*" in
+      *"SHOW archive_mode"*) echo on ;;
+      *stanza-create*) [ -n "${STUB_CREATE_FAILS:-}" ] && { printf '%s\n' "$STUB_CREATE_FAILS"; return 1; }; return 0 ;;
+      *"--stanza=polaris check"*) printf '%s\n' "$STUB_CHECK_FAILS"; return 28 ;;
+      *) echo "unexpected compose $*" >&2; return 99 ;;
+    esac
+}
+'''
+
+    def run_5c(self, **env):
+        self.assertIn("stanza-create", self.BLOCK, "the cut missed step 5c")
+        tmpdir = self.dir / "t"
+        tmpdir.mkdir()
+        r = self.run_bash(self.COMPOSE + self.BLOCK + '\necho "THE DEPLOY GOES ON"\n', TMPDIR=str(tmpdir), **env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("THE DEPLOY GOES ON", r.stdout)
+        self.assertEqual(list(tmpdir.iterdir()), [], "the stanza log was left behind")
+        return r
+
+    def test_a_failure_without_pgbackrest_lines_warns_and_goes_on(self):
+        r = self.run_5c(STUB_CREATE_FAILS="Error response from daemon: container 4f2a is restarting")
+        self.assertIn("pgBackRest stanza-create/check FAILED", r.stderr)
+        self.assertIn("pgbackrest --stanza=polaris check", r.stderr, "the generic advice must be printed")
+
+    def test_error_028_names_the_stanza_upgrade_and_the_backup_after_it(self):
+        r = self.run_5c(STUB_CHECK_FAILS="ERROR: [028]: backup and archive info files exist but do not match the database\n"
+                                         "HINT: is this the correct stanza?")
+        self.assertIn("       ERROR: [028]", r.stderr, "pgBackRest's own line must be printed")
+        self.assertIn("pgbackrest --stanza=polaris stanza-upgrade", r.stderr)
+        self.assertIn("pgbackrest --stanza=polaris --type=full backup", r.stderr)
+
+
+class DeployRefusesAnotherMajorsCluster(_CutBlock):
+    """A PostgreSQL server refuses a cluster another major initialised. A FROM line moved to a new major
+    and deployed recreated postgres on a cluster it could not open, and the database stayed down until the
+    line went back. The deploy's check, cut from polaris-deploy.sh, with a stand-in docker that lists the
+    project's pg_data volumes and reads PG_VERSION from one."""
+
+    FN = _cut("scripts/polaris-deploy.sh", "pg_major_check() {")
+    DOCKER = r'''PROJECT=proj
+docker() {
+    case "$1 $2" in
+      "volume ls") printf '%s' "${STUB_VOLS:-}" ;;
+      "run --rm") [ -z "${STUB_RUN_FAILS:-}" ] || return 125; printf '%s\n' "$STUB_PG_VERSION" ;;
+      *) echo "unexpected docker $*" >&2; return 99 ;;
+    esac
+}
+'''
+
+    def check(self, from_line, vols="proj_pg_data", pg_version="16", run_fails=""):
+        (self.dir / "polaris_web").mkdir(exist_ok=True)
+        (self.dir / "polaris_web" / "Dockerfile.postgres").write_text("# the base\n%s\nENTRYPOINT [\"x\"]\n" % from_line)
+        r = self.run_bash(self.DOCKER + self.FN + '\nif pg_major_check; then echo PASSED; else echo REFUSED; fi\n',
+                          POLARIS_ROOT=self.tmp.name, STUB_VOLS=vols, STUB_PG_VERSION=pg_version,
+                          STUB_RUN_FAILS=run_fails)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return r.stdout.strip(), r.stderr
+
+    def test_a_cluster_of_another_major_is_refused_both_ways(self):
+        for cluster, image in (("16", "17"), ("17", "16")):
+            with self.subTest(cluster=cluster, image=image):
+                got, err = self.check("FROM postgres:%s-alpine@sha256:%s" % (image, "ab" * 32), pg_version=cluster)
+                self.assertEqual(got, "REFUSED", err)
+                self.assertIn("proj_pg_data holds a PostgreSQL %s cluster" % cluster, err)
+                self.assertIn("is PostgreSQL %s" % image, err)
+                self.assertIn('"Postgres version upgrade"', err)
+
+    def test_the_same_major_a_new_volume_and_an_empty_one_pass(self):
+        base = "FROM postgres:16-alpine@sha256:%s" % ("ab" * 32)
+        self.assertEqual(self.check(base)[0], "PASSED")
+        self.assertEqual(self.check(base, vols="")[0], "PASSED", "a first deploy has no volume")
+        self.assertEqual(self.check(base, pg_version="none")[0], "PASSED", "an empty volume is initialised by the image")
+
+    def test_what_cannot_be_read_is_refused(self):
+        base = "FROM postgres:16-alpine@sha256:%s" % ("ab" * 32)
+        for name, kw, says in (("unreadable cluster", {"run_fails": "1"}, "could not read proj_pg_data's PG_VERSION"),
+                               ("two volumes", {"vols": "proj_pg_data\nproj_other"}, "more than one pg_data volume"),
+                               ("no major in FROM", {"from_line": "FROM postgres:latest"}, "no single 'FROM postgres:<major>'")):
+            with self.subTest(name):
+                got, err = self.check(kw.pop("from_line", base), **kw)
+                self.assertEqual(got, "REFUSED", err)
+                self.assertIn(says, err)
+
+
+class UpgradeRollbackStopsAtAFailedCopy(_CutBlock):
+    """OPERATIONS.md's rollback from a PostgreSQL major upgrade copies the old cluster back and redeploys,
+    then moves pgBackRest's stanza back to it. Pasted into a shell, its lines ran one after another, so a
+    copy that failed (a full disk) was followed by a deploy onto half a cluster. The block runs here, cut
+    from the document the way scripts/polaris-pg-upgrade-drill.sh cuts it, with a stand-in docker and deploy."""
+
+    DOCKER = r'''#!/bin/sh
+echo "docker $*" >> "$CALLS"
+case "$*" in
+  *"config --no-interpolate"*) echo "name: proj" ;;
+  "volume inspect"*) ;;
+  *" down") ;;
+  "run --rm"*) exit "${STUB_COPY_RC:-0}" ;;
+  *"printenv POLARIS_PGBACKREST_ENABLED") echo "$STUB_ARCHIVING" ;;
+  *pgbackrest*) ;;
+  *) echo "unexpected docker $*" >&2; exit 99 ;;
+esac
+'''
+
+    def walk(self, **env):
+        doc = (ROOT / "docs" / "operator" / "OPERATIONS.md").read_text()
+        sec = doc[doc.index("### Postgres version upgrade"):doc.index("### TLS certificate renewal")]
+        a = sec.index("```bash", sec.index("To go back")) + len("```bash\n")
+        block = sec[a:sec.index("```", a)]
+        for d in ("bin", "polaris_web", "scripts"):
+            (self.dir / d).mkdir(exist_ok=True)
+        (self.dir / "bin" / "docker").write_text(self.DOCKER)
+        (self.dir / "scripts" / "polaris-deploy.sh").write_text('#!/bin/sh\necho "deploy $*" >> "$CALLS"\n')
+        for f in (self.dir / "bin" / "docker", self.dir / "scripts" / "polaris-deploy.sh"):
+            f.chmod(0o755)
+        calls = self.dir / "calls"
+        r = subprocess.run(["bash", "-c", block], cwd=self.dir, capture_output=True, text=True, timeout=60,
+                           env=dict({"PATH": "%s:/usr/bin:/bin" % (self.dir / "bin"), "CALLS": str(calls)}, **env))
+        return r, (calls.read_text().splitlines() if calls.exists() else [])
+
+    def test_a_failed_copy_is_not_deployed_onto(self):
+        r, calls = self.walk(STUB_COPY_RC="1", STUB_ARCHIVING="1")
+        self.assertNotEqual(r.returncode, 0, "a failed rollback must end non-zero")
+        self.assertTrue(any(c.startswith("docker run --rm") for c in calls), calls)
+        self.assertFalse([c for c in calls if c.startswith("deploy") or "pgbackrest" in c or "printenv" in c], calls)
+
+    def test_the_stanza_follows_the_old_cluster_back_when_the_stack_archives(self):
+        r, calls = self.walk(STUB_ARCHIVING="1")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        tail = [c for c in calls if c.startswith("deploy") or "pgbackrest" in c]
+        self.assertEqual(len(tail), 3, calls)
+        self.assertTrue(tail[0].startswith("deploy prod --no-pull"), tail)
+        self.assertTrue(tail[1].endswith("pgbackrest --stanza=polaris stanza-upgrade"), tail)
+        self.assertTrue(tail[2].endswith("pgbackrest --stanza=polaris --type=full backup"), tail)
+
+    def test_a_stack_that_does_not_archive_skips_pgbackrest(self):
+        r, calls = self.walk(STUB_ARCHIVING="0")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(any(c.startswith("deploy") for c in calls), calls)
+        self.assertFalse([c for c in calls if "pgbackrest" in c], calls)
+
+
+class PgUpgradeDrillStateFailsClosed(_CutBlock):
+    """The PostgreSQL upgrade drill compares each table's count and a digest of its rows before and after.
+    Read inside printf's arguments, a failed count or copy went unseen by set -e, and a table never read
+    hashed as empty input: both states compared equal and the drill passed. state() runs here, cut from
+    the drill, with a stand-in database of 42 tables."""
+
+    FN = _cut("scripts/polaris-pg-upgrade-drill.sh", "state() {")
+    DB = r'''fail() { echo "FAIL: $*" >&2; exit 1; }
+sql() {
+    case "$*" in
+      *"format('%I.%I'"*) for i in $(seq 10 51); do echo "public.t$i"; done ;;
+      *"count(*) FROM public.t${STUB_COUNT_FAILS:-none}") return 2 ;;
+      *"count(*) FROM"*) echo 2 ;;
+      *) echo fact ;;
+    esac
+}
+compose() {
+    local q; q=$(cat)
+    case "$q" in
+      *"FROM public.t${STUB_COPY_FAILS:-none})"*) echo "ERROR:  could not read" >&2; return 3 ;;
+      *"FROM public.t${STUB_COPY_EMPTY:-none})"*) return 0 ;;
+      *) printf 'r1\nr2\n' ;;
+    esac
+}
+'''
+
+    def state(self, **env):
+        out = self.dir / "state.txt"
+        r = self.run_bash(self.DB + self.FN + '\nstate "%s"\necho "STATE WRITTEN"\n' % out, **env)
+        return r, out
+
+    def test_every_table_is_read(self):
+        r, out = self.state()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rows = [line for line in out.read_text().splitlines() if line.startswith("rows ")]
+        self.assertEqual(len(rows), 42)
+        self.assertNotIn("e3b0c442", out.read_text())
+
+    def test_a_failed_read_fails_and_names_its_table(self):
+        for env, says in (({"STUB_COPY_FAILS": "23"}, "could not copy public.t23"),
+                          ({"STUB_COUNT_FAILS": "11"}, "could not count public.t11"),
+                          ({"STUB_COPY_EMPTY": "37"}, "public.t37 counts 2 rows, but its copy read none")):
+            with self.subTest(**env):
+                r, _ = self.state(**env)
+                self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                self.assertIn(says, r.stderr)
+                self.assertNotIn("STATE WRITTEN", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
