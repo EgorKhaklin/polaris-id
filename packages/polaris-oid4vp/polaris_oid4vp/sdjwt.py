@@ -67,19 +67,34 @@ KB_TYP = "kb+jwt"
 #: attacker-controlled, and a verifier that follows it can be walked down to `none`.
 ACCEPTED_ALGS = ("ES256",)
 
-#: Claim names a disclosure may never carry. draft-ietf-oauth-sd-jwt-vc: "iss, nbf, exp,
-#: cnf, vct, status ... MUST be included in the SD-JWT and MUST NOT be included in the
-#: Disclosures"; draft-ietf-oauth-selective-disclosure-jwt reserves `_sd`, `_sd_alg` and
-#: `...` structurally.
+#: Claims no disclosure may supply. SD-JWT VC draft 19, section 2.2.2.3: "The following
+#: registered JWT claims, including any of their sub-claims, when used in the SD-JWT component
+#: of an SD-JWT VC, MUST NOT be included in Disclosures and therefore MUST NOT be selectively
+#: disclosed": iss, nbf, exp, cnf, vct, vct#integrity, aka_vcts and status. The same section
+#: lists the two that "MAY be included in Disclosures": sub and iat.
 #:
-#: Refusing the NAME rather than only a collision is the stronger rule and the necessary
-#: one. A collision check alone catches a disclosure that overwrites `iss`, and misses one
-#: that INTRODUCES `exp` where the issuer set none, which puts a holder-chosen expiry into
-#: the claims a relying party reads. `cnf` is the sharpest: a disclosed `cnf` returns a key
-#: that is not the key the key binding was checked against, whether or not the issuer set
-#: one. Measured 2026-09-17; every one of these verified as authentic before.
-_DISCLOSURE_FORBIDDEN_NAMES = frozenset(
-    ("iss", "nbf", "exp", "cnf", "vct", "status", "iat", "_sd", "_sd_alg", "..."))
+#: A rule about WHERE a disclosure lands, not what it is called. A registered claim is a member
+#: of the payload's top level, so a disclosure is refused when it supplies one of these there, or
+#: anything inside one: a sub-claim of `status`, an element of `aka_vcts`, a member of `cnf`. A
+#: private claim further down that shares a name, `degree.status` or `vehicle.exp`, is not the
+#: registered claim and is disclosed like any other. Until 2026-10-10 this was a list of names
+#: matched at every depth, with `iat` on it and neither `vct#integrity` nor `aka_vcts`, so it
+#: refused conforming credentials (a disclosed `iat`, the two private claims above) and accepted
+#: non-conforming ones (a disclosed `vct#integrity`, `aka_vcts` or sub-claim of `status`).
+#:
+#: Refusing these rather than only a collision is the stronger rule and the necessary one. A
+#: collision check alone catches a disclosure that overwrites `iss`, and misses one that
+#: INTRODUCES `exp` where the issuer set none, which puts a holder-chosen expiry into the claims
+#: a relying party reads. `cnf` is the sharpest: a disclosed `cnf` returns a key that is not the
+#: key the key binding was checked against, whether or not the issuer set one. Measured
+#: 2026-09-17; every one of these verified as authentic before.
+_NEVER_DISCLOSED = frozenset(
+    ("iss", "nbf", "exp", "cnf", "vct", "vct#integrity", "aka_vcts", "status"))
+
+#: Names SD-JWT keeps for its own structure, refused as a disclosure's claim name at any depth:
+#: RFC 9901 section 7.1 rejects a disclosure named `_sd` or `...`, and section 4.1.1 keeps
+#: `_sd_alg` to the payload's top level.
+_RESERVED_DISCLOSURE_NAMES = frozenset(("_sd", "_sd_alg", "..."))
 
 #: Bounds on hostile input. There were none anywhere in this package until 2026-09-17: a
 #: 117 MiB presentation with a two-million-entry `_sd` array verified as authentic in 1.46 s,
@@ -528,14 +543,18 @@ def _issuer_public_keys(header, issuer_jwks, trust_anchors, now=None):
         if why:
             return [], why, None
         for anchor in trust_anchors:
-            if _chains_to(leaf, anchor, now, intermediates):
-                # After the chain, so that this refusal names the extended key usage. Inside
-                # `_chains_to` it read "does not chain to any configured trust anchor" for a
-                # leaf the anchor had certified (the EU reference PID issuer's, until 2026-10-10).
-                why = _leaf_eku_refusal(leaf)
-                if why:
-                    return [], why, None
-                return [leaf.public_key()], "", (leaf, anchor)
+            why = _chains_to(leaf, anchor, now, intermediates)
+            # "" chains, a string refuses, and anything else, None or a boolean from the contract
+            # this replaced among them, is no chain: an answer of the wrong type fails closed.
+            if not isinstance(why, str):
+                continue
+            # After the chain, so that this refusal names the extended key usage. Inside
+            # `_chains_to` it read "does not chain to any configured trust anchor" for a
+            # leaf the anchor had certified (the EU reference PID issuer's, until 2026-10-10).
+            why = why or _leaf_eku_refusal(leaf)
+            if why:
+                return [], why, None
+            return [leaf.public_key()], "", (leaf, anchor)
         return [], "the x5c leaf does not chain to any configured trust anchor", None
     if issuer_jwks:
         kid = header.get("kid")
@@ -618,15 +637,19 @@ def _signed_by(child, parent):
     return child.issuer == parent.subject
 
 
-def _valid_at(cert, now):
-    """True when `now` (an aware datetime) is inside `cert`'s validity period."""
+def _outside_validity(cert, now, what):
+    """"" when `now` (an aware datetime) is inside `cert`'s validity period, else a refusal that
+    names `what` the certificate is and the period it is valid for."""
     try:
         not_before = cert.not_valid_before_utc
         not_after = cert.not_valid_after_utc
     except AttributeError:  # pragma: no cover - cryptography < 42
         not_before = cert.not_valid_before.replace(tzinfo=datetime.timezone.utc)
         not_after = cert.not_valid_after.replace(tzinfo=datetime.timezone.utc)
-    return not_before <= now <= not_after
+    if not_before <= now <= not_after:
+        return ""
+    return "%s is outside its validity period (%s to %s)" % (
+        what, not_before.strftime("%Y-%m-%dT%H:%M:%SZ"), not_after.strftime("%Y-%m-%dT%H:%M:%SZ"))
 
 
 def _an_anchor_in_the_chain(intermediates, trust_anchors):
@@ -654,9 +677,9 @@ def _an_anchor_in_the_chain(intermediates, trust_anchors):
     return ""
 
 
-def _may_certify(ca, below, now):
-    """True when `ca`, sent in `x5c`, may certify a path with `below` CA certificates under it,
-    at `now` (an aware datetime).
+def _may_certify(ca, below):
+    """True when `ca`, sent in `x5c`, may certify a path with `below` CA certificates under it.
+    Its validity period is read by `_chains_to`, so that a refusal for it says so.
 
     RFC 5280: a CA certificate asserts basicConstraints cA (4.2.1.9) and, when it states a key
     usage, keyCertSign (4.2.1.3); its pathLenConstraint bounds the CAs beneath it; and a critical
@@ -686,12 +709,19 @@ def _may_certify(ca, below, now):
             return False
     except Exception:  # noqa: BLE001  absent or malformed basic constraints: not a CA
         return False
-    return _valid_at(ca, now)
+    return True
 
 
 def _chains_to(leaf, anchor, now=None, intermediates=()):
     """Is `leaf` certified by `anchor`, directly or through the CA certificates `intermediates`
     that its `x5c` sends after it, and valid at `now` (POSIX seconds; None for the clock)?
+
+    "" when it is. None when the path does not lead to `anchor`: a link that does not verify, a
+    CA certificate that may not certify what is beneath it, or more CAs than a path length
+    allows. Otherwise, for a path `anchor` does certify, why it is refused: a certificate in it
+    outside its validity period, or a leaf whose key usage does not permit signing. Each of those
+    read "does not chain to any configured trust anchor" until 2026-10-10, which sent an
+    integrator to the trust configuration when a certificate's dates or usage were the answer.
 
     The chain is checked as sent and nothing is searched for: RFC 7515 4.1.6 has each
     certificate certify the one before it, so every link is the next certificate in the array
@@ -703,7 +733,7 @@ def _chains_to(leaf, anchor, now=None, intermediates=()):
     path = [leaf, *intermediates]
     for child, parent in zip(path, path[1:] + [anchor]):
         if not _signed_by(child, parent):
-            return False
+            return None
 
     # 2026-09-17: the signature and the issuer/subject match were the WHOLE check, and that
     # is not a trust decision, it is a "did this CA ever sign this" decision. Three things
@@ -723,11 +753,15 @@ def _chains_to(leaf, anchor, now=None, intermediates=()):
     # binding's iat and the credential's exp and nbf, and this window alone read the wall clock,
     # so a leaf that had expired by `now` still chained (2026-10-01).
     now = _utcnow() if now is None else datetime.datetime.fromtimestamp(now, datetime.timezone.utc)
-    if not _valid_at(leaf, now):
-        return False
+    why = _outside_validity(leaf, now, "the x5c leaf")
+    if why:
+        return why
     for below, ca in enumerate(intermediates):
-        if not _may_certify(ca, below, now):
-            return False
+        why = _outside_validity(ca, now, "x5c certificate %d" % (below + 1))
+        if why:
+            return why
+        if not _may_certify(ca, below):
+            return None
     if intermediates:
         # The anchor's own pathLenConstraint, when it states one, bounds the CAs sent beneath it.
         try:
@@ -735,23 +769,24 @@ def _chains_to(leaf, anchor, now=None, intermediates=()):
         except x509.ExtensionNotFound:
             limit = None
         except Exception:  # noqa: BLE001  a malformed constraint is not a usable permission
-            return False
+            return None
         if limit is not None and len(intermediates) > limit:
-            return False
+            return None
 
     # digitalSignature, when the certificate states a KeyUsage at all. A certificate that
     # says what it may be used for and does not say "sign" is not a signing certificate.
     try:
         usage = leaf.extensions.get_extension_for_class(x509.KeyUsage).value
-        if not usage.digital_signature:
-            return False
     except x509.ExtensionNotFound:
-        pass
+        return ""
     except Exception:  # noqa: BLE001  a malformed extension is not a usable permission
-        return False
+        return "the x5c leaf's key usage does not parse, so it permits no credential signing"
+    if not usage.digital_signature:
+        return ("the x5c leaf's key usage does not include digitalSignature, so it permits no "
+                "credential signing")
     # The leaf's extended key usage is `_leaf_eku_refusal`'s, read once a chain is found, so that
     # its refusal says what it is.
-    return True
+    return ""
 
 
 def _leaf_eku_refusal(leaf):
@@ -1153,20 +1188,18 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
             return _refuse("disclosure", "the same disclosure was presented twice")
         # A claim name is a JSON object key, so a string. This runs before the commitment
         # check below, on input any holder of one genuine credential writes, and an array or
-        # an object reached the forbidden-name set lookup and raised TypeError (2026-09-28).
+        # an object reached the reserved-name set lookup and raised TypeError (2026-09-28).
         if len(parsed) == 3 and not isinstance(parsed[1], str):
             return _refuse("disclosure",
                            "a disclosure's claim name is a JSON %s, not a string, so it "
                            "names no claim" % type(parsed[1]).__name__)
-        # A 3-element disclosure names a claim. An object-property disclosure may not name
-        # one of the registered claims the credential's own integrity rests on, whether or
-        # not the payload already carries it.
-        if len(parsed) == 3 and parsed[1] in _DISCLOSURE_FORBIDDEN_NAMES:
+        # A 3-element disclosure names a claim, and three names are SD-JWT's own at any depth.
+        # The registered claims SD-JWT VC keeps out of disclosures depend on where a disclosure
+        # lands, so they are judged once the claims are resolved, below.
+        if len(parsed) == 3 and parsed[1] in _RESERVED_DISCLOSURE_NAMES:
             return _refuse("disclosure",
-                           "a disclosure is named %r, which the specification requires to be "
-                           "in the signed credential and never selectively disclosed. A "
-                           "holder-supplied %r is not one this verifier will hand on"
-                           % (parsed[1], parsed[1]))
+                           "a disclosure is named %r, which SD-JWT reserves for its own "
+                           "structure (RFC 9901, sections 4.1.1 and 7.1)" % parsed[1])
         by_digest[digest] = parsed
 
     # AFTER parsing, not before: a recursive disclosure's inner digest is reachable only
@@ -1192,6 +1225,22 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         claims = _resolve(payload, by_digest, used, collisions, disclosed=disclosed)
     except _TooDeep as exc:
         return _refuse("disclosure", str(exc))
+    # SD-JWT VC draft 19, section 2.2.2.3 (quoted at _NEVER_DISCLOSED), held on the paths the
+    # resolver filled: the position judged is the one a relying party reads the claim at, through
+    # recursive disclosures and array elements alike, and no second walk of the payload can
+    # disagree with the resolver about where a disclosure sits. A repeated digest was refused
+    # above, so each disclosure has one path. The shallowest first, so the refusal names a
+    # claim before its sub-claims.
+    supplied = sorted((p for p in disclosed if p[0] in _NEVER_DISCLOSED),
+                      key=lambda p: (len(p), repr(p)))
+    if supplied:
+        where = (repr(supplied[0][0]) if len(supplied[0]) == 1 else
+                 "%s, inside %r" % (json.dumps(list(supplied[0])), supplied[0][0]))
+        return _refuse("disclosure",
+                       "a disclosure supplies %s, which SD-JWT VC draft 19 (section 2.2.2.3) "
+                       "keeps out of disclosures with every claim inside it: the issuer signs it "
+                       "in clear text or leaves it out, and a holder-supplied one is not handed "
+                       "on" % where)
     if collisions:
         # SD-JWT section 9.3. The clear-text claims go in first and the disclosed ones
         # second, so before this check a disclosure named `iss` simply replaced the issuer in

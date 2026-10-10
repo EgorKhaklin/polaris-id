@@ -19,6 +19,9 @@
 #
 # Exits 0 only if the presentation is accepted AND every control is refused where it should be.
 set -euo pipefail
+# Every exit path ends with "done", success and failure alike: a run whose output does not end in
+# "done" did not finish, and is never a pass.
+trap 'echo "done"' EXIT
 
 PS_REPO="${PS_REPO:-https://github.com/ParleSec/ProtocolSoup.git}"
 PS_COMMIT="${PS_COMMIT:-97d306cafa3a005dd01c1641b13c9b5abb6bcc19}"   # tag v4.0.0
@@ -75,9 +78,10 @@ git -C src checkout -q FETCH_HEAD
 # -mod=readonly: every module is checked against ProtocolSoup's go.sum and nothing in the tree is
 # rewritten. The module and build caches are named volumes so a second run does not download again.
 started=$(date +%s)
+# GOTOOLCHAIN=auto: a commit needing a newer Go than the pinned image holds (v4.1.1: 1.26.6) fetches it.
 docker run --rm -v "$WORK/src/backend":/src:ro -v "$WORK":/out -w /src \
   -v polaris-go-mod:/go/pkg/mod -v polaris-go-build:/root/.cache/go-build \
-  -e CGO_ENABLED=0 -e GOFLAGS=-mod=readonly -e GOTOOLCHAIN=local "$GO_IMAGE" \
+  -e CGO_ENABLED=0 -e GOFLAGS=-mod=readonly -e GOTOOLCHAIN=auto "$GO_IMAGE" \
   sh -c 'go version && go build -trimpath -o /out/wallet-harness ./cmd/walletharness' | sed 's/^/           /'
 echo "built      wallet-harness in $(( $(date +%s) - started )) s"
 
@@ -104,7 +108,7 @@ cleanup() {
     docker rm -f "$NAME-$w" >/dev/null 2>&1 || true
   done
 }
-trap cleanup EXIT
+trap 'cleanup || true; echo "done"' EXIT
 
 PYTHONUNBUFFERED=1 venv/bin/python "$HERE/walk.py" serve issuer "$ISSUER_PORT" > issuer.log 2>&1 &
 ISSUER_PID=$!

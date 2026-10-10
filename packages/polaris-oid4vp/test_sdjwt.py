@@ -72,6 +72,12 @@ def _disclosure(salt, name, value):
     return b64u_encode(raw)
 
 
+def _period(cert):
+    """A certificate's validity period as the verifier's refusals print it."""
+    return "(%s to %s)" % tuple(t.strftime("%Y-%m-%dT%H:%M:%SZ")
+                                for t in (cert.not_valid_before_utc, cert.not_valid_after_utc))
+
+
 #: Leaves `iss` out of a credential, where None would sign a JSON null into it.
 _ABSENT = object()
 
@@ -771,10 +777,34 @@ class X5CTests(unittest.TestCase):
                                        trust_anchors=[ca], require_key_binding=False, now=now)
         ok = at(time.time())
         self.assertTrue(ok.authentic, "control: %s: %s" % (ok.code, ok.reason))
+        # The reason as well as the code (2026-10-10): the anchor certified this leaf, and until
+        # then the refusal read "does not chain to any configured trust anchor".
         for label, now in (("after it expired", time.time() + 60 * day),
                            ("before it was valid", time.time() - 5 * day)):
             with self.subTest(label):
-                self.assertEqual(at(now).code, "issuer_key")
+                v = at(now)
+                self.assertEqual((v.code, v.reason), (
+                    "issuer_key", "the x5c leaf is outside its validity period %s" % _period(leaf)))
+
+    def test_a_chain_answer_of_the_wrong_type_is_no_chain(self):
+        """`_chains_to` answers "" (it chains), a reason (refused) or None (no chain); until
+        2026-10-10 it answered True or False. Its caller reads the answer by type, so a boolean,
+        or anything else that is not a string, never reads as "" and never yields a key."""
+        from polaris_oid4vp import sdjwt as S
+        ca, leaf, _ = self._chain()
+        header = {"alg": "ES256", "typ": "dc+sd-jwt",
+                  "x5c": [base64.b64encode(leaf.public_bytes(serialization.Encoding.DER)).decode()]}
+        keys, why, _ = S._issuer_public_keys(header, None, [ca])
+        self.assertEqual((len(keys), why), (1, ""), "control: the real answer chains")
+        original = S._chains_to
+        try:
+            for answer in (None, False, True, 0, 1, b"", [], {}):
+                with self.subTest(answer=answer):
+                    S._chains_to = lambda *_a, answer=answer, **_k: answer
+                    self.assertEqual(S._issuer_public_keys(header, None, [ca]), (
+                        [], "the x5c leaf does not chain to any configured trust anchor", None))
+        finally:
+            S._chains_to = original
 
     def test_a_leaf_from_another_anchor_is_refused(self):
         """The refusal that names the chain. An integrator debugs from this text, and until
@@ -975,7 +1005,8 @@ class IssuerNamedByItsCertificateTests(unittest.TestCase):
     def test_a_name_that_does_not_parse_refuses_by_name(self):
         """Defence in depth behind `_not_an_issuer_leaf`, which reads every extension first and
         refuses a leaf whose extensions do not parse ("basic constraints do not parse"), so no
-        presentation reaches these two; each says what failed when it is reached directly."""
+        presentation reaches these three; each says what failed when it is reached directly. The
+        key usage is read by `_chains_to`, here on a leaf that is its own anchor."""
         from polaris_oid4vp import sdjwt as S
         from cryptography.x509.oid import ExtensionOID
         for oid, check, said in (
@@ -983,7 +1014,9 @@ class IssuerNamedByItsCertificateTests(unittest.TestCase):
                  "the issuer certificate's subjectAltName does not parse, so it names no issuer"),
                 (ExtensionOID.EXTENDED_KEY_USAGE, S._leaf_eku_refusal,
                  "the x5c leaf's extended key usage does not parse, so it permits no credential "
-                 "signing")):
+                 "signing"),
+                (ExtensionOID.KEY_USAGE, lambda leaf: S._chains_to(leaf, leaf),
+                 "the x5c leaf's key usage does not parse, so it permits no credential signing")):
             with self.subTest(extension=oid.dotted_string):
                 key = ec.generate_private_key(ec.SECP256R1())
                 name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "issuer")])
@@ -1422,6 +1455,247 @@ class DisclosureCollisionTests(unittest.TestCase):
         self.assertEqual(v.claims["birthdate"], "1990-04-17")
 
 
+class NeverDisclosedClaimsTests(unittest.TestCase):
+    """SD-JWT VC draft 19, section 2.2.2.3: iss, nbf, exp, cnf, vct, vct#integrity, aka_vcts and
+    status, "including any of their sub-claims", "MUST NOT be included in Disclosures", and sub
+    and iat "MAY be included in Disclosures".
+
+    Until 2026-10-10 the rule here was a list of names matched at every depth, wrong both ways.
+    Measured on 1.0.0rc17: a disclosed `iat` (A) and the private claims `degree.status` (B) and
+    `vehicle.exp` (C) were refused; a disclosed `vct#integrity` (D), `aka_vcts` (E) and
+    `status.status_list.idx` (F) verified as authentic; a disclosed `sub` (G) verified, as it
+    does now. The rule is now about where a disclosure lands: a never-disclosed claim at the top
+    level, or anything inside one (H)."""
+
+    SL = "https://issuer.example/sl"
+
+    def setUp(self):
+        self.w = Wallet()
+        self.now = int(time.time())
+
+    @staticmethod
+    def _digest(disclosure):
+        return b64u_encode(hashlib.sha256(disclosure.encode("ascii")).digest())
+
+    @staticmethod
+    def _element(salt, value):
+        """An array-element disclosure, [salt, value]."""
+        return b64u_encode(json.dumps([salt, value], separators=(",", ":")).encode())
+
+    def _verify(self, payload, disclosures, key_binding=True):
+        """`payload` over the issuer's `iss`, `vct`, `_sd_alg` and the holder's `cnf` (a member
+        `payload` sets to _ABSENT is left out), signed by the wallet's issuer and presented with
+        `disclosures`, with a key binding JWT over them or, `key_binding=False`, with none."""
+        w = self.w
+        signed = {"iss": "https://issuer.example", "vct": "urn:eudi:pid:1", "_sd_alg": "sha-256",
+                  "cnf": {"jwk": _public_jwk(w.holder_key)}}
+        signed.update(payload)
+        signed = {k: v for k, v in signed.items() if v is not _ABSENT}
+        issuer_jwt = _jws(w.issuer_key, {"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1"},
+                          signed)
+        presented = issuer_jwt + "~" + "".join(d + "~" for d in disclosures)
+        if not key_binding:
+            return w.verify(presented, require_key_binding=False)
+        kb = _jws(w.holder_key, {"alg": "ES256", "typ": "kb+jwt"},
+                  {"iat": self.now, "aud": AUDIENCE, "nonce": NONCE,
+                   "sd_hash": self._digest(presented)})
+        return w.verify(presented + kb)
+
+    def assertAccepted(self, v):
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
+    def assertSupplied(self, v, where):
+        """Refused by this rule, naming `where`: a different check refusing it does not pass."""
+        self.assertFalse(v.authentic, "accepted")
+        self.assertEqual(v.code, "disclosure")
+        self.assertTrue(v.reason.startswith(
+            "a disclosure supplies %s, which SD-JWT VC draft 19 (section 2.2.2.3) keeps out of "
+            "disclosures with every claim inside it" % where), v.reason)
+
+    # What draft 19 permits: A, B, C and G.
+
+    def test_a_disclosed_iat_is_accepted(self):
+        """A: `iat` "MAY be included in Disclosures"."""
+        d = _disclosure("s1", "iat", self.now)
+        v = self._verify({"_sd": [self._digest(d)]}, [d])
+        self.assertAccepted(v)
+        self.assertEqual(v.claims["iat"], self.now)
+        self.assertIn(("iat",), v.disclosed)
+
+    def test_a_private_claim_that_shares_a_registered_name_is_disclosed_like_any_other(self):
+        """B and C: `degree.status` and `vehicle.exp` are members of private claims, not the
+        registered `status` and `exp`. The vehicle's `exp` is long past, and it is not the
+        credential's expiry either: that is read from the signed top level alone."""
+        for label, parent, name, value in (("B", "degree", "status", "awarded"),
+                                           ("C", "vehicle", "exp", 946684800)):
+            with self.subTest(label, claim="%s.%s" % (parent, name)):
+                d = _disclosure("s-" + label, name, value)
+                v = self._verify({"iat": self.now, parent: {"_sd": [self._digest(d)]}}, [d])
+                self.assertAccepted(v)
+                self.assertEqual(v.claims[parent], {name: value})
+                self.assertIn((parent, name), v.disclosed)
+
+    def test_a_disclosed_sub_is_accepted(self):
+        """G, the control: `sub` "MAY be included in Disclosures", before 2026-10-10 and since."""
+        d = _disclosure("s7", "sub", "user-42")
+        v = self._verify({"iat": self.now, "_sd": [self._digest(d)]}, [d])
+        self.assertAccepted(v)
+        self.assertEqual(v.claims["sub"], "user-42")
+
+    # What draft 19 forbids: D, E, F and H.
+
+    def test_a_disclosed_vct_integrity_is_refused(self):
+        """D, accepted until 2026-10-10."""
+        d = _disclosure("s4", "vct#integrity", "sha256-AAAA")
+        self.assertSupplied(self._verify({"iat": self.now, "_sd": [self._digest(d)]}, [d]),
+                            "'vct#integrity'")
+
+    def test_a_disclosed_aka_vcts_or_element_of_one_is_refused(self):
+        """E, accepted until 2026-10-10; and an element of an `aka_vcts` the issuer signed, which
+        is inside the claim."""
+        d = _disclosure("s5", "aka_vcts", ["urn:x"])
+        self.assertSupplied(self._verify({"iat": self.now, "_sd": [self._digest(d)]}, [d]),
+                            "'aka_vcts'")
+        e = self._element("s5e", "urn:y")
+        self.assertSupplied(self._verify(
+            {"iat": self.now, "aka_vcts": ["urn:x", {"...": self._digest(e)}]}, [e]),
+            '["aka_vcts", 1], inside \'aka_vcts\'')
+
+    def test_a_disclosed_sub_claim_of_status_is_refused(self):
+        """F: `status.status_list.idx`, accepted until 2026-10-10."""
+        d = _disclosure("s6", "idx", 7)
+        v = self._verify({"iat": self.now, "status": {"status_list": {
+            "uri": self.SL, "_sd": [self._digest(d)]}}}, [d])
+        self.assertSupplied(v, '["status", "status_list", "idx"], inside \'status\'')
+
+    def test_every_never_disclosed_claim_is_refused_at_the_top_level(self):
+        """H. Each is introduced where the issuer signed none, so that no collision can be what
+        refuses it, with key binding and without, so that `kb_cnf` cannot be either."""
+        for name, value in (("iss", "https://attacker.example"), ("nbf", 0),
+                            ("exp", 4102444800), ("cnf", {"jwk": _public_jwk(self.w.holder_key)}),
+                            ("vct", "urn:eudi:pid:1"), ("vct#integrity", "sha256-AAAA"),
+                            ("aka_vcts", ["urn:x"]),
+                            ("status", {"status_list": {"uri": self.SL, "idx": 7}})):
+            for key_binding in (True, False):
+                with self.subTest(claim=name, key_binding=key_binding):
+                    d = _disclosure("h-" + name, name, value)
+                    v = self._verify({"iat": self.now, name: _ABSENT, "_sd": [self._digest(d)]},
+                                     [d], key_binding=key_binding)
+                    self.assertSupplied(v, repr(name))
+
+    def test_anything_inside_a_never_disclosed_claim_is_refused(self):
+        """H, "including any of their sub-claims": three depths inside `status`, an array element
+        among them, a recursive disclosure inside it, a member of `cnf` beside the key it binds,
+        and the key itself presented without key binding, where no other check reads `cnf`."""
+        idx = _disclosure("i", "idx", 7)
+        listed = _disclosure("l", "status_list", {"uri": self.SL, "idx": 7})
+        nested = _disclosure("n", "status_list", {"uri": self.SL, "_sd": [self._digest(idx)]})
+        element = self._element("e", {"kind": "revocation"})
+        kid = _disclosure("k", "kid", "holder-key-1")
+        jwk = _disclosure("j", "jwk", _public_jwk(self.w.holder_key))
+        for label, top, payload, disclosures, key_binding, where in (
+                ("status.status_list", "status", {"_sd": [self._digest(listed)]}, [listed], True,
+                 '["status", "status_list"]'),
+                ("status.status_list.idx", "status",
+                 {"status_list": {"uri": self.SL, "_sd": [self._digest(idx)]}}, [idx], True,
+                 '["status", "status_list", "idx"]'),
+                ("status.status_list.extra[0]", "status",
+                 {"status_list": {"uri": self.SL, "idx": 7, "extra": [
+                     {"...": self._digest(element)}]}}, [element], True,
+                 '["status", "status_list", "extra", 0]'),
+                ("status.status_list, recursive", "status", {"_sd": [self._digest(nested)]},
+                 [nested, idx], True, '["status", "status_list"]'),
+                ("cnf.kid", "cnf", {"jwk": _public_jwk(self.w.holder_key),
+                                    "_sd": [self._digest(kid)]}, [kid], True, '["cnf", "kid"]'),
+                ("cnf.jwk, no key binding", "cnf", {"_sd": [self._digest(jwk)]}, [jwk], False,
+                 '["cnf", "jwk"]')):
+            with self.subTest(label):
+                v = self._verify({"iat": self.now, top: payload}, disclosures,
+                                 key_binding=key_binding)
+                self.assertSupplied(v, "%s, inside %r" % (where, top))
+
+    # Adversarial shapes: where another check refuses first, the test names that check.
+
+    def test_a_top_level_status_disclosure_carrying_its_own_sd_is_refused_as_status(self):
+        """An object-valued disclosure named `status` whose value carries `_sd`: refused as
+        `status`, the shallowest claim it supplies, with its inner disclosure or alone, and beside
+        a `status` the issuer signed in clear text, a collision this rule answers first."""
+        idx = _disclosure("i", "idx", 7)
+        outer = _disclosure("o", "status", {"status_list": {"uri": self.SL,
+                                                            "_sd": [self._digest(idx)]}})
+        signed = {"status_list": {"uri": self.SL, "idx": 1}}
+        for label, clear, disclosures in (("with its inner disclosure", _ABSENT, [outer, idx]),
+                                          ("alone", _ABSENT, [outer]),
+                                          ("beside a signed status", signed, [outer, idx])):
+            with self.subTest(label):
+                v = self._verify({"iat": self.now, "status": clear,
+                                  "_sd": [self._digest(outer)]}, disclosures)
+                self.assertSupplied(v, "'status'")
+
+    def test_a_status_member_under_a_private_claim_is_not_the_registered_claim(self):
+        """A recursive disclosure is judged where the resolver puts it, through every disclosure
+        above it: `record.status.idx`, two disclosures deep under a private claim, is not inside
+        the registered `status`. The same inner disclosure under the top-level `status` is
+        refused (test_anything_inside_a_never_disclosed_claim_is_refused)."""
+        idx = _disclosure("i", "idx", 7)
+        record = _disclosure("r", "record", {"status": {"_sd": [self._digest(idx)]}})
+        v = self._verify({"iat": self.now, "_sd": [self._digest(record)]}, [record, idx])
+        self.assertAccepted(v)
+        self.assertEqual(v.claims["record"], {"status": {"idx": 7}})
+        self.assertIn(("record", "status", "idx"), v.disclosed)
+
+    def test_a_digest_committed_inside_and_outside_status_is_refused_as_repeated(self):
+        """Digest reuse: one disclosure committed at a permitted position and inside `status`.
+        RFC 9901 7.1's repeated-digest rule (`_repeated_digest`) refuses it first, so a disclosure
+        cannot borrow a permitted position to land in a forbidden one."""
+        d = _disclosure("x", "idx", 7)
+        v = self._verify({"iat": self.now, "_sd": [self._digest(d)], "status": {"status_list": {
+            "uri": self.SL, "_sd": [self._digest(d)]}}}, [d])
+        self.assertEqual((v.authentic, v.code), (False, "disclosure"))
+        self.assertIn("more than once", v.reason)
+
+    def test_a_status_disclosure_nothing_references_is_refused_by_the_commitment_rules(self):
+        """A `status` sub-claim the issuer committed to nowhere is refused as uncommitted, before
+        any position exists to judge; one committed in a slot it cannot fill (an array element in
+        an object's `_sd`) resolves to nothing and is refused as an orphan."""
+        idx = _disclosure("x", "idx", 7)
+        element = self._element("y", 7)
+        for label, sd, disclosure, said in (
+                ("committed nowhere", [], idx, "never committed to"),
+                ("committed where it cannot resolve", [self._digest(element)], element,
+                 "resolve to nothing")):
+            with self.subTest(label):
+                v = self._verify({"iat": self.now, "status": {"status_list": {
+                    "uri": self.SL, "idx": 7, "_sd": sd}}}, [disclosure])
+                self.assertEqual((v.authentic, v.code), (False, "disclosure"))
+                self.assertIn(said, v.reason)
+
+    def test_a_decoy_digest_inside_status_is_not_a_disclosure(self):
+        """The rule is about disclosures, as draft 19's text is. A digest no disclosure matches is
+        a decoy (RFC 9901 4.2.5): it supplies nothing and is not refused, and the status claim
+        reads as the issuer signed it."""
+        decoy = self._digest(_disclosure("decoy", "idx", 0))
+        v = self._verify({"iat": self.now, "status": {"status_list": {
+            "uri": self.SL, "idx": 7, "_sd": [decoy]}}}, [])
+        self.assertAccepted(v)
+        self.assertEqual((v.revocation["state"], v.revocation["idx"]), ("not_evaluated", 7))
+
+    def test_the_names_sd_jwt_reserves_are_refused_at_any_depth(self):
+        """`_sd`, `...` and `_sd_alg` stay refused by name wherever they sit (RFC 9901 7.1 and
+        4.1.1): the position rule replaced the name rule for the registered claims only."""
+        for name in ("_sd", "...", "_sd_alg"):
+            for parent in (None, "degree"):
+                with self.subTest(name=name, parent=parent):
+                    d = _disclosure("r", name, "x")
+                    sd = {"_sd": [self._digest(d)]}
+                    v = self._verify(dict(sd, iat=self.now) if parent is None
+                                     else {"iat": self.now, parent: sd}, [d])
+                    self.assertEqual((v.authentic, v.code), (False, "disclosure"))
+                    self.assertEqual(v.reason, "a disclosure is named %r, which SD-JWT reserves "
+                                               "for its own structure (RFC 9901, sections 4.1.1 "
+                                               "and 7.1)" % name)
+
+
 class HostileInputTotalityTests(unittest.TestCase):
     """`verify_presentation` is documented to return a Verdict and never raise. It raised.
 
@@ -1776,6 +2050,7 @@ class IssuerCertificateTests(unittest.TestCase):
         v = self._verify(leaf, leaf_key, ca)
         self.assertFalse(v.authentic, "a certificate that expired yesterday is not an issuer")
         self.assertEqual(v.code, "issuer_key")
+        self.assertEqual(v.reason, "the x5c leaf is outside its validity period %s" % _period(leaf))
 
     def test_a_leaf_not_valid_until_next_year_is_refused(self):
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -1786,6 +2061,7 @@ class IssuerCertificateTests(unittest.TestCase):
         v = self._verify(leaf, leaf_key, ca)
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "issuer_key")
+        self.assertEqual(v.reason, "the x5c leaf is outside its validity period %s" % _period(leaf))
 
     def test_a_tls_server_certificate_from_the_same_ca_is_not_an_issuer(self):
         """THE ONE THAT MATTERS. This package's own cli.py records walt.id refusing a leaf
@@ -1824,6 +2100,9 @@ class IssuerCertificateTests(unittest.TestCase):
                          "a certificate that states its usage and does not include signing "
                          "is not a signing certificate")
         self.assertEqual(v.code, "issuer_key")
+        # The anchor certified this leaf; until 2026-10-10 the reason read "does not chain".
+        self.assertEqual(v.reason, "the x5c leaf's key usage does not include digitalSignature, "
+                                   "so it permits no credential signing")
 
     def test_an_extended_key_usage_naming_only_tls_is_refused_on_its_own(self):
         """And the EKU isolated the same way, with a KeyUsage that permits signing."""
@@ -2009,12 +2288,16 @@ class ReferencePidIssuerCertificateTests(unittest.TestCase):
                 self.assertEqual(certified, (leaf, self.ca))
 
     def test_their_own_validity_still_governs(self):
+        """Refused since they expired, and the refusal says so (2026-10-10; it read NO_CHAIN)."""
         from polaris_oid4vp import sdjwt as S
-        for leaf in self.signers:
+        for leaf, period in zip(self.signers, (
+                "(2024-07-01T10:03:06Z to 2025-09-24T10:03:05Z)",
+                "(2024-07-01T10:03:44Z to 2025-09-24T10:03:43Z)")):
             with self.subTest(leaf=leaf.subject.rfc4514_string()):
                 keys, why, _ = S._issuer_public_keys(
                     self._header(leaf), None, [self.ca], self.SINCE_EXPIRED)
-                self.assertEqual((keys, why), ([], self.NO_CHAIN))
+                self.assertEqual((keys, why), (
+                    [], "the x5c leaf is outside its validity period %s" % period))
 
     def test_they_leave_iss_unbound_rather_than_refuse_it(self):
         from polaris_oid4vp import sdjwt as S
@@ -2189,6 +2472,8 @@ class IntermediateChainTests(unittest.TestCase):
         self._refused(self._verify(root, chain, key))
 
     def test_an_intermediate_outside_its_validity_period_is_refused(self):
+        """And named (2026-10-10): the anchor certified this path, and until then the reason read
+        "does not chain to any configured trust anchor"."""
         now = datetime.datetime.now(datetime.timezone.utc)
         day = datetime.timedelta(days=1)
         for label, window in (("expired", (now - 30 * day, now - day)),
@@ -2196,7 +2481,10 @@ class IntermediateChainTests(unittest.TestCase):
             with self.subTest(label):
                 root, chain, key = self._make(depth=1, change=lambda position, o, w=window: o.update(
                     not_before=w[0], not_after=w[1]))
-                self._refused(self._verify(root, chain, key))
+                v = self._verify(root, chain, key)
+                self._refused(v)
+                self.assertEqual(v.reason, "x5c certificate 1 is outside its validity period %s"
+                                 % _period(chain[1]))
 
     def test_an_intermediates_path_length_is_held(self):
         """Two CAs; the upper one (x5c position 2) allows no CA beneath it, and one is there."""

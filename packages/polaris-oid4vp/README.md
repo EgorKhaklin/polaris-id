@@ -18,7 +18,7 @@ version 1.0.0rc7, which passed all eleven modules of the Foundation's hosted HAI
 2026-09-24). The certification covers that version in that role. OpenID® and OpenID® Certified™
 are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Status:** this release, 1.0.0rc17, is the certified rc7 verifier plus the fixes made since; the
+**Status:** this release, 1.0.0rc18, is the certified rc7 verifier plus the fixes made since; the
 certification names rc7. It is re-run weekly against the outside implementations in the table
 below. No operator other than the author has run it and no independent security review exists.
 Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
@@ -168,8 +168,8 @@ for an issuer key configured with `issuer_jwks`, and for a refusal.
 | `credential_validity` | a credential past its `exp` or before its `nbf` |
 | `vct` | a credential of a type the query did not ask for |
 | `issuer_typ` | an issuer JWT not typed `dc+sd-jwt`, a W3C VC Data Model `vc+sd-jwt` credential among them |
-| `disclosure` | a disclosure of a claim that must be signed (`iss`, `exp`, `cnf`, ...), a colliding claim, a digest the credential commits to twice, or nesting past the depth cap |
-| `issuer_key` | an untrusted key, an x5c leaf outside its validity, not marked for signing (the reason names an extended key usage for another purpose), self-signed or a CA, or one whose subjectAltName names an issuer other than the credential's `iss` |
+| `disclosure` | a disclosure that supplies a claim SD-JWT VC keeps out of disclosures (draft 19, section 2.2.2.3: `iss`, `nbf`, `exp`, `cnf`, `vct`, `vct#integrity`, `aka_vcts`, `status`) or anything inside one, judged by where it lands, so a disclosed `sub` or `iat`, or a private claim's `status` member, is accepted; a disclosure named `_sd`, `_sd_alg` or `...`; a colliding claim, a digest the credential commits to twice, or nesting past the depth cap |
+| `issuer_key` | an untrusted key; an x5c leaf, or a CA certificate it sends, outside its validity (the reason names the period); a leaf not marked for signing (the reason names the key usage, or an extended key usage for another purpose), self-signed or a CA, or one whose subjectAltName names an issuer other than the credential's `iss` |
 | `crit` | an issuer JWT, key-binding JWT or status list token whose `crit` names an extension; none is implemented |
 | `malformed` | over 256 KiB, JSON over 64 KiB or 64 levels, or non-finite numbers |
 
@@ -240,11 +240,11 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 435 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 450 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 120 refusals accept and requires a
-  test to fail: 116 are caught, and the 4 survivors are declared with their reasons (measured
-  2026-10-01, after the day's review fixes; CI runs it on every push).
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 124 refusals accept and requires a
+  test to fail: 120 are caught, and the 4 survivors are declared with their reasons (measured
+  2026-10-10; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.

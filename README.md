@@ -8,7 +8,8 @@
 [![Release](https://img.shields.io/github/v/release/EgorKhaklin/polaris-id?include_prereleases&label=release&color=c9a352&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/releases/latest)
 [![Status: pre-pilot](https://img.shields.io/badge/status-pre--pilot-9a6b2f?labelColor=0a1421&style=flat-square)](#status)
 [![OpenID Certified: polaris-oid4vp 1.0.0rc7 verifier](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_1.0.0rc7_verifier-c9a352?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid-certified)
-[![Tested against 14 outside implementations](https://img.shields.io/badge/tested_against-14_outside_implementations-2b5797?labelColor=0a1421&style=flat-square)](#status)
+[![Tested against 15 outside implementations](https://img.shields.io/badge/tested_against-15_outside_implementations-2b5797?labelColor=0a1421&style=flat-square)](#status)
+[![Wallet canary: outside wallets' newest releases against the published verifier, weekly](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/wallet-canary.yml?branch=main&event=schedule&label=wallet%20canary&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/wallet-canary.yml?query=event%3Aschedule)
 [![License](https://img.shields.io/badge/license-Apache--2.0-2b5797?labelColor=0a1421&style=flat-square)](LICENSE)
 [![OpenSSF Best Practices](https://img.shields.io/cii/level/15004?label=OpenSSF%20best%20practices&labelColor=0a1421&style=flat-square)](https://www.bestpractices.dev/projects/15004)
 [![OpenSSF Baseline](https://www.bestpractices.dev/projects/15004/baseline)](https://www.bestpractices.dev/projects/15004)
@@ -85,7 +86,7 @@ polaris-verify --pqc-provider auto --issuer-anchor ml-dsa-65-issuer.json --pack 
 
 **`polaris-oid4vp 1.0.0rc7` is OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile** (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/), 24 September 2026). A self-certification the Foundation reviewed and published, for that package version in that role: not an endorsement, not an audit, and not a certification of the rest of Polaris. OpenID® and OpenID® Certified™ are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Tested against software nobody here wrote.** Six wallets ran unmodified: walt.id, Credo, eudi-dev, OID4VCgo, ProtocolSoup and Procivis One Core. Eight more libraries, services and test tools took part: the European Commission's reference OpenID4VP libraries (Kotlin and Swift) and PID issuer, vck, Multipaz and irmago through a wallet built here, and SpruceID's adapter and ERICA through their own wallet harnesses. Every run carries controls that must be refused, and a [weekly canary](.github/workflows/wallet-canary.yml) re-runs them against the newest release. The author drove every walk: this is interoperability, not use. Dated runs: [the scoreboard](lab/EXTERNAL-NOUNS.md#wallets).
+**Tested against software nobody here wrote.** Six wallets ran unmodified: walt.id, Credo, eudi-dev, OID4VCgo, ProtocolSoup and Procivis One Core. Nine more libraries, services and test tools took part: the European Commission's reference OpenID4VP libraries (Kotlin and Swift) and PID issuer, vck, Multipaz and irmago through a wallet built here; Axle's Kotlin OpenID4VP client, driven by a harness written here; and SpruceID's adapter and ERICA through their own wallet harnesses. Every run carries controls that must be refused, and a [weekly canary](.github/workflows/wallet-canary.yml) re-runs them against the newest release. The author drove every walk: this is interoperability, not use. Dated runs: [the scoreboard](lab/EXTERNAL-NOUNS.md#wallets).
 
 **Not yet:** an independent security review, an operator other than the author, a pilot. What separates the release candidates from 1.0.0 is one outside operator reaching a verified result without help. Versions: [RELEASING.md](docs/RELEASING.md).
 
@@ -128,6 +129,18 @@ The claim is **algorithm agility under an audited migration path**, not settled 
 Two ML-DSA implementations must agree at issuance or it fails closed; the TLS edge negotiates X25519MLKEM768. The detached verifier and both SDKs also check the FN-DSA family (draft FIPS 206): signatures 2.6 times smaller than ML-DSA-65's, with two independent implementations (liboqs, @noble/post-quantum) agreeing on its conformance vectors. Polaris signs under it only as an experimental signer, opted into and never in production, two-witnessed like ML-DSA, until its signing time passes Polaris's side-channel test.
 
 The migration path is tested beyond these: in the lab, one population moved through seven signature families (ML-DSA, FN-DSA, SLH-DSA, MAYO, UOV, SNOVA, CROSS) and 136 liboqs signature variants, never left without a valid signature ([CANDIDATES.md](lab/crypto-migration/CANDIDATES.md)). Lab results admit no algorithm to the product.
+
+<img src="docs/assets/rule.svg" width="100%" alt="">
+
+## When to use something else
+
+- To test a wallet, issuer or verifier against a ready-made counterpart, in the browser or on the command line:
+  [eudi-dev](https://github.com/dominikschlosser/eudi-dev) (its v2.3.7 is OpenID Certified for the wallet profiles).
+- A full TypeScript framework for wallets, issuers and verifiers, DIDComm included: [Credo](https://github.com/openwallet-foundation/credo-ts).
+- The verifier the EU reference wallets are built against: [eudi-srv-verifier-endpoint](https://github.com/eu-digital-identity-wallet/eudi-srv-verifier-endpoint).
+- mdoc (ISO/IEC 18013-5) or the browser's Digital Credentials API: `polaris-oid4vp` supports neither;
+  [Multipaz](https://github.com/openwallet-foundation/multipaz) does.
+- Real identity data in production today: Polaris is pre-pilot (see [Limits](#limits-stated-plainly)).
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 

@@ -118,6 +118,31 @@ def attack_empty_signature():
     return v["signature_valid"] is True, "empty signature; signature_valid=%s" % v["signature_valid"]
 
 
+def attack_wrong_length_public_key():
+    """A public key that is not exactly ML-DSA-65's 1952 bytes must be refused at the size check,
+    before any witness. Arbitrary bytes of the wrong length (empty and 32 bytes), not a forgery:
+    the verifier must report the signature invalid and run no witness. MUST fail."""
+    st = _setup()
+    for pk in (b"", os.urandom(32)):
+        v = st["V"].verify_pack(_pack(st["token"], st["genuine_sig"], pk))
+        if v["signature_valid"] is True or v.get("authenticity") == "genuine" or v.get("witnesses"):
+            return True, ("a %d-byte public key was accepted or witnessed; signature_valid=%s witnesses=%s"
+                          % (len(pk), v["signature_valid"], v.get("witnesses")))
+    return False, "a wrong-length public key is refused at the size check, no witness run"
+
+
+def attack_wrong_length_signature():
+    """A signature that is not exactly ML-DSA-65's 3309 bytes must be refused at the size check,
+    before any witness. Arbitrary bytes of the wrong length (empty and 10 bytes). MUST fail."""
+    st = _setup()
+    for sig in (b"", os.urandom(10)):
+        v = st["V"].verify_pack(_pack(st["token"], sig, st["issuer_pk"]))
+        if v["signature_valid"] is True or v.get("authenticity") == "genuine" or v.get("witnesses"):
+            return True, ("a %d-byte signature was accepted or witnessed; signature_valid=%s witnesses=%s"
+                          % (len(sig), v["signature_valid"], v.get("witnesses")))
+    return False, "a wrong-length signature is refused at the size check, no witness run"
+
+
 def attack_outsider_accepted_by_federation_set():
     """Federation boundary (PE.3): an issuer OUTSIDE the federation signs a valid
     token and presents it to a relying party that trusts a set of OTHER issuers
@@ -251,6 +276,8 @@ ATTACKS = [
     ("wrong_key", attack_wrong_key),
     ("placeholder_relabeled_as_real", attack_placeholder_relabeled_as_real),
     ("empty_signature", attack_empty_signature),
+    ("wrong_length_public_key", attack_wrong_length_public_key),
+    ("wrong_length_signature", attack_wrong_length_signature),
     ("outsider_accepted_by_federation_set", attack_outsider_accepted_by_federation_set),
     ("app_two_witness_verify_rejects_tamper", attack_app_two_witness_verify_rejects_tamper),
 ]

@@ -191,6 +191,62 @@ class RefusalsAreTestedTests(unittest.TestCase):
                 self.assertIn(got, (False, None),
                               "a bad signature must be refused or unavailable, never accepted")
 
+    def test_a_wrong_length_key_or_signature_is_refused_before_either_witness(self):
+        """2026-10-10: the SDK did not check an ML-DSA public key's or signature's length before
+        verifying, so a missing or truncated key could come back authentic from one witness.
+        `_size_problem` now runs on every door before either witness, and each witness re-checks
+        before its library sees the bytes. Arbitrary bytes of the wrong length, not a forgery: a
+        wrong length is refused at the size check. A wrong-length key is a recognised conformance
+        case (fido-alliance/conformance-test-tools-resources#817)."""
+        pk_len, sig_len = pv.ALGORITHM_SIZES[pv.ALGORITHM]
+        self.assertEqual((pk_len, sig_len), (1952, 3309))   # ML-DSA-65, FIPS 204
+        self.assertIsNone(pv._size_problem(pv.ALGORITHM, b"\x01" * pk_len, b"\x02" * sig_len))
+        # Each witness returns False, never None (None would let the other decide alone).
+        for bad_pk in (0, 1, 32, pk_len - 1, pk_len + 1):
+            for backend in (pv._verify_cryptography, pv._verify_liboqs):
+                with self.subTest(backend=backend.__name__, pk=bad_pk):
+                    self.assertIs(backend(b"d" * 32, b"\x02" * sig_len, b"\x01" * bad_pk, pv.ALGORITHM), False)
+        for bad_sig in (0, 1, sig_len - 1, sig_len + 1):
+            for backend in (pv._verify_cryptography, pv._verify_liboqs):
+                with self.subTest(backend=backend.__name__, sig=bad_sig):
+                    self.assertIs(backend(b"d" * 32, b"\x02" * bad_sig, b"\x01" * pk_len, pv.ALGORITHM), False)
+
+    def test_verify_over_digest_refuses_a_wrong_length_with_its_reason(self):
+        pk_len, sig_len = pv.ALGORITHM_SIZES[pv.ALGORITHM]
+        ok, ran, note = pv._verify_over_digest(b"d" * 32, (b"\x02" * sig_len).hex(), (b"\x01" * 32).hex())
+        self.assertIs(ok, False)
+        self.assertEqual(ran, [])
+        self.assertIn("public key", note)
+        # empty is a wrong length, not an abstention
+        ok, ran, note = pv._verify_over_digest(b"d" * 32, (b"\x02" * sig_len).hex(), "")
+        self.assertIs(ok, False)
+        self.assertIn("public key", note)
+
+    def test_a_lone_witness_that_would_accept_cannot_resurrect_a_wrong_length(self):
+        from unittest import mock
+        pk_len, sig_len = pv.ALGORITHM_SIZES[pv.ALGORITHM]
+        # The only installed witness, stubbed to accept; the size check is upstream of it.
+        with mock.patch.object(pv, "_verify_cryptography", return_value=None), \
+                mock.patch.object(pv, "_verify_liboqs", return_value=True):
+            ok, _ran, note = pv._verify_over_digest(b"d" * 32, (b"\x02" * sig_len).hex(), (b"\x01" * 32).hex())
+            self.assertIs(ok, False, "a wrong-length key must not reach the lone witness")
+            self.assertIn("public key", note)
+
+    def test_verify_authenticity_refuses_a_wrong_length_key_and_a_real_pack_still_verifies(self):
+        pk_len, sig_len = pv.ALGORITHM_SIZES[pv.ALGORITHM]
+        tok = "TKN-SDK-SIZE-1"
+
+        def pack(sig_hex, pk_hex):
+            return {"format": "polaris-authenticity-pack/1", "token_value": tok,
+                    "algorithm": pv.ALGORITHM, "signature_hex": sig_hex, "public_key_hex": pk_hex}
+        for bad_pk in (1, 32, pk_len - 1, pk_len + 1):
+            v = pv.verify_authenticity(pack((b"\x02" * sig_len).hex(), (b"\x01" * bad_pk).hex()))
+            self.assertFalse(v.authentic, bad_pk)
+            self.assertIn("public key", v.note or "")
+        if _mldsa_available():
+            good = _vector("ml-dsa-65-valid.json")
+            self.assertTrue(pv.verify_authenticity(good).authentic, "positive control")
+
     def test_a_signature_that_is_not_bytes_is_refused_rather_than_accepted(self):
         """The catch-all handlers, which the other cases do not reach.
 

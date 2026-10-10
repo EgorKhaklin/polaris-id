@@ -16,6 +16,9 @@
 #                                                     # (each CLAIMS word is a --claim)
 #   EUDI_TUNNEL=1 lab/interop/eudi-dev/run.sh         # each verifier behind its own cloudflared
 #                                                     # quick tunnel: public HTTPS a wallet can verify
+#   EUDI_CAPTURE=DIR lab/interop/eudi-dev/run.sh      # write the genuine exchange's bytes to DIR
+#                                                     # (capture/README.md); the issuer signs under
+#                                                     # an x5c certificate, trusted through its CA
 #
 # With Docker running, the wallet runs from its image. Without it (or with EUDI_NATIVE=1), the
 # wallet's release binary for this machine (macOS or Linux, x86-64 or arm64) is downloaded and
@@ -76,6 +79,16 @@ fi
 # validate, which strict mode in eudi-dev v2.5.0 and later does. A fresh tunnel per verifier,
 # because a quick tunnel does not reliably reconnect to an origin restarted under it.
 TUNNEL="${EUDI_TUNNEL:-}"
+# EUDI_CAPTURE=DIR: the genuine presentation's verifier runs through capture_serve.py, which runs
+# the installed `polaris-oid4vp serve` in-process and writes the request object, the posted
+# response and the decrypted vp_token to DIR, byte for byte, once the verifier accepts. Off by default.
+CAPTURE="${EUDI_CAPTURE:-}"
+if [ -n "$CAPTURE" ]; then
+  [ -f "$HERE/capture_serve.py" ] || { echo "EUDI_CAPTURE needs capture_serve.py beside run.sh" >&2; exit 2; }
+  mkdir -p "$CAPTURE"
+  CAPTURE="$(cd "$CAPTURE" && pwd)"
+  [ -z "$(ls -A "$CAPTURE")" ] || { echo "EUDI_CAPTURE=$CAPTURE is not empty; one capture per directory" >&2; exit 2; }
+fi
 if [ "$TUNNEL" = 1 ]; then
   command -v cloudflared >/dev/null 2>&1 || { echo "EUDI_TUNNEL=1 needs cloudflared on PATH" >&2; exit 2; }
   BIND=127.0.0.1
@@ -205,12 +218,18 @@ b = lambda i: base64.urlsafe_b64encode(i.to_bytes(32, "big")).decode().rstrip("=
 json.dump({"kty": "EC", "crv": "P-256", "x": b(n.x), "y": b(n.y), "kid": "eudi-dev-holder"},
           open("holder-jwk.json", "w"))
 EOF
-venv/bin/python "$ISSUER" --holder-jwk holder-jwk.json --out issued.json >/dev/null
+# A capture signs under an x5c certificate, so the files carry the issuer's key and one CA
+# certificate verifies them offline; without one, the verifier trusts a JWKS.
+X5C=()
+[ -n "$CAPTURE" ] && X5C=(--x5c)
+venv/bin/python "$ISSUER" --holder-jwk holder-jwk.json --out issued.json ${X5C[@]+"${X5C[@]}"} >/dev/null
 venv/bin/python - <<'EOF'
 import base64, json
 from cryptography.hazmat.primitives.asymmetric import ec
 issued = json.load(open("issued.json"))
 open("credential.txt", "w").write(issued["credential"])
+if "issuer_ca_pem" in issued:
+    open("issuer-ca.pem", "w").write(issued["issuer_ca_pem"])
 json.dump(issued["issuer_jwks"], open("issuer-jwks.json", "w"))
 # Control (a): a different key under the SAME kid, so only the signature can tell them apart.
 n = ec.generate_private_key(ec.SECP256R1()).public_key().public_numbers()
@@ -219,7 +238,12 @@ json.dump([{"kty": "EC", "crv": "P-256", "x": b(n.x), "y": b(n.y),
             "kid": issued["issuer_jwks"][0]["kid"]}], open("issuer-jwks-other.json", "w"))
 EOF
 wallet import "$(in_wallet_view credential.txt)" | tail -1
-TRUST=--issuer-jwks TRUSTED=issuer-jwks.json OTHER=issuer-jwks-other.json REFUSAL_A=issuer_signature
+if [ -n "$CAPTURE" ]; then
+  TRUST=--issuer-trust-anchor TRUSTED=issuer-ca.pem OTHER=pki/anchor.pem REFUSAL_A=issuer_key
+  echo "credential this repository's issuer script, under an x5c certificate (capture)"
+else
+  TRUST=--issuer-jwks TRUSTED=issuer-jwks.json OTHER=issuer-jwks-other.json REFUSAL_A=issuer_signature
+fi
 fi
 
 VERIFIER_PID="" TUNNEL_PID="" TUNNELS=0
@@ -254,16 +278,19 @@ start_tunnel() {  # a quick tunnel to the loopback port; sets TUNNEL_URL, or exi
 CLAIM_ARGS=()
 for c in ${CLAIMS:-}; do CLAIM_ARGS+=(--claim "$c"); done
 
-start_verifier() {  # $1 what the verifier trusts (a JWKS or a CA, per $TRUST), $2 log file
+start_verifier() {  # $1 what the verifier trusts (a JWKS or a CA, per $TRUST), $2 log file,
+                    # $3 "capture" to run it through capture_serve.py into $CAPTURE
+  local serve=(venv/bin/polaris-oid4vp serve)
+  [ "${3:-}" = capture ] && serve=(venv/bin/python "$HERE/capture_serve.py" "$CAPTURE" serve)
   if [ "$TUNNEL" = 1 ]; then
     start_tunnel
     # The request object's certificate names the tunnel host; a fresh one per tunnel.
     venv/bin/polaris-oid4vp keygen --out "pki-$TUNNELS" --host "${TUNNEL_URL#https://}" >/dev/null
-    PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki "pki-$TUNNELS" --host "${TUNNEL_URL#https://}" \
+    PYTHONUNBUFFERED=1 "${serve[@]}" --pki "pki-$TUNNELS" --host "${TUNNEL_URL#https://}" \
       --bind "$BIND" --port "$PORT" --public-base-url "$TUNNEL_URL" --no-local-tls \
       "$TRUST" "$1" ${CLAIM_ARGS[@]+"${CLAIM_ARGS[@]}"} --once > "$2" 2>&1 &
   else
-    PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host "$VHOST" \
+    PYTHONUNBUFFERED=1 "${serve[@]}" --pki pki --host "$VHOST" \
       --bind "$BIND" --port "$PORT" "$TRUST" "$1" ${CLAIM_ARGS[@]+"${CLAIM_ARGS[@]}"} --once > "$2" 2>&1 &
   fi
   VERIFIER_PID=$!
@@ -314,13 +341,32 @@ expect() {  # $1 label, $2 file, $3 pattern that must appear
 }
 
 echo "== genuine presentation"
-start_verifier "$TRUSTED" verifier.log
+if [ -n "$CAPTURE" ]; then start_verifier "$TRUSTED" verifier.log capture
+else start_verifier "$TRUSTED" verifier.log; fi
 URI=$(launch_uri verifier.log)
 present "$URI" wallet.log
 expect "the wallet submitted and was answered 200" wallet.log 'Response: 200'
 expect "the verifier accepted it" verifier.log '<- 200 authentic'
 # A refused presentation prints nothing here; the controls still run and RESULT says FAILED.
 { grep -E '<- 200' verifier.log || true; } | sed 's/^/        /'
+if [ -n "$CAPTURE" ]; then
+  # Not a control: a run asked to capture that wrote less than all of it has not done what it
+  # was asked. Every file must be there and non-empty, and the wrapper must not have said FAILED.
+  # The list is taken first and judged: a substitution that fails inside a `for` list does not
+  # trip set -e, and an empty list would find nothing missing.
+  missing="" expected=""
+  expected="$(venv/bin/python -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import capture_serve; print(" ".join(capture_serve.CAPTURE_FILES))' "$HERE")" || expected=""
+  [ -n "$expected" ] || missing=" (the list of expected files could not be read from capture_serve.py)"
+  for f in $expected; do
+    [ -s "$CAPTURE/$f" ] || missing="$missing $f"
+  done
+  { grep -E '^capture: ' verifier.log || true; } | sed 's/^/        /'
+  if [ -n "$missing" ] || grep -q '^capture: FAILED' verifier.log; then
+    echo "  FAIL  the capture in $CAPTURE is incomplete:${missing:- the wrapper reported FAILED} (see $WORK/verifier.log)"; fail=1
+  else
+    echo "  ok    the capture is complete in $CAPTURE"
+  fi
+fi
 
 echo "== control (b): the same request again, after it was answered"
 present "$URI" wallet-replay.log

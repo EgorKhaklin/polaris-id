@@ -3466,6 +3466,20 @@ jobs:
       # its tests stay true as the verifier moves under it.
       - name: The access gate (lab/strategy/007) — a presentation in, an OIDC ID token out
         run: python -m unittest lab/strategy/007/test_gate.py
+      # lab/interop/eudi-dev/capture: one presentation the eudi-dev wallet built, kept as files
+      # with the clock frozen at the capture. Verified offline against this package, with a
+      # flipped byte in each signature refused.
+      - name: A captured eudi-dev presentation, verified offline (lab/interop/eudi-dev/capture)
+        run: python -m unittest lab/interop/eudi-dev/capture/test_capture.py
+      # lab/interop/negative-vectors (record 018): the vector set other verifiers can run, kept
+      # true as this verifier moves: no drift from its generator, every verdict reached, and each
+      # certificate defect shown to be the only one.
+      - name: The negative vectors (lab/interop/negative-vectors), each verdict reached
+        run: python -m unittest lab/interop/negative-vectors/test_vectors.py
+      # lab/interop/status-list/revoked: a credential its Token Status List revokes, for testing another
+      # verifier's revocation check; it stays what its generator makes and reads as revoked here.
+      - name: The revoked-credential fixture (lab/interop/status-list/revoked), revoked at index 3
+        run: python -m unittest lab/interop/status-list/revoked/test_fixture.py
       # The refusals as HTTP status codes, which is the form the conformance plan scores.
       # Noticing a forged presentation and answering 200 anyway fails seven modules at once
       # while every unit test stays green.

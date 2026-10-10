@@ -7,14 +7,18 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
-## Unreleased
+## v1.0.0-rc.72 — 2026-10-10 (an ML-DSA key or signature of the wrong size is refused, and a PostgreSQL major-version upgrade runs as written)
+
+polaris-verify, the Python SDK and the application refuse an ML-DSA public key or signature that is not its parameter set's exact size before either witness runs; before this, a missing or truncated key could be reported genuine. Trust acceptance stayed fail-closed throughout. The application role's password reaches the database at first start only as a SCRAM verifier; a PostgreSQL major-version upgrade and its rollback are drilled as OPERATIONS.md writes them, and a deploy refuses a PostgreSQL image of another major than its cluster's; the deploy's secret pre-flight reads the stack as Compose resolves it; a managed PostgreSQL is initialised by one script. polaris-oid4vp keeps SD-JWT VC draft 19's never-disclosed claims by position, not by name, and accepts the EU reference PID issuer's document-signer certificates. The full list follows: 2 security, 13 fixed, 4 added and 1 changed entries.
 
 ### Security
 
+- polaris-verify, the Python SDK and the application's verify with an explicit algorithm could report a signature as genuine under an empty or truncated ML-DSA public key (one witness decided); every verify site now refuses a key or signature that is not its parameter set's exact size before either witness runs. Trust acceptance stayed fail-closed: a short key never matches an anchor, and the anchor is what binds a key to an issuer.
 - The application role's password reached the database as plain text on psql's command line at first start; the server now receives a SCRAM verifier.
 
 ### Fixed
 
+- `polaris-oid4vp` judges the claims SD-JWT VC draft 19 keeps out of disclosures (section 2.2.2.3) by where a disclosure lands rather than by its name: it refused a disclosed `iat`, which the draft permits, and private claims that share a name (`degree.status`, `vehicle.exp`), and accepted a disclosed `vct#integrity` or `aka_vcts` and a disclosed sub-claim of `status` or `cnf`. An x5c leaf or CA certificate outside its validity, and a leaf whose key usage forbids signing, are named in the refusal instead of "does not chain".
 - `polaris-oid4vp` accepts the EU reference PID issuer's document-signer certificates (extended key usage 1.3.130.2.0.0.1.2, no subjectAltName), which it refused; with no subjectAltName the `iss` is reported as unbound and kept out of `claims` and the status resolver, and a refused extended key usage is named in the reason.
 - Athena's Authority, Proof policy and Trust graph tabs each drew the whole constitution board above their own view; each tab now shows its own view alone.
 - A deploy whose PostgreSQL image was another major than its cluster's (a FROM line moved and deployed, as a dependency bump proposes) recreated the database on a cluster that server refuses, and it stayed down until the line went back. `polaris-deploy.sh` now refuses before building, either way, and names the documented upgrade; a Helm upgrade does not check.
@@ -30,6 +34,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- Axle's Kotlin OpenID4VP client (OpenWallet Foundation Labs), driven by a harness written here, presents to the published verifier, 1.0.0rc16; the README's count of outside implementations is 15. Not in the weekly canary.
 - `scripts/polaris-pg-upgrade-drill.sh` runs OPERATIONS.md's PostgreSQL major-version upgrade (16 to 17) and its rollback as written, and requires every table's rows, the sequences, the catalogue, roles and grants, a credential issued before and pgBackRest's health to be the same on each side; its control must name one audit row changed on the new major. CI runs both nightly and on pull requests that change what they run.
 - The release SBOM build runs before a release: read-only and with no signing identity, on pull requests that change how the SBOMs are made and weekly on main, holding the six SBOMs to SPDX 2.3 and the NTIA minimum elements; only a release run attests and publishes them, and only the files whose digests the build reported.
 - CI parses every `docker compose -f` file set the documents, scripts and workflows name, with the flags each call uses, under the runner's Compose (nothing starts), and fails on a set that does not parse, naming each document and line that uses it; `check_documented_compose_files_resolve` requires every file a call names to exist.
