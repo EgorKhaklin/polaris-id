@@ -311,6 +311,14 @@ def _status_of(entry):
     return "active" if status is None else status
 
 
+#: verify_pack's note on a pack that passed every check needing no backend when no witness could
+#: run on it: the one pack verdict that decides nothing, which --verify-dir therefore skips.
+_NOTE_NO_WITNESS = ("no ML-DSA-65 verifier available: install liboqs-python "
+                    "(and optionally cryptography>=48 for the second witness)")
+_NOTE_DEV_PLACEHOLDER = ("this run declared --dev-placeholder, so no real backend was "
+                         "consulted: NOTHING here is authenticated")
+
+
 def verify_pack(pack: dict, anchor_keys=None) -> dict:
     """Verify an authenticity pack. Returns a verdict dict. Total: hostile non-dict input
     fails closed rather than raising."""
@@ -402,11 +410,7 @@ def verify_pack(pack: dict, anchor_keys=None) -> dict:
     verdict["witnesses"] = ran
 
     if primary is None and witness is None:
-        verdict["note"] = ("this run declared --dev-placeholder, so no real backend was "
-                           "consulted: NOTHING here is authenticated"
-                           if _DEV_PLACEHOLDER_MODE else
-                           "no ML-DSA-65 verifier available: install liboqs-python "
-                           "(and optionally cryptography>=48 for the second witness)")
+        verdict["note"] = _NOTE_DEV_PLACEHOLDER if _DEV_PLACEHOLDER_MODE else _NOTE_NO_WITNESS
         return verdict
     if primary is not None and witness is not None and primary != witness:
         verdict["signature_valid"] = False
@@ -432,59 +436,92 @@ def verify_dir(dir_path) -> int:
     """Re-verify every published vector in ``dir_path`` against its declared
     expectation (``_vector.expect``: "valid" | "invalid"). This is the offline
     proof a third party runs to confirm this verifier agrees with the published
-    packs: a genuine pack verifies, and every tampered pack FAILS. Exit 0 iff all
-    match, 2 if any disagree, 3 on a usage error."""
+    packs: a genuine pack verifies, and every tampered pack FAILS.
+
+    Every pack's verdict is held to its expectation, a refusal before either witness runs (a
+    wrong length, hex that does not decode) included: a refusal is a verdict. A file that is
+    not an authenticity pack, and a pack no backend here can verify, are SKIPPED, and neither
+    passes. Exit 0 iff every vector is as expected and a real witness decided at least one, and
+    the last line then says so; otherwise 2, after "N of M as expected" and a line naming each
+    cause from the run. 3 when the directory holds no *.json."""
     import glob
     paths = sorted(glob.glob(os.path.join(dir_path, "*.json")))
     if not paths:
         print("no *.json vectors in %s" % dir_path, file=sys.stderr)
         return 3
-    all_ok = True
+    matched = mismatched = not_objects = unreadable = 0
+    skipped = {}          # why -> how many, in the order first met
     ran_real = False
     for p in paths:
+        name = os.path.basename(p)
         try:
             with open(p) as fh:
                 pack = json.load(fh)
         except Exception as e:
-            print("%-34s UNREADABLE (%s)" % (os.path.basename(p), e))
-            all_ok = False
+            print("%-34s UNREADABLE (%s)" % (name, e))
+            unreadable += 1
             continue
         # A vector that is not an object (the conformance set has a bare `true`) raised
         # AttributeError out of the next line: a traceback and exit 1, a code the docstring
         # above does not define. It is reported and counted as a disagreement instead.
         if not isinstance(pack, dict):
-            print("%-34s NOT A PACK (a JSON %s, not an object)" % (os.path.basename(p), type(pack).__name__))
-            all_ok = False
+            print("%-34s NOT A PACK (a JSON %s, not an object)" % (name, type(pack).__name__))
+            not_objects += 1
+            continue
+        # Another signed artifact is not a pack, by the rule --pack applies (a trust list, an ID
+        # token, a revocation feed in the conformance set). Judged as a pack it is refused for not
+        # being one, and a vector of it expecting "invalid" would pass for that reason.
+        fmt = pack.get("format")
+        if isinstance(fmt, str) and fmt != "polaris-authenticity-pack/1":
+            print("%-34s SKIPPED (not an authenticity pack: a %s)" % (name, fmt))
+            skipped["not an authenticity pack"] = skipped.get("not an authenticity pack", 0) + 1
             continue
         meta = pack.get("_vector") if isinstance(pack.get("_vector"), dict) else {}
         expect = meta.get("expect", "valid")
         verdict = verify_pack(pack)
+        # A pack no witness could run on is neither pass nor fail: it is reported, so a bare-Python
+        # run is not mistaken for a green check. It is the only pack verdict that decides nothing.
+        # A refusal before either witness runs (a wrong length, hex that does not decode, a token
+        # that is not a serial) is decided, and is held to the expectation like any other; until
+        # 2026-10-10 it was SKIPPED as well, so a vector set holding a wrong-length negative could
+        # not pass on a correct verifier.
+        if verdict["note"] == _NOTE_DEV_PLACEHOLDER:
+            why = "--dev-placeholder: no real backend was consulted"
+        elif verdict["note"] == _NOTE_NO_WITNESS:
+            why = ("no installed backend verifies %s" % verdict["algorithm"]
+                   if any(_provider_available(n) for n in REAL_PROVIDERS) else "no ML-DSA verifier installed")
+        else:
+            why = None
+        if why:
+            print("%-34s SKIPPED (%s)" % (name, why))
+            skipped[why] = skipped.get(why, 0) + 1
+            continue
         got = "valid" if verdict["signature_valid"] else "invalid"
         if verdict["authenticity"] not in ("none", None) and verdict["witnesses"]:
             ran_real = True
-        # A vector whose verifier could not run at all (no library, so no witness)
-        # is neither pass nor fail here — report it so a bare-Python run is not
-        # mistaken for a green check.
-        if not verdict["witnesses"] and pack.get("public_key_hex"):
-            # Two very different reasons land here, and reporting the wrong one sends the
-            # reader to install a library they already have. Measured: pointed at the
-            # published conformance vectors with cryptography>=48 installed, every
-            # non-pack artifact (trust list, ID token, revocation feed) was reported as
-            # "no ML-DSA verifier installed".
-            if not any(_provider_available(n) for n in REAL_PROVIDERS):
-                reason = "no ML-DSA verifier installed"
-            else:
-                reason = "not an authenticity pack (%s)" % (verdict["note"] or "no witness ran")
-            print("%-34s SKIPPED (%s)" % (os.path.basename(p), reason))
-            all_ok = False
-            continue
         ok = (got == expect)
-        all_ok = all_ok and ok
-        print("%-34s expect=%-8s got=%-8s %s"
-              % (os.path.basename(p), expect, got, "OK" if ok else "MISMATCH"))
-    if ran_real:
+        matched += ok
+        mismatched += not ok
+        print("%-34s expect=%-8s got=%-8s %s" % (name, expect, got, "OK" if ok else "MISMATCH"))
+    # The closing lines say what the exit code says. Until 2026-10-10 a run printed "verified
+    # with the app's real witnesses" beside a SKIPPED or MISMATCH row. A row as expected is not
+    # an authentic pack (a refused forgery is as expected), so the count says "as expected", and
+    # a run that does not pass names each cause it met. A run in which no real witness decided
+    # anything checked no signature, and does not pass whatever its rows say.
+    if matched == len(paths) and ran_real:
         print("(verified with the app's real witnesses)")
-    return 0 if all_ok else 2
+        return 0
+    print("%d of %d as expected" % (matched, len(paths)))
+    causes = ["%d mismatched" % mismatched] if mismatched else []
+    causes += ["%d skipped: %s" % (n, why) for why, n in skipped.items()]
+    if not_objects:
+        causes.append("%d not a pack (not a JSON object)" % not_objects)
+    if unreadable:
+        causes.append("%d unreadable" % unreadable)
+    if not ran_real:
+        causes.append("no real witness decided any pack")
+    print("; ".join(causes))
+    return 2
 
 
 def selftest() -> int:

@@ -7,6 +7,12 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
+## Unreleased
+
+### Fixed
+
+- `polaris-verify --verify-dir` reported a pack it refused before either witness ran (a public key of the wrong length, hex that does not decode) as SKIPPED, so a vector set holding such a negative could not pass on a correct verifier; every pack's verdict is now held to its expectation, and only another artifact and a pack no backend can verify are skipped. A directory in which no real witness decided anything, such as the placeholder alone, exited 0 and now exits 2. A run that does not pass ends with "N of M as expected" and a line naming each cause, where it printed "verified with the app's real witnesses" beside a skipped or mismatched vector. The application's signing self-checks (issuance, status assertions, migration) refuse a key or signature of the wrong size with that reason instead of reporting a two-witness failure.
+
 ## v1.0.0-rc.72 — 2026-10-10 (an ML-DSA key or signature of the wrong size is refused, and a PostgreSQL major-version upgrade runs as written)
 
 polaris-verify, the Python SDK and the application refuse an ML-DSA public key or signature that is not its parameter set's exact size before either witness runs; before this, a missing or truncated key could be reported genuine. Trust acceptance stayed fail-closed throughout. The application role's password reaches the database at first start only as a SCRAM verifier; a PostgreSQL major-version upgrade and its rollback are drilled as OPERATIONS.md writes them, and a deploy refuses a PostgreSQL image of another major than its cluster's; the deploy's secret pre-flight reads the stack as Compose resolves it; a managed PostgreSQL is initialised by one script. polaris-oid4vp keeps SD-JWT VC draft 19's never-disclosed claims by position, not by name, and accepts the EU reference PID issuer's document-signer certificates. The full list follows: 2 security, 13 fixed, 4 added and 1 changed entries.

@@ -865,6 +865,177 @@ class VerifyDirIsTotal(unittest.TestCase):
             self.assertIn("c-vector-meta-a-string.json", out.getvalue())
 
 
+def _an_ml_dsa_backend():
+    """Is a real ML-DSA backend usable here? --verify-dir needs one to verify a genuine pack."""
+    return V._provider_available("oqs") or _cryptography_mldsa()
+
+
+class VerifyDirHoldsEveryPackToItsExpectation(unittest.TestCase):
+    """--verify-dir holds each pack's verdict to its `_vector.expect`. Until 2026-10-10 a pack refused
+    before either witness ran (a public key of the wrong length, hex that does not decode) was
+    reported SKIPPED, which fails the run, so a vector set holding such a negative could not pass on
+    a correct verifier. A refusal is a verdict. SKIPPED is left for a file that is not a pack and a
+    pack no backend here can verify, and neither passes; a run in which no real witness decided
+    anything does not pass. A run that does not pass ends "N of M as expected" (a refused forgery is
+    as expected, not verified) and a line naming each cause it met; one that passes ends with the
+    real witnesses, as before.
+
+    The wrong-length pack is arbitrary bytes, a 32-byte key and a signature-length run of one
+    byte, refused at the size check before any witness sees it."""
+
+    GENUINE = json.loads((ROOT / "vectors" / "ml-dsa-65-valid.json").read_text())
+    TAMPERED = json.loads((ROOT / "vectors" / "ml-dsa-65-tampered-signature.json").read_text())
+    PLACEHOLDER = json.loads((ROOT / "vectors" / "placeholder.json").read_text())
+    VERIFIED = "(verified with the app's real witnesses)"
+    NO_WITNESS = "no real witness decided any pack"
+
+    @staticmethod
+    def run_dir(files):
+        """(exit code, stdout) of verify_dir over a directory holding `files`: name -> a JSON
+        value, or text written as it is."""
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as d:
+            for name, body in files.items():
+                (pathlib.Path(d) / name).write_text(body if isinstance(body, str) else json.dumps(body))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = V.verify_dir(d)
+        return code, out.getvalue()
+
+    def run_dir_with_no_witness(self, files, installed):
+        """run_dir with neither witness running, and `installed` saying whether a backend is."""
+        with unittest.mock.patch.object(V, "_verify_liboqs", return_value=None), \
+                unittest.mock.patch.object(V, "_verify_cryptography", return_value=None), \
+                unittest.mock.patch.object(V, "_provider_available", return_value=installed):
+            return self.run_dir(files)
+
+    @staticmethod
+    def row(out, name):
+        return next(line for line in out.splitlines() if line.startswith(name + " "))
+
+    @staticmethod
+    def closing(out):
+        """The last two lines: the count, and the causes of a run that does not pass."""
+        return out.splitlines()[-2:]
+
+    def pack(self, expect, **fields):
+        """The genuine pack with `fields` changed, expecting `expect`."""
+        changed = dict(self.GENUINE, **fields)
+        changed["_vector"] = {"expect": expect}
+        return changed
+
+    def wrong_length(self, expect):
+        return self.pack(expect, public_key_hex=bytes(range(32)).hex(), signature_hex=(b"\x02" * 3309).hex())
+
+    @unittest.skipUnless(_an_ml_dsa_backend(), "no ML-DSA backend: the genuine pack cannot verify here")
+    def test_a_refusal_before_either_witness_is_held_to_its_expectation(self):
+        negatives = {"b-key-of-the-wrong-length.json": self.wrong_length("invalid"),
+                     "c-signature-not-hex.json": self.pack("invalid", signature_hex="zz" + self.GENUINE["signature_hex"][2:]),
+                     "d-statement-not-a-serial.json": self.pack("invalid", token_value='{"format":"polaris-x/1"}'),
+                     "e-set-below-the-floor.json": self.pack("invalid", algorithm="ML-DSA-44")}
+        files = {"a-genuine.json": self.GENUINE}
+        files.update(negatives)
+        code, out = self.run_dir(files)
+        self.assertNotIn("SKIPPED", out)
+        for name in negatives:
+            self.assertRegex(self.row(out, name), r"expect=invalid\s+got=invalid\s+OK$", name)
+        self.assertEqual(out.splitlines()[-1], self.VERIFIED)
+        self.assertEqual(code, 0, out)
+
+    def test_the_same_wrong_length_pack_expected_valid_is_a_mismatch(self):
+        code, out = self.run_dir({"a-genuine.json": self.GENUINE,
+                                  "b-key-of-the-wrong-length.json": self.wrong_length("valid")})
+        self.assertRegex(self.row(out, "b-key-of-the-wrong-length.json"), r"expect=valid\s+got=invalid\s+MISMATCH$")
+        self.assertNotEqual(code, 0, out)
+
+    def test_another_artifact_is_skipped_whatever_it_expects(self):
+        # Judged as a pack it is refused for not being one, and its "invalid" would pass for that.
+        trust_list = json.loads((ROOT / "conformance" / "vectors" / "trust-list-valid.json").read_text())
+        trust_list["_vector"] = {"expect": "invalid"}
+        code, out = self.run_dir({"a-genuine.json": self.GENUINE, "b-trust-list.json": trust_list})
+        self.assertTrue(self.row(out, "b-trust-list.json").endswith(
+            " SKIPPED (not an authenticity pack: a polaris-trust-list/1)"), out)
+        self.assertIn("1 skipped: not an authenticity pack", out.splitlines()[-1])
+        self.assertEqual(code, 2, out)
+
+    def test_a_pack_no_witness_can_verify_is_skipped_with_its_cause(self):
+        files = {"a-genuine.json": self.GENUINE, "b-key-of-the-wrong-length.json": self.wrong_length("invalid")}
+        for installed, why in ((False, "no ML-DSA verifier installed"),
+                               (True, "no installed backend verifies ML-DSA-65")):
+            with self.subTest(why):
+                code, out = self.run_dir_with_no_witness(files, installed)
+                self.assertTrue(self.row(out, "a-genuine.json").endswith(" SKIPPED (%s)" % why), out)
+                # The wrong length beside it is still a refusal: that needs no backend.
+                self.assertRegex(self.row(out, "b-key-of-the-wrong-length.json"), r"expect=invalid\s+got=invalid\s+OK$")
+                self.assertEqual(self.closing(out), ["1 of 2 as expected", "1 skipped: %s; %s" % (why, self.NO_WITNESS)])
+                self.assertEqual(code, 2, out)
+        with unittest.mock.patch.object(V, "_verify_liboqs", return_value=None), \
+                unittest.mock.patch.object(V, "_verify_cryptography", return_value=None):
+            self.assertEqual(V.verify_pack(self.GENUINE)["note"], "no ML-DSA-65 verifier available: install "
+                             "liboqs-python (and optionally cryptography>=48 for the second witness)")
+        self.addCleanup(V.set_dev_placeholder_mode, False)
+        V.set_dev_placeholder_mode(True)
+        self.assertEqual(V.verify_pack(self.GENUINE)["note"], "this run declared --dev-placeholder, so no "
+                         "real backend was consulted: NOTHING here is authenticated")
+        code, out = self.run_dir({"a-genuine.json": self.GENUINE})
+        why = "--dev-placeholder: no real backend was consulted"
+        self.assertTrue(self.row(out, "a-genuine.json").endswith(" SKIPPED (%s)" % why), out)
+        self.assertEqual(self.closing(out), ["0 of 1 as expected", "1 skipped: %s; %s" % (why, self.NO_WITNESS)])
+        self.assertEqual(code, 2, out)
+
+    def test_a_directory_in_which_no_witness_decided_anything_does_not_pass(self):
+        import contextlib
+        import io
+        for label, files in (("an empty directory", {}), ("no *.json", {"notes.txt": "not a vector"})):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code, out = self.run_dir(files)
+            self.assertEqual(code, 3, label)
+            self.assertEqual(out, "", label)
+            self.assertRegex(err.getvalue(), r"^no \*\.json vectors in .+\n$", label)
+        artifact = {"format": "polaris-trust-list/1", "_vector": {"expect": "invalid"}}
+        for label, vector, closing in (
+                ("an expectation and nothing else", {"_vector": {"expect": "invalid"}},
+                 ["1 of 1 as expected", self.NO_WITNESS]),
+                ("the placeholder", self.PLACEHOLDER, ["1 of 1 as expected", self.NO_WITNESS]),
+                ("another artifact", artifact,
+                 ["0 of 1 as expected", "1 skipped: not an authenticity pack; " + self.NO_WITNESS]),
+                ("a key of the wrong length", self.wrong_length("invalid"), ["1 of 1 as expected", self.NO_WITNESS])):
+            with self.subTest(label):
+                code, out = self.run_dir({"only.json": vector})
+                self.assertEqual(self.closing(out), closing)
+                self.assertNotIn(self.VERIFIED, out)
+                self.assertEqual(code, 2, out)
+
+    def test_the_line_after_the_count_names_each_cause(self):
+        code, out = self.run_dir_with_no_witness({
+            "a-genuine.json": self.GENUINE,                                  # skipped: no backend
+            "b-key-of-the-wrong-length.json": self.wrong_length("valid"),    # mismatched
+            "c-trust-list.json": {"format": "polaris-trust-list/1"},         # skipped: another artifact
+            "d-true.json": "true",                                           # not an object
+            "e-cut-short.json": '{"format": "polaris-authenticity'}, installed=False)   # unreadable
+        self.assertEqual(self.row(out, "d-true.json"), "d-true.json".ljust(34) + " NOT A PACK (a JSON bool, not an object)")
+        self.assertRegex(self.row(out, "e-cut-short.json"), r"^e-cut-short\.json +UNREADABLE \(.+\)$")
+        self.assertEqual(self.closing(out), [
+            "0 of 5 as expected",
+            "1 mismatched; 1 skipped: no ML-DSA verifier installed; 1 skipped: not an authenticity pack; "
+            "1 not a pack (not a JSON object); 1 unreadable; " + self.NO_WITNESS])
+        self.assertEqual(code, 2, out)
+
+    @unittest.skipUnless(_an_ml_dsa_backend(), "no ML-DSA backend: the genuine pack cannot verify here")
+    def test_the_closing_lines_say_what_the_exit_code_says(self):
+        code, out = self.run_dir({"a-genuine.json": self.GENUINE, "b-tampered.json": self.TAMPERED})
+        self.assertEqual(out.splitlines()[-1], self.VERIFIED)
+        self.assertNotIn("as expected", out)
+        self.assertEqual(code, 0, out)
+        code, out = self.run_dir({"a-genuine.json": self.GENUINE, "b-tampered.json": self.TAMPERED,
+                                  "c-key-of-the-wrong-length.json": self.wrong_length("valid")})
+        self.assertEqual(self.closing(out), ["2 of 3 as expected", "1 mismatched"])
+        self.assertNotIn(self.VERIFIED, out)
+        self.assertEqual(code, 2, out)
+
+
 # (verifier, the published genuine vector, the key that says it is authentic)
 _SIGNED_ARTIFACTS = (("verify_manifest", "federation-manifest-valid.json", "manifest_authentic"),
                      ("verify_trust_list", "trust-list-valid.json", "trust_list_authentic"),
