@@ -38,6 +38,13 @@ would be meaningless.
 
   python3 scripts/polaris-procedure-mutation-drill.py
   python3 scripts/polaris-procedure-mutation-drill.py --exhaustive   # also the app suite
+  python3 scripts/polaris-procedure-mutation-drill.py --shard 2/6    # one sixth of the refusals
+
+SHARDS. `--shard I/N` mutates only every N-th refusal, starting at the I-th, of the full set in
+its stable (procedure, index) order, so N runs together mutate each refusal exactly once
+(scripts/test_procedure_drill.py proves the partition). Everything that is not a refusal runs in
+every shard: the full-set guard, the baseline, the negative control and the catalog check. CI
+runs six shards in parallel: unsharded, the drill was 1h45m of one job.
 """
 from __future__ import annotations
 
@@ -127,6 +134,45 @@ SURVIVORS_EXPECTED: dict[str, str] = {
     "uc_issue_credential_copy#5": "the draw bound: 64 collisions in a list at most half full, "
                                   "probability below 2^-64; it bounds the loop, no test reaches it",
 }
+
+
+def parse_shard(text: str) -> tuple:
+    """`I/N` as (I, N), 1-based. Anything else is a usage error, never a silent full run."""
+    m = re.fullmatch(r"\s*(\d+)\s*/\s*(\d+)\s*", text or "")
+    if not m:
+        raise argparse.ArgumentTypeError("--shard takes I/N, as in 2/6, not %r" % text)
+    i, n = int(m.group(1)), int(m.group(2))
+    if n < 1 or not 1 <= i <= n:
+        raise argparse.ArgumentTypeError("--shard %s: need 1 <= I <= N" % text)
+    return i, n
+
+
+def shard_cases(cases: list, shard: tuple) -> list:
+    """The cases shard (I, N) mutates: positions I-1, I-1+N, I-1+2N, ... of the cases sorted by
+    (procedure, refusal index). Round-robin rather than contiguous blocks, because the cost of
+    a refusal is the cost of its procedure's test classes and those differ a hundredfold
+    (seconds for uc9_record_recovery_channel, minutes for uc8_revoke_token): dealing each
+    procedure's refusals across the shards keeps them even. The sort makes the deal independent
+    of the order the catalog returned, so N runs on N machines agree on who measures what."""
+    i, n = shard
+    ordered = sorted(cases, key=lambda c: (c[0], c[1]))
+    return [c for k, c in enumerate(ordered) if k % n == i - 1]
+
+
+def declared_survivors(measured_units: set, full_units: set, measured_procs: set) -> set:
+    """The SURVIVORS_EXPECTED entries this run answers for.
+
+    measured_units: the `procedure#index` refusals this run mutated (its shard, less the
+    unmeasurable). full_units: every refusal before sharding. measured_procs: the procedures of
+    the full set some test class names.
+
+    An entry this run mutated is checked here. An entry naming a refusal its procedure no longer
+    has (a stale index) belongs to no shard, so every shard reports it: dropping it from all of
+    them would let the list go stale with every shard green. Unsharded this is exactly the
+    procedure-level filter --only needs: every entry whose procedure was measured."""
+    return {k for k in SURVIVORS_EXPECTED
+            if k in measured_units
+            or (k.split("#")[0] in measured_procs and k not in full_units)}
 
 
 def _env() -> dict:
@@ -343,6 +389,8 @@ def main(argv=None) -> int:
     ap.add_argument("--only", default=None, help="one procedure name, for iterating")
     ap.add_argument("--changed", action="store_true",
                     help="only the procedures this ship touched (what CI runs per push)")
+    ap.add_argument("--shard", type=parse_shard, default=(1, 1), metavar="I/N",
+                    help="mutate only shard I of N (1-based) of the refusals; N runs cover all")
     args = ap.parse_args(argv)
 
     env = _env()
@@ -384,12 +432,13 @@ def main(argv=None) -> int:
             return 0
         print("  the procedures moved in this ship: running all of them")
 
-    cases = []
+    full_cases = []
     for name, body in sorted(originals.items()):
         if args.only and name != args.only:
             continue
         for idx, (a, b, text) in enumerate(_raise_spans(body)):
-            cases.append((name, idx, a, b, text))
+            full_cases.append((name, idx, a, b, text))
+    cases = full_cases
     print("procedure mutation drill: %d refusal(s) across %d procedure(s)"
           % (len(cases), len({c[0] for c in cases})))
     # Refuse to report from nothing. `_raise_spans` parsing no RAISE at all, or an `--only`
@@ -402,6 +451,32 @@ def main(argv=None) -> int:
               "it never tested. Either 05_procedures.sql raises nowhere, the span parser has "
               "broken, or --only named a procedure that does not exist.", file=sys.stderr)
         return 1
+    shard_i, shard_n = args.shard
+    sharded = shard_n > 1
+    if sharded:
+        cases = shard_cases(full_cases, args.shard)
+        print("  shard %d/%d: %d of these %d refusal(s), across %d procedure(s)"
+              % (shard_i, shard_n, len(cases), len(full_cases), len({c[0] for c in cases})))
+        # More shards than refusals (an --only on a small procedure, or a matrix wider than the
+        # work) leaves some shards nothing. The guard above already refused an empty FULL set,
+        # which is the case it exists for; an empty share of a non-empty set is not a guarantee
+        # about nothing, because this shard claims nothing and says so. Failing it would turn CI
+        # red over the arithmetic of N against the work, with no refusal left unmeasured.
+        # The empty share is legitimate only when there are fewer refusals than this shard's
+        # number. Any other empty shard is the partition losing work, and passing it would
+        # leave those refusals unmutated by every shard with every shard green.
+        if not cases and len(full_cases) >= shard_i:
+            print("FAIL: shard %d/%d received no refusal although the full set has %d, so the "
+                  "partition has dropped work no shard will mutate." % (shard_i, shard_n, len(full_cases)),
+                  file=sys.stderr)
+            conn.close()
+            return 1
+        if not cases:
+            print("  shard %d/%d has no refusal to mutate: the %d refusal(s) fall to the other "
+                  "shard(s). Nothing was mutated and nothing is claimed here."
+                  % (shard_i, shard_n, len(full_cases)))
+            conn.close()
+            return 0
     # Said before anything is mutated, because a killed run cannot say it afterwards.
     print("  if this run is interrupted, repair with:")
     print("    psql -d %s -f polaris_sql/05_procedures.sql" % env["POLARIS_DB_NAME"])
@@ -410,9 +485,11 @@ def main(argv=None) -> int:
         body = originals[name]
         return body[:a] + "NULL;  /* %s */" % MUTATION_MARK + body[b:]
 
-    # BASELINE. Everything unmutated must be green, or nothing below means anything.
-    targets_by_proc = {n: _classes_exercising(n) for n in {c[0] for c in cases}}
-    uncovered = sorted(n for n, t in targets_by_proc.items() if not t)
+    # BASELINE. Everything unmutated must be green, or nothing below means anything. The
+    # targets are those of the FULL set, in every shard: the baseline, the negative control and
+    # --exhaustive then mean what they meant unsharded, whichever shard holds which refusal.
+    targets_by_proc = {n: _classes_exercising(n) for n in {c[0] for c in full_cases}}
+    uncovered = sorted(n for n in {c[0] for c in cases} if not targets_by_proc[n])
     if uncovered:
         print("  no test class names: %s -- their refusals cannot be measured here"
               % ", ".join(uncovered))
@@ -426,7 +503,7 @@ def main(argv=None) -> int:
 
     # NEGATIVE CONTROL.
     cname, ctext = CONTROL
-    ctl = [c for c in cases if c[0] == cname and ctext in c[4]]
+    ctl = [c for c in full_cases if c[0] == cname and ctext in c[4]]
     if not args.only:
         if not ctl:
             print("\nthe negative control refusal (%s: %s) is not in the catalog; without it a "
@@ -498,11 +575,14 @@ def main(argv=None) -> int:
     print("the catalog came back intact: %d procedures, byte for byte." % len(after))
 
     found = {s[0] for s in survivors}
-    # Compare only against the procedures this run actually measured. --only is for
-    # iterating on one procedure, and without this every declared survivor belonging to a
-    # procedure the run skipped reads as "now covered", so --only could never pass.
-    measured = {c[0] for c in cases} - {u.split("#")[0] for u in unmeasurable}
-    declared = {k for k in SURVIVORS_EXPECTED if k.split("#")[0] in measured}
+    # Compare only against what this run actually measured. --only is for iterating on one
+    # procedure, and without this every declared survivor belonging to a procedure the run
+    # skipped reads as "now covered", so --only could never pass. A shard is the same question
+    # one level down: it answers for the refusals it mutated, not for its procedures' others.
+    measured_units = {"%s#%d" % (c[0], c[1]) for c in cases} - set(unmeasurable)
+    declared = declared_survivors(measured_units,
+                                  {"%s#%d" % (c[0], c[1]) for c in full_cases},
+                                  {n for n in {c[0] for c in full_cases} if targets_by_proc[n]})
     new_ones, gone = sorted(found - declared), sorted(declared - found)
     if new_ones:
         print("\nFAIL: %d refusal(s) can be deleted with every test still green:" % len(new_ones))
@@ -517,9 +597,11 @@ def main(argv=None) -> int:
     # len(cases) counts the unmeasurable ones too, and saying "59 mutated" when ten were
     # skipped is this tool overstating its own work, which is the thing it exists to catch.
     print("OK: %d refusal(s) mutated, %d untested%s. Deleting any of the rest turns "
-          "something red."
+          "something red.%s"
           % (len(cases) - len(unmeasurable), len(survivors),
-             ("; %d not measurable here" % len(unmeasurable)) if unmeasurable else ""))
+             ("; %d not measurable here" % len(unmeasurable)) if unmeasurable else "",
+             (" (shard %d/%d of %d refusal(s); the other shards mutate the rest)"
+              % (shard_i, shard_n, len(full_cases))) if sharded else ""))
     return 0
 
 

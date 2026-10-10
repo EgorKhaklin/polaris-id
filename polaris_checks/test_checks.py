@@ -23218,6 +23218,64 @@ def test_product_suite_parts_share_setup_check_discriminates(tmp_path):
         "a suite still run as one job has no copies to compare"
 
 
+def test_product_suite_sharded_part_check_discriminates(tmp_path):
+    # 2026-10-10: the procedure drill runs as a shard matrix under a gate job that keeps its name.
+    gh = tmp_path / ".github" / "workflows"
+    gh.mkdir(parents=True)
+
+    def part(jid, label, strategy="", run="run tests", deps="pip install -r req.txt"):
+        return (f"  {jid}:\n    name: \"Product suite: {label}\"\n    runs-on: ubuntu-latest\n{strategy}"
+                f"    services:\n      postgres:\n        image: postgres:16-alpine@sha256:aa\n    env:\n      A: '1'\n"
+                f"    steps:\n      - name: Checkout\n        uses: actions/checkout@abc\n\n"
+                f"      - name: Install deps\n        run: {deps}\n\n"
+                f"      - name: {label} only\n        run: {run}\n")
+
+    def gate(jid, label, needs):
+        return (f"  {jid}:\n    name: {label}\n    needs: [{', '.join(needs)}]\n"
+                "    if: always()\n    runs-on: ubuntu-latest\n    steps:\n"
+                "      - name: Every part passed\n        env:\n          RESULTS: ${{ toJSON(needs) }}\n"
+                "        run: echo \"$RESULTS\" | python3 -c 'import json, sys; r = {k: v[\"result\"] for k, v in "
+                f"json.load(sys.stdin).items()}}; sys.exit(0 if len(r) == {len(needs)} and all(v == \"success\" for v in "
+                "r.values()) else 1)'\n")
+
+    matrix = "    strategy:\n      fail-fast: false\n      matrix:\n        shard: [1, 2, 3]\n"
+    drill = 'python scripts/polaris-procedure-mutation-drill.py --shard "${{ matrix.shard }}/3"'
+
+    def write(shard=None, sub=None, top=None, extra=""):
+        shard = shard if shard is not None else part("test-procedures-shard", "drill shard", matrix, drill)
+        sub = sub if sub is not None else gate("test-procedures", '"Product suite: procedure mutation drill"',
+                                               ["test-procedures-shard"])
+        top = top if top is not None else gate("test", "Polaris product test suite", ["test-core", "test-procedures"])
+        (gh / "ci.yml").write_text("on: push\njobs:\n" + part("test-core", "core") + shard + sub + extra + top)
+        return checks.check_product_suite_parts_share_setup(tmp_path)[0]
+
+    good = write()
+    assert good.level == "OK", good.message
+    assert "in 3 shards" in good.message
+    assert write(sub=gate("test-procedures", "drill", ["test-procedures-shard"]).replace(
+        "    if: always()\n", "")).level == "FAIL", \
+        "a shard gate without if: always() is skipped when a shard fails, and skipped reads as passing"
+    assert write(sub=gate("test-procedures", "drill", ["test-procedures-shard"]).replace(
+        "all(v ==", "any(v ==")).level == "FAIL", "a shard gate that passes one green result must FAIL"
+    assert write(shard=part("test-procedures-shard", "s", matrix.replace("[1, 2, 3]", "[1, 2, 4]"),
+                            drill)).level == "FAIL", "a shard list with a gap leaves work to no shard"
+    assert write(shard=part("test-procedures-shard", "s", matrix, drill.replace("}}/3", "}}/4"))).level == "FAIL", \
+        "shards of a different N than the matrix runs leave work to no shard"
+    assert write(shard=part("test-procedures-shard", "s", matrix, "python drill.py")).level == "FAIL", \
+        "a matrix whose shards do not pass --shard runs the whole drill N times, splitting nothing"
+    assert write(shard=part("test-procedures-shard", "s", matrix, drill, deps="pip install -r x.txt")).level == "FAIL", \
+        "a shard's setup drifted from the other parts' must FAIL"
+    assert write(sub="", top=gate("test", "Polaris product test suite", ["test-core"])).level == "FAIL", \
+        "a shard matrix the required job reaches through no gate must FAIL"
+    nested = gate("test-procedures", "drill", ["test-mid"])
+    mid = gate("test-mid", "mid", ["test-procedures-shard"])
+    deep = write(sub=nested, extra=mid)
+    assert deep.level == "FAIL" and "gates nest one level" in deep.message, "a gate under a gate must FAIL"
+    named = write(shard=part("test-procedures-shard", "s", matrix, 'echo "${{ matrix.shard }}/3"; python drill.py'))
+    assert named.level == "FAIL" and "to --shard" in named.message, \
+        "a shard number printed but never passed to --shard splits nothing"
+
+
 def test_edge_tls_state_shared_check_discriminates(tmp_path):
     tpl = tmp_path / "deploy" / "helm" / "polaris" / "templates"
     tpl.mkdir(parents=True)

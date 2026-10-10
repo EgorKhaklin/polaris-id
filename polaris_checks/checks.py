@@ -28181,6 +28181,9 @@ def _job_parts(block: str) -> tuple[str, dict[str, str]]:
     stripped-comment lines dropped so two copies that differ only in a comment compare equal."""
     head, _, steps = block.partition("\n    steps:\n")
     keep = lambda text: "\n".join(l for l in text.splitlines() if l.strip() not in ("", "#"))
+    # A sharded part's `strategy:` block (its matrix) is not setup: the shards are copies of one
+    # job, and check_product_suite_parts_share_setup pins the matrix separately.
+    head = re.sub(r"(?m)^    strategy:\s*\n(?:(?:      .*| *)\n)*", "", head + "\n")
     head = keep("\n".join(l for l in head.splitlines() if not re.match(r"^    name:", l)))
     out = {}
     for chunk in re.split(r"(?m)^(?=      - name:)", steps):
@@ -28194,6 +28197,52 @@ def _job_parts(block: str) -> tuple[str, dict[str, str]]:
 # of #309, 2026-10-09: a part renamed out of "Product suite:" and dropped from the gate's needs passed).
 _PRODUCT_SUITE_WORK = ("scripts/polaris-coverage.sh", "polaris-procedure-mutation-drill.py", "polaris-app-role-suite.py",
                        "cargo test --release", "cargo llvm-cov", "polaris-zk-mutation-drill.py")
+
+
+def _job_needs(block: str) -> list[str]:
+    """A job's `needs:`, in either YAML form; [] when it has none."""
+    m = re.search(r"(?m)^    needs:\s*\[([^\]]*)\]", block)
+    if m:
+        return [n.strip().strip("'\"") for n in m.group(1).split(",") if n.strip()]
+    m = re.search(r"(?m)^    needs:\s*\n((?:      - \S+\s*\n?)+)", block)
+    return re.findall(r"- (\S+)", m.group(1)) if m else []
+
+
+def _gate_problems(label: str, block: str, needs: list[str]) -> list[str]:
+    """What is wrong with a gate job: it must run `if: always()` and judge all of its needs."""
+    problems = []
+    if not re.search(r"(?m)^    if:\s*\$?\{?\{?\s*always\(\)", block):
+        problems.append(f"{label} does not run `if: always()`: when a part fails it is skipped, and "
+                        "GitHub reports a skipped required check as passing")
+    # Every result, and as many as it needs: `any(... == "success")`, or a count short of the parts, passed one
+    # green part as the whole suite (review of #309).
+    judge = block.split("\n    steps:\n", 1)[-1]
+    if "toJSON(needs)" not in judge or f"len(r) == {len(needs)} and" not in judge \
+            or 'all(v == "success" for v in r.values())' not in judge:
+        problems.append(f"{label} must judge all {len(needs)} parts' results (len(r) == {len(needs)} and "
+                        "all(v == \"success\" ...)), not one of them")
+    return problems
+
+
+def _shard_problems(job: str, block: str) -> tuple[int, list[str]]:
+    """A part run as a `shard:` matrix: (its shard count, what is wrong). The shards must be 1..N
+    and each must pass `${{ matrix.shard }}/N` with that same N to a `--shard` run; shards
+    1..N of a different N, or a gap in the list, leave refusals that no shard mutates."""
+    m = re.search(r"(?m)^    strategy:\s*\n(?:      .*\n)*?        shard:\s*\[([^\]]*)\]", block + "\n")
+    if not m:
+        return 0, []
+    try:
+        shards = [int(x) for x in m.group(1).split(",") if x.strip()]
+    except ValueError:
+        return 0, [f"{job}'s shard matrix is not a list of numbers"]
+    n = len(shards)
+    problems = []
+    if shards != list(range(1, n + 1)):
+        problems.append(f"{job}'s shards are {shards}, not 1 to {n}, so some work falls to no shard")
+    if "--shard" not in block or ("${{ matrix.shard }}/%d" % n) not in block:
+        problems.append(f"{job} runs {n} shards but does not pass ${{{{ matrix.shard }}}}/{n} to --shard, "
+                        "so the shards do not split the work between them")
+    return n, problems
 
 
 def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
@@ -28212,6 +28261,11 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
     shares by name with another is the same step. A setup step added to one part only is not
     caught by name (nothing marks a step as setup); its absence fails that part's own run.
     A suite still run as one job has no copies and passes.
+
+    A part may itself be a gate over a `shard:` matrix (the procedure drill since 2026-10-10,
+    so its name stays the one the docs and the ruleset know). That gate is held to the same
+    rules as the required job, its shards count as parts for the setup comparison, and the
+    matrix must be shards 1 to N, each passing its own number of N to `--shard`.
     """
     name = "product_suite_parts_share_setup"
     jobs = _ci_jobs(_read(root, ".github/workflows/ci.yml"))
@@ -28221,34 +28275,40 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
         return _fail(name, "ci.yml has no job named \"Polaris product test suite\", the check the main "
                            "ruleset requires")
     block = jobs[gate]
-    m = re.search(r"(?m)^    needs:\s*\[([^\]]*)\]", block)
-    if m:
-        needs = [n.strip().strip("'\"") for n in m.group(1).split(",") if n.strip()]
-    else:
-        m = re.search(r"(?m)^    needs:\s*\n((?:      - \S+\s*\n?)+)", block)
-        needs = re.findall(r"- (\S+)", m.group(1)) if m else []
+    needs = _job_needs(block)
     labelled = [j for j, b in jobs.items() if re.search(r'(?m)^    name:\s*"?Product suite:', b)]
     if not needs:
         if labelled:
             return _fail(name, f"{', '.join(labelled)} run as parts of the product suite, but its required job "
                                "needs none of them, so a red part cannot block a merge")
         return _ok(name, "the product suite runs as one job; there are no copies to keep in step")
-    problems = [f"{j} is a part of the product suite the required job does not need" for j in labelled
-                if j not in needs]
+    problems = [f"the required job needs {j}, which ci.yml does not define" for j in needs if j not in jobs]
+    problems += _gate_problems("the required job", block, needs)
+    # A needed job with needs of its own is a gate over parts (one level: a shard matrix).
+    parts, gated, sharded = [], set(needs), []
+    for j in (j for j in needs if j in jobs):
+        sub = _job_needs(jobs[j])
+        if not sub:
+            parts.append(j)
+            continue
+        problems += _gate_problems(f"{j}, the gate over {', '.join(sub)},", jobs[j], sub)
+        for s in sub:
+            if s not in jobs:
+                problems.append(f"{j} needs {s}, which ci.yml does not define")
+            elif _job_needs(jobs[s]):
+                problems.append(f"{s} is a gate under the gate {j}; gates nest one level")
+            else:
+                parts.append(s)
+                gated.add(s)
+    for j in parts:
+        n, why = _shard_problems(j, jobs[j])
+        problems += why
+        if n:
+            sharded.append(f"{j} in {n} shards")
+    problems += [f"{j} is a part of the product suite the required job does not need" for j in labelled
+                 if j not in gated]
     problems += [f"{j} runs the product suite's work but the required job does not need it"
-                 for j, b in jobs.items() if j != gate and j not in needs and any(w in b for w in _PRODUCT_SUITE_WORK)]
-    problems += [f"the required job needs {j}, which ci.yml does not define" for j in needs if j not in jobs]
-    if not re.search(r"(?m)^    if:\s*\$?\{?\{?\s*always\(\)", block):
-        problems.append("the required job does not run `if: always()`: when a part fails it is skipped, and "
-                        "GitHub reports a skipped required check as passing")
-    # Every result, and as many as it needs: `any(... == "success")`, or a count short of the parts, passed one
-    # green part as the whole suite (review of #309).
-    judge = block.split("\n    steps:\n", 1)[-1]
-    if "toJSON(needs)" not in judge or f"len(r) == {len(needs)} and" not in judge \
-            or 'all(v == "success" for v in r.values())' not in judge:
-        problems.append(f"the required job must judge all {len(needs)} parts' results (len(r) == {len(needs)} and "
-                        "all(v == \"success\" ...)), not one of them")
-    parts = [j for j in needs if j in jobs]
+                 for j, b in jobs.items() if j != gate and j not in gated and any(w in b for w in _PRODUCT_SUITE_WORK)]
     split = {j: _job_parts(jobs[j]) for j in parts}
     shared = 0
     # Every pair, not neighbours in needs: a step two parts share that a third lacks is still compared.
@@ -28263,9 +28323,9 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
         shared = max(shared, len(common))
     if problems:
         return _fail(name, "; ".join(problems))
-    return _ok(name, f"the required job gates on {len(parts)} parallel parts ({', '.join(parts)}), runs "
-                     f"always and judges each result; they share runner, services, environment and "
-                     f"{shared} setup steps verbatim")
+    return _ok(name, f"the required job gates on {len(parts)} parallel parts ({', '.join(parts)}"
+                     f"{'; ' + ', '.join(sharded) if sharded else ''}), every gate runs always and judges "
+                     f"each result; they share runner, services, environment and {shared} setup steps verbatim")
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
