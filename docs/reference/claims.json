@@ -92,6 +92,20 @@
       ]
     },
     {
+      "id": "wallet-canary",
+      "kind": "badge",
+      "claim": "Wallet canary: outside wallets' newest releases against the published verifier, weekly",
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:.github/workflows/wallet-canary.yml",
+        "url:https://github.com/EgorKhaklin/polaris-id/actions/workflows/wallet-canary.yml?query=event%3Aschedule"
+      ],
+      "reproduce": null,
+      "why": "A live status the CI service renders for the weekly scheduled runs on main, in which outside wallets' newest releases present to the verifier installed from PyPI. The workflow is in the tree; its result is on the service, and it can turn red for a reason outside the tree."
+    },
+    {
       "id": "license",
       "kind": "badge",
       "claim": "License",
