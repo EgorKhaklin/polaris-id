@@ -126,7 +126,7 @@ compose project systemd started, so `systemctl status polaris` stays accurate.
 
 **Offsite backups**: WAL archiving and the base backups are on by default, to
 a local repository that does not survive the host. Set `POLARIS_PGBACKREST_S3_*`
-in `polaris.env`, put the key pair in
+in `polaris.env`, put the key pair and a cipher passphrase in
 `polaris_web/secrets/pgbackrest_repo_creds.conf`, then
 `scripts/polaris-deploy.sh prod` ([`DR.md`](DR.md)).
 

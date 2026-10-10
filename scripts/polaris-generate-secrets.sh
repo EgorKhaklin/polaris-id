@@ -177,7 +177,8 @@ print(json.dumps(pqc_signing.generate_keypair()))'
     echo "  ✓ ${name}  (ML-DSA-65 keypair generated; mode 0644)"
 }
 
-# v9.173 (roadmap P0.9) — the S3 key pair for the OFFSITE backup repo. The prod
+# v9.173 (roadmap P0.9) - the S3 key pair for the OFFSITE backup repo, and since
+# 2026-10-10 its cipher passphrase (repo2-cipher-pass, mandatory with a bucket). The prod
 # compose mounts this file read-only at /etc/pgbackrest/conf.d/repo-creds.conf
 # UNCONDITIONALLY (a compose mount cannot be optional, and a missing source
 # path would make docker create a directory there), so it must exist even for a
@@ -194,16 +195,22 @@ write_pgbackrest_creds_if_missing() {
         return 0
     fi
     ( umask 0022 && cat > "${target}" <<'TPL'
-# pgbackrest_repo_creds.conf — S3 key pair for the OFFSITE backup repo (P0.9).
-# Mounted read-only at /etc/pgbackrest/conf.d/repo-creds.conf. Empty = local
-# repo. To go offsite: fill in the two keys below AND set
+# pgbackrest_repo_creds.conf - S3 key pair and cipher passphrase for the OFFSITE
+# backup repo (P0.9). Mounted read-only at /etc/pgbackrest/conf.d/repo-creds.conf.
+# Empty = local repo only. To go offsite: fill in the three lines below AND set
 # POLARIS_PGBACKREST_S3_BUCKET / _ENDPOINT / _REGION for the postgres service,
-# then ./scripts/polaris-deploy.sh prod (it runs stanza-create + check).
-# Rotate with the bucket's IAM tooling; then update here and redeploy.
+# then ./scripts/polaris-deploy.sh prod (it runs stanza-create + check). The
+# bucket becomes repo2, beside the local repo1, encrypted by pgBackRest with the
+# passphrase (openssl rand -base64 48); the postgres container refuses to start
+# with a bucket and no passphrase. Keep a copy of the passphrase off this host:
+# without it the offsite copy cannot be restored, and it cannot be changed later
+# without a new repo. Rotate the key pair with the bucket's IAM tooling; then
+# update here and redeploy.
 #
 # [global]
-# repo1-s3-key=<access-key>
-# repo1-s3-key-secret=<secret-key>
+# repo2-s3-key=<access-key>
+# repo2-s3-key-secret=<secret-key>
+# repo2-cipher-pass=<32+ characters: openssl rand -base64 48>
 TPL
     )
     chmod 0644 "${target}"

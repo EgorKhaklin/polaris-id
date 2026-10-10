@@ -453,9 +453,11 @@ services:
       POLARIS_PGBACKREST_ENABLED: "${POLARIS_PGBACKREST_ENABLED:-1}"
       # v9.173 (P0.9) — the OFFSITE repo, by env alone. The image entrypoint
       # renders these into /etc/pgbackrest/conf.d/repo.conf at every start; unset
-      # BUCKET means a LOCAL repo (not offsite). The S3 key pair is NOT env: it is
-      # the mounted secrets/pgbackrest_repo_creds.conf below, and the container
-      # refuses to start if it finds the key pair in env.
+      # BUCKET means the LOCAL repo only (not offsite). A bucket is added as repo2,
+      # beside the local repo1, encrypted by pgBackRest. The S3 key pair and the
+      # repo2 cipher passphrase are NOT env: they are the mounted
+      # secrets/pgbackrest_repo_creds.conf below, and the container refuses to
+      # start if it finds them in env, or a bucket without the passphrase.
       POLARIS_PGBACKREST_S3_BUCKET: "${POLARIS_PGBACKREST_S3_BUCKET:-}"
       POLARIS_PGBACKREST_S3_ENDPOINT: "${POLARIS_PGBACKREST_S3_ENDPOINT:-}"
       POLARIS_PGBACKREST_S3_REGION: "${POLARIS_PGBACKREST_S3_REGION:-}"
@@ -475,12 +477,13 @@ services:
       # copies it into the data dir and turns ssl on so the app<->DB hop is encrypted.
       - ${POLARIS_SECRETS_DIR:-./secrets}/postgres_server.crt:/etc/polaris-pg-certs/server.crt:ro
       - ${POLARIS_SECRETS_DIR:-./secrets}/postgres_server.key:/etc/polaris-pg-certs/server.key:ro
-      # v9.126+ — the pgBackRest stanza config + the local repo volume (used only
-      # while no POLARIS_PGBACKREST_S3_BUCKET is set; see pgbackrest.conf).
+      # v9.126+ - the pgBackRest stanza config + the local repo volume (repo1,
+      # always; a bucket is repo2 beside it; see pgbackrest.conf).
       - ./pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
       - pgbackrest_repo:/var/lib/pgbackrest
-      # v9.173 (P0.9) — the S3 key pair for the offsite repo, file-mounted (never
-      # env). Created as a commented template by polaris-generate-secrets.sh.
+      # v9.173 (P0.9) - the S3 key pair and cipher passphrase for the offsite
+      # repo, file-mounted (never env). Created as a commented template by
+      # polaris-generate-secrets.sh.
       - ${POLARIS_SECRETS_DIR:-./secrets}/pgbackrest_repo_creds.conf:/etc/pgbackrest/conf.d/repo-creds.conf:ro
     healthcheck:
       # -h: only the REAL server listens on TCP. The entrypoint's temporary

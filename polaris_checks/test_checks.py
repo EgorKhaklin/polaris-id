@@ -6557,13 +6557,71 @@ def test_ci_ssl_probe_check_discriminates(tmp_path):
 
 
 def test_offsite_backup_env_driven_check_discriminates(tmp_path):
+    GEN = (
+        "#!/usr/bin/env bash\n"
+        "CREDS=\"$(dirname \"$OUT\")/repo-creds.conf\"\n"
+        "if [ -n \"${POLARIS_PGBACKREST_S3_KEY:-}${POLARIS_PGBACKREST_S3_KEY_SECRET:-}\" ]; then exit 3; fi\n"
+        "env_names=\"$(compgen -e)\" || exit 3\n"
+        "for name in $env_names; do case \"$name\" in\n"
+        "  POLARIS_PGBACKREST_*CIPHER_PASS*|PGBACKREST_*CIPHER_PASS*) exit 3 ;; esac; done\n"
+        "if mounted; then\n"
+        "    require_cipher \"the operator-mounted ${OUT}\" < <(cat \"$OUT\")\n"
+        "    exit 0\n"
+        "fi\n"
+        "body=\"repo1-path=/var/lib/pgbackrest\"\n"
+        "if [ -n \"${POLARIS_PGBACKREST_S3_BUCKET:-}\" ]; then\n"
+        "    if ! grep -Eq '^[[:space:]]*repo2-cipher-pass[[:space:]]*=' \"$CREDS\"; then\n"
+        "        exit 4\n"
+        "    fi\n"
+        "    if [ \"$pass_len\" -lt 32 ]; then exit 4; fi\n"
+        "    body=\"${body}\nrepo2-type=s3\nrepo2-cipher-type=aes-256-cbc\"\n"
+        "fi\n"
+        "require_cipher \"the configuration\" < <(printf '%s\\n' \"$body\")\n")
+    DRILL = (
+        "S3_IMAGE=ghcr.io/versity/versitygw@sha256:x\n"
+        "docker run -e POLARIS_PGBACKREST_S3_KEY=leaked img && exit 1\n"
+        "docker run -e PGBACKREST_REPO2_CIPHER_PASS=leaked img && exit 1\n"
+        "grep -qx 'repo2-type=s3' rendered.conf\n"
+        "grep -qx 'repo2-cipher-type=aes-256-cbc' rendered.conf\n"
+        "pgbackrest --stanza=polaris --repo=1 --type=full backup\n"
+        "pgbackrest --stanza=polaris --repo=2 --type=full backup\n"
+        "pgbackrest --stanza=polaris --repo=2 --type=full backup\n"
+        "|| fail \"backup's expire at the rendered repo2-retention-full=2 did not remove $R2_FULL1\"\n"
+        "refuses mounted \"configures repo2 (repo2-type=s3) with no cipher\"\n"
+        "put canary/plaintext\n"
+        "if grep -qF \"$MARKER\" /tmp/obj; then echo PLAINTEXT; fi\n"
+        "[ \"$(head -c 8 /tmp/obj)\" != \"Salted__\" ] && echo NOT-CIPHERTEXT\n"
+        "[ \"$left\" = 0 ] || fail \"repo1 was not wiped\"\n"
+        "refused_restore nopass \"repo2-cipher-pass. The offsite repo\" \"\" \"$WORK/repo-creds-nopass.conf\" image\n"
+        "refused_restore wrong \"$INFO_REFUSED\" \"$WRONG_KEY_REFUSED\" \"$WORK/repo-creds-wrongpass.conf\" image\n"
+        "refused_restore nocipher \"$INFO_REFUSED\" \"$NO_CIPHER_REFUSED\" \"$WORK/repo-creds-nopass.conf\" own\n"
+        "grep -qF -- \"$says\" \"$WORK/refused-restore.log\"\n"
+        "WRONG_KEY_REFUSED='\\[FormatError\\] unable to load info file|CryptoError'\n"
+        "NO_CIPHER_REFUSED='at line 1: Salted__|is or was the repo encrypted'\n"
+        "grep -qE 'HostConnectError|ServiceError|FileMissingError' \"$WORK/refused-restore.log\"\n"
+        "RESTORE_REPO2='pgbackrest --stanza=polaris --repo=2 restore'\n"
+        "echo \"done\"\n")
+    BACKUP = ('repos=$(cat /etc/pgbackrest/conf.d/repo.conf | sed -nE "s/^repo([0-9]+)-.*/\\1/p")\n'
+              'for repo in $repos; do\n'
+              '  pgbackrest --stanza=polaris --repo="${repo}" --type="${PGBR_TYPE}" backup\n'
+              'done\n')
+    DEPLOY = ("for secret in polaris_db_password pgbackrest_repo_creds.conf; do :; done\n"
+              'pgbr_preflight() {\n'
+              '    env -i bash "${POLARIS_ROOT}/polaris_web/pgbackrest-conf.sh" \\\n'
+              '        "${tmp}/conf.d/repo.conf" "${SECRETS_DIR}/pgbackrest_repo_creds.conf"\n'
+              '}\n'
+              'if pgbr_preflight; then :; else exit 1; fi\n'
+              'compose pull\n'
+              'compose up -d postgres\n'
+              'repos=$(cat /etc/pgbackrest/conf.d/repo.conf)\n'
+              'for repo in $repos; do\n'
+              '  pgbackrest --stanza=polaris --repo="${repo}" --type=full backup\n'
+              'done\n')
+    RCHECK = ('verify 1 --set="$label"\n'
+              'if grep -Eq \'^repo2-\' /etc/pgbackrest/conf.d/repo.conf; then verify 2 --set="$label2"; fi\n')
     good = {
         "polaris_web/pgbackrest.conf": "[global]\nrepo1-retention-full=2\n[polaris]\npg1-path=/data\n",
-        "polaris_web/pgbackrest-conf.sh": (
-            "#!/usr/bin/env bash\n"
-            "if [ -n \"${POLARIS_PGBACKREST_S3_KEY:-}${POLARIS_PGBACKREST_S3_KEY_SECRET:-}\" ]; then exit 3; fi\n"
-            "if [ -z \"${POLARIS_PGBACKREST_S3_BUCKET:-}\" ]; then body=repo1-path=/var/lib/pgbackrest\n"
-            "else body=\"repo1-type=s3\"; fi\n"),
+        "polaris_web/pgbackrest-conf.sh": GEN,
         "polaris_web/pg-entrypoint.sh": "#!/bin/sh\n/usr/local/bin/polaris-pgbackrest-conf.sh || exit 1\n"
                                         "exec /usr/local/bin/docker-entrypoint.sh \"$@\"\n",
         "polaris_web/Dockerfile.postgres": "FROM postgres:16-alpine@sha256:abc\nRUN apk add pgbackrest\n"
@@ -6576,12 +6634,10 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
             "    volumes:\n"
             "      - ./secrets/pgbackrest_repo_creds.conf:/etc/pgbackrest/conf.d/repo-creds.conf:ro\n"),
         "scripts/polaris-generate-secrets.sh": "write_pgbackrest_creds_if_missing() {\n  : > pgbackrest_repo_creds.conf\n}\nwrite_pgbackrest_creds_if_missing\n",
-        "scripts/polaris-deploy.sh": "for secret in polaris_db_password pgbackrest_repo_creds.conf; do :; done\n",
-        "scripts/polaris-offsite-drill.sh": (
-            "S3_IMAGE=ghcr.io/versity/versitygw@sha256:x\n"
-            "docker run -e POLARIS_PGBACKREST_S3_KEY=leaked img && exit 1\n"
-            "grep -q '^repo1-type=s3$' /etc/pgbackrest/conf.d/repo.conf\n"
-            "pgbackrest --stanza=polaris restore\n"),
+        "scripts/polaris-deploy.sh": DEPLOY,
+        "scripts/polaris-backup.sh": BACKUP,
+        "scripts/polaris-restore-check.sh": RCHECK,
+        "scripts/polaris-offsite-drill.sh": DRILL,
         ".github/workflows/ci.yml": "steps:\n  - run: bash scripts/polaris-offsite-drill.sh\n",
         "docs/operator/DR.md": "export POLARIS_PGBACKREST_S3_BUCKET=<bucket>\n",
     }
@@ -6593,50 +6649,133 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_text(body)
 
+    def fails(overrides, why, says=None):
+        write(overrides)
+        f = checks.check_offsite_backup_env_driven(tmp_path)[0]
+        assert f.level == "FAIL", "must FAIL when " + why
+        if says:
+            assert says in f.message, "the finding must say %r when %s: %s" % (says, why, f.message)
+        write()
+
     write()
     assert checks.check_offsite_backup_env_driven(tmp_path)[0].level == "OK", "must PASS on the good fixture"
 
     # 2026-09-24: the endpoint must be pinned by digest, whichever server it is. A tag is
     # what a registry can change under the drill; the digest is what makes a withdrawal
     # fail loud instead of silently running something else.
-    write({"scripts/polaris-offsite-drill.sh": (
-        "S3_IMAGE=ghcr.io/versity/versitygw:latest\n"
-        "docker run -e POLARIS_PGBACKREST_S3_KEY=leaked img && exit 1\n"
-        "grep -q '^repo1-type=s3$' /etc/pgbackrest/conf.d/repo.conf\n"
-        "pgbackrest --stanza=polaris restore\n")})
-    assert checks.check_offsite_backup_env_driven(tmp_path)[0].level == "FAIL", \
-        "must FAIL when the S3 endpoint image is not pinned by digest"
-    write()
+    fails({"scripts/polaris-offsite-drill.sh": DRILL.replace("versitygw@sha256:x", "versitygw:latest")},
+          "the S3 endpoint image is not pinned by digest")
 
     # The load-bearing lesson: repo1-path back in the main conf duplicates the
     # rendered fragment and pgBackRest refuses to start.
-    write({"polaris_web/pgbackrest.conf": "[global]\nrepo1-path=/var/lib/pgbackrest\n[polaris]\npg1-path=/d\n"})
-    f = checks.check_offsite_backup_env_driven(tmp_path)[0]
-    assert f.level == "FAIL" and "multiple times" in f.message, "must FAIL when pgbackrest.conf sets repo1-path"
+    fails({"polaris_web/pgbackrest.conf": "[global]\nrepo1-path=/var/lib/pgbackrest\n[polaris]\npg1-path=/d\n"},
+          "pgbackrest.conf sets repo1-path", "multiple times")
 
     # The renderer that no longer refuses the key pair in env.
-    write({"polaris_web/pgbackrest-conf.sh": "body=repo1-type=s3\nbody=repo1-path=/x\n"
-                                             "echo $POLARIS_PGBACKREST_S3_BUCKET\n"})
-    assert checks.check_offsite_backup_env_driven(tmp_path)[0].level == "FAIL", \
-        "must FAIL when the renderer does not refuse (exit 3) the key pair in env"
+    fails({"polaris_web/pgbackrest-conf.sh": GEN.replace("then exit 3; fi\n", "then :; fi\n", 1)
+           .replace("POLARIS_PGBACKREST_S3_KEY_SECRET", "X")},
+          "the renderer does not refuse (exit 3) the key pair in env")
 
     # The compose carrying the key pair as env.
-    write({"polaris_web/docker-compose.prod.yml": good["polaris_web/docker-compose.prod.yml"]
-           + "      POLARIS_PGBACKREST_S3_KEY: abc\n"})
-    assert checks.check_offsite_backup_env_driven(tmp_path)[0].level == "FAIL", \
-        "must FAIL when the compose passes the S3 key pair through environment"
+    fails({"polaris_web/docker-compose.prod.yml": good["polaris_web/docker-compose.prod.yml"]
+           + "      POLARIS_PGBACKREST_S3_KEY: abc\n"},
+          "the compose passes the S3 key pair through environment")
 
     # The v9.173 CI failure: the function called before it is defined.
-    write({"scripts/polaris-generate-secrets.sh": "write_pgbackrest_creds_if_missing\n"
-           "write_pgbackrest_creds_if_missing() {\n  : > pgbackrest_repo_creds.conf\n}\n"})
-    f = checks.check_offsite_backup_env_driven(tmp_path)[0]
-    assert f.level == "FAIL" and "DEFINE" in f.message, \
-        "must FAIL when generate-secrets calls the function before defining it"
+    fails({"scripts/polaris-generate-secrets.sh": "write_pgbackrest_creds_if_missing\n"
+           "write_pgbackrest_creds_if_missing() {\n  : > pgbackrest_repo_creds.conf\n}\n"},
+          "generate-secrets calls the function before defining it", "DEFINE")
 
     # CI no longer running the offsite drill.
-    write({".github/workflows/ci.yml": "steps:\n  - run: echo local round-trip only\n"})
-    assert checks.check_offsite_backup_env_driven(tmp_path)[0].level == "FAIL", \
-        "must FAIL when CI does not run the offsite drill"
+    fails({".github/workflows/ci.yml": "steps:\n  - run: echo local round-trip only\n"},
+          "CI does not run the offsite drill")
+
+    # 2026-10-10: the bucket is an encrypted repo2 beside the local repo1. Each property, mutated.
+    # A repo2 option in the static conf: with no bucket it conjures a repo2 at the local default path.
+    fails({"polaris_web/pgbackrest.conf": good["polaris_web/pgbackrest.conf"].replace(
+               "[polaris]", "repo2-retention-full=2\n[polaris]")},
+          "pgbackrest.conf sets a repo2- option", "repo2- option")
+    # The bucket rendered as repo1 again, replacing the local repo.
+    fails({"polaris_web/pgbackrest-conf.sh": GEN.replace("repo2-type=s3", "repo1-type=s3\nrepo2-type=s3")},
+          "the renderer makes the bucket repo1", "replacing the local repo")
+    # No repo2 at all.
+    fails({"polaris_web/pgbackrest-conf.sh": GEN.replace("repo2-type=s3", "repo2-type=posix")},
+          "the renderer does not add the bucket as repo2-type=s3")
+    # repo2 rendered without the cipher.
+    fails({"polaris_web/pgbackrest-conf.sh": GEN.replace("\nrepo2-cipher-type=aes-256-cbc", "")},
+          "repo2 is rendered without repo2-cipher-type=aes-256-cbc", "aes-256-cbc")
+    # A bucket with no passphrase rendered anyway (the fail-closed refusal gone).
+    fails({"polaris_web/pgbackrest-conf.sh": GEN.replace("        exit 4\n", "        :\n")},
+          "a bucket without repo2-cipher-pass is not refused (exit 4)", "exit 4")
+    fails({"polaris_web/pgbackrest-conf.sh": GEN.replace(" \"$CREDS\"", " /dev/null")},
+          "the passphrase check does not read the secret fragment", "exit 4")
+    # The passphrase copied into the 0644 repo.conf from a variable.
+    fails({"polaris_web/pgbackrest-conf.sh": GEN.replace(
+               'repo2-cipher-type=aes-256-cbc"', 'repo2-cipher-type=aes-256-cbc\nrepo2-cipher-pass=$PASS"')},
+          "the renderer writes the passphrase into repo.conf", "0644")
+    # A passphrase in env no longer refused.
+    fails({"polaris_web/pgbackrest-conf.sh": GEN.replace("POLARIS_PGBACKREST_*CIPHER_PASS*|PGBACKREST_*CIPHER_PASS*", "NONE")},
+          "the renderer does not refuse a cipher passphrase in env", "CIPHER_PASS")
+    # The compose carrying a passphrase as env.
+    fails({"polaris_web/docker-compose.prod.yml": good["polaris_web/docker-compose.prod.yml"]
+           + "      PGBACKREST_REPO2_CIPHER_PASS: abc\n"},
+          "the compose passes a cipher passphrase through environment", "passphrase")
+    # Backups to repo1 only: the bucket would hold WAL and no base backup.
+    fails({"scripts/polaris-backup.sh": BACKUP.replace(' --repo="${repo}"', "")},
+          "polaris-backup.sh backs up repo1 alone", "no base backup")
+    fails({"scripts/polaris-deploy.sh": DEPLOY.replace(' --repo="${repo}"', "")},
+          "polaris-deploy.sh takes the first full in repo1 alone", "each repo")
+    # The deploy no longer runs the renderer's refusal before it starts the stack.
+    fails({"scripts/polaris-deploy.sh": DEPLOY.replace('"${SECRETS_DIR}/pgbackrest_repo_creds.conf"', "")},
+          "the deploy's preflight does not read the host's fragment", "pgbr_preflight")
+    fails({"scripts/polaris-deploy.sh": DEPLOY.replace("if pgbr_preflight; then :; else exit 1; fi\n", "")
+           .replace("compose up -d postgres\n", "compose up -d postgres\nif pgbr_preflight; then :; else exit 1; fi\n")},
+          "the deploy's preflight runs after compose up", "before its first compose pull or up")
+    # The weekly restore check no longer verifies the offsite copy.
+    fails({"scripts/polaris-restore-check.sh": RCHECK.replace("verify 2 --set=", "verify 1 --set=")},
+          "the restore check does not verify repo2", "repo2")
+    # A short passphrase accepted.
+    fails({"polaris_web/pgbackrest-conf.sh": GEN.replace(" -lt 32 ", " -lt 3 ")},
+          "the renderer accepts a passphrase under 32 characters", "32 characters")
+    # A mounted repo.conf, or a fragment's repository, no longer held to the cipher rule.
+    fails({"polaris_web/pgbackrest-conf.sh": GEN.replace('require_cipher "the operator-mounted', ': "the operator-mounted')},
+          "a mounted repo.conf skips the cipher rule", "operator-mounted")
+    fails({"polaris_web/pgbackrest-conf.sh": GEN.replace('require_cipher "the configuration"', ': "the configuration"')},
+          "a fragment's repository skips the cipher rule", "operator-mounted")
+    # The drill overriding the retention on the command line instead of proving the rendered value.
+    fails({"scripts/polaris-offsite-drill.sh": DRILL + "pgbackrest --stanza=polaris --repo=2 --repo2-retention-full=1 expire\n"},
+          "the drill overrides the retention on the command line", "override the retention")
+    # The drill, step by step.
+    for gone, says in (
+            ("grep -qx 'repo2-type=s3' rendered.conf\n", "repo2-type=s3"),
+            ("grep -qx 'repo2-cipher-type=aes-256-cbc' rendered.conf\n", "assert the rendered repo2 is encrypted"),
+            ("docker run -e PGBACKREST_REPO2_CIPHER_PASS=leaked img && exit 1\n", "cipher-passphrase-in-env refusal"),
+            ("pgbackrest --stanza=polaris --repo=1 --type=full backup\n", "full backup into repo1"),
+            ("pgbackrest --stanza=polaris --repo=2 --type=full backup\n", "full backup into repo2"),
+            ("|| fail \"backup's expire at the rendered repo2-retention-full=2 did not remove $R2_FULL1\"\n",
+             "rendered retention"),
+            ("refuses mounted \"configures repo2 (repo2-type=s3) with no cipher\"\n", "mounted repo.conf"),
+            ("grep -qF -- \"$says\" \"$WORK/refused-restore.log\"\n", "own error text"),
+            ("WRONG_KEY_REFUSED='\\[FormatError\\] unable to load info file|CryptoError'\n",
+             "wrong-passphrase restore's own cipher error"),
+            ("NO_CIPHER_REFUSED='at line 1: Salted__|is or was the repo encrypted'\n", "no-cipher restore's own error"),
+            ("refused_restore nocipher \"$INFO_REFUSED\" \"$NO_CIPHER_REFUSED\" \"$WORK/repo-creds-nopass.conf\" own\n",
+             "hold the no-cipher restore"),
+            ("grep -qE 'HostConnectError|ServiceError|FileMissingError' \"$WORK/refused-restore.log\"\n",
+             "missing info file"),
+            ("[ \"$(head -c 8 /tmp/obj)\" != \"Salted__\" ] && echo NOT-CIPHERTEXT\n", "cipher header"),
+            ("if grep -qF \"$MARKER\" /tmp/obj; then echo PLAINTEXT; fi\n", "marker row's plaintext"),
+            ("put canary/plaintext\n", "plaintext canary"),
+            ("[ \"$left\" = 0 ] || fail \"repo1 was not wiped\"\n", "wipe repo1"),
+            ("refused_restore nopass \"repo2-cipher-pass. The offsite repo\" \"\" \"$WORK/repo-creds-nopass.conf\" image\n",
+             "with no passphrase"),
+            ("refused_restore wrong \"$INFO_REFUSED\" \"$WRONG_KEY_REFUSED\" \"$WORK/repo-creds-wrongpass.conf\" image\n",
+             "with a wrong passphrase"),
+            ("RESTORE_REPO2='pgbackrest --stanza=polaris --repo=2 restore'\n", "from repo2 alone"),
+            ("echo \"done\"\n", "final done line")):
+        assert gone in DRILL, gone
+        fails({"scripts/polaris-offsite-drill.sh": DRILL.replace(gone, "")},
+              "the drill drops: " + gone.strip(), says)
 
 
 def test_pager_integration_check_discriminates(tmp_path):

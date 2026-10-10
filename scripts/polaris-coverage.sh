@@ -135,7 +135,7 @@ run_standalone "$ROOT/scripts" unittest test_verify_load test_wallet test_relyin
                                        test_conformance_runner test_pin_chart_images test_chain_anchor_tool test_migrate_runner \
                                        test_coverage_script test_trigger_drill test_operator_env test_key_event test_doctor test_evaluate \
                                        test_sync_objects_parity test_event_partition_migration test_database_settings \
-                                       test_db_state test_db_reference
+                                       test_db_state test_db_reference test_pgbackrest_conf
 # Verbose, so the log names each restore case that passed (docs/operator/SECURITY-STATE-DRILLS.md cites it).
 run_standalone "$ROOT/scripts" unittest -v test_restore_schema_check
 # polaris_sim's tests import the package (from polaris_sim import ...), so they

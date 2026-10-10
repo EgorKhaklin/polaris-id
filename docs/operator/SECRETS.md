@@ -37,7 +37,7 @@ mounts each file through `${POLARIS_SECRETS_DIR:-./secrets}/<name>`.
 | `polaris_signing_key` | ML-DSA-65 keypair JSON | 0644 | the app, via `POLARIS_PQC_SIGNING_KEY_FILE` (the issuer trust anchor) | the key ceremony ([KEY-CEREMONY.md](KEY-CEREMONY.md)) |
 | `postgres_server.crt` / `.key` | self-signed TLS cert, CN=postgres, 825 days | 0644 | the postgres container copies them into its data dir at init | regenerate with `polaris-generate-secrets.sh` after deleting the pair, or supply a CA-issued pair |
 | `pgbouncer_server.crt` / `.key` | self-signed TLS cert, 825 days; the app pins it with `sslmode=verify-ca` | 0644 | pgbouncer and the app | same as the postgres pair |
-| `pgbackrest_repo_creds.conf` | S3 key pair for the offsite backup repo; ships as an empty template | 0644 | pgBackRest as the postgres user | at the object-store provider, then rewrite the file |
+| `pgbackrest_repo_creds.conf` | S3 key pair and cipher passphrase (`repo2-cipher-pass`) for the offsite backup repo; ships as an empty template | 0644 | pgBackRest as the postgres user | the key pair at the object-store provider, then rewrite the file; the passphrase only with a new repository ([DR.md, section 5](DR.md#5-wal-archiving-and-the-offsite-repo-pgbackrest)) |
 | Caddy ACME account key and certificates | managed by Caddy | n/a | Caddy | automatic (Let's Encrypt renewal) |
 
 Each container mounts only the files whose "Read by" cell names it, and the Helm chart projects into
