@@ -29,6 +29,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Added
 
 - `scripts/polaris-pg-upgrade-drill.sh` runs OPERATIONS.md's PostgreSQL major-version upgrade (16 to 17) and its rollback as written, and requires every table's rows, the sequences, the catalogue, roles and grants, a credential issued before and pgBackRest's health to be the same on each side; its control must name one audit row changed on the new major. CI runs both nightly and on pull requests that change what they run.
+- The release SBOM build runs before a release: read-only and with no signing identity, on pull requests that change how the SBOMs are made and weekly on main, holding the six SBOMs to SPDX 2.3 and the NTIA minimum elements; only a release run attests and publishes them, and only the files whose digests the build reported.
+- CI parses every `docker compose -f` file set the documents, scripts and workflows name, with the flags each call uses, under the runner's Compose (nothing starts), and fails on a set that does not parse, naming each document and line that uses it; `check_documented_compose_files_resolve` requires every file a call names to exist.
 
 ### Changed
 
