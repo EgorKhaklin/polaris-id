@@ -337,6 +337,7 @@ class TheRestore(_Stubbed):
         self.assertEqual(settings.load((self.stub / "state.json").read_text()), SOURCE)
         self.assertIn("the backup's privileges, restored", r.stdout, "the privilege check must still run after")
         self.assertLess(r.stdout.index("4.2/6"), r.stdout.index("4.5/6"))
+        self.assertIn("[6/6]", r.stdout, "a completed restore says so: the cases below rely on it")
 
     def test_settings_that_cannot_be_applied_stop_the_restore(self):
         before = (self.stub / "state.json").read_text()
@@ -344,7 +345,11 @@ class TheRestore(_Stubbed):
         self.assertEqual(r.returncode, EXIT_SETTINGS_MISMATCH, r.stdout + r.stderr)
         self.assertIn("could not be applied to 'polaris_t', which keeps its own", r.stderr)
         self.assertIn('role "no_such_role" does not exist', r.stderr)
-        self.assertNotIn("4.5/6", r.stdout, "a restore whose settings failed went on")
+        # The privileges are decided first (exit 11 wins when both fail), then the restore stops with 12
+        # and never completes ("[6/6]", which the successful restore above prints).
+        self.assertIn("[4.5/6]", r.stdout, "the privileges were not checked before the settings failure was reported")
+        self.assertIn("the privileges are the backup's, but its database settings are not", r.stderr)
+        self.assertNotIn("[6/6]", r.stdout, "a restore whose settings failed went on")
         self.assertEqual((self.stub / "state.json").read_text(), before)
 
     def test_settings_that_read_back_otherwise_stop_the_restore(self):
@@ -354,7 +359,11 @@ class TheRestore(_Stubbed):
         self.assertIn("the restored database settings are not the backup's", r.stderr)
         self.assertIn("the database's polaris.min_epoch_anonymity_set: restored 1, the backup 25", r.stderr)
         self.assertIn("role polaris_app's statement_timeout: missing after the restore (the backup: 7s)", r.stderr)
-        self.assertNotIn("4.5/6", r.stdout)
+        # The privileges are decided first (exit 11 wins when both fail), then the restore stops with 12
+        # and never completes ("[6/6]", which the successful restore above prints).
+        self.assertIn("[4.5/6]", r.stdout, "the privileges were not checked before the settings failure was reported")
+        self.assertIn("the privileges are the backup's, but its database settings are not", r.stderr)
+        self.assertNotIn("[6/6]", r.stdout, "a restore whose settings failed went on")
 
     def test_settings_that_cannot_be_read_back_are_an_unverified_restore(self):
         r = self.restore(self.tarball(record(SOURCE)), STUB_READ="fail")
@@ -381,7 +390,11 @@ class TheRestore(_Stubbed):
         self.assertIn("the backup records no database settings, so the target's would be reset to none", r.stderr)
         self.assertNotIn("DO $reset$", self.log("psql.log"))
         self.assertEqual((self.stub / "state.json").read_text(), before)
-        self.assertNotIn("4.5/6", r.stdout)
+        # The privileges are decided first (exit 11 wins when both fail), then the restore stops with 12
+        # and never completes ("[6/6]", which the successful restore above prints).
+        self.assertIn("[4.5/6]", r.stdout, "the privileges were not checked before the settings failure was reported")
+        self.assertIn("the privileges are the backup's, but its database settings are not", r.stderr)
+        self.assertNotIn("[6/6]", r.stdout, "a restore whose settings failed went on")
 
     def test_a_settings_file_the_manifest_does_not_cover_is_refused(self):
         r = self.restore(self.tarball(record(SOURCE), in_manifest=False))
