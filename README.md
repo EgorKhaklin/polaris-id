@@ -22,8 +22,8 @@
 [![ML-DSA-65](https://img.shields.io/badge/ML--DSA--65-FIPS_204-5b4b8a?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#ml-dsa-65)
 [![FN-DSA: Falcon-1024](https://img.shields.io/badge/FN--DSA-Falcon--1024_(FIPS_206_draft)-5b4b8a?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#fn-dsa-draft-fips-206)
 
-[![PyPI](https://img.shields.io/badge/PyPI-polaris--verify-3775a9?labelColor=0a1421&style=flat-square)](https://pypi.org/project/polaris-verify/)
-[![npm](https://img.shields.io/badge/npm-polaris--sdk--ts-cb3837?labelColor=0a1421&style=flat-square)](https://www.npmjs.com/package/polaris-sdk-ts)
+[![PyPI](https://img.shields.io/badge/PyPI-polaris--verify-3775a9?labelColor=0a1421&style=flat-square)](packages/polaris-verify)
+[![npm](https://img.shields.io/badge/npm-polaris--sdk--ts-cb3837?labelColor=0a1421&style=flat-square)](sdk/typescript)
 [![Discord](https://img.shields.io/badge/Discord-join_the_server-5865F2?logo=discord&logoColor=white&labelColor=0a1421&style=flat-square)](https://discord.gg/ragewuCKj)
 
 <a href="https://polaris-id.e-khaklin.workers.dev/"><img src="docs/assets/nav/project-site.svg" alt="Project site"></a>
