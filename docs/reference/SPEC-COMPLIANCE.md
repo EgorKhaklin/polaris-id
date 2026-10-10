@@ -23,7 +23,7 @@ date. Self means the author ran it; what outside parties have run is in
 ## OpenID Certified
 
 `polaris-oid4vp 1.0.0rc7` is OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0
-**Verifier** profile (`sd_jwt_vc`, `direct_post.jwt`), reviewed and published by the OpenID
+**Verifier** profile (`sd_jwt_vc`, `direct_post.jwt`), approved and listed by the OpenID
 Foundation on 24 September 2026
 ([listing](https://openid.net/certification/certified-oid4vp-haip-final/)). It is a
 self-certification for that package version in that role: not an endorsement, not an audit, and not

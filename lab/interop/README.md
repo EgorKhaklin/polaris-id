@@ -356,7 +356,7 @@ without failure. The request (OCS-3049) was approved, with the fee waived under 
 Foundation's open-source policy. `polaris-oid4vp 1.0.0rc7` is listed as OpenID Certified to the
 OpenID4VP 1.0 + HAIP 1.0 Verifier profile at
 <https://openid.net/certification/certified-oid4vp-haip-final/>. That is a self-certification
-the Foundation reviewed and published, for that version in that role, and not an endorsement or
+the OpenID Foundation approved and lists, for that version in that role, and not an endorsement or
 an audit. [`lab/EXTERNAL-NOUNS.md`](../EXTERNAL-NOUNS.md) records exactly what it covers.
 
 **What this assessment got right and wrong, kept here on purpose.** Right: that the protocol
