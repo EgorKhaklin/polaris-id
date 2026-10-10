@@ -29,8 +29,9 @@ Releases up to 1.0.0-rc.70 left the notional sample's floor of one in a producti
 next upgrade raises exactly that one to 20: `polaris-migrate.sh --sync-objects` under
 `POLARIS_ENV=production`, which the deploy, the Linux installer and the chart's migration Job run,
 and which stops the upgrade if the floor then reads below 20. A floor the authority set to another
-value stays; as the database superuser, `ALTER DATABASE polaris SET polaris.min_epoch_anonymity_set = 20`
-sets it by hand.
+value stays. A floor of exactly one is taken to be the sample's and raised, so an authority that
+wants one in production cannot keep it through an upgrade. As the database superuser,
+`ALTER DATABASE polaris SET polaris.min_epoch_anonymity_set = 20` sets the floor by hand.
 
 **How often a relying party's ledger resets.** The scoped nullifier (P9.3) is keyed by the
 epoch, deliberately, so that membership never becomes a permanent pseudonym. A relying party

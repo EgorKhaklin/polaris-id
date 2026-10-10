@@ -225,11 +225,15 @@ stage_app() {
         source "$INSTALL_DIR/scripts/polaris-host-lock.sh"
         polaris_host_lock "install.sh"
         ( cd "$INSTALL_DIR/polaris_web" && docker compose -f docker-compose.prod.yml build -q ) \
-            && ok "production images built"
+            || die "the production images did not build (cd $INSTALL_DIR/polaris_web && docker compose -f docker-compose.prod.yml build)"
+        ok "production images built"
     fi
 
-    # 3. Secrets (if-missing; 0700 dir, file modes chosen by the generator).
-    ( cd "$INSTALL_DIR" && bash scripts/polaris-generate-secrets.sh >/dev/null ) && ok "secrets present under polaris_web/secrets/"
+    # 3. Secrets (if-missing; 0700 dir, file modes chosen by the generator). Each step here stops the
+    # install when it fails: inside an && list, as until 2026-10-10, set -e does not.
+    ( cd "$INSTALL_DIR" && bash scripts/polaris-generate-secrets.sh >/dev/null ) \
+        || die "the secrets were not generated (cd $INSTALL_DIR && bash scripts/polaris-generate-secrets.sh)"
+    ok "secrets present under polaris_web/secrets/"
 
     # 4. The EnvironmentFile.
     if [ -f "$ENV_FILE" ]; then

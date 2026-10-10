@@ -544,11 +544,13 @@ do_sync_objects() {
 # polaris.min_epoch_anonymity_set to ONE (04_data.sql) and every install loads it; docker-init.sh puts
 # 20 back for POLARIS_ENV=production at a cluster's first init only, and 09_grants.sql above sets it
 # only where it is unset. So a production database initialised before 2026-10-08 (up to 1.0.0-rc.70)
-# kept 1, and uc11_close_epoch closed epochs of two. Here, with POLARIS_ENV=production (the deploy,
-# the Linux installer and the chart's migration Job set it), exactly the sample's 1 is raised to 20
-# with docker-init.sh's statement and read back: anything but 20 or more stops the run. Any other
-# value is the authority's (docs/design/epoch-cadence.md: "20 unless the authority sets another") and
-# stays, with a warning when it is below 20. A database that is not production is never touched.
+# kept 1, and uc11_close_epoch could close epochs smaller than 20. Here, with POLARIS_ENV=production
+# (the deploy, the Linux installer and the chart's migration Job set it), exactly the sample's 1 is
+# raised to 20 with docker-init.sh's statement and read back: anything but 20 or more stops the run.
+# A floor of exactly 1 is taken to be the sample's, so a production floor of 1 does not survive an
+# upgrade. Any other value is the authority's (docs/design/epoch-cadence.md: "20 unless the authority
+# sets another") and stays, with a warning when it is below 20. A database that is not production is
+# never touched.
 FLOOR_READ="SELECT coalesce(polaris_database_setting('polaris.min_epoch_anonymity_set'), '')"
 FLOOR_RAISE=$(cat <<'SQL'
 DO $$

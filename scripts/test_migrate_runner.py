@@ -10,7 +10,7 @@ in the pending list and --up set out to apply them all (the Helm upgrade drill m
 require it to stop with EXIT_DB, planning nothing. They need no database.
 
 A production database initialised before 2026-10-08 kept the sample's polaris.min_epoch_anonymity_set
-of 1 through every upgrade, so uc11_close_epoch closed epochs of two; --sync-objects now raises
+of 1 through every upgrade, so uc11_close_epoch could close epochs smaller than 20; --sync-objects raises
 exactly that 1 under POLARIS_ENV=production. Those tests run the runner with a stand-in psql.
 
     python3 -m unittest test_migrate_runner      (from scripts/)
@@ -86,8 +86,8 @@ exit 0
 class AProductionDatabaseLosesTheSamplesFloor(unittest.TestCase):
     """--sync-objects, run by every upgrade path, raises exactly the notional sample's floor of one to
     twenty on a production database and reads it back; a floor the authority set stays, and a
-    database that is not production is never touched (measured by the release-upgrade drill: an
-    upgraded rc.70 production database read 1, a fresh install 20)."""
+    database that is not production is never touched (measured on 2026-10-10: an upgraded rc.70
+    production database read 1, a fresh install 20)."""
 
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-floor-"))

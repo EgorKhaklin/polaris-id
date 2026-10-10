@@ -602,5 +602,62 @@ class UpgradesRunTheSyncAsProduction(unittest.TestCase):
         self.assertIn("- {name: POLARIS_ENV, value: production}", chart)
 
 
+class TheInstallerStopsAtAFailedStep(unittest.TestCase):
+    """install.sh's image build and secrets steps, cut from the script and run under its options:
+    each failure stops the install there, naming the command to re-run. Until 2026-10-10 both ran as
+    `( ... ) && ok`, which set -e does not stop, so the install went on without its images or secrets."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-install-steps-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        (self.tmp / "polaris_web").mkdir()
+        (self.tmp / "scripts").mkdir()
+        (self.tmp / "bin").mkdir()
+        for path, rc in ((self.tmp / "bin" / "docker", "STUB_BUILD_RC"),
+                         (self.tmp / "scripts" / "polaris-generate-secrets.sh", "STUB_SECRETS_RC")):
+            path.write_text('#!/bin/sh\necho "$(basename "$0") $*" >> "%s"\nexit "${%s:-0}"\n'
+                            % (self.tmp / "calls.log", rc))
+            path.chmod(0o755)
+        self.text = (ROOT / "deploy" / "linux" / "install.sh").read_text()
+
+    def cut(self, first, last):
+        lines = self.text.splitlines()
+        start = next(i for i, line in enumerate(lines) if first in line)
+        end = next(i for i in range(start, len(lines)) if last in lines[i])
+        self.assertLessEqual(end - start, 3, "the step grew: %r" % lines[start:end + 1])
+        return "\n".join(lines[start:end + 1])
+
+    def run_step(self, step, **env):
+        helpers = [line for line in self.text.splitlines() if line.startswith(("ok()", "die()"))]
+        script = "set -euo pipefail\n%s\nINSTALL_DIR=\"%s\"\n%s\necho \"REACHED THE NEXT STEP\"\n" % (
+            "\n".join(helpers), self.tmp, step)
+        full = {"PATH": "%s:/usr/bin:/bin" % (self.tmp / "bin"), "HOME": str(self.tmp)}
+        full.update(env)
+        return subprocess.run(["bash", "-c", script], env=full, capture_output=True, text=True, timeout=30)
+
+    def test_a_failed_image_build_stops_the_install(self):
+        step = self.cut("docker-compose.prod.yml build -q )", 'ok "production images built"')
+        ok = self.run_step(step)
+        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+        self.assertIn("ok   production images built", ok.stdout)
+        r = self.run_step(step, STUB_BUILD_RC="17")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("install: the production images did not build (cd %s/polaris_web && docker compose" % self.tmp,
+                      r.stderr)
+        self.assertNotIn("REACHED THE NEXT STEP", r.stdout)
+        self.assertNotIn("production images built", r.stdout)
+
+    def test_failed_secrets_stop_the_install(self):
+        step = self.cut("bash scripts/polaris-generate-secrets.sh >/dev/null )", 'ok "secrets present')
+        ok = self.run_step(step)
+        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+        self.assertIn("ok   secrets present under polaris_web/secrets/", ok.stdout)
+        r = self.run_step(step, STUB_SECRETS_RC="3")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("install: the secrets were not generated (cd %s && bash scripts/polaris-generate-secrets.sh)"
+                      % self.tmp, r.stderr)
+        self.assertNotIn("REACHED THE NEXT STEP", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

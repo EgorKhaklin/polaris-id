@@ -1661,10 +1661,11 @@ steps.
 
 **The anonymity floor.** A production database initialised before 2026-10-08
 (every release up to 1.0.0-rc.70) kept the notional sample's
-`polaris.min_epoch_anonymity_set` of 1, so `uc11_close_epoch` closed epochs of
-two. The object sync this upgrade runs raises exactly that 1 to 20 and stops
+`polaris.min_epoch_anonymity_set` of 1, so `uc11_close_epoch` could close epochs
+smaller than 20. The object sync this upgrade runs raises exactly that 1 to 20 and stops
 the upgrade if the floor then reads below 20; a floor you set to another value
-stays, with a warning when it is below 20. The Linux installer and the chart's
+stays, with a warning when it is below 20. A floor of exactly 1 is taken to be
+the sample's and raised: a production floor of 1 does not survive an upgrade. The Linux installer and the chart's
 migration Job do the same
 ([epoch-cadence.md](../design/epoch-cadence.md)).
 
