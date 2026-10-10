@@ -230,6 +230,18 @@ def main():
         if page.query_selector('.rule-contradicted'):
             fail("a rule card reads in force while its self-test write went through")
         page.screenshot(path=str(OUT / "05-athena-selftest.png"))
+        # every tab shows its own panel and only it: a panel the script hides must not render
+        # (until 2026-10-10 `.board { display: grid }` beat `hidden`, so every tab showed the board)
+        tabs = [t.get_attribute('data-athena-tab') for t in page.query_selector_all('[data-athena-tab]')]
+        if len(tabs) < 4:
+            fail(f"Athena rendered {len(tabs)} tabs, expected 4")
+        for name in tabs[1:] + tabs[:1]:
+            page.query_selector(f'[data-athena-tab="{name}"]').click()
+            shown = page.evaluate("""() => [...document.querySelectorAll('[data-athena-panel]')]
+                .filter(p => p.getClientRects().length > 0).map(p => p.getAttribute('data-athena-panel'))""")
+            if shown != [name]:
+                fail(f"the Athena tab '{name}' shows the panels {shown}; it must show '{name}' alone")
+        print(f"  Athena tabs: each of {len(tabs)} shows its own panel alone")
         # interactive: switch to Authority, run the chain, assert a verdict renders
         page.query_selector('[data-athena-tab="authority"]').click()
         page.wait_for_selector('[data-athena-chain-run]', timeout=5000)

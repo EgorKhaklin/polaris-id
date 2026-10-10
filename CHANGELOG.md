@@ -15,6 +15,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- Athena's Authority, Proof policy and Trust graph tabs each drew the whole constitution board above their own view; each tab now shows its own view alone.
 - A deploy whose PostgreSQL image was another major than its cluster's (a FROM line moved and deployed, as a dependency bump proposes) recreated the database on a cluster that server refuses, and it stayed down until the line went back. `polaris-deploy.sh` now refuses before building, either way, and names the documented upgrade; a Helm upgrade does not check.
 - After the documented major-version upgrade, and after its rollback, pgBackRest's stanza still named the other cluster, so WAL archiving failed (error [028]) until an operator found the stanza upgrade. Both now upgrade the stanza and take a full backup, asking the stack whether it archives; the deploy prints pgBackRest's error and, on [028], the two commands.
 - A managed PostgreSQL, whose owner is not a superuser, could not load the schema as ENCRYPTION-AT-REST.md said; `scripts/polaris-db-init.sh` initialises one after a single grant.
