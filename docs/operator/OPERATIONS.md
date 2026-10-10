@@ -1756,10 +1756,21 @@ else
   docker volume rm "$V"
 fi
 
-# 5. Rebuild and bring the stack up on an empty cluster, then restore into it
+# 5. Rebuild and bring the stack up on an empty cluster, upgrade pgBackRest's stanza to it, then
+#    restore into it and take the new major's first full backup. Until the stanza is upgraded
+#    the deploy's pgBackRest step reports error [028] (the old cluster's stanza), and WAL would
+#    accumulate during the restore. Whether the stack archives (POLARIS_PGBACKREST_ENABLED, on
+#    unless 0) is asked of the stack: polaris.env sets it, and this shell may not have read it.
 ./scripts/polaris-deploy.sh prod --no-pull
+ARCHIVING=$(docker compose -f polaris_web/docker-compose.prod.yml exec -T postgres printenv POLARIS_PGBACKREST_ENABLED)
+[ "$ARCHIVING" = 0 ] ||
+  docker compose -f polaris_web/docker-compose.prod.yml exec -u postgres postgres \
+    pgbackrest --stanza=polaris stanza-upgrade
 ./scripts/polaris-restore.sh /var/backups/polaris/<step-1 tarball> \
     --target=docker-stack --force --verify-schema-version
+[ "$ARCHIVING" = 0 ] ||
+  docker compose -f polaris_web/docker-compose.prod.yml exec -u postgres postgres \
+    pgbackrest --stanza=polaris --type=full backup
 
 # 6. Only once step 5 printed "schema_version table matches migrations/ on disk" and the
 #    stack serves, delete the old cluster's copy. The names are looked up again, without
@@ -1771,7 +1782,8 @@ else echo "docker compose config failed: run this from the repository root, and 
 
 Until step 6, `<project>_pg_data_old` holds the old major's cluster untouched. To go back,
 restore the `FROM` line, then put the copy back into the cluster's volume (created with
-compose's labels if step 5 never made it) and redeploy. A new shell works here too:
+compose's labels if step 5 never made it), redeploy, and upgrade pgBackRest's stanza to the
+old cluster (step 5 moved it to the new one) with a full backup. A new shell works here too:
 
 ```bash
 P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config --no-interpolate | sed -n 's/^name: //p' | head -n1)
@@ -1785,17 +1797,16 @@ else
       --label com.docker.compose.volume=pg_data "$V"
   docker run --rm -v "${V}_old:/from:ro" -v "$V:/to" \
     alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
-    sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'
-  ./scripts/polaris-deploy.sh prod --no-pull
+    sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/' &&
+  ./scripts/polaris-deploy.sh prod --no-pull &&
+  ARCHIVING=$(docker compose -f polaris_web/docker-compose.prod.yml exec -T postgres printenv POLARIS_PGBACKREST_ENABLED) &&
+  if [ "$ARCHIVING" != 0 ]; then
+    docker compose -f polaris_web/docker-compose.prod.yml exec -u postgres postgres \
+      pgbackrest --stanza=polaris stanza-upgrade &&
+    docker compose -f polaris_web/docker-compose.prod.yml exec -u postgres postgres \
+      pgbackrest --stanza=polaris --type=full backup
+  fi
 fi
-```
-
-If continuous WAL archiving is enabled, run the stanza upgrade before the
-first new-major backup:
-
-```bash
-docker compose -f polaris_web/docker-compose.prod.yml exec -u postgres postgres \
-    pgbackrest --stanza=polaris stanza-upgrade
 ```
 
 ### TLS certificate renewal
