@@ -4616,7 +4616,8 @@ def check_table_count_matches_doc(root: pathlib.Path) -> list[Finding]:
 # Each document with the kinds it states, pinned. A count compared only when a pattern finds it
 # fails open: a reworded line ("ci.yml (thirty-one jobs)"), a document that drops a count or one
 # that goes missing all read as nothing to compare (2026-10-10). So every listed document must
-# exist and state each kind pinned here; the rest are listed to be checked if they ever state one.
+# exist and state each kind pinned here, and state no kind it is not pinned to (pins equal the stated
+# kinds, both ways); the rest are listed to be checked if they ever state one.
 _STATED_COUNT_DOCS: dict[str, tuple[str, ...]] = {
     "README.md": ("invariant checks", "CI jobs"),
     "ROADMAP.md": ("invariant checks", "routes"),
@@ -4701,6 +4702,10 @@ def check_stated_counts(root: pathlib.Path) -> list[Finding]:
             wrong = sorted(set(s for s in stated if s != real[kind]))
             if wrong:
                 drifted.append(f"{rel} states {wrong} {kind} but the repo measures {real[kind]}")
+        unpinned = [k for k in _STATED_COUNT_KINDS if k in found and k not in pinned]
+        if unpinned:
+            drifted.append(f"{rel} states the {' and '.join(unpinned)} count but is not pinned to it: pin it in "
+                           "_STATED_COUNT_DOCS, so a rewording later cannot drop it unseen")
         lost = [k for k in pinned if k not in found]
         if lost:
             drifted.append(f"{rel} no longer states the {' and '.join(lost)} count it is pinned to "
