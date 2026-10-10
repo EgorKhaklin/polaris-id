@@ -30,3 +30,31 @@ The key binding JWT carries an `iat`, and freshness is relative to it, so the te
 to that value rather than widening the acceptance window until an old presentation passes,
 which would be the check deleting itself. One test deliberately does the opposite and asserts
 the same fixture is REFUSED a year later.
+
+## `eudi-pid-ds/`: the EU reference PID issuer's certificates
+
+Three certificates the EU reference PID issuer,
+[eudi-srv-web-issuing-eudiw-py](https://github.com/eu-digital-identity-wallet/eudi-srv-web-issuing-eudiw-py),
+publishes as test material, added upstream in commit `e410ecd319a2b0c7a81b33093ce156b0d67f54dc`
+(2024-07-01) and unchanged at `4a9233215c12d720ac0ca52c36bfeeb0651c1514` (main on 2026-10-10).
+Upstream is Apache-2.0, and its NOTICE.txt reads "EU Digital Identity Wallet, Copyright (c) 2023
+European Commission". Fetched 2026-10-10:
+
+| Upstream file | SHA-256 | Taken from it |
+|---|---|---|
+| `api_docs/test_tokens/DS-token/PID-DS-0002.zip` | `6d3f3ce6661cf1aa8f85591643506a0a805b3ddf34d77b8b2e1cd13116178c09` | `PID-DS-0002.cert.der`, SHA-256 `77c89447a275b9d23634e66c2ecfeee11b0f98d551ac6b1f2b27966afaf8dd8f` |
+| `api_docs/test_tokens/DS-token/PID-DS-0003.zip` | `c790f513a26c979e7feec6576e6efa71b06a5356c58f56a1f2efff17278614e6` | `PID-DS-0003.cert.der`, SHA-256 `a5f46f401f953a602e102784b8b2a19b2a834924ba9e9edfdb179bd04a452fc0` |
+| `api_docs/test_tokens/IACA-token/PIDIssuerCAUT01.pem.gz` | `8bf206193c208abaf90407f026357decbde090ea0f22765c6a4244ed8ab638c6` | `PIDIssuerCAUT01.pem`, its whole content (CRLF line ends), SHA-256 `3b04635db064490bf4cf22538de024189982065413a7d5bb002e99644c11b8af` |
+
+Each zip also holds the document signer's private key. It was not extracted and is not here; the
+zips were read with Python's `zipfile`, and only the `.cert.der` member was written out.
+
+The two document signers are `CN=PID DS - 0002` and `CN=PID DS - 0003`
+(`O=EUDI Wallet Reference Implementation, C=UT`), issued by `CN=PID Issuer CA - UT 01` and valid
+from 2024-07-01 to 2025-09-24. Each carries a critical extended key usage naming only
+1.3.130.2.0.0.1.2, a critical key usage of digitalSignature, an issuerAltName and a CRL
+distribution point, and no subjectAltName. The CA is self-signed (P-384, valid to 2032-11-27)
+with a critical extended key usage of 1.3.130.2.0.0.1.7. `test_sdjwt.py`
+(`ReferencePidIssuerCertificateTests`) checks these hashes first, so a changed file fails as a
+changed file. It verifies the real chain at a time inside the certificates' validity, and signs
+credentials with throwaway keys under copies of their extensions, because their keys are not here.

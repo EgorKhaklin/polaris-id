@@ -54,9 +54,10 @@ import zlib
 #: token dated further ahead is still refused.
 MAX_IAT_SKEW_SECONDS = 300
 
-#: Status values the draft defines. 0x03 and 0x0B-0x0F are application-specific; everything
-#: else is reserved. An unknown value is reported by number and NOT folded into "valid",
-#: because a status this code does not understand is not a status it may act on.
+#: Status values the draft defines. 0x03 and 0x0C-0x0F are application-specific (draft -21,
+#: section 7.1; 0x0B left that range in -14); everything else is reserved. An unknown value is
+#: reported by number and NOT folded into "valid", because a status this code does not
+#: understand is not a status it may act on.
 VALID, INVALID, SUSPENDED = 0, 1, 2
 _MEANING = {VALID: "VALID", INVALID: "INVALID", SUSPENDED: "SUSPENDED"}
 

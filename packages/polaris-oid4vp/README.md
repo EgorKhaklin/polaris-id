@@ -18,7 +18,7 @@ version 1.0.0rc7, which passed all eleven modules of the Foundation's hosted HAI
 2026-09-24). The certification covers that version in that role. OpenID® and OpenID® Certified™
 are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Status:** this release, 1.0.0rc16, is the certified rc7 verifier plus the fixes made since; the
+**Status:** this release, 1.0.0rc17, is the certified rc7 verifier plus the fixes made since; the
 certification names rc7. It is re-run weekly against the outside implementations in the table
 below. No operator other than the author has run it and no independent security review exists.
 Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
@@ -94,10 +94,13 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   inside its validity period and its path length, with no critical extension this does not
   read, and none of them the anchor itself). The leaf must be inside its validity period and,
   when it states a key usage, include digitalSignature; one that states extended key usages must name one an
-  issuer may hold (ISO 18013-5's document signer, as EUDI issuers use, or client auth, code
-  signing or email protection). A leaf that states no key usage is not restricted by one. An `iss` must be
-  a name the leaf gives: a URI subjectAltName exactly, or, for a leaf naming only DNS hosts, an
-  https URL on one. Without `iss`, the certificate's subject is the issuer.
+  issuer may hold (ISO 18013-5's document signer, as EUDI issuers use; the EUDI PID Rulebook's
+  document signer, 1.3.130.2.0.0.1.2, as the EU reference PID issuer uses; or client auth, code
+  signing or email protection). A leaf that states no key usage is not restricted by one. The
+  issuer is the leaf's subject under the anchor its chain ends at. A leaf that names an issuer
+  must name the credential's `iss`: a URI subjectAltName exactly, or, for a leaf naming only DNS
+  hosts, an https URL on one. A leaf with neither (the EU reference PID issuer's has no
+  subjectAltName) leaves `iss` unbound: the verdict reports it apart, not in `claims`.
 - `--issuer-jwks` trusts every key it lists for every `iss`, except one whose `use`, `key_ops` or `alg`
   says it is not for ES256 signatures; list one issuer's keys per verifier.
 - `--public-base-url https://verifier.example` sets the HTTPS origin a wallet reaches this
@@ -145,6 +148,14 @@ verdict.authentic, verdict.code, verdict.reason, verdict.claims
 `expected_nonce` and `expected_audience` are required: reading them from the presentation would
 make every presentation replayable. `sdjwt.py` touches no socket and reads no configuration.
 
+For an issuer that signs with its certificate in `x5c`, the verdict also says who signed:
+`issuer_subject` is the leaf's subject and `issuer_anchor` the subject of the configured anchor
+its chain ends at (RFC 4514 strings). `iss_bound` is `True` when the leaf gives the credential's
+`iss` as one of its names, and `None` when there is no `iss`. It is `False` when the leaf gives
+no name an `iss` could be, so nothing binds `iss` to the key: the `iss` is then left out of
+`claims`, reported as `unbound_iss`, and not given to a status resolver. All four are `None`
+for an issuer key configured with `issuer_jwks`, and for a refusal.
+
 | Refusal code | Refuses |
 |---|---|
 | `issuer_signature` | an issuer signature that does not verify |
@@ -158,7 +169,7 @@ make every presentation replayable. `sdjwt.py` touches no socket and reads no co
 | `vct` | a credential of a type the query did not ask for |
 | `issuer_typ` | an issuer JWT not typed `dc+sd-jwt`, a W3C VC Data Model `vc+sd-jwt` credential among them |
 | `disclosure` | a disclosure of a claim that must be signed (`iss`, `exp`, `cnf`, ...), a colliding claim, a digest the credential commits to twice, or nesting past the depth cap |
-| `issuer_key` | an untrusted key, an x5c leaf outside its validity, not marked for signing, self-signed or a CA, or one that does not name the credential's `iss` |
+| `issuer_key` | an untrusted key, an x5c leaf outside its validity, not marked for signing (the reason names an extended key usage for another purpose), self-signed or a CA, or one whose subjectAltName names an issuer other than the credential's `iss` |
 | `crit` | an issuer JWT, key-binding JWT or status list token whose `crit` names an extension; none is implemented |
 | `malformed` | over 256 KiB, JSON over 64 KiB or 64 levels, or non-finite numbers |
 
@@ -201,6 +212,9 @@ only.
 - **Who may publish status for whom is stated, not inferred:** `StatedAuthority` records that a
   named key may publish for a named issuer at a named URI. Anything else is `no_authority`, and
   no request is sent to a URI an unvetted credential names.
+- **Unbound iss:** delegated status lists are not consulted; status is established only by a
+  list signed with the credential's own key. The resolver is given `issuer=None` for such a
+  credential, so a `StatedAuthority` entry for the name in its `iss` is never found.
 
 ## Conformance run
 
@@ -226,7 +240,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 422 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 435 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 120 refusals accept and requires a
