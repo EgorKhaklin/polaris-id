@@ -4613,13 +4613,27 @@ def check_table_count_matches_doc(root: pathlib.Path) -> list[Finding]:
 # on the README, the roadmap, the system map and the demo site while the repo
 # held 104, 73 and 14. A number nobody re-measures is a number that lies.
 # ---------------------------------------------------------------------------
-_STATED_COUNT_DOCS = (
-    "README.md", "ROADMAP.md", "MISSION.md", "CONTRIBUTING.md",
-    "docs/ARCHITECTURE-OVERVIEW.md", "docs/reference/SYSTEM-MAP.md",
-    "docs/reference/DATA-MODEL.md", "docs/reference/README.md",
-    "docs/PRODUCTION-READINESS.md", "polaris_sql/README.md", "polaris_web/README.md",
-    "polaris_cli/README.md", "polaris_checks/README.md", "site/index.html",
-)
+# Each document with the kinds it states, pinned. A count compared only when a pattern finds it
+# fails open: a reworded line ("ci.yml (thirty-one jobs)"), a document that drops a count or one
+# that goes missing all read as nothing to compare (2026-10-10). So every listed document must
+# exist and state each kind pinned here, and state no kind it is not pinned to (pins equal the stated
+# kinds, both ways); the rest are listed to be checked if they ever state one.
+_STATED_COUNT_DOCS: dict[str, tuple[str, ...]] = {
+    "README.md": ("invariant checks", "CI jobs"),
+    "ROADMAP.md": ("invariant checks", "routes"),
+    "MISSION.md": (),
+    "CONTRIBUTING.md": (),
+    "docs/ARCHITECTURE-OVERVIEW.md": (),
+    "docs/reference/SYSTEM-MAP.md": ("CI jobs",),
+    "docs/reference/DATA-MODEL.md": (),
+    "docs/reference/README.md": (),
+    "docs/PRODUCTION-READINESS.md": (),
+    "polaris_sql/README.md": ("stored procedures",),
+    "polaris_web/README.md": (),
+    "polaris_cli/README.md": (),
+    "polaris_checks/README.md": (),
+    "site/index.html": (),
+}
 _STATED_COUNT_KINDS = {
     # kind: patterns whose single group is the stated number
     "invariant checks": (
@@ -4672,22 +4686,33 @@ def check_stated_counts(root: pathlib.Path) -> list[Finding]:
     real = _measured_counts(root)
     if real["CI jobs"] == 0 or real["routes"] == 0:
         return _fail("stated_counts", "cannot measure CI jobs or routes (ci.yml / app.py missing)")
-    seen_in_readme: set[str] = set()
-    for rel in _STATED_COUNT_DOCS:
+    # Every drifted document is named, not the first: on 2026-10-10 the README's job count was
+    # fixed, SYSTEM-MAP's was fixed before the next run, and its own failure was never seen.
+    drifted = []
+    for rel, pinned in _STATED_COUNT_DOCS.items():
         text = _prose(_read(root, rel))
         if not text:
+            drifted.append(f"{rel} is missing or empty")
             continue
+        found = set()
         for kind, patterns in _STATED_COUNT_KINDS.items():
             stated = [int(m) for pat in patterns for m in re.findall(pat, text, re.I)]
-            if stated and rel == "README.md":
-                seen_in_readme.add(kind)
+            if stated:
+                found.add(kind)
             wrong = sorted(set(s for s in stated if s != real[kind]))
             if wrong:
-                return _fail("stated_counts",
-                             f"{rel} states {wrong} {kind} but the repo measures {real[kind]}")
-    for kind in ("invariant checks", "CI jobs"):
-        if kind not in seen_in_readme:
-            return _fail("stated_counts", f"README.md no longer states the {kind} count")
+                drifted.append(f"{rel} states {wrong} {kind} but the repo measures {real[kind]}")
+        unpinned = [k for k in _STATED_COUNT_KINDS if k in found and k not in pinned]
+        if unpinned:
+            drifted.append(f"{rel} states the {' and '.join(unpinned)} count but is not pinned to it: pin it in "
+                           "_STATED_COUNT_DOCS, so a rewording later cannot drop it unseen")
+        lost = [k for k in pinned if k not in found]
+        if lost:
+            drifted.append(f"{rel} no longer states the {' and '.join(lost)} count it is pinned to "
+                           "(reworded past the patterns, or removed: restate it, or unpin it in "
+                           "_STATED_COUNT_DOCS)")
+    if drifted:
+        return _fail("stated_counts", "; ".join(drifted))
     summary = ", ".join(f"{v} {k}" for k, v in real.items())
     return _ok("stated_counts", f"every stated count matches the artifacts ({summary})")
 
@@ -5808,6 +5833,208 @@ def check_shell_pipes_read_to_the_end(root: pathlib.Path) -> list[Finding]:
                f"{pipes} pipelines in {len(files)} shell files: none feeds a consumer that stops reading early")
 
 
+# Every documented `docker compose -f ...`, so the file sets operators and scripts use are parsed in CI
+# under the runner's Compose (scripts/polaris-compose-parse.py) and resolved here. On 2026-10-10 two
+# documented commands failed only when run: OPERATIONS.md's `config --no-interpolate`, which Compose
+# 2.38 refuses on the production file, and the HA patronictl alias, whose overlay extends a service
+# only the blue-green file defines. Read from fenced code blocks in Markdown, from shell scripts and
+# from workflows; a `\\` continuation is joined; a quoted alias, a `$(cd X && ...)` and an env prefix
+# are seen through. docs/history/ is an archive of commands for releases that are gone.
+_COMPOSE_SKIP = ("docs/history/",)
+_COMPOSE_CALL = re.compile(r"(?<![\w-])docker(?: compose|-compose)(?![\w-])")
+# Variables that name a place in the tree; any other variable in a -f is dynamic and not resolved here.
+_COMPOSE_ROOT_VARS = {"ROOT": "", "POLARIS_ROOT": "", "TREE": "", "REPO": "", "REPO_ROOT": "",
+                      "WEB": "polaris_web", "WEB_DIR": "polaris_web", "POLARIS_WEB": "polaris_web"}
+# Floors a little under what was measured when they were set (2026-10-10: 103 calls with a static file set,
+# 9 combinations), so an extractor that stops reading fails while an ordinary doc edit does not.
+_COMPOSE_FLOOR = 100
+_COMPOSE_COMBO_FLOOR = 8
+
+
+@dataclass
+class ComposeCall:
+    rel: str
+    line: int
+    files: tuple[str, ...]      # resolved, repo-relative; empty when any -f is dynamic
+    unresolved: tuple[str, ...]
+    dynamic: bool
+    sub: str
+    flags: tuple[str, ...]      # what changes how the file set parses: --no-interpolate, --format X, --profile X
+    env: tuple[tuple[str, str], ...]
+    expect_fail: str
+
+
+def _compose_logical_lines(rel: str, text: str):
+    """(first line number, logical line, expect-fail reason) for every line `docker compose` could be on."""
+    lines = text.split("\n")
+    if rel.endswith(".md"):
+        keep, fence, expect, pending = [], False, "", ""
+        for ln in lines:
+            m = re.match(r"\s*<!-- compose-parse: expect-fail (.+?) -->", ln)
+            if m and not fence:
+                pending = m.group(1)
+            if re.match(r"\s*(```|~~~)", ln):
+                fence = not fence
+                expect, pending = (pending, "") if fence else ("", pending)
+                keep.append(("", ""))
+                continue
+            keep.append((ln if fence else "", expect if fence else ""))
+    else:
+        keep = [(ln, "") for ln in lines]
+    # A standalone `cd` holds for the rest of its block: a fenced block, or one workflow step. A shell
+    # script's cd is read on the call's own line only.
+    blocky = rel.endswith(".md") or rel.endswith(".yml")
+    i, block_cd = 0, ""
+    while i < len(keep):
+        start, (cur, expect) = i, keep[i]
+        while cur.endswith("\\") and i + 1 < len(keep):
+            i += 1
+            cur = cur[:-1] + " " + keep[i][0].lstrip()
+        if blocky:
+            if (rel.endswith(".md") and not cur and not expect) or re.match(r"\s*-\s+(name|uses|run):|\s*run:", cur):
+                block_cd = ""
+            m = re.match(r"\s*cd\s+([\"']?)([^\"'\s;&]+)\1\s*$", cur)
+            if m:
+                block_cd = m.group(2)
+        if _COMPOSE_CALL.search(cur):
+            yield start + 1, cur, expect, block_cd
+        i += 1
+
+
+def _compose_place(rel: str, path: str) -> str:
+    """`path` with the variables that name a place in the tree replaced; any other variable is left."""
+    places = dict(_COMPOSE_ROOT_VARS, HERE=str(pathlib.PurePosixPath(rel).parent))
+    for var, place in places.items():
+        for form in ("${%s}" % var, "$%s" % var):
+            if path == form:
+                return place or "."
+            if path.startswith(form + "/"):
+                path = (place + "/" if place else "") + path[len(form) + 1:]
+    if path.startswith("/opt/polaris/"):
+        path = path[len("/opt/polaris/"):]
+    return path
+
+
+def _compose_resolve(root: pathlib.Path, rel: str, cwd: str, path: str) -> str | None:
+    path = _compose_place(rel, path)
+    if "$" in path or path.startswith("/"):
+        return None
+    for base in ([cwd] if cwd else []) + ["", "polaris_web", str(pathlib.PurePosixPath(rel).parent)]:
+        cand = os.path.normpath(os.path.join(base, path)) if base else os.path.normpath(path)
+        if not cand.startswith("..") and (root / cand).is_file():
+            return cand
+    return ""
+
+
+def _compose_calls(root: pathlib.Path) -> list[ComposeCall]:
+    import shlex
+    calls = []
+    for rel in _tracked_files(root):
+        if rel.startswith(_COMPOSE_SKIP) or not (
+                rel.endswith((".md", ".sh")) or (rel.startswith(".github/workflows/") and rel.endswith(".yml"))):
+            continue
+        text = _read_path(root / rel)
+        if "docker" not in text:
+            continue
+        for line, cur, expect, block_cd in _compose_logical_lines(rel, text):
+            for m in _COMPOSE_CALL.finditer(cur):
+                before, tail = cur[:m.start()], cur[m.end():]
+                # Inside a quoted alias (P="docker compose ..."), the command ends at the closing quote.
+                quote = '"' if before.count('"') % 2 else "'" if before.count("'") % 2 else ""
+                end = len(tail)
+                for stop in ([quote] if quote else []) + ["|", ";", "&&", "||", "`"]:
+                    k = tail.find(stop)
+                    if k >= 0:
+                        end = min(end, k)
+                depth, k = 0, 0
+                while k < end:          # a `)` that closes the $( ) the call sits in
+                    depth += {"(": 1, ")": -1}.get(tail[k], 0)
+                    if depth < 0:
+                        end = k
+                        break
+                    k += 1
+                try:
+                    toks = shlex.split(tail[:end], comments=False, posix=True)
+                except ValueError:
+                    toks = tail[:end].split()
+                env_m = re.search(r"((?:[A-Z_][A-Z0-9_]*=(?:\"[^\"]*\"|'[^']*'|[^\s\"']*)\s+)+)$", before)
+                env = tuple(tuple(kv.split("=", 1)) for kv in shlex.split(env_m.group(1))) if env_m else ()
+                lead = before[:env_m.start()] if env_m else before
+                cd = re.search(r"\bcd\s+([\"']?)([^\"'\s;&)]+)\1\s*&&\s*$", lead)
+                cwd = _compose_place(rel, cd.group(2) if cd else block_cd)
+                # A cd to a variable, or to a directory the tree does not have (a suite cloned at run
+                # time), names another checkout's files: dynamic here.
+                elsewhere = bool(cwd) and ("$" in cwd or not (root / cwd).is_dir())
+                raw, flags, sub, i = [], [], "", 0
+                while i < len(toks):
+                    t = toks[i]
+                    if t in ("-f", "--file") and i + 1 < len(toks):
+                        raw.append(toks[i + 1]); i += 2; continue
+                    if t.startswith("--file="):
+                        raw.append(t.split("=", 1)[1]); i += 1; continue
+                    if t in ("--profile", "-p", "--project-name", "--env-file", "--project-directory") and i + 1 < len(toks):
+                        if t == "--profile":
+                            flags += [t, toks[i + 1]]
+                        i += 2; continue
+                    if t.startswith("-"):
+                        i += 1; continue
+                    sub = t
+                    rest = toks[i + 1:]
+                    for j, r in enumerate(rest):
+                        if r == "--no-interpolate":
+                            flags.append(r)
+                        elif r == "--format" and j + 1 < len(rest):
+                            flags += [r, rest[j + 1]]
+                        elif r.startswith("--format="):
+                            flags += ["--format", r.split("=", 1)[1]]
+                    break
+                if not raw:
+                    continue
+                resolved = [None if elsewhere else _compose_resolve(root, rel, cwd, p) for p in raw]
+                dynamic = any(r is None for r in resolved)
+                calls.append(ComposeCall(
+                    rel, line, () if dynamic else tuple(r for r in resolved if r),
+                    tuple(p for p, r in zip(raw, resolved) if r == ""), dynamic, sub,
+                    tuple(flags) if sub == "config" else _compose_profiles(flags),
+                    env, expect))
+            # The overlays the deploy loads beside the production file (polaris.env's POLARIS_COMPOSE_EXTRA),
+            # resolved from polaris_web/ where it runs compose.
+            for m in re.finditer(r"POLARIS_COMPOSE_EXTRA=([\"'])([^\"']*)\1", cur):
+                raw = re.findall(r"(?:^|\s)-f\s+(\S+)", m.group(2))
+                if not raw:
+                    continue
+                resolved = [_compose_resolve(root, rel, "polaris_web", p) for p in raw]
+                dynamic = any(r is None for r in resolved)
+                calls.append(ComposeCall(
+                    rel, line, () if dynamic else ("polaris_web/docker-compose.prod.yml",) + tuple(r for r in resolved if r),
+                    tuple(p for p, r in zip(raw, resolved) if r == ""), dynamic, "config", (), (), expect))
+    return calls
+
+
+def _compose_profiles(flags: list[str]) -> tuple[str, ...]:
+    out = []
+    for i, f in enumerate(flags):
+        if f == "--profile" and i + 1 < len(flags):
+            out += [f, flags[i + 1]]
+    return tuple(out)
+
+
+def check_documented_compose_files_resolve(root: pathlib.Path) -> list[Finding]:
+    name = "documented_compose_files_resolve"
+    calls = _compose_calls(root)
+    static = [c for c in calls if not c.dynamic]
+    if not calls or len(static) < _COMPOSE_FLOOR or len({(c.files, c.flags) for c in static}) < _COMPOSE_COMBO_FLOOR:
+        return _fail(name, f"found {len(calls)} documented `docker compose -f` calls, {len(static)} with a static "
+                           f"file set (floor {_COMPOSE_FLOOR}, {_COMPOSE_COMBO_FLOOR} combinations): the extractor "
+                           "reads less than it did")
+    missing = [f"{c.rel}:{c.line} ({', '.join(c.unresolved)})" for c in static if c.unresolved]
+    if missing:
+        return _fail(name, "a documented `docker compose -f` names a file the tree does not have: " + "; ".join(missing))
+    combos = {(c.files, c.flags) for c in static}
+    return _ok(name, f"{len(calls)} documented `docker compose -f` calls, {len(static)} with a static file set "
+                     f"({len(combos)} file-set and flag combinations, parsed in CI by scripts/polaris-compose-parse.py); "
+                     "every file they name is in the tree")
+
 # A psql that runs INSIDE a container (a run_psql routed through `docker compose ... exec`)
 # cannot read a file on the host. polaris-create-operator.sh, polaris-generate-recovery-code.sh
 # and polaris-recover-admin.sh wrote their SQL to a host temp file and ran `run_psql -f` on it,
@@ -6427,12 +6654,40 @@ def check_workflows_reach_the_app_role(root: pathlib.Path) -> list[Finding]:
                "role its password, so the privilege-boundary tests connect as polaris_app")
 
 
+# 2026-10-10: the release's SBOM steps ran only when a release was cut, so a step added on 10-02
+# failed for the first time on v1.0.0-rc.71's release. A pull request that changes how the SBOMs
+# are made now runs the build, and the build sits in sbom-build.yml: a read-only job with no OIDC
+# identity, whose files the attesting job in sbom.yml holds to the digests it reported.
+_SBOM_PR_PATHS = (".github/workflows/sbom.yml", ".github/workflows/sbom-build.yml",
+                  "scripts/polaris-sbom-enrich.py", ".github/sbom/**",
+                  "scripts/polaris-image-build.sh", "polaris_web/Dockerfile*", "polaris_web/requirements*.txt")
+
+
 def check_sbom_workflow(root: pathlib.Path) -> list[Finding]:
-    wf = _read(root, ".github/workflows/sbom.yml")
-    if not wf:
+    release_wf = _read(root, ".github/workflows/sbom.yml")
+    if not release_wf:
         return _fail("sbom", ".github/workflows/sbom.yml is missing; releases ship no SBOM")
-    if "release:" not in wf:
+    if "release:" not in release_wf:
         return _fail("sbom", "sbom.yml is not triggered on release")
+    if not re.search(r"(?m)^  schedule:\n\s+- cron:", release_wf):
+        return _fail("sbom", "sbom.yml has no schedule: an upstream base image that drifts past the NTIA "
+                     "minimum elements shows only when the next release is cut")
+    pr = re.search(r"(?m)^  pull_request:\n    paths:\n((?:      - .*\n)+)", release_wf + "\n")
+    listed = {p.strip().strip("-").strip().strip("\"'") for p in pr.group(1).splitlines()} if pr else set()
+    missing = [p for p in _SBOM_PR_PATHS if p not in listed]
+    if missing:
+        return _fail("sbom", "a pull request that changes how the SBOMs are made does not run their build "
+                     "before a release needs it: sbom.yml's pull_request paths lack " + ", ".join(missing))
+    build_wf = _read(root, ".github/workflows/sbom-build.yml")
+    if build_wf:
+        if "uses: ./.github/workflows/sbom-build.yml" not in release_wf:
+            return _fail("sbom", "sbom-build.yml exists but sbom.yml does not call it")
+        if re.search(r"(?m)^\s*id-token:\s*write", build_wf):
+            return _fail("sbom", "sbom-build.yml asks for an OIDC identity: the build must not be able to sign")
+        if "needs.build.outputs.sha256" not in release_wf:
+            return _fail("sbom", "the attesting job does not hold the SBOMs to the digests the build reported")
+    # The build's steps first, as they run; a release workflow with no separate build is read alone.
+    wf = build_wf + "\n" + release_wf
     if "spdx-json" not in wf:
         return _fail("sbom", "sbom.yml does not generate SPDX-format SBOMs")
     # All five images plus the python surface must be covered. The images are
@@ -6497,6 +6752,10 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
     sbom = _read(root, ".github/workflows/sbom.yml")
     if not sbom:
         return _fail("sbom_trivy", ".github/workflows/sbom.yml is missing")
+    sbom += "\n" + _read(root, ".github/workflows/sbom-build.yml")
+    if not re.search(r"aquasec/trivy:[0-9]", sbom):
+        return _fail("sbom_trivy", "the SBOM generator (sbom.yml, sbom-build.yml) names no Trivy version, "
+                     "so nothing holds it to the scanner's")
     versions = set(re.findall(r"aquasec/trivy:([0-9][0-9.]*)", ci + sbom))
     if not versions:
         return _fail("sbom_trivy", "no aquasec/trivy version found in the workflows")
@@ -6767,7 +7026,8 @@ def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
                      "see two controls refused: another tag's identity, and provenance asked of "
                      "an architecture's digest")
     trivy = set(re.findall(r"aquasec/trivy:([\w.-]+)", wf))
-    sbom_trivy = set(re.findall(r"aquasec/trivy:([\w.-]+)", _read(root, ".github/workflows/sbom.yml")))
+    sbom_trivy = set(re.findall(r"aquasec/trivy:([\w.-]+)", _read(root, ".github/workflows/sbom.yml")
+                                + _read(root, ".github/workflows/sbom-build.yml")))
     if not trivy or trivy != sbom_trivy:
         return _fail(name, f"{rel} generates the registry SBOMs with Trivy {sorted(trivy)}, "
                      f"sbom.yml with {sorted(sbom_trivy)}; the two must be one version")
@@ -26582,7 +26842,13 @@ def check_verification_plan_covers_published_artifacts(root: pathlib.Path) -> li
 # a scratch repository's one file (2026-10-10), the third time after 2026-09-28's two. A class-level
 # guard covers only its own class, and the 10-10 tests were new classes beside a guarded one; the
 # scrub is module-wide (setUpModule, or an autouse fixture) and drops every GIT_* by prefix.
-_SPAWNS_GIT = re.compile(r"[\[(]\s*[\"']git[\"']\s*,")
+# Not seen: git named through a variable or constant (GIT = "git"; [GIT, "init"]).
+_SPAWNS_GIT = re.compile(
+    r"[\[(]\s*[\"'](?:(?:/[\w.+-]+)+/)?git[\"']\s*[,\])]"                # ["git", ...], ["git"] + args, any absolute git
+    r"|[\[(]\s*[\"']/usr/bin/env[\"']\s*,\s*[\"']git[\"']"               # git started by env
+    r"|shutil\.which\(\s*[\"']git[\"']\s*\)"                               # git looked up on PATH
+    r"|[\"'](?:(?:/[\w.+-]+)+/)?git\s+(?:-C|init|add|commit|clone|config|worktree|rev-parse|"
+    r"log|ls-files|status|checkout|merge|tag|fetch|push)\b")              # a command line in a string (shell=True, bash -c)
 
 
 def check_git_spawning_tests_drop_the_hook_environment(root: pathlib.Path) -> list[Finding]:
@@ -28182,6 +28448,9 @@ def _job_parts(block: str) -> tuple[str, dict[str, str]]:
     stripped-comment lines dropped so two copies that differ only in a comment compare equal."""
     head, _, steps = block.partition("\n    steps:\n")
     keep = lambda text: "\n".join(l for l in text.splitlines() if l.strip() not in ("", "#"))
+    # A sharded part's `strategy:` block (its matrix) is not setup: the shards are copies of one
+    # job, and check_product_suite_parts_share_setup pins the matrix separately.
+    head = re.sub(r"(?m)^    strategy:\s*\n(?:(?:      .*| *)\n)*", "", head + "\n")
     head = keep("\n".join(l for l in head.splitlines() if not re.match(r"^    name:", l)))
     out = {}
     for chunk in re.split(r"(?m)^(?=      - name:)", steps):
@@ -28195,6 +28464,52 @@ def _job_parts(block: str) -> tuple[str, dict[str, str]]:
 # of #309, 2026-10-09: a part renamed out of "Product suite:" and dropped from the gate's needs passed).
 _PRODUCT_SUITE_WORK = ("scripts/polaris-coverage.sh", "polaris-procedure-mutation-drill.py", "polaris-app-role-suite.py",
                        "cargo test --release", "cargo llvm-cov", "polaris-zk-mutation-drill.py")
+
+
+def _job_needs(block: str) -> list[str]:
+    """A job's `needs:`, in either YAML form; [] when it has none."""
+    m = re.search(r"(?m)^    needs:\s*\[([^\]]*)\]", block)
+    if m:
+        return [n.strip().strip("'\"") for n in m.group(1).split(",") if n.strip()]
+    m = re.search(r"(?m)^    needs:\s*\n((?:      - \S+\s*\n?)+)", block)
+    return re.findall(r"- (\S+)", m.group(1)) if m else []
+
+
+def _gate_problems(label: str, block: str, needs: list[str]) -> list[str]:
+    """What is wrong with a gate job: it must run `if: always()` and judge all of its needs."""
+    problems = []
+    if not re.search(r"(?m)^    if:\s*\$?\{?\{?\s*always\(\)", block):
+        problems.append(f"{label} does not run `if: always()`: when a part fails it is skipped, and "
+                        "GitHub reports a skipped required check as passing")
+    # Every result, and as many as it needs: `any(... == "success")`, or a count short of the parts, passed one
+    # green part as the whole suite (review of #309).
+    judge = block.split("\n    steps:\n", 1)[-1]
+    if "toJSON(needs)" not in judge or f"len(r) == {len(needs)} and" not in judge \
+            or 'all(v == "success" for v in r.values())' not in judge:
+        problems.append(f"{label} must judge all {len(needs)} parts' results (len(r) == {len(needs)} and "
+                        "all(v == \"success\" ...)), not one of them")
+    return problems
+
+
+def _shard_problems(job: str, block: str) -> tuple[int, list[str]]:
+    """A part run as a `shard:` matrix: (its shard count, what is wrong). The shards must be 1..N
+    and each must pass `${{ matrix.shard }}/N` with that same N to a `--shard` run; shards
+    1..N of a different N, or a gap in the list, leave refusals that no shard mutates."""
+    m = re.search(r"(?m)^    strategy:\s*\n(?:      .*\n)*?        shard:\s*\[([^\]]*)\]", block + "\n")
+    if not m:
+        return 0, []
+    try:
+        shards = [int(x) for x in m.group(1).split(",") if x.strip()]
+    except ValueError:
+        return 0, [f"{job}'s shard matrix is not a list of numbers"]
+    n = len(shards)
+    problems = []
+    if shards != list(range(1, n + 1)):
+        problems.append(f"{job}'s shards are {shards}, not 1 to {n}, so some work falls to no shard")
+    if "--shard" not in block or ("${{ matrix.shard }}/%d" % n) not in block:
+        problems.append(f"{job} runs {n} shards but does not pass ${{{{ matrix.shard }}}}/{n} to --shard, "
+                        "so the shards do not split the work between them")
+    return n, problems
 
 
 def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
@@ -28213,6 +28528,11 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
     shares by name with another is the same step. A setup step added to one part only is not
     caught by name (nothing marks a step as setup); its absence fails that part's own run.
     A suite still run as one job has no copies and passes.
+
+    A part may itself be a gate over a `shard:` matrix (the procedure drill since 2026-10-10,
+    so its name stays the one the docs and the ruleset know). That gate is held to the same
+    rules as the required job, its shards count as parts for the setup comparison, and the
+    matrix must be shards 1 to N, each passing its own number of N to `--shard`.
     """
     name = "product_suite_parts_share_setup"
     jobs = _ci_jobs(_read(root, ".github/workflows/ci.yml"))
@@ -28222,34 +28542,40 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
         return _fail(name, "ci.yml has no job named \"Polaris product test suite\", the check the main "
                            "ruleset requires")
     block = jobs[gate]
-    m = re.search(r"(?m)^    needs:\s*\[([^\]]*)\]", block)
-    if m:
-        needs = [n.strip().strip("'\"") for n in m.group(1).split(",") if n.strip()]
-    else:
-        m = re.search(r"(?m)^    needs:\s*\n((?:      - \S+\s*\n?)+)", block)
-        needs = re.findall(r"- (\S+)", m.group(1)) if m else []
+    needs = _job_needs(block)
     labelled = [j for j, b in jobs.items() if re.search(r'(?m)^    name:\s*"?Product suite:', b)]
     if not needs:
         if labelled:
             return _fail(name, f"{', '.join(labelled)} run as parts of the product suite, but its required job "
                                "needs none of them, so a red part cannot block a merge")
         return _ok(name, "the product suite runs as one job; there are no copies to keep in step")
-    problems = [f"{j} is a part of the product suite the required job does not need" for j in labelled
-                if j not in needs]
+    problems = [f"the required job needs {j}, which ci.yml does not define" for j in needs if j not in jobs]
+    problems += _gate_problems("the required job", block, needs)
+    # A needed job with needs of its own is a gate over parts (one level: a shard matrix).
+    parts, gated, sharded = [], set(needs), []
+    for j in (j for j in needs if j in jobs):
+        sub = _job_needs(jobs[j])
+        if not sub:
+            parts.append(j)
+            continue
+        problems += _gate_problems(f"{j}, the gate over {', '.join(sub)},", jobs[j], sub)
+        for s in sub:
+            if s not in jobs:
+                problems.append(f"{j} needs {s}, which ci.yml does not define")
+            elif _job_needs(jobs[s]):
+                problems.append(f"{s} is a gate under the gate {j}; gates nest one level")
+            else:
+                parts.append(s)
+                gated.add(s)
+    for j in parts:
+        n, why = _shard_problems(j, jobs[j])
+        problems += why
+        if n:
+            sharded.append(f"{j} in {n} shards")
+    problems += [f"{j} is a part of the product suite the required job does not need" for j in labelled
+                 if j not in gated]
     problems += [f"{j} runs the product suite's work but the required job does not need it"
-                 for j, b in jobs.items() if j != gate and j not in needs and any(w in b for w in _PRODUCT_SUITE_WORK)]
-    problems += [f"the required job needs {j}, which ci.yml does not define" for j in needs if j not in jobs]
-    if not re.search(r"(?m)^    if:\s*\$?\{?\{?\s*always\(\)", block):
-        problems.append("the required job does not run `if: always()`: when a part fails it is skipped, and "
-                        "GitHub reports a skipped required check as passing")
-    # Every result, and as many as it needs: `any(... == "success")`, or a count short of the parts, passed one
-    # green part as the whole suite (review of #309).
-    judge = block.split("\n    steps:\n", 1)[-1]
-    if "toJSON(needs)" not in judge or f"len(r) == {len(needs)} and" not in judge \
-            or 'all(v == "success" for v in r.values())' not in judge:
-        problems.append(f"the required job must judge all {len(needs)} parts' results (len(r) == {len(needs)} and "
-                        "all(v == \"success\" ...)), not one of them")
-    parts = [j for j in needs if j in jobs]
+                 for j, b in jobs.items() if j != gate and j not in gated and any(w in b for w in _PRODUCT_SUITE_WORK)]
     split = {j: _job_parts(jobs[j]) for j in parts}
     shared = 0
     # Every pair, not neighbours in needs: a step two parts share that a third lacks is still compared.
@@ -28264,9 +28590,9 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
         shared = max(shared, len(common))
     if problems:
         return _fail(name, "; ".join(problems))
-    return _ok(name, f"the required job gates on {len(parts)} parallel parts ({', '.join(parts)}), runs "
-                     f"always and judges each result; they share runner, services, environment and "
-                     f"{shared} setup steps verbatim")
+    return _ok(name, f"the required job gates on {len(parts)} parallel parts ({', '.join(parts)}"
+                     f"{'; ' + ', '.join(sharded) if sharded else ''}), every gate runs always and judges "
+                     f"each result; they share runner, services, environment and {shared} setup steps verbatim")
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
@@ -28504,6 +28830,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_archive_version_derived,
     check_no_grep_q_transaction_scrape,
     check_shell_pipes_read_to_the_end,
+    check_documented_compose_files_resolve,
     check_container_psql_reads_sql_from_stdin,
     check_psql_status_capture_set_e_safe,
     check_recover_admin_refuses_self_pairing,

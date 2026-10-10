@@ -456,20 +456,36 @@ class RestoreKeepsTheDatabaseSettings(_RestoreHarness):
         self.assertIn("this backup records no database settings", r.stdout)
         self.assertEqual(self._settings(target), [])
 
+    @staticmethod
+    def unknown_role(stage):
+        """A setting for a role the target does not have: the replay cannot apply it."""
+        path = os.path.join(stage, "database-settings.json")
+        with open(path) as f:
+            doc = json.load(f)
+        doc["settings"].append({"role": "polaris_no_such_role_%d" % os.getpid(), "name": "work_mem", "value": "2MB"})
+        with open(path, "w") as f:
+            json.dump(doc, f)
+
     def test_settings_that_cannot_be_applied_are_refused_and_change_nothing(self):
-        def unknown_role(stage):
-            path = os.path.join(stage, "database-settings.json")
-            with open(path) as f:
-                doc = json.load(f)
-            doc["settings"].append({"role": "polaris_no_such_role_%d" % os.getpid(), "name": "work_mem", "value": "2MB"})
-            with open(path, "w") as f:
-                json.dump(doc, f)
         target = self._initialised("unappliable")
         before = self._settings(target)
-        r = self.restore(target, self.retar("unappliable", unknown_role))
+        r = self.restore(target, self.retar("unappliable", self.unknown_role))
         self.assertEqual(r.returncode, EXIT_SETTINGS_MISMATCH, (r.stdout + r.stderr)[-2500:])
         self.assertIn("could not be applied", r.stderr)
+        self.assertIn("the privileges are the backup's, but its database settings are not", r.stderr)
         self.assertEqual(self._settings(target), before, "a replay that failed changed the target's settings")
+
+    def test_a_privilege_breach_is_reported_first_when_the_settings_fail_too(self):
+        """Both fail: the restore exits 11, the privilege it did not restore, and prints the settings too.
+        It exited 12 at the settings and never checked the privileges."""
+        target = self._initialised("bothfail")
+        self._psql(target, "GRANT CREATE ON SCHEMA public TO polaris_app")
+        r = self.restore(target, self.retar("bothfail", self.unknown_role))
+        self.assertEqual(r.returncode, EXIT_PRIVILEGE_MISMATCH, (r.stdout + r.stderr)[-2500:])
+        self.assertIn("could not be applied", r.stderr)
+        self.assertIn("the restored privileges are not the backup's", r.stderr)
+        self.assertIn("schema public", r.stderr)
+        self.assertIn("the backup's database settings did not restore either", r.stderr)
 
     def test_settings_that_read_back_otherwise_are_refused(self):
         """The comparison's own control: the replay, then one setting the backup does not hold."""
@@ -509,11 +525,12 @@ class DockerExecUsesTheStackRole(unittest.TestCase):
             text = path.read_text(encoding="utf-8", errors="replace").replace("\\\n", " ")
             for c in self.CLIENT.finditer(text):
                 u = re.search(r'(?:-U|--username[= ])\s*"?([^"\s]+)', c.group(2))
-                calls.append((path.name, c.group(1)))
+                calls.append((path.name, c.group(1), c.group(2)))
                 if not u or u.group(1) != role:
                     wrong.append("%s: %s -U %s" % (path.name, c.group(1), u.group(1) if u else "(none)"))
         self.assertGreaterEqual(len(calls), 20, "the scan found too few calls to mean anything")
-        self.assertIn(("polaris-restore.sh", "psql"), calls, "the restore cross-check's docker read was not seen")
+        cross_check = [c for c in calls if c[:2] == ("polaris-restore.sh", "psql") and '"${applied_sql}"' in c[2]]
+        self.assertTrue(cross_check, "the restore cross-check's docker read was not seen")
         self.assertEqual(wrong, [], "docker exec clients must connect as %s" % role)
 
     def test_every_restore_client_call_uses_its_branch_role(self):

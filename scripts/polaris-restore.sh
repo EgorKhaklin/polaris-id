@@ -38,7 +38,8 @@
 # ... IN DATABASE ... SET, which pg_restore applies only with --create): the target's are replaced by
 # them and read back. A file that cannot be read or applied, that records none, or settings that read
 # back otherwise, exit EXIT_SETTINGS_MISMATCH=12. A backup taken before they were recorded leaves the
-# target's as they are.
+# target's as they are. The privileges are decided first: when both fail, the restore prints both and
+# exits 11.
 #
 # Examples:
 #   ./scripts/polaris-restore.sh /var/backups/polaris-20260514T030000Z.tar.gz
@@ -442,45 +443,58 @@ if [[ "${SKIP_DB}" -eq 0 ]]; then
     # otherwise, stop the restore here: nothing was changed by a replay that failed.
     step "4.2/6" "database settings: the backup's, on '${TARGET_DB}'…"
     settings_file="${EXTRACTED}/database-settings.json"
-    if [[ ! -e "${settings_file}" ]]; then
-        echo "  • this backup records no database settings (taken before 2026-10-10): '${TARGET_DB}' keeps its own"
-    else
-        if ! settings_sql=$(python3 "${SETTINGS_HELPER}" replay "${settings_file}" "${TARGET_DB}" 2>"${WORK}/settings.err") \
-           || ! settings_query=$(python3 "${SETTINGS_HELPER}" query 2>>"${WORK}/settings.err"); then
-            echo "  ✗ the backup's database settings cannot be read, so they were not restored:" >&2
-            sed -n '1,5p' "${WORK}/settings.err" | sed 's/^/      /' >&2
-            exit "${EXIT_SETTINGS_MISMATCH}"
+    # A failure here is reported now and decided after the privileges: when both fail the restore exits 11,
+    # since a privilege the backup did not hold is the security defect (OPERATIONS.md's exit table says so).
+    settings_failed=0
+    # Called under ||, so set -e is off here: every step checks its own status.
+    restore_settings() {
+        if [[ ! -e "${settings_file}" ]]; then
+            echo "  • this backup records no database settings (taken before 2026-10-10): '${TARGET_DB}' keeps its own"
+        else
+            if ! settings_sql=$(python3 "${SETTINGS_HELPER}" replay "${settings_file}" "${TARGET_DB}" 2>"${WORK}/settings.err") \
+               || ! settings_query=$(python3 "${SETTINGS_HELPER}" query 2>>"${WORK}/settings.err"); then
+                echo "  ✗ the backup's database settings cannot be read, so they were not restored:" >&2
+                sed -n '1,5p' "${WORK}/settings.err" | sed 's/^/      /' >&2
+                return 1
+            fi
+            # Every Polaris database carries 09_grants.sql's settings, so a record of none is a reading
+            # that saw nothing: replayed, it would reset the target's to none.
+            settings_count=$(python3 "${SETTINGS_HELPER}" count "${settings_file}" 2>/dev/null || echo 0)
+            if ! [[ "${settings_count}" =~ ^[0-9]+$ ]] || (( settings_count < 1 )); then
+                echo "  ✗ the backup records no database settings, so the target's would be reset to none; '${TARGET_DB}' keeps its own" >&2
+                return 1
+            fi
+            if ! settings_err=$(db_sql "${TARGET_DB}" "${settings_sql}" 2>&1); then
+                echo "  ✗ the backup's database settings could not be applied to '${TARGET_DB}', which keeps its own:" >&2
+                printf '%s\n' "${settings_err}" | sed -n '1,5p' | sed 's/^/      /' >&2
+                return 1
+            fi
+            if ! restored_settings=$(db_sql "${TARGET_DB}" "${settings_query}" 2>"${WORK}/settings.err"); then
+                echo "  ✗ cannot read '${TARGET_DB}'s database settings, so the restore is unverified:" >&2
+                sed -n '1,5p' "${WORK}/settings.err" | sed 's/^/      /' >&2
+                return 1
+            fi
+            if ! settings_mismatch=$(printf '%s\n' "${restored_settings}" | python3 "${SETTINGS_HELPER}" compare "${settings_file}" 2>&1); then
+                echo "  ✗ the restored database settings are not the backup's:" >&2
+                printf '%s\n' "${settings_mismatch}" | sed -n '1,40p' | sed 's/^/      /' >&2
+                return 1
+            fi
+            echo "  ✓ the backup's database settings, restored: ${settings_count}"
         fi
-        # Every Polaris database carries 09_grants.sql's settings, so a record of none is a reading
-        # that saw nothing: replayed, it would reset the target's to none.
-        settings_count=$(python3 "${SETTINGS_HELPER}" count "${settings_file}" 2>/dev/null || echo 0)
-        if ! [[ "${settings_count}" =~ ^[0-9]+$ ]] || (( settings_count < 1 )); then
-            echo "  ✗ the backup records no database settings, so the target's would be reset to none; '${TARGET_DB}' keeps its own" >&2
-            exit "${EXIT_SETTINGS_MISMATCH}"
-        fi
-        if ! settings_err=$(db_sql "${TARGET_DB}" "${settings_sql}" 2>&1); then
-            echo "  ✗ the backup's database settings could not be applied to '${TARGET_DB}', which keeps its own:" >&2
-            printf '%s\n' "${settings_err}" | sed -n '1,5p' | sed 's/^/      /' >&2
-            exit "${EXIT_SETTINGS_MISMATCH}"
-        fi
-        if ! restored_settings=$(db_sql "${TARGET_DB}" "${settings_query}" 2>"${WORK}/settings.err"); then
-            echo "  ✗ cannot read '${TARGET_DB}'s database settings, so the restore is unverified:" >&2
-            sed -n '1,5p' "${WORK}/settings.err" | sed 's/^/      /' >&2
-            exit "${EXIT_SETTINGS_MISMATCH}"
-        fi
-        if ! settings_mismatch=$(printf '%s\n' "${restored_settings}" | python3 "${SETTINGS_HELPER}" compare "${settings_file}" 2>&1); then
-            echo "  ✗ the restored database settings are not the backup's:" >&2
-            printf '%s\n' "${settings_mismatch}" | sed -n '1,40p' | sed 's/^/      /' >&2
-            exit "${EXIT_SETTINGS_MISMATCH}"
-        fi
-        echo "  ✓ the backup's database settings, restored: ${settings_count}"
-    fi
+    }
+    restore_settings || settings_failed=1
 
     # The privileges, against what the same dump gives a new database with no default privileges
     # (template0). Every object the backup holds must carry its ACL; objects it does not hold are not
     # this restore's, but the public schema's and the default privileges are compared both ways. A
     # check that cannot run is an unverified restore, never a passed one.
     step "4.5/6" "privileges: the restored database's against the backup's…"
+    privileges_fail() {   # exit 11; when the database settings failed too, say so: 11 is reported first
+        if [[ "${settings_failed}" -eq 1 ]]; then
+            echo "    the backup's database settings did not restore either (above); exit 11 is reported first" >&2
+        fi
+        exit "${EXIT_PRIVILEGE_MISMATCH}"
+    }
     # A scratch database a killed run left behind (only SIGKILL skips the trap). A run beside this one
     # keeps its own: its DROP fails while that run is connected, and at worst that run exits 11.
     for stale in $(db_sql postgres "SELECT datname FROM pg_database WHERE datname LIKE 'polaris\\_restore\\_privileges\\_%'" 2>/dev/null); do
@@ -491,13 +505,13 @@ if [[ "${SKIP_DB}" -eq 0 ]]; then
         SCRATCH_DB=""
         echo "  ✗ cannot create a scratch database to read the backup's privileges, so the restore is unverified:" >&2
         printf '%s\n' "${scratch_err}" | sed -n '1,5p' | sed 's/^/      /' >&2
-        exit "${EXIT_PRIVILEGE_MISMATCH}"
+        privileges_fail
     fi
     scratch_schema_restore "${SCRATCH_DB}" "${EXTRACTED}/polaris.dump" > /dev/null 2>&1 || true   # benign errors, as above
     if ! want_privileges=$(db_sql "${SCRATCH_DB}" "${PRIVILEGE_FACTS}" 2>"${WORK}/privileges.err"); then
         echo "  ✗ cannot read the backup's privileges from a scratch database, so the restore is unverified:" >&2
         sed -n '1,5p' "${WORK}/privileges.err" | sed 's/^/      /' >&2
-        exit "${EXIT_PRIVILEGE_MISMATCH}"
+        privileges_fail
     fi
     # The reference must hold every table, sequence, view and routine the dump holds: an object that did
     # not restore into the scratch database would go uncompared, and the check would pass where it could
@@ -506,7 +520,7 @@ if [[ "${SKIP_DB}" -eq 0 ]]; then
     if ! dump_toc=$(dump_contents "${EXTRACTED}/polaris.dump" 2>"${WORK}/privileges.err"); then
         echo "  ✗ cannot list the backup's contents, so the restore is unverified:" >&2
         sed -n '1,5p' "${WORK}/privileges.err" | sed 's/^/      /' >&2
-        exit "${EXIT_PRIVILEGE_MISMATCH}"
+        privileges_fail
     fi
     dump_objects=$(printf '%s\n' "${dump_toc}" \
         | sed -n -E 's/^[0-9]+; [0-9]+ [0-9]+ (TABLE|SEQUENCE|VIEW|MATERIALIZED VIEW|FOREIGN TABLE) public ([^ ]+) [^ ]+$/relation \2/p; s/^[0-9]+; [0-9]+ [0-9]+ (FUNCTION|PROCEDURE|AGGREGATE) public (.+) [^ ]+$/routine \2/p' \
@@ -516,22 +530,22 @@ if [[ "${SKIP_DB}" -eq 0 ]]; then
     if ! grep -qx 'relation identitytoken' <<< "${dump_objects}" \
             || [[ "$(printf '%s\n' "${dump_objects}" | grep -c . || true)" != "${listed}" ]]; then
         echo "  ✗ the backup's contents could not all be read (${listed} tables, sequences, views and routines listed), so the restore is unverified" >&2
-        exit "${EXIT_PRIVILEGE_MISMATCH}"
+        privileges_fail
     fi
     unreferenced=$(LC_ALL=C comm -23 <(printf '%s\n' "${dump_objects}") \
                        <(printf '%s\n' "${want_privileges}" | cut -f2 | LC_ALL=C sort -u)) || {
         echo "  ✗ cannot compare the backup's contents with its restored schema, so the restore is unverified" >&2
-        exit "${EXIT_PRIVILEGE_MISMATCH}"
+        privileges_fail
     }
     if [[ -n "${unreferenced}" ]]; then
         echo "  ✗ $(printf '%s\n' "${unreferenced}" | grep -c .) of the backup's $(printf '%s\n' "${dump_objects}" | grep -c .) tables, sequences, views and routines are missing from its restored schema, so their privileges are unverified:" >&2
         printf '%s\n' "${unreferenced}" | sed -n '1,12p' | sed 's/^/      /' >&2
-        exit "${EXIT_PRIVILEGE_MISMATCH}"
+        privileges_fail
     fi
     if ! restored_privileges=$(db_sql "${TARGET_DB}" "${PRIVILEGE_FACTS}" 2>"${WORK}/privileges.err"); then
         echo "  ✗ cannot read ${TARGET_DB}'s privileges, so the restore is unverified:" >&2
         sed -n '1,5p' "${WORK}/privileges.err" | sed 's/^/      /' >&2
-        exit "${EXIT_PRIVILEGE_MISMATCH}"
+        privileges_fail
     fi
     privilege_mismatch=$(awk -F'\t' '
         NR == FNR { want[$2] = $3; root[$1] = 1; next }
@@ -543,14 +557,18 @@ if [[ "${SKIP_DB}" -eq 0 ]]; then
             for (k in got) if (!(k in want)) print k ": restored " got[k] ", the backup none"
         }' <(printf '%s\n' "${want_privileges}") <(printf '%s\n' "${restored_privileges}") | sort) || {
         echo "  ✗ cannot compare the restored privileges with the backup's, so the restore is unverified" >&2
-        exit "${EXIT_PRIVILEGE_MISMATCH}"
+        privileges_fail
     }
     if [[ -n "${privilege_mismatch}" ]]; then
         echo "  ✗ the restored privileges are not the backup's ($(printf '%s\n' "${privilege_mismatch}" | grep -c .) differ):" >&2
         printf '%s\n' "${privilege_mismatch}" | sed -n '1,100p' | sed 's/^/      /' >&2
-        exit "${EXIT_PRIVILEGE_MISMATCH}"
+        privileges_fail
     fi
     echo "  ✓ the backup's privileges, restored: $(printf '%s\n' "${want_privileges}" | grep -c .) tables, columns, routines, sequences and defaults"
+    if [[ "${settings_failed}" -eq 1 ]]; then
+        echo "  ✗ the privileges are the backup's, but its database settings are not (above)" >&2
+        exit "${EXIT_SETTINGS_MISMATCH}"
+    fi
 else
     step "4/6" "DB restore skipped"
 fi

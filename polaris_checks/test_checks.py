@@ -3017,13 +3017,17 @@ def test_sbom_workflow_check_discriminates(tmp_path):
     wf = tmp_path / ".github" / "workflows"
     wf.mkdir(parents=True)
     sbom = wf / "sbom.yml"
+    # Every fixture runs on a release and on a pull request that changes how the SBOMs are made, so
+    # each case below fails for its own reason.
+    PR = ("  pull_request:\n    paths:\n" + "".join('      - "%s"\n' % p for p in checks._SBOM_PR_PATHS))
+    ON = "on:\n  release:\n    types: [published]\n" + PR + "  schedule:\n    - cron: \"23 5 * * 1\"\n"
 
     # No workflow at all -> releases ship no SBOM.
     assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
         "must FAIL when sbom.yml is absent"
 
     # Present but missing an image and the upload step.
-    sbom.write_text("on:\n  release:\n    types: [published]\n"
+    sbom.write_text(ON +
                     "jobs:\n  sbom:\n    steps:\n"
                     "      - run: trivy fs --format spdx-json /src\n"
                     "      - run: docker build -t polaris-app:sbom .\n"
@@ -3031,7 +3035,7 @@ def test_sbom_workflow_check_discriminates(tmp_path):
     assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
         "must FAIL when not all five images are covered"
 
-    sbom.write_text("on:\n  release:\n    types: [published]\n"
+    sbom.write_text(ON +
                     "jobs:\n  sbom:\n    steps:\n"
                     "      - run: trivy fs --format spdx-json --output sbom-python.spdx.json /src\n"
                     "      - run: |\n"
@@ -3099,6 +3103,36 @@ def test_sbom_workflow_check_discriminates(tmp_path):
         "must PASS with release trigger, SPDX, all five images, python, the NTIA minimum " \
         "elements filled and checked before attesting, and upload before publishing"
 
+    def found():
+        return checks.check_sbom_workflow(tmp_path)[0]
+
+    # The release path runs only at a release: a pull request changing it runs nothing.
+    sbom.write_text(head.replace(PR, "") + "      - run: |\n" + install + fill + judge + attest + publish)
+    assert found().level == "FAIL" and "pull_request paths lack" in found().message, found().message
+    sbom.write_text(head.replace('      - "scripts/polaris-sbom-enrich.py"\n', "") + "      - run: |\n"
+                    + install + fill + judge + attest + publish)
+    assert "scripts/polaris-sbom-enrich.py" in found().message, "must name the path a pull request would not run"
+    sbom.write_text(head.replace("  schedule:\n    - cron: \"23 5 * * 1\"\n", "") + "      - run: |\n"
+                    + install + fill + judge + attest + publish)
+    assert found().level == "FAIL" and "no schedule" in found().message, found().message
+
+    # The build split out: a read-only job with no OIDC identity, its files held to its digests.
+    build = wf / "sbom-build.yml"
+    gen = head[head.index("jobs:"):].replace("jobs:\n  sbom:", "jobs:\n  build:") + "      - run: |\n" + install + fill + judge
+    caller = (ON + "jobs:\n  build:\n    uses: ./.github/workflows/sbom-build.yml\n"
+              "  publish:\n    needs: [build]\n    steps:\n"
+              "      - run: test \"$WANT\" = \"${{ needs.build.outputs.sha256 }}\"\n" + attest + publish)
+    build.write_text("on:\n  workflow_call:\n" + gen)
+    sbom.write_text(caller)
+    assert found().level == "OK", f"must PASS a split build that sbom.yml calls and holds to its digests: {found().message}"
+    sbom.write_text(caller.replace("uses: ./.github/workflows/sbom-build.yml", "runs-on: ubuntu-latest"))
+    assert found().level == "FAIL" and "does not call it" in found().message, found().message
+    sbom.write_text(caller.replace("${{ needs.build.outputs.sha256 }}", "anything"))
+    assert found().level == "FAIL" and "digests" in found().message, found().message
+    sbom.write_text(caller)
+    build.write_text("on:\n  workflow_call:\npermissions:\n  id-token: write\n" + gen)
+    assert found().level == "FAIL" and "OIDC identity" in found().message, found().message
+
 
 def test_sbom_trivy_match_check_discriminates(tmp_path):
     wf = tmp_path / ".github" / "workflows"
@@ -3115,6 +3149,19 @@ def test_sbom_trivy_match_check_discriminates(tmp_path):
     sbom.write_text("env:\n  TRIVY_IMAGE: aquasec/trivy:0.58.1\n")
     assert checks.check_sbom_trivy_matches_scan(tmp_path)[0].level == "OK", \
         "must PASS when both use the same Trivy version"
+
+    # The generator split into sbom-build.yml: its pin is read there, and one is required.
+    (wf / "sbom-build.yml").write_text("env:\n  TRIVY_IMAGE: aquasec/trivy:0.58.1\n")
+    sbom.write_text("jobs:\n  build:\n    uses: ./.github/workflows/sbom-build.yml\n")
+    assert checks.check_sbom_trivy_matches_scan(tmp_path)[0].level == "OK", \
+        "must PASS when the reusable build pins the scanner's version"
+    (wf / "sbom-build.yml").write_text("env:\n  TRIVY_IMAGE: aquasec/trivy:0.59.0\n")
+    assert checks.check_sbom_trivy_matches_scan(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the reusable build's Trivy differs from the scanner's"
+    (wf / "sbom-build.yml").write_text("env: {}\n")
+    found = checks.check_sbom_trivy_matches_scan(tmp_path)[0]
+    assert found.level == "FAIL" and "names no Trivy version" in found.message, \
+        "must FAIL when the generator names no version at all, rather than passing on the scanner's alone"
 
 
 def test_supply_chain_pins_check_discriminates(tmp_path):
@@ -3148,7 +3195,7 @@ def test_supply_chain_pins_check_discriminates(tmp_path):
     broken(".github/workflows/ci.yml",
            "redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0",
            "redis:8-alpine", "must FAIL when a CI service image runs by tag")
-    broken(".github/workflows/sbom.yml",
+    broken(".github/workflows/sbom-build.yml",
            "aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7",
            "aquasec/trivy:0.58.1", "must FAIL when the SBOM generator runs by tag")
     broken("polaris_web/docker-compose.yml",
@@ -3202,6 +3249,7 @@ def test_release_provenance_check_discriminates(tmp_path):
 
 def test_release_images_signed_check_discriminates(tmp_path):
     files = (".github/workflows/release-images.yml", ".github/workflows/sbom.yml",
+             ".github/workflows/sbom-build.yml",
              "docs/operator/VERIFY-RELEASE.md", "scripts/polaris-pin-chart-images.py")
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -6562,6 +6610,54 @@ def test_no_grep_q_psql_check_discriminates(tmp_path):
         "must PASS for a read-only psql listing piped into grep -q"
 
 
+def test_documented_compose_files_resolve_check_discriminates(tmp_path, monkeypatch):
+    def write(files):
+        for rel, body in files.items():
+            p = tmp_path / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(body)
+
+    def run():
+        return checks.check_documented_compose_files_resolve(tmp_path)[0]
+
+    assert run().level == "FAIL", "must FAIL when it finds no documented compose call"
+    monkeypatch.setattr(checks, "_COMPOSE_FLOOR", 1)
+    monkeypatch.setattr(checks, "_COMPOSE_COMBO_FLOOR", 1)
+    write({"polaris_web/docker-compose.prod.yml": "services: {}\n", "polaris_web/docker-compose.ha.yml": "services: {}\n",
+           "polaris_web/docker-compose.bluegreen.yml": "services: {}\n", "polaris_web/docker-compose.citest.yml": "services: {}\n"})
+    doc = ("# Ops\n\nProse with docker compose -f nowhere.yml outside a block is not a command.\n\n```bash\n"
+           'P="docker compose -f polaris_web/docker-compose.prod.yml -f polaris_web/docker-compose.ha.yml exec postgres patronictl"\n'
+           "N=$(. scripts/polaris-env.sh && cd polaris_web && POLARIS_DOMAIN=\"${POLARIS_DOMAIN:-x}\" docker compose \\\n"
+           "      -f docker-compose.prod.yml config --no-interpolate --format json | jq .name)\n"
+           'export POLARIS_COMPOSE_EXTRA="-f docker-compose.citest.yml -f docker-compose.bluegreen.yml"\n```\n')
+    write({"docs/OPS.md": doc})
+    found = run()
+    assert found.level == "OK", f"must PASS when every documented file is in the tree: {found.message}"
+    calls = {c.line: c for c in checks._compose_calls(tmp_path)}
+    # The quoted alias, seen through its quotes, with its two files in order and its subcommand.
+    assert calls[6].files == ("polaris_web/docker-compose.prod.yml", "polaris_web/docker-compose.ha.yml") \
+        and calls[6].sub == "exec", calls.get(6)
+    # The $(cd X && ...) form after a continuation: resolved from its cd, with the flags that change the parse.
+    assert calls[7].files == ("polaris_web/docker-compose.prod.yml",) and calls[7].sub == "config", calls.get(7)
+    assert calls[7].flags == ("--no-interpolate", "--format", "json"), calls[7].flags
+    assert calls[7].env == (("POLARIS_DOMAIN", "${POLARIS_DOMAIN:-x}"),), calls[7].env
+    # polaris.env's overlays, beside the production file the deploy always loads.
+    assert calls[9].files == ("polaris_web/docker-compose.prod.yml", "polaris_web/docker-compose.citest.yml",
+                              "polaris_web/docker-compose.bluegreen.yml"), calls.get(9)
+    assert 3 not in calls, "prose outside a code block is not a command"
+
+    # A documented file the tree does not have is named with its document and line.
+    write({"docs/OPS.md": doc.replace("docker-compose.ha.yml exec", "docker-compose.dr.yml exec")})
+    found = run()
+    assert found.level == "FAIL" and "docs/OPS.md:6 (polaris_web/docker-compose.dr.yml)" in found.message, found.message
+
+    # A suite cloned at run time names its own files: a cd to a variable is another checkout's.
+    write({"docs/OPS.md": doc, ".github/workflows/w.yml": 'jobs:\n  j:\n    steps:\n      - run: |\n'
+           '          cd "$SUITE"\n          docker compose -f docker-compose-prebuilt.yml up -d\n'})
+    assert run().level == "OK", f"a call in another checkout is not resolved here: {run().message}"
+    assert [c.dynamic for c in checks._compose_calls(tmp_path) if c.rel.endswith("w.yml")] == [True]
+
+
 def test_shell_pipes_read_to_the_end_check_discriminates(tmp_path):
     def level(root):
         return checks.check_shell_pipes_read_to_the_end(root)[0]
@@ -8671,34 +8767,72 @@ def test_stated_counts_check_measures_the_artifacts(tmp_path):
             p = tmp_path / rel
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(body)
+
+    def level(within=None):
+        found = checks.check_stated_counts(tmp_path)[0]
+        assert within is None or within in found.message, f"expected {within!r} in: {found.message}"
+        return found.level
+
     n_checks = len(checks.CHECKS)
     ci = "name: CI\non:\n  push:\njobs:\n  test:\n    runs-on: ubuntu\n  build:\n    runs-on: ubuntu\n"
     app = "@app.route('/a')\ndef a(): pass\n@app.route('/b')\ndef b(): pass\n@app.route('/c')\ndef c(): pass\n"
     procs = "CREATE OR REPLACE FUNCTION uc1() RETURNS void AS $$ $$;\n"
-    readme = (f"{n_checks} plain `check_*` functions; Flask, 3 routes; 1 stored procedure.\n"
-              "| CI jobs | 2 |\n")
-    write({".github/workflows/ci.yml": ci, "polaris_web/app.py": app,
-           "polaris_sql/05_procedures.sql": procs, "README.md": readme,
-           "site/index.html": f"<b>{n_checks}</b><span>invariant checks</span> <b>2</b><span>CI jobs</span>\n"})
-    assert checks.check_stated_counts(tmp_path)[0].level == "OK", "must PASS when every count is measured"
+    # Every listed document exists and states exactly the kinds it is pinned to, at the fixture's numbers.
+    says = {"invariant checks": f"{n_checks} invariant checks", "CI jobs": "ci.yml (2 jobs)",
+            "routes": "3 routes", "stored procedures": "1 stored procedure"}
+    docs = {rel: "Counts: " + "; ".join(says[k] for k in kinds) + ".\n" if kinds else "No counts here.\n"
+            for rel, kinds in checks._STATED_COUNT_DOCS.items()}
+    readme = f"{n_checks} plain `check_*` functions.\n| CI jobs | 2 |\n"
+    write(dict(docs, **{".github/workflows/ci.yml": ci, "polaris_web/app.py": app,
+                        "polaris_sql/05_procedures.sql": procs, "README.md": readme}))
+    assert level() == "OK", f"must PASS when every count is measured: {checks.check_stated_counts(tmp_path)[0].message}"
+
+    # A pinned count reworded past the patterns fails open no more: the map's line in words.
+    write({"docs/reference/SYSTEM-MAP.md": "```\n├── .github/workflows/  ← ci.yml (two jobs)\n```\n"})
+    assert level("docs/reference/SYSTEM-MAP.md no longer states the CI jobs count") == "FAIL"
+    write({"docs/reference/SYSTEM-MAP.md": docs["docs/reference/SYSTEM-MAP.md"]})
+
+    # A listed document that goes missing fails, rather than reading as nothing to compare.
+    (tmp_path / "MISSION.md").unlink()
+    assert level("MISSION.md is missing") == "FAIL"
+    write({"MISSION.md": docs["MISSION.md"]})
+    assert level() == "OK", "fixture: restored, it passes again"
+
+    # A count a document starts stating, right today, must be pinned: unpinned, a rewording drops it unseen.
+    write({"MISSION.md": "Polaris runs 1 stored procedure here.\n"})
+    assert level("MISSION.md states the stored procedures count but is not pinned to it") == "FAIL"
+    write({"MISSION.md": docs["MISSION.md"]})
 
     write({"site/index.html": "<b>7</b><span>CI jobs</span>\n"})
-    assert checks.check_stated_counts(tmp_path)[0].level == "FAIL", "must FAIL when the site's CI-job count drifts"
-    write({"site/index.html": "<b>2</b><span>CI jobs</span>\n"})
+    assert level("site/index.html states [7] CI jobs") == "FAIL", "must FAIL when the site's CI-job count drifts"
+    write({"site/index.html": docs["site/index.html"]})
 
-    write({"README.md": readme.replace("3 routes", "72 routes")})
-    assert checks.check_stated_counts(tmp_path)[0].level == "FAIL", "must FAIL when the route count drifts"
+    write({"ROADMAP.md": docs["ROADMAP.md"].replace("3 routes", "72 routes")})
+    assert level("ROADMAP.md states [72] routes") == "FAIL", "must FAIL when the route count drifts"
+    write({"ROADMAP.md": docs["ROADMAP.md"]})
 
     write({"README.md": readme.replace(f"{n_checks} plain", "77 plain")})
-    assert checks.check_stated_counts(tmp_path)[0].level == "FAIL", "must FAIL when the check count drifts"
+    assert level("README.md states [77] invariant checks") == "FAIL", "must FAIL when the check count drifts"
 
     write({"README.md": "no numbers here\n"})
-    assert checks.check_stated_counts(tmp_path)[0].level == "FAIL", "must FAIL when the README stops stating the counts"
+    assert level("README.md no longer states the invariant checks and CI jobs count") == "FAIL", \
+        "must FAIL when the README stops stating the counts"
 
     # The CI count comes from the jobs: keys, not from job-shaped words elsewhere in the file.
     write({"README.md": readme, ".github/workflows/ci.yml": ci + "  deploy:\n    needs: [test, build]\n"})
-    assert checks.check_stated_counts(tmp_path)[0].level == "FAIL", "must FAIL when a CI job is added and no doc follows"
+    assert level() == "FAIL", "must FAIL when a CI job is added and no doc follows"
 
+    # Every drifted document is named, so fixing the first does not hide the next.
+    write({".github/workflows/ci.yml": ci, "README.md": readme.replace("| CI jobs | 2 |", "| CI jobs | 3 |"),
+           "docs/reference/SYSTEM-MAP.md": "```\n├── .github/workflows/  ← ci.yml (3 jobs)\n```\n"})
+    found = checks.check_stated_counts(tmp_path)[0]
+    assert found.level == "FAIL" and "README.md states [3]" in found.message \
+        and "docs/reference/SYSTEM-MAP.md states [3]" in found.message, \
+        f"must name both drifted documents, the system map's diagram included: {found.message}"
+
+    # The tree itself states every pinned count, and only those, at the measured numbers.
+    found = checks.check_stated_counts(REPO)[0]
+    assert found.level == "OK", f"the repository's own documents must pass: {found.message}"
 
 def test_c1c10_objects_check_resolves_names_against_the_code(tmp_path):
     def write(files):
@@ -21621,6 +21755,21 @@ def test_git_spawning_tests_drop_the_hook_environment_check_discriminates(tmp_pa
     mod.write_text(spawn + module_scrub.replace("GIT_", "GIT_DIR"))
     assert fn(tmp_path)[0].level == "FAIL", "must FAIL a scrub of one named variable: the prefix is the guard"
 
+    # git reached other ways is git all the same: a command line run through a shell, an absolute
+    # path, or a lookup on PATH.
+    for form in ('    def test_x(self):\n        subprocess.run("git init -q /tmp/x", shell=True)\n',
+                 '    def test_x(self):\n        subprocess.run(["bash", "-c", "git -C /tmp/x commit -m m"])\n',
+                 '    def test_x(self):\n        subprocess.run(["/usr/bin/git", "init"])\n',
+                 '    def test_x(self):\n        subprocess.run([shutil.which("git"), "init"])\n',
+                 '    def test_x(self):\n        args = ["init"]\n        subprocess.run(["git"] + args)\n',
+                 '    def test_x(self):\n        subprocess.run(["/opt/homebrew/bin/git", "init"])\n',
+                 '    def test_x(self):\n        subprocess.run(["/usr/bin/env", "git", "init"])\n'):
+        other = "import os, shutil, subprocess\n\nclass T:\n" + form
+        mod.write_text(other)
+        assert fn(tmp_path)[0].level == "FAIL", f"must FAIL a module that runs git this way unscrubbed: {form!r}"
+        mod.write_text(other + module_scrub)
+        assert fn(tmp_path)[0].level == "OK", f"must PASS the same module scrubbed: {fn(tmp_path)[0].message}"
+
     mod.write_text(spawn + module_scrub.replace("os.environ.pop(k)", "os.environ.get(k)"))
     assert fn(tmp_path)[0].level == "FAIL", "must FAIL a guard that reads GIT_* and removes nothing"
 
@@ -23216,6 +23365,64 @@ def test_product_suite_parts_share_setup_check_discriminates(tmp_path):
     (gh / "ci.yml").write_text("on: push\njobs:\n" + mono)
     assert checks.check_product_suite_parts_share_setup(tmp_path)[0].level == "OK", \
         "a suite still run as one job has no copies to compare"
+
+
+def test_product_suite_sharded_part_check_discriminates(tmp_path):
+    # 2026-10-10: the procedure drill runs as a shard matrix under a gate job that keeps its name.
+    gh = tmp_path / ".github" / "workflows"
+    gh.mkdir(parents=True)
+
+    def part(jid, label, strategy="", run="run tests", deps="pip install -r req.txt"):
+        return (f"  {jid}:\n    name: \"Product suite: {label}\"\n    runs-on: ubuntu-latest\n{strategy}"
+                f"    services:\n      postgres:\n        image: postgres:16-alpine@sha256:aa\n    env:\n      A: '1'\n"
+                f"    steps:\n      - name: Checkout\n        uses: actions/checkout@abc\n\n"
+                f"      - name: Install deps\n        run: {deps}\n\n"
+                f"      - name: {label} only\n        run: {run}\n")
+
+    def gate(jid, label, needs):
+        return (f"  {jid}:\n    name: {label}\n    needs: [{', '.join(needs)}]\n"
+                "    if: always()\n    runs-on: ubuntu-latest\n    steps:\n"
+                "      - name: Every part passed\n        env:\n          RESULTS: ${{ toJSON(needs) }}\n"
+                "        run: echo \"$RESULTS\" | python3 -c 'import json, sys; r = {k: v[\"result\"] for k, v in "
+                f"json.load(sys.stdin).items()}}; sys.exit(0 if len(r) == {len(needs)} and all(v == \"success\" for v in "
+                "r.values()) else 1)'\n")
+
+    matrix = "    strategy:\n      fail-fast: false\n      matrix:\n        shard: [1, 2, 3]\n"
+    drill = 'python scripts/polaris-procedure-mutation-drill.py --shard "${{ matrix.shard }}/3"'
+
+    def write(shard=None, sub=None, top=None, extra=""):
+        shard = shard if shard is not None else part("test-procedures-shard", "drill shard", matrix, drill)
+        sub = sub if sub is not None else gate("test-procedures", '"Product suite: procedure mutation drill"',
+                                               ["test-procedures-shard"])
+        top = top if top is not None else gate("test", "Polaris product test suite", ["test-core", "test-procedures"])
+        (gh / "ci.yml").write_text("on: push\njobs:\n" + part("test-core", "core") + shard + sub + extra + top)
+        return checks.check_product_suite_parts_share_setup(tmp_path)[0]
+
+    good = write()
+    assert good.level == "OK", good.message
+    assert "in 3 shards" in good.message
+    assert write(sub=gate("test-procedures", "drill", ["test-procedures-shard"]).replace(
+        "    if: always()\n", "")).level == "FAIL", \
+        "a shard gate without if: always() is skipped when a shard fails, and skipped reads as passing"
+    assert write(sub=gate("test-procedures", "drill", ["test-procedures-shard"]).replace(
+        "all(v ==", "any(v ==")).level == "FAIL", "a shard gate that passes one green result must FAIL"
+    assert write(shard=part("test-procedures-shard", "s", matrix.replace("[1, 2, 3]", "[1, 2, 4]"),
+                            drill)).level == "FAIL", "a shard list with a gap leaves work to no shard"
+    assert write(shard=part("test-procedures-shard", "s", matrix, drill.replace("}}/3", "}}/4"))).level == "FAIL", \
+        "shards of a different N than the matrix runs leave work to no shard"
+    assert write(shard=part("test-procedures-shard", "s", matrix, "python drill.py")).level == "FAIL", \
+        "a matrix whose shards do not pass --shard runs the whole drill N times, splitting nothing"
+    assert write(shard=part("test-procedures-shard", "s", matrix, drill, deps="pip install -r x.txt")).level == "FAIL", \
+        "a shard's setup drifted from the other parts' must FAIL"
+    assert write(sub="", top=gate("test", "Polaris product test suite", ["test-core"])).level == "FAIL", \
+        "a shard matrix the required job reaches through no gate must FAIL"
+    nested = gate("test-procedures", "drill", ["test-mid"])
+    mid = gate("test-mid", "mid", ["test-procedures-shard"])
+    deep = write(sub=nested, extra=mid)
+    assert deep.level == "FAIL" and "gates nest one level" in deep.message, "a gate under a gate must FAIL"
+    named = write(shard=part("test-procedures-shard", "s", matrix, 'echo "${{ matrix.shard }}/3"; python drill.py'))
+    assert named.level == "FAIL" and "to --shard" in named.message, \
+        "a shard number printed but never passed to --shard splits nothing"
 
 
 def test_edge_tls_state_shared_check_discriminates(tmp_path):
