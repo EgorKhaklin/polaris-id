@@ -43,7 +43,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
       - name: Install the TypeScript SDK's pinned dependencies
@@ -147,7 +147,7 @@ jobs:
       # of the OIDC exchange. Trusted publishing wants no token anywhere. The CLI is upgraded
       # because the exchange needs npm 11.5.1 or later, and the publish runs verbose so that
       # the exchange's answer is in the log if the registry refuses.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # `npm stage publish` needs Node 22.14.0 or later. 24 satisfies it; the assertion
           # below is what actually holds the floor, because a pin can be edited.

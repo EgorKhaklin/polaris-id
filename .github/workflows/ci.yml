@@ -233,7 +233,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master  # zizmor: ignore[ref-version-mismatch] -- the action publishes no tags: a master commit, pinned by its SHA
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -778,7 +778,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master  # zizmor: ignore[ref-version-mismatch] -- the action publishes no tags: a master commit, pinned by its SHA
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -924,7 +924,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master  # zizmor: ignore[ref-version-mismatch] -- the action publishes no tags: a master commit, pinned by its SHA
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -1095,7 +1095,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master  # zizmor: ignore[ref-version-mismatch] -- the action publishes no tags: a master commit, pinned by its SHA
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -1235,7 +1235,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master  # zizmor: ignore[ref-version-mismatch] -- the action publishes no tags: a master commit, pinned by its SHA
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -1382,7 +1382,7 @@ jobs:
       # without checking what that job installs is how the mdoc drill (cbor2) and the
       # quantum-event drill (psycopg2) each went red after they were added.
       - name: Set up Node (for the pinned axe-core)
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
 
@@ -3140,7 +3140,7 @@ jobs:
       # the drill refuses to report -- correctly, but the job dies on setup rather than
       # on a finding. node itself is preinstalled on the runner; the dependencies are not.
       - name: Set up Node (the drill inverts the TypeScript SDK too)
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
       - name: Install the TypeScript SDK's pinned dependencies
@@ -3429,7 +3429,7 @@ jobs:
       # The drill's npm leg packs the TypeScript SDK and installs the tarball into a bare
       # project. npm ci here builds the dist/ the package now points `exports` at.
       - name: Set up Node (the drill packs and installs the TypeScript SDK too)
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
       - name: Install the TypeScript SDK's pinned dependencies
@@ -3497,7 +3497,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
       - name: Install pinned dependencies
