@@ -98,15 +98,47 @@ if ! docker compose version >/dev/null 2>&1; then
     echo "  ✗ docker compose v2 plugin not available"; exit 1
 fi
 
-# v9.173 — pgbackrest_repo_creds.conf is mounted unconditionally by the prod
-# compose; if the source file is missing docker creates a DIRECTORY there.
-for secret in polaris_secret_key polaris_db_password polaris_db_root_password pgbackrest_repo_creds.conf; do
-    if [[ ! -s "${SECRETS_DIR}/${secret}" ]]; then
+# The secret files the stack needs to start. The app's are every secret_file setting in
+# polaris_web/config_schema.py that the prod compose points at a mounted secret: production
+# validates each at boot (readable, non-empty), so they are read from those two files rather
+# than listed here. A release that adds one is then required before anything is built, once
+# the checkout is that release's, as OPERATIONS.md's upgrade makes it first (v1.0.0-rc.70 had no
+# polaris_redis_password and no polaris_secret_key_fallbacks, and a list of four let its upgrade
+# go on to start an app that production validation refuses). The rest are not
+# app settings: redis_users.acl is Redis's users, derived from that password; the root
+# password initializes the database; and (v9.173) pgbackrest_repo_creds.conf is mounted
+# unconditionally, so a missing source makes docker create a DIRECTORY there.
+if ! app_secrets="$(python3 -I -c '
+import re, sys
+sys.path.insert(0, sys.argv[1])
+import config_schema
+compose = open(sys.argv[1] + "/docker-compose.prod.yml", encoding="utf-8").read()
+files = dict(re.findall(r"(?m)^  (\w+):\n    file: \$\{POLARIS_SECRETS_DIR[^}]*\}/(\S+)$", compose))
+for name, secret in sorted(set(re.findall(r"(?m)^\s+(POLARIS_\w+_FILE): /run/secrets/(\w+)\s*$", compose))):
+    s = config_schema.lookup(name)
+    if s is not None and s.kind == "secret_file":
+        print(files[secret])' "${POLARIS_ROOT}/polaris_web")" || [[ -z "${app_secrets}" ]]; then
+    echo "  ✗ could not read the secret files production requires from polaris_web/config_schema.py"
+    echo "    and polaris_web/docker-compose.prod.yml"
+    exit 1
+fi
+missing=0
+for secret in ${app_secrets} redis_users.acl polaris_db_root_password pgbackrest_repo_creds.conf; do
+    if [[ ! -f "${SECRETS_DIR}/${secret}" || ! -s "${SECRETS_DIR}/${secret}" ]]; then
         echo "  ✗ missing secret: secrets/${secret}"
-        echo "    run: ./scripts/polaris-generate-secrets.sh"
-        exit 1
+        missing=1
     fi
 done
+if [[ "${missing}" -ne 0 ]]; then
+    echo "    run: ./scripts/polaris-generate-secrets.sh (it writes only the files that are missing)"
+    # Sealed, the files above are missing from the store this deploy just unsealed, and the
+    # generator writes plaintext to polaris_web/secrets: every secret, if that directory is gone.
+    if [[ "${POLARIS_SECRETS_BACKEND:-file}" != "file" ]]; then
+        echo "    then seal only those: ./scripts/polaris-secrets.sh seal --only <name> for each one named"
+        echo "    above, and remove the plaintext directory (docs/operator/SECRETS.md, section 5.1)"
+    fi
+    exit 1
+fi
 echo "  ✓ docker present"
 echo "  ✓ all secrets present"
 

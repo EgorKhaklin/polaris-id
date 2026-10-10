@@ -1638,13 +1638,34 @@ The Plonky2 prover is CPU-bound. To improve:
 ### Polaris version upgrade
 
 ```bash
-# Standard path
-./scripts/polaris-deploy.sh prod
+# Standard path, in the install's checkout (on a Linux host, /opt/polaris, as root)
+git fetch --tags && git checkout vX.Y.Z    # or, following a branch: git pull --ff-only
+bash scripts/polaris-generate-secrets.sh   # writes only the secret files a release adds
+./scripts/polaris-deploy.sh prod --no-pull
 ```
 
-This pulls the latest commit, rebuilds every Polaris image (the app, the
+Update the checkout first, so the secrets step and the deploy are the new
+release's. `polaris-generate-secrets.sh` writes only the secret files that are
+missing and never overwrites one; a release can add one (an install made at
+v1.0.0-rc.70 or earlier has no `polaris_secret_key_fallbacks`,
+`polaris_redis_password` or `redis_users.acl`). It refuses, and names, a
+directory where a secret file belongs: docker leaves one at a secret that was
+missing when the stack started, and the operator removes it. The deploy
+refuses to start while any secret file production requires is missing, and
+names it. A tag checkout has no branch,
+so the deploy's own `git pull --ff-only` would fail; `--no-pull` skips it.
+On a host whose secrets are sealed (age or awskms), the generator writes to
+`polaris_web/secrets` in plaintext, and as adopting the store removed that
+directory it writes every secret anew: seal only the files the deploy names as
+missing, each with `./scripts/polaris-secrets.sh seal --only <name>`, then
+remove the plaintext directory as
+[SECRETS.md, section 5.1](SECRETS.md#51-adopting-a-sealed-store) does (a full
+`seal` would replace the live database passwords and signing key).
+
+The deploy rebuilds every Polaris image (the app, the
 edge, the pooler and the database), applies schema migrations idempotently,
-recreates the infrastructure containers whose image changed, and then the app
+re-applies the database objects (procedures, triggers, grants), recreates the
+infrastructure containers whose image changed, and then the app
 container(s). The DB volume is preserved.
 [`scripts/polaris-upgrade-drill.sh`](../../scripts/polaris-upgrade-drill.sh)
 runs this path from the previous release's own stack: nothing pending, every

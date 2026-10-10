@@ -13,8 +13,10 @@ database, no Docker and no systemd.
     python3 -m unittest test_operator_env      (from scripts/)
 """
 import json
+import os
 import pathlib
 import shutil
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -38,6 +40,18 @@ ENV_FILE = "\n".join([
     "POLARIS_SECRETS_DIR=",
     "POLARIS_LAST=no-newline",
 ])
+
+
+#: The secret files a production deploy requires: the app's (each secret_file setting in
+#: config_schema.py the prod compose mounts) and Redis's users, the root password and the
+#: pgBackRest fragment.
+APP_SECRETS = ("polaris_db_password", "polaris_redis_password", "polaris_secret_key_fallbacks",
+               "polaris_secret_key")
+ALL_SECRETS = APP_SECRETS + ("redis_users.acl", "polaris_db_root_password", "pgbackrest_repo_creds.conf")
+#: What a v1.0.0-rc.70 install holds: its polaris-generate-secrets.sh wrote neither the Redis
+#: password nor its users file nor the fallback keys, and its deploy checked these four.
+RC70_SECRETS = ("polaris_secret_key", "polaris_db_password", "polaris_db_root_password",
+                "pgbackrest_repo_creds.conf")
 
 
 class _Base(unittest.TestCase):
@@ -271,8 +285,7 @@ exit 99
         self.nets = self.tmp / "networks"
         secrets = self.tmp / "secrets"
         secrets.mkdir()
-        for name in ("polaris_secret_key", "polaris_db_password", "polaris_db_root_password",
-                     "pgbackrest_repo_creds.conf"):
+        for name in ALL_SECRETS:
             (secrets / name).write_text("x\n")
         self.env_text = ("POLARIS_DOMAIN=polaris.example.org\nPOLARIS_SECRETS_BACKEND=file\n"
                          "POLARIS_SECRETS_DIR=%s\n" % secrets)
@@ -448,8 +461,9 @@ class DeployRefusesAnOffsiteRepoThePostgresImageWouldRefuse(_Base):
         self.nets = self.tmp / "networks"
         self.fixture_dir = self.tmp / "secrets"
         self.fixture_dir.mkdir()
-        for name in ("polaris_secret_key", "polaris_db_password", "polaris_db_root_password"):
-            (self.fixture_dir / name).write_text("x\n")
+        for name in ALL_SECRETS:
+            if name != "pgbackrest_repo_creds.conf":
+                (self.fixture_dir / name).write_text("x\n")
         self.compose_json = self.tmp / "compose.json"
         (self.bin / "docker").write_text(DeploysTakeTurns.DOCKER % {
             "log": self.docker_log, "nets": self.nets, "project": "offsite", "json": self.compose_json})
@@ -547,6 +561,207 @@ class DeployRefusesAnOffsiteRepoThePostgresImageWouldRefuse(_Base):
                 # It goes on to step 3, where DeploysTakeTurns' stand-in pins the running image.
                 self.assertIn("tag sha256:feed polaris-app:rollback-offsite", self.docker_log.read_text())
                 self.assertNotIn(self.FIXTURE_CIPHER_TEXT, r.stdout + r.stderr)
+
+
+class DeployRequiresEverySecretProductionValidates(_Base):
+    """config_schema.py makes each app secret_file one production validates at boot, and an rc.70
+    install has neither polaris_redis_password nor polaris_secret_key_fallbacks (nor redis_users.acl,
+    which Redis reads). The deploy checked four names, so the upgrade OPERATIONS.md gave went on to
+    pull, build and start a stack that could not start. It now refuses first, naming each missing
+    file and the script that writes it. The stand-in Docker is DeploysTakeTurns'."""
+
+    def setUp(self):
+        super().setUp()
+        self.nets = self.tmp / "networks"
+        self.fixture_dir = self.tmp / "secrets"
+        self.fixture_dir.mkdir()
+        compose_json = self.tmp / "compose.json"
+        compose_json.write_text(json.dumps({"name": "secrets", "services": {"postgres": {"environment": {}}}}))
+        (self.bin / "docker").write_text(DeploysTakeTurns.DOCKER % {
+            "log": self.docker_log, "nets": self.nets, "project": "secrets", "json": compose_json})
+        (self.bin / "docker").chmod(0o755)
+        self.env_file.write_text("POLARIS_DOMAIN=polaris.example.org\nPOLARIS_SECRETS_BACKEND=file\n"
+                                 "POLARIS_SECRETS_DIR=%s\n" % self.fixture_dir)
+
+    def _deploy(self, present, directory=None):
+        for p in self.fixture_dir.iterdir():
+            p.rmdir() if p.is_dir() else p.unlink()
+        for name in present:
+            (self.fixture_dir / name).write_text("# template\n" if name == "pgbackrest_repo_creds.conf" else "x\n")
+        if directory:
+            (self.fixture_dir / directory).mkdir()
+        self.docker_log.unlink(missing_ok=True)
+        r = subprocess.run(["bash", str(ROOT / "scripts" / "polaris-deploy.sh"), "prod", "--no-pull"],
+                           capture_output=True, text=True, timeout=60,
+                           env={"PATH": "%s:/usr/bin:/bin:/usr/sbin:/sbin" % self.bin, "HOME": str(self.tmp),
+                                "STUB_WD": str(ROOT / "polaris_web"), "STUB_EF": str(self.env_file)})
+        return r, r.stdout + r.stderr
+
+    def _refused_before_docker(self, r, out):
+        self.assertEqual(r.returncode, 1, out)
+        self.assertIn("run: ./scripts/polaris-generate-secrets.sh", out)
+        calls = self.docker_log.read_text().splitlines() if self.docker_log.exists() else []
+        self.assertEqual(calls, ["compose version"], "the refused deploy went on: %s\n%s" % (calls, out))
+        self.assertFalse(list(self.nets.iterdir()) if self.nets.is_dir() else [], "the refused deploy took the lock")
+
+    def test_an_rc70_install_is_refused_naming_what_it_lacks(self):
+        r, out = self._deploy(RC70_SECRETS)
+        self._refused_before_docker(r, out)
+        for name in ("polaris_redis_password", "redis_users.acl", "polaris_secret_key_fallbacks"):
+            self.assertIn("missing secret: secrets/%s\n" % name, out)
+        for name in RC70_SECRETS:
+            self.assertNotIn("missing secret: secrets/%s\n" % name, out)
+
+    def test_each_file_is_required_and_a_directory_is_not_one(self):
+        for name in ALL_SECRETS:
+            with self.subTest(missing=name):
+                r, out = self._deploy([n for n in ALL_SECRETS if n != name])
+                self._refused_before_docker(r, out)
+                self.assertIn("missing secret: secrets/%s\n" % name, out)
+        # A bind mount whose source is missing makes docker create a directory there.
+        r, out = self._deploy([n for n in ALL_SECRETS if n != "polaris_redis_password"],
+                              directory="polaris_redis_password")
+        self._refused_before_docker(r, out)
+        self.assertIn("missing secret: secrets/polaris_redis_password\n", out)
+
+    def test_the_app_files_are_config_schemas_secret_files_the_compose_mounts(self):
+        import importlib.util
+        import re
+        import sys
+        spec = importlib.util.spec_from_file_location("config_schema", ROOT / "polaris_web" / "config_schema.py")
+        schema = importlib.util.module_from_spec(spec)
+        sys.modules.setdefault("config_schema", schema)  # the dataclass resolves its module by name
+        spec.loader.exec_module(schema)
+        compose = (ROOT / "polaris_web" / "docker-compose.prod.yml").read_text()
+        mounted = {secret for name, secret in re.findall(r"(?m)^\s+(POLARIS_\w+_FILE): /run/secrets/(\w+)\s*$", compose)
+                   if getattr(schema.lookup(name), "kind", None) == "secret_file"}
+        self.assertEqual(mounted, set(APP_SECRETS))
+
+    def test_the_full_set_goes_on(self):
+        r, out = self._deploy(ALL_SECRETS)
+        self.assertIn("all secrets present", out)
+        self.assertIn("tag sha256:feed polaris-app:rollback-secrets", self.docker_log.read_text(), out)
+
+    @unittest.skipIf(sys.platform.startswith("linux") and os.geteuid() == 0,
+                     "as root on Linux the unseal mounts a tmpfs over the test's directory")
+    def test_a_sealed_store_is_told_to_seal_only_what_is_missing(self):
+        # The deploy unseals into POLARIS_SECRETS_DIR first, so a file missing there is missing from
+        # the store; the generator writes plaintext, all of it when polaris_web/secrets is gone, and a
+        # full seal would put new values over the live ones. A stand-in interpreter makes the unseal
+        # a no-op over the directory the test fills.
+        stub = self.bin / "unseal-noop"
+        stub.write_text("#!/bin/sh\nexit 0\n")
+        stub.chmod(0o755)
+        self.env_file.write_text("POLARIS_DOMAIN=polaris.example.org\nPOLARIS_SECRETS_BACKEND=age\n"
+                                 "POLARIS_SECRETS_DIR=%s\nPOLARIS_PYTHON=%s\n" % (self.fixture_dir, stub))
+        r, out = self._deploy(RC70_SECRETS)
+        self._refused_before_docker(r, out)
+        self.assertIn("missing secret: secrets/polaris_redis_password\n", out)
+        self.assertIn("./scripts/polaris-secrets.sh seal --only <name> for each one named", out)
+        r, out = self._deploy(ALL_SECRETS)
+        self.assertIn("all secrets present", out)
+
+    def test_the_file_backend_is_not_told_to_seal(self):
+        r, out = self._deploy(RC70_SECRETS)
+        self._refused_before_docker(r, out)
+        self.assertNotIn("seal --only", out)
+
+
+class DeployRefusesWhenItCannotTellWhichSecretsProductionNeeds(_Base):
+    """The app's secret files are read from config_schema.py and the prod compose. A list that comes
+    out empty, or that cannot be read, is a refusal, never a pre-flight that checks nothing. The
+    deploy runs from a copy of the tree whose two files the test changes."""
+
+    def setUp(self):
+        super().setUp()
+        self.root = self.tmp / "tree"
+        (self.root / "scripts").mkdir(parents=True)
+        (self.root / "polaris_web").mkdir()
+        for name in ("polaris-deploy.sh", "polaris-env.sh", "polaris-host-lock.sh"):
+            shutil.copy(ROOT / "scripts" / name, self.root / "scripts" / name)
+        self.compose = (ROOT / "polaris_web" / "docker-compose.prod.yml").read_text()
+        self.fixture_dir = self.tmp / "secrets"
+        self.fixture_dir.mkdir()
+        for name in ALL_SECRETS:
+            (self.fixture_dir / name).write_text("x\n")
+        self.env_file.write_text("POLARIS_DOMAIN=polaris.example.org\nPOLARIS_SECRETS_BACKEND=file\n"
+                                 "POLARIS_SECRETS_DIR=%s\n" % self.fixture_dir)
+        (self.bin / "docker").write_text('#!/bin/sh\necho "$*" >> "%s"\n[ "$*" = "compose version" ] && exit 0\n'
+                                         'exit 99\n' % self.docker_log)
+        (self.bin / "docker").chmod(0o755)
+
+    def _deploy(self, compose, schema=True):
+        (self.root / "polaris_web" / "docker-compose.prod.yml").write_text(compose)
+        target = self.root / "polaris_web" / "config_schema.py"
+        if schema:
+            shutil.copy(ROOT / "polaris_web" / "config_schema.py", target)
+        elif target.exists():
+            target.unlink()
+        self.docker_log.unlink(missing_ok=True)
+        r = subprocess.run(["bash", str(self.root / "scripts" / "polaris-deploy.sh"), "prod", "--no-pull"],
+                           capture_output=True, text=True, timeout=60,
+                           env={"PATH": "%s:/usr/bin:/bin:/usr/sbin:/sbin" % self.bin, "HOME": str(self.tmp),
+                                "STUB_WD": str(self.root / "polaris_web"), "STUB_EF": str(self.env_file)})
+        return r, r.stdout + r.stderr
+
+    def test_an_empty_or_unreadable_list_is_refused(self):
+        import re
+        no_mounts = re.sub(r"(?m)^\s+POLARIS_\w+_FILE: /run/secrets/\w+\s*\n", "", self.compose)
+        no_entry = self.compose.replace("  polaris_redis_password:\n    file:", "  polaris_redis_password_gone:\n    file:")
+        self.assertNotEqual(no_mounts, self.compose)
+        self.assertNotEqual(no_entry, self.compose)
+        for what, compose, schema in (("no secret_file is mounted", no_mounts, True),
+                                      ("a mounted secret the secrets section lacks", no_entry, True),
+                                      ("no config_schema.py", self.compose, False)):
+            with self.subTest(what):
+                r, out = self._deploy(compose, schema)
+                self.assertEqual(r.returncode, 1, out)
+                self.assertIn("could not read the secret files production requires", out)
+                calls = self.docker_log.read_text().splitlines() if self.docker_log.exists() else []
+                self.assertEqual(calls, ["compose version"], out)
+        r, out = self._deploy(self.compose)
+        self.assertIn("all secrets present", out)
+
+
+class GeneratorRefusesADirectoryWhereASecretBelongs(unittest.TestCase):
+    """docker creates a directory at a bind source that is missing when the stack starts, and `-s`
+    is true for a directory: the generator said the secret existed and never wrote it, so a host
+    that started the stack before generating stayed broken. It now refuses and names the
+    directory, and leaves it for the operator to remove. Runs the real generator in a copy of the
+    tree, with a Docker that fails (so no signing key is minted)."""
+
+    def _generate(self, directory=None):
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-gen-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "scripts").mkdir()
+        (tmp / "polaris_web").mkdir()
+        (tmp / "bin").mkdir()
+        shutil.copy(ROOT / "scripts" / "polaris-generate-secrets.sh", tmp / "scripts")
+        (tmp / "bin" / "docker").write_text("#!/bin/sh\nexit 99\n")
+        (tmp / "bin" / "docker").chmod(0o755)
+        secrets = tmp / "polaris_web" / "secrets"
+        if directory:
+            (secrets / directory).mkdir(parents=True)
+        r = subprocess.run(["bash", str(tmp / "scripts" / "polaris-generate-secrets.sh")], capture_output=True,
+                           text=True, timeout=120,
+                           env={"PATH": "%s:/usr/bin:/bin:/usr/sbin:/sbin" % (tmp / "bin"), "HOME": str(tmp)})
+        return r, secrets
+
+    def test_a_directory_at_a_secrets_path_is_refused_and_kept(self):
+        for name in ("polaris_redis_password", "redis_users.acl", "polaris_secret_key_fallbacks",
+                     "pgbackrest_repo_creds.conf", "postgres_server.key"):
+            with self.subTest(name):
+                r, secrets = self._generate(directory=name)
+                self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn("remove the directory %s," % (secrets / name), r.stderr)
+                self.assertIn("created by docker for a missing secret, then rerun", r.stderr)
+                self.assertTrue((secrets / name).is_dir(), "the generator removed the directory itself")
+
+    def test_without_one_every_file_is_written(self):
+        r, secrets = self._generate()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        for name in ALL_SECRETS:
+            self.assertTrue((secrets / name).is_file() and (secrets / name).stat().st_size > 0, name)
 
 
 HELPER = ROOT / "scripts" / "polaris-host-lock.sh"

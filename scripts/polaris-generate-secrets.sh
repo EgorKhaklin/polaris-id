@@ -56,6 +56,20 @@ gen_hex() {
     fi
 }
 
+# A directory where a secret file belongs is what docker leaves at a bind source that was
+# missing when the stack started. `-s` is true for a directory, so it read as an existing
+# secret and the file was never written. Refused, never removed here: it is the operator's.
+refuse_directory() {
+    local path
+    for path in "$@"; do
+        if [[ -d "${path}" ]]; then
+            echo "  ✗ $(basename "${path}")  (a directory, not a file: remove the directory ${path}," >&2
+            echo "      created by docker for a missing secret, then rerun)" >&2
+            return 1
+        fi
+    done
+}
+
 write_secret_if_missing() {
     local name="$1"
     local hex_bytes="$2"
@@ -72,6 +86,7 @@ write_secret_if_missing() {
     # 0644 because docker-init.sh reads it as the non-root postgres user.
     local mode="${3:-0600}"
     local target="${SECRETS_DIR}/${name}"
+    refuse_directory "${target}" || return 1
 
     # -s (non-empty), not -e: a 0-byte file from an interrupted prior run must be
     # regenerated, not treated as a real secret. An -e guard silently shipped an
@@ -111,6 +126,7 @@ REDIS_ACL_POLARIS_RULES='~polaris:rl:* resetchannels -@all +ping +client|setinfo
 write_redis_acl_if_missing() {
     local pw="${SECRETS_DIR}/polaris_redis_password"
     local target="${SECRETS_DIR}/redis_users.acl"
+    refuse_directory "${target}" "${pw}" || return 1
     if [[ -s "${target}" ]]; then
         echo "  ✓ redis_users.acl  (exists; not overwriting — use polaris-rotate-secret.sh to rotate)"
         return 0
@@ -134,6 +150,7 @@ write_redis_acl_if_missing() {
 write_signing_key_if_missing() {
     local name="polaris_signing_key"
     local target="${SECRETS_DIR}/${name}"
+    refuse_directory "${target}" || return 1
     if [[ -s "${target}" ]]; then
         echo "  ✓ ${name}  (exists; not overwriting — use polaris-rotate-secret.sh to rotate)"
         return 0
@@ -190,6 +207,7 @@ print(json.dumps(pqc_signing.generate_keypair()))'
 # the host boundary.
 write_pgbackrest_creds_if_missing() {
     local target="${SECRETS_DIR}/pgbackrest_repo_creds.conf"
+    refuse_directory "${target}" || return 1
     if [[ -s "${target}" ]]; then
         echo "  ✓ pgbackrest_repo_creds.conf  (exists; not overwriting)"
         return 0
@@ -227,6 +245,7 @@ TPL
 write_postgres_cert_if_missing() {
     local crt="${SECRETS_DIR}/postgres_server.crt"
     local key="${SECRETS_DIR}/postgres_server.key"
+    refuse_directory "${crt}" "${key}" || return 1
     if [[ -f "${crt}" && -f "${key}" ]]; then
         echo "  ✓ postgres_server.crt/.key  (exist; not overwriting)"
         return 0
@@ -262,6 +281,7 @@ write_postgres_cert_if_missing() {
 write_pgbouncer_cert_if_missing() {
     local crt="${SECRETS_DIR}/pgbouncer_server.crt"
     local key="${SECRETS_DIR}/pgbouncer_server.key"
+    refuse_directory "${crt}" "${key}" || return 1
     if [[ -f "${crt}" && -f "${key}" ]]; then
         echo "  ✓ pgbouncer_server.crt/.key  (exist; not overwriting)"
         return 0

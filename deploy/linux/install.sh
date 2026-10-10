@@ -204,7 +204,7 @@ stage_app() {
 
     # 1. The repository at INSTALL_DIR.
     if [ -d "$INSTALL_DIR/polaris_web" ]; then
-        skip "$INSTALL_DIR already holds Polaris (upgrades: scripts/polaris-deploy.sh prod)"
+        skip "$INSTALL_DIR already holds Polaris (upgrades: docs/operator/LINUX-SERVER.md, Upgrade)"
     else
         local src="${SOURCE:-}"
         if [ -z "$src" ] && [ -f "$SELF_ROOT/polaris_web/docker-compose.prod.yml" ]; then src="$SELF_ROOT"; fi
@@ -300,7 +300,7 @@ stage_app() {
     printf '%s' "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); c=d['checks']; bad=[k for k in ('database','redis','zk_binary') if c[k]['status']!='healthy']; assert not bad, 'unhealthy: %s' % bad; print('  checks:', {k: v.get('status') for k, v in c.items()})" \
         || die "/api/health reports unhealthy components"
     ok "healthy through the TLS edge: $url"
-    printf '\n  Polaris is running under systemd.\n    systemctl status polaris      journalctl -u polaris\n    upgrades: cd %s && scripts/polaris-deploy.sh prod\n    hardening: docs/operator/HARDENING.md\n\n' "$INSTALL_DIR"
+    printf '\n  Polaris is running under systemd.\n    systemctl status polaris      journalctl -u polaris\n    upgrades: docs/operator/LINUX-SERVER.md, Upgrade (in %s)\n    hardening: docs/operator/HARDENING.md\n\n' "$INSTALL_DIR"
     # Lab record 017 (gate row OP-2): the two steps a working install still needs, named exactly. The
     # key step is the authority's act, so the install never takes it: it says the one command.
     printf '  Next, once (docs/operator/LINUX-SERVER.md, "After the install"):\n'

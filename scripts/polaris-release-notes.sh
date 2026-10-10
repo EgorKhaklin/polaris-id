@@ -63,9 +63,18 @@ if summary:
 print("### Breaking changes\n")
 print((absolute("\n".join(breaking)) if breaking else "None.") + "\n")
 print("### Upgrade\n")
-print("Pull the tag, rebuild the images, and run `scripts/polaris-deploy.sh prod` "
-      "(the expand-contract migration policy keeps the running app safe during the roll); "
-      "on a Linux host, `systemctl restart polaris` after `git pull`. "
+# The procedure OPERATIONS.md and LINUX-SERVER.md give. A restart of polaris.service only starts
+# the images already built: no migration, no database objects, none of a release's new secrets.
+print("In the install's checkout (on a Linux host, `/opt/polaris`, as root):\n\n"
+      "```bash\ngit fetch --tags && git checkout v" + version + "\n"
+      "bash scripts/polaris-generate-secrets.sh   # writes only the secret files a release adds\n"
+      "scripts/polaris-deploy.sh prod --no-pull   # a tag checkout has no branch to pull\n```\n\n"
+      "An install made at v1.0.0-rc.70 or earlier lacks three secret files the generator writes: "
+      "`polaris_secret_key_fallbacks`, `polaris_redis_password` and `redis_users.acl`. "
+      "The deploy refuses to start while a secret file production requires is missing, rebuilds "
+      "every image, applies the migrations and the database objects, and smoke-tests the app "
+      "(the expand-contract migration policy keeps the running app safe during the roll). "
+      + absolute("The procedure: [OPERATIONS.md](docs/operator/OPERATIONS.md#polaris-version-upgrade). ")
       + (f"This release closes roadmap row {row.group(1)}." if row else "")
       + "\n")
 print("### Verify this release\n")

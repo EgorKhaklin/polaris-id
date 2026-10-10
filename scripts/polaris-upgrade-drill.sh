@@ -7,13 +7,14 @@
 #
 #   1. a checkout of the previous release runs that release's own lab/strategy/006/try.sh: its
 #      images, its secrets and ML-DSA-65 key, its stack; it issues credential A;
-#   2. the same checkout moves to this commit, as `git pull` would, and upgrades as OPERATIONS.md's
-#      "Polaris version upgrade" says: polaris-generate-secrets.sh (it writes only what is
-#      missing), then polaris-deploy.sh prod (images, migrations, objects, the app, a smoke test);
-#      the upgraded database's security state (scripts/lib/polaris-db-state.sh) must equal, table
-#      by table, that of this commit installed fresh in the same cluster from the files its
-#      postgres image carries (scripts/lib/polaris-db-reference.sh): what an upgrade leaves
-#      different from a fresh install of the same release is drift;
+#   2. the same checkout moves to this commit, detached as a release tag's checkout is, and
+#      upgrades as OPERATIONS.md's "Polaris version upgrade" says: polaris-generate-secrets.sh (it
+#      writes only what is missing), then polaris-deploy.sh prod --no-pull (images, migrations,
+#      objects, the app, a smoke test); the upgraded database's security state
+#      (scripts/lib/polaris-db-state.sh) must equal, table by table, that of this commit installed
+#      fresh in the same cluster from the files its postgres image carries
+#      (scripts/lib/polaris-db-reference.sh): what an upgrade leaves different from a fresh install
+#      of the same release is drift;
 #   3. a release that cannot start is deployed the same way: its smoke test fails and the deploy
 #      puts back the app image it replaced, which the app then runs, serving (under Docker's
 #      containerd image store, which upgrade.yml turns on, as a clean install of Engine 29 has it);
