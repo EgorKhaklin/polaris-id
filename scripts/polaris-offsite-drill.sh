@@ -350,10 +350,14 @@ refused_restore() {  # refused_restore <what> <expected text> <and this ERE, or 
     fi
     # Not a refusal by the cipher: the endpoint unreachable or refusing (HostConnectError,
     # ServiceError), or the info files not found where they were written (FileMissingError).
-    if ! grep -qF -- "$says" "$WORK/refused-restore.log" \
-            || { [ -n "$cipher" ] && ! grep -qE -- "$cipher" "$WORK/refused-restore.log"; } \
-            || grep -qE 'HostConnectError|ServiceError|FileMissingError' "$WORK/refused-restore.log"; then
-        tail -20 "$WORK/refused-restore.log" >&2
+    # Read as bytes (LC_ALL=C): ciphertext read as text follows "Salted__" on its line, and under a
+    # UTF-8 locale macOS grep matched no pattern on such a line (the first live run). A mismatch
+    # prints what was captured, unprintable bytes shown as ?, so the run names the text it saw.
+    if ! LC_ALL=C grep -qF -- "$says" "$WORK/refused-restore.log" \
+            || { [ -n "$cipher" ] && ! LC_ALL=C grep -qE -- "$cipher" "$WORK/refused-restore.log"; } \
+            || LC_ALL=C grep -qE 'HostConnectError|ServiceError|FileMissingError' "$WORK/refused-restore.log"; then
+        echo "--- what the refused restore printed (last 20 lines) ---" >&2
+        LC_ALL=C tr -c '[:print:]\n' '?' < "$WORK/refused-restore.log" | tail -20 >&2
         fail "a restore from repo2 $what failed, but not with the refusal it names ($says${cipher:+, $cipher})"
     fi
     echo "  refused: a restore from repo2 $what ($says${cipher:+, $cipher})"
