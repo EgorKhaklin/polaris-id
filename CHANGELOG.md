@@ -36,6 +36,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- `polaris-restore.sh --verify-schema-version` reported every migration missing on every good restore: it read a column `schema_version` does not have and discarded the error. It now judges each migration by its latest event, as `polaris-migrate.sh` does, and fails closed when it cannot read the table.
+- The documented PostgreSQL major-version upgrade deleted the live database volume before the restore was verified, chosen by a name match that could pick another stack's volume. It now keeps the old cluster as a copy until the restore verifies, finds the volume by its compose labels, refuses a second run, and documents a rollback.
 - The README said all eight outside libraries and tools presented through a wallet built here; SpruceID's adapter and ERICA ran their own wallet harnesses. Its OpenID Certified badge now names the certified version, 1.0.0rc7.
 - Under real signing, the relying-party route refused a credential with no issuance record: every credential a recovery issued, and every credential once the audit purge reached its record (five years under either retention template; credentials are valid for ten). Its key check dated by that record; it now dates such a credential by its first signature, written in the transaction that made it.
 - A revocation past the rate bound showed "An internal database error occurred"; the console now asks for a co-signing authority.
