@@ -26,6 +26,9 @@
 # should be. A run that only printed the success line would say nothing: a verifier that
 # accepts everything prints it too.
 set -euo pipefail
+# The last line of every run, whichever way it ends: a run that stops early is the report most worth having.
+report_line() { echo "Tell us how it went, success or failure: https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml"; }
+trap report_line EXIT
 
 IMAGE="${EUDI_IMAGE:-ghcr.io/dominikschlosser/eudi-dev:v2.3.7}"
 EUDI_VERSION="${EUDI_VERSION:-v2.3.7}"
@@ -232,7 +235,7 @@ stop_verifier() {  # `wait` returns the killed server's 143, which set -e would 
     TUNNEL_PID=""
   fi
 }
-trap stop_verifier EXIT
+trap 'stop_verifier; report_line' EXIT
 
 start_tunnel() {  # a quick tunnel to the loopback port; sets TUNNEL_URL, or exits 2
   TUNNELS=$((TUNNELS + 1))
