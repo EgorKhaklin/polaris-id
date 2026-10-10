@@ -141,4 +141,4 @@ Do not open a public issue for a vulnerability; see [SECURITY.md](SECURITY.md).
 [Apache 2.0](LICENSE). Building on Polaris is encouraged, provided the constitutional constraints are
 not weakened in the derivative.
 
-*Maintainer: Egor Khaklin. Last updated: 2026-10-01 (v1.0.0-rc.70).*
+*Maintainer: Egor Khaklin. Last updated: 2026-10-10 (v1.0.0-rc.71).*

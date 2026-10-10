@@ -7,13 +7,15 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
-## Unreleased
+## v1.0.0-rc.71 — 2026-10-10 (the application's database role keeps only what it is granted, through restores, deploys and upgrades)
+
+A restore and a deploy no longer give the application's database role back what the schema revokes, and the role reads an event partition only through its parent; an upgrade raises a production database's anonymity floor of one to twenty; an offsite bucket is an encrypted second repository (breaking), and ZK proofs from earlier binaries no longer verify (breaking). The full list follows: 25 security, 89 fixed, 75 added and 42 changed entries.
 
 ### Security
 
 - The chart mounted every key of its Secret into the app's pod, the superuser's and the replicator's passwords, both servers' TLS keys and the backup repository's credentials among them; each pod now mounts only the keys it reads, at 0440 (lab record 017).
 - The HA and DR profiles' etcd authenticates its clients, and Patroni's REST API refuses unauthenticated writes; both accepted any container on their networks (lab record 017).
-- ZK proofs are built with Plonky2's zero-knowledge configuration; earlier binaries built sound but non-hiding proofs, which no longer verify.
+- **Breaking**: ZK proofs are built with Plonky2's zero-knowledge configuration; earlier binaries built sound but non-hiding proofs, which no longer verify.
 - A production database kept the notional sample's anonymity floor of one and closed epochs of two members; it now restores twenty.
 - The access log records method, path and protocol, no longer the query string or the referrer (lab record 017).
 - A restore to an earlier point no longer revives what was withdrawn after it, nor reissues identifiers already issued (lab record 017).
@@ -90,6 +92,44 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-key-event.sh` never registers a retired or compromised key again, and one authority's key events run one at a time.
 - The trigger refusal drill no longer reports a refusal untested when the test that caught it failed inside a subtest beside a flaky one.
 - Two C1 privilege-boundary tests no longer fail when a trigger's random fold runs inside them.
+- The README's OpenID Certified badge now names what it covers: the polaris-oid4vp verifier, not Polaris.
+- The SQL console runs one statement per query; a second statement could lift its five-second limit.
+- SECURITY.md called PyPI's publish attestation the same kind of provenance as build provenance; it says what each is.
+- A credential's page and both investigation pages read its verifications through an index, not a full scan.
+- Release SBOMs failed the NTIA minimum elements and four were invalid SPDX; the release checks both before publishing.
+- The advisory-lock check reads locks taken in functions; the holder key register's lock gains contention tests.
+- The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
+- A migration's signature was dated by the credential's issuance, so its key read unauthorized; each is dated by its own.
+- A holder's pack was refused at the relying-party door once a migration added signatures; any in force verifies.
+- Closing a migration window cut superseded signatures off at once, whatever its grace; they verify until the date.
+- Under the placeholder profile a population migration wrote a signature no verify path accepted; now issuance's.
+- A population migration onto a set nothing here signs with (SLH-DSA) is refused before it starts.
+- The warrant audit page no longer says zero-knowledge events come back redacted; they are never returned.
+- The Atlas marked every withheld count "<5", false for one withheld for its whole's sake; it shows a neutral mark.
+- A person's investigation page takes its colours from the theme; a credential value read at 3.48:1 in light.
+- A credential's investigation page found its successor by scanning every credential: 904 ms at 3.6 million.
+- A credential's page read its device bindings and revocations by scanning those tables.
+- Record pages' tables scroll at phone width, and their hard-coded pill colours (3.49:1) take the theme.
+- The public walkthrough said post-quantum signing protects against coercion; it now marks where each rule is enforced.
+- An Atlas series could carry one bucket more than asked, and its authority filter took non-ASCII digits.
+- The simulator stamped events on the host's clock, so on a host off UTC the Atlas's hour windows missed them.
+- The UI drill and the performance baseline refuse a port another server holds; the drill's app no longer outlives it.
+- A failed deploy did not roll back on Docker's containerd image store (Engine 29's default) or on a stack whose app is not `polaris-app`.
+- In the Atlas, a hovered tab keeps its label and a lone interval is drawn; a stacked chart no longer reads a withheld value as zero.
+- Public pages: no empty band above the first line, a visible secondary action, a four-column feature grid.
+- Every page showing the OpenID® Certified™ mark names the OpenID Foundation as its owner, as its trademark policy (2.2) asks.
+- SPEC-COMPLIANCE.md said `vc+sd-jwt` credentials are verified; the verifier refuses them (`issuer_typ`), as its README says.
+- The EU-library lab walk failed its dependency check on a clean machine: its verification metadata missed one BOM a cold cache fetches.
+- The duress wording check passed the noun "compulsion resistance"; API.md and DATA-MODEL.md named the mechanism with it.
+- API.md pointed at `app.py` for the federation check; it is in `verification_routes.py`.
+- The signals queue said "N of M active" while counting every credential with a duress code, in 923 ms.
+- Delete buttons for a person, a credential and an authority, which the database always refuses, are gone.
+- A credential issued by recovery carried a placeholder for a signature and verified under nothing; approval now signs it.
+- Issuance and migration recorded the algorithm a request named, not the one that signed; now the signing key's set.
+- The readiness ledger said a Module-LWE break needs no verification code; the hash-based fallback has no signer or verifier.
+- A status change to a number that is no credential reported success.
+- A refused deep page number now says what to do instead and offers the list back.
+- The population recount's lock test passed with the lock deleted; it now holds a fold that touches no row.
 
 ### Added
 
@@ -213,47 +253,6 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-id migrate-algorithm` signs as the route does; `--signature-hex` and `--signature-file` are withdrawn.
 - CI runs the product suite's app-role suite and ZK steps, and Real PQC's web suite, as jobs of their own.
 - The coverage step stops re-running suites the product suite's other steps run.
-
-### Fixed
-
-- The README's OpenID Certified badge now names what it covers: the polaris-oid4vp verifier, not Polaris.
-- The SQL console runs one statement per query; a second statement could lift its five-second limit.
-- SECURITY.md called PyPI's publish attestation the same kind of provenance as build provenance; it says what each is.
-- A credential's page and both investigation pages read its verifications through an index, not a full scan.
-- Release SBOMs failed the NTIA minimum elements and four were invalid SPDX; the release checks both before publishing.
-- The advisory-lock check reads locks taken in functions; the holder key register's lock gains contention tests.
-- The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
-- A migration's signature was dated by the credential's issuance, so its key read unauthorized; each is dated by its own.
-- A holder's pack was refused at the relying-party door once a migration added signatures; any in force verifies.
-- Closing a migration window cut superseded signatures off at once, whatever its grace; they verify until the date.
-- Under the placeholder profile a population migration wrote a signature no verify path accepted; now issuance's.
-- A population migration onto a set nothing here signs with (SLH-DSA) is refused before it starts.
-- The warrant audit page no longer says zero-knowledge events come back redacted; they are never returned.
-- The Atlas marked every withheld count "<5", false for one withheld for its whole's sake; it shows a neutral mark.
-- A person's investigation page takes its colours from the theme; a credential value read at 3.48:1 in light.
-- A credential's investigation page found its successor by scanning every credential: 904 ms at 3.6 million.
-- A credential's page read its device bindings and revocations by scanning those tables.
-- Record pages' tables scroll at phone width, and their hard-coded pill colours (3.49:1) take the theme.
-- The public walkthrough said post-quantum signing protects against coercion; it now marks where each rule is enforced.
-- An Atlas series could carry one bucket more than asked, and its authority filter took non-ASCII digits.
-- The simulator stamped events on the host's clock, so on a host off UTC the Atlas's hour windows missed them.
-- The UI drill and the performance baseline refuse a port another server holds; the drill's app no longer outlives it.
-- A failed deploy did not roll back on Docker's containerd image store (Engine 29's default) or on a stack whose app is not `polaris-app`.
-- In the Atlas, a hovered tab keeps its label and a lone interval is drawn; a stacked chart no longer reads a withheld value as zero.
-- Public pages: no empty band above the first line, a visible secondary action, a four-column feature grid.
-- Every page showing the OpenID® Certified™ mark names the OpenID Foundation as its owner, as its trademark policy (2.2) asks.
-- SPEC-COMPLIANCE.md said `vc+sd-jwt` credentials are verified; the verifier refuses them (`issuer_typ`), as its README says.
-- The EU-library lab walk failed its dependency check on a clean machine: its verification metadata missed one BOM a cold cache fetches.
-- The duress wording check passed the noun "compulsion resistance"; API.md and DATA-MODEL.md named the mechanism with it.
-- API.md pointed at `app.py` for the federation check; it is in `verification_routes.py`.
-- The signals queue said "N of M active" while counting every credential with a duress code, in 923 ms.
-- Delete buttons for a person, a credential and an authority, which the database always refuses, are gone.
-- A credential issued by recovery carried a placeholder for a signature and verified under nothing; approval now signs it.
-- Issuance and migration recorded the algorithm a request named, not the one that signed; now the signing key's set.
-- The readiness ledger said a Module-LWE break needs no verification code; the hash-based fallback has no signer or verifier.
-- A status change to a number that is no credential reported success.
-- A refused deep page number now says what to do instead and offers the list back.
-- The population recount's lock test passed with the lock deleted; it now holds a fold that touches no row.
 
 ## v1.0.0-rc.70 — 2026-10-01 (the three verifiers read every input alike)
 
