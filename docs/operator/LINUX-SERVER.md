@@ -128,7 +128,8 @@ sudo bash scripts/polaris-generate-secrets.sh        # writes only the secret fi
 sudo scripts/polaris-deploy.sh prod --no-pull
 ```
 
-The deploy refuses to start while a secret file production requires is
+The deploy refuses to start while a secret file that
+`docker-compose.prod.yml` mounts and the production configuration validates is
 missing, rebuilds the images, applies migrations and the database objects,
 smoke-tests `/api/health`, and rolls back the app image if the smoke test
 fails. It operates on the same compose project systemd started, so

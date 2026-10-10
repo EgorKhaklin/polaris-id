@@ -978,8 +978,9 @@ class ReleaseNotesTests(unittest.TestCase):
                          ["git fetch --tags && git checkout v9.9.9", "bash scripts/polaris-generate-secrets.sh",
                           "scripts/polaris-deploy.sh prod --no-pull"])
         self.assertNotIn("systemctl", upgrade)
-        for name in ("polaris_secret_key_fallbacks", "polaris_redis_password", "redis_users.acl"):
-            self.assertIn("`%s`" % name, upgrade)
+        # Generic: which files one release lacks belongs in that release's CHANGELOG line, not here.
+        self.assertNotIn("rc.70", upgrade)
+        self.assertIn("a secret file the production compose file mounts", upgrade)
         self.assertIn("/blob/v9.9.9/docs/operator/OPERATIONS.md#polaris-version-upgrade", upgrade)
 
     def test_a_block_with_no_intro_has_no_summary(self):

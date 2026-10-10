@@ -1646,18 +1646,24 @@ bash scripts/polaris-generate-secrets.sh   # writes only the secret files a rele
 
 Update the checkout first, so the secrets step and the deploy are the new
 release's. `polaris-generate-secrets.sh` writes only the secret files that are
-missing and never overwrites one; a release can add one (an install made at
-v1.0.0-rc.70 or earlier has no `polaris_secret_key_fallbacks`,
-`polaris_redis_password` or `redis_users.acl`). It refuses, and names, a
-directory where a secret file belongs: docker leaves one at a secret that was
-missing when the stack started, and the operator removes it. The deploy
-refuses to start while any secret file production requires is missing, and
-names it. A tag checkout has no branch,
+missing and never overwrites one; a release can add one. An install made at
+v1.0.0-rc.70 or earlier lacks three files that `docker-compose.prod.yml` mounts
+(`polaris_secret_key_fallbacks`, `polaris_redis_password` and
+`redis_users.acl`), six with the HA/DR overlays; the generator writes all six.
+It refuses, and names, a directory where a secret file belongs: Docker Compose
+before 2.30 creates one at a secret file that is missing when the stack starts
+(2.30 and later refuse to start instead), and every version creates one at a
+missing bind-mounted file such as the pgBackRest fragment; the operator removes
+it. The deploy refuses to start while a secret
+file that `docker-compose.prod.yml` mounts and the production configuration
+validates is missing, and names it. A tag checkout has no branch,
 so the deploy's own `git pull --ff-only` would fail; `--no-pull` skips it.
 On a host whose secrets are sealed (age or awskms), the generator writes to
 `polaris_web/secrets` in plaintext, and as adopting the store removed that
 directory it writes every secret anew: seal only the files the deploy names as
-missing, each with `./scripts/polaris-secrets.sh seal --only <name>`, then
+missing, each with `./scripts/polaris-secrets.sh seal --only <name>`
+(`redis_users.acl` is derived from `polaris_redis_password`: seal both or
+neither), then
 remove the plaintext directory as
 [SECRETS.md, section 5.1](SECRETS.md#51-adopting-a-sealed-store) does (a full
 `seal` would replace the live database passwords and signing key).

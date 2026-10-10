@@ -56,8 +56,9 @@ gen_hex() {
     fi
 }
 
-# A directory where a secret file belongs is what docker leaves at a bind source that was
-# missing when the stack started. `-s` is true for a directory, so it read as an existing
+# A directory where a secret file belongs: Docker Compose before 2.30 creates one at a secret file
+# that is missing when the stack starts (2.30 and later refuse to start instead), and every version
+# creates one at a missing bind-mounted file such as the pgBackRest fragment. `-s` is true for a directory, so it read as an existing
 # secret and the file was never written. Refused, never removed here: it is the operator's.
 refuse_directory() {
     local path
