@@ -29,6 +29,11 @@
 #                           Exits EXIT_SCHEMA_MISMATCH=10 if divergent or unreadable
 #                           (prevents serving half-restored DB). v9.23.
 #
+# Every database restore keeps the backup's privileges: the target's schema default privileges are
+# cleared before pg_restore (the dump restores its own), and afterwards every table, column, routine
+# and sequence the dump holds, the public schema and the default privileges must carry the ACLs the
+# same dump gives a new database. Otherwise EXIT_PRIVILEGE_MISMATCH=11.
+#
 # Examples:
 #   ./scripts/polaris-restore.sh /var/backups/polaris-20260514T030000Z.tar.gz
 #   ./scripts/polaris-restore.sh polaris-backup.tar.gz --target=polaris_restored
@@ -52,6 +57,7 @@ EXIT_DB_RESTORE_FAIL=7
 EXIT_FS_RESTORE_FAIL=8
 EXIT_DOCKER_MISSING=9
 EXIT_SCHEMA_MISMATCH=10   # v9.23 — schema_version table vs migrations/ diverged
+EXIT_PRIVILEGE_MISMATCH=11   # the restored privileges are not the backup's, or cannot be read or made so
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 POLARIS_ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
@@ -70,7 +76,7 @@ VERIFY_SCHEMA=0   # v9.23 — opt-in schema_version cross-check after restore
 BACKUP_FILE=""
 
 usage() {
-    sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
     exit "${EXIT_USAGE}"
 }
 
@@ -133,6 +139,97 @@ run_pg_restore() {
     fi
 }
 
+# psql on one database, its status psql's own, columns tab-separated.
+db_sql() {  # db_sql DB SQL
+    if [[ "${USE_DOCKER_STACK}" -eq 1 ]]; then
+        docker compose -f "${COMPOSE_FILE}" exec -T postgres psql -U postgres -d "$1" -X -At -v ON_ERROR_STOP=1 -F $'\t' -c "$2"
+    else
+        psql -U "${PGUSER:-postgres}" -d "$1" -X -At -v ON_ERROR_STOP=1 -F $'\t' -c "$2"
+    fi
+}
+
+# The dump's schema alone, into a new database: the privileges it gives a database that has no
+# default privileges of its own.
+scratch_schema_restore() {  # scratch_schema_restore DB DUMP
+    if [[ "${USE_DOCKER_STACK}" -eq 1 ]]; then
+        docker compose -f "${COMPOSE_FILE}" exec -T postgres \
+            pg_restore -U postgres -d "$1" --schema-only < "$2"
+    else
+        pg_restore -U "${PGUSER:-postgres}" -d "$1" --schema-only "$2"
+    fi
+}
+
+# The dump's table of contents (pg_restore -l reads no database).
+dump_contents() {  # dump_contents DUMP
+    if [[ "${USE_DOCKER_STACK}" -eq 1 ]]; then
+        docker compose -f "${COMPOSE_FILE}" exec -T postgres pg_restore -U postgres -l < "$1"
+    else
+        pg_restore -U "${PGUSER:-postgres}" -l "$1"
+    fi
+}
+
+# The target's default privileges, set aside before pg_restore. pg_restore --clean recreates every
+# table, sequence and routine of the dump, and a new object takes the database's default privileges:
+# 09_grants.sql's give polaris_app SELECT, INSERT, UPDATE and DELETE on new tables and EXECUTE on new
+# routines. pg_dump writes each object's grants as a difference from PostgreSQL's built-in default,
+# so the revokes that narrowed polaris_app were never replayed: until 2026-10-10 a restore into an
+# initialised database (the stack's, after its first start) gave it back write access to the
+# append-only tables, the counts and the owner-only routines, and UPDATE on every column of AppUser.
+# The dump restores its own default privileges, with its grants, at the end. Database-wide ones
+# (ALTER DEFAULT PRIVILEGES without IN SCHEMA) change what every new object starts with in a way
+# this cannot undo, so they are refused.
+CLEAR_DEFAULT_PRIVILEGES=$(cat <<'SQL'
+DO $clear$
+DECLARE r record;
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_default_acl WHERE defaclnamespace = 0) THEN
+        RAISE EXCEPTION 'database-wide default privileges are set for %: remove them, or restore into a new database (--target=NAME)',
+            (SELECT string_agg(DISTINCT defaclrole::regrole::text, ', ') FROM pg_default_acl WHERE defaclnamespace = 0);
+    END IF;
+    FOR r IN
+        SELECT DISTINCT d.defaclrole::regrole::text AS owner, n.nspname AS nsp,
+               CASE d.defaclobjtype WHEN 'r' THEN 'TABLES' WHEN 'S' THEN 'SEQUENCES'
+                                    WHEN 'f' THEN 'FUNCTIONS' WHEN 'T' THEN 'TYPES' END AS kind,
+               CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS grantee
+          FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace
+          CROSS JOIN LATERAL aclexplode(d.defaclacl) a
+    LOOP
+        EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %s IN SCHEMA %I REVOKE ALL ON %s FROM %s',
+                       r.owner, r.nsp, r.kind, r.grantee);
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_default_acl) THEN
+        RAISE EXCEPTION 'default privileges remain after they were cleared';
+    END IF;
+END
+$clear$;
+SQL
+)
+
+# What the privilege check reads in either database: the ACL as stored of every table, view, sequence
+# and routine of the public schema and of every column with grants of its own, each keyed by the
+# object it belongs to; and the public schema's and the default privileges, which are always compared.
+PRIVILEGE_FACTS=$(cat <<'SQL'
+SELECT 'relation ' || c.oid::regclass::text, 'relation ' || c.oid::regclass::text, coalesce(c.relacl::text, '-')
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+UNION ALL
+SELECT 'relation ' || c.oid::regclass::text, 'column ' || c.oid::regclass::text || '.' || quote_ident(a.attname), a.attacl::text
+  FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname = 'public' AND a.attnum > 0 AND NOT a.attisdropped AND a.attacl IS NOT NULL
+UNION ALL
+SELECT 'routine ' || p.oid::regprocedure::text, 'routine ' || p.oid::regprocedure::text, coalesce(p.proacl::text, '-')
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public'
+UNION ALL
+SELECT '*', 'schema public', coalesce(nspacl::text, '-') FROM pg_namespace WHERE nspname = 'public'
+UNION ALL
+SELECT '*', 'default privileges of ' || d.defaclrole::regrole::text || ' in ' || coalesce(n.nspname, 'every schema')
+       || ' on ' || d.defaclobjtype::text, d.defaclacl::text
+  FROM pg_default_acl d LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace
+ ORDER BY 2
+SQL
+)
+SCRATCH_DB=""
+
 cat <<BANNER
 
   Polaris — restore from backup
@@ -149,7 +246,13 @@ BANNER
 # Step 1: Extract + verify manifest
 # ---------------------------------------------------------------------------
 WORK=$(mktemp -d)
-trap 'rm -rf "${WORK}"' EXIT
+cleanup() {
+    rm -rf "${WORK}"
+    if [[ -n "${SCRATCH_DB}" ]]; then
+        db_sql postgres "DROP DATABASE IF EXISTS \"${SCRATCH_DB}\"" > /dev/null 2>&1 || true
+    fi
+}
+trap cleanup EXIT
 
 step "1/6" "extracting ${BACKUP_FILE} → ${WORK}…"
 # Encrypted backups (.enc, produced when POLARIS_BACKUP_KEY_FILE was set at
@@ -290,6 +393,11 @@ if [[ "${SKIP_DB}" -eq 0 ]]; then
     # restore report "✗ pg_restore failed — DB state may be partial" and abort —
     # exactly the false alarm a DR tool must not raise. So we capture the code
     # but judge success by VERIFYING THE OUTCOME: the core schema must be present.
+    if ! clear_err=$(db_sql "${TARGET_DB}" "${CLEAR_DEFAULT_PRIVILEGES}" 2>&1); then
+        echo "  ✗ cannot set aside ${TARGET_DB}'s default privileges, so the restore would not keep the backup's; nothing was restored:" >&2
+        printf '%s\n' "${clear_err}" | sed -n '1,5p' | sed 's/^/      /' >&2
+        exit "${EXIT_PRIVILEGE_MISMATCH}"
+    fi
     pg_restore_rc=0
     run_pg_restore "${EXTRACTED}/polaris.dump" || pg_restore_rc=$?
 
@@ -309,6 +417,82 @@ if [[ "${SKIP_DB}" -eq 0 ]]; then
     else
         echo "  ✓ pg_restore complete (${restored_tables} tables in public schema)"
     fi
+
+    # The privileges, against what the same dump gives a new database with no default privileges
+    # (template0). Every object the backup holds must carry its ACL; objects it does not hold are not
+    # this restore's, but the public schema's and the default privileges are compared both ways. A
+    # check that cannot run is an unverified restore, never a passed one.
+    step "4.5/6" "privileges: the restored database's against the backup's…"
+    # A scratch database a killed run left behind (only SIGKILL skips the trap). A run beside this one
+    # keeps its own: its DROP fails while that run is connected, and at worst that run exits 11.
+    for stale in $(db_sql postgres "SELECT datname FROM pg_database WHERE datname LIKE 'polaris\\_restore\\_privileges\\_%'" 2>/dev/null); do
+        db_sql postgres "DROP DATABASE IF EXISTS \"${stale}\"" > /dev/null 2>&1 || true
+    done
+    SCRATCH_DB="polaris_restore_privileges_$$"
+    if ! scratch_err=$(db_sql postgres "CREATE DATABASE \"${SCRATCH_DB}\" TEMPLATE template0" 2>&1); then
+        SCRATCH_DB=""
+        echo "  ✗ cannot create a scratch database to read the backup's privileges, so the restore is unverified:" >&2
+        printf '%s\n' "${scratch_err}" | sed -n '1,5p' | sed 's/^/      /' >&2
+        exit "${EXIT_PRIVILEGE_MISMATCH}"
+    fi
+    scratch_schema_restore "${SCRATCH_DB}" "${EXTRACTED}/polaris.dump" > /dev/null 2>&1 || true   # benign errors, as above
+    if ! want_privileges=$(db_sql "${SCRATCH_DB}" "${PRIVILEGE_FACTS}" 2>"${WORK}/privileges.err"); then
+        echo "  ✗ cannot read the backup's privileges from a scratch database, so the restore is unverified:" >&2
+        sed -n '1,5p' "${WORK}/privileges.err" | sed 's/^/      /' >&2
+        exit "${EXIT_PRIVILEGE_MISMATCH}"
+    fi
+    # The reference must hold every table, sequence, view and routine the dump holds: an object that did
+    # not restore into the scratch database would go uncompared, and the check would pass where it could
+    # not read. The dump's own table of contents names them (its routines with schema-qualified argument
+    # types and ", " between them, as regprocedure writes neither).
+    if ! dump_toc=$(dump_contents "${EXTRACTED}/polaris.dump" 2>"${WORK}/privileges.err"); then
+        echo "  ✗ cannot list the backup's contents, so the restore is unverified:" >&2
+        sed -n '1,5p' "${WORK}/privileges.err" | sed 's/^/      /' >&2
+        exit "${EXIT_PRIVILEGE_MISMATCH}"
+    fi
+    dump_objects=$(printf '%s\n' "${dump_toc}" \
+        | sed -n -E 's/^[0-9]+; [0-9]+ [0-9]+ (TABLE|SEQUENCE|VIEW|MATERIALIZED VIEW|FOREIGN TABLE) public ([^ ]+) [^ ]+$/relation \2/p; s/^[0-9]+; [0-9]+ [0-9]+ (FUNCTION|PROCEDURE|AGGREGATE) public (.+) [^ ]+$/routine \2/p' \
+        | sed -E '/^routine /{s/, /,/g; s/public\.//g;}' | LC_ALL=C sort -u) || dump_objects=""
+    listed=$(grep -c -E '^[0-9]+; [0-9]+ [0-9]+ (TABLE|SEQUENCE|VIEW|MATERIALIZED VIEW|FOREIGN TABLE|FUNCTION|PROCEDURE|AGGREGATE) public ' \
+                 <<< "${dump_toc}" || true)
+    if ! grep -qx 'relation identitytoken' <<< "${dump_objects}" \
+            || [[ "$(printf '%s\n' "${dump_objects}" | grep -c . || true)" != "${listed}" ]]; then
+        echo "  ✗ the backup's contents could not all be read (${listed} tables, sequences, views and routines listed), so the restore is unverified" >&2
+        exit "${EXIT_PRIVILEGE_MISMATCH}"
+    fi
+    unreferenced=$(LC_ALL=C comm -23 <(printf '%s\n' "${dump_objects}") \
+                       <(printf '%s\n' "${want_privileges}" | cut -f2 | LC_ALL=C sort -u)) || {
+        echo "  ✗ cannot compare the backup's contents with its restored schema, so the restore is unverified" >&2
+        exit "${EXIT_PRIVILEGE_MISMATCH}"
+    }
+    if [[ -n "${unreferenced}" ]]; then
+        echo "  ✗ $(printf '%s\n' "${unreferenced}" | grep -c .) of the backup's $(printf '%s\n' "${dump_objects}" | grep -c .) tables, sequences, views and routines are missing from its restored schema, so their privileges are unverified:" >&2
+        printf '%s\n' "${unreferenced}" | sed -n '1,12p' | sed 's/^/      /' >&2
+        exit "${EXIT_PRIVILEGE_MISMATCH}"
+    fi
+    if ! restored_privileges=$(db_sql "${TARGET_DB}" "${PRIVILEGE_FACTS}" 2>"${WORK}/privileges.err"); then
+        echo "  ✗ cannot read ${TARGET_DB}'s privileges, so the restore is unverified:" >&2
+        sed -n '1,5p' "${WORK}/privileges.err" | sed 's/^/      /' >&2
+        exit "${EXIT_PRIVILEGE_MISMATCH}"
+    fi
+    privilege_mismatch=$(awk -F'\t' '
+        NR == FNR { want[$2] = $3; root[$1] = 1; next }
+        $1 == "*" || ($1 in root) { got[$2] = $3 }
+        END {
+            for (k in want)
+                if (!(k in got)) print k ": missing after the restore (the backup: " want[k] ")"
+                else if (got[k] != want[k]) print k ": restored " got[k] ", the backup " want[k]
+            for (k in got) if (!(k in want)) print k ": restored " got[k] ", the backup none"
+        }' <(printf '%s\n' "${want_privileges}") <(printf '%s\n' "${restored_privileges}") | sort) || {
+        echo "  ✗ cannot compare the restored privileges with the backup's, so the restore is unverified" >&2
+        exit "${EXIT_PRIVILEGE_MISMATCH}"
+    }
+    if [[ -n "${privilege_mismatch}" ]]; then
+        echo "  ✗ the restored privileges are not the backup's ($(printf '%s\n' "${privilege_mismatch}" | grep -c .) differ):" >&2
+        printf '%s\n' "${privilege_mismatch}" | sed -n '1,100p' | sed 's/^/      /' >&2
+        exit "${EXIT_PRIVILEGE_MISMATCH}"
+    fi
+    echo "  ✓ the backup's privileges, restored: $(printf '%s\n' "${want_privileges}" | grep -c .) tables, columns, routines, sequences and defaults"
 else
     step "4/6" "DB restore skipped"
 fi

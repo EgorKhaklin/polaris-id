@@ -633,6 +633,7 @@ Exit codes (greppable for incident response):
 | 8 | Filesystem audit-of-record restore failed |
 | 9 | `docker` not available (when `--target=docker-stack`) |
 | 10 | `schema_version` diverges from `migrations/`, or cannot be read (`--verify-schema-version`) |
+| 11 | The restored privileges are not the backup's, or cannot be checked: every table, column, routine and sequence the dump holds, the public schema and the default privileges must carry the ACLs the same dump gives a new database. Also refused before anything is restored: a target with database-wide default privileges |
 
 After restore:
 

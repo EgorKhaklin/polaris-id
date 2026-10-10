@@ -46,45 +46,19 @@ def _run(cmd, env, cwd=None, timeout=900):
     return subprocess.run(cmd, env=env, cwd=cwd, capture_output=True, text=True, timeout=timeout)
 
 
-class VerifySchemaVersionAfterRestore(unittest.TestCase):
+class _RestoreHarness(unittest.TestCase):
+    """Databases, backups and psql for the cases below, against the PostgreSQL the environment names."""
 
     @classmethod
-    def setUpClass(cls):
+    def _connect(cls, prefix):
         cls.env = _env()
         if _run(["psql", "-X", "-At", "-d", "postgres", "-c", "SELECT 1"], cls.env).returncode != 0:
             if os.environ.get("CI"):
                 raise RuntimeError("CI runs this suite against PostgreSQL, and none is reachable")
             raise unittest.SkipTest("no PostgreSQL reachable as POLARIS_DB_USER at POLARIS_DB_HOST")
-        cls.tmp = tempfile.mkdtemp(prefix="polaris-restore-check-")
-        cls.prefix = "polaris_rsc_%d" % os.getpid()
+        cls.tmp = tempfile.mkdtemp(prefix="polaris-%s-" % prefix)
+        cls.prefix = "polaris_%s_%d" % (prefix, os.getpid())
         cls.dbs = []
-        src = cls._createdb("src")
-        load = _run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", src, "-f", "00_load_all.sql"],
-                    cls.env, cwd=ROOT / "polaris_sql")
-        assert load.returncode == 0, load.stderr[-1500:]
-        menv = dict(cls.env, POLARIS_DB_NAME=src)
-        up = _run(["bash", str(SCRIPTS / "polaris-migrate.sh"), "--up"], menv)
-        assert up.returncode == 0, (up.stdout + up.stderr)[-1500:]
-        applied = cls._psql(src, "SELECT count(*) FROM schema_version WHERE event_type = 'applied'")
-        on_disk = len(glob.glob(str(ROOT / "polaris_sql" / "migrations" / "*.up.sql")))
-        assert int(applied) == on_disk > 0, (applied, on_disk)
-        cls.newest = sorted(pathlib.Path(p).name[:-len(".up.sql")]
-                            for p in glob.glob(str(ROOT / "polaris_sql" / "migrations" / "*.up.sql")))[-1]
-        # Four backups of the one database: as migrated; with its newest migration reverted
-        # (a 'reverted' event after the 'applied' one); re-applied, then reverted again by a row
-        # with the very same timestamp, which only event_id orders; with its registry unreadable.
-        cls.good = cls._backup(src, "good")
-        down = _run(["bash", str(SCRIPTS / "polaris-migrate.sh"), "--down", "1"], menv)
-        assert down.returncode == 0, (down.stdout + down.stderr)[-1500:]
-        cls.reverted = cls._backup(src, "reverted")
-        reup = _run(["bash", str(SCRIPTS / "polaris-migrate.sh"), "--up"], menv)
-        assert reup.returncode == 0, (reup.stdout + reup.stderr)[-1500:]
-        cls._psql(src, "INSERT INTO schema_version (name, event_type, occurred_at, actor_user_id, file_sha256) "
-                       "SELECT name, 'reverted', occurred_at, actor_user_id, file_sha256 FROM schema_version "
-                       "WHERE name = '%s' AND event_type = 'applied' ORDER BY event_id DESC LIMIT 1" % cls.newest)
-        cls.tied = cls._backup(src, "tied")
-        cls._psql(src, "ALTER TABLE schema_version RENAME COLUMN name TO legacy_name")
-        cls.unreadable = cls._backup(src, "unreadable")
 
     @classmethod
     def tearDownClass(cls):
@@ -117,6 +91,40 @@ class VerifySchemaVersionAfterRestore(unittest.TestCase):
         tarballs = glob.glob(os.path.join(dest, "polaris-*.tar.gz"))
         assert len(tarballs) == 1, tarballs
         return tarballs[0]
+
+
+class VerifySchemaVersionAfterRestore(_RestoreHarness):
+
+    @classmethod
+    def setUpClass(cls):
+        cls._connect("rsc")
+        src = cls._createdb("src")
+        load = _run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", src, "-f", "00_load_all.sql"],
+                    cls.env, cwd=ROOT / "polaris_sql")
+        assert load.returncode == 0, load.stderr[-1500:]
+        menv = dict(cls.env, POLARIS_DB_NAME=src)
+        up = _run(["bash", str(SCRIPTS / "polaris-migrate.sh"), "--up"], menv)
+        assert up.returncode == 0, (up.stdout + up.stderr)[-1500:]
+        applied = cls._psql(src, "SELECT count(*) FROM schema_version WHERE event_type = 'applied'")
+        on_disk = len(glob.glob(str(ROOT / "polaris_sql" / "migrations" / "*.up.sql")))
+        assert int(applied) == on_disk > 0, (applied, on_disk)
+        cls.newest = sorted(pathlib.Path(p).name[:-len(".up.sql")]
+                            for p in glob.glob(str(ROOT / "polaris_sql" / "migrations" / "*.up.sql")))[-1]
+        # Four backups of the one database: as migrated; with its newest migration reverted
+        # (a 'reverted' event after the 'applied' one); re-applied, then reverted again by a row
+        # with the very same timestamp, which only event_id orders; with its registry unreadable.
+        cls.good = cls._backup(src, "good")
+        down = _run(["bash", str(SCRIPTS / "polaris-migrate.sh"), "--down", "1"], menv)
+        assert down.returncode == 0, (down.stdout + down.stderr)[-1500:]
+        cls.reverted = cls._backup(src, "reverted")
+        reup = _run(["bash", str(SCRIPTS / "polaris-migrate.sh"), "--up"], menv)
+        assert reup.returncode == 0, (reup.stdout + reup.stderr)[-1500:]
+        cls._psql(src, "INSERT INTO schema_version (name, event_type, occurred_at, actor_user_id, file_sha256) "
+                       "SELECT name, 'reverted', occurred_at, actor_user_id, file_sha256 FROM schema_version "
+                       "WHERE name = '%s' AND event_type = 'applied' ORDER BY event_id DESC LIMIT 1" % cls.newest)
+        cls.tied = cls._backup(src, "tied")
+        cls._psql(src, "ALTER TABLE schema_version RENAME COLUMN name TO legacy_name")
+        cls.unreadable = cls._backup(src, "unreadable")
 
     def restore(self, tarball, case, scripts=SCRIPTS):
         target = self._createdb(case)
@@ -161,6 +169,166 @@ class VerifySchemaVersionAfterRestore(unittest.TestCase):
         self.assertEqual(r.returncode, EXIT_SCHEMA_MISMATCH, (r.stdout + r.stderr)[-2000:])
         self.assertIn("cannot read schema_version", r.stdout)
         self.assertNotIn("NOT in restored DB", r.stdout)
+
+
+EXIT_PRIVILEGE_MISMATCH = 11
+
+# polaris_app's effective privileges, one fact a line: on every table, view, sequence, column and
+# routine of the public schema, and the default privileges.
+APP_ROLE_FACTS = """
+SELECT 'table ' || c.oid::regclass::text || ' ' || p.priv
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE')) p(priv)
+ WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND has_table_privilege('polaris_app', c.oid, p.priv)
+UNION ALL
+SELECT 'sequence ' || c.oid::regclass::text || ' ' || p.priv
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN (VALUES ('USAGE'), ('SELECT'), ('UPDATE')) p(priv)
+ WHERE n.nspname = 'public' AND c.relkind = 'S' AND has_sequence_privilege('polaris_app', c.oid, p.priv)
+UNION ALL
+SELECT 'column ' || c.oid::regclass::text || '.' || a.attname || ' ' || p.priv
+  FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE')) p(priv)
+ WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND a.attnum > 0 AND NOT a.attisdropped
+   AND has_column_privilege('polaris_app', c.oid, a.attnum, p.priv)
+UNION ALL
+SELECT 'routine ' || p.oid::regprocedure::text || ' EXECUTE'
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+ WHERE n.nspname = 'public' AND has_function_privilege('polaris_app', p.oid, 'EXECUTE')
+UNION ALL
+SELECT 'default ' || d.defaclobjtype::text || ' in ' || coalesce(n.nspname, '-') || ' ' || d.defaclacl::text
+  FROM pg_default_acl d LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace
+"""
+
+
+class RestoreKeepsTheBackupsPrivileges(_RestoreHarness):
+    """A restore gives polaris_app the privileges the backup gave it, no more.
+
+    09_grants.sql grants polaris_app SELECT, INSERT, UPDATE and DELETE on new tables and EXECUTE on new
+    routines as default privileges, then narrows it: the append-only tables, the counts, the registers,
+    AppUser to its four lockout columns, the owner-only routines. pg_restore --clean recreates every
+    object, a new object takes the database's default privileges, and pg_dump writes grants as a
+    difference from PostgreSQL's built-in default, so the narrowing was never replayed: restored into
+    an initialised database (the stack's, after its first start; a host's after setup.sh), polaris_app
+    could write all of them again and run the retention purge. Each case restores into a database
+    initialised the way the stack is; the expectations are the source's own privileges, read when its
+    backup was taken."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._connect("rkp")
+        src = cls._initialised("src")
+        up = _run(["bash", str(SCRIPTS / "polaris-migrate.sh"), "--up"], dict(cls.env, POLARIS_DB_NAME=src))
+        assert up.returncode == 0, (up.stdout + up.stderr)[-1500:]
+        cls.source = cls._facts(src)
+        cls.backup = cls._backup(src, "backup")
+
+    @classmethod
+    def _initialised(cls, suffix):
+        """A database initialised as docker-init.sh initialises the stack's, its default privileges set."""
+        db = cls._createdb(suffix)
+        load = _run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-f", "00_load_all.sql"],
+                    cls.env, cwd=ROOT / "polaris_sql")
+        assert load.returncode == 0, load.stderr[-1500:]
+        return db
+
+    @classmethod
+    def _facts(cls, db):
+        return set(cls._psql(db, APP_ROLE_FACTS).splitlines())
+
+    def restore_into(self, target):
+        return _run(["bash", str(SCRIPTS / "polaris-restore.sh"), self.backup, "--target=%s" % target, "--force",
+                     "--verify-schema-version"], self.env)
+
+    def assertSameFacts(self, got, msg):
+        lost, gained = sorted(self.source - got), sorted(got - self.source)
+        self.assertEqual((lost[:8], gained[:8]), ([], []), "%s: %d lost, %d gained" % (msg, len(lost), len(gained)))
+
+    def test_the_source_is_narrowed_as_the_schema_says(self):
+        """The cases below mean something only if the source holds the narrowing they look for."""
+        self.assertTrue(any(f.startswith("default r in public ") for f in self.source), "no default privileges")
+        appuser_update = {f for f in self.source if f.startswith("column appuser.") and f.endswith(" UPDATE")}
+        self.assertTrue(appuser_update, "polaris_app updates no AppUser column")
+        self.assertNotIn("column appuser.password_hash UPDATE", self.source)
+        self.assertNotIn("table appuser UPDATE", self.source)
+        self.assertFalse([f for f in self.source if f.startswith("routine uc_archive_purge(")], "the purge is lent")
+        self.assertNotIn("table schema_version INSERT", self.source)
+
+    def test_a_restore_into_an_initialised_database_keeps_the_app_roles_privileges(self):
+        target = self._initialised("restored")
+        r = self.restore_into(target)
+        self.assertEqual(r.returncode, 0, (r.stdout + r.stderr)[-2500:])
+        self.assertIn("the backup's privileges, restored", r.stdout)
+        got = self._facts(target)
+        self.assertNotIn("column appuser.password_hash UPDATE", got, "polaris_app could reset a password")
+        self.assertFalse([f for f in got if f.startswith("routine uc_archive_purge(")], "polaris_app may run the purge")
+        self.assertSameFacts(got, "polaris_app's privileges after the restore are not the source's")
+
+    def test_a_privilege_the_backup_does_not_hold_is_refused(self):
+        """The public schema is not recreated by the restore, so a grant the target holds on it remains."""
+        target = self._initialised("widened")
+        self._psql(target, "GRANT CREATE ON SCHEMA public TO polaris_app")
+        r = self.restore_into(target)
+        self.assertEqual(r.returncode, EXIT_PRIVILEGE_MISMATCH, (r.stdout + r.stderr)[-2500:])
+        self.assertIn("the restored privileges are not the backup's", r.stderr)
+        self.assertIn("schema public", r.stderr)
+
+    def restore_with(self, case, old, new):
+        """The restore run by a copy of the script with OLD replaced by NEW: the check's own controls."""
+        tree = os.path.join(self.tmp, "tree-" + case, "scripts")
+        os.makedirs(tree)
+        shutil.copy2(SCRIPTS / "polaris-env.sh", tree)
+        text = (SCRIPTS / "polaris-restore.sh").read_text()
+        self.assertEqual(text.count(old), 1, "the control's anchor drifted: %r" % old)
+        pathlib.Path(tree, "polaris-restore.sh").write_text(text.replace(old, new))
+        return _run(["bash", os.path.join(tree, "polaris-restore.sh"), self.backup,
+                     "--target=%s" % self._initialised(case), "--force"], self.env)
+
+    def test_without_the_clearing_the_check_names_what_the_restore_widened(self):
+        r = self.restore_with("unclear", '    if ! clear_err=$(db_sql "${TARGET_DB}" "${CLEAR_DEFAULT_PRIVILEGES}" 2>&1); then',
+                              '    if false; then')
+        self.assertEqual(r.returncode, EXIT_PRIVILEGE_MISMATCH, (r.stdout + r.stderr)[-2500:])
+        appended_only = sorted(f.split()[1] for f in self.source if f.startswith("table ") and f.endswith(" INSERT")
+                               and "table %s UPDATE" % f.split()[1] not in self.source
+                               and "table %s DELETE" % f.split()[1] not in self.source)
+        self.assertTrue(appended_only, "the source has no table the application may only append to")
+        self.assertIn("relation %s:" % appended_only[0], r.stderr, "an append-only table widened unnamed")
+        self.assertIn("relation appuser:", r.stderr, "AppUser widened past its four columns unnamed")
+
+    def test_privileges_that_cannot_be_read_are_an_unverified_restore(self):
+        anchor = '\nSCRATCH_DB=""\n'
+        for case, facts, says in (("empty", "SELECT '', '', '' WHERE false", "missing from its restored schema"),
+                                  ("unreadable", "SELECT no_such_column FROM pg_class", "cannot read the backup's privileges")):
+            with self.subTest(case):
+                r = self.restore_with(case, anchor, anchor + 'PRIVILEGE_FACTS="%s"\n' % facts)
+                self.assertEqual(r.returncode, EXIT_PRIVILEGE_MISMATCH, (r.stdout + r.stderr)[-2500:])
+                self.assertIn(says, r.stderr)
+
+    def test_contents_the_check_cannot_account_for_are_an_unverified_restore(self):
+        """The reference must cover the dump: an object it lacks, contents that cannot be listed, or a
+        listing that cannot be read, each leaves objects uncompared, and each is refused."""
+        anchor = '\nSCRATCH_DB=""\n'
+        real = 'pg_restore -U "${PGUSER:-postgres}" -l "$1"'
+        for case, stub, says in (
+                ("ghost", '{ %s; echo "9999; 1259 1 TABLE public ghost postgres"; }' % real, "relation ghost"),
+                ("unlisted", '{ echo "pg_restore: error: not an archive" >&2; return 1; }', "cannot list the backup's contents"),
+                ("unparsed", "{ %s | sed 's/ public / other /'; }" % real, "could not all be read"),
+                ("partial", "{ %s | sed 's/ TABLE public agency / TABLE public \"agency x\" /'; }" % real,
+                 "could not all be read")):
+            with self.subTest(case):
+                r = self.restore_with(case, anchor, anchor + "dump_contents() %s\n" % stub)
+                self.assertEqual(r.returncode, EXIT_PRIVILEGE_MISMATCH, (r.stdout + r.stderr)[-2500:])
+                self.assertIn(says, r.stderr)
+
+    def test_database_wide_default_privileges_are_refused_before_anything_is_restored(self):
+        target = self._initialised("database_wide")
+        self._psql(target, "ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO polaris_app")
+        self._psql(target, "CREATE TABLE restore_marker (x int)")
+        r = self.restore_into(target)
+        self.assertEqual(r.returncode, EXIT_PRIVILEGE_MISMATCH, (r.stdout + r.stderr)[-2500:])
+        self.assertIn("database-wide default privileges", r.stderr)
+        self.assertIn("nothing was restored", r.stderr)
+        self.assertEqual(self._psql(target, "SELECT to_regclass('public.restore_marker') IS NOT NULL"), "t")
 
 
 class DockerExecUsesTheStackRole(unittest.TestCase):
