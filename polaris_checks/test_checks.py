@@ -21564,6 +21564,13 @@ def test_git_spawning_tests_drop_the_hook_environment_check_discriminates(tmp_pa
     mod.write_text(spawn + module_scrub.replace("GIT_", "GIT_DIR"))
     assert fn(tmp_path)[0].level == "FAIL", "must FAIL a scrub of one named variable: the prefix is the guard"
 
+    mod.write_text(spawn + module_scrub.replace("os.environ.pop(k)", "os.environ.get(k)"))
+    assert fn(tmp_path)[0].level == "FAIL", "must FAIL a guard that reads GIT_* and removes nothing"
+
+    mod.write_text(spawn + "\n\ndef setUpModule():\n"
+                   "    for k in [k for k in os.environ if k.startswith(\"GIT_\")]:\n        del os.environ[k]\n")
+    assert fn(tmp_path)[0].level == "OK", f"must PASS a guard that deletes them: {fn(tmp_path)[0].message}"
+
 
 def test_drill_case_counts_check_discriminates(tmp_path):
     """A drill that records no cases must not print its verdict and exit 0.

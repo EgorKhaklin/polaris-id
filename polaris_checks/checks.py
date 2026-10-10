@@ -26453,8 +26453,12 @@ def check_git_spawning_tests_drop_the_hook_environment(root: pathlib.Path) -> li
             if not isinstance(node, ast.FunctionDef):
                 continue
             autouse = any("autouse=True" in ast.unparse(d).replace(" ", "") for d in node.decorator_list)
+            body = ast.get_source_segment(text, node) or ""
+            # The guard has to take the variables out, not only name them: a `.get(k)` in place of
+            # `.pop(k)` keeps the shape and drops nothing.
             if (node.name == "setUpModule" or autouse) and \
-                    re.search(r"startswith\(\s*[\"']GIT_[\"']\s*\)", ast.get_source_segment(text, node) or ""):
+                    re.search(r"startswith\(\s*[\"']GIT_[\"']\s*\)", body) and \
+                    re.search(r"os\.environ\.pop\(|del\s+os\.environ\[|os\.environ\.clear\(\)|\.delenv\(", body):
                 guarded = True
         if not guarded:
             unguarded.append(rel)
