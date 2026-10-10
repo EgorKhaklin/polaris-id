@@ -85,7 +85,7 @@ below.
 | `app` | `polaris-app:prod` (built from `Dockerfile.prod`) | Flask + gunicorn (`WEB_CONCURRENCY`, default 4) | 8000 |
 | `pgbouncer` | `polaris-pgbouncer:prod` (built from `Dockerfile.pgbouncer`) | Session-mode connection pool in front of Postgres (transaction mode is refused: it would hand one request's operator scope to the next) | 6432 |
 | `postgres` | `polaris-postgres:prod` (built from `Dockerfile.postgres`: `postgres:16-alpine` plus pgBackRest) | Database | 5432 |
-| `redis` | `redis:7-alpine` (digest-pinned) | Rate-limiter backend | 6379 |
+| `redis` | `redis:8-alpine` (digest-pinned) | Rate-limiter backend | 6379 |
 
 Volumes:
 - `pg_data` (named): Postgres data

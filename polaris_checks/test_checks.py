@@ -3048,8 +3048,8 @@ def test_supply_chain_pins_check_discriminates(tmp_path):
            'kubectl apply -f "$CALICO_MANIFEST"',
            "must FAIL when the Calico manifest is applied straight from its URL")
     broken(".github/workflows/ci.yml",
-           "redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
-           "redis:7-alpine", "must FAIL when a CI service image runs by tag")
+           "redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0",
+           "redis:8-alpine", "must FAIL when a CI service image runs by tag")
     broken(".github/workflows/sbom.yml",
            "aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7",
            "aquasec/trivy:0.58.1", "must FAIL when the SBOM generator runs by tag")

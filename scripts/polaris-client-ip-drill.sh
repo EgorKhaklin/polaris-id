@@ -38,7 +38,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${1:-polaris-caddy:prod}"
 PY_IMAGE=python:3.12-alpine
-HAPROXY_IMAGE="haproxy:3.1-alpine@sha256:475863a372c92c3dab3d59eafbbf8019dceebcd0c456594551b160ecdba4bdb9"
+HAPROXY_IMAGE="haproxy:3.4-alpine@sha256:7af8255207ee9964ccb4eec8ce4b7a40b777769665e3ae83897fb01b24d8a43a"
 NET="polaris-client-ip-drill-$$"
 WORK="$(mktemp -d)"
 FORGED=203.0.113.66
