@@ -3435,6 +3435,11 @@ jobs:
       # its tests stay true as the verifier moves under it.
       - name: The access gate (lab/strategy/007) — a presentation in, an OIDC ID token out
         run: python -m unittest lab/strategy/007/test_gate.py
+      # lab/interop/eudi-dev/capture: one presentation the eudi-dev wallet built, kept as files
+      # with the clock frozen at the capture. Verified offline against this package, with a
+      # flipped byte in each signature refused.
+      - name: A captured eudi-dev presentation, verified offline (lab/interop/eudi-dev/capture)
+        run: python -m unittest lab/interop/eudi-dev/capture/test_capture.py
       # The refusals as HTTP status codes, which is the form the conformance plan scores.
       # Noticing a forged presentation and answering 200 anyway fails seven modules at once
       # while every unit test stays green.
