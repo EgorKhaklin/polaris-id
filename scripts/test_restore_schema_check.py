@@ -18,6 +18,7 @@ POLARIS_DB_USER, POLARIS_DB_PASSWORD, POLARIS_DB_PORT) and a role that may creat
 import glob
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -160,6 +161,64 @@ class VerifySchemaVersionAfterRestore(unittest.TestCase):
         self.assertEqual(r.returncode, EXIT_SCHEMA_MISMATCH, (r.stdout + r.stderr)[-2000:])
         self.assertIn("cannot read schema_version", r.stdout)
         self.assertNotIn("NOT in restored DB", r.stdout)
+
+
+class DockerExecUsesTheStackRole(unittest.TestCase):
+    """Every `compose ... exec -T postgres <client> -U <role>` in scripts/ names the stack's POSTGRES_USER.
+
+    The cross-check's docker branch above once named a `polaris` role the production stack does not
+    have, so the documented docker-stack restore stopped at "role polaris does not exist" while the
+    host-path tests passed (found in review, 2026-10-10). These calls need the stack to run, which
+    the suite does not start, so their role is held to docker-compose.prod.yml here."""
+
+    CLIENT = re.compile(r"exec\s+-T\s+(?:-u\s+\S+\s+)?postgres\s+"
+                        r"(psql|pg_dump|pg_dumpall|pg_restore|createdb|dropdb)\b([^\n]*)")
+
+    def test_every_docker_exec_client_uses_the_stack_role(self):
+        compose = (ROOT / "polaris_web" / "docker-compose.prod.yml").read_text()
+        m = re.search(r"^\s*POSTGRES_USER:\s*(\S+)\s*$", compose, re.M)
+        self.assertIsNotNone(m, "docker-compose.prod.yml names no POSTGRES_USER")
+        role = m.group(1)
+        calls, wrong = [], []
+        for path in sorted(SCRIPTS.glob("*.sh")):
+            text = path.read_text(encoding="utf-8", errors="replace").replace("\\\n", " ")
+            for c in self.CLIENT.finditer(text):
+                u = re.search(r'(?:-U|--username[= ])\s*"?([^"\s]+)', c.group(2))
+                calls.append((path.name, c.group(1)))
+                if not u or u.group(1) != role:
+                    wrong.append("%s: %s -U %s" % (path.name, c.group(1), u.group(1) if u else "(none)"))
+        self.assertGreaterEqual(len(calls), 20, "the scan found too few calls to mean anything")
+        self.assertIn(("polaris-restore.sh", "psql"), calls, "the restore cross-check's docker read was not seen")
+        self.assertEqual(wrong, [], "docker exec clients must connect as %s" % role)
+
+    def test_every_restore_client_call_uses_its_branch_role(self):
+        """In polaris-restore.sh each psql or pg_restore command connects as its branch's helper does:
+        the docker branch as the stack's POSTGRES_USER, the host branch as ${PGUSER:-postgres}.
+        The cross-check's host read once ran with no -U, as the OS user, after a restore made as
+        postgres (found in review, 2026-10-10)."""
+        compose = (ROOT / "polaris_web" / "docker-compose.prod.yml").read_text()
+        role = re.search(r"^\s*POSTGRES_USER:\s*(\S+)\s*$", compose, re.M).group(1)
+        text = (SCRIPTS / "polaris-restore.sh").read_text().replace("\\\n", " ")
+        docker, host, wrong, heredoc = [], [], [], None
+        for line in text.split("\n"):
+            if heredoc:
+                heredoc = None if line.strip() == heredoc else heredoc
+                continue
+            code = line.strip()
+            if not code or code.startswith("#") or re.match(r"(echo|printf)\b", code):
+                continue
+            h = re.search(r"<<-?\s*['\"]?(\w+)", code)
+            if h:
+                heredoc = h.group(1)
+            for m in re.finditer(r"(?:^|[\s;{(|&])(psql|pg_restore)\s([^\n]*)", code):
+                in_docker = "exec -T postgres" in code
+                want = "-U %s" % role if in_docker else '-U "${PGUSER:-postgres}"'
+                (docker if in_docker else host).append(code)
+                if want not in m.group(2):
+                    wrong.append(("docker" if in_docker else "host") + ": " + code[:90])
+        self.assertGreaterEqual(len(docker), 3, docker)
+        self.assertGreaterEqual(len(host), 3, host)
+        self.assertEqual(wrong, [], "each client must connect as its branch's helper does")
 
 
 if __name__ == "__main__":

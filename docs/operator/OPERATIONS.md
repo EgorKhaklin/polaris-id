@@ -1695,11 +1695,11 @@ docker compose -f polaris_web/docker-compose.prod.yml down
 #    the copy already exists, because a second run would copy the new cluster over the only
 #    copy of the old one. The volume is found by its compose labels, as polaris-deploy.sh
 #    finds its project; a name match can pick another stack's volume on the same host.
-P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config | sed -n 's/^name: //p' | head -n1)
+P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config --no-interpolate | sed -n 's/^name: //p' | head -n1)
 V=$(docker volume ls -q --filter "label=com.docker.compose.project=$P" \
       --filter label=com.docker.compose.volume=pg_data)
 if [ -z "$P" ]; then
-  echo "no compose project name (run this from the repository root). Stop here."
+  echo "docker compose config failed: run this from the repository root, and check the compose file parses. Stop here."
 elif [ "$(printf '%s\n' "$V" | grep -c .)" -ne 1 ]; then
   echo "expected one pg_data volume in project '$P', found: '$V'. Stop here."
 elif docker volume inspect "${V}_old" >/dev/null 2>&1; then
@@ -1718,10 +1718,11 @@ fi
     --target=docker-stack --force --verify-schema-version
 
 # 6. Only once step 5 printed "schema_version table matches migrations/ on disk" and the
-#    stack serves, delete the old cluster's copy. The names are looked up again, so a new
-#    shell works; compose names the volume <project>_pg_data.
-P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config | sed -n 's/^name: //p' | head -n1)
-[ -n "$P" ] && docker volume rm "${P}_pg_data_old"
+#    stack serves, delete the old cluster's copy. The names are looked up again, without
+#    needing the deploy's variables, so a new shell works; compose names the volume <project>_pg_data.
+P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config --no-interpolate | sed -n 's/^name: //p' | head -n1)
+if [ -n "$P" ]; then docker volume rm "${P}_pg_data_old"
+else echo "docker compose config failed: run this from the repository root, and check the compose file parses."; fi
 ```
 
 Until step 6, `<project>_pg_data_old` holds the old major's cluster untouched. To go back,
@@ -1729,10 +1730,10 @@ restore the `FROM` line, then put the copy back into the cluster's volume (creat
 compose's labels if step 5 never made it) and redeploy. A new shell works here too:
 
 ```bash
-P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config | sed -n 's/^name: //p' | head -n1)
+P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config --no-interpolate | sed -n 's/^name: //p' | head -n1)
 V="${P}_pg_data"
 if [ -z "$P" ] || ! docker volume inspect "${V}_old" >/dev/null 2>&1; then
-  echo "no compose project name, or no ${V}_old to roll back to. Stop here."
+  echo "docker compose config failed (run from the repository root, check the compose file parses), or no ${V}_old to roll back to. Stop here."
 else
   docker compose -f polaris_web/docker-compose.prod.yml down
   docker volume inspect "$V" >/dev/null 2>&1 ||

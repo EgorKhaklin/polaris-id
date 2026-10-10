@@ -339,9 +339,9 @@ if [[ "${VERIFY_SCHEMA}" -eq 1 && "${SKIP_DB}" -eq 0 ]]; then
         sv_err=$(mktemp)
         if [[ "${USE_DOCKER_STACK}" -eq 1 ]]; then
             sv_read() { docker compose -f "${COMPOSE_FILE}" exec -T postgres \
-                psql -U polaris -d "${TARGET_DB}" -X -At -v ON_ERROR_STOP=1 -c "${applied_sql}"; }
+                psql -U postgres -d "${TARGET_DB}" -X -At -v ON_ERROR_STOP=1 -c "${applied_sql}"; }
         else
-            sv_read() { psql -d "${TARGET_DB}" -X -At -v ON_ERROR_STOP=1 -c "${applied_sql}"; }
+            sv_read() { psql -U "${PGUSER:-postgres}" -d "${TARGET_DB}" -X -At -v ON_ERROR_STOP=1 -c "${applied_sql}"; }
         fi
         if ! actual_raw=$(sv_read 2>"${sv_err}"); then
             echo "  ✗ cannot read schema_version in ${TARGET_DB}, so the restore is unverified:"
