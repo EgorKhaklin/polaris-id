@@ -446,6 +446,7 @@ if [[ "${SKIP_DB}" -eq 0 ]]; then
     # A failure here is reported now and decided after the privileges: when both fail the restore exits 11,
     # since a privilege the backup did not hold is the security defect (OPERATIONS.md's exit table says so).
     settings_failed=0
+    # Called under ||, so set -e is off here: every step checks its own status.
     restore_settings() {
         if [[ ! -e "${settings_file}" ]]; then
             echo "  • this backup records no database settings (taken before 2026-10-10): '${TARGET_DB}' keeps its own"
