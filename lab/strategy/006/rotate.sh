@@ -47,7 +47,7 @@ sql() { "${COMPOSE[@]}" exec -T postgres psql -U postgres -d polaris -qtA -c "SE
 JAR="${OUT}/rotate-cookies"
 : > "${JAR}"
 CSRF=$(curl -s --cacert "${CA}" -c "${JAR}" -b "${JAR}" "${BASE}/login" \
-       | { grep -o 'name="csrf_token" value="[^"]*"' || true; } | head -1 | sed 's/.*value="//;s/"$//')
+       | { grep -o 'name="csrf_token" value="[^"]*"' || true; } | sed -n 1p | sed 's/.*value="//;s/"$//')
 [[ "$(curl -s --cacert "${CA}" -c "${JAR}" -b "${JAR}" -o /dev/null -w '%{http_code}' \
       --data-urlencode "csrf_token=${CSRF}" --data-urlencode "username=try-operator" \
       --data-urlencode "password@"<(tr -d '\r\n' < "${OUT}/operator-password") "${BASE}/login")" == 302 ]] \

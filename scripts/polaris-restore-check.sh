@@ -204,7 +204,7 @@ if ! verify 1 --set="$label" || ! grep -Fq "backup: $label, status: valid" <<< "
 fi
 OLDER_DAMAGE=""
 if ! verify 1; then
-    OLDER_DAMAGE="$(grep -E 'invalid|missing|error' <<< "$VERIFY_REPORT" | tr -s ' ' | head -3 | paste -sd ';' -)"
+    OLDER_DAMAGE="$(grep -E 'invalid|missing|error' <<< "$VERIFY_REPORT" | tr -s ' ' | sed -n 1,3p | paste -sd ';' -)"
     printf '%s\n' "$VERIFY_REPORT" >&2
     say "WARNING: the repository holds damage outside the newest backup (restore points it covers are lost): $OLDER_DAMAGE"
 fi

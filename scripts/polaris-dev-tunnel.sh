@@ -66,7 +66,7 @@ CF_PID=$!
 
 URL=""
 for _ in $(seq 1 40); do
-    URL="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$CF_LOG" | head -1 || true)"
+    URL="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$CF_LOG" | sed -n 1p || true)"
     [ -n "$URL" ] && break
     sleep 1
 done

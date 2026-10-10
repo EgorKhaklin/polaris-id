@@ -97,7 +97,7 @@ cleanup() {
     if [[ -n "${TRAFFIC_PID:-}" ]]; then kill -TERM "$TRAFFIC_PID" 2>/dev/null || true; wait "$TRAFFIC_PID" 2>/dev/null || true; fi
     docker rm -f "$SINK" "$AM" "$PROM" >/dev/null 2>&1 || true
     # Never leave the stack partitioned or stopped behind a failure.
-    if [[ -n "${NET:-}" ]] && ! docker inspect -f '{{json .NetworkSettings.Networks}}' polaris-pgbouncer 2>/dev/null | grep -q "\"$NET\""; then
+    if [[ -n "${NET:-}" ]] && ! docker inspect -f '{{json .NetworkSettings.Networks}}' polaris-pgbouncer 2>/dev/null | grep "\"$NET\"" >/dev/null; then
         docker network connect ${PGB_ALIAS_ARGS[@]+"${PGB_ALIAS_ARGS[@]}"} "$NET" polaris-pgbouncer >/dev/null 2>&1 || true
     fi
     compose start app app-green >/dev/null 2>&1 || true
@@ -143,7 +143,7 @@ PYEOF
 traffic_start() { : > "$1"; python3 "$WORK/traffic.py" "$URL" "$1" & TRAFFIC_PID=$!; sleep 3; }
 traffic_stop()  { kill -TERM "$TRAFFIC_PID" 2>/dev/null || true; wait "$TRAFFIC_PID" 2>/dev/null || true; TRAFFIC_PID=""; }
 stat() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])" "$1" "$2"; }
-edge_ok() { curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" 2>/dev/null | grep -q 200; }
+edge_ok() { curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" 2>/dev/null | grep 200 >/dev/null; }
 # The health JSON is fetched into a variable and parsed from argv, not piped into python: a fetch
 # piped into an interpreter reads, to a supply-chain scanner, as downloaded code being run.
 db_healthy() {

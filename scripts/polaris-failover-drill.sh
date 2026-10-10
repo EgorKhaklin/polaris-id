@@ -144,7 +144,7 @@ timeline_followed() {  # timeline_followed MEMBER VIA WANT: the member reports t
     [[ -n "$tl" && "$tl" == "$3" ]]
 }
 container_healthy() { [[ "$(docker inspect --format '{{.State.Health.Status}}' "$1" 2>/dev/null)" == "healthy" ]]; }
-edge_ok() { curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" 2>/dev/null | grep -q 200; }
+edge_ok() { curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" 2>/dev/null | grep 200 >/dev/null; }
 writes_ok_since() {  # an insert COMPLETED after T
     python3 -c "
 import sys

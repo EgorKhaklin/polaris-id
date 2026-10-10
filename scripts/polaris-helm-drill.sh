@@ -93,7 +93,7 @@ spec:
 PODEOF
 then kubectl -n "$NS" delete pod pss-violation --ignore-not-found >/dev/null; fail "a PRIVILEGED pod was admitted; the restricted standard is not enforced"; fi
 grep -q "violates PodSecurity" /tmp/pss.err || { cat /tmp/pss.err; fail "privileged pod refused for another reason"; }
-echo "  privileged pod rejected: $(grep -o 'violates PodSecurity "restricted[^"]*"' /tmp/pss.err | head -1)"
+echo "  privileged pod rejected: $(grep -o 'violates PodSecurity "restricted[^"]*"' /tmp/pss.err | sed -n 1p)"
 
 echo "== 3. secrets + helm install =="
 ( cd "$ROOT" && bash scripts/polaris-generate-secrets.sh >/dev/null 2>&1 ) || true
@@ -117,7 +117,7 @@ if grep -q "name: ${REL}-edge-ca\$" /tmp/polaris-casecret.yaml || grep -q "secre
     fail "with edge.caSecret the chart must mount that Secret and generate no root of its own"
 fi
 helm template "$REL" "$ROOT/deploy/helm/polaris" --set edge.tls=acme --set edge.replicas=1 \
-    | grep -q "claimName: ${REL}-caddy-acme" || fail "edge.tls=acme does not keep its state on a volume"
+    | grep "claimName: ${REL}-caddy-acme" >/dev/null || fail "edge.tls=acme does not keep its state on a volume"
 echo "  edge.tls=acme: refused with two replicas; one keeps its state on ${REL}-caddy-acme"
 helm install "$REL" "$ROOT/deploy/helm/polaris" -n "$NS" --set domain=localhost --set edge.tls=internal \
     --set secrets.existingSecret=polaris-secrets --set images.pullPolicy=Never \
@@ -193,7 +193,7 @@ OVERRIDES=$(cat <<JSONEOF
    "securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}
 JSONEOF
 )
-if kubectl -n "$NS" run np-probe --image=polaris-app:prod --restart=Never --rm -i --overrides="$OVERRIDES" 2>&1 | sed 's/^/  /' | tee /tmp/np-probe.out | grep -q "REACHED"; then fail "a pod outside the topology reached a protected service"; fi
+if kubectl -n "$NS" run np-probe --image=polaris-app:prod --restart=Never --rm -i --overrides="$OVERRIDES" 2>&1 | sed 's/^/  /' | tee /tmp/np-probe.out | grep "REACHED" >/dev/null; then fail "a pod outside the topology reached a protected service"; fi
 grep -q "blocked polaris-postgres:5432" /tmp/np-probe.out || { cat /tmp/np-probe.out; fail "probe did not run"; }
 echo "  default-deny + allow-list holds (postgres, pgbouncer, app unreachable from outside the topology)"
 
@@ -243,7 +243,7 @@ now() { python3 -c "import time; print(time.time())"; }
 le() { python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) <= float(sys.argv[2]) else 1)" "$1" "$2"; }
 # Every command may fail (no Endpoints yet, a member with no log): under pipefail one that did ended the drill
 # here, before the fail that names what broke.
-diagnose() { echo "--- diagnostics ---" >&2; kubectl -n "$NS" get pods -l application=polaris-db -L role >&2 || true; { kubectl -n "$NS" get endpoints "${REL}-postgres" -o yaml 2>/dev/null || true; } | sed -n '/annotations/,/subsets/p' | head -12 >&2; for m in "${REL}-postgres-0" "${REL}-postgres-1"; do echo "[$m]" >&2; { kubectl -n "$NS" logs "$m" --tail=25 2>&1 || true; } | sed 's/^/    /' >&2; done; }
+diagnose() { echo "--- diagnostics ---" >&2; kubectl -n "$NS" get pods -l application=polaris-db -L role >&2 || true; { kubectl -n "$NS" get endpoints "${REL}-postgres" -o yaml 2>/dev/null || true; } | sed -n '/annotations/,/subsets/p' | sed -n 1,12p >&2; for m in "${REL}-postgres-0" "${REL}-postgres-1"; do echo "[$m]" >&2; { kubectl -n "$NS" logs "$m" --tail=25 2>&1 || true; } | sed 's/^/    /' >&2; done; }
 L0=$(lease_holder); [[ -n "$L0" ]] || { diagnose; fail "no Patroni lease holder (annotation on the leader Endpoints)"; }
 R0=$(other_member "$L0")
 if kubectl -n "$NS" exec "$L0" -- wget -qO- http://127.0.0.1:8008/config 2>/dev/null \
@@ -405,7 +405,7 @@ verify_all() {
 # Assigned, not echoed: set -e does not see a substitution fail inside an argument.
 n=$(verify_all)
 echo "  $n edge replicas verify against the chart's root, without -k"
-victim=$(edge_pods | head -1)
+victim=$(edge_pods | sed -n 1p)
 kubectl -n "$NS" delete "$victim" --wait=true >/dev/null
 kubectl -n "$NS" rollout status "deploy/${REL}-caddy" --timeout=180s >/dev/null
 n=$(verify_all)
@@ -418,7 +418,7 @@ helm upgrade "$REL" "$ROOT/deploy/helm/polaris" -n "$NS" --reuse-values --wait -
 n=$(verify_all)
 echo "  helm upgrade kept the root: $n replicas still verify against it"
 # The internal root is no root a browser knows: HSTS there would pin users to a certificate they must override.
-kubectl -n "$NS" port-forward "$(edge_pods | head -1)" 18444:8443 >/dev/null 2>&1 & pf=$!
+kubectl -n "$NS" port-forward "$(edge_pods | sed -n 1p)" 18444:8443 >/dev/null 2>&1 & pf=$!
 code=""
 for _ in $(seq 1 20); do
     code=$(curl -s --cacert /tmp/polaris-edge-ca.crt --max-time 10 -D /tmp/polaris-internal.hdr -o /dev/null -w '%{http_code}' https://localhost:18444/api/health || true)
@@ -459,7 +459,7 @@ done
 [ -n "$serving" ] || fail "an edge replica does not serve the certificate in edge.tlsSecret 120 s after the upgrade"
 echo "  every edge replica serves the Secret's certificate"
 # A certificate clients trust carries HSTS (the internal root's never did).
-kubectl -n "$NS" port-forward "$(edge_pods | head -1)" 18444:8443 >/dev/null 2>&1 & pf=$!
+kubectl -n "$NS" port-forward "$(edge_pods | sed -n 1p)" 18444:8443 >/dev/null 2>&1 & pf=$!
 hsts=""
 for _ in $(seq 1 20); do
     hsts=$(curl -sk --max-time 10 -D - -o /dev/null https://localhost:18444/api/health | grep -i '^strict-transport-security' || true)

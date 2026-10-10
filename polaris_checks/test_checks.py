@@ -3844,7 +3844,7 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
            "must FAIL when a stopped app is read as a first deploy")
     broken(dep, 'docker tag "${ROLLBACK_IMAGE}" polaris-app:prod', 'docker tag "${PREV_IMAGE_ID}" polaris-app:prod',
            "must FAIL when the rollback re-tags the bare image ID again")
-    broken(dep, "PREV_APP=$(compose ps -a -q app 2>/dev/null | head -n1 || true)", "PREV_APP=polaris-app",
+    broken(dep, "PREV_APP=$(compose ps -a -q app 2>/dev/null | sed -n 1p || true)", "PREV_APP=polaris-app",
            "must FAIL when the deploy finds the running app by a fixed container name")
     broken(dep, """docker inspect --format='{{.Image}}' "${PREV_APP}\"""", "docker inspect --format='{{.Image}}' polaris-app",
            "must FAIL when the image is read from the container named polaris-app")
@@ -6560,6 +6560,63 @@ def test_no_grep_q_psql_check_discriminates(tmp_path):
     sh.write_text('if psql -lqt | cut -d"|" -f1 | grep -qw "$DB"; then ok; fi\n')
     assert checks.check_no_grep_q_transaction_scrape(tmp_path)[0].level == "OK", \
         "must PASS for a read-only psql listing piped into grep -q"
+
+
+def test_shell_pipes_read_to_the_end_check_discriminates(tmp_path):
+    def level(root):
+        return checks.check_shell_pipes_read_to_the_end(root)[0]
+
+    # Nothing to read proves nothing: no shell file, then shell files with no pipeline.
+    assert level(tmp_path).level == "FAIL", "must FAIL when it reads no shell file"
+    (tmp_path / "scripts").mkdir()
+    sh = tmp_path / "scripts" / "drill.sh"
+    sh.write_text("set -euo pipefail\necho ok\n")
+    assert level(tmp_path).level == "FAIL", "must FAIL when the shell files hold no pipeline"
+
+    good = ("set -euo pipefail\n"
+            "v=$(compose ps -q app | sed -n 1p)\n"
+            'docker logs x 2>&1 | grep "served" >/dev/null && bad "served"\n'
+            "grep -E 'a|head' f | grep -c x\n"
+            "printf '%s' \"$x\" | sed 's/q/x/' | grep -v y\n"
+            "# docker logs x | head -1, in a comment\n"
+            'case "$k" in foo|head) ;; esac\n'
+            "x | awk '{s += $1} END {print s; exit}'\n"
+            "cat <<'EOF'\nps | head -1\nEOF\n"
+            'sh -c "find . | head -1"\n'
+            "x=$(echo a |\n  sed -n 1p)\n")
+    sh.write_text(good)
+    found = level(tmp_path)
+    assert found.level == "OK", f"must PASS consumers that read to the end, quoted text, comments, case " \
+                                f"patterns, END-only exits and heredoc bodies: {found.message}"
+
+    for line in ('if docker logs x 2>&1 | grep -q "served"; then bad; fi',
+                 "v=$(find . -name x | head -1)",
+                 'v="$(compose ps -q app | head -n1)"',
+                 "cmd | grep -m1 x",
+                 "cmd | grep -qx x",
+                 "cmd | grep --quiet x",
+                 "cmd | egrep -q x",
+                 "cmd | grep -l x",
+                 "cmd | sed -n '1{p;q}'",
+                 "cmd | sed 1q",
+                 "cmd | awk '{print; exit}'",
+                 "cmd \\\n  | head -1",
+                 "cmd |\n  head -1",
+                 "cmd |& head -1"):
+        sh.write_text(good + line + "\n")
+        found = level(tmp_path)
+        want = f"drill.sh:{good.count(chr(10)) + 1 + line[:line.index('|')].count(chr(10))} "  # the pipe's line
+        assert found.level == "FAIL" and want in found.message, \
+            f"must FAIL and name {want!r} for {line!r}: {found.message}"
+
+    # A sourced library runs under its caller's pipefail, so it is held without setting it.
+    sh.write_text(good)
+    lib = tmp_path / "scripts" / "lib" / "helpers.sh"
+    lib.parent.mkdir()
+    lib.write_text("first_app() { compose ps -q app | head -1; }\n")
+    found = level(tmp_path)
+    assert found.level == "FAIL" and "helpers.sh:1 " in found.message, \
+        f"must FAIL a library that sets no pipefail itself: {found.message}"
 
 
 def test_psql_status_set_e_check_discriminates(tmp_path):

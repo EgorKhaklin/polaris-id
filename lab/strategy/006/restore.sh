@@ -75,7 +75,7 @@ sql "INSERT INTO BackupEvent (kind, location, detail) VALUES ('pgbackrest', 'lab
 before=$(verified)
 out=$(bash "$VERIFY" --margin-minutes 0 --archive-timeout 20 2>&1); rc=$?
 [[ $rc -eq 1 ]] || { printf '%s\n' "$out" >&2; fail "with archiving failing the run exited $rc, not 1"; }
-printf '%s\n' "$out" | grep -q 'the archive is not current' || { printf '%s\n' "$out" >&2; fail "the run failed, but not on the archive"; }
+printf '%s\n' "$out" | grep 'the archive is not current' >/dev/null || { printf '%s\n' "$out" >&2; fail "the run failed, but not on the archive"; }
 [[ "$(verified)" -eq $before ]] || fail "a run that failed recorded a verified restore"
 cleanup; SAVED_ARCHIVE_COMMAND=""
 for _ in $(seq 1 30); do
@@ -93,7 +93,7 @@ copy_sql "ALTER TABLE backupevent DISABLE TRIGGER USER" > /dev/null
 copy_sql "DELETE FROM backupevent WHERE event_id = (SELECT min(event_id) FROM backupevent)" > /dev/null \
     || fail "deleting a row from the copy"
 out=$(bash "$VERIFY" --compare-only 2>&1); rc=$?
-[[ $rc -eq 1 ]] && printf '%s\n' "$out" | grep -q 'public.backupevent' \
+[[ $rc -eq 1 ]] && printf '%s\n' "$out" | grep 'public.backupevent' >/dev/null \
     || { printf '%s\n' "$out" >&2; fail "--compare-only did not name the table the copy lost a row from (exit $rc)"; }
 bash "$VERIFY" --discard > /dev/null
 ok "the copy ran with archiving off and no listener; the deleted row was named: $(printf '%s\n' "$out" | grep -o 'public.backupevent ([^)]*)')"
@@ -110,13 +110,13 @@ damage() {  # damage <file in the postgres container>: 16 bytes overwritten in i
 step "5/6 a damaged WAL file archived after the newest backup: the copy must stop short"
 STOP=$(newest stop); [[ -n "$STOP" ]] || fail "could not read where the newest backup's WAL stops"
 victim=$("${COMPOSE[@]}" exec -T postgres sh -c "ls /var/lib/pgbackrest/archive/polaris/*/*/ | grep -E '^[0-9A-F]{24}-' | sort" < /dev/null \
-         | awk -v stop="$STOP" 'substr($0, 1, 24) > stop { print; exit }' | tr -d '\r')
+         | awk -v stop="$STOP" 'substr($0, 1, 24) > stop && !seen++ { print }' | tr -d '\r')
 [[ -n "$victim" ]] || fail "no WAL archived after the newest backup to damage"
 damage "$("${COMPOSE[@]}" exec -T postgres sh -c "ls /var/lib/pgbackrest/archive/polaris/*/*/$victim" < /dev/null | tr -d '\r')" \
     || fail "damaging $victim"
 before=$(verified)
 out=$(bash "$VERIFY" --margin-minutes 0 2>&1); rc=$?
-[[ $rc -eq 1 ]] && printf '%s\n' "$out" | grep -q 'missing from the archive or unreadable' \
+[[ $rc -eq 1 ]] && printf '%s\n' "$out" | grep 'missing from the archive or unreadable' >/dev/null \
     || { printf '%s\n' "$out" | tail -25 >&2; fail "WAL damaged after the newest backup was not refused at replay (exit $rc)"; }
 [[ "$(verified)" -eq $before ]] || fail "a run that failed recorded a verified restore"
 ok "refused at replay: $(printf '%s\n' "$out" | sed -n 's/^restore-check: FAILED: //p' | cut -c1-110)"
@@ -124,12 +124,12 @@ ok "refused at replay: $(printf '%s\n' "$out" | sed -n 's/^restore-check: FAILED
 step "6/6 a damaged file of the newest backup: the run must stop at pgbackrest verify"
 LABEL=$(newest label)
 # A data file of the backup (a bundle, or a copied file), not its manifest, which pgBackRest keeps twice.
-file=$("${COMPOSE[@]}" exec -T postgres sh -c "find /var/lib/pgbackrest/backup/polaris/$LABEL -type f -size +4k ! -name 'backup.manifest*' | sort | head -1" < /dev/null | tr -d '\r')
+file=$("${COMPOSE[@]}" exec -T postgres sh -c "find /var/lib/pgbackrest/backup/polaris/$LABEL -type f -size +4k ! -name 'backup.manifest*' | sort | sed -n 1p" < /dev/null | tr -d '\r')
 [[ -n "$file" ]] || fail "no file of the newest backup ($LABEL) to damage"
 damage "$file" || fail "damaging $file"
 before=$(verified)
 out=$(bash "$VERIFY" --margin-minutes 0 2>&1); rc=$?
-[[ $rc -eq 1 ]] && printf '%s\n' "$out" | grep -q "verify found the newest backup ($LABEL)" \
+[[ $rc -eq 1 ]] && printf '%s\n' "$out" | grep "verify found the newest backup ($LABEL)" >/dev/null \
     || { printf '%s\n' "$out" | tail -25 >&2; fail "a damaged file of the newest backup was not refused at verify (exit $rc)"; }
 [[ "$(verified)" -eq $before ]] || fail "a run that failed recorded a verified restore"
 ok "refused at verify: $(printf '%s\n' "$out" | grep -E 'checksum invalid|status:' | tr -s ' ' | tr '\n' ' ')"

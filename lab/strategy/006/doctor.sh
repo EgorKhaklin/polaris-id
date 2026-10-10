@@ -58,7 +58,7 @@ expect_named() {  # expect_named <component, or a|b> <what>; also requires every
     [[ ${RC} -eq 1 && "$(first_failing)" =~ ^(${want})$ ]] \
         || { printf '%s\n' "${DOC}" >&2; fail "${what}: the doctor named '$(first_failing)', not '${want}' (exit ${RC})"; }
     for pattern in "$@"; do
-        printf '%s\n' "${DOC}" | grep -q -- "${pattern}" \
+        printf '%s\n' "${DOC}" | grep -- "${pattern}" >/dev/null \
             || { printf '%s\n' "${DOC}" >&2; fail "${what}: the doctor's report does not say '${pattern}'"; }
     done
     ok "${what}: named $(first_failing) first$( [[ $# -gt 0 ]] && printf ', and said: %s' "$*")"

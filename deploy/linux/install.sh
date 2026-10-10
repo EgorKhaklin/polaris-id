@@ -119,7 +119,7 @@ fetch_retry() {  # $1 = url, $2 = destination; 0 on success, 1 when every attemp
 verify_docker_key() {  # $1 = armored key file, $2 = expected fingerprint
     have gpg || die "gpg is required to verify Docker's signing key"
     local fpr
-    fpr=$(gpg --show-keys --with-colons --with-fingerprint "$1" 2>/dev/null | awk -F: '$1=="fpr"{print $10; exit}')
+    fpr=$(gpg --show-keys --with-colons --with-fingerprint "$1" 2>/dev/null | awk -F: '$1=="fpr" && !seen++ {print $10}')
     [ "$fpr" = "$2" ] || die "Docker signing key fingerprint mismatch: got ${fpr:-<none>}, want $2"
     ok "Docker signing key fingerprint verified ($2)"
 }

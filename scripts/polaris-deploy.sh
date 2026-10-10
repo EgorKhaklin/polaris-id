@@ -150,7 +150,7 @@ secret_preflight "this checkout"
 source "${SCRIPT_DIR}/polaris-host-lock.sh"
 polaris_host_lock "this deploy"
 # The rollback pin is named for the compose project: two stacks on one host keep a pin each.
-PROJECT=$(compose config 2>/dev/null | sed -n 's/^name: //p' | head -n1 || true)
+PROJECT=$(compose config 2>/dev/null | sed -n 's/^name: //p' | sed -n 1p || true)
 [[ -n "${PROJECT}" ]] || { echo "  ✗ could not read the compose project's name (docker compose config)" >&2; exit 1; }
 echo "  ✓ the only build or deploy of this host's images (project ${PROJECT})"
 
@@ -243,7 +243,7 @@ fi
 ROLLBACK_TAG="polaris-app:rollback-${PROJECT}"
 PREV_IMAGE_ID=""
 # -a: a stopped or restarting app still names the image this deploy replaces.
-PREV_APP=$(compose ps -a -q app 2>/dev/null | head -n1 || true)
+PREV_APP=$(compose ps -a -q app 2>/dev/null | sed -n 1p || true)
 if [[ -n "${PREV_APP}" ]]; then
     PREV_IMAGE_ID=$(docker inspect --format='{{.Image}}' "${PREV_APP}" 2>/dev/null || echo "")
 fi
@@ -441,7 +441,7 @@ if [[ "${POLARIS_PGBACKREST_ENABLED:-1}" == "1" ]]; then
         first_full_local=0
         for repo in ${pgbr_repos}; do
             if compose exec -T -u postgres postgres pgbackrest --stanza=polaris --repo="${repo}" --output=json info 2>/dev/null \
-                    | grep -q '"type": *"full"'; then
+                    | grep '"type": *"full"' >/dev/null; then
                 continue
             fi
             echo "        repo${repo} holds no base backup yet: taking its first full one…"
@@ -475,7 +475,7 @@ if [[ "${POLARIS_PGBACKREST_ENABLED:-1}" == "1" ]]; then
         echo "     repo is not ready, so WAL will accumulate on disk until this is fixed." >&2
         # A log without pgBackRest's own ERROR or HINT lines (a daemon or compose failure says
         # "Error") must not end the deploy here: grep's no-match is 1, and set -e would.
-        { grep -E 'ERROR|HINT' "$stanza_log" || true; } | head -4 | sed 's/^/       /' >&2
+        { grep -E 'ERROR|HINT' "$stanza_log" || true; } | sed -n 1,4p | sed 's/^/       /' >&2
         if grep -q 'ERROR: \[028\]' "$stanza_log"; then
             # [028]: the repository's stanza belongs to another cluster, as after a PostgreSQL
             # major-version upgrade (OPERATIONS.md, "Postgres version upgrade", step 5).
@@ -504,7 +504,7 @@ fi
 wait_healthy() {  # $1 = service
     local cid i
     for i in $(seq 1 60); do
-        cid=$(compose ps -q "$1" 2>/dev/null | head -1)
+        cid=$(compose ps -q "$1" 2>/dev/null | sed -n 1p)
         [[ -n "$cid" ]] && [[ "$(docker inspect --format '{{.State.Health.Status}}' "$cid" 2>/dev/null)" == "healthy" ]] && return 0
         sleep 2
     done
@@ -537,7 +537,7 @@ for i in $(seq 1 30); do
     # Probe from inside the docker network — avoids waiting on TLS issuance.
     if HEALTH_JSON=$(compose exec -T app \
                        curl -fsS http://localhost:8000/api/health 2>/dev/null); then
-        STATUS=$(echo "${HEALTH_JSON}" | grep -oE '"status":"[a-z]+"' | head -1 | cut -d'"' -f4)
+        STATUS=$(echo "${HEALTH_JSON}" | grep -oE '"status":"[a-z]+"' | sed -n 1p | cut -d'"' -f4)
         if [[ "${STATUS}" == "healthy" ]]; then
             SMOKE_OK=1
             break

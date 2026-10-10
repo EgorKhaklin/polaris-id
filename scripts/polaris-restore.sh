@@ -284,7 +284,7 @@ fi
 tar -xzf "${EXTRACT_SRC}" -C "${WORK}"
 
 # Find the extracted polaris-<ts>/ directory.
-EXTRACTED=$(find "${WORK}" -maxdepth 1 -mindepth 1 -type d -name 'polaris-*' | head -1)
+EXTRACTED=$(find "${WORK}" -maxdepth 1 -mindepth 1 -type d -name 'polaris-*' | sed -n 1p)
 if [[ -z "${EXTRACTED}" || ! -d "${EXTRACTED}" ]]; then
     echo "  ✗ extracted backup does not contain a polaris-*/ directory" >&2
     exit "${EXIT_MANIFEST_MISSING}"
@@ -587,7 +587,7 @@ if [[ "${VERIFY_SCHEMA}" -eq 1 && "${SKIP_DB}" -eq 0 ]]; then
         fi
         if ! actual_raw=$(sv_read 2>"${sv_err}"); then
             echo "  ✗ cannot read schema_version in ${TARGET_DB}, so the restore is unverified:"
-            sed 's/^/      /' "${sv_err}" | head -5
+            sed 's/^/      /' "${sv_err}" | sed -n 1,5p
             rm -f "${sv_err}"
             exit "${EXIT_SCHEMA_MISMATCH}"
         fi

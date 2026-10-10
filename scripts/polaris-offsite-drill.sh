@@ -416,6 +416,6 @@ fi
 markers=$(docker exec "$RES" psql -U postgres -d polaris -tAc \
     "SELECT count(*) FROM plain WHERE t = '$MARKER'" | tr -d '[:space:]')
 [ "$markers" = 2 ] || fail "the restore decrypted $markers of the 2 marker rows"
-{ docker logs "$RES" 2>&1 || true; } | grep -m1 -E 'restore backup set' || true
+{ docker logs "$RES" 2>&1 || true; } | { grep -E 'restore backup set' || true; } | sed -n 1p
 echo "== OFFSITE DRILL PASSED: encrypted repo2 beside local repo1; backup, expire, ciphertext, refusal, restore from repo2 alone =="
 echo "done"

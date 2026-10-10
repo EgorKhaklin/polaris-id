@@ -38,7 +38,7 @@ for p in "$PORT" 7006; do
   fi
 done
 # A container of that name is somebody's; this walk only removes the one it starts.
-if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+if docker ps -a --format '{{.Names}}' | grep -x "$CONTAINER" >/dev/null; then
   echo "a container named $CONTAINER exists; remove it or set CONTAINER" >&2
   exit 2
 fi

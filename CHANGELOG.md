@@ -96,6 +96,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-key-event.sh` never registers a retired or compromised key again, and one authority's key events run one at a time.
 - The trigger refusal drill no longer reports a refusal untested when the test that caught it failed inside a subtest beside a flaky one.
 - Two C1 privilege-boundary tests no longer fail when a trigger's random fold runs inside them.
+- Under pipefail, a pipe into `head`, `grep -q`, `grep -m` or `grep -l`, or an `awk` that exits, failed when the writer outlived the match (SIGPIPE, exit 141), so a check such as the edge-limits drill's "the upstream served the slow body" could pass without firing; 101 such pipes in 40 shell files now read to the end, and `check_shell_pipes_read_to_the_end` refuses a new one.
 
 ### Added
 

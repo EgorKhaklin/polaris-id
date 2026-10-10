@@ -138,7 +138,7 @@ sha256_of() {
 # Verify mode
 # ---------------------------------------------------------------------------
 if [[ "${VERIFY_LATEST}" -eq 1 ]]; then
-    LATEST=$(ls -1t "${DEST}"/polaris-archive-*.tar.gz 2>/dev/null | head -1 || true)
+    LATEST=$(ls -1t "${DEST}"/polaris-archive-*.tar.gz 2>/dev/null | sed -n 1p || true)
     if [[ -z "${LATEST}" ]]; then
         echo "  ✗ no archives under ${DEST}" >&2
         exit "${EXIT_ARCHIVE_MISSING}"
@@ -147,7 +147,7 @@ if [[ "${VERIFY_LATEST}" -eq 1 ]]; then
     TMP=$(mktemp -d)
     trap 'rm -rf "${TMP}"' EXIT
     tar -xzf "${LATEST}" -C "${TMP}"
-    EXTRACTED=$(find "${TMP}" -maxdepth 1 -mindepth 1 -type d -name 'polaris-archive-*' | head -1)
+    EXTRACTED=$(find "${TMP}" -maxdepth 1 -mindepth 1 -type d -name 'polaris-archive-*' | sed -n 1p)
     [[ -z "${EXTRACTED}" ]] && EXTRACTED="${TMP}"
     python3 - "${EXTRACTED}" <<'PY'
 import json, hashlib, os, sys
@@ -230,7 +230,7 @@ if [[ "${FROM_POLICY}" -eq 1 ]]; then
     done
     # Oldest for the scalar, newest for the context tables.
     CUTOFF_ISO=$(printf '%s\n' "${CUT_TOKEN_LIFECYCLE}" "${CUT_VERIFICATION}" \
-                                "${CUT_ENROLLMENT}" "${CUT_AUTH_AUDIT}" | sort | head -1)
+                                "${CUT_ENROLLMENT}" "${CUT_AUTH_AUDIT}" | sort | sed -n 1p)
     CONTEXT_CUTOFF=$(printf '%s\n' "${CUT_TOKEN_LIFECYCLE}" "${CUT_VERIFICATION}" \
                                     "${CUT_ENROLLMENT}" "${CUT_AUTH_AUDIT}" | sort | tail -1)
     CUTOFF_DAYS=$(run_psql -c "SELECT (EXTRACT(EPOCH FROM (now() - '${CUTOFF_ISO}'::timestamptz)) / 86400)::int" 2>/dev/null | tr -d '[:space:]' || echo "0")

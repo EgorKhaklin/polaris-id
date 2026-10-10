@@ -89,7 +89,7 @@ if [[ "${VERIFY_LATEST}" -eq 1 ]]; then
     # remains and the glob must see it. Verified before v9.199, this glob
     # matched *.tar.gz only and reported "no backups found" on every
     # encrypted deployment.
-    LATEST=$(ls -1t "${DEST}"/polaris-*.tar.gz "${DEST}"/polaris-*.tar.gz.enc 2>/dev/null | head -1 || true)
+    LATEST=$(ls -1t "${DEST}"/polaris-*.tar.gz "${DEST}"/polaris-*.tar.gz.enc 2>/dev/null | sed -n 1p || true)
     if [[ -z "${LATEST}" ]]; then
         echo "  ✗ no backups found under ${DEST}" >&2
         exit 1
@@ -120,7 +120,7 @@ if [[ "${VERIFY_LATEST}" -eq 1 ]]; then
     # level to find MANIFEST.json. (Pre-v8.82 looked at ${TMP}/MANIFEST.json
     # and would always report 'malformed' even on healthy backups — bug
     # surfaced during the v8.81 polaris-restore.sh drill.)
-    EXTRACTED=$(find "${TMP}" -maxdepth 1 -mindepth 1 -type d -name 'polaris-*' | head -1)
+    EXTRACTED=$(find "${TMP}" -maxdepth 1 -mindepth 1 -type d -name 'polaris-*' | sed -n 1p)
     if [[ -z "${EXTRACTED}" || ! -d "${EXTRACTED}" ]]; then
         # Fall back to the flat layout for hand-rolled tarballs.
         EXTRACTED="${TMP}"

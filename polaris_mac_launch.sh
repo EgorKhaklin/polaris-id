@@ -195,7 +195,7 @@ require_layout() {
 # Port preflight: detect macOS AirPlay Receiver on :5000 and other conflicts
 # -----------------------------------------------------------------------------
 port_in_use() {
-    lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | grep -q LISTEN
+    lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | grep LISTEN >/dev/null
 }
 
 port_owner() {
@@ -213,11 +213,11 @@ preflight_port() {
     owner="$(port_owner "$PORT")"
     # If the listener is our own Docker proxy or gunicorn, that's fine; the
     # idempotent up paths will detect "already running" downstream.
-    if echo "$owner" | grep -qiE 'docker|com.docke|gunicorn|python'; then
+    if echo "$owner" | grep -iE 'docker|com.docke|gunicorn|python' >/dev/null; then
         return 0
     fi
     err "Port $PORT is held by: $owner"
-    if [[ "$PORT" == "5000" ]] && echo "$owner" | grep -qi 'controlce'; then
+    if [[ "$PORT" == "5000" ]] && echo "$owner" | grep -i 'controlce' >/dev/null; then
         echo
         warn "macOS AirPlay Receiver listens on port 5000 by default."
         echo "  Disable it: System Settings -> General -> AirDrop & Handoff -> AirPlay Receiver -> Off"
@@ -282,7 +282,7 @@ ensure_docker_running() {
 }
 
 docker_app_running() {
-    (cd "$WEB_DIR" && docker compose ps --services --filter status=running 2>/dev/null) | grep -q '^app$'
+    (cd "$WEB_DIR" && docker compose ps --services --filter status=running 2>/dev/null) | grep '^app$' >/dev/null
 }
 
 # A container can be marked "running" by docker compose for a moment while
@@ -318,11 +318,11 @@ docker_image_stale() {
     src_epoch="$(find "$WEB_DIR" -type f \
                   ! -path '*/venv/*' ! -path '*/__pycache__/*' ! -path '*/.git/*' \
                   -exec stat -f '%m' {} \; 2>/dev/null \
-              | sort -nr | head -1)"
+              | sort -nr | sed -n 1p)"
     if [[ -z "$src_epoch" ]]; then
         src_epoch="$(find "$WEB_DIR" -type f \
                       ! -path '*/venv/*' ! -path '*/__pycache__/*' ! -path '*/.git/*' \
-                      -printf '%T@\n' 2>/dev/null | cut -d. -f1 | sort -nr | head -1)"
+                      -printf '%T@\n' 2>/dev/null | cut -d. -f1 | sort -nr | sed -n 1p)"
     fi
     if [[ -z "$src_epoch" ]]; then return 1; fi
     (( src_epoch > img_epoch )) || return 1
@@ -511,7 +511,7 @@ launch_docker() {
 # to use. Self-healing in this case = wipe the volume and let init re-run.
 db_auth_broken() {
     docker compose logs --tail 200 db 2>&1 \
-        | grep -q 'password authentication failed for user "polaris_app"'
+        | grep 'password authentication failed for user "polaris_app"' >/dev/null
 }
 
 # Bring the stack up. If the app fails to come healthy AND the db logs show
@@ -613,7 +613,7 @@ build_zk_binary() {
     if [[ -x "$ZK_BINARY" ]]; then
         local newer
         newer="$(find "$ZK_DIR/src" "$ZK_DIR/Cargo.toml" "$ZK_DIR/Cargo.lock" \
-                    -newer "$ZK_BINARY" 2>/dev/null | head -n1)"
+                    -newer "$ZK_BINARY" 2>/dev/null | sed -n 1p)"
         if [[ -z "$newer" ]]; then
             export POLARIS_ZK_BINARY="$ZK_BINARY"
             ok "ZK prover up-to-date (polaris-zk) — /api/zk/* enabled"
@@ -698,13 +698,13 @@ launch_native() {
         export PATH="/usr/local/opt/postgresql@16/bin:$PATH"
     fi
 
-    if ! brew services list | grep -E '^postgresql@16' | grep -q started; then
+    if ! brew services list | grep -E '^postgresql@16' | grep started >/dev/null; then
         log "Starting PostgreSQL 16"
         brew services start postgresql@16
         sleep 3
     fi
 
-    if ! psql -U "$USER" -lqt 2>/dev/null | cut -d'|' -f1 | grep -qw polaris_test; then
+    if ! psql -U "$USER" -lqt 2>/dev/null | cut -d'|' -f1 | grep -w polaris_test >/dev/null; then
         log "Creating polaris_test database"
         createdb polaris_test
     fi
@@ -1166,7 +1166,7 @@ doctor() {
         if [[ -n "$containers" ]] && [[ "$(echo "$containers" | wc -l)" -gt 1 ]]; then
             echo "$containers" | sed 's/^/  /'
             # If app container is in restart loop, flag it
-            if docker ps --filter name=polaris-app --filter status=restarting --format '{{.Names}}' 2>/dev/null | grep -q polaris-app; then
+            if docker ps --filter name=polaris-app --filter status=restarting --format '{{.Names}}' 2>/dev/null | grep polaris-app >/dev/null; then
                 printf "  ${RED}BAD${NC}   polaris-app is in a restart loop — run: ./polaris_mac_launch.sh logs app\n"
             fi
         else
@@ -1201,7 +1201,7 @@ doctor() {
     echo
 
     # 7. Stale-volume auth check (if Docker is up + db running)
-    if docker_available && docker compose -f "$WEB_DIR/docker-compose.yml" ps --services --filter status=running 2>/dev/null | grep -q '^db$'; then
+    if docker_available && docker compose -f "$WEB_DIR/docker-compose.yml" ps --services --filter status=running 2>/dev/null | grep '^db$' >/dev/null; then
         printf "%sDatabase auth state%s\n" "$BOLD" "$NC"
         if db_auth_broken; then
             printf "  ${RED}BAD${NC}   Postgres logs show password-auth failure for polaris_app\n"
@@ -1280,7 +1280,7 @@ reset_all() {
     [ -d /opt/homebrew/opt/postgresql@16/bin ] && export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"
     [ -d /usr/local/opt/postgresql@16/bin ]   && export PATH="/usr/local/opt/postgresql@16/bin:$PATH"
     if command -v dropdb >/dev/null 2>&1 && \
-       psql -U "$USER" -lqt 2>/dev/null | cut -d'|' -f1 | grep -qw polaris_test; then
+       psql -U "$USER" -lqt 2>/dev/null | cut -d'|' -f1 | grep -w polaris_test >/dev/null; then
         log "Dropping native polaris_test database"
         dropdb polaris_test 2>/dev/null || warn "Could not drop polaris_test (is something connected?)"
     fi

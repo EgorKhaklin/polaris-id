@@ -68,7 +68,7 @@ fi
 venv/bin/pip wheel -q --pre --no-deps --no-build-isolation -w wheel "$PKG"
 venv/bin/pip install -q --no-deps wheel/*.whl
 echo "installed  polaris-oid4vp $(venv/bin/python -c 'import importlib.metadata as m; print(m.version("polaris-oid4vp"))')"
-venv/bin/polaris-oid4vp serve --help | grep -q -- --issuer-trust-anchor || {
+venv/bin/polaris-oid4vp serve --help | grep -- --issuer-trust-anchor >/dev/null || {
   echo "this polaris-oid4vp has no --issuer-trust-anchor; set POLARIS_OID4VP to one that does" >&2
   exit 2
 }
@@ -122,7 +122,7 @@ start_wallet() {
   docker rm -f polaris-oid4vcgo-wallet >/dev/null 2>&1 || true
   docker run -d --name polaris-oid4vcgo-wallet ${ADD_HOST[@]+"${ADD_HOST[@]}"} -p "$WALLET_PORT:8443" \
     -v "$WORK:/w" alpine:3.20 /w/wallet -config /w/config.json >/dev/null
-  for _ in $(seq 1 40); do docker logs polaris-oid4vcgo-wallet 2>&1 | grep -q "listening" && break; sleep 0.25; done
+  for _ in $(seq 1 40); do docker logs polaris-oid4vcgo-wallet 2>&1 | grep "listening" >/dev/null && break; sleep 0.25; done
 }
 start_wallet
 docker logs polaris-oid4vcgo-wallet 2>&1 | grep -i "warning" | sed 's/^/wallet says  /' || true

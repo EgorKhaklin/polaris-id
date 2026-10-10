@@ -95,7 +95,7 @@ stat() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[sys.arg
 wait_edge() {  # $1 = seconds
     local i
     for i in $(seq 1 "$1"); do
-        curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" | grep -q 200 && return 0; sleep 1
+        curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" | grep 200 >/dev/null && return 0; sleep 1
     done
     return 1
 }
@@ -117,7 +117,7 @@ wait_edge 30 || fail "edge not healthy before the drill"
 # Read the RUNNING container's mount rather than the compose model: the prod
 # file and an overlay both declare a mount at this target, and only the
 # container knows which one won.
-CADDY_CID=$(compose ps -q caddy | head -1)
+CADDY_CID=$(compose ps -q caddy | sed -n 1p)
 [[ -n "$CADDY_CID" ]] || fail "no running caddy container"
 CADDYFILE=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/etc/caddy/Caddyfile"}}{{.Source}}{{end}}{{end}}' "$CADDY_CID")
 [[ -f "$CADDYFILE" ]] || fail "could not locate the mounted Caddyfile ($CADDYFILE)"
@@ -189,10 +189,10 @@ python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) <= float(sys.argv[2]) e
 
 echo "== 3. database restart under traffic =="
 app_ids_before=$(compose ps -q app app-green 2>/dev/null | sort | tr '\n' ' ')
-pg_started_before=$(docker inspect --format '{{.State.StartedAt}}' "$(compose ps -q postgres | head -1)")
+pg_started_before=$(docker inspect --format '{{.State.StartedAt}}' "$(compose ps -q postgres | sed -n 1p)")
 traffic_start "$WORK/db.json"
 compose restart -t 10 postgres >/dev/null 2>&1 || fail "could not restart postgres"
-pg_started_after=$(docker inspect --format '{{.State.StartedAt}}' "$(compose ps -q postgres | head -1)")
+pg_started_after=$(docker inspect --format '{{.State.StartedAt}}' "$(compose ps -q postgres | sed -n 1p)")
 [[ "$pg_started_before" != "$pg_started_after" ]] || fail "postgres did not restart; the scenario would be vacuous"
 for i in $(seq 1 90); do db_healthy && break; sleep 1; done
 db_healthy || fail "readiness did not report the database healthy within 90 s of the restart"

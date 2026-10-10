@@ -78,15 +78,15 @@ if [ -n "$POLARIS_APP_PASSWORD" ] && [ "$POLARIS_APP_PASSWORD" != "polaris_dev_p
         exit 2
     fi
     if [ ${#POLARIS_APP_PASSWORD} -lt 24 ]; then
-        if ! echo "$POLARIS_APP_PASSWORD" | grep -q '[0-9]'; then
+        if ! echo "$POLARIS_APP_PASSWORD" | grep '[0-9]' >/dev/null; then
             echo "FATAL: POLARIS_APP_PASSWORD under 24 chars must contain a digit." >&2
             exit 2
         fi
-        if ! echo "$POLARIS_APP_PASSWORD" | grep -q '[A-Za-z]'; then
+        if ! echo "$POLARIS_APP_PASSWORD" | grep '[A-Za-z]' >/dev/null; then
             echo "FATAL: POLARIS_APP_PASSWORD under 24 chars must contain a letter." >&2
             exit 2
         fi
-        if ! echo "$POLARIS_APP_PASSWORD" | grep -q '[^A-Za-z0-9]'; then
+        if ! echo "$POLARIS_APP_PASSWORD" | grep '[^A-Za-z0-9]' >/dev/null; then
             echo "FATAL: POLARIS_APP_PASSWORD under 24 chars must contain a symbol." >&2
             exit 2
         fi

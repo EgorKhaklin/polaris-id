@@ -208,7 +208,7 @@ ok "no migration pending"
 [[ "$("${COMPOSE[@]}" exec -T postgres psql -X -t -A -U postgres -d polaris -c 'SHOW archive_mode' < /dev/null \
       | tr -d '[:space:]')" == on ]] || fail "WAL archiving is not on after the upgrade"
 "${COMPOSE[@]}" exec -T -u postgres postgres pgbackrest --stanza=polaris --output=json info < /dev/null 2> /dev/null \
-    | grep -q '"type": *"full"' || fail "the repository holds no full base backup after the upgrade"
+    | grep '"type": *"full"' >/dev/null || fail "the repository holds no full base backup after the upgrade"
 ok "WAL archiving is on and the repository holds a full base backup"
 # Gate row OP-11: the deploy proved that first backup restores (scripts/polaris-restore-verify.sh) and
 # recorded it, so PolarisRestoreUnverified's clock starts at a verified restore.
@@ -250,7 +250,7 @@ ok "credential #${B}, issued after the upgrade, verifies"
 # Credential A, issued before the upgrade, asked of the upgraded app as its operator.
 BASE=https://localhost:8443 CA="${OUT}/caddy-root.crt" JAR="${WORK}/cookies"
 CSRF=$(curl -s --cacert "${CA}" -c "${JAR}" -b "${JAR}" "${BASE}/login" \
-       | { grep -o 'name="csrf_token" value="[^"]*"' || true; } | head -1 | sed 's/.*value="//;s/"$//')
+       | { grep -o 'name="csrf_token" value="[^"]*"' || true; } | sed -n 1p | sed 's/.*value="//;s/"$//')
 [[ "$(curl -s --cacert "${CA}" -c "${JAR}" -b "${JAR}" -o /dev/null -w '%{http_code}' \
       --data-urlencode "csrf_token=${CSRF}" --data-urlencode "username=try-operator" \
       --data-urlencode "password@"<(tr -d '\r\n' < "${OUT}/operator-password") "${BASE}/login")" == 302 ]] \

@@ -5657,6 +5657,157 @@ def check_no_grep_q_transaction_scrape(root: pathlib.Path) -> list[Finding]:
                "by verifying the outcome")
 
 
+# Under `set -o pipefail` a pipeline fails when ANY stage fails, and a stage that stops reading
+# early (`head`, `grep -q`, `grep -m`, `grep -l`, a `sed` that quits, an `awk` that exits) closes
+# the pipe while the stage before it may still be writing. That writer dies of SIGPIPE (141), so a
+# pipeline whose consumer FOUND what it looked for reports failure, depending on output size and
+# timing: `if docker logs x | grep -q y; then bad ...` skips the `bad` it should reach (a negative
+# check that passes open), and `v=$(cmd | head -1)` stops a `set -e` script at random. A sourced
+# library runs under its caller's pipefail, so every tracked shell file is held to this, whether or
+# not it sets pipefail itself. A consumer that reads to the end does the same job: `sed -n 1p` for
+# `head -1`, `grep ... >/dev/null` for `grep -q` (2026-10-10: 101 sites in 40 files rewritten).
+# Quoted text is not code (`grep -E 'a|head'`), nor are comments, case patterns or heredoc bodies;
+# a `$(...)` inside double quotes is. Out of scope: `read` and `break` as consumers, and the run
+# steps of the workflows and Dockerfiles.
+_PIPE_INTO = re.compile(r"(?<!\|)\|&?(?!\|)(?:[ \t]+|\\?\n)*")
+_EARLY_GREP = re.compile(r"[ef]?grep((?:[ \t]+(?:-[A-Za-z0-9]+|--[a-z-]+(?:=\S+)?))*)")
+_SED_QUIT = re.compile(r"(?:^|[;{}\n0-9$/])\s*[qQ]\s*\d*\s*(?:[;}]|$)")
+
+
+def _shell_code_mask(text: str) -> str:
+    """`text` with quoted literals, comments and heredoc bodies blanked, offsets unchanged.
+
+    A `$(...)` inside double quotes stays code. A blanked character becomes a space and a newline
+    stays a newline, so an offset in the mask is the same offset in `text`.
+    """
+    out: list[str] = []
+    stack = ["code"]
+    heredocs: list[tuple[str, bool]] = []
+    i, n = 0, len(text)
+    while i < n:
+        c, top = text[i], stack[-1]
+        if top == "sq":
+            if c == "'":
+                stack.pop()
+            out.append(c if c in "'\n" else " ")
+        elif top == "dq":
+            if c == "\\" and i + 1 < n:
+                out.append(" " + ("\n" if text[i + 1] == "\n" else " "))
+                i += 1
+            elif c == '"':
+                stack.pop()
+                out.append(c)
+            elif text.startswith("$(", i):
+                stack.append("sub")
+                out.append("$(")
+                i += 1
+            else:
+                out.append(c if c == "\n" else " ")
+        elif c == "\\" and i + 1 < n:
+            out.append(text[i:i + 2])
+            i += 1
+        elif c in "'\"":
+            stack.append("sq" if c == "'" else "dq")
+            out.append(c)
+        elif text.startswith("$(", i):
+            stack.append("sub")
+            out.append("$(")
+            i += 1
+        elif c == "(":
+            stack.append("paren")
+            out.append(c)
+        elif c == ")" and top in ("sub", "paren"):
+            stack.pop()
+            out.append(c)
+        elif c == "#" and (i == 0 or text[i - 1] in " \t\n;|&("):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append(" " * (j - i))
+            i = j
+            continue
+        elif text.startswith("<<", i) and not text.startswith("<<<", i) and \
+                (m := re.match(r"<<(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2", text[i:])):
+            heredocs.append((m.group(3), m.group(1) == "-"))
+            out.append(m.group(0))
+            i += m.end()
+            continue
+        elif c == "\n" and heredocs:
+            out.append(c)
+            i += 1
+            for word, strip_tabs in heredocs:
+                while i < n:
+                    j = text.find("\n", i)
+                    j = n if j < 0 else j
+                    line = text[i:j]
+                    out.append(" " * len(line) + ("\n" if j < n else ""))
+                    i = j + 1
+                    if (line.lstrip("\t") if strip_tabs else line) == word:
+                        break
+            heredocs = []
+            continue
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)[:n]
+
+
+def _early_consumer(text: str, mask: str, at: int) -> str | None:
+    """The command at `at` if it can stop reading before its input ends, else None.
+
+    The command ends at the first `|`, `;`, `&`, newline or `)` that is code in `mask`, so a
+    quoted `sed -n '1{p;q}'` is read whole.
+    """
+    end = re.search(r"[|;&\n)]", mask[at:at + 400])
+    rest = text[at:at + (end.start() if end else 400)]
+    if re.match(r"head\b(?![)|])", text[at:at + 8]):  # `head)` and `head|` are case patterns
+        return "head"
+    m = _EARLY_GREP.match(rest)
+    if m:
+        for opt in m.group(1).split():
+            if opt.startswith("--"):
+                if opt.split("=")[0] in ("--quiet", "--silent", "--max-count", "--files-with-matches"):
+                    return "grep " + opt
+            elif re.search(r"[qml]", opt[1:]):
+                return "grep " + opt
+    m = re.match(r"sed\b(.*)", rest, re.S)
+    if m:
+        scripts = re.findall(r"'([^']*)'|\"([^\"]*)\"|(?:^|\s)(\d*q)\b", m.group(1))
+        if any(_SED_QUIT.search(s) for group in scripts for s in group if s):
+            return "sed ...q"
+    m = re.match(r"awk\b(.*)", rest, re.S)
+    if m and re.search(r"\bexit\b", re.sub(r"END\s*\{[^}]*\}", "", m.group(1))):
+        return "awk ... exit"
+    return None
+
+
+def check_shell_pipes_read_to_the_end(root: pathlib.Path) -> list[Finding]:
+    files = [rel for rel in _tracked_files(root) if rel.endswith((".sh", ".bash"))
+             and not any(d in _NAMED_REF_SKIP_DIRS for d in rel.split("/"))]
+    pipes, offenders = 0, []
+    for rel in files:
+        text = _read_path(root / rel)
+        mask = _shell_code_mask(text)
+        if len(mask) != len(text):
+            offenders.append(f"{rel} (the scanner lost its place: read it by hand)")
+            continue
+        for m in _PIPE_INTO.finditer(mask):
+            pipes += 1
+            kind = _early_consumer(text, mask, m.end())
+            if kind:
+                offenders.append(f"{rel}:{text.count(chr(10), 0, m.start()) + 1} ({kind})")
+    if not files or not pipes:
+        return _fail("shell_pipes_read_to_the_end",
+                     f"read {len(files)} shell files and {pipes} pipelines: a scan that saw nothing proves nothing")
+    if offenders:
+        return _fail("shell_pipes_read_to_the_end",
+                     f"{len(offenders)} pipe(s) into a consumer that can stop reading early; under pipefail the "
+                     "writer's SIGPIPE fails the pipeline after a match (read to the end instead: `sed -n 1p` "
+                     "for `head -1`, `grep ... >/dev/null` for `grep -q`): " + ", ".join(offenders[:12])
+                     + (" ..." if len(offenders) > 12 else ""))
+    return _ok("shell_pipes_read_to_the_end",
+               f"{pipes} pipelines in {len(files)} shell files: none feeds a consumer that stops reading early")
+
+
 # A psql that runs INSIDE a container (a run_psql routed through `docker compose ... exec`)
 # cannot read a file on the host. polaris-create-operator.sh, polaris-generate-recovery-code.sh
 # and polaris-recover-admin.sh wrote their SQL to a host temp file and ran `run_psql -f` on it,
@@ -28351,6 +28502,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_purge_binds_archive_to_database,
     check_archive_version_derived,
     check_no_grep_q_transaction_scrape,
+    check_shell_pipes_read_to_the_end,
     check_container_psql_reads_sql_from_stdin,
     check_psql_status_capture_set_e_safe,
     check_recover_admin_refuses_self_pairing,
