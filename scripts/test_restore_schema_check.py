@@ -393,7 +393,12 @@ class RestoreKeepsTheDatabaseSettings(_RestoreHarness):
         work = os.path.join(self.tmp, name)
         os.makedirs(work)
         with tarfile.open(self.backup) as tar:
-            tar.extractall(work, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
+            root = os.path.realpath(work)
+            for m in tar.getmembers():
+                dest = os.path.realpath(os.path.join(root, m.name))
+                if os.path.commonpath([root, dest]) != root:
+                    raise AssertionError("a tar member outside the stage: %r" % m.name)
+            tar.extractall(work, filter="data")
         stage = [p for p in glob.glob(os.path.join(work, "polaris-*")) if os.path.isdir(p)][0]
         mutate(stage)
         manifest_path = os.path.join(stage, "MANIFEST.json")
