@@ -17,6 +17,21 @@ import unittest
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
+# Run from a git hook, the environment names the repository being committed (GIT_INDEX_FILE,
+# GIT_DIR, GIT_WORK_TREE). A scratch repository's `git add` or `git commit` here then writes into
+# THAT index: from a linked worktree, where its path is absolute, the tool-tests hook replaced a
+# 1680-entry index with a scratch repository's one file (2026-10-10). No test here sees any of it.
+_HOOK_GIT_ENV = {}
+
+
+def setUpModule():
+    _HOOK_GIT_ENV.update({k: os.environ.pop(k) for k in list(os.environ) if k.startswith("GIT_")})
+
+
+def tearDownModule():
+    os.environ.update(_HOOK_GIT_ENV)
+
+
 def _load():
     spec = importlib.util.spec_from_file_location(
         "polaris_ship_tool", os.path.join(_HERE, "polaris-ship.py"))
@@ -622,15 +637,19 @@ class ZkProverStale(unittest.TestCase):
 
     def test_a_run_refuses_a_stale_prover_before_it_touches_a_database(self):
         import io
+        import sys
         calls = []
-        saved = ship.zk_prover_stale, ship.hold_run_lock
+        saved = ship.zk_prover_stale, ship.hold_run_lock, ship._python
         ship.zk_prover_stale = lambda root, env: "the prover is stale (stand-in)"
         ship.hold_run_lock = lambda env, *a, **k: calls.append("lock") or (None, "stand-in")
+        # run() first requires an interpreter with flask and psycopg2; the hook's python3 has
+        # neither, and the refusal under test comes before anything uses it.
+        ship._python = lambda: sys.executable
         try:
             out = io.StringIO()
             rc = ship.run(["--shards", "1"], out)
         finally:
-            ship.zk_prover_stale, ship.hold_run_lock = saved
+            ship.zk_prover_stale, ship.hold_run_lock, ship._python = saved
         self.assertEqual(rc, 2)
         self.assertIn("run: refused: the prover is stale (stand-in).", out.getvalue())
         self.assertEqual(calls, [], "the run went on to take the database lock")

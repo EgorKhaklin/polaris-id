@@ -22,6 +22,21 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+# Run from a git hook, the environment names the repository being committed (GIT_INDEX_FILE,
+# GIT_DIR, GIT_WORK_TREE). A scratch repository's `git add` or `git commit` here then writes into
+# THAT index: from a linked worktree, where its path is absolute, the tool-tests hook replaced a
+# 1680-entry index with a scratch repository's one file (2026-10-10). No test here sees any of it.
+_HOOK_GIT_ENV = {}
+
+
+def setUpModule():
+    _HOOK_GIT_ENV.update({k: os.environ.pop(k) for k in list(os.environ) if k.startswith("GIT_")})
+
+
+def tearDownModule():
+    os.environ.update(_HOOK_GIT_ENV)
 LOADER = ROOT / "scripts" / "polaris-env.sh"
 
 ENV_FILE = "\n".join([
