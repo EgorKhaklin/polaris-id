@@ -21,7 +21,7 @@ fails otherwise.
 | [`SECRETS.md`](SECRETS.md) | Every secret the stack uses, how each is generated, read and rotated, and the sealed store |
 | [`KEY-CEREMONY.md`](KEY-CEREMONY.md) | The issuer signing key: custody drivers (file, PKCS#11, AWS KMS), the witnessed ceremony, rotation with trust anchors |
 | [`WEBAUTHN-ROLLOUT.md`](WEBAUTHN-ROLLOUT.md) | Rolling WebAuthn MFA out to operators in phases, the attestation policy, enrollment and recovery |
-| [`SECURITY.md`](SECURITY-CONTROLS.md) | The security posture: every control, where it is enforced, which check pins it, and the dated hardening engagement |
+| [`SECURITY-CONTROLS.md`](SECURITY-CONTROLS.md) | The security posture: every control, where it is enforced, which check pins it, and the dated hardening engagement |
 | [`PRIVACY.md`](PRIVACY.md) | Data minimization and the operational privacy posture |
 | [`ENCRYPTION-AT-REST.md`](ENCRYPTION-AT-REST.md) | What is plaintext on disk, what is already encrypted, and the host volume encryption path |
 | [`DR.md`](DR.md) | Disaster recovery: the targets (RPO 300 s, RTO 4 h), the procedures by failure class, WAL archiving and the off-site repository |
@@ -42,7 +42,7 @@ pre-deploy checklist in [OPERATIONS.md](OPERATIONS.md#pre-deploy-checklist).
 What a deployment still needs from your organization is the decision table
 in [PRODUCTION-READINESS.md](../PRODUCTION-READINESS.md).
 
-**Assessing a deployment.** [SECURITY.md](SECURITY-CONTROLS.md), [PRIVACY.md](PRIVACY.md),
+**Assessing a deployment.** [SECURITY-CONTROLS.md](SECURITY-CONTROLS.md), [PRIVACY.md](PRIVACY.md),
 [ENCRYPTION-AT-REST.md](ENCRYPTION-AT-REST.md), [DR.md](DR.md) with the
 measured rows in [DR-DRILLS.md](DR-DRILLS.md) and [CHAOS-DRILLS.md](CHAOS-DRILLS.md), and
 [PQC-POSTURE.md](../reference/PQC-POSTURE.md).

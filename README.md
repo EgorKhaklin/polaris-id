@@ -102,7 +102,7 @@ The vocation above them: **no person can be compelled to renounce, transfer or s
 | **C5** | No inline scripts (`script-src 'self'`). | Engineering | HTTP response header, verified per route |
 | **C6** | Disclosure level is enforced server-side. | Constitutional | Server code paired with redaction tests |
 | **C7** | No hardcoded cryptography. | Engineering | Foreign key to `CryptographicAlgorithm` |
-| **C8** | Every map/API aggregate is bounded. | Engineering | Hard caps in the SQL functions |
+| **C8** | Every map/API aggregate is bounded. | Engineering | Route-level caps (`_ATLAS_MAX_*`) applied before the SQL sees a caller's count |
 | **C9** | Concurrency is tested with real threads. | Engineering | Threaded suites against a live database |
 | **C10** | Identity is not money. | Constitutional | Structural absence, pinned by a check |
 
