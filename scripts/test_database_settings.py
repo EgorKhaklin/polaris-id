@@ -372,6 +372,17 @@ class TheRestore(_Stubbed):
                 self.assertIn("the backup's database settings cannot be read, so they were not restored", r.stderr)
                 self.assertNotIn("DO $reset$", self.log("psql.log"))
 
+    def test_a_record_of_no_settings_is_refused_before_the_target_is_touched(self):
+        """Every Polaris database carries 09_grants.sql's settings: none is a reading that saw nothing,
+        and replaying it would reset the target's to none."""
+        before = (self.stub / "state.json").read_text()
+        r = self.restore(self.tarball(record([])))
+        self.assertEqual(r.returncode, EXIT_SETTINGS_MISMATCH, r.stdout + r.stderr)
+        self.assertIn("the backup records no database settings, so the target's would be reset to none", r.stderr)
+        self.assertNotIn("DO $reset$", self.log("psql.log"))
+        self.assertEqual((self.stub / "state.json").read_text(), before)
+        self.assertNotIn("4.5/6", r.stdout)
+
     def test_a_settings_file_the_manifest_does_not_cover_is_refused(self):
         r = self.restore(self.tarball(record(SOURCE), in_manifest=False))
         self.assertEqual(r.returncode, EXIT_MANIFEST_VERIFY_FAIL, r.stdout + r.stderr)
@@ -436,6 +447,14 @@ class TheBackup(_Stubbed):
         self.assertIn("could not be recorded, so a restore of this backup would lose them; no backup was written",
                       r.stderr)
         self.assertIn("permission denied", r.stderr)
+        self.assertEqual(list(dest.glob("polaris-*")), [])
+
+    def test_a_reading_of_no_settings_writes_no_backup(self):
+        self.state(record([], database="polaris_src"))
+        r, dest = self.backup()
+        self.assertEqual(r.returncode, 5, r.stdout + r.stderr)
+        self.assertIn("the database records no settings of its own (09_grants.sql sets four); no backup was written",
+                      r.stderr)
         self.assertEqual(list(dest.glob("polaris-*")), [])
 
     def test_an_unusable_reading_writes_no_backup(self):

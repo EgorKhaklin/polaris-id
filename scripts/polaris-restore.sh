@@ -36,8 +36,9 @@
 #
 # And the backup's database settings (database-settings.json: ALTER DATABASE ... SET and ALTER ROLE
 # ... IN DATABASE ... SET, which pg_restore applies only with --create): the target's are replaced by
-# them and read back. A file that cannot be read or applied, or settings that read back otherwise, exit
-# EXIT_SETTINGS_MISMATCH=12. A backup taken before they were recorded leaves the target's as they are.
+# them and read back. A file that cannot be read or applied, that records none, or settings that read
+# back otherwise, exit EXIT_SETTINGS_MISMATCH=12. A backup taken before they were recorded leaves the
+# target's as they are.
 #
 # Examples:
 #   ./scripts/polaris-restore.sh /var/backups/polaris-20260514T030000Z.tar.gz
@@ -82,7 +83,7 @@ VERIFY_SCHEMA=0   # v9.23 — opt-in schema_version cross-check after restore
 BACKUP_FILE=""
 
 usage() {
-    sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'
     exit "${EXIT_USAGE}"
 }
 
@@ -450,6 +451,13 @@ if [[ "${SKIP_DB}" -eq 0 ]]; then
             sed -n '1,5p' "${WORK}/settings.err" | sed 's/^/      /' >&2
             exit "${EXIT_SETTINGS_MISMATCH}"
         fi
+        # Every Polaris database carries 09_grants.sql's settings, so a record of none is a reading
+        # that saw nothing: replayed, it would reset the target's to none.
+        settings_count=$(python3 "${SETTINGS_HELPER}" count "${settings_file}" 2>/dev/null || echo 0)
+        if ! [[ "${settings_count}" =~ ^[0-9]+$ ]] || (( settings_count < 1 )); then
+            echo "  ✗ the backup records no database settings, so the target's would be reset to none; '${TARGET_DB}' keeps its own" >&2
+            exit "${EXIT_SETTINGS_MISMATCH}"
+        fi
         if ! settings_err=$(db_sql "${TARGET_DB}" "${settings_sql}" 2>&1); then
             echo "  ✗ the backup's database settings could not be applied to '${TARGET_DB}', which keeps its own:" >&2
             printf '%s\n' "${settings_err}" | sed -n '1,5p' | sed 's/^/      /' >&2
@@ -465,7 +473,7 @@ if [[ "${SKIP_DB}" -eq 0 ]]; then
             printf '%s\n' "${settings_mismatch}" | sed -n '1,40p' | sed 's/^/      /' >&2
             exit "${EXIT_SETTINGS_MISMATCH}"
         fi
-        echo "  ✓ the backup's database settings, restored: $(python3 "${SETTINGS_HELPER}" count "${settings_file}")"
+        echo "  ✓ the backup's database settings, restored: ${settings_count}"
     fi
 
     # The privileges, against what the same dump gives a new database with no default privileges

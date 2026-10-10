@@ -225,7 +225,14 @@ if [[ -s "${STAGE}/polaris.dump" ]]; then
         sed -n '1,5p' "${WORK}/settings.err" | sed 's/^/      /' >&2
         exit 5
     fi
-    echo "  ✓ $(python3 "${SCRIPT_DIR}/polaris_db_settings.py" count "${STAGE}/database-settings.json") database settings recorded"
+    # Every Polaris database carries 09_grants.sql's settings (the clock, the revocation bound and its
+    # window, the floor): none means a reading that saw nothing, which a restore would replay as none.
+    settings_count=$(python3 "${SCRIPT_DIR}/polaris_db_settings.py" count "${STAGE}/database-settings.json" 2>/dev/null || echo 0)
+    if ! [[ "${settings_count}" =~ ^[0-9]+$ ]] || (( settings_count < 1 )); then
+        echo "  ✗ the database records no settings of its own (09_grants.sql sets four); no backup was written" >&2
+        exit 5
+    fi
+    echo "  ✓ ${settings_count} database settings recorded"
 fi
 
 # 3. Manifest with hashes
