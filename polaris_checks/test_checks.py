@@ -6593,10 +6593,12 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
         "[ \"$(head -c 8 /tmp/obj)\" != \"Salted__\" ] && echo NOT-CIPHERTEXT\n"
         "[ \"$left\" = 0 ] || fail \"repo1 was not wiped\"\n"
         "refused_restore nopass \"repo2-cipher-pass. The offsite repo\" \"\" \"$WORK/repo-creds-nopass.conf\" image\n"
-        "refused_restore wrong \"$INFO_REFUSED\" \"$WRONG_KEY_REFUSED\" \"$WORK/repo-creds-wrongpass.conf\" image\n"
+        "NOT_SAYS=\"$NO_CIPHER_REFUSED\" \\\n"
+        "    refused_restore wrong \"$INFO_REFUSED\" \"$WRONG_KEY_REFUSED\" \"$WORK/repo-creds-wrongpass.conf\" image\n"
         "refused_restore nocipher \"$INFO_REFUSED\" \"$NO_CIPHER_REFUSED\" \"$WORK/repo-creds-nopass.conf\" own\n"
         "grep -qF -- \"$says\" \"$WORK/refused-restore.log\"\n"
-        "LC_ALL=C grep -qE -- \"$cipher\" \"$WORK/refused-restore.log\"\n"
+        "|| { [ -n \"$cipher\" ] && ! LC_ALL=C grep -qE -- \"$cipher\" \"$WORK/refused-restore.log\"; } \\\n"
+        "|| { [ -n \"${NOT_SAYS:-}\" ] && LC_ALL=C grep -qE -- \"$NOT_SAYS\" \"$WORK/refused-restore.log\"; }; then\n"
         "WRONG_KEY_REFUSED='\\[FormatError\\] unable to load info file|CryptoError: unable to flush'\n"
         "NO_CIPHER_REFUSED='at line 1: Salted__'\n"
         "grep -qE 'HostConnectError|ServiceError|FileMissingError' \"$WORK/refused-restore.log\"\n"
@@ -6744,6 +6746,9 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
     fails({"polaris_web/pgbackrest-conf.sh": GEN.replace('require_cipher "the configuration"', ': "the configuration"')},
           "a fragment's repository skips the cipher rule", "operator-mounted")
     # The drill overriding the retention on the command line instead of proving the rendered value.
+    # The cipher clause's polarity inverted (-n to -z): it would stop requiring each refusal's own pattern.
+    fails({"scripts/polaris-offsite-drill.sh": DRILL.replace('[ -n "$cipher" ]', '[ -z "$cipher" ]')},
+          "the cipher clause's test is inverted", "cipher-specific pattern")
     fails({"scripts/polaris-offsite-drill.sh": DRILL + "pgbackrest --stanza=polaris --repo=2 --repo2-retention-full=1 expire\n"},
           "the drill overrides the retention on the command line", "override the retention")
     # The drill, step by step.
@@ -6757,7 +6762,11 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
              "rendered retention"),
             ("refuses mounted \"configures repo2 (repo2-type=s3) with no cipher\"\n", "mounted repo.conf"),
             ("grep -qF -- \"$says\" \"$WORK/refused-restore.log\"\n", "own error text"),
-            ("LC_ALL=C grep -qE -- \"$cipher\" \"$WORK/refused-restore.log\"\n", "cipher-specific pattern"),
+            ("|| { [ -n \"$cipher\" ] && ! LC_ALL=C grep -qE -- \"$cipher\" \"$WORK/refused-restore.log\"; } \\\n",
+             "cipher-specific pattern"),
+            ("|| { [ -n \"${NOT_SAYS:-}\" ] && LC_ALL=C grep -qE -- \"$NOT_SAYS\" \"$WORK/refused-restore.log\"; }; then\n",
+             "another case's refusal"),
+            ("NOT_SAYS=\"$NO_CIPHER_REFUSED\" \\\n", "apart from the no-cipher one"),
             ("WRONG_KEY_REFUSED='\\[FormatError\\] unable to load info file|CryptoError: unable to flush'\n",
              "wrong-passphrase restore's own cipher error"),
             ("NO_CIPHER_REFUSED='at line 1: Salted__'\n", "no-cipher restore's own error"),
@@ -6771,7 +6780,7 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
             ("[ \"$left\" = 0 ] || fail \"repo1 was not wiped\"\n", "wipe repo1"),
             ("refused_restore nopass \"repo2-cipher-pass. The offsite repo\" \"\" \"$WORK/repo-creds-nopass.conf\" image\n",
              "with no passphrase"),
-            ("refused_restore wrong \"$INFO_REFUSED\" \"$WRONG_KEY_REFUSED\" \"$WORK/repo-creds-wrongpass.conf\" image\n",
+            ("    refused_restore wrong \"$INFO_REFUSED\" \"$WRONG_KEY_REFUSED\" \"$WORK/repo-creds-wrongpass.conf\" image\n",
              "with a wrong passphrase"),
             ("RESTORE_REPO2='pgbackrest --stanza=polaris --repo=2 restore'\n", "from repo2 alone"),
             ("echo \"done\"\n", "final done line")):
