@@ -1,7 +1,7 @@
 # Negative test vectors for SD-JWT VC presentations
 
 **Reader:** anyone building or testing a verifier of SD-JWT VC presentations under OpenID4VP 1.0 and
-HAIP 1.0, with or without Polaris. **What it is:** [`vectors.json`](vectors.json), 23 presentations a
+HAIP 1.0, with or without Polaris. **What it is:** [`vectors.json`](vectors.json), 25 presentations a
 verifier must judge, each with the verdict a correct verifier reaches and the sentence that requires it.
 [Lab record 018](../../strategy/018-negative-vectors.md) explains why it exists and what would end it.
 
@@ -13,13 +13,13 @@ against the verification function sees the verdict directly.
 
 Two **controls** come first: valid presentations, one with the issuer key in an `x5c` chain, one given as
 a JWK. A verifier that refuses them refuses everything, and its refusals below mean nothing. Each of the
-other 21 is the control with exactly one thing changed, re-signed wherever the change needs it, so the
+other 23 is the control with exactly one thing changed, re-signed wherever the change needs it, so the
 only reason to refuse it is the clause it cites:
 
 | Group | Vectors |
 |---|---|
 | JOSE | `crit` in the issuer JWT and in the key binding JWT; an ES256 signature DER-encoded |
-| Key binding JWT | `aud` as an array, `aud` without the Client Identifier prefix, `typ` JWT, `alg` none, HS256 keyed with the holder's public JWK, `iat` NaN, `exp` a string |
+| Key binding JWT | `aud` or `nonce` missing, `aud` as an array, `aud` without the Client Identifier prefix, `typ` JWT, `alg` none, HS256 keyed with the holder's public JWK, `iat` NaN, `exp` a string |
 | Disclosures | a digest committed twice, a claim already in the clear, `exp` or `iss` disclosed, four elements, a claim named `_sd` |
 | `x5c` chain | a self-signed leaf, the anchor sent in the chain, an unknown root, an expired leaf, an intermediate that is not a CA |
 
@@ -52,8 +52,69 @@ ECDSA (RFC 6979), so `python3 make_vectors.py > vectors.json` regenerates the fi
 **The keys and certificates are test material: never trust them.**
 [`test_vectors.py`](test_vectors.py), run in CI:
 - the file has not drifted from its generator;
-- `polaris-oid4vp` reaches all 23 verdicts;
+- `polaris-oid4vp` reaches all 25 verdicts, under the default binding and under another verifier's;
+- the views equal the generator's output, and a view with no vectors or a missing pair file fails;
 - each certificate defect is the only one, because the same chain repaired is accepted.
+
+## Bind them to your verifier
+
+Every Key Binding JWT names one verifier (`aud`, `nonce`) and one instant, so the published file is refused by any
+verifier but the one in its `settings`, controls included. Regenerate it for yours:
+
+```bash
+python3 make_vectors.py --audience 'x509_san_dns:verifier.test' --nonce 'your-test-nonce' --now 1830297600 --out DIR
+```
+
+Two flags are optional: `--issuer-key FILE` and `--holder-key FILE` replace the seeded issuer and holder keys.
+
+Your two settings:
+- **the verifier:** `--audience` is your client_id, with its OpenID4VP 1.0 Client Identifier Prefix
+  (`x509_san_dns:`, `x509_hash:`, `redirect_uri:`, ..., or `origin:` over the Digital Credentials API;
+  `kb-aud-no-prefix` strips it, so one is required: a pre-registered client_id without one cannot be bound), and
+  `--nonce` is the nonce your test request carries. `--now` (Unix seconds) is the instant your verifier judges at:
+  every `iat`, `exp` and certificate validity moves with it, the expired leaf included.
+- **the issuer:** your test configuration trusts the root in `DIR/vectors.json`'s `settings.trust_anchors_pem`
+  (for the `x5c` vectors) and the key in `settings.issuer_jwks` (for the `jwks` ones). The root depends on `--now`
+  only. `--issuer-key` signs every issuer JWT with your own key instead, still under the generated root.
+
+`--issuer-key` and `--holder-key` are PEM files holding an unencrypted P-256 private key, PKCS#8 (`PRIVATE KEY`)
+or SEC1 (`EC PRIVATE KEY`), for example from `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256`.
+Without binding flags, `python3 make_vectors.py > vectors.json` reproduces `vectors.json` byte for byte, and
+`python3 make_vectors.py --out .` run in this directory (or `--out` naming it) reproduces `vectors.json` and
+`views/` byte for byte.
+
+## Views
+
+[`views/`](views) holds the same vectors in layouts other suites read. They are derived from the generator
+(`python3 make_vectors.py --out .`) and never edited by hand; the test fails on any difference.
+
+- [`views/eudi/`](views/eudi): the EU reference verifier's test-resource layout. Vector N of `vectors.json`
+  (from 0) is the pair `<50+N>-<id>-dcql.json` (the transaction-init body: the DCQL query for the control's
+  claims, the nonce, `request_uri_method` post) and `<50+N>-<id>-vpToken.json` (`{"pid": [<presentation>]}`).
+  Numbering starts at 50 so it collides with nothing there, and follows the file's order so an added vector
+  never renumbers one. `INDEX.json` is the index below.
+- [`views/index.json`](views/index.json): one entry per vector, `id`, `spec_section` (the first clause),
+  `target` (the layer), `input` (the presentation), `expected`, `hardening` (true for `spec-implied`),
+  `reference_rejected_at_mint`, `clauses`, `trust`, `profile`, and `files` (its EU pair). `profile` is `haip`
+  for every vector: the KB-JWT `typ` is `kb+jwt`, as the header's `scope` says. A verifier that requires another
+  KB-JWT typ (for example `kb+sd-jwt`) refuses the controls at the key-binding layer; for such a verifier only the
+  issuer-signed cases apply, checked on their own. `reference_rejected_at_mint` is
+  polaris-oid4vp's verdict when the views were made: the generator runs every vector through
+  `run_vectors.py`'s `polaris-oid4vp` adapter with the vectors' own settings, as `test_vectors.py` does (this
+  tree's package, else an installed one). Making the views therefore needs polaris-oid4vp.
+- [`views/expected-failures.example.json`](views/expected-failures.example.json): where a consumer lists the
+  vectors its verifier does not yet refuse. We ship it empty and list nobody's exceptions. The file is a JSON
+  array; each entry is `{"test-name": <vector id>, "expected-result": <the verdict the verifier reaches today>,
+  "reason": <why>, "link": <the tracking issue>}`. `test-name` and `expected-result` follow the conformance
+  suite's expected-failures files; `reason` and `link` are ours.
+
+## Credits
+
+The views take their shapes from others' work: the mint-time reference verdict and the hardening flag from
+goodmeta/ap2-conformance (Apache-2.0); the index fields `spec_section`, `target`, `input` and `expected` from
+reallyme/openid4vp's test vectors; the pair layout from the EU reference verifier's test resources
+(eudi-srv-verifier-endpoint, Apache-2.0); and the exceptions file from the OpenID Foundation conformance
+suite's expected-failures files (MIT). Nothing of theirs is copied into this directory.
 
 ## Limits
 
@@ -61,4 +122,5 @@ ECDSA (RFC 6979), so `python3 make_vectors.py > vectors.json` regenerates the fi
   Token Status List have no vectors yet.
 - A verdict is pass or refuse; why a verifier refused is not compared, so a refusal for the wrong
   reason counts as a pass.
-- Version 0.1.0. Vectors may be added, and none will change meaning under the same id.
+- Version 0.2.0 (0.1.0 plus `kb-aud-missing` and `kb-nonce-missing`). Vectors may be added, and none will change
+  meaning under the same id.
