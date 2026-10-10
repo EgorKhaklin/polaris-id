@@ -39,9 +39,9 @@ Not yet compared:
 - **Physical paths.** Point-in-time recovery and the DR restore (pgBackRest), the offsite restore,
   failover, zone loss and region evacuation copy the database's files, so the state should come back
   unchanged. No drill compares it yet.
-- **A restore into a new database's settings.** The backup is taken without `--create`, so a restore
-  into a new database may not carry the database's own settings (`ALTER DATABASE ... SET`). Not yet
-  measured.
+- **A restore into a new database's settings.** `pg_restore` applies the database's own settings
+  (`ALTER DATABASE ... SET`) only with `--create`, which `polaris-restore.sh` does not use, so a
+  restore into a new database does not carry them. Not yet measured by a drill.
 
 A row's result changes only with a run at a commit on `main`, named in the last column. "Local run" marks one made
 on a maintainer's machine rather than in CI; the CI job's next run on `main` replaces it.
