@@ -22,6 +22,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The application role briefly had the public development password while the schema loaded, and kept it if a migration failed; it now gets its own before the load, and an empty one is refused in production.
 - Under pipefail, a pipe into `head`, `grep -q`, `grep -m` or `grep -l`, or an `awk` that exits, failed when the writer outlived the match (SIGPIPE, exit 141), so a check such as the edge-limits drill's "the upstream served the slow body" could pass without firing; 101 such pipes in 40 shell files now read to the end, and `check_shell_pipes_read_to_the_end` refuses a new one.
 - The deploy's secret pre-flight read one compose file and a list kept in the script, so the HA and DR profiles' secrets and the TLS certificates went unchecked, and a deploy that pulled checked the release it started from. It now reads the stack as `docker compose config` resolves it, with its overlays, requires every file the stack mounts from the secrets directory, refuses a setting that names a secret its service does not mount, and checks again after its own `git pull`.
+- OPERATIONS.md's PostgreSQL major-version upgrade read the compose project with `config --no-interpolate`, which Compose 2.38 refuses on the production file's secret binds, so steps 4 and 6 and the rollback stopped before they began; they read it as the deploy does, with polaris.env loaded.
+- The patronictl shorthand in OPERATIONS.md and FAILOVER.md loaded the HA overlay without the blue-green file it extends, so Compose refused it ("app-green has neither an image nor a build context") on the first HA command; it loads the blue-green file before the HA one, as LINUX-SERVER.md and DEPLOYMENT.md do.
 
 ### Added
 

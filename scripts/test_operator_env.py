@@ -1302,7 +1302,7 @@ class UpgradeRollbackStopsAtAFailedCopy(_CutBlock):
     DOCKER = r'''#!/bin/sh
 echo "docker $*" >> "$CALLS"
 case "$*" in
-  *"config --no-interpolate"*) echo "name: proj" ;;
+  *"docker-compose.prod.yml config") echo "name: proj" ;;
   "volume inspect"*) ;;
   *" down") ;;
   "run --rm"*) exit "${STUB_COPY_RC:-0}" ;;
@@ -1321,11 +1321,14 @@ esac
             (self.dir / d).mkdir(exist_ok=True)
         (self.dir / "bin" / "docker").write_text(self.DOCKER)
         (self.dir / "scripts" / "polaris-deploy.sh").write_text('#!/bin/sh\necho "deploy $*" >> "$CALLS"\n')
+        # The block reads the project with polaris.env loaded, as the deploy does; here there is none.
+        shutil.copy(LOADER, self.dir / "scripts" / "polaris-env.sh")
         for f in (self.dir / "bin" / "docker", self.dir / "scripts" / "polaris-deploy.sh"):
             f.chmod(0o755)
         calls = self.dir / "calls"
         r = subprocess.run(["bash", "-c", block], cwd=self.dir, capture_output=True, text=True, timeout=60,
-                           env=dict({"PATH": "%s:/usr/bin:/bin" % (self.dir / "bin"), "CALLS": str(calls)}, **env))
+                           env=dict({"PATH": "%s:/usr/bin:/bin" % (self.dir / "bin"), "CALLS": str(calls),
+                                     "POLARIS_ENV_FILE": ""}, **env))
         return r, (calls.read_text().splitlines() if calls.exists() else [])
 
     def test_a_failed_copy_is_not_deployed_onto(self):
