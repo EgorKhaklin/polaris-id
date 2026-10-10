@@ -2530,6 +2530,24 @@ jobs:
       - name: Generate secrets + certs
         run: bash scripts/polaris-generate-secrets.sh
 
+      # The deploy's secret pre-flight (scripts/polaris_stack_secrets.py) over every overlay this job
+      # runs: the HA and DR profiles' secrets must be among the files it requires, and each file it
+      # requires the generator wrote. Only here is the parser read over the overlays on real compose.
+      - name: The deploy's secret pre-flight reads every overlay's secrets
+        run: |
+          cd polaris_web
+          docker compose -f docker-compose.prod.yml ${POLARIS_COMPOSE_EXTRA} config --format json \
+            | python3 ../scripts/polaris_stack_secrets.py "$PWD/secrets" > "$RUNNER_TEMP/stack-secrets" \
+            || { cat "$RUNNER_TEMP/stack-secrets"; echo "::error::the deploy's pre-flight refuses this stack (above)"; exit 1; }
+          for s in polaris_patroni_restapi_password polaris_etcd_root_password polaris_etcd_patroni_password; do
+            grep -qx "FILE $PWD/secrets/$s" "$RUNNER_TEMP/stack-secrets" \
+              || { cat "$RUNNER_TEMP/stack-secrets"; echo "::error::the deploy's pre-flight does not require $s"; exit 1; }
+          done
+          while read -r kind path; do
+            [ "$kind" = FILE ] && [ -s "$path" ] || { echo "::error::$kind $path: not a non-empty file"; exit 1; }
+          done < "$RUNNER_TEMP/stack-secrets"
+          echo "the pre-flight requires $(grep -c '^FILE ' "$RUNNER_TEMP/stack-secrets") files over every overlay, each present"
+
       - name: Region evacuation drill (cut region A, promote region B, measure RTO and RPO)
         env:
           POLARIS_EVACUATION_OUT: /tmp/evacuation.json

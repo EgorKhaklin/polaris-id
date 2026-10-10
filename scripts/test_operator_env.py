@@ -742,7 +742,7 @@ class DeployRechecksTheSecretsAfterItsOwnPull(_Base):
         seed, origin, self.clone = self.tmp / "seed", self.tmp / "origin.git", self.tmp / "clone"
         (seed / "scripts").mkdir(parents=True)
         (seed / "polaris_web").mkdir()
-        for name in ("polaris-deploy.sh", "polaris-env.sh", "polaris-host-lock.sh"):
+        for name in ("polaris-deploy.sh", "polaris-env.sh", "polaris-host-lock.sh", "polaris_stack_secrets.py"):
             shutil.copy(ROOT / "scripts" / name, seed / "scripts" / name)
         shutil.copy(ROOT / "polaris_web" / "docker-compose.prod.yml", seed / "polaris_web" / "docker-compose.prod.yml")
         (seed / "polaris_web" / "stack.json").write_text(stack_json(self.fixture_dir, self.secrets, self.binds))

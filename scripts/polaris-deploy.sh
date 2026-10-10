@@ -108,38 +108,7 @@ fi
 # be there when the app reads it.
 secret_preflight() {  # WHEN: printed with the result
     local out line missing=0 path name
-    if ! out="$(compose config --format json 2> /dev/null | python3 -I -c '
-import json, os, sys
-cfg = json.load(sys.stdin)
-sdir = os.path.realpath(sys.argv[1])
-top = cfg.get("secrets") or {}
-need, bad = set(), []
-for svc_name, svc in sorted((cfg.get("services") or {}).items()):
-    mounted = set()
-    for s in svc.get("secrets") or []:
-        src = s.get("source") if isinstance(s, dict) else s
-        tgt = (s.get("target") if isinstance(s, dict) else None) or src
-        mounted.add(tgt if tgt.startswith("/") else "/run/secrets/" + tgt)
-        f = (top.get(src) or {}).get("file")
-        if not f:
-            bad.append("%s mounts secret %s, which names no file" % (svc_name, src))
-        else:
-            need.add(f)
-    for k, v in sorted((svc.get("environment") or {}).items()):
-        if k.endswith("_FILE") and isinstance(v, str) and v.startswith("/run/secrets/") and v not in mounted:
-            bad.append("%s sets %s=%s, a secret it does not mount" % (svc_name, k, v))
-    for v in svc.get("volumes") or []:
-        if isinstance(v, dict) and v.get("type") == "bind":
-            src = v.get("source") or ""
-            if os.path.realpath(src).startswith(sdir + os.sep):
-                need.add(src)
-for b in bad:
-    print("BAD " + b)
-for f in sorted(need):
-    print("FILE " + f)
-if bad or not need:
-    sys.exit(3)
-' "${SECRETS_DIR}")"; then
+    if ! out="$(compose config --format json 2> /dev/null | python3 -I "${SCRIPT_DIR}/polaris_stack_secrets.py" "${SECRETS_DIR}")"; then
         printf '%s\n' "${out}" | { grep '^BAD ' || true; } | sed 's/^BAD /  ✗ /'
         echo "  ✗ could not read the secret files the stack mounts from \`docker compose config\` ($1);"
         echo "    nothing was started."
