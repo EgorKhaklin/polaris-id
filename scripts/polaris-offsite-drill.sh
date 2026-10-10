@@ -359,18 +359,22 @@ refused_restore() {  # refused_restore <what> <expected text> <and this ERE, or 
     echo "  refused: a restore from repo2 $what ($says${cipher:+, $cipher})"
 }
 # pgBackRest's text when it cannot load repo2's backup.info: the cipher is wrong, or absent and the
-# file read as plaintext. INFO_REFUSED is its info-file loader's error, and CIPHER_REFUSED what makes
-# it the cipher's: a CryptoError, or the loader's hint for a file it could not parse. Both are taken
-# from pgBackRest's own messages, not from a run of this drill, which has not run since this step was
-# written: the first live run pins the exact text (narrow these to what its log shows).
+# file read as plaintext. INFO_REFUSED is its info-file loader's error, and the second pattern what
+# makes it the cipher's. A wrong passphrase decrypts the file to bytes that do not parse: the first
+# live run (2026-10-10, pgBackRest 2.58.0) logged "[FormatError] unable to load info file ...
+# key/value found outside of section at line 1", then "[075]: no backup set found to restore"; a
+# padding check that fails first would raise CryptoError instead. Step 9 restores the same bucket
+# with the right passphrase, so the passphrase is the only difference. With no cipher configured,
+# CIPHER_REFUSED is the loader's hint for a file it could not parse, or a CryptoError.
 INFO_REFUSED="unable to load info file"
+WRONG_KEY_REFUSED='\[FormatError\] unable to load info file|CryptoError'
 CIPHER_REFUSED="is or was the repo encrypted|CryptoError"
 
 echo "== 8. (d) a restore from repo2 without the passphrase is refused =="
 # No passphrase: the image's own path refuses before pgBackRest runs (fail closed).
 refused_restore "with no passphrase" "repo2-cipher-pass. The offsite repo" "" "$WORK/repo-creds-nopass.conf" image
 # A wrong passphrase: the image renders as always, and pgBackRest cannot decrypt the repo.
-refused_restore "with a wrong passphrase" "$INFO_REFUSED" "$CIPHER_REFUSED" "$WORK/repo-creds-wrongpass.conf" image
+refused_restore "with a wrong passphrase" "$INFO_REFUSED" "$WRONG_KEY_REFUSED" "$WORK/repo-creds-wrongpass.conf" image
 # The bucket and its key pair with no cipher configured at all: pgBackRest reading the objects as
 # plaintext.
 grep -v '^repo2-cipher-type=' "$WORK/rendered.conf" > "$WORK/repo-nocipher.conf"
