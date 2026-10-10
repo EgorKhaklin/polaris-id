@@ -5,9 +5,9 @@ asking anyone a question.** If you cannot, that is the bug and we want to hear i
 [open a report](https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml).
 
 This page is run start to finish before it is changed, from outside the repository, against the
-package on PyPI rather than a working copy. Last walked 2026-10-04 against `polaris-oid4vp`
-1.0.0rc16 installed from the registry, with the system Python 3.9.6 on macOS (the ten minutes' walt.id
-half against 1.0.0rc16 by the weekly canary on a clean runner, run 37220600561). In the first minute,
+package on PyPI rather than a working copy. Last walked 2026-10-10 against `polaris-oid4vp`
+1.0.0rc16 installed from the registry, with the system Python 3.9.6 on macOS: the ten minutes' walt.id
+half from an empty directory, `200 authentic` in 44 seconds with the wallet's image already pulled. In the first minute,
 eudi-dev v2.3.7 (its image, then its own binary without Docker) presented a credential, the verifier
 answered `200 authentic`, and all three controls were refused. In the ten minutes, walt.id's wallet
 presented and the verifier answered `200 authentic`. Nothing here is from memory.
@@ -128,6 +128,9 @@ Leave this running, in its own terminal, from `~/polaris-try` with the venv acti
 `PYTHONUNBUFFERED=1` is not decoration: without it Python buffers through the pipe,
 `verifier.log` stays empty, and step 6 finds nothing. Writing this page caught that.
 
+`--once` starts one request and prints the parameters the wallet is launched with; the verifier
+keeps serving after the presentation, until you stop it with Ctrl-C.
+
 ## 6. Present
 
 In a second terminal, from `~/polaris-try`, with the venv activated
@@ -182,6 +185,8 @@ One command. Paste the whole output into an issue at
 Tell us which numbered step you were on. Do not tidy the output.
 
 ## Cleaning up
+
+Stop the verifier with Ctrl-C in its terminal, then:
 
     docker rm -f polaris-waltid && rm -rf ~/polaris-try
 

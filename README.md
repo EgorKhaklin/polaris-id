@@ -62,7 +62,7 @@ bash run.sh
 # RESULT: accepted, and all three controls refused
 ```
 
-A failure report is as useful as a success: tell us how it went in [the stranger's path report](https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml).
+It works in a temporary directory it creates and serves the verifier on port 9443. A failure report is as useful as a success: tell us how it went in [the stranger's path report](https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml).
 
 Or verify a published credential offline, in Python or TypeScript:
 
